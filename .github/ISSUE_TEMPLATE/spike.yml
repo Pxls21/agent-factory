@@ -1,0 +1,46 @@
+name: Stage 0 proof spike
+description: Produce executable evidence for one uncertain integration seam.
+title: "[S0] "
+labels: ["stage:0", "type:spike"]
+body:
+  - type: input
+    id: build_plan_id
+    attributes:
+      label: Build-plan ID
+      placeholder: S0-01
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: State one concrete claim that this spike will prove or disprove.
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Reproducible fixture and command
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Exit evidence
+      description: List observable pass/fail criteria, including the negative case.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security boundary
+      description: Identify credentials, networks, mounts, and failure behavior.
+    validations:
+      required: true
+  - type: input
+    id: source_pin
+    attributes:
+      label: Upstream source pin
+      placeholder: component@commit
+    validations:
+      required: true

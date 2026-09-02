@@ -1,0 +1,43 @@
+# Reviewed shape for the pinned Hermes version in upstream.lock.yaml.
+# buzz-acp starts this runtime through `hermes-acp`; Hermes' native Buzz plugin
+# is intentionally not enabled in the selected topology.
+# The factory_memory provider and policy-hook executable do not exist yet.
+
+database:
+  journal_mode: wal
+  synchronous: FULL
+
+model:
+  default: "${HERMES_MODEL}"
+  provider: factory-router
+  streaming: true
+
+providers:
+  factory-router:
+    name: Factory Router
+    base_url: http://omniroute:20128/v1
+    api_mode: codex_responses
+    key_env: OMNIROUTE_INTERNAL_API_KEY
+    extra_headers:
+      x-omniroute-compression: "off"
+
+memory:
+  # One provider composes Agent, Project, Team, and Company scopes.
+  memory_enabled: false
+  user_profile_enabled: false
+  nudge_interval: 0
+  provider: factory_memory
+
+max_concurrent_sessions: 4
+
+hooks:
+  pre_tool_call:
+    - command: /opt/agent-factory/bin/policy-hook
+      timeout: 3
+      fail_closed: true
+
+hooks_auto_accept: true
+
+telemetry:
+  enabled: false
+  send: false

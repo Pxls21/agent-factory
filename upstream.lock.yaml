@@ -1,0 +1,122 @@
+# Audit snapshot, not an automatic dependency resolver.
+snapshot_date: "2026-09-02"
+
+selected_core:
+  agent-client-protocol:
+    repository: https://github.com/agentclientprotocol/agent-client-protocol.git
+    commit: 37a7d4f8a0a0632653a14084b8140ceb486ab0e8
+    license: Apache-2.0
+    role: buzz_to_hermes_protocol_contract
+  hermes-agent:
+    repository: https://github.com/NousResearch/hermes-agent.git
+    commit: 527da60844d4dced37879ea50259675371abe10e
+    observed_version: 0.21.0
+    license: MIT
+    role: main_production_workhorse_and_native_acp_server
+  buzz:
+    repository: https://github.com/block/buzz.git
+    commit: 1c8321cd08feb597f8bcff5195c21148fb3e98ed
+    license: Apache-2.0
+    role: human_interface_relay_and_buzz_acp
+  omniroute:
+    repository: https://github.com/diegosouzapw/OmniRoute.git
+    commit: 500568a1cd2de24c8a41fc9f241a0f4283fc9601
+    observed_version: 3.8.51
+    license: MIT
+    role: sole_model_api_gateway
+  fubuki-os:
+    repository: https://github.com/NerdHerderDani/fubuki-os.git
+    commit: 7375e56d6a5dc857bfd43ceccbc09bbc817d575a
+    observed_version: 0.1.0
+    license: Apache-2.0
+    role: governance_packet_compiler_and_bounds
+  ai-memory:
+    repository: https://github.com/akitaonrails/ai-memory.git
+    commit: 73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e
+    observed_version: 1.39.0
+    license: MIT
+    role: durable_memory_substrate_for_four_logical_scopes
+  gvisor:
+    repository: https://github.com/google/gvisor.git
+    commit: 80bb741691be65cedb6688ac518bef3664af0fcc
+    license: Apache-2.0
+    role: runtime_and_research_worker_containment
+
+selected_later_planes:
+  jit:
+    repository: https://github.com/bingreeky/JIT.git
+    commit: ababa06c2f54d799fd9fbc356e5368f61a452260
+    license: MIT
+    role: harness_foundry_generator
+  gbrain:
+    repository: https://github.com/garrytan/gbrain.git
+    commit: e9a14c952870f4a8b3f32529ce8ed05e9dad698b
+    observed_version: 0.48.1.0
+    license: MIT
+    role: dream_phase_mechanism_and_provenance_source
+  harnessrouter:
+    repository: https://github.com/HarnessRouter/harnessrouter.git
+    commit: 08d61ea145d6b78c433f6910547c1e7ee293c948
+    license: Apache-2.0
+    role: conditional_uhp_gateway_for_approved_generated_harnesses
+  openharness:
+    repository: https://github.com/HKUDS/OpenHarness.git
+    commit: 9b2efd795c6aa09f88b0c257d269a9e518da6ae7
+    observed_version: 0.1.9
+    license: MIT
+    role: foundry_reference_and_possible_host_not_assumed_minimal
+  alphaeval:
+    repository: https://github.com/GAIR-NLP/AlphaEval.git
+    commit: 754efe2d3939fdfab85f64ef23cbd12647a462da
+    license: MIT
+    role: hardened_harness_and_agent_evaluation_lab
+  pandaprobe:
+    repository: https://github.com/chirpz-ai/pandaprobe.git
+    commit: eec2a69b1a4d4dc492a2e80a2d974034c20de69e
+    license: Apache-2.0
+    role: observability_and_trace_analysis_plane
+
+development_and_reference:
+  ast-grep:
+    repository: https://github.com/ast-grep/ast-grep.git
+    commit: 29285d16757371a70a93190929940886e68618d3
+    license: MIT
+    role: deterministic_codemods
+  comby:
+    repository: https://github.com/comby-tools/comby.git
+    commit: 3b6bdff7bc3b50361b621da9db030152772e7e6b
+    license: Apache-2.0
+    role: structural_rewrites
+  openbot:
+    repository: https://github.com/CopilotKit/OpenBot.git
+    commit: 257c1280d684089be9adb0b35cce262efc7064bf
+    license: MIT
+    role: fail_closed_policy_semantics_reference
+
+not_selected_as_stock_runtimes:
+  codex-acp:
+    repository: https://github.com/agentclientprotocol/codex-acp.git
+    commit: 87997e2627e8fa246a49de533c612f6196c4004e
+    observed_version: 1.8.0
+    license: Apache-2.0
+  claude-agent-acp:
+    repository: https://github.com/agentclientprotocol/claude-agent-acp.git
+    commit: ea7076c0bc324603e65d8c124b7573f158749969
+    observed_version: 0.73.0
+    license: Apache-2.0
+  pi-acp:
+    repository: https://github.com/svkozak/pi-acp.git
+    commit: d1cffc047ab37a096ee70ca39cfc1de463db8d12
+    observed_version: 0.0.33
+    license: MIT
+  codex-cli:
+    repository: https://github.com/openai/codex.git
+    commit: 8d32abcd017d06511b46050cff9dbba8738fc2fa
+    license: Apache-2.0
+  claude-code:
+    repository: https://github.com/anthropics/claude-code.git
+    commit: aef74afe01f65b602258d6102b0da9730ac6f0aa
+    observed_version: 2.1.258
+  pi:
+    repository: https://github.com/earendil-works/pi.git
+    commit: e266507b606b9552fa277252644054afd4384b11

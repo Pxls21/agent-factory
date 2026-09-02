@@ -1,32 +1,40 @@
 # Agent Factory
 
-Agent Factory is a planning repository for a governed, memory-aware agent system built around one execution engine: **Hermes Agent**.
+Agent Factory is a planning repository for a governed, memory-aware agent system with **Hermes Agent as the main workhorse**, plus a controlled research and improvement stack around it.
 
-This repository is ready for implementation planning, not production deployment. It contains the reviewed architecture, integration contracts, security boundaries, milestone backlog, source pins, configuration examples, and the complete original v2 document set. No application functionality has been built in this pass.
+This repository is ready for implementation planning, not production deployment. It contains the reviewed architecture, integration contracts, security boundaries, memory and dream-phase design, JIT Harness Foundry, evaluation strategy, source pins, configuration examples, and the complete original v2 document set. No application functionality has been built in this pass.
 
-## v1 in one sentence
+## System in one paragraph
 
-Buzz provides the human interface; Hermes is the sole agent runtime; every model request goes through OmniRoute; Fubuki supplies a hash-pinned governance packet; ai-memory supplies project and company memory through a Hermes memory-provider plugin; tool calls pass a fail-closed Hermes hook before execution in a gVisor-contained runtime.
+Buzz provides the human interface and `buzz-acp` drives Hermes through Hermes' native ACP server. Hermes is the sole stock production runtime and sends every model request through OmniRoute, including Codex-capable models. Fubuki supplies hash-pinned governance, ai-memory supplies the four logical memory levels through a first-party composite adapter, and tool calls pass a fail-closed policy gate inside gVisor containment. The later improvement plane retains GBrain-informed dream cycles, JIT-generated harness candidates, the Harness Foundry, AlphaEval-style evaluation, PandaProbe observability, and HarnessRouter only when an approved UHP-only harness actually needs it.
 
 ```mermaid
 flowchart TD
     U["People in Buzz"] --> B["Buzz relay"]
-    B --> H["Hermes gateway + native Buzz plugin"]
+    B --> A["buzz-acp"]
+    A --> H["Hermes native ACP"]
     H --> O["OmniRoute"]
-    O --> M["Approved model providers"]
-    H <--> A["ai-memory"]
-    H --> G["Policy decision hook"]
+    O --> M["Approved models"]
+    H <--> R["ai-memory + Fubuki bounds"]
+    H --> G["Policy gate + gVisor"]
 ```
 
-## Deliberate simplifications
+```mermaid
+flowchart TD
+    T["Hermes traces + memory"] --> D["GBrain-informed dream worker"]
+    T --> J["JIT Harness Foundry"]
+    D --> Q["Reviewable proposals"]
+    J --> E["Isolated AlphaEval/PandaProbe evaluation"]
+    E --> P["Human promotion gate"]
+```
 
-- Hermes is the only v1 execution engine.
-- Hermes' native Buzz platform plugin replaces the separate `buzz-acp` execution path.
-- Codex/Claude/Pi adapters, HarnessRouter, the Harness Foundry, JIT, OpenHarness, and GBrain are not in the v1 runtime.
-- “Codex through Hermes” means Hermes uses a Codex Responses-compatible model route through OmniRoute. The Codex CLI/app-server is not enabled in v1 because it would create a second execution path and can bypass the sole-egress design.
-- ai-memory starts with two durable scopes: project and company. Team and per-agent durable scopes are deferred.
-- Automatic memory promotion is disabled initially. Human approval remains mandatory when the learning loop is enabled later.
-- AlphaEval is an optional evaluation lab after a hardened Hermes runner exists; it is not a production service.
+## What changed from the supplied v2 plan
+
+- Hermes replaces Codex CLI, Claude Code, Pi, and their ACP adapters as parallel stock runtimes.
+- ACP remains in the live path: `buzz-acp` talks to Hermes' native ACP server.
+- Codex-capable models remain available through Hermes' Responses-compatible OmniRoute route; Codex is a model/backend choice, not another workhorse.
+- JIT, the Harness Foundry, GBrain/dream phase, HarnessRouter's conditional Phase 2 role, PandaProbe, AlphaEval, Fubuki, ai-memory, gVisor, and the development tools remain in the plan.
+- Source-audit corrections are retained: the four memory levels require a composite adapter; Fubuki has two seams to fix/test; OmniRoute compression needs a real request/header assertion; whole-runtime gVisor is not per-tool isolation; AlphaEval and generated harnesses require a hardened sandbox.
 
 ## Reading order
 
@@ -36,18 +44,20 @@ flowchart TD
 4. [Integration contracts](docs/03_INTEGRATION_CONTRACTS.md)
 5. [Memory and governance](docs/04_MEMORY_AND_GOVERNANCE.md)
 6. [Security](docs/05_SECURITY.md)
-7. [Evaluation strategy](docs/06_EVALUATION.md)
+7. [Evaluation and observability](docs/06_EVALUATION.md)
 8. [Build plan](docs/07_BUILD_PLAN.md)
 9. [Decision log](docs/08_DECISION_LOG.md)
 10. [Pre-mortem](docs/09_PREMORTEM.md)
+11. [Harness Foundry](docs/10_HARNESS_FOUNDRY.md)
+12. [Dream phase](docs/11_DREAM_PHASE.md)
 
-The supplied v2 plan is preserved unchanged in [`docs/archive/v2-original/`](docs/archive/v2-original/README.md). The current documents supersede it where they disagree.
+The supplied v2 plan is preserved unchanged in [`docs/archive/v2-original/`](docs/archive/v2-original/README.md). The current documents supersede it only where the source audit or Hermes runtime decision requires a correction.
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
-| `docs/` | Current plan, contracts, audit, risks, and decisions |
+| `docs/` | Current plan, contracts, Foundry, dream phase, audit, risks, and decisions |
 | `docs/archive/v2-original/` | Immutable copy of all 14 supplied planning documents |
 | `config/` | Reviewed configuration examples; never put live secrets here |
 | `deploy/` | Deployment contract and non-runnable topology blueprint |
@@ -57,4 +67,4 @@ The supplied v2 plan is preserved unchanged in [`docs/archive/v2-original/`](doc
 
 ## Current gate
 
-Do not begin feature work until all Stage 0 exit criteria in [the build plan](docs/07_BUILD_PLAN.md) are satisfied. In particular, prove the Hermes→OmniRoute Responses route, the Buzz plugin flow, the Fubuki linter fix, gVisor compatibility, and the ai-memory provider seam with small executable spikes.
+Do not begin broad feature work until the Stage 0 proof pack in [the build plan](docs/07_BUILD_PLAN.md) validates the Buzz→ACP→Hermes→OmniRoute spine, memory composition, Fubuki seams, policy failure behavior, and gVisor compatibility. JIT and GBrain work can begin as isolated research spikes, but their output has no production write or execution authority until later gates pass.
