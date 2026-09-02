@@ -83,6 +83,30 @@ Per-proof constraints (doc-sourced):
 3. Which OmniRoute upstream provider(s) get real credentials for S0-03's live round trip, and
    who supplies them (secrets never enter the repo)?
 
+## 6a. Chairman-verified addenda (council session 2026-09-02, reproduced by coordinator)
+
+The council verdict (`COUNCIL-VERDICT-STAGE0-v1.md`) adopted **wave-plan-v2** unanimously; the
+Chairman's independent probes then surfaced two defects the panel missed. Both were REPRODUCED
+by the coordinator before landing here:
+
+1. **Bare netns is TOTAL isolation, not selective egress.** Probes (coordinator, this session):
+   - `curl https://pypi.org/simple/` → `200` (positive control, normal shell)
+   - `unshare --net -- curl https://pypi.org/simple/` → `curl (6)` DNS unresolvable
+   - local listener `python3 -m http.server 9099 --bind 127.0.0.1`: host → `200`; inside
+     `unshare --net` → `000` (curl rc=7 — the fresh namespace has its own empty loopback)
+   Consequence: the proven Wave-0 mechanism blocks EVERYTHING, including a host-local
+   OmniRoute. S0-05's architecture needs SELECTIVE egress (OmniRoute reachable, model
+   endpoints not). The Wave-0 spike must therefore produce a veth/proxy-shaped selective
+   design; a bare-netns canary offered as S0-05 evidence would be a vacuous negative control
+   (admissible only as "mechanism exists" evidence, labeled *mechanism proven, containment
+   unproven*).
+2. **The three-way classification covers 11 of 12 proofs — S0-03 is unclassified.** It needs a
+   FOURTH class: *execution proof blocked on an external input* (a real upstream credential —
+   procurable on a different timescale/owner than S0-08's host). Ledger denominators are
+   therefore four-way; no status line may read a flat "N/12".
+3. **S0-06's class is disputed** (execution proof vs blocked-but-procurable pending Rust 1.95)
+   — settled empirically by the Wave-0 cargo/rustup spike, not by preference (verdict KC-3).
+
 ## 6. Sources
 
 `docs/01_ARCHITECTURE.md`, `docs/02_COMPONENT_AUDIT.md`, `docs/03_INTEGRATION_CONTRACTS.md`,
