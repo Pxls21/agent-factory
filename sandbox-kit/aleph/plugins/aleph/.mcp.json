@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aleph": {
+      "command": "aleph",
+      "args": [
+        "--enable-actions",
+        "--workspace-mode",
+        "any",
+        "--tool-docs",
+        "concise"
+      ]
+    }
+  }
+}

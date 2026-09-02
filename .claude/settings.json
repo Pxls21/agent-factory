@@ -1,0 +1,84 @@
+{
+  "enabledMcpjsonServers": [
+    "gitnexus",
+    "aleph",
+    "codebase-memory",
+    "ouroboros",
+    "phoenix-docs"
+  ],
+  "permissions": {
+    "allow": [
+      "mcp__ouroboros",
+      "mcp__gitnexus",
+      "mcp__codebase-memory",
+      "mcp__aleph",
+      "mcp__phoenix-docs",
+      "mcp__github",
+      "mcp__Context7",
+      "mcp__Exa",
+      "mcp__Eraser",
+      "mcp__Lucid",
+      "mcp__SlidesGPT",
+      "mcp__claude-code-remote",
+      "mcp__Claude_Code_Remote",
+      "Workflow",
+      "Agent",
+      "Task"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/edit-snapshot.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/wiki-context.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/turn-retro-gate.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/graft-first-nag.py"
+          }
+        ]
+      }
+    ]
+  },
+  "outputStyle": "Attention-kind"
+}

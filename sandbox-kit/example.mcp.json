@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "vectorbtpro": {
+      "command": "/root/venv-trading/bin/python",
+      "args": ["-m", "vectorbtpro.mcp_server"]
+    },
+    "gitnexus": {
+      "type": "stdio",
+      "command": "node",
+      "args": [".gitnexus/run.cjs", "mcp"]
+    },
+    "aleph": {
+      "type": "stdio",
+      "command": "/root/venv-trading/bin/aleph",
+      "args": ["--workspace-mode", "any", "--tool-docs", "concise"],
+      "env": {
+        "ALEPH_WORKSPACE": "/home/user/trading-system"
+      }
+    },
+    "codebase-memory": {
+      "type": "stdio",
+      "command": "/root/.local/bin/codebase-memory-mcp",
+      "args": []
+    },
+    "ouroboros": {
+      "type": "stdio",
+      "command": "ouroboros",
+      "args": ["mcp", "serve"]
+    },
+    "phoenix-docs": {
+      "type": "http",
+      "url": "https://arizeai-433a7140.mintlify.app/mcp"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Conservative initial posture for the pinned ai-memory version.
+# Run `ai-memory init` in the real data directory and merge the generated auth
+# values rather than copying placeholder secrets from this file.
+
+[slots]
+per_user = false
+
+[auto_improve]
+require_approval = true
+
+[auto_improve.eval]
+enabled = false
+command = ""
+timeout_secs = 120
+targets = ["_rules", "procedures"]
+min_delta = 0.0
+
+[auto_improve.scheduler]
+enabled = false
+interval_secs = 3600
+max_sessions_per_tick = 1
+min_session_age_secs = 600
+
+[maintenance]
+enabled = false
+forget_sweep_interval_secs = 0
+lint_interval_secs = 0
+embedding_backfill_interval_secs = 0
+
+# Authentication is generated/managed separately. Keep the generated [auth]
+# section last if following ai-memory's own template/update tooling.

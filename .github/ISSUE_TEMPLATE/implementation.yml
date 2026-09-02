@@ -1,0 +1,44 @@
+name: Implementation task
+description: Implement a scoped item after its prerequisite proof spike passes.
+title: "[Build] "
+labels: ["type:implementation"]
+body:
+  - type: input
+    id: milestone
+    attributes:
+      label: Milestone and prerequisite spike
+      placeholder: M1; S0-01 passed in #123
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Required outcome
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope / out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance tests
+      description: Include normal, failure, and security behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Architecture boundaries
+      options:
+        - label: Hermes remains the sole stock production workhorse; experimental candidates stay behind their approved gates.
+          required: true
+        - label: Model traffic remains OmniRoute-only.
+          required: true
+        - label: No secrets are added to source, logs, or fixtures.
+          required: true
+        - label: Relevant docs/ADR and source pins are updated.
+          required: true

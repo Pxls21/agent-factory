@@ -1,0 +1,74 @@
+# Architecture inventory only. NOT a Docker Compose document.
+schema_version: 1
+status: planning_only
+
+production_units:
+  buzz:
+    role: human_interface_and_relay
+    depends_on: [buzz-postgres-17, buzz-redis, buzz-minio, buzz-minio-init]
+  buzz-acp:
+    role: buzz_to_hermes_acp_bridge
+    command: hermes-acp
+    depends_on: [buzz, hermes]
+  hermes:
+    role: sole_stock_production_workhorse
+    contains:
+      - native_acp_server
+      - fubuki_governance_extension
+      - factory_memory_provider
+      - fail_closed_policy_hook
+    runtime: runsc
+    depends_on: [omniroute, memory-adapter, policy]
+  memory-adapter:
+    role: four_logical_scope_composition_and_authorization
+    depends_on: [ai-memory]
+  ai-memory:
+    role: durable_memory_substrate
+    dockerfile: docker/Dockerfile
+  omniroute:
+    role: sole_model_and_embedding_api_egress
+    depends_on: [persistent_route_state]
+  policy:
+    role: deterministic_tool_decisions
+    implementation: pending
+
+isolated_later_units:
+  dream-worker:
+    role: gbrain_informed_proposal_generation
+    runtime: runsc
+    enabled: false
+    authority: artifact_output_only
+  jit-foundry:
+    role: five_file_harness_candidate_generation
+    runtime: runsc
+    enabled: false
+    authority: candidate_output_only
+  alphaeval:
+    role: hardened_hermes_and_candidate_evaluation
+    runtime: runsc
+    enabled: false
+  pandaprobe:
+    role: optional_redacted_trace_analysis
+    enabled: false
+  harnessrouter:
+    role: conditional_gateway_for_approved_uhp_only_harness
+    enabled: false
+    activation_requires: adr_and_approved_candidate
+
+networks:
+  edge: [buzz, buzz-acp]
+  acp: [buzz-acp, hermes]
+  model: [hermes, omniroute]
+  memory: [hermes, memory-adapter, ai-memory]
+  policy: [hermes, policy]
+  research: [dream-worker, jit-foundry, alphaeval]
+  observability: [pandaprobe]
+  conditional-harness: [harnessrouter]
+
+prohibited_stock_runtimes:
+  - codex-cli
+  - codex-acp
+  - claude-code
+  - claude-agent-acp
+  - pi
+  - pi-acp

@@ -1,0 +1,21 @@
+{
+  "name": "aleph",
+  "version": "0.9.4",
+  "description": "Recursive Language Model MCP server for large local data. Keep files, repos, logs, and documents in external memory; search, peek, compute, and recurse without dumping whole contexts into the prompt.",
+  "author": {
+    "name": "Hunter Bown",
+    "url": "https://github.com/Hmbown"
+  },
+  "homepage": "https://github.com/Hmbown/aleph",
+  "repository": "https://github.com/Hmbown/aleph",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "rlm",
+    "external-memory",
+    "search",
+    "reasoning",
+    "recursive",
+    "large-data"
+  ]
+}

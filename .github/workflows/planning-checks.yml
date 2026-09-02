@@ -1,0 +1,17 @@
+name: planning-checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify repository structure and archive integrity
+        run: ./scripts/verify-planning-repo.sh
