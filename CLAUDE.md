@@ -498,10 +498,16 @@ built; until it lands, every component emits structured JSON events carrying the
 > EMPTY on purpose — the entries below are one illustrative example, not this project's history;
 > replace them with your own first incident on contact.
 
-- *(illustrative example — replace with your project's real first entry)* **Rule 1 (verify seams)
-  — an idiom mismatch.** Memory-written code assumed one write idiom (e.g. a heredoc); the actual
-  call site used another (e.g. `printf`) — the "safety" code was silently dead until a
-  seam-verification pass caught it. Fix: read the real contract before writing code that calls it.
+- **2026-09-02 — Orchestrator rule (e) (commit at every boundary) bit on day one.** Dispatched
+  three council agents with the Stage 0 findings doc uncommitted; the container restarted
+  mid-round, killing one agent's in-flight work. The doc survived on the volume by luck, and the
+  dead agent's completed round was recovered from its transcript file under the session tasks
+  dir (`/tmp/claude-0/…/tasks/<agentId>.output` — parse the JSONL for the last assistant text
+  block) rather than re-run. Fix: commit+push BEFORE any multi-agent dispatch; on losing an
+  agent, recover from its transcript before paying to re-run it. Corollary validated the same
+  minute: the SessionStart hook re-provisioned the entire toolchain on the fresh container
+  unattended (council/graft/codebase-memory returned; ouroboros MCP needed its documented stdio
+  fallback) — the ephemeral-container design works, but only committed state is real.
 
 ## Code-intelligence — GitNexus
 
