@@ -33,8 +33,13 @@ if [ -x "$AF_VENV/bin/python" ]; then
 fi
 
 say "node tools (npm prefix $(npm config get prefix 2>/dev/null))"
-command -v gitnexus >/dev/null 2>&1 || { npm i -g --ignore-scripts gitnexus@1.6.10 >/dev/null 2>&1 && npm rebuild -g @ladybugdb/core >/dev/null 2>&1; }
-command -v gitnexus >/dev/null 2>&1 && ok "gitnexus $(gitnexus --version 2>/dev/null | head -1)" || warn "gitnexus not installed"
+# Pin gitnexus to the sandbox version (1.6.10): the PC carried a pre-existing 1.3.9 whose index
+# layout (.gitnexus/run.cjs, flat gitnexus-* skills) differs from what the skills describe.
+GN_WANT=1.6.10; GN_HAVE="$(gitnexus --version 2>/dev/null | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1)"
+if [ "$GN_HAVE" != "$GN_WANT" ]; then
+  npm i -g --ignore-scripts "gitnexus@$GN_WANT" >/dev/null 2>&1 && npm rebuild -g @ladybugdb/core >/dev/null 2>&1 \
+    && ok "gitnexus $GN_WANT installed (was ${GN_HAVE:-absent})" || warn "gitnexus $GN_WANT install failed (have ${GN_HAVE:-none})"
+else ok "gitnexus $GN_HAVE"; fi
 command -v graft >/dev/null 2>&1 || npm install -g @nanonets/graft@0.16.0 >/dev/null 2>&1
 command -v graft >/dev/null 2>&1 && { graft telemetry disable >/dev/null 2>&1; ok "graft $(graft --version 2>/dev/null | head -1)"; } || warn "graft not installed"
 

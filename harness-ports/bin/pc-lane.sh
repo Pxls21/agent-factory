@@ -17,6 +17,7 @@
 #   AF_VENV   python venv root      default: $HOME/venv-agent-factory
 #   CODEX_BIN      codex binary          default: codex (from PATH)
 #   HERMES_BIN     hermes binary         default: hermes (from PATH)
+#   HERMES_PROFILE lane profile          default: agentfactory (dedicated; never the owner default)
 #   HERMES_MODEL   OmniRoute route id    default: codex/gpt-5.6-sol-ultra (owner ruling 2026-09-03)
 #   HERMES_REASONING  Hermes effort      default: ultra
 #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
@@ -218,7 +219,10 @@ else
   # persistent provider stays `custom` = OmniRoute in ~/.hermes/config.yaml), --reasoning
   # pins Hermes's own effort, --accept-hooks lets the ported shell hooks run without a
   # TTY prompt (an unattended lane cannot answer one). Both overridable per lane.
-  "$HERMES_BIN" -z "$(cat "$PROMPT_FILE")" \
+  # -p selects the DEDICATED lane profile (created with `hermes profile create --clone`): the
+  # merged snippet (repo skills dir, MCP servers, hooks, lane approvals) lives there, so the
+  # owner's own default profile is never touched by lane configuration.
+  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" -z "$(cat "$PROMPT_FILE")" \
       -m "${HERMES_MODEL:-codex/gpt-5.6-sol-ultra}" \
       --reasoning "${HERMES_REASONING:-ultra}" \
       --accept-hooks \
