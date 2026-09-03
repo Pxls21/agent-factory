@@ -12,7 +12,7 @@ session or a probe run this session.
 |---|---|
 | **Proven live this session** | Planning docs verified (`scripts/verify-planning-repo.sh` green); operating kit installed and probed: Ouroboros 0.53.0 + stdio fallback round trip (`scripts/ooo_mcp.py --list` returned full tool surface via the isolated-uvx retry), gitnexus 1.6.10, codebase-memory-mcp 0.10.8, aleph venv, /council + /wiki-* skills, graft graph built |
 | **Built, never run** | Nothing — no application code exists (`STATUS.md`) |
-| **Absent** | Everything in `docs/07_BUILD_PLAN.md`: all Stage 0 proofs, spine, adapters, policy service, evaluation lab. Honey meter (install blocked by network). Wiki (`wiki-init` not yet run) |
+| **Absent** | Everything in `docs/07_BUILD_PLAN.md`: all Stage 0 proofs, spine, adapters, policy service, evaluation lab. Honey: RESOLVED 2026-09-03 — vendored + installed offline from the local marketplace (plugin honey@greenpt 1.3.1, 14 skills, hive agents, eco meter). Wiki (`wiki-init` not yet run) |
 
 ## 2. Environment reality (probed 2026-09-02, this container)
 
@@ -25,6 +25,7 @@ session or a probe run this session.
 | runsc (gVisor) | ABSENT; /dev/kvm ABSENT | S0-08 cannot run here as-is; runsc static install + systrap platform is a spike question; otherwise S0-08 needs a real host — surface, never stub |
 | bwrap | ABSENT (unshare present) | no bubblewrap isolation for local gates |
 | uid | 0 (root) | root-start/priv-drop tests partially representable |
+| **PC bridge** (learned 2026-09-03 from the owner) | The owner's PC is the execution host: Fedora 42 bare metal (KVM), podman + podman-compose, local vLLM OpenAI-compatible endpoint `localhost:8010/v1` (`sim9b`), reached via a token-gated HTTP bridge with per-session ephemeral links (`PC-BRIDGE.md`) | S0-08 (runsc/KVM), all container stacks (Buzz relay, OmniRoute, ai-memory), and S0-03's model upstream run THERE. No third-party model credential is needed: OmniRoute's upstream = the PC's vLLM, identity asserted as `sim9b` |
 | Network | pip/npm/uv installs worked; raw.githubusercontent.com curl blocked; GitHub repo access is session-scoped — upstream clones need `add_repo` per repo (public read may be proxy-served) | Pinned upstream checkouts are feasible but each repo needs explicit attachment; record every failure honestly |
 
 ## 3. What Stage 0 is (source: `docs/07_BUILD_PLAN.md:5-20`)
@@ -75,7 +76,12 @@ Per-proof constraints (doc-sourced):
 2. Repo layout for first code (proofs/, adapters/, policy/ …) — pick the convention in the seed.
 3. Fixture format for ACP conformance (pinned protocol commit supplies the schema).
 
-**PATH 2 (human tradeoffs — put to the owner as text, don't block):**
+**PATH 2 — RESOLVED by the owner 2026-09-03 ("the system runs on my PC via the PC bridge"):**
+gVisor host = the PC (bare-metal Fedora 42, KVM); S0-03 credential = the PC's local vLLM behind
+OmniRoute (no third-party key); container stacks = podman on the PC. Ordering preference not
+stated → parallel-by-component stands. Original questions kept below for the record.
+
+**PATH 2 (as originally posed):**
 1. Stage 0 ordering/parallelism: strict S0-01→S0-12 vs seam-parallel batches (spine proofs
    S0-01…S0-05 first, decisions S0-09/S0-10/S0-12 interleaved)?
 2. Is a bridged host (real VM with gVisor+docker) planned for S0-08, or should Stage 0 accept

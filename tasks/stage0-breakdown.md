@@ -25,6 +25,18 @@
 | S0-03 blocks on a real credential; pass asserts upstream model identity, never a 200; the S0-04 stub is forbidden for S0-03 | Run S0-03 against the S0-04 stub (stub-drift hollow green) | council (Socrates) |
 | Machinery = increments 1–2 only; later proofs extend schemas by need | Five machinery increments / lazy machinery inside proof 1 | interview Q4 |
 
+## Venue update (owner, 2026-09-03): the PC bridge is the execution host
+`PC-BRIDGE.md` / `scripts/pc.sh`. Bridge-side (via `scripts/pc.sh`, results still written as
+`result.json` with `env_fingerprint = pc-bridge:<host>`): the runsc/KVM spike and S0-08's live
+run (#5, #17); podman-compose stacks for S0-01/S0-02 (#7, #8), S0-03/S0-04 (#14, #15) and
+S0-06 (#13); S0-05's full canaries (#16). S0-03's upstream = the PC's local vLLM
+(`localhost:8010/v1`, identity `sim9b`) behind OmniRoute — the credential question is closed.
+**New Wave-0 spike #0 — `pc-bridge` liveness + capability probe** (needs the owner's BRIDGE
+READY banner): `hostname`, `/dev/kvm`, `podman`, `runsc`, `rustup`/`cargo`, `curl localhost:8010/v1/models`.
+The in-sandbox spikes #4 (dockerd) and #5 (runsc) become secondary: they record the SANDBOX
+fact; the PC probe records the venue that matters. Without a banner in a session, bridge-side
+items are `NOT run here: no bridge banner` — never silently skipped.
+
 ## Standing prerequisites
 - Pinned upstream sources: attach each repo via `add_repo` before cloning at the pinned commit
   (`upstream.lock.yaml`); public reads may be proxy-served — record every failure honestly.
@@ -69,7 +81,14 @@ Nothing below exists yet: registry, schemas, validator, runner, generator, CI wo
 any proof, any fixture, any ADR from S0-09/10, SBOM. `wiki-init` not yet run. Honey meter absent.
 `ouroboros` MCP server does not connect natively — stdio fallback only.
 
-## Open owner questions (PATH-2, async) — keyed to increments
+## Owner answers (2026-09-03)
+- **#14 / KC-2:** credential = the PC's local vLLM endpoint behind OmniRoute. S0-03 is no longer
+  blocked-on-external-input once the bridge is up; its class flips to execution via the
+  `pc-bridge` spike (declared transition — add to `spike_to_class_mapping` in increment #1).
+- **#17 / KC-1:** gVisor host = the PC (bare metal, KVM). S0-08 runs live via the bridge.
+- **Ordering:** parallel-by-component stands.
+
+## Open owner questions (PATH-2, async) — keyed to increments (ORIGINAL, now answered above)
 - **#14 / KC-2:** who supplies the real upstream model credential for S0-03, and by when? If none exists when Wave 2 opens, S0-03 stays RED-pending (never runs against the stub).
 - **#17 / KC-1:** is a gVisor-capable host (runsc + KVM) going to be procured, by whom, by when? Until then S0-08 is spec+fixtures with a re-probed NOT-run marker.
 - **Ordering preference:** the breakdown runs Wave-1 proofs in parallel by disjoint component; say so if strict sequential is preferred.

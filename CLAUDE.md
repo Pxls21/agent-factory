@@ -33,7 +33,11 @@ Model routing — cheapest tier that cannot mint an expensive wrong green; honey
 - THIS harness's Agent tool exposes TIERS (`fable`/`opus`/`sonnet`/`haiku`) — 4.6-vs-4.8 pinning
   applies where a config takes a model id (e.g. a self-hosted model-server endpoint pinned to a
   specific model); otherwise both profiles ride the `opus` tier and the role lives in the brief.
-  Inject the honey mode into each dispatch BRIEF by hand (no SubagentStart hook ships with this kit).
+  Honey is vendored (`sandbox-kit/honey-for-devs`; its 14 skills + `hive-*` agents are committed under
+  `.claude/`) and `scripts/setup.sh` installs the plugin OFFLINE from that local marketplace — the
+  plugin's SessionStart hook and `/honey` command return each session. Still inject the honey mode
+  into each dispatch BRIEF by hand: dispatched subagents do not inherit the session hook
+  (`honey-superpowers` carries the exact directive to paste).
 - Escalate a tier when: spine/gate/security files touched · an increment failed review · cross-file
   semantics. De-escalate for mechanical follow-ups. Hive never touches the spine; no tier
   self-accepts spine work — the coordinator re-runs gates regardless (Reflection Firewall:
@@ -147,9 +151,10 @@ it before planning.**
 - `docs/08_DECISION_LOG.md` + `docs/adr/` — decisions with their reasons.
 - `sandbox-kit/` — the vendored operating kit this repo's workflow comes from (operating guide,
   research-prompt guide, vendored tools; provenance in `sandbox-kit/VENDORED-FROM.md`).
-- Remote-execution bridges, if any get set up later (heavy jobs on a bridged host/VM): keep that
-  runbook alongside this kit under its own name — the kit deliberately ships no bridge doc,
-  because bridge topology is entirely project-specific. None exists today.
+- `PC-BRIDGE.md` — the owner's PC (Fedora 42, Ryzen/128 GB/RTX 3090, podman, local vLLM at
+  `localhost:8010/v1`, bare metal → KVM) is the EXECUTION HOST for containers, gVisor, the model
+  upstream, and long/live jobs, reached through a token-gated HTTP bridge (`scripts/pc.sh`).
+  Links + tokens are pasted per session into the untracked `.pc-bridge.env` — never committed.
 
 ## Environment & Tools (summary)
 
@@ -160,9 +165,11 @@ re-runs it every session). Commit and push anything worth keeping.
 > **Full details:** `sandbox-kit/OPERATING-GUIDE.md` (day-to-day rules, shell/tool gotchas,
 > GitNexus/Ouroboros fallbacks, task tracking, pipeline order).
 
-**Remote-execution bridges, if you set any up** — keep one canonical current-links doc (bridge
-URLs are usually ephemeral quick-tunnels) and check it BEFORE declaring any environment blocker:
-"it won't install here" → run it on the bridge, don't route around it with a stub.
+**The PC bridge is this project's remote-execution host** (`PC-BRIDGE.md`; helper `scripts/pc.sh`;
+current link+token in the untracked `.pc-bridge.env`, pasted per session from the owner's BRIDGE
+READY banner). Check it BEFORE declaring any environment blocker: "it won't install here" → run it
+on the PC, don't route around it with a stub. No banner this session → the PC-side items are
+`NOT run here` with the bridge named as the reason, never silently skipped.
 **Deploy steps come FROM the runbook, not from memory.** Before deploying/restarting any remote
 component, grep the runbook for that component first — the quirk you're about to re-learn is
 usually already written down; re-reading beats re-deriving from memory.
@@ -225,8 +232,8 @@ For any substantial new subsystem:
 8. **Hand-build** — surgical, test-driven, one commit per increment; every acceptance test
    deterministic and LLM-free.
 
-Cross-cutting invariants: **no-LLM-judge spine · negative-control discipline · heavy jobs on a
-bridged host, if one is ever set up (none exists today).**
+Cross-cutting invariants: **no-LLM-judge spine · negative-control discipline · heavy jobs ON the
+PC (via the bridge — `PC-BRIDGE.md`).**
 
 ## Behavioral guidelines (Andrej Karpathy skills)
 

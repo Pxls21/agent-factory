@@ -13,6 +13,13 @@
 # pinned binary (never a stub of the system under test), normalized-then-golden
 # transcript comparison with a minimal reviewed volatile-field list, run twice;
 # expected_failure_reason lives inside each negative fixture file.
+#
+# Owner answers (2026-09-03), superseding the placeholders in-body: the execution
+# host is the owner's PC via the token-gated bridge (PC-BRIDGE.md). S0-08's host
+# = the PC (bare-metal KVM). S0-03's "credential" = the PC's local vLLM endpoint
+# behind OmniRoute (identity `sim9b`); a `pc-bridge` Wave-0 spike is added and
+# its positive result is a DECLARED transition S0-03: blocked_credential ->
+# execution_proof (increment 1 adds it to spike_to_class_mapping).
 goal: 'Author an implementation-ready Stage 0 Seed for the agent-factory repo that
   specifies the 12 gating proofs (S0-01..S0-12) under the settled wave-plan-v2 council
   verdict: repo layout for proofs/spikes/fixtures/ledger, per-proof assertion lists
