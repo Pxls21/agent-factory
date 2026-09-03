@@ -129,7 +129,9 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   # a branch at the same PIN, then review/gate/commit here. Added 2026-09-03 after the first
   # lane produced files nobody could fetch.
   LOCAL_PATCH="$OUT/patch-$LANE_ID.diff"
-  bridge "cd $PC_AF_REPO/.lanes/$LANE_ID/tree 2>/dev/null && git add -A . >/dev/null 2>&1 && git diff --cached --binary | base64 -w0" > "$LOCAL_PATCH.b64" 2>/dev/null
+  # Diff against the PIN, not HEAD: a lane that commits its increments in the worktree (checkpoint
+  # discipline) would otherwise ship an empty patch. Index vs PIN covers committed + uncommitted work.
+  bridge "cd $PC_AF_REPO/.lanes/$LANE_ID/tree 2>/dev/null && git add -A . >/dev/null 2>&1 && git diff --cached --binary $PIN | base64 -w0" > "$LOCAL_PATCH.b64" 2>/dev/null
   if [ -s "$LOCAL_PATCH.b64" ] && base64 -d < "$LOCAL_PATCH.b64" > "$LOCAL_PATCH" 2>/dev/null && [ -s "$LOCAL_PATCH" ]; then
     echo "pc_lane: patch  -> $LOCAL_PATCH ($(grep -c '^diff --git' "$LOCAL_PATCH") file(s))" >&2
   else
