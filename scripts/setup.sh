@@ -174,7 +174,7 @@ fi
 
 if [ -x "$VENV_PY" ]; then
   # pyflakes powers the edit-snapshot hook's lint-delta tell.
-  "$VENV_PY" -m pip install -q pyflakes pytest 2>&1 \
+  "$VENV_PY" -m pip install -q pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4" 2>&1 \
     && ok "pyflakes installed (edit-snapshot hook lint delta)" \
     || warn "pyflakes install failed — edit-snapshot hook loses its pyflakes delta"
 

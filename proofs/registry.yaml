@@ -1,0 +1,36 @@
+{
+"schema": "proofs/registry-v1",
+"classes": {
+  "execution_proof": {"ledger_denominator": 7},
+  "conformance_checked_decision": {"ledger_denominator": 3},
+  "blocked_credential": {"ledger_denominator": 1},
+  "blocked_host": {"ledger_denominator": 1}
+},
+"class_aliases": {"blocked_capability": "blocked_host"},
+"waves": [0, 1, 2, 3],
+"proofs": [
+  {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 6},
+  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4, "assertion_count": 3},
+  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "blocked_credential", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "assertion_count": 3, "blocked": {"owner": "TBD-owner-credential", "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted", "marker_path": "proofs/S0-03/blocked.json"}},
+  {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
+  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1, "assertion_count": 2},
+  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1, "assertion_count": 4},
+  {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
+  {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "blocked_host", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1, "assertion_count": 1, "blocked": {"owner": "TBD-owner-gvisor-host", "unblock_condition": "runsc executable and a trivial runsc container run succeeds", "marker_path": "proofs/S0-08/blocked.json"}},
+  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 2},
+  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 2},
+  {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
+  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3}
+],
+
+# COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.
+# COORDINATOR DECISION — ADDITION (owner answer 2026-09-03): pc-bridge joins the frozen mapping through the two rule ids already recorded by its existing artifact; any spike may cite a declared rule whose probe satisfies the rule's negative or positive branch.
+# COORDINATOR DECISION — RULE IDS (2026-09-03): every branch that names a class carries its rule_id IN THIS FILE (the seed's positive branches had none; the pc-bridge record already cites map-rust-s006 for its S0-06 positive effect). The validator honours ONLY transitions declared here — no rule id lives in code (AF-AP-13). The dockerd positive branch names no class and so declares no transition.
+"spike_to_class_mapping": [
+  {"spike": "rust-ai-memory", "probe": "cargo build of pinned ai-memory on the installed toolchain, then rustup 1.95 fetch", "negative_effect": {"affected_proof": "S0-06", "from_class": "execution_proof", "to_class": "blocked_capability", "rule_id": "map-rust-s006"}, "positive_effect": {"affected_proof": "S0-06", "class": "execution_proof", "rule_id": "map-rust-s006", "note": "KC-3 falsifies the blocked label"}},
+  {"spike": "runsc", "probe": "static runsc install attempt plus a trivial runsc container run", "negative_effect": {"affected_proof": "S0-08", "from_class": "blocked_host", "to_class": "blocked_host", "rule_id": "map-runsc-s008", "note": "confirms deferral, marker re-probed every CI run"}, "positive_effect": {"affected_proof": "S0-08", "class": "execution_proof", "rule_id": "map-runsc-s008", "note": "deferral_expired, proof must run"}},
+  {"spike": "dockerd", "probe": "start dockerd in-sandbox and run hello-world", "negative_effect": {"affected_proof": null, "rule_id": "map-dockerd-venue", "note": "venue note only, process-level-first premise holds"}, "positive_effect": {"affected_proof": "S0-08", "note": "KC-6 re-test whether S0-08 is procurement-blocked or merely container-blocked"}},
+  {"spike": "selective-egress", "probe": "veth/proxy netns where the unit reaches a local OmniRoute listener but not a model endpoint", "negative_effect": {"affected_proof": "S0-05", "rescope": "mechanism increment becomes an egress-broker design task", "rule_id": "map-egress-s005", "note": "KC-1"}, "positive_effect": {"affected_proof": "S0-05", "class": "execution_proof", "rule_id": "map-egress-s005", "label": "mechanism proven, containment unproven"}},
+  {"spike": "pc-bridge", "probe": "probe the owner PC for OmniRoute identity and gVisor host capability", "positive_effect": {"affected_proof": "S0-03", "from_class": "blocked_credential", "to_class": "execution_proof", "rule_id": "map-pcbridge-s003"}, "negative_effect": {"affected_proof": "S0-08", "from_class": "blocked_host", "to_class": "blocked_host", "rule_id": "map-pcbridge-s008"}}
+]
+}

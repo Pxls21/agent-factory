@@ -1,6 +1,7 @@
 {
  "spike_id": "pc-bridge",
- "schema": "provisional-until-increment-1",
+ "schema": "proofs/schemas/spike.schema.json",
+ "outcome": "positive",
  "ran_at": "2026-09-03T05:05:20+00:00",
  "env_fingerprint": "pc-bridge:fedora:6.17.11-200.fc42.x86_64",
  "runs": [

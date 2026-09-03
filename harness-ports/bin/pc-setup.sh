@@ -27,7 +27,7 @@ say "project venv ($AF_VENV)"
 [ -x "$AF_VENV/bin/python" ] || "$PY311" -m venv "$AF_VENV" || warn "venv create failed"
 if [ -x "$AF_VENV/bin/python" ]; then
   "$AF_VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1
-  "$AF_VENV/bin/pip" install -q pyflakes pytest "mcp==1.29.1" >/dev/null 2>&1 && ok "pyflakes pytest mcp==1.29.1" || warn "base pip install failed"
+  "$AF_VENV/bin/pip" install -q pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4" "mcp==1.29.1" >/dev/null 2>&1 && ok "pyflakes pytest jsonschema==4.25.1 rfc3339-validator==0.1.4 mcp==1.29.1" || warn "base pip install failed"
   "$AF_VENV/bin/pip" install -q -e "$AF_REPO/sandbox-kit/aleph[mcp]" >/dev/null 2>&1 && ok "aleph (editable, [mcp])" || warn "aleph install failed"
   "$AF_VENV/bin/python" -c "from mcp.server.fastmcp import FastMCP" 2>/dev/null && ok "mcp v1 API present" || warn "mcp v1 API missing — aleph MCP server will not start"
 fi

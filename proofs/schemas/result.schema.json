@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proofs/schemas/result.schema.json",
+  "title": "Stage 0 proof result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proof_id", "classification", "recorded_at", "env_fingerprint", "runs", "negative_control", "digest"],
+  "properties": {
+    "proof_id": {"type": "string", "pattern": "^S0-(0[1-9]|1[0-2])$"},
+    "classification": {"enum": ["execution_proof", "conformance_checked_decision"]},
+    "recorded_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "env_fingerprint": {"type": "string", "pattern": "^(pc-bridge|sandbox):.+$"},
+    "runs": {
+      "type": "array",
+      "minItems": 2,
+      "contains": {"type": "object", "properties": {"leg": {"const": "positive"}}, "required": ["leg"]},
+      "minContains": 1,
+      "allOf": [{"contains": {"type": "object", "properties": {"leg": {"const": "negative"}}, "required": ["leg"]}, "minContains": 1}],
+      "items": {"$ref": "#/$defs/run"}
+    },
+    "negative_control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture", "expected_failure_reason", "observed_failure_reason"],
+      "properties": {
+        "fixture": {"type": "string", "minLength": 1},
+        "expected_failure_reason": {"type": "string", "minLength": 1},
+        "observed_failure_reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg", "cmd", "started_at", "finished_at", "exit_code", "stdout_sha256", "stderr_sha256"],
+      "properties": {
+        "leg": {"enum": ["positive", "negative"]},
+        "cmd": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "started_at": {"type": "string", "format": "date-time"},
+        "finished_at": {"type": "string", "format": "date-time"},
+        "exit_code": {"type": "integer"},
+        "stdout_sha256": {"$ref": "#/$defs/sha256"},
+        "stderr_sha256": {"$ref": "#/$defs/sha256"},
+        "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+      }
+    }
+  }
+}

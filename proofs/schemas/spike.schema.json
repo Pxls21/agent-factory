@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proofs/schemas/spike.schema.json",
+  "title": "Stage 0 classification spike",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spike_id", "schema", "outcome", "ran_at", "env_fingerprint", "runs", "facts", "classification_effect", "not_verified"],
+  "properties": {
+    "spike_id": {"type": "string", "minLength": 1},
+    "schema": {"const": "proofs/schemas/spike.schema.json"},
+    "outcome": {"enum": ["positive", "negative", "errored"]},
+    "ran_at": {"type": "string", "format": "date-time"},
+    "env_fingerprint": {"type": "string", "minLength": 1},
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code", "stdout_digest"],
+        "properties": {
+          "command": {"type": "string"},
+          "exit_code": {"type": "integer"},
+          "stdout_digest": {"type": "string"}
+        }
+      }
+    },
+    "facts": {"type": "object"},
+    "classification_effect": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["affected_proof", "from_class", "to_class", "rule_id"],
+        "properties": {
+          "affected_proof": {"type": "string", "pattern": "^S0-(0[1-9]|1[0-2])$"},
+          "from_class": {"type": "string", "minLength": 1},
+          "to_class": {"type": "string", "minLength": 1},
+          "rule_id": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "not_verified": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -137,8 +137,23 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   LOCAL_PATCH="$OUT/patch-$LANE_ID.diff"
   # Diff against the PIN, not HEAD: a lane that commits its increments in the worktree (checkpoint
   # discipline) would otherwise ship an empty patch. Index vs PIN covers committed + uncommitted work.
-  bridge "cd $PC_AF_REPO/.lanes/$LANE_ID/tree 2>/dev/null && git add -A . >/dev/null 2>&1 && git diff --cached --binary $PIN | base64 -w0" > "$LOCAL_PATCH.b64" 2>/dev/null
-  if [ -s "$LOCAL_PATCH.b64" ] && base64 -d < "$LOCAL_PATCH.b64" > "$LOCAL_PATCH" 2>/dev/null && [ -s "$LOCAL_PATCH" ]; then
+  # The bridge caps a reply at ~45 KB of stdout (bit 2026-09-03: a 150 KB patch came back as its
+  # last 45 KB — transcript text where "diff --git" should be). So: materialize the base64 on the
+  # PC, pull it in 40,000-char slices, verify the char count, then decode.
+  REMOTE_B64="$PC_AF_REPO/.lanes/$LANE_ID/patch.b64"
+  TOTAL="$(bridge "cd $PC_AF_REPO/.lanes/$LANE_ID/tree 2>/dev/null && git add -A . >/dev/null 2>&1 && git diff --cached --binary $PIN | base64 -w0 > $REMOTE_B64 && wc -c < $REMOTE_B64" 2>/dev/null | tr -dc 0-9)"
+  : > "$LOCAL_PATCH.b64"; GOT=0
+  if [ -n "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
+    off=1; step=40000
+    while [ "$off" -le "$TOTAL" ]; do
+      end=$((off+step-1))
+      bridge "cut -c${off}-${end} $REMOTE_B64" 2>/dev/null | tr -d '\n' >> "$LOCAL_PATCH.b64"
+      off=$((end+1))
+    done
+    GOT="$(wc -c < "$LOCAL_PATCH.b64")"
+    [ "$GOT" = "$TOTAL" ] || echo "pc_lane: patch transfer size mismatch (got $GOT of $TOTAL base64 chars)" >&2
+  fi
+  if [ "$GOT" != 0 ] && [ "$GOT" = "$TOTAL" ] && base64 -d < "$LOCAL_PATCH.b64" > "$LOCAL_PATCH" 2>/dev/null && grep -q '^diff --git' "$LOCAL_PATCH"; then
     echo "pc_lane: patch  -> $LOCAL_PATCH ($(grep -c '^diff --git' "$LOCAL_PATCH") file(s))" >&2
   else
     echo "pc_lane: no changes in the lane worktree (or patch fetch failed)" >&2; rm -f "$LOCAL_PATCH"

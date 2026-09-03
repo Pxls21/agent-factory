@@ -7,15 +7,19 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `097b0e3` 2026-09-03T05:38:59+00:00 (`claude/soundbox-kit-migration-iz1jwf`) — batch D
-- **Local HEAD:** 3 commits ahead of origin at write time (provenance + batch D review log · the
-  Codex/Hermes ports · this wiki compile). SHAs are rewritten by `push_clean.sh` at push, so this
-  page names commits by subject; the tree is what is pinned.
+- **Origin tip:** `237192a` 2026-09-03T10:09:53+00:00 (`claude/soundbox-kit-migration-iz1jwf`) — transcript sync after the increment-#1 lane bring-up
+- **Local HEAD:** 1 commit ahead of origin at write time (the increment-#1 harvest + five RED
+  spine tests). SHAs are rewritten by `push_clean.sh` at push, so this page names commits by
+  subject; the tree is what is pinned.
 - **Today:** 2026-09-03
 
 ## Active lanes
-- **Increment #1 `s0-01-registry-schemas-validator`** on the PC Hermes lane (pin a5bd59b, round 2;
-  round 1 halted on a wrong brief premise, amended). Contract C1-C12 in `tasks/briefs/`.
+- **Increment #1 `s0-01-registry-schemas-validator`** — contract-gate ROUND 2. Round 1 (PC Hermes
+  lane, sol-ultra, four runs: wrong premise → two 503 deaths → success at pin c39b64f) was
+  harvested 2026-09-03: C1–C3 green in the sandbox; the lane's 33/33 was a host-python green
+  (AF-AP-11, harness fixed); the coordinator's spine read shipped three gaps as five RED tests
+  (AF-AP-12/13/14). Repair brief `tasks/briefs/s0-01b-repair-spine-gaps.md` → then the verify lane
+  (`harness-ports/briefs/verify-contract.md`, terra-xhigh) → coordinator final layer.
 - **Continuity + offload plane** (`continuity-offload-plane`, task #25): transcript sync live
   (`transcripts/sandbox/`), lane roles/templates committed, offload map written; first route probe
   (Gemini flash as researcher) running; curator lane not yet run.
@@ -26,8 +30,9 @@ last_compiled: 2026-09-03
 - **`harness-skill-rewordings`** (pending, low priority): `.agents/skills` is a verbatim mirror of
   `.claude/skills` — the source repo's 14 hand-ported skill rewordings were not carried over;
   the mechanism table in `AGENTS.md`/`.hermes.md` carries translation meanwhile.
-- **Stage 0 build:** NOT STARTED. First pending increment: `s0-01-registry-schemas-validator`.
-  Pipeline (findings, council, interview, seed, breakdown) COMPLETE, all committed.
+- **Stage 0 build:** STARTED 2026-09-03 with increment #1 (above). Pipeline (findings, council,
+  interview, seed, breakdown) COMPLETE, all committed. `tests/` is deliberately RED (5 contract
+  tests) until the repair lane lands.
 
 ## In-flight runs
 - **PC lane bring-up** (2026-09-03): DONE and PROVEN — clone at `~/agent-factory`, pc-setup complete
@@ -36,7 +41,8 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-None.
+- **Repair lane `s0-01b`** — dispatched after this push (PC Hermes, code-implementer route);
+  the coordinator polls `scripts/pc_lane.sh` and harvests the patch.
 
 ## Pending owner decisions
 - **BUILD lane = Hermes on the PC (owner ruling 2026-09-03):** bring-up in progress (clone, venv,
@@ -70,5 +76,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Post-close audit commit (skill-sync gate, follow-up registered) — 2026-09-03; next update at the
-first Stage 0 increment.
+Increment-#1 harvest commit — 2026-09-03; next update when the repair lane's patch lands.

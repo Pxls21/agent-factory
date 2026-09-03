@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""Validate the Stage 0 proof registry and its independently recorded artifacts."""
+import argparse
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+import jsonschema
+
+CANONICAL_CLASSES = (
+    "execution_proof",
+    "conformance_checked_decision",
+    "blocked_credential",
+    "blocked_host",
+)
+PROOF_ID_RE = re.compile(r"^S0-(0[1-9]|1[0-2])$")
+
+
+class Findings:
+    def __init__(self):
+        self.items = []
+
+    def add(self, finding):
+        if finding not in self.items:
+            self.items.append(finding)
+
+
+def _detail(error):
+    path = ".".join(str(part) for part in error.absolute_path)
+    return f"{path}: {error.message}" if path else error.message
+
+
+def _load_json(path):
+    return json.loads(path.read_text())
+
+
+def _load_schema(root, name):
+    schema = _load_json(root / "proofs" / "schemas" / name)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    return schema
+
+
+def _registry(root, findings):
+    path = root / "proofs" / "registry.yaml"
+    try:
+        text = "\n".join(
+            line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
+        )
+        registry = json.loads(text)
+    except Exception as error:
+        findings.add(f"registry-schema: {error}")
+        return None
+    if not isinstance(registry, dict):
+        findings.add("registry-schema: top level must be an object")
+        return None
+    required_top = {"classes", "class_aliases", "waves", "proofs", "spike_to_class_mapping"}
+    missing_top = sorted(required_top - set(registry))
+    if missing_top:
+        findings.add(f"registry-schema: missing {','.join(missing_top)}")
+        return None
+    classes = registry["classes"]
+    if not isinstance(classes, dict) or tuple(classes) != CANONICAL_CLASSES:
+        findings.add("registry-schema: classes must declare the canonical four in order")
+    else:
+        for name, value in classes.items():
+            denominator = value.get("ledger_denominator") if isinstance(value, dict) else None
+            if not isinstance(denominator, int) or isinstance(denominator, bool) or denominator < 1:
+                findings.add(f"registry-schema: {name} ledger_denominator must be a positive integer")
+    proofs = registry["proofs"]
+    if not isinstance(proofs, list) or len(proofs) != 12:
+        findings.add("registry-schema: proofs must contain exactly twelve entries")
+        return registry
+    seen = set()
+    mapping_spikes = {
+        rule.get("spike") for rule in registry["spike_to_class_mapping"]
+        if isinstance(rule, dict) and isinstance(rule.get("spike"), str)
+    }
+    for index, proof in enumerate(proofs):
+        if not isinstance(proof, dict):
+            findings.add(f"registry-schema: proofs.{index} must be an object")
+            continue
+        proof_id = proof.get("proof_id", f"proofs.{index}")
+        if "classification" not in proof:
+            findings.add(f"registry-schema: {proof_id} missing classification")
+        else:
+            classification = proof["classification"]
+            if classification not in CANONICAL_CLASSES:
+                findings.add(f"unknown-class: {proof_id} {classification}")
+        required = {
+            "proof_id", "title", "classification", "wave", "spike_dependencies",
+            "required_negative_controls", "assertion_count",
+        }
+        missing = sorted(required - set(proof))
+        if missing and "classification" not in missing:
+            findings.add(f"registry-schema: {proof_id} missing {','.join(missing)}")
+        if not isinstance(proof_id, str) or not PROOF_ID_RE.fullmatch(proof_id):
+            findings.add(f"registry-schema: invalid proof_id {proof_id}")
+        elif proof_id in seen:
+            findings.add(f"registry-schema: duplicate proof_id {proof_id}")
+        seen.add(proof_id)
+        if proof.get("wave") not in registry["waves"]:
+            findings.add(f"registry-schema: {proof_id} unknown wave {proof.get('wave')}")
+        dependencies = proof.get("spike_dependencies")
+        if not isinstance(dependencies, list):
+            findings.add(f"registry-schema: {proof_id} spike_dependencies must be a list")
+        else:
+            for spike in dependencies:
+                if spike not in mapping_spikes:
+                    findings.add(f"registry-schema: {proof_id} unknown spike dependency {spike}")
+        for field in ("required_negative_controls", "assertion_count"):
+            value = proof.get(field)
+            floor = 1 if field == "required_negative_controls" else 0
+            if not isinstance(value, int) or isinstance(value, bool) or value < floor:
+                findings.add(f"registry-schema: {proof_id} {field} must be an integer >= {floor}")
+        if proof.get("classification") in ("blocked_credential", "blocked_host"):
+            blocked = proof.get("blocked")
+            blocked_required = {"owner", "unblock_condition", "marker_path"}
+            if not isinstance(blocked, dict) or set(blocked) != blocked_required:
+                findings.add(f"registry-schema: {proof_id} blocked metadata invalid")
+    expected_ids = {f"S0-{index:02d}" for index in range(1, 13)}
+    if seen != expected_ids:
+        findings.add("registry-schema: proof ids must be S0-01 through S0-12")
+    return registry
+
+
+def _validate(instance, schema, prefix, findings):
+    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    errors = sorted(validator.iter_errors(instance), key=lambda error: (list(error.absolute_path), error.message))
+    for error in errors:
+        findings.add(f"{prefix}: {_detail(error)}")
+    return not errors
+
+
+def _artifact_states(root, registry, schemas, findings):
+    states = {}
+    for proof in registry["proofs"]:
+        proof_id = proof.get("proof_id")
+        if not isinstance(proof_id, str):
+            continue
+        result_path = root / "proofs" / proof_id / "result.json"
+        blocked_path = root / "proofs" / proof_id / "blocked.json"
+        if result_path.exists() and blocked_path.exists():
+            findings.add(f"registry-schema: {proof_id} has both result and blocked artifacts")
+            states[proof_id] = "INVALID"
+            continue
+        if result_path.exists():
+            try:
+                artifact = _load_json(result_path)
+            except Exception as error:
+                findings.add(f"registry-schema: {proof_id} result unreadable: {error}")
+                states[proof_id] = "INVALID"
+                continue
+            valid = _validate(artifact, schemas["result"], f"registry-schema: {proof_id} result", findings)
+            if artifact.get("proof_id") != proof_id:
+                findings.add(
+                    f"registry-schema: {proof_id} result proof_id mismatch "
+                    f"{artifact.get('proof_id')}"
+                )
+                valid = False
+            if artifact.get("classification") != proof.get("classification"):
+                findings.add(
+                    f"class-mismatch: {proof_id} registry={proof.get('classification')} "
+                    f"artifact={artifact.get('classification')}"
+                )
+                valid = False
+            runs = artifact.get("runs")
+            if isinstance(runs, list):
+                digest = hashlib.sha256(
+                    json.dumps(runs, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                if artifact.get("digest") != digest:
+                    findings.add(f"digest-mismatch: {proof_id}")
+                    valid = False
+            states[proof_id] = "PRESENT" if valid else "INVALID"
+        elif blocked_path.exists():
+            try:
+                artifact = _load_json(blocked_path)
+            except Exception as error:
+                findings.add(f"registry-schema: {proof_id} blocked unreadable: {error}")
+                states[proof_id] = "INVALID"
+                continue
+            valid = _validate(artifact, schemas["blocked"], f"registry-schema: {proof_id} blocked", findings)
+            if artifact.get("proof_id") != proof_id:
+                findings.add(
+                    f"registry-schema: {proof_id} blocked proof_id mismatch "
+                    f"{artifact.get('proof_id')}"
+                )
+                valid = False
+            if artifact.get("classification") != proof.get("classification"):
+                findings.add(
+                    f"class-mismatch: {proof_id} registry={proof.get('classification')} "
+                    f"artifact={artifact.get('classification')}"
+                )
+                valid = False
+            # S0-03's credential_rejected state is proof-RED, never a valid deferral.
+            if proof_id == "S0-03" and artifact.get("marker", {}).get("blocker_status") == "rejecting":
+                findings.add("registry-schema: S0-03 credential rejection is not a valid blocked marker")
+                valid = False
+            states[proof_id] = "BLOCKED" if valid else "INVALID"
+        else:
+            states[proof_id] = "ABSENT"
+    return states
+
+
+def _branch_transition(effect, branch, aliases):
+    affected = branch.get("affected_proof")
+    if affected != effect.get("affected_proof"):
+        return None
+    if "from_class" in branch or "to_class" in branch:
+        from_class = aliases.get(branch.get("from_class"), branch.get("from_class"))
+        to_class = aliases.get(branch.get("to_class"), branch.get("to_class"))
+        return (affected, from_class, to_class)
+    class_name = aliases.get(branch.get("class"), branch.get("class"))
+    if class_name:
+        return (affected, class_name, class_name)
+    return None
+
+
+def _allowed_transitions(registry):
+    aliases = registry["class_aliases"]
+    allowed = {}
+    for rule in registry["spike_to_class_mapping"]:
+        for branch_name in ("negative_effect", "positive_effect"):
+            branch = rule.get(branch_name)
+            if not isinstance(branch, dict) or not branch.get("rule_id"):
+                continue
+            transition = _branch_transition(branch, branch, aliases)
+            if transition:
+                allowed.setdefault(branch["rule_id"], set()).add(transition)
+    # Positive branches copied verbatim from the seed did not carry rule ids.
+    allowed.setdefault("map-rust-s006", set()).add(
+        ("S0-06", "execution_proof", "execution_proof")
+    )
+    return allowed
+
+
+def _mapped_spikes(root, registry, spike_schema, findings):
+    names = sorted({rule["spike"] for rule in registry["spike_to_class_mapping"]})
+    aliases = registry["class_aliases"]
+    allowed = _allowed_transitions(registry)
+    for name in names:
+        path = root / "spikes" / name / "result.json"
+        if not path.exists():
+            continue
+        try:
+            artifact = _load_json(path)
+        except Exception as error:
+            findings.add(f"spike-artifact-invalid: {name} {error}")
+            continue
+        if not _validate(artifact, spike_schema, f"spike-artifact-invalid: {name}", findings):
+            continue
+        for effect in artifact["classification_effect"]:
+            from_class = aliases.get(effect["from_class"], effect["from_class"])
+            to_class = aliases.get(effect["to_class"], effect["to_class"])
+            transition = (effect["affected_proof"], from_class, to_class)
+            if transition not in allowed.get(effect["rule_id"], set()):
+                findings.add(f"undeclared-transition: {name} {from_class}->{to_class}")
+
+
+def _ledger(path, states, findings):
+    try:
+        ledger = _load_json(path)
+    except Exception as error:
+        findings.add(f"registry-schema: ledger unreadable: {error}")
+        return
+    claims = ledger.get("proofs") if isinstance(ledger, dict) else None
+    if not isinstance(claims, list):
+        findings.add("registry-schema: ledger proofs must be a list")
+        return
+    for claim in claims:
+        if not isinstance(claim, dict) or not isinstance(claim.get("proof_id"), str) or not isinstance(claim.get("state"), str):
+            findings.add("registry-schema: ledger claim must contain proof_id and state")
+            continue
+        found = states.get(claim["proof_id"], "ABSENT")
+        if claim["state"] != found:
+            findings.add(f"ledger-drift: {claim['proof_id']} claimed {claim['state']} but {found}")
+
+
+def _inspect(root, ledger_path=None):
+    findings = Findings()
+    registry = _registry(root, findings)
+    if registry is None or not isinstance(registry.get("proofs"), list):
+        return registry, {}, findings
+    try:
+        schemas = {
+            "result": _load_schema(root, "result.schema.json"),
+            "blocked": _load_schema(root, "blocked.schema.json"),
+            "spike": _load_schema(root, "spike.schema.json"),
+        }
+    except Exception as error:
+        findings.add(f"registry-schema: schema invalid: {error}")
+        return registry, {}, findings
+    states = _artifact_states(root, registry, schemas, findings)
+    _mapped_spikes(root, registry, schemas["spike"], findings)
+    if ledger_path is not None:
+        _ledger(ledger_path, states, findings)
+    return registry, states, findings
+
+
+def integrity(root, ledger_path):
+    registry, states, findings = _inspect(root, ledger_path)
+    if registry and isinstance(registry.get("proofs"), list):
+        for proof in sorted(registry["proofs"], key=lambda entry: str(entry.get("proof_id"))):
+            proof_id = proof.get("proof_id")
+            if isinstance(proof_id, str):
+                print(f"{proof_id} {states.get(proof_id, 'INVALID')}")
+        for classification in sorted(registry.get("classes", {})):
+            denominator = registry["classes"][classification].get("ledger_denominator", 0)
+            numerator = sum(
+                1 for proof in registry["proofs"]
+                if proof.get("classification") == classification
+                and states.get(proof.get("proof_id")) in ("PRESENT", "BLOCKED")
+            )
+            print(f"{classification} numerator={numerator} denominator={denominator}")
+    for finding in sorted(findings.items):
+        print(finding)
+    return 1 if findings.items else 0
+
+
+def stage1_gate(root):
+    registry, states, findings = _inspect(root)
+    if findings.items:
+        for finding in sorted(findings.items):
+            print(finding)
+        return 1
+    missing = []
+    for proof in registry["proofs"]:
+        expected = "BLOCKED" if proof["classification"].startswith("blocked_") else "PRESENT"
+        if states.get(proof["proof_id"]) != expected:
+            missing.append(f"missing: {proof['proof_id']} ({proof['classification']})")
+    for line in missing:
+        print(line)
+    return 2 if missing else 0
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="validate-ledger")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    integrity_parser = subparsers.add_parser("integrity")
+    integrity_parser.add_argument("--root", type=Path, default=Path("."))
+    integrity_parser.add_argument("--ledger", type=Path)
+    gate_parser = subparsers.add_parser("stage1-gate")
+    gate_parser.add_argument("--root", type=Path, default=Path("."))
+    arguments = parser.parse_args()
+    root = arguments.root.resolve()
+    if arguments.command == "integrity":
+        return integrity(root, arguments.ledger.resolve() if arguments.ledger else None)
+    return stage1_gate(root)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

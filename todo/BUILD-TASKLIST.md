@@ -36,7 +36,7 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | slug | increment | status | blocked-by | gate (deterministic) |
 |---|---|---|---|---|
 | s0-00-pc-bridge-probe | #0 spike: bridge liveness + PC capability probe | done 2026-09-03 (`abb16a0`) | — | `spikes/pc-bridge/result.json` present, redacted |
-| s0-01-registry-schemas-validator | #1 registry + schemas + validator (empty-set semantics) | pending | — | integrity green on empty set, stage gate RED, forged-digest/drift/unclassified negatives RED |
+| s0-01-registry-schemas-validator | #1 registry + schemas + validator (empty-set semantics) | in_progress — lane-built on the PC (Hermes sol-ultra, brief `tasks/briefs/s0-01-registry-schemas-validator.md`), harvested 2026-09-03; C1–C3 green in the sandbox; harness fixed (AF-AP-11); 3 spine gaps shipped as RED tests → repair lane, then verify lane | — | integrity green on empty set, stage gate RED, forged-digest/drift/unclassified negatives RED |
 | s0-02-runner-ledger-ci-markers | #2 runner + ledger generator + CI split checks + probe-backed markers | pending | s0-01 | generator byte-identical ×2; validator mutation audit kills forge/drift/marker mutants |
 | s0-03-spike-rust-ai-memory | #3 spike rust-ai-memory (PC: `cargo +1.95.0`) | pending | s0-02 | fact recorded either way; classification_effect per map-rust-s006 |
 | s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | pending | s0-02 | fact recorded |

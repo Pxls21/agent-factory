@@ -75,6 +75,10 @@ AP_SCREEN = [
      "hashing in edited code — is the hashed form EXACTLY what the store holds? (stamp-store mismatch class)"),
     ("AP-24", re.compile(r"except\s+(Exception|BaseException)?\s*:\s*(pass|continue)\b"),
      "swallowed exception — fail-soft must be fail-LOUD"),
+    # AF-AP-12 (2026-09-03): jsonschema registers `date-time` only when rfc3339-validator imports;
+    # a FormatChecker built without asserting its checkers leaves every `format` keyword unchecked.
+    ("AF-AP-12", re.compile(r"FormatChecker\(\)"),
+     "FormatChecker() without asserting the needed checkers are registered — an unregistered `format` is silently unchecked; assert presence and fail loud (AF-AP-12)"),
     ("AP-39", re.compile(r"(api_key|api_secret|auth_token|bearer_token)\s*:\s*Optional\[str\]\s*=\s*None"),
      "optional credential param — verify a PRODUCTION call site supplies it (cred-param-without-supplier class)"),
     ("AP-x", re.compile(r"int\(round\("),
@@ -102,6 +106,10 @@ AP_SCREEN = [
 # later test in the process. monkeypatch.setattr never matches (method call).
 # AP-63/64/65 have no regex shape — the registry names their instruments.
 TEST_SCREEN = [
+    # AF-AP-11 (2026-09-03): a repo CLI spawned through its shebang runs on whatever python3 PATH
+    # finds — the PC's system python carried jsonschema and minted a green the venv could not.
+    ("AF-AP-11", re.compile(r"subprocess\.(?:run|Popen|check_output|check_call|call)\(\s*\[\s*str\("),
+     "CLI spawned through its shebang — inherits the host interpreter's site-packages, not the declared toolchain; put sys.executable first (AF-AP-11)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),
     # TN3-F4 (2026-09-02): a blanket except in a test hollows any call-count
