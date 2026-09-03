@@ -1,0 +1,12 @@
+{
+  "proof_id": "S0-08",
+  "probe_cmd": [
+    "sh",
+    "proofs/S0-08/probe_runsc.sh"
+  ],
+  "timeout_s": 10,
+  "reason_map": {
+    "10": "capability_absent",
+    "11": "capability_present_but_failing"
+  }
+}

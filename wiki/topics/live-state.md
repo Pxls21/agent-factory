@@ -41,6 +41,10 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
+- **Increment #2a LANDED (2026-09-03):** runner + probes + committed markers; the honest ledger on
+  the PC now reads `S0-03 BLOCKED (credential_absent)`, `S0-08 EXPIRED` (runsc works there → the
+  gate demands the proof run). D5 re-ruled: expiry is a state for integrity, a RED for the gate.
+  NEXT: 2a adversarial lane (`agentfactory-verify`) + 2b build lane (`agentfactory-build`) in parallel.
 - **Increment #2 SPLIT into 2a/2b (2026-09-03)** after three PC lanes failed to land it: two brief
   defects caught by the lanes' premise checks (fixed, rules 0a/0c baked) and one compaction loop
   (AF-AP-19; CONTEXT BUDGET rule now in every lane prompt). `s0-02a-runner-probes` is the next
@@ -87,4 +91,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#2 split commit — 2026-09-03; next update when the 2a build lane reports.
+Increment-#2a harvest commit — 2026-09-03; next update when the 2a adversarial lane and the 2b build lane report.

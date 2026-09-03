@@ -43,6 +43,12 @@ def _load_schema(root, name):
     return schema
 
 
+def canonical_digest(value):
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _registry(root, findings):
     path = root / "proofs" / "registry.yaml"
     try:
@@ -218,9 +224,7 @@ def _artifact_states(root, registry, schemas, findings):
                 if "positive" not in legs:
                     findings.add(f"registry-schema: {proof_id} result runs: missing positive leg")
                     valid = False
-                digest = hashlib.sha256(
-                    json.dumps(runs, sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest()
+                digest = canonical_digest(runs)
                 if artifact.get("digest") != digest:
                     findings.add(f"digest-mismatch: {proof_id}")
                     valid = False
@@ -245,11 +249,18 @@ def _artifact_states(root, registry, schemas, findings):
                     f"artifact={artifact.get('classification')}"
                 )
                 valid = False
+            blocker_status = artifact.get("marker", {}).get("blocker_status")
+            # COORDINATOR DECISION (2026-09-03, increment #2a): an expired deferral is an honest
+            # STATE for `integrity` (the marker is well-formed and truthful: the blocker is gone)
+            # and a RED for `stage1-gate` (the proof must now run). Reporting it as an integrity
+            # finding made the committed tree's integrity red forever, contradicting the split-check
+            # design (integrity green when honest, even empty; the gate carries the RED).
+            expired = blocker_status == "expired"
             # S0-03's credential_rejected state is proof-RED, never a valid deferral.
-            if proof_id == "S0-03" and artifact.get("marker", {}).get("blocker_status") == "rejecting":
+            if proof_id == "S0-03" and blocker_status == "rejecting":
                 findings.add("registry-schema: S0-03 credential rejection is not a valid blocked marker")
                 valid = False
-            states[proof_id] = "BLOCKED" if valid else "INVALID"
+            states[proof_id] = ("EXPIRED" if expired else "BLOCKED") if valid else "INVALID"
         else:
             states[proof_id] = "ABSENT"
     return states
@@ -379,7 +390,12 @@ def stage1_gate(root):
     missing = []
     for proof in registry["proofs"]:
         expected = "BLOCKED" if proof["classification"].startswith("blocked_") else "PRESENT"
-        if states.get(proof["proof_id"]) != expected:
+        state = states.get(proof["proof_id"])
+        if state == "EXPIRED":
+            missing.append(
+                f"missing: {proof['proof_id']} ({proof['classification']}; deferral expired — the proof must run)"
+            )
+        elif state != expected:
             missing.append(f"missing: {proof['proof_id']} ({proof['classification']})")
     for line in missing:
         print(line)

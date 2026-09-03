@@ -1,0 +1,29 @@
+{
+  "proof_id": "S0-03",
+  "classification": "blocked_credential",
+  "env_fingerprint": "pc-bridge:fedora",
+  "marker": {
+    "probe_cmd": [
+      "python3",
+      "proofs/S0-03/probe_omniroute.py",
+      "http://127.0.0.1:20128/v1/models"
+    ],
+    "probe_run": {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-03/probe_omniroute.py",
+        "http://127.0.0.1:20128/v1/models"
+      ],
+      "started_at": "2026-09-03T18:33:34.401518Z",
+      "finished_at": "2026-09-03T18:33:34.505499Z",
+      "exit_code": 10,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "blocker_status": "absent",
+    "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted",
+    "owner": "TBD-owner-credential",
+    "reason": "credential_absent"
+  }
+}

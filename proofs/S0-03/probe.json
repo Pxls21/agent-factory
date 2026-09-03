@@ -1,0 +1,14 @@
+{
+  "proof_id": "S0-03",
+  "probe_cmd": [
+    "python3",
+    "proofs/S0-03/probe_omniroute.py",
+    "http://127.0.0.1:20128/v1/models"
+  ],
+  "timeout_s": 10,
+  "key_env": "OMNIROUTE_API_KEY",
+  "reason_map": {
+    "10": "credential_absent",
+    "11": "credential_rejected"
+  }
+}

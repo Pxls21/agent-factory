@@ -41,8 +41,9 @@ closure tests). The two schemas EXIST; none of the CREATE paths below exist yet 
   probe and never written anywhere.
 - MODIFY `proofs/schemas/blocked.schema.json`: `blocker_status` enum gains `expired`; optional
   `marker.reason` (the four reasons). MODIFY `scripts/validate-ledger`: an `expired` marker ⇒
-  finding `deferral-expired: <id>` (exit 1, state INVALID, never BLOCKED); nothing else changes and
-  every existing test stays green unchanged.
+  state `EXPIRED` in `integrity` (exit 0, no numerator) and `missing: <id> (<class>; deferral
+  expired — the proof must run)` in `stage1-gate` (exit 2) — D5 as re-ruled; nothing else changes
+  and every existing test stays green unchanged.
 - CREATE `proofs/S0-03/probe.json` (probe: presence of `key_env` `OMNIROUTE_API_KEY`, then one
   authenticated `GET http://127.0.0.1:20128/v1/models` with the bearer; exit codes: 10 =
   credential_absent, 11 = credential_rejected, 0 = accepted) and `proofs/S0-08/probe.json`
@@ -65,14 +66,14 @@ C4 The leg's environment is ONLY spec env + PATH/HOME/LANG (a `CANARY_FROM_PAREN
 C5 A spec carrying `classification` ⇒ rejected as an additional property; `result.json` carries
    the REGISTRY's classification.
 C6 S0-08 probe with no runsc on PATH ⇒ `blocked.json` valid, `absent`, integrity BLOCKED; a fake
-   `runsc` that succeeds (tmp PATH) ⇒ `expired`, `validate-ledger` prints `deferral-expired: S0-08`,
-   exit 1.
+   `runsc` that succeeds (tmp PATH) ⇒ `expired`, integrity prints `S0-08 EXPIRED` (exit 0) and
+   `stage1-gate` prints `missing: S0-08 (blocked_host; deferral expired — the proof must run)`, exit 2.
 C7 S0-03 probe with `key_env` unset ⇒ `credential_absent` (BLOCKED); set and refused by a local
    HTTP double answering 401 (test only) ⇒ `credential_rejected` ⇒ the S0-03 proof-RED rule fires;
    the secret's value appears nowhere under the tmp tree (grep = 0).
 C8 Full suite `$HOME/venv-agent-factory/bin/python -m pytest tests/ -q` green twice (counts
-   verbatim); `validate-ledger integrity` on the repo root exit 0 or exit 1 ONLY for
-   `deferral-expired` findings that are true on this venue (state which); `stage1-gate` exit 2.
+   verbatim); `validate-ledger integrity` on the repo root exit 0 with the committed markers'
+   true states (on the PC: `S0-08 EXPIRED`); `stage1-gate` exit 2.
 C9 Two named mutants killed: digest over `runs` with `indent=2` ⇒ `digest-mismatch`; probe writer
    never writing `expired` ⇒ C6 reds.
 C10 Commits pass the hooks; only the boundary touched; no secret or bridge link in any file.

@@ -1,0 +1,26 @@
+{
+  "proof_id": "S0-08",
+  "classification": "blocked_host",
+  "env_fingerprint": "pc-bridge:fedora",
+  "marker": {
+    "probe_cmd": [
+      "sh",
+      "proofs/S0-08/probe_runsc.sh"
+    ],
+    "probe_run": {
+      "leg": "negative",
+      "cmd": [
+        "sh",
+        "proofs/S0-08/probe_runsc.sh"
+      ],
+      "started_at": "2026-09-03T18:33:34.707753Z",
+      "finished_at": "2026-09-03T18:33:34.722402Z",
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "blocker_status": "expired",
+    "unblock_condition": "runsc executable and a trivial runsc container run succeeds",
+    "owner": "TBD-owner-gvisor-host"
+  }
+}

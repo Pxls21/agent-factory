@@ -69,11 +69,14 @@ D4 **The environment is not a config channel.** The runner builds each leg's env
    environment. Secrets reach a probe only through a spec-declared `key_env` name; no value is
    ever written to any artifact or log (the S0-03 probe records presence/acceptance, never the
    secret). Classification is read from the REGISTRY, never from a spec.
-D5 **Deferral expiry is RED.** A probe whose blocker is now present and working writes
-   `blocker_status: expired`; `validate-ledger` reports `deferral-expired: <id>` (exit 1) and the
-   ledger shows the proof RED, never BLOCKED. `credential_rejected` keeps the existing S0-03
-   rule (proof-RED). Extend `blocked.schema.json` and the validator minimally for `expired`;
-   every existing test stays green unchanged.
+D5 **Deferral expiry is a STATE for integrity and a RED for the gate (re-ruled 2026-09-03 after
+   the 2a lane hit the contradiction).** A probe whose blocker is now present and working writes
+   `blocker_status: expired`; `validate-ledger integrity` reports the proof's state as `EXPIRED`
+   (exit 0 — the marker is well-formed and truthful; it counts toward NO numerator), and
+   `validate-ledger stage1-gate` lists `missing: <id> (<class>; deferral expired — the proof must
+   run)` and exits 2. An integrity FINDING for expiry (the first wording) made the committed tree
+   red forever and contradicted the split-check design. `credential_rejected` keeps the existing
+   S0-03 rule (proof-RED). `blocked.schema.json` gains `expired` + optional `marker.reason`.
 D6 **`stage1-gate` is RED by design and must not block.** Its CI job runs with
    `continue-on-error: true` and writes the missing set to the job summary; `ledger-integrity`
    and `tests` are ordinary (blocking) jobs. Rejected: one job doing both (an empty repo would

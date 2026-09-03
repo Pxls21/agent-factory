@@ -16,7 +16,8 @@
       "properties": {
         "probe_cmd": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "probe_run": {"$ref": "#/$defs/run"},
-        "blocker_status": {"enum": ["absent", "rejecting"]},
+        "blocker_status": {"enum": ["absent", "rejecting", "expired"]},
+        "reason": {"enum": ["credential_absent", "credential_rejected", "capability_absent", "capability_present_but_failing"]},
         "unblock_condition": {"type": "string", "minLength": 1},
         "owner": {"type": "string", "minLength": 1}
       }

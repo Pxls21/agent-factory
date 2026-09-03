@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Execute Stage 0 proof specs and blocker probes."""
+import argparse
+import datetime
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import platform
+import subprocess
+import sys
+from pathlib import Path
+
+import jsonschema
+
+FORMAT_CHECKER = jsonschema.FormatChecker(formats=jsonschema.FormatChecker.checkers)
+PASSTHROUGH_ENV = ("PATH", "HOME", "LANG")
+
+
+def _utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _load_json(path):
+    return json.loads(path.read_text())
+
+
+def _load_validator(root):
+    path = root / "scripts" / "validate-ledger"
+    if not path.exists():
+        path = Path(__file__).resolve().with_name("validate-ledger")
+    loader = importlib.machinery.SourceFileLoader("stage0_validate_ledger", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise RuntimeError(f"cannot load canonical validator: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _validate(value, schema_path):
+    schema = _load_json(schema_path)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        jsonschema.Draft202012Validator(schema, format_checker=FORMAT_CHECKER).iter_errors(value),
+        key=lambda error: [str(part) for part in error.absolute_path],
+    )
+    if errors:
+        error = errors[0]
+        path = ".".join(str(part) for part in error.absolute_path)
+        detail = f"{path}: {error.message}" if path else error.message
+        raise ValueError(detail)
+
+
+def _registry_proof(root, proof_id):
+    text = "\n".join(
+        line
+        for line in (root / "proofs" / "registry.yaml").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    registry = json.loads(text)
+    return next((proof for proof in registry["proofs"] if proof["proof_id"] == proof_id), None)
+
+
+def _clean_env(explicit, key_env=None):
+    environment = {
+        name: os.environ[name]
+        for name in PASSTHROUGH_ENV
+        if name in os.environ
+    }
+    environment.update(explicit or {})
+    if key_env and key_env in os.environ:
+        environment[key_env] = os.environ[key_env]
+    return environment
+
+
+def _run_process(cmd, cwd, timeout_s, environment, leg):
+    started_at = _utc_now()
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_s)
+        exit_code = process.returncode
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, 9)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = process.communicate()
+        exit_code = -9
+        timed_out = True
+    finished_at = _utc_now()
+    record = {
+        "leg": leg,
+        "cmd": cmd,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "exit_code": exit_code,
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+    }
+    return record, stdout.decode(errors="replace"), stderr.decode(errors="replace"), timed_out
+
+
+def _write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def _remove(path):
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def run_proof(root, proof_id, venue):
+    proof_dir = root / "proofs" / proof_id
+    result_path = proof_dir / "result.json"
+    _remove(result_path)
+    spec = _load_json(proof_dir / "spec.json")
+    _validate(spec, root / "proofs" / "schemas" / "spec.schema.json")
+    if spec["proof_id"] != proof_id:
+        raise ValueError(f"proof-id-mismatch: expected {proof_id} got {spec['proof_id']}")
+    registry_proof = _registry_proof(root, proof_id)
+    if registry_proof is None:
+        raise ValueError(f"unknown-proof: {proof_id}")
+
+    runs = []
+    negative_control = None
+    for leg in spec["legs"]:
+        cwd = (root / leg["cwd"]).resolve()
+        try:
+            cwd.relative_to(root)
+        except ValueError as error:
+            raise ValueError(f"cwd-outside-root: {leg['cwd']}") from error
+        run, stdout, stderr, _timed_out = _run_process(
+            leg["cmd"],
+            cwd,
+            leg["timeout_s"],
+            _clean_env(leg.get("env")),
+            leg["leg"],
+        )
+        runs.append(run)
+        expected_exit = leg["expect"]["exit_code"]
+        if run["exit_code"] != expected_exit:
+            raise ValueError(
+                f"leg-exit-mismatch: {proof_id} {leg['leg']} "
+                f"expected {expected_exit} got {run['exit_code']}"
+            )
+        if leg["leg"] == "negative":
+            expected_reason = leg["expect"]["failure_reason"]
+            observed_reason = next(
+                (line for line in (stdout + "\n" + stderr).splitlines() if expected_reason in line),
+                None,
+            )
+            if observed_reason is None:
+                raise ValueError(f"negative-control-unmet: {proof_id}")
+            if negative_control is None:
+                negative_control = {
+                    "fixture": " ".join(leg["cmd"]),
+                    "expected_failure_reason": expected_reason,
+                    "observed_failure_reason": observed_reason,
+                }
+
+    result = {
+        "proof_id": proof_id,
+        "classification": registry_proof["classification"],
+        "recorded_at": _utc_now(),
+        "env_fingerprint": f"{venue}:{platform.node()}",
+        "runs": runs,
+        "negative_control": negative_control,
+        "digest": _load_validator(root).canonical_digest(runs),
+    }
+    _validate(result, root / "proofs" / "schemas" / "result.schema.json")
+    _write_json(result_path, result)
+
+
+def run_probe(root, proof_id, venue):
+    proof_dir = root / "proofs" / proof_id
+    blocked_path = proof_dir / "blocked.json"
+    _remove(blocked_path)
+    probe = _load_json(proof_dir / "probe.json")
+    _validate(probe, root / "proofs" / "schemas" / "probe.schema.json")
+    if probe["proof_id"] != proof_id:
+        raise ValueError(f"proof-id-mismatch: expected {proof_id} got {probe['proof_id']}")
+    registry_proof = _registry_proof(root, proof_id)
+    if registry_proof is None or "blocked" not in registry_proof:
+        raise ValueError(f"not-blocked-proof: {proof_id}")
+
+    run, _stdout, _stderr, timed_out = _run_process(
+        probe["probe_cmd"],
+        root,
+        probe["timeout_s"],
+        _clean_env(probe.get("env"), probe.get("key_env")),
+        "negative",
+    )
+    reason = probe["reason_map"].get(str(run["exit_code"]))
+    if timed_out or (run["exit_code"] != 0 and reason is None):
+        raise ValueError(f"probe-invalid: {proof_id} exit {run['exit_code']}")
+    if run["exit_code"] == 0:
+        blocker_status = "expired"
+    elif reason.endswith("_absent"):
+        blocker_status = "absent"
+    else:
+        blocker_status = "rejecting"
+
+    marker = {
+        "probe_cmd": probe["probe_cmd"],
+        "probe_run": run,
+        "blocker_status": blocker_status,
+        "unblock_condition": registry_proof["blocked"]["unblock_condition"],
+        "owner": registry_proof["blocked"]["owner"],
+    }
+    if reason is not None:
+        marker["reason"] = reason
+    blocked = {
+        "proof_id": proof_id,
+        "classification": registry_proof["classification"],
+        "env_fingerprint": f"{venue}:{platform.node()}",
+        "marker": marker,
+    }
+    _validate(blocked, root / "proofs" / "schemas" / "blocked.schema.json")
+    _write_json(blocked_path, blocked)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("verb", choices=("run", "probe"))
+    parser.add_argument("--proof", required=True)
+    parser.add_argument("--venue", required=True, choices=("sandbox", "pc-bridge"))
+    parser.add_argument("--root", required=True, type=Path)
+    args = parser.parse_args(argv)
+    try:
+        root = args.root.resolve()
+        if args.verb == "run":
+            run_proof(root, args.proof, args.venue)
+        else:
+            run_probe(root, args.proof, args.venue)
+    except Exception as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
