@@ -131,7 +131,28 @@ hash-pinned packets, proposal planes without write authority — is the same sha
 by hand today (lanes propose patches; the coordinator commits). Formalizing the team is a later
 increment with its own ADR; this map is its primary-source evidence.
 
+**Evidence from increment #1 (2026-09-03, the first increment the team shape actually ran):**
+- Verification is TWO roles, not one: a mechanical **contract-runner** (executes every contract
+  item literally, cheap route) and an **adversarial verifier** (attacks + spine read, strong
+  route). One lane carrying both ran 167 calls, compacted four times and died with nothing
+  written; split and sized to one context each, the adversarial lane finished in 20 minutes with
+  one SOLID finding and eight confirmed killers.
+- Routes are **combos with failover**, and a combo is only as fast as its head: the sweep combo's
+  dead head cost 120 s per call. The team's router must remember a dead route (circuit breaker),
+  and a route probe must be a real instruction — a 24-token `OK` cannot see a retirement banner.
+- Every lane **reports as it goes** (`LANE_REPORT_DRAFT`); a partial report is evidence, never a
+  verdict. Recovery when a lane dies: the worktree keeps files, the session store keeps the
+  transcript — read both before re-running.
+- Builders never self-accept; the coordinator re-runs every gate itself and reads only the spine
+  hunks. Three of the increment's real defects were found by that read, not by the lanes' tests.
+- The **round cap holds**: a fourth NOT-READY became a one-line main-loop fix with its killer test,
+  not a fifth lane.
+
 ## 6. NOT built (first-class)
+
+- **Sweep-class lanes have not completed a single run** (2026-09-03): the mechanical contract run
+  was done by the coordinator because the sweep combo's head routes are dead (owner action
+  pending). The curator lane (`wiki-curate.md`) and the echo-sweep template have never run.
 
 Route probes (§4); the curator lane has not run once; `build-roles.py` generates Codex layers for
 three roles only; echo-sweep and code-search templates are untested by a real run; no automatic
