@@ -33,3 +33,21 @@ runs the installers (idempotent) so user-level copies stay in sync. Totals: 391 
 
 The source repo's PROJECT-SPECIFIC set (HERMES-VM, PC-bridge/thermal docs, ACTIVE-LINKS, the
 filled trading `CLAUDE.md`) was deliberately left behind, per its manifest.
+
+**Operating setup ported wholesale from `pxls21/trading-system` @ `clean-build` (`3e332ce`, 2026-09-03,
+owner ask "look at the whole setup and how its structured and port everything"):** the source repo's
+PROJECT-SPECIFIC layer that the kit's manifest deliberately left behind, re-pointed at this repo.
+Batch A — `scripts/hooks/{pre-commit,post-commit,pre-push}` (pyflakes delta + shell-syntax gate ·
+wiki-stale marker + background graft/GitNexus reindex · wiki gate + model-identifier trailer gate),
+`scripts/{push_clean.sh,safe_commit.sh,orient.sh,resume-heal.sh,relaunch-suite.sh,why.sh,lint_delta.py,
+chat_tail.py,replay_transcript_edits.py,patch_ouroboros.py}`. Batch B — `todo/BUILD-TASKLIST.md`
+(SSoT ledger + task-DB mirror rule), `docs/INCIDENT-LOG.md` (+ ANTI-PATTERN REGISTRY, `AF-AP-*`),
+`docs/OBSERVABILITY-RUNBOOK.md`, `.wiki-compiler.json`, `tests/test_claude_md_lint.py`. Batch C —
+`CLAUDE.md` rewritten onto the source repo's structure (skills are the AUTHORITATIVE expansions; the
+file is their operative index; trading-only sections dropped or kept in general form — see the
+commit message for the list). Batch D — `harness-ports/` (Codex CLI + Hermes Agent adapters, lane
+roles, PC-side spawn path), `.codex/`, `.agents/skills/` (synced from `.claude/skills`, 382),
+`scripts/pc_lane.sh`, `docs/HARNESS-PORTS.md`; `AGENTS.md`/`.hermes.md` are the Codex/Hermes ports
+of `CLAUDE.md` (the planning repo's original 15 agent rules moved into all three verbatim). Batch E —
+the first `wiki/` compile. Trading-only material NOT ported: `vectorbtpro` (MCP + skill), the
+flash-loan/MEV authorization context, GPU tenancy, keep-alive Routines (owner-optional here).
