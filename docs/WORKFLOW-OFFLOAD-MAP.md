@@ -78,7 +78,13 @@ CURATED skill subset — `harness-ports/lane-skills.txt` → `harness-ports/bin/
 `.agents/lane-skills/` (25 workflow skills, 520 KB; pre-commit gate keeps it in sync) — and the lane
 profile points `skills.external_dirs` there; (2) the profile carries a `fallback_providers` chain
 (`sol-xhigh` → `terra-ultra` → `gpt-5.5-xhigh`, all through OmniRoute, key via `OMNIROUTE_API_KEY` in
-the profile `.env`) so a busy route fails over instead of killing the lane.
+the profile `.env`) so a busy route fails over instead of killing the lane. (3) The lane profile disables the toolsets a lane never
+uses (`hermes tools disable browser vision image_gen tts memory session_search clarify delegation
+cronjob computer_use`): tool schemas 42 KB → 19 KB (21 → 13 tools), system prompt 47 KB. Round 3
+still died on the same 503 with the skills trimmed and the chain installed while a second lane
+(the Gemini probe, itself stuck on a rate-limited key pool) was open on the gateway; round 4 runs
+alone with all three trims — the outcome pins whether the 503 is request weight or gateway
+concurrency.
 
 ## 4. Probe plan for the routes (pins §2; nothing above is final until this table has rows)
 
@@ -89,10 +95,10 @@ followed, whether the known answer (file:line) was found, and any refusal/format
 
 | Candidate | Wall | Calls / tokens | Shape followed | Found the fact | Verdict |
 |---|---|---|---|---|---|
-| `codex/gpt-5.6-sol-ultra` (baseline) | — | — | — | — | not probed as researcher |
+| `codex/gpt-5.6-sol-ultra` (baseline) | 3m43s (trial build lane) | 16 calls | yes | yes (spike files) | WORKS for build lanes; two build rounds died on `HTTP 503 structurally heavy chat request capacity is busy` (gateway-side; 1-token probes 200 in 1.3-2 s) — see §3b |
 | `codex/gpt-5.6-terra-xhigh` | — | — | — | — | not probed |
-| `gemini/gemini-3.1-pro-preview` | — | — | — | — | not probed |
-| `gemini/gemini-3-flash-preview` | — | — | — | — | not probed |
+| `gemini/gemini-3.1-pro-preview` | 7m41s (all retries) | 0 completed | — | — | UNAVAILABLE 2026-09-03 09:00Z: `All credentials for model gemini-3.1-pro-preview are cooling down` (OmniRoute's Gemini key pool rate-limited); re-probe later |
+| `gemini/gemini-3-flash-preview` | — | — | — | — | not probed yet — the first attempt ran the role default instead (pc_lane.sh did not forward HERMES_MODEL over the bridge; fixed after round 4) |
 | `auto/best-free` | — | — | — | — | not probed |
 | `free-reasoning` | — | — | — | — | not probed |
 | `codex/codex-auto-review` | — | — | — | — | not probed |
