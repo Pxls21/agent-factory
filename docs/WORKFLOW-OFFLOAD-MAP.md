@@ -88,6 +88,10 @@ concurrency.
 
 ## 4. Probe plan for the routes (pins §2; nothing above is final until this table has rows)
 
+> Quirk (2026-09-03): the FIRST chat call on a route after idle sometimes returns HTTP 200 with an
+> EMPTY body (JSON parse fails); the immediate retry succeeds. Probe scripts retry once before
+> declaring a route dead; Hermes's own in-process retries already cover lanes.
+
 Probe = the same read-only brief per candidate (`harness-ports/briefs/code-search.md` with a fixed
 question that has a known answer in this tree), role researcher, `HERMES_MODEL=<candidate>`.
 Recorded per candidate: wall time, `usage.json` tokens and calls, whether the report shape was
@@ -97,12 +101,12 @@ followed, whether the known answer (file:line) was found, and any refusal/format
 |---|---|---|---|---|---|
 | `codex/gpt-5.6-sol-ultra` (baseline) | 3m43s (trial build lane); increment-#1 build round 4 landed the whole increment | 16 calls (trial) | yes | yes (spike files) | WORKS for build lanes; THREE lane runs died on `HTTP 503 structurally heavy chat request capacity is busy` (two build rounds, one repair round 2026-09-03 11:2xZ) while 24-token probes on `-sol-ultra` and `-sol-xhigh` answered 200 in 1.5-2.5 s the same minute — a weight-keyed, transient refusal; `pc-lane.sh` now retries the attempt on that exact signature (3×, doubling backoff from 60 s) — see §3b |
 | `codex/gpt-5.6-sol-xhigh` | — | — | — | — | 24-token probe 200 in 1.5 s (2026-09-03); the explicit step-down route (`HERMES_MODEL`) when `-ultra` keeps refusing; not yet measured on a lane |
-| `codex/gpt-5.6-terra-xhigh` | — | — | — | — | not probed |
-| `gemini/gemini-3.1-pro-preview` | 7m41s (all retries) | 0 completed | — | — | UNAVAILABLE 2026-09-03 09:00Z: `All credentials for model gemini-3.1-pro-preview are cooling down` (OmniRoute's Gemini key pool rate-limited); re-probe later |
-| `gemini/gemini-3-flash-preview` | — | — | — | — | not probed yet — the first attempt ran the role default instead (pc_lane.sh did not forward HERMES_MODEL over the bridge; fixed after round 4) |
-| `auto/best-free` | — | — | — | — | not probed |
-| `free-reasoning` | — | — | — | — | not probed |
-| `codex/codex-auto-review` | — | — | — | — | not probed |
+| `codex/gpt-5.6-terra-xhigh` | — | — | — | — | first lane measurement in flight (increment-#1 verify lane 2026-09-03 12:0xZ) |
+| `gemini/gemini-3.1-pro-preview` | 7m41s (all retries) | 0 completed | — | — | UNAVAILABLE 2026-09-03 09:00Z and still 429 `model_cooldown` at 11:06Z; re-probe later |
+| `gemini/gemini-3-flash-preview` | 2.2s (24-token probe) | 1 call | n/a (probe) | n/a | AVAILABLE 2026-09-03 11:06Z (200, served `gemini-3-flash-preview`); next: a real curator/researcher lane |
+| `auto/best-free` | 15.2s (24-token probe) | 1 call | n/a | n/a | AVAILABLE 2026-09-03 11:06Z — resolved to `gemini-3-flash-preview`; slower than naming flash directly |
+| `free-reasoning` | 8.7s to fail | 1 call | — | — | UNAVAILABLE 2026-09-03 11:06Z: 502, every upstream in the pool 403 |
+| `codex/codex-auto-review` | 1.6s (24-token probe) | 1 call | n/a | n/a | AVAILABLE 2026-09-03 11:06Z (200); candidate for echo-sweeper/reviewer lanes |
 
 ## 5. The coding-team blueprint (owner: "two birds, one stone")
 
