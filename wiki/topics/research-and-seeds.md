@@ -74,7 +74,7 @@ Seed: `seed_0933ed382f70`, self-validation 8/8.
 ## 7. Gotchas [coverage: high -- 5 sources]
 
 **NOT-built (first-class):**
-- The pipeline is complete (all artifacts committed); the BUILD has not started
+- The pipeline is complete (all artifacts committed); the BUILD is in progress (increment #1 closed 2026-09-03, #2 in progress)
 - No application code, no proof runner, no CI workflow exist yet
 
 **Council caveats:**

@@ -41,6 +41,9 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
+- **FROZEN 2026-09-03 (owner review):** no new increment work until the review-fixes lane lands —
+  real CI (`stage0-ci.yml`), fail-closed `sync-skills.sh`, hygienic hook-adapter test (task #26);
+  then the upstream-lock refresh (#27) and the vendored-kit packaging decision (#28, owner).
 - **Increment #2a LANDED (2026-09-03):** runner + probes + committed markers; the honest ledger on
   the PC now reads `S0-03 BLOCKED (credential_absent)`, `S0-08 EXPIRED` (runsc works there → the
   gate demands the proof run). D5 re-ruled: expiry is a state for integrity, a RED for the gate.
@@ -79,7 +82,7 @@ This wiki is a map, not the territory. The ledger (`todo/BUILD-TASKLIST.md`) win
 build-status or count disagreement.
 
 **NOT-built (first-class):**
-- No application code exists (STATUS.md: "Implementation: not started")
+- No application code for the spine exists (STATUS.md: Stage 0 machinery in progress)
 - Telemetry plane planned; sinks (OpenObserve 5080, Phoenix 6006) running on the PC but receive
   nothing from this project
 - Harness ports unit-proven in the sandbox only; NOT smoke-tested on the PC
@@ -87,7 +90,7 @@ build-status or count disagreement.
 - Wiki compiled from planning docs, not from code
 - Pre-commit now runs three gates (pyflakes delta, shell syntax, skill-sync); none of them is a
   test of the Stage 0 spine — that spine does not exist yet
-- Stage 0 proof pack: 0 of 18 increments complete (only spike #0 done)
+- Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
 

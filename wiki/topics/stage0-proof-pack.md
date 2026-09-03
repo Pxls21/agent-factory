@@ -12,7 +12,7 @@ Buzz-->ACP-->Hermes-->OmniRoute spine, memory composition, Fubuki seams, policy 
 and gVisor compatibility. Twelve proofs (S0-01 through S0-12) are decomposed into 18 build
 increments plus a Wave-0 spike set, sequenced by the council's wave-plan-v2.
 
-**Build status: NOT STARTED.** Spike #0 (pc-bridge liveness) is done; 0 of 18 increments
+**Build status: IN PROGRESS (frozen 2026-09-03 for review fixes).** Spike #0 (pc-bridge liveness) is done; increment #1 (registry + schemas + validator) CLOSED and #2a (runner + probe-backed markers) landed — 1 of 18 increments
 complete; the first pending is `s0-01-registry-schemas-validator`. The authoritative status lives
 in [todo/BUILD-TASKLIST.md](todo/BUILD-TASKLIST.md) -- this article defers to it.
 
@@ -93,7 +93,7 @@ Planned schemas (increment #1):
 ## 7. Gotchas [coverage: high -- 7 sources]
 
 **NOT-built (first-class):**
-- 0 of 18 increments complete (only spike #0 done)
+- 1 of 18 increments complete (#1; #2a landed, #2b pending), plus spike #0; the twelve proofs stay ABSENT by design until their increments run
 - No registry, no schemas, no validator, no runner, no ledger generator, no CI workflow
 - No spike completed except pc-bridge (#0)
 - No proof has been executed

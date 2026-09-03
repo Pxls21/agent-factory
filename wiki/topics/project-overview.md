@@ -19,7 +19,7 @@ authority until later gates pass.
 
 **No application code exists.** The repository contains reviewed architecture, integration
 contracts, security boundaries, the complete component audit, configuration examples, upstream
-pins, and the Stage 0 proof pack contract. The Stage 0 build has NOT started; the first pending
+pins, and the Stage 0 proof pack contract. The Stage 0 build is IN PROGRESS (increment #1 done, #2 in progress, frozen for review fixes on 2026-09-03); the first pending
 increment is `s0-01-registry-schemas-validator`.
 
 ## 2. Architecture [coverage: high -- 8 sources]
@@ -107,11 +107,11 @@ ordering by falsification power. Seven kill criteria KC-1..KC-7 gate the build.
 ## 7. Gotchas [coverage: high -- 10 sources]
 
 **NOT-built (first-class):**
-- No application code exists -- STATUS.md: "Implementation: not started"
+- No application code for the spine exists -- STATUS.md: Stage 0 MACHINERY in progress (registry, schemas, validator, proof runner, probe-backed markers)
 - No production container, Compose deployment, provider credentials, or live smoke test
 - No Hermes Fubuki extension, composite memory adapter, policy service, or evaluation runner
 - No JIT, GBrain worker, HarnessRouter integration, or PandaProbe deployment
-- The Stage 0 proof pack (0 of 18 increments complete; the only completed item is spike #0,
+- The Stage 0 proof pack (1 of 18 increments closed — #1; #2a landed; spike #0 done,
   `pc-bridge` liveness probe)
 - The wiki (this file) is compiled from planning docs, not from code
 
