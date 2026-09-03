@@ -25,6 +25,7 @@
 #   0   in sync (or copy succeeded with no prior drift)
 #   1   --check found drift (DRIFT, NEW, or STALE-BASE)
 #   64  usage / missing directory
+#   65  comm comparison failed (fail-closed — /dev/fd absent or comm error)
 set -uo pipefail
 
 die() { echo "sync-skills: $*" >&2; exit 64; }
@@ -102,13 +103,23 @@ dst_dirs() {
 SRC_LIST="$(src_dirs | sort)"
 DST_LIST="$(dst_dirs | sort)"
 
-new="$(comm -23 <(echo "$SRC_LIST") <(echo "$DST_LIST"))"
-stale="$(comm -13 <(echo "$SRC_LIST") <(echo "$DST_LIST"))"
+_SYNC_TMP_SRC="$(mktemp)" || die "cannot create temp file"
+_SYNC_TMP_DST="$(mktemp)" || die "cannot create temp file"
+trap 'rm -f "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST"' EXIT
+echo "$SRC_LIST" > "$_SYNC_TMP_SRC"
+echo "$DST_LIST" > "$_SYNC_TMP_DST"
+
+new="$(comm -23 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
+[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
+stale="$(comm -13 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
+[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
 
 drift=""
 intentional=""
 stale_base=""
-for name in $(comm -12 <(echo "$SRC_LIST") <(echo "$DST_LIST")); do
+_common="$(comm -12 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
+[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
+for name in $_common; do
   if ! diff -rq "$SRC/$name" "$DST/$name" >/dev/null 2>&1; then
     if [ -n "${HP_NAMES[$name]+x}" ]; then
       # Hand-ported skill — check whether .claude twin still matches recorded hash

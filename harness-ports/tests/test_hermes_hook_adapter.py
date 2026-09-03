@@ -10,6 +10,7 @@ below assert stdout is EMPTY and that the adapter said so on stderr.
 
 Run: python3 harness-ports/tests/test_hermes_hook_adapter.py
 """
+import atexit
 import json
 import os
 import subprocess
@@ -20,10 +21,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 AD = ROOT / "harness-ports" / "bin" / "hermes-hook-adapter.py"
 
+
+def _git_common_dir():
+    """Works in linked worktrees where .git is a file, not a directory."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            p = Path(result.stdout.strip())
+            if not p.is_absolute():
+                p = ROOT / p
+            return p.resolve()
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return ROOT / ".git"
+
+
+_GIT_DIR = _git_common_dir()
+
 # Fixtures adapted for agent-factory: the edit-snapshot hook checks
 # p.is_file() and the wiki-context hook checks WIKI.is_dir(), so the test
 # must supply real files. These are test fixtures, not project state.
-_FIXTURE_DIR = tempfile.mkdtemp(prefix="hp-test-")
+_FIXTURE_TD = tempfile.TemporaryDirectory(prefix="hp-test-")
+_FIXTURE_DIR = _FIXTURE_TD.name
 _FIXTURE_PY = os.path.join(_FIXTURE_DIR, "emitter.py")
 with open(_FIXTURE_PY, "w") as _f:
     _f.write("import os\n\ndef emit(x):\n    return x\n")
@@ -37,6 +59,31 @@ if not _LIVE_STATE.is_file():
     _WIKI_DIR.mkdir(parents=True, exist_ok=True)
     _LIVE_STATE.write_text("# Live state\n\nStatus: test fixture for harness-port tests.\n")
     _WIKI_CREATED = True
+
+
+def _ensure_retro_fires():
+    """The retro gate keys on .git/turn-retro-acked matching HEAD. Remove the
+    sentinel so the hook fires for this test, and restore it afterward. Without
+    this, a prior hook firing in the same session makes the test always pass
+    vacuously (exit 0, no output)."""
+    sent = _GIT_DIR / "turn-retro-acked"
+    saved = sent.read_bytes() if sent.is_file() else None
+    sent.unlink(missing_ok=True)
+    return sent, saved
+
+
+_RETRO_SENTINEL, _RETRO_SAVED = _ensure_retro_fires()
+
+
+def _restore_sentinel():
+    """Restore the sentinel to its pre-test state."""
+    if _RETRO_SAVED is not None:
+        _RETRO_SENTINEL.write_bytes(_RETRO_SAVED)
+    else:
+        _RETRO_SENTINEL.unlink(missing_ok=True)
+
+
+atexit.register(_restore_sentinel)
 
 
 def run(hook, event, payload):
@@ -76,18 +123,6 @@ PROMPT = {"hook_event_name": "pre_llm_call", "tool_name": None, "tool_input": No
           "session_id": "t", "cwd": str(ROOT),
           "extra": {"user_message": "check the GA gate pipeline", "is_first_turn": True}}
 
-def _ensure_retro_fires():
-    """The retro gate keys on .git/turn-retro-acked matching HEAD. Remove the
-    sentinel so the hook fires for this test, and restore it afterward. Without
-    this, a prior hook firing in the same session makes the test always pass
-    vacuously (exit 0, no output)."""
-    sent = ROOT / ".git" / "turn-retro-acked"
-    _saved = sent.read_text() if sent.is_file() else None
-    sent.unlink(missing_ok=True)
-    return _saved
-
-_RETRO_SAVED = _ensure_retro_fires()
-
 CASES = [
     ("pre_verify POSITIVE: retro gate's exit-2+stderr becomes a Hermes block",
      "turn-retro-gate.sh", "pre_verify",
@@ -106,10 +141,6 @@ CASES = [
      lambda o, e, r: o.strip() == "",
      "literal-token sweeps are legal — no block, no output"),
 
-    # Assertion adapted for agent-factory: the original checked for 6065 bytes
-    # of wiki content from trading-system's compiled wiki. Here we check the
-    # adapter wraps wiki-context.py output as {"context": ...} using a test
-    # fixture wiki. The premise is unchanged: the adapter must not drop output.
     ("pre_llm_call POSITIVE: wiki context is wrapped as {\"context\": ...}",
      "wiki-context.py", "pre_llm_call", PROMPT,
      lambda o, e, r: is_ctx(o) and "live-state" in json.loads(o)["context"],
@@ -140,9 +171,9 @@ def main() -> int:
             if not ok:
                 print(f"         rc={r}\n         stdout={o[:400]!r}\n         stderr={e[:400]!r}")
     finally:
+        _restore_sentinel()
         if _WIKI_CREATED:
             _LIVE_STATE.unlink(missing_ok=True)
-            # Remove empty dirs only if we created them
             try:
                 _WIKI_DIR.rmdir()
                 _WIKI_DIR.parent.rmdir()

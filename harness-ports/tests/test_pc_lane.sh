@@ -13,6 +13,10 @@
 # Runs entirely in a throwaway git repo under $TMPDIR. Touches nothing real.
 set -uo pipefail
 
+# Hermetic: clear env vars that a parent lane or caller might export, so the
+# suite's own values are never shadowed by the caller's environment.
+unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING 2>/dev/null || true
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANE="$HERE/../bin/pc-lane.sh"
 TMP="$(mktemp -d)"
@@ -233,6 +237,25 @@ grep -Fxq "low" "$HERMES_ARGS_FILE"; override_effort_rc=$?
 check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
   "$([ $override_model_rc -eq 0 ] && [ $override_effort_rc -eq 0 ] && echo 0 || echo 1)" \
   "a hard-wired role route would block measured per-lane experiments and emergency step-downs"
+
+# --- ROBUSTNESS CONTROL: the unset at the top is load-bearing ----------------
+# pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
+# Without the unset at the top of this test file, a suite run inside a lane
+# would collide every test lane onto the parent's id. Prove the leak exists:
+BRIEF_ROBUST="$TMP/tests/brief-robust.md"; { echo "PIN: $SHA"; echo; echo "robustness check"; } > "$BRIEF_ROBUST"
+export HERMES_ARGS_FILE="$TMP/hermes-args-robust"
+LANE_ID=leaked-parent HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust"
+check "ROBUSTNESS: inherited LANE_ID IS adopted (proves the unset is load-bearing)" \
+  "$([ -d "$REPO/.lanes/leaked-parent" ] && echo 0 || echo 1)" \
+  "pc-lane.sh uses inherited LANE_ID by design; the test's unset at the top prevents leakage"
+# Now prove the unset worked: run WITHOUT leaked env and confirm the brief-derived id
+HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust2"
+LD_ROBUST="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-robust' | head -1)"
+check "ROBUSTNESS: without inherited LANE_ID the lane derives its own from the brief" \
+  "$([ -n "$LD_ROBUST" ] && [ "$(basename "$LD_ROBUST")" != "leaked-parent" ] && [ -s "$LD_ROBUST/report.md" ] && echo 0 || echo 1)" \
+  "the unset at the top of this script cleared the leak; the lane's id is brief-derived"
 
 echo
 echo "$pass passed, $fail failed"

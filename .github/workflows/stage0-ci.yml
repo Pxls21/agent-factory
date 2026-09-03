@@ -1,0 +1,66 @@
+name: stage0-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4"
+      - name: Run tests
+        run: python -m pytest tests/ -q
+      - name: Lint scripts
+        run: python -m pyflakes scripts/validate-ledger scripts/proof-runner
+
+  harness-suites:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git for throwaway repos
+        run: |
+          git config --global user.email "ci@test"
+          git config --global user.name "CI"
+      - name: Run harness suites
+        run: bash harness-ports/tests/run-all.sh
+
+  ledger-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4"
+      - name: Validate ledger integrity
+        run: python scripts/validate-ledger integrity
+
+  stage1-gate:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4"
+      - name: Stage 1 gate
+        run: python scripts/validate-ledger stage1-gate | tee -a "$GITHUB_STEP_SUMMARY"
+
+  planning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify planning structure
+        run: ./scripts/verify-planning-repo.sh

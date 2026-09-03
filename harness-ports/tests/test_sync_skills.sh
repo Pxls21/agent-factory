@@ -174,6 +174,42 @@ rec_hash=$(grep 'hp-skill' "$REPO2/harness-ports/hand-ported.sha256" | cut -d' '
 check "--record refreshes base hash" "$rr" \
   "recorded hash must match current .claude twin after --record"
 
+# =============================================================================
+# FAIL-CLOSED NEGATIVE CONTROL: a broken comm must exit 65, never "in sync"
+# =============================================================================
+
+REPO3="$TMP/repo3"
+mkdir -p "$REPO3"
+git -C "$REPO3" init -q
+git -C "$REPO3" config user.email t@t; git -C "$REPO3" config user.name t
+echo x > "$REPO3/f.txt"; git -C "$REPO3" add -A; git -C "$REPO3" commit -qm base
+mkdir -p "$REPO3/.claude/skills/alpha"
+echo "a" > "$REPO3/.claude/skills/alpha/SKILL.md"
+mkdir -p "$REPO3/.agents/skills/alpha"
+echo "a" > "$REPO3/.agents/skills/alpha/SKILL.md"
+
+FAKE_COMM="$TMP/comm-stub"
+cat > "$FAKE_COMM" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 3
+STUBEOF
+chmod +x "$FAKE_COMM"
+FAKE_BIN="$TMP/fake-bin"
+mkdir -p "$FAKE_BIN"
+cp "$FAKE_COMM" "$FAKE_BIN/comm"
+
+export AF_REPO="$REPO3"
+out7="$(PATH="$FAKE_BIN:$PATH" bash "$SYNC" --check 2>&1)"; rc7=$?
+check "NEGATIVE CONTROL: broken comm → exit 65 (fail-closed)" \
+  "$([ $rc7 -eq 65 ] && echo 0 || echo 1)" \
+  "exit code 65 means comm failed and the script refused to guess (got rc=$rc7)"
+echo "$out7" | grep -q "comparison failed" && cf=0 || cf=1
+check "broken comm prints failure diagnostic" "$cf" \
+  "stderr must name the failure so the CI log explains the exit"
+echo "$out7" | grep -q "in sync" && is=1 || is=0
+check "broken comm does NOT print 'in sync'" "$is" \
+  "a false 'in sync' with a broken comparator is the failure this gate prevents"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
