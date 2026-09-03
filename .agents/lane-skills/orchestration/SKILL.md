@@ -32,6 +32,12 @@ subordinate to, the Anthropic docs.
    findings doc's false "no generic battery selector exists" was adopted unverified → a
    delegate built a colliding duplicate of the live GA_OBJECTIVES seam whose own gate files
    were in the session's known-failing list the whole time.
+0a. **Every path a brief names carries CREATE / MODIFY / READ (2026-09-03, agent-factory).** A
+   deliverable written as "`proofs/<id>/spec.json` (schema `proofs/schemas/spec.schema.json`: …)"
+   read as "that schema exists"; the lane's premise check found no such file and halted (correctly,
+   AP-43 shape) — one dispatch round for a missing tag. New schemas/contracts a lane must create
+   are given IN FULL in the brief ("copy, do not redesign"); a lane never invents an authoritative
+   shape.
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
    adopts a metric/threshold formula from findings prose, check its grain and units against a
    KNOWN MEASURED instance of the same quantity; where prose and prior measured values imply

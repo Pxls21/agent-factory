@@ -1,6 +1,13 @@
 # BRIEF — increment #2 `s0-02-runner-ledger-ci`: proof runner + ledger generator + CI split checks + probe-backed blocked markers
 PIN: (set at dispatch — scripts/pc_lane.sh refuses to run without a full SHA here)
 
+> **AMENDED 2026-09-03 after lane round 1 halted (correctly) on a brief premise:** the first
+> version named `proofs/schemas/spec.schema.json` as if it already existed. It does NOT — it is a
+> NEW deliverable of this increment, as are `proofs/schemas/probe.schema.json`, the two probe specs,
+> the two markers, the ledger pair and `proofs/normalization.yaml`. Every path below now carries
+> a CREATE / MODIFY / READ tag, and §"Authoritative shapes" gives the two new schemas in full so
+> nothing has to be invented. Nothing else changed.
+
 You are the BUILD lane (Hermes on the PC, role code-implementer). The coordinator keeps the seed
 and the contract below; you implement, test, commit in your worktree, and report DATA. An
 adversarial verifier grades against the CONTRACT, never against your own tests. `.hermes.md`
@@ -13,7 +20,7 @@ carries the project rules. honey: ultra.
 2. `seeds/seed-stage0-v1.yaml` — `constraints`, `ontology_schema` (blocked_marker,
    ledger_denominator, fixture_format), the S0-03 and S0-08 blocks (`blocked_marker.probe`,
    `reason_enum`, `rule`, `unblock_condition`), the S0-01 block's "normalized-then-golden" rule.
-3. Increment #1 as landed: `proofs/registry.yaml`, `proofs/schemas/*.json`,
+3. Increment #1 as landed (READ): `proofs/registry.yaml`, the THREE existing schemas `proofs/schemas/{result,blocked,spike}.schema.json`,
    `scripts/validate-ledger` (its `--ledger` input shape is `{"proofs": [{"proof_id", "state"}]}`;
    its digest = sha256 over `json.dumps(runs, sort_keys=True, separators=(",", ":"))`; it exits
    3 without the date-time checker), `tests/test_validate_ledger.py` (the style every new test
@@ -62,20 +69,65 @@ D6 **`stage1-gate` is RED by design and must not block.** Its CI job runs with
    and `tests` are ordinary (blocking) jobs. Rejected: one job doing both (an empty repo would
    read as passing).
 
-## Deliverables (boundary — touch ONLY these paths; report anything else, never fix it)
-- `scripts/proof-runner` — `run --proof <id> --venue sandbox|pc-bridge --root <dir>` executes
-  the legs in `proofs/<id>/spec.json` (schema `proofs/schemas/spec.schema.json`: per leg `leg`,
+## Authoritative shapes (the coordinator's contract for the two NEW schemas — copy, do not redesign)
+`proofs/schemas/spec.schema.json` (draft 2020-12, `additionalProperties: false` at every level):
+```json
+{"type":"object","required":["proof_id","legs"],
+ "properties":{
+  "proof_id":{"type":"string","pattern":"^S0-(0[1-9]|1[0-2])$"},
+  "legs":{"type":"array","minItems":2,"items":{"type":"object","required":["leg","cmd","cwd","timeout_s","expect"],
+    "properties":{
+      "leg":{"enum":["positive","negative"]},
+      "cmd":{"type":"array","minItems":1,"items":{"type":"string"}},
+      "cwd":{"type":"string","pattern":"^(?!/)(?!.*(^|/)\\.\\.(/|$)).*$"},
+      "timeout_s":{"type":"integer","minimum":1,"maximum":3600},
+      "env":{"type":"object","additionalProperties":{"type":"string"}},
+      "expect":{"type":"object","required":["exit_code"],
+        "properties":{"exit_code":{"type":"integer"},"failure_reason":{"type":"string","minLength":1}}}},
+    "if":{"properties":{"leg":{"const":"negative"}}},
+    "then":{"properties":{"expect":{"required":["exit_code","failure_reason"]}}}},
+    "contains":{"properties":{"leg":{"const":"positive"}}},"minContains":1,
+    "allOf":[{"contains":{"properties":{"leg":{"const":"negative"}}},"minContains":1}]}}}
+```
+(No `classification` property anywhere — C5 rejects it as an additional property.)
+`proofs/schemas/probe.schema.json` (same conventions):
+```json
+{"type":"object","required":["proof_id","probe_cmd","timeout_s","reason_map"],
+ "properties":{
+  "proof_id":{"type":"string","pattern":"^S0-(0[1-9]|1[0-2])$"},
+  "probe_cmd":{"type":"array","minItems":1,"items":{"type":"string"}},
+  "timeout_s":{"type":"integer","minimum":1,"maximum":600},
+  "env":{"type":"object","additionalProperties":{"type":"string"}},
+  "key_env":{"type":"string","pattern":"^[A-Z][A-Z0-9_]*$"},
+  "reason_map":{"type":"object","minProperties":1,"propertyNames":{"pattern":"^[1-9][0-9]*$"},
+     "additionalProperties":{"enum":["credential_absent","credential_rejected","capability_absent","capability_present_but_failing"]}}}}
+```
+Probe semantics (D5): exit 0 ⇒ the blocker is present and working ⇒ `blocker_status: expired`; an
+exit code listed in `reason_map` ⇒ its reason, with `*_absent` ⇒ `blocker_status: absent` and
+`credential_rejected` / `capability_present_but_failing` ⇒ `blocker_status: rejecting`; any other
+exit code or a timeout ⇒ the probe is INVALID (`probe-invalid: <id> exit <n>`, exit 1, no marker
+written). `key_env` is the ONLY secret channel: the runner reads that one variable from its own
+process environment by the declared name and passes it to the probe; unset ⇒ the probe runs
+without it (the S0-03 probe then exits with its `credential_absent` code). `blocked.schema.json`
+gets the minimal MODIFY: `blocker_status` enum + `expired`, and an optional `marker.reason` (the
+four reasons above).
+
+## Deliverables (boundary — touch ONLY these paths, each tagged CREATE / MODIFY / READ; report anything else, never fix it)
+- CREATE `scripts/proof-runner` — `run --proof <id> --venue sandbox|pc-bridge --root <dir>` executes
+  the legs in `proofs/<id>/spec.json` (CREATE the schema `proofs/schemas/spec.schema.json` per
+  §Authoritative shapes; per leg `leg`,
   `cmd` argv, `cwd` relative to root, `timeout_s`, `env` map, `expect.exit_code`, and for the
   negative leg `expect.failure_reason`), records `started_at`/`finished_at` (UTC, `Z`), exit code,
   sha256 of stdout and stderr, optional artifacts, computes the digest per D3, sets
   `negative_control.observed_failure_reason` to the FIRST stdout/stderr line containing the
   expected reason (no match ⇒ the run is INVALID: exit 1 with `negative-control-unmet: <id>`,
   and NO `result.json` is written), writes `proofs/<id>/result.json` valid against
-  `result.schema.json`. `probe --proof <id> --venue …` runs `proofs/<id>/probe.json`
+  `result.schema.json` (READ). `probe --proof <id> --venue …` runs `proofs/<id>/probe.json` (CREATE
+  `proofs/schemas/probe.schema.json` per §Authoritative shapes)
   (`probe_cmd`, `timeout_s`, `env`, optional `key_env`, `reason_map` from exit classes to the
   seed's `reason_enum`) and writes `proofs/<id>/blocked.json` (D4, D5). Timeouts kill the
   process group and record exit `-9`/timeout as a leg failure, never a hang.
-- `scripts/ledger-gen` — `generate --venue … --root …` (D2) and `--check` (CI). Writes
+- CREATE `scripts/ledger-gen` — `generate --venue … --root …` (D2) and `--check` (CI). Writes
   `proofs/ledger.json` (`proofs: [{proof_id, classification, state}]`, per-class
   `numerator`/`denominator` read from the registry, `markers: [{proof_id, blocker_status,
   probed_at, probe_venue}]` copied from the artifacts) and `proofs/LEDGER.md` (a four-way table:
@@ -83,27 +135,30 @@ D6 **`stage1-gate` is RED by design and must not block.** Its CI job runs with
   with the exact counts and per-proof rows; the string `N/12` for any N must not appear — the
   seed's own check greps for it). Deterministic: no wall-clock field of its own; two runs on any
   host produce identical bytes.
-- `proofs/normalization.yaml` + `scripts/normalize` — the declared minimal volatile-field table
+- CREATE `proofs/normalization.yaml` + CREATE `scripts/normalize` — the declared minimal volatile-field table
   (name, regex, replacement; at least: RFC3339 timestamps, pids, durations, session/thread ids,
   absolute temp paths, hostnames) applied line-wise; the table is CLOSED: a golden compare fails
   with `undeclared-volatile-field: <line>` when two runs differ on a line no rule normalizes.
   `normalize <file>` prints the normalized text; idempotent (normalizing twice = once).
-- `proofs/S0-03/probe.json`, `proofs/S0-08/probe.json` and the markers they produce ON THIS
+- CREATE `proofs/S0-03/probe.json`, `proofs/S0-08/probe.json` and (CREATE, generated) the markers
+  `proofs/S0-03/blocked.json`, `proofs/S0-08/blocked.json` they produce ON THIS
   VENUE via `ledger-gen generate --venue pc-bridge` (S0-08: `command -v runsc` then a trivial
   runsc invocation per the seed; S0-03: presence of the `key_env` secret, then one authenticated
   no-op against OmniRoute at `http://127.0.0.1:20128/v1` — `GET /v1/models` with the bearer —
   recorded as accepted/rejected; NEVER print, hash or store the secret). Whatever the probes
   find is the recorded truth (expired deferrals are the expected honest outcome on the PC).
-- `.github/workflows/stage0-ledger.yml` — jobs `tests` (pip-pinned deps exactly as
+- CREATE `.github/workflows/stage0-ledger.yml` — jobs `tests` (pip-pinned deps exactly as
   `scripts/setup.sh`; `python -m pytest tests/ -q`), `ledger-integrity` (`ledger-gen --check`,
   then `validate-ledger integrity --ledger proofs/ledger.json`), `stage1-gate` (D6).
   `permissions: contents: read`; triggers: push (all branches) and pull_request.
-- Tests: `tests/test_proof_runner.py`, `tests/test_ledger_gen.py`, `tests/test_normalization.py`,
+- CREATE tests: `tests/test_proof_runner.py`, `tests/test_ledger_gen.py`, `tests/test_normalization.py`,
   `tests/test_stage0_workflow.py` (the YAML parses, the three jobs exist, `stage1-gate` carries
   `continue-on-error: true`, the pip pins equal setup.sh's). Fixtures are throwaway specs under
   tmp_path whose legs are real subprocesses (`python3 -c …`); the repo never gains a proof
   artifact except the two markers and the generated ledger.
-- `scripts/setup.sh` / `harness-ports/bin/pc-setup.sh` only if a new pinned dependency is
+- MODIFY `proofs/schemas/blocked.schema.json` (D5, minimal) and `scripts/validate-ledger` (D5:
+  `deferral-expired: <id>` finding; accept `expired`; nothing else). MODIFY
+  `scripts/setup.sh` / `harness-ports/bin/pc-setup.sh` only if a new pinned dependency is
   unavoidable (state why; PyYAML is NOT declared today — `normalization.yaml` may be JSON-syntax
   YAML like the registry, or you pin `PyYAML==6.0.2` in both setup scripts and the workflow).
 
