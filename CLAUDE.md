@@ -556,7 +556,7 @@ find-and-replace (use `rename` — call-graph aware) · commit without `detect_c
 **Resources** — `gitnexus://repo/agent-factory/context` (codebase overview, index freshness) ·
 `…/clusters` (functional areas) · `…/processes` (execution flows) · `…/process/{name}`
 (step-by-step trace).
-**CLI skills**, if vendored (`.claude/skills/gitnexus/gitnexus-<name>/SKILL.md`): `exploring` —
+**CLI skills**, if vendored (`.claude/skills/gitnexus-<name>/SKILL.md`): `exploring` —
 architecture / "how does X work?" · `impact-analysis` — blast radius / "what breaks if I change
 X?" · `debugging` — trace bugs / "why is X failing?" · `refactoring` — rename/extract/split ·
 `guide` — tools, resources, schema · `cli` — index, status, clean, wiki commands.
@@ -564,7 +564,7 @@ X?" · `debugging` — trace bugs / "why is X failing?" · `refactoring` — ren
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **agent-factory** (15675 symbols, 35143 relationships, 785 execution flows).
+This project is indexed by GitNexus as **agent-factory** (15749 symbols, 35231 relationships, 784 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
@@ -604,5 +604,25 @@ This project is indexed by GitNexus as **agent-factory** (15675 symbols, 35143 r
 | Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
+| Work in the Tests area (865 symbols) | `.claude/skills/gitnexus-area-tests/SKILL.md` |
+| Work in the Pipeline area (762 symbols) | `.claude/skills/gitnexus-area-pipeline/SKILL.md` |
+| Work in the Mcp area (422 symbols) | `.claude/skills/gitnexus-area-mcp/SKILL.md` |
+| Work in the Repl area (364 symbols) | `.claude/skills/gitnexus-area-repl/SKILL.md` |
+| Work in the Cypher area (177 symbols) | `.claude/skills/gitnexus-area-cypher/SKILL.md` |
+| Work in the Store area (165 symbols) | `.claude/skills/gitnexus-area-store/SKILL.md` |
+| Work in the Foundation area (156 symbols) | `.claude/skills/gitnexus-area-foundation/SKILL.md` |
+| Work in the Cli area (147 symbols) | `.claude/skills/gitnexus-area-cli/SKILL.md` |
+| Work in the Aleph area (143 symbols) | `.claude/skills/gitnexus-area-aleph/SKILL.md` |
+| Work in the Ui area (108 symbols) | `.claude/skills/gitnexus-area-ui/SKILL.md` |
+| Work in the Discover area (93 symbols) | `.claude/skills/gitnexus-area-discover/SKILL.md` |
+| Work in the Semantic area (85 symbols) | `.claude/skills/gitnexus-area-semantic/SKILL.md` |
+| Work in the Components area (76 symbols) | `.claude/skills/gitnexus-area-components/SKILL.md` |
+| Work in the Scripts area (72 symbols) | `.claude/skills/gitnexus-area-scripts/SKILL.md` |
+| Work in the Eso area (64 symbols) | `.claude/skills/gitnexus-area-eso/SKILL.md` |
+| Work in the Repro area (54 symbols) | `.claude/skills/gitnexus-area-repro/SKILL.md` |
+| Work in the Integrations area (41 symbols) | `.claude/skills/gitnexus-area-integrations/SKILL.md` |
+| Work in the Watcher area (36 symbols) | `.claude/skills/gitnexus-area-watcher/SKILL.md` |
+| Work in the Providers area (35 symbols) | `.claude/skills/gitnexus-area-providers/SKILL.md` |
+| Work in the Sub_query area (27 symbols) | `.claude/skills/gitnexus-area-sub-query/SKILL.md` |
 
 <!-- gitnexus:end -->
