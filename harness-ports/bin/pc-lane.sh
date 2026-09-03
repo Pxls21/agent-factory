@@ -18,8 +18,10 @@
 #   CODEX_BIN      codex binary          default: codex (from PATH)
 #   HERMES_BIN     hermes binary         default: hermes (from PATH)
 #   HERMES_PROFILE lane profile          default: agentfactory (dedicated; never the owner default)
-#   HERMES_MODEL   OmniRoute route id    default: codex/gpt-5.6-sol-ultra (owner ruling 2026-09-03)
-#   HERMES_REASONING  Hermes effort      default: ultra
+#   HERMES_MODEL   OmniRoute route id    default: by ROLE (see role_model below); owner ruling
+#                  2026-09-03: BUILD = codex/gpt-5.6-sol-ultra; cheaper routes for consistent
+#                  low-judgment roles; Gemini for search/research. PROVISIONAL until probed.
+#   HERMES_REASONING  Hermes effort      default: by ROLE (ultra for build/verify, high otherwise)
 #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
 #   LANE_ID        override the lane id  default: derived from the brief
 #   PC_LANE_FAKE_HARNESS
@@ -229,13 +231,36 @@ else
   # (agent/runtime_cwd.py: terminal.cwd is bridged to TERMINAL_CWD; agent_init.py reads it).
   # --in moves the PROCESS cwd only — a diagnostic lane still started its shell in $HOME
   # (2026-09-03, 7th run). Pin the tool's cwd explicitly.
+  # ROLE -> route defaults (owner 2026-09-03: offload every consistent low-judgment step to
+  # the cheapest route that does it reliably; PROVISIONAL until the probe table in
+  # docs/WORKFLOW-OFFLOAD-MAP.md pins them). Explicit HERMES_MODEL/HERMES_REASONING win.
+  case "${ROLE:-}" in
+    code-implementer)     DEF_MODEL="codex/gpt-5.6-sol-ultra";   DEF_EFFORT="ultra";;
+    adversarial-verifier) DEF_MODEL="codex/gpt-5.6-terra-xhigh"; DEF_EFFORT="xhigh";;
+    evidence-gatherer|researcher) DEF_MODEL="gemini/gemini-3.1-pro-preview"; DEF_EFFORT="high";;
+    curator|echo-sweeper) DEF_MODEL="gemini/gemini-3-flash-preview"; DEF_EFFORT="medium";;
+    *)                    DEF_MODEL="codex/gpt-5.6-sol-ultra";   DEF_EFFORT="ultra";;
+  esac
   TERMINAL_CWD="$TREE" \
   "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_FILE")" \
-      -m "${HERMES_MODEL:-codex/gpt-5.6-sol-ultra}" \
-      --reasoning "${HERMES_REASONING:-ultra}" \
+      -m "${HERMES_MODEL:-$DEF_MODEL}" \
+      --reasoning "${HERMES_REASONING:-$DEF_EFFORT}" \
       --accept-hooks \
       --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG"
   rc=$?
+fi
+
+# LANE TRANSCRIPT HOME (owner 2026-09-03): export the Hermes session (scrubbed) INTO the worktree
+# so it travels with the patch; the curator lane reads transcripts/pc/*.md later.
+if [ "$HARNESS" = "hermes" ] && [ -s "$LANE_DIR/usage.json" ]; then
+  SID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('session_id',''))" "$LANE_DIR/usage.json" 2>/dev/null)"
+  HDB="${HERMES_STATE_DB:-$HOME/.hermes/profiles/${HERMES_PROFILE:-agentfactory}/state.db}"
+  if [ -n "$SID" ] && [ -f "$HDB" ]; then
+    python3 "$AF_REPO/harness-ports/bin/hermes-session-export.py" --db "$HDB" --session "$SID" \
+      --out "$TREE/transcripts/pc/$LANE_ID.md" >/dev/null 2>>"$LOG" \
+      && { printf '\n---\nusage.json:\n\n```json\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; cat "$LANE_DIR/usage.json" >> "$TREE/transcripts/pc/$LANE_ID.md"; printf '\n```\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; echo "pc-lane: transcript -> transcripts/pc/$LANE_ID.md (in the lane tree)" >&2; } \
+      || echo "pc-lane: session export FAILED (see lane.log) — report still stands" >&2
+  fi
 fi
 
 if [ ! -s "$REPORT" ]; then

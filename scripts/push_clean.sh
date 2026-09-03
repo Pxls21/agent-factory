@@ -46,3 +46,20 @@ LEFT=$(git log "$RANGE" --format='%B' | grep -c 'Co-Authored-By: Claude\|Claude-
 SHA=$(git rev-parse HEAD)
 echo "== pushing $SHA =="
 git push -u origin "$SHA:refs/heads/$BRANCH"
+
+# TRANSCRIPT SYNC (owner ask 2026-09-03): after every successful push, refresh the scrubbed daily
+# chat digests under transcripts/sandbox/ and push them as their own ledger-plane commit (no
+# trailers, exempt from the wiki-stale marker). Never blocks the push above; a failed export is
+# reported and skipped. Set TRANSCRIPT_SYNC=0 to skip (e.g. while a gate of record is running).
+if [ "${TRANSCRIPT_SYNC:-1}" = "1" ] && [ -f scripts/transcript_export.py ]; then
+  if python3 scripts/transcript_export.py --out transcripts/sandbox >/dev/null 2>&1 \
+     && [ -n "$(git status --porcelain -- transcripts/sandbox)" ]; then
+    git add -- transcripts/sandbox \
+      && git commit -q -m "transcripts: scrubbed sandbox chat digests ($(date -u +%F))" -- transcripts/sandbox \
+      && git push -q origin "$(git rev-parse HEAD):refs/heads/$BRANCH" \
+      && echo "== transcripts synced: $(git rev-parse --short HEAD) ==" \
+      || echo "transcript sync: commit/push failed — code push above already succeeded" >&2
+  else
+    echo "transcript sync: nothing new (or export unavailable)"
+  fi
+fi

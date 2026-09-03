@@ -28,7 +28,7 @@ elif echo "$CHANGED" | grep -qv '^wiki/'; then
   # WHERE lessons get baked same-increment; demanding a wiki delta per bake
   # recreates the nag loop the ledger-plane exemption killed.
   if [ -z "$(echo "$CHANGED" | grep -v '^AGENTS\.md$' | grep -v '^CLAUDE\.md$' \
-        | grep -v '^docs/INCIDENT-LOG\.md$' | grep -v '^\.agents/research/' \
+        | grep -v '^docs/INCIDENT-LOG\.md$' | grep -v '^\.agents/research/' | grep -v '^transcripts/' \
         | grep -v '^sandbox-kit/[^/]*\.md$' | grep -v '^\.claude/skills/')" ] \
      && [ -z "$(git diff-tree -p --no-commit-id HEAD -- AGENTS.md CLAUDE.md \
            | grep '^[+-]' | grep -v '^[+-][+-]' | grep -v 'indexed by GitNexus')" ]; then
