@@ -25,6 +25,8 @@
 ## 0. STATUS (updated 2026-09-03)
 
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
+Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
+scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
 Build: **NOT STARTED** — first pending increment is `s0-01-registry-schemas-validator`.
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
@@ -52,9 +54,13 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | s0-16-s0-05-full-egress | #16 S0-05 full canary suite over live units | pending | s0-06, s0-07, s0-14 | every unit's canary FAILS after its positive control; gate-off → RED |
 | s0-17-s0-08-gvisor | #17 S0-08 containment spec + fixtures; live run on the PC after the runsc spike | pending | s0-02, s0-05 | marker re-probed every CI run; grep-gate fails on missing marker |
 | s0-18-s0-11-eval-hardening | #18 S0-11 runner design + rubric isolation | pending | s0-02 | unprivileged/no-cred/no-net rubric; zero chmod-777/host-net hits |
-| port-trading-system-setup | tooling: port the trading-system setup wholesale (hooks, ops scripts, ledgers, CLAUDE.md, harness-ports, wiki) | in_progress 2026-09-03 | — | hooks active; lint test green; harness-ports tests pass; wiki compiled |
+| port-trading-system-setup | tooling: port the trading-system setup wholesale (hooks, ops scripts, ledgers, CLAUDE.md, harness-ports, wiki) | done 2026-09-03 (batch E commit) | — | hooks active ✓; lint test green ✓; harness-ports tests 58/58 ✓; wiki compiled ✓ (PC smoke NOT run — owner) |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-03 sync (batch E, port CLOSED):** first wiki compile landed (`wiki/`: 12 topics, 3 concepts,
+INDEX/CONTEXT/schema/log, `topics/live-state.md` continuity snapshot; link check clean; no flat N/12).
+`port-trading-system-setup` → done. Task DB #23 mirrored. Next: `s0-01-registry-schemas-validator`.
 
 **2026-09-03 sync (ports):** `AGENTS.md` (Codex CLI port, 26.0 KB < 32 KiB budget) and `.hermes.md` (Hermes
 port) written by a delegate from the new CLAUDE.md, coordinator-reviewed: 15 standing rules hash-identical

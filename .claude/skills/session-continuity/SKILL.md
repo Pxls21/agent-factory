@@ -200,3 +200,12 @@ origin state, task state, or owner statements contradict what you remember:
   "79-green x2" recovered diff. Recovery restores bytes, not trust; the full verify
   gate still runs. Upstream prevention: delegates on rollback-prone containers push a
   work branch when green (orchestration lane rule).
+
+- **OWNER TERMS OF ART RESOLVE IN THE OWNER'S SOURCE REPO BEFORE THEY ARE INTERPRETED (2026-09-03,
+  agent-factory port).** "The quartet" was answered as the git-hook trio; it was the four code-intel
+  tools — a section TITLE in the source repo's CLAUDE.md. Same message, second misread: a model server
+  seen running on the PC was assumed to be a dependency when the owner's egress was the gateway in front
+  of it. Rule: when the owner names something you cannot place, `grep -rn -i '<term>'` the repo they
+  built with (its CLAUDE.md, ledgers, runbooks) and their live-asset runbooks BEFORE answering; the
+  source repo is a primary source for vocabulary, not only for code. Answering from the nearest
+  familiar meaning costs a correction round every time.
