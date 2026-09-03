@@ -33,6 +33,11 @@ mkdir -p "$REPO/harness-ports/roles"
 cat > "$REPO/harness-ports/roles/code-implementer.md" <<'EOF'
 ROLE-MARKER: this is the code-implementer role body.
 EOF
+for test_role in adversarial-verifier researcher curator contract-runner; do
+  cat > "$REPO/harness-ports/roles/$test_role.md" <<EOF
+ROLE-MARKER: this is the $test_role role body.
+EOF
+done
 echo hello > "$REPO/file.txt"
 git -C "$REPO" add -A >/dev/null
 git -C "$REPO" commit -qm base
@@ -185,6 +190,47 @@ grep -q "INCREMENTAL REPORT" "$LD10/prompt.md"; check "the standing incremental-
 check "NEGATIVE CONTROL: a lane with a real final report keeps it (no draft promotion)" \
   "$(grep -q "^FAKE-HARNESS-REPORT" "$LD/report.md" && ! grep -q "^DRAFT REPORT" "$LD/report.md" && echo 0 || echo 1)" \
   "the fallback must key on an EMPTY report, never overwrite a delivered one"
+
+# --- Hermes role defaults select the live OmniRoute combos -----------------
+# (ported 2026-09-03 from the owner's Codex edit of the PC checkout — same mapping, kept its test)
+FAKE_HERMES="$TMP/fake-hermes.sh"
+unset PC_LANE_FAKE_HARNESS FLAKY_COUNT_FILE
+cat > "$FAKE_HERMES" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. Captures Hermes argv so route/effort selection can be asserted.
+printf '%s\n' "$@" > "${HERMES_ARGS_FILE:?}"
+echo "FAKE-HERMES-REPORT"
+EOF
+chmod +x "$FAKE_HERMES"
+
+assert_role_route() { # role expected-model expected-effort
+  role="$1" expected_model="$2" expected_effort="$3"
+  export HERMES_ARGS_FILE="$TMP/hermes-args-$role"
+  LANE_ID="route-$role" HERMES_BIN="$FAKE_HERMES" \
+    bash "$LANE" "$BRIEF" hermes "$role" >/dev/null 2>"$TMP/route-$role.err"
+  awk -v m="$expected_model" -v e="$expected_effort" '
+    prev=="-m" && $0==m { found_model=1 }
+    prev=="--reasoning" && $0==e { found_effort=1 }
+    { prev=$0 }
+    END { exit !(found_model && found_effort) }
+  ' "$HERMES_ARGS_FILE"
+  check "$role selects $expected_model at $expected_effort" $? \
+    "role intent is stable while OmniRoute owns paid-first/free-last failover"
+}
+assert_role_route code-implementer agentfactory-build ultra
+assert_role_route adversarial-verifier agentfactory-verify xhigh
+assert_role_route researcher agentfactory-research high
+assert_role_route curator agentfactory-sweep medium
+assert_role_route contract-runner agentfactory-sweep medium
+
+export HERMES_ARGS_FILE="$TMP/hermes-args-override"
+LANE_ID="route-override" HERMES_MODEL="manual/override" HERMES_REASONING="low" HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/route-override.err"
+grep -Fxq "manual/override" "$HERMES_ARGS_FILE"; override_model_rc=$?
+grep -Fxq "low" "$HERMES_ARGS_FILE"; override_effort_rc=$?
+check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
+  "$([ $override_model_rc -eq 0 ] && [ $override_effort_rc -eq 0 ] && echo 0 || echo 1)" \
+  "a hard-wired role route would block measured per-lane experiments and emergency step-downs"
 
 echo
 echo "$pass passed, $fail failed"
