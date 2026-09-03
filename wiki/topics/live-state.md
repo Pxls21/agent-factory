@@ -29,6 +29,8 @@ last_compiled: 2026-09-03
 None.
 
 ## Pending owner decisions
+- **BUILD lane = Hermes on the PC (owner ruling 2026-09-03):** bring-up in progress (clone, venv,
+  config merge, trial lane); the OmniRoute model id for the lane is being resolved from `/v1/models`.
 - **Build-direction review** (`tasks/stage0-build-direction.md`, 2026-09-03): the owner asked for
   the direction summary before increment #1; building waits for their notes or "go ahead".
 

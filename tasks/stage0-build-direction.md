@@ -75,9 +75,15 @@ gVisor compatibility.** Stage 1 features are out of scope for this whole plan.
   negative control failing for the exact expected reason; deterministic runs twice, bitwise;
   mutation audit on every gate; `/bug-echo` on every real defect; the ledger and task DB updated
   in the same increment; four-way status lines only.
-- Delegation: build lanes go to `code-implementer` with a brief-as-file and disjoint boundaries
-  (one `proofs/<id>/` tree per lane); verify lanes to Opus 5; root cause, design and the final
-  verdict stay in the main loop; commit + push before every dispatch.
+- Delegation (owner ruling 2026-09-03): build lanes run on the owner's HERMES CLI on the PC
+  through OmniRoute (the owner's OpenAI model, highest reasoning), dispatched with
+  `scripts/pc_lane.sh <brief> hermes code-implementer` — brief-as-file, disjoint boundaries (one
+  `proofs/<id>/` tree per lane), the lane never pushes (git shim). The lane runs the build loop
+  and its own contract-gate pass and returns a DATA report; the coordinator grades it, runs the
+  final validation in the sandbox (and Opus 5 adversarial verify where a wrong green is
+  expensive), then commits and pushes. Opus 4.6 `code-implementer` is the sandbox fallback.
+  Root cause, design and the final verdict stay in the main loop; commit + push before every
+  dispatch.
 - Venue: the sandbox for code, specs, fixtures and unit gates; the PC via `scripts/pc.sh` for
   anything live, container, Rust or model-bound. A proof that cannot run where it is gets spec +
   fixture + an explicit `NOT run here: <reason>` marker — never a fake green.
@@ -109,7 +115,10 @@ services without the owner; no claim of "runnable" before the executable accepta
 
 ## 6. First moves after "go ahead"
 
-1. #1 registry/schemas/validator (sandbox) → 2. #2 runner/ledger/CI (sandbox) → 3. PC prep over
-the bridge → Wave 0 spikes #3 / #5 / #6 in parallel, each recorded either way → 4. Wave 1 lanes.
+0. PC lane bring-up (now the first move): clone the repo on the PC, venv + quartet tools, merge the
+Hermes config snippet (skills dir, MCP servers, hooks), one trial lane on a throwaway brief to prove
+the round trip (brief → `hermes -z` → report → sandbox review) before any real increment rides it.
+1. #1 registry/schemas/validator (first Hermes lane) → 2. #2 runner/ledger/CI → 3. Wave 0 spikes
+#3 / #5 / #6 in parallel on the PC, each recorded either way → 4. Wave 1 lanes.
 Expected shape: Waves F and 0 in the next working session, Wave 1 after that, Wave 2 once the
 spikes have classified S0-06 and S0-08.

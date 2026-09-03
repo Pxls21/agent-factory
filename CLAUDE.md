@@ -64,17 +64,24 @@ artifacts.
 
 Model routing — cheapest tier that cannot mint an expensive wrong green; honey mode per role:
 
-**STAGE ROUTING (owner ruling 2026-07-28, inherited with the setup): plan/orchestrate = Fable
-(the main loop) · every EXPLORE/VERIFY lane = Opus 5 · every BUILD lane = Opus 4.6 ("throw the
-problem and disappear") · Sonnet 4.6 over Sonnet 5 on the rare sonnet dispatch.** Opus 5
-analyzes superbly but keeps making errors when left to build-and-fix alone; Opus 4.6 executes
-reliably once pointed; Fable points them.
+**STAGE ROUTING (owner ruling 2026-07-28, inherited; BUILD lane re-ruled by the owner
+2026-09-03): plan/orchestrate = Fable (the main loop) · every EXPLORE/VERIFY lane = Opus 5 ·
+every BUILD lane = the owner's HERMES CLI ON THE PC (`hermes -z`, model = the owner's OpenAI
+model through OmniRoute, reasoning HIGHEST; dispatched by `scripts/pc_lane.sh <brief> hermes
+<role>`) — Opus 4.6 `code-implementer` is the SANDBOX FALLBACK when the bridge is down or the
+work is sandbox-only tooling · Sonnet 4.6 over Sonnet 5 on the rare sonnet dispatch.** The
+owner's reason: the PC lane is faster and spends none of the coordinator's tokens. The build
+loop, the contract gate and the FINAL validation stay in the main loop; the PC lane also runs
+its own contract-gate/validation pass first ("it can do all that by itself"), so the main loop
+grades a self-validated report, never raw output. Opus 5 analyzes superbly but keeps making
+errors when left to build-and-fix alone; a builder executes reliably once pointed; Fable points.
 
 | Model / lane | Use for | Honey |
 |---|---|---|
 | **Fable 5** (main loop) | orchestration, plans, root-cause calls, design, final verdicts | `lite` — reasoning IS the deliverable |
 | **Opus 5** — EXPLORE/VERIFY (`opus` tier, or agents `evidence-gatherer`/`adversarial-verifier`) | forensics, evidence tables, audits, premortems/roasts, adversarial review, every workflow verify stage | `full`: line-bounded findings, evidence anchors, SOLID/UNSURE |
-| **Opus 4.6** — BUILD (agent `code-implementer` ONLY — the `opus` TIER resolves to Opus 5, so 4.6 rides the agent definition's literal model id) | fire-and-forget implementation lanes (code + deterministic test) | `ultra` Lever-2: report is DATA — files:lines, verbatim test counts, discrepancies, NOT-done |
+| **Hermes on the PC** — BUILD (owner ruling 2026-09-03; `scripts/pc_lane.sh <brief> hermes code-implementer`, role bodies in `harness-ports/roles/`) | fire-and-forget implementation lanes on the PC (code + deterministic test + its own contract-gate pass), fixing, debugging, long runs | `ultra` Lever-2: report is DATA — files:lines, verbatim test counts, discrepancies, NOT-done |
+| **Opus 4.6** — BUILD fallback (agent `code-implementer` ONLY — the `opus` TIER resolves to Opus 5, so 4.6 rides the agent definition's literal model id) | sandbox-only tooling lanes, or any build lane while the bridge is down | same |
 | **Sonnet 4.6** (prefer over Sonnet 5 — owner assessment) | rare mid-complexity/mechanical follow-ups; `hive-builder` (≤2 files) | `full` |
 | **Haiku 4.5** | `hive-scout`/`hive-reviewer` (read-only), locate/triage/classify, mechanical sweeps | `ultra`; returns = Lever-3 id-keyed JSON |
 

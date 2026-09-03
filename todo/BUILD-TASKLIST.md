@@ -59,6 +59,14 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (owner ruling — BUILD lane = Hermes on the PC):** build/fix/debug lanes move to the
+owner's Hermes CLI (v0.21.0 on the PC, already wired to OmniRoute `127.0.0.1:20128/v1`), highest
+reasoning, via `scripts/pc_lane.sh … hermes`; the coordinator keeps briefs, the contract gate and the
+final validation; Opus 4.6 `code-implementer` becomes the sandbox fallback. gVisor `runsc
+release-20260817.0` staged in `~/gvisor-install` on the PC (sha512 verified; sha256 048b89aa…) — the
+owner runs the sudo install; user-level podman runtime entry written. Direction doc updated; PC lane
+bring-up (clone/venv/tools/config/trial) is the next move. `harness-skill-rewordings` in flight.
+
 **2026-09-03 sync (post-close audit):** `harness-skill-rewordings` OPENED (pending, low priority) — the
 final sweep showed `.agents/skills` is a verbatim mirror (0 HARNESS PORT notes); the harness doc's
 "14 hand-ported" claims were inherited prose (AF-AP-6, second instance) and are corrected. Pre-commit
