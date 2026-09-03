@@ -41,6 +41,11 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
+- **Increment #2 SPLIT into 2a/2b (2026-09-03)** after three PC lanes failed to land it: two brief
+  defects caught by the lanes' premise checks (fixed, rules 0a/0c baked) and one compaction loop
+  (AF-AP-19; CONTEXT BUDGET rule now in every lane prompt). `s0-02a-runner-probes` is the next
+  dispatch on `agentfactory-build`; `s0-02b-ledger-normalize-ci` follows its landing. OWNER ACTION:
+  raise the lane profile's `compression.threshold` to 0.8 / `protect_first_n` to 6 (INCIDENT-LOG).
 - **Increment #1 CLOSED 2026-09-03.** Adversarial lane `s0-01e` returned one under-reporting
   finding (fixed in the main loop under the round cap, killer test in `tests/red/`); attacks A1–A8
   SOLID; 45 tests ×2; C1–C18 18/18. NEXT: increment #2 `s0-02-runner-ledger-ci` dispatched to the
@@ -82,4 +87,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#1 CLOSE commit — 2026-09-03; next update when increment #2's build lane reports.
+Increment-#2 split commit — 2026-09-03; next update when the 2a build lane reports.

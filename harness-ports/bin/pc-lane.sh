@@ -157,6 +157,10 @@ if [ -n "$ROLE" ]; then
   printf '\n\n---\n\n' >> "$PROMPT_FILE"
 fi
 cat "$BRIEF" >> "$PROMPT_FILE"
+# Standing lane rule (2026-09-03): the context budget is the lane's life. A build lane loaded four
+# skills (75 KB) on its first turn, compacted, was told by the compaction handoff to reload them,
+# and looped: eight compactions, the brief itself compacted away, a stop-on-reversal halt.
+printf '\n\n---\nCONTEXT BUDGET (standing lane rule): do NOT call skill_view or tool_describe unless this brief names a skill by name — your role text and this brief carry every rule you need, and after a compaction do NOT reload skills. Read files by line range (`sed -n`, `grep -n`), never whole large files; every large tool output is context you cannot get back.\n' >> "$PROMPT_FILE"
 # Standing lane rule (2026-09-03): the report must survive a mid-run death.
 printf '\n\n---\nINCREMENTAL REPORT (standing lane rule): append each FINISHED section of your report to the file %s as you go (shell: `cat >> "$LANE_REPORT_DRAFT"`); the final message is still your full report. Never commit that file.\n' "$LANE_DIR/report-draft.md" >> "$PROMPT_FILE"
 

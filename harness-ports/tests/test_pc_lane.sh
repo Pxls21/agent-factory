@@ -187,6 +187,8 @@ check "an empty final report is replaced by the promoted draft, marked PARTIAL, 
   "2026-09-03: a 167-call verify lane died mid-stream and 66 minutes of grading came home only via state.db forensics"
 grep -q "INCREMENTAL REPORT" "$LD10/prompt.md"; check "the standing incremental-report rule is in every lane prompt" $? \
   "a rule the lane never sees cannot be followed"
+grep -q "CONTEXT BUDGET" "$LD10/prompt.md"; check "the standing context-budget rule (no skill reloads) is in every lane prompt" $? \
+  "2026-09-03: a lane reloaded 75 KB of skills after each of eight compactions and lost its brief"
 check "NEGATIVE CONTROL: a lane with a real final report keeps it (no draft promotion)" \
   "$(grep -q "^FAKE-HARNESS-REPORT" "$LD/report.md" && ! grep -q "^DRAFT REPORT" "$LD/report.md" && echo 0 || echo 1)" \
   "the fallback must key on an EMPTY report, never overwrite a delivered one"
