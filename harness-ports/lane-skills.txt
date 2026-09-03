@@ -1,0 +1,30 @@
+# Skills a BUILD/VERIFY/RESEARCH lane needs (curated subset of .agents/skills). One name per line.
+# Rationale (2026-09-03): Hermes puts every skill's description into every call's system prompt
+# (382 external + 90 bundled = 45 KB of index); lanes need the workflow skills, not the domain
+# library. sync-lane-skills.sh materializes .agents/lane-skills/ from this list; the lane profile's
+# skills.external_dirs points there. Add a name here, re-run the sync, commit both.
+build-loop
+deep-work
+orchestration
+anti-hollow-green
+contract-gate
+trace-the-chain
+adversarial-review
+root-cause-debugging
+empirical-validation
+luck
+code-intel-trio
+session-continuity
+bug-echo
+thermo-nuclear-review
+premortem-roast
+vendor-first
+gitnexus-cli
+gitnexus-debugging
+gitnexus-exploring
+gitnexus-guide
+gitnexus-impact-analysis
+gitnexus-refactoring
+honey
+honey-compress
+honey-review

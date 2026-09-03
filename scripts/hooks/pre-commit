@@ -49,6 +49,15 @@ if git diff --cached --name-only | grep -q '^\.claude/skills/' \
     exit 1
   fi
 fi
+# LANE-SKILLS GATE (2026-09-03): .agents/lane-skills/ is the curated subset lanes load; it must
+# mirror .agents/skills/ for every name in harness-ports/lane-skills.txt.
+if git diff --cached --name-only | grep -qE '^(\.agents/skills/|\.agents/lane-skills/|harness-ports/lane-skills\.txt)' \
+   && [ -x "$REPO_ROOT/harness-ports/bin/sync-lane-skills.sh" ]; then
+  if ! bash "$REPO_ROOT/harness-ports/bin/sync-lane-skills.sh" --check >/dev/null 2>&1; then
+    echo "COMMIT BLOCKED: .agents/lane-skills is out of sync with .agents/skills — run 'bash harness-ports/bin/sync-lane-skills.sh' and stage .agents/lane-skills too." >&2
+    exit 1
+  fi
+fi
 # SHELL SYNTAX GATE (2026-09-03): a ported hook shipped with a syntax-error tail
 # after its `exit 0` — bash reads scripts incrementally, so runtime never saw it,
 # review never saw it, `bash -n` does. Every staged shell script must parse.

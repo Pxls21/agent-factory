@@ -68,6 +68,18 @@ clone → `pc-setup.sh` → `hermes profile create --clone <name>` → `hermes-c
 diagnostic lanes (placement + guards) → first real brief. Eight things that broke here and are now
 tests or defaults: `docs/INCIDENT-LOG.md` (2026-09-03 bring-up entry).
 
+## 3b. Prompt weight and resilience (measured 2026-09-03)
+
+`hermes prompt-size` on the lane profile: system prompt 81 KB, of which the skills index is 45 KB
+(382 external + 90 bundled skill descriptions on EVERY call) plus 42 KB of tool schemas and 24 KB of
+context files. The first increment lane died on `HTTP 503: Structurally heavy chat request capacity
+is busy` from the Codex route after three retries. Two mechanisms now in place: (1) lanes load a
+CURATED skill subset — `harness-ports/lane-skills.txt` → `harness-ports/bin/sync-lane-skills.sh` →
+`.agents/lane-skills/` (25 workflow skills, 520 KB; pre-commit gate keeps it in sync) — and the lane
+profile points `skills.external_dirs` there; (2) the profile carries a `fallback_providers` chain
+(`sol-xhigh` → `terra-ultra` → `gpt-5.5-xhigh`, all through OmniRoute, key via `OMNIROUTE_API_KEY` in
+the profile `.env`) so a busy route fails over instead of killing the lane.
+
 ## 4. Probe plan for the routes (pins §2; nothing above is final until this table has rows)
 
 Probe = the same read-only brief per candidate (`harness-ports/briefs/code-search.md` with a fixed
