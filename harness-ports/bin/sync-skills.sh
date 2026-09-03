@@ -100,8 +100,8 @@ dst_dirs() {
   done
 }
 
-SRC_LIST="$(src_dirs | sort)"
-DST_LIST="$(dst_dirs | sort)"
+SRC_LIST="$(src_dirs | sort)" || { echo "sync-skills: src skill-list generation failed" >&2; exit 65; }
+DST_LIST="$(dst_dirs | sort)" || { echo "sync-skills: dst skill-list generation failed" >&2; exit 65; }
 
 _SYNC_TMP_SRC="$(mktemp)" || die "cannot create temp file"
 _SYNC_TMP_DST="$(mktemp)" || die "cannot create temp file"

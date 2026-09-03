@@ -45,17 +45,17 @@ test "${archive_count}" = "14" || {
   sha256sum --check SHA256SUMS
 )
 
-if rg -n '(codex-acp|claude-agent-acp|pi-acp)' "${repo_root}/config"; then
+if grep -rn -E '(codex-acp|claude-agent-acp|pi-acp)' "${repo_root}/config"; then
   echo "an excluded stock runtime adapter appears in active config/deployment files" >&2
   exit 1
 fi
 
-if ! rg -q 'BUZZ_ACP_AGENT_COMMAND=hermes-acp' "${repo_root}/.env.example"; then
+if ! grep -q 'BUZZ_ACP_AGENT_COMMAND=hermes-acp' "${repo_root}/.env.example"; then
   echo "buzz-acp is not configured to launch Hermes native ACP" >&2
   exit 1
 fi
 
-if ! rg -q 'role: sole_stock_production_workhorse' \
+if ! grep -q 'role: sole_stock_production_workhorse' \
   "${repo_root}/deploy/topology.blueprint.yaml"; then
   echo "Hermes sole-workhorse invariant is missing from the deployment blueprint" >&2
   exit 1

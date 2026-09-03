@@ -22,24 +22,27 @@ ROOT = Path(__file__).resolve().parents[2]
 AD = ROOT / "harness-ports" / "bin" / "hermes-hook-adapter.py"
 
 
-def _git_common_dir():
-    """Works in linked worktrees where .git is a file, not a directory."""
+def _absolute_git_dir():
+    """Per-worktree git dir — matches the real hook's --absolute-git-dir.
+
+    In a linked worktree .git is a file pointing elsewhere; --absolute-git-dir
+    resolves to the per-worktree dir (e.g. /repo/.git/worktrees/wt1) where the
+    turn-retro-acked sentinel lives. --git-common-dir would return the shared
+    parent (.git), which is wrong for per-worktree state."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
+            ["git", "rev-parse", "--absolute-git-dir"],
             cwd=str(ROOT), capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
             p = Path(result.stdout.strip())
-            if not p.is_absolute():
-                p = ROOT / p
             return p.resolve()
     except (subprocess.SubprocessError, OSError):
         pass
     return ROOT / ".git"
 
 
-_GIT_DIR = _git_common_dir()
+_GIT_DIR = _absolute_git_dir()
 
 # Fixtures adapted for agent-factory: the edit-snapshot hook checks
 # p.is_file() and the wiki-context hook checks WIKI.is_dir(), so the test

@@ -238,24 +238,45 @@ check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
   "$([ $override_model_rc -eq 0 ] && [ $override_effort_rc -eq 0 ] && echo 0 || echo 1)" \
   "a hard-wired role route would block measured per-lane experiments and emergency step-downs"
 
-# --- ROBUSTNESS CONTROL: the unset at the top is load-bearing ----------------
+# --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
 # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
-# Without the unset at the top of this test file, a suite run inside a lane
-# would collide every test lane onto the parent's id. Prove the leak exists:
+# The unset at line 18 of THIS file prevents a parent lane's LANE_ID from
+# contaminating every test run. These tests kill the mutation "remove the unset":
+#   1. Export LANE_ID — prove pc-lane.sh adopts it (propagation works)
+#   2. Unset LANE_ID — prove pc-lane.sh derives its own (isolation works)
+# If the unset at line 18 were removed, a parent lane's LANE_ID would persist
+# through to step 2 and the derivation check would fail.
 BRIEF_ROBUST="$TMP/tests/brief-robust.md"; { echo "PIN: $SHA"; echo; echo "robustness check"; } > "$BRIEF_ROBUST"
 export HERMES_ARGS_FILE="$TMP/hermes-args-robust"
-LANE_ID=leaked-parent HERMES_BIN="$FAKE_HERMES" \
-  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust"
-check "ROBUSTNESS: inherited LANE_ID IS adopted (proves the unset is load-bearing)" \
-  "$([ -d "$REPO/.lanes/leaked-parent" ] && echo 0 || echo 1)" \
-  "pc-lane.sh uses inherited LANE_ID by design; the test's unset at the top prevents leakage"
-# Now prove the unset worked: run WITHOUT leaked env and confirm the brief-derived id
+
+export LANE_ID=parent-poison
 HERMES_BIN="$FAKE_HERMES" \
-  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust2"
-LD_ROBUST="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-robust' | head -1)"
-check "ROBUSTNESS: without inherited LANE_ID the lane derives its own from the brief" \
-  "$([ -n "$LD_ROBUST" ] && [ "$(basename "$LD_ROBUST")" != "leaked-parent" ] && [ -s "$LD_ROBUST/report.md" ] && echo 0 || echo 1)" \
-  "the unset at the top of this script cleared the leak; the lane's id is brief-derived"
+  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust1"
+check "MUTATION: exported LANE_ID IS adopted by pc-lane.sh (propagation)" \
+  "$([ -d "$REPO/.lanes/parent-poison" ] && echo 0 || echo 1)" \
+  "pc-lane.sh inherits LANE_ID by design — a parent lane's id propagates into the child"
+
+unset LANE_ID
+BRIEF_ROBUST2="$TMP/tests/brief-robust2.md"; { echo "PIN: $SHA"; echo; echo "robustness isolated"; } > "$BRIEF_ROBUST2"
+HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF_ROBUST2" hermes code-implementer >/dev/null 2>"$TMP/err-robust2"
+LD_ROBUST="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-robust2' | head -1)"
+check "MUTATION: after unset, LANE_ID is derived from the brief (isolation)" \
+  "$([ -n "$LD_ROBUST" ] && [ "$(basename "$LD_ROBUST")" != "parent-poison" ] && [ -s "$LD_ROBUST/report.md" ] && echo 0 || echo 1)" \
+  "removing the unset at line 18 would make this fail — the exported parent-poison would persist"
+
+# --- MUTATION-KILLING: parent-environment poison for LANE_REPORT_DRAFT -------
+# pc-lane.sh sets its own LANE_REPORT_DRAFT (line 187). This test exports a
+# bogus parent path and proves the harness writes to the lane-local path, not
+# the parent's. Kills the mutation "remove the LANE_REPORT_DRAFT assignment".
+export LANE_REPORT_DRAFT="$TMP/parent-poison-draft.md"
+BRIEF_DRAFT="$TMP/tests/brief-draftpoison.md"; { echo "PIN: $SHA"; echo; echo "draft poison"; } > "$BRIEF_DRAFT"
+PC_LANE_FAKE_HARNESS="$DRAFTY" bash "$LANE" "$BRIEF_DRAFT" hermes code-implementer >/dev/null 2>"$TMP/err-draftpoison"
+LD_DRAFT="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-draftpoison' | head -1)"
+check "MUTATION: parent LANE_REPORT_DRAFT does NOT poison the lane's draft path" \
+  "$([ ! -s "$TMP/parent-poison-draft.md" ] && [ -s "$LD_DRAFT/report-draft.md" ] && echo 0 || echo 1)" \
+  "pc-lane.sh sets its own LANE_REPORT_DRAFT — removing that assignment would route drafts to the parent's file"
+unset LANE_REPORT_DRAFT
 
 echo
 echo "$pass passed, $fail failed"
