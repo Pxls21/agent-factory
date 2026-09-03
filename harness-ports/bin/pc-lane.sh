@@ -157,6 +157,8 @@ if [ -n "$ROLE" ]; then
   printf '\n\n---\n\n' >> "$PROMPT_FILE"
 fi
 cat "$BRIEF" >> "$PROMPT_FILE"
+# Standing lane rule (2026-09-03): the report must survive a mid-run death.
+printf '\n\n---\nINCREMENTAL REPORT (standing lane rule): append each FINISHED section of your report to the file %s as you go (shell: `cat >> "$LANE_REPORT_DRAFT"`); the final message is still your full report. Never commit that file.\n' "$LANE_DIR/report-draft.md" >> "$PROMPT_FILE"
 
 echo "pc-lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
 echo "pc-lane: tree=$TREE" >&2
@@ -174,6 +176,11 @@ rc=0
 : "${LANE_CAPACITY_RETRIES:=3}"     # extra attempts after a capacity refusal; 0 disables
 : "${LANE_CAPACITY_BACKOFF:=60}"    # seconds before the first retry, doubling; tests pass 0
 CAPACITY_RX='^API call failed after [0-9]+ retries: HTTP 503'
+# INCREMENTAL REPORT (2026-09-03): a 167-call verify lane died mid-stream with report.md EMPTY —
+# the report was all-or-nothing, so 66 minutes of grading came home only via state.db forensics.
+# Every lane now gets LANE_REPORT_DRAFT in its environment and a standing prompt line telling it
+# to append each finished section there; if the final report is empty, the draft is promoted.
+LANE_REPORT_DRAFT="$LANE_DIR/report-draft.md"; export LANE_REPORT_DRAFT
 attempt=0
 while :; do
 attempt=$((attempt + 1))
@@ -246,12 +253,20 @@ else
   # ROLE -> route defaults (owner 2026-09-03: offload every consistent low-judgment step to
   # the cheapest route that does it reliably; PROVISIONAL until the probe table in
   # docs/WORKFLOW-OFFLOAD-MAP.md pins them). Explicit HERMES_MODEL/HERMES_REASONING win.
+  # 2026-09-03 (owner, via Codex): the routes are the four OmniRoute COMBOS `agentfactory-*`
+  # (priority failover chains defined in OmniRoute's `combos` table, smoke-tested 200 each):
+  #   agentfactory-build    sol-ultra -> sol-xhigh -> terra-ultra -> gpt-5.5-xhigh -> free-coding
+  #   agentfactory-verify   terra-xhigh -> agy/gemini-3.1-pro-low -> antigravity pro-low -> gpt-5.5-xhigh -> free-reasoning
+  #   agentfactory-research gemini-3.1-pro-preview -> agy pro-low -> antigravity pro-low -> gemini flash -> free-chat
+  #   agentfactory-sweep    gemini-3-flash-preview -> agy flash-agent -> antigravity flash-agent -> free-fast
+  # A combo answers even when its first route refuses (the 503 capacity class, a 429 quota);
+  # the served model is whatever the chain reached — the lane report's usage.json names it.
   case "${ROLE:-}" in
-    code-implementer)     DEF_MODEL="codex/gpt-5.6-sol-ultra";   DEF_EFFORT="ultra";;
-    adversarial-verifier) DEF_MODEL="codex/gpt-5.6-terra-xhigh"; DEF_EFFORT="xhigh";;
-    evidence-gatherer|researcher) DEF_MODEL="gemini/gemini-3.1-pro-preview"; DEF_EFFORT="high";;
-    curator|echo-sweeper) DEF_MODEL="gemini/gemini-3-flash-preview"; DEF_EFFORT="medium";;
-    *)                    DEF_MODEL="codex/gpt-5.6-sol-ultra";   DEF_EFFORT="ultra";;
+    code-implementer)     DEF_MODEL="agentfactory-build";    DEF_EFFORT="ultra";;
+    adversarial-verifier) DEF_MODEL="agentfactory-verify";   DEF_EFFORT="xhigh";;
+    evidence-gatherer|researcher) DEF_MODEL="agentfactory-research"; DEF_EFFORT="high";;
+    curator|echo-sweeper|contract-runner) DEF_MODEL="agentfactory-sweep"; DEF_EFFORT="medium";;
+    *)                    DEF_MODEL="agentfactory-build";    DEF_EFFORT="ultra";;
   esac
   TERMINAL_CWD="$TREE" \
   "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_FILE")" \
@@ -272,6 +287,11 @@ fi
 [ "$attempt" -gt 1 ] && echo "pc-lane: attempt $attempt ended rc=$rc" >&2
 break
 done
+
+if [ ! -s "$REPORT" ] && [ -s "$LANE_REPORT_DRAFT" ]; then
+  { echo "DRAFT REPORT — the lane ended (harness rc=$rc) before writing its final report; this is the incremental draft it kept. Grade it as PARTIAL evidence, never as a verdict."; echo; cat "$LANE_REPORT_DRAFT"; } > "$REPORT"
+  echo "pc-lane: final report empty — promoted report-draft.md (PARTIAL)" >&2
+fi
 
 # LANE TRANSCRIPT HOME (owner 2026-09-03): export the Hermes session (scrubbed) INTO the worktree
 # so it travels with the patch; the curator lane reads transcripts/pc/*.md later.

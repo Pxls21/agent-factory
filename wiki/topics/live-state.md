@@ -41,9 +41,11 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-- **Verify lane `s0-01c`** — dispatched after this push (PC Hermes, adversarial-verifier route
-  terra-xhigh, first measurement of that route); RED tests under `tests/red/` come home with
-  the patch. Repair lane `s0-01b` DONE (run 1 died on the capacity 503; run 2 landed: 39 passed ×2).
+- **Repair lane `s0-01d`** — dispatched after this push on the owner's `agentfactory-build`
+  combo: make the verifier's five RED tests (`tests/red/`) green. Then TWO verification lanes in
+  parallel: `run-contract.md` (contract-runner, `agentfactory-sweep`) + a narrowed adversarial
+  lane (`agentfactory-verify`). Verify lane `s0-01c` died mid-run after 167 calls (AF-AP-16/17);
+  its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
 - **BUILD lane = Hermes on the PC (owner ruling 2026-09-03):** bring-up in progress (clone, venv,
@@ -77,4 +79,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#1 round-2 harvest commit — 2026-09-03; next update at the verify lane's verdict.
+Increment-#1 round-3 setup commit (verifier findings recovered, combos wired) — 2026-09-03; next update when `s0-01d` lands.

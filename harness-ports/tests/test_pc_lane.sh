@@ -162,6 +162,30 @@ check "NEGATIVE CONTROL: with LANE_CAPACITY_RETRIES=0 the refusal is the final r
   "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "HTTP 503" "$LD9/report.md" && ! grep -q "retrying" "$TMP/err9" && echo 0 || echo 1)" \
   "a retry loop that fired on every report (not the signature) would pass the test above and mask real failures"
 
+# --- a lane that dies before its final report still leaves its draft ------------
+# TEST DOUBLE: writes two sections to $LANE_REPORT_DRAFT, then exits with an EMPTY report.
+DRAFTY="$TMP/drafty-harness.sh"
+cat > "$DRAFTY" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. Appends sections to the draft path the lane exported, then dies silently.
+printf 'C1 PASS rc=0\n' >> "${LANE_REPORT_DRAFT:?}"
+printf 'C2 PASS rc=2\n' >> "${LANE_REPORT_DRAFT:?}"
+cat >/dev/null
+exit 137
+EOF
+chmod +x "$DRAFTY"
+BRIEF10="$TMP/tests/brief-drafty.md"; { echo "PIN: $SHA"; echo; echo "die after two sections"; } > "$BRIEF10"
+PC_LANE_FAKE_HARNESS="$DRAFTY" bash "$LANE" "$BRIEF10" codex >"$TMP/out10" 2>"$TMP/err10"; rc10=$?
+LD10="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-drafty.md' | head -1)"
+check "an empty final report is replaced by the promoted draft, marked PARTIAL, harness rc kept" \
+  "$([ $rc10 -eq 137 ] && head -1 "$LD10/report.md" | grep -q "^DRAFT REPORT" && grep -q "C2 PASS rc=2" "$LD10/report.md" && grep -q "promoted report-draft.md" "$TMP/err10" && echo 0 || echo 1)" \
+  "2026-09-03: a 167-call verify lane died mid-stream and 66 minutes of grading came home only via state.db forensics"
+grep -q "INCREMENTAL REPORT" "$LD10/prompt.md"; check "the standing incremental-report rule is in every lane prompt" $? \
+  "a rule the lane never sees cannot be followed"
+check "NEGATIVE CONTROL: a lane with a real final report keeps it (no draft promotion)" \
+  "$(grep -q "^FAKE-HARNESS-REPORT" "$LD/report.md" && ! grep -q "^DRAFT REPORT" "$LD/report.md" && echo 0 || echo 1)" \
+  "the fallback must key on an EMPTY report, never overwrite a delivered one"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

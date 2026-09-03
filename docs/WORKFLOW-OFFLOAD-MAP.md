@@ -43,6 +43,8 @@ files with a PIN; reports are DATA. The only things that still cost coordinator 
 
 ## 2. Roles → routes (PROVISIONAL until §4 pins them)
 
+> **PINNED by the owner 2026-09-03:** the routes are now the four OmniRoute COMBOS `agentfactory-build` / `-verify` / `-research` / `-sweep` (priority failover chains created via Codex; definitions in OmniRoute's `combos` table; each answered a 24-token probe 200 and Hermes reached `agentfactory-verify` end to end). `pc-lane.sh` maps roles to them; the table below records what each combo reaches first.
+
 | Role (`harness-ports/roles/`) | Default route (`pc-lane.sh`) | Effort | Why this class of model |
 |---|---|---|---|
 | code-implementer | `codex/gpt-5.6-sol-ultra` | ultra | owner ruling: "OpenAI sol 5.6 on the highest" |
