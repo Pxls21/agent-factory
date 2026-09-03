@@ -107,7 +107,10 @@ echo "pc_lane: polling every ${POLL_SECONDS}s (max $((POLL_SECONDS*MAX_POLLS/60)
 i=0; done_flag=0
 while [ "$i" -lt "$MAX_POLLS" ]; do
   i=$((i+1))
-  probe="$(bridge "test -s $REMOTE_REPORT && echo READY || (pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE)")"
+  # Liveness is THIS lane's pidfile (two lanes now run concurrently; a bare pgrep for any
+  # pc-lane.sh would report a dead lane as RUNNING while its sibling is alive — 2026-09-03).
+  # The pgrep stays as the fallback for the launch window before the pidfile exists.
+  probe="$(bridge "test -s $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE))")"
   case "$probe" in
     *READY*)   done_flag=1; break;;
     *RUNNING*) ;;

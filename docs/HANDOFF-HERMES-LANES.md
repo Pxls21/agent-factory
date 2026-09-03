@@ -67,6 +67,18 @@ Briefs are files with a `PIN:` line; reports are DATA (files:lines, verbatim out
 
 Report back: the commit that lands the port, the three diagnostic lane outputs verbatim, and the first real increment's contract + verdict.
 
+### 6. Maturity delta since this prompt was first written (2026-09-03, after increment #1 ran three contract-gate rounds through the lanes)
+Copy these too; each was paid for by a real failure in agent-factory:
+- **Routes are OmniRoute COMBOS, not raw routes.** The owner created `agentfactory-build` / `-verify` / `-research` / `-sweep` (priority failover chains: paid route first, free pool last). Create the trading-system equivalents (`trading-build` …) in OmniRoute's combos UI/DB and point `harness-ports/bin/pc-lane.sh`'s role table at them; a combo answers when its first route refuses (the capacity 503, a 429 quota).
+- **Capacity retry.** `pc-lane.sh` re-runs an attempt only on the exact `HTTP 503 … capacity is busy` signature (3×, doubling backoff from 60 s), keeping each refused report. Tests: flaky double + negative control.
+- **Incremental report.** `pc-lane.sh` exports `LANE_REPORT_DRAFT` and injects a standing prompt rule; an empty final report is replaced by the draft marked PARTIAL. A 167-call verify lane once died mid-stream with an empty report.
+- **Two verification lanes, sized to one context.** The mechanical contract run (`harness-ports/briefs/run-contract.md`, role `contract-runner`, sweep combo) and the adversarial attack/spine lane (verify combo) run in parallel. A brief names ≤16 contract items or ≤8 attacks; a lane that compacts loses its governing role text.
+- **Tests spawn CLIs under `sys.executable`,** never through a shebang: a PC green rode on the host python's site-packages while the sandbox had 17 reds for one cause.
+- **`scripts/pc_fetch.sh`** — chunked, size-verified single-file fetch (the bridge caps replies at ~45 KB; a truncated tail decodes to a plausible file).
+- **The PC checkout is a deploy target.** Edits land in the sandbox (or a pushed branch) and arrive by `git merge --ff-only`; a dirty PC checkout at deploy time is read and ported, never overwritten blind.
+- **Lane liveness is the lane's own pidfile**, not "any pc-lane.sh process" — two lanes run concurrently now.
+- **Recovery path when a lane dies:** its worktree keeps its files; `state.db` keeps the session — export with `harness-ports/bin/hermes-session-export.py --db ~/.hermes/profiles/<profile>/state.db --session <id>`; never re-run before recovering.
+
 ## (end of prompt)
 
 ---
