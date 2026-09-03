@@ -2,13 +2,20 @@
 name: bug-echo
 description: 'After fixing a bug, find and rate other instances of the same pattern in the codebase. Two modes: described, or inferred from a recent fix with self-validation. Triggers: "run bug-echo", "echo this fix", "scan for similar bugs", "find other instances", "after-fix scan".'
 license: Apache-2.0
-allowed-tools: [Grep, Glob, Read, Write, Edit, Bash, AskUserQuestion, Agent]
 metadata:
   version: 1.3.2
   author: Terry Nyberg, Coffee & Code LLC
   tier: execution
   category: debugging
 ---
+
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/bug-echo/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
 
 # bug-echo
 
@@ -49,7 +56,7 @@ Before any scanning work, verify the working environment is sane.
 
 1. **Check for uncommitted changes:**
    - Run `git status --porcelain` via Bash.
-   - If output is non-empty (uncommitted changes exist), use AskUserQuestion to ask: "There are uncommitted changes. If these are from a prior bug-echo session, commit them first so this run has a clean baseline. Otherwise: commit before scanning, or proceed anyway?" Options: "Commit first", "Proceed (accept risk)", "Cancel". On "Commit first", show files changed and stop with a request that the user commit. On "Cancel", stop. On "Proceed (accept risk)", log "User accepted risk of uncommitted changes" and continue.
+   - If output is non-empty (uncommitted changes exist), use a plain-text question to the user to ask: "There are uncommitted changes. If these are from a prior bug-echo session, commit them first so this run has a clean baseline. Otherwise: commit before scanning, or proceed anyway?" Options: "Commit first", "Proceed (accept risk)", "Cancel". On "Commit first", show files changed and stop with a request that the user commit. On "Cancel", stop. On "Proceed (accept risk)", log "User accepted risk of uncommitted changes" and continue.
 
 2. **Note build manifest presence (advisory):**
    - Detect via Glob whether `Package.swift`, `xcodeproj`, `Cargo.toml`, `package.json`, or a similar build manifest exists in the project root. Note the result in the report header. Do NOT run a build — that's the user's responsibility before applying any fix this skill suggests. If no manifest is detected, mention it but continue scanning. This step is advisory metadata for the report, not a gate.
@@ -81,9 +88,9 @@ If you add scale handling, gate it and add it to this list. A change that makes 
 Two modes are supported:
 
 1. **User-described:** the invoking prompt includes a description of the pattern. Skip to Step 2A.
-2. **Inferred from recent fix:** the session has a recent edit (in conversation context or from `git log -p -1`). Use AskUserQuestion to confirm. Go to Step 2B.
+2. **Inferred from recent fix:** the session has a recent edit (in conversation context or from `git log -p -1`). Use a plain-text question to the user to confirm. Go to Step 2B.
 
-If both are possible, disambiguate with AskUserQuestion:
+If both are possible, disambiguate with a plain-text question to the user:
 
 ```
 Question (header: "Source"): "How should I identify the pattern?"
@@ -120,7 +127,7 @@ Summarize the pattern back to the user:
 
 A single-condition pattern (e.g., a deprecated API name) doesn't need this form. Free-form prose is fine. Use the conditions form when the user's description includes "and" twice or more, or when the pattern is shape-based rather than name-based.
 
-Confirm with AskUserQuestion (Yes scan now / Refine / Cancel) before proceeding to Step 3.
+Confirm with a plain-text question to the user (Yes scan now / Refine / Cancel) before proceeding to Step 3.
 
 ---
 
@@ -206,7 +213,7 @@ Before running the full scan + classify + rate + write ceremony, run the validat
 
 The **25** threshold is absolute, not relative to codebase size. A 40-file project where a pattern legitimately appears 30 times should trigger the same offer as a 5,000-file one — the cost being avoided is *classifying 30 sites*, which is the same work regardless of repo size. Below 25, never show this; the classify step is cheap enough that interrupting the user is the worse trade.
 
-**When the gate opens**, use AskUserQuestion before proceeding to Step 3:
+**When the gate opens**, use a plain-text question to the user before proceeding to Step 3:
 
 ```
 Question (header: "Breadth"): "[N] candidate sites match — enough that some are likely false positives. Tighten the pattern before I classify all [N]?"
@@ -249,7 +256,7 @@ Run the validated pattern across the codebase.
 2. **Choose the scan strategy based on file count:**
    - **Under 50 files:** Scan directly using Grep with the pattern.
    - **50 to 500 files:** Scan directly. Acceptable performance.
-   - **Over 500 files:** Dispatch sub-agents via the Agent tool. Split files into batches of ~100. Follow the sub-agent aggregation contract in Step 3.5 — it defines exactly what each sub-agent receives, what it returns, and how the main agent merges the batches. Do not improvise the merge; a large run's correctness depends on deterministic aggregation.
+   - **Over 500 files:** Dispatch sub-agents via the harness subagent mechanism. Split files into batches of ~100. Follow the sub-agent aggregation contract in Step 3.5 — it defines exactly what each sub-agent receives, what it returns, and how the main agent merges the batches. Do not improvise the merge; a large run's correctness depends on deterministic aggregation.
 
 3. **AST-grep precision (optional, opt-in):**
    - If AST-grep is installed and the language is Swift, run AST-grep against the pattern via Bash for higher precision.
@@ -267,7 +274,7 @@ This step governs the `Over 500 files` branch of Step 3.2 exclusively. **Codebas
 
 ### What each sub-agent receives
 
-Every sub-agent dispatched via the Agent tool gets an identical instruction payload, differing only in its file-list slice:
+Every sub-agent dispatched via the harness subagent mechanism gets an identical instruction payload, differing only in its file-list slice:
 
 1. **The validated pattern**, verbatim — the exact regex (or AST-grep query) from Step 2B/2A, not a paraphrase.
 2. **Its ~100-file batch**, as an explicit list of paths. Batches must be disjoint where possible; see the dedup rule below for the overlap case.
@@ -448,7 +455,7 @@ The report is human-readable and self-contained. See § Deferred to v1.4+ for th
 
 ## Step 6: Follow-up
 
-After the report is written, offer guided fixes via AskUserQuestion:
+After the report is written, offer guided fixes via a plain-text question to the user:
 
 ```
 Question (header: "Next"): "How would you like to proceed?"
@@ -464,7 +471,7 @@ Options:
 3. Ask for explicit approval before applying.
 4. Apply via the Edit tool only after the user confirms.
 5. Update the report's Issue Rating Table to mark Status as `Fixed`, `Skipped`, or `Deferred` for each finding processed.
-6. After all selected fixes are applied, present an AskUserQuestion:
+6. After all selected fixes are applied, present an a plain-text question to the user:
 
    ```
    Question (header: "Commit"): "Commit these bug-echo fixes now?"
@@ -507,7 +514,7 @@ Re-display the rating table at the end of the fix session with all Status column
 If Step 2B's self-validation fails (the inferred pattern doesn't match the pre-fix file) and Step 2A's user-described mode also doesn't apply (no recent fix, no described pattern), bug-echo's job is done — it has no diff to work with. Rather than synthesize a catalog, the skill should suggest the right tool for the next step:
 
 ```
-AskUserQuestion with questions:
+a plain-text question to the user with questions:
 [
   {
     "question": "I can't infer a pattern from a recent fix or description. Run bug-prospector instead?",
@@ -580,7 +587,7 @@ Large-codebase hardening. All three additions are threshold-gated branches; the 
 - **Recon scout (Step 2.5):** new pre-flight count between pattern validation and full scan. Buckets candidate count into 0 / 1-5 / 6+ and matches report shape to actual signal. Catches the case where the original fix was already localized (one-line note in conversation, no `.agents/research/` write) and the case where there are 1-5 sibling instances (lightweight inline report). Reserves the full file-write ceremony for 6+ candidates where the structured report carries its weight. Origin: 18-run retrospective on a 600-file Swift codebase showed ~39% of runs would benefit from a lighter-weight report shape. See [recon-scout-rationale.md](examples/recon-scout-rationale.md) for the full evidence.
 - **Conditions form in Step 2A:** suggested form for describing multi-condition pattern shapes (e.g., "Identifiable struct + ephemeral constructor + ForEach consumer"). Optional; free-form prose still works. Helps users articulate patterns that only fire when 2-3 conditions hold together — the most common shape for false-positive-prone bugs.
 
-## House addendum — trading-system (2026-08-28): semantic-sibling amplifier (slopo IP-2)
+## House addendum — agent-factory (2026-08-28): semantic-sibling amplifier (slopo IP-2)
 
 Grep-shaped signatures catch token-shaped echoes only. When the slopo index is
 live in this workspace (`slopo.conf.yaml` + `.slopo-runtime/` present), add one

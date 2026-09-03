@@ -221,6 +221,12 @@ a coordinator-chosen subset, and require the LITERAL pytest invocation in the re
 message** — 2026-08-26: a builder claimed "184 x2" while its tree had 4 reproducible failures;
 the coordinator's 76-test subset was green because it skipped the broken file, and three
 different true counts (155/158/168) circulated unverifiably until the invocation was pinned.
+**A harvested diff that ADDS a mutant must also add its killer file to the lane's GATE SET in
+the same harvest commit (2026-09-02):** the I4b delegate registered M_I4B_sever_relabel with a
+new killer test file, the harvest cherry-picked both, and the gate set stayed blind — the next
+lane's `--check-anchors --tests` pre-flight said SCOPE_FAIL, which is the instrument working
+but one increment late. Harvest checklist line: `git diff` touching `scripts/mutants/*` ⇒ diff
+the mutant's killer list against the gate file before committing.
 **Semantic-duplicate lens (slopo, IP-1 — owner integration request 2026-08-27): when the slopo
 index is live (`slopo.conf.yaml` + `.slopo-runtime/`), run `slopo review --base
 origin/claude/clean-build` over a landed build lane's diff and read the flagged clusters —
@@ -270,6 +276,12 @@ agent's EXTERNAL artifacts persist — recover by inspecting what it left and fi
 re-running from scratch. **A user-STOPPED agent cannot be resumed at all** (the harness
 refuses SendMessage: "won't be resumed"), but its commits and its `setsid` gate keep running
 (2026-09-02: I3h stopped by an accidental owner keypress after 2 commits + a live lane_gate).
+**COMMIT-EARLY IS THE RECOVERY INSURANCE (2026-09-02, second keypress kill in one day):**
+both stray-keypress-killed builders (I3h, I4a) were cheap to recover ONLY because each had
+already committed its increment in its worktree before dying — the loss was just the report
+and a truncated mutant run, refinished lean in minutes. Every build brief's worktree
+discipline therefore includes: commit each increment the moment its own tests are green,
+never batch commits to the end of the lane — an uncommitted dead lane is a full rebuild.
 Recovery = `git status` + `git log <dispatch-sha>..HEAD` + `pgrep -fa '[l]ane_gate'`, read
 its gate output as the report, diff its commits against the brief's item list, and
 re-dispatch ONLY the residual — never a fresh full brief. **A container RESTART is the same
@@ -360,3 +372,9 @@ re-dispatches from the brief — never resumes from the untrusted partial (recov
 bytes, not trust). Corollary for the coordinator itself: push verified work at every
 delegates-dead window (split the stack if part of it is unmerged/NOT-READY — cherry-pick the
 safe commits to trunk rather than holding everything hostage to the broken one).
+
+- **Harvest cherry-picks run as `git -C <main-tree>`, never bare after a `cd` (2026-09-02,
+  bit twice in one day):** a compound `cd <worktree> && pytest … ; git cherry-pick …` runs the
+  cherry-pick INSIDE the delegate worktree (where it no-ops "nothing to commit" or half-applies
+  and leaves conflict state), and the shell's cwd-reset masks it on the next call. The re-run in
+  the main tree then works, but the worktree is left mid-cherry-pick — abort it before removal.

@@ -3,6 +3,14 @@ name: adversarial-review
 description: The pre-merge review playbook — reproduce, don't adopt. Use for any branch review; defines the minimum attack set, the verdict format, and the honesty requirements for what was and wasn't reproduced.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/adversarial-review/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # Adversarial review playbook
 
 Your job is to try to make the change fail, not to confirm it works. The author's report is a list of claims; reproduce every claim you rely on.

@@ -3,6 +3,14 @@ name: code-intel-trio
 description: Use the three code-intelligence tools (GitNexus, codebase-memory, code-review-graph) together — which one for which question, exact CLI invocations that work in this container, bootstrap steps on a fresh container, and the two-instrument rule for dormancy claims. Load before any Phase-1 grounding, impact analysis, dead-wiring hunt, pre-commit check, or DORMANT/reachability claim.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/code-intel-trio/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # The code-intel trio — one map, three instruments
 
 Owner mandate: mapping is a REFLEX, not an audit. Use these RELIGIOUSLY. Each has

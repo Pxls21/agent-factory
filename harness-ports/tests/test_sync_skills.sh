@@ -7,6 +7,10 @@
 #   - a re-check after copy exits 0
 #   - NEW and STALE dirs are reported
 #   - the gitnexus parent dir is excluded
+#   - hand-ported (allowlisted) intentional drift with matching hash → --check exit 0
+#   - hand-ported dir whose base changed → exit 1 with STALE-BASE
+#   - non-allowlisted drift → exit 1 with DRIFT
+#   - plain run does NOT overwrite an allowlisted dir
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +91,88 @@ check "stale dir left in place (not deleted)" "$st" \
 [ ! -d "$REPO/.agents/skills/gitnexus" ] && gx=0 || gx=1
 check "gitnexus dir NOT copied" "$gx" \
   "gitnexus is the empty parent dir, not a skill — copying it would be noise"
+
+# =============================================================================
+# HAND-PORT-AWARE TESTS (allowlist + base hash)
+# =============================================================================
+
+# --- set up a hand-ported skill -----------------------------------------------
+REPO2="$TMP/repo2"
+mkdir -p "$REPO2"
+git -C "$REPO2" init -q
+git -C "$REPO2" config user.email t@t; git -C "$REPO2" config user.name t
+echo x > "$REPO2/f.txt"; git -C "$REPO2" add -A; git -C "$REPO2" commit -qm base
+
+# source skill: hp-skill (will be hand-ported) and plain-skill (normal)
+mkdir -p "$REPO2/.claude/skills/hp-skill"
+echo "base-content" > "$REPO2/.claude/skills/hp-skill/SKILL.md"
+mkdir -p "$REPO2/.claude/skills/plain-skill"
+echo "plain-content" > "$REPO2/.claude/skills/plain-skill/SKILL.md"
+
+# destination: hp-skill has intentional rewording, plain-skill drifted
+mkdir -p "$REPO2/.agents/skills/hp-skill"
+echo "HARNESS PORT rewording" > "$REPO2/.agents/skills/hp-skill/SKILL.md"
+mkdir -p "$REPO2/.agents/skills/plain-skill"
+echo "WRONG-plain" > "$REPO2/.agents/skills/plain-skill/SKILL.md"
+
+# allowlist and hash file
+mkdir -p "$REPO2/harness-ports"
+echo "hp-skill" > "$REPO2/harness-ports/hand-ported.txt"
+# Record the current .claude base hash
+hp_hash=$(sha256sum "$REPO2/.claude/skills/hp-skill/SKILL.md" | cut -d' ' -f1)
+printf '%s  %s\n' "$hp_hash" "hp-skill" > "$REPO2/harness-ports/hand-ported.sha256"
+
+export AF_REPO="$REPO2"
+
+# --- POSITIVE: allowlisted intentional drift with matching hash → exit 0 ------
+# (only hp-skill differs, and its hash matches — plain-skill also differs but it's non-allowlisted)
+# We need plain-skill to be in sync for this test to isolate the allowlist behavior.
+cp "$REPO2/.claude/skills/plain-skill/SKILL.md" "$REPO2/.agents/skills/plain-skill/SKILL.md"
+
+out4="$(bash "$SYNC" --check 2>&1)"; rc4=$?
+check "allowlisted intentional drift → --check exit 0" "$([ $rc4 -eq 0 ] && echo 0 || echo 1)" \
+  "only difference is the allowlisted hp-skill whose base hash matches"
+echo "$out4" | grep -q "INTENTIONAL: hp-skill" && ip=0 || ip=1
+check "--check prints INTENTIONAL: hp-skill" "$ip" \
+  "exact line INTENTIONAL: hp-skill must appear"
+
+# --- NEGATIVE: allowlisted dir whose .claude base changed → exit 1 + STALE-BASE
+echo "CHANGED base-content" > "$REPO2/.claude/skills/hp-skill/SKILL.md"
+out5="$(bash "$SYNC" --check 2>&1)"; rc5=$?
+check "stale-base allowlisted → --check exit 1" "$([ $rc5 -eq 1 ] && echo 0 || echo 1)" \
+  "exit 1 because the .claude twin changed since the port"
+echo "$out5" | grep -q "STALE-BASE: hp-skill" && sb=0 || sb=1
+check "--check prints STALE-BASE: hp-skill" "$sb" \
+  "exact line STALE-BASE: hp-skill must appear"
+
+# restore for next test
+echo "base-content" > "$REPO2/.claude/skills/hp-skill/SKILL.md"
+
+# --- NEGATIVE: non-allowlisted drift → exit 1 with DRIFT ---------------------
+echo "WRONG-plain" > "$REPO2/.agents/skills/plain-skill/SKILL.md"
+out6="$(bash "$SYNC" --check 2>&1)"; rc6=$?
+check "non-allowlisted drift → --check exit 1" "$([ $rc6 -eq 1 ] && echo 0 || echo 1)" \
+  "exit 1 because plain-skill drifted and is not allowlisted"
+echo "$out6" | grep -q "DRIFT" && dr=0 || dr=1
+check "--check prints DRIFT for non-allowlisted" "$dr" \
+  "DRIFT line must appear for plain-skill"
+
+# --- POSITIVE: plain run does NOT overwrite an allowlisted dir ----------------
+before_hp=$(cat "$REPO2/.agents/skills/hp-skill/SKILL.md")
+bash "$SYNC" >/dev/null 2>&1
+after_hp=$(cat "$REPO2/.agents/skills/hp-skill/SKILL.md")
+[ "$before_hp" = "$after_hp" ] && noc=0 || noc=1
+check "plain run does NOT overwrite allowlisted dir" "$noc" \
+  "hp-skill content must be byte-identical before and after plain run"
+
+# --- --record refreshes the hash file -----------------------------------------
+echo "NEW base" > "$REPO2/.claude/skills/hp-skill/SKILL.md"
+bash "$SYNC" --record >/dev/null 2>&1
+new_hash=$(sha256sum "$REPO2/.claude/skills/hp-skill/SKILL.md" | cut -d' ' -f1)
+rec_hash=$(grep 'hp-skill' "$REPO2/harness-ports/hand-ported.sha256" | cut -d' ' -f1)
+[ "$new_hash" = "$rec_hash" ] && rr=0 || rr=1
+check "--record refreshes base hash" "$rr" \
+  "recorded hash must match current .claude twin after --record"
 
 echo
 echo "$pass passed, $fail failed"

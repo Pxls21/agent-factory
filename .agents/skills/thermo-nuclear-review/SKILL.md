@@ -3,6 +3,14 @@ name: thermo-nuclear-review
 description: Comprehensive security and correctness audit of a branch's changes. Use for thermo nuclear, thermonuclear, or deep review requests, or branch/PR diff audits focused on bugs, breaking changes, security issues, devex regressions, and feature-gate leaks.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/thermo-nuclear-review/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 > VENDORED third-party skill (owner request 2026-08-25). Upstream: cursor/plugins
 > thermos/skills/thermo-nuclear-review @ main (12.4K installs; Socket/Snyk/Trust-Hub
 > pass). Provenance row: docs/THIRD-PARTY-AGENT-TOOLS.md. HOUSE AMENDMENTS:

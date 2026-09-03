@@ -17,6 +17,8 @@
 #   AF_VENV   python venv root      default: $HOME/venv-agent-factory
 #   CODEX_BIN      codex binary          default: codex (from PATH)
 #   HERMES_BIN     hermes binary         default: hermes (from PATH)
+#   HERMES_MODEL   OmniRoute route id    default: codex/gpt-5.6-sol-ultra (owner ruling 2026-09-03)
+#   HERMES_REASONING  Hermes effort      default: ultra
 #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
 #   LANE_ID        override the lane id  default: derived from the brief
 #   PC_LANE_FAKE_HARNESS
@@ -211,7 +213,15 @@ else
   # cwd is the workspace, which is why we cd'd into the lane tree above. We do
   # NOT pass --worktree: this script already manages the worktree, and letting
   # Hermes make a second one would put the lane somewhere we are not watching.
+  # Owner ruling 2026-09-03: the BUILD lane is Hermes on the PC through OmniRoute on the
+  # owner's OpenAI route at the HIGHEST reasoning. -m pins the OmniRoute route id (the
+  # persistent provider stays `custom` = OmniRoute in ~/.hermes/config.yaml), --reasoning
+  # pins Hermes's own effort, --accept-hooks lets the ported shell hooks run without a
+  # TTY prompt (an unattended lane cannot answer one). Both overridable per lane.
   "$HERMES_BIN" -z "$(cat "$PROMPT_FILE")" \
+      -m "${HERMES_MODEL:-codex/gpt-5.6-sol-ultra}" \
+      --reasoning "${HERMES_REASONING:-ultra}" \
+      --accept-hooks \
       --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG"
   rc=$?
 fi

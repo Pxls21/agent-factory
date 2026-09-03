@@ -161,17 +161,20 @@ verify lane, only `claude/soundbox-kit-migration-iz1jwf` via `scripts/push_clean
 Both consume the same `SKILL.md` with `name` / `description` YAML frontmatter, so **one ported
 copy serves both** — placed once, at `.agents/skills/`.
 
-### Scope — 0 hand-ported, 6 tool-managed, 376 vendored verbatim (THIS repo)
+### Scope — 14 hand-ported, 6 tool-managed, 362 vendored verbatim (THIS repo)
 
-**Every one of the 382 skills in `.agents/skills/` is a VERBATIM copy of its `.claude/skills/`
-twin**, produced by `harness-ports/bin/sync-skills.sh`. The source repo hand-ported 14
-project-authored skills (`build-loop` · `deep-work` · `orchestration` · `anti-hollow-green` ·
-`contract-gate` · `trace-the-chain` · `adversarial-review` · `root-cause-debugging` ·
-`empirical-validation` · `luck` · `code-intel-trio` · `session-continuity` · `bug-echo` ·
-`thermo-nuclear-review`) with **HARNESS PORT** notes; those rewordings were NOT carried into this
-repo (`grep -rl 'HARNESS PORT' .agents/skills` → 0). Translation of Claude-Code mechanisms rides
-entirely on the mechanism table in `AGENTS.md` / `.hermes.md` for now. Re-porting the 14 is a
-registered follow-up (`harness-skill-rewordings` in `todo/BUILD-TASKLIST.md`), not a silent gap.
+**14 project-authored skills** carry HARNESS PORT rewordings in `.agents/skills/` — each has a
+`> **HARNESS PORT.**` note and mechanism-name substitutions for Codex/Hermes. The 14 names
+(listed in `harness-ports/hand-ported.txt`, base hashes in `harness-ports/hand-ported.sha256`):
+
+`adversarial-review` · `anti-hollow-green` · `bug-echo` · `build-loop` · `code-intel-trio` ·
+`contract-gate` · `deep-work` · `empirical-validation` · `luck` · `orchestration` ·
+`root-cause-debugging` · `session-continuity` · `thermo-nuclear-review` · `trace-the-chain`
+
+The sync script (`harness-ports/bin/sync-skills.sh`) recognizes these as intentional drift and
+never overwrites them on a plain run; `--check` reports them as `INTENTIONAL` (exit 0) when the
+`.claude` twin's hash matches the recorded base, or `STALE-BASE` (exit 1) when it has changed
+since the port.
 
 **Tool-managed (6)** — `gitnexus-cli` · `gitnexus-debugging` · `gitnexus-exploring` ·
 `gitnexus-guide` · `gitnexus-impact-analysis` · `gitnexus-refactoring`
@@ -180,9 +183,9 @@ GitNexus mirrors these into `.agents/skills/` whenever an `.agents/` directory e
 (`gitnexus@1.6.10`, `dist/cli/ai-context.js:309-332`). It **overwrites on every `analyze`**.
 Never hand-edit them — any edit is lost at the next reindex.
 
-**Vendored (376)** — the third-party skill library, copied VERBATIM. Lines inside vendored
+**Vendored (362)** — the third-party skill library, copied VERBATIM. Lines inside vendored
 skills that name Claude-Code-only mechanisms (Task/Agent tool, /slash commands, hooks) are left
-as-is and mapped through the mechanism table in `AGENTS.md` — one table, not 376 edits.
+as-is and mapped through the mechanism table in `AGENTS.md` — one table, not 362 edits.
 
 ### Skill invocation mapping
 
@@ -191,13 +194,13 @@ Both harnesses invoke skills by name. Codex uses `@skill-name` in the prompt; He
 (`/council`, `/wiki-*`, `/bug-echo`, `/contract-gate`, `/luck`, etc.) are reachable on both
 harnesses by their skill name without the leading `/`.
 
-### Rewording in the hand-ported skills — NOT applied in this repo
+### Rewording in the hand-ported skills
 
-The source repo carried 24 reword sites across its 14 hand-ported skills (two beyond renaming:
-`contract-gate` — builder and evaluator in separate contexts, a single-model harness hands step 3
-back to the sandbox lane; `orchestration` SUCCESSION — reframed as the operating mode). None of
-those edits exist here yet; the skills read exactly as they do for Claude Code. Until the
-follow-up lands, apply the two semantic rules above by hand when you run those skills.
+42 body reword sites across the 14 hand-ported skills. Two carry semantic changes beyond
+mechanism renaming: `contract-gate` — builder and evaluator in separate contexts, a single-model
+harness hands step 3 back to the sandbox lane; `orchestration` SUCCESSION — reframed as the
+operating mode. Trading-system-specific live paths/branches/env names were re-pointed to this
+repo during the port (war stories referencing the source repo by name are left as evidence).
 
 ---
 
@@ -479,24 +482,32 @@ When a rule changes:
 4. If the STANDING PROJECT RULES ever change, re-run the md5 check in section 3 — the three
    files must hash identically.
 
-### Skill sync — all 382 skills
+### Skill sync — 382 skills (14 hand-ported, 362 verbatim, 6 tool-managed)
 
 After any change to `.claude/skills/` (new skill, vendored update, skill removal):
 
-    bash harness-ports/bin/sync-skills.sh              # copy + report
-    bash harness-ports/bin/sync-skills.sh --check      # report only, exit 1 on drift
+    bash harness-ports/bin/sync-skills.sh              # copy + report (never overwrites allowlisted dirs)
+    bash harness-ports/bin/sync-skills.sh --check      # report only, exit 1 on drift/stale-base
+    bash harness-ports/bin/sync-skills.sh --record     # refresh base hashes for hand-ported skills
 
-The script copies every skill dir from `.claude/skills/` to `.agents/skills/`, excluding the
-empty `gitnexus` parent dir. It reports:
+The script copies every non-allowlisted skill dir from `.claude/skills/` to `.agents/skills/`,
+excluding the empty `gitnexus` parent dir. Hand-ported skills listed in
+`harness-ports/hand-ported.txt` are NEVER overwritten by a plain run; their drift is classified
+by comparing the `.claude` twin's sha256 against the recorded base hash in
+`harness-ports/hand-ported.sha256`. Reports:
 
 - **NEW** — dirs in source but not destination (copied on run, reported on --check)
 - **STALE** — dirs in destination but not source (reported, NOT deleted)
-- **DRIFT** — dirs where content differs (copied on run, reported on --check)
+- **DRIFT** — non-allowlisted dirs where content differs (copied on run, exit 1 on --check)
+- **INTENTIONAL** — hand-ported dirs whose `.claude` twin matches the recorded base hash
+  (expected drift, exit 0 on --check)
+- **STALE-BASE** — hand-ported dirs whose `.claude` twin changed since the port (exit 1 on
+  --check; re-port via 3-way merge, then `--record` to update the base hash)
 
-In this repo NO skill carries intentional rewordings, so a clean sync reports zero DRIFT; any
-DRIFT is a `.claude/skills/` edit whose twin was not re-synced (the pre-commit gate catches it).
+The pre-commit SKILL-SYNC GATE (`scripts/hooks/pre-commit`) calls `sync-skills.sh --check` and
+blocks on exit 1. A clean check reports 14 INTENTIONAL lines and exit 0.
 
-Test: `harness-ports/tests/test_sync_skills.sh` (11 checks).
+Test: `harness-ports/tests/test_sync_skills.sh` (19 checks).
 
 ### Instructions-file drift check
 

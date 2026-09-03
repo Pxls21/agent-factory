@@ -1,11 +1,19 @@
 ---
 name: orchestration
-description: Delegation and coordination for multi-agent builds, any project — Claude-5 brief-writing, the ORCHESTRATOR protocol (disjoint boundaries, worktree pins, push-reviewed-SHA, vocabulary locks), parallel-agent meta-rules, coordinator token economy, and SUCCESSION (no-Fable operation). Load before authoring any delegate brief, dispatching parallel agents, reviewing/pushing delegate work, or coordinating a multi-agent wave. CLAUDE.md carries the routing table and non-negotiables — this skill is the authoritative expansion.
+description: Delegation and coordination for multi-agent builds, any project — Claude-5 brief-writing, the ORCHESTRATOR protocol (disjoint boundaries, worktree pins, push-reviewed-SHA, vocabulary locks), parallel-agent meta-rules, coordinator token economy, and SUCCESSION (no-Fable operation). Load before authoring any delegate brief, dispatching parallel agents, reviewing/pushing delegate work, or coordinating a multi-agent wave. the project instructions file carries the routing table and non-negotiables — this skill is the authoritative expansion.
 ---
+
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/orchestration/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
 
 # Orchestration — briefs, delegation, coordination
 
-CLAUDE.md carries the model-routing table, FABLE-SAFEGUARD, MAIN-LOOP FOCUS and explicit-model
+the project instructions file carries the model-routing table, FABLE-SAFEGUARD, MAIN-LOOP FOCUS and explicit-model
 rules (always in context). This skill is the full expansion of everything else about running
 delegates well.
 
@@ -76,6 +84,12 @@ re-read memory files. To-dos come FROM the Ouroboros seed; status lines are outc
 (`Verified live:` / `DONE:` / `NOT built.`), never narratives.
 
 ## SUCCESSION — no-Fable operation
+
+**On Codex/Hermes this section IS the operating mode, not a contingency.** These harnesses run
+one model and have no tier to escalate to, so read every "tier" below as "an independent
+reviewer in a separate context" — which, here, means the sandbox lane. Rule 1 is the one that
+binds hardest: a single-model harness has no internal way to satisfy "independent", so
+independence is obtained by handing the work back, never by re-reading your own diff.
 
 (The standing goal: the tier below must not need the tier above.) Every protocol here is
 model-agnostic BY CONSTRUCTION — quality tracks the brief and the gates, not the coordinator's
@@ -184,17 +198,7 @@ Delegate the bulk to well-briefed agents, keep review + the hardest seams yourse
 boundary while another runs. **(a2) Workflow worktree isolation creates worktrees from
 origin/main, NOT the checked-out branch (bit 2026-07-24: 608 commits stale, every briefed seam
 absent) — every worktree brief pins the tip SHA and mandates `git reset --hard <tip>` +
-verification as the delegate's FIRST action.** **(a3) Every COPY of the tree — worktree,
-`git archive`, mutation harness — must replace `vectorbtpro-new` with a symlink:
-`rm -rf <copy>/vectorbtpro-new && ln -s <repo>/vectorbtpro-new <copy>/vectorbtpro-new`.
-The editable VBT install resolves to `<repo>/vectorbtpro-new` (429 TRACKED files), so a
-copy at any other path makes `verify_vbt_install()` raise VbtShadowError in every
-vbt-touching test: a gate on the copy reds for a reason unrelated to the code, and a
-mutation harness on the copy KILLS every mutant narrowed to such a file whatever the
-mutation did (V7-F1, 2026-09-02, hollow kills). `ln -s` alone onto a worktree lands the
-link INSIDE the tracked dir (V7's D0 recipe → phantom reds); the `rm -rf` is load-bearing.
-The repo has TWO archive builders (`lane_gate.sh::archive_tree`,
-`mutation_run.py::_fresh_tree`) — a fix to one is an AP-45s until it reaches the other.**
+verification as the delegate's FIRST action.**
 
 (b) **The brief carries seams YOU verified + prior mistake-patterns as do-nots** (delegates
 repeat mistakes you don't name); **any brief creating a NEW numeric module on market data
@@ -208,11 +212,7 @@ refused to route around it, and returned the body — the brief cost nothing but
 luck); **a long brief travels as a FILE, not an inline prompt** —
 scratchpad file + a short pointer prompt that Reads it first and STOPS loud if missing (an inline
 audit brief once arrived truncated to 79 chars and burned the dispatch; the file pattern makes
-re-truncation impossible and a lost file a cheap loud retry). **A file brief's HEAD pin is
-re-checked against `git rev-parse HEAD` at DISPATCH time, not authoring time** — a brief
-authored before a coordinator boundary commit names a stale tip, and the delegate's mandatory
-premise check halts on it (2026-09-02: I3h brief said 30e6cd7d, tree was 7d759443; one sed
-before dispatch). Pin the PUSH BASE as the immutable anchor; the HEAD line is "current tip".
+re-truncation impossible and a lost file a cheap loud retry).
 
 (c) **Review = re-run the gates yourself + read only security/spine-critical hunks** — where
 every real delegate defect was caught (dead-wire tier check, jail escape, fabricated-green risk);
@@ -223,38 +223,10 @@ the coordinator's 76-test subset was green because it skipped the broken file, a
 different true counts (155/158/168) circulated unverifiably until the invocation was pinned.
 **Semantic-duplicate lens (slopo, IP-1 — owner integration request 2026-08-27): when the slopo
 index is live (`slopo.conf.yaml` + `.slopo-runtime/`), run `slopo review --base
-origin/claude/clean-build` over a landed build lane's diff and read the flagged clusters —
+origin/claude/soundbox-kit-migration-iz1jwf` over a landed build lane's diff and read the flagged clusters —
 "this new code is semantically similar to existing code at <path>" is the
 delegate-re-implemented-an-existing-seam tell (the AP-43 duplicate-GA_OBJECTIVES class) at the
 cheapest boundary. ADVISORY only, never a gate; attach flagged clusters to verify briefs.**
-**(c2) THE LANE EXIT GATE IS A SCRIPT, NOT A PARAGRAPH (owner mandate 2026-09-02, after
-seven RP-30b verify rounds).** Every build/repair brief ends with: run
-`scripts/lane_gate.sh <push-base> <gate-files.txt> [--mutants scripts/mutants/<lane>.py]
-[--digest <script>]` as ONE detached invocation, poll `$OUT/DONE`, paste the VERDICT block
-verbatim into the report AND the final commit body; VERDICT RED = the lane is not done,
-whatever the prose says. Every verify brief runs the SAME script first and grades from its
-artifacts (`reds_new.txt`, `mutants.txt`, `lint_delta.txt`) before any reading. Verifier
-findings that need a repair ship as RED TESTS (committed failing tests or manifest mutants),
-never file:line prose — the repair brief is "make these N tests green, do not edit them".
-A finding with no test is INFO and does not open a round. "Pre-existing" is a word only
-`lane_gate.sh` may say (its `reds pre-existing=` line, computed against the PUSH BASE
-archive) — the I3g report called a range regression pre-existing off a mid-stack SHA, and
-the mis-label cost a full round. Round cap: `contract-gate` §4 — round-3 NOT-READY stops the
-wave for a main-loop churn root-cause; there is no round-4 brief.
-
-**(c3) A GATE OF RECORD FREEZES THE WHOLE TREE — wiki, skills, docs, ledger included
-(2026-09-02).** `lane_gate.sh` re-checks HEAD and `git status --porcelain` at the END of its
-run and REDs on "HEAD moved" / "tree dirtied during the gate", with no file-type carve-out —
-a wiki live-state edit or a ledger stamp during the ~90-min run wastes the whole run exactly
-like a code edit would. The coordinator nearly did this twice in one window (a live-state
-delta mid-run; then the GitNexus banner rewriter regrew AGENTS.md/CLAUDE.md after a
-compaction setup pass). Rules: (1) park every non-code delta as a patch in the scratchpad
-(`git diff > $S/<name>_pending.patch`, `git checkout -- <file>`) and apply it AFTER the
-VERDICT block is read; (2) every keep-alive tick during a gate runs `git status --porcelain
---untracked-files=no` and reverts banner churn (`git checkout -- AGENTS.md CLAUDE.md`) — the
-running pytest lives in a separate worktree, so the revert is safe; (3) commits, task-DB
-metadata and wiki updates queue behind the verdict — the ONLY things that move during a gate
-are scratchpad files and the in-session task DB.
 
 (d) **Background-agent liveness = transcript-file mtime probe** (never read the transcript —
 context overflow). **Staleness is only a death signal when it EXCEEDS the brief's longest
@@ -267,15 +239,7 @@ a duplicate lane on shared files is strictly worse than a late one. **Brief dele
 — a delegate that backgrounds a run and stops is NEVER rewoken by its completion; it sits stalled
 until the coordinator messages it (two executors parked this way in one sprint).** A stalled
 agent's EXTERNAL artifacts persist — recover by inspecting what it left and finishing lean, not
-re-running from scratch. **A user-STOPPED agent cannot be resumed at all** (the harness
-refuses SendMessage: "won't be resumed"), but its commits and its `setsid` gate keep running
-(2026-09-02: I3h stopped by an accidental owner keypress after 2 commits + a live lane_gate).
-Recovery = `git status` + `git log <dispatch-sha>..HEAD` + `pgrep -fa '[l]ane_gate'`, read
-its gate output as the report, diff its commits against the brief's item list, and
-re-dispatch ONLY the residual — never a fresh full brief. **A container RESTART is the same
-shape:** it kills every agent but not their `setsid` gates (2026-09-02: two lane_gate runs
-survived a restart the compaction summary presumed had killed them) — `pgrep`/`ls $OUT` BEFORE
-relaunching anything, and brief the re-dispatched agent to REUSE the surviving artifacts.
+re-running from scratch.
 
 (e) **Commit at every boundary between agent handoffs** — a dirty tree across turn-ends burns
 quota and blocks committing finished work.

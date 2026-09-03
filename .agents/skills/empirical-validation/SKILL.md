@@ -3,6 +3,14 @@ name: empirical-validation
 description: Method for answering an open quantitative question that gates a decision — pre-register the verdict rule, verify the instrument, sample the risky cases, keep a control group, report the tail. Use when a ship/hold decision depends on a number nobody has measured yet, rather than on a claim to check or a cause to find.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/empirical-validation/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # Empirical validation
 
 Distinct from the two neighbouring methods. `root-cause-debugging` finds a cause. `adversarial-review` checks whether someone's claim survives reproduction. This one answers **an open quantitative question that gates a decision** — is this margin sufficient, is this fast enough, does this change what it must not — where the honest answer today is "nobody has measured it". No amount of review substitutes: a reviewer of any capability meets the same missing number.

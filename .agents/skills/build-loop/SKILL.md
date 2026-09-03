@@ -1,11 +1,19 @@
 ---
 name: build-loop
-description: The meticulous build loop ("Fable light") — MANDATORY for every code increment, in any project. Full text with war-story evidence. Load before writing any code increment, test, or commit; when verifying seams; when debugging an unexpected test failure; when running a live smoke; or when closing an increment. CLAUDE.md carries the condensed operative steps — this skill is the authoritative expansion.
+description: The meticulous build loop ("Fable light") — MANDATORY for every code increment, in any project. Full text with war-story evidence. Load before writing any code increment, test, or commit; when verifying seams; when debugging an unexpected test failure; when running a live smoke; or when closing an increment. the project instructions file carries the condensed operative steps — this skill is the authoritative expansion.
 ---
+
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/build-loop/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
 
 # The meticulous build loop ("Fable light" — mandatory for every code increment)
 
-Model-agnostic, per increment, no skipping steps. This is the verbatim protocol; CLAUDE.md's
+Model-agnostic, per increment, no skipping steps. This is the verbatim protocol; the project instructions file's
 build-loop section is the condensed index of it. On any doubt, THIS text governs.
 
 > **Golden-fence rule for byte-constrained refactors (2026-08-28, refactor waves G+A):** when an
@@ -62,13 +70,8 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    doc named; the live producer was a different class entirely — VolatilityBucket — so the
    causality certificate was falsified as written and every downstream argument inherited the
    skew. One grep of the live call site would have caught it at design time.)
-2. **One increment = code + deterministic test + commit.** The commit passes
-   `scripts/hooks/pre-commit` (pyflakes DELTA vs HEAD on staged .py — NEW hits block; the
-   `SKIP_LINT_DELTA=1` bypass prints itself; rationale in `scripts/lint_delta.py`), and a
-   LANE of increments exits only through `scripts/lane_gate.sh <push-base> <gate-files.txt>`
-   with its VERDICT block pasted verbatim (owner mandate 2026-09-02 — orphaned imports and
-   "pre-existing" mislabels each cost a verify round before these two existed). Test is
-   LLM-free, in-sandbox, with a NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
+2. **One increment = code + deterministic test + commit.** Test is LLM-free, in-sandbox, with a
+   NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
    gate runs RED and provably never touches the cwd). **A fixture that cannot carry the PRODUCTION
    data TYPE is a vacuous test — build round-trip/serialization tests from the real producer's
    types, not hand-built native-Python stand-ins** (PREMORTEM-2 R2-01: a champion test used a

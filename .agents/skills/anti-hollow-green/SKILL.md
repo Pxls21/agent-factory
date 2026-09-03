@@ -1,11 +1,19 @@
 ---
 name: anti-hollow-green
-description: The anti-hollow-green tactics — general-purpose, any project: the full operational checklist behind the #1 NO STUBS rule, with war-story evidence (NaN fail-open wormholes, os.environ config leaks, mutation-testing, oracle independence, searchable-parameter-domain attack surface). Load when designing or reviewing ANY gate, oracle, test suite, benchmark, guard on externally-sourced values, or numeric fail-closed check; when a green looks too easy; or when bounding any optimizer/search parameter domain. CLAUDE.md carries the rule + one-line tactic index — this skill is the authoritative expansion.
+description: The anti-hollow-green tactics — general-purpose, any project: the full operational checklist behind the #1 NO STUBS rule, with war-story evidence (NaN fail-open wormholes, os.environ config leaks, mutation-testing, oracle independence, searchable-parameter-domain attack surface). Load when designing or reviewing ANY gate, oracle, test suite, benchmark, guard on externally-sourced values, or numeric fail-closed check; when a green looks too easy; or when bounding any optimizer/search parameter domain. the project instructions file carries the rule + one-line tactic index — this skill is the authoritative expansion.
 ---
+
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/anti-hollow-green/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
 
 # Anti-hollow-green TACTICS — operational checklist (every gate, oracle, test, increment)
 
-The #1 rule (CLAUDE.md): NEVER replace a real component with a stub, fake, no-op, hardcoded
+The #1 rule (the project instructions file): NEVER replace a real component with a stub, fake, no-op, hardcoded
 value, tautology, or shortcut to "get past" a blocker. A fake-substrate result is worse than
 none. The hollow green lives in PROSE too. On a blocker: STOP → SURFACE → offer real options →
 pivot to the nearest REAL provable thing → wait for direction. This skill is the full tactical
@@ -65,14 +73,6 @@ expansion.
    the graded artifact choose its own oracle value). Drop ONLY when: (a) change provably scoped,
    (b) ≥1 retained assertion is INVARIANT to the change, (c) the reduced gate still fails an
    empty/mutant workflow. Fail any leg → abstain, never mint.
-   **4b. Pair every absolute pinned golden with a structural discriminator** (2026-09-02,
-   dark-emissions digest): an absolute pin (sha of output bytes) fires on BOTH the defect it
-   guards against AND every intentional upstream evolution — undecidable red, and "re-pin to
-   green" quietly becomes the norm. Ship, next to the pin, a same-run structural test that
-   isolates the guarded mechanism (e.g. output bytes with the suspect subsystem suppressed ==
-   live bytes): pin red + discriminator green = evolution (re-pin WITH provenance: the probe
-   result and the window of intentional movers); discriminator red = the real defect,
-   root-cause. A pin without its discriminator makes every future red a judgment call.
 5. **No LLM-judge in the gate spine.** Gate/oracle/assertion execution is deterministic
    exit-code / set-hash comparison; an LLM enters ONLY at codify/generate/tune time.
 6. **A stress benchmark's value is the defects it FORCES, not the green it prints.** Design the
@@ -123,15 +123,6 @@ expansion.
    weekend-ratio>3) individually missed a case that any real-number fixture would have caught
    at write time. If the incident's numbers exist anywhere (wiki, findings, incident log),
    copying them into the test file is cheaper than every alternative.
-
-12. **A lane's green is a SCRIPT VERDICT, never a paragraph (AP-62, 2026-09-02).** "Tests
-   green, reds pre-existing, mutants die" written by hand was wrong at least once per round
-   across seven RP-30b I3 rounds. The exit gate is `scripts/lane_gate.sh <push-base>
-   <gate-files> [--mutants] [--digest]` and its VERDICT block pasted verbatim; a verifier
-   finding with no red test or mutant is INFO, not a repair item (skill `contract-gate` §4).
-   The gate script gets its own negative control (tactic 1): a seeded probe with a known
-   lint hit, a surviving mutant and a drifted anchor must come back RED before the first
-   real lane trusts it.
 
 Related requirement (from the #1 rule): **every benchmark/eval MUST exercise the ACTUAL
 pipeline**, score against a **real independent oracle**, and report the **hollow-green

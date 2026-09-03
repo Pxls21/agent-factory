@@ -13,6 +13,7 @@ loop stays the enforcement point). Every external probe is time-bounded.
 Extend the AP screen when a new registry row lands (bug-echo mandate:
 registry and this screen move together).
 """
+import os
 import ast
 import json
 import re
@@ -120,7 +121,7 @@ PROBE_TIMEOUT = 8
 # first and MISSED the real AP-60 shape (the name WAS bound — inside main(),
 # a different scope), so scoping is left to pyflakes, not re-implemented.
 _NP_PD = re.compile(r"(?<![\w.])(np|pd)\.")
-_VENV_PY = "/root/venv-agent-factory/bin/python"
+_VENV_PY = os.environ.get("AF_VENV", "/root/venv-agent-factory") + "/bin/python"  # PC lanes export AF_VENV
 
 
 def _pyflakes_msgs(py: str, text: str) -> dict:

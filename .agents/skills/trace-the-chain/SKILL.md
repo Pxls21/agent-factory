@@ -3,6 +3,14 @@ name: trace-the-chain
 description: Method for reliably answering "is X enabled / what is the default / did we fix Y" questions — enumerate every layer of the chain before concluding, date it with git, and present the table before the verdict. Use for audits, investigations, and any question whose answer you might otherwise have to reverse.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/trace-the-chain/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # Trace the chain
 
 "What is the default", "is X on", and "did we fix Y" are almost never one value — they are a chain. Each layer read alone yields a confident, defensible, wrong answer; two agents can reach opposite conclusions citing real evidence from different layers. The method:

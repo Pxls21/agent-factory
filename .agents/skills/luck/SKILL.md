@@ -3,6 +3,14 @@ name: luck
 description: "The Geometry of Luck — vendored seven-facet diagnostic lens (solvency, gradient coupling, structural compatibility, niche construction, circulation, integration, path sensitivity) for META-WORKFLOW deliberation: retros, research prompts, architecture/design decisions, premortems/roasts, council debates, seed reviews. Apply to the SETUP and WORKFLOW of this AI system, not to trading verdicts. BARRED from the gate spine, delegate briefs, and any measurement/certification verdict (no-LLM-judge law)."
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/luck/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # The Geometry of Luck — house integration (owner mandate 2026-08-27)
 
 **Provenance:** vendored verbatim from github.com/soleio/luck @ main (MIT,

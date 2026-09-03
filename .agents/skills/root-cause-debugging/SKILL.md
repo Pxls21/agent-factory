@@ -3,6 +3,14 @@ name: root-cause-debugging
 description: Method for debugging to true root cause — reproduce first, verify the instrument before the reading, instrument before concluding, one variable at a time, and don't stop at the first real bug. Use for any defect hunt - crashes, hangs, wrong output, flaky tests, perf regressions.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/root-cause-debugging/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # Root-cause debugging
 
 1. **Reproduce before you theorize.** A bug you can't trigger is a rumor. Capture the failing state (logs, dumps, exact binaries, inputs) BEFORE restarting or rebuilding — the crime scene is evidence you cannot recreate. A crash you let vanish uncaptured is "noted only", not investigated.

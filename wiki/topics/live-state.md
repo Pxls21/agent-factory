@@ -25,6 +25,10 @@ last_compiled: 2026-09-03
   Pipeline (findings, council, interview, seed, breakdown) COMPLETE, all committed.
 
 ## In-flight runs
+- **PC lane bring-up** (2026-09-03): repo cloned on the PC at `~/agent-factory` (33cf54e, hooks
+  active); `harness-ports/bin/pc-setup.sh` running detached (log `.lanes/pc-setup.log` on the PC);
+  gVisor `runsc release-20260817.0` staged in `~/gvisor-install` awaiting the owner's sudo step;
+  next: a dedicated Hermes profile with the merged snippet, then the `hermes-lane-trial` spike.
 
 None.
 

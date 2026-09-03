@@ -209,3 +209,42 @@ origin state, task state, or owner statements contradict what you remember:
   built with (its CLAUDE.md, ledgers, runbooks) and their live-asset runbooks BEFORE answering; the
   source repo is a primary source for vocabulary, not only for code. Answering from the nearest
   familiar meaning costs a correction round every time.
+
+- **REPORTS OF RECORD NEVER LIVE ONLY IN THE SCRATCHPAD (2026-09-02, bit twice in one
+  night — two container restarts wiped `$S/report_V4.md` + `$S/report_V6.md`, blocking
+  three I4e residuals whose scope was defined ONLY there).** A verify/repair lane's
+  report of record, any proposed-edit text awaiting a ruling, and any enumerated work
+  list (e.g. an unrun-mutant set) gets persisted to the REPO (`tasks/` stamp,
+  `.agents/research/`, or the ledger row) in the same increment that cites it —
+  the scratchpad is for in-flight working files only. Recovery from the transcript
+  JSONL works (every Write is recorded) but costs a whole archaeology lane; the
+  one-line repo copy at citation time costs nothing.
+
+## Handed-value freshness (2026-09-03 — three stale values in one night, all owner-caught)
+
+Any VALUE handed to a human for execution (env var, launch parameter, universe,
+timeframe, K) is a brief, and its premises age like briefs. Before handing one over,
+build the value→dated-source table and take each value from the NEWEST dated layer:
+ledger sync block > interview-validated seed > campaign findings > runbook env section
+> script/code default. The runbook's env lines and code defaults are convenience
+copies that drift (three did: GA_SYMBOLS 6 weeks stale, launch-script default 4-token,
+code default 3-token); the ledger's dated sync blocks are append-only and win. An
+EXTERNAL research doc is a source of questions, never of campaign constants — RP-31's
+"hourly" framing contradicted the settled 4h frame and rode into two preregs before
+the audit caught it.
+
+## Deep-history asset (2026-09-03)
+
+`.agents/research/2026-09-03-session-histogram.md` is the full-transcript
+reconstruction (every owner ruling verbatim in §4, pinned campaign parameters in
+§5, eras back to July from the ledger). Live-state = the recent map; the histogram
+= the deep record. Consult §5 before handing any value for execution and §4 before
+re-deciding anything that smells previously ruled. If it ages, regenerate with the
+chat-histogram workflow script under the session workflows dir.
+
+- **When the owner NAMES an artifact ("the inc9 script"), grep the commit history for
+  that name FIRST** (`git log --all --oneline | grep -i <name>` + the runbook) — never
+  reply with a rebuilt/guessed substitute. 2026-09-03: the owner named relaunch_inc9
+  three times while the coordinator invented a new script, offered the wrong launcher,
+  and searched scripts/ twice; the answer was in the runbook's "proven cell" paragraph
+  and the commit subjects the whole time. Owner recall of names outranks search heuristics.

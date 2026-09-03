@@ -1,7 +1,15 @@
 ---
 name: deep-work
-description: The deep-work protocol ("Fable deep") — general-purpose, any project: Phases 0-6 plus the retrospective rule and the operational meta-rules, full text with war-story evidence. Load for new subsystems, gate/security/store spine changes, code review of a stretch, root-cause investigations, anything where a wrong green is expensive, long-running probes/measurements, GC/retention sweeps, handoffs, or session close-outs. CLAUDE.md carries the trigger list and phase index — this skill is the authoritative expansion.
+description: The deep-work protocol ("Fable deep") — general-purpose, any project: Phases 0-6 plus the retrospective rule and the operational meta-rules, full text with war-story evidence. Load for new subsystems, gate/security/store spine changes, code review of a stretch, root-cause investigations, anything where a wrong green is expensive, long-running probes/measurements, GC/retention sweeps, handoffs, or session close-outs. the project instructions file carries the trigger list and phase index — this skill is the authoritative expansion.
 ---
+
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/deep-work/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
 
 # The deep-work protocol ("Fable deep" — serious increments and reviews)
 
@@ -265,7 +273,7 @@ red since the 59-gene expansion because that suite sat outside every per-suite g
 **The retrospective rule — extract the alpha at the end of EVERY sprint.** Triggers: (a) after
 every context continuation (first action — lessons freshest); (b) after closing any task >3
 increments; (c) before writing any handoff. None fired → session end.
-**MECHANIZED 2026-08-25 (owner directive):** the Stop hook `turn-retro-gate.sh` now fires this
+**MECHANIZED 2026-08-25 (owner directive):** the turn-retro gate (Codex: a `Stop` hook; Hermes: a `pre_verify` shell hook) now fires this
 rule's checklist once per landed commit-batch — wiki delta · bugs→registry/screen ·
 nuance→matching skill · next-time-easier tooling. The hook is the floor, not the ceiling:
 answer by DOING, or by an explicit "retro: nothing to bake"; never by dismissing the gate.
@@ -276,7 +284,7 @@ answer by DOING, or by an explicit "retro: nothing to bake"; never by dismissing
   where the next task reads them) and integrate (connect siloed parts), or pool as a one-off?
   Meta-workflow only — never in verdicts or delegate briefs.
 - **Bake answers into the protocol IN THE SAME INCREMENT** — general rules into the matching
-  skill/CLAUDE.md section; project-specific operational facts in the matching runbook/handoff. A
+  skill/the project instructions file section; project-specific operational facts in the matching runbook/handoff. A
   lesson recorded only in a handoff WILL be re-learned the expensive way (the mutation-restore
   mistake was made twice for exactly this).
 - **Prefer the GENERAL form** (project example in parentheses as evidence). Only-makes-sense-here

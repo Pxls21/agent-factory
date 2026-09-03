@@ -3,6 +3,14 @@ name: session-continuity
 description: Resume/continuity protocol — verify session timeline and work provenance against the transcript and git BEFORE asserting who did what, when, or re-executing any close-out. Load on EVERY session resume from a compaction summary, whenever origin is ahead of your remembered state, whenever local commits look like duplicates of origin, or before claiming a container/session "died" or that "another session" did work.
 ---
 
+> **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
+> (via `skills.external_dirs`). It is the same protocol as `.claude/skills/session-continuity/SKILL.md`;
+> only lines naming a Claude-Code-specific mechanism were reworded — see `docs/HARNESS-PORTS.md`.
+> "the project instructions file" = `AGENTS.md` on Codex, `.hermes.md` on Hermes.
+> Model-tier names below ("Fable light", "Opus 5 lane") are PROTOCOL LABELS, not routing
+> instructions: these harnesses run ONE model. Where the protocol calls for an independent
+> verifier, hand the work BACK to the sandbox lane — never self-accept.
+
 # Session continuity — verify before asserting (owner mandate 2026-08-04)
 
 ## The incident this skill exists for
@@ -37,7 +45,7 @@ origin state, task state, or owner statements contradict what you remember:
    - origin tip: `git log -1 --format='%ci %s' origin/<branch>`
    - local tip + base: `git log --oneline origin/<branch>..HEAD`
    - transcript: first/last timestamps + entries-per-day histogram of
-     `/root/.claude/projects/<project>/<session-id>.jsonl`
+     `the harness session store (Codex: `~/.codex/sessions/*.jsonl`; Hermes: SQLite `~/.hermes/state.db`)`
    If the transcript shows activity AFTER the summary's last event, the
    summary is STALE — the transcript is the primary source for session
    history, the summary is a lossy cache. Rebuild state from transcript tail
@@ -74,7 +82,7 @@ origin state, task state, or owner statements contradict what you remember:
   extracting `tool_use` entries (`name == "Write"`) and replaying their
   `content`.
 - **CORRECTED 2026-08-27 (proven live): SUBAGENT transcripts SURVIVE rollbacks**
-  at `/root/.claude/projects/<project>/<session-id>/subagents/agent-<id>.jsonl`
+  at `the harness subagent session records (Codex: `~/.codex/sessions/`; Hermes: `state.db`)`
   — `/root/.claude` is the durable store; only the `/tmp` scratchpad task
   mirrors roll back with the disk. Recover from `/root`, never conclude loss
   from `/tmp` absence.
@@ -97,7 +105,7 @@ origin state, task state, or owner statements contradict what you remember:
   the PBO-IN-LOOP/SEAL-era programs had no rows left).** The durable mirror is
   `todo/BUILD-TASKLIST.md` §LIVE (mirror every task create/close there in the
   same increment, push); the forensic backstop is the transcript's complete
-  TaskCreate/TaskUpdate record (extract `tool_use` entries by name — 70
+  task-ledger record (extract `tool_use` entries by name — 70
   creates were recovered that way). On resume: restore the task DB FROM the
   ledger, and diff task-DB-vs-ledger on keep-alive ticks whenever either
   changed.
@@ -187,7 +195,7 @@ origin state, task state, or owner statements contradict what you remember:
 - **LOST-COMMIT RECOVERY FROM SUBAGENT TRANSCRIPTS (2026-08-31, proven).** A delegate's
   commits that were never pushed are NOT lost to a container rollback: the subagent
   transcript survives under
-  `/root/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl` and records every
+  `the harness subagent session records (Codex: `~/.codex/sessions/`; Hermes: `state.db`)` and records every
   Edit/Write tool_use with full content. Recovery recipe: (1) locate the transcript by
   grepping for a distinctive symbol the agent created; (2) extract tool_use ops
   programmatically (never Read the JSONL whole — it overflows context); (3) replay
@@ -209,3 +217,42 @@ origin state, task state, or owner statements contradict what you remember:
   built with (its CLAUDE.md, ledgers, runbooks) and their live-asset runbooks BEFORE answering; the
   source repo is a primary source for vocabulary, not only for code. Answering from the nearest
   familiar meaning costs a correction round every time.
+
+- **REPORTS OF RECORD NEVER LIVE ONLY IN THE SCRATCHPAD (2026-09-02, bit twice in one
+  night — two container restarts wiped `$S/report_V4.md` + `$S/report_V6.md`, blocking
+  three I4e residuals whose scope was defined ONLY there).** A verify/repair lane's
+  report of record, any proposed-edit text awaiting a ruling, and any enumerated work
+  list (e.g. an unrun-mutant set) gets persisted to the REPO (`tasks/` stamp,
+  `.agents/research/`, or the ledger row) in the same increment that cites it —
+  the scratchpad is for in-flight working files only. Recovery from the transcript
+  JSONL works (every Write is recorded) but costs a whole archaeology lane; the
+  one-line repo copy at citation time costs nothing.
+
+## Handed-value freshness (2026-09-03 — three stale values in one night, all owner-caught)
+
+Any VALUE handed to a human for execution (env var, launch parameter, universe,
+timeframe, K) is a brief, and its premises age like briefs. Before handing one over,
+build the value→dated-source table and take each value from the NEWEST dated layer:
+ledger sync block > interview-validated seed > campaign findings > runbook env section
+> script/code default. The runbook's env lines and code defaults are convenience
+copies that drift (three did: GA_SYMBOLS 6 weeks stale, launch-script default 4-token,
+code default 3-token); the ledger's dated sync blocks are append-only and win. An
+EXTERNAL research doc is a source of questions, never of campaign constants — RP-31's
+"hourly" framing contradicted the settled 4h frame and rode into two preregs before
+the audit caught it.
+
+## Deep-history asset (2026-09-03)
+
+`.agents/research/2026-09-03-session-histogram.md` is the full-transcript
+reconstruction (every owner ruling verbatim in §4, pinned campaign parameters in
+§5, eras back to July from the ledger). Live-state = the recent map; the histogram
+= the deep record. Consult §5 before handing any value for execution and §4 before
+re-deciding anything that smells previously ruled. If it ages, regenerate with the
+chat-histogram workflow script under the session workflows dir.
+
+- **When the owner NAMES an artifact ("the inc9 script"), grep the commit history for
+  that name FIRST** (`git log --all --oneline | grep -i <name>` + the runbook) — never
+  reply with a rebuilt/guessed substitute. 2026-09-03: the owner named relaunch_inc9
+  three times while the coordinator invented a new script, offered the wrong launcher,
+  and searched scripts/ twice; the answer was in the runbook's "proven cell" paragraph
+  and the commit subjects the whole time. Owner recall of names outranks search heuristics.

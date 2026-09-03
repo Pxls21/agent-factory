@@ -1,0 +1,14 @@
+adversarial-review
+anti-hollow-green
+bug-echo
+build-loop
+code-intel-trio
+contract-gate
+deep-work
+empirical-validation
+luck
+orchestration
+root-cause-debugging
+session-continuity
+thermo-nuclear-review
+trace-the-chain
