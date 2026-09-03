@@ -30,9 +30,9 @@ last_compiled: 2026-09-03
 - **`harness-skill-rewordings`** (pending, low priority): `.agents/skills` is a verbatim mirror of
   `.claude/skills` — the source repo's 14 hand-ported skill rewordings were not carried over;
   the mechanism table in `AGENTS.md`/`.hermes.md` carries translation meanwhile.
-- **Stage 0 build:** STARTED 2026-09-03 with increment #1 (above). Pipeline (findings, council,
-  interview, seed, breakdown) COMPLETE, all committed. `tests/` is deliberately RED (5 contract
-  tests) until the repair lane lands.
+- **Stage 0 build:** increment #1 of 18 DONE (machinery: registry + schemas + validator); the
+  twelve proofs stay ABSENT by design until their increments run. Pipeline (findings, council,
+  interview, seed, breakdown) COMPLETE, all committed. `tests/` fully green (45).
 
 ## In-flight runs
 - **PC lane bring-up** (2026-09-03): DONE and PROVEN — clone at `~/agent-factory`, pc-setup complete
@@ -41,10 +41,11 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-- **Adversarial attack lane `s0-01e`** (agentfactory-verify, terra-xhigh) — running against the
-  round-3 tree; RED tests under `tests/red/` come home with the patch. The mechanical contract run
-  (C1–C18) was done by the coordinator in the sandbox: 18/18 PASS (the sweep combo's head routes
-  are dead — flash credits depleted, antigravity flash retired; owner action in INCIDENT-LOG). Repair lane `s0-01d` DONE on
+- **Increment #1 CLOSED 2026-09-03.** Adversarial lane `s0-01e` returned one under-reporting
+  finding (fixed in the main loop under the round cap, killer test in `tests/red/`); attacks A1–A8
+  SOLID; 45 tests ×2; C1–C18 18/18. NEXT: increment #2 `s0-02-runner-ledger-ci` dispatched to the
+  `agentfactory-build` lane (brief committed, PIN at dispatch). Owner action pending: rebuild the
+  `agentfactory-sweep` combo (dead head routes — INCIDENT-LOG). Repair lane `s0-01d` DONE on
   `agentfactory-build` (44 passed ×2; first lane to run under the incremental-report rule — its
   report-draft.md was written). Verify lane `s0-01c` died mid-run after 167 calls (AF-AP-16/17);
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
@@ -81,4 +82,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#1 round-3 harvest commit — 2026-09-03; next update at the two verification lanes' verdicts.
+Increment-#1 CLOSE commit — 2026-09-03; next update when increment #2's build lane reports.

@@ -1,6 +1,8 @@
 # BRIEF — increment #1 `s0-01-registry-schemas-validator`: proof registry + artifact schemas + ledger validator with EMPTY-SET semantics
 PIN: (set at dispatch — scripts/pc_lane.sh refuses to run without a full SHA here)
 
+> **STATUS 2026-09-03: DONE.** Landed through four PC Hermes lanes (build round 1 at pin c39b64f; repair rounds s0-01b, s0-01d; adversarial verify s0-01e) plus the coordinator's own harvest fixes; final layer 45 tests ×2, C1–C18 PASS, attacks A1–A8 SOLID. Commits: `git log --oneline c39b64f..HEAD -- proofs scripts/validate-ledger tests`.
+
 > **AMENDED 2026-09-03 after lane round 1 (coordinator-level, reason stated):** round 1 halted on a
 > premise the brief got wrong — `spikes/pc-bridge/result.json` carries a THREE-effect ARRAY with
 > rule ids `map-pcbridge-s003`, `map-pcbridge-s008`, `map-rust-s006` and one `blocked_capability`

@@ -136,7 +136,8 @@ def _registry(root, findings):
             "required_negative_controls", "assertion_count",
         }
         missing = sorted(required - set(proof))
-        if missing and "classification" not in missing:
+        if missing:  # every missing field, classification included (AF-S0-01E-01: the old
+            # `"classification" not in missing` guard hid the siblings behind that one finding)
             findings.add(f"registry-schema: {proof_id} missing {','.join(missing)}")
         if not isinstance(proof_id, str) or not PROOF_ID_RE.fullmatch(proof_id):
             findings.add(f"registry-schema: invalid proof_id {proof_id}")
