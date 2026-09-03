@@ -160,8 +160,8 @@ and gVisor compatibility.**
 
 `.agents/skills/` holds 382 skills. Most are vendored third-party text carried over
 **verbatim**, so they name Claude-Code mechanisms that do not exist here. That is deliberate:
-362 skills were not reworded, because rewording third-party text is how you introduce silent
-errors at scale. **Translate as you read, using this table.** A skill saying "use the Task tool"
+none of the 382 were reworded — rewording third-party text is how you introduce silent errors
+at scale, and the 14 project skills' harness rewordings are a registered follow-up, not done. **Translate as you read, using this table.** A skill saying "use the Task tool"
 means "spawn a subagent"; do the Codex thing.
 
 | A skill says… | Do this on Codex |

@@ -155,3 +155,13 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    report. **Status lines open with the OUTCOME, tagged by verification level:** `Verified live:`
    (real path) ≠ `DONE:` (tests green) ≠ `NOT built.` (absent/dormant, stated first-class). The
    verdict leads; the story follows.
+
+**Addendum — a DELTA gate meeting OLD code is a full-tree audit in disguise (2026-09-03,
+agent-factory port).** Delta gates (pyflakes delta, the anti-pattern screen on ADDED lines) never
+re-screen files that pre-date them, so a wholesale port or a vendoring drop is the one moment every
+old line is NEW: the screen lit up 11 hits on adapters the source repo had run for weeks (five real
+silent `except` sites, the rest fixture strings the tests exist to flag). Rule: budget the audit
+into the port increment; resolve hits by CLASS, never by count — fail-loud the real ones, exclude
+vendored trees from the gate the way the edit-snapshot screen already does, and take the hook's
+own sanctioned bypass ONLY for by-design hits with each one named in the commit body. Never edit a
+test to silence the screen.

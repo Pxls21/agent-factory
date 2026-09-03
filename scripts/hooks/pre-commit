@@ -35,6 +35,16 @@ else
     exit 1
   fi
 fi
+# SKILL-SYNC GATE (2026-09-03): a lesson baked into .claude/skills/ left its .agents/skills/
+# twin stale until the final sweep caught it. If any .claude/skills/ path is staged, the two
+# trees must agree (harness-ports/bin/sync-skills.sh --check). Fix = run the sync, stage both.
+if git diff --cached --name-only | grep -q '^\.claude/skills/' \
+   && [ -x "$REPO_ROOT/harness-ports/bin/sync-skills.sh" ]; then
+  if ! bash "$REPO_ROOT/harness-ports/bin/sync-skills.sh" --check >/dev/null 2>&1; then
+    echo "COMMIT BLOCKED: .claude/skills changed but .agents/skills is out of sync — run 'bash harness-ports/bin/sync-skills.sh' and stage .agents/skills too." >&2
+    exit 1
+  fi
+fi
 # SHELL SYNTAX GATE (2026-09-03): a ported hook shipped with a syntax-error tail
 # after its `exit 0` — bash reads scripts incrementally, so runtime never saw it,
 # review never saw it, `bash -n` does. Every staged shell script must parse.

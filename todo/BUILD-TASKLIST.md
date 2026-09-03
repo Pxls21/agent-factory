@@ -55,8 +55,14 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | s0-17-s0-08-gvisor | #17 S0-08 containment spec + fixtures; live run on the PC after the runsc spike | pending | s0-02, s0-05 | marker re-probed every CI run; grep-gate fails on missing marker |
 | s0-18-s0-11-eval-hardening | #18 S0-11 runner design + rubric isolation | pending | s0-02 | unprivileged/no-cred/no-net rubric; zero chmod-777/host-net hits |
 | port-trading-system-setup | tooling: port the trading-system setup wholesale (hooks, ops scripts, ledgers, CLAUDE.md, harness-ports, wiki) | done 2026-09-03 (batch E commit) | — | hooks active ✓; lint test green ✓; harness-ports tests 58/58 ✓; wiki compiled ✓ (PC smoke NOT run — owner) |
+| harness-skill-rewordings | tooling follow-up: re-port the source repo's 14 hand-ported skill rewordings (HARNESS PORT notes; contract-gate/orchestration semantics) into `.agents/skills/` with this repo's paths | pending | — | `grep -rl "HARNESS PORT" .agents/skills` = 14; sync-skills --check reports exactly those 14 as intentional |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-03 sync (post-close audit):** `harness-skill-rewordings` OPENED (pending, low priority) — the
+final sweep showed `.agents/skills` is a verbatim mirror (0 HARNESS PORT notes); the harness doc's
+"14 hand-ported" claims were inherited prose (AF-AP-6, second instance) and are corrected. Pre-commit
+SKILL-SYNC GATE added (a `.claude/skills` change with a stale `.agents` twin blocks).
 
 **2026-09-03 sync (batch E, port CLOSED):** first wiki compile landed (`wiki/`: 12 topics, 3 concepts,
 INDEX/CONTEXT/schema/log, `topics/live-state.md` continuity snapshot; link check clean; no flat N/12).
