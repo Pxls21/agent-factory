@@ -7,17 +7,21 @@
 # non-blocking so nobody learns to bypass the hook.
 # Bypass (printed, so it shows in review): SKIP_LINT_DELTA=1 git commit ...
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PY="/root/venv-agent-factory/bin/python"
+# Venv path honours AF_VENV (PC lanes export it; the sandbox default stays). Found by the first
+# Hermes lane 2026-09-03: the hardcoded /root path fell back to a pyflakes-less python3 and the
+# old early `exit 0` below then skipped EVERY later gate (shell syntax, skill sync).
+PY="${AF_VENV:-/root/venv-agent-factory}/bin/python"
 [ -x "$PY" ] || PY="python3"
-if ! "$PY" -c "import pyflakes" 2>/dev/null; then
-  echo "pre-commit: pyflakes missing in $PY — run scripts/setup.sh (it installs pyflakes into the venv). NOT blocking." >&2
-  exit 0
-fi
-"$PY" "$REPO_ROOT/scripts/lint_delta.py" --staged
-RC=$?
-if [ "$RC" != "0" ]; then
-  echo "COMMIT BLOCKED by lint_delta (rc=$RC) — see NEW hits above." >&2
-  exit 1
+if "$PY" -c "import pyflakes" 2>/dev/null; then
+  "$PY" "$REPO_ROOT/scripts/lint_delta.py" --staged
+  RC=$?
+  if [ "$RC" != "0" ]; then
+    echo "COMMIT BLOCKED by lint_delta (rc=$RC) — see NEW hits above." >&2
+    exit 1
+  fi
+else
+  # Missing tooling degrades THIS gate only; the gates below still run (they need no pyflakes).
+  echo "pre-commit: pyflakes missing in $PY — run scripts/setup.sh (sandbox) or harness-ports/bin/pc-setup.sh (PC). Lint delta SKIPPED, other gates still run." >&2
 fi
 # AP-67 (2026-09-02): a staged edit to a file a mutation manifest anchors into re-checks
 # that manifest's anchors against the index (seconds, no pytest). Without this the

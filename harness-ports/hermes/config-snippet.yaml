@@ -153,9 +153,13 @@ hooks:
   # PARTIAL PORT: pre_verify fires at the bounded edited-code verify gate, so a
   # turn that edits nothing is never gated. .hermes.md tells the agent to run
   # the retro anyway — do not read this hook as full coverage.
-  pre_verify:
-    - command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py turn-retro-gate.sh pre_verify"
-      timeout: 60
+  # OFF FOR BUILD LANES (2026-09-03, fifth real lane): the retro checklist is a COORDINATOR
+  # turn-end mechanism; on a one-shot lane it replaced the brief's final DATA report with the
+  # retro answer. Sandbox delegates never get the Stop hook either. Re-enable only for an
+  # interactive manager session.
+  # pre_verify:
+  #   - command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py turn-retro-gate.sh pre_verify"
+  #     timeout: 60
 
   # ---------------------------------------------------------------------
   # NOT WIRED — deliberately, and here is exactly why.

@@ -74,3 +74,22 @@ def test_pre_commit_gate_positive_and_negative_controls(tmp_path):
     assert r.returncode != 0
     assert "bash -n failed on bad.sh" in r.stderr, r.stderr
     assert _sh(["git", "rev-list", "--count", "HEAD"], repo, env).stdout.strip() == "1"
+
+
+def test_shell_gate_fires_without_pyflakes(tmp_path):
+    """Found by the first Hermes lane on the PC (2026-09-03): with a pyflakes-less interpreter the
+    hook used to `exit 0` before the later gates. Point AF_VENV at a venv-less dir so the hook
+    falls back to plain python3 without pyflakes (simulated by PYTHONPATH poisoning is fragile;
+    instead we pass a python that cannot import pyflakes: a shim that exits 1 on `-c`)."""
+    repo, env = _throwaway_repo(tmp_path)
+    fake_venv = tmp_path / "novenv" / "bin"
+    fake_venv.mkdir(parents=True)
+    shim = fake_venv / "python"
+    shim.write_text("#!/bin/sh\nexit 1\n")  # every `python -c ...` fails -> pyflakes 'missing'
+    os.chmod(shim, 0o755)
+    env = dict(env, AF_VENV=str(tmp_path / "novenv"))
+    (repo / "bad.sh").write_text("#!/bin/bash\nexit 0\n  ) 9>/tmp/x.lock &\nfi\n")
+    assert _sh(["git", "add", "bad.sh", "scripts"], repo, env).returncode == 0
+    r = _sh(["git", "commit", "-q", "-m", "bad"], repo, env)
+    assert r.returncode != 0, "the shell gate must still block when the lint gate is skipped"
+    assert "Lint delta SKIPPED" in r.stderr and "bash -n failed on bad.sh" in r.stderr, r.stderr
