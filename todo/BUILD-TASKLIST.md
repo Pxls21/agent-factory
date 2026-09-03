@@ -59,6 +59,14 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (gVisor on the PC):** the owner ran the sudo install; `/usr/local/bin/runsc` verified
+(release-20260817.0, sha256 matches). Rootless gVisor container PROVEN with `--runtime-flag ignore-cgroups
+--security-opt label=disable` (inside: `4.19.0-gvisor`, gVisor banner, HTTPS out ok; negative control on
+crun: host kernel 6.17). Caveats recorded in PC-BRIDGE.md (SELinux label off for runsc containers; no
+cgroups rootless). Effect: S0-08 is no longer blocked on capability once spike #5 lands its artifact
+(`spikes/runsc/result.json`, map-runsc-s008) with the registry/validator of increments #1-#2 — the
+reclassification goes through the machinery, never by hand. Task DB: no status change yet.
+
 **2026-09-03 sync (PC lane PROVEN end to end):** runs 7-9 closed the last defect — Hermes's terminal cwd
 is carried by `TERMINAL_CWD` (now exported per lane): `pwd` = pinned linked worktree, HEAD = PIN,
 `git push`/`gh pr` BLOCKED under yolo by the profile deny list, a new file fetched through the patch path

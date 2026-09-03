@@ -28,8 +28,8 @@ last_compiled: 2026-09-03
 - **PC lane bring-up** (2026-09-03): DONE and PROVEN — clone at `~/agent-factory`, pc-setup complete
   (quartet, venv, gitnexus 1.6.10), Hermes profile `agentfactory` with the merged snippet; spike
   `hermes-lane-trial` runs 8-9: shell in the pinned worktree (`TERMINAL_CWD`), push/PR blocked
-  under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor staged in
-  `~/gvisor-install`; the owner's sudo install step is pending.
+  under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
+  the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
 None.
 

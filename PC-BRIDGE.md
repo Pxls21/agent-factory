@@ -116,5 +116,28 @@ runsc --version
 ```
 
 The user-level podman runtime entry is already written (`~/.config/containers/containers.conf`:
-`runsc = ["/usr/local/bin/runsc"]`); the runsc spike then runs `podman run --runtime runsc ...`
-rootless on the systrap platform (no KVM). Optional, not required: `sudo modprobe kvm_amd`.
+`runsc = ["/usr/local/bin/runsc"]`). Optional, not required: `sudo modprobe kvm_amd`.
+
+**Status 2026-09-03: `runsc` INSTALLED by the owner (`/usr/local/bin/runsc`, root:root, `bin_t`, sha256
+`048b89aa…` = the staged file; `runsc version release-20260817.0, spec 1.2.1`). The shim was not
+installed — podman does not need it (it is for containerd/docker); install it only if Docker ever
+enters the picture. Silent success is normal: `install` and `restorecon` print nothing.**
+
+**Verified rootless gVisor run (the runsc spike's positive control):**
+
+```bash
+podman run --rm --runtime /usr/local/bin/runsc --runtime-flag ignore-cgroups \
+  --security-opt label=disable docker.io/library/alpine:3.20 sh -c 'uname -r; echo runsc-ok'
+# -> 4.19.0-gvisor / runsc-ok   (dmesg inside: "Starting gVisor..."; HTTPS to example.com from inside: ok)
+# negative control: the same command on the default runtime (crun) prints the HOST kernel 6.17.11-200.fc42
+```
+
+Two caveats, stated first-class for the S0-08 spec: (1) `--security-opt label=disable` — runsc refuses
+an OCI spec carrying an SELinux process label (`FetchSpec failed: SELinux is not supported`), so the
+gVisor sandbox, not SELinux, is the container's confinement; the host still confines the runsc process.
+(2) `--runtime-flag ignore-cgroups` — rootless runsc cannot set up cgroups here (systemd driver: `Interactive
+authentication required`; cgroupfs: root `cgroup.subtree_control` denied; `--cgroups=disabled` rejected by
+runsc), so NO resource limits apply in this configuration even though `user@1000.service` delegates
+`cpu io memory pids`. The production shape (delegated systemd cgroups or rootful) is a Wave-0 spike
+question; the containment proof itself does not depend on cgroups. Platform: systrap (runsc default;
+`/dev/kvm` absent).
