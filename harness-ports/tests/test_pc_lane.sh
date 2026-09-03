@@ -17,6 +17,14 @@ set -uo pipefail
 # suite's own values are never shadowed by the caller's environment.
 unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING 2>/dev/null || true
 
+# Self-test mode: the hermetic-cleanup test below spawns THIS SCRIPT from a
+# poisoned parent.  If the unset above worked, LANE_ID is gone; if the unset
+# line is removed (the mutation), the parent's LANE_ID leaks through.
+if [ "${_HERMETIC_SELF_TEST:-}" = "1" ]; then
+  if [ -n "${LANE_ID:-}" ]; then echo "LEAK:$LANE_ID"; exit 99; fi
+  echo "CLEAN"; exit 0
+fi
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANE="$HERE/../bin/pc-lane.sh"
 TMP="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
@@ -273,6 +281,21 @@ LD_DRAFT="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-draftpoison' | head
 check "MUTATION: parent LANE_REPORT_DRAFT does NOT poison the lane's draft path" \
   "$([ ! -s "$TMP/parent-poison-draft.md" ] && [ -s "$LD_DRAFT/report-draft.md" ] && echo 0 || echo 1)" \
   "env LANE_REPORT_DRAFT=... creates a poisoned parent — pc-lane.sh sets its own path"
+
+# --- MUTATION-KILLING: line-17 hermetic cleanup (self-invocation) -------------
+# The blanket `unset LANE_ID ...` at line 17 prevents a parent's exported vars
+# from leaking into the suite.  The `env` tests above prove pc-lane.sh's own
+# behavior but do NOT test line 17 — removing it still passes in clean CI.
+#
+# This test spawns THIS SCRIPT from a poisoned parent.  The self-test guard
+# near the top checks whether LANE_ID survived the unset:
+#   - line 17 present  → unset fires → CLEAN → exit 0  → PASS
+#   - line 17 removed  → LANE_ID leaks → LEAK:… → exit 99 → FAIL
+hermetic_out="$(env _HERMETIC_SELF_TEST=1 LANE_ID=suite-level-poison bash "${BASH_SOURCE[0]}" 2>&1)"
+hermetic_rc=$?
+check "MUTATION: line-17 unset prevents parent LANE_ID leak into suite" \
+  "$([ $hermetic_rc -eq 0 ] && echo 0 || echo 1)" \
+  "self-invocation with LANE_ID=suite-level-poison: line 17 must unset it (got rc=$hermetic_rc, out=$hermetic_out)"
 
 echo
 echo "$pass passed, $fail failed"

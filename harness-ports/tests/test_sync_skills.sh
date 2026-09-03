@@ -175,77 +175,114 @@ check "--record refreshes base hash" "$rr" \
   "recorded hash must match current .claude twin after --record"
 
 # =============================================================================
-# FAIL-CLOSED NEGATIVE CONTROL: a broken comm must exit 65, never "in sync"
+# FAIL-CLOSED NEGATIVE CONTROLS: each sort/comm guard independently exits 65
 # =============================================================================
+# sync-skills.sh has two sort guards (src line 103, dst line 104) and three comm
+# guards (new-list, stale-list, common-list).  An always-failing stub triggers
+# all guards at once, so removing any ONE guard leaves the others to produce
+# exit 65.  These call-counting stubs fail on exactly ONE invocation, proving
+# each guard independently.  Removing a single guard breaks its specific test.
 
-REPO3="$TMP/repo3"
-mkdir -p "$REPO3"
-git -C "$REPO3" init -q
-git -C "$REPO3" config user.email t@t; git -C "$REPO3" config user.name t
-echo x > "$REPO3/f.txt"; git -C "$REPO3" add -A; git -C "$REPO3" commit -qm base
-mkdir -p "$REPO3/.claude/skills/alpha"
-echo "a" > "$REPO3/.claude/skills/alpha/SKILL.md"
-mkdir -p "$REPO3/.agents/skills/alpha"
-echo "a" > "$REPO3/.agents/skills/alpha/SKILL.md"
+GUARD_REPO="$TMP/guard-repo"
+mkdir -p "$GUARD_REPO"
+git -C "$GUARD_REPO" init -q
+git -C "$GUARD_REPO" config user.email t@t; git -C "$GUARD_REPO" config user.name t
+echo x > "$GUARD_REPO/f.txt"; git -C "$GUARD_REPO" add -A; git -C "$GUARD_REPO" commit -qm base
+mkdir -p "$GUARD_REPO/.claude/skills/alpha"
+echo "a" > "$GUARD_REPO/.claude/skills/alpha/SKILL.md"
+mkdir -p "$GUARD_REPO/.agents/skills/alpha"
+echo "a" > "$GUARD_REPO/.agents/skills/alpha/SKILL.md"
+export AF_REPO="$GUARD_REPO"
 
-FAKE_COMM="$TMP/comm-stub"
-cat > "$FAKE_COMM" <<'STUBEOF'
+REAL_SORT="$(command -v sort)"
+REAL_COMM="$(command -v comm)"
+
+# mk_counting_stub <real-binary> <fail-on-call-N> <counter-file> <stub-path>
+mk_counting_stub() {
+  cat > "$4" <<STUBEOF
 #!/usr/bin/env bash
-exit 3
+n=\$((\$(cat "$3" 2>/dev/null || echo 0) + 1))
+echo "\$n" > "$3"
+[ "\$n" -eq $2 ] && exit 3
+exec "$1" "\$@"
 STUBEOF
-chmod +x "$FAKE_COMM"
-FAKE_BIN="$TMP/fake-bin"
-mkdir -p "$FAKE_BIN"
-cp "$FAKE_COMM" "$FAKE_BIN/comm"
+  chmod +x "$4"
+}
 
-export AF_REPO="$REPO3"
-out7="$(PATH="$FAKE_BIN:$PATH" bash "$SYNC" --check 2>&1)"; rc7=$?
-check "NEGATIVE CONTROL: broken comm → exit 65 (fail-closed)" \
-  "$([ $rc7 -eq 65 ] && echo 0 || echo 1)" \
-  "exit code 65 means comm failed and the script refused to guess (got rc=$rc7)"
-echo "$out7" | grep -q "comparison failed" && cf=0 || cf=1
-check "broken comm prints failure diagnostic" "$cf" \
-  "stderr must name the failure so the CI log explains the exit"
-echo "$out7" | grep -q "in sync" && is=1 || is=0
-check "broken comm does NOT print 'in sync'" "$is" \
-  "a false 'in sync' with a broken comparator is the failure this gate prevents"
+# --- sort guard: src (call 1) -------------------------------------------------
+rm -f "$TMP/ctr-sort-src"
+FBIN_SS="$TMP/fbin-sort-src"; mkdir -p "$FBIN_SS"
+mk_counting_stub "$REAL_SORT" 1 "$TMP/ctr-sort-src" "$FBIN_SS/sort"
+out_ss="$(PATH="$FBIN_SS:$PATH" bash "$SYNC" --check 2>&1)"; rc_ss=$?
+check "GUARD: src sort fails → exit 65" \
+  "$([ $rc_ss -eq 65 ] && echo 0 || echo 1)" \
+  "sort failing on call 1 must trigger the src-list guard (got rc=$rc_ss)"
+echo "$out_ss" | grep -q "src skill-list generation failed" && ss_d=0 || ss_d=1
+check "GUARD: src sort diagnostic names the src list" "$ss_d" \
+  "must print 'src skill-list generation failed'"
+echo "$out_ss" | grep -q "in sync" && ss_i=1 || ss_i=0
+check "GUARD: src sort does NOT print 'in sync'" "$ss_i" \
+  "false 'in sync' with a broken src sort is the failure this gate prevents"
 
-# =============================================================================
-# FAIL-CLOSED NEGATIVE CONTROL: a broken sort must exit 65, never "in sync"
-# =============================================================================
+# --- sort guard: dst (call 2) -------------------------------------------------
+rm -f "$TMP/ctr-sort-dst"
+FBIN_SD="$TMP/fbin-sort-dst"; mkdir -p "$FBIN_SD"
+mk_counting_stub "$REAL_SORT" 2 "$TMP/ctr-sort-dst" "$FBIN_SD/sort"
+out_sd="$(PATH="$FBIN_SD:$PATH" bash "$SYNC" --check 2>&1)"; rc_sd=$?
+check "GUARD: dst sort fails → exit 65" \
+  "$([ $rc_sd -eq 65 ] && echo 0 || echo 1)" \
+  "sort failing on call 2 must trigger the dst-list guard (got rc=$rc_sd)"
+echo "$out_sd" | grep -q "dst skill-list generation failed" && sd_d=0 || sd_d=1
+check "GUARD: dst sort diagnostic names the dst list" "$sd_d" \
+  "must print 'dst skill-list generation failed'"
+echo "$out_sd" | grep -q "in sync" && sd_i=1 || sd_i=0
+check "GUARD: dst sort does NOT print 'in sync'" "$sd_i" \
+  "false 'in sync' with a broken dst sort is the failure this gate prevents"
 
-REPO4="$TMP/repo4"
-mkdir -p "$REPO4"
-git -C "$REPO4" init -q
-git -C "$REPO4" config user.email t@t; git -C "$REPO4" config user.name t
-echo x > "$REPO4/f.txt"; git -C "$REPO4" add -A; git -C "$REPO4" commit -qm base
-mkdir -p "$REPO4/.claude/skills/alpha"
-echo "a" > "$REPO4/.claude/skills/alpha/SKILL.md"
-mkdir -p "$REPO4/.agents/skills/alpha"
-echo "a" > "$REPO4/.agents/skills/alpha/SKILL.md"
+# --- comm guard: new-list (call 1) --------------------------------------------
+rm -f "$TMP/ctr-comm-new"
+FBIN_CN="$TMP/fbin-comm-new"; mkdir -p "$FBIN_CN"
+mk_counting_stub "$REAL_COMM" 1 "$TMP/ctr-comm-new" "$FBIN_CN/comm"
+out_cn="$(PATH="$FBIN_CN:$PATH" bash "$SYNC" --check 2>&1)"; rc_cn=$?
+check "GUARD: new-list comm fails → exit 65" \
+  "$([ $rc_cn -eq 65 ] && echo 0 || echo 1)" \
+  "comm failing on call 1 must trigger the new-list guard (got rc=$rc_cn)"
+echo "$out_cn" | grep -q "new-list comparison failed" && cn_d=0 || cn_d=1
+check "GUARD: new-list comm diagnostic names the new-list comparison" "$cn_d" \
+  "must print 'new-list comparison failed'"
+echo "$out_cn" | grep -q "in sync" && cn_i=1 || cn_i=0
+check "GUARD: new-list comm does NOT print 'in sync'" "$cn_i" \
+  "false 'in sync' with a broken new-list comm is the failure this gate prevents"
 
-FAKE_SORT="$TMP/sort-stub"
-cat > "$FAKE_SORT" <<'STUBEOF'
-#!/usr/bin/env bash
-exit 3
-STUBEOF
-chmod +x "$FAKE_SORT"
-FAKE_BIN2="$TMP/fake-bin2"
-mkdir -p "$FAKE_BIN2"
-cp "$FAKE_SORT" "$FAKE_BIN2/sort"
-cp "$(command -v comm)" "$FAKE_BIN2/comm"
+# --- comm guard: stale-list (call 2) ------------------------------------------
+rm -f "$TMP/ctr-comm-stale"
+FBIN_CS="$TMP/fbin-comm-stale"; mkdir -p "$FBIN_CS"
+mk_counting_stub "$REAL_COMM" 2 "$TMP/ctr-comm-stale" "$FBIN_CS/comm"
+out_cs="$(PATH="$FBIN_CS:$PATH" bash "$SYNC" --check 2>&1)"; rc_cs=$?
+check "GUARD: stale-list comm fails → exit 65" \
+  "$([ $rc_cs -eq 65 ] && echo 0 || echo 1)" \
+  "comm failing on call 2 must trigger the stale-list guard (got rc=$rc_cs)"
+echo "$out_cs" | grep -q "stale-list comparison failed" && cs_d=0 || cs_d=1
+check "GUARD: stale-list comm diagnostic names the stale-list comparison" "$cs_d" \
+  "must print 'stale-list comparison failed'"
+echo "$out_cs" | grep -q "in sync" && cs_i=1 || cs_i=0
+check "GUARD: stale-list comm does NOT print 'in sync'" "$cs_i" \
+  "false 'in sync' with a broken stale-list comm is the failure this gate prevents"
 
-export AF_REPO="$REPO4"
-out8="$(PATH="$FAKE_BIN2:$PATH" bash "$SYNC" --check 2>&1)"; rc8=$?
-check "NEGATIVE CONTROL: broken sort → exit 65 (fail-closed)" \
-  "$([ $rc8 -eq 65 ] && echo 0 || echo 1)" \
-  "exit code 65 means sort failed and the script refused to guess (got rc=$rc8)"
-echo "$out8" | grep -q "failed" && sf=0 || sf=1
-check "broken sort prints failure diagnostic" "$sf" \
-  "stderr must name the failure so the CI log explains the exit"
-echo "$out8" | grep -q "in sync" && ss=1 || ss=0
-check "broken sort does NOT print 'in sync'" "$ss" \
-  "a false 'in sync' with a broken sort is the failure this gate prevents"
+# --- comm guard: common-list (call 3) -----------------------------------------
+rm -f "$TMP/ctr-comm-common"
+FBIN_CC="$TMP/fbin-comm-common"; mkdir -p "$FBIN_CC"
+mk_counting_stub "$REAL_COMM" 3 "$TMP/ctr-comm-common" "$FBIN_CC/comm"
+out_cc="$(PATH="$FBIN_CC:$PATH" bash "$SYNC" --check 2>&1)"; rc_cc=$?
+check "GUARD: common-list comm fails → exit 65" \
+  "$([ $rc_cc -eq 65 ] && echo 0 || echo 1)" \
+  "comm failing on call 3 must trigger the common-list guard (got rc=$rc_cc)"
+echo "$out_cc" | grep -q "common-list comparison failed" && cc_d=0 || cc_d=1
+check "GUARD: common-list comm diagnostic names the common-list comparison" "$cc_d" \
+  "must print 'common-list comparison failed'"
+echo "$out_cc" | grep -q "in sync" && cc_i=1 || cc_i=0
+check "GUARD: common-list comm does NOT print 'in sync'" "$cc_i" \
+  "false 'in sync' with a broken common-list comm is the failure this gate prevents"
 
 echo
 echo "$pass passed, $fail failed"

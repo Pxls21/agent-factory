@@ -110,15 +110,15 @@ echo "$SRC_LIST" > "$_SYNC_TMP_SRC"
 echo "$DST_LIST" > "$_SYNC_TMP_DST"
 
 new="$(comm -23 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
-[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
+[ $_rc -ne 0 ] && { echo "sync-skills: new-list comparison failed (comm rc=$_rc)" >&2; exit 65; }
 stale="$(comm -13 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
-[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
+[ $_rc -ne 0 ] && { echo "sync-skills: stale-list comparison failed (comm rc=$_rc)" >&2; exit 65; }
 
 drift=""
 intentional=""
 stale_base=""
 _common="$(comm -12 "$_SYNC_TMP_SRC" "$_SYNC_TMP_DST")"; _rc=$?
-[ $_rc -ne 0 ] && { echo "sync-skills: comparison failed (comm rc=$_rc)" >&2; exit 65; }
+[ $_rc -ne 0 ] && { echo "sync-skills: common-list comparison failed (comm rc=$_rc)" >&2; exit 65; }
 for name in $_common; do
   if ! diff -rq "$SRC/$name" "$DST/$name" >/dev/null 2>&1; then
     if [ -n "${HP_NAMES[$name]+x}" ]; then
