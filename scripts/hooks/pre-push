@@ -3,10 +3,11 @@
 # when .git/wiki-gate-block exists (arm it once the per-commit wiki cadence is
 # proven workable post-WIKI-AUDIT — owner wants the wiki never stale).
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-MARKER="$REPO_ROOT/.git/wiki-stale"
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"  # worktree-safe (2026-09-03)
+MARKER="$COMMON_DIR/wiki-stale"
 if [ -f "$MARKER" ]; then
   SINCE="$(cat "$MARKER")"
-  if [ -f "$REPO_ROOT/.git/wiki-gate-block" ]; then
+  if [ -f "$COMMON_DIR/wiki-gate-block" ]; then
     echo "PUSH BLOCKED: wiki stale since commit $SINCE — update wiki/ (or remove .git/wiki-gate-block to downgrade to warn)." >&2
     exit 1
   fi

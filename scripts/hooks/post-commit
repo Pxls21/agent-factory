@@ -7,7 +7,8 @@
 # 2) Wiki freshness marker: a commit touching non-wiki files marks the wiki
 #    stale (until a wiki/ commit clears it). pre-push reads the marker.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-MARKER="$REPO_ROOT/.git/wiki-stale"
+# Repo-wide marker -> the COMMON git dir (a linked worktree .git is a file; 2026-09-03).
+MARKER="$(git rev-parse --path-format=absolute --git-common-dir)/wiki-stale"
 
 CHANGED="$(git diff-tree --no-commit-id --name-only -r HEAD)"
 # A commit that carries ANY wiki delta counts as fresh — the mandate is "wiki

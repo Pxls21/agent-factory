@@ -222,7 +222,10 @@ else
   # -p selects the DEDICATED lane profile (created with `hermes profile create --clone`): the
   # merged snippet (repo skills dir, MCP servers, hooks, lane approvals) lives there, so the
   # owner's own default profile is never touched by lane configuration.
-  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" -z "$(cat "$PROMPT_FILE")" \
+  # --in "$TREE" --no-restore-cwd: Hermes restores the last session's recorded cwd by default;
+  # the first real lane ran its shell in the main clone (branch tip) instead of the pinned
+  # worktree and correctly STOPPED on the pin mismatch (2026-09-03). Pin the cwd explicitly.
+  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_FILE")" \
       -m "${HERMES_MODEL:-codex/gpt-5.6-sol-ultra}" \
       --reasoning "${HERMES_REASONING:-ultra}" \
       --accept-hooks \

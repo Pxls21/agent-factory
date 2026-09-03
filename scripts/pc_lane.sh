@@ -69,45 +69,11 @@ LANE_ID="$(basename "$BRIEF" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40)-${PIN:0:8}
 # The token reaches curl through `--config -` on STDIN, never as an argv element
 # and never in a file. Stdin is the one channel that is neither the process table
 # nor the filesystem.
-bridge() { # bridge <shell-command>
-  python3 - "$1" <<'PY'
-import json, os, subprocess, sys, tempfile, time
-cmd = sys.argv[1]
-body = json.dumps({"cmd": cmd}).encode()
-with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as fh:
-    fh.write(body)                    # the command is not secret; the token is
-    data_path = fh.name
-try:
-    url = os.environ["PC_BRIDGE_URL"].rstrip("/") + "/exec"
-    cfg = (
-        f'url = "{url}"\n'
-        'request = "POST"\n'
-        'header = "Content-Type: application/json"\n'
-        f'header = "X-Agent-Token: {os.environ["PC_BRIDGE_TOKEN"]}"\n'
-        'header = "Connection: close"\n'
-        f'data-binary = "@{data_path}"\n'
-        'silent\nshow-error\nmax-time = 110\n'
-    )
-    # Connection: close + retry-on-non-JSON: both required (connection-poisoning
-    # quirk, PC-BRIDGE.md). Matches scripts/pc.sh retry contract.
-    r = None
-    for attempt in range(3):
-        r = subprocess.run(["curl", "--config", "-"], input=cfg,
-                           capture_output=True, text=True)
-        if r.stdout.lstrip().startswith("{"):
-            break
-        if attempt < 2:
-            time.sleep(1)
-    sys.stdout.write(r.stdout)
-    # curl's stderr carries harmless per-call noise on this bridge (the runbook
-    # says to ignore the bash-hook "bind" warnings), so surface it ONLY when the
-    # call actually failed. Blanket-suppressing it would hide real errors, and a
-    # silent bridge failure reads exactly like a lane that produced nothing.
-    if r.returncode != 0:
-        sys.stderr.write(f"bridge: curl exited {r.returncode}\n{r.stderr}")
-finally:
-    os.unlink(data_path)
-PY
+bridge() { # bridge <shell-command>  -> remote stdout on stdout, remote stderr on stderr, remote rc
+  # The envelope unwrapping lives in scripts/pc_bridge_exec.py (tested by
+  # harness-ports/tests/test_pc_bridge_exec.py). Bit 2026-09-03: the inline version printed the
+  # JSON envelope, so the poll "worked" by substring luck and the report fetch base64-decoded JSON.
+  python3 "$ROOT/scripts/pc_bridge_exec.py" "$1"
 }
 
 echo "pc_lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
@@ -158,6 +124,18 @@ bridge "test -s $REMOTE_REPORT && base64 -w0 $REMOTE_REPORT" > "$LOCAL_REPORT.b6
 if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPORT" 2>/dev/null; then
   rm -f "$LOCAL_REPORT.b64"
   echo "pc_lane: report -> $LOCAL_REPORT" >&2
+  # Bring the lane's CHANGES home too (the lane never pushes): stage everything in the pinned
+  # worktree and ship the cached diff. Apply in the sandbox with `git apply --index <patch>` on
+  # a branch at the same PIN, then review/gate/commit here. Added 2026-09-03 after the first
+  # lane produced files nobody could fetch.
+  LOCAL_PATCH="$OUT/patch-$LANE_ID.diff"
+  bridge "cd $PC_AF_REPO/.lanes/$LANE_ID/tree 2>/dev/null && git add -A . >/dev/null 2>&1 && git diff --cached --binary | base64 -w0" > "$LOCAL_PATCH.b64" 2>/dev/null
+  if [ -s "$LOCAL_PATCH.b64" ] && base64 -d < "$LOCAL_PATCH.b64" > "$LOCAL_PATCH" 2>/dev/null && [ -s "$LOCAL_PATCH" ]; then
+    echo "pc_lane: patch  -> $LOCAL_PATCH ($(grep -c '^diff --git' "$LOCAL_PATCH") file(s))" >&2
+  else
+    echo "pc_lane: no changes in the lane worktree (or patch fetch failed)" >&2; rm -f "$LOCAL_PATCH"
+  fi
+  rm -f "$LOCAL_PATCH.b64"
   cat "$LOCAL_REPORT"
   [ "$done_flag" = 2 ] && exit 70
   exit 0

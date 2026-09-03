@@ -6,7 +6,11 @@
 # needed or explicitly stating nothing is. This mechanizes the deep-work
 # retrospective rule so it no longer depends on the coordinator remembering.
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SENT="$REPO_ROOT/.git/turn-retro-acked"
+# Sentinel lives in the PER-WORKTREE git dir: in a linked worktree (PC lanes) .git is a FILE,
+# so a path under REPO_ROOT/.git is unwritable and the gate fires on every turn (a Hermes lane
+# looped 20 calls on it, 2026-09-03). --absolute-git-dir resolves both layouts.
+GIT_DIR_ABS="$(cd "$REPO_ROOT" && git rev-parse --absolute-git-dir 2>/dev/null)" || exit 0
+SENT="$GIT_DIR_ABS/turn-retro-acked"
 HEAD_SHA="$(cd "$REPO_ROOT" && git rev-parse --short HEAD 2>/dev/null)" || exit 0
 if [ -f "$SENT" ] && [ "$(cat "$SENT")" = "$HEAD_SHA" ]; then
   exit 0
@@ -35,8 +39,9 @@ fi
 echo "$HEAD_SHA" > "$SENT"
 
 WIKI_LINE="wiki: FRESH"
-if [ -f "$REPO_ROOT/.git/wiki-stale" ]; then
-  WIKI_LINE="wiki: STALE since $(cat "$REPO_ROOT/.git/wiki-stale") — land the delta (live-state.md at minimum)"
+COMMON_DIR="$(cd "$REPO_ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -f "$COMMON_DIR/wiki-stale" ]; then
+  WIKI_LINE="wiki: STALE since $(cat "$COMMON_DIR/wiki-stale") — land the delta (live-state.md at minimum)"
 fi
 
 cat >&2 <<EOF
