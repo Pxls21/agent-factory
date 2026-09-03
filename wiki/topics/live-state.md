@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 - **Today:** 2026-09-03
 
 ## Active lanes
+- **Increment #1 `s0-01-registry-schemas-validator`** on the PC Hermes lane (pin a5bd59b, round 2;
+  round 1 halted on a wrong brief premise, amended). Contract C1-C12 in `tasks/briefs/`.
+- **Continuity + offload plane** (`continuity-offload-plane`, task #25): transcript sync live
+  (`transcripts/sandbox/`), lane roles/templates committed, offload map written; first route probe
+  (Gemini flash as researcher) running; curator lane not yet run.
 
 - **`port-trading-system-setup`** — DONE with this commit: batches A-D landed, the Codex/Hermes
   ports (`AGENTS.md`, `.hermes.md`) reviewed and committed, batch E (this wiki compile) landed.

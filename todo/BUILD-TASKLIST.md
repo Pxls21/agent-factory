@@ -56,8 +56,18 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | s0-18-s0-11-eval-hardening | #18 S0-11 runner design + rubric isolation | pending | s0-02 | unprivileged/no-cred/no-net rubric; zero chmod-777/host-net hits |
 | port-trading-system-setup | tooling: port the trading-system setup wholesale (hooks, ops scripts, ledgers, CLAUDE.md, harness-ports, wiki) | done 2026-09-03 (batch E commit) | — | hooks active ✓; lint test green ✓; harness-ports tests 58/58 ✓; wiki compiled ✓ (PC smoke NOT run — owner) |
 | harness-skill-rewordings | tooling follow-up: re-port the source repo's hand-ported skill rewordings (HARNESS PORT notes; contract-gate/orchestration semantics) into `.agents/skills/` with this repo's paths | done 2026-09-03 (`c2e529a`, `86ade0d`) | — | 15 HARNESS PORT notes; sync-skills --check rc=0 with 15 INTENTIONAL; NOT ported: `premortem-roast/dimensions.md` (source-only extra file) |
+| continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-03 sync (build started + continuity plane):** `s0-01-registry-schemas-validator` DISPATCHED to the
+PC Hermes lane at pin a5bd59b (round 1 halted on a brief premise the coordinator got wrong — AP-43
+instance; brief amended to the tree's real shapes; round 2 running). `continuity-offload-plane` OPENED
+(task DB #25): landed batch 1 (scrubbed transcript export sandbox + PC, per-class secret tests, post-push
+sync, role -> route defaults, curator/researcher/echo-sweeper roles, brief templates) and batch 2
+(docs/WORKFLOW-OFFLOAD-MAP.md, docs/HANDOFF-HERMES-LANES.md attached to chat). First route probe
+(gemini-3-flash as researcher) running. Owner rulings recorded: offload every consistent low-judgment
+step; this structure = the first coding team's blueprint.
 
 **2026-09-03 sync (gVisor on the PC):** the owner ran the sudo install; `/usr/local/bin/runsc` verified
 (release-20260817.0, sha256 matches). Rootless gVisor container PROVEN with `--runtime-flag ignore-cgroups
