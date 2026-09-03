@@ -21,6 +21,9 @@ honestly in the doc.
 - `AGENTS.md`: Codex CLI project instructions (includes the 15 standing rules verbatim)
 - `.hermes.md`: Hermes project instructions
 - `.agents/skills/<name>/SKILL.md`: all 382 ported skills (synced by `harness-ports/bin/sync-skills.sh`)
+  -- a VERBATIM mirror: the source repo's 14 hand-ported rewordings (HARNESS PORT notes) are NOT
+  here yet (follow-up `harness-skill-rewordings` in the ledger); translation rides on the
+  mechanism table in `AGENTS.md` / `.hermes.md`
 - `harness-ports/roles/`: 3 lane roles (code-implementer, adversarial-verifier, evidence-gatherer)
 - `.codex/config.toml`: Codex hooks + MCP configuration
 - `harness-ports/hermes/config-snippet.yaml`: Hermes hooks + MCP + provider (merge by hand)
@@ -45,7 +48,8 @@ the project's MCP servers connected.
 ## 4. API Surface [coverage: medium -- 3 sources]
 
 - `pc_lane.sh <role> <brief> [branch]`: sandbox-side spawn (calls `pc.sh` with the PC-side script)
-- `sync-skills.sh`: one-directional sync `.claude/skills/` --> `.agents/skills/`
+- `sync-skills.sh`: one-directional sync `.claude/skills/` --> `.agents/skills/` (pre-commit
+  SKILL-SYNC GATE blocks a `.claude/skills/` commit whose twin is stale; a clean sync = zero DRIFT)
 - `mcp-smoke.sh`: acceptance probe for MCP server connectivity
 - Bridge contract for lanes: `X-Agent-Token` + `{"cmd": "bash harness-ports/bin/pc-lane.sh ..."}` + `/exec`
 

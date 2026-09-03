@@ -18,6 +18,9 @@ last_compiled: 2026-09-03
 - **`port-trading-system-setup`** — DONE with this commit: batches A-D landed, the Codex/Hermes
   ports (`AGENTS.md`, `.hermes.md`) reviewed and committed, batch E (this wiki compile) landed.
   NOT done inside it: PC smoke of the harness ports (needs a bridge banner + the owner).
+- **`harness-skill-rewordings`** (pending, low priority): `.agents/skills` is a verbatim mirror of
+  `.claude/skills` — the source repo's 14 hand-ported skill rewordings were not carried over;
+  the mechanism table in `AGENTS.md`/`.hermes.md` carries translation meanwhile.
 - **Stage 0 build:** NOT STARTED. First pending increment: `s0-01-registry-schemas-validator`.
   Pipeline (findings, council, interview, seed, breakdown) COMPLETE, all committed.
 
@@ -47,8 +50,11 @@ build-status or count disagreement.
 - Harness ports unit-proven in the sandbox only; NOT smoke-tested on the PC
 - Ouroboros native MCP broken (MCP-SDK v2 vs v1.x); stdio fallback (`scripts/ooo_mcp.py`) works
 - Wiki compiled from planning docs, not from code
+- Pre-commit now runs three gates (pyflakes delta, shell syntax, skill-sync); none of them is a
+  test of the Stage 0 spine — that spine does not exist yet
 - Stage 0 proof pack: 0 of 18 increments complete (only spike #0 done)
 
 ## Last updated
 
-The wiki-compile commit (batch E) — 2026-09-03; next update at the first Stage 0 increment.
+Post-close audit commit (skill-sync gate, follow-up registered) — 2026-09-03; next update at the
+first Stage 0 increment.

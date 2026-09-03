@@ -31,7 +31,7 @@ Who depends on it: every build/verify/orchestration increment in the project. CL
   phoenix-docs, graft)
 
 **Git hooks** ([scripts/hooks/](scripts/hooks/)):
-- **pre-commit**: pyflakes delta gate (new hits only, via `scripts/lint_delta.py`), shell syntax
+- **pre-commit**: pyflakes delta gate (new hits only, via `scripts/lint_delta.py`), shell syntax ; SKILL-SYNC GATE (a `.claude/skills/` change whose `.agents/skills/` twin is stale blocks)
   gate (`bash -n` on every staged `.sh`), anti-pattern screen
 - **post-commit**: marks wiki stale (`.git/wiki-stale`), backgrounds graft + GitNexus reindex
 - **pre-push**: model-identifier trailer gate (blocks `Co-Authored-By: Claude` /
@@ -66,7 +66,7 @@ enclosing symbol's GitNexus blast radius + anti-pattern registry screen.
 ## 3. Talks To [coverage: medium -- 5 sources]
 
 - SessionStart hook --> setup.sh --> orient.sh --> wiki live-state injection
-- pre-commit --> lint_delta.py, bash -n, AP screen
+- pre-commit --> lint_delta.py, bash -n, AP screen, sync-skills.sh --check
 - post-commit --> graft build, GitNexus analyze (background)
 - push_clean.sh --> filter-branch (trailer strip) --> git push
 - edit-snapshot.py --> GitNexus impact, AP registry scan
