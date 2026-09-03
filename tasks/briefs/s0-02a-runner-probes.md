@@ -6,17 +6,23 @@ because one lane cannot hold it: THIS brief is half A (runner + probes). Half B 
 normalization, CI workflow) is a later lane and is NOT yours. honey: ultra.
 
 The parent brief `tasks/briefs/s0-02-runner-ledger-ci.md` BINDS here for: §COORDINATOR DECISIONS
-D1–D6 and §Authoritative shapes (the full `spec.schema.json` and `probe.schema.json` and the
-probe→marker semantics). READ those two sections once, by line range (`grep -n "^## " …` then
-`sed -n`), and do not read the rest of it. `.hermes.md` carries the project rules.
+D1–D6 and the probe→marker semantics paragraph under §Authoritative shapes (exit 0 ⇒ `expired`;
+a `reason_map` code ⇒ its reason ⇒ `*_absent` → `absent`, `credential_rejected` /
+`capability_present_but_failing` → `rejecting`; anything else or a timeout ⇒ `probe-invalid: <id>
+exit <n>`, exit 1, no marker; `key_env` is the only secret channel). READ those two sections
+once, by line range (`grep -n "^## " …` then `sed -n`), and do not read the rest of it.
+`.hermes.md` carries the project rules.
 
 FIRST ACTION (halt loud on any mismatch): `pwd && git rev-parse HEAD` equals the PIN, tree clean,
-`$HOME/venv-agent-factory/bin/python -m pytest tests/ -q` → `45 passed`. None of the CREATE paths
-below exist yet — verify with `git ls-files proofs/schemas scripts tests | sort`.
+`$HOME/venv-agent-factory/bin/python -m pytest tests/ -q` → `63 passed` (45 + the 18 schema
+closure tests). The two schemas EXIST; none of the CREATE paths below exist yet — verify with
+`git ls-files proofs/schemas scripts tests | sort`.
 
 ## Deliverables (boundary — touch ONLY these paths; report anything else, never fix it)
-- CREATE `proofs/schemas/spec.schema.json` and CREATE `proofs/schemas/probe.schema.json` —
-  verbatim from the parent's §Authoritative shapes.
+- READ `proofs/schemas/spec.schema.json` and `proofs/schemas/probe.schema.json` — COMMITTED by the
+  coordinator with their own closure tests (`tests/test_spec_probe_schemas.py`: every object
+  closed, `classification` rejected, a negative leg needs `failure_reason`, both legs required).
+  They ARE the contract; do not edit them — a spec that needs another field is a STOP-and-report.
 - CREATE `scripts/proof-runner` with two verbs (argparse, `#!/usr/bin/env python3`, run under the
   project venv — the tests spawn it with `sys.executable`):
   `run --proof <id> --venue sandbox|pc-bridge --root <dir>` executes the legs of

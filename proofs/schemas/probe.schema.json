@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proofs/schemas/probe.schema.json",
+  "title": "Stage 0 blocked-marker probe spec (re-run on every ledger generation)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proof_id", "probe_cmd", "timeout_s", "reason_map"],
+  "properties": {
+    "proof_id": {"type": "string", "pattern": "^S0-(0[1-9]|1[0-2])$"},
+    "probe_cmd": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "timeout_s": {"type": "integer", "minimum": 1, "maximum": 600},
+    "env": {"type": "object", "additionalProperties": {"type": "string"}},
+    "key_env": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+    "reason_map": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[1-9][0-9]*$"},
+      "additionalProperties": {"enum": ["credential_absent", "credential_rejected", "capability_absent", "capability_present_but_failing"]}
+    }
+  }
+}

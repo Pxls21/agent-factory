@@ -79,39 +79,14 @@ D6 **`stage1-gate` is RED by design and must not block.** Its CI job runs with
    and `tests` are ordinary (blocking) jobs. Rejected: one job doing both (an empty repo would
    read as passing).
 
-## Authoritative shapes (the coordinator's contract for the two NEW schemas — copy, do not redesign)
-`proofs/schemas/spec.schema.json` (draft 2020-12, `additionalProperties: false` at every level):
-```json
-{"type":"object","required":["proof_id","legs"],
- "properties":{
-  "proof_id":{"type":"string","pattern":"^S0-(0[1-9]|1[0-2])$"},
-  "legs":{"type":"array","minItems":2,"items":{"type":"object","required":["leg","cmd","cwd","timeout_s","expect"],
-    "properties":{
-      "leg":{"enum":["positive","negative"]},
-      "cmd":{"type":"array","minItems":1,"items":{"type":"string"}},
-      "cwd":{"type":"string","pattern":"^(?!/)(?!.*(^|/)\\.\\.(/|$)).*$"},
-      "timeout_s":{"type":"integer","minimum":1,"maximum":3600},
-      "env":{"type":"object","additionalProperties":{"type":"string"}},
-      "expect":{"type":"object","required":["exit_code"],
-        "properties":{"exit_code":{"type":"integer"},"failure_reason":{"type":"string","minLength":1}}}},
-    "if":{"properties":{"leg":{"const":"negative"}}},
-    "then":{"properties":{"expect":{"required":["exit_code","failure_reason"]}}}},
-    "contains":{"properties":{"leg":{"const":"positive"}}},"minContains":1,
-    "allOf":[{"contains":{"properties":{"leg":{"const":"negative"}}},"minContains":1}]}}}
-```
-(No `classification` property anywhere — C5 rejects it as an additional property.)
-`proofs/schemas/probe.schema.json` (same conventions):
-```json
-{"type":"object","required":["proof_id","probe_cmd","timeout_s","reason_map"],
- "properties":{
-  "proof_id":{"type":"string","pattern":"^S0-(0[1-9]|1[0-2])$"},
-  "probe_cmd":{"type":"array","minItems":1,"items":{"type":"string"}},
-  "timeout_s":{"type":"integer","minimum":1,"maximum":600},
-  "env":{"type":"object","additionalProperties":{"type":"string"}},
-  "key_env":{"type":"string","pattern":"^[A-Z][A-Z0-9_]*$"},
-  "reason_map":{"type":"object","minProperties":1,"propertyNames":{"pattern":"^[1-9][0-9]*$"},
-     "additionalProperties":{"enum":["credential_absent","credential_rejected","capability_absent","capability_present_but_failing"]}}}}
-```
+## Authoritative shapes (the coordinator's contract for the two NEW input schemas)
+**COMMITTED as files on 2026-09-03 — `proofs/schemas/spec.schema.json` and
+`proofs/schemas/probe.schema.json` ARE the shape**, each object closed with
+`additionalProperties: false`, tested by `tests/test_spec_probe_schemas.py` (18 cases: closures,
+`classification` rejected, a negative leg requires `failure_reason`, both legs required, cwd
+relative and without `..`, `reason_map` codes non-zero and reasons from the four-value enum).
+An earlier version of this section carried the JSON inline and its prose promised closures the JSON
+lacked — a lane halted on exactly that (round 4). Files, not prose, are the contract now.
 Probe semantics (D5): exit 0 ⇒ the blocker is present and working ⇒ `blocker_status: expired`; an
 exit code listed in `reason_map` ⇒ its reason, with `*_absent` ⇒ `blocker_status: absent` and
 `credential_rejected` / `capability_present_but_failing` ⇒ `blocker_status: rejecting`; any other

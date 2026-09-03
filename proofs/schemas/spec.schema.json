@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proofs/schemas/spec.schema.json",
+  "title": "Stage 0 proof spec (the runner's input: the legs it executes)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proof_id", "legs"],
+  "properties": {
+    "proof_id": {"type": "string", "pattern": "^S0-(0[1-9]|1[0-2])$"},
+    "legs": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/leg"},
+      "contains": {"type": "object", "properties": {"leg": {"const": "positive"}}, "required": ["leg"]},
+      "minContains": 1,
+      "allOf": [{"contains": {"type": "object", "properties": {"leg": {"const": "negative"}}, "required": ["leg"]}, "minContains": 1}]
+    }
+  },
+  "$defs": {
+    "leg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["leg", "cmd", "cwd", "timeout_s", "expect"],
+      "properties": {
+        "leg": {"enum": ["positive", "negative"]},
+        "cmd": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "cwd": {"type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).*$"},
+        "timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600},
+        "env": {"type": "object", "additionalProperties": {"type": "string"}},
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["exit_code"],
+          "properties": {
+            "exit_code": {"type": "integer"},
+            "failure_reason": {"type": "string", "minLength": 1}
+          }
+        }
+      },
+      "if": {"properties": {"leg": {"const": "negative"}}, "required": ["leg"]},
+      "then": {"properties": {"expect": {"required": ["exit_code", "failure_reason"]}}}
+    }
+  }
+}
