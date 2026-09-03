@@ -41,8 +41,10 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-- **Verification lanes `s0-01f` (run-contract, sweep) + `s0-01e` (adversarial attacks, verify)** —
-  dispatched in parallel after this push against the round-3 tree. Repair lane `s0-01d` DONE on
+- **Adversarial attack lane `s0-01e`** (agentfactory-verify, terra-xhigh) — running against the
+  round-3 tree; RED tests under `tests/red/` come home with the patch. The mechanical contract run
+  (C1–C18) was done by the coordinator in the sandbox: 18/18 PASS (the sweep combo's head routes
+  are dead — flash credits depleted, antigravity flash retired; owner action in INCIDENT-LOG). Repair lane `s0-01d` DONE on
   `agentfactory-build` (44 passed ×2; first lane to run under the incremental-report rule — its
   report-draft.md was written). Verify lane `s0-01c` died mid-run after 167 calls (AF-AP-16/17);
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
