@@ -59,6 +59,16 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (Hermes lane round trip PROVEN, spike `hermes-lane-trial`):** six runs on the PC lane.
+Run 6 completed the brief end to end in 3m43s (quartet present, venv ok, repo tests 9/9 on the PC, DATA
+report fetched). Defects found by runs 1-5, all fixed with tests: ouroboros MCP crash loop (disabled for
+lanes); bridge envelope not unwrapped (`scripts/pc_bridge_exec.py` + 8-check stub test); Hermes cwd restore
+(`--in TREE --no-restore-cwd`); hook sentinels unwritable in linked worktrees (`--absolute-git-dir` /
+common dir + `tests/test_hooks_worktree.py`); pre-commit hardcoded venv + early exit skipping later gates
+(found BY the lane; fixed + negative control); retro gate consuming the lane report (pre_verify off for
+lanes). OPEN: the lane shell still runs in the main clone rather than the pinned worktree (patch fetch
+empty) — must close before increment #1 rides a lane. gVisor staged; owner sudo step pending.
+
 **2026-09-03 sync (rewordings done; first Hermes lane):** `harness-skill-rewordings` DONE — 15 hand-ported
 skills, hand-port-aware sync (allowlist + base hashes, INTENTIONAL/STALE-BASE/--record), pre-commit gate
 intact. PC bring-up: clone + venv + quartet + `agentfactory` Hermes profile with the merged snippet.

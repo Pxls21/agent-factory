@@ -1,0 +1,34 @@
+{
+  "spike": "hermes-lane-trial",
+  "recorded_at": "2026-09-03T07:39:18Z",
+  "host": "fedora",
+  "pinned_commit": "a9847b47e8eff21024f5ac610730c6795bb61459",
+  "tools": {
+    "graft": "/home/rocco/.npm-global/bin/graft",
+    "gitnexus": "/home/rocco/.npm-global/bin/gitnexus",
+    "codebase-memory-mcp": "/home/rocco/.local/bin/codebase-memory-mcp",
+    "ouroboros": "/home/rocco/.local/bin/ouroboros",
+    "hermes": "/home/rocco/.local/bin/hermes"
+  },
+  "indexes": {
+    "graft": "present",
+    "gitnexus": "present"
+  },
+  "venv_ok": true,
+  "skills_seen": [
+    "build-loop",
+    "contract-gate",
+    "anti-hollow-green"
+  ],
+  "tests_last_line": "9 passed in 1.61s",
+  "hermes_version": "Hermes Agent v0.21.0 (2026.8.31) · upstream 58472d80",
+  "notes": "",
+  "provenance": "written by the Hermes BUILD lane on the PC (profile agentfactory, model codex/gpt-5.6-sol-ultra via OmniRoute, 6th run, 3m43s); transcribed verbatim from the lane report by the coordinator because the lane's shell ran in the main clone, not the pinned worktree (open defect: terminal cwd)",
+  "runs_before_this_one": {
+    "1": "stalled 11 min in MCP startup: ouroboros server crash-looped (fixed: disabled for lanes)",
+    "2": "stopped: shell in the main clone, HEAD != PIN (found: Hermes restores its recorded cwd)",
+    "3": "looped 20 calls on the retro gate: hook sentinel unwritable in a linked worktree (fixed: --absolute-git-dir)",
+    "4": "stopped: dirty tree from run 3 (runner still without --in)",
+    "5": "did the work, but the retro gate consumed the final report; found the pre-commit early-exit defect (fixed)"
+  }
+}
