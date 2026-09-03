@@ -75,9 +75,13 @@ mcp_servers:
   #   python3 ${AF_REPO}/scripts/ooo_mcp.py <tool> "$(cat args.json)"
   # That wrapper is also the correct path whenever Hermes's MCP layer stalls on
   # an approval prompt. Same pattern for GitNexus: scripts/gn_mcp.py.
+  # DISABLED for lanes (2026-09-03, first real lane): `ouroboros mcp serve` is broken in the
+  # installed tool env (MCP-SDK v2 vs the [claude-sdk] extra) and Hermes crash-looped on it for
+  # 11 minutes before the lane could start. Lanes use the stdio wrapper scripts/ooo_mcp.py.
   ouroboros:
     command: "ouroboros"
     args: ["mcp", "serve"]
+    enabled: false
     timeout: 300
     connect_timeout: 90
 

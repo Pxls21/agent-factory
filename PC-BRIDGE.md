@@ -68,3 +68,44 @@ does both.
 1. Owner pastes the BRIDGE READY banner → write `.pc-bridge.env` (never commit).
 2. `scripts/pc.sh 'hostname && uname -r && ls /dev/kvm && command -v podman runsc rustup cargo && curl -s localhost:8010/v1/models'` — the liveness + capability probe (Wave-0 spike `pc-bridge`).
 3. Record the probe output as `spikes/pc-bridge/result.json` (dated; URLs redacted).
+
+## Hermes BUILD lanes on the PC (owner ruling 2026-09-03)
+
+All token-heavy work (building, fixing, debugging, running) runs on the owner's Hermes CLI on the
+PC through OmniRoute; the coordinator keeps briefs, the contract gate and the final validation.
+
+- **Profile:** `agentfactory` (`hermes -p agentfactory`, created with `hermes profile create
+  --clone`, config at `~/.hermes/profiles/agentfactory/config.yaml`). The repo snippet
+  (`harness-ports/hermes/config-snippet.yaml`: repo skills dir, MCP servers, hooks, lane approvals
+  with the `git push*`/`gh pr *` hard denies) is merged ADD-ONLY into that profile by
+  `harness-ports/bin/hermes-config-merge.py` (backup written first). The owner's default profile is
+  never touched.
+- **Model:** OmniRoute route `codex/gpt-5.6-sol-ultra` (the owner's "OpenAI sol 5.6, highest"),
+  Hermes `--reasoning ultra`; both env-overridable per lane (`HERMES_MODEL`, `HERMES_REASONING`).
+- **Dispatch from the sandbox:** `scripts/pc_lane.sh <brief.md> hermes code-implementer` — the
+  brief MUST carry a `PIN: <full sha>` line (the lane worktree is pinned to it); the runner ships
+  the brief, launches `harness-ports/bin/pc-lane.sh` detached, polls, and fetches `report.md`.
+  Lane state lives PC-side under `~/agent-factory/.lanes/<lane-id>/` (brief, prompt, tree,
+  lane.pid, lane.log, launch.log, report.md, usage.json). Re-running the same dispatch is
+  replay-safe (a live pid or an existing report is never doubled).
+- **Bring-up:** `harness-ports/bin/pc-setup.sh` (user-level, idempotent: venv, gitnexus 1.6.10,
+  graft, codebase-memory, code-review-graph, ouroboros, detached indexes). PC clone:
+  `~/agent-factory` on the designated branch, hooks active.
+- **Never** run a lane against the owner's default profile, never `--yolo` a lane, never let a lane
+  push (blocked by the git shim and the profile deny list).
+
+### gVisor install (owner-run, needs sudo)
+
+The release binaries are staged and checksum-verified in `~/gvisor-install` (`runsc
+release-20260817.0`, sha512 OK). The owner runs:
+
+```bash
+sudo install -m 0755 -o root -g root ~/gvisor-install/runsc /usr/local/bin/runsc
+sudo install -m 0755 -o root -g root ~/gvisor-install/containerd-shim-runsc-v1 /usr/local/bin/containerd-shim-runsc-v1
+sudo restorecon -v /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
+runsc --version
+```
+
+The user-level podman runtime entry is already written (`~/.config/containers/containers.conf`:
+`runsc = ["/usr/local/bin/runsc"]`); the runsc spike then runs `podman run --runtime runsc ...`
+rootless on the systrap platform (no KVM). Optional, not required: `sudo modprobe kvm_amd`.
