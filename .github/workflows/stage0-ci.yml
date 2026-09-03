@@ -36,7 +36,9 @@ jobs:
           git config --global user.email "ci@test"
           git config --global user.name "CI"
       - name: Run harness suites
-        run: bash harness-ports/tests/run-all.sh
+        run: |
+          export AF_VENV="$(python3 -c 'import sys; print(sys.prefix)')"
+          bash harness-ports/tests/run-all.sh
 
   ledger-integrity:
     runs-on: ubuntu-latest

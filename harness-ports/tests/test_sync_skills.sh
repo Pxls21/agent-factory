@@ -210,6 +210,43 @@ echo "$out7" | grep -q "in sync" && is=1 || is=0
 check "broken comm does NOT print 'in sync'" "$is" \
   "a false 'in sync' with a broken comparator is the failure this gate prevents"
 
+# =============================================================================
+# FAIL-CLOSED NEGATIVE CONTROL: a broken sort must exit 65, never "in sync"
+# =============================================================================
+
+REPO4="$TMP/repo4"
+mkdir -p "$REPO4"
+git -C "$REPO4" init -q
+git -C "$REPO4" config user.email t@t; git -C "$REPO4" config user.name t
+echo x > "$REPO4/f.txt"; git -C "$REPO4" add -A; git -C "$REPO4" commit -qm base
+mkdir -p "$REPO4/.claude/skills/alpha"
+echo "a" > "$REPO4/.claude/skills/alpha/SKILL.md"
+mkdir -p "$REPO4/.agents/skills/alpha"
+echo "a" > "$REPO4/.agents/skills/alpha/SKILL.md"
+
+FAKE_SORT="$TMP/sort-stub"
+cat > "$FAKE_SORT" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 3
+STUBEOF
+chmod +x "$FAKE_SORT"
+FAKE_BIN2="$TMP/fake-bin2"
+mkdir -p "$FAKE_BIN2"
+cp "$FAKE_SORT" "$FAKE_BIN2/sort"
+cp "$(command -v comm)" "$FAKE_BIN2/comm"
+
+export AF_REPO="$REPO4"
+out8="$(PATH="$FAKE_BIN2:$PATH" bash "$SYNC" --check 2>&1)"; rc8=$?
+check "NEGATIVE CONTROL: broken sort → exit 65 (fail-closed)" \
+  "$([ $rc8 -eq 65 ] && echo 0 || echo 1)" \
+  "exit code 65 means sort failed and the script refused to guess (got rc=$rc8)"
+echo "$out8" | grep -q "failed" && sf=0 || sf=1
+check "broken sort prints failure diagnostic" "$sf" \
+  "stderr must name the failure so the CI log explains the exit"
+echo "$out8" | grep -q "in sync" && ss=1 || ss=0
+check "broken sort does NOT print 'in sync'" "$ss" \
+  "a false 'in sync' with a broken sort is the failure this gate prevents"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

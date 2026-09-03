@@ -19,7 +19,7 @@ unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING 2>/de
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANE="$HERE/../bin/pc-lane.sh"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 pass=0; fail=0
@@ -240,43 +240,39 @@ check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
 
 # --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
 # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
-# The unset at line 18 of THIS file prevents a parent lane's LANE_ID from
-# contaminating every test run. These tests kill the mutation "remove the unset":
-#   1. Export LANE_ID — prove pc-lane.sh adopts it (propagation works)
-#   2. Unset LANE_ID — prove pc-lane.sh derives its own (isolation works)
-# If the unset at line 18 were removed, a parent lane's LANE_ID would persist
-# through to step 2 and the derivation check would fail.
+# These tests launch pc-lane.sh under real subprocess environments using `env`,
+# NOT export/unset in the same shell. This proves pc-lane.sh's actual behavior
+# under both poisoned and clean parent environments.
 BRIEF_ROBUST="$TMP/tests/brief-robust.md"; { echo "PIN: $SHA"; echo; echo "robustness check"; } > "$BRIEF_ROBUST"
-export HERMES_ARGS_FILE="$TMP/hermes-args-robust"
-
-export LANE_ID=parent-poison
-HERMES_BIN="$FAKE_HERMES" \
-  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust1"
-check "MUTATION: exported LANE_ID IS adopted by pc-lane.sh (propagation)" \
-  "$([ -d "$REPO/.lanes/parent-poison" ] && echo 0 || echo 1)" \
-  "pc-lane.sh inherits LANE_ID by design — a parent lane's id propagates into the child"
-
-unset LANE_ID
 BRIEF_ROBUST2="$TMP/tests/brief-robust2.md"; { echo "PIN: $SHA"; echo; echo "robustness isolated"; } > "$BRIEF_ROBUST2"
-HERMES_BIN="$FAKE_HERMES" \
+
+# Test 1: externally poisoned parent → pc-lane.sh adopts it (propagation)
+env LANE_ID=parent-poison HERMES_BIN="$FAKE_HERMES" HERMES_ARGS_FILE="$TMP/hermes-args-robust" \
+  bash "$LANE" "$BRIEF_ROBUST" hermes code-implementer >/dev/null 2>"$TMP/err-robust1"
+check "MUTATION: externally poisoned LANE_ID IS adopted by pc-lane.sh (propagation)" \
+  "$([ -d "$REPO/.lanes/parent-poison" ] && echo 0 || echo 1)" \
+  "env LANE_ID=parent-poison creates a real poisoned parent — pc-lane.sh inherits it by design"
+
+# Test 2: clean parent (env -u) → pc-lane.sh derives its own (isolation)
+env -u LANE_ID HERMES_BIN="$FAKE_HERMES" HERMES_ARGS_FILE="$TMP/hermes-args-robust2" \
   bash "$LANE" "$BRIEF_ROBUST2" hermes code-implementer >/dev/null 2>"$TMP/err-robust2"
 LD_ROBUST="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-robust2' | head -1)"
-check "MUTATION: after unset, LANE_ID is derived from the brief (isolation)" \
+check "MUTATION: clean parent → LANE_ID derived from brief (isolation)" \
   "$([ -n "$LD_ROBUST" ] && [ "$(basename "$LD_ROBUST")" != "parent-poison" ] && [ -s "$LD_ROBUST/report.md" ] && echo 0 || echo 1)" \
-  "removing the unset at line 18 would make this fail — the exported parent-poison would persist"
+  "env -u LANE_ID creates a clean parent process — pc-lane.sh derives from the brief filename"
 
 # --- MUTATION-KILLING: parent-environment poison for LANE_REPORT_DRAFT -------
-# pc-lane.sh sets its own LANE_REPORT_DRAFT (line 187). This test exports a
-# bogus parent path and proves the harness writes to the lane-local path, not
-# the parent's. Kills the mutation "remove the LANE_REPORT_DRAFT assignment".
-export LANE_REPORT_DRAFT="$TMP/parent-poison-draft.md"
+# pc-lane.sh sets its own LANE_REPORT_DRAFT. This test launches under a parent
+# that has a bogus draft path and proves the harness writes to the lane-local
+# path, not the parent's. Kills the mutation "remove the LANE_REPORT_DRAFT
+# assignment".
 BRIEF_DRAFT="$TMP/tests/brief-draftpoison.md"; { echo "PIN: $SHA"; echo; echo "draft poison"; } > "$BRIEF_DRAFT"
-PC_LANE_FAKE_HARNESS="$DRAFTY" bash "$LANE" "$BRIEF_DRAFT" hermes code-implementer >/dev/null 2>"$TMP/err-draftpoison"
+env LANE_REPORT_DRAFT="$TMP/parent-poison-draft.md" PC_LANE_FAKE_HARNESS="$DRAFTY" \
+  bash "$LANE" "$BRIEF_DRAFT" hermes code-implementer >/dev/null 2>"$TMP/err-draftpoison"
 LD_DRAFT="$REPO/.lanes/$(ls -t "$REPO/.lanes" | grep '^brief-draftpoison' | head -1)"
 check "MUTATION: parent LANE_REPORT_DRAFT does NOT poison the lane's draft path" \
   "$([ ! -s "$TMP/parent-poison-draft.md" ] && [ -s "$LD_DRAFT/report-draft.md" ] && echo 0 || echo 1)" \
-  "pc-lane.sh sets its own LANE_REPORT_DRAFT — removing that assignment would route drafts to the parent's file"
-unset LANE_REPORT_DRAFT
+  "env LANE_REPORT_DRAFT=... creates a poisoned parent — pc-lane.sh sets its own path"
 
 echo
 echo "$pass passed, $fail failed"
