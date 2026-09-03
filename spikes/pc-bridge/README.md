@@ -1,0 +1,3 @@
+# Spike pc-bridge — Wave 0, run 2026-09-03 via scripts/pc.sh
+
+Verified live on the owner's PC (facts in result.json; links/tokens redacted). Headline: the Buzz production relay stack (postgres 17 / redis / minio / relay + pairing relay), OmniRoute (20128) and a local vLLM (`sim9b`, 8010) are ALREADY RUNNING on the PC under podman 5.7. runsc is absent; KVM modules are unloaded (owner `sudo modprobe kvm_amd`); rustup carries 1.95.0. Classification effects: S0-03 -> execution (local model behind OmniRoute); S0-08 -> blocked_capability pending a runsc install spike ON THE PC (systrap needs no KVM); S0-06 buildable on the PC.

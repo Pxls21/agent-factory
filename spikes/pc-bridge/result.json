@@ -1,0 +1,56 @@
+{
+ "spike_id": "pc-bridge",
+ "schema": "provisional-until-increment-1",
+ "ran_at": "2026-09-03T05:05:20+00:00",
+ "env_fingerprint": "pc-bridge:fedora:6.17.11-200.fc42.x86_64",
+ "runs": [
+  {
+   "command": "scripts/pc.sh '<capability probe>' (three bridge calls; verbatim commands in the session transcript, URL/token redacted)",
+   "exit_code": 0,
+   "stdout_digest": "sha256:055f7621204b50f2"
+  }
+ ],
+ "facts": {
+  "host": "fedora (rocco), kernel 6.17.11-200.fc42.x86_64, up 51 days, 12 cores, 125 GB RAM, 701 GB free on /home, SELinux Enforcing",
+  "gpu": "RTX 3090 24 GB; VLLM::EngineCore resident ~10.2 GB",
+  "kvm": "/dev/kvm ABSENT; CPU has SVM (12 flags); kvm/kvm-amd modules present on disk but NOT loaded -> fix is `sudo modprobe kvm_amd` (sudo needs the owner's password)",
+  "containers": "podman 5.7.0, user podman.socket active; podman-compose ABSENT; `docker` binary present but no server; live compose project buzz-prod: postgres:17-alpine, redis:7-alpine, minio RELEASE.2025-09-07, buzz relay (3001->3000), buzz pairing-relay (100.64.254.33:5000); also phoenix 17.26.0 (6006/4317), openobserve (5080), neo4j x2, mirofish/miroshark, osint/analyst stacks",
+  "omniroute": "port 20128 listening on 0.0.0.0 -> HTTP 307 to /dashboard (OmniRoute already running)",
+  "models": "vLLM at localhost:8010/v1 serving id `sim9b` (max_model_len 16384, root /home/rocco/models/huihui-qwen3.5-9b-abliterated-awq); Ollama on 11434 (bge-m3 embeddings) and mirofish-ollama on 11435; guards ~/vllm_serve.sh, ~/llama_server_restore.sh present",
+  "runsc": "ABSENT",
+  "rust": "rustc/cargo 1.93.0 default; rustup toolchains: stable, nightly, 1.95.0 (ai-memory buildable with cargo +1.95.0)",
+  "languages": "python3 3.13.11 default, python3.11 present, node v22.21.1, npm 10.9.4, uv 0.9.17, git 2.52.0",
+  "network": "outbound curl to github.com -> 200 (unrestricted); cloudflared present",
+  "sudo": "NEEDS_PASSWORD (no NOPASSWD)",
+  "repos": "~/trading-system present; ~/agent-factory ABSENT (clone needed)",
+  "ports_in_use": "5432 (pg), 8010 (vllm), 11434/11435 (ollama), 20128 (omniroute)"
+ },
+ "classification_effect": [
+  {
+   "affected_proof": "S0-03",
+   "from_class": "blocked_credential",
+   "to_class": "execution_proof",
+   "rule_id": "map-pcbridge-s003",
+   "reason": "OmniRoute running on the PC and a local model (vLLM sim9b) available as its upstream; identity assertable as `sim9b`"
+  },
+  {
+   "affected_proof": "S0-08",
+   "from_class": "blocked_host",
+   "to_class": "blocked_capability",
+   "rule_id": "map-pcbridge-s008",
+   "reason": "host reachable but runsc absent; KVM modules unloaded (owner sudo). gVisor systrap platform needs no KVM -> runsc install spike moves to the PC"
+  },
+  {
+   "affected_proof": "S0-06",
+   "from_class": "execution_proof",
+   "to_class": "execution_proof",
+   "rule_id": "map-rust-s006",
+   "reason": "rustup already has 1.95.0 on the PC -> ai-memory buildable there; the sandbox cargo spike becomes secondary"
+  }
+ ],
+ "not_verified": [
+  "podman compose subcommand availability (buzz-prod containers exist, so SOME compose path worked)",
+  "who launched OmniRoute on 20128 and its persistence/config state",
+  "vLLM tool-calling flags currently in effect"
+ ]
+}
