@@ -56,6 +56,14 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (batch D):** harness-ports ported by a delegate and re-gated by the coordinator
+(`harness-ports/tests/run-all.sh`: 58/58; repo `tests/`: 6 passed): `.codex/config.toml` + role layers,
+`harness-ports/{bin,roles,hermes,tests}`, `scripts/pc_lane.sh` (bridge contract = `X-Agent-Token` +
+`{"cmd"}` + `/exec`, token via curl `--config -` on stdin), `.agents/skills/` sync, `docs/HARNESS-PORTS.md`.
+Coordinator fixes on review: OmniRoute port corrected to the verified `:20128` (the doc had inherited
+the source repo's `:8317`); trading-only `vectorbtpro` skill removed from both skill trees. NOT done:
+PC smoke (no bridge banner this session), `AGENTS.md`/`.hermes.md` ports (next), wiki compile (E).
+
 **2026-09-03 sync (batch C):** `port-trading-system-setup` — CLAUDE.md rewritten onto the clean-build
 structure (skills authoritative, GIT BRANCH RULES → push_clean/safe_commit, QUARTET section, the planning
 repo's 15 standing rules folded in); SHELL SYNTAX GATE added to pre-commit (+ `tests/test_shell_syntax.py`)

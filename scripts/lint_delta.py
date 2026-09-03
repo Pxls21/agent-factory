@@ -68,13 +68,19 @@ def _git_show(spec: str) -> str | None:
     return p.stdout if p.returncode == 0 else None
 
 
+_VENDORED = (".agents/", ".claude/", "sandbox-kit/", "graft/")
+
+
 def _changed(args) -> list[str]:
     if args.staged:
         cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
     else:
         cmd = ["git", "diff", "--name-only", "--diff-filter=ACMR", args.base]
     out = subprocess.check_output(cmd, text=True, cwd=REPO)
-    return [f for f in out.split() if f.endswith(".py")]
+    # Vendored trees are not this repo's delta (third-party skill scripts, the kit,
+    # the graft cache) — same exclusion edit-snapshot.py applies (2026-09-03: a
+    # .agents/skills sync tripped AP-24 on office-validator scripts nobody here wrote).
+    return [f for f in out.split() if f.endswith(".py") and not f.startswith(_VENDORED)]
 
 
 def _pair(args, path: str) -> tuple[str | None, str | None]:

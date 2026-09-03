@@ -1,0 +1,255 @@
+# Hermes Agent — agent-factory config snippet.
+#
+# INSTALL: Hermes has no repo-scoped config file. Its config is the per-profile
+# ~/.hermes/config.yaml (or $HERMES_HOME/config.yaml). Merge the blocks below
+# into that file by hand — do NOT replace it; it already holds your model,
+# provider, and credential settings.
+#
+#   cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak    # keep a backup first
+#   $EDITOR ~/.hermes/config.yaml                          # merge the blocks below
+#   hermes status                                          # confirm it still loads
+#
+# Only the PROJECT INSTRUCTIONS are repo-scoped on Hermes: .hermes.md at the
+# repo root, which Hermes picks up automatically (first match in the chain
+# .hermes.md -> AGENTS.md -> CLAUDE.md -> .cursorrules). Nothing to install for
+# that — it is already committed.
+#
+# NOT SMOKE-TESTED. This snippet was written from the Hermes documentation
+# (website/docs/reference/mcp-config-reference.md, user-guide/features/skills.md,
+# user-guide/features/hooks.md) and from each server's committed definition in
+# this repo. It has never been loaded by a running Hermes. Run
+# harness-ports/bin/mcp-smoke.sh on the PC before trusting it.
+#
+# Set these in the environment Hermes runs under (or in ~/.hermes/.env):
+#   AF_REPO        absolute path to the agent-factory clone on the PC
+#   AF_VENV        python venv root            (default $HOME/venv-agent-factory)
+#   CODEBASE_MEMORY_BIN codebase-memory-mcp path    (default $HOME/.local/bin/...)
+
+# ===========================================================================
+# 1. SKILLS — point Hermes at the repo's ported skills
+# ===========================================================================
+# The 20 ported project skills live in the repo at .agents/skills/ and are read
+# by BOTH harnesses (Codex discovers .agents/skills natively; Hermes needs this
+# external_dirs entry). Same SKILL.md + name/description frontmatter shape, so
+# there is exactly one copy to maintain.
+#
+# Local precedence: a skill of the same name under ~/.hermes/skills wins. If you
+# have an old copy of any of these there, delete it or it will shadow the repo.
+#
+# External dirs are NOT a write-protection boundary: if the Hermes process can
+# write to the repo, skill_manage can edit these files in place. That is fine
+# here (they are version-controlled — `git diff` will show it), but do not treat
+# the directory as read-only.
+skills:
+  external_dirs:
+    - ${AF_REPO}/.agents/skills
+
+# ===========================================================================
+# 2. MCP SERVERS
+# ===========================================================================
+# Hermes expands ${VAR} (and the Cursor-style ${env:VAR}) anywhere in a server
+# entry, so paths are parameterised directly — no launcher needed on this side.
+# The launcher is still used where it adds argument logic.
+mcp_servers:
+
+  gitnexus:
+    command: "node"
+    args: ["${AF_REPO}/.gitnexus/run.cjs", "mcp"]
+    timeout: 300
+
+  aleph:
+    command: "${AF_VENV}/bin/aleph"
+    args: ["--workspace-mode", "any", "--tool-docs", "concise"]
+    env:
+      ALEPH_WORKSPACE: "${AF_REPO}"
+    timeout: 300
+
+  codebase-memory:
+    command: "${CODEBASE_MEMORY_BIN}"
+    args: []
+    timeout: 300
+
+  # Tier 1 of the Ouroboros ladder. On the documented `mcp serve` breakage
+  # (MCP-SDK v2 vs the [claude-sdk] extra's v1.x), do NOT retry through MCP —
+  # drop to the tier-2 stdio wrapper, which has no permission gate at all:
+  #   python3 ${AF_REPO}/scripts/ooo_mcp.py <tool> "$(cat args.json)"
+  # That wrapper is also the correct path whenever Hermes's MCP layer stalls on
+  # an approval prompt. Same pattern for GitNexus: scripts/gn_mcp.py.
+  ouroboros:
+    command: "ouroboros"
+    args: ["mcp", "serve"]
+    timeout: 300
+    connect_timeout: 90
+
+  graft:
+    command: "graft"
+    args: ["mcp", "${AF_REPO}"]
+    timeout: 300
+
+  phoenix-docs:
+    url: "https://arizeai-433a7140.mintlify.app/mcp"
+    timeout: 300
+    # Third-party endpoint outside our control: every write-capable tool call
+    # needs explicit approval. It is a docs server, so this costs nothing.
+    trust: untrusted
+
+# ===========================================================================
+# 3. HOOKS — the five project hooks, as far as Hermes can carry them
+# ===========================================================================
+# Hermes shell hooks take JSON on stdin and read JSON from stdout, and accept
+# Claude-Code block shapes. But the RETURN contract is per-event, so each hook
+# goes through harness-ports/bin/hermes-hook-adapter.py, which translates and —
+# for observer events — refuses to pretend the model saw anything.
+#
+# Honest mapping (see docs/HARNESS-PORTS.md for the full NO-HOOK list):
+#   session-start.sh   -> on_session_start  SIDE EFFECTS ONLY (observer)
+#                       + pre_llm_call for the live-state injection
+#   wiki-context.py    -> pre_llm_call      FULL equivalent
+#   turn-retro-gate.sh -> pre_verify        PARTIAL: fires at the edited-code
+#                                           verify gate, not on every turn end
+#   edit-snapshot.py   -> post_tool_call    OBSERVER — output is DISCARDED.
+#                                           Not wired. Ask for the snapshot.
+#   graft-first-nag.py -> pre_tool_call     NOT WIRED BY DEFAULT (see below)
+hooks:
+
+  # Toolchain rebuild + orientation. Observer: Hermes ignores what it prints,
+  # but the side effects (venv, deps, index warm-up) still happen. Generous
+  # timeout because a cold container rebuild is minutes, not seconds.
+  on_session_start:
+    - command: "bash ${AF_REPO}/harness-ports/bin/hook-shim.sh session-start.sh"
+      timeout: 300
+
+  # Relevance-matched wiki excerpts injected into the user message. This is the
+  # ONLY event on Hermes that can inject context, so it carries the per-prompt
+  # wiki match, the first-turn live-state snapshot, AND it drains the spool
+  # written by post_tool_call below (--spool).
+  pre_llm_call:
+    - command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py wiki-context.py pre_llm_call --spool"
+      timeout: 30
+
+  # Edit snapshot: blast radius + anti-pattern screen after every edit.
+  #
+  # post_tool_call is an OBSERVER — Hermes discards whatever a hook returns, so
+  # this CANNOT reach the model at edit time the way Claude Code's PostToolUse
+  # does. With --spool the snapshot is written to a per-session file that the
+  # NEXT pre_llm_call drains and injects.
+  #
+  # THE COST IS ONE TURN OF LATENCY, and it is not equivalent to the sandbox
+  # behaviour: pre_llm_call fires once per turn BEFORE the tool loop, so a
+  # snapshot taken during turn N arrives at the start of turn N+1. Better than
+  # discarding it; worse than injecting in place. Proven end to end, including
+  # the drain-exactly-once negative control, by
+  # harness-ports/tests/test_hermes_spool.py.
+  post_tool_call:
+    - matcher: "patch|write_file"
+      command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py edit-snapshot.py post_tool_call --spool"
+      timeout: 60
+
+  # Turn-retro gate. Blocks with the retro checklist once per landed batch.
+  # PARTIAL PORT: pre_verify fires at the bounded edited-code verify gate, so a
+  # turn that edits nothing is never gated. .hermes.md tells the agent to run
+  # the retro anyway — do not read this hook as full coverage.
+  pre_verify:
+    - command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py turn-retro-gate.sh pre_verify"
+      timeout: 60
+
+  # ---------------------------------------------------------------------
+  # NOT WIRED — deliberately, and here is exactly why.
+  #
+  # graft-first-nag.py on pre_tool_call: the nag is ADVISORY — it warns and
+  # never blocks. pre_tool_call offers only block / modify / approve; there is
+  # no advisory channel. Enabling the line below converts a warning into a HARD
+  # BLOCK of search_files calls that look like semantic identifier searches.
+  # That is a real behaviour change, so it is the owner's call, not a default.
+  #
+  # pre_tool_call:
+  #   - matcher: "search_files"
+  #     command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py graft-first-nag.py pre_tool_call"
+  #     timeout: 20
+  #     fail_closed: false
+  # ---------------------------------------------------------------------
+
+# First-use consent: Hermes prompts once per (event, command) pair before
+# running a shell hook. On an unattended manager loop that prompt will stall the
+# first run. Either run each hook once interactively to accept it, or set:
+# hooks_auto_accept: true
+
+# ===========================================================================
+# 3b. APPROVALS — the port of .claude/settings.json `permissions`
+# ===========================================================================
+# Not a copy: the models differ. Claude Code lists TOOLS that may run without a
+# prompt (permissions.allow: mcp__gitnexus, …, Workflow, Agent, Task). Hermes
+# gates SHELL COMMANDS through an approval mode plus allow/deny globs, and gates
+# MCP servers per server (`trust`, `tools.include`/`exclude`).
+#
+#   .claude/settings.json                   Hermes equivalent
+#   permissions.allow: [mcp__<server>]   -> the server's entry above; `trust: full`
+#                                           is the default, `untrusted` forces
+#                                           approval on write-capable tools
+#   permissions.allow: [Workflow]        -> NO EQUIVALENT (no Workflow runtime)
+#   permissions.allow: [Agent, Task]     -> delegate_task
+#   enabledMcpjsonServers: [...]         -> presence in mcp_servers, `enabled: true`
+approvals:
+  mode: smart                 # smart | manual | off. Never `off` here: it disables
+                              # every safety check on terminal commands.
+
+  # Headless behaviour. A lane started with `-q` hits this path, and the default
+  # matters: `deny` means an unattended lane refuses a dangerous command and
+  # reports, rather than sitting on a prompt nobody will answer.
+  single_query_mode: deny
+  cron_mode: deny
+
+  # HARD LIMITS. This list blocks matching commands unconditionally — it holds
+  # even under `--yolo`, `/yolo`, and `mode: off`, which is exactly why the lane's
+  # non-negotiables live here rather than in prose. A lane must never push, never
+  # force-push, and never open a PR; the sandbox side reviews and pushes.
+  deny:
+    - "git push*"
+    - "git remote add*"
+    - "gh pr *"
+    - "gh release *"
+    - "gh issue *"
+
+# Shell commands that never need approval. Keep this minimal and read-only-ish:
+# every entry here is a command the lane can run unattended without review.
+command_allowlist:
+  - git status
+  - git log
+  - git diff
+  - git show
+  - pytest
+  - graft
+  - rg
+
+# ===========================================================================
+# 4. MODEL / PROVIDER — how Hermes reaches the model (through OmniRoute)
+# ===========================================================================
+# The gateway is OmniRoute (github.com/pitbaden/omniroute) — an OpenAI-compatible
+# multi-provider LLM gateway — the project's SOLE model egress (docs/01, AGENTS.md rule 3;
+# owner ruling 2026-09-03: "just use omniroute"). It is already RUNNING on the PC at
+# 127.0.0.1:20128 (verified live 2026-09-03, spike #0). It carries the owner's
+# Codex subscription into Hermes: Hermes talks to any OpenAI-compatible endpoint
+# as a custom provider, so OmniRoute is registered as a provider and the Codex
+# model is selected through it by name.
+#
+# UNVERIFIED: the owner has already wired this on the PC; the block below is
+# written from the Hermes provider documentation and is included so nobody
+# re-derives it. It has NOT been run from here. Confirm against the live PC
+# config before changing anything.
+#
+# The block stays commented because the owner supplies the live values, not
+# because the wiring is in doubt. Uncomment, fill the three placeholders, and
+# run `hermes model` (or the dashboard) to confirm Hermes picks it up.
+#
+# providers:
+#   omniroute:
+#     api: "${OMNIROUTE_BASE_URL}"        # http://127.0.0.1:20128/v1 on the PC
+#     api_key: "${OMNIROUTE_API_KEY}"
+#     discover_models: false              # skip /models probing on a local gateway
+#     models:
+#       - "<the codex model id as OmniRoute exposes it>"
+#
+# model:
+#   provider: omniroute
+#   default: "<the codex model id as OmniRoute exposes it>"
+#   api_mode: chat_completions

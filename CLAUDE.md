@@ -231,8 +231,10 @@ pending increment is named in the ledger.
 - `docs/OBSERVABILITY-RUNBOOK.md` — the PC-side OpenObserve/Phoenix facts + the
   credential-staleness preflight lesson (no component ships telemetry to them yet — NOT built).
 - `docs/HARNESS-PORTS.md` — the Codex CLI / Hermes Agent ports of this context (`AGENTS.md`,
-  `.hermes.md`, `.agents/skills/`, `harness-ports/`): what each harness enforces and what it does
-  NOT. Until that doc exists the ports are NOT built (batch D of the setup port).
+  `.hermes.md`, `.agents/skills/` synced by `harness-ports/bin/sync-skills.sh`, `harness-ports/`
+  adapters + lane roles + the PC-side spawn path `scripts/pc_lane.sh`): what each harness
+  enforces and what it does NOT. Unit-proven in the sandbox (`harness-ports/tests/run-all.sh`);
+  NOT smoke-tested on the PC — owner-run smoke steps are in the doc.
 - `sandbox-kit/` — the vendored operating kit (operating guide, research-prompt guide + two
   worked examples, telemetry reference, vendored tools; provenance `sandbox-kit/VENDORED-FROM.md`).
 - `wiki/` — **PER-COMMIT FRESHNESS MANDATE (owner 2026-08-25, inherited: "wiki is updated at

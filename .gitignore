@@ -29,3 +29,6 @@ vendor/
 /graft/
 .ignore
 .pc-bridge.env
+
+# PC-lane scratch (spawn path writes per-lane logs/reports here; ported from the source repo)
+/.lanes/

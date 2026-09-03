@@ -1,0 +1,198 @@
+# Codex CLI — project config layer for agent-factory.
+#
+# Codex reads this as the "project" config layer: <repo-root>/.codex/config.toml
+# (codex-rs/config/src/config_layer_source.rs — Project { dot_codex_folder }).
+# It merges UNDER session flags and OVER the user layer (~/.codex/config.toml).
+#
+# Everything here is repo-relative or resolved at run time, so this file is
+# machine-independent and safe to commit. Per-machine paths are supplied through
+# the environment variables documented in harness-ports/bin/mcp-server.sh.
+#
+# Companion docs: docs/HARNESS-PORTS.md · AGENTS.md (the ported project rules).
+
+# ---------------------------------------------------------------------------
+# Permissions / approvals — the port of .claude/settings.json `permissions`
+# ---------------------------------------------------------------------------
+# The two models are NOT the same shape, so this is a mapping, not a copy.
+#
+# Claude Code lists TOOLS that may run without a prompt (`permissions.allow`:
+# mcp__gitnexus, mcp__ouroboros, …, Workflow, Agent, Task). Codex has no
+# per-tool allowlist: it gates on a SANDBOX POLICY plus an APPROVAL POLICY, and
+# MCP servers are gated per server rather than per tool.
+#
+#   .claude/settings.json                     Codex equivalent
+#   permissions.allow: [mcp__<server>, …]  -> the server appears in [mcp_servers.*]
+#                                             (enabled defaults to true); approval is
+#                                             governed by approval_policy below
+#   permissions.allow: [Workflow]          -> NO EQUIVALENT (no Workflow runtime)
+#   permissions.allow: [Agent, Task]       -> spawn_agent, gated by approval_policy
+#   enabledMcpjsonServers: [...]           -> presence in [mcp_servers.*]
+#
+# Interactive default: keep the sandbox ON and ask before anything outside it.
+# `workspace-write` lets the lane edit the repo it is working in without a prompt
+# per file, while still refusing writes outside the workspace and network access
+# it was not granted.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+# NON-INTERACTIVE runs do NOT inherit the above prompt behaviour, and this is
+# load-bearing for the spawn path: `codex exec` overrides approval_policy to
+# `never` in headless mode (exec/src/lib.rs:413 — "Default to never ask for
+# approvals in headless mode"). So a lane never stalls on a prompt, and the
+# sandbox is still the thing keeping it honest. Do NOT reach for
+# --dangerously-bypass-approvals-and-sandbox to "make it work": that disables the
+# sandbox too, which is the opposite of what an unattended lane should have.
+
+# ---------------------------------------------------------------------------
+# MCP servers
+# ---------------------------------------------------------------------------
+# Every stdio server launches through harness-ports/bin/mcp-server.sh. Codex
+# forwards env var NAMES (`env_vars`) but does NOT expand ${VAR} inside command
+# or args, so the launcher — not this file — resolves paths. `bash -lc` with a
+# git-derived root makes the launcher findable from any subdirectory of the repo.
+#
+# NOT SMOKE-TESTED FROM THE SANDBOX. These servers live on the PC; this config
+# was written from each server's committed definition (.mcp.json and the
+# user-level mcpServers block), not from a successful connection. Run
+# harness-ports/bin/mcp-smoke.sh on the PC before trusting any of them.
+
+[mcp_servers.gitnexus]
+command = "bash"
+args = ["-lc", 'exec "$(git rev-parse --show-toplevel)/harness-ports/bin/mcp-server.sh" gitnexus']
+env_vars = ["AF_REPO"]
+startup_timeout_sec = 60
+
+[mcp_servers.aleph]
+command = "bash"
+args = ["-lc", 'exec "$(git rev-parse --show-toplevel)/harness-ports/bin/mcp-server.sh" aleph']
+env_vars = ["AF_REPO", "AF_VENV"]
+startup_timeout_sec = 60
+
+[mcp_servers.codebase-memory]
+command = "bash"
+args = ["-lc", 'exec "$(git rev-parse --show-toplevel)/harness-ports/bin/mcp-server.sh" codebase-memory']
+env_vars = ["AF_REPO", "CODEBASE_MEMORY_BIN"]
+startup_timeout_sec = 60
+
+# Tier 1 of the Ouroboros ladder. If it fails to initialize (the documented
+# MCP-SDK v2 vs [claude-sdk] v1.x split), do NOT retry through MCP — use the
+# tier-2 stdio wrapper directly: python3 scripts/ooo_mcp.py <tool> '<json>'.
+# That wrapper is also the correct path whenever a harness's MCP layer hangs on
+# an approval prompt, because it has no permission gate at all.
+[mcp_servers.ouroboros]
+command = "bash"
+args = ["-lc", 'exec "$(git rev-parse --show-toplevel)/harness-ports/bin/mcp-server.sh" ouroboros']
+env_vars = ["AF_REPO", "OUROBOROS_BIN"]
+startup_timeout_sec = 90
+
+# User-level in the sandbox (/root/.claude.json), project-level here so the PC
+# clone gets it without a separate user-config edit.
+[mcp_servers.graft]
+command = "bash"
+args = ["-lc", 'exec "$(git rev-parse --show-toplevel)/harness-ports/bin/mcp-server.sh" graft']
+env_vars = ["AF_REPO", "GRAFT_BIN"]
+startup_timeout_sec = 60
+
+[mcp_servers.phoenix-docs]
+url = "https://arizeai-433a7140.mintlify.app/mcp"
+startup_timeout_sec = 60
+
+# ---------------------------------------------------------------------------
+# Hooks — all five project hooks, ported
+# ---------------------------------------------------------------------------
+# Schema: codex-rs/config/src/hook_config.rs (HookEventsToml / MatcherGroup /
+# HookHandlerConfig). Event names are PascalCase table keys under [[hooks.X]].
+#
+# Wire protocol matches the project hooks as written: JSON on stdin with
+# snake_case tool_name/tool_input; non-JSON stdout becomes additionalContext;
+# exit 2 + stderr blocks. Verified in codex-rs/hooks/src/engine/output_parser.rs
+# and events/{session_start,user_prompt_submit,stop}.rs.
+#
+# Two hooks need payload translation because Codex's TOOL payloads differ from
+# Claude Code's — apply_patch carries {"command": <patch text>}, not
+# {file_path, new_string}. Those go through codex-hook-adapter.py; the rest use
+# the plain shim. Proof the translation works: harness-ports/tests/
+# test_codex_hook_adapter.py (7 cases, paired positive/negative controls).
+
+# 1/5 session-start.sh — toolchain rebuild + wiki live-state + orientation.
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'bash "$(git rev-parse --show-toplevel)/harness-ports/bin/hook-shim.sh" session-start.sh'
+timeout = 600
+statusMessage = "agent-factory: session bootstrap + wiki live-state"
+
+# 2/5 edit-snapshot.py — blast radius + anti-pattern screen after every edit.
+# Matcher uses Write|Edit: Codex accepts those as compatibility ALIASES that
+# select apply_patch handlers (codex-rs/core/src/tools/hook_names.rs), while the
+# payload still says apply_patch — which is exactly what the adapter expects.
+[[hooks.PostToolUse]]
+matcher = "Write|Edit"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/harness-ports/bin/codex-hook-adapter.py" edit-snapshot.py'
+timeout = 60
+statusMessage = "edit snapshot: impact + anti-pattern screen"
+
+# 3/5 wiki-context.py — relevance-matched wiki excerpts on every prompt.
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/harness-ports/bin/hook-shim.sh" wiki-context.py'
+timeout = 30
+statusMessage = "wiki context"
+
+# 4/5 turn-retro-gate.sh — blocks turn-end once per landed batch (exit 2 + stderr).
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'bash "$(git rev-parse --show-toplevel)/harness-ports/bin/hook-shim.sh" turn-retro-gate.sh'
+timeout = 30
+statusMessage = "turn-end retro gate"
+
+# 5/5 graft-first-nag.py — GRAFT-FIRST mandate. Codex has no Grep tool, so the
+# matcher is Bash and the adapter recovers a Grep-shaped payload from rg/grep
+# command lines. Advisory only: it prints, it never blocks.
+[[hooks.PreToolUse]]
+matcher = "Bash"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/harness-ports/bin/codex-hook-adapter.py" graft-first-nag.py'
+timeout = 20
+statusMessage = "graft-first check"
+
+# ---------------------------------------------------------------------------
+# Lane roles (the three things the sandbox build lanes actually ARE)
+# ---------------------------------------------------------------------------
+# Schema: codex-rs/config/src/config_toml.rs — `[agents.<name>]` deserializes to
+# AgentRoleToml { description, config_file, nickname_candidates }. `description`
+# is "Human-facing role documentation used in spawn tool guidance"; `config_file`
+# is "a role-specific config layer", resolved relative to THIS config.toml.
+#
+# Each layer sets `developer_instructions` (config_toml.rs:228 — "Developer
+# instructions inserted as a `developer` role message"), which is the correct
+# home for a role persona. `instructions` would replace the system prompt and
+# `experimental_instructions_file` is discouraged upstream; neither fits a role.
+#
+# The layers are GENERATED from harness-ports/roles/<name>.md — one source of
+# truth, shared with Hermes (which has no role mechanism and gets the same file
+# prepended by pc-lane.sh). Regenerate with build-roles.py; CI-check with
+# `python3 harness-ports/bin/build-roles.py --check`.
+#
+# NO MODEL IS PINNED. The sandbox pins a different model per lane; the PC harness
+# serves ONE model, so all three roles run on it and the coordinator-side routing
+# table does not apply. The consequence is in each role body: a lane cannot
+# supply its own independent verification, so its output stays a PROPOSAL until
+# the sandbox verify lane grades it.
+
+[agents.code-implementer]
+description = "The BUILD lane: turns a settled design into verified code, proves it mechanically, and escalates rather than improvises when reality contradicts the brief. Not for open-ended investigation, root-cause analysis, or review duty."
+config_file = "./agents/code-implementer.toml"
+
+[agents.adversarial-verifier]
+description = "The VERIFY lane: attacks a finished increment or claim against the FULL contract (never the builder's own cases), reproduces every claim it relies on, runs the minimum attack set, and returns MERGE-READY / NOT-READY with evidence. Reports everything found, without severity filtering."
+config_file = "./agents/adversarial-verifier.toml"
+
+[agents.evidence-gatherer]
+description = "The EXPLORE lane: collects exhaustive, file:line-cited, git-dated evidence WITHOUT concluding. It must not propose root causes, verdicts, or fixes — those stay with the coordinating loop."
+config_file = "./agents/evidence-gatherer.toml"

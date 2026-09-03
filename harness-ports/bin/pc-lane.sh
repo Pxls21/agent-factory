@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# pc-lane.sh — run ONE build/verify lane on the PC, non-interactively.
+#
+#   pc-lane.sh <brief-file> [codex|hermes] [role]
+#
+# This is the thing the whole harness port exists for: give it a brief and it
+# runs the same kind of lane the sandbox runs, on the PC, in its own git
+# worktree, under a lane role, and leaves the final message in report.md.
+#
+# Runs SYNCHRONOUSLY and exits with the harness's exit code. To run it detached
+# (which is what the bridge caller does, because a bridge call dies at ~120s),
+# see scripts/pc_lane.sh — it wraps this in setsid + a pidfile and polls.
+#
+# ---------------------------------------------------------------------------
+# Environment (all overridable; defaults are non-root and PC-shaped)
+#   AF_REPO   repo clone            default: $HOME/agent-factory
+#   AF_VENV   python venv root      default: $HOME/venv-agent-factory
+#   CODEX_BIN      codex binary          default: codex (from PATH)
+#   HERMES_BIN     hermes binary         default: hermes (from PATH)
+#   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
+#   LANE_ID        override the lane id  default: derived from the brief
+#   PC_LANE_FAKE_HARNESS
+#                  test-double harness; see harness-ports/tests/test_pc_lane.sh.
+#                  Set ONLY by the plumbing test. Refuses to run if the brief is
+#                  not itself under a test directory, so it cannot be used to
+#                  fake a real lane.
+# ---------------------------------------------------------------------------
+#
+# HARD LIMITS, enforced not just documented:
+#   - the lane NEVER pushes. A `git` shim earlier on PATH refuses push, remote
+#     add/set-url, and the gh subcommands that publish. The sandbox side reviews
+#     and pushes; a lane that could push could bypass that review.
+#   - the lane NEVER opens PRs or posts comments (same shim).
+#   - the lane NEVER issues a gate verdict — that rule lives in the role bodies
+#     (harness-ports/roles/*.md) and in the project instructions, because it is a
+#     judgement, not a command that can be blocked.
+#
+# REPLAY SAFETY (docs/PC-BRIDGE-RUNBOOK.md, "Bridge-launched background processes
+# MUST self-guard"): a bridge call that times out may be REPLAYED, and a bare
+# relaunch would spawn a second lane on the same worktree. The guard here is on
+# the STATE THIS INTENDS TO CREATE, not mutual exclusion (rule 1b — a kill+
+# relaunch defeats flock): if report.md already exists the lane is done and this
+# re-prints it; if the pidfile names a live process the lane is running and this
+# exits without starting a second one.
+set -uo pipefail
+
+die() { echo "pc-lane: $*" >&2; exit 64; }
+
+BRIEF="${1:-}"; HARNESS="${2:-codex}"; ROLE="${3:-}"
+[ -n "$BRIEF" ] || die "usage: pc-lane.sh <brief-file> [codex|hermes] [role]"
+[ -f "$BRIEF" ] || die "brief not found: $BRIEF"
+case "$HARNESS" in codex|hermes) ;; *) die "harness must be codex or hermes, got '$HARNESS'";; esac
+
+: "${AF_REPO:=$HOME/agent-factory}"
+: "${AF_VENV:=$HOME/venv-agent-factory}"
+: "${CODEX_BIN:=codex}"
+: "${HERMES_BIN:=hermes}"
+: "${LANE_BRANCH:=claude/soundbox-kit-migration-iz1jwf}"
+[ -d "$AF_REPO/.git" ] || [ -f "$AF_REPO/.git" ] || die "not a git clone: $AF_REPO"
+
+BRIEF="$(cd "$(dirname "$BRIEF")" && pwd)/$(basename "$BRIEF")"
+
+# --- the pinned SHA ---------------------------------------------------------
+# A lane must never run on "whatever HEAD happens to be" — the runbook records a
+# live incident where a relaunch landed on the wrong tree. The brief pins it.
+PIN="$(grep -oiE '^[[:space:]]*(PIN|SHA|BASE)[[:space:]:]+[0-9a-f]{7,40}' "$BRIEF" \
+        | head -1 | grep -oiE '[0-9a-f]{7,40}$' || true)"
+[ -n "$PIN" ] || die "brief pins no SHA. Add a line like 'PIN: <sha>' — refusing to
+  guess a base commit (a lane on the wrong tree produces confident wrong work)."
+
+LANE_ID="${LANE_ID:-$(basename "$BRIEF" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40)-${PIN:0:8}}"
+LANE_DIR="$AF_REPO/.lanes/$LANE_ID"
+TREE="$LANE_DIR/tree"
+REPORT="$LANE_DIR/report.md"
+PIDFILE="$LANE_DIR/lane.pid"
+LOG="$LANE_DIR/lane.log"
+mkdir -p "$LANE_DIR" || die "cannot create $LANE_DIR"
+
+# Lane worktrees must never enter the index. `.lanes/` is in the repo's
+# .gitignore, but a lane may run in a clone that predates that entry, and a
+# `git add -A` would then stage an embedded git repository ("adding embedded git
+# repository: .lanes/…/tree" — seen live in the plumbing test). This
+# self-contained ignore makes the guard travel with the lane rather than
+# depending on the checkout.
+[ -f "$AF_REPO/.lanes/.gitignore" ] || printf '*\n' > "$AF_REPO/.lanes/.gitignore"
+
+# --- state guard (replay safety) --------------------------------------------
+if [ -s "$REPORT" ]; then
+  echo "pc-lane: lane '$LANE_ID' already produced a report — not re-running." >&2
+  cat "$REPORT"; exit 0
+fi
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+  echo "pc-lane: lane '$LANE_ID' is already running (pid $(cat "$PIDFILE")) — not starting a second." >&2
+  exit 0
+fi
+echo $$ > "$PIDFILE"
+cleanup() { rm -f "$PIDFILE"; }
+trap cleanup EXIT
+
+# --- the no-push shim -------------------------------------------------------
+# Earlier on PATH than the real binaries. This is the enforcement point for
+# "a lane never pushes"; the prose in the role file is the explanation.
+SHIM="$LANE_DIR/shim"
+mkdir -p "$SHIM"
+REAL_GIT="$(command -v git)" || die "git not found"
+cat > "$SHIM/git" <<SHIMEOF
+#!/usr/bin/env bash
+# Lane guard: this lane may read and commit locally, but may not publish.
+for a in "\$@"; do
+  case "\$a" in
+    push) echo "pc-lane: 'git push' is refused inside a lane. The sandbox side reviews and pushes." >&2; exit 13;;
+  esac
+done
+case "\${1:-}" in
+  remote) case "\${2:-}" in add|set-url) echo "pc-lane: 'git remote \$2' is refused inside a lane." >&2; exit 13;; esac;;
+esac
+exec "$REAL_GIT" "\$@"
+SHIMEOF
+cat > "$SHIM/gh" <<'SHIMEOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  pr|release|issue|api|repo)
+    echo "pc-lane: 'gh $1' is refused inside a lane — no outward-facing actions." >&2; exit 13;;
+esac
+exec "$(command -v -- gh 2>/dev/null | grep -v "$0" | head -1)" "$@"
+SHIMEOF
+chmod +x "$SHIM/git" "$SHIM/gh"
+export PATH="$SHIM:$PATH"
+
+# --- the lane's worktree ----------------------------------------------------
+# Disjoint per lane, exactly like the sandbox's agent worktrees, so parallel
+# lanes cannot collide on the tree.
+if [ ! -d "$TREE/.git" ] && [ ! -f "$TREE/.git" ]; then
+  "$REAL_GIT" -C "$AF_REPO" fetch origin "$LANE_BRANCH" --quiet \
+    || echo "pc-lane: fetch failed — continuing with local objects" >&2
+  "$REAL_GIT" -C "$AF_REPO" worktree add --detach "$TREE" "$PIN" --quiet \
+    || die "worktree add failed at $PIN (is the SHA fetched?)"
+fi
+HAVE="$("$REAL_GIT" -C "$TREE" rev-parse HEAD 2>/dev/null || echo none)"
+case "$HAVE" in
+  "$PIN"*) ;;
+  *) die "lane tree is at $HAVE but the brief pins $PIN — refusing to run on the wrong tree.";;
+esac
+
+# --- the prompt: role file, then brief --------------------------------------
+PROMPT_FILE="$LANE_DIR/prompt.md"
+: > "$PROMPT_FILE"
+if [ -n "$ROLE" ]; then
+  RF="$AF_REPO/harness-ports/roles/$ROLE.md"
+  [ -f "$RF" ] || die "role '$ROLE' not found at $RF"
+  cat "$RF" >> "$PROMPT_FILE"
+  printf '\n\n---\n\n' >> "$PROMPT_FILE"
+fi
+cat "$BRIEF" >> "$PROMPT_FILE"
+
+echo "pc-lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
+echo "pc-lane: tree=$TREE" >&2
+
+# --- run the harness --------------------------------------------------------
+cd "$TREE" || die "cannot cd $TREE"
+export AF_REPO AF_VENV
+rc=0
+
+if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
+  # TEST DOUBLE — the one stand-in this port permits, and only for plumbing.
+  # It proves worktree/role/report wiring without a model. Refused unless the
+  # brief lives under a tests/ directory, so it can never masquerade as a lane.
+  # The brief must itself live under a tests/ directory or be named test-*.
+  # Deliberately NOT "anything under /tmp": briefs are routinely staged in a
+  # temp dir, so that would have let the double stand in for a real lane — which
+  # the plumbing test caught.
+  case "$BRIEF" in
+    */tests/*|*/test-*) ;;
+    *) die "PC_LANE_FAKE_HARNESS set for a non-test brief ($BRIEF) — refusing.";;
+  esac
+  echo "pc-lane: USING FAKE HARNESS (test double) — this is NOT a real lane run." >&2
+  "$PC_LANE_FAKE_HARNESS" < "$PROMPT_FILE" > "$REPORT" 2> "$LOG"
+  rc=$?
+
+elif [ "$HARNESS" = "codex" ]; then
+  # `codex exec` = non-interactive. Flags, and why each one:
+  #   --cd            run in the lane worktree
+  #   -o/--output-last-message  the agent's FINAL message -> report.md (this is
+  #                   the built-in mechanism; do not scrape stdout for it)
+  #   --skip-git-repo-check     the worktree is detached-HEAD; don't refuse it
+  #   --dangerously-bypass-hook-trust
+  #                   REQUIRED for the ported hooks to run: hooks need persisted
+  #                   trust, and an unattended lane has no way to grant it
+  #                   interactively. Proven by upstream's own exec hook test
+  #                   (codex-rs/exec/tests/suite/hooks.rs). Without it the hooks
+  #                   silently do not fire.
+  #   --sandbox workspace-write  keep the sandbox ON. NOT
+  #                   --dangerously-bypass-approvals-and-sandbox: that disables
+  #                   the sandbox too, which is the opposite of what an
+  #                   unattended lane should have.
+  # Approvals need no flag: exec defaults approval_policy to `never` in headless
+  # mode (exec/src/lib.rs:413), so a lane cannot stall on a prompt.
+  "$CODEX_BIN" exec \
+      --cd "$TREE" \
+      --output-last-message "$REPORT" \
+      --skip-git-repo-check \
+      --dangerously-bypass-hook-trust \
+      --sandbox workspace-write \
+      - < "$PROMPT_FILE" > "$LOG" 2>&1
+  rc=$?
+
+else
+  # `hermes -z` = the purest one-shot: single prompt in, final response text out,
+  # nothing else on stdout or stderr. So stdout IS the report.
+  # Same agent, same tools, same skills — only the interactive layers stripped.
+  # cwd is the workspace, which is why we cd'd into the lane tree above. We do
+  # NOT pass --worktree: this script already manages the worktree, and letting
+  # Hermes make a second one would put the lane somewhere we are not watching.
+  "$HERMES_BIN" -z "$(cat "$PROMPT_FILE")" \
+      --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG"
+  rc=$?
+fi
+
+if [ ! -s "$REPORT" ]; then
+  echo "pc-lane: harness exited $rc but produced NO report — see $LOG" >&2
+  [ -s "$LOG" ] && tail -40 "$LOG" >&2
+  [ "$rc" -eq 0 ] && rc=70
+fi
+
+echo "pc-lane: done lane=$LANE_ID rc=$rc report=$REPORT" >&2
+[ -s "$REPORT" ] && cat "$REPORT"
+exit "$rc"
