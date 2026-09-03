@@ -22,5 +22,14 @@ its `skills/honey*` and `agents/hive-*.md` are also copied into `.claude/` so th
 install. `PC-BRIDGE.md` + `scripts/pc.sh` — the owner's PC bridge runbook, adapted from
 `trading-system/docs/PC-BRIDGE-RUNBOOK.md` (the kit deliberately leaves bridge docs behind).
 
+**Self-contained `.claude/` (2026-09-03, owner ask "copy over everything and install everything"):**
+`.claude/output-styles/` (attention-kind / spartan / rundown, from `sandbox-kit/output-styles`),
+the nested `.claude/skills/gitnexus/gitnexus-*` set the CLAUDE.md code-intel section names (from
+trading-system), and the skills/agents/commands the vendored installers would otherwise only place
+under `~/.claude` each session: `council` + the 18 `council-*` agents, `wiki-compiler` + the 12
+`/wiki-*` commands, `codebase-memory` + its 3 agents, `session-start-hook`. `scripts/setup.sh` still
+runs the installers (idempotent) so user-level copies stay in sync. Totals: 391 skills, 27 agents,
+4 output styles, 12 commands.
+
 The source repo's PROJECT-SPECIFIC set (HERMES-VM, PC-bridge/thermal docs, ACTIVE-LINKS, the
 filled trading `CLAUDE.md`) was deliberately left behind, per its manifest.
