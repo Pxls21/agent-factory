@@ -29,6 +29,8 @@ last_compiled: 2026-09-03
 None.
 
 ## Pending owner decisions
+- **Build-direction review** (`tasks/stage0-build-direction.md`, 2026-09-03): the owner asked for
+  the direction summary before increment #1; building waits for their notes or "go ahead".
 
 - `sudo modprobe kvm_amd` on the PC (KVM modules present but unloaded; needed before gVisor tests)
 - runsc install on the PC (absent; systrap platform needs no KVM but the binary is missing)
