@@ -91,8 +91,17 @@ PC through OmniRoute; the coordinator keeps briefs, the contract gate and the fi
 - **Bring-up:** `harness-ports/bin/pc-setup.sh` (user-level, idempotent: venv, gitnexus 1.6.10,
   graft, codebase-memory, code-review-graph, ouroboros, detached indexes). PC clone:
   `~/agent-factory` on the designated branch, hooks active.
-- **Never** run a lane against the owner's default profile, never `--yolo` a lane, never let a lane
-  push (blocked by the git shim and the profile deny list).
+- **Working directory:** `pc-lane.sh` exports `TERMINAL_CWD=<lane tree>` — Hermes's terminal tool
+  takes its cwd from that carrier, not from the process cwd (`--in` alone left a lane's shell in
+  `$HOME`; proven by a read-only diagnostic lane, 2026-09-03). Verified: `pwd` = the pinned
+  linked worktree, `.git` is a `gitdir:` file, HEAD = PIN.
+- **Hard limits, verified under yolo:** Hermes one-shot runs with `HERMES_YOLO_MODE=1` (no human
+  can answer a prompt), so the lane's limits are the profile deny list plus the git/gh shims. A
+  negative-control lane ran `git push origin HEAD` and `gh pr list`: both BLOCKED by
+  `approvals.deny` ("not even with --yolo"), exit -1.
+- **Never** run a lane against the owner's default profile; never let a lane push (blocked as
+  above); never wire coordinator turn-end hooks (the retro gate) into a one-shot lane — they
+  replace the final DATA report.
 
 ### gVisor install (owner-run, needs sudo)
 

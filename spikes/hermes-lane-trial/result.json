@@ -21,14 +21,21 @@
     "anti-hollow-green"
   ],
   "tests_last_line": "9 passed in 1.61s",
-  "hermes_version": "Hermes Agent v0.21.0 (2026.8.31) · upstream 58472d80",
+  "hermes_version": "Hermes Agent v0.21.0 (2026.8.31) \u00b7 upstream 58472d80",
   "notes": "",
-  "provenance": "written by the Hermes BUILD lane on the PC (profile agentfactory, model codex/gpt-5.6-sol-ultra via OmniRoute, 6th run, 3m43s); transcribed verbatim from the lane report by the coordinator because the lane's shell ran in the main clone, not the pinned worktree (open defect: terminal cwd)",
+  "provenance": "runs 1-6 recorded from the lane report (run 6 wrote in the main clone \u2014 the terminal cwd defect, since FIXED); lane-placement.json (same directory) is the lane's OWN file, fetched through scripts/pc_lane.sh's patch path and applied with git apply --index",
   "runs_before_this_one": {
     "1": "stalled 11 min in MCP startup: ouroboros server crash-looped (fixed: disabled for lanes)",
     "2": "stopped: shell in the main clone, HEAD != PIN (found: Hermes restores its recorded cwd)",
     "3": "looped 20 calls on the retro gate: hook sentinel unwritable in a linked worktree (fixed: --absolute-git-dir)",
     "4": "stopped: dirty tree from run 3 (runner still without --in)",
-    "5": "did the work, but the retro gate consumed the final report; found the pre-commit early-exit defect (fixed)"
-  }
+    "5": "did the work, but the retro gate consumed the final report; found the pre-commit early-exit defect (fixed)",
+    "6": "brief completed (this record) but the shell ran in the main clone: Hermes terminal cwd comes from TERMINAL_CWD, not the process cwd"
+  },
+  "runs_after": {
+    "7": "read-only diagnostic: pwd=/home/rocco with --in in effect -> root cause TERMINAL_CWD (fixed in pc-lane.sh)",
+    "8": "diagnostic 2: pwd = pinned linked worktree, HEAD = PIN; hard limits verified under HERMES_YOLO_MODE=1: git push and gh pr BLOCKED by the profile deny list (exit -1)",
+    "9": "lane-placement.json written in the pinned worktree; patch fetched (1 file) and applied in the sandbox \u2014 the full round trip incl. the deliverable path is PROVEN"
+  },
+  "status": "PROVEN 2026-09-03: dispatch -> worktree-pinned execution on the PC -> hard limits -> DATA report -> patch home. Ready for increment #1 after the owner's go-ahead."
 }

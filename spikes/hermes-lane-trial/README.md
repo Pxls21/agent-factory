@@ -8,8 +8,9 @@ that the sandbox fetches. Six runs; each earlier run's failure was a real defect
 with a test (see `result.json` → `runs_before_this_one` and `docs/INCIDENT-LOG.md`). The model itself
 verified its premises and stopped correctly every time it should have.
 
-**Does NOT prove:** any Stage 0 proof logic (none ran); that the lane works in the PINNED WORKTREE — its
-shell ran in the main clone (HEAD happened to equal the pin), so the patch fetch was empty. That is the
-open defect before the first real increment rides a lane.
+**Does NOT prove:** any Stage 0 proof logic (none ran). The earlier open defect (lane shell in the main
+clone) is CLOSED: runs 7-9 proved `pwd` = the pinned linked worktree (`TERMINAL_CWD` is Hermes's cwd
+carrier), `git push`/`gh pr` blocked under yolo, and a new file coming home through the patch path
+(`lane-placement.json` here is that file, applied with `git apply --index`).
 
 Result: `result.json`. Pinned commit: `a9847b47e8eff21024f5ac610730c6795bb61459`. Date: 2026-09-03.

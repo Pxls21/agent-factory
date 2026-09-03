@@ -1,0 +1,11 @@
+{
+  "recorded_at": "2026-09-03T07:51:57.707948Z",
+  "pwd": "/home/rocco/agent-factory/.lanes/brief-lane-placement.md--95a83732/tree",
+  "toplevel": "/home/rocco/agent-factory/.lanes/brief-lane-placement.md--95a83732/tree",
+  "head": "95a8373260f78354d0b0dc3d4b1f82fe45368433",
+  "gitdir_line": "gitdir: /home/rocco/agent-factory/.git/worktrees/tree2",
+  "terminal_cwd": "/home/rocco/agent-factory/.lanes/brief-lane-placement.md--95a83732/tree",
+  "pin_matches_head": true,
+  "shell_started_in_pinned_worktree": true,
+  "notes": ""
+}

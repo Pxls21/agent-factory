@@ -25,10 +25,10 @@ last_compiled: 2026-09-03
   Pipeline (findings, council, interview, seed, breakdown) COMPLETE, all committed.
 
 ## In-flight runs
-- **PC lane bring-up** (2026-09-03): DONE except one defect — clone at `~/agent-factory` (tracks the
-  designated branch), pc-setup complete (quartet, venv, gitnexus 1.6.10), Hermes profile
-  `agentfactory` with the merged snippet, spike `hermes-lane-trial` run 6 green (3m43s). OPEN: the
-  lane shell runs in the main clone, not the pinned worktree (patch fetch empty). gVisor staged in
+- **PC lane bring-up** (2026-09-03): DONE and PROVEN — clone at `~/agent-factory`, pc-setup complete
+  (quartet, venv, gitnexus 1.6.10), Hermes profile `agentfactory` with the merged snippet; spike
+  `hermes-lane-trial` runs 8-9: shell in the pinned worktree (`TERMINAL_CWD`), push/PR blocked
+  under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor staged in
   `~/gvisor-install`; the owner's sudo install step is pending.
 
 None.

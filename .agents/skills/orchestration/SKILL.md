@@ -364,3 +364,13 @@ re-dispatches from the brief — never resumes from the untrusted partial (recov
 bytes, not trust). Corollary for the coordinator itself: push verified work at every
 delegates-dead window (split the stack if part of it is unmerged/NOT-READY — cherry-pick the
 safe commits to trunk rather than holding everything hostage to the broken one).
+
+**PC-LANE PLACEMENT (2026-09-03, agent-factory Hermes bring-up — eight runs).** When a lane runs
+under a foreign harness on another host, prove three things from the LANE'S OWN OUTPUT before any
+real brief rides it: `pwd` equals the pinned worktree (a `gitdir:` file, HEAD = PIN), the hard
+limits refuse (`git push`, `gh pr` → blocked, exit code quoted), and the deliverable path returns
+(report AND patch fetched). A 60-second read-only diagnostic brief answers all three; five build
+runs did not. Flags that move the process (`cd`, `--in`) do not move the tool — find the tool's
+own cwd carrier (Hermes: `TERMINAL_CWD`). Never wire a coordinator turn-end hook into a one-shot
+lane: it consumes the final report. A known-broken optional MCP server must be disabled for lanes
+— a crash loop at startup costs minutes per run and zero model calls.

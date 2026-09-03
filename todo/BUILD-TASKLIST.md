@@ -59,6 +59,13 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (PC lane PROVEN end to end):** runs 7-9 closed the last defect — Hermes's terminal cwd
+is carried by `TERMINAL_CWD` (now exported per lane): `pwd` = pinned linked worktree, HEAD = PIN,
+`git push`/`gh pr` BLOCKED under yolo by the profile deny list, a new file fetched through the patch path
+and applied in the sandbox. Registry AF-AP-8/9; orchestration skill carries the placement rule. Build
+lanes are ready: increment #1 rides the lane after the owner's go-ahead on the direction doc. Owner
+sudo step for gVisor still pending.
+
 **2026-09-03 sync (Hermes lane round trip PROVEN, spike `hermes-lane-trial`):** six runs on the PC lane.
 Run 6 completed the brief end to end in 3m43s (quartet present, venv ok, repo tests 9/9 on the PC, DATA
 report fetched). Defects found by runs 1-5, all fixed with tests: ouroboros MCP crash loop (disabled for
