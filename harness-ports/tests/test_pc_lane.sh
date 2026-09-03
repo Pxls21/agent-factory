@@ -128,6 +128,40 @@ check "fake harness REFUSED for a non-test brief" \
   "$([ $rc7 -ne 0 ] && [ $g7 -eq 0 ] && echo 0 || echo 1)" \
   "the one permitted stand-in must never be usable to fake a real lane"
 
+# --- capacity refusal is retried on its exact signature, and only then --------
+# TEST DOUBLE: refuses with the OmniRoute 503 line on its first call, reports on the second.
+FLAKY="$TMP/flaky-harness.sh"
+cat > "$FLAKY" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. First call: the verbatim capacity refusal Hermes prints; later calls: a report.
+COUNT="${FLAKY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+if [ "$n" -eq 1 ]; then
+  echo "API call failed after 3 retries: HTTP 503: Structurally heavy chat request capacity is busy; retry shortly."
+else
+  echo "FLAKY-HARNESS-REPORT after $n attempts"; cat >/dev/null
+fi
+EOF
+chmod +x "$FLAKY"
+BRIEF8="$TMP/tests/brief-retry.md"; { echo "PIN: $SHA"; echo; echo "retry me"; } > "$BRIEF8"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-8"
+LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$FLAKY" bash "$LANE" "$BRIEF8" codex >"$TMP/out8" 2>"$TMP/err8"; rc8=$?
+LD8="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-retry.md' | head -1)"
+check "a capacity refusal (HTTP 503 signature) is retried and the SECOND attempt's report stands" \
+  "$([ $rc8 -eq 0 ] && grep -q "after 2 attempts" "$LD8/report.md" && echo 0 || echo 1)" \
+  "a transient route refusal must not cost a whole dispatch round (2026-09-03: it did, twice)"
+check "the refused attempt is kept as report.attempt1.md and the retry is logged" \
+  "$([ -s "$LD8/report.attempt1.md" ] && grep -q "HTTP 503" "$LD8/report.attempt1.md" && grep -q "retrying in 0s" "$TMP/err8" && echo 0 || echo 1)" \
+  "evidence of the refusal survives; the launch log shows the retry"
+
+BRIEF9="$TMP/tests/brief-noretry.md"; { echo "PIN: $SHA"; echo; echo "do not retry me"; } > "$BRIEF9"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-9"
+LANE_CAPACITY_RETRIES=0 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$FLAKY" bash "$LANE" "$BRIEF9" codex >"$TMP/out9" 2>"$TMP/err9"
+LD9="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-noretry.md' | head -1)"
+check "NEGATIVE CONTROL: with LANE_CAPACITY_RETRIES=0 the refusal is the final report (one attempt)" \
+  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "HTTP 503" "$LD9/report.md" && ! grep -q "retrying" "$TMP/err9" && echo 0 || echo 1)" \
+  "a retry loop that fired on every report (not the signature) would pass the test above and mask real failures"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

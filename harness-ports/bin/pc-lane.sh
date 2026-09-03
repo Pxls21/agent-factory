@@ -166,6 +166,18 @@ cd "$TREE" || die "cannot cd $TREE"
 export AF_REPO AF_VENV
 rc=0
 
+# CAPACITY RETRY (2026-09-03): OmniRoute's Codex routes refuse a "structurally heavy" request
+# (a lane prompt is ~47 KB of system prompt + tools) with `HTTP 503 ... capacity is busy`
+# while a 24-token probe on the same route answers in 2 s. Hermes retries three times within
+# seconds and gives up; the whole lane then costs a dispatch round for a transient. Retry the
+# ATTEMPT on that exact signature only, with a doubling backoff, keeping every refused report.
+: "${LANE_CAPACITY_RETRIES:=3}"     # extra attempts after a capacity refusal; 0 disables
+: "${LANE_CAPACITY_BACKOFF:=60}"    # seconds before the first retry, doubling; tests pass 0
+CAPACITY_RX='^API call failed after [0-9]+ retries: HTTP 503'
+attempt=0
+while :; do
+attempt=$((attempt + 1))
+
 if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
   # TEST DOUBLE — the one stand-in this port permits, and only for plumbing.
   # It proves worktree/role/report wiring without a model. Refused unless the
@@ -249,6 +261,17 @@ else
       --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG"
   rc=$?
 fi
+
+if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null; then
+  wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
+  cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
+  echo "pc-lane: attempt $attempt refused by route capacity (HTTP 503) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  sleep "$wait_s"
+  continue
+fi
+[ "$attempt" -gt 1 ] && echo "pc-lane: attempt $attempt ended rc=$rc" >&2
+break
+done
 
 # LANE TRANSCRIPT HOME (owner 2026-09-03): export the Hermes session (scrubbed) INTO the worktree
 # so it travels with the patch; the curator lane reads transcripts/pc/*.md later.
