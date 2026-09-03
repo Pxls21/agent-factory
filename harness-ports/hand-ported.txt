@@ -8,6 +8,7 @@ deep-work
 empirical-validation
 luck
 orchestration
+premortem-roast
 root-cause-debugging
 session-continuity
 thermo-nuclear-review

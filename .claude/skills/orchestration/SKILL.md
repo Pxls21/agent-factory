@@ -184,17 +184,15 @@ Delegate the bulk to well-briefed agents, keep review + the hardest seams yourse
 boundary while another runs. **(a2) Workflow worktree isolation creates worktrees from
 origin/main, NOT the checked-out branch (bit 2026-07-24: 608 commits stale, every briefed seam
 absent) — every worktree brief pins the tip SHA and mandates `git reset --hard <tip>` +
-verification as the delegate's FIRST action.** **(a3) Every COPY of the tree — worktree,
-`git archive`, mutation harness — must replace `vectorbtpro-new` with a symlink:
-`rm -rf <copy>/vectorbtpro-new && ln -s <repo>/vectorbtpro-new <copy>/vectorbtpro-new`.
-The editable VBT install resolves to `<repo>/vectorbtpro-new` (429 TRACKED files), so a
-copy at any other path makes `verify_vbt_install()` raise VbtShadowError in every
-vbt-touching test: a gate on the copy reds for a reason unrelated to the code, and a
-mutation harness on the copy KILLS every mutant narrowed to such a file whatever the
-mutation did (V7-F1, 2026-09-02, hollow kills). `ln -s` alone onto a worktree lands the
-link INSIDE the tracked dir (V7's D0 recipe → phantom reds); the `rm -rf` is load-bearing.
-The repo has TWO archive builders (`lane_gate.sh::archive_tree`,
-`mutation_run.py::_fresh_tree`) — a fix to one is an AP-45s until it reaches the other.**
+verification as the delegate's FIRST action.** **(a3) Any editable or vendored dependency
+tree that a copy must reference at the ORIGINAL path (symlink, not duplicate) needs
+`rm -rf <copy>/<dep> && ln -s <repo>/<dep> <copy>/<dep>` in every tree-copy builder
+(worktree, `git archive`, mutation harness). Without it: a gate on the copy reds for a
+reason unrelated to the code, and a mutation harness KILLS every mutant narrowed to such a
+file whatever the mutation did (V7-F1, 2026-09-02, hollow kills in the source repo). `ln -s`
+alone onto a worktree lands the link INSIDE the tracked dir (phantom reds); the `rm -rf` is
+load-bearing. When the repo has multiple archive builders, a fix to one is silent until it
+reaches the others.**
 
 (b) **The brief carries seams YOU verified + prior mistake-patterns as do-nots** (delegates
 repeat mistakes you don't name); **any brief creating a NEW numeric module on market data
@@ -227,12 +225,10 @@ new killer test file, the harvest cherry-picked both, and the gate set stayed bl
 lane's `--check-anchors --tests` pre-flight said SCOPE_FAIL, which is the instrument working
 but one increment late. Harvest checklist line: `git diff` touching `scripts/mutants/*` ⇒ diff
 the mutant's killer list against the gate file before committing.
-**Semantic-duplicate lens (slopo, IP-1 — owner integration request 2026-08-27): when the slopo
-index is live (`slopo.conf.yaml` + `.slopo-runtime/`), run `slopo review --base
-origin/claude/clean-build` over a landed build lane's diff and read the flagged clusters —
-"this new code is semantically similar to existing code at <path>" is the
-delegate-re-implemented-an-existing-seam tell (the AP-43 duplicate-GA_OBJECTIVES class) at the
-cheapest boundary. ADVISORY only, never a gate; attach flagged clusters to verify briefs.**
+**Semantic-duplicate lens (slopo, IP-1): when a slopo index is live (`slopo.conf.yaml` +
+`.slopo-runtime/`), run `slopo review --base origin/claude/soundbox-kit-migration-iz1jwf` over
+a landed build lane's diff — ADVISORY only, never a gate; attach flagged clusters to verify
+briefs.**
 **(c2) THE LANE EXIT GATE IS A SCRIPT, NOT A PARAGRAPH (owner mandate 2026-09-02, after
 seven RP-30b verify rounds).** Every build/repair brief ends with: run
 `scripts/lane_gate.sh <push-base> <gate-files.txt> [--mutants scripts/mutants/<lane>.py]

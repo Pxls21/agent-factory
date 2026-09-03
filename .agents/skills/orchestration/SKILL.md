@@ -198,7 +198,15 @@ Delegate the bulk to well-briefed agents, keep review + the hardest seams yourse
 boundary while another runs. **(a2) Workflow worktree isolation creates worktrees from
 origin/main, NOT the checked-out branch (bit 2026-07-24: 608 commits stale, every briefed seam
 absent) — every worktree brief pins the tip SHA and mandates `git reset --hard <tip>` +
-verification as the delegate's FIRST action.**
+verification as the delegate's FIRST action.** **(a3) Any editable or vendored dependency
+tree that a copy must reference at the ORIGINAL path (symlink, not duplicate) needs
+`rm -rf <copy>/<dep> && ln -s <repo>/<dep> <copy>/<dep>` in every tree-copy builder
+(worktree, `git archive`, mutation harness). Without it: a gate on the copy reds for a
+reason unrelated to the code, and a mutation harness KILLS every mutant narrowed to such a
+file whatever the mutation did (V7-F1, 2026-09-02, hollow kills in the source repo). `ln -s`
+alone onto a worktree lands the link INSIDE the tracked dir (phantom reds); the `rm -rf` is
+load-bearing. When the repo has multiple archive builders, a fix to one is silent until it
+reaches the others.**
 
 (b) **The brief carries seams YOU verified + prior mistake-patterns as do-nots** (delegates
 repeat mistakes you don't name); **any brief creating a NEW numeric module on market data
@@ -221,12 +229,44 @@ a coordinator-chosen subset, and require the LITERAL pytest invocation in the re
 message** — 2026-08-26: a builder claimed "184 x2" while its tree had 4 reproducible failures;
 the coordinator's 76-test subset was green because it skipped the broken file, and three
 different true counts (155/158/168) circulated unverifiably until the invocation was pinned.
-**Semantic-duplicate lens (slopo, IP-1 — owner integration request 2026-08-27): when the slopo
-index is live (`slopo.conf.yaml` + `.slopo-runtime/`), run `slopo review --base
-origin/claude/soundbox-kit-migration-iz1jwf` over a landed build lane's diff and read the flagged clusters —
-"this new code is semantically similar to existing code at <path>" is the
-delegate-re-implemented-an-existing-seam tell (the AP-43 duplicate-GA_OBJECTIVES class) at the
-cheapest boundary. ADVISORY only, never a gate; attach flagged clusters to verify briefs.**
+**A harvested diff that ADDS a mutant must also add its killer file to the lane's GATE SET in
+the same harvest commit (2026-09-02):** the I4b delegate registered M_I4B_sever_relabel with a
+new killer test file, the harvest cherry-picked both, and the gate set stayed blind — the next
+lane's `--check-anchors --tests` pre-flight said SCOPE_FAIL, which is the instrument working
+but one increment late. Harvest checklist line: `git diff` touching `scripts/mutants/*` ⇒ diff
+the mutant's killer list against the gate file before committing.
+**Semantic-duplicate lens (slopo, IP-1): when a slopo index is live (`slopo.conf.yaml` +
+`.slopo-runtime/`), run `slopo review --base origin/claude/soundbox-kit-migration-iz1jwf` over
+a landed build lane's diff — ADVISORY only, never a gate; attach flagged clusters to verify
+briefs.**
+**(c2) THE LANE EXIT GATE IS A SCRIPT, NOT A PARAGRAPH (owner mandate 2026-09-02, after
+seven RP-30b verify rounds).** Every build/repair brief ends with: run
+`scripts/lane_gate.sh <push-base> <gate-files.txt> [--mutants scripts/mutants/<lane>.py]
+[--digest <script>]` as ONE detached invocation, poll `$OUT/DONE`, paste the VERDICT block
+verbatim into the report AND the final commit body; VERDICT RED = the lane is not done,
+whatever the prose says. Every verify brief runs the SAME script first and grades from its
+artifacts (`reds_new.txt`, `mutants.txt`, `lint_delta.txt`) before any reading. Verifier
+findings that need a repair ship as RED TESTS (committed failing tests or manifest mutants),
+never file:line prose — the repair brief is "make these N tests green, do not edit them".
+A finding with no test is INFO and does not open a round. "Pre-existing" is a word only
+`lane_gate.sh` may say (its `reds pre-existing=` line, computed against the PUSH BASE
+archive) — the I3g report called a range regression pre-existing off a mid-stack SHA, and
+the mis-label cost a full round. Round cap: `contract-gate` §4 — round-3 NOT-READY stops the
+wave for a main-loop churn root-cause; there is no round-4 brief.
+
+**(c3) A GATE OF RECORD FREEZES THE WHOLE TREE — wiki, skills, docs, ledger included
+(2026-09-02).** `lane_gate.sh` re-checks HEAD and `git status --porcelain` at the END of its
+run and REDs on "HEAD moved" / "tree dirtied during the gate", with no file-type carve-out —
+a wiki live-state edit or a ledger stamp during the ~90-min run wastes the whole run exactly
+like a code edit would. The coordinator nearly did this twice in one window (a live-state
+delta mid-run; then the GitNexus banner rewriter regrew AGENTS.md/CLAUDE.md after a
+compaction setup pass). Rules: (1) park every non-code delta as a patch in the scratchpad
+(`git diff > $S/<name>_pending.patch`, `git checkout -- <file>`) and apply it AFTER the
+VERDICT block is read; (2) every keep-alive tick during a gate runs `git status --porcelain
+--untracked-files=no` and reverts banner churn (`git checkout -- AGENTS.md CLAUDE.md`) — the
+running pytest lives in a separate worktree, so the revert is safe; (3) commits, task-DB
+metadata and wiki updates queue behind the verdict — the ONLY things that move during a gate
+are scratchpad files and the in-session task DB.
 
 (d) **Background-agent liveness = transcript-file mtime probe** (never read the transcript —
 context overflow). **Staleness is only a death signal when it EXCEEDS the brief's longest

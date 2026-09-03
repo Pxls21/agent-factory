@@ -160,8 +160,8 @@ and gVisor compatibility.**
 
 `.agents/skills/` holds 382 skills. Most are vendored third-party text carried over
 **verbatim**, so they name Claude-Code mechanisms that do not exist here. That is deliberate:
-14 project skills carry HARNESS PORT rewordings in `.agents/skills/` (listed in
-`harness-ports/hand-ported.txt`); the remaining 362 vendored skills are verbatim — rewording
+15 project skills carry HARNESS PORT rewordings in `.agents/skills/` (listed in
+`harness-ports/hand-ported.txt`); the remaining 361 vendored skills are verbatim — rewording
 third-party text at scale introduces silent errors. **Translate as you read, using this table.** A skill saying "use the Task tool"
 means "spawn a subagent"; do the Codex thing.
 

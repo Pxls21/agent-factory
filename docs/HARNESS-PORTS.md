@@ -161,15 +161,16 @@ verify lane, only `claude/soundbox-kit-migration-iz1jwf` via `scripts/push_clean
 Both consume the same `SKILL.md` with `name` / `description` YAML frontmatter, so **one ported
 copy serves both** — placed once, at `.agents/skills/`.
 
-### Scope — 14 hand-ported, 6 tool-managed, 362 vendored verbatim (THIS repo)
+### Scope — 15 hand-ported, 6 tool-managed, 361 vendored verbatim (THIS repo)
 
-**14 project-authored skills** carry HARNESS PORT rewordings in `.agents/skills/` — each has a
-`> **HARNESS PORT.**` note and mechanism-name substitutions for Codex/Hermes. The 14 names
+**15 project-authored skills** carry HARNESS PORT rewordings in `.agents/skills/` — each has a
+`> **HARNESS PORT.**` note and mechanism-name substitutions for Codex/Hermes. The 15 names
 (listed in `harness-ports/hand-ported.txt`, base hashes in `harness-ports/hand-ported.sha256`):
 
 `adversarial-review` · `anti-hollow-green` · `bug-echo` · `build-loop` · `code-intel-trio` ·
 `contract-gate` · `deep-work` · `empirical-validation` · `luck` · `orchestration` ·
-`root-cause-debugging` · `session-continuity` · `thermo-nuclear-review` · `trace-the-chain`
+`premortem-roast` · `root-cause-debugging` · `session-continuity` · `thermo-nuclear-review` ·
+`trace-the-chain`
 
 The sync script (`harness-ports/bin/sync-skills.sh`) recognizes these as intentional drift and
 never overwrites them on a plain run; `--check` reports them as `INTENTIONAL` (exit 0) when the
@@ -183,9 +184,9 @@ GitNexus mirrors these into `.agents/skills/` whenever an `.agents/` directory e
 (`gitnexus@1.6.10`, `dist/cli/ai-context.js:309-332`). It **overwrites on every `analyze`**.
 Never hand-edit them — any edit is lost at the next reindex.
 
-**Vendored (362)** — the third-party skill library, copied VERBATIM. Lines inside vendored
+**Vendored (361)** — the third-party skill library, copied VERBATIM. Lines inside vendored
 skills that name Claude-Code-only mechanisms (Task/Agent tool, /slash commands, hooks) are left
-as-is and mapped through the mechanism table in `AGENTS.md` — one table, not 362 edits.
+as-is and mapped through the mechanism table in `AGENTS.md` — one table, not 361 edits.
 
 ### Skill invocation mapping
 
@@ -196,7 +197,7 @@ harnesses by their skill name without the leading `/`.
 
 ### Rewording in the hand-ported skills
 
-42 body reword sites across the 14 hand-ported skills. Two carry semantic changes beyond
+42+ body reword sites across the 15 hand-ported skills. Two carry semantic changes beyond
 mechanism renaming: `contract-gate` — builder and evaluator in separate contexts, a single-model
 harness hands step 3 back to the sandbox lane; `orchestration` SUCCESSION — reframed as the
 operating mode. Trading-system-specific live paths/branches/env names were re-pointed to this
@@ -482,7 +483,7 @@ When a rule changes:
 4. If the STANDING PROJECT RULES ever change, re-run the md5 check in section 3 — the three
    files must hash identically.
 
-### Skill sync — 382 skills (14 hand-ported, 362 verbatim, 6 tool-managed)
+### Skill sync — 382 skills (15 hand-ported, 361 verbatim, 6 tool-managed)
 
 After any change to `.claude/skills/` (new skill, vendored update, skill removal):
 

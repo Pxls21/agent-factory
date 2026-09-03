@@ -41,6 +41,9 @@ die() { echo "pc_lane: $*" >&2; exit 64; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$ROOT/.pc-bridge.env" ] && . "$ROOT/.pc-bridge.env"
+# The env file holds plain KEY=value lines; the bridge() helper below is a python child and
+# only sees EXPORTED variables (bit 2026-09-03 on the first real lane: KeyError PC_BRIDGE_URL).
+export PC_BRIDGE_URL PC_BRIDGE_TOKEN 2>/dev/null || true
 
 BRIEF="${1:-}"; HARNESS="${2:-codex}"; ROLE="${3:-}"
 [ -n "$BRIEF" ] || die "usage: scripts/pc_lane.sh <brief-file> [codex|hermes] [role]"
