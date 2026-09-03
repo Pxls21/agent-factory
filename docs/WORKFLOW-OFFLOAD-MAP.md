@@ -95,7 +95,8 @@ followed, whether the known answer (file:line) was found, and any refusal/format
 
 | Candidate | Wall | Calls / tokens | Shape followed | Found the fact | Verdict |
 |---|---|---|---|---|---|
-| `codex/gpt-5.6-sol-ultra` (baseline) | 3m43s (trial build lane) | 16 calls | yes | yes (spike files) | WORKS for build lanes; two build rounds died on `HTTP 503 structurally heavy chat request capacity is busy` (gateway-side; 1-token probes 200 in 1.3-2 s) — see §3b |
+| `codex/gpt-5.6-sol-ultra` (baseline) | 3m43s (trial build lane); increment-#1 build round 4 landed the whole increment | 16 calls (trial) | yes | yes (spike files) | WORKS for build lanes; THREE lane runs died on `HTTP 503 structurally heavy chat request capacity is busy` (two build rounds, one repair round 2026-09-03 11:2xZ) while 24-token probes on `-sol-ultra` and `-sol-xhigh` answered 200 in 1.5-2.5 s the same minute — a weight-keyed, transient refusal; `pc-lane.sh` now retries the attempt on that exact signature (3×, doubling backoff from 60 s) — see §3b |
+| `codex/gpt-5.6-sol-xhigh` | — | — | — | — | 24-token probe 200 in 1.5 s (2026-09-03); the explicit step-down route (`HERMES_MODEL`) when `-ultra` keeps refusing; not yet measured on a lane |
 | `codex/gpt-5.6-terra-xhigh` | — | — | — | — | not probed |
 | `gemini/gemini-3.1-pro-preview` | 7m41s (all retries) | 0 completed | — | — | UNAVAILABLE 2026-09-03 09:00Z: `All credentials for model gemini-3.1-pro-preview are cooling down` (OmniRoute's Gemini key pool rate-limited); re-probe later |
 | `gemini/gemini-3-flash-preview` | — | — | — | — | not probed yet — the first attempt ran the role default instead (pc_lane.sh did not forward HERMES_MODEL over the bridge; fixed after round 4) |
