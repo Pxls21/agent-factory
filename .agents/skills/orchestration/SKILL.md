@@ -373,4 +373,7 @@ limits refuse (`git push`, `gh pr` → blocked, exit code quoted), and the deliv
 runs did not. Flags that move the process (`cd`, `--in`) do not move the tool — find the tool's
 own cwd carrier (Hermes: `TERMINAL_CWD`). Never wire a coordinator turn-end hook into a one-shot
 lane: it consumes the final report. A known-broken optional MCP server must be disabled for lanes
-— a crash loop at startup costs minutes per run and zero model calls.
+— a crash loop at startup costs minutes per run and zero model calls. Two more before the first real brief (2026-09-03, round 2 died on a 503): measure the lane
+profile's prompt (`hermes prompt-size`) and curate the skills it indexes — a build lane does not
+need the domain library on every call — and install a `fallback_providers` chain so one busy route
+fails over instead of killing the lane after three retries.
