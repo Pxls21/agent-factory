@@ -90,7 +90,13 @@ bridge "mkdir -p $PC_AF_REPO/.lanes/$LANE_ID && printf %s '$B64' | base64 -d > $
 # setsid + </dev/null + redirected output: a bridge curl that times out must not
 # take the lane down with it. pc-lane.sh's own state guard makes a replayed
 # launch a no-op rather than a second lane.
-LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID \
+# Forward the per-lane overrides the PC runner honours (model/effort/profile/toolsets) —
+# without this the first route probe silently ran the role default (2026-09-03).
+FWD=""
+for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH; do
+  [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
+done
+LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID$FWD \
   bash harness-ports/bin/pc-lane.sh $REMOTE_BRIEF $HARNESS ${ROLE:-} \
   > .lanes/$LANE_ID/launch.log 2>&1 < /dev/null & echo launched"
 bridge "$LAUNCH" || die "launch call failed (it may still have started — polling anyway)"
