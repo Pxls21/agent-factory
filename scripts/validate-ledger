@@ -70,34 +70,47 @@ def _registry(root, findings):
             if not isinstance(denominator, int) or isinstance(denominator, bool) or denominator < 1:
                 findings.add(f"registry-schema: {name} ledger_denominator must be a positive integer")
     aliases = registry["class_aliases"]
-    if isinstance(aliases, dict):
-        for key, value in aliases.items():
-            if key in CANONICAL_CLASSES:
-                findings.add(f"registry-schema: class_aliases key {key} is canonical")
-            if value not in CANONICAL_CLASSES:
-                findings.add(f"registry-schema: class_aliases {key}->{value} is not canonical")
+    if not isinstance(aliases, dict):
+        findings.add("registry-schema: class_aliases must be an object")
+        return None
+    for key, value in aliases.items():
+        if key in CANONICAL_CLASSES:
+            findings.add(f"registry-schema: class_aliases key {key} is canonical")
+        if value not in CANONICAL_CLASSES:
+            findings.add(f"registry-schema: class_aliases {key}->{value} is not canonical")
     mapping = registry["spike_to_class_mapping"]
-    if isinstance(mapping, list) and isinstance(aliases, dict):
-        for rule in mapping:
-            if not isinstance(rule, dict):
+    if not isinstance(mapping, list):
+        findings.add("registry-schema: spike_to_class_mapping must be a list")
+        return None
+    for rule in mapping:
+        if not isinstance(rule, dict):
+            continue
+        for branch_name in ("negative_effect", "positive_effect"):
+            branch = rule.get(branch_name)
+            if not isinstance(branch, dict):
+                sibling_name = "positive_effect" if branch_name == "negative_effect" else "negative_effect"
+                sibling = rule.get(sibling_name)
+                label = rule.get("rule_id")
+                if not label and isinstance(sibling, dict):
+                    label = sibling.get("rule_id")
+                findings.add(
+                    f"registry-schema: {label or rule.get('spike', 'mapping rule')} "
+                    f"{branch_name} must be an object"
+                )
                 continue
-            for branch_name in ("negative_effect", "positive_effect"):
-                branch = rule.get(branch_name)
-                if not isinstance(branch, dict):
+            rule_id = branch.get("rule_id")
+            if not rule_id:
+                continue
+            for field in ("from_class", "to_class", "class"):
+                if field not in branch:
                     continue
-                rule_id = branch.get("rule_id")
-                if not rule_id:
-                    continue
-                for field in ("from_class", "to_class", "class"):
-                    if field not in branch:
-                        continue
-                    value = branch[field]
-                    resolved = aliases.get(value, value)
-                    if resolved not in CANONICAL_CLASSES:
-                        findings.add(
-                            f"registry-schema: {rule_id} {branch_name} {field} "
-                            f"{value} is not canonical"
-                        )
+                value = branch[field]
+                resolved = aliases.get(value, value)
+                if resolved not in CANONICAL_CLASSES:
+                    findings.add(
+                        f"registry-schema: {rule_id} {branch_name} {field} "
+                        f"{value} is not canonical"
+                    )
     proofs = registry["proofs"]
     if not isinstance(proofs, list) or len(proofs) != 12:
         findings.add("registry-schema: proofs must contain exactly twelve entries")
@@ -197,6 +210,13 @@ def _artifact_states(root, registry, schemas, findings):
                 valid = False
             runs = artifact.get("runs")
             if isinstance(runs, list):
+                legs = {run.get("leg") for run in runs if isinstance(run, dict)}
+                if "negative" not in legs:
+                    findings.add(f"registry-schema: {proof_id} result runs: missing negative leg")
+                    valid = False
+                if "positive" not in legs:
+                    findings.add(f"registry-schema: {proof_id} result runs: missing positive leg")
+                    valid = False
                 digest = hashlib.sha256(
                     json.dumps(runs, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
@@ -299,9 +319,13 @@ def _ledger(path, states, findings):
         if not isinstance(claim, dict) or not isinstance(claim.get("proof_id"), str) or not isinstance(claim.get("state"), str):
             findings.add("registry-schema: ledger claim must contain proof_id and state")
             continue
-        found = states.get(claim["proof_id"], "ABSENT")
+        proof_id = claim["proof_id"]
+        if proof_id not in states:
+            findings.add(f"registry-schema: ledger unknown proof_id {proof_id}")
+            continue
+        found = states[proof_id]
         if claim["state"] != found:
-            findings.add(f"ledger-drift: {claim['proof_id']} claimed {claim['state']} but {found}")
+            findings.add(f"ledger-drift: {proof_id} claimed {claim['state']} but {found}")
 
 
 def _inspect(root, ledger_path=None):

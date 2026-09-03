@@ -41,10 +41,10 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-- **Repair lane `s0-01d`** — dispatched after this push on the owner's `agentfactory-build`
-  combo: make the verifier's five RED tests (`tests/red/`) green. Then TWO verification lanes in
-  parallel: `run-contract.md` (contract-runner, `agentfactory-sweep`) + a narrowed adversarial
-  lane (`agentfactory-verify`). Verify lane `s0-01c` died mid-run after 167 calls (AF-AP-16/17);
+- **Verification lanes `s0-01f` (run-contract, sweep) + `s0-01e` (adversarial attacks, verify)** —
+  dispatched in parallel after this push against the round-3 tree. Repair lane `s0-01d` DONE on
+  `agentfactory-build` (44 passed ×2; first lane to run under the incremental-report rule — its
+  report-draft.md was written). Verify lane `s0-01c` died mid-run after 167 calls (AF-AP-16/17);
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
@@ -79,4 +79,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#1 round-3 setup commit (verifier findings recovered, combos wired) — 2026-09-03; next update when `s0-01d` lands.
+Increment-#1 round-3 harvest commit — 2026-09-03; next update at the two verification lanes' verdicts.
