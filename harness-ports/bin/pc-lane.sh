@@ -225,6 +225,11 @@ else
   # --in "$TREE" --no-restore-cwd: Hermes restores the last session's recorded cwd by default;
   # the first real lane ran its shell in the main clone (branch tip) instead of the pinned
   # worktree and correctly STOPPED on the pin mismatch (2026-09-03). Pin the cwd explicitly.
+  # TERMINAL_CWD is Hermes's runtime carrier for the terminal tool's working directory
+  # (agent/runtime_cwd.py: terminal.cwd is bridged to TERMINAL_CWD; agent_init.py reads it).
+  # --in moves the PROCESS cwd only — a diagnostic lane still started its shell in $HOME
+  # (2026-09-03, 7th run). Pin the tool's cwd explicitly.
+  TERMINAL_CWD="$TREE" \
   "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_FILE")" \
       -m "${HERMES_MODEL:-codex/gpt-5.6-sol-ultra}" \
       --reasoning "${HERMES_REASONING:-ultra}" \
