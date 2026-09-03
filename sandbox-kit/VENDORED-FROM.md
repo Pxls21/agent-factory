@@ -16,5 +16,11 @@ What was installed where in this repo:
 | `CLAUDE.template.md` | `sandbox-kit/` + filled as root `CLAUDE.md` | Verbatim protocol text kept; placeholders filled for agent-factory. |
 | portable docs, vendored tools, `output-styles/` | `sandbox-kit/` | `OPERATING-GUIDE`, `RESEARCH-PROMPT-GUIDE`, examples, `aleph/`, `codebase-memory-mcp/`, `council-of-high-intelligence/`, `llm-wiki-compiler/`, `docs/THIRD-PARTY-AGENT-TOOLS.md`. |
 
+**Added 2026-09-03 (not in the kit snapshot):** `sandbox-kit/honey-for-devs/` — Green-PT/honey-for-devs
+(shallow clone, main, 2026-09-03), vendored because the kit's curl-installer URL is blocked here;
+its `skills/honey*` and `agents/hive-*.md` are also copied into `.claude/` so they load without any
+install. `PC-BRIDGE.md` + `scripts/pc.sh` — the owner's PC bridge runbook, adapted from
+`trading-system/docs/PC-BRIDGE-RUNBOOK.md` (the kit deliberately leaves bridge docs behind).
+
 The source repo's PROJECT-SPECIFIC set (HERMES-VM, PC-bridge/thermal docs, ACTIVE-LINKS, the
 filled trading `CLAUDE.md`) was deliberately left behind, per its manifest.

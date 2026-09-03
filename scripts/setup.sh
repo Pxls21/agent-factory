@@ -74,19 +74,29 @@ else
   warn "sandbox-kit/llm-wiki-compiler/install.sh not found — skipping"
 fi
 
-# --- Honey (Green-PT/honey-for-devs) — token-efficiency skill + hive agents ----
+# --- Honey (Green-PT/honey-for-devs) — VENDORED, installs offline -------------
 # The SWARM ORCHESTRATION & HONEY section of CLAUDE.md is grounded against this
-# tool; installing it wires the actual `honey` skill, the `/honey` command, the
-# SessionStart hook, the hive-scout/builder/reviewer subagents, and the eco
-# (EcoLogits) meter. Installs to /root/.claude (ephemeral), so re-run per session.
-say "Honey (honey-for-devs)"
-if command -v node >/dev/null 2>&1; then
-  curl -fsSL https://raw.githubusercontent.com/Green-PT/honey-for-devs/main/install.sh 2>/dev/null \
-    | bash -s -- --yes --only claude >/dev/null 2>&1 \
-    && ok "honey@greenpt installed (skill + /honey + hive agents + eco + statusline)" \
-    || warn "honey install failed (network?) — CLAUDE.md honey rules still apply regardless"
+# tool. Source is vendored at sandbox-kit/honey-for-devs (skills + hive agents are
+# ALSO committed under .claude/ so they load with no install at all). This block
+# registers the vendored tree as a LOCAL plugin marketplace (no network — the
+# raw.githubusercontent installer path is blocked in this sandbox), installs the
+# plugin (the /honey command, SessionStart hook, eco meter), and wires the CO2
+# statusline. Installs to /root/.claude (ephemeral), so re-run per session.
+say "Honey (honey-for-devs, vendored)"
+HONEY_SRC="$REPO_ROOT/sandbox-kit/honey-for-devs"
+if [ -f "$HONEY_SRC/.claude-plugin/marketplace.json" ] && command -v claude >/dev/null 2>&1; then
+  claude plugin marketplace add "$HONEY_SRC" >/dev/null 2>&1 || true   # idempotent: exists -> no-op
+  if claude plugin install honey@greenpt >/dev/null 2>&1; then
+    ok "honey@greenpt installed from the vendored local marketplace"
+  else
+    warn "honey plugin install failed — vendored skills/agents under .claude/ still load"
+  fi
+  if command -v node >/dev/null 2>&1; then
+    node "$HONEY_SRC/bin/install.js" --yes --only claude >/dev/null 2>&1 || true   # statusline+eco; its GitHub marketplace step may fail harmlessly
+    [ -f "$HOME/.claude/honey/statusline.js" ] && ok "honey statusline + eco meter wired" || warn "honey statusline not wired"
+  fi
 else
-  warn "node not on PATH — skipping honey install (CLAUDE.md honey rules still apply)"
+  warn "vendored honey source or claude CLI missing — skipping (CLAUDE.md honey rules still apply)"
 fi
 
 # --- Code-intel trio (skill: .claude/skills/code-intel-trio) ------------------
