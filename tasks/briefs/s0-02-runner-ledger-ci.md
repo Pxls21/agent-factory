@@ -6,7 +6,12 @@ PIN: (set at dispatch — scripts/pc_lane.sh refuses to run without a full SHA h
 > NEW deliverable of this increment, as are `proofs/schemas/probe.schema.json`, the two probe specs,
 > the two markers, the ledger pair and `proofs/normalization.yaml`. Every path below now carries
 > a CREATE / MODIFY / READ tag, and §"Authoritative shapes" gives the two new schemas in full so
-> nothing has to be invented. Nothing else changed.
+> nothing has to be invented.
+> **AMENDED AGAIN 2026-09-03 after lane round 2 halted (correctly) on a contradiction:** D2 made
+> every `generate` re-probe (new real timestamps) while C6 demanded two `generate` runs be
+> byte-identical. Resolved by naming the fixed input: `render`/`--check` are deterministic over the
+> COMMITTED artifacts; `generate` re-probes first and then renders. D2, the `ledger-gen`
+> deliverable and C6 are rewritten below; nothing else changed.
 
 You are the BUILD lane (Hermes on the PC, role code-implementer). The coordinator keeps the seed
 and the contract below; you implement, test, commit in your worktree, and report DATA. An
@@ -45,10 +50,15 @@ D1 **Probe venue.** Marker probes run on the EXECUTION venue (the PC, or the san
    runner-side `runsc` probe would say "absent" forever (a venue-blind marker is a hollow
    green in the RED direction). Rejected: CI re-probes on its runner (wrong venue); CI reaches
    the PC over the bridge (secrets in CI; the link is ephemeral).
-D2 **Generation always re-probes.** `ledger-gen` has no "skip probes" mode: every generation
-   re-runs every blocked proof's probe and rewrites its `blocked.json`. `ledger-gen --check` is
-   the CI mode: NO probing, regenerate from committed artifacts, byte-compare to the committed
-   ledger, exit 1 with a diff on drift. Rejected: a static marker checked for presence.
+D2 **Generation always re-probes; rendering is deterministic over a fixed snapshot.** Three verbs:
+   `ledger-gen generate --venue … --root …` re-runs every blocked proof's probe, rewrites its
+   `blocked.json` (real timestamps — they MAY differ between two generates), then renders;
+   `ledger-gen render --root …` renders the ledger pair from the committed artifacts alone (no
+   probes, no wall-clock field of its own — byte-identical on every host for one artifact set);
+   `ledger-gen --check --root …` is the CI mode: render to a temp dir and byte-compare with the
+   committed pair, exit 1 with a diff on drift. There is no way to skip the probes inside
+   `generate`. Rejected: a static marker checked for presence; a `generate` that freezes or
+   fabricates probe timestamps to look deterministic (a fake).
 D3 **One canonicalization.** Exactly one digest/canonicalization implementation exists in the
    repo and the runner shares it with `scripts/validate-ledger` BY CONSTRUCTION (import the
    validator's function — e.g. `importlib.util.spec_from_file_location` on the script — or move
@@ -127,14 +137,15 @@ four reasons above).
   (`probe_cmd`, `timeout_s`, `env`, optional `key_env`, `reason_map` from exit classes to the
   seed's `reason_enum`) and writes `proofs/<id>/blocked.json` (D4, D5). Timeouts kill the
   process group and record exit `-9`/timeout as a leg failure, never a hang.
-- CREATE `scripts/ledger-gen` — `generate --venue … --root …` (D2) and `--check` (CI). Writes
+- CREATE `scripts/ledger-gen` — `generate` (re-probe, then render), `render` (deterministic from
+  the committed artifacts) and `--check` (CI byte-compare), all per D2. Writes
   `proofs/ledger.json` (`proofs: [{proof_id, classification, state}]`, per-class
   `numerator`/`denominator` read from the registry, `markers: [{proof_id, blocker_status,
   probed_at, probe_venue}]` copied from the artifacts) and `proofs/LEDGER.md` (a four-way table:
   execution / conformance-checked decision / blocked-on-external-input / blocked-on-capability,
   with the exact counts and per-proof rows; the string `N/12` for any N must not appear — the
-  seed's own check greps for it). Deterministic: no wall-clock field of its own; two runs on any
-  host produce identical bytes.
+  seed's own check greps for it). The renderer adds no wall-clock field of its own: for one
+  artifact set, `render` on any host produces identical bytes; only `generate` changes artifacts.
 - CREATE `proofs/normalization.yaml` + CREATE `scripts/normalize` — the declared minimal volatile-field table
   (name, regex, replacement; at least: RFC3339 timestamps, pids, durations, session/thread ids,
   absolute temp paths, hostnames) applied line-wise; the table is CLOSED: a golden compare fails
@@ -174,9 +185,12 @@ C4 The runner's leg sees ONLY the spec's env + PATH/HOME/LANG: a leg printing
    `os.environ` shows no parent variable set by the test (`CANARY_FROM_PARENT`).
 C5 `classification` in `result.json` equals the registry's, whatever the spec says (a spec
    carrying `classification` is rejected: `spec-schema: additional property classification`).
-C6 `ledger-gen generate` twice ⇒ `ledger.json` and `LEDGER.md` byte-identical; `ledger-gen
-   --check` exit 0 on the committed pair; hand-editing one state in `ledger.json` ⇒ `--check`
-   exit 1 naming the proof, and `validate-ledger integrity --ledger` reports `ledger-drift: …`.
+C6 `ledger-gen render` twice ⇒ `ledger.json` and `LEDGER.md` byte-identical; after
+   `ledger-gen generate`, `ledger-gen --check` exits 0 (the committed pair equals a fresh render
+   of the artifacts it just wrote); two `generate` runs differ ONLY in marker probe fields
+   (`probed_at`, the probe leg's timestamps/digests) — show the diff is confined to them;
+   hand-editing one state in `ledger.json` ⇒ `--check` exit 1 naming the proof, and
+   `validate-ledger integrity --ledger` reports `ledger-drift: …`.
 C7 On the empty set the ledger shows four denominators 7/3/1/1 with numerators 0 and no `N/12`.
 C8 S0-08 probe on a venue without runsc ⇒ `blocked.json` valid, `blocker_status: absent`,
    integrity shows S0-08 BLOCKED; a fake `runsc` on PATH that succeeds (tmp_path fixture) ⇒

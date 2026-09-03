@@ -38,6 +38,11 @@ subordinate to, the Anthropic docs.
    AP-43 shape) — one dispatch round for a missing tag. New schemas/contracts a lane must create
    are given IN FULL in the brief ("copy, do not redesign"); a lane never invents an authoritative
    shape.
+0c. **A determinism clause names its fixed input (2026-09-03, agent-factory).** "Two runs are
+   byte-identical" is a contradiction when the same verb also re-probes or re-measures (real
+   timestamps differ). Write which INPUT SNAPSHOT the claim is deterministic over (render from the
+   committed artifacts) and which verb is allowed to change the inputs (generate, re-probe). A
+   brief carrying both halves unreconciled halted a lane for a round — the halt was the kit working.
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
    adopts a metric/threshold formula from findings prose, check its grain and units against a
    KNOWN MEASURED instance of the same quantity; where prose and prior measured values imply
