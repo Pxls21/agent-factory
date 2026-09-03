@@ -48,8 +48,3 @@ if command -v gitnexus >/dev/null 2>&1; then
   ) 9>/tmp/gitnexus-analyze.lock >/dev/null 2>&1 &
 fi
 exit 0
-    cd "$REPO_ROOT" && slopo index >>/tmp/slopo-sync.log 2>&1 \
-      && slopo embed >>/tmp/slopo-sync.log 2>&1
-  ) 9>/tmp/slopo-sync.lock >/dev/null 2>&1 &
-fi
-exit 0

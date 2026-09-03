@@ -232,6 +232,33 @@ else
   warn "graft not on PATH — skipping graph build and MCP registration"
 fi
 
+# --- Project MCP servers at USER scope ----------------------------------------
+# The .mcp.json (project-scope) servers sit at "Pending approval" in CCR sessions
+# — nobody answers the prompt while the owner is away (2026-09-03) — so the same
+# servers are registered at user scope, where they connect without one. Tools
+# bind on the NEXT session start. codebase-memory (as codebase-memory-mcp), graft
+# and ouroboros are registered by their own blocks above. `claude mcp list` then
+# prints a "conflicting scopes" diagnostic for gitnexus (user entry absolute-pathed
+# on purpose vs the relative project one) — cosmetic; both resolve to run.cjs.
+if command -v claude &>/dev/null; then
+  say "Project MCP servers (user scope)"
+  if [ -f "$REPO_ROOT/.gitnexus/run.cjs" ]; then
+    claude mcp remove gitnexus --scope user 2>/dev/null || true
+    claude mcp add gitnexus --scope user -- node "$REPO_ROOT/.gitnexus/run.cjs" mcp 2>/dev/null \
+      && ok "gitnexus MCP registered (user scope)" || warn "gitnexus MCP registration failed"
+  else
+    warn "gitnexus: .gitnexus/run.cjs absent (index still building?) — MCP registration skipped this run"
+  fi
+  if [ -x /root/venv-agent-factory/bin/aleph ]; then
+    claude mcp remove aleph --scope user 2>/dev/null || true
+    claude mcp add aleph --scope user -e ALEPH_WORKSPACE="$REPO_ROOT" -- /root/venv-agent-factory/bin/aleph --workspace-mode any --tool-docs concise 2>/dev/null \
+      && ok "aleph MCP registered (user scope)" || warn "aleph MCP registration failed"
+  fi
+  claude mcp remove phoenix-docs --scope user 2>/dev/null || true
+  claude mcp add --transport http phoenix-docs https://arizeai-433a7140.mintlify.app/mcp --scope user 2>/dev/null \
+    && ok "phoenix-docs MCP registered (user scope)" || warn "phoenix-docs MCP registration failed"
+fi
+
 # --- Git hooks -----------------------------------------------------------------
 # Activate repo-managed git hooks when the project authors them
 # (scripts/hooks/: post-commit reindex, pre-push wiki gate — see the reference

@@ -56,6 +56,13 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (batch C):** `port-trading-system-setup` — CLAUDE.md rewritten onto the clean-build
+structure (skills authoritative, GIT BRANCH RULES → push_clean/safe_commit, QUARTET section, the planning
+repo's 15 standing rules folded in); SHELL SYNTAX GATE added to pre-commit (+ `tests/test_shell_syntax.py`)
+after batch A shipped a dead syntax tail in post-commit; project MCP servers registered at user scope by
+setup.sh (gitnexus/aleph/phoenix-docs); `code-intel-trio` re-pointed at this repo's slug. Batch D
+(harness-ports/Codex/Hermes) in flight on a delegate; AGENTS.md/.hermes.md ports + E (wiki-init) next.
+
 **2026-09-03 sync:** pipeline tasks (council, interview→seed, breakdown) DONE; `s0-00-pc-bridge-probe`
 DONE (`abb16a0`); `port-trading-system-setup` OPENED (in_progress) — batches A (scripts/hooks) + B
 (ledgers/docs/tests/wiki config) landing this commit; C (CLAUDE.md rewrite), D (harness-ports),

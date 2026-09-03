@@ -40,18 +40,18 @@ node .gitnexus/run.cjs status                                      # index fresh
 
 ### codebase-memory (binary: /root/.local/bin/codebase-memory-mcp; MCP on stdio or `cli` one-shots)
 ```bash
-codebase-memory-mcp cli index_repository --repo-path /home/user/trading-system   # after each landed increment
-codebase-memory-mcp cli search_graph --project home-user-trading-system --query "<free text>"
-codebase-memory-mcp cli query_graph --project home-user-trading-system \
+codebase-memory-mcp cli index_repository --repo-path /home/user/agent-factory   # after each landed increment
+codebase-memory-mcp cli search_graph --project home-user-agent-factory --query "<free text>"
+codebase-memory-mcp cli query_graph --project home-user-agent-factory \
   --query "MATCH (a)-[:CALLS]->(b {name: '<fn>'}) RETURN a.name, a.file_path LIMIT 20"
-codebase-memory-mcp cli detect_changes --project home-user-trading-system        # incremental reindex
+codebase-memory-mcp cli detect_changes --project home-user-agent-factory        # incremental reindex
 ```
 - QUIRK: arg is `repo_path`/`--repo-path`, NOT `path`. A wrong arg produces a
   MISLEADING "Indexing worker crashed on a file" hint — read the worker log
   (~/.cache/codebase-memory-mcp/logs/) before believing a crash.
 - QUIRK: CLI-mode `trace_path` returns an empty echo of its args — use
   `query_graph` Cypher for caller/callee traces instead (works, verified).
-- Project name = slugged path (`home-user-trading-system`); `list_projects` when unsure.
+- Project name = slugged path (`home-user-agent-factory`); `list_projects` when unsure.
 
 ### code-review-graph (venv: /root/venv-crg/bin/code-review-graph)
 ```bash

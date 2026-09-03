@@ -35,4 +35,19 @@ else
     exit 1
   fi
 fi
+# SHELL SYNTAX GATE (2026-09-03): a ported hook shipped with a syntax-error tail
+# after its `exit 0` — bash reads scripts incrementally, so runtime never saw it,
+# review never saw it, `bash -n` does. Every staged shell script must parse.
+for F in $(git diff --cached --name-only --diff-filter=ACMR); do
+  case "$F" in
+    *.sh|scripts/hooks/*) ;;
+    *) continue ;;
+  esac
+  [ -f "$REPO_ROOT/$F" ] || continue
+  head -1 "$REPO_ROOT/$F" | grep -q 'sh$\|sh ' || continue
+  if ! bash -n "$REPO_ROOT/$F"; then
+    echo "COMMIT BLOCKED: bash -n failed on $F — fix the syntax (unreachable tails count)." >&2
+    exit 1
+  fi
+done
 exit 0
