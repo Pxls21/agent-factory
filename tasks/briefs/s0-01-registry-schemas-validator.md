@@ -1,6 +1,13 @@
 # BRIEF — increment #1 `s0-01-registry-schemas-validator`: proof registry + artifact schemas + ledger validator with EMPTY-SET semantics
 PIN: (set at dispatch — scripts/pc_lane.sh refuses to run without a full SHA here)
 
+> **AMENDED 2026-09-03 after lane round 1 (coordinator-level, reason stated):** round 1 halted on a
+> premise the brief got wrong — `spikes/pc-bridge/result.json` carries a THREE-effect ARRAY with
+> rule ids `map-pcbridge-s003`, `map-pcbridge-s008`, `map-rust-s006` and one `blocked_capability`
+> value; the brief had described a single object "lacking a rule_id" and invented `map-bridge-s003`.
+> The spike-schema, registry-mapping, C8 and C9 clauses below are rewritten to the record's actual
+> shape; nothing else changed. (docs/INCIDENT-LOG.md, AP-43 instance.)
+
 You are the BUILD lane (Hermes on the PC, role code-implementer). The coordinator keeps the seed
 and the contract below; you implement, test, commit in your worktree, and report DATA. The
 adversarial verifier grades against the CONTRACT, not against your own tests.
@@ -32,15 +39,23 @@ names. Nothing here runs a proof. No stub of any component.
   (number of seed assertions), and for `blocked_*` entries a `blocked` object (`owner`: the seed's
   placeholder, `unblock_condition`, `marker_path`: `proofs/<id>/blocked.json`). Top-level:
   `classes` (the four, with their ledger denominators declared), `waves`, and
-  `spike_to_class_mapping` copied from the seed VERBATIM in content, with ONE declared
-  normalization and ONE declared addition, both stated in a `# COORDINATOR DECISION` comment:
-  the seed writes `blocked_capability` twice (map-rust-s006's `to_class`, S0-08's
-  `ledger_denominator`) while its ontology enum says `blocked_host`; the registry uses `blocked_host`
-  everywhere (the seed file itself is immutable; the registry is where the vocabulary is fixed). Addition (owner answer 2026-09-03, breakdown §Owner answers): spike
-  `pc-bridge` positive_effect → S0-03 `blocked_credential` → `execution_proof` (OmniRoute on the PC
-  is the model egress), rule_id `map-bridge-s003`; negative_effect: none (absence of the bridge
-  keeps the declared class). Initial declared classes stay the SEED's (S0-03 blocked_credential,
-  S0-08 blocked_host): a class changes ONLY through a spike artifact the validator reads.
+  `spike_to_class_mapping` copied from the seed VERBATIM in content, with TWO declared
+  decisions, both stated in a `# COORDINATOR DECISION` comment: (a) VOCABULARY — the seed writes
+  `blocked_capability` twice (map-rust-s006's `to_class`, S0-08's `ledger_denominator`) and the
+  pc-bridge record writes it once, while the ontology enum says `blocked_host`; the registry's enum
+  is the four canonical names, and it declares `class_aliases: {blocked_capability: blocked_host}`
+  which the validator applies ON READ to spike effects and mapping rules only (proof artifacts must
+  use the canonical enum). (b) ADDITION (owner answer 2026-09-03, breakdown §Owner answers) — the
+  `pc-bridge` spike joins the mapping with the rule ids its EXISTING record already cites:
+  `map-pcbridge-s003` positive_effect S0-03 `blocked_credential` → `execution_proof` (OmniRoute on
+  the PC is the egress; identity assertable), and `map-pcbridge-s008` negative_effect S0-08
+  `blocked_host` → `blocked_host` (host reachable, runsc absent at probe time — confirms deferral;
+  the record's `blocked_capability` normalizes to it). The record's third effect cites the seed's
+  `map-rust-s006` positive branch (S0-06 stays `execution_proof`, buildable on the PC): a rule may
+  be cited by any spike whose probe satisfies it, so the validator matches an effect by
+  (rule_id, from_class, to_class) against the rule's declared negative OR positive branch. Initial
+  declared classes stay the SEED's (S0-03 blocked_credential, S0-08 blocked_host): a class changes
+  ONLY through a spike artifact the validator reads.
 - `proofs/schemas/result.schema.json`, `proofs/schemas/blocked.schema.json`,
   `proofs/schemas/spike.schema.json` — JSON Schema (draft 2020-12), `additionalProperties: false`
   at the top level. `result`: proof_id, classification, recorded_at (RFC3339 UTC), env_fingerprint
@@ -54,13 +69,13 @@ names. Nothing here runs a proof. No stub of any component.
   leg), blocker_status ∈ {absent, rejecting}, unblock_condition, owner}) — a marker with
   blocker_status `rejecting` and a credential probe is NOT a valid blocked marker for S0-03 (the
   breakdown: `credential_rejected` ⇒ proof-RED); express that as a schema-level or validator-level
-  rule and say which. `spike`: take the field NAMES from the existing `spikes/pc-bridge/result.json` (`spike_id`,
-  `schema`, `ran_at`, `env_fingerprint`, `runs`, `facts`, `classification_effect`, `not_verified`)
-  and add `outcome` ∈ {positive, negative, errored}; `classification_effect` is an object or null
-  carrying at least {affected_proof, from_class, to_class, rule_id}. Bring the pc-bridge record
-  into conformance WITHOUT renaming or changing any recorded fact (add `outcome: positive`; if its
-  `classification_effect` lacks a rule_id, add `rule_id: map-bridge-s003` beside the existing
-  content and say so). `spikes/hermes-lane-trial/` is a tooling spike, not a
+  rule and say which. `spike`: the field NAMES and shapes come from the existing `spikes/pc-bridge/result.json`, read it:
+  `spike_id`, `schema` (string), `ran_at`, `env_fingerprint`, `runs` (array of {command: string,
+  exit_code: int, stdout_digest: string} — spike runs are looser than proof runs, by design),
+  `facts` (object), `classification_effect` (ARRAY, possibly empty, of {affected_proof,
+  from_class, to_class, rule_id, reason?}), `not_verified` (array of strings); add `outcome` ∈
+  {positive, negative, errored}. Migrate the pc-bridge record by ADDING `outcome: positive` and
+  setting `schema` to the new schema's `$id`; every other key and value stays byte-for-byte. `spikes/hermes-lane-trial/` is a tooling spike, not a
   classification spike: leave it alone; the validator ignores spikes the mapping does not name.
 - `scripts/validate-ledger` (python3, executable, stdlib + `jsonschema`) with two subcommands and
   deterministic output (sorted keys, no timestamps, exit codes are the contract):
@@ -105,11 +120,13 @@ C5 Hand-edited ledger claiming a proof over the empty set ⇒ exit 1, `ledger-dr
 C6 Registry entry without `classification` ⇒ `registry-schema`; a fifth class value ⇒ `unknown-class`.
 C7 The registry's twelve classes equal the seed's: execution_proof = {01,02,04,05,06,07,11},
    conformance_checked_decision = {09,10,12}, blocked_credential = {03}, blocked_host = {08}.
-C8 The registry mapping contains the seed's rules (rust-ai-memory/map-rust-s006, runsc/
-   map-runsc-s008, and every other rule the seed lists) plus map-bridge-s003; an artifact effect
-   with any other rule_id ⇒ `undeclared-transition`.
-C9 `spikes/pc-bridge/result.json` validates against spike.schema.json and every fact it carried
-   before is still present verbatim (diff shows only added keys).
+C8 The registry mapping contains every rule the seed lists (map-rust-s006, map-runsc-s008,
+   map-dockerd-venue, map-egress-s005) plus map-pcbridge-s003 and map-pcbridge-s008; the committed
+   pc-bridge record's three effects all validate as declared (after alias normalization); an
+   effect with an unknown rule_id, or a declared rule_id with a from/to pair that matches neither
+   branch ⇒ `undeclared-transition`.
+C9 `spikes/pc-bridge/result.json` validates against spike.schema.json; `git diff` on it shows
+   exactly one added key (`outcome`) and one changed value (`schema`), nothing else.
 C10 All three schemas are valid JSON Schema and reject an artifact with an extra top-level key.
 C11 `python -m pytest tests/ -q` passes in full on the PC (existing suites included), twice.
 C12 The lane's commits pass the repo hooks (pre-commit lint delta + shell-syntax + skill-sync run
