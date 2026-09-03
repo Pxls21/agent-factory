@@ -1,0 +1,39 @@
+#!/bin/bash
+# HOOKS-QUARTET: wiki-freshness gate. WARN mode by default; flips to BLOCK
+# when .git/wiki-gate-block exists (arm it once the per-commit wiki cadence is
+# proven workable post-WIKI-AUDIT — owner wants the wiki never stale).
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+MARKER="$REPO_ROOT/.git/wiki-stale"
+if [ -f "$MARKER" ]; then
+  SINCE="$(cat "$MARKER")"
+  if [ -f "$REPO_ROOT/.git/wiki-gate-block" ]; then
+    echo "PUSH BLOCKED: wiki stale since commit $SINCE — update wiki/ (or remove .git/wiki-gate-block to downgrade to warn)." >&2
+    exit 1
+  fi
+  echo "WARNING: wiki stale since commit $SINCE — code moved without a wiki update (owner mandate 2026-08-25: wiki tracks every commit)." >&2
+fi
+
+# TRAILER GATE (incident 2026-08-28): a 4-commit stack reached origin carrying
+# model-identifier trailers because a push bypassed scripts/push_clean.sh.
+# BLOCK any outgoing commit that still carries them — push_clean.sh strips
+# them and is the only sanctioned push path for claude/clean-build.
+ZERO=0000000000000000000000000000000000000000
+while read -r _lref lsha _rref rsha; do
+  [ "$lsha" = "$ZERO" ] && continue  # branch deletion
+  if [ "$rsha" = "$ZERO" ]; then RANGE="$lsha"; else RANGE="$rsha..$lsha"; fi
+  # F-F: capture git log's exit code separately so an unresolvable range
+  # BLOCKS (the old pipe swallowed the error via 2>/dev/null and grep -c
+  # returned 0, letting the push through).
+  LOG_OUTPUT=$(git log "$RANGE" --format='%B' 2>&1)
+  LOG_RC=$?
+  if [ "$LOG_RC" != "0" ]; then
+    echo "PUSH BLOCKED: git log failed on range $RANGE (rc=$LOG_RC) — cannot verify trailers. Resolve the range before pushing." >&2
+    exit 1
+  fi
+  HITS=$(echo "$LOG_OUTPUT" | grep -c 'Co-Authored-By: Claude\|Claude-Session:' || true)
+  if [ "${HITS:-0}" != "0" ]; then
+    echo "PUSH BLOCKED: $HITS model-identifier trailer line(s) in outgoing range — push via scripts/push_clean.sh (strips them), never raw git push." >&2
+    exit 1
+  fi
+done
+exit 0

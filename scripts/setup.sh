@@ -43,6 +43,25 @@ else
   fi
 fi
 
+# Apply the vendored Ouroboros patches (ported from trading-system, scripts/patch_ouroboros.py):
+# P1 ledger self-conflict tie-break, P2 interview initial_context cap 3500 -> 10000.
+# They patch the uv TOOL env (CLI + native `mcp serve`); the isolated-uvx fallback
+# that scripts/ooo_mcp.py uses when native serve fails is a SEPARATE env and stays
+# unpatched — keep initial_context short on that path (CLAUDE.md quirks).
+if command -v ouroboros &>/dev/null && [ -f "$REPO_ROOT/scripts/patch_ouroboros.py" ]; then
+  OOO_PY="$(head -1 "$(command -v ouroboros)" 2>/dev/null | sed 's/^#!//' | tr -d '[:space:]')" || true
+  if [ -z "$OOO_PY" ] || [ ! -x "$OOO_PY" ]; then
+    OOO_PY="/root/.local/share/uv/tools/ouroboros-ai/bin/python"
+  fi
+  if [ -x "$OOO_PY" ]; then
+    "$OOO_PY" "$REPO_ROOT/scripts/patch_ouroboros.py" \
+      && ok "ouroboros patches applied (ledger tie-break, interview cap 10000)" \
+      || warn "ouroboros patches failed (version changed?)"
+  else
+    warn "could not find the ouroboros interpreter for patching"
+  fi
+fi
+
 # Register Ouroboros MCP server (local binary, not uvx — see
 # sandbox-kit/OUROBOROS-SETUP.md §8). MCP tools only load on NEXT session
 # start, but registration is idempotent. The stdio fallback
@@ -155,7 +174,7 @@ fi
 
 if [ -x "$VENV_PY" ]; then
   # pyflakes powers the edit-snapshot hook's lint-delta tell.
-  "$VENV_PY" -m pip install -q pyflakes 2>&1 \
+  "$VENV_PY" -m pip install -q pyflakes pytest 2>&1 \
     && ok "pyflakes installed (edit-snapshot hook lint delta)" \
     || warn "pyflakes install failed — edit-snapshot hook loses its pyflakes delta"
 

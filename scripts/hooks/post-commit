@@ -1,0 +1,55 @@
+#!/bin/bash
+# HOOKS-QUARTET (owner directive 2026-08-25): keep the code-intel quartet and
+# the wiki fresh at every commit.
+# 1) Background-reindex graft + GitNexus so `graft ask`/`impact` never lag the
+#    tree. Lock-guarded: a commit landing while a build runs skips (the running
+#    build already sees the new tree or the next commit re-triggers).
+# 2) Wiki freshness marker: a commit touching non-wiki files marks the wiki
+#    stale (until a wiki/ commit clears it). pre-push reads the marker.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+MARKER="$REPO_ROOT/.git/wiki-stale"
+
+CHANGED="$(git diff-tree --no-commit-id --name-only -r HEAD)"
+# A commit that carries ANY wiki delta counts as fresh — the mandate is "wiki
+# delta ships in the same increment", so a mixed code+wiki commit clears the
+# marker (first version marked mixed commits stale: the non-wiki branch won).
+if echo "$CHANGED" | grep -q '^wiki/'; then
+  rm -f "$MARKER"
+elif echo "$CHANGED" | grep -qv '^wiki/'; then
+  # Machine-churn exemption: a commit whose ONLY payload is the gitnexus
+  # index-stamp rewrite in AGENTS.md/CLAUDE.md is not a material change and
+  # must not demand a wiki delta.
+  # LEDGER-PLANE exemption (retro 2026-08-25): docs/INCIDENT-LOG.md and
+  # .agents/research/ are append-only ledgers the wiki synthesizes at its next
+  # pass by design — appending there is not system drift (kills the
+  # docs-commit -> stale -> retro -> docs-commit nag loop).
+  # Lesson-bake plane (retro 2026-08-25b): sandbox-kit guides and repo skills are
+  # WHERE lessons get baked same-increment; demanding a wiki delta per bake
+  # recreates the nag loop the ledger-plane exemption killed.
+  if [ -z "$(echo "$CHANGED" | grep -v '^AGENTS\.md$' | grep -v '^CLAUDE\.md$' \
+        | grep -v '^docs/INCIDENT-LOG\.md$' | grep -v '^\.agents/research/' \
+        | grep -v '^sandbox-kit/[^/]*\.md$' | grep -v '^\.claude/skills/')" ] \
+     && [ -z "$(git diff-tree -p --no-commit-id HEAD -- AGENTS.md CLAUDE.md \
+           | grep '^[+-]' | grep -v '^[+-][+-]' | grep -v 'indexed by GitNexus')" ]; then
+    :
+  else
+    git rev-parse --short HEAD > "$MARKER"
+  fi
+fi
+
+if command -v graft >/dev/null 2>&1; then
+  ( flock -n 9 || exit 0
+    cd "$REPO_ROOT" && DO_NOT_TRACK=1 graft build >/tmp/graft-build.log 2>&1
+  ) 9>/tmp/graft-build.lock >/dev/null 2>&1 &
+fi
+if command -v gitnexus >/dev/null 2>&1; then
+  ( flock -n 9 || exit 0
+    cd "$REPO_ROOT" && gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1
+  ) 9>/tmp/gitnexus-analyze.lock >/dev/null 2>&1 &
+fi
+exit 0
+    cd "$REPO_ROOT" && slopo index >>/tmp/slopo-sync.log 2>&1 \
+      && slopo embed >>/tmp/slopo-sync.log 2>&1
+  ) 9>/tmp/slopo-sync.lock >/dev/null 2>&1 &
+fi
+exit 0

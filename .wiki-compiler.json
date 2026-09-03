@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "mode": "codebase",
+  "name": "agent-factory",
+  "sources": [
+    { "path": "./", "exclude": ["node_modules/", "dist/", ".git/", "wiki/", "vendor/", "__pycache__/", ".build/", "target/", "coverage/", ".gitnexus/", "graft/", ".claude/", ".agents/", "sandbox-kit/", "docs/archive/"] }
+  ],
+  "output": "wiki/",
+  "service_discovery": "manual",
+  "knowledge_files": [
+    "README.md", "CLAUDE.md", "AGENTS.md", "STATUS.md", "PC-BRIDGE.md", "SECURITY.md", "CONTRIBUTING.md",
+    "docs/*.md", "docs/adr/*.md", "docs/research/*.md",
+    "seeds/*.yaml", "todo/BUILD-TASKLIST.md", "tasks/*.md", "spikes/*/README.md",
+    ".env.example", "upstream.lock.yaml", "deploy/*.md", "deploy/*.yaml"
+  ],
+  "deep_scan": true,
+  "auto_update": "prompt",
+  "article_sections": [
+    { "name": "Purpose", "description": "What this module/subsystem does and who depends on it", "required": true },
+    { "name": "Architecture", "description": "Key files, structure, entry points, with file:line anchors" },
+    { "name": "Talks To", "description": "Dependencies, seams, inter-module calls" },
+    { "name": "API Surface", "description": "Exported functions, classes, config knobs, event kinds" },
+    { "name": "Data", "description": "Stores, artifacts, persisted state, telemetry streams owned" },
+    { "name": "Key Decisions", "description": "Why it was built this way — seed refs, owner rulings, council verdicts, rejected alternatives" },
+    { "name": "Gotchas", "description": "Known issues, dormant/NOT-built seams stated first-class, failure modes, incident-log entries" },
+    { "name": "Sources", "description": "Backlinks to all contributing files", "required": true }
+  ],
+  "link_style": "markdown"
+}

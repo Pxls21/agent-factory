@@ -1,0 +1,38 @@
+#!/bin/bash
+# ROUND-CHURN GATE (owner mandate 2026-09-02, RP-30b rounds 5-6): every .py in
+# the index is pyflakes-DELTA checked against HEAD and BLOCKS on NEW hits.
+# Orphaned imports, np/pd used without import (AP-61) and caller-only locals
+# read inside a helper (AP-60) each cost a whole verify round; each was a
+# pyflakes line nobody ran. Delta, not plain lint: pre-existing hits stay
+# non-blocking so nobody learns to bypass the hook.
+# Bypass (printed, so it shows in review): SKIP_LINT_DELTA=1 git commit ...
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PY="/root/venv-agent-factory/bin/python"
+[ -x "$PY" ] || PY="python3"
+if ! "$PY" -c "import pyflakes" 2>/dev/null; then
+  echo "pre-commit: pyflakes missing in $PY — run scripts/setup.sh (it installs pyflakes into the venv). NOT blocking." >&2
+  exit 0
+fi
+"$PY" "$REPO_ROOT/scripts/lint_delta.py" --staged
+RC=$?
+if [ "$RC" != "0" ]; then
+  echo "COMMIT BLOCKED by lint_delta (rc=$RC) — see NEW hits above." >&2
+  exit 1
+fi
+# AP-67 (2026-09-02): a staged edit to a file a mutation manifest anchors into re-checks
+# that manifest's anchors against the index (seconds, no pytest). Without this the
+# drifted anchor surfaces only in the gate of record's stage 4, ~50 min in.
+# Bypass (printed, so it shows in review): SKIP_ANCHOR_CHECK=1 git commit ...
+if [ ! -f "$REPO_ROOT/scripts/mutant_anchor_precommit.py" ]; then
+  :  # no mutation-manifest tooling in this repo yet (lives in sandbox-kit/reference-scripts until proofs need it)
+elif [ -n "$SKIP_ANCHOR_CHECK" ]; then
+  echo "pre-commit: SKIP_ANCHOR_CHECK set — AP-67 anchor check bypassed." >&2
+else
+  "$PY" "$REPO_ROOT/scripts/mutant_anchor_precommit.py"
+  RC=$?
+  if [ "$RC" != "0" ]; then
+    echo "COMMIT BLOCKED by mutant_anchor_precommit (rc=$RC) — re-pin the manifest in this commit." >&2
+    exit 1
+  fi
+fi
+exit 0
