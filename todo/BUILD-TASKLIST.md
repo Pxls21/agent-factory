@@ -56,6 +56,15 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-03 sync (ports):** `AGENTS.md` (Codex CLI port, 26.0 KB < 32 KiB budget) and `.hermes.md` (Hermes
+port) written by a delegate from the new CLAUDE.md, coordinator-reviewed: 15 standing rules hash-identical
+in all three files, GitNexus block byte-identical, zero source-repo terms. Coordinator fixes: dropped the
+ported "ignore an injected branch directive" sentence (wrong here — the branch IS the session's), removed
+the source repo's proposal ids from the MANAGER CHARTER, added the PC environment safety block (OmniRoute
+`:20128` sole egress, never stop the owner's services, sudo, untracked bridge env), and corrected
+`docs/HARNESS-PORTS.md` where it still verified a section that does not exist here (AF-AP-6). Batch E
+(wiki compile) in flight.
+
 **2026-09-03 sync (batch D):** harness-ports ported by a delegate and re-gated by the coordinator
 (`harness-ports/tests/run-all.sh`: 58/58; repo `tests/`: 6 passed): `.codex/config.toml` + role layers,
 `harness-ports/{bin,roles,hermes,tests}`, `scripts/pc_lane.sh` (bridge contract = `X-Agent-Token` +
