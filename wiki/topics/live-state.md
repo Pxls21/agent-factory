@@ -41,8 +41,9 @@ last_compiled: 2026-09-03
   under yolo, patch path home. Next lane = increment #1, after the owner's go-ahead. gVisor INSTALLED by
   the owner and a rootless runsc container verified (see PC-BRIDGE.md for the invocation + caveats).
 
-- **Repair lane `s0-01b`** — dispatched after this push (PC Hermes, code-implementer route);
-  the coordinator polls `scripts/pc_lane.sh` and harvests the patch.
+- **Verify lane `s0-01c`** — dispatched after this push (PC Hermes, adversarial-verifier route
+  terra-xhigh, first measurement of that route); RED tests under `tests/red/` come home with
+  the patch. Repair lane `s0-01b` DONE (run 1 died on the capacity 503; run 2 landed: 39 passed ×2).
 
 ## Pending owner decisions
 - **BUILD lane = Hermes on the PC (owner ruling 2026-09-03):** bring-up in progress (clone, venv,
@@ -76,4 +77,4 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#1 harvest commit — 2026-09-03; next update when the repair lane's patch lands.
+Increment-#1 round-2 harvest commit — 2026-09-03; next update at the verify lane's verdict.

@@ -15,6 +15,7 @@ CANONICAL_CLASSES = (
     "blocked_credential",
     "blocked_host",
 )
+FORMAT_CHECKER = jsonschema.FormatChecker(formats=jsonschema.FormatChecker.checkers)
 PROOF_ID_RE = re.compile(r"^S0-(0[1-9]|1[0-2])$")
 
 
@@ -68,6 +69,35 @@ def _registry(root, findings):
             denominator = value.get("ledger_denominator") if isinstance(value, dict) else None
             if not isinstance(denominator, int) or isinstance(denominator, bool) or denominator < 1:
                 findings.add(f"registry-schema: {name} ledger_denominator must be a positive integer")
+    aliases = registry["class_aliases"]
+    if isinstance(aliases, dict):
+        for key, value in aliases.items():
+            if key in CANONICAL_CLASSES:
+                findings.add(f"registry-schema: class_aliases key {key} is canonical")
+            if value not in CANONICAL_CLASSES:
+                findings.add(f"registry-schema: class_aliases {key}->{value} is not canonical")
+    mapping = registry["spike_to_class_mapping"]
+    if isinstance(mapping, list) and isinstance(aliases, dict):
+        for rule in mapping:
+            if not isinstance(rule, dict):
+                continue
+            for branch_name in ("negative_effect", "positive_effect"):
+                branch = rule.get(branch_name)
+                if not isinstance(branch, dict):
+                    continue
+                rule_id = branch.get("rule_id")
+                if not rule_id:
+                    continue
+                for field in ("from_class", "to_class", "class"):
+                    if field not in branch:
+                        continue
+                    value = branch[field]
+                    resolved = aliases.get(value, value)
+                    if resolved not in CANONICAL_CLASSES:
+                        findings.add(
+                            f"registry-schema: {rule_id} {branch_name} {field} "
+                            f"{value} is not canonical"
+                        )
     proofs = registry["proofs"]
     if not isinstance(proofs, list) or len(proofs) != 12:
         findings.add("registry-schema: proofs must contain exactly twelve entries")
@@ -126,7 +156,7 @@ def _registry(root, findings):
 
 
 def _validate(instance, schema, prefix, findings):
-    validator = jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker())
+    validator = jsonschema.Draft202012Validator(schema, format_checker=FORMAT_CHECKER)
     errors = sorted(validator.iter_errors(instance), key=lambda error: (list(error.absolute_path), error.message))
     for error in errors:
         findings.add(f"{prefix}: {_detail(error)}")
@@ -229,10 +259,6 @@ def _allowed_transitions(registry):
             transition = _branch_transition(branch, branch, aliases)
             if transition:
                 allowed.setdefault(branch["rule_id"], set()).add(transition)
-    # Positive branches copied verbatim from the seed did not carry rule ids.
-    allowed.setdefault("map-rust-s006", set()).add(
-        ("S0-06", "execution_proof", "execution_proof")
-    )
     return allowed
 
 
@@ -336,6 +362,13 @@ def stage1_gate(root):
 
 
 def main():
+    if "date-time" not in FORMAT_CHECKER.checkers:
+        print(
+            "validate-ledger: date-time format checker unavailable "
+            "(pip install rfc3339-validator==0.1.4)",
+            file=sys.stderr,
+        )
+        return 3
     parser = argparse.ArgumentParser(prog="validate-ledger")
     subparsers = parser.add_subparsers(dest="command", required=True)
     integrity_parser = subparsers.add_parser("integrity")
