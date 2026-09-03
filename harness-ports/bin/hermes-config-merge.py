@@ -13,7 +13,8 @@ A timestamped backup is written next to the config before any write. Prints ever
 added and every key it left alone. Exit 0 = merged (or nothing to do), 2 = usage error.
 
 Usage: hermes-config-merge.py --config ~/.hermes/config.yaml --snippet <snippet.yaml>
-       --set AF_REPO=/abs/path --set AF_VENV=/abs/path --set CODEBASE_MEMORY_BIN=/abs/bin [--dry-run]
+       --set AF_REPO=/abs/path --set AF_VENV=/abs/path --set CODEBASE_MEMORY_BIN=/abs/bin
+       [--skip mcp_servers.codebase-memory] [--dry-run]
 """
 import argparse
 import datetime as _dt
@@ -67,6 +68,9 @@ def main() -> int:
     ap.add_argument("--snippet", required=True)
     ap.add_argument("--set", action="append", default=[], metavar="VAR=value")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--skip", action="append", default=[], metavar="dotted.key",
+                    help="snippet key to leave out, e.g. mcp_servers.codebase-memory when the "
+                         "profile already runs the same binary under another name")
     a = ap.parse_args()
     env = {}
     for kv in a.set:
@@ -80,6 +84,13 @@ def main() -> int:
     cfg = cfg or {}
     snippet = yaml.safe_load(snip_path.read_text()) or {}
     snippet = _subst(snippet, env)
+    for dotted in a.skip:
+        node, parts = snippet, dotted.split(".")
+        for k in parts[:-1]:
+            node = node.get(k, {}) if isinstance(node, dict) else {}
+        if isinstance(node, dict) and parts[-1] in node:
+            del node[parts[-1]]
+            print(f"SKIPPED (by request): {dotted}")
     merged = _merge(cfg, snippet)
     print("ADDED:"); [print("  +", p) for p in ADDED] or print("  (nothing)")
     print("KEPT (owner value wins):"); [print("  =", p) for p in KEPT] or print("  (nothing)")
