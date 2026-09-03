@@ -177,6 +177,19 @@ in-flight requests are lost). **Stdio quoting:** shell expansion corrupts curly-
 it to a temp file: `JSONARG=$(cat /path/args.json) && python scripts/ooo_mcp.py tool_name
 "$JSONARG"`. The interview tool starts with `initial_context` (not `topic`/`context`) and resumes
 with `session_id` + `answer`.
+**Ouroboros stdio quirks (hit 2026-09-02, all reproduced):** every `scripts/ooo_mcp.py` call that
+drives the interview/seed backend needs `IS_SANDBOX=1` exported (the nested claude refuses
+root+bypassPermissions; symptom: a question-less "cannot complete yet" reply) · `initial_context`
+is capped (~1.5k chars) and an oversized one POISONS the session for every later round — start a
+fresh interview and push detail through answers · each question issues a Synapse fan-out: submit
+`{session_id, fanout_id, correlation_key:"context.lane_id", results:[{key, content}|{key,
+undispatched:true}]}` covering the required lanes; `data_context` must match its contract exactly
+(`{question_identity, lane_id, data_needed:false, no_evidence_reason, read_requests:[]}`) and the
+`question_identity` lives in `~/.ouroboros/data/fanout/<fanout_id>.json` · string values are
+rejected on shell metacharacters (`;` `|` `&` backticks `$`) — scrub before submitting · nothing
+is retained between partial submissions — resubmit every lane · `ouroboros_generate_seed` returns
+YAML and writes NO file — transcribe to `seeds/` immediately and run the seed's own
+`verify_command`s (a red first pass is the gate working: ours caught a missing per-proof section).
 
 **Never use `AskUserQuestion` for interview routing or design decisions** — it blocks like MCP
 (hang → timeout → lost requests). Ask in natural text; the user answers when back. During
