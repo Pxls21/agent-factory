@@ -22,6 +22,7 @@
 | D-016 | Retain PandaProbe as optional later observability | Preserve the capability subject to egress, credential, and retention proof |
 | D-017 | Auto-improve scheduler/maintenance start off; promotion is reviewed | Prevents silent learning, deletion, or cross-scope changes |
 | D-018 | Preserve the original v2 documents unchanged | Maintains provenance while current docs apply source corrections |
+| D-019 | Advance OmniRoute pin to `488f57e9` (HEAD, v3.8.51) and GBrain pin to `8c70f625` (HEAD, v0.48.2.0) | OmniRoute: the prior pin (`500568a1`) predates GHSA-5926-2w35-7h4q — a credential-export vulnerability where `POST /api/providers/{id}/claude-auth/export` and `.../codex-auth/export` fail open under `requireLogin=false` (the local-first default). The PC's OmniRoute listens on `0.0.0.0:20128`, making this actively relevant. Fix landed at commit `49c4a620` (PR #12600); the new pin includes it. GBrain: the prior pin (`e9a14c9`, v0.48.1.0) missed the `no_key fail-open` fix and storage scope fix shipped in v0.48.2.0. PC action: the owner must upgrade OmniRoute from npm 3.8.48 to at least a git-source build at `488f57e9` — the fix is NOT on npm (latest 3.8.50 predates it). |
 
 ## Open implementation choices
 

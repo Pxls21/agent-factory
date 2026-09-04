@@ -1,5 +1,5 @@
 # Audit snapshot, not an automatic dependency resolver.
-snapshot_date: "2026-09-02"
+snapshot_date: "2026-09-04"
 
 selected_core:
   agent-client-protocol:
@@ -20,7 +20,7 @@ selected_core:
     role: human_interface_relay_and_buzz_acp
   omniroute:
     repository: https://github.com/diegosouzapw/OmniRoute.git
-    commit: 500568a1cd2de24c8a41fc9f241a0f4283fc9601
+    commit: 488f57e9d3fccc8d1741fdf21d35d5730b118a18
     observed_version: 3.8.51
     license: MIT
     role: sole_model_api_gateway
@@ -50,8 +50,8 @@ selected_later_planes:
     role: harness_foundry_generator
   gbrain:
     repository: https://github.com/garrytan/gbrain.git
-    commit: e9a14c952870f4a8b3f32529ce8ed05e9dad698b
-    observed_version: 0.48.1.0
+    commit: 8c70f6255047a7647adb30b1d6333a48068d9fa5
+    observed_version: 0.48.2.0
     license: MIT
     role: dream_phase_mechanism_and_provenance_source
   harnessrouter:
