@@ -11,90 +11,103 @@ The stock AlphaEval runner exposes three documented hazards (component audit §3
 3. **Production credential passing** — environment variables containing API keys
    are inherited by rubric processes.
 
-## 2. Design: isolated rubric execution
+## 2. Policy (machine-readable)
 
-Each rubric process is launched through `unshare --user --net`, which places it
-in a fresh **user namespace** (privilege drop) and a fresh **network namespace**
-(no host networking) in one unprivileged step. The runner asserts the isolation
-actually took effect on four axes; the S0-11 checker
-(`check_eval_hardening.py`) enforces each axis and, crucially, re-runs the same
-predicate against an UN-wrapped probe to prove no axis is a tautology.
+The S0-11 design gate parses this block; each hazard must be declared forbidden.
+Prose elsewhere in this document is explanatory only and is NOT the contract —
+the checker reads this block, so no wording can satisfy the gate while a hazard
+is enabled.
 
-### 2.1 UID drop (least privilege)
+```yaml
+policy:
+  host_networking: forbidden
+  recursive_chmod_777: forbidden
+  production_credential_passing: forbidden
+```
 
-The rubric process runs under a new user namespace, so its effective UID is not
-the runner's UID (it maps to an unprivileged id, not root). The checker asserts
-`probe uid != parent uid` AND `probe uid != 0` — a report claiming root is
-rejected even when the parent is non-root, and a report missing the UID (or any
-other mandatory field) is rejected, never defaulted to a pass. A wrapper that
-fails to create the user namespace (e.g. a pass-through `unshare`) leaves the
-UID unchanged and is rejected. The checker first runs a capability preflight
-(`--selftest`): where the host cannot create or read the namespaces the check
-consumes, it exits 2 (capability unavailable — not a pass, not a breach) so the
-proof is deferred to the PC/gVisor host rather than reporting a false result.
+## 3. Design: isolated rubric execution, verified by parent observation
 
-### 2.2 Network isolation (no host networking)
+Each rubric process is launched under isolation and then observed FROM THE
+PARENT via `/proc/<pid>` — the checker never trusts a report the child writes
+about itself, because a child under a fake or pass-through wrapper can fabricate
+a clean self-report. Wrapper binaries are invoked by ABSOLUTE path
+(`/usr/bin/unshare`, `/usr/bin/setpriv`, `/usr/bin/nsenter`) so a `PATH` entry
+cannot substitute a fake. A non-vacuity gate re-runs the same parent observation
+against an UN-wrapped child and requires every axis to breach.
 
-The new network namespace contains only an unconfigured loopback, so no
-outbound connection is possible. The checker does NOT rely on "cannot reach an
-external address" (that is a tautology inside an already-egress-filtered
-sandbox). Instead it holds a loopback listener in its OWN netns and asserts the
-rubric probe **cannot reach it** — a signal only real namespace isolation can
-produce — while an un-wrapped probe reaches it. Namespace identity is confirmed
-separately: `/proc/self/ns/net` inode of the probe differs from the parent's.
+A capability preflight (`--selftest`) runs first: where the host cannot create or
+observe the namespaces the check consumes, the checker exits 2 (capability
+unavailable — not a pass, not a breach) so the proof is deferred to the
+PC/gVisor host. Every proof leg that reads a child's namespaces is gated by this
+same preflight.
 
-### 2.3 Credential isolation — allow-list, not blacklist (no credential passing)
+### 3.1 UID drop (least privilege), parent-observed
 
-The runner builds the rubric environment from a **closed allow-list**: an EXACT
-set of names — `PATH, HOME, LANG, LC_ALL, LC_CTYPE, TMPDIR` plus the three
-runner variables `RUBRIC_TASK_ID, RUBRIC_CWD, RUBRIC_PROBE_PORT`. It is NOT a
-`RUBRIC_*` prefix wildcard (a prefix is itself an open-ended allow-list — a
-credential named `RUBRIC_PRODUCTION_API_KEY` would slip through it) and NOT a
-name blacklist (a blacklist missed production credentials such as
-`OMNIROUTE_INTERNAL_API_KEY`, `BUZZ_PRIVATE_KEY`, and `STORAGE_ENCRYPTION_KEY`).
-Every other variable, whatever it is named, is stripped by construction. The
-checker injects those exact decoys into the parent environment and asserts they
-are absent from the wrapped probe and present in the un-wrapped one.
+The rubric runs as a REAL non-root uid, and the parent reads the child's real
+host uid from `/proc/<pid>/status` — asserting `!= parent uid` AND `!= 0`. The
+launch differs by venue: as root, `unshare --net` creates the netns and
+`setpriv --reuid=65534 --regid=65534 --clear-groups` drops privilege; as a
+non-root service user (production, CI), `unshare --user --net` keeps the
+runner's own non-root host uid. The child's own `getuid()` is deliberately NOT
+used: under a bare user namespace it reports an unprivileged id while the host
+uid stays root, so it is not evidence of a drop.
 
-### 2.4 Permission hardening (no recursive chmod 777)
+### 3.2 Network isolation (no host networking), parent-observed
 
-The runner never applies recursive or world-writable permission changes. The
-S0-11 forbidden-op sweep enforces this across every non-Markdown file in the
-proof (the checker included — see below) using STRUCTURED checks, not a regex
-list: Python is parsed as an AST so real `os.chmod(…, 0o777)` calls and
-shell-command string arguments are caught while the checker's own pattern
-literals are not; YAML is parsed so `network_mode: host` and `hostNetwork: true`
-(including the bool `True`) are caught; shell and other text use regex. Because
-the Python check is call-based, the checker file needs no self-exclusion — a
-real forbidden call hidden inside it would still be caught. Rejected forms:
-world-writable `chmod`, octal (`777`, `0777`, `666`, ...) or symbolic
-(`o+w`, `a+w`, `go+rwx`, ...), and any host-networking directive.
+The netns contains only an unconfigured loopback, so it has no connectivity. The
+parent reads `/proc/<pid>/ns/net` and asserts the inode differs from its own (a
+fresh netns). When the parent has the privilege, it also actively confirms
+isolation: it holds a loopback listener in its own netns and `nsenter`s the
+child's netns to prove that listener is UNREACHABLE from inside — a signal only
+real namespace isolation can produce. The un-wrapped child shares the parent
+netns and reaches it.
 
-The design doc itself is checked for the inverse defect: a doc that asserts any
-hazard is enabled/required (or isolation disabled) fails, so the coverage gate
-cannot be satisfied by prose that documents the hazards as permitted.
+### 3.3 Credential isolation — closed allow-list, parent-observed
 
-### 2.5 Working directory
+The runner builds the rubric environment from a **closed EXACT allow-list**:
+`PATH, HOME, LANG, LC_ALL, LC_CTYPE, TMPDIR` plus the three runner variables
+`RUBRIC_TASK_ID, RUBRIC_CWD, RUBRIC_PROBE_PORT`. It is NOT a `RUBRIC_*` prefix
+wildcard (a prefix is itself open-ended — a credential named
+`RUBRIC_PRODUCTION_API_KEY` would slip through) and NOT a name blacklist (which
+missed `OMNIROUTE_INTERNAL_API_KEY`, `BUZZ_PRIVATE_KEY`, `STORAGE_ENCRYPTION_KEY`).
+The parent reads the child's actual environment from `/proc/<pid>/environ` and
+asserts every key is in the allow-list; production-named decoys the checker
+injects into the parent environment must be absent from the child and present in
+the un-wrapped control.
 
-Each rubric invocation receives a fresh temporary directory as its working
-directory, cleaned up after the rubric completes. This is a convenience for
-output collection — it is **not** a filesystem containment boundary (see §4).
+### 3.4 Permission hardening (no recursive chmod 777)
 
-## 3. Judge call routing
+The runner never applies recursive or world-writable permission changes. S0-11
+enforces this with a **best-effort lint** over every non-Markdown file in the
+proof (Python via AST with import-alias resolution and constant folding, YAML via
+a parsed walk, shell/other via regex). The lint catches obvious and accidental
+hazards; it is deliberately NOT presented as a complete static-analysis boundary
+— a determined author can express `chmod 777` or `network_mode: host` in forms no
+static scan enumerates. The real guarantees are the runtime isolation above
+(network) and gVisor + a non-root service user at the PC boundary
+(filesystem/privilege — §5).
 
-Any rubric requiring LLM calls uses the OmniRoute endpoint exclusively
-(standing rule 3). The runner injects the OmniRoute base URL as
-`RUBRIC_LLM_ENDPOINT`; no direct-provider credentials are passed.
+### 3.5 Working directory
 
-## 4. NOT verified in the sandbox (delivered at the PC/production boundary)
+Each rubric invocation receives a fresh temporary working directory. This is a
+convenience for output collection — it is **not** a filesystem containment
+boundary (§5).
 
-- **Filesystem containment.** A separate cwd is not a jail, and the sandbox
-  user namespace does not enforce host file ownership against an unmapped UID.
-  Real FS containment is delivered by **gVisor + a mapped user namespace** at
-  the PC/production boundary (standing rule 11: least privilege, non-root
-  service users, gVisor containment). It is proven by the S0-08 gVisor proof,
-  not here.
-- **UDP/ICMP egress and DNS** inside the netns (only TCP loopback reachability
-  is exercised as the network discriminator).
-- **Live rubric workloads.** The probe reports process state; it does not run a
-  real AlphaEval rubric. That integration is Wave-2 work.
+## 4. Judge call routing
+
+Any rubric requiring LLM calls uses the OmniRoute endpoint exclusively (standing
+rule 3). The runner injects the OmniRoute base URL as `RUBRIC_LLM_ENDPOINT`; no
+direct-provider credentials are passed.
+
+## 5. NOT verified in the sandbox (delivered at the PC/production boundary)
+
+- **Filesystem containment.** A separate cwd is not a jail, and the sandbox user
+  namespace does not enforce host file ownership against an unmapped uid. Real FS
+  containment is delivered by **gVisor + a mapped user namespace** at the PC
+  boundary (standing rule 11) and proven by the S0-08 gVisor proof, not here.
+- **Complete static hazard coverage.** The forbidden-op lint is best-effort, not
+  exhaustive; the runtime isolation and gVisor boundary are the guarantees.
+- **UDP/ICMP egress and DNS** inside the netns (TCP loopback reachability is the
+  network discriminator).
+- **Live rubric workloads.** The stand-in blocks for observation; it does not run
+  a real AlphaEval rubric. That integration is Wave-2 work.

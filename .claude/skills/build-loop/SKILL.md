@@ -69,7 +69,12 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    with its VERDICT block pasted verbatim (owner mandate 2026-09-02 — orphaned imports and
    "pre-existing" mislabels each cost a verify round before these two existed). Test is
    LLM-free, in-sandbox, with a NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
-   gate runs RED and provably never touches the cwd). **A fixture that cannot carry the PRODUCTION
+   gate runs RED and provably never touches the cwd). **A capability-gated proof is tested under
+   BOTH a capable and an incapable environment (AF-AP-24, S0-11): every leg that reads the gated
+   capability is guarded by the SAME preflight the real check consumes (not a proxy signal, not a
+   selected subset), and a test proves the incapable path DEFERS (a distinct "unavailable" exit,
+   never a false pass or false breach) — a guard on only some legs is the owner's "2 failed" on the
+   host that lacks the capability.** **A fixture that cannot carry the PRODUCTION
    data TYPE is a vacuous test — build round-trip/serialization tests from the real producer's
    types, not hand-built native-Python stand-ins** (PREMORTEM-2 R2-01: a champion test used a
    native-`bool` `make_genome_dict` fixture; the real pymoo MixedVariable population carries

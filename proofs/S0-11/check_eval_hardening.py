@@ -1,40 +1,42 @@
 """S0-11: Evaluation hardening conformance checker.
 
-Proves the Hermes evaluation runner isolates rubric subprocesses on four axes
-and that the isolation actually FIRED (no tautology greens):
+Proves the Hermes evaluation runner isolates rubric subprocesses, using evidence
+the PARENT observes from the kernel (`/proc/<pid>`), never the child's own
+report — a child under a fake wrapper can fabricate a clean self-report, so
+self-reported isolation is not trusted. Wrapper binaries are called by ABSOLUTE
+path (no PATH hijack).
 
-  1. Runner design doc covers the three AlphaEval hazards and does not assert any
-     of them as enabled/required (semantic inversion guard).
+Axes (all parent-observed, kernel truth):
+  - UID drop:   /proc/<pid>/status real uid != parent AND != 0. Achieved by a
+                REAL privilege drop (root: `unshare --net` + `setpriv --reuid`;
+                non-root: `unshare --user --net`, host uid stays the non-root
+                runner's). The child's own getuid() is NOT used — under a bare
+                user namespace it reports an unprivileged id while the host uid
+                stays root, so it is not evidence of a drop.
+  - netns:      /proc/<pid>/ns/net inode != parent (a fresh, connectivity-less
+                netns). When the parent can `nsenter` the child's netns, it also
+                actively confirms a loopback listener it holds is UNREACHABLE
+                from inside that netns.
+  - env:        /proc/<pid>/environ is a subset of a CLOSED EXACT allow-list
+                (never a prefix wildcard); production-named decoys the checker
+                injects into the parent env must be absent.
+Non-vacuity: the same parent observation is run against an UN-wrapped child and
+must breach every axis, or an axis is a tautology.
 
-  2. Rubric isolation — a probe run through ``unshare --user --net`` must report,
-     on every axis, and a well-formed report is mandatory (missing evidence is a
-     failure, never a silent pass):
-       - UID drop:       probe uid != parent uid AND uid != 0 (never root)
-       - netns identity: probe /proc/self/ns/net inode != parent's (fresh netns)
-       - network:        a loopback listener the checker holds in its own netns
-                         is UNREACHABLE from the probe (the netns blocks it)
-       - environment:    the probe env is a subset of a CLOSED allow-list — an
-                         EXACT set of names (ENV_ALLOWLIST + a fixed RUBRIC_* set),
-                         never a prefix wildcard. Production-named decoys are
-                         injected and must be absent.
-     Non-vacuity gate: the same predicate is re-run against the probe WITHOUT the
-     wrapper; every axis must flip to breached, or an axis is a tautology.
-     Capability preflight (``--selftest``): the positive check first proves the
-     host can actually create+read the namespaces it consumes; where it cannot,
-     the checker returns exit 2 ("capability unavailable", NOT a pass, NOT a
-     breach) so the proof is skipped there and runs on the PC/gVisor host.
+Design gate: runner_design.md must carry a machine-readable ```yaml `policy:`
+block declaring each hazard forbidden — a deterministic contract, not prose
+scanned for synonyms.
 
-  3. Forbidden-op sweep — STRUCTURED, not a regex list: Python via AST (real
-     ``os.chmod(…, 0o777)`` calls and shell-command string args), YAML via a
-     parsed walk (``network_mode: host``, ``hostNetwork: true`` incl. bool True),
-     shell/other text via regex. Every non-Markdown file is scanned, the checker
-     itself included (AST ignores its own pattern string literals, so no
-     self-exclusion hole).
+Forbidden-op sweep: a BEST-EFFORT LINT over the proof's non-Markdown files
+(Python via AST with import-alias + constant folding, YAML via a parsed walk,
+shell/other via regex). It catches obvious/accidental hazards; it is NOT a
+complete static-analysis boundary (a determined author can evade any static
+scan). The real guarantees are the runtime isolation above (network) and gVisor
++ a non-root service user at the PC boundary (filesystem/privilege, S0-08).
 
-Filesystem containment is NOT asserted here (a separate cwd is not a jail; the
-sandbox userns does not enforce host ownership) — it is delivered by gVisor + a
-mapped user namespace at the PC/production boundary (standing rule 11, S0-08) and
-listed not-verified in runner_design.md.
+Capability preflight (`--selftest`): confirms the host primitives and that the
+parent can observe a child's /proc; exit 2 = capability-unavailable (skip, run
+on the PC), never a false pass or breach.
 
 Usage:
   check_eval_hardening.py <proof-dir>
@@ -43,56 +45,254 @@ Usage:
   check_eval_hardening.py --rubric-neg-cred <fixture> <proof-dir>
 
 Exit 0 + "PASS"; 1 + reason on a real breach; 2 on capability-unavailable.
-Output is byte-deterministic (no volatile inode/port/path values printed).
+Output is byte-deterministic (no volatile inode/pid/port/path values printed).
 """
 import ast
-import json
 import os
 import re
+import select
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 from pathlib import Path
 
-# Closed environment allow-list: the ONLY names that may reach a rubric process.
-# Not a blacklist, and not a prefix wildcard — an EXACT set. Everything else,
-# every present or future credential whatever it is named, is stripped.
 ENV_ALLOWLIST = frozenset({"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"})
 RUBRIC_ALLOWED = frozenset({"RUBRIC_TASK_ID", "RUBRIC_CWD", "RUBRIC_PROBE_PORT"})
 ALLOWED_ENV = ENV_ALLOWLIST | RUBRIC_ALLOWED
 
-# Production-realistic credential names a NAME blacklist would miss. Injected into
-# the parent env for the run so the allow-list is proven to strip a present
-# credential (positive) and the non-isolated control is proven to leak it.
 DECOY_CREDENTIALS = {
     "OMNIROUTE_INTERNAL_API_KEY": "decoy-omniroute-do-not-use",
     "BUZZ_PRIVATE_KEY": "decoy-buzz-do-not-use",
     "STORAGE_ENCRYPTION_KEY": "decoy-storage-do-not-use",
 }
 
-ISO_WRAPPER = ["unshare", "--user", "--net", "--"]
+UNSHARE = "/usr/bin/unshare"
+SETPRIV = "/usr/bin/setpriv"
+NSENTER = "/usr/bin/nsenter"
+DROP_UID = "65534"  # nobody
+DROP_GID = "65534"  # nogroup
+READY_BLOCK = "import sys; sys.stdout.write('R'); sys.stdout.flush(); sys.stdin.read(1)"
 
-HAZARD_COVERAGE = {
-    "host-networking": ("no host network", "network isolation", "netns",
-                        "unshare --net", "clone_newnet"),
-    "chmod-777": ("chmod 777", "permission hardening", "recursive permission"),
-    "credential-passing": ("credential pass", "credential isolation", "strip",
-                           "allow-list", "allowlist"),
-}
+HAZARDS = ("host_networking", "recursive_chmod_777", "production_credential_passing")
 
-# Hazard-ENABLING assertions in the design doc: a doc that says a hazard is
-# enabled/required/allowed (or isolation disabled) is not a passing design.
-_DESIGN_INVERSIONS = [
-    re.compile(r"(host network\w*|network isolation)[^.\n]{0,40}\b(disabled|enabled|required|allowed|permitted|off)\b", re.I),
-    re.compile(r"chmod\s*-?[rR]?\s*0?777[^.\n]{0,40}\b(required|allowed|enabled|permitted|needed)\b", re.I),
-    re.compile(r"credential[^.\n]{0,30}\b(passing|passed|sharing|shared)\b[^.\n]{0,40}\b(enabled|required|allowed|permitted)\b", re.I),
-    re.compile(r"(credential (isolation|stripping|allow-?list))[^.\n]{0,20}\b(disabled|removed|off)\b", re.I),
-]
 
-# --- forbidden-op detection --------------------------------------------------
-# World-writable octal shell modes: the world (last) digit carries the write bit.
+# --- parent-observed isolation ----------------------------------------------
+def _net_ns():
+    try:
+        return os.readlink("/proc/self/ns/net")
+    except OSError:
+        return ""
+
+
+def _iso_launch(child_cmd):
+    """Absolute-path wrapper that puts the child in a fresh netns as a real
+    non-root uid. Root creates the netns then drops via setpriv; a non-root
+    runner uses a user namespace (its host uid, already non-root, is kept)."""
+    if os.getuid() == 0:
+        return [UNSHARE, "--net", "--", SETPRIV, "--reuid", DROP_UID,
+                "--regid", DROP_GID, "--clear-groups", "--"] + child_cmd
+    return [UNSHARE, "--user", "--net", "--"] + child_cmd
+
+
+class _LoopbackListener:
+    def __init__(self):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", 0))
+        self.port = self._sock.getsockname()[1]
+        self._sock.listen(16)
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+                conn.close()
+            except OSError:
+                return
+
+    def close(self):
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
+def _proc_uid(pid):
+    with open("/proc/%d/status" % pid) as handle:
+        for line in handle:
+            if line.startswith("Uid:"):
+                return int(line.split()[1])  # real uid
+    raise OSError("no Uid line")
+
+
+def _proc_env_keys(pid):
+    with open("/proc/%d/environ" % pid, "rb") as handle:
+        raw = handle.read()
+    return sorted({entry.split(b"=", 1)[0].decode("utf-8", "replace")
+                   for entry in raw.split(b"\x00") if entry})
+
+
+def _nsenter_reach(pid, port):
+    """Parent-driven: enter the child's netns and try the parent's listener.
+    True = reached, False = refused (isolated), None = probe could not run."""
+    if os.getuid() != 0 or not os.path.exists(NSENTER):
+        return None
+    probe = ("import socket,sys\n"
+             "try:\n s=socket.create_connection(('127.0.0.1',%d),timeout=2);"
+             "s.close();print('REACHED')\n"
+             "except OSError:\n print('REFUSED')" % port)
+    try:
+        r = subprocess.run([NSENTER, "--net=/proc/%d/ns/net" % pid, "--",
+                            sys.executable, "-c", probe],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if "REACHED" in r.stdout:
+        return True
+    if "REFUSED" in r.stdout:
+        return False
+    return None
+
+
+def _release(proc):
+    try:
+        if proc.stdin:
+            proc.stdin.write(b"x")
+            proc.stdin.close()
+        proc.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _observe_child(launch, env, port):
+    """Launch a child that signals ready then blocks; observe it from the parent
+    via /proc while it is alive. Returns an observation dict or None."""
+    try:
+        proc = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, env=env)
+    except OSError:
+        return None
+    try:
+        ready = b""
+        if select.select([proc.stdout], [], [], 10)[0]:
+            ready = proc.stdout.read(1)
+        if ready != b"R":
+            return None
+        pid = proc.pid
+        obs = {
+            "uid": _proc_uid(pid),
+            "net_ns": os.readlink("/proc/%d/ns/net" % pid),
+            "env_keys": _proc_env_keys(pid),
+            "net_reachable": _nsenter_reach(pid, port),
+        }
+        return obs
+    except (OSError, ValueError):
+        return None
+    finally:
+        _release(proc)
+
+
+def _violations(obs, parent_uid, parent_net_ns):
+    """Axes on which the PARENT-OBSERVED state is not isolated. Empty ==
+    isolated. Deterministic labels only."""
+    if obs is None:
+        return ["observation-failed"]
+    axes = []
+    if obs["uid"] == parent_uid or obs["uid"] == 0:
+        axes.append("uid-not-dropped")
+    if not obs["net_ns"] or obs["net_ns"] == parent_net_ns:
+        axes.append("netns-not-isolated")
+    if [k for k in obs["env_keys"] if k not in ALLOWED_ENV]:
+        axes.append("env-not-allowlisted")
+    return sorted(axes)
+
+
+def _with_decoys(fn):
+    saved = {k: os.environ.get(k) for k in DECOY_CREDENTIALS}
+    os.environ.update(DECOY_CREDENTIALS)
+    try:
+        return fn()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _allow_env(cwd, port):
+    base = dict(os.environ)
+    env = {k: base[k] for k in ALLOWED_ENV if k in base}
+    env["RUBRIC_TASK_ID"] = "probe-001"
+    env["RUBRIC_CWD"] = cwd
+    env["RUBRIC_PROBE_PORT"] = str(port)
+    return env
+
+
+def _full_env(cwd, port):
+    env = dict(os.environ)
+    env["RUBRIC_TASK_ID"] = "probe-001"
+    env["RUBRIC_CWD"] = cwd
+    env["RUBRIC_PROBE_PORT"] = str(port)
+    return env
+
+
+def _capability_status():
+    """Confirm the host primitives + that the parent can observe a child's
+    /proc. Does NOT judge isolation outcome (a wrapper that runs but does not
+    isolate is a checker FAILURE, not unavailable)."""
+    if not _net_ns():
+        return "netns-unreadable-parent"
+    needed = [UNSHARE] + ([SETPRIV] if os.getuid() == 0 else [])
+    for path in needed:
+        if not os.path.exists(path):
+            return "missing:" + path
+    child = [sys.executable, "-c", READY_BLOCK]
+    obs = _observe_child(_iso_launch(child), {"PATH": "/usr/bin"}, 0)
+    if obs is None:
+        return "child-unobservable"
+    if not obs["net_ns"]:
+        return "child-netns-unreadable"
+    return "ok"
+
+
+# --- design policy gate ------------------------------------------------------
+def check_runner_design(proof_dir):
+    design = proof_dir / "runner_design.md"
+    if not design.exists():
+        print("runner-design-missing: " + str(design))
+        return False
+    text = design.read_text()
+    policy = _extract_policy(text)
+    if policy is None:
+        print("runner-design-no-policy-block: missing machine-readable ```yaml policy: block")
+        return False
+    for hazard in HAZARDS:
+        value = str(policy.get(hazard, "")).strip().lower()
+        if value not in ("forbidden", "false", "no", "denied"):
+            print("runner-design-policy-not-forbidding: " + hazard + "=" + repr(policy.get(hazard)))
+            return False
+    return True
+
+
+def _extract_policy(text):
+    for match in re.finditer(r"```ya?ml\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE):
+        try:
+            import yaml
+            doc = yaml.safe_load(match.group(1))
+        except Exception:
+            continue
+        if isinstance(doc, dict) and isinstance(doc.get("policy"), dict):
+            return doc["policy"]
+    return None
+
+
+# --- forbidden-op lint (best-effort; not the boundary) -----------------------
 _CHMOD_OCTAL = re.compile(r"chmod\b[^\n]*?\b[0-7]?[0-7]{2}[2367]\b")
 _CHMOD_SYM_TOKEN = re.compile(r"\b([ugoa]*)[+=]([rwxXst]*)")
 _HOST_NET = re.compile(
@@ -136,8 +336,27 @@ def _call_name(func):
     return ".".join(reversed(parts))
 
 
-_SHELL_CALLS = {"os.system", "subprocess.run", "subprocess.call", "subprocess.Popen",
-                "subprocess.check_call", "subprocess.check_output"}
+def _fold_int(node, int_consts):
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in int_consts:
+        return int_consts[node.id]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Add)):
+        left = _fold_int(node.left, int_consts)
+        right = _fold_int(node.right, int_consts)
+        if left is not None and right is not None:
+            return left | right if isinstance(node.op, ast.BitOr) else left + right
+    return None
+
+
+def _strings_of(node, str_lists):
+    out = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            out.append(sub.value)
+        if isinstance(sub, ast.Name) and sub.id in str_lists:
+            out.extend(str_lists[sub.id])
+    return out
 
 
 def _python_prohibited(text):
@@ -145,19 +364,59 @@ def _python_prohibited(text):
         tree = ast.parse(text)
     except SyntaxError:
         return _text_prohibited(text)
+
+    mod_aliases = {"subprocess": "subprocess", "os": "os"}
+    from_shell = set()
+    from_chmod = set()
+    int_consts = {}
+    str_lists = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in ("subprocess", "os"):
+                    mod_aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "subprocess":
+                for alias in node.names:
+                    if alias.name in ("run", "call", "Popen", "check_call", "check_output"):
+                        from_shell.add(alias.asname or alias.name)
+            if node.module == "os":
+                for alias in node.names:
+                    if alias.name in ("system",):
+                        from_shell.add(alias.asname or alias.name)
+                    if alias.name == "chmod":
+                        from_chmod.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            folded = _fold_int(node.value, int_consts)
+            if folded is not None:
+                int_consts[name] = folded
+            elif isinstance(node.value, (ast.List, ast.Tuple)):
+                strings = [e.value for e in node.value.elts
+                           if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+                if strings:
+                    str_lists[name] = strings
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node.func)
-        short = name.split(".")[-1] if name else ""
-        if short in ("chmod", "fchmod", "lchmod"):
+        parts = name.split(".") if name else []
+        canon = None
+        if len(parts) >= 2 and parts[0] in mod_aliases:
+            canon = mod_aliases[parts[0]] + "." + ".".join(parts[1:])
+        short = parts[-1] if parts else ""
+        is_chmod = short in ("chmod", "fchmod", "lchmod") or name in from_chmod
+        is_shell = canon in ("subprocess.run", "subprocess.call", "subprocess.Popen",
+                             "subprocess.check_call", "subprocess.check_output",
+                             "os.system") or name in from_shell
+        if is_chmod:
             for arg in list(node.args) + [kw.value for kw in node.keywords]:
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, int) and (arg.value & 0o2):
-                    return "world-writable chmod (os.chmod)"
-        if name in _SHELL_CALLS:
-            strings = [n.value for n in ast.walk(node)
-                       if isinstance(n, ast.Constant) and isinstance(n.value, str)]
-            hit = _text_prohibited(" ".join(strings))
+                mode = _fold_int(arg, int_consts)
+                if mode is not None and (mode & 0o2):
+                    return "world-writable chmod (call)"
+        if is_shell:
+            hit = _text_prohibited(" ".join(_strings_of(node, str_lists)))
             if hit:
                 return hit + " (shell call)"
     return None
@@ -167,8 +426,9 @@ def _yaml_walk(node):
     if isinstance(node, dict):
         for key, value in node.items():
             kl = str(key).lower()
-            if kl in ("network_mode", "network") and str(value).strip().strip("\"'").lower() == "host":
-                return "host networking (yaml)"
+            if kl in ("network_mode", "network"):
+                if "host" in str(value).strip().strip("\"'").lower():
+                    return "host networking (yaml)"
             if kl == "hostnetwork":
                 if value is True or str(value).strip().lower() in ("true", "yes", "on"):
                     return "host networking (yaml)"
@@ -201,197 +461,12 @@ def _yaml_prohibited(text):
     return None
 
 
-# --- isolation probe machinery ----------------------------------------------
-def _net_ns():
-    try:
-        return os.readlink("/proc/self/ns/net")
-    except OSError:
-        return ""
-
-
-class _LoopbackListener:
-    def __init__(self):
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind(("127.0.0.1", 0))
-        self.port = self._sock.getsockname()[1]
-        self._sock.listen(16)
-        threading.Thread(target=self._serve, daemon=True).start()
-
-    def _serve(self):
-        while True:
-            try:
-                conn, _ = self._sock.accept()
-                conn.close()
-            except OSError:
-                return
-
-    def close(self):
-        try:
-            self._sock.close()
-        except OSError:
-            pass
-
-
-def _probe_env(allowlisted, cwd, port):
-    base = dict(os.environ)  # decoys were injected into os.environ for the run
-    if allowlisted:
-        env = {k: base[k] for k in ALLOWED_ENV if k in base}
-    else:
-        env = base
-    env["RUBRIC_TASK_ID"] = "probe-001"
-    env["RUBRIC_CWD"] = cwd
-    env["RUBRIC_PROBE_PORT"] = str(port)
-    return env
-
-
-def _run_probe(probe, isolated, port):
-    with tempfile.TemporaryDirectory(prefix="rubric-") as cwd:
-        cmd = (ISO_WRAPPER if isolated else []) + [sys.executable, str(probe)]
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
-                               cwd=cwd, env=_probe_env(isolated, cwd, port))
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if r.returncode != 0:
-            return None
-        try:
-            return json.loads(r.stdout)
-        except json.JSONDecodeError:
-            return None
-
-
-def _report_defects(report):
-    if not isinstance(report, dict):
-        return ["report-not-dict"]
-    defects = []
-    if not isinstance(report.get("uid"), int):
-        defects.append("report-uid-missing")
-    if not isinstance(report.get("net_ns"), str) or not report.get("net_ns"):
-        defects.append("report-netns-missing")
-    if not isinstance(report.get("env_keys"), list):
-        defects.append("report-envkeys-missing")
-    if not isinstance(report.get("listener_reachable"), bool):
-        defects.append("report-reachability-missing")
-    return defects
-
-
-def _violations(report, parent_uid, parent_net_ns):
-    """Axes on which the report is NOT isolated. Empty == fully isolated. A
-    malformed report (missing mandatory evidence) is itself a set of defects,
-    never a silent pass. Deterministic labels only."""
-    defects = _report_defects(report)
-    if defects:
-        return sorted(defects)
-    axes = []
-    if report["uid"] == parent_uid or report["uid"] == 0:
-        axes.append("uid-not-dropped")
-    if report["net_ns"] == parent_net_ns:
-        axes.append("netns-not-isolated")
-    if report["listener_reachable"] is not False:
-        axes.append("network-reachable")
-    if [k for k in report["env_keys"] if k not in ALLOWED_ENV]:
-        axes.append("env-not-allowlisted")
-    return sorted(axes)
-
-
-def _with_decoys(fn):
-    saved = {k: os.environ.get(k) for k in DECOY_CREDENTIALS}
-    os.environ.update(DECOY_CREDENTIALS)
-    try:
-        return fn()
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
-def _capability_status():
-    """Exercise every primitive the positive checker consumes: parent netns
-    readable, `unshare --user --net` runs, child netns + uid readable. Returns
-    "ok" or a reason. Does NOT judge isolation OUTCOME (a pass-through wrapper
-    that runs but does not isolate is a checker FAILURE, not unavailable)."""
-    if not _net_ns():
-        return "netns-unreadable-parent"
-    probe = ("import os,json;"
-             "print(json.dumps({'uid':os.getuid(),"
-             "'ns':os.readlink('/proc/self/ns/net')}))")
-    try:
-        r = subprocess.run(ISO_WRAPPER + [sys.executable, "-c", probe],
-                           capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
-        return "unshare-unavailable"
-    if r.returncode != 0:
-        return "unshare-rc-" + str(r.returncode)
-    try:
-        d = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return "probe-no-report"
-    if not d.get("ns"):
-        return "netns-unreadable-child"
-    if not isinstance(d.get("uid"), int):
-        return "uid-unreadable"
-    return "ok"
-
-
-def check_runner_design(proof_dir):
-    design = proof_dir / "runner_design.md"
-    if not design.exists():
-        print("runner-design-missing: " + str(design))
-        return False
-    text = design.read_text()
-    lowered = text.lower()
-    for hazard_name, needles in HAZARD_COVERAGE.items():
-        if not any(n in lowered for n in needles):
-            print("runner-design-incomplete: missing coverage of " + hazard_name)
-            return False
-    for pattern in _DESIGN_INVERSIONS:
-        if pattern.search(text):
-            print("runner-design-inverts-hazard: a hazard is asserted enabled/required/disabled")
-            return False
-    return True
-
-
-def check_rubric_isolation(proof_dir):
-    probe = proof_dir / "fixtures" / "rubric_probe.py"
-    if not probe.exists():
-        print("rubric-probe-missing: " + str(probe))
-        return False
-    parent_uid = os.getuid()
-    parent_net_ns = _net_ns()
-
-    def run():
-        listener = _LoopbackListener()
-        try:
-            iso = _run_probe(probe, True, listener.port)
-            raw = _run_probe(probe, False, listener.port)
-        finally:
-            listener.close()
-        return iso, raw
-
-    iso, raw = _with_decoys(run)
-
-    iso_axes = _violations(iso, parent_uid, parent_net_ns)
-    if iso_axes:
-        print("rubric-isolation-failure: " + ",".join(iso_axes))
-        return False
-    raw_axes = _violations(raw, parent_uid, parent_net_ns)
-    for axis in ("uid-not-dropped", "netns-not-isolated",
-                 "network-reachable", "env-not-allowlisted"):
-        if axis not in raw_axes:
-            print("isolation-assertion-vacuous: " + axis + " did not discriminate")
-            return False
-    return True
-
-
 def check_forbidden_ops(proof_dir):
     for path in sorted(proof_dir.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         suffix = path.suffix.lower()
-        if suffix == ".md":  # documentation names the hazards on purpose
+        if suffix == ".md":
             continue
         text = path.read_text(errors="replace")
         if suffix == ".py":
@@ -402,6 +477,42 @@ def check_forbidden_ops(proof_dir):
             label = _text_prohibited(text)
         if label:
             print("forbidden-op: " + str(path.relative_to(proof_dir)) + ": " + label)
+            return False
+    return True
+
+
+# --- isolation check ---------------------------------------------------------
+def check_rubric_isolation(proof_dir):
+    probe = proof_dir / "fixtures" / "rubric_probe.py"
+    if not probe.exists():
+        print("rubric-probe-missing: " + str(probe))
+        return False
+    parent_uid = os.getuid()
+    parent_net_ns = _net_ns()
+    child = [sys.executable, str(probe)]
+
+    def run():
+        listener = _LoopbackListener()
+        try:
+            iso = _observe_child(_iso_launch(child), _allow_env(str(proof_dir), listener.port), listener.port)
+            raw = _observe_child(child, _full_env(str(proof_dir), listener.port), listener.port)
+        finally:
+            listener.close()
+        return iso, raw
+
+    iso, raw = _with_decoys(run)
+
+    iso_axes = _violations(iso, parent_uid, parent_net_ns)
+    if iso_axes:
+        print("rubric-isolation-failure: " + ",".join(iso_axes))
+        return False
+    if iso.get("net_reachable") is True:
+        print("rubric-isolation-failure: network-reachable")
+        return False
+    raw_axes = _violations(raw, parent_uid, parent_net_ns)
+    for axis in ("uid-not-dropped", "netns-not-isolated", "env-not-allowlisted"):
+        if axis not in raw_axes:
+            print("isolation-assertion-vacuous: " + axis + " did not discriminate")
             return False
     return True
 
@@ -422,24 +533,25 @@ def positive(proof_dir):
 
 
 def rubric_neg(probe, proof_dir):
-    """Four-axis negative: run the probe WITHOUT the wrapper; every axis must be
-    breached. Environment-independent (no userns needed for the unwrapped run)."""
+    """Four-axis negative: observe an UN-wrapped child; every parent-observed
+    axis must breach. Requires the isolation capability (reads child /proc)."""
     if not probe.exists():
         print("fixture-missing: " + str(probe))
         return 1
     parent_uid = os.getuid()
     parent_net_ns = _net_ns()
+    child = [sys.executable, str(probe)]
 
     def run():
         listener = _LoopbackListener()
         try:
-            return _run_probe(probe, False, listener.port)
+            return _observe_child(child, _full_env(str(proof_dir), listener.port), listener.port)
         finally:
             listener.close()
 
     axes = _violations(_with_decoys(run), parent_uid, parent_net_ns)
-    if not axes:
-        print("rubric-neg-unexpected-pass: unwrapped probe reported isolated")
+    if not axes or axes == ["observation-failed"]:
+        print("rubric-neg-unexpected: " + (",".join(axes) or "unwrapped child reported isolated"))
         return 1
     print("rubric-isolation-violation: " + ",".join(axes))
     print("exit 1 per contract")
@@ -447,22 +559,21 @@ def rubric_neg(probe, proof_dir):
 
 
 def rubric_neg_cred(fixture, proof_dir):
-    """Frozen seed negative control: run the credential-reading fixture with the
-    allow-list env (credentials absent by construction) and require the exact
-    frozen reason. Environment-independent (tests the env allow-list, not netns)."""
+    """Frozen seed negative control: the credential-reading rubric, run with the
+    allow-list env (credentials absent by construction), must emit the exact
+    frozen reason. Environment-independent (tests the env allow-list)."""
     if not fixture.exists():
         print("fixture-missing: " + str(fixture))
         return 1
     frozen = "rubric-isolation-violation: credential env absent by construction"
 
     def run():
-        with tempfile.TemporaryDirectory(prefix="rubric-cred-") as cwd:
-            try:
-                return subprocess.run(
-                    [sys.executable, str(fixture)], capture_output=True, text=True,
-                    timeout=15, cwd=cwd, env=_probe_env(True, cwd, 0))
-            except (OSError, subprocess.TimeoutExpired):
-                return None
+        env = _allow_env(str(proof_dir), 0)
+        try:
+            return subprocess.run([sys.executable, str(fixture)], capture_output=True,
+                                  text=True, timeout=15, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
 
     result = _with_decoys(run)
     if result is None:
@@ -488,7 +599,6 @@ def main():
         print("       check_eval_hardening.py --rubric-neg <probe> <proof-dir>")
         print("       check_eval_hardening.py --rubric-neg-cred <fixture> <proof-dir>")
         return 1
-
     if argv[0] == "--selftest":
         status = _capability_status()
         print(status)
@@ -503,7 +613,6 @@ def main():
             print("usage: check_eval_hardening.py --rubric-neg-cred <fixture> <proof-dir>")
             return 1
         return rubric_neg_cred(Path(argv[1]).resolve(), Path(argv[2]).resolve())
-
     proof_dir = Path(argv[0]).resolve()
     if not proof_dir.is_dir():
         print("proof-dir-missing: " + str(proof_dir))

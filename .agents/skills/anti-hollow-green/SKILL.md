@@ -51,7 +51,19 @@ expansion.
    resolver + RunConfig-sourced flags threaded to `generate_signals`).**
 3. **Mutation-testing IS the hollow-green detector.** Inject bugs into the code-under-gate; a gate
    that still passes is hollow. Demand BRANCH coverage. A gate surviving no mutants is a tautology
-   — reject it. **3a. Mutants live in tmp/scratchpad COPIES — even inside COMMITTED test
+   — reject it. **3-EQ. Mutate the EQUIVALENCE CLASS, not the named specimen (AF-AP-30, S0-11
+   closed 3× before this stuck).** When a review names cases, the fix and its tests must cover
+   every EQUIVALENT expression of the same defect, or the class re-appears one surface out. For a
+   forbidden-call scan: the aliased import (`import subprocess as sp`), the from-import
+   (`from subprocess import run`), the variable command (`cmd=[…]; run(cmd)`), the variable/computed
+   argument (`mode=0o777`, `0o700|0o077`), the env-defaulted config (`${VAR:-host}`). For a
+   filter: prefix-vs-exact (`RUBRIC_*` is not a closed set), blacklist-vs-allowlist. For a value
+   check: boundary and wrong-type values (`isinstance(True,int)` is true — use `type(x) is int`
+   plus a range). For an evidence source: self-report-vs-external-observation (never trust the
+   subject's own report — a fake wrapper fabricates a clean one; observe from the kernel/parent).
+   And when static scanning is the class's losing game (infinite equivalents), STOP adding
+   synonyms — move the contract to a machine-readable policy field or a runtime-denial test, and
+   state the scan's limits honestly. **3a. Mutants live in tmp/scratchpad COPIES — even inside COMMITTED test
    controls.** A subprocess mutation control must import a tmp copy (PYTHONPATH prepend /
    scratchpad cwd), never rewrite the real module with restore-in-finally: any crash inside the
    window leaves the mutant IN THE TREE (AP-34, 2026-08-25: a committed force-flag-ON control

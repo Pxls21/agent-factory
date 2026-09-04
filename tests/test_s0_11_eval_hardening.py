@@ -1,16 +1,13 @@
 """S0-11: Evaluation hardening conformance tests.
 
 Covers the positive leg, the frozen seed credential control, the four-axis
-negative, and a mutant kill-battery for every hollow green found in two owner
-reviews: pass-through unshare, real credential names, RUBRIC_* wildcard leakage,
-root/missing-field acceptance, os.chmod / subprocess chmod / hostNetwork bool /
-network_mode host, symbolic chmod, forbidden ops hidden in the checker itself,
-and a hazard-inverting design doc.
+negative, and a mutant kill-battery for every hollow green found across three
+owner reviews. The isolation is proven by PARENT observation of the child's
+/proc (never a child self-report), so the fabricated-report class is dead.
 
-Isolation-dependent tests skip via the checker's own ``--selftest`` capability
-predicate (exit 2) where the host cannot create/read the namespaces — the
-isolation proof then runs on the PC/gVisor host. Allow-list, sweep, and design
-tests are environment-independent and run everywhere.
+Every leg that reads a child's namespaces is guarded by the checker's own
+``--selftest`` capability predicate (exit 2 -> skip, run on the PC/gVisor host).
+Allow-list, sweep, and design-policy tests are environment-independent.
 """
 import importlib.util
 import json
@@ -31,6 +28,7 @@ CRED_FIXTURE = PROOF_DIR / "fixtures" / "neg_credential_read.py"
 SPEC = PROOF_DIR / "spec.json"
 SPEC_SCHEMA = REPO / "proofs" / "schemas" / "spec.schema.json"
 FROZEN_REASON = "rubric-isolation-violation: credential env absent by construction"
+FOUR_AXIS_REASON = "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated,uid-not-dropped"
 
 _spec = importlib.util.spec_from_file_location("check_eval_hardening", CHECKER)
 chk = importlib.util.module_from_spec(_spec)
@@ -38,10 +36,8 @@ _spec.loader.exec_module(chk)
 
 
 def _run(*extra_args, env=None):
-    return subprocess.run(
-        [sys.executable, str(CHECKER)] + list(extra_args),
-        capture_output=True, text=True, timeout=60, env=env,
-    )
+    return subprocess.run([sys.executable, str(CHECKER)] + list(extra_args),
+                          capture_output=True, text=True, timeout=60, env=env)
 
 
 def _selftest_rc():
@@ -54,8 +50,7 @@ def _selftest_rc():
 NEEDS_ISO = pytest.mark.skipif(
     _selftest_rc() == 2,
     reason="isolation capability unavailable (--selftest exit 2); the isolation "
-           "proof runs on the PC/gVisor host (NOT run here)",
-)
+           "proof runs on the PC/gVisor host (NOT run here)")
 
 
 def _copy_proof(tmp_path):
@@ -67,8 +62,7 @@ def _copy_proof(tmp_path):
 # --- proof legs --------------------------------------------------------------
 def test_selftest_reports_capability():
     r = _run("--selftest")
-    assert r.returncode in (0, 2)
-    assert r.stdout.strip() != ""
+    assert r.returncode in (0, 2) and r.stdout.strip() != ""
 
 
 @NEEDS_ISO
@@ -79,149 +73,155 @@ def test_positive_conformance():
 
 
 def test_negative_frozen_credential_control():
-    # Frozen seed control (must be preserved verbatim, env-independent).
+    # Frozen seed control (env-only, preserved verbatim, environment-independent).
     r = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert FROZEN_REASON in r.stdout
-    assert "exit 1 per contract" in r.stdout
+    assert FROZEN_REASON in r.stdout and "exit 1 per contract" in r.stdout
 
 
+def test_deterministic_frozen_cred():
+    r1 = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
+    r2 = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
+    assert r1.stdout == r2.stdout and r1.returncode == r2.returncode
+
+
+@NEEDS_ISO
 def test_negative_four_axis_covers_all_axes():
     r = _run("--rubric-neg", str(PROBE), str(PROOF_DIR))
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "rubric-isolation-violation:" in r.stdout
-    for axis in ("uid-not-dropped", "netns-not-isolated",
-                 "network-reachable", "env-not-allowlisted"):
+    for axis in ("uid-not-dropped", "netns-not-isolated", "env-not-allowlisted"):
         assert axis in r.stdout, "axis missing: " + axis
 
 
-def test_deterministic():
+@NEEDS_ISO
+def test_deterministic_four_axis():
     r1 = _run("--rubric-neg", str(PROBE), str(PROOF_DIR))
     r2 = _run("--rubric-neg", str(PROBE), str(PROOF_DIR))
     assert r1.stdout == r2.stdout and r1.returncode == r2.returncode
 
 
-def test_spec_valid_and_honors_frozen_seed_control():
+def test_spec_valid_and_contract_matches_test():
     spec = json.loads(SPEC.read_text())
     jsonschema.validate(spec, json.loads(SPEC_SCHEMA.read_text()))
     assert spec["proof_id"] == "S0-11"
     negatives = [leg for leg in spec["legs"] if leg["leg"] == "negative"]
-    assert len(negatives) >= 2, "need the frozen control AND the four-axis negative"
     reasons = [leg["expect"].get("failure_reason", "") for leg in negatives]
-    assert any(r == FROZEN_REASON for r in reasons), "frozen seed reason must be a leg"
+    assert FROZEN_REASON in reasons, "frozen seed control must be a leg"
+    # canonical contract must be as strong as the test: the complete four-axis reason
+    assert FOUR_AXIS_REASON in reasons, "four-axis leg must pin the complete reason"
 
 
 def test_fixtures_exist():
     assert (PROOF_DIR / "runner_design.md").exists()
-    assert PROBE.exists()
-    assert CRED_FIXTURE.exists()
+    assert PROBE.exists() and CRED_FIXTURE.exists()
 
 
-def test_runner_design_covers_hazards():
-    text = (PROOF_DIR / "runner_design.md").read_text().lower()
-    assert "network isolation" in text or "no host network" in text
-    assert "chmod 777" in text or "permission hardening" in text
-    assert "credential" in text
-    assert "not verified" in text or "filesystem containment" in text
+# --- machine-readable design policy (not prose scanning) ---------------------
+def test_runner_design_policy_forbids_hazards():
+    assert chk.check_runner_design(PROOF_DIR) is True
 
 
-# --- allow-list is a closed exact set, not a prefix wildcard -----------------
+def test_runner_design_ignores_inverted_prose(tmp_path):
+    dst = _copy_proof(tmp_path)
+    (dst / "runner_design.md").write_text(
+        "Network isolation is unnecessary; chmod 777 is mandatory; credential passing is supported.\n\n"
+        "```yaml\npolicy:\n  host_networking: forbidden\n  recursive_chmod_777: forbidden\n"
+        "  production_credential_passing: forbidden\n```\n")
+    assert chk.check_runner_design(dst) is True  # policy is the contract, not prose
+
+
+def test_runner_design_rejects_permissive_policy(tmp_path):
+    dst = _copy_proof(tmp_path)
+    (dst / "runner_design.md").write_text(
+        "```yaml\npolicy:\n  host_networking: allowed\n  recursive_chmod_777: forbidden\n"
+        "  production_credential_passing: forbidden\n```\n")
+    assert chk.check_runner_design(dst) is False
+
+
+def test_runner_design_rejects_missing_policy(tmp_path):
+    dst = _copy_proof(tmp_path)
+    (dst / "runner_design.md").write_text("Prose only, no machine-readable policy block.\n")
+    assert chk.check_runner_design(dst) is False
+
+
+# --- closed exact allow-list -------------------------------------------------
 def test_allowlist_is_closed_exact_set():
     names = ["RUBRIC_PRODUCTION_API_KEY", "OMNIROUTE_INTERNAL_API_KEY", "BUZZ_PRIVATE_KEY"]
     saved = {n: os.environ.get(n) for n in names}
     for n in names:
         os.environ[n] = "sentinel"
     try:
-        env = chk._probe_env(allowlisted=True, cwd="/tmp", port=1)
+        env = chk._allow_env("/tmp", 1)
         for k in env:
             assert k in chk.ALLOWED_ENV, "allow-list leaked: " + k
-        # a RUBRIC_*-named credential must be flagged, not passed by prefix
-        v = chk._violations(
-            {"uid": 65534, "net_ns": "A", "env_keys": sorted(list(env) + ["RUBRIC_PRODUCTION_API_KEY"]),
-             "listener_reachable": False}, 0, "P")
+        v = chk._violations({"uid": 65534, "net_ns": "A", "net_reachable": False,
+                             "env_keys": sorted(list(env) + ["RUBRIC_PRODUCTION_API_KEY"])}, 0, "P")
         assert "env-not-allowlisted" in v
     finally:
         for n, val in saved.items():
-            if val is None:
-                os.environ.pop(n, None)
-            else:
-                os.environ[n] = val
+            os.environ.pop(n, None) if val is None else os.environ.__setitem__(n, val)
 
 
-# --- report validation: root uid and missing evidence ------------------------
-def test_mutant_root_uid_caught():
-    v = chk._violations({"uid": 0, "net_ns": "A", "env_keys": [], "listener_reachable": False}, 1000, "P")
-    assert "uid-not-dropped" in v
-
-
-def test_mutant_missing_report_fields_caught():
-    v = chk._violations({"net_ns": "A", "listener_reachable": False}, 0, "P")
-    assert any(d.startswith("report-") for d in v)
-    v2 = chk._violations({"uid": 65534, "listener_reachable": False, "env_keys": []}, 0, "P")
-    assert "report-netns-missing" in v2
-
-
-# --- isolation mutants (need real capability) --------------------------------
-@NEEDS_ISO
-def test_mutant_passthrough_unshare_caught(tmp_path):
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake = fake_bin / "unshare"
-    fake.write_text('#!/bin/bash\nwhile [[ "$1" == --* || "$1" == "--" ]]; do shift; done\nexec "$@"\n')
-    fake.chmod(0o755)
-    env = dict(os.environ, PATH=str(fake_bin) + os.pathsep + os.environ["PATH"])
-    r = _run(str(PROOF_DIR), env=env)
-    assert r.returncode == 1, r.stdout + r.stderr
-    assert "rubric-isolation-failure:" in r.stdout
+# --- parent observation, not child self-report -------------------------------
+def test_report_validation_root_and_missing():
+    # A report claiming root passes only if it equals neither parent nor 0.
+    assert "uid-not-dropped" in chk._violations({"uid": 0, "net_ns": "A", "net_reachable": False, "env_keys": []}, 1000, "P")
+    assert chk._violations(None, 0, "P") == ["observation-failed"]
 
 
 @NEEDS_ISO
-def test_mutant_real_credential_names_stripped_end_to_end():
-    env = dict(os.environ, BUZZ_PRIVATE_KEY="x", OMNIROUTE_INTERNAL_API_KEY="y",
-               RUBRIC_PRODUCTION_API_KEY="z")
-    r = _run(str(PROOF_DIR), env=env)
-    assert r.returncode == 0, r.stdout + r.stderr
+def test_parent_observes_unwrapped_child_as_breached():
+    # The B5 class: evidence is parent-read from /proc, not child-authored.
+    port = 0
+    obs = chk._with_decoys(lambda: chk._observe_child(
+        [sys.executable, str(PROBE)], chk._full_env(str(PROOF_DIR), port), port))
+    assert obs is not None
+    v = chk._violations(obs, os.getuid(), chk._net_ns())
+    assert "uid-not-dropped" in v and "netns-not-isolated" in v and "env-not-allowlisted" in v
 
 
-# --- structured forbidden-op sweep -------------------------------------------
-def test_mutant_os_chmod_call_caught(tmp_path):
+@NEEDS_ISO
+def test_positive_fails_without_real_isolation(monkeypatch):
+    # If the wrapper does not actually isolate, the parent observation catches it.
+    monkeypatch.setattr(chk, "_iso_launch", lambda child: list(child))
+    r = chk.positive(PROOF_DIR)
+    assert r == 1
+
+
+def test_positive_defers_on_incapable_host(monkeypatch):
+    # Incapable environment: the checker exits 2 (defer to the PC), never a
+    # false pass (0) or a false breach (1).
+    monkeypatch.setattr(chk, "_capability_status", lambda: "netns-unreadable-parent")
+    r = chk.positive(PROOF_DIR)
+    assert r == 2
+
+
+# --- forbidden-op lint: direct + equivalence-class evasions ------------------
+SWEEP_MUTANTS = {
+    "os_chmod_literal": ("h.py", "import os\nos.chmod('/x', 0o777)\n"),
+    "subprocess_direct": ("h.py", "import subprocess\nsubprocess.run(['chmod','-R','0777','/x'])\n"),
+    "subprocess_alias": ("h.py", "import subprocess as sp\nsp.run(['chmod','-R','0777','/x'])\n"),
+    "from_import_run": ("h.py", "from subprocess import run\nrun(['chmod','-R','0777','/x'])\n"),
+    "cmd_variable": ("h.py", "import subprocess\ncmd=['chmod','-R','0777','/x']\nsubprocess.run(cmd)\n"),
+    "mode_variable": ("h.py", "import os\nmode=0o777\nos.chmod('/x', mode)\n"),
+    "computed_mode": ("h.py", "import os\nos.chmod('/x', 0o700 | 0o077)\n"),
+    "hostnetwork_bool": ("pod.yaml", "spec:\n  hostNetwork: True\n"),
+    "network_mode_host": ("c.yml", "services:\n  r:\n    network_mode: host\n"),
+    "network_mode_default": ("c2.yml", "services:\n  r:\n    network_mode: ${NETWORK_MODE:-host}\n"),
+    "chmod_0777_sh": ("h.sh", "#!/bin/sh\nchmod -R 0777 /x\n"),
+    "chmod_symbolic": ("h.sh", "#!/bin/sh\nchmod go+rwx /x\n"),
+}
+
+
+@pytest.mark.parametrize("case", list(SWEEP_MUTANTS))
+def test_sweep_catches_mutant(tmp_path, case):
+    fname, body = SWEEP_MUTANTS[case]
     dst = _copy_proof(tmp_path)
-    (dst / "harden.py").write_text("import os\nos.chmod('/workspace', 0o777)\n")
-    assert chk.check_forbidden_ops(dst) is False
+    (dst / fname).write_text(body)
+    assert chk.check_forbidden_ops(dst) is False, "sweep missed: " + case
 
 
-def test_mutant_subprocess_chmod_caught(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "harden.py").write_text("import subprocess\nsubprocess.run(['chmod','-R','0777','/x'])\n")
-    assert chk.check_forbidden_ops(dst) is False
-
-
-def test_mutant_hostnetwork_bool_yaml_caught(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "pod.yaml").write_text("apiVersion: v1\nspec:\n  hostNetwork: True\n")
-    assert chk.check_forbidden_ops(dst) is False
-
-
-def test_mutant_network_mode_host_yaml_caught(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "compose.yml").write_text("services:\n  rubric:\n    network_mode: host\n")
-    assert chk.check_forbidden_ops(dst) is False
-
-
-def test_mutant_chmod_0777_shell_caught(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "harden.sh").write_text("#!/bin/bash\nchmod -R 0777 /workspace\n")
-    assert chk.check_forbidden_ops(dst) is False
-
-
-def test_mutant_chmod_symbolic_caught(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "harden.sh").write_text("#!/bin/bash\nchmod -R go+rwx /workspace\n")
-    assert chk.check_forbidden_ops(dst) is False
-
-
-def test_mutant_forbidden_op_inside_checker_caught(tmp_path):
-    # No self-exclusion hole: a forbidden call added to the checker copy is caught.
+def test_forbidden_op_inside_checker_caught(tmp_path):
     dst = _copy_proof(tmp_path)
     text = (dst / "check_eval_hardening.py").read_text()
     (dst / "check_eval_hardening.py").write_text(text + "\nimport os as _o\n_o.chmod('/x', 0o777)\n")
@@ -231,8 +231,8 @@ def test_mutant_forbidden_op_inside_checker_caught(tmp_path):
 def test_sweep_scans_yaml_but_not_markdown(tmp_path):
     dst = _copy_proof(tmp_path)
     assert chk.check_forbidden_ops(dst) is True
-    (dst / "notes.md").write_text("Never run chmod 777 or set network_mode: host.\n")
-    assert chk.check_forbidden_ops(dst) is True  # markdown documents hazards
+    (dst / "notes.md").write_text("Never run chmod 777 or network_mode: host.\n")
+    assert chk.check_forbidden_ops(dst) is True
     (dst / "bad.yaml").write_text("network_mode: host\n")
     assert chk.check_forbidden_ops(dst) is False
 
@@ -241,12 +241,3 @@ def test_benign_not_flagged():
     assert chk._python_prohibited("import os\nos.chmod('/x', 0o644)\n") is None
     assert chk._python_prohibited("import subprocess\nsubprocess.run(['ls','-la'])\n") is None
     assert chk._text_prohibited("chmod 755 file") is None
-
-
-# --- design doc inversion guard ----------------------------------------------
-def test_runner_design_rejects_inversion(tmp_path):
-    dst = _copy_proof(tmp_path)
-    (dst / "runner_design.md").write_text(
-        "netns unshare --net; credential isolation strip; permission hardening; chmod 777.\n"
-        "But: network isolation is disabled; chmod 777 is required; credential passing is enabled.\n")
-    assert chk.check_runner_design(dst) is False
