@@ -1,0 +1,29 @@
+{
+  "proof_id": "S0-07",
+  "classification": "execution_proof",
+  "wave": 1,
+  "description": "Fubuki corrections: persona_lint ordering fix, BoundDecision.record_id join, canonical hash stability",
+  "upstream_dependency": {
+    "name": "fubuki-os",
+    "repository": "https://github.com/NerdHerderDani/fubuki-os.git",
+    "commit": "7375e56d6a5dc857bfd43ceccbc09bbc817d575a"
+  },
+  "legs": [
+    {
+      "leg": "positive",
+      "command": "python3 proofs/S0-07/check_fubuki_corrections.py <fubuki-os-root>",
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": "PASS"
+      }
+    },
+    {
+      "leg": "negative",
+      "command": "python3 proofs/S0-07/check_fubuki_corrections.py --lint-check proofs/S0-07/fixtures/neg-violating-persona <fubuki-os-root>",
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "lint-violation: corporate-filler, exit 1 per contract"
+      }
+    }
+  ]
+}

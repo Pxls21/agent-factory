@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #10-#12 (S0-09 Foundry ADR, S0-10 GBrain ADR, S0-12 license/SBOM pin-diff) DONE 2026-09-04 — all 3 conformance-checked decisions complete. Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #9-#12 DONE 2026-09-04: S0-07 Fubuki corrections (first execution proof, 1/7), S0-09 Foundry ADR, S0-10 GBrain ADR, S0-12 license/SBOM pin-diff — all 3 conformance-checked decisions complete. Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
@@ -48,7 +48,7 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | DONE 2026-09-04 — POSITIVE: veth pair + iptables in a dedicated network namespace; four legs all passed (positive: stand-in reached 200, negative-blocked-port: iptables DROP timeout, negative-external: no route, gate-off mutation: blocked port reachable after flushing iptables — de-vacuous). AF-AP-1 respected (NOT bare unshare --net). S0-05 mechanism proven, containment unproven per map-egress-s005 | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
 | s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | pending | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
 | s0-08-s0-02-buzz-auth | #8 S0-02 Buzz authorization (four DISTINCT denials) | pending | s0-02 | one turn on allowed; four named denials |
-| s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | pending | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
+| s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | DONE 2026-09-04 — exercises real fubuki-os at pinned commit `7375e56d`; (1) persona_lint ordering bug reproduced (review-first→exit 2) and wrapped (corrected exit logic→exit 1); (2) BoundDecision.record_id join proven (approved + rejected records, id matches, reasons present on denied); (3) canonical JSON hash stable ×2, mutation changes hash. Negative: violating persona fixture → `lint-violation: corporate-filler, exit 1 per contract` rc=1; 6 pytest tests green ×2 | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
 | s0-10-s0-09-foundry-adr | #10 S0-09 ADR + conformance shell | DONE 2026-09-04 — ADR 0005 accepted (first-party minimal translator; OpenHarness not a runtime dep); conformance checker validates 4 required sections + JIT 5-file list; negative fixture (missing Consequences) → `adr-incomplete: missing required section: Consequences` rc=1; 5 pytest tests green ×2 | s0-02 | section removal → RED |
 | s0-11-s0-10-gbrain-adr | #11 S0-10 ADR + conformance shell | DONE 2026-09-04 — ADR 0006 accepted (wrap pinned GBrain dream machinery); checker validates 4 required sections + credential-isolation statement + proposal-only contract; negative fixture (credential statement stripped) → `adr-incomplete: missing credential-isolation statement` rc=1; 4 pytest tests green ×2 | s0-02 | credential-isolation statement removal → RED |
 | s0-12-s0-12-license-sbom | #12 S0-12 license/notices/SBOM pin-diff shell | DONE 2026-09-04 — SBOM.yaml (22 components, pins match upstream.lock.yaml), THIRD-PARTY-NOTICES.md, LICENSE-DECISION.md (pending owner choice), update procedure documented; checker validates file existence + pin equality + update-procedure presence; negative fixture (mutated hermes-agent pin) → `sbom-pin-drift: pin differs from upstream.lock.yaml for hermes-agent` rc=1; 5 pytest tests green ×2 | s0-02 | pin mutation → RED |
@@ -63,6 +63,19 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-04 sync (Wave 1 increment #9 S0-07 DONE):** First execution proof against a real
+upstream dependency. Checker exercises pinned fubuki-os (`7375e56d`) directly via sys.path import
+(zero external deps). Three assertions: (1) persona_lint ordering bug reproduced — REVIEW-first
+file order gives upstream exit 2 despite VIOLATION findings; corrected exit logic wraps it to
+exit 1. (2) BoundDecision.record_id join — evaluate_record returns decisions whose record_id
+matches the source MemoryRecord.record_id; approved record passes all filters, proposed record
+is denied with status reason. (3) Canonical JSON hash (hash_obj) stable ×2 on identical input;
+single-field mutation produces a different hash. Negative control: fixture with corporate-filler
++ closing-filler → `lint-violation: corporate-filler, exit 1 per contract` rc=1. 6 pytest
+tests green ×2 (includes upstream-bug-reproduction test). Execution denominator: 1/7 complete.
+
+`s0-09-s0-07-fubuki` closed.
 
 **2026-09-04 sync (Wave 1 increment #12 S0-12 DONE):** Third and final conformance-checked
 decision proof. SBOM.yaml created with 22 component pins mechanically derived from
