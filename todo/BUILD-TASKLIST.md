@@ -81,7 +81,13 @@ limits are stated — the boundary is the runtime isolation + gVisor, not a comp
 (4) the spec pins the COMPLETE four-axis reason (canonical contract ≥ the strongest test). (5) every
 namespace-reading leg is `--selftest`-gated and a test proves the incapable path exits 2 (defer,
 never a false pass/breach) — the round-2 "2 failed" was an ungated leg. `isinstance(True,int)` /
-`uid:-1` are dissolved (uid parsed from /proc). 32 S0-11 tests, 142 full suite, ×2 deterministic;
+`uid:-1` are dissolved (uid parsed from /proc). **CI on the first round-3 push caught a
+self-inflicted venue bug** (the same "test both venues" rule this increment baked): the checker
+asserted `uid != parent`, which passes only as root; the non-root ubuntu runner failed
+`uid-not-dropped`. Fixed — the invariant is `uid != 0` (never root, never `!= parent`; a non-root
+runner's rubric inherits its non-root uid), the uid-drop discrimination is gated to a root venue,
+and `test_positive_conformance_non_root_venue` (setpriv-simulated) exercises the CI path
+in-sandbox. Both venues green. 33 S0-11 tests, 144 full suite, ×2 deterministic;
 3-leg result.json; ledger integrity green; `execution_proof` 1 of 7. Registry: AF-AP-24/25/26
 extended, AF-AP-28 (trust the subject's self-report), AF-AP-29 (contract weaker than the test),
 AF-AP-30 (specimen-only remediation) added; bakes to `anti-hollow-green` (equivalence-class mutants)

@@ -27,7 +27,7 @@
       "timeout_s": 60,
       "expect": {
         "exit_code": 1,
-        "failure_reason": "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated,uid-not-dropped"
+        "failure_reason": "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated"
       }
     }
   ]

@@ -28,7 +28,9 @@ CRED_FIXTURE = PROOF_DIR / "fixtures" / "neg_credential_read.py"
 SPEC = PROOF_DIR / "spec.json"
 SPEC_SCHEMA = REPO / "proofs" / "schemas" / "spec.schema.json"
 FROZEN_REASON = "rubric-isolation-violation: credential env absent by construction"
-FOUR_AXIS_REASON = "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated,uid-not-dropped"
+# The canonical negative reason is the VENUE-STABLE pair (netns, env); the uid
+# axis is venue-dependent (a non-root runner cannot produce a root child).
+STABLE_NEG_REASON = "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated"
 
 _spec = importlib.util.spec_from_file_location("check_eval_hardening", CHECKER)
 chk = importlib.util.module_from_spec(_spec)
@@ -72,6 +74,21 @@ def test_positive_conformance():
     assert r.stdout.strip() == "PASS"
 
 
+@NEEDS_ISO
+@pytest.mark.skipif(os.getuid() != 0 or not os.path.exists("/usr/bin/setpriv"),
+                    reason="non-root venue simulation needs a root runner + setpriv")
+def test_positive_conformance_non_root_venue():
+    # The 'test every leg under BOTH venues' rule: reproduce a non-root runner
+    # (the CI/production service user) by dropping to nobody. `uid != parent`
+    # would (wrongly) fire here; the correct invariant `uid != 0` passes.
+    r = subprocess.run(
+        ["/usr/bin/setpriv", "--reuid", "65534", "--regid", "65534", "--clear-groups",
+         "--", sys.executable, str(CHECKER), str(PROOF_DIR)],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, "non-root venue failed: " + r.stdout + r.stderr
+    assert r.stdout.strip() == "PASS"
+
+
 def test_negative_frozen_credential_control():
     # Frozen seed control (env-only, preserved verbatim, environment-independent).
     r = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
@@ -86,10 +103,11 @@ def test_deterministic_frozen_cred():
 
 
 @NEEDS_ISO
-def test_negative_four_axis_covers_all_axes():
+def test_negative_covers_stable_axes():
     r = _run("--rubric-neg", str(PROBE), str(PROOF_DIR))
     assert r.returncode == 1, r.stdout + r.stderr
-    for axis in ("uid-not-dropped", "netns-not-isolated", "env-not-allowlisted"):
+    assert STABLE_NEG_REASON in r.stdout
+    for axis in ("netns-not-isolated", "env-not-allowlisted"):
         assert axis in r.stdout, "axis missing: " + axis
 
 
@@ -107,8 +125,8 @@ def test_spec_valid_and_contract_matches_test():
     negatives = [leg for leg in spec["legs"] if leg["leg"] == "negative"]
     reasons = [leg["expect"].get("failure_reason", "") for leg in negatives]
     assert FROZEN_REASON in reasons, "frozen seed control must be a leg"
-    # canonical contract must be as strong as the test: the complete four-axis reason
-    assert FOUR_AXIS_REASON in reasons, "four-axis leg must pin the complete reason"
+    # canonical contract must be as strong as the test: the complete stable reason
+    assert STABLE_NEG_REASON in reasons, "four-axis leg must pin the complete stable reason"
 
 
 def test_fixtures_exist():
@@ -155,7 +173,7 @@ def test_allowlist_is_closed_exact_set():
         for k in env:
             assert k in chk.ALLOWED_ENV, "allow-list leaked: " + k
         v = chk._violations({"uid": 65534, "net_ns": "A", "net_reachable": False,
-                             "env_keys": sorted(list(env) + ["RUBRIC_PRODUCTION_API_KEY"])}, 0, "P")
+                             "env_keys": sorted(list(env) + ["RUBRIC_PRODUCTION_API_KEY"])}, "P")
         assert "env-not-allowlisted" in v
     finally:
         for n, val in saved.items():
@@ -164,9 +182,11 @@ def test_allowlist_is_closed_exact_set():
 
 # --- parent observation, not child self-report -------------------------------
 def test_report_validation_root_and_missing():
-    # A report claiming root passes only if it equals neither parent nor 0.
-    assert "uid-not-dropped" in chk._violations({"uid": 0, "net_ns": "A", "net_reachable": False, "env_keys": []}, 1000, "P")
-    assert chk._violations(None, 0, "P") == ["observation-failed"]
+    # A root child is a violation (the unprivileged invariant is uid != 0).
+    assert "uid-is-root" in chk._violations({"uid": 0, "net_ns": "A", "net_reachable": False, "env_keys": []}, "P")
+    # A non-root child in a fresh netns with a clean env is isolated.
+    assert chk._violations({"uid": 65534, "net_ns": "A", "net_reachable": False, "env_keys": []}, "P") == []
+    assert chk._violations(None, "P") == ["observation-failed"]
 
 
 @NEEDS_ISO
@@ -176,8 +196,10 @@ def test_parent_observes_unwrapped_child_as_breached():
     obs = chk._with_decoys(lambda: chk._observe_child(
         [sys.executable, str(PROBE)], chk._full_env(str(PROOF_DIR), port), port))
     assert obs is not None
-    v = chk._violations(obs, os.getuid(), chk._net_ns())
-    assert "uid-not-dropped" in v and "netns-not-isolated" in v and "env-not-allowlisted" in v
+    v = chk._violations(obs, chk._net_ns())
+    assert "netns-not-isolated" in v and "env-not-allowlisted" in v
+    if os.getuid() == 0:  # uid axis discriminates only on a root venue
+        assert "uid-is-root" in v
 
 
 @NEEDS_ISO

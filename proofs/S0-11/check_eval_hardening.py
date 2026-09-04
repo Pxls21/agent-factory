@@ -197,14 +197,17 @@ def _observe_child(launch, env, port):
         _release(proc)
 
 
-def _violations(obs, parent_uid, parent_net_ns):
+def _violations(obs, parent_net_ns):
     """Axes on which the PARENT-OBSERVED state is not isolated. Empty ==
-    isolated. Deterministic labels only."""
+    isolated. The unprivileged invariant is `uid != 0` (never root) — NOT
+    `uid != parent`: a non-root runner cannot change its child's host uid, so
+    the rubric legitimately inherits the runner's own non-root uid. Deterministic
+    labels only."""
     if obs is None:
         return ["observation-failed"]
     axes = []
-    if obs["uid"] == parent_uid or obs["uid"] == 0:
-        axes.append("uid-not-dropped")
+    if obs["uid"] == 0:
+        axes.append("uid-is-root")
     if not obs["net_ns"] or obs["net_ns"] == parent_net_ns:
         axes.append("netns-not-isolated")
     if [k for k in obs["env_keys"] if k not in ALLOWED_ENV]:
@@ -502,15 +505,23 @@ def check_rubric_isolation(proof_dir):
 
     iso, raw = _with_decoys(run)
 
-    iso_axes = _violations(iso, parent_uid, parent_net_ns)
+    iso_axes = _violations(iso, parent_net_ns)
     if iso_axes:
         print("rubric-isolation-failure: " + ",".join(iso_axes))
         return False
     if iso.get("net_reachable") is True:
         print("rubric-isolation-failure: network-reachable")
         return False
-    raw_axes = _violations(raw, parent_uid, parent_net_ns)
-    for axis in ("uid-not-dropped", "netns-not-isolated", "env-not-allowlisted"):
+    # Non-vacuity: netns and env ALWAYS discriminate (the wrapper creates a fresh
+    # netns and the allow-list strips env). The uid axis discriminates only on a
+    # ROOT venue, where the un-wrapped child is root and the wrapper drops it; a
+    # non-root runner cannot produce a root child to test against, and its rubric
+    # inherits the runner's own non-root uid.
+    raw_axes = _violations(raw, parent_net_ns)
+    required = ["env-not-allowlisted", "netns-not-isolated"]
+    if parent_uid == 0:
+        required.append("uid-is-root")
+    for axis in required:
         if axis not in raw_axes:
             print("isolation-assertion-vacuous: " + axis + " did not discriminate")
             return False
@@ -538,7 +549,6 @@ def rubric_neg(probe, proof_dir):
     if not probe.exists():
         print("fixture-missing: " + str(probe))
         return 1
-    parent_uid = os.getuid()
     parent_net_ns = _net_ns()
     child = [sys.executable, str(probe)]
 
@@ -549,11 +559,16 @@ def rubric_neg(probe, proof_dir):
         finally:
             listener.close()
 
-    axes = _violations(_with_decoys(run), parent_uid, parent_net_ns)
-    if not axes or axes == ["observation-failed"]:
+    # The negative control reports only the VENUE-STABLE axes (netns, env), which
+    # an un-wrapped child breaches on every host — so the canonical spec pins a
+    # complete, venue-independent reason. (The uid axis is venue-dependent and is
+    # exercised by the positive check's non-vacuity gate on a root venue.)
+    axes = _violations(_with_decoys(run), parent_net_ns)
+    stable = [a for a in axes if a in ("env-not-allowlisted", "netns-not-isolated")]
+    if len(stable) < 2:
         print("rubric-neg-unexpected: " + (",".join(axes) or "unwrapped child reported isolated"))
         return 1
-    print("rubric-isolation-violation: " + ",".join(axes))
+    print("rubric-isolation-violation: " + ",".join(stable))
     print("exit 1 per contract")
     return 1
 

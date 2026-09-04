@@ -43,14 +43,20 @@ same preflight.
 
 ### 3.1 UID drop (least privilege), parent-observed
 
-The rubric runs as a REAL non-root uid, and the parent reads the child's real
-host uid from `/proc/<pid>/status` — asserting `!= parent uid` AND `!= 0`. The
-launch differs by venue: as root, `unshare --net` creates the netns and
-`setpriv --reuid=65534 --regid=65534 --clear-groups` drops privilege; as a
+The rubric runs as a non-root uid, and the parent reads the child's real host
+uid from `/proc/<pid>/status` — asserting `!= 0` (never root). It is deliberately
+NOT `!= parent uid`: a non-root runner cannot change its child's host uid (that
+needs root), so the rubric legitimately INHERITS the runner's own non-root uid,
+and `uid != parent` would wrongly fail there. The launch differs by venue: as
+root, `unshare --net` creates the netns and `setpriv --reuid=65534
+--regid=65534 --clear-groups` performs a REAL privilege drop (root→nobody); as a
 non-root service user (production, CI), `unshare --user --net` keeps the
-runner's own non-root host uid. The child's own `getuid()` is deliberately NOT
-used: under a bare user namespace it reports an unprivileged id while the host
-uid stays root, so it is not evidence of a drop.
+runner's own non-root host uid, which already satisfies `uid != 0`. The child's
+own `getuid()` is never used: under a bare user namespace it reports an
+unprivileged id while the host uid is unchanged, so it is not evidence. The
+uid-drop DISCRIMINATION (that the check would catch a root rubric) is exercised
+by the non-vacuity gate only on a root venue, where an un-wrapped child is
+actually root; the netns and env axes discriminate on every venue.
 
 ### 3.2 Network isolation (no host networking), parent-observed
 

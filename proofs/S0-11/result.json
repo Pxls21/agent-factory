@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-11",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-04T11:21:37.471575Z",
+  "recorded_at": "2026-09-04T11:33:50.588867Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-11/check_eval_hardening.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T11:21:37.142396Z",
-      "finished_at": "2026-09-04T11:21:37.333160Z",
+      "started_at": "2026-09-04T11:33:50.271739Z",
+      "finished_at": "2026-09-04T11:33:50.454692Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "proofs/S0-11/fixtures/neg_credential_read.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T11:21:37.333368Z",
-      "finished_at": "2026-09-04T11:21:37.392779Z",
+      "started_at": "2026-09-04T11:33:50.454904Z",
+      "finished_at": "2026-09-04T11:33:50.512146Z",
       "exit_code": 1,
       "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -41,10 +41,10 @@
         "proofs/S0-11/fixtures/rubric_probe.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T11:21:37.393005Z",
-      "finished_at": "2026-09-04T11:21:37.471506Z",
+      "started_at": "2026-09-04T11:33:50.512359Z",
+      "finished_at": "2026-09-04T11:33:50.588804Z",
       "exit_code": 1,
-      "stdout_sha256": "42a7d98213f1c6fffaff4d69a4c1730425751c6da7bed76d748838221bf92591",
+      "stdout_sha256": "d206890ee8739d29e74e824c80bc8e74eedc7f81bdb64b34efc9f22e6af30e08",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
@@ -53,5 +53,5 @@
     "expected_failure_reason": "rubric-isolation-violation: credential env absent by construction",
     "observed_failure_reason": "rubric-isolation-violation: credential env absent by construction"
   },
-  "digest": "4890bb5c7fd610dddc555dcf4e42a47370198b64164e1aa558d840b6bee19d7f"
+  "digest": "68e9678ce10be335ebe2029bdc70000c68c7aeaebc8d84a49044fe0b4c46aeb6"
 }
