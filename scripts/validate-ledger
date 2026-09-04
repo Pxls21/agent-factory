@@ -49,17 +49,28 @@ def canonical_digest(value):
     ).hexdigest()
 
 
+ATTESTATION_CLOSURE = ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml")
+
+
 def proof_attestation(root, proof_id):
-    """Map every INPUT file under the proof directory (checker source, spec,
-    fixtures, design) to its sha256 — the produced artifacts (result.json,
-    blocked.json) and __pycache__ excluded. Recorded in the artifact by the
-    runner and re-derived here from the tree; any divergence means the artifact
-    is no longer bound to the code/spec/fixtures that produced it (a neutered
-    checker with a stale green artifact fails this, where the schema+digest
-    checks alone passed). Paths are relative to `root` and sorted."""
-    proof_dir = Path(root) / "proofs" / proof_id
+    """Map every input that DETERMINES this proof's verdict to its sha256: the
+    proof-local inputs (checker source, spec, fixtures, design) AND the shared
+    TRUST CLOSURE that runs and validates it — the canonical runner, this
+    validator, the registry, and the JSON schemas. Recorded in the artifact by
+    the runner and re-derived here from the tree; any divergence means the
+    artifact is no longer bound to the code that produced OR checks it (a
+    neutered checker OR a mutated runner/validator with a stale green artifact
+    fails this, where the schema+digest checks alone passed). A file the recorded
+    attestation names but the tree lacks still fails — the recorded key has no
+    match. Paths are relative to `root`; result.json/blocked.json/__pycache__
+    excluded; a closure file absent from a minimal (test) root is simply skipped,
+    so both sides compute the same set over that root."""
+    root = Path(root)
+    paths = [root / rel for rel in ATTESTATION_CLOSURE]
+    paths += sorted((root / "proofs" / "schemas").glob("*.json"))
+    paths += sorted((root / "proofs" / proof_id).rglob("*"))
     attestation = {}
-    for path in sorted(proof_dir.rglob("*")):
+    for path in paths:
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         if path.name in ("result.json", "blocked.json"):
@@ -261,6 +272,38 @@ def _artifact_states(root, registry, schemas, findings):
                     )
                     findings.add(f"attestation-mismatch: {proof_id} {changed[0] if changed else ''}".rstrip())
                     valid = False
+            # Bind the recorded runs to the ATTESTED spec: the legs the runner
+            # recorded must BE the spec's legs — same count and order, same
+            # leg-type, same command, same expected exit code, and each negative
+            # leg's recorded reason must carry the spec's failure_reason. A forged
+            # artifact that swaps the positive command for `/usr/bin/true` and
+            # recomputes its own digest no longer matches the (attested) spec.
+            if isinstance(runs, list):
+                spec_path = root / "proofs" / proof_id / "spec.json"
+                try:
+                    spec_legs = _load_json(spec_path).get("legs")
+                except Exception as error:
+                    findings.add(f"runs-spec-unreadable: {proof_id} {error}")
+                    spec_legs = None
+                    valid = False
+                if isinstance(spec_legs, list):
+                    if len(runs) != len(spec_legs):
+                        findings.add(
+                            f"runs-spec-mismatch: {proof_id} recorded {len(runs)} legs, spec has {len(spec_legs)}"
+                        )
+                        valid = False
+                    else:
+                        for index, (run, leg) in enumerate(zip(runs, spec_legs)):
+                            expect = leg.get("expect", {}) if isinstance(leg, dict) else {}
+                            if (run.get("leg") != leg.get("leg")
+                                    or run.get("cmd") != leg.get("cmd")
+                                    or run.get("exit_code") != expect.get("exit_code")):
+                                findings.add(f"runs-spec-mismatch: {proof_id} leg {index}")
+                                valid = False
+                            reason = expect.get("failure_reason")
+                            if reason and reason not in (run.get("failure_reason") or ""):
+                                findings.add(f"runs-spec-reason-mismatch: {proof_id} leg {index}")
+                                valid = False
             states[proof_id] = "PRESENT" if valid else "INVALID"
         elif blocked_path.exists():
             try:

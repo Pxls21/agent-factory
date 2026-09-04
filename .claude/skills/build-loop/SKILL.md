@@ -170,8 +170,13 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    S0-11 cycle-5): work the owner is actively reviewing is not closed until the OWNER accepts —
    the coordinator never self-records "closed"/"re-closed" for it, in the ledger or the task DB.**
    The verification level in the chat handoff and the tracked status must agree; a ledger that
-   claims closure while the handoff says review-pending is a hollow green in the tracker (mechanize
-   it where you can — e.g. a ledger-vocabulary guard in the repo's own verify script).
+   claims closure while the handoff says review-pending is a hollow green in the tracker. **Mechanize
+   it as a STATE guard, not a vocabulary ban (S0-11 cycle-6, AF-AP-32):** a guard that rejects only
+   the word "re-closed" still passes a "DONE by coordinator" row. Parse a single canonical status
+   marker per item, require REVIEW-PENDING (or ACCEPTED with a committed owner-acceptance record),
+   and fail on DONE/CLOSED/a deleted marker/conflicting duplicates — with negative tests for each.
+   A regex vocabulary check is not a semantic state guard (the same regex-vs-parser class as a
+   security scan that greps where it must parse).
 
 **Addendum — a DELTA gate meeting OLD code is a full-tree audit in disguise (2026-09-03,
 agent-factory port).** Delta gates (pyflakes delta, the anti-pattern screen on ADDED lines) never

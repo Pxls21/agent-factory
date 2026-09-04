@@ -61,15 +61,12 @@ if ! grep -q 'role: sole_stock_production_workhorse' \
   exit 1
 fi
 
-# Review-pending state, enforced mechanically (AF-AP-32): a proof the owner
-# reopened for review stays REVIEW-PENDING until the owner accepts it. The
-# coordinator must never record its OWN closure ("re-closed") — status must not
-# run ahead of owner acceptance. The build ledger is the drift site the owner
-# caught, so the banned self-closure word cannot reappear there.
-if grep -niE 're-?closed' "${repo_root}/todo/BUILD-TASKLIST.md"; then
-  echo "BUILD-TASKLIST records a proof as 're-closed': a proof the owner reopened is REVIEW-PENDING until the owner accepts it; the coordinator never self-records closure (AF-AP-32)" >&2
-  exit 1
-fi
+# Review-pending state, enforced mechanically as a STATE guard, not a vocabulary
+# ban (AF-AP-32): parse the canonical per-proof status markers and require
+# REVIEW-PENDING until an owner-acceptance record exists. This rejects DONE /
+# CLOSED / a deleted marker / conflicting duplicate rows — not only the one
+# "re-closed" word an earlier vocabulary check happened to block.
+python3 "${repo_root}/scripts/check-proof-status.py" "${repo_root}" || exit 1
 
 if git -C "${repo_root}" rev-parse --git-dir >/dev/null 2>&1; then
   git -C "${repo_root}" diff --check

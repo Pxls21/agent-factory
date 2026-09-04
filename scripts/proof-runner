@@ -131,9 +131,25 @@ def _remove(path):
 def run_proof(root, proof_id, venue):
     proof_dir = root / "proofs" / proof_id
     result_path = proof_dir / "result.json"
+    try:
+        _run_proof(root, proof_id, venue, proof_dir, result_path)
+    except Deferred:
+        # Incapable venue: PRESERVE the capable-venue artifact untouched.
+        raise
+    except Exception:
+        # A real capable-run FAILURE invalidates the stale artifact — otherwise a
+        # mutated runner that makes the proof fail leaves the previous green in
+        # place and the validator still reports PRESENT. Only an explicit defer
+        # preserves.
+        _remove(result_path)
+        raise
+
+
+def _run_proof(root, proof_id, venue, proof_dir, result_path):
     # Do NOT remove the existing artifact up front: an incapable venue must
     # DEFER without destroying the capable-venue proof. The artifact is
-    # overwritten only on a fully successful run (see the end of this function).
+    # overwritten only on a fully successful run (see the end of this function);
+    # a real failure removes it in the run_proof wrapper above.
     spec = _load_json(proof_dir / "spec.json")
     _validate(spec, root / "proofs" / "schemas" / "spec.schema.json")
     if spec["proof_id"] != proof_id:
@@ -181,6 +197,10 @@ def run_proof(root, proof_id, venue):
             )
             if observed_reason is None:
                 raise ValueError(f"negative-control-unmet: {proof_id}")
+            # Record each negative leg's observed reason ON the run, so the
+            # validator can bind it to the spec's failure_reason (not just the
+            # single primary negative_control block below).
+            run["failure_reason"] = observed_reason
             if negative_control is None:
                 negative_control = {
                     "fixture": " ".join(leg["cmd"]),

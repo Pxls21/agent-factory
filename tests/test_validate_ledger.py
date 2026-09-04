@@ -4,6 +4,8 @@ The integrity negatives are intentionally authored before their positive control
 All mutations happen in temporary copies; the repository never gains fake proof artifacts.
 """
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 import pathlib
@@ -91,17 +93,22 @@ def _result(proof_id="S0-01", classification="execution_proof"):
     }
 
 
+def _load_validator():
+    loader = importlib.machinery.SourceFileLoader("stage0_validate_ledger", str(CLI))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
 def _attested(root, proof_id, result):
-    """Seed a proof input file and stamp the result with a matching attestation
-    (now a required, tree-bound field: the validator re-derives it from the proof
-    directory, so a PRESENT artifact must carry the digests of its inputs)."""
+    """Seed a proof input file and stamp the result with a matching attestation,
+    computed by the REAL validator so it covers the whole trust closure (runner,
+    validator, registry, schemas, proof-local inputs) that the validator will
+    re-derive from this root."""
     proof_dir = root / "proofs" / proof_id
     proof_dir.mkdir(parents=True, exist_ok=True)
-    source = proof_dir / "spec.json"
-    source.write_text(json.dumps({"proof_id": proof_id}) + "\n")
-    result["attestation"] = {
-        str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
-    }
+    (proof_dir / "spec.json").write_text(json.dumps({"proof_id": proof_id}) + "\n")
+    result["attestation"] = _load_validator().proof_attestation(root, proof_id)
     return result
 
 
@@ -418,6 +425,69 @@ def test_attestation_mismatch_flips_present_to_invalid(tmp_path):
     out = _run(root).stdout
     assert "S0-01 PRESENT" not in out
     assert "attestation-mismatch: S0-01 proofs/S0-01/spec.json" in out
+
+
+def test_forged_command_fails_runs_spec_binding(tmp_path):
+    # The recorded runs must BE the attested spec's legs. Forging the positive
+    # command (to /usr/bin/true) and recomputing the self-digest no longer
+    # passes: the runs no longer match the spec.
+    root = _copy_contract(tmp_path)
+    result = _attested(root, "S0-01", _result())
+    spec = {"proof_id": "S0-01", "legs": [
+        {"leg": "positive", "cmd": result["runs"][0]["cmd"], "cwd": ".", "timeout_s": 60,
+         "expect": {"exit_code": 0}},
+        {"leg": "negative", "cmd": result["runs"][1]["cmd"], "cwd": ".", "timeout_s": 60,
+         "expect": {"exit_code": 1, "failure_reason": "boom"}}]}
+    (root / "proofs" / "S0-01" / "spec.json").write_text(json.dumps(spec) + "\n")
+    result["runs"][1]["failure_reason"] = "boom"
+    result["digest"] = hashlib.sha256(
+        json.dumps(result["runs"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    result["attestation"] = _load_validator().proof_attestation(root, "S0-01")
+    _write_json(root / "proofs" / "S0-01" / "result.json", result)
+    assert "S0-01 PRESENT" in _run(root).stdout  # honest baseline
+
+    forged = json.loads((root / "proofs" / "S0-01" / "result.json").read_text())
+    forged["runs"][0]["cmd"] = ["/usr/bin/true"]
+    forged["digest"] = hashlib.sha256(
+        json.dumps(forged["runs"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    _write_json(root / "proofs" / "S0-01" / "result.json", forged)
+    out = _run(root).stdout
+    assert "S0-01 PRESENT" not in out
+    assert "runs-spec-mismatch: S0-01 leg 0" in out
+
+
+def test_negative_reason_bound_to_spec(tmp_path):
+    # A recorded negative leg whose reason does not carry the spec's
+    # failure_reason fails, even with a matching command and exit code.
+    root = _copy_contract(tmp_path)
+    result = _attested(root, "S0-01", _result())
+    spec = {"proof_id": "S0-01", "legs": [
+        {"leg": "positive", "cmd": result["runs"][0]["cmd"], "cwd": ".", "timeout_s": 60,
+         "expect": {"exit_code": 0}},
+        {"leg": "negative", "cmd": result["runs"][1]["cmd"], "cwd": ".", "timeout_s": 60,
+         "expect": {"exit_code": 1, "failure_reason": "the-required-reason"}}]}
+    (root / "proofs" / "S0-01" / "spec.json").write_text(json.dumps(spec) + "\n")
+    result["runs"][1]["failure_reason"] = "a-different-reason"  # does not carry the spec reason
+    result["digest"] = hashlib.sha256(
+        json.dumps(result["runs"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    result["attestation"] = _load_validator().proof_attestation(root, "S0-01")
+    _write_json(root / "proofs" / "S0-01" / "result.json", result)
+    out = _run(root).stdout
+    assert "S0-01 PRESENT" not in out
+    assert "runs-spec-reason-mismatch: S0-01 leg 1" in out
+
+
+def test_registry_mutation_breaks_attestation(tmp_path):
+    # The attestation extends to the shared trust closure: mutating the registry
+    # (not the proof directory) still breaks the binding.
+    root = _copy_contract(tmp_path)
+    _write_json(root / "proofs" / "S0-01" / "result.json", _attested(root, "S0-01", _result()))
+    assert "S0-01 PRESENT" in _run(root).stdout
+    registry = root / "proofs" / "registry.yaml"
+    registry.write_text(registry.read_text() + "\n# tampered\n")
+    out = _run(root).stdout
+    assert "S0-01 PRESENT" not in out
+    assert "attestation-mismatch: S0-01 proofs/registry.yaml" in out
 
 
 def test_registry_matches_seed_classes_and_counts():

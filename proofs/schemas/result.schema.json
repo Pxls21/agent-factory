@@ -59,6 +59,7 @@
         "exit_code": {"type": "integer"},
         "stdout_sha256": {"$ref": "#/$defs/sha256"},
         "stderr_sha256": {"$ref": "#/$defs/sha256"},
+        "failure_reason": {"type": "string", "minLength": 1},
         "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
       }
     }

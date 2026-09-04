@@ -155,7 +155,20 @@ expansion.
    this green survive the real component being replaced by a no-op?" — and on an incapable venue
    where re-execution is impossible, the artifact must be regenerated on a CAPABLE one and the
    incapable check verifies the source binding, never a frozen self-hash. A validator that never
-   re-derives from source is trusting a frozen lie.
+   re-derives from source is trusting a frozen lie. **The binding must be the COMPLETE trust
+   closure, not the named files (S0-11 cycle-6, AF-AP-30 recurrence-6):** a first attestation
+   that hashed only the proof-local inputs left the RUNNER and the VALIDATOR un-attested, so
+   mutating the runner (every leg → `/usr/bin/true`) made the run fail while the stale green
+   survived, and the validator still said PRESENT. Attest EVERYTHING that produces OR checks the
+   verdict — the runner, the validator, the registry, the schemas — so a tooling mutation flips
+   the artifact INVALID. Two siblings in the same class: (a) **bind the recorded run to the
+   attested spec** — a result that records its own commands is forgeable (swap the positive
+   command for `/usr/bin/true`, recompute the self-digest) until the validator checks the runs
+   against the spec one-for-one (count, order, command, exit, each negative reason); a self-digest
+   proves internal consistency, never fidelity to the contract. (b) **never preserve an artifact
+   across a real failure** — an artifact is kept ONLY for an explicit capability-defer; a genuine
+   run failure must INVALIDATE (remove) it, or a mutated producer that makes the proof fail leaves
+   the previous green in place.
 14. **A NAMED PROPERTY is not a USABLE contract — prove the property end-to-end (AF-AP-30
    recurrence-5, S0-11 cycle-5).** "The rubric gets a separate cwd" was satisfied by a
    root-owned `0700` temp dir the dropped uid could neither write nor collect from, deleted

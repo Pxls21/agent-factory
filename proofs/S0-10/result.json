@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-10",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-04T14:48:03.769251Z",
+  "recorded_at": "2026-09-04T16:48:47.575934Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-10/check_conformance.py",
         "docs/adr/0006-gbrain-seam.md"
       ],
-      "started_at": "2026-09-04T14:48:03.724739Z",
-      "finished_at": "2026-09-04T14:48:03.745479Z",
+      "started_at": "2026-09-04T16:48:47.524364Z",
+      "finished_at": "2026-09-04T16:48:47.549242Z",
       "exit_code": 0,
       "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,11 +24,12 @@
         "proofs/S0-10/check_conformance.py",
         "proofs/S0-10/fixtures/neg-missing-credential-stmt.md"
       ],
-      "started_at": "2026-09-04T14:48:03.745647Z",
-      "finished_at": "2026-09-04T14:48:03.768751Z",
+      "started_at": "2026-09-04T16:48:47.549433Z",
+      "finished_at": "2026-09-04T16:48:47.575394Z",
       "exit_code": 1,
       "stdout_sha256": "752cbdff8506600b0eba7c4354b05148d2e4ed02e73638dba6ba117e5855c8a9",
-      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reason": "adr-incomplete: missing credential-isolation statement"
     }
   ],
   "negative_control": {
@@ -37,9 +38,17 @@
     "observed_failure_reason": "adr-incomplete: missing credential-isolation statement"
   },
   "attestation": {
+    "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
+    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
+    "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
+    "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
+    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/spec.schema.json": "0485e31ed468af3cbe9b65bc10a6448fc4e9cbe0efa3a39f24047e2216bed097",
+    "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-10/check_conformance.py": "fe49d6fd7701ec4a7bd28fb8f703b90a6df9367ba3093e9079f414e623fb672c",
     "proofs/S0-10/fixtures/neg-missing-credential-stmt.md": "5ae55aad31329422774b7a6e3ba686e17c34a78252cc9617a2c7085fd1e53946",
     "proofs/S0-10/spec.json": "57bdaa836c67f9b1ca59001594723527b34e0c0ae83a32c0c20554be11a25227"
   },
-  "digest": "e571cecd42d19d3004488b1daed7153c62d0a8844f4e15583a6b3e8548b71b9c"
+  "digest": "a36dd2745280a38dee1c821a23f6d2ecc94613a8baaf7d1ebe41d857a711158b"
 }

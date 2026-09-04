@@ -4,6 +4,8 @@ Negative controls first: each asserts the exact failure before the positive.
 All mutations happen in temporary copies; the repository never gains fake artifacts.
 """
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import pathlib
 import shutil
@@ -13,6 +15,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "ledger-gen"
 VALIDATOR = ROOT / "scripts" / "validate-ledger"
+
+
+def _load_validator():
+    loader = importlib.machinery.SourceFileLoader("stage0_validate_ledger", str(VALIDATOR))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
 PROOF_IDS = [f"S0-{i:02d}" for i in range(1, 13)]
 
 
@@ -80,15 +89,13 @@ def _result(proof_id="S0-01", classification="execution_proof",
 
 
 def _attested(root, proof_id, result):
-    """Seed a proof input file and stamp the result with a matching attestation
-    (now a required, tree-bound field re-derived from the proof directory)."""
+    """Seed a proof input file and stamp the result with a matching attestation,
+    computed by the REAL validator so it covers the whole trust closure the
+    validator re-derives from this root."""
     proof_dir = root / "proofs" / proof_id
     proof_dir.mkdir(parents=True, exist_ok=True)
-    source = proof_dir / "spec.json"
-    source.write_text(json.dumps({"proof_id": proof_id}) + "\n")
-    result["attestation"] = {
-        str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
-    }
+    (proof_dir / "spec.json").write_text(json.dumps({"proof_id": proof_id}) + "\n")
+    result["attestation"] = _load_validator().proof_attestation(root, proof_id)
     return result
 
 

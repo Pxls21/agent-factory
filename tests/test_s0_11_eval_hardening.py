@@ -178,6 +178,67 @@ def test_result_schema_requires_attestation():
         jsonschema.validate(stripped, schema)
 
 
+def test_trust_closure_attestation_covers_the_runner():
+    # The attestation binds the shared trust closure, not only proof-local files:
+    # the runner, the validator, the registry and the schemas are attested too.
+    result = json.loads((PROOF_DIR / "result.json").read_text())
+    attested = set(result["attestation"])
+    for required in ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml"):
+        assert required in attested, "trust closure omits " + required
+    assert any(k.startswith("proofs/schemas/") for k in attested)
+
+
+def test_tooling_mutation_breaks_attestation():
+    # Mutating the canonical runner WITHOUT regenerating flips the artifact to
+    # INVALID (the neuter-the-runner, keep-the-green attack) — environment
+    # independent, so it runs on every venue.
+    root = _repo_copy()
+    try:
+        assert "S0-11 PRESENT" in _integrity(root).stdout
+        runner = root / "scripts" / "proof-runner"
+        runner.write_text(runner.read_text() + "\n# tamper\n")
+        out = _integrity(root).stdout
+        assert "S0-11 PRESENT" not in out
+        assert "attestation-mismatch: S0-11 scripts/proof-runner" in out
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_real_run_failure_invalidates_artifact():
+    # A real (non-defer) capable-run failure must REMOVE the stale artifact, not
+    # preserve it — otherwise a mutated runner that makes the proof fail leaves
+    # the previous green behind. Corrupting the spec fails the run on any venue.
+    root = _repo_copy()
+    try:
+        result_path = root / "proofs" / "S0-11" / "result.json"
+        assert result_path.exists()
+        (root / "proofs" / "S0-11" / "spec.json").write_text('{"proof_id": "S0-11"}\n')  # no legs -> invalid
+        r = subprocess.run(
+            [sys.executable, str(root / "scripts" / "proof-runner"),
+             "run", "--proof", "S0-11", "--venue", "sandbox", "--root", str(root)],
+            capture_output=True, text=True, timeout=60)
+        assert r.returncode == 1, r.stderr
+        assert not result_path.exists(), "a real run failure must invalidate the stale artifact"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_committed_runs_are_bound_to_spec():
+    # The committed artifact's runs match spec.json one-for-one (leg, command,
+    # exit) and each negative leg carries the spec's failure_reason — the binding
+    # the validator enforces.
+    result = json.loads((PROOF_DIR / "result.json").read_text())
+    spec = json.loads(SPEC.read_text())
+    assert len(result["runs"]) == len(spec["legs"])
+    for run, leg in zip(result["runs"], spec["legs"]):
+        assert run["leg"] == leg["leg"]
+        assert run["cmd"] == leg["cmd"]
+        assert run["exit_code"] == leg["expect"]["exit_code"]
+        reason = leg["expect"].get("failure_reason")
+        if reason:
+            assert reason in run.get("failure_reason", "")
+
+
 def test_negative_frozen_credential_control():
     # Env-only, preserved verbatim, environment-independent (no preflight gate).
     r = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
