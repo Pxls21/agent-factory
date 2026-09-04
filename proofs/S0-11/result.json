@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-11",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-04T08:26:19.011224Z",
+  "recorded_at": "2026-09-04T09:08:04.537102Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-11/check_eval_hardening.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T08:26:18.867516Z",
-      "finished_at": "2026-09-04T08:26:18.947580Z",
+      "started_at": "2026-09-04T09:08:04.319700Z",
+      "finished_at": "2026-09-04T09:08:04.444840Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -23,20 +23,20 @@
         "python3",
         "proofs/S0-11/check_eval_hardening.py",
         "--rubric-neg",
-        "proofs/S0-11/fixtures/neg_credential_read.py",
+        "proofs/S0-11/fixtures/rubric_probe.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T08:26:18.947803Z",
-      "finished_at": "2026-09-04T08:26:19.011152Z",
+      "started_at": "2026-09-04T09:08:04.445076Z",
+      "finished_at": "2026-09-04T09:08:04.537018Z",
       "exit_code": 1,
-      "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
+      "stdout_sha256": "9cd4fd9faa1a6e016eccbfe89471a86d5de3bd4c85af2fda3cc62ed38063f362",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
   "negative_control": {
-    "fixture": "python3 proofs/S0-11/check_eval_hardening.py --rubric-neg proofs/S0-11/fixtures/neg_credential_read.py proofs/S0-11",
-    "expected_failure_reason": "rubric-isolation-violation: credential env absent by construction",
-    "observed_failure_reason": "rubric-isolation-violation: credential env absent by construction"
+    "fixture": "python3 proofs/S0-11/check_eval_hardening.py --rubric-neg proofs/S0-11/fixtures/rubric_probe.py proofs/S0-11",
+    "expected_failure_reason": "rubric-isolation-violation:",
+    "observed_failure_reason": "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated,network-reachable,uid-not-dropped"
   },
-  "digest": "254320d81db36f80313e106fc1b4482439c87a19f1a00ba95139b7714076d803"
+  "digest": "a2c5fd822ae8ae183f03e43d62ec38063db2f8da3033c50bd7574a25096da095"
 }

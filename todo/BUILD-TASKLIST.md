@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #9-#12 DONE 2026-09-04: S0-07 Fubuki corrections (first execution proof), S0-09 Foundry ADR, S0-10 GBrain ADR, S0-12 license/SBOM pin-diff — all 3 conformance-checked decisions complete. Wave 3 increment #18 S0-11 eval hardening DONE 2026-09-04 (execution proof 2/7). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #9-#12 DONE 2026-09-04: S0-07 Fubuki corrections (first execution proof), S0-09 Foundry ADR, S0-10 GBrain ADR, S0-12 license/SBOM pin-diff — all 3 conformance-checked decisions complete. Wave 3 increment #18 S0-11 eval hardening: reopened 2026-09-04 after owner review found hollow greens (net-isolation tautology, credential blacklist, .py/.sh-only sweep), re-hardened and re-closed 2026-09-04 — real four-axis isolation proof (UID drop + netns identity + loopback-listener reachability + env allow-list) with a non-vacuity gate, broadened sweep, mutant kill-battery (ledger: execution_proof 1 of 7 present). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
@@ -57,14 +57,39 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | s0-15-s0-04-compression | #15 S0-04 compression contract (sanctioned stub behind real OmniRoute) | pending | s0-14 | header asserts; request preservation; header-path mutation → RED |
 | s0-16-s0-05-full-egress | #16 S0-05 full canary suite over live units | pending | s0-06, s0-07, s0-14 | every unit's canary FAILS after its positive control; gate-off → RED |
 | s0-17-s0-08-gvisor | #17 S0-08 containment spec + fixtures; live run on the PC after the runsc spike | pending | s0-02, s0-05 | marker re-probed every CI run; grep-gate fails on missing marker |
-| s0-18-s0-11-eval-hardening | #18 S0-11 runner design + rubric isolation | DONE 2026-09-04 — runner design doc covers 3 AlphaEval hazards (host networking, chmod 777, credential passing); rubric isolation proven via unshare --net + credential env stripping + separate cwd; grep sweep clean; negative fixture → `rubric-isolation-violation: credential env absent by construction` rc=1; 6 pytest tests green ×2 | s0-02 | unprivileged/no-cred/no-net rubric; zero chmod-777/host-net hits |
+| s0-18-s0-11-eval-hardening | #18 S0-11 runner design + rubric isolation | REOPENED then re-closed 2026-09-04 — owner review found hollow greens; re-hardened. Isolation now proven on 4 axes through `unshare --user --net`: UID drop (uid≠parent), netns identity (`/proc/self/ns/net` inode≠parent), network (loopback listener the checker holds is UNREACHABLE from the probe — not the 1.1.1.1 tautology), env ALLOW-LIST (not blacklist; production-named decoys BUZZ_PRIVATE_KEY/OMNIROUTE_INTERNAL_API_KEY/STORAGE_ENCRYPTION_KEY stripped). Non-vacuity gate: same predicate re-run on the UN-wrapped probe must breach every axis. Sweep broadened to all non-.md files; octal+symbolic world-writable chmod + host-net directives. Mutant kill-battery green (pass-through unshare, real cred names, network_mode:host YAML, chmod -R 0777, go+rwx). FS containment NOT claimed in-sandbox → gVisor/S0-08. 15 pytest tests (isolation legs skip-with-reason where userns unavailable) + proof-runner result.json + ledger integrity green | s0-02 | unprivileged/no-cred/no-net rubric; zero chmod-777/host-net hits; every axis discriminates |
 | port-trading-system-setup | tooling: port the trading-system setup wholesale (hooks, ops scripts, ledgers, CLAUDE.md, harness-ports, wiki) | done 2026-09-03 (batch E commit) | — | hooks active ✓; lint test green ✓; harness-ports tests 58/58 ✓; wiki compiled ✓ (PC smoke NOT run — owner) |
 | harness-skill-rewordings | tooling follow-up: re-port the source repo's hand-ported skill rewordings (HARNESS PORT notes; contract-gate/orchestration semantics) into `.agents/skills/` with this repo's paths | done 2026-09-03 (`c2e529a`, `86ade0d`) | — | 15 HARNESS PORT notes; sync-skills --check rc=0 with 15 INTENTIONAL; NOT ported: `premortem-roast/dimensions.md` (source-only extra file) |
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
-**2026-09-04 sync (Wave 3 increment #18 S0-11 DONE):** Evaluation hardening execution proof.
+**2026-09-04 sync (Wave 3 increment #18 S0-11 REOPENED → re-hardened):** Owner review of the
+first S0-11 close found hollow greens: (1) the `net_isolated` check was a tautology — the
+sandbox has no direct route to 1.1.1.1 regardless of `unshare`, so a pass-through `unshare` still
+reported isolated; (2) the env stripper was a NAME BLACKLIST that let real production credentials
+(`BUZZ_PRIVATE_KEY`, `OMNIROUTE_INTERNAL_API_KEY`, `STORAGE_ENCRYPTION_KEY`) through; (3) the grep
+sweep scanned only `.py`/`.sh`, so `network_mode: host` in YAML and `chmod -R 0777` survived; the
+checker never asserted UID or namespace identity and ran the probe as root. All reproduced, then
+fixed. The checker now proves isolation on FOUR axes through `unshare --user --net`: UID drop
+(uid≠parent, i.e. not root), netns identity (`/proc/self/ns/net` inode≠parent), network (a
+loopback listener the checker holds in its own netns is UNREACHABLE from the probe — a signal only
+real isolation produces), and env ALLOW-LIST (only PATH/HOME/LANG/LC_*/TMPDIR + RUBRIC_*; every
+other variable stripped by construction, decoys included). A non-vacuity gate re-runs the SAME
+predicate on the UN-wrapped probe and requires every axis to flip to breached — a tautological
+axis fails the proof (`isolation-assertion-vacuous`). Sweep broadened to every non-`.md` file
+(markdown documents the hazards on purpose) and to octal+symbolic world-writable `chmod`. Mutant
+kill-battery green: pass-through `unshare`, real credential names, `network_mode: host` YAML,
+`chmod -R 0777`, `chmod go+rwx`. Filesystem containment is NOT claimed in-sandbox (a separate cwd
+is not a jail; the sandbox userns does not enforce host ownership) — it is delivered by
+gVisor+userns at the PC boundary (S0-08) and listed as not-verified in `runner_design.md`.
+`result.json` regenerated through the canonical `scripts/proof-runner`; ledger integrity green;
+126 pytest pass (15 S0-11 tests; the two isolation legs skip-with-reason where `unshare --user
+--net` is unavailable — "NOT run here", the isolation proof then runs on the PC/gVisor host).
+Ledger: `execution_proof` 1 of 7 present. No stubs; the one prior hollow-green class is now a
+committed mutant test.
+
+**2026-09-04 sync (Wave 3 increment #18 S0-11 DONE — SUPERSEDED by the reopen above):** Evaluation hardening execution proof.
 Runner design doc covers all three audited AlphaEval hazards: host networking (netns via
 unshare --net), recursive chmod 777 (never applied), production credential passing (env vars
 stripped by construction). Rubric isolation proven with real process-level primitives: probe
