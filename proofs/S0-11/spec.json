@@ -1,0 +1,28 @@
+{
+  "proof_id": "S0-11",
+  "classification": "execution_proof",
+  "wave": 3,
+  "description": "Evaluation hardening: runner design covering AlphaEval hazards, rubric process isolation (netns + credential stripping + separate cwd), grep sweep clean",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-11/check_eval_hardening.py", "proofs/S0-11"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {
+        "exit_code": 0,
+        "stdout_contains": "PASS"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-11/check_eval_hardening.py", "--rubric-neg", "proofs/S0-11/fixtures/neg_credential_read.py", "proofs/S0-11"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "rubric-isolation-violation: credential env absent by construction"
+      }
+    }
+  ]
+}
