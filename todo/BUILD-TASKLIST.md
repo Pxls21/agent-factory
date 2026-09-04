@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE — ai-memory builds, dockerd runs, runsc runs, selective egress proven; S0-06 stays execution_proof, S0-08 deferral expired, S0-05 mechanism proven). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increment #10 (S0-09 Foundry ADR) DONE 2026-09-04. Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
@@ -49,7 +49,7 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | pending | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
 | s0-08-s0-02-buzz-auth | #8 S0-02 Buzz authorization (four DISTINCT denials) | pending | s0-02 | one turn on allowed; four named denials |
 | s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | pending | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
-| s0-10-s0-09-foundry-adr | #10 S0-09 ADR + conformance shell | pending | s0-02 | section removal → RED |
+| s0-10-s0-09-foundry-adr | #10 S0-09 ADR + conformance shell | DONE 2026-09-04 — ADR 0005 accepted (first-party minimal translator; OpenHarness not a runtime dep); conformance checker validates 4 required sections + JIT 5-file list; negative fixture (missing Consequences) → `adr-incomplete: missing required section: Consequences` rc=1; 5 pytest tests green ×2 | s0-02 | section removal → RED |
 | s0-11-s0-10-gbrain-adr | #11 S0-10 ADR + conformance shell | pending | s0-02 | credential-isolation statement removal → RED |
 | s0-12-s0-12-license-sbom | #12 S0-12 license/notices/SBOM pin-diff shell | pending | s0-02 | pin mutation → RED |
 | s0-13-s0-06-four-scope | #13 S0-06 four-scope adapter proof (real ai-memory on the PC) | pending | s0-02, s0-03 | leak fixture never crosses; unauthorized tuple denied |
@@ -63,6 +63,18 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-04 sync (Wave 1 increment #10 S0-09 DONE):** First conformance-checked decision proof.
+
+`s0-10-s0-09-foundry-adr` closed: ADR 0005 accepted — first-party minimal translator for JIT
+outputs. Decision: option A (small purpose-built host) over OpenHarness extraction (option B) or
+pinned OpenHarness derivative (option C). ADR carries the JIT five-file list (memory.py,
+planning.py, action.py, tool_policy.py, prompt.yaml). Conformance checker validates four required
+sections (Context, Alternatives, Decision, Consequences), OpenHarness discussion presence, and all
+five JIT files. Negative fixture: ADR copy with Consequences section removed → `adr-incomplete:
+missing required section: Consequences` rc=1. spec.json: one positive leg + one negative leg.
+5 pytest tests green ×2 (deterministic). Classification: conformance_checked_decision (1/3
+conformance denominator).
 
 **2026-09-04 sync (Wave 0 spike #6 DONE):** Fourth and final Wave 0 spike closed.
 

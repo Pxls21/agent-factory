@@ -1,0 +1,19 @@
+{
+  "proof_id": "S0-09",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-09/check_conformance.py", "docs/adr/0005-foundry-host.md"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 0}
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-09/check_conformance.py", "proofs/S0-09/fixtures/neg-missing-section.md"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 1, "failure_reason": "adr-incomplete: missing required section"}
+    }
+  ]
+}
