@@ -2,41 +2,40 @@
 
 Proves the Hermes evaluation runner isolates rubric subprocesses, using evidence
 the PARENT observes from the kernel (`/proc/<pid>`), never the child's own
-report — a child under a fake wrapper can fabricate a clean self-report, so
-self-reported isolation is not trusted. Wrapper binaries are called by ABSOLUTE
-path (no PATH hijack).
+report. Wrapper binaries are called by ABSOLUTE path (no PATH hijack).
 
 Axes (all parent-observed, kernel truth):
-  - UID drop:   /proc/<pid>/status real uid != parent AND != 0. Achieved by a
-                REAL privilege drop (root: `unshare --net` + `setpriv --reuid`;
-                non-root: `unshare --user --net`, host uid stays the non-root
-                runner's). The child's own getuid() is NOT used — under a bare
-                user namespace it reports an unprivileged id while the host uid
-                stays root, so it is not evidence of a drop.
-  - netns:      /proc/<pid>/ns/net inode != parent (a fresh, connectivity-less
-                netns). When the parent can `nsenter` the child's netns, it also
-                actively confirms a loopback listener it holds is UNREACHABLE
-                from inside that netns.
-  - env:        /proc/<pid>/environ is a subset of a CLOSED EXACT allow-list
-                (never a prefix wildcard); production-named decoys the checker
-                injects into the parent env must be absent.
+  - UID:     /proc/<pid>/status real uid != 0 (never root). Not `!= parent`: a
+             non-root runner cannot change its child's host uid, so the rubric
+             inherits the runner's own non-root uid.
+  - netns:   /proc/<pid>/ns/net inode != parent (a fresh netns).
+  - cwd:     /proc/<pid>/cwd is a fresh working directory != the parent's cwd
+             (the production workspace); the runner assigns a per-rubric temp dir.
+  - env:     /proc/<pid>/environ is a subset of a CLOSED EXACT allow-list;
+             production-named decoys the checker injects must be absent.
+  - network: an ACTIVE paired control — the parent holds a loopback listener in
+             its own netns and `nsenter`s each child's netns: the WRAPPED child
+             must find it UNREACHABLE (isolated) and the UN-wrapped child must
+             find it REACHABLE (the discriminator flips). A venue that cannot run
+             `nsenter` (non-root) DEFERS via the preflight — the discriminator is
+             never accepted as fail-open (None).
 Non-vacuity: the same parent observation is run against an UN-wrapped child and
-must breach every axis, or an axis is a tautology.
+must breach netns, cwd, and env on every venue (and uid on a root venue, where
+an un-wrapped child is actually root).
 
 Design gate: runner_design.md must carry a machine-readable ```yaml `policy:`
-block declaring each hazard forbidden — a deterministic contract, not prose
-scanned for synonyms.
+block declaring each hazard forbidden.
 
-Forbidden-op sweep: a BEST-EFFORT LINT over the proof's non-Markdown files
-(Python via AST with import-alias + constant folding, YAML via a parsed walk,
-shell/other via regex). It catches obvious/accidental hazards; it is NOT a
-complete static-analysis boundary (a determined author can evade any static
-scan). The real guarantees are the runtime isolation above (network) and gVisor
-+ a non-root service user at the PC boundary (filesystem/privilege, S0-08).
+Forbidden-op sweep: a BEST-EFFORT LINT (Python AST + YAML parse + regex). Not a
+complete static-analysis boundary; the real guarantees are the runtime isolation
+above and gVisor + a non-root service user at the PC boundary (S0-08).
 
-Capability preflight (`--selftest`): confirms the host primitives and that the
-parent can observe a child's /proc; exit 2 = capability-unavailable (skip, run
-on the PC), never a false pass or breach.
+Capability preflight (`--selftest`): confirms the host primitives AND that the
+parent can observe a child's /proc AND run the `nsenter` network discriminator;
+exit 2 = capability-unavailable (defer to a capable venue). Every namespace-
+reading leg (`<proof-dir>`, `--rubric-neg`) runs this preflight and defers with
+exit 2, so the canonical runner defers consistently. The env-only frozen
+credential leg (`--rubric-neg-cred`) needs no namespaces and runs everywhere.
 
 Usage:
   check_eval_hardening.py <proof-dir>
@@ -54,6 +53,7 @@ import select
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 
@@ -86,9 +86,9 @@ def _net_ns():
 
 
 def _iso_launch(child_cmd):
-    """Absolute-path wrapper that puts the child in a fresh netns as a real
-    non-root uid. Root creates the netns then drops via setpriv; a non-root
-    runner uses a user namespace (its host uid, already non-root, is kept)."""
+    """Absolute-path wrapper: fresh netns as a real non-root uid. Root creates
+    the netns then drops via setpriv; a non-root runner uses a user namespace
+    (its own non-root host uid is kept, which already satisfies uid != 0)."""
     if os.getuid() == 0:
         return [UNSHARE, "--net", "--", SETPRIV, "--reuid", DROP_UID,
                 "--regid", DROP_GID, "--clear-groups", "--"] + child_cmd
@@ -136,7 +136,8 @@ def _proc_env_keys(pid):
 
 def _nsenter_reach(pid, port):
     """Parent-driven: enter the child's netns and try the parent's listener.
-    True = reached, False = refused (isolated), None = probe could not run."""
+    True = reached, False = refused (isolated), None = probe could not run
+    (never accepted as a pass — a None is a capability gap, handled by defer)."""
     if os.getuid() != 0 or not os.path.exists(NSENTER):
         return None
     probe = ("import socket,sys\n"
@@ -169,12 +170,20 @@ def _release(proc):
             pass
 
 
-def _observe_child(launch, env, port):
+def _observe_child(launch, base_env, port, fresh_cwd):
     """Launch a child that signals ready then blocks; observe it from the parent
-    via /proc while it is alive. Returns an observation dict or None."""
+    via /proc while it is alive. `fresh_cwd` True runs it in a per-rubric temp
+    directory (the isolated runner behaviour); False lets it inherit the parent's
+    cwd (the un-isolated control). Returns an observation dict or None."""
+    ctx = tempfile.TemporaryDirectory(prefix="rubric-cwd-") if fresh_cwd else None
+    cwd = ctx.name if ctx else None
+    env = dict(base_env)
+    env["RUBRIC_TASK_ID"] = "probe-001"
+    env["RUBRIC_PROBE_PORT"] = str(port)
+    env["RUBRIC_CWD"] = cwd if cwd else os.getcwd()
     try:
         proc = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env)
+                                stderr=subprocess.DEVNULL, cwd=cwd, env=env)
     except OSError:
         return None
     try:
@@ -184,25 +193,25 @@ def _observe_child(launch, env, port):
         if ready != b"R":
             return None
         pid = proc.pid
-        obs = {
+        return {
             "uid": _proc_uid(pid),
             "net_ns": os.readlink("/proc/%d/ns/net" % pid),
+            "cwd": os.readlink("/proc/%d/cwd" % pid),
             "env_keys": _proc_env_keys(pid),
             "net_reachable": _nsenter_reach(pid, port),
         }
-        return obs
     except (OSError, ValueError):
         return None
     finally:
         _release(proc)
+        if ctx:
+            ctx.cleanup()
 
 
-def _violations(obs, parent_net_ns):
-    """Axes on which the PARENT-OBSERVED state is not isolated. Empty ==
-    isolated. The unprivileged invariant is `uid != 0` (never root) — NOT
-    `uid != parent`: a non-root runner cannot change its child's host uid, so
-    the rubric legitimately inherits the runner's own non-root uid. Deterministic
-    labels only."""
+def _violations(obs, parent_net_ns, parent_cwd):
+    """Axes on which the PARENT-OBSERVED /proc state is not isolated. Empty ==
+    isolated on these axes. The network axis is a paired control handled
+    separately. Deterministic labels only."""
     if obs is None:
         return ["observation-failed"]
     axes = []
@@ -210,9 +219,19 @@ def _violations(obs, parent_net_ns):
         axes.append("uid-is-root")
     if not obs["net_ns"] or obs["net_ns"] == parent_net_ns:
         axes.append("netns-not-isolated")
+    if not obs["cwd"] or obs["cwd"] == parent_cwd:
+        axes.append("cwd-not-isolated")
     if [k for k in obs["env_keys"] if k not in ALLOWED_ENV]:
         axes.append("env-not-allowlisted")
     return sorted(axes)
+
+
+def _stable_breaches(obs, parent_net_ns, parent_cwd):
+    """The venue-independent breach axes an un-wrapped child shows on every host
+    (netns, cwd, env). The uid axis is venue-dependent (root only) and network is
+    a paired positive control, so neither is in the canonical negative reason."""
+    return [a for a in _violations(obs, parent_net_ns, parent_cwd)
+            if a in ("cwd-not-isolated", "env-not-allowlisted", "netns-not-isolated")]
 
 
 def _with_decoys(fn):
@@ -228,39 +247,36 @@ def _with_decoys(fn):
                 os.environ[k] = v
 
 
-def _allow_env(cwd, port):
+def _allow_env():
     base = dict(os.environ)
-    env = {k: base[k] for k in ALLOWED_ENV if k in base}
-    env["RUBRIC_TASK_ID"] = "probe-001"
-    env["RUBRIC_CWD"] = cwd
-    env["RUBRIC_PROBE_PORT"] = str(port)
-    return env
+    return {k: base[k] for k in ENV_ALLOWLIST if k in base}
 
 
-def _full_env(cwd, port):
-    env = dict(os.environ)
-    env["RUBRIC_TASK_ID"] = "probe-001"
-    env["RUBRIC_CWD"] = cwd
-    env["RUBRIC_PROBE_PORT"] = str(port)
-    return env
+def _full_env():
+    return dict(os.environ)
 
 
 def _capability_status():
-    """Confirm the host primitives + that the parent can observe a child's
-    /proc. Does NOT judge isolation outcome (a wrapper that runs but does not
-    isolate is a checker FAILURE, not unavailable)."""
+    """Confirm the host primitives + that the parent can observe a child's /proc
+    AND run the nsenter network discriminator. Does NOT judge isolation outcome."""
     if not _net_ns():
         return "netns-unreadable-parent"
-    needed = [UNSHARE] + ([SETPRIV] if os.getuid() == 0 else [])
+    needed = [UNSHARE, NSENTER] + ([SETPRIV] if os.getuid() == 0 else [])
     for path in needed:
         if not os.path.exists(path):
             return "missing:" + path
     child = [sys.executable, "-c", READY_BLOCK]
-    obs = _observe_child(_iso_launch(child), {"PATH": "/usr/bin"}, 0)
+    listener = _LoopbackListener()
+    try:
+        obs = _observe_child(_iso_launch(child), {"PATH": "/usr/bin"}, listener.port, True)
+    finally:
+        listener.close()
     if obs is None:
         return "child-unobservable"
     if not obs["net_ns"]:
         return "child-netns-unreadable"
+    if obs["net_reachable"] is None:
+        return "nsenter-unavailable"  # the network discriminator cannot run here
     return "ok"
 
 
@@ -270,8 +286,7 @@ def check_runner_design(proof_dir):
     if not design.exists():
         print("runner-design-missing: " + str(design))
         return False
-    text = design.read_text()
-    policy = _extract_policy(text)
+    policy = _extract_policy(design.read_text())
     if policy is None:
         print("runner-design-no-policy-block: missing machine-readable ```yaml policy: block")
         return False
@@ -490,41 +505,43 @@ def check_rubric_isolation(proof_dir):
     if not probe.exists():
         print("rubric-probe-missing: " + str(probe))
         return False
-    parent_uid = os.getuid()
     parent_net_ns = _net_ns()
+    parent_cwd = os.getcwd()
     child = [sys.executable, str(probe)]
 
     def run():
         listener = _LoopbackListener()
         try:
-            iso = _observe_child(_iso_launch(child), _allow_env(str(proof_dir), listener.port), listener.port)
-            raw = _observe_child(child, _full_env(str(proof_dir), listener.port), listener.port)
+            iso = _observe_child(_iso_launch(child), _allow_env(), listener.port, True)
+            raw = _observe_child(child, _full_env(), listener.port, False)
         finally:
             listener.close()
         return iso, raw
 
     iso, raw = _with_decoys(run)
 
-    iso_axes = _violations(iso, parent_net_ns)
+    iso_axes = _violations(iso, parent_net_ns, parent_cwd)
     if iso_axes:
         print("rubric-isolation-failure: " + ",".join(iso_axes))
         return False
-    if iso.get("net_reachable") is True:
+    # Active network control: the isolated child's netns must REFUSE the parent's
+    # listener (False), never fail open on a missing observation (None/True).
+    if iso["net_reachable"] is not False:
         print("rubric-isolation-failure: network-reachable")
         return False
-    # Non-vacuity: netns and env ALWAYS discriminate (the wrapper creates a fresh
-    # netns and the allow-list strips env). The uid axis discriminates only on a
-    # ROOT venue, where the un-wrapped child is root and the wrapper drops it; a
-    # non-root runner cannot produce a root child to test against, and its rubric
-    # inherits the runner's own non-root uid.
-    raw_axes = _violations(raw, parent_net_ns)
-    required = ["env-not-allowlisted", "netns-not-isolated"]
-    if parent_uid == 0:
+
+    raw_axes = _violations(raw, parent_net_ns, parent_cwd)
+    required = ["cwd-not-isolated", "env-not-allowlisted", "netns-not-isolated"]
+    if os.getuid() == 0:
         required.append("uid-is-root")
     for axis in required:
         if axis not in raw_axes:
             print("isolation-assertion-vacuous: " + axis + " did not discriminate")
             return False
+    # Non-vacuity of the network axis: the un-wrapped child must REACH the listener.
+    if raw["net_reachable"] is not True:
+        print("isolation-assertion-vacuous: network did not discriminate")
+        return False
     return True
 
 
@@ -544,29 +561,30 @@ def positive(proof_dir):
 
 
 def rubric_neg(probe, proof_dir):
-    """Four-axis negative: observe an UN-wrapped child; every parent-observed
-    axis must breach. Requires the isolation capability (reads child /proc)."""
+    """Namespace-reading negative control: observe an UN-wrapped child; the
+    venue-stable /proc axes (netns, cwd, env) must all breach. Gated by the same
+    preflight as the positive so it DEFERS (exit 2) on an incapable venue."""
+    status = _capability_status()
+    if status != "ok":
+        print("isolation-capability-unavailable: " + status)
+        return 2
     if not probe.exists():
         print("fixture-missing: " + str(probe))
         return 1
     parent_net_ns = _net_ns()
+    parent_cwd = os.getcwd()
     child = [sys.executable, str(probe)]
 
     def run():
         listener = _LoopbackListener()
         try:
-            return _observe_child(child, _full_env(str(proof_dir), listener.port), listener.port)
+            return _observe_child(child, _full_env(), listener.port, False)
         finally:
             listener.close()
 
-    # The negative control reports only the VENUE-STABLE axes (netns, env), which
-    # an un-wrapped child breaches on every host — so the canonical spec pins a
-    # complete, venue-independent reason. (The uid axis is venue-dependent and is
-    # exercised by the positive check's non-vacuity gate on a root venue.)
-    axes = _violations(_with_decoys(run), parent_net_ns)
-    stable = [a for a in axes if a in ("env-not-allowlisted", "netns-not-isolated")]
-    if len(stable) < 2:
-        print("rubric-neg-unexpected: " + (",".join(axes) or "unwrapped child reported isolated"))
+    stable = _stable_breaches(_with_decoys(run), parent_net_ns, parent_cwd)
+    if len(stable) < 3:
+        print("rubric-neg-unexpected: " + (",".join(stable) or "unwrapped child reported isolated"))
         return 1
     print("rubric-isolation-violation: " + ",".join(stable))
     print("exit 1 per contract")
@@ -576,14 +594,15 @@ def rubric_neg(probe, proof_dir):
 def rubric_neg_cred(fixture, proof_dir):
     """Frozen seed negative control: the credential-reading rubric, run with the
     allow-list env (credentials absent by construction), must emit the exact
-    frozen reason. Environment-independent (tests the env allow-list)."""
+    frozen reason. Environment-only — needs no namespaces, runs on every venue."""
     if not fixture.exists():
         print("fixture-missing: " + str(fixture))
         return 1
     frozen = "rubric-isolation-violation: credential env absent by construction"
 
     def run():
-        env = _allow_env(str(proof_dir), 0)
+        env = _allow_env()
+        env["RUBRIC_TASK_ID"] = "neg-cred"
         try:
             return subprocess.run([sys.executable, str(fixture)], capture_output=True,
                                   text=True, timeout=15, env=env)

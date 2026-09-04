@@ -1,13 +1,14 @@
 """S0-11: Evaluation hardening conformance tests.
 
-Covers the positive leg, the frozen seed credential control, the four-axis
-negative, and a mutant kill-battery for every hollow green found across three
-owner reviews. The isolation is proven by PARENT observation of the child's
-/proc (never a child self-report), so the fabricated-report class is dead.
+Isolation is proven by PARENT observation of the child's /proc (uid, netns,
+cwd, environ) plus an ACTIVE nsenter listener discriminator — never a child
+self-report. Every namespace-reading leg (positive, --rubric-neg) runs the
+checker's own `--selftest` preflight and DEFERS (exit 2) on a venue that cannot
+run the discriminator; a capable venue must run nsenter (root). The env-only
+frozen credential leg runs everywhere.
 
-Every leg that reads a child's namespaces is guarded by the checker's own
-``--selftest`` capability predicate (exit 2 -> skip, run on the PC/gVisor host).
-Allow-list, sweep, and design-policy tests are environment-independent.
+Isolation-dependent tests skip via `--selftest` (exit 2); allow-list, sweep,
+design-policy, and report-validation tests are environment-independent.
 """
 import importlib.util
 import json
@@ -28,9 +29,8 @@ CRED_FIXTURE = PROOF_DIR / "fixtures" / "neg_credential_read.py"
 SPEC = PROOF_DIR / "spec.json"
 SPEC_SCHEMA = REPO / "proofs" / "schemas" / "spec.schema.json"
 FROZEN_REASON = "rubric-isolation-violation: credential env absent by construction"
-# The canonical negative reason is the VENUE-STABLE pair (netns, env); the uid
-# axis is venue-dependent (a non-root runner cannot produce a root child).
-STABLE_NEG_REASON = "rubric-isolation-violation: env-not-allowlisted,netns-not-isolated"
+STABLE_NEG_REASON = ("rubric-isolation-violation: "
+                     "cwd-not-isolated,env-not-allowlisted,netns-not-isolated")
 
 _spec = importlib.util.spec_from_file_location("check_eval_hardening", CHECKER)
 chk = importlib.util.module_from_spec(_spec)
@@ -52,7 +52,7 @@ def _selftest_rc():
 NEEDS_ISO = pytest.mark.skipif(
     _selftest_rc() == 2,
     reason="isolation capability unavailable (--selftest exit 2); the isolation "
-           "proof runs on the PC/gVisor host (NOT run here)")
+           "proof runs on a capable (root, nsenter) venue (NOT run here)")
 
 
 def _copy_proof(tmp_path):
@@ -75,22 +75,21 @@ def test_positive_conformance():
 
 
 @NEEDS_ISO
-@pytest.mark.skipif(os.getuid() != 0 or not os.path.exists("/usr/bin/setpriv"),
-                    reason="non-root venue simulation needs a root runner + setpriv")
-def test_positive_conformance_non_root_venue():
-    # The 'test every leg under BOTH venues' rule: reproduce a non-root runner
-    # (the CI/production service user) by dropping to nobody. `uid != parent`
-    # would (wrongly) fire here; the correct invariant `uid != 0` passes.
-    r = subprocess.run(
-        ["/usr/bin/setpriv", "--reuid", "65534", "--regid", "65534", "--clear-groups",
-         "--", sys.executable, str(CHECKER), str(PROOF_DIR)],
-        capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, "non-root venue failed: " + r.stdout + r.stderr
-    assert r.stdout.strip() == "PASS"
+def test_all_spec_legs_via_canonical_invocation():
+    # Every spec leg, run exactly as the canonical runner invokes it.
+    spec = json.loads(SPEC.read_text())
+    for leg in spec["legs"]:
+        args = leg["cmd"][1:]  # drop "python3"
+        r = subprocess.run([sys.executable] + args, capture_output=True, text=True,
+                           timeout=60, cwd=str(REPO))
+        assert r.returncode == leg["expect"]["exit_code"], \
+            leg["leg"] + " exit " + str(r.returncode) + ": " + r.stdout + r.stderr
+        if "failure_reason" in leg["expect"]:
+            assert leg["expect"]["failure_reason"] in (r.stdout + r.stderr)
 
 
 def test_negative_frozen_credential_control():
-    # Frozen seed control (env-only, preserved verbatim, environment-independent).
+    # Env-only, preserved verbatim, environment-independent (no preflight gate).
     r = _run("--rubric-neg-cred", str(CRED_FIXTURE), str(PROOF_DIR))
     assert r.returncode == 1, r.stdout + r.stderr
     assert FROZEN_REASON in r.stdout and "exit 1 per contract" in r.stdout
@@ -107,8 +106,8 @@ def test_negative_covers_stable_axes():
     r = _run("--rubric-neg", str(PROBE), str(PROOF_DIR))
     assert r.returncode == 1, r.stdout + r.stderr
     assert STABLE_NEG_REASON in r.stdout
-    for axis in ("netns-not-isolated", "env-not-allowlisted"):
-        assert axis in r.stdout, "axis missing: " + axis
+    for axis in ("netns-not-isolated", "cwd-not-isolated", "env-not-allowlisted"):
+        assert axis in r.stdout
 
 
 @NEEDS_ISO
@@ -122,11 +121,10 @@ def test_spec_valid_and_contract_matches_test():
     spec = json.loads(SPEC.read_text())
     jsonschema.validate(spec, json.loads(SPEC_SCHEMA.read_text()))
     assert spec["proof_id"] == "S0-11"
-    negatives = [leg for leg in spec["legs"] if leg["leg"] == "negative"]
-    reasons = [leg["expect"].get("failure_reason", "") for leg in negatives]
+    reasons = [leg["expect"].get("failure_reason", "")
+               for leg in spec["legs"] if leg["leg"] == "negative"]
     assert FROZEN_REASON in reasons, "frozen seed control must be a leg"
-    # canonical contract must be as strong as the test: the complete stable reason
-    assert STABLE_NEG_REASON in reasons, "four-axis leg must pin the complete stable reason"
+    assert STABLE_NEG_REASON in reasons, "negative leg must pin the complete stable reason"
 
 
 def test_fixtures_exist():
@@ -134,7 +132,7 @@ def test_fixtures_exist():
     assert PROBE.exists() and CRED_FIXTURE.exists()
 
 
-# --- machine-readable design policy (not prose scanning) ---------------------
+# --- machine-readable design policy ------------------------------------------
 def test_runner_design_policy_forbids_hazards():
     assert chk.check_runner_design(PROOF_DIR) is True
 
@@ -145,7 +143,7 @@ def test_runner_design_ignores_inverted_prose(tmp_path):
         "Network isolation is unnecessary; chmod 777 is mandatory; credential passing is supported.\n\n"
         "```yaml\npolicy:\n  host_networking: forbidden\n  recursive_chmod_777: forbidden\n"
         "  production_credential_passing: forbidden\n```\n")
-    assert chk.check_runner_design(dst) is True  # policy is the contract, not prose
+    assert chk.check_runner_design(dst) is True
 
 
 def test_runner_design_rejects_permissive_policy(tmp_path):
@@ -162,60 +160,91 @@ def test_runner_design_rejects_missing_policy(tmp_path):
     assert chk.check_runner_design(dst) is False
 
 
-# --- closed exact allow-list -------------------------------------------------
+# --- closed exact allow-list + report validation (env-independent) -----------
 def test_allowlist_is_closed_exact_set():
-    names = ["RUBRIC_PRODUCTION_API_KEY", "OMNIROUTE_INTERNAL_API_KEY", "BUZZ_PRIVATE_KEY"]
+    names = ["RUBRIC_PRODUCTION_API_KEY", "OMNIROUTE_INTERNAL_API_KEY", "RUBRIC_LLM_ENDPOINT"]
     saved = {n: os.environ.get(n) for n in names}
     for n in names:
         os.environ[n] = "sentinel"
     try:
-        env = chk._allow_env("/tmp", 1)
+        env = chk._allow_env()
         for k in env:
-            assert k in chk.ALLOWED_ENV, "allow-list leaked: " + k
-        v = chk._violations({"uid": 65534, "net_ns": "A", "net_reachable": False,
-                             "env_keys": sorted(list(env) + ["RUBRIC_PRODUCTION_API_KEY"])}, "P")
-        assert "env-not-allowlisted" in v
+            assert k in chk.ENV_ALLOWLIST, "allow-list leaked: " + k
+        obs = {"uid": 65534, "net_ns": "A", "cwd": "/fresh", "net_reachable": False,
+               "env_keys": sorted(list(chk.ALLOWED_ENV) + ["RUBRIC_PRODUCTION_API_KEY"])}
+        assert "env-not-allowlisted" in chk._violations(obs, "P", "/parent")
     finally:
         for n, val in saved.items():
             os.environ.pop(n, None) if val is None else os.environ.__setitem__(n, val)
 
 
-# --- parent observation, not child self-report -------------------------------
-def test_report_validation_root_and_missing():
-    # A root child is a violation (the unprivileged invariant is uid != 0).
-    assert "uid-is-root" in chk._violations({"uid": 0, "net_ns": "A", "net_reachable": False, "env_keys": []}, "P")
-    # A non-root child in a fresh netns with a clean env is isolated.
-    assert chk._violations({"uid": 65534, "net_ns": "A", "net_reachable": False, "env_keys": []}, "P") == []
-    assert chk._violations(None, "P") == ["observation-failed"]
+def test_report_validation_axes():
+    parent_ns, parent_cwd = "P", "/parent"
+    isolated = {"uid": 65534, "net_ns": "A", "cwd": "/fresh", "net_reachable": False, "env_keys": []}
+    assert chk._violations(isolated, parent_ns, parent_cwd) == []
+    assert "uid-is-root" in chk._violations({**isolated, "uid": 0}, parent_ns, parent_cwd)
+    assert "netns-not-isolated" in chk._violations({**isolated, "net_ns": parent_ns}, parent_ns, parent_cwd)
+    assert "cwd-not-isolated" in chk._violations({**isolated, "cwd": parent_cwd}, parent_ns, parent_cwd)
+    assert chk._violations(None, parent_ns, parent_cwd) == ["observation-failed"]
+
+
+# --- venue behaviour: capable runs; incapable defers on every namespace leg --
+@NEEDS_ISO
+@pytest.mark.skipif(os.getuid() != 0 or not os.path.exists("/usr/bin/setpriv"),
+                    reason="non-root venue simulation needs a root runner + setpriv")
+def test_non_root_venue_defers():
+    # A non-root venue cannot run the nsenter discriminator, so the checker
+    # DEFERS (exit 2) — never a false pass or breach.
+    r = subprocess.run(
+        ["/usr/bin/setpriv", "--reuid", "65534", "--regid", "65534", "--clear-groups",
+         "--", sys.executable, str(CHECKER), str(PROOF_DIR)],
+        capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2, "expected defer, got " + str(r.returncode) + ": " + r.stdout
+
+
+def test_every_namespace_leg_defers_on_incapable(monkeypatch):
+    # Incapable environment: positive AND the namespace-reading negative both
+    # defer (exit 2); the env-only frozen credential leg still runs.
+    monkeypatch.setattr(chk, "_capability_status", lambda: "nsenter-unavailable")
+    assert chk.positive(PROOF_DIR) == 2
+    assert chk.rubric_neg(PROBE, PROOF_DIR) == 2
+    assert chk.rubric_neg_cred(CRED_FIXTURE, PROOF_DIR) == 1  # env-only, ungated
 
 
 @NEEDS_ISO
 def test_parent_observes_unwrapped_child_as_breached():
-    # The B5 class: evidence is parent-read from /proc, not child-authored.
-    port = 0
-    obs = chk._with_decoys(lambda: chk._observe_child(
-        [sys.executable, str(PROBE)], chk._full_env(str(PROOF_DIR), port), port))
+    listener = chk._LoopbackListener()
+    try:
+        obs = chk._with_decoys(lambda: chk._observe_child(
+            [sys.executable, str(PROBE)], chk._full_env(), listener.port, False))
+    finally:
+        listener.close()
     assert obs is not None
-    v = chk._violations(obs, chk._net_ns())
-    assert "netns-not-isolated" in v and "env-not-allowlisted" in v
-    if os.getuid() == 0:  # uid axis discriminates only on a root venue
-        assert "uid-is-root" in v
+    for axis in ("netns-not-isolated", "cwd-not-isolated", "env-not-allowlisted"):
+        assert axis in chk._violations(obs, chk._net_ns(), os.getcwd())
+    assert obs["net_reachable"] is True  # un-wrapped child reaches the parent's listener
+    if os.getuid() == 0:
+        assert "uid-is-root" in chk._violations(obs, chk._net_ns(), os.getcwd())
+
+
+@NEEDS_ISO
+def test_wrapped_child_has_fresh_cwd_and_refuses_listener():
+    listener = chk._LoopbackListener()
+    try:
+        obs = chk._with_decoys(lambda: chk._observe_child(
+            chk._iso_launch([sys.executable, str(PROBE)]), chk._allow_env(), listener.port, True))
+    finally:
+        listener.close()
+    assert obs is not None
+    assert obs["cwd"] != os.getcwd() and "rubric-cwd-" in obs["cwd"]  # fresh dir
+    assert obs["net_reachable"] is False  # isolated netns refuses the listener
+    assert chk._violations(obs, chk._net_ns(), os.getcwd()) == []
 
 
 @NEEDS_ISO
 def test_positive_fails_without_real_isolation(monkeypatch):
-    # If the wrapper does not actually isolate, the parent observation catches it.
     monkeypatch.setattr(chk, "_iso_launch", lambda child: list(child))
-    r = chk.positive(PROOF_DIR)
-    assert r == 1
-
-
-def test_positive_defers_on_incapable_host(monkeypatch):
-    # Incapable environment: the checker exits 2 (defer to the PC), never a
-    # false pass (0) or a false breach (1).
-    monkeypatch.setattr(chk, "_capability_status", lambda: "netns-unreadable-parent")
-    r = chk.positive(PROOF_DIR)
-    assert r == 2
+    assert chk.positive(PROOF_DIR) == 1
 
 
 # --- forbidden-op lint: direct + equivalence-class evasions ------------------

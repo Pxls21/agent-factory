@@ -93,17 +93,27 @@ static scan enumerates. The real guarantees are the runtime isolation above
 (network) and gVisor + a non-root service user at the PC boundary
 (filesystem/privilege — §5).
 
-### 3.5 Working directory
+### 3.5 Working directory, parent-observed
 
-Each rubric invocation receives a fresh temporary working directory. This is a
-convenience for output collection — it is **not** a filesystem containment
-boundary (§5).
+Each rubric invocation runs in a fresh per-rubric temporary directory, passed to
+the process as its actual working directory (not merely advertised in an
+environment variable). The parent asserts it: it reads `/proc/<pid>/cwd` and
+requires the child's real cwd to differ from the parent's cwd (the production
+workspace); the un-wrapped control, which inherits the parent's cwd, breaches
+this axis. The fresh cwd is a convenience for output collection and a first
+separation from the workspace — it is **not** a filesystem containment boundary
+(§5); real FS containment is delivered by gVisor at the PC boundary.
 
 ## 4. Judge call routing
 
 Any rubric requiring LLM calls uses the OmniRoute endpoint exclusively (standing
-rule 3). The runner injects the OmniRoute base URL as `RUBRIC_LLM_ENDPOINT`; no
-direct-provider credentials are passed.
+rule 3): in production the runner injects the OmniRoute base URL as
+`RUBRIC_LLM_ENDPOINT` for a rubric that makes model calls, and passes no
+direct-provider credentials. This S0-11 proof's rubric stand-in makes NO model
+call, so `RUBRIC_LLM_ENDPOINT` is not injected here and is deliberately absent
+from this proof's closed environment allow-list (§3.3) — the allow-list carries
+only what the stand-in actually needs. A rubric that calls the model would add
+`RUBRIC_LLM_ENDPOINT` to the allow-list at that point.
 
 ## 5. NOT verified in the sandbox (delivered at the PC/production boundary)
 
