@@ -1,0 +1,14 @@
+# Mutated SBOM — one pin deliberately wrong for the negative control.
+# Update procedure documented here for the file-existence check.
+
+snapshot_date: "2026-09-04"
+
+# --- Update procedure ---
+# (placeholder for fixture)
+
+components:
+  - name: hermes-agent
+    repository: https://github.com/NousResearch/hermes-agent.git
+    commit: "0000000000000000000000000000000000dead00"
+    license: MIT
+    role: main_production_workhorse_and_native_acp_server

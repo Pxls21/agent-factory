@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #10-#11 (S0-09 Foundry ADR, S0-10 GBrain ADR) DONE 2026-09-04. Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE); Wave 1 increments #10-#12 (S0-09 Foundry ADR, S0-10 GBrain ADR, S0-12 license/SBOM pin-diff) DONE 2026-09-04 — all 3 conformance-checked decisions complete. Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
@@ -51,7 +51,7 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | pending | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
 | s0-10-s0-09-foundry-adr | #10 S0-09 ADR + conformance shell | DONE 2026-09-04 — ADR 0005 accepted (first-party minimal translator; OpenHarness not a runtime dep); conformance checker validates 4 required sections + JIT 5-file list; negative fixture (missing Consequences) → `adr-incomplete: missing required section: Consequences` rc=1; 5 pytest tests green ×2 | s0-02 | section removal → RED |
 | s0-11-s0-10-gbrain-adr | #11 S0-10 ADR + conformance shell | DONE 2026-09-04 — ADR 0006 accepted (wrap pinned GBrain dream machinery); checker validates 4 required sections + credential-isolation statement + proposal-only contract; negative fixture (credential statement stripped) → `adr-incomplete: missing credential-isolation statement` rc=1; 4 pytest tests green ×2 | s0-02 | credential-isolation statement removal → RED |
-| s0-12-s0-12-license-sbom | #12 S0-12 license/notices/SBOM pin-diff shell | pending | s0-02 | pin mutation → RED |
+| s0-12-s0-12-license-sbom | #12 S0-12 license/notices/SBOM pin-diff shell | DONE 2026-09-04 — SBOM.yaml (22 components, pins match upstream.lock.yaml), THIRD-PARTY-NOTICES.md, LICENSE-DECISION.md (pending owner choice), update procedure documented; checker validates file existence + pin equality + update-procedure presence; negative fixture (mutated hermes-agent pin) → `sbom-pin-drift: pin differs from upstream.lock.yaml for hermes-agent` rc=1; 5 pytest tests green ×2 | s0-02 | pin mutation → RED |
 | s0-13-s0-06-four-scope | #13 S0-06 four-scope adapter proof (real ai-memory on the PC) | pending | s0-02, s0-03 | leak fixture never crosses; unauthorized tuple denied |
 | s0-14-s0-03-omniroute-roundtrip | #14 S0-03 Hermes→OmniRoute live round trip (OmniRoute already up on the PC; identity = routed model id) | pending | s0-02 | tool-call round trip; upstream identity asserted; key-disable → RED; stub FORBIDDEN |
 | s0-15-s0-04-compression | #15 S0-04 compression contract (sanctioned stub behind real OmniRoute) | pending | s0-14 | header asserts; request preservation; header-path mutation → RED |
@@ -63,6 +63,16 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-04 sync (Wave 1 increment #12 S0-12 DONE):** Third and final conformance-checked
+decision proof. SBOM.yaml created with 22 component pins mechanically derived from
+upstream.lock.yaml; THIRD-PARTY-NOTICES.md lists all upstream licenses; LICENSE-DECISION.md
+(pre-existing) documents the pending first-party license decision. Pin-diff checker asserts
+bitwise pin equality, file existence, and update-procedure presence. Negative: hermes-agent pin
+mutated → `sbom-pin-drift: pin differs from upstream.lock.yaml for hermes-agent` rc=1. 5 pytest
+tests green ×2. Conformance-checked decision denominator: 3/3 complete (S0-09, S0-10, S0-12).
+
+`s0-12-s0-12-license-sbom` closed.
 
 **2026-09-04 sync (Wave 1 increments #10-#11 S0-09 + S0-10 DONE):** Two conformance-checked
 decision proofs landed.

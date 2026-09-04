@@ -1,0 +1,12 @@
+snapshot_date: "2026-09-04"
+
+selected_core:
+  hermes-agent:
+    repository: https://github.com/NousResearch/hermes-agent.git
+    commit: 527da60844d4dced37879ea50259675371abe10e
+    license: MIT
+    role: main_production_workhorse_and_native_acp_server
+
+selected_later_planes: {}
+development_and_reference: {}
+not_selected_as_stock_runtimes: {}

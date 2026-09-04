@@ -1,0 +1,19 @@
+{
+  "proof_id": "S0-12",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-12/check_pin_diff.py", "."],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 0}
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-12/check_pin_diff.py", "proofs/S0-12/fixtures/mutated-root"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 1, "failure_reason": "sbom-pin-drift: pin differs from upstream.lock.yaml"}
+    }
+  ]
+}
