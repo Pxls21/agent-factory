@@ -74,7 +74,7 @@
 
 | id | mechanism | greppable signature | proven instance | status |
 |---|---|---|---|---|
-| AF-AP-1 | total-isolation instrument offered as a selective-egress negative control (the canary fails for a reason other than the gate under test) | `unshare --net` in any S0-05 fixture without a positive-control leg reaching the allowed target | findings §6a (Chairman probe, reproduced) | OPEN until spike #6 lands the veth/proxy design |
+| AF-AP-1 | total-isolation instrument offered as a selective-egress negative control (the canary fails for a reason other than the gate under test) | `unshare --net` in any S0-05 fixture without a positive-control leg reaching the allowed target | findings §6a (Chairman probe, reproduced) | SWEPT(2026-09-04) — spike #6 landed the veth/iptables design with gate-off mutation |
 | AF-AP-2 | collective reference satisfying a per-item gate by count (ids appear in a list, never as specified items) | seed/registry ids that appear only once in a spec | seed-stage0-v1 first self-validation | SWEPT(2026-09-02) — per-proof appendix |
 | AF-AP-3 | uncommitted work at a multi-agent dispatch boundary (container reset vaporizes it) | dispatch with `git status` non-empty | council session 2026-09-02 | SWEPT(2026-09-02) — commit-before-dispatch |
 | AF-AP-4 | sandbox-probe-as-world: venue classification from the sandbox alone while the owner's live host holds the capability | any "blocked_host/blocked_credential" label with no PC-bridge probe record | findings v1 §2 + council KC-1/KC-2 | SWEPT(2026-09-03) — spike #0 |

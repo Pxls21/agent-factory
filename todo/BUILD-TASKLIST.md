@@ -22,15 +22,15 @@
 > before marking done. Heavy/live/container work runs ON THE PC via `scripts/pc.sh`
 > (`PC-BRIDGE.md`); `NOT run here` is stated, never skipped silently.
 
-## 0. STATUS (updated 2026-09-03)
+## 0. STATUS (updated 2026-09-04)
 
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#5 DONE 2026-09-04 (all POSITIVE — ai-memory builds, dockerd runs, runsc runs; S0-06 stays execution_proof, S0-08 deferral expired). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#6 DONE 2026-09-04 (all POSITIVE — ai-memory builds, dockerd runs, runsc runs, selective egress proven; S0-06 stays execution_proof, S0-08 deferral expired, S0-05 mechanism proven). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
-Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
+Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
 
 ## 1. Tasks
 
@@ -45,7 +45,7 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | s0-03-spike-rust-ai-memory | #3 spike rust-ai-memory (PC: cargo build at pinned commit) | DONE 2026-09-04 — POSITIVE: ai-memory v1.39.0 (edition 2024, resolver 3, MSRV 1.95, 12 workspace crates) compiles on the PC; default stable 1.93.0 succeeded, rustup 1.95.0 available; binaries produced (618 MB + 306 MB debug). S0-06 stays `execution_proof` per map-rust-s006 | s0-02 | `spikes/rust-ai-memory/result.json` present; classification_effect applied |
 | s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | DONE 2026-09-04 — POSITIVE: Docker v29.3.1 starts (overlayfs, cgroupfs, seccomp); hello-world pulled and ran. KC-6: sandbox is NOT container-blocked | s0-02 | `spikes/dockerd/result.json` present |
 | s0-05-spike-runsc | #5 spike runsc install (sandbox + PC confirmed) | DONE 2026-09-04 — POSITIVE: runsc release-20260817.0 downloaded and runs rootless in sandbox (systrap, 4.19.0-gvisor kernel); PC also has it (owner-installed). S0-08 deferral expired → `execution_proof` per map-runsc-s008 | s0-02 | `spikes/runsc/result.json` present; classification_effect applied |
-| s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | pending | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
+| s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | DONE 2026-09-04 — POSITIVE: veth pair + iptables in a dedicated network namespace; four legs all passed (positive: stand-in reached 200, negative-blocked-port: iptables DROP timeout, negative-external: no route, gate-off mutation: blocked port reachable after flushing iptables — de-vacuous). AF-AP-1 respected (NOT bare unshare --net). S0-05 mechanism proven, containment unproven per map-egress-s005 | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
 | s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | pending | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
 | s0-08-s0-02-buzz-auth | #8 S0-02 Buzz authorization (four DISTINCT denials) | pending | s0-02 | one turn on allowed; four named denials |
 | s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | pending | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
@@ -63,6 +63,23 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-04 sync (Wave 0 spike #6 DONE):** Fourth and final Wave 0 spike closed.
+
+`s0-06-spike-selective-egress` closed POSITIVE: veth pair + iptables in a dedicated network
+namespace proves selective egress. NOT bare `unshare --net` (AF-AP-1: total isolation blocks both
+legs). Architecture: host-side veth-host 10.200.0.1/24 runs the OmniRoute stand-in on port 12800;
+netns-side veth-egress 10.200.0.2/24 with iptables allowing ONLY 10.200.0.1:12800 TCP, default
+DROP. Four legs all passed: (1) positive: curl from inside netns reached stand-in at :12800 with
+200 + `omniroute-standin` in body; (2) negative blocked-port: curl to :12801 timed out (iptables
+DROP, listener IS running); (3) negative external: curl to 1.1.1.1 connection refused (no route);
+(4) gate-off mutation: after flushing iptables and setting ACCEPT, blocked port :12801 became
+reachable returning `blocked-model` — proves the iptables gate was the barrier, not a structural
+artifact (de-vacuous negative control per anti-hollow-green tactic 1). Classification effect:
+S0-05 mechanism proven, containment unproven per `map-egress-s005` — full canary suite over live
+production units is Wave 2 (increment #16). iproute2 and iptables both available in the sandbox
+(apt-installed). Spike artifacts: `spikes/selective-egress/result.json`,
+`spikes/selective-egress/probe.sh`.
 
 **2026-09-04 sync (Wave 0 spikes #3-#5 DONE):** Three spikes closed in one session, all POSITIVE.
 
