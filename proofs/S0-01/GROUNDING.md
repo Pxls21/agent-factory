@@ -1,8 +1,10 @@
 # S0-01 ACP conformance — grounding & provenance (2026-09-04)
 
-> Status: **GROUNDING ONLY — the proof is NOT yet run.** This records the verified
-> provenance and the settled harness design from the live PC-bridge session. The
-> executable proof (`runner`, `fixtures/`, `result.json`) lands in a later increment.
+> Status: **BUILD COMPATIBILITY VERIFIED; RUNTIME INTEGRATION UNVERIFIED until the relay
+> handshake.** The three pinned components clone/build/install and run standalone by absolute
+> path — that is *build compatibility*, not integration. Integration (buzz-acp actually launching
+> and speaking ACP to hermes-acp) becomes verified only after the first real relay-driven
+> handshake. The executable proof (`runner`, `fixtures/`, `result.json`) lands in a later increment.
 > Owner ruling 2026-09-04: build+test against FRESH pinned clones; do NOT touch the
 > live installs or `upstream.lock.yaml`; invoke by ABSOLUTE PATH; if the pinned
 > components cannot integrate, STOP and report (no silent patch/re-pin).
@@ -28,8 +30,23 @@ Toolchains (PC): `rustc 1.93.0`, `cargo 1.93.0`, `Python 3.13.11`, `git 2.52.0`.
   - build: `cargo build --release -p buzz-acp` (from `~/s0-01-pinned/buzz`), finished 1m39s.
   - sha256: `a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064`
 - **hermes-acp** — `/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp`
-  - install: `python3 -m venv ~/s0-01-pinned/.venv-hermes && .venv-hermes/bin/pip install -e '~/s0-01-pinned/hermes-agent[acp]'`
-  - deps incl. `agent-client-protocol==0.9.0` (Python ACP lib); `--version` = `0.21.0`; `--check` = `Hermes ACP check OK`.
+  - **Install method (owner Option 2, 2026-09-04): editable install, NOT a built wheel.** hermes-agent's
+    `setup.py` is a deliberate guard that REFUSES `bdist_wheel`/`sdist` (`RuntimeError: Building wheels
+    or sdists for hermes-agent is not supported`); its only sanctioned wheel path is uv2nix (Nix), and
+    Nix is not installed on the PC (owner declined to install it for this proof). The component's docs
+    direct developers to an editable install. Immutability is anchored not by a wheel file but by the
+    clean-pinned-tree content hash below, re-verified before AND after each proof run.
+  - install: `PYTHONDONTWRITEBYTECODE=1 python3 -m venv .venv-hermes && .venv-hermes/bin/pip install -e '~/s0-01-pinned/hermes-agent[acp]'` (fresh venv). deps incl. `agent-client-protocol==0.9.0`.
+  - **Provenance record** (`~/s0-01-pinned/.markers/hermes-provenance.json`):
+    - commit `527da60844d4dced37879ea50259675371abe10e`; `HEAD^{tree}` `a36bba5ee05b1b27eaee510287e74f976e2bbf21`
+    - `git status --porcelain --untracked-files=all` = empty; submodules = none
+    - `git archive --format=tar HEAD | sha256sum` = `b65c49908d8bba3e87e234a5fc972ac294d6411aa3f794d82c706aff97302ee3`
+    - `direct_url.json` = `{"dir_info":{"editable":true},"url":"file:///home/rocco/s0-01-pinned/hermes-agent"}` — points to the PINNED clone, NOT `~/.hermes/hermes-agent`
+    - python `3.13.11`; venv `/home/rocco/s0-01-pinned/.venv-hermes`; `pip freeze` sha256 `352babfa576c5774e8fc710b4fce82aaeb7758c3116da70928e0239539922aab`
+    - entrypoint sha256 `f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1`; `--version` `0.21.0`; `--check` OK
+  - **Pre/post-run recheck (owner mandate):** commit + `HEAD^{tree}` + porcelain-empty + archive-sha256 are
+    re-verified against these values immediately BEFORE and AFTER each of the two proof runs; any source-tree
+    change (or byte differing) invalidates the run. `PYTHONDONTWRITEBYTECODE=1` on every invocation.
 - **ACP schema (pinned)** — `/home/rocco/s0-01-pinned/acp/schema/v2/schema.json` (also v1). Used by the negative control.
 
 ## Topology (verified from source + the built binary's `--help`)
@@ -76,21 +93,42 @@ omits `protocolVersion`; the harness schema-validates it against the pinned sche
 `acp.PROTOCOL_VERSION` rather than erroring — so the violation is enforced at the schema layer against
 the pinned protocol commit, exactly as the seed's fixture_format specifies.)
 
-## Settled design decision — deterministic golden
+## Settled design — model egress (OmniRoute-only) + deterministic golden
 
-buzz-acp requires the relay + a real agent turn, and a live model turn is not byte-reproducible. The proof
-is **ACP protocol conformance**, not model content, so the golden is the **normalized protocol SHAPE**:
-strip the volatile fields (JSON-RPC ids, timestamps, session ids, ports, pids, model-output text, token
-counts) and keep the message-type SEQUENCE, the terminal `stop_reason`, and the capability field names.
-The normalized transcript is deterministic across runs → golden ×2 byte-identical. (A deterministic hermes
-backend is not required for a shape-conformance golden; normalization handles content volatility.)
+**Model egress is OmniRoute-exclusive (ADR 0002; owner correction 2026-09-04). NO direct Ollama or canned
+model endpoint.** The pinned hermes-acp is configured to reach models ONLY through the EXISTING OmniRoute
+instance:
+- base_url `http://127.0.0.1:20128/v1` (live: returns 401 unauth → scoped credential required);
+- credential from env `OMNIROUTE_API_KEY` (scoped internal; sourced at run time, **never copied, committed,
+  or printed**; provider keys live only inside OmniRoute);
+- `codex_responses` wire mode + the compression-off header (ADR 0002);
+- an existing route (e.g. `codex/gpt-5.6-sol-xhigh` / `auto/best-coding-fast`).
+This is **NOT** S0-03: S0-01 proves ACP behavior; S0-03 later proves OmniRoute's upstream identity and the
+credential boundary. No new OmniRoute deploy; no OmniRoute config change unless the existing route genuinely
+cannot support a deterministic test.
+
+**Determinism procedure (owner-directed):** make a NORMAL model request through OmniRoute; normalize only
+volatile VALUES. Try the existing route first; if its ACP event STRUCTURE is not reproducible under
+structure-preserving normalization, add a dedicated OmniRoute test route to a deterministic scripted backend
+(sanctioned; a scripted backend behind OmniRoute is preferred over Ollama) — after demonstrating the need.
+
+**Normalization discipline (STRUCTURE-PRESERVING):** strip volatile VALUES only — JSON-RPC id values,
+timestamps, session-id values, ports, pids, model-output TEXT, token counts. **PRESERVE protocol structure
+and ordering:** message-type sequence, event COUNTS, terminal `stop_reason`, cancellation, and session
+separation. Missing, duplicated, reordered, or cross-session events are REAL failures and must NOT be
+normalized away. The normalized transcript is then deterministic across runs → golden ×2 byte-identical.
 
 ## Owner constraints checklist (for the build increment)
 
-- [ ] Fresh isolated dirs only (done for clones/build); never touch live installs or `upstream.lock.yaml`.
-- [ ] Invoke both binaries by absolute path (paths above); no ambient PATH.
-- [ ] Record: SHAs, clean-tree, toolchains, build commands, binary sha256, argv, transcript digests (this doc + `result.json`).
-- [ ] Golden normalized-compare run TWICE byte-identical + the malformed-initialize negative.
+- [x] Fresh isolated dirs only; never touch live installs or `upstream.lock.yaml`.
+- [ ] Invoke both binaries by absolute path (paths above); no ambient PATH; `PYTHONDONTWRITEBYTECODE=1`.
+- [x] Record SHAs, `HEAD^{tree}`, clean-tree (`--untracked-files=all`), toolchains, build commands, binary
+      sha256, editable-install provenance (direct_url, freeze, entrypoint hash). Still to record at run time: argv, transcript digests (`result.json`).
+- [ ] Re-verify ALL THREE trees (commit + `HEAD^{tree}` + porcelain-empty + `git archive` sha256) immediately
+      BEFORE and AFTER both proof runs; any source-tree change invalidates the run.
+- [ ] Model egress ONLY through the existing OmniRoute (`:20128/v1`, `OMNIROUTE_API_KEY`); never print/commit keys. Not S0-03.
+- [ ] Throwaway Buzz relay + Nostr identity kept isolated from production (`buzz-prod-*`).
+- [ ] Golden normalized-compare run TWICE byte-identical (structure-preserving) + the malformed-initialize negative.
 - [ ] If pinned components cannot integrate faithfully → STOP and report with evidence (no patch, no re-pin).
 
 ## NOT yet done (next increment)

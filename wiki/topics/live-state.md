@@ -21,9 +21,15 @@ last_compiled: 2026-09-03
   `~/s0-01-pinned/.venv-hermes/bin/hermes-acp` (v0.21.0, --check OK). Provenance + settled design in
   `proofs/S0-01/GROUNDING.md`. KEY: buzz-acp is a relay daemon (needs Nostr key + `--relay-url`, launches the
   agent via `--agent-command`); golden = normalized protocol SHAPE (content volatility stripped); negative =
-  schema-layer (acp v2 InitializeRequest required [protocolVersion, info]). NEXT: Nostr identity + relay
-  target, canonical fixtures, runner (capture→normalize→golden ×2 + negative), result.json, ledger. Do NOT
-  touch live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.
+  schema-layer (acp v2 InitializeRequest required [protocolVersion, info]). Owner corrections 2026-09-04:
+  BUILD-COMPAT verified / runtime integration UNVERIFIED until the first handshake; hermes install =
+  EDITABLE (wheel is forbidden by the component's own setup.py guard; Nix declined) with full provenance
+  (tree a36bba5e, git-archive sha256 b65c4990, direct_url→pinned clone, entrypoint f90a0cc3,
+  PYTHONDONTWRITEBYTECODE=1, recheck all 3 trees before+after each run); model egress OmniRoute-ONLY
+  (`:20128/v1`, env OMNIROUTE_API_KEY never printed/committed, codex_responses+compression-off, ADR 0002) —
+  NOT S0-03; throwaway relay+Nostr isolated from buzz-prod-*. NEXT: relay+identity, fixtures, runner
+  (capture→structure-preserving-normalize→golden ×2 + schema negative), result.json, ledger. Do NOT touch
+  live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.
 - **S0-11 eval hardening `s0-18-s0-11-eval-hardening` — ACCEPTED 2026-09-04** (owner process
   decision after 8 reviews; technical proof + trust binding accepted). Cycle 8 fixed the last live
   guard bug: `check-proof-status.py` now BINDS the visible `PROOF-STATUS` line to the ONE canonical
