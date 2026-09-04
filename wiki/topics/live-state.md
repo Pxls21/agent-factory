@@ -7,13 +7,22 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `237192a` 2026-09-03T10:09:53+00:00 (`claude/soundbox-kit-migration-iz1jwf`) — transcript sync after the increment-#1 lane bring-up
-- **Local HEAD:** 1 commit ahead of origin at write time (the increment-#1 harvest + five RED
-  spine tests). SHAs are rewritten by `push_clean.sh` at push, so this page names commits by
-  subject; the tree is what is pinned.
-- **Today:** 2026-09-03
+- **Origin tip:** `328bef1` 2026-09-04 (`claude/soundbox-kit-migration-iz1jwf`) — sandbox chat-digest sync after the S0-11 cycle-7 acceptance-guard commit
+- **Local HEAD:** 1 commit ahead of origin at write time (the S0-11 cycle-8 governance increment:
+  slug-bypass guard fix + acceptance record). SHAs are rewritten by `push_clean.sh` at push, so
+  this page names commits by subject; the tree is what is pinned.
+- **Today:** 2026-09-04
 
 ## Active lanes
+- **S0-11 eval hardening `s0-18-s0-11-eval-hardening` — ACCEPTED 2026-09-04** (owner process
+  decision after 8 reviews; technical proof + trust binding accepted). Cycle 8 fixed the last live
+  guard bug: `check-proof-status.py` now BINDS the visible `PROOF-STATUS` line to the ONE canonical
+  task row via an EXACT proof→slug map (the S0-10 slug `s0-11-s0-10-gbrain-adr` embeds "s0-11", so a
+  substring match would misbind it). Acceptance is a human process decision, NOT machine-enforced
+  (the agent pushes under the owner's GitHub identity); the owner-verifiable anchor is the open,
+  owner-blocked `acceptance-anchor-af-ap-32` task (#30). **NOTE: the lane entries below predate the
+  2026-09-04 Stage-0 wave (S0-07/09/10/12 done; S0-11 cycles 1-8) — the ledger
+  (`todo/BUILD-TASKLIST.md`) is authoritative on status, this page is being brought forward.**
 - **Increment #1 `s0-01-registry-schemas-validator`** — contract-gate ROUND 2. Round 1 (PC Hermes
   lane, sol-ultra, four runs: wrong premise → two 503 deaths → success at pin c39b64f) was
   harvested 2026-09-03: C1–C3 green in the sandbox; the lane's 33/33 was a host-python green
@@ -94,4 +103,6 @@ build-status or count disagreement.
 
 ## Last updated
 
-Increment-#2a harvest commit — 2026-09-03; next update when the 2a adversarial lane and the 2b build lane report.
+S0-11 cycle-8 governance increment (slug-bypass guard fix + ACCEPTED record) — 2026-09-04; next
+update when Stage-0 proof lanes resume. This page's pre-09-04 lane entries are being brought
+forward incrementally; the ledger (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.

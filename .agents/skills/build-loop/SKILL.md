@@ -198,6 +198,20 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    cycle-6 ACCEPTED test never ran ledger integrity afterward, which is exactly how the
    attestation break slipped through; the transition test must run all gates the transition
    touches.
+   **Cycle-8 resolution (S0-11 accepted — the loop ends by naming the guard's scope):**
+   (e) **Bind a state marker across EVERY visible surface, and match keys EXACTLY.** One visible
+   marker still diverges if a SECOND surface (a task row) can assert a competing status — the
+   cycle-7 guard rejected only bare-id rows, so a slug-keyed `DONE` row bypassed it. Bind the
+   authoritative marker to the ONE canonical row that displays it (require exactly one), and map
+   the item to its row by an EXACT key, NEVER a substring: when one slug embeds another item's id
+   (`s0-11-…` sits inside the S0-10 slug), a substring match misbinds the wrong row.
+   (f) **A guard the pusher's identity cannot make owner-only is a CONSISTENCY guard, not an
+   authenticity guard — say which one you built.** When the agent pushes under the owner's own
+   identity, no in-repo signal is structurally owner-only: the guard can prove the surfaces AGREE,
+   never that a human owner accepted. Do not sell it as enforcing acceptance. Record acceptance as
+   an explicit owner PROCESS decision, name the residual (identity separation — a dedicated bot
+   identity + protected branch + the owner's native review on the head SHA) as owner-blocked work,
+   and STOP reopening: an eighth equivalent is not the fix, naming the scope is.
 
 **Addendum — a DELTA gate meeting OLD code is a full-tree audit in disguise (2026-09-03,
 agent-factory port).** Delta gates (pyflakes delta, the anti-pattern screen on ADDED lines) never

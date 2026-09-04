@@ -61,11 +61,13 @@ if ! grep -q 'role: sole_stock_production_workhorse' \
   exit 1
 fi
 
-# Review-pending state, enforced mechanically as a STATE guard, not a vocabulary
-# ban (AF-AP-32): parse the canonical per-proof status markers and require
-# REVIEW-PENDING until an owner-acceptance record exists. This rejects DONE /
-# CLOSED / a deleted marker / conflicting duplicate rows — not only the one
-# "re-closed" word an earlier vocabulary check happened to block.
+# Proof-status CONSISTENCY guard (AF-AP-32): binds each tracked proof's single
+# visible `PROOF-STATUS: <id> = <status>` line to its ONE canonical task row
+# (exact proof->slug map), rejecting hidden markers, bare-id rows, duplicate or
+# missing rows, and a canonical row whose status cell contradicts the marker
+# (the cycle-8 slug bypass). It checks consistency, NOT acceptance authenticity:
+# ACCEPTED records an owner process decision; an owner-verifiable anchor needs
+# identity separation (the separate acceptance-anchor-af-ap-32 task).
 python3 "${repo_root}/scripts/check-proof-status.py" "${repo_root}" || exit 1
 
 if git -C "${repo_root}" rev-parse --git-dir >/dev/null 2>&1; then

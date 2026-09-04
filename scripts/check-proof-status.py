@@ -1,42 +1,77 @@
 #!/usr/bin/env python3
-"""Structured review-status guard (AF-AP-32).
+"""Consistency guard for the visible proof-review status (AF-AP-32).
 
-A proof the owner reopened for review is REVIEW-PENDING until the OWNER accepts
-it. The coordinator can record ONLY REVIEW-PENDING; it has no in-repo path to
-ACCEPTED, because any acceptance file the coordinator can write, it can forge
-(file existence is not authentication). Genuine acceptance is an OWNER action on
-owner-controlled infrastructure (a merge to `main`, or a protected GitHub
-review) that the coordinator structurally cannot produce; wiring an in-repo
-ACCEPTED status to such an anchor is an owner decision, pending here.
+This is a CONSISTENCY check, not an acceptance authenticator. It verifies that
+the one authoritative, VISIBLE status line for each tracked proof —
+`PROOF-STATUS: <id> = <status>` in todo/BUILD-TASKLIST.md — agrees with the one
+canonical task row for that proof, and it rejects the ledger-divergence attacks
+the owner reproduced over cycles 6-8:
 
-This enforces, as a STATE check over a SINGLE, VISIBLE source of truth:
+  * a HIDDEN HTML-comment PROOF-STATUS marker that silently diverges from the
+    visible ledger a human reads;
+  * a task row keyed by a BARE proof id (`| S0-11 | ... |`) asserting a status;
+  * a CANONICAL slug row whose status cell CONTRADICTS the PROOF-STATUS line
+    (the cycle-8 bypass: a `| s0-18-s0-11-eval-hardening | ... | DONE |` row
+    slipped through because the guard only rejected bare-id rows, never the
+    slug-keyed row's own status cell);
+  * a DUPLICATE or MISSING canonical row for a tracked proof.
 
-  * the authoritative status is a VISIBLE line `PROOF-STATUS: <id> = <status>`
-    in todo/BUILD-TASKLIST.md — NOT a hidden HTML comment (a hidden marker can
-    silently diverge from the visible task ledger a human reads);
-  * exactly one status line per proof (a duplicate/conflicting line fails);
-  * the only status the coordinator may record is REVIEW-PENDING — DONE, CLOSED,
-    ACCEPTED or any other word fails (the coordinator never self-accepts);
-  * no Markdown TASK ROW may be keyed by a bare proof id (`| S0-11 | … |`) — that
-    is the shape of a visible row asserting a status that contradicts the
-    authoritative line; real task rows are keyed by descriptive slugs;
-  * every proof under active review (REQUIRED_REVIEW) has a status line.
+The proof -> canonical-slug map is EXACT, never a substring: the S0-10 task row
+is keyed `s0-11-s0-10-gbrain-adr`, whose text contains "s0-11" but is NOT the
+S0-11 row — a substring match would bind the wrong row's status.
 
-Exit 0 when the status state is clean; exit 1 (with reasons on stderr) otherwise.
+What this guard does NOT do — and does not claim to do — is AUTHENTICATE
+acceptance. While the implementation agent pushes under the repo owner's own
+GitHub identity, no in-repo signal can be structurally owner-only: any status
+the coordinator can write, it can forge. So `ACCEPTED` here records an explicit
+HUMAN PROCESS DECISION (the owner's review), NOT a machine-enforced guarantee.
+Making acceptance owner-verifiable needs IDENTITY SEPARATION (a dedicated bot
+identity + protected `main` + the owner's native GitHub review on the head SHA);
+that is tracked as the separate AF-AP-32 governance task, not built here. This
+guard's job is only to keep the visible status surfaces from contradicting each
+other.
+
+Exit 0 when the visible status is internally consistent; exit 1 (with reasons on
+stderr) otherwise.
 """
 import re
 import sys
 from pathlib import Path
 
+# proof id -> its ONE canonical task-row slug. EXACT, never a substring match
+# (`s0-11-s0-10-gbrain-adr` is the S0-10 row; a substring would misbind it).
+TRACKED = {"S0-11": "s0-18-s0-11-eval-hardening"}
+# The ledger's status vocabulary. ACCEPTED records an owner process decision
+# (see the module docstring); DONE/CLOSED/other are not the governance words and
+# must not appear as an authoritative status.
+KNOWN_STATUSES = {"REVIEW-PENDING", "ACCEPTED"}
+
 VISIBLE_MARKER = re.compile(r"^PROOF-STATUS:\s+(S0-[0-9]{2})\s*=\s*([A-Za-z-]+)\s*$", re.MULTILINE)
 HIDDEN_MARKER = re.compile(r"<!--\s*PROOF-STATUS\b")
-TABLE_ROW_FIRST_CELL = re.compile(r"^\s*\|\s*([^|]+?)\s*\|")
 BARE_PROOF_ID = re.compile(r"^S0-[0-9]{2}$")
-# The coordinator may record ONLY this. ACCEPTED is not a coordinator-writable
-# status: it requires an owner-verifiable anchor the coordinator cannot forge.
-COORDINATOR_STATUS = "REVIEW-PENDING"
-# Proofs under active owner review that MUST carry a status line.
-REQUIRED_REVIEW = {"S0-11"}
+# Column index of the status cell in the task table
+# (header: slug | increment | status | blocked-by | gate).
+STATUS_COLUMN = 2
+# Leading status token of a status cell, ignoring an optional **bold** wrapper:
+# "**ACCEPTED** (owner...)" -> ACCEPTED, "DONE 2026-09-04 — ..." -> DONE.
+LEADING_STATUS = re.compile(r"^\**\s*([A-Za-z][A-Za-z-]*)")
+
+
+def _row_cells(line):
+    r"""Cells of a Markdown table row, split on UNESCAPED pipes (`\|` is literal).
+
+    Returns None for a non-row line. Border empties are dropped so cells[0] is
+    the first content cell.
+    """
+    if "|" not in line:
+        return None
+    parts = re.split(r"(?<!\\)\|", line.rstrip("\n"))
+    cells = [cell.strip() for cell in parts]
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells or None
 
 
 def check(repo_root):
@@ -56,38 +91,70 @@ def check(repo_root):
             "the task ledger a human reads (AF-AP-32)"
         )
 
-    # A task row keyed by a bare proof id is the contradictory-visible-row attack:
-    # a real task row is keyed by a descriptive slug, never a bare S0-NN.
-    for line in text.splitlines():
-        match = TABLE_ROW_FIRST_CELL.match(line)
-        if match and BARE_PROOF_ID.match(match.group(1).strip()):
-            errors.append(
-                f"a task row is keyed by the bare proof id {match.group(1).strip()!r}: a visible "
-                f"row must not assert a status; the authoritative status is the single "
-                f"PROOF-STATUS line (AF-AP-32)"
-            )
-
-    seen = {}
+    # The one authoritative visible status per proof.
+    status_of = {}
     for proof_id, status in VISIBLE_MARKER.findall(text):
-        if proof_id in seen:
+        if proof_id in status_of:
             errors.append(
-                f"{proof_id}: more than one PROOF-STATUS line ({seen[proof_id]} and {status}) — "
-                f"exactly one authoritative status per proof"
+                f"{proof_id}: more than one PROOF-STATUS line ({status_of[proof_id]} and "
+                f"{status}) — exactly one authoritative status per proof"
             )
-        seen[proof_id] = status
-        if status != COORDINATOR_STATUS:
+        status_of[proof_id] = status
+        if status not in KNOWN_STATUSES:
             errors.append(
-                f"{proof_id}: PROOF-STATUS is {status}; the coordinator records ONLY "
-                f"{COORDINATOR_STATUS}. Acceptance is an owner action on owner-controlled "
-                f"infrastructure (a merge to main, or a protected review), never a "
-                f"coordinator-written status or file (AF-AP-32)"
+                f"{proof_id}: PROOF-STATUS is {status}; the ledger vocabulary is "
+                f"{sorted(KNOWN_STATUSES)} (ACCEPTED records an explicit owner process "
+                f"decision — never a DONE/CLOSED self-closure) (AF-AP-32)"
             )
 
-    for proof_id in sorted(REQUIRED_REVIEW):
-        if proof_id not in seen:
+    # One scan of the task rows: reject bare-id rows, collect canonical-slug rows.
+    slug_to_proof = {slug.lower(): proof_id for proof_id, slug in TRACKED.items()}
+    canonical_rows = {proof_id: [] for proof_id in TRACKED}
+    for line in text.splitlines():
+        cells = _row_cells(line)
+        if not cells:
+            continue
+        first = cells[0]
+        if BARE_PROOF_ID.match(first):
             errors.append(
-                f"{proof_id}: no PROOF-STATUS line — a proof under owner review must be "
-                f"REVIEW-PENDING until the owner accepts it"
+                f"a task row is keyed by the bare proof id {first!r}: a visible row must not "
+                f"assert a status; the authoritative status is the single PROOF-STATUS line "
+                f"bound to the one canonical slug row (AF-AP-32)"
+            )
+        proof_id = slug_to_proof.get(first.lower())
+        if proof_id is not None:
+            canonical_rows[proof_id].append(cells)
+
+    # Every tracked proof: a status line, exactly one canonical row, and that
+    # row's status cell bound to the authoritative value.
+    for proof_id in sorted(TRACKED):
+        slug = TRACKED[proof_id]
+        rows = canonical_rows[proof_id]
+        if proof_id not in status_of:
+            errors.append(
+                f"{proof_id}: no PROOF-STATUS line — a tracked proof must carry a single "
+                f"visible authoritative status"
+            )
+        if len(rows) != 1:
+            errors.append(
+                f"{proof_id}: found {len(rows)} task rows keyed {slug!r}, expected exactly one "
+                f"— the status is bound to a SINGLE canonical row (AF-AP-32)"
+            )
+            continue
+        if proof_id not in status_of:
+            continue
+        want = status_of[proof_id]
+        cells = rows[0]
+        if len(cells) <= STATUS_COLUMN:
+            errors.append(f"{proof_id}: canonical row {slug!r} has no status column")
+            continue
+        match = LEADING_STATUS.match(cells[STATUS_COLUMN])
+        got = match.group(1) if match else None
+        if got != want:
+            errors.append(
+                f"{proof_id}: canonical row {slug!r} status cell leads with {got!r}, but the "
+                f"authoritative PROOF-STATUS is {want!r} — the visible row must not contradict "
+                f"the status line (AF-AP-32)"
             )
     return errors
 
