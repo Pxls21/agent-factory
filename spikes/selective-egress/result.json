@@ -1,73 +1,54 @@
 {
- "spike_id": "selective-egress",
- "schema": "proofs/schemas/spike.schema.json",
- "outcome": "positive",
- "ran_at": "2026-09-04T06:15:00+00:00",
- "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
- "mechanism": "veth pair + iptables in a dedicated network namespace; NOT bare unshare --net (AF-AP-1)",
- "architecture": {
-  "host_side": "veth-host 10.200.0.1/24 — runs the OmniRoute stand-in on port 12800 and a blocked listener on 12801",
-  "netns_side": "veth-egress 10.200.0.2/24 — iptables OUTPUT/INPUT allow only 10.200.0.1:12800 (TCP), default DROP",
-  "stand_in": "Python HTTP server returning {object: list, data: [{id: omniroute-standin}]}",
-  "blocked_listener": "Python HTTP server on port 12801 returning {id: blocked-model} — reachable only when iptables gate is OFF"
- },
- "runs": [
-  {
-   "label": "positive-leg",
-   "command": "ip netns exec egress-spike curl http://10.200.0.1:12800/v1/models",
-   "exit_code": 0,
-   "stdout_excerpt": "{\"object\": \"list\", \"data\": [{\"id\": \"omniroute-standin\"}]}",
-   "pass": true,
-   "notes": "Unit inside netns reaches the allowed OmniRoute stand-in through the veth pair"
+  "spike_id": "selective-egress",
+  "schema": "proofs/schemas/spike.schema.json",
+  "outcome": "positive",
+  "ran_at": "2026-09-04T08:24:06+00:00",
+  "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
+  "runs": [
+    {
+      "command": "ip netns exec egress-spike curl -sS --connect-timeout 5 http://10.200.0.1:12800/v1/models",
+      "exit_code": 0,
+      "stdout_digest": "259351a97ba4343b875fd93efd6a8d83feb615627514495296a44e57c1493113"
+    },
+    {
+      "command": "ip netns exec egress-spike curl -sS --connect-timeout 5 http://10.200.0.1:12801/v1/models",
+      "exit_code": 28,
+      "stdout_digest": "cc2c5e906252b0896c90bd5b11dd905eff284884ffd7c86bb547ea38c6119927"
+    },
+    {
+      "command": "ip netns exec egress-spike curl -sS --connect-timeout 5 http://1.1.1.1/",
+      "exit_code": 7,
+      "stdout_digest": "82f9f3cc636afcaf52ae6d962b7bb17056547ea1ed7e723b8179085e2b2effd1"
+    },
+    {
+      "command": "iptables -F + -P ACCEPT inside netns, then curl the previously-blocked port",
+      "exit_code": 0,
+      "stdout_digest": "2eb09f16650f9c0ec4d84d95813ffe9f88fa5d5af258f58e4fd6548b670a6d30"
+    }
+  ],
+  "facts": {
+    "iproute2": "installed (apt)",
+    "iptables": "available (/usr/sbin/iptables)",
+    "ip_netns": "works (create, move veth, exec)",
+    "veth_pairs": "works",
+    "curl_inside_netns": "works",
+    "af_ap_1_respected": "bare unshare --net NOT used; veth pair provides selective connectivity"
   },
-  {
-   "label": "negative-leg-blocked-port",
-   "command": "ip netns exec egress-spike curl --connect-timeout 5 http://10.200.0.1:12801/v1/models",
-   "curl_exit": 28,
-   "denial_reason": "Failed to connect to 10.200.0.1 port 12801 after 5002 ms: Timeout was reached",
-   "pass": true,
-   "notes": "Same unit fails to reach a non-allowed port on the same host — iptables DROP causes timeout (the listener IS running, but the namespace firewall blocks it)"
-  },
-  {
-   "label": "negative-leg-external",
-   "command": "ip netns exec egress-spike curl --connect-timeout 5 http://1.1.1.1/",
-   "curl_exit": 7,
-   "denial_reason": "Failed to connect to 1.1.1.1 port 80 after 0 ms: Couldn't connect to server",
-   "pass": true,
-   "notes": "Same unit fails to reach any external IP — no route out of the namespace and iptables DROP"
-  },
-  {
-   "label": "gate-off-mutation",
-   "command": "iptables -F + -P ACCEPT inside netns, then curl the previously-blocked port",
-   "exit_code": 0,
-   "stdout_excerpt": "{\"id\":\"blocked-model\"}",
-   "pass": true,
-   "notes": "Gate-off mutation: dropping iptables rules makes the blocked port reachable — proves the gate was the barrier, not a structural artifact (de-vacuous negative control per anti-hollow-green tactic 1)"
-  }
- ],
- "facts": {
-  "iproute2": "installed (apt)",
-  "iptables": "available (/usr/sbin/iptables)",
-  "ip_netns": "works (create, move veth, exec)",
-  "veth_pairs": "works",
-  "curl_inside_netns": "works",
-  "af_ap_1_respected": "bare unshare --net NOT used; veth pair provides selective connectivity"
- },
- "classification_effect": [
-  {
-   "affected_proof": "S0-05",
-   "class": "execution_proof",
-   "rule_id": "map-egress-s005",
-   "label": "mechanism proven, containment unproven",
-   "reason": "veth + iptables selective egress mechanism works in the sandbox: allowed traffic passes, blocked traffic is denied by the namespace firewall, and the gate-off mutation proves the gate is the barrier. Full canary suite over live production units is Wave 2 (increment #16)"
-  }
- ],
- "not_verified": [
-  "Full canary suite over live production units (Wave 2, increment #16)",
-  "UDP/ICMP egress filtering (only TCP tested)",
-  "DNS resolution inside the netns (no resolver configured — production units would need a DNS policy)",
-  "Performance and throughput under load",
-  "Persistence across process restarts",
-  "Integration with runsc/gVisor containment layer"
- ]
+  "classification_effect": [
+    {
+      "affected_proof": "S0-05",
+      "from_class": "execution_proof",
+      "to_class": "execution_proof",
+      "rule_id": "map-egress-s005",
+      "reason": "veth + iptables selective egress mechanism works in the sandbox: allowed traffic passes, blocked traffic is denied by the namespace firewall, and the gate-off mutation proves the gate is the barrier"
+    }
+  ],
+  "not_verified": [
+    "Full canary suite over live production units (Wave 2, increment #16)",
+    "UDP/ICMP egress filtering (only TCP tested)",
+    "DNS resolution inside the netns (no resolver configured)",
+    "Performance and throughput under load",
+    "Persistence across process restarts",
+    "Integration with runsc/gVisor containment layer"
+  ]
 }

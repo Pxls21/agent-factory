@@ -12,7 +12,7 @@ def check(path):
         text = f.read()
 
     for section in REQUIRED_SECTIONS:
-        if not re.search(rf"^##\s+.*{re.escape(section)}", text, re.MULTILINE | re.IGNORECASE):
+        if not re.search(rf"^##\s+{re.escape(section)}\b", text, re.MULTILINE | re.IGNORECASE):
             print(f"adr-incomplete: missing required section: {section}")
             return 1
 

@@ -1,60 +1,55 @@
 {
- "spike_id": "runsc",
- "schema": "proofs/schemas/spike.schema.json",
- "outcome": "positive",
- "ran_at": "2026-09-04T06:07:00+00:00",
- "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
- "runs": [
-  {
-   "label": "runsc-download",
-   "command": "curl -fsSL -o /tmp/runsc https://storage.googleapis.com/gvisor/releases/release/latest/x86_64/runsc",
-   "exit_code": 0,
-   "notes": "Static binary downloaded from gVisor releases"
+  "spike_id": "runsc",
+  "schema": "proofs/schemas/spike.schema.json",
+  "outcome": "positive",
+  "ran_at": "2026-09-04T08:25:05+00:00",
+  "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
+  "runs": [
+    {
+      "command": "curl -fsSL -o /tmp/runsc https://storage.googleapis.com/gvisor/releases/release/latest/x86_64/runsc",
+      "exit_code": 0,
+      "stdout_digest": "empty"
+    },
+    {
+      "command": "/tmp/runsc --version",
+      "exit_code": 0,
+      "stdout_digest": "04f241b14923f59833180e9b98db87c13af5dd5299c1af95f6910d3824dc7c6d"
+    },
+    {
+      "command": "/tmp/runsc --rootless do /bin/true",
+      "exit_code": 0,
+      "stdout_digest": "75a945167a71ca011fa66ec16c3589ce73287b1e585349e52ac64d558795d144"
+    },
+    {
+      "command": "/tmp/runsc --rootless do uname -r",
+      "exit_code": 0,
+      "stdout_digest": "9c8baf29a8924748fc00eb3844bc9c83e3eedc43e6a3602569887dcbf2e65c7e"
+    }
+  ],
+  "facts": {
+    "runsc_version": "release-20260817.0",
+    "oci_spec": "1.2.1",
+    "platform": "systrap (inferred; no KVM, no /dev/kvm)",
+    "rootless": true,
+    "sandbox_network": "not supported rootless (host network used)",
+    "gvisor_kernel": "4.19.0-gvisor",
+    "host_kernel": "6.18.44-fc-v24",
+    "kvm": "ABSENT",
+    "install_method": "static binary download (no package manager)"
   },
-  {
-   "label": "runsc-version",
-   "command": "/tmp/runsc --version",
-   "exit_code": 0,
-   "notes": "runsc version release-20260817.0, spec 1.2.1"
-  },
-  {
-   "label": "trivial-run",
-   "command": "/tmp/runsc --rootless do /bin/true",
-   "exit_code": 0,
-   "notes": "Warning: sandbox network not supported with --rootless (switched to host); process exited successfully under gVisor"
-  },
-  {
-   "label": "uname-inside-gvisor",
-   "command": "/tmp/runsc --rootless do uname -r",
-   "exit_code": 0,
-   "stdout": "4.19.0-gvisor",
-   "notes": "Confirmed gVisor kernel interception active (host kernel is 6.18.44)"
-  }
- ],
- "facts": {
-  "runsc_version": "release-20260817.0",
-  "oci_spec": "1.2.1",
-  "platform": "systrap (inferred; no KVM, no /dev/kvm)",
-  "rootless": true,
-  "sandbox_network": "not supported rootless (host network used)",
-  "gvisor_kernel": "4.19.0-gvisor",
-  "host_kernel": "6.18.44-fc-v24",
-  "kvm": "ABSENT",
-  "install_method": "static binary download (no package manager)"
- },
- "classification_effect": [
-  {
-   "affected_proof": "S0-08",
-   "from_class": "blocked_host",
-   "to_class": "execution_proof",
-   "rule_id": "map-runsc-s008",
-   "reason": "deferral_expired: runsc installs and runs in the sandbox (rootless, systrap platform); the containment proof must run — it is no longer deferred. The PC also has runsc (owner-installed release-20260817.0, verified in the pc-bridge spike)"
-  }
- ],
- "not_verified": [
-  "Docker + runsc integration (--runtime=runsc not tested; requires Docker daemon configuration)",
-  "Podman + runsc integration (podman absent in sandbox; available on the PC)",
-  "Network namespace isolation under gVisor (rootless mode uses host network)",
-  "cgroup enforcement under gVisor rootless"
- ]
+  "classification_effect": [
+    {
+      "affected_proof": "S0-08",
+      "from_class": "blocked_host",
+      "to_class": "execution_proof",
+      "rule_id": "map-runsc-s008",
+      "reason": "deferral_expired: runsc installs and runs in the sandbox (rootless, systrap platform); the containment proof must run"
+    }
+  ],
+  "not_verified": [
+    "Docker + runsc integration (--runtime=runsc not tested; requires Docker daemon configuration)",
+    "Podman + runsc integration (podman absent in sandbox; available on the PC)",
+    "Network namespace isolation under gVisor (rootless mode uses host network)",
+    "cgroup enforcement under gVisor rootless"
+  ]
 }

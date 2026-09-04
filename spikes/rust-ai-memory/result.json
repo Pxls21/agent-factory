@@ -1,57 +1,54 @@
 {
- "spike_id": "rust-ai-memory",
- "schema": "proofs/schemas/spike.schema.json",
- "outcome": "positive",
- "ran_at": "2026-09-04T06:00:02+00:00",
- "env_fingerprint": "pc-bridge:fedora:x86_64:rustup-1.95.0",
- "runs": [
-  {
-   "label": "cargo-build-default",
-   "command": "cargo build (default stable toolchain, inside /tmp/spike-rust-ai-memory clone at pinned commit)",
-   "exit_code": 0,
-   "duration_s": 142,
-   "notes": "Full workspace (12 crates + evals) compiled; default stable = rustc 1.93.0 per rustup show; MSRV declared 1.95 but build succeeded (MSRV enforcement is advisory in this cargo version)"
-  },
-  {
-   "label": "cargo-1950-build",
-   "command": "cargo +1.95.0 build (explicit 1.95.0 toolchain override)",
-   "exit_code": 0,
-   "duration_s": 1,
-   "notes": "Reused cached artifacts from the default-toolchain build; confirms 1.95.0 is installed and functional"
-  }
- ],
- "facts": {
-  "ai_memory_commit": "73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e",
-  "ai_memory_version": "1.39.0",
-  "ai_memory_edition": "2024",
-  "ai_memory_resolver": "3",
-  "ai_memory_msrv": "1.95",
-  "ai_memory_workspace_members": [
-   "ai-memory-core", "ai-memory-store", "ai-memory-wiki", "ai-memory-mcp",
-   "ai-memory-hooks", "ai-memory-llm", "ai-memory-consolidate", "ai-memory-web",
-   "ai-memory-cli", "ai-memory-workstream", "evals"
+  "spike_id": "rust-ai-memory",
+  "schema": "proofs/schemas/spike.schema.json",
+  "outcome": "positive",
+  "ran_at": "2026-09-04T06:00:02+00:00",
+  "env_fingerprint": "pc-bridge:fedora:x86_64:rustup-1.95.0",
+  "runs": [
+    {
+      "command": "cargo build (default stable toolchain, inside /tmp/spike-rust-ai-memory clone at pinned commit)",
+      "exit_code": 0,
+      "stdout_digest": "uncaptured"
+    },
+    {
+      "command": "cargo +1.95.0 build (explicit 1.95.0 toolchain override)",
+      "exit_code": 0,
+      "stdout_digest": "uncaptured"
+    }
   ],
-  "rust_toolchain_file": "ABSENT (no rust-toolchain.toml in repo)",
-  "pc_default_stable": "rustc 1.93.0 (254b59607 2026-01-19)",
-  "pc_rustup_toolchains": ["stable (1.93.0, default)", "nightly", "1.95", "1.95.0"],
-  "pc_target": "x86_64-unknown-linux-gnu",
-  "built_binaries": {
-   "ai-memory": "618 MB (debug)",
-   "ai-memory-eval": "306 MB (debug)"
+  "facts": {
+    "ai_memory_commit": "73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e",
+    "ai_memory_version": "1.39.0",
+    "ai_memory_edition": "2024",
+    "ai_memory_resolver": "3",
+    "ai_memory_msrv": "1.95",
+    "ai_memory_workspace_members": [
+      "ai-memory-core", "ai-memory-store", "ai-memory-wiki", "ai-memory-mcp",
+      "ai-memory-hooks", "ai-memory-llm", "ai-memory-consolidate", "ai-memory-web",
+      "ai-memory-cli", "ai-memory-workstream", "evals"
+    ],
+    "rust_toolchain_file": "ABSENT (no rust-toolchain.toml in repo)",
+    "pc_default_stable": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "pc_rustup_toolchains": ["stable (1.93.0, default)", "nightly", "1.95", "1.95.0"],
+    "pc_target": "x86_64-unknown-linux-gnu",
+    "built_binaries": {
+      "ai-memory": "618 MB (debug)",
+      "ai-memory-eval": "306 MB (debug)"
+    },
+    "cargo_lock": "present (126 KB)"
   },
-  "cargo_lock": "present (126 KB)"
- },
- "classification_effect": [
-  {
-   "affected_proof": "S0-06",
-   "class": "execution_proof",
-   "rule_id": "map-rust-s006",
-   "reason": "ai-memory v1.39.0 (Rust, edition 2024) compiles on the PC: default stable toolchain succeeded, and rustup 1.95.0 is available as explicit override; the four-scope adapter design proof can exercise the real crate"
-  }
- ],
- "not_verified": [
-  "cargo test (build-only spike per seed spec; test suite not run)",
-  "release profile build (debug profile only)",
-  "whether the default-toolchain success reflects MSRV advisory enforcement or a concurrent-run environment artifact (1.95.0 available either way)"
- ]
+  "classification_effect": [
+    {
+      "affected_proof": "S0-06",
+      "from_class": "execution_proof",
+      "to_class": "execution_proof",
+      "rule_id": "map-rust-s006",
+      "reason": "ai-memory v1.39.0 (Rust, edition 2024) compiles on the PC: default stable toolchain succeeded, and rustup 1.95.0 is available as explicit override"
+    }
+  ],
+  "not_verified": [
+    "cargo test (build-only spike per seed spec; test suite not run)",
+    "release profile build (debug profile only)",
+    "whether the default-toolchain success reflects MSRV advisory enforcement or a concurrent-run environment artifact (1.95.0 available either way)"
+  ]
 }

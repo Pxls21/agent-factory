@@ -4,11 +4,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import jsonschema
+
 REPO = Path(__file__).resolve().parents[1]
 CHECKER = REPO / "proofs" / "S0-11" / "check_eval_hardening.py"
 PROOF_DIR = REPO / "proofs" / "S0-11"
 NEG_FIXTURE = PROOF_DIR / "fixtures" / "neg_credential_read.py"
 SPEC = PROOF_DIR / "spec.json"
+SPEC_SCHEMA = REPO / "proofs" / "schemas" / "spec.schema.json"
 
 
 def _run(*extra_args):
@@ -33,8 +36,9 @@ def test_negative_credential_violation():
 
 def test_spec_valid():
     spec = json.loads(SPEC.read_text())
+    schema = json.loads(SPEC_SCHEMA.read_text())
+    jsonschema.validate(spec, schema)
     assert spec["proof_id"] == "S0-11"
-    assert spec["classification"] == "execution_proof"
     legs = spec["legs"]
     pos = [l for l in legs if l["leg"] == "positive"]
     neg = [l for l in legs if l["leg"] == "negative"]

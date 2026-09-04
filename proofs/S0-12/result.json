@@ -1,0 +1,40 @@
+{
+  "proof_id": "S0-12",
+  "classification": "conformance_checked_decision",
+  "recorded_at": "2026-09-04T08:26:43.483863Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-12/check_pin_diff.py",
+        "."
+      ],
+      "started_at": "2026-09-04T08:26:43.371882Z",
+      "finished_at": "2026-09-04T08:26:43.434375Z",
+      "exit_code": 0,
+      "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-12/check_pin_diff.py",
+        "proofs/S0-12/fixtures/mutated-root"
+      ],
+      "started_at": "2026-09-04T08:26:43.434704Z",
+      "finished_at": "2026-09-04T08:26:43.483783Z",
+      "exit_code": 1,
+      "stdout_sha256": "be67901080b0bd7ecae40951af137988b1bf42d84cec9b7cd83d52d017302caa",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-12/check_pin_diff.py proofs/S0-12/fixtures/mutated-root",
+    "expected_failure_reason": "sbom-pin-drift: pin differs from upstream.lock.yaml",
+    "observed_failure_reason": "sbom-pin-drift: pin differs from upstream.lock.yaml for hermes-agent"
+  },
+  "digest": "b339b86ad1f517e903321cbb1a2997a5bca77db48f5a2047f31470a885ba73c6"
+}

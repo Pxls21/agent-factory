@@ -1,0 +1,70 @@
+{
+  "proofs": [
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-01",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-02",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "blocked_credential",
+      "normalized_digest": "b095ef6b9fafcc9634b85cfdba56cabce0a0e43608e2a7b3eacb861d7451f3d8",
+      "proof_id": "S0-03",
+      "state": "BLOCKED"
+    },
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-04",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-05",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-06",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "execution_proof",
+      "proof_id": "S0-07",
+      "state": "ABSENT"
+    },
+    {
+      "classification": "blocked_host",
+      "normalized_digest": "110d5b2bd415fe16ae315f620cbe705d857f70bb430d233c40eab2163388ece8",
+      "proof_id": "S0-08",
+      "state": "EXPIRED"
+    },
+    {
+      "classification": "conformance_checked_decision",
+      "normalized_digest": "953002a8182c62cd70958ba3709f17cac816c4d3b5e44aabcd7463aba27a4dce",
+      "proof_id": "S0-09",
+      "state": "PRESENT"
+    },
+    {
+      "classification": "conformance_checked_decision",
+      "normalized_digest": "1e5acc60b7c38295f717536fb8b39c50cae682c2b8c6b3b2ab6c3a4ad970d6e7",
+      "proof_id": "S0-10",
+      "state": "PRESENT"
+    },
+    {
+      "classification": "execution_proof",
+      "normalized_digest": "1a91a885d7cb1b1f36fd5c19f11756ace4d1210d984202818e66e2dd150835a6",
+      "proof_id": "S0-11",
+      "state": "PRESENT"
+    },
+    {
+      "classification": "conformance_checked_decision",
+      "normalized_digest": "c46954745fc47da9768fd56600e68f09e99b27efa8b883688373292524413fc1",
+      "proof_id": "S0-12",
+      "state": "PRESENT"
+    }
+  ]
+}

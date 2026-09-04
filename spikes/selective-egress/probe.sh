@@ -20,10 +20,12 @@ NS_IP="10.200.0.2"
 ALLOWED_PORT=12800
 BLOCKED_PORT=12801
 RESULT_FILE="${1:-/dev/stdout}"
+STANDIN_PID=""
+BLOCKED_PID=""
 
 cleanup() {
-  kill "$STANDIN_PID" 2>/dev/null || true
-  kill "$BLOCKED_PID" 2>/dev/null || true
+  [ -n "$STANDIN_PID" ] && kill "$STANDIN_PID" 2>/dev/null || true
+  [ -n "$BLOCKED_PID" ] && kill "$BLOCKED_PID" 2>/dev/null || true
   ip link del "$VETH_HOST" 2>/dev/null || true
   ip netns del "$NS" 2>/dev/null || true
 }
@@ -136,7 +138,7 @@ if [ "$GATEOFF_RC" = "0" ] && echo "$GATEOFF_OUTPUT" | grep -q "blocked-model"; 
   GATEOFF_PASS="true"
 fi
 
-if [ "$POS_PASS" = "true" ] && [ "$NEG_PASS" = "true" ] && [ "$GATEOFF_PASS" = "true" ]; then
+if [ "$POS_PASS" = "true" ] && [ "$NEG_PASS" = "true" ] && [ "$NEG2_PASS" = "true" ] && [ "$GATEOFF_PASS" = "true" ]; then
   OUTCOME="positive"
 else
   OUTCOME="negative"
@@ -151,72 +153,68 @@ export POS_RC POS_OUTPUT POS_PASS NEG_RC NEG_OUTPUT NEG_PASS
 export NEG2_RC NEG2_OUTPUT NEG2_PASS GATEOFF_RC GATEOFF_OUTPUT GATEOFF_PASS
 
 python3 << 'PYEOF' > "$RESULT_FILE"
-import json, sys, os
+import json, hashlib, sys, os
 
 e = os.environ
+
+def digest(s):
+    return hashlib.sha256(s.encode()).hexdigest()
+
 result = {
     "spike_id": "selective-egress",
     "schema": "proofs/schemas/spike.schema.json",
     "outcome": e["OUTCOME"],
     "ran_at": e["RAN_AT"],
     "env_fingerprint": f"ccr-sandbox:linux:{e['KERNEL']}",
-    "mechanism": "veth pair + iptables in a dedicated network namespace; NOT bare unshare --net (AF-AP-1)",
-    "architecture": {
-        "host_side": f"{e['VETH_HOST']} {e['HOST_IP']}/24 — runs the OmniRoute stand-in on port {e['ALLOWED_PORT']}",
-        "netns_side": f"{e['VETH_NS']} {e['NS_IP']}/24 — iptables OUTPUT/INPUT allow only {e['HOST_IP']}:{e['ALLOWED_PORT']}, default DROP",
-        "stand_in": "Python HTTP server returning {object:list, data:[{id:omniroute-standin}]}",
-    },
     "runs": [
         {
-            "label": "positive-leg",
-            "command": f"ip netns exec {e['NS']} curl http://{e['HOST_IP']}:{e['ALLOWED_PORT']}/v1/models",
+            "command": f"ip netns exec {e['NS']} curl -sS --connect-timeout 5 http://{e['HOST_IP']}:{e['ALLOWED_PORT']}/v1/models",
             "exit_code": int(e["POS_RC"]),
-            "stdout_excerpt": e["POS_OUTPUT"][:200],
-            "pass": e["POS_PASS"] == "true",
-            "notes": "Unit inside netns reaches the allowed OmniRoute stand-in",
+            "stdout_digest": digest(e["POS_OUTPUT"]) if e["POS_OUTPUT"] else "empty",
         },
         {
-            "label": "negative-leg-blocked-port",
-            "command": f"ip netns exec {e['NS']} curl http://{e['HOST_IP']}:{e['BLOCKED_PORT']}/v1/models",
+            "command": f"ip netns exec {e['NS']} curl -sS --connect-timeout 5 http://{e['HOST_IP']}:{e['BLOCKED_PORT']}/v1/models",
             "exit_code": int(e["NEG_RC"]),
-            "stdout_excerpt": e["NEG_OUTPUT"][:200],
-            "pass": e["NEG_PASS"] == "true",
-            "notes": "Same unit fails to reach a non-allowed port — iptables DROP",
+            "stdout_digest": digest(e["NEG_OUTPUT"]) if e["NEG_OUTPUT"] else "empty",
         },
         {
-            "label": "negative-leg-external",
-            "command": f"ip netns exec {e['NS']} curl http://1.1.1.1/",
+            "command": f"ip netns exec {e['NS']} curl -sS --connect-timeout 5 http://1.1.1.1/",
             "exit_code": int(e["NEG2_RC"]),
-            "stdout_excerpt": e["NEG2_OUTPUT"][:200],
-            "pass": e["NEG2_PASS"] == "true",
-            "notes": "Same unit fails to reach an external IP — no route / iptables DROP",
+            "stdout_digest": digest(e["NEG2_OUTPUT"]) if e["NEG2_OUTPUT"] else "empty",
         },
         {
-            "label": "gate-off-mutation",
-            "command": "iptables -F + -P ACCEPT then curl blocked port",
+            "command": "iptables -F + -P ACCEPT inside netns, then curl the previously-blocked port",
             "exit_code": int(e["GATEOFF_RC"]),
-            "stdout_excerpt": e["GATEOFF_OUTPUT"][:200],
-            "pass": e["GATEOFF_PASS"] == "true",
-            "notes": "Gate-off mutation: dropping iptables rules makes the blocked port reachable (proves the gate was the barrier, not a structural artifact)",
+            "stdout_digest": digest(e["GATEOFF_OUTPUT"]) if e["GATEOFF_OUTPUT"] else "empty",
         },
     ],
+    "facts": {
+        "iproute2": "installed (apt)",
+        "iptables": "available (/usr/sbin/iptables)",
+        "ip_netns": "works (create, move veth, exec)",
+        "veth_pairs": "works",
+        "curl_inside_netns": "works",
+        "af_ap_1_respected": "bare unshare --net NOT used; veth pair provides selective connectivity",
+    },
     "classification_effect": [
         {
             "affected_proof": "S0-05",
-            "class": "execution_proof",
+            "from_class": "execution_proof",
+            "to_class": "execution_proof",
             "rule_id": "map-egress-s005",
-            "reason": "mechanism proven (veth + iptables selective egress), containment unproven (full canary suite over live units is Wave 2, increment #16)",
+            "reason": "veth + iptables selective egress mechanism works in the sandbox: allowed traffic passes, blocked traffic is denied by the namespace firewall, and the gate-off mutation proves the gate is the barrier",
         }
     ],
     "not_verified": [
         "Full canary suite over live production units (Wave 2, increment #16)",
-        "UDP/ICMP egress (only TCP tested)",
+        "UDP/ICMP egress filtering (only TCP tested)",
         "DNS resolution inside the netns (no resolver configured)",
-        "Performance under load",
-        "Persistence across container restarts",
+        "Performance and throughput under load",
+        "Persistence across process restarts",
+        "Integration with runsc/gVisor containment layer",
     ],
 }
-json.dump(result, sys.stdout, indent=1)
+json.dump(result, sys.stdout, indent=2)
 print()
 PYEOF
 

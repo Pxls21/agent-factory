@@ -1,48 +1,49 @@
 {
- "spike_id": "dockerd",
- "schema": "proofs/schemas/spike.schema.json",
- "outcome": "positive",
- "ran_at": "2026-09-04T06:06:00+00:00",
- "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
- "runs": [
-  {
-   "label": "dockerd-start",
-   "command": "dockerd --log-level error (backgrounded, 30s timeout)",
-   "exit_code": 0,
-   "notes": "Daemon started successfully; /var/run/docker.sock created"
+  "spike_id": "dockerd",
+  "schema": "proofs/schemas/spike.schema.json",
+  "outcome": "positive",
+  "ran_at": "2026-09-04T08:25:25+00:00",
+  "env_fingerprint": "ccr-sandbox:linux:6.18.44-fc-v24",
+  "runs": [
+    {
+      "command": "dockerd --log-level error (backgrounded, 30s timeout)",
+      "exit_code": 0,
+      "stdout_digest": "empty"
+    },
+    {
+      "command": "docker info",
+      "exit_code": 0,
+      "stdout_digest": "a632de89aa25037e4e2c2f8db76d7f455bd625d9efadfb6e794a54f48ac3adc2"
+    },
+    {
+      "command": "docker run --rm hello-world",
+      "exit_code": 0,
+      "stdout_digest": "0a8d675a2077a48c8e8a813ef6fd095cc6b5c456f685e6eff55ddc9363cb8fed"
+    }
+  ],
+  "facts": {
+    "docker_version": "29.3.1",
+    "storage_driver": "overlayfs",
+    "cgroup_driver": "cgroupfs",
+    "security_options": [
+      "seccomp (builtin profile)"
+    ],
+    "network": "outbound pull from Docker Hub succeeded",
+    "kvm": "ABSENT (/dev/kvm not present)"
   },
-  {
-   "label": "docker-info",
-   "command": "docker info",
-   "exit_code": 0,
-   "notes": "ServerVersion 29.3.1, Driver overlayfs, CgroupDriver cgroupfs, SecurityOptions [seccomp builtin]"
-  },
-  {
-   "label": "hello-world",
-   "command": "docker run --rm hello-world",
-   "exit_code": 0,
-   "notes": "Image pulled from Docker Hub, container ran, printed 'Hello from Docker!' message"
-  }
- ],
- "facts": {
-  "docker_version": "29.3.1",
-  "storage_driver": "overlayfs",
-  "cgroup_driver": "cgroupfs",
-  "security_options": ["seccomp (builtin profile)"],
-  "network": "outbound pull from Docker Hub succeeded",
-  "kvm": "ABSENT (/dev/kvm not present)"
- },
- "classification_effect": [
-  {
-   "affected_proof": "S0-08",
-   "rule_id": "map-dockerd-venue",
-   "reason": "KC-6 re-test: dockerd works in the sandbox — S0-08 is not container-blocked; gVisor containment proof can use Docker as the runtime if needed (the PC already has podman + runsc)"
-  }
- ],
- "not_verified": [
-  "Docker Compose (not tested)",
-  "Container networking beyond outbound pull (no port-mapping or inter-container test)",
-  "Privileged container or --security-opt modes",
-  "Docker-in-Docker nesting"
- ]
+  "classification_effect": [
+    {
+      "affected_proof": "S0-08",
+      "from_class": "blocked_host",
+      "to_class": "blocked_host",
+      "rule_id": "map-dockerd-venue",
+      "reason": "KC-6 re-test: dockerd works in the sandbox \u2014 S0-08 is not container-blocked; gVisor containment proof can use Docker as the runtime if needed"
+    }
+  ],
+  "not_verified": [
+    "Docker Compose (not tested)",
+    "Container networking beyond outbound pull (no port-mapping or inter-container test)",
+    "Privileged container or --security-opt modes",
+    "Docker-in-Docker nesting"
+  ]
 }

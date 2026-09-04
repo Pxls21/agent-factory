@@ -1,0 +1,40 @@
+{
+  "proof_id": "S0-09",
+  "classification": "conformance_checked_decision",
+  "recorded_at": "2026-09-04T08:26:31.936670Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-09/check_conformance.py",
+        "docs/adr/0005-foundry-host.md"
+      ],
+      "started_at": "2026-09-04T08:26:31.887501Z",
+      "finished_at": "2026-09-04T08:26:31.910938Z",
+      "exit_code": 0,
+      "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-09/check_conformance.py",
+        "proofs/S0-09/fixtures/neg-missing-section.md"
+      ],
+      "started_at": "2026-09-04T08:26:31.911158Z",
+      "finished_at": "2026-09-04T08:26:31.936583Z",
+      "exit_code": 1,
+      "stdout_sha256": "43b055be9e864094e2cf2c5ac64ba07b2eb3bdc6e9af949f5826bda4d6652448",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-09/check_conformance.py proofs/S0-09/fixtures/neg-missing-section.md",
+    "expected_failure_reason": "adr-incomplete: missing required section",
+    "observed_failure_reason": "adr-incomplete: missing required section: Consequences"
+  },
+  "digest": "a5beb8eeda500ed7f871c6146873f2a2a33602713abbd50caf517769ace9be9e"
+}

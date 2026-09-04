@@ -1,0 +1,42 @@
+{
+  "proof_id": "S0-11",
+  "classification": "execution_proof",
+  "recorded_at": "2026-09-04T08:26:19.011224Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-11/check_eval_hardening.py",
+        "proofs/S0-11"
+      ],
+      "started_at": "2026-09-04T08:26:18.867516Z",
+      "finished_at": "2026-09-04T08:26:18.947580Z",
+      "exit_code": 0,
+      "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-11/check_eval_hardening.py",
+        "--rubric-neg",
+        "proofs/S0-11/fixtures/neg_credential_read.py",
+        "proofs/S0-11"
+      ],
+      "started_at": "2026-09-04T08:26:18.947803Z",
+      "finished_at": "2026-09-04T08:26:19.011152Z",
+      "exit_code": 1,
+      "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-11/check_eval_hardening.py --rubric-neg proofs/S0-11/fixtures/neg_credential_read.py proofs/S0-11",
+    "expected_failure_reason": "rubric-isolation-violation: credential env absent by construction",
+    "observed_failure_reason": "rubric-isolation-violation: credential env absent by construction"
+  },
+  "digest": "254320d81db36f80313e106fc1b4482439c87a19f1a00ba95139b7714076d803"
+}

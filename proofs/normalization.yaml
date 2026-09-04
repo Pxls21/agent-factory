@@ -6,7 +6,8 @@
     "recorded_at",
     "env_fingerprint",
     "runs.*.started_at",
-    "runs.*.finished_at"
+    "runs.*.finished_at",
+    "digest"
   ],
   "blocked": [
     "env_fingerprint",
