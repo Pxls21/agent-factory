@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); #3 spike rust-ai-memory DONE 2026-09-04 (POSITIVE — ai-memory builds on the PC). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); Wave 0 spikes #3-#5 DONE 2026-09-04 (all POSITIVE — ai-memory builds, dockerd runs, runsc runs; S0-06 stays execution_proof, S0-08 deferral expired). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
@@ -43,8 +43,8 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | upstream-lock-refresh | #27 refresh `upstream.lock.yaml`: OmniRoute (pin predates the credential-export security fix) + GBrain — after testing the patched commits on the PC, before #14 S0-03 | DONE 2026-09-04 — OmniRoute advanced to `488f57e9` (includes GHSA-5926-2w35-7h4q fix at `49c4a620`); GBrain to `8c70f625` (v0.48.2.0, `no_key fail-open` + storage scope fixes); decision D-019 recorded | review-fixes-1 | tested commits + reason in `docs/08_DECISION_LOG.md` |
 | vendored-kit-packaging | #28 owner decision: generated source/commit/license manifest for the vendored trees (Hermes lane) or isolate Stage 0 code from the vendored environment in the PR stack | pending — awaiting the owner's choice | — | reviewers can mechanically skip vendored paths |
 | s0-03-spike-rust-ai-memory | #3 spike rust-ai-memory (PC: cargo build at pinned commit) | DONE 2026-09-04 — POSITIVE: ai-memory v1.39.0 (edition 2024, resolver 3, MSRV 1.95, 12 workspace crates) compiles on the PC; default stable 1.93.0 succeeded, rustup 1.95.0 available; binaries produced (618 MB + 306 MB debug). S0-06 stays `execution_proof` per map-rust-s006 | s0-02 | `spikes/rust-ai-memory/result.json` present; classification_effect applied |
-| s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | pending | s0-02 | fact recorded |
-| s0-05-spike-runsc | #5 spike runsc install ON THE PC (systrap, no KVM needed) | pending | s0-02 | fact recorded; map-runsc-s008 |
+| s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | DONE 2026-09-04 — POSITIVE: Docker v29.3.1 starts (overlayfs, cgroupfs, seccomp); hello-world pulled and ran. KC-6: sandbox is NOT container-blocked | s0-02 | `spikes/dockerd/result.json` present |
+| s0-05-spike-runsc | #5 spike runsc install (sandbox + PC confirmed) | DONE 2026-09-04 — POSITIVE: runsc release-20260817.0 downloaded and runs rootless in sandbox (systrap, 4.19.0-gvisor kernel); PC also has it (owner-installed). S0-08 deferral expired → `execution_proof` per map-runsc-s008 | s0-02 | `spikes/runsc/result.json` present; classification_effect applied |
 | s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | pending | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
 | s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | pending | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
 | s0-08-s0-02-buzz-auth | #8 S0-02 Buzz authorization (four DISTINCT denials) | pending | s0-02 | one turn on allowed; four named denials |
@@ -64,7 +64,19 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
-**2026-09-04 sync (spike rust-ai-memory DONE):** `s0-03-spike-rust-ai-memory` closed POSITIVE.
+**2026-09-04 sync (Wave 0 spikes #3-#5 DONE):** Three spikes closed in one session, all POSITIVE.
+
+`s0-04-spike-dockerd` closed POSITIVE: Docker v29.3.1 starts in the sandbox (overlayfs,
+cgroupfs, seccomp). hello-world pulled from Docker Hub and ran. KC-6: sandbox is NOT
+container-blocked. Venue note for S0-08.
+
+`s0-05-spike-runsc` closed POSITIVE: runsc release-20260817.0 downloaded as a static binary,
+runs rootless in the sandbox (systrap platform, kernel 4.19.0-gvisor inside, host 6.18.44).
+Sandbox network not supported rootless (host network used). The PC also has runsc (owner-installed,
+same release). Classification effect: S0-08 deferral EXPIRED → `execution_proof` per
+`map-runsc-s008` — the containment proof must now run. Task DB #7, #8 closed.
+
+`s0-03-spike-rust-ai-memory` closed POSITIVE.
 ai-memory v1.39.0 at pinned commit `73715b6` (edition 2024, resolver 3, workspace of 12 crates +
 evals) compiled on the PC via the bridge. Default stable toolchain (rustc 1.93.0) succeeded;
 explicit `cargo +1.95.0 build` also succeeded (cached). Binaries: `ai-memory` 618 MB, `ai-memory-eval`
