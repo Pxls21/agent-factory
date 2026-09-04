@@ -14,6 +14,16 @@ last_compiled: 2026-09-03
 - **Today:** 2026-09-04
 
 ## Active lanes
+- **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (task #10) — IN PROGRESS, grounded 2026-09-04.**
+  Owner chose Option 1 (build+test at the pins). Bridge live. FRESH isolated pinned clones on the PC at
+  `~/s0-01-pinned/{hermes-agent@527da60,buzz@1c8321c,acp@37a7d4f8}` (clean-tree). Built by absolute path:
+  buzz-acp `~/s0-01-pinned/buzz/target/release/buzz-acp` (sha256 a5a17ffc…), hermes-acp
+  `~/s0-01-pinned/.venv-hermes/bin/hermes-acp` (v0.21.0, --check OK). Provenance + settled design in
+  `proofs/S0-01/GROUNDING.md`. KEY: buzz-acp is a relay daemon (needs Nostr key + `--relay-url`, launches the
+  agent via `--agent-command`); golden = normalized protocol SHAPE (content volatility stripped); negative =
+  schema-layer (acp v2 InitializeRequest required [protocolVersion, info]). NEXT: Nostr identity + relay
+  target, canonical fixtures, runner (capture→normalize→golden ×2 + negative), result.json, ledger. Do NOT
+  touch live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.
 - **S0-11 eval hardening `s0-18-s0-11-eval-hardening` — ACCEPTED 2026-09-04** (owner process
   decision after 8 reviews; technical proof + trust binding accepted). Cycle 8 fixed the last live
   guard bug: `check-proof-status.py` now BINDS the visible `PROOF-STATUS` line to the ONE canonical
@@ -103,6 +113,7 @@ build-status or count disagreement.
 
 ## Last updated
 
-S0-11 cycle-8 governance increment (slug-bypass guard fix + ACCEPTED record) — 2026-09-04; next
-update when Stage-0 proof lanes resume. This page's pre-09-04 lane entries are being brought
-forward incrementally; the ledger (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.
+S0-01 ACP conformance grounding (pinned clones built on the PC, provenance + design in
+`proofs/S0-01/GROUNDING.md`) — 2026-09-04; next update when the S0-01 runner + fixtures land. This
+page's pre-09-04 lane entries are being brought forward incrementally; the ledger
+(`todo/BUILD-TASKLIST.md`) wins on any status disagreement.
