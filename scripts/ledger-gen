@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Generate proofs/ledger.json deterministically from the proof registry and artifacts."""
+import argparse
+import copy
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+
+def _load_validator(root):
+    path = root / "scripts" / "validate-ledger"
+    if not path.exists():
+        path = Path(__file__).resolve().with_name("validate-ledger")
+    loader = importlib.machinery.SourceFileLoader("stage0_validate_ledger", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise RuntimeError(f"cannot load validator: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_normalization(root):
+    path = root / "proofs" / "normalization.yaml"
+    text = "\n".join(
+        line for line in path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    return json.loads(text)
+
+
+def _strip(obj, parts):
+    if not parts:
+        return
+    key = parts[0]
+    rest = parts[1:]
+    if key == "*":
+        if isinstance(obj, list):
+            for item in obj:
+                _strip(item, rest)
+    elif isinstance(obj, dict):
+        if not rest:
+            obj.pop(key, None)
+        elif key in obj:
+            _strip(obj[key], rest)
+
+
+def _normalized_digest(artifact, volatile_paths):
+    normalized = copy.deepcopy(artifact)
+    for path in volatile_paths:
+        _strip(normalized, path.split("."))
+    return hashlib.sha256(
+        json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="ledger-gen")
+    parser.add_argument("--root", type=Path, default=Path("."))
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+
+    root = args.root.resolve()
+    output = (args.output or root / "proofs" / "ledger.json").resolve()
+
+    validator = _load_validator(root)
+    registry, states, findings = validator._inspect(root)
+
+    if registry is None or not isinstance(registry.get("proofs"), list):
+        print("ledger-gen: registry invalid", file=sys.stderr)
+        for finding in findings.items:
+            print(f"  {finding}", file=sys.stderr)
+        return 1
+
+    normalization = _load_normalization(root)
+
+    if findings.items:
+        for finding in findings.items:
+            print(f"ledger-gen: warning: {finding}", file=sys.stderr)
+
+    proofs = []
+    for proof in sorted(registry["proofs"], key=lambda p: str(p.get("proof_id", ""))):
+        proof_id = proof.get("proof_id")
+        if not isinstance(proof_id, str):
+            continue
+        entry = {
+            "classification": proof.get("classification"),
+            "proof_id": proof_id,
+            "state": states.get(proof_id, "ABSENT"),
+        }
+
+        result_path = root / "proofs" / proof_id / "result.json"
+        blocked_path = root / "proofs" / proof_id / "blocked.json"
+        artifact_path = result_path if result_path.exists() else (
+            blocked_path if blocked_path.exists() else None
+        )
+        if artifact_path is not None:
+            try:
+                artifact = json.loads(artifact_path.read_text())
+                artifact_type = "result" if artifact_path.name == "result.json" else "blocked"
+                volatile = normalization.get(artifact_type, [])
+                entry["normalized_digest"] = _normalized_digest(artifact, volatile)
+            except Exception:
+                pass
+
+        proofs.append(entry)
+
+    ledger = {"proofs": proofs}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+
+    print(f"ledger-gen: wrote {output} ({len(proofs)} proofs)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

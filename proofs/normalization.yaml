@@ -1,0 +1,16 @@
+{
+  # Volatile fields stripped before computing normalized_digest in ledger.json.
+  # Path syntax: dot-separated keys; * matches every array element.
+  # These change between runs without affecting proof validity.
+  "result": [
+    "recorded_at",
+    "env_fingerprint",
+    "runs.*.started_at",
+    "runs.*.finished_at"
+  ],
+  "blocked": [
+    "env_fingerprint",
+    "marker.probe_run.started_at",
+    "marker.probe_run.finished_at"
+  ]
+}
