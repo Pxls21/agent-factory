@@ -27,7 +27,7 @@
 Pipeline (findings → council → interview → seed → breakdown): **COMPLETE**, all committed.
 Tooling port from trading-system (`port-trading-system-setup`): **DONE** 2026-09-03 — hooks, ops
 scripts, ledgers, CLAUDE.md, Codex/Hermes ports, wiki; PC smoke of the harness ports NOT run.
-Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
+Build: **IN PROGRESS** — increment #1 DONE (2026-09-03), #2a landed, #2b landed 2026-09-04 (2 of 18 increments closed); #3 spike rust-ai-memory DONE 2026-09-04 (POSITIVE — ai-memory builds on the PC). Review fixes (`review-fixes-1`) DONE 2026-09-04; Stage 0 work unfrozen.
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
@@ -42,7 +42,7 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | review-fixes-1-ci-harness | #26 owner review 2026-09-03: real CI workflow, sync-skills fail-closed, hook/pc_lane test hygiene | DONE 2026-09-04 — four adversarial review rounds; all mutants killed; 98 harness checks ×2 + 80 pytest ×2 | — | CI green; sync-skills exits 65 on ANY list-generation failure; hook test uses `--absolute-git-dir` + reruns twice; pc_lane mutation-killing env-poison tests |
 | upstream-lock-refresh | #27 refresh `upstream.lock.yaml`: OmniRoute (pin predates the credential-export security fix) + GBrain — after testing the patched commits on the PC, before #14 S0-03 | DONE 2026-09-04 — OmniRoute advanced to `488f57e9` (includes GHSA-5926-2w35-7h4q fix at `49c4a620`); GBrain to `8c70f625` (v0.48.2.0, `no_key fail-open` + storage scope fixes); decision D-019 recorded | review-fixes-1 | tested commits + reason in `docs/08_DECISION_LOG.md` |
 | vendored-kit-packaging | #28 owner decision: generated source/commit/license manifest for the vendored trees (Hermes lane) or isolate Stage 0 code from the vendored environment in the PR stack | pending — awaiting the owner's choice | — | reviewers can mechanically skip vendored paths |
-| s0-03-spike-rust-ai-memory | #3 spike rust-ai-memory (PC: `cargo +1.95.0`) | pending | s0-02 | fact recorded either way; classification_effect per map-rust-s006 |
+| s0-03-spike-rust-ai-memory | #3 spike rust-ai-memory (PC: cargo build at pinned commit) | DONE 2026-09-04 — POSITIVE: ai-memory v1.39.0 (edition 2024, resolver 3, MSRV 1.95, 12 workspace crates) compiles on the PC; default stable 1.93.0 succeeded, rustup 1.95.0 available; binaries produced (618 MB + 306 MB debug). S0-06 stays `execution_proof` per map-rust-s006 | s0-02 | `spikes/rust-ai-memory/result.json` present; classification_effect applied |
 | s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | pending | s0-02 | fact recorded |
 | s0-05-spike-runsc | #5 spike runsc install ON THE PC (systrap, no KVM needed) | pending | s0-02 | fact recorded; map-runsc-s008 |
 | s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | pending | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
@@ -63,6 +63,16 @@ Phoenix/OpenObserve already running on the PC; runsc absent; rustup has 1.95.0.
 | continuity-offload-plane | tooling: transcript sync (sandbox digests + PC lane transcripts), per-role OmniRoute routes, curator/echo/researcher lanes + templates, workflow offload map, trading-system handoff | in_progress 2026-09-03 | — | scrubber tests green (per-class negatives); probe table has rows; curator lane ran once with a reviewed wiki delta |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-04 sync (spike rust-ai-memory DONE):** `s0-03-spike-rust-ai-memory` closed POSITIVE.
+ai-memory v1.39.0 at pinned commit `73715b6` (edition 2024, resolver 3, workspace of 12 crates +
+evals) compiled on the PC via the bridge. Default stable toolchain (rustc 1.93.0) succeeded;
+explicit `cargo +1.95.0 build` also succeeded (cached). Binaries: `ai-memory` 618 MB, `ai-memory-eval`
+306 MB (debug profile). No rust-toolchain.toml in the upstream repo — MSRV 1.95 declared in
+workspace Cargo.toml but the default 1.93.0 build did not error (advisory enforcement). Spike
+artifact: `spikes/rust-ai-memory/result.json`. Classification effect: S0-06 stays `execution_proof`
+per `map-rust-s006` — the four-scope adapter design proof (#13) can exercise the real Rust crate on
+the PC. Task DB #6 closed.
 
 **2026-09-03 sync (build started + continuity plane):** `s0-01-registry-schemas-validator` DISPATCHED to the
 PC Hermes lane at pin a5bd59b (round 1 halted on a brief premise the coordinator got wrong — AP-43
