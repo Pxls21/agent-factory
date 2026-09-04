@@ -176,10 +176,28 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    claims closure while the handoff says review-pending is a hollow green in the tracker. **Mechanize
    it as a STATE guard, not a vocabulary ban (S0-11 cycle-6, AF-AP-32):** a guard that rejects only
    the word "re-closed" still passes a "DONE by coordinator" row. Parse a single canonical status
-   marker per item, require REVIEW-PENDING (or ACCEPTED with a committed owner-acceptance record),
-   and fail on DONE/CLOSED/a deleted marker/conflicting duplicates — with negative tests for each.
-   A regex vocabulary check is not a semantic state guard (the same regex-vs-parser class as a
-   security scan that greps where it must parse).
+   marker per item, require REVIEW-PENDING, and fail on DONE/CLOSED/a deleted marker/conflicting
+   duplicates — with negative tests for each. A regex vocabulary check is not a semantic state
+   guard (the same regex-vs-parser class as a security scan that greps where it must parse).
+   **Cycle-7 sharpening (S0-11 seventh review — three more AF-AP-32 instances):**
+   (a) **ONE VISIBLE authoritative source.** A HIDDEN marker (an HTML comment) can diverge from the
+   visible ledger a human reads — a visible "DONE" row alongside a hidden "REVIEW-PENDING" marker
+   passed. The authoritative status is a single VISIBLE line; reject hidden markers and any visible
+   row (e.g. a table row keyed by the bare item id) that asserts a competing status.
+   (b) **THE COORDINATOR NEVER BUILDS AN ACCEPTANCE GATE IT CAN SATISFY.** Any acceptance file the
+   coordinator can write, it can forge — an arbitrary `OWNER-ACCEPTED` file "created by
+   implementation agent" self-accepted. File existence is not authentication. The coordinator may
+   record ONLY the pending state; genuine acceptance is an OWNER action on owner-controlled
+   infrastructure it structurally cannot forge (a merge to a protected branch, a protected review,
+   a signature against the owner's key). If you cannot build an unforgeable acceptance path
+   (no crypto tooling, no owner anchor), SURFACE it as an owner decision — do not fabricate a
+   fourth forgeable mechanism (#1 rule).
+   (c) **Store review metadata OUTSIDE any attested/hashed input tree** — an acceptance file placed
+   in the attested proof dir made the acceptance procedure itself break integrity.
+   (d) **Test a state TRANSITION through EVERY adjacent gate, not just its focused test.** The
+   cycle-6 ACCEPTED test never ran ledger integrity afterward, which is exactly how the
+   attestation break slipped through; the transition test must run all gates the transition
+   touches.
 
 **Addendum — a DELTA gate meeting OLD code is a full-tree audit in disguise (2026-09-03,
 agent-factory port).** Delta gates (pyflakes delta, the anti-pattern screen on ADDED lines) never
