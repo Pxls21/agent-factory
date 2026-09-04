@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-12",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-04T08:26:43.483863Z",
+  "recorded_at": "2026-09-04T14:48:04.593252Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "."
       ],
-      "started_at": "2026-09-04T08:26:43.371882Z",
-      "finished_at": "2026-09-04T08:26:43.434375Z",
+      "started_at": "2026-09-04T14:48:04.490812Z",
+      "finished_at": "2026-09-04T14:48:04.547930Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "proofs/S0-12/fixtures/mutated-root"
       ],
-      "started_at": "2026-09-04T08:26:43.434704Z",
-      "finished_at": "2026-09-04T08:26:43.483783Z",
+      "started_at": "2026-09-04T14:48:04.548163Z",
+      "finished_at": "2026-09-04T14:48:04.592687Z",
       "exit_code": 1,
       "stdout_sha256": "be67901080b0bd7ecae40951af137988b1bf42d84cec9b7cd83d52d017302caa",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -36,5 +36,13 @@
     "expected_failure_reason": "sbom-pin-drift: pin differs from upstream.lock.yaml",
     "observed_failure_reason": "sbom-pin-drift: pin differs from upstream.lock.yaml for hermes-agent"
   },
-  "digest": "b339b86ad1f517e903321cbb1a2997a5bca77db48f5a2047f31470a885ba73c6"
+  "attestation": {
+    "proofs/S0-12/check_pin_diff.py": "70777c1824ae6bae71dc701a653db8440e8736122814327f4271db4521647f89",
+    "proofs/S0-12/fixtures/mutated-root/LICENSE-DECISION.md": "7d3f2ae750e7a354feb1f74a0589c17c68eb9c87e2ae2a83b3b52338f0b5aba0",
+    "proofs/S0-12/fixtures/mutated-root/SBOM.yaml": "513bd9771fbe45d95a01e0629d839ede1d1bb810ebf5581147d2017c598a39cf",
+    "proofs/S0-12/fixtures/mutated-root/THIRD-PARTY-NOTICES.md": "a70db7ee9ddb73a0cd4be156e61f9d77a8398b199f66dee901f1c35bb7e02a63",
+    "proofs/S0-12/fixtures/mutated-root/upstream.lock.yaml": "c5cb3825513e9371e3d083835f5842cad79c3d3cacbdaadad256f855f19ec4eb",
+    "proofs/S0-12/spec.json": "2569589f8b33018de6199039108d8e4396c4c0905258a617a2b0206fb92ffd93"
+  },
+  "digest": "7ccca2237b00b552194c5a2107d2ba7a078b4e9fa4d14b48e3f8c3e6661977ba"
 }

@@ -10,7 +10,13 @@ Axes (all parent-observed, kernel truth):
              inherits the runner's own non-root uid.
   - netns:   /proc/<pid>/ns/net inode != parent (a fresh netns).
   - cwd:     /proc/<pid>/cwd is a fresh working directory != the parent's cwd
-             (the production workspace); the runner assigns a per-rubric temp dir.
+             (the production workspace); the runner assigns a per-rubric temp dir
+             that is chowned to the drop uid so the rubric can WRITE it — the
+             rubric writes an output file and the parent COLLECTS it before
+             cleanup, proving the workspace is usable, not merely different.
+  - priv:    /proc/<pid>/status shows no_new_privs=1 and an empty capability
+             bounding set (root venue) — no execve can regain privilege via a
+             setuid/file-capability binary.
   - env:     /proc/<pid>/environ is a subset of a CLOSED EXACT allow-list;
              production-named decoys the checker injects must be absent.
   - network: an ACTIVE paired control — the parent holds a loopback listener in
@@ -72,6 +78,10 @@ SETPRIV = "/usr/bin/setpriv"
 NSENTER = "/usr/bin/nsenter"
 DROP_UID = "65534"  # nobody
 DROP_GID = "65534"  # nogroup
+DROP_UID_INT = 65534
+DROP_GID_INT = 65534
+RUBRIC_OUTPUT = "rubric-output.txt"       # a real rubric writes results to its workspace
+RUBRIC_WROTE = "rubric-wrote:probe-001"   # the parent collects exactly this before cleanup
 READY_BLOCK = "import sys; sys.stdout.write('R'); sys.stdout.flush(); sys.stdin.read(1)"
 
 HAZARDS = ("host_networking", "recursive_chmod_777", "production_credential_passing")
@@ -87,11 +97,14 @@ def _net_ns():
 
 def _iso_launch(child_cmd):
     """Absolute-path wrapper: fresh netns as a real non-root uid. Root creates
-    the netns then drops via setpriv; a non-root runner uses a user namespace
+    the netns then drops via setpriv, ALSO setting no_new_privs and CLEARING the
+    capability bounding set so no later execve can regain privilege through a
+    setuid or file-capability binary; a non-root runner uses a user namespace
     (its own non-root host uid is kept, which already satisfies uid != 0)."""
     if os.getuid() == 0:
         return [UNSHARE, "--net", "--", SETPRIV, "--reuid", DROP_UID,
-                "--regid", DROP_GID, "--clear-groups", "--"] + child_cmd
+                "--regid", DROP_GID, "--clear-groups",
+                "--no-new-privs", "--bounding-set", "-all", "--"] + child_cmd
     return [UNSHARE, "--user", "--net", "--"] + child_cmd
 
 
@@ -134,6 +147,30 @@ def _proc_env_keys(pid):
                    for entry in raw.split(b"\x00") if entry})
 
 
+def _proc_privilege(pid):
+    """Parent-read the child's no_new_privs flag and capability bounding set from
+    /proc/<pid>/status (kernel truth). no_new_privs=1 and cap_bnd=0 together mean
+    a later execve cannot regain privilege via setuid/file-capability binaries."""
+    no_new_privs, cap_bnd = 0, None
+    with open("/proc/%d/status" % pid) as handle:
+        for line in handle:
+            if line.startswith("NoNewPrivs:"):
+                no_new_privs = int(line.split()[1])
+            elif line.startswith("CapBnd:"):
+                cap_bnd = int(line.split()[1], 16)
+    return no_new_privs, cap_bnd
+
+
+def _collect_output(workspace):
+    """Read the rubric's workspace output, if the rubric could write it. Absent
+    (None) means the workspace was not usable by the dropped rubric."""
+    try:
+        with open(os.path.join(workspace, RUBRIC_OUTPUT)) as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
 def _nsenter_reach(pid, port):
     """Parent-driven: enter the child's netns and try the parent's listener.
     True = reached, False = refused (isolated), None = probe could not run
@@ -171,20 +208,32 @@ def _release(proc):
 
 
 def _observe_child(launch, base_env, port, fresh_cwd):
-    """Launch a child that signals ready then blocks; observe it from the parent
-    via /proc while it is alive. `fresh_cwd` True runs it in a per-rubric temp
-    directory (the isolated runner behaviour); False lets it inherit the parent's
-    cwd (the un-isolated control). Returns an observation dict or None."""
-    ctx = tempfile.TemporaryDirectory(prefix="rubric-cwd-") if fresh_cwd else None
-    cwd = ctx.name if ctx else None
+    """Launch a child that writes its workspace, signals ready, then blocks;
+    observe it from the parent via /proc while it is alive.
+
+    A per-rubric writable workspace is ALWAYS provisioned and passed as
+    RUBRIC_CWD — on a root venue it is chowned to the drop uid so the
+    post-privilege-drop child can actually write there (a real rubric writes
+    results/logs to its workspace). `fresh_cwd` True also makes that workspace
+    the process's own working directory (the isolated runner behaviour, observed
+    at /proc/<pid>/cwd); False lets the process inherit the parent's cwd (the
+    un-isolated control) while still giving the rubric a throwaway workspace so
+    its write never lands in the proof tree. The parent collects the workspace
+    output before cleanup. Returns an observation dict or None."""
+    ctx = tempfile.TemporaryDirectory(prefix="rubric-cwd-")
+    workspace = ctx.name
+    if os.getuid() == 0:
+        os.chown(workspace, DROP_UID_INT, DROP_GID_INT)  # the dropped child must be able to write
+    cwd = workspace if fresh_cwd else None
     env = dict(base_env)
     env["RUBRIC_TASK_ID"] = "probe-001"
     env["RUBRIC_PROBE_PORT"] = str(port)
-    env["RUBRIC_CWD"] = cwd if cwd else os.getcwd()
+    env["RUBRIC_CWD"] = workspace
     try:
         proc = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, cwd=cwd, env=env)
     except OSError:
+        ctx.cleanup()
         return None
     try:
         ready = b""
@@ -193,19 +242,22 @@ def _observe_child(launch, base_env, port, fresh_cwd):
         if ready != b"R":
             return None
         pid = proc.pid
+        no_new_privs, cap_bnd = _proc_privilege(pid)
         return {
             "uid": _proc_uid(pid),
             "net_ns": os.readlink("/proc/%d/ns/net" % pid),
             "cwd": os.readlink("/proc/%d/cwd" % pid),
             "env_keys": _proc_env_keys(pid),
             "net_reachable": _nsenter_reach(pid, port),
+            "no_new_privs": no_new_privs,
+            "cap_bnd": cap_bnd,
+            "collected_output": _collect_output(workspace),
         }
     except (OSError, ValueError):
         return None
     finally:
         _release(proc)
-        if ctx:
-            ctx.cleanup()
+        ctx.cleanup()
 
 
 def _violations(obs, parent_net_ns, parent_cwd):
@@ -528,6 +580,21 @@ def check_rubric_isolation(proof_dir):
     # listener (False), never fail open on a missing observation (None/True).
     if iso["net_reachable"] is not False:
         print("rubric-isolation-failure: network-reachable")
+        return False
+    # Privilege boundary (root venue, where the real setpriv drop happens): the
+    # wrapped child must run with no_new_privs SET and an EMPTY capability
+    # bounding set, so no later execve regains privilege via a setuid or
+    # file-capability binary. Venue-dependent, like the uid axis (a non-root
+    # user-namespace venue defers before reaching this check).
+    if os.getuid() == 0 and (iso.get("no_new_privs") != 1 or iso.get("cap_bnd") != 0):
+        print("rubric-isolation-failure: privileges-not-restricted")
+        return False
+    # Usable workspace: the fresh cwd must be a securely-owned, WRITABLE output
+    # directory — the rubric writes to it and the parent collects that output
+    # before cleanup. A different-but-unwritable cwd (root-owned 0700 that the
+    # dropped uid cannot write) fails here, not silently passes.
+    if iso.get("collected_output") != RUBRIC_WROTE:
+        print("rubric-isolation-failure: workspace-not-writable")
         return False
 
     raw_axes = _violations(raw, parent_net_ns, parent_cwd)

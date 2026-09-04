@@ -77,7 +77,14 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    capability is guarded by the SAME preflight the real check consumes (not a proxy signal, not a
    selected subset), and a test proves the incapable path DEFERS (a distinct "unavailable" exit,
    never a false pass or false breach) — a guard on only some legs is the owner's "2 failed" on the
-   host that lacks the capability.** **A fixture that cannot carry the PRODUCTION
+   host that lacks the capability. Exercise the CANONICAL CONSUMER, in both venue states, not a
+   proxy (AF-AP-24 recurrence-3, S0-11 cycle-5): a test that invokes the checker legs directly
+   proves nothing about the runner production actually calls — the runner had NO defer branch and
+   destroyed the artifact on the incapable venue while the "canonical" test that bypassed it stayed
+   green. Drive the real runner/CLI; where a capable box can simulate the incapable venue (drop to
+   a non-privileged uid via `setpriv`), run the SAME test both ways so the defer path is covered
+   wherever the suite runs. A deferring/failing run must PRESERVE the capable-venue artifact, never
+   delete-then-fail.** **A fixture that cannot carry the PRODUCTION
    data TYPE is a vacuous test — build round-trip/serialization tests from the real producer's
    types, not hand-built native-Python stand-ins** (PREMORTEM-2 R2-01: a champion test used a
    native-`bool` `make_genome_dict` fixture; the real pymoo MixedVariable population carries
@@ -162,7 +169,12 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    doc still saying "blocked" after the fix is a defect); sync TODO with task list; push; stop and
    report. **Status lines open with the OUTCOME, tagged by verification level:** `Verified live:`
    (real path) ≠ `DONE:` (tests green) ≠ `NOT built.` (absent/dormant, stated first-class). The
-   verdict leads; the story follows.
+   verdict leads; the story follows. **`REVIEW-PENDING` is its own level, below `DONE` (AF-AP-32,
+   S0-11 cycle-5): work the owner is actively reviewing is not closed until the OWNER accepts —
+   the coordinator never self-records "closed"/"re-closed" for it, in the ledger or the task DB.**
+   The verification level in the chat handoff and the tracked status must agree; a ledger that
+   claims closure while the handoff says review-pending is a hollow green in the tracker (mechanize
+   it where you can — e.g. a ledger-vocabulary guard in the repo's own verify script).
 
 **Addendum — a DELTA gate meeting OLD code is a full-tree audit in disguise (2026-09-03,
 agent-factory port).** Delta gates (pyflakes delta, the anti-pattern screen on ADDED lines) never

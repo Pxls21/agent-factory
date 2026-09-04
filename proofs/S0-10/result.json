@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-10",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-04T08:26:38.490989Z",
+  "recorded_at": "2026-09-04T14:48:03.769251Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-10/check_conformance.py",
         "docs/adr/0006-gbrain-seam.md"
       ],
-      "started_at": "2026-09-04T08:26:38.443510Z",
-      "finished_at": "2026-09-04T08:26:38.466909Z",
+      "started_at": "2026-09-04T14:48:03.724739Z",
+      "finished_at": "2026-09-04T14:48:03.745479Z",
       "exit_code": 0,
       "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-10/check_conformance.py",
         "proofs/S0-10/fixtures/neg-missing-credential-stmt.md"
       ],
-      "started_at": "2026-09-04T08:26:38.467216Z",
-      "finished_at": "2026-09-04T08:26:38.490897Z",
+      "started_at": "2026-09-04T14:48:03.745647Z",
+      "finished_at": "2026-09-04T14:48:03.768751Z",
       "exit_code": 1,
       "stdout_sha256": "752cbdff8506600b0eba7c4354b05148d2e4ed02e73638dba6ba117e5855c8a9",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -36,5 +36,10 @@
     "expected_failure_reason": "adr-incomplete: missing credential-isolation statement",
     "observed_failure_reason": "adr-incomplete: missing credential-isolation statement"
   },
-  "digest": "43d5b5d223d3ccb8b3298107a90093050af7ce65fe516c00074c59222b1fb543"
+  "attestation": {
+    "proofs/S0-10/check_conformance.py": "fe49d6fd7701ec4a7bd28fb8f703b90a6df9367ba3093e9079f414e623fb672c",
+    "proofs/S0-10/fixtures/neg-missing-credential-stmt.md": "5ae55aad31329422774b7a6e3ba686e17c34a78252cc9617a2c7085fd1e53946",
+    "proofs/S0-10/spec.json": "57bdaa836c67f9b1ca59001594723527b34e0c0ae83a32c0c20554be11a25227"
+  },
+  "digest": "e571cecd42d19d3004488b1daed7153c62d0a8844f4e15583a6b3e8548b71b9c"
 }

@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import jsonschema
@@ -28,6 +29,8 @@ PROBE = PROOF_DIR / "fixtures" / "rubric_probe.py"
 CRED_FIXTURE = PROOF_DIR / "fixtures" / "neg_credential_read.py"
 SPEC = PROOF_DIR / "spec.json"
 SPEC_SCHEMA = REPO / "proofs" / "schemas" / "spec.schema.json"
+PROOF_RUNNER = REPO / "scripts" / "proof-runner"
+VALIDATE_LEDGER = REPO / "scripts" / "validate-ledger"
 FROZEN_REASON = "rubric-isolation-violation: credential env absent by construction"
 STABLE_NEG_REASON = ("rubric-isolation-violation: "
                      "cwd-not-isolated,env-not-allowlisted,netns-not-isolated")
@@ -61,6 +64,37 @@ def _copy_proof(tmp_path):
     return dst
 
 
+def _repo_copy():
+    """A world-traversable copy of proofs/ + scripts/ under /tmp, so a setpriv
+    drop to nobody (the incapable-venue simulation) can traverse it and read the
+    fixtures. Returns the copy root; caller removes it."""
+    root = Path(tempfile.mkdtemp(prefix="s0-11-canon-", dir="/tmp"))
+    os.chmod(root, 0o755)
+    shutil.copytree(REPO / "proofs", root / "proofs")
+    shutil.copytree(REPO / "scripts", root / "scripts")
+    subprocess.run(["chmod", "-R", "o+rX", str(root)], check=True)
+    return root
+
+
+def _run_runner(root, *, incapable):
+    """Drive the CANONICAL runner (scripts/proof-runner) against `root`. When
+    `incapable` and we are root, drop to nobody via setpriv so the checker
+    cannot run the nsenter discriminator; a non-root runner is already
+    incapable. This exercises BOTH venue states through the real consumer."""
+    cmd = [sys.executable, str(root / "scripts" / "proof-runner"),
+           "run", "--proof", "S0-11", "--venue", "sandbox", "--root", str(root)]
+    if incapable and os.getuid() == 0:
+        cmd = ["/usr/bin/setpriv", "--reuid", "65534", "--regid", "65534",
+               "--clear-groups", "--"] + cmd
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+
+
+def _integrity(root):
+    return subprocess.run(
+        [sys.executable, str(root / "scripts" / "validate-ledger"), "integrity", "--root", str(root)],
+        capture_output=True, text=True, timeout=60)
+
+
 # --- proof legs --------------------------------------------------------------
 def test_selftest_reports_capability():
     r = _run("--selftest")
@@ -75,17 +109,73 @@ def test_positive_conformance():
 
 
 @NEEDS_ISO
-def test_all_spec_legs_via_canonical_invocation():
-    # Every spec leg, run exactly as the canonical runner invokes it.
-    spec = json.loads(SPEC.read_text())
-    for leg in spec["legs"]:
-        args = leg["cmd"][1:]  # drop "python3"
-        r = subprocess.run([sys.executable] + args, capture_output=True, text=True,
-                           timeout=60, cwd=str(REPO))
-        assert r.returncode == leg["expect"]["exit_code"], \
-            leg["leg"] + " exit " + str(r.returncode) + ": " + r.stdout + r.stderr
-        if "failure_reason" in leg["expect"]:
-            assert leg["expect"]["failure_reason"] in (r.stdout + r.stderr)
+def test_canonical_runner_runs_on_capable_venue():
+    # The REAL canonical runner (not the checker legs directly) drives every spec
+    # leg on a capable venue: exit 0, and it regenerates a valid, attested,
+    # PRESENT artifact.
+    root = _repo_copy()
+    try:
+        r = _run_runner(root, incapable=False)
+        assert r.returncode == 0, "runner failed: " + r.stdout + r.stderr
+        result = json.loads((root / "proofs" / "S0-11" / "result.json").read_text())
+        assert "attestation" in result and result["attestation"]
+        integ = _integrity(root)
+        assert "S0-11 PRESENT" in integ.stdout, integ.stdout + integ.stderr
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_canonical_runner_defers_and_preserves_on_incapable_venue():
+    # The owner's blocker: on an incapable venue the runner must DEFER (exit 2)
+    # and PRESERVE the capable-venue artifact, never delete it then fail. Runs on
+    # BOTH venue states — root drops to nobody, a non-root runner is already
+    # incapable — so the defer path is exercised wherever the suite runs.
+    root = _repo_copy()
+    try:
+        result_path = root / "proofs" / "S0-11" / "result.json"
+        before = result_path.read_bytes()
+        r = _run_runner(root, incapable=True)
+        assert r.returncode == 2, "expected defer (2), got " + str(r.returncode) + ": " + r.stderr
+        assert "capability-unavailable" in r.stderr
+        assert result_path.exists(), "runner deleted the capable-venue artifact"
+        assert result_path.read_bytes() == before, "runner overwrote the artifact on an incapable venue"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_attestation_binds_artifact_to_source():
+    # Environment-independent (validate-ledger hashes files; it never runs the
+    # checker): a valid tree is PRESENT, but neutering the checker WITHOUT
+    # regenerating the artifact flips it to INVALID with attestation-mismatch —
+    # the neuter-and-keep-stale-green attack the owner reproduced.
+    root = _repo_copy()
+    try:
+        assert "S0-11 PRESENT" in _integrity(root).stdout
+        chk_path = root / "proofs" / "S0-11" / "check_eval_hardening.py"
+        text = chk_path.read_text()
+        neutered = text.replace(
+            "    if os.getuid() == 0:\n        return [UNSHARE",
+            "    return list(child_cmd)  # neutered pass-through\n    if os.getuid() == 0:\n        return [UNSHARE",
+            1)
+        assert neutered != text, "neuter substitution did not apply"
+        chk_path.write_text(neutered)
+        out = _integrity(root).stdout
+        assert "S0-11 PRESENT" not in out, "attestation did not catch the neutered checker"
+        assert "attestation-mismatch: S0-11" in out and "check_eval_hardening.py" in out
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_result_schema_requires_attestation():
+    # The binding is a schema invariant: an artifact without attestation is
+    # rejected, so no proof artifact can silently lack the source binding.
+    schema = json.loads((REPO / "proofs" / "schemas" / "result.schema.json").read_text())
+    assert "attestation" in schema["required"]
+    result = json.loads((PROOF_DIR / "result.json").read_text())
+    assert result.get("attestation"), "committed S0-11 result must carry an attestation"
+    stripped = {k: v for k, v in result.items() if k != "attestation"}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(stripped, schema)
 
 
 def test_negative_frozen_credential_control():
@@ -238,12 +328,41 @@ def test_wrapped_child_has_fresh_cwd_and_refuses_listener():
     assert obs is not None
     assert obs["cwd"] != os.getcwd() and "rubric-cwd-" in obs["cwd"]  # fresh dir
     assert obs["net_reachable"] is False  # isolated netns refuses the listener
+    # Fresh cwd is USABLE: the dropped rubric wrote its workspace and the parent
+    # collected it (blocker 3), and the privilege drop set no_new_privs + cleared
+    # the capability bounding set (blocker 4).
+    assert obs["collected_output"] == "rubric-wrote:probe-001"
+    if os.getuid() == 0:
+        assert obs["no_new_privs"] == 1 and obs["cap_bnd"] == 0
     assert chk._violations(obs, chk._net_ns(), os.getcwd()) == []
 
 
 @NEEDS_ISO
 def test_positive_fails_without_real_isolation(monkeypatch):
     monkeypatch.setattr(chk, "_iso_launch", lambda child: list(child))
+    assert chk.positive(PROOF_DIR) == 1
+
+
+@NEEDS_ISO
+@pytest.mark.skipif(os.getuid() != 0, reason="privilege drop is a root-venue axis")
+def test_positive_fails_without_no_new_privs(monkeypatch):
+    # Drop --no-new-privs/--bounding-set from the launch: the wrapped child keeps
+    # its capability bounding set / no_new_privs=0, and the parent's privilege
+    # assertion fails the positive proof (blocker 4).
+    def weak_launch(child_cmd):
+        return [chk.UNSHARE, "--net", "--", chk.SETPRIV, "--reuid", chk.DROP_UID,
+                "--regid", chk.DROP_GID, "--clear-groups", "--"] + child_cmd
+    monkeypatch.setattr(chk, "_iso_launch", weak_launch)
+    assert chk.positive(PROOF_DIR) == 1
+
+
+@NEEDS_ISO
+@pytest.mark.skipif(os.getuid() != 0, reason="workspace chown is the load-bearing step only under a real uid drop")
+def test_positive_fails_when_workspace_unwritable(monkeypatch):
+    # Skip the chown that makes the fresh cwd writable by the dropped uid: the
+    # rubric cannot write, the parent collects nothing, and the positive proof
+    # fails workspace-not-writable rather than silently passing (blocker 3).
+    monkeypatch.setattr(chk.os, "chown", lambda *a, **k: None)
     assert chk.positive(PROOF_DIR) == 1
 
 

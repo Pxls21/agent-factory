@@ -18,6 +18,12 @@ FORMAT_CHECKER = jsonschema.FormatChecker(formats=jsonschema.FormatChecker.check
 PASSTHROUGH_ENV = ("PATH", "HOME", "LANG")
 
 
+class Deferred(Exception):
+    """A leg reported capability-unavailable (exit 2): the venue cannot run this
+    proof. The runner defers (exit 2) and PRESERVES the existing artifact from a
+    capable venue — it never overwrites or deletes it on an incapable venue."""
+
+
 def _utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -125,7 +131,9 @@ def _remove(path):
 def run_proof(root, proof_id, venue):
     proof_dir = root / "proofs" / proof_id
     result_path = proof_dir / "result.json"
-    _remove(result_path)
+    # Do NOT remove the existing artifact up front: an incapable venue must
+    # DEFER without destroying the capable-venue proof. The artifact is
+    # overwritten only on a fully successful run (see the end of this function).
     spec = _load_json(proof_dir / "spec.json")
     _validate(spec, root / "proofs" / "schemas" / "spec.schema.json")
     if spec["proof_id"] != proof_id:
@@ -150,6 +158,15 @@ def run_proof(root, proof_id, venue):
             leg["leg"],
         )
         runs.append(run)
+        # Exit 2 is the checker's documented capability-unavailable signal: the
+        # venue cannot run this leg (e.g. a non-root runner cannot drive the
+        # namespace/nsenter discriminator). Defer — do not treat it as a
+        # mismatch, and do not overwrite the capable-venue artifact.
+        if run["exit_code"] == 2:
+            raise Deferred(
+                f"deferred: {proof_id} {leg['leg']} capability-unavailable (exit 2); "
+                f"artifact preserved — run on a capable venue"
+            )
         expected_exit = leg["expect"]["exit_code"]
         if run["exit_code"] != expected_exit:
             raise ValueError(
@@ -171,6 +188,7 @@ def run_proof(root, proof_id, venue):
                     "observed_failure_reason": observed_reason,
                 }
 
+    validator = _load_validator(root)
     result = {
         "proof_id": proof_id,
         "classification": registry_proof["classification"],
@@ -178,7 +196,8 @@ def run_proof(root, proof_id, venue):
         "env_fingerprint": f"{venue}:{platform.node()}",
         "runs": runs,
         "negative_control": negative_control,
-        "digest": _load_validator(root).canonical_digest(runs),
+        "attestation": validator.proof_attestation(root, proof_id),
+        "digest": validator.canonical_digest(runs),
     }
     _validate(result, root / "proofs" / "schemas" / "result.schema.json")
     _write_json(result_path, result)
@@ -245,6 +264,9 @@ def main(argv=None):
             run_proof(root, args.proof, args.venue)
         else:
             run_probe(root, args.proof, args.venue)
+    except Deferred as deferred:
+        print(deferred, file=sys.stderr)
+        return 2
     except Exception as error:
         print(error, file=sys.stderr)
         return 1

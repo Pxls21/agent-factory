@@ -79,6 +79,19 @@ def _result(proof_id="S0-01", classification="execution_proof",
     }
 
 
+def _attested(root, proof_id, result):
+    """Seed a proof input file and stamp the result with a matching attestation
+    (now a required, tree-bound field re-derived from the proof directory)."""
+    proof_dir = root / "proofs" / proof_id
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    source = proof_dir / "spec.json"
+    source.write_text(json.dumps({"proof_id": proof_id}) + "\n")
+    result["attestation"] = {
+        str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    return result
+
+
 def _blocked(proof_id="S0-03", classification="blocked_credential",
              blocker_status="absent", env_fingerprint="pc-bridge:fedora"):
     return {
@@ -191,7 +204,7 @@ def test_empty_set_all_absent(tmp_path):
 
 def test_result_present(tmp_path):
     root = _copy_contract(tmp_path)
-    _write_json(root / "proofs" / "S0-01" / "result.json", _result())
+    _write_json(root / "proofs" / "S0-01" / "result.json", _attested(root, "S0-01", _result()))
     output = tmp_path / "ledger.json"
 
     completed = _run_gen(root, output)

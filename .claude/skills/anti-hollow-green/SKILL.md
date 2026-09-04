@@ -144,6 +144,28 @@ expansion.
    The gate script gets its own negative control (tactic 1): a seeded probe with a known
    lint hit, a surviving mutant and a drifted anchor must come back RED before the first
    real lane trusts it.
+13. **BIND the recorded proof to the CODE that produced it (AF-AP-31, S0-11 cycle-5).** A result
+   artifact that records only command/output hashes is not bound to its producer: neuter the
+   checker (replace the real isolation with a pass-through), keep the stale green artifact, and a
+   validator that re-checks schema + a digest-over-the-runs still says PRESENT — because the
+   positive hash is merely `sha256("PASS\n")` and CI never re-executes. The fix is an
+   ATTESTATION: the runner records the sha256 of every executable input (checker source, spec,
+   fixtures, design), the validator RE-DERIVES those digests from the tree and fails on any
+   mismatch, and the schema REQUIRES the field. The kill-switch question here is literal — "could
+   this green survive the real component being replaced by a no-op?" — and on an incapable venue
+   where re-execution is impossible, the artifact must be regenerated on a CAPABLE one and the
+   incapable check verifies the source binding, never a frozen self-hash. A validator that never
+   re-derives from source is trusting a frozen lie.
+14. **A NAMED PROPERTY is not a USABLE contract — prove the property end-to-end (AF-AP-30
+   recurrence-5, S0-11 cycle-5).** "The rubric gets a separate cwd" was satisfied by a
+   root-owned `0700` temp dir the dropped uid could neither write nor collect from, deleted
+   before anyone read it — a different directory, not a usable workspace. When a requirement is a
+   CAPABILITY (writable workspace, reachable endpoint, persisted record), the gate must exercise
+   the real workload the capability exists for: WRITE to it as the real principal, COLLECT the
+   result back, then clean up — and fail if the collection is empty. A property observed as
+   "present but different" while the workload that needs it never runs is a named-property hollow
+   green; drive the actual write/collect/cleanup (or send/receive, or persist/read-back) so an
+   unusable-but-present resource fails loud.
 
 Related requirement (from the #1 rule): **every benchmark/eval MUST exercise the ACTUAL
 pipeline**, score against a **real independent oracle**, and report the **hollow-green

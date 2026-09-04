@@ -91,6 +91,20 @@ def _result(proof_id="S0-01", classification="execution_proof"):
     }
 
 
+def _attested(root, proof_id, result):
+    """Seed a proof input file and stamp the result with a matching attestation
+    (now a required, tree-bound field: the validator re-derives it from the proof
+    directory, so a PRESENT artifact must carry the digests of its inputs)."""
+    proof_dir = root / "proofs" / proof_id
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    source = proof_dir / "spec.json"
+    source.write_text(json.dumps({"proof_id": proof_id}) + "\n")
+    result["attestation"] = {
+        str(source.relative_to(root)): hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    return result
+
+
 def _empty_lines():
     return [*(f"{proof_id} ABSENT" for proof_id in PROOF_IDS),
             "blocked_credential numerator=0 denominator=1",
@@ -384,13 +398,26 @@ def test_empty_set_stage1_gate_names_all_twelve_and_is_deterministic(tmp_path):
 
 def test_valid_result_is_present_and_increments_its_class(tmp_path):
     root = _copy_contract(tmp_path)
-    _write_json(root / "proofs" / "S0-01" / "result.json", _result())
+    _write_json(root / "proofs" / "S0-01" / "result.json", _attested(root, "S0-01", _result()))
 
     completed = _run(root)
 
     assert completed.returncode == 0
     assert "S0-01 PRESENT" in completed.stdout
     assert "execution_proof numerator=1 denominator=7" in completed.stdout
+
+
+def test_attestation_mismatch_flips_present_to_invalid(tmp_path):
+    # The source binding: a PRESENT artifact whose attested inputs no longer match
+    # the tree (a source file changed after the artifact was recorded — the
+    # neuter-and-keep-stale-green attack) becomes INVALID for exactly that reason.
+    root = _copy_contract(tmp_path)
+    _write_json(root / "proofs" / "S0-01" / "result.json", _attested(root, "S0-01", _result()))
+    assert "S0-01 PRESENT" in _run(root).stdout
+    (root / "proofs" / "S0-01" / "spec.json").write_text('{"proof_id": "S0-01", "tampered": true}\n')
+    out = _run(root).stdout
+    assert "S0-01 PRESENT" not in out
+    assert "attestation-mismatch: S0-01 proofs/S0-01/spec.json" in out
 
 
 def test_registry_matches_seed_classes_and_counts():

@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-11",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-04T12:17:00.255228Z",
+  "recorded_at": "2026-09-04T14:48:04.338271Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-11/check_eval_hardening.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T12:16:59.871673Z",
-      "finished_at": "2026-09-04T12:17:00.068876Z",
+      "started_at": "2026-09-04T14:48:03.934911Z",
+      "finished_at": "2026-09-04T14:48:04.144557Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "proofs/S0-11/fixtures/neg_credential_read.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T12:17:00.069267Z",
-      "finished_at": "2026-09-04T12:17:00.132187Z",
+      "started_at": "2026-09-04T14:48:04.144744Z",
+      "finished_at": "2026-09-04T14:48:04.207612Z",
       "exit_code": 1,
       "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -41,8 +41,8 @@
         "proofs/S0-11/fixtures/rubric_probe.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-04T12:17:00.132358Z",
-      "finished_at": "2026-09-04T12:17:00.255167Z",
+      "started_at": "2026-09-04T14:48:04.207840Z",
+      "finished_at": "2026-09-04T14:48:04.337720Z",
       "exit_code": 1,
       "stdout_sha256": "11ee37f0bf754b5d55077553ea0973891e715037febd8b8011fb29d2c170d202",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -53,5 +53,12 @@
     "expected_failure_reason": "rubric-isolation-violation: credential env absent by construction",
     "observed_failure_reason": "rubric-isolation-violation: credential env absent by construction"
   },
-  "digest": "c31f5f76d82cea1fe1b17c2ae8c80e53ce3a924f90b57f5725dfd7016e8639e7"
+  "attestation": {
+    "proofs/S0-11/check_eval_hardening.py": "1310939ffd0f3c249cce5052736db6763698260e28806350a1fbdb6058000350",
+    "proofs/S0-11/fixtures/neg_credential_read.py": "a77790bf0bc5d64a0e6902e8601c4fea3a30adda51cf1cf6bf6134a24de88a1a",
+    "proofs/S0-11/fixtures/rubric_probe.py": "e371cb9feae34c4143a6dfce1a63cc1cb67ff4af00bcb18f93d74737a16ed745",
+    "proofs/S0-11/runner_design.md": "37236db7a6d3bb89b898dc89aa0b683475db36e1b1227665d7a7bca94c3fb2b0",
+    "proofs/S0-11/spec.json": "57fc8a3b3ba4acc80a9d3aae6393c4749f986ee282c03ee061520d66faa194fe"
+  },
+  "digest": "caf5f2d0ddba82ce8c7a73f520e1189ed1b2b8f0efe9dad10c59352509c4381a"
 }

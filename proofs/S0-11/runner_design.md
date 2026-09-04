@@ -49,14 +49,25 @@ NOT `!= parent uid`: a non-root runner cannot change its child's host uid (that
 needs root), so the rubric legitimately INHERITS the runner's own non-root uid,
 and `uid != parent` would wrongly fail there. The launch differs by venue: as
 root, `unshare --net` creates the netns and `setpriv --reuid=65534
---regid=65534 --clear-groups` performs a REAL privilege drop (root→nobody); as a
-non-root service user (production, CI), `unshare --user --net` keeps the
-runner's own non-root host uid, which already satisfies `uid != 0`. The child's
-own `getuid()` is never used: under a bare user namespace it reports an
-unprivileged id while the host uid is unchanged, so it is not evidence. The
-uid-drop DISCRIMINATION (that the check would catch a root rubric) is exercised
-by the non-vacuity gate only on a root venue, where an un-wrapped child is
-actually root; the netns and env axes discriminate on every venue.
+--regid=65534 --clear-groups --no-new-privs --bounding-set -all` performs a REAL
+privilege drop (root→nobody) that ALSO sets `no_new_privs` and CLEARS the
+capability bounding set; as a non-root service user (production, CI),
+`unshare --user --net` keeps the runner's own non-root host uid, which already
+satisfies `uid != 0`. The child's own `getuid()` is never used: under a bare
+user namespace it reports an unprivileged id while the host uid is unchanged, so
+it is not evidence. The uid-drop DISCRIMINATION (that the check would catch a
+root rubric) is exercised by the non-vacuity gate only on a root venue, where an
+un-wrapped child is actually root; the netns and env axes discriminate on every
+venue.
+
+**Privilege boundary (parent-observed, root venue).** A uid drop alone is not a
+complete privilege boundary: without `no_new_privs`, a later `execve` of a
+setuid or file-capability binary can regain privilege. The root launch therefore
+sets `no_new_privs` and empties the capability bounding set, and the parent reads
+`/proc/<pid>/status` and asserts `NoNewPrivs: 1` and `CapBnd: 0000000000000000`
+on the wrapped child. This axis is venue-dependent (only the root `setpriv` drop
+sets it); a non-root user-namespace venue defers via the capability preflight
+before the check runs.
 
 ### 3.2 Network isolation (no host networking), parent-observed
 
@@ -97,12 +108,18 @@ static scan enumerates. The real guarantees are the runtime isolation above
 
 Each rubric invocation runs in a fresh per-rubric temporary directory, passed to
 the process as its actual working directory (not merely advertised in an
-environment variable). The parent asserts it: it reads `/proc/<pid>/cwd` and
-requires the child's real cwd to differ from the parent's cwd (the production
-workspace); the un-wrapped control, which inherits the parent's cwd, breaches
-this axis. The fresh cwd is a convenience for output collection and a first
-separation from the workspace — it is **not** a filesystem containment boundary
-(§5); real FS containment is delivered by gVisor at the PC boundary.
+environment variable). The directory is chowned to the drop uid so the
+post-privilege-drop rubric can actually WRITE it — a real AlphaEval rubric writes
+results and logs to its workspace. The rubric writes an output file there; the
+parent COLLECTS that output (reads it back) BEFORE the directory is cleaned up,
+proving the workspace is securely-owned AND usable, not merely a different
+directory the dropped uid cannot write. The parent also reads `/proc/<pid>/cwd`
+and requires the child's real cwd to differ from the parent's cwd (the
+production workspace); the un-wrapped control, which inherits the parent's cwd,
+breaches this axis while still receiving its own throwaway workspace so its write
+never lands in the proof tree. The fresh cwd is a usable output directory and a
+first separation from the workspace — it is **not** a filesystem containment
+boundary (§5); real FS containment is delivered by gVisor at the PC boundary.
 
 ## 4. Judge call routing
 
@@ -127,3 +144,18 @@ only what the stand-in actually needs. A rubric that calls the model would add
   network discriminator).
 - **Live rubric workloads.** The stand-in blocks for observation; it does not run
   a real AlphaEval rubric. That integration is Wave-2 work.
+
+## 6. Artifact bound to its inputs (attestation)
+
+The recorded `result.json` is bound to the exact code, spec and fixtures that
+produced it. On a capable venue the canonical runner (`scripts/proof-runner`)
+records an `attestation` — the sha256 of every input file under this proof
+directory (checker, spec, fixtures, this design doc). `scripts/validate-ledger`
+re-derives those digests from the tree and fails on any mismatch. A neutered
+checker (e.g. `_iso_launch` replaced with a pass-through) therefore no longer
+validates against a stale green artifact: the schema and digest checks pass over
+such an artifact, but the source binding does not. On an incapable venue the
+runner DEFERS (exit 2) and PRESERVES the capable-venue artifact rather than
+deleting it; the isolation proof is regenerated only where the namespaces and
+the `nsenter` discriminator can actually run (the root sandbox, or gVisor at the
+PC boundary).

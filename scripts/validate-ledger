@@ -49,6 +49,25 @@ def canonical_digest(value):
     ).hexdigest()
 
 
+def proof_attestation(root, proof_id):
+    """Map every INPUT file under the proof directory (checker source, spec,
+    fixtures, design) to its sha256 — the produced artifacts (result.json,
+    blocked.json) and __pycache__ excluded. Recorded in the artifact by the
+    runner and re-derived here from the tree; any divergence means the artifact
+    is no longer bound to the code/spec/fixtures that produced it (a neutered
+    checker with a stale green artifact fails this, where the schema+digest
+    checks alone passed). Paths are relative to `root` and sorted."""
+    proof_dir = Path(root) / "proofs" / proof_id
+    attestation = {}
+    for path in sorted(proof_dir.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        if path.name in ("result.json", "blocked.json"):
+            continue
+        attestation[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return attestation
+
+
 def _registry(root, findings):
     path = root / "proofs" / "registry.yaml"
     try:
@@ -227,6 +246,20 @@ def _artifact_states(root, registry, schemas, findings):
                 digest = canonical_digest(runs)
                 if artifact.get("digest") != digest:
                     findings.add(f"digest-mismatch: {proof_id}")
+                    valid = False
+            # Bind the artifact to its executable inputs: the recorded attestation
+            # must equal the tree's current per-file digests. This is what fails a
+            # neutered checker that kept a stale green artifact (the schema+digest
+            # checks pass over such an artifact; the source binding does not).
+            recorded = artifact.get("attestation")
+            if isinstance(recorded, dict):
+                current = proof_attestation(root, proof_id)
+                if recorded != current:
+                    changed = sorted(
+                        set(recorded) ^ set(current)
+                        | {k for k in recorded if k in current and recorded[k] != current[k]}
+                    )
+                    findings.add(f"attestation-mismatch: {proof_id} {changed[0] if changed else ''}".rstrip())
                     valid = False
             states[proof_id] = "PRESENT" if valid else "INVALID"
         elif blocked_path.exists():
