@@ -11,3 +11,4 @@ Current accepted records:
 - 0003: Four logical memory scopes are composed over ai-memory.
 - 0004: Dream and JIT Foundry planes are isolated proposal/candidate producers.
 - 0005: Foundry host is a first-party minimal translator for JIT outputs; OpenHarness is not a runtime dependency.
+- 0006: GBrain seam is wrap (pinned dream machinery in a first-party adapter); dream worker has no admin credentials.

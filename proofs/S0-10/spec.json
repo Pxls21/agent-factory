@@ -1,0 +1,19 @@
+{
+  "proof_id": "S0-10",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-10/check_conformance.py", "docs/adr/0006-gbrain-seam.md"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 0}
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-10/check_conformance.py", "proofs/S0-10/fixtures/neg-missing-credential-stmt.md"],
+      "cwd": ".",
+      "timeout_s": 30,
+      "expect": {"exit_code": 1, "failure_reason": "adr-incomplete: missing credential-isolation statement"}
+    }
+  ]
+}
