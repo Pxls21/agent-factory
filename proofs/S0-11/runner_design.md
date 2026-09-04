@@ -24,8 +24,14 @@ predicate against an UN-wrapped probe to prove no axis is a tautology.
 
 The rubric process runs under a new user namespace, so its effective UID is not
 the runner's UID (it maps to an unprivileged id, not root). The checker asserts
-`probe uid != parent uid`. A wrapper that fails to create the user namespace
-(e.g. a pass-through `unshare`) leaves the UID unchanged and is rejected.
+`probe uid != parent uid` AND `probe uid != 0` — a report claiming root is
+rejected even when the parent is non-root, and a report missing the UID (or any
+other mandatory field) is rejected, never defaulted to a pass. A wrapper that
+fails to create the user namespace (e.g. a pass-through `unshare`) leaves the
+UID unchanged and is rejected. The checker first runs a capability preflight
+(`--selftest`): where the host cannot create or read the namespaces the check
+consumes, it exits 2 (capability unavailable — not a pass, not a breach) so the
+proof is deferred to the PC/gVisor host rather than reporting a false result.
 
 ### 2.2 Network isolation (no host networking)
 
@@ -39,23 +45,34 @@ separately: `/proc/self/ns/net` inode of the probe differs from the parent's.
 
 ### 2.3 Credential isolation — allow-list, not blacklist (no credential passing)
 
-The runner builds the rubric environment from an **allow-list**: only
-`PATH, HOME, LANG, LC_ALL, LC_CTYPE, TMPDIR` and runner-specific `RUBRIC_*`
-variables are passed. Every other variable — every present or future
-credential, whatever it is named — is stripped by construction. A name
-blacklist is explicitly rejected: it missed production credentials such as
-`OMNIROUTE_INTERNAL_API_KEY`, `BUZZ_PRIVATE_KEY`, and `STORAGE_ENCRYPTION_KEY`.
-The checker injects those exact decoys into the parent environment and asserts
-they are absent from the wrapped probe and present in the un-wrapped one.
+The runner builds the rubric environment from a **closed allow-list**: an EXACT
+set of names — `PATH, HOME, LANG, LC_ALL, LC_CTYPE, TMPDIR` plus the three
+runner variables `RUBRIC_TASK_ID, RUBRIC_CWD, RUBRIC_PROBE_PORT`. It is NOT a
+`RUBRIC_*` prefix wildcard (a prefix is itself an open-ended allow-list — a
+credential named `RUBRIC_PRODUCTION_API_KEY` would slip through it) and NOT a
+name blacklist (a blacklist missed production credentials such as
+`OMNIROUTE_INTERNAL_API_KEY`, `BUZZ_PRIVATE_KEY`, and `STORAGE_ENCRYPTION_KEY`).
+Every other variable, whatever it is named, is stripped by construction. The
+checker injects those exact decoys into the parent environment and asserts they
+are absent from the wrapped probe and present in the un-wrapped one.
 
 ### 2.4 Permission hardening (no recursive chmod 777)
 
 The runner never applies recursive or world-writable permission changes. The
-S0-11 grep sweep enforces this across the proof's executable/config surface
-(all files except Markdown docs and the checker itself): it rejects
+S0-11 forbidden-op sweep enforces this across every non-Markdown file in the
+proof (the checker included — see below) using STRUCTURED checks, not a regex
+list: Python is parsed as an AST so real `os.chmod(…, 0o777)` calls and
+shell-command string arguments are caught while the checker's own pattern
+literals are not; YAML is parsed so `network_mode: host` and `hostNetwork: true`
+(including the bool `True`) are caught; shell and other text use regex. Because
+the Python check is call-based, the checker file needs no self-exclusion — a
+real forbidden call hidden inside it would still be caught. Rejected forms:
 world-writable `chmod`, octal (`777`, `0777`, `666`, ...) or symbolic
-(`o+w`, `a+w`, `go+rwx`, ...), and any host-networking directive
-(`--network host`, `network_mode: host`, `hostNetwork: true`, ...).
+(`o+w`, `a+w`, `go+rwx`, ...), and any host-networking directive.
+
+The design doc itself is checked for the inverse defect: a doc that asserts any
+hazard is enabled/required (or isolation disabled) fails, so the coverage gate
+cannot be satisfied by prose that documents the hazards as permitted.
 
 ### 2.5 Working directory
 

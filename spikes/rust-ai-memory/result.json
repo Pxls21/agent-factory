@@ -2,18 +2,18 @@
   "spike_id": "rust-ai-memory",
   "schema": "proofs/schemas/spike.schema.json",
   "outcome": "positive",
-  "ran_at": "2026-09-04T06:00:02+00:00",
+  "ran_at": "2026-09-04T10:12:04+00:00",
   "env_fingerprint": "pc-bridge:fedora:x86_64:rustup-1.95.0",
   "runs": [
     {
-      "command": "cargo build (default stable toolchain, inside /tmp/spike-rust-ai-memory clone at pinned commit)",
+      "command": "cargo build (default stable toolchain, fresh clone of pinned commit in /tmp/spike-rust-ai-memory); stdout_digest = sha256 of the captured build log",
       "exit_code": 0,
-      "stdout_digest": "uncaptured"
+      "stdout_digest": "a03e0fedbbc9c9e2c761d63502345f0fd24ec9284ef79977d9cccc848fbaa75b"
     },
     {
-      "command": "cargo +1.95.0 build (explicit 1.95.0 toolchain override)",
+      "command": "cargo +1.95.0 build (explicit 1.95.0 toolchain override); stdout_digest = sha256 of the captured build log",
       "exit_code": 0,
-      "stdout_digest": "uncaptured"
+      "stdout_digest": "92bec25ad54c650450560360480d5f94d3d8ad203f81a2c724e0c641b330bbfb"
     }
   ],
   "facts": {

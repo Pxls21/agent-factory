@@ -12,6 +12,16 @@
     },
     {
       "leg": "negative",
+      "cmd": ["python3", "proofs/S0-11/check_eval_hardening.py", "--rubric-neg-cred", "proofs/S0-11/fixtures/neg_credential_read.py", "proofs/S0-11"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "rubric-isolation-violation: credential env absent by construction"
+      }
+    },
+    {
+      "leg": "negative",
       "cmd": ["python3", "proofs/S0-11/check_eval_hardening.py", "--rubric-neg", "proofs/S0-11/fixtures/rubric_probe.py", "proofs/S0-11"],
       "cwd": ".",
       "timeout_s": 60,
