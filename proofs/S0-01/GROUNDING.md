@@ -189,6 +189,10 @@ normalized away. The normalized transcript is then deterministic across runs →
 - **Credential caveat (first-class):** OmniRoute did NOT validate the key — the instance runs `REQUIRE_API_KEY=false`
   and the key the owner's Hermes carries is in no row of its key table (`/v1/models` → 401). The turns ran exactly the
   way the owner's own Hermes runs today. Not S0-03 evidence.
+- **Repaired later on 2026-09-05 (owner via Codex):** the `hermes` key was rotated into every Hermes profile and
+  `REQUIRE_API_KEY=true` enabled; reproduced read-only (no key 401, bogus 401, rotated key 200 / 2,625 ids, monitor 7/7).
+  The tee'd buzz-acp was restarted with the rotated key (`.markers/buzz-acp.pid`). Runs 1 and 2 keep their caveat; every
+  later run is credential-validated by OmniRoute.
 - **Determinism finding (`evidence/determinism-live-route.json`):** identical inputs, same client sequence, same
   terminal state, DIFFERENT `session/update` structure (run 1: 49 thought + 27 message chunks, one post-terminal
   `session_info_update`; run 2: 59 + 1, none). Structure-preserving normalization cannot yield a byte-identical golden on
@@ -209,8 +213,17 @@ normalized away. The normalized transcript is then deterministic across runs →
 
 ## NOT yet done (next increment)
 
-- Owner: a deterministic scripted backend behind a dedicated OmniRoute test route (sanctioned; the need is demonstrated
-  above) — a config change on the owner's running OmniRoute, so owner-run or explicitly delegated.
+- **Golden route (owner or Codex — a config change on the running OmniRoute):** the scripted backend is built and tested
+  (`tools/scripted_backend.py`, `tests/test_s0_01_scripted_backend.py`). Recipe: (1) on the PC start it by absolute path —
+  `setsid /usr/bin/python3 ~/agent-factory/proofs/S0-01/tools/scripted_backend.py --port 20201 --token-file
+  ~/s0-01-pinned/.secrets/scripted-upstream.env --record-dir ~/s0-01-pinned/.markers/upstream-records --pidfile
+  ~/s0-01-pinned/.markers/scripted-backend.pid </dev/null >~/s0-01-pinned/.markers/scripted-backend.log 2>&1 &`
+  (the token file is a 0600 `UPSTREAM_TOKEN=…` line); (2) in OmniRoute add an `openai-compatible` provider connection
+  named `s0-01-scripted` with base URL `http://127.0.0.1:20201/v1` and that token as its API key; (3) confirm the model ids
+  OmniRoute exposes for it (expected `s0-01-pong`, `s0-01-slow` under that connection) and tell the coordinator, which
+  then points the pinned hermes config's `model.default` at the pong id for the golden and at the slow id for the
+  cancellation leg. The backend never emits tool calls, so the ACP structure is fixed; it records every upstream request
+  with the bearer reduced to a fingerprint (S0-04-grade evidence later). Not S0-03 evidence.
 - Runner: golden ×2 on the scripted route (structure-preserving normalization), the live-route leg (run-invariant
   structure), cancel mid-turn (`session/cancel` → `cancelled`, no orphan), clean shutdown (exit 0), two users
   (`respond_to=allowlist`, second member, two top-level mentions under `session_policy=thread`), config echo, the

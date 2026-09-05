@@ -143,10 +143,12 @@ and **pivot to the nearest REAL thing you CAN prove** so the turn still lands a 
 
 **Every benchmark/eval MUST exercise the ACTUAL pipeline**, score against a **real independent
 oracle**, and report the **hollow-green (gate-false-positive) rate**. A harness that
-re-implements or stubs the spine it claims to prove is forbidden. In THIS project the one
-sanctioned stub is S0-04's deterministic upstream-request-preservation instrument, which sits
-BEHIND real OmniRoute at the boundary the plan itself specifies (`docs/03` §2) — every other proof
-exercises the REAL pinned component, and a proof that cannot run in the sandbox runs on the PC or
+re-implements or stubs the spine it claims to prove is forbidden. In THIS project the
+sanctioned stubs are TWO, both sitting BEHIND real OmniRoute at the boundary the plan itself specifies
+(`docs/03` §2): S0-04's deterministic upstream-request-preservation instrument, and S0-01's deterministic
+scripted model backend behind a dedicated OmniRoute test route (owner-sanctioned 2026-09-04 for the
+golden, after two live runs proved the model route's ACP event structure non-reproducible) — every other
+proof exercises the REAL pinned component, and a proof that cannot run in the sandbox runs on the PC or
 is delivered as spec + fixture + an explicit `NOT run here: <reason>` marker, never a fake green.
 
 **Tactic index — full text + war stories in skill `anti-hollow-green` (load when designing or

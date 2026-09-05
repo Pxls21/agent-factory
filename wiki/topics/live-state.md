@@ -106,12 +106,12 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
-- **(#34) OmniRoute inference plane UNAUTHENTICATED on `0.0.0.0`** (and the Hermes configs carry a key that is in no row of the key table — regenerate `hermes` first, THEN flip the requirement)**:** `REQUIRE_API_KEY=false` in the first-loaded
-  `~/.omniroute-migrated/.env`; firewalld default zone opens 1025-65535; LAN + Tailscale reachable. Fix =
-  `REQUIRE_API_KEY=true` and/or a Tailscale-only bind + service restart (owner's service — not touched).
-- **(#33) Rotate the leaked `STORAGE_ENCRYPTION_KEY`:** 29/32 provider connections encrypted under it; OmniRoute
-  3.8.50 has no in-app rotation — procedure in the handoff's review header (owner-run: export → new key in both
-  loaded env files → re-OAuth/re-add → shred).
+- **RESOLVED 2026-09-05 (owner via Codex): OmniRoute auth** — `hermes` key rotated everywhere, `REQUIRE_API_KEY=true`,
+  reproduced (401/401/200; monitor 7/7). `STORAGE_ENCRYPTION_KEY`: owner decided NOT to rotate now (#33 closed).
+  Residual: port 20128 LAN-reachable behind auth — firewall narrowing deferred (owner).
+- **S0-01 golden route (owner or Codex):** add an `openai-compatible` provider connection in OmniRoute pointing at the
+  deterministic scripted backend (`proofs/S0-01/tools/scripted_backend.py`; recipe in GROUNDING) — the live route's
+  event structure is non-deterministic (demonstrated 2026-09-05 with two runs).
 - **(#35) ADR 0002 wire mode:** live Hermes profiles use `chat_completions`; the ADR pins `codex_responses` +
   `x-omniroute-compression: off` — amend or revert.
 - Handoff items 6 (Web2API re-auth + real generation test) and 7 (Google keys' Cloud project/billing identity).

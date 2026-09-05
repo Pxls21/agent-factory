@@ -76,6 +76,16 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-05 sync (OmniRoute auth repaired by the owner; coordinator reproduced; S0-01 stack restarted with the rotated key; scripted golden backend built):**
+Owner via Codex: `hermes` key rotated across Fedora + laptop Hermes profiles, `REQUIRE_API_KEY=true` in both loaded
+env layers, services restarted. Reproduced read-only: no key 401, bogus 401, rotated key 200 (2,625 ids), listener
+`REQUIRE_API_KEY=true`, `scripts/omniroute_invariants.sh` 7/7. Tasks: #33 closed (owner: do NOT rotate
+`STORAGE_ENCRYPTION_KEY` now), #34 closed (residual: LAN reachability behind auth, firewall deferred), #35 open
+(owner recommends testing both transports against real tool calls before amending ADR 0002). Built:
+`proofs/S0-01/tools/scripted_backend.py` (deterministic OpenAI-compatible upstream, bearer-gated, request-recording,
+`s0-01-pong` + `s0-01-slow`) + tests — the golden's upstream BEHIND real OmniRoute; the provider connection is the
+owner's/Codex's config step (recipe in GROUNDING). CLAUDE.md now names TWO sanctioned stubs. Denominators unchanged.
+
 **2026-09-05 sync (S0-01 milestone 2: relay-driven prompt turn reached twice; determinism finding; S0-01 still INCOMPLETE):**
 An owner mention (accepted, h+p) drove the pinned buzz-acp → `session/new` + `session/prompt` on the pinned hermes-acp →
 `session/update` stream → `stopReason=end_turn`; Hermes reached the managed OmniRoute (auto/best-coding-fast, 3 API
