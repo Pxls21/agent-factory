@@ -2,9 +2,8 @@
   "proofs": [
     {
       "classification": "execution_proof",
-      "normalized_digest": "3868154394ad84485f8da94aa56a1dc8b5486b9c8a7c1f9deed348f06148a683",
       "proof_id": "S0-01",
-      "state": "PRESENT"
+      "state": "ABSENT"
     },
     {
       "classification": "execution_proof",

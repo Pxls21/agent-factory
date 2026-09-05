@@ -19,8 +19,9 @@ last_compiled: 2026-09-03
   sanctioned scripted route `s0-01-scripted` behind the real OmniRoute (task #36, owner/Codex). Five legs captured as RAW
   frames with identical pre/post manifests: golden ×2 (11 normalized lines, byte-identical), `!cancel` → cancelled with
   zero orphans, `!shutdown` → exit 0, two users under allowlist → two sessions. `check_acp_conformance.py` PASS; spec
-  wired into the canonical runner. result.json RECORDED on the PC venue (`pc-bridge:fedora`, 2026-09-05T11:47:56Z), ledger regenerated (S0-01 PRESENT).
-  NEXT: the owner's review. Note: `proofs/S0-01/` is attested — edits there require re-running the canonical runner.
+  wired into the canonical runner. OWNER REVIEW 2026-09-05: closure DECLINED — five mutations passed the checker; result.json WITHDRAWN (S0-01 ABSENT).
+  NEXT: evidence bundle v2 + checker v2 + mutation regression tests (AF-AP-36 gate) → re-capture with `max_turn=3600s` →
+  adversarial verify → re-mint → owner review. Note: `proofs/S0-01/` is attested — edits there require re-running the canonical runner.
   History: initialize milestone (client offered 2 / agent returned 1) and two live-model turns (structure
   non-reproducible → scripted golden) on 2026-09-05. Credential caveat applies only to the two live runs.
 - **Handoff reconciliation (task #31) — DONE 2026-09-05:** Codex's OmniRoute/Hermes handoff ported verbatim
