@@ -1,0 +1,9 @@
+/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp
+--relay-url
+ws://127.0.0.1:3999
+--agent-command
+/home/rocco/s0-01-pinned/.markers/frame_tee.py
+--agent-args
+
+--idle-timeout
+900

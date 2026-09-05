@@ -19,13 +19,18 @@ def _copy(tmp_path):
     return root
 
 
-def test_positive_leg_defers_and_preserves_no_artifact(tmp_path):
+def test_runner_records_the_proof_from_the_committed_bundle(tmp_path):
+    """Both legs run through the canonical runner on a copied tree: exit 0 and a result.json whose negative
+    control binds the seed's exact failure reason. (Before the bundle existed this leg deferred with exit 2.)"""
     root = _copy(tmp_path)
     r = subprocess.run([sys.executable, str(RUNNER), "--proof", "S0-01", "--venue", "sandbox", "--root", str(root), "run"],
-                       capture_output=True, text=True, timeout=180)
-    assert r.returncode != 0
-    assert "deferred" in (r.stdout + r.stderr).lower() and "S0-01" in (r.stdout + r.stderr)
-    assert not (root / "proofs" / "S0-01" / "result.json").exists()
+                       capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads((root / "proofs" / "S0-01" / "result.json").read_text())
+    assert result["proof_id"] == "S0-01" and result["classification"] == "execution_proof"
+    assert result["negative_control"]["observed_failure_reason"] == "protocol-violation: missing required initialize field"
+    legs = [(run["leg"], run["exit_code"]) for run in result["runs"]]
+    assert legs == [("positive", 0), ("negative", 1)]
 
 
 def test_negative_leg_reason_line_matches_the_spec_binding(tmp_path):

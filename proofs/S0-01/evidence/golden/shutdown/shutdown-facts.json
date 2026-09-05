@@ -1,0 +1,7 @@
+{
+ "method": "owner control command `!shutdown` (kind 9, mention) after a completed pong turn",
+ "buzz_acp_exit_code": 0,
+ "agent_processes_alive_after": 0,
+ "agent_process_alive_after": false,
+ "session_completed_before_shutdown": true
+}

@@ -39,6 +39,7 @@ owner's native GitHub review on the head SHA); that is the separate AF-AP-32 gov
 (`acceptance-anchor-af-ap-32`), owner-blocked on infrastructure.
 
 PROOF-STATUS: S0-11 = ACCEPTED
+PROOF-STATUS: S0-01 = REVIEW-PENDING
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.
@@ -57,7 +58,7 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | s0-04-spike-dockerd | #4 spike dockerd-in-sandbox (secondary; PC uses podman) | DONE 2026-09-04 — POSITIVE: Docker v29.3.1 starts (overlayfs, cgroupfs, seccomp); hello-world pulled and ran. KC-6: sandbox is NOT container-blocked | s0-02 | `spikes/dockerd/result.json` present |
 | s0-05-spike-runsc | #5 spike runsc install (sandbox + PC confirmed) | DONE 2026-09-04 — POSITIVE: runsc release-20260817.0 downloaded and runs rootless in sandbox (systrap, 4.19.0-gvisor kernel); PC also has it (owner-installed). S0-08 deferral expired → `execution_proof` per map-runsc-s008 | s0-02 | `spikes/runsc/result.json` present; classification_effect applied |
 | s0-06-spike-selective-egress | #6 spike selective egress (S0-05 mechanism; veth/proxy, never bare unshare) | DONE 2026-09-04 — POSITIVE: veth pair + iptables in a dedicated network namespace; four legs all passed (positive: stand-in reached 200, negative-blocked-port: iptables DROP timeout, negative-external: no route, gate-off mutation: blocked port reachable after flushing iptables — de-vacuous). AF-AP-1 respected (NOT bare unshare --net). S0-05 mechanism proven, containment unproven per map-egress-s005 | s0-02 | positive leg reaches the allowed target, negative leg denied with exact reason |
-| s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | pending | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
+| s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance (PC podman stack; real pinned hermes-acp) | **REVIEW-PENDING** 2026-09-05 — proof run RECORDED on the pc-bridge venue: the pinned buzz-acp (1c8321c) launched the pinned hermes-acp (527da60) through the isolated relay; six assertions from RAW frames (initialize v1-conformant with the pinned capability values, client offered 2 / agent returned 1; prompt turn → end_turn; `!cancel` → cancelled with zero orphans; `!shutdown` → exit 0, no agent process left; two users under allowlist → two sessions, no cross-talk; idle_timeout=900s echoed) + golden ×2 byte-identical (11 normalized lines, structure-preserving) on the sanctioned scripted route behind the real OmniRoute (validated credential) + the schema-layer negative. Two live-model runs showed the live route's structure is non-reproducible (recorded). Evidence `proofs/S0-01/evidence/golden/`, checker `check_acp_conformance.py`, 34 tests. result.json + ledger regeneration land in the follow-up commit (canonical runner on the PC venue). Owner review grants closure; not S0-03 evidence | s0-02 | normalized-golden transcripts ×2; `protocol-violation: missing required initialize field` |
 | s0-08-s0-02-buzz-auth | #8 S0-02 Buzz authorization (four DISTINCT denials) | pending | s0-02 | one turn on allowed; four named denials |
 | s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | DONE 2026-09-04 — exercises real fubuki-os at pinned commit `7375e56d`; (1) persona_lint ordering bug reproduced (review-first→exit 2) and wrapped (corrected exit logic→exit 1); (2) BoundDecision.record_id join proven (approved + rejected records, id matches, reasons present on denied); (3) canonical JSON hash stable ×2, mutation changes hash. Negative: violating persona fixture → `lint-violation: corporate-filler, exit 1 per contract` rc=1; 6 pytest tests green ×2 | s0-02 | ordered lint fixture; record_id join; hash stable ×2 |
 | s0-10-s0-09-foundry-adr | #10 S0-09 ADR + conformance shell | DONE 2026-09-04 — ADR 0005 accepted (first-party minimal translator; OpenHarness not a runtime dep); conformance checker validates 4 required sections + JIT 5-file list; negative fixture (missing Consequences) → `adr-incomplete: missing required section: Consequences` rc=1; 5 pytest tests green ×2 | s0-02 | section removal → RED |
@@ -75,6 +76,19 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 | acceptance-anchor-af-ap-32 | governance (cycle-8 spin-off from S0-11 AF-AP-32): an OWNER-VERIFIABLE ACCEPTED anchor for reopened proofs — a dedicated bot/GitHub-App push identity + protected `main` (require PRs, required checks, one owner approval, dismiss stale approvals, no bot bypass) + the owner's native GitHub review on the exact head SHA as the anchor | pending — OWNER-BLOCKED on infrastructure (the agent cannot create a GitHub App or configure branch protection); until it lands, `check-proof-status.py` checks CONSISTENCY only and ACCEPTED records an owner PROCESS decision, not machine-enforcement | — | with identity separation, an owner GitHub review on the head SHA is the machine-checkable acceptance; without it, acceptance stays an explicit human process decision |
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
+
+**2026-09-05 sync (S0-01 PROOF RUN RECORDED — REVIEW-PENDING; golden ×2 identical on the scripted route):**
+The owner (via Codex) added the OmniRoute connection `s0-01-scripted` (task #36 done; reproduced: non-stream and stream
+200 through OmniRoute). Five legs captured on the PC venue through the byte-preserving tee with pre/post three-tree
+manifests identical to the baseline: golden run-1 and run-2 (identical structure; `golden.jsonl` frozen from run-1, 11
+lines), `!cancel` mid-stream on `s0-01-slow` → `session/cancel` → `stopReason=cancelled`, zero orphan processes;
+`!shutdown` after a completed turn → "exiting gracefully", exit 0, no agent process left; two users under
+`respond_to=allowlist` → two `session/new`, two prompts, two `end_turn`, one pong chunk per session. `check_acp_conformance.py`
+PASSES (6 assertions + golden ×2); `spec.json` runs through the canonical runner (sandbox copy: exit 0, result.json with the
+seed's exact negative reason). `PROOF-STATUS: S0-01 = REVIEW-PENDING` added and tracked by `check-proof-status.py`; the
+coordinator never self-records closure (AF-AP-32). NEXT: canonical runner on the PC venue → result.json → ledger-gen →
+validate-ledger (follow-up commit). Denominators: execution proofs with an execution artifact go from 1 (S0-11) to 2
+once result.json lands.
 
 **2026-09-05 sync (OmniRoute auth repaired by the owner; coordinator reproduced; S0-01 stack restarted with the rotated key; scripted golden backend built):**
 Owner via Codex: `hermes` key rotated across Fedora + laptop Hermes profiles, `REQUIRE_API_KEY=true` in both loaded

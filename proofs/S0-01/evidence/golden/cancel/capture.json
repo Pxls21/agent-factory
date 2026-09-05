@@ -1,0 +1,252 @@
+{
+  "acp_sequence": {
+    "agent_to_client_order": [
+      [
+        "RESP",
+        0
+      ],
+      [
+        "RESP",
+        1
+      ],
+      [
+        "NOTIF",
+        "available_commands_update"
+      ],
+      [
+        "NOTIF",
+        "usage_update"
+      ],
+      [
+        "NOTIF",
+        "agent_message_chunk"
+      ],
+      [
+        "NOTIF",
+        "session_info_update"
+      ],
+      [
+        "NOTIF",
+        "usage_update"
+      ],
+      [
+        "RESP",
+        2
+      ]
+    ],
+    "client_to_agent": [
+      [
+        0,
+        "initialize"
+      ],
+      [
+        1,
+        "session/new"
+      ],
+      [
+        2,
+        "session/prompt"
+      ],
+      [
+        null,
+        "session/cancel"
+      ]
+    ],
+    "session_ids": [
+      "9ff330c8-ba43-42d0-bd0a-9d6e0a33ba27"
+    ],
+    "session_update_kind_counts": {
+      "agent_message_chunk": 1,
+      "available_commands_update": 1,
+      "session_info_update": 1,
+      "usage_update": 2
+    },
+    "terminals": [
+      [
+        2,
+        "cancelled"
+      ]
+    ]
+  },
+  "capture": "s0-01-golden-leg:cancel",
+  "components": {
+    "acp-schema-v1": {
+      "commit": "37a7d4f8a0a0632653a14084b8140ceb486ab0e8",
+      "copy_in_repo": "proofs/S0-01/fixtures/acp-schema-v1.json",
+      "path": "schema/v1/schema.json",
+      "repo": "agent-client-protocol",
+      "sha256": "caf62ff962ada396878372ced11efb2c6764e59d90919a38583c319948931a42",
+      "tree": "d5ee4635bc543c330415e2e166e606f2ef68dcf5"
+    },
+    "buzz-acp": {
+      "build": "cargo build --release -p buzz-acp (rustc/cargo 1.93.0)",
+      "path": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+      "sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
+      "source": {
+        "commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+        "porcelain_untracked_all_empty": true,
+        "repo": "buzz",
+        "tree": "660315900bcd5432568016633c47d46d8ccee07b"
+      }
+    },
+    "frame_tee": {
+      "copy_in_repo": "proofs/S0-01/tools/frame_tee.py",
+      "path": "/home/rocco/s0-01-pinned/.markers/frame_tee.py",
+      "role": "byte-preserving stdio tee between buzz-acp and hermes-acp; proof instrument, not a pinned component",
+      "sha256": "a7a0c367e5251b2cca2aca145ff6b4308ce5b9a40d4a184c73d79b27d32d1f38"
+    },
+    "hermes-acp": {
+      "entrypoint_sha256": "f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1",
+      "install": "editable, fresh venv (owner Option 2), PYTHONDONTWRITEBYTECODE=1",
+      "path": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+      "provenance_record": "/home/rocco/s0-01-pinned/.markers/hermes-provenance.json",
+      "source": {
+        "archive_sha256": "b65c49908d8bba3e87e234a5fc972ac294d6411aa3f794d82c706aff97302ee3",
+        "commit": "527da60844d4dced37879ea50259675371abe10e",
+        "porcelain_untracked_all_empty": true,
+        "repo": "hermes-agent",
+        "tree": "a36bba5ee05b1b27eaee510287e74f976e2bbf21"
+      },
+      "version": "0.21.0"
+    }
+  },
+  "config_echo": {
+    "argv_idle_timeout": "900",
+    "idle_timeout": "900s",
+    "max_turn": "7200s",
+    "respond_to": "owner-only",
+    "session_policy": "thread",
+    "source": "startup-line.txt"
+  },
+  "frames": {
+    "argv": {
+      "file": "argv.txt",
+      "lines": 9,
+      "sha256": "29775981443c644d360fb6624f31b1263b0e8ecc942ec04e5874649b9124efce"
+    },
+    "cancel_facts": {
+      "file": "cancel-facts.json",
+      "sha256": "3adeea71ba55eba233be83d4275a40bfcdda7d3c387507fd5bd1b4c4c441621a"
+    },
+    "env_names": {
+      "file": "env-names.txt",
+      "lines": 12,
+      "sha256": "96ba5e35127d1b5e6161cf209d3ba67badf871df52f07a3ea4265f197279eaf3"
+    },
+    "frames_agent_to_client": {
+      "file": "frames-agent-to-client.jsonl",
+      "lines": 8,
+      "sha256": "dfa9f4e1f4b8fb61735d16390b66a74eab87d1aa9d16d2366bed2934a91dcc47"
+    },
+    "frames_client_to_agent": {
+      "file": "frames-client-to-agent.jsonl",
+      "lines": 4,
+      "sha256": "923e2aab33bc4b457c6b7dcebe76984dea76f2cb8ac4b163ff1adb77f684b381"
+    },
+    "startup_line": {
+      "file": "startup-line.txt",
+      "lines": 1,
+      "sha256": "0633eee0b6d34b82cc1d24bf9f7a183dab7c2c6d43e12d49f4fa2cf25f0e4d50"
+    }
+  },
+  "hermes_config_sha256_prefix": "9e3d905c58d5b964",
+  "manifests": {
+    "baseline": {
+      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
+      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
+      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
+    },
+    "identical": true,
+    "method": "manifest.sh: find <tree> -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; digest = sha256 of that manifest",
+    "post_capture": {
+      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
+      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
+      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
+    },
+    "pre_capture": {
+      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
+      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
+      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
+    }
+  },
+  "mentions": {
+    "cancel-cmd": {
+      "accepted": true,
+      "event_id": "4a46a07d26f35dbcc2b35d71802c6be4e1bc600b8d6b05218f15564f0324bd82",
+      "mention_pubkeys": [
+        "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
+      ]
+    },
+    "owner": {
+      "accepted": true,
+      "event_id": "3f882374f7af2daf2adc85a65331d5cde8193538966c95f5291cf124219018bd",
+      "mention_pubkeys": [
+        "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
+      ]
+    }
+  },
+  "model_route": "s0-01-scripted/s0-01-slow",
+  "orphan_check": {
+    "agent_children_alive": 3,
+    "agent_side_processes_alive": [
+      {
+        "cmd": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp --relay-url ws://127.0.0.1:3999 --agent-comman",
+        "pid": 1538395,
+        "ppid": 1538387
+      },
+      {
+        "cmd": "/usr/bin/python3 /home/rocco/s0-01-pinned/.markers/frame_tee.py ",
+        "pid": 1538408,
+        "ppid": 1538395
+      },
+      {
+        "cmd": "/home/rocco/s0-01-pinned/.venv-hermes/bin/python3 /home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-a",
+        "pid": 1538410,
+        "ppid": 1538408
+      }
+    ],
+    "all_children_parented_by_buzz_acp": true,
+    "buzz_acp_alive": true,
+    "buzz_acp_pid": 1538395,
+    "checked": true,
+    "method": "owner control command `!cancel` (kind 9, thread reply mentioning the agent) during the slow scripted stream",
+    "note": "the exit-code wrapper (bash -c env -i ...) is the coordinator's recorder, excluded",
+    "orphan_processes_after": 0
+  },
+  "process": {
+    "argv": [
+      "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+      "--relay-url",
+      "ws://127.0.0.1:3999",
+      "--agent-command",
+      "/home/rocco/s0-01-pinned/.markers/frame_tee.py",
+      "--agent-args",
+      "",
+      "--idle-timeout",
+      "900"
+    ],
+    "buzz_acp_exit_code": 0,
+    "credential_source": "the owner's Hermes lane profile env (the rotated key), read at launch, never printed",
+    "env_names": [
+      "BUZZ_ACP_AGENT_OWNER",
+      "BUZZ_ACP_RESPOND_TO",
+      "BUZZ_ACP_SESSION_POLICY",
+      "BUZZ_PRIVATE_KEY",
+      "BUZZ_RELAY_URL",
+      "HERMES_HOME",
+      "HOME",
+      "OMNIROUTE_API_KEY",
+      "PATH",
+      "PYTHONDONTWRITEBYTECODE",
+      "S0_01_AGENT",
+      "S0_01_FRAMEDIR"
+    ],
+    "omniroute_credential_in_env": true
+  },
+  "timestamps_utc": {
+    "buzz_acp_start": "2026-09-05T11:35:22.261154Z",
+    "manifest_post": "2026-09-05T11:35:46Z",
+    "manifest_pre": "2026-09-05T11:35:25Z"
+  },
+  "venue": "pc-bridge:fedora (isolated pinned clones under /home/rocco/s0-01-pinned; isolated relay ws://127.0.0.1:3999; model route s0-01-scripted via the managed OmniRoute)"
+}

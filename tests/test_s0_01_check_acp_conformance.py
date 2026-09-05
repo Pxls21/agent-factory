@@ -50,7 +50,7 @@ def _cancel_leg():
     term = next(o for o in a2c if o.get("id") == 2)
     term["result"]["stopReason"] = "cancelled"
     rec = copy.deepcopy(rec)
-    rec["orphan_check"] = {"agent_process_alive_after": False}
+    rec["orphan_check"] = {"checked": True, "orphan_processes_after": 0, "agent_children_alive": 1, "all_children_parented_by_buzz_acp": True}
     return c2a, a2c, rec
 
 
@@ -168,9 +168,9 @@ def test_cancel_leg_requires_cancel_notification_and_cancelled_terminal(bundle):
     a2 = copy.deepcopy(a2c); next(o for o in a2 if o.get("id") == 2)["result"]["stopReason"] = "end_turn"
     _write(d, c2a, a2, rec)
     assert "cancel: terminal stopReason is 'end_turn', expected 'cancelled'" in _run(bundle).stdout
-    rec2 = copy.deepcopy(rec); rec2["orphan_check"] = {"agent_process_alive_after": True}
+    rec2 = copy.deepcopy(rec); rec2["orphan_check"] = {"checked": True, "orphan_processes_after": 1}
     _write(d, c2a, a2c, rec2)
-    assert "cancel: capture record does not show the agent process gone" in _run(bundle).stdout
+    assert "cancel: capture record does not prove zero orphan processes after cancel" in _run(bundle).stdout
 
 
 def test_shutdown_and_two_users_and_config_echo_negatives(bundle):
@@ -218,7 +218,15 @@ def test_frozen_golden_is_binding(bundle):
     assert r.returncode == 1 and "differ from the frozen golden.jsonl" in r.stdout
 
 
-def test_real_committed_evidence_root_defers_today():
-    """The repo's own evidence dir has no golden bundle yet: the leg must defer, never pass."""
+def test_real_committed_evidence_root_passes_with_the_frozen_golden():
+    """The repo's own evidence bundle (captured 2026-09-05 on the PC venue) passes; the frozen golden is binding."""
     r = _run(P / "evidence")
-    assert r.returncode == 2 and r.stdout.startswith("deferred:")
+    assert r.returncode == 0 and r.stdout.startswith("PASS: 6 assertions + golden x2 identical"), r.stdout
+    frozen = (P / "evidence" / "golden" / "golden.jsonl").read_text().splitlines()
+    c2a, a2c = _frames(P / "evidence" / "golden" / "run-1")
+    assert cc.normalize_run(c2a, a2c) == frozen
+    c2a2, a2c2 = _frames(P / "evidence" / "golden" / "run-2")
+    assert cc.normalize_run(c2a2, a2c2) == frozen
+    for leg in ("cancel", "shutdown", "two-users"):
+        rec = json.loads((P / "evidence" / "golden" / leg / "capture.json").read_text())
+        assert rec["manifests"]["identical"] is True and rec["config_echo"]["idle_timeout"] == "900s", leg

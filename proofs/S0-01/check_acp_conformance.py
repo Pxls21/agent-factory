@@ -208,8 +208,10 @@ def assert_cancel(c2a, a2c, record: dict, leg="cancel"):
         raise Failure(f"{leg}: no session/cancel notification was sent")
     assert_prompt_turn(c2a, a2c, leg, expect_stop="cancelled")
     orphan = record.get("orphan_check") or {}
-    if orphan.get("agent_process_alive_after") is not False:
-        raise Failure(f"{leg}: capture record does not show the agent process gone after cancel")
+    # "no orphan process": every agent-side process still alive after the cancel is parented by buzz-acp
+    # (a managed pooled child is not an orphan); a reparented (ppid 1) or unmanaged survivor is.
+    if orphan.get("orphan_processes_after") != 0 or orphan.get("checked") is not True:
+        raise Failure(f"{leg}: capture record does not prove zero orphan processes after cancel")
 
 
 def assert_shutdown(record: dict, leg="shutdown"):

@@ -44,10 +44,15 @@ def _canonical(status_cell):
     )
 
 
-def _ledger(marker="PROOF-STATUS: S0-11 = REVIEW-PENDING", rows=None):
+S0_01_MARKER = "PROOF-STATUS: S0-01 = REVIEW-PENDING"
+S0_01_ROW = "| s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance | REVIEW-PENDING 2026-09-05; details | s0-02 | gate |\n"
+
+
+def _ledger(marker="PROOF-STATUS: S0-11 = REVIEW-PENDING", rows=None, s0_01_marker=S0_01_MARKER, s0_01_row=S0_01_ROW):
+    """Fixture ledger: the S0-11 case under test plus a consistent S0-01 binding (both proofs are tracked)."""
     if rows is None:
         rows = [_canonical("REVIEW-PENDING; details")]
-    return f"notes\n{marker}\n\n{HEADER}{''.join(rows)}"
+    return f"notes\n{marker}\n{s0_01_marker}\n\n{HEADER}{''.join(rows)}{s0_01_row}"
 
 
 def _make_root(tmp_path, tasklist_text):
@@ -126,7 +131,7 @@ def test_duplicate_canonical_row_fails(tmp_path):
 
 def test_missing_canonical_row_fails(tmp_path):
     # A marker with no canonical row: the status is not bound to anything visible.
-    text = f"notes\nPROOF-STATUS: S0-11 = REVIEW-PENDING\n\n{HEADER}"
+    text = f"notes\nPROOF-STATUS: S0-11 = REVIEW-PENDING\n{S0_01_MARKER}\n\n{HEADER}{S0_01_ROW}"
     result = _run(_make_root(tmp_path, text))
     assert result.returncode == 1
     assert "found 0 task rows" in result.stderr
@@ -209,3 +214,18 @@ def test_row_cells_splits_on_unescaped_pipes_only():
     cells = checker._row_cells(r"| a | b with \| escaped pipe | c |")
     assert cells == ["a", r"b with \| escaped pipe", "c"]
     assert checker._row_cells("no pipes here") is None
+
+
+def test_s0_01_binding_marker_and_canonical_row_must_agree(tmp_path):
+    ok = _make_root(tmp_path / "ok", _ledger())
+    assert _run(ok).returncode == 0
+    # the S0-01 row still saying `pending` while the marker says REVIEW-PENDING is a contradiction
+    bad = _make_root(tmp_path / "bad", _ledger(s0_01_row="| s0-07-s0-01-acp-conformance | #7 | pending | s0-02 | gate |\n"))
+    r = _run(bad)
+    assert r.returncode == 1 and "S0-01" in r.stdout + r.stderr
+    # a DONE-style self-closure of S0-01 is not a governance word
+    done = _make_root(tmp_path / "done", _ledger(s0_01_marker="PROOF-STATUS: S0-01 = DONE", s0_01_row="| s0-07-s0-01-acp-conformance | #7 | DONE | s0-02 | gate |\n"))
+    assert _run(done).returncode == 1
+    # a missing S0-01 marker fails: deletion is not a way out
+    gone = _make_root(tmp_path / "gone", _ledger(s0_01_marker="", s0_01_row=""))
+    assert _run(gone).returncode == 1

@@ -14,36 +14,14 @@ last_compiled: 2026-09-03
 - **Today:** 2026-09-05
 
 ## Active lanes
-- **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (task #10) — IN PROGRESS, grounded 2026-09-04.**
-  Owner chose Option 1 (build+test at the pins). Bridge live. FRESH isolated pinned clones on the PC at
-  `~/s0-01-pinned/{hermes-agent@527da60,buzz@1c8321c,acp@37a7d4f8}` (clean-tree). Built by absolute path:
-  buzz-acp `~/s0-01-pinned/buzz/target/release/buzz-acp` (sha256 a5a17ffc…), hermes-acp
-  `~/s0-01-pinned/.venv-hermes/bin/hermes-acp` (v0.21.0, --check OK). Provenance + settled design in
-  `proofs/S0-01/GROUNDING.md`. KEY: buzz-acp is a relay daemon (needs Nostr key + `--relay-url`, launches the
-  agent via `--agent-command`); golden = normalized protocol SHAPE (content volatility stripped); negative =
-  schema-layer (acp v2 InitializeRequest required [protocolVersion, info]). Owner corrections 2026-09-04:
-  BUILD-COMPAT verified / runtime integration UNVERIFIED until the first handshake; hermes install =
-  EDITABLE (wheel is forbidden by the component's own setup.py guard; Nix declined) with full provenance
-  (tree a36bba5e, git-archive sha256 b65c4990, direct_url→pinned clone, entrypoint f90a0cc3,
-  PYTHONDONTWRITEBYTECODE=1, recheck all 3 trees before+after each run); model egress OmniRoute-ONLY
-  (`:20128/v1`, env OMNIROUTE_API_KEY never printed/committed, codex_responses+compression-off, ADR 0002) —
-  NOT S0-03; throwaway relay+Nostr isolated from buzz-prod-*. **2026-09-05 state:** relay stack + identities +
-  channel + buzz-acp owner-gate subscription + accepted owner mention (h+p tags) all REACHED on the PC;
-  hermes reached OmniRoute and hit an orphan instance's 401 — root cause fixed by the owner's Codex session
-  (`docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md`, reviewed + committed). **Initialize milestone captured as RAW frames 2026-09-05**
-  (client offered 2, agent returned 1; `proofs/S0-01/evidence/initialize-20260905T062959Z/`; no prompt, no
-  credential). **Owner ruling 2026-09-05: no new key** — S0-01 uses the same OmniRoute client key the owner's
-  Hermes uses (the earlier scoped-key directive dated from the orphan 401s). FINDING: that key is in no row of the
-  authoritative key table (`/v1/models` 401) — Hermes works only because the plane is open; owner regenerates `hermes`. **Milestone 2 reached 2026-09-05:** relay-driven prompt turn ×2 (mention → session/new →
-  session/prompt → update stream → end_turn; Hermes reached OmniRoute; credential NOT validated — plane open).
-  FINDING: live-route event structure varies run to run → golden needs the deterministic scripted backend behind
-  an OmniRoute test route (owner-run). Staged: scripted backend RUNNING on the PC (:20201), user2 fixture identity admitted (owner-only gate
-  observed holding). NEXT: the OmniRoute provider connection (task #36, owner/Codex) → golden ×2 on `s0-01-pong`,
-  cancel on `s0-01-slow`, shutdown, two users under allowlist → freeze golden.jsonl → proof-runner on the PC venue → result.json
-  (checker + spec already wired; the positive leg defers until the bundle exists). Then: `/v1/models` 200 preflight → pinned config to the ADR
-  wire shape (`codex_responses` + compression-off header) → owner mention through `frame_tee.py` → runner
-  (capture→structure-preserving-normalize→golden ×2 + schema negative), result.json, ledger. Do NOT touch
-  live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.
+- **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (task #10) — PROOF RUN RECORDED 2026-09-05, REVIEW-PENDING.**
+  Pinned clones on the PC (`~/s0-01-pinned/{hermes-agent@527da60,buzz@1c8321c,acp@37a7d4f8}`), isolated relay stack,
+  sanctioned scripted route `s0-01-scripted` behind the real OmniRoute (task #36, owner/Codex). Five legs captured as RAW
+  frames with identical pre/post manifests: golden ×2 (11 normalized lines, byte-identical), `!cancel` → cancelled with
+  zero orphans, `!shutdown` → exit 0, two users under allowlist → two sessions. `check_acp_conformance.py` PASS; spec
+  wired into the canonical runner. NEXT: runner on the PC venue → result.json → ledger-gen/validate → owner review.
+  History: initialize milestone (client offered 2 / agent returned 1) and two live-model turns (structure
+  non-reproducible → scripted golden) on 2026-09-05. Credential caveat applies only to the two live runs.
 - **Handoff reconciliation (task #31) — DONE 2026-09-05:** Codex's OmniRoute/Hermes handoff ported verbatim
   under a review header (reproduced vs reported); `scripts/omniroute_invariants.sh` (read-only, 7 checks,
   11 deterministic tests) — live: 5 OK, `require_api_key` FAIL, `catalog` FAIL (no key file); offload map +
@@ -149,7 +127,7 @@ build-status or count disagreement.
 
 ## Last updated
 
-Handoff reconciliation + OmniRoute invariants monitor + incidents AF-AP-33/34/35 — 2026-09-05; S0-01
-waits on the owner's scoped client key; next update when the frame-captured relay turn lands. This
+S0-01 proof run recorded (five legs, golden ×2, checker PASS) — 2026-09-05; next update when result.json + ledger
+land from the PC venue and the owner reviews. This
 page's pre-09-04 lane entries are being brought forward incrementally; the ledger
 (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.

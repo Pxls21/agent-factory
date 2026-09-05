@@ -40,7 +40,11 @@ from pathlib import Path
 
 # proof id -> its ONE canonical task-row slug. EXACT, never a substring match
 # (`s0-11-s0-10-gbrain-adr` is the S0-10 row; a substring would misbind it).
-TRACKED = {"S0-11": "s0-18-s0-11-eval-hardening"}
+TRACKED = {
+    "S0-11": "s0-18-s0-11-eval-hardening",
+    # S0-01 proof run recorded 2026-09-05 (pc-bridge venue); REVIEW-PENDING until the owner accepts.
+    "S0-01": "s0-07-s0-01-acp-conformance",
+}
 # The ledger's status vocabulary. ACCEPTED records an owner process decision
 # (see the module docstring); DONE/CLOSED/other are not the governance words and
 # must not appear as an authoritative status.

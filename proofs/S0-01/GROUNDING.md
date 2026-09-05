@@ -1,13 +1,14 @@
 # S0-01 ACP conformance — grounding & provenance (2026-09-04)
 
-> Status: **BUILD COMPATIBILITY VERIFIED; RUNTIME INTEGRATION UNVERIFIED until the relay
-> handshake.** The three pinned components clone/build/install and run standalone by absolute
-> path — that is *build compatibility*, not integration. Integration (buzz-acp actually launching
-> and speaking ACP to hermes-acp) becomes verified only after the first real relay-driven
-> handshake. The executable proof (`runner`, `fixtures/`, `result.json`) lands in a later increment.
-> Owner ruling 2026-09-04: build+test against FRESH pinned clones; do NOT touch the
-> live installs or `upstream.lock.yaml`; invoke by ABSOLUTE PATH; if the pinned
-> components cannot integrate, STOP and report (no silent patch/re-pin).
+> Status (2026-09-05): **PROOF RUN RECORDED on the pc-bridge venue — REVIEW-PENDING.** The pinned `buzz-acp`
+> (1c8321c) launched the pinned `hermes-acp` (527da60) through the isolated relay and the sanctioned scripted route
+> behind the real OmniRoute; all six seed assertions hold on RAW frames and the golden compares byte-identical across
+> two runs (`evidence/golden/`, `check_acp_conformance.py` PASS). `result.json` is produced by the canonical
+> proof-runner on the PC venue in the follow-up commit; the owner's review grants closure (AF-AP-32: the coordinator
+> never self-records it). Not S0-03 evidence. History: build compatibility verified 2026-09-04 → runtime integration
+> reached 2026-09-05 (initialize, then the relay-driven prompt turn) → proof run 2026-09-05.
+> Owner rulings honoured: fresh pinned clones; live installs and `upstream.lock.yaml` untouched; absolute paths;
+> STOP-and-report on any integration failure (none occurred).
 
 ## Provenance — pinned clones on the PC (isolated, clean)
 
@@ -137,14 +138,14 @@ normalized away. The normalized transcript is then deterministic across runs →
 - [x] Record SHAs, `HEAD^{tree}`, clean-tree (`--untracked-files=all`), toolchains, build commands, binary
       sha256, editable-install provenance (direct_url, freeze, entrypoint hash). Still to record at run time: argv, transcript digests (`result.json`).
 - [x] Re-verify ALL THREE trees immediately BEFORE and AFTER each run (recursive manifests; identical across the initialize capture and both exploratory turns) — repeated for the proof runs.
-- [ ] Model egress ONLY through the existing OmniRoute (`:20128/v1`, `OMNIROUTE_API_KEY`); never print/commit keys. Not S0-03.
+- [x] Model egress ONLY through the existing OmniRoute (`:20128/v1`; the owner's rotated Hermes key, validated by `REQUIRE_API_KEY=true`; the golden's upstream is the sanctioned scripted backend BEHIND OmniRoute). Never printed/committed. Not S0-03.
 - [x] Throwaway Buzz relay + Nostr identity isolated from production (`buzz-prod-*`): own ports (3999/3998/3997,
       postgres 5471, redis 6471, minio 9471), own containers `s0-01-harness-*`, own keys. **CAVEAT (AF-AP-34):** four
       `pkill -x buzz-relay` calls on 2026-09-04 aimed at THIS relay restarted the production `buzz-prod-relay-1`
       (its binary shares the bare name in the host process table) — reported to the owner; teardown now goes
       through pidfiles + `/proc/<pid>/exe`, never names.
-- [ ] Golden normalized-compare run TWICE byte-identical (structure-preserving) + the malformed-initialize negative.
-- [ ] If pinned components cannot integrate faithfully → STOP and report with evidence (no patch, no re-pin).
+- [x] Golden normalized-compare run TWICE byte-identical (structure-preserving, 11 lines) + the malformed-initialize negative (schema layer, exact reason).
+- [x] If pinned components cannot integrate faithfully → STOP and report (never needed: they integrated at the pins, no patch, no re-pin).
 
 ## Reached 2026-09-04/05 (relay path) — still RUNTIME INTEGRATION UNVERIFIED
 
@@ -243,9 +244,10 @@ normalized away. The normalized transcript is then deterministic across runs →
   (bundles built from the REAL frames; missing/duplicated/reordered/cross-session events, cancel/shutdown/two-user/echo/
   provenance negatives, deferral) and `tests/test_s0_01_spec_runner.py` (the real runner defers and preserves).
   Normalizer note: two adjacent chunks of the same kind are interchangeable once text is stripped — not a reorder.
-- CAPTURE still to run (needs task #36): golden ×2 on `s0-01-pong`, cancel on `s0-01-slow` (`session/cancel` →
-  `cancelled`, agent process gone), clean shutdown after a completed turn (exit code captured by a wrapper), two
-  users under `respond_to=allowlist` (owner + user2, two top-level mentions under `session_policy=thread`); then freeze
-  `golden.jsonl` from a reviewed run-1 normalization, run the proof-runner on the PC venue, ledger integrity.
-- Stack state: the isolated relay stack and the tee'd buzz-acp (pidfile `.markers/buzz-acp.pid`) stay up on the PC
-  for the next runs; teardown goes through pidfiles, never names (AF-AP-34).
+- CAPTURED 2026-09-05 (task #36 done by the owner via Codex): golden ×2 on `s0-01-scripted/s0-01-pong` (identical
+  structure; `golden.jsonl` frozen from run-1), `!cancel` mid-stream on `s0-01-slow` → `session/cancel` → `cancelled`,
+  zero orphans (buzz-acp → frame_tee → hermes-acp all parented by buzz-acp), `!shutdown` after a completed turn → exit 0
+  and no agent process left, two users under `respond_to=allowlist` (owner + user2) → two sessions, one pong each, no
+  cross-talk. Every leg's pre/post three-tree manifests equal the baseline (the shutdown leg's post snapshot was taken
+  late and is annotated). Remaining: the canonical proof-runner on the PC venue → `result.json` → `ledger-gen` →
+  `validate-ledger`; then the owner's review.

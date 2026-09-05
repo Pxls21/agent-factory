@@ -1,0 +1,11 @@
+{"clientCapabilities":{"auth":{"terminal":true}},"clientInfo.name":"buzz-acp","dir":"c2a","id":"<ID1>","kind":"req","method":"initialize","protocolVersion":2}
+{"dir":"c2a","id":"<ID2>","kind":"req","mcpServers":0,"method":"session/new"}
+{"dir":"c2a","id":"<ID3>","kind":"req","method":"session/prompt","prompt":["text","text","text","text"],"sessionId":"<SID1>"}
+{"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true},"sessionCapabilities":{"fork":{},"list":{},"resume":{}}},"agentInfo.name":"hermes-agent","dir":"a2c","error":false,"id":"<ID1>","kind":"resp","protocolVersion":1,"result_keys":["agentCapabilities","agentInfo","authMethods","protocolVersion"]}
+{"dir":"a2c","error":false,"id":"<ID2>","kind":"resp","result_keys":["_meta","models","modes","sessionId"],"sessionId":"<SID1>"}
+{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"available_commands_update","update":{"availableCommands":[{"description":"str","name":"str"},{"description":"str","input":{"hint":"str"},"name":"str"},{"description":"str","name":"str"},{"description":"str","name":"str"},{"description":"str","name":"str"},{"description":"str","name":"str"},{"description":"str","input":{"hint":"str"},"name":"str"},{"description":"str","input":{"hint":"str"},"name":"str"},{"description":"str","name":"str"}]}}
+{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"usage_update","update":{"size":"int","used":"int"}}
+{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"agent_message_chunk","update":{}}
+{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"session_info_update","update":{"updatedAt":"str"}}
+{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"usage_update","update":{"size":"int","used":"int"}}
+{"dir":"a2c","error":false,"id":"<ID3>","kind":"resp","result_keys":["stopReason","usage"],"stopReason":"end_turn"}

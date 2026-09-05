@@ -1,0 +1,27 @@
+{
+ "method": "owner control command `!cancel` (kind 9, thread reply mentioning the agent) during the slow scripted stream",
+ "checked": true,
+ "buzz_acp_pid": 1538395,
+ "buzz_acp_alive": true,
+ "agent_side_processes_alive": [
+  {
+   "pid": 1538395,
+   "ppid": 1538387,
+   "cmd": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp --relay-url ws://127.0.0.1:3999 --agent-comman"
+  },
+  {
+   "pid": 1538408,
+   "ppid": 1538395,
+   "cmd": "/usr/bin/python3 /home/rocco/s0-01-pinned/.markers/frame_tee.py "
+  },
+  {
+   "pid": 1538410,
+   "ppid": 1538408,
+   "cmd": "/home/rocco/s0-01-pinned/.venv-hermes/bin/python3 /home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-a"
+  }
+ ],
+ "agent_children_alive": 3,
+ "orphan_processes_after": 0,
+ "all_children_parented_by_buzz_acp": true,
+ "note": "the exit-code wrapper (bash -c env -i ...) is the coordinator's recorder, excluded"
+}
