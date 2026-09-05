@@ -2,8 +2,9 @@
   "proofs": [
     {
       "classification": "execution_proof",
+      "normalized_digest": "3868154394ad84485f8da94aa56a1dc8b5486b9c8a7c1f9deed348f06148a683",
       "proof_id": "S0-01",
-      "state": "ABSENT"
+      "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
@@ -44,25 +45,25 @@
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "953002a8182c62cd70958ba3709f17cac816c4d3b5e44aabcd7463aba27a4dce",
+      "normalized_digest": "3a603c12b738cbcbb7a9828f041237db26975b75800ac3fa501a322c6ab46825",
       "proof_id": "S0-09",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "1e5acc60b7c38295f717536fb8b39c50cae682c2b8c6b3b2ab6c3a4ad970d6e7",
+      "normalized_digest": "28ff8cff58069cdc3cbf3a6976b150a0c2f875a1d2db93f6a0e52364aaedde9f",
       "proof_id": "S0-10",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "2394da796ba7fd630cdc7f5a52fc29c54521b50ebd1615c69e0804dc07548a36",
+      "normalized_digest": "93b4b2d7b49228328fa2e1b4f3adc874c9ed037425916cdd68b04d637021d307",
       "proof_id": "S0-11",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "c46954745fc47da9768fd56600e68f09e99b27efa8b883688373292524413fc1",
+      "normalized_digest": "9148a598b15f3b256d9cc7876f32a463c1b50a07aaab0631a219151384950255",
       "proof_id": "S0-12",
       "state": "PRESENT"
     }

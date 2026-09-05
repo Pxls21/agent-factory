@@ -77,6 +77,14 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-05 sync (S0-01 result.json RECORDED on the pc-bridge venue; ledger regenerated — S0-01 PRESENT; still REVIEW-PENDING):**
+The canonical `scripts/proof-runner --proof S0-01 --venue pc-bridge` ran in the PC clone at the evidence commit: positive leg
+exit 0 (`check_acp_conformance.py` PASS), negative leg exit 1 with `protocol-violation: missing required initialize field`,
+`env_fingerprint=pc-bridge:fedora`, recorded 2026-09-05T11:47:56Z, sha256 3e2121d4…; the attestation covers 117 files under
+`proofs/S0-01/` — **any edit there (GROUNDING.md included) invalidates it and requires re-running the canonical runner**,
+so status notes live here and in the wiki. `ledger-gen` + `validate-ledger integrity` green; execution proofs with an
+artifact: S0-11, S0-01 (2 of 7). Closure stays with the owner's review (PROOF-STATUS: S0-01 = REVIEW-PENDING).
+
 **2026-09-05 sync (S0-01 PROOF RUN RECORDED — REVIEW-PENDING; golden ×2 identical on the scripted route):**
 The owner (via Codex) added the OmniRoute connection `s0-01-scripted` (task #36 done; reproduced: non-stream and stream
 200 through OmniRoute). Five legs captured on the PC venue through the byte-preserving tee with pre/post three-tree
