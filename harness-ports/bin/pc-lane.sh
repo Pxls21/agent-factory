@@ -258,11 +258,12 @@ else
   # the cheapest route that does it reliably; PROVISIONAL until the probe table in
   # docs/WORKFLOW-OFFLOAD-MAP.md pins them). Explicit HERMES_MODEL/HERMES_REASONING win.
   # 2026-09-03 (owner, via Codex): the routes are the four OmniRoute COMBOS `agentfactory-*`
-  # (priority failover chains defined in OmniRoute's `combos` table, smoke-tested 200 each):
-  #   agentfactory-build    sol-ultra -> sol-xhigh -> terra-ultra -> gpt-5.5-xhigh -> free-coding
-  #   agentfactory-verify   terra-xhigh -> agy/gemini-3.1-pro-low -> antigravity pro-low -> gpt-5.5-xhigh -> free-reasoning
-  #   agentfactory-research gemini-3.1-pro-preview -> agy pro-low -> antigravity pro-low -> gemini flash -> free-chat
-  #   agentfactory-sweep    gemini-3-flash-preview -> agy flash-agent -> antigravity flash-agent -> free-fast
+  # (priority failover chains defined in OmniRoute's `combos` table). Chain orders as of
+  # 2026-09-05 (K3 promoted, deepseek-v4-flash removed — docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md):
+  #   agentfactory-build    sol-ultra -> ollama-cloud/kimi-k3 -> sol-xhigh -> terra-ultra -> gpt-5.5-xhigh -> glm-5.2 -> free-coding
+  #   agentfactory-verify   terra-xhigh -> kimi-k3 -> glm-5.2 -> agy/gemini-3.1-pro-low -> antigravity pro-low -> gpt-5.5-xhigh -> free-reasoning
+  #   agentfactory-research kimi-k3 -> gemini-3.1-pro-preview -> glm-5.2 -> agy pro-low -> antigravity pro-low -> gemini flash -> free-chat
+  #   agentfactory-sweep    kimi-k3 -> gemini-3-flash-preview -> agy flash-agent -> antigravity flash-agent -> free-fast
   # A combo answers even when its first route refuses (the 503 capacity class, a 429 quota);
   # the served model is whatever the chain reached — the lane report's usage.json names it.
   case "${ROLE:-}" in

@@ -141,3 +141,24 @@ runsc), so NO resource limits apply in this configuration even though `user@1000
 `cpu io memory pids`. The production shape (delegated systemd cgroups or rootful) is a Wave-0 spike
 question; the containment proof itself does not depend on cgroups. Platform: systrap (runsc default;
 `/dev/kvm` absent).
+
+## OmniRoute on the PC — the managed unit, and the process-kill rule (2026-09-05)
+
+- **The authoritative OmniRoute is `omniroute-migrated.service`** (systemd --user; exec
+  `~/.omniroute-migration-npm/node_modules/.bin/omniroute serve --port 20128`; data dir
+  `~/.omniroute-migrated`, pinned by the unit override `~/.config/systemd/user/omniroute-migrated.service.d/10-data-dir.conf`).
+  Env files load in this order: `~/.omniroute-migrated/.env` → `~/omniroute-migration-20260829/candidate-home/.omniroute/.env`
+  (the unit's `HOME`) → the npm package `.env`; the first setter of a variable wins. `~/.omniroute/.env` is
+  read by nothing managed — it belonged to the 2026-09-05 orphan (`docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md`,
+  INCIDENT-LOG 2026-09-05, AF-AP-33). Health 200 says nothing about WHICH instance answers: run
+  `bash scripts/pc.sh "$(cat scripts/omniroute_invariants.sh)"` (read-only; set `OMNIROUTE_API_KEY_FILE`
+  for the catalog check) before trusting the port.
+- **Never kill by name on this host (AF-AP-34).** The production Buzz relay's binary shows up in the
+  host process table as `buzz-relay`, so `pkill -x buzz-relay` aimed at the isolated S0-01 relay
+  restarted `buzz-prod-relay-1` four times on 2026-09-04. Every server started over the bridge writes
+  a pidfile (`setsid <cmd> </dev/null >log 2>&1 & echo $! > <name>.pid`); stop it with
+  `kill "$(cat <name>.pid)"` only after `readlink /proc/$(cat <name>.pid)/exe` shows YOUR binary path;
+  diagnose port collisions with `ss -lntp 'sport = :<port>'` + `/proc/<pid>/cgroup`, never with a sweep.
+- **Owner-only actions surfaced 2026-09-05:** `REQUIRE_API_KEY=true` (the inference plane is
+  unauthenticated on `0.0.0.0`, task #34); the `STORAGE_ENCRYPTION_KEY` rotation (task #33); client-key
+  creation for S0-01 (needs a dashboard session — the coordinator does not use the owner's password).

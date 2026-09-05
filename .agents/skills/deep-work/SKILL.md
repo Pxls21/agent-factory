@@ -368,6 +368,31 @@ answer by DOING, or by an explicit "retro: nothing to bake"; never by dismissing
   heavy jobs (a delegate's full pytest, another probe) — three-way contention here both corrupted
   timings and OOM-killed a probe. If a heavy job is live, either wait or state the contention
   alongside the number; a precise-looking figure measured under load is contention, not signal.
+- **Kill only PIDs you own — never by name on a shared host (AF-AP-34, 2026-09-04).** `pkill -x <name>`,
+  `pkill -f <pattern>` and `killall` match EVERY process with that binary name or command line: other
+  installs, container processes (which appear in the host process table under their bare name), and the
+  caller's own shell when it carries the pattern. Four `pkill -x buzz-relay` aimed at an isolated test
+  relay each restarted the owner's PRODUCTION `buzz-prod-relay-1` (podman `RestartCount=4`, last start
+  7 s after the last kill; live traffic interrupted), unnoticed for eight hours; an earlier
+  `pkill -f target/release/buzz-relay` killed the bridge shell that carried the pattern. Rule: every
+  server you start writes a pidfile (`setsid … & echo $! > X.pid`); a stop is `kill <pid from YOUR
+  pidfile>` after `readlink /proc/<pid>/exe` (or the cgroup line) confirms it is yours; a port
+  collision is diagnosed with `ss -lntp` + `/proc/<pid>/cgroup`, never resolved with a name sweep.
+- **Redact by KEY NAME or pattern class, never by interpolating the secret's VALUE (AF-AP-35,
+  2026-09-04).** A filter built from the value (`sed "s/$SECRET/…/"`, `s/$(printf …)/`,
+  `.replace(secret, …)`) puts the value into the command line, the tool output and the transcript it
+  was meant to protect; one quoting slip echoed OmniRoute's `STORAGE_ENCRYPTION_KEY` into the session
+  log and the owner had to declare it compromised (29 encrypted provider credentials; the component has
+  no in-app rotation). Rule: `s/^\(KEY\|SECRET\|TOKEN\|PASSWORD\)=.*/\1=<redacted>/`-style filters on
+  the NAME; print only lengths and digests of secrets; dry-run every redaction on a dummy value first;
+  a management credential read from an owner's file is an owner action to authorize, not a convenience.
+- **Health 200 ≠ the right instance (AF-AP-33, 2026-09-05).** A duplicate/unmanaged process that
+  squats a service port answers `/health` while serving a divergent dataset or config (OmniRoute's
+  orphan served the small default DB: catalog 622 vs 2,626, combos gone, every key 401, health 200;
+  systemd reported the real unit "active" inside its `EADDRINUSE` loop). A liveness check asserts
+  OWNERSHIP (exactly one listener; its cgroup = the managed unit; its OWN `/proc/<pid>/environ`
+  carries the authoritative data dir — kernel truth, not the unit's declared config) and a
+  dataset-discriminating probe (the authenticated catalog carries the required ids), never health alone.
 
 ## Phase 5 addendum — thermo-nuclear full-stack pass (owner mandate 2026-08-26)
 

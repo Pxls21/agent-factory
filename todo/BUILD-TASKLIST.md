@@ -76,6 +76,33 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-05 sync (Codex OmniRoute/Hermes handoff reconciled; OmniRoute invariants monitor; three incidents; S0-01 initialize milestone recorded, S0-01 still INCOMPLETE):**
+Tasks created this increment (subject slugs): `handoff-reconciliation-omniroute` (#31, DONE this
+commit), `incident-prod-relay-pkill-af-ap-34` (#32, logged + rule baked; OPEN until the owner
+acknowledges), `owner-rotate-storage-encryption-key` (#33, OWNER-BLOCKED), `owner-omniroute-require-api-key`
+(#34, OWNER-BLOCKED), `owner-adr-0002-wire-mode` (#35, OWNER decision). Handoff remaining actions: 1-5 and 9
+DONE (`docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md` committed verbatim under a review header;
+`scripts/omniroute_invariants.sh` read-only, 7 checks, 11 deterministic tests; live on the PC: 5 OK,
+`require_api_key` FAIL = the inference plane is unauthenticated on 0.0.0.0, `catalog` FAIL = no key file);
+6-7 OWNER-ONLY; 8 = the S0-01 build/verify lanes once the key exists (research/sweep UNMEASURED). Focused
+lane tests 33/33 ×2; full harness suite ALL SUITES PASSED. Offload map + `pc-lane.sh` comment synced to the
+2026-09-05 combo orders (K3 promoted; deepseek-v4-flash removed). **S0-01 (`s0-07-s0-01-acp-conformance`,
+#10) — milestone, recorded precisely (owner wording 2026-09-05):** the pinned `buzz-acp` launched the pinned
+`hermes-acp` and exchanged ACP initialize messages — client offered protocol `2`; agent returned protocol `1`;
+initialize exchange succeeded with the required capabilities. S0-01 overall REMAINS INCOMPLETE: nothing yet
+proves relay-authenticated prompting, OmniRoute egress, streaming/terminal behavior, cancellation, shutdown,
+concurrent-session mapping, timeout configuration, determinism, or the negative control. Raw initialize request/response
+FRAMES (not logs) CAPTURED 2026-09-05T06:30:01Z through `frame_tee.py` with no prompt and no OmniRoute
+credential, bound to the pinned paths + three-tree manifests (pre = post = baseline) —
+`proofs/S0-01/evidence/initialize-20260905T062959Z/`, checker `proofs/S0-01/check_initialize.py`, 5 tests
+incl. the seed's negative fixture. Owner ruling 2026-09-05: NO new key — the proof uses the same OmniRoute client key the owner's Hermes uses
+(the new-scoped-key directive dated from the orphan-instance 401s and is withdrawn). FINDING: that key is in NO row of the
+authoritative key table (`/v1/models` 401); Hermes works only because `REQUIRE_API_KEY=false` — owner must regenerate
+the `hermes` key before enabling the requirement (#34). Incidents: AF-AP-33 (orphan OmniRoute listener, Codex-fixed),
+AF-AP-34 (the coordinator's `pkill -x buzz-relay` restarted the PRODUCTION `buzz-prod-relay-1` four times on
+2026-09-04 — reported to the owner), AF-AP-35 (the coordinator leaked `STORAGE_ENCRYPTION_KEY` into the
+session log). Four-way denominators unchanged: no proof changed state this increment.
+
 **2026-09-04 sync (S0-11 cycle 8 — ACCEPTED by owner process decision; the slug bypass fixed):**
 The owner's EIGHTH review accepted S0-11's technical proof and trust binding, and ruled: do NOT
 reopen S0-11 for a ninth cycle — the remaining parser/anchor work is the separate

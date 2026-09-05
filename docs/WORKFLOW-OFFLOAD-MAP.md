@@ -47,10 +47,16 @@ files with a PIN; reports are DATA. The only things that still cost coordinator 
 
 | Role (`harness-ports/roles/`) | Default route (`pc-lane.sh`) | Effort | Why this class of model |
 |---|---|---|---|
-| code-implementer | `codex/gpt-5.6-sol-ultra` | ultra | owner ruling: "OpenAI sol 5.6 on the highest" |
-| adversarial-verifier | `codex/gpt-5.6-terra-xhigh` | xhigh | a different variant than the builder so the two do not share blind spots; still strong |
-| researcher / evidence-gatherer | `gemini/gemini-3.1-pro-preview` | high | owner: Gemini for search; long context over the tree |
-| curator, echo-sweeper | `gemini/gemini-3-flash-preview` | medium | consistent, bounded, cheap; correctness is checked by the coordinator's review of a patch/table |
+| code-implementer | `agentfactory-build` — `codex/gpt-5.6-sol-ultra` → `ollama-cloud/kimi-k3` → `sol-xhigh` → `terra-ultra` → `gpt-5.5-xhigh` → `ollama-cloud/glm-5.2` → `free-coding` | ultra | owner ruling: "OpenAI sol 5.6 on the highest"; the combo fails over on the 503 capacity class |
+| adversarial-verifier | `agentfactory-verify` — `codex/gpt-5.6-terra-xhigh` → `kimi-k3` → `glm-5.2` → `agy/gemini-3.1-pro-low` → `antigravity/gemini-3.1-pro-low` → `gpt-5.5-xhigh` → `free-reasoning` | xhigh | a different variant than the builder so the two do not share blind spots; still strong |
+| researcher / evidence-gatherer | `agentfactory-research` — `kimi-k3` → `gemini/gemini-3.1-pro-preview` → `glm-5.2` → `agy pro-low` → `antigravity pro-low` → `gemini/gemini-3-flash-preview` → `free-chat` | high | long context over the tree; Gemini kept DOWNSTREAM since both Google keys share one Cloud project's quota (429s) |
+| curator, echo-sweeper, contract-runner | `agentfactory-sweep` — `kimi-k3` → `gemini/gemini-3-flash-preview` → `agy/gemini-3-flash-agent` → `antigravity/gemini-3-flash-agent` → `free-fast` | medium | consistent, bounded, cheap; correctness is checked by the coordinator's review of a patch/table |
+
+Chain orders as of **2026-09-05** (owner via Codex, `docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md`): `ollama-cloud/kimi-k3`
+promoted to the head of research and sweep and to second place in build and verify; `ollama-cloud/deepseek-v4-flash`
+removed (absent from Ollama Cloud's live catalog; direct probe 400). K3 and GLM answered Codex's DIRECT probes 200
+through the managed OmniRoute; neither has been measured on a real lane. The 2026-09-03 sweep workaround
+(`HERMES_MODEL=antigravity/gemini-3-flash-agent`) is superseded once one real sweep lane confirms the new head.
 | (reserve) free grunt | `auto/best-free`, `free-reasoning`, `auto/coding:free` | — | zero-cost sweeps once a probe shows they follow the report shape |
 | (reserve) review | `codex/codex-auto-review` | — | OmniRoute exposes a Codex review route; untested |
 
@@ -105,9 +111,12 @@ followed, whether the known answer (file:line) was found, and any refusal/format
 | `codex/gpt-5.6-sol-xhigh` | — | — | — | — | 24-token probe 200 in 1.5 s (2026-09-03); the explicit step-down route (`HERMES_MODEL`) when `-ultra` keeps refusing; not yet measured on a lane |
 | `agentfactory-build` (combo) | — | — | — | — | 24-token probe 200 in 2.7 s, served `gpt-5.6-sol-ultra` (2026-09-03 15:0xZ); repair lane s0-01d dispatched on it |
 | `agentfactory-verify` (combo) | — | — | — | — | 24-token probe 200 in 3.8 s, served `gpt-5.6-terra-xhigh`; a real `hermes -p agentfactory -z … -m agentfactory-verify --reasoning xhigh` one-shot returned `LANE-OK` (the fixed Hermes↔OmniRoute path, end to end) |
-| `agentfactory-research` (combo) | — | — | — | — | 24-token probe 200 in 5.0 s, served `gemini-3.1-pro-low` (the chain skipped `gemini/gemini-3.1-pro-preview`: 429 quota on both Google keys in OmniRoute's call log, then antigravity answered). Same dead-head shape as `-sweep` but the head fails FAST (429 in 0.3 s), so this combo is usable as is |
-| `agentfactory-sweep` (combo) | first lane: ~2 min PER CALL, stopped | — | — | — | 24-token probe 200 in 0.9 s, but on the first real lane every request waited 120 s in OmniRoute's rate-limit queue on the dead head route (`gemini-3-flash-preview`: credits depleted → 429) before failing over to `antigravity/gemini-3-flash-agent` (200 in ~1 s). Until the owner reorders the combo, sweep-class lanes dispatch with `HERMES_MODEL=antigravity/gemini-3-flash-agent` (INCIDENT-LOG 2026-09-03) |
+| `agentfactory-research` (combo) | — | — | — | — | 24-token probe 200 in 5.0 s, served `gemini-3.1-pro-low` (the chain skipped `gemini/gemini-3.1-pro-preview`: 429 quota on both Google keys in OmniRoute's call log, then antigravity answered). Same dead-head shape as `-sweep` but the head fails FAST (429 in 0.3 s), so this combo is usable as is — REORDERED 2026-09-05: head is now `ollama-cloud/kimi-k3` |
+| `agentfactory-sweep` (combo) | first lane: ~2 min PER CALL, stopped | — | — | — | 24-token probe 200 in 0.9 s, but on the first real lane every request waited 120 s in OmniRoute's rate-limit queue on the dead head route (`gemini-3-flash-preview`: credits depleted → 429) before failing over to `antigravity/gemini-3-flash-agent` (200 in ~1 s). Until the owner reorders the combo, sweep-class lanes dispatch with `HERMES_MODEL=antigravity/gemini-3-flash-agent` (INCIDENT-LOG 2026-09-03) — REORDERED 2026-09-05: head is now `ollama-cloud/kimi-k3` (Codex direct probe 200); the `HERMES_MODEL` override stands only until a real sweep lane measures the new head |
 | `antigravity/gemini-3-flash-agent`, `agy/gemini-3-flash-agent` | 0.6 s | — | — | — | DEAD 2026-09-03: HTTP 200 with a canned upstream retirement banner ("Gemini 3.5 Flash is no longer available…") on every real prompt; answers `OK` to a 24-token probe — probes must carry a real instruction |
+| `ollama-cloud/kimi-k3` | — | — | — | — | Codex DIRECT probe 200 (2026-09-05) through the managed OmniRoute; head of research/sweep, second in build/verify; NOT lane-measured |
+| `ollama-cloud/glm-5.2` | — | — | — | — | Codex DIRECT probe 200 (2026-09-05); mid-chain in build/verify/research; NOT lane-measured |
+| `ollama-cloud/deepseek-v4-flash` | — | — | — | — | DEAD 2026-09-05: absent from Ollama Cloud's live catalog (direct probe 400); removed from `agentfactory-sweep` |
 | `agy/gemini-3.1-pro-low` / `antigravity/gemini-3.1-pro-low` | 12.6 s / 17.8 s | — | yes (two-line instruction) | — | LIVE; the working member of `-verify`/`-research`; candidate sweep head |
 | `auto/best-coding-fast` | 12.6 s | — | yes | — | LIVE, served `qwen3.7-max`; the lane profile's default model |
 | `codex/gpt-5.5-low` | 3.2 s | — | yes | — | LIVE, fastest cheap paid route; recommended sweep head until the combo is rebuilt |

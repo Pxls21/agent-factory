@@ -1,0 +1,17 @@
+{
+  "clientCapabilities": {
+    "_meta": {
+      "goose": {
+        "customNotifications": true
+      },
+      "terminal-auth": true
+    },
+    "auth": {
+      "terminal": true
+    }
+  },
+  "clientInfo": {
+    "name": "buzz-acp",
+    "version": "0.1.0"
+  }
+}

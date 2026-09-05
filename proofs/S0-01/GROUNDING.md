@@ -98,11 +98,23 @@ the pinned protocol commit, exactly as the seed's fixture_format specifies.)
 **Model egress is OmniRoute-exclusive (ADR 0002; owner correction 2026-09-04). NO direct Ollama or canned
 model endpoint.** The pinned hermes-acp is configured to reach models ONLY through the EXISTING OmniRoute
 instance:
-- base_url `http://127.0.0.1:20128/v1` (live: returns 401 unauth → scoped credential required);
-- credential from env `OMNIROUTE_API_KEY` (scoped internal; sourced at run time, **never copied, committed,
-  or printed**; provider keys live only inside OmniRoute);
-- `codex_responses` wire mode + the compression-off header (ADR 0002);
-- an existing route (e.g. `codex/gpt-5.6-sol-xhigh` / `auto/best-coding-fast`).
+- base_url `http://127.0.0.1:20128/v1` — the MANAGED instance `omniroute-migrated.service` (2026-09-05: an
+  unmanaged orphan had squatted the port serving a reduced DB — every key got `401 AUTH_002`; fixed by the
+  owner's Codex session; `docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md`, AF-AP-33);
+- credential from env `OMNIROUTE_API_KEY` = **the same client key the owner's Hermes uses** (owner ruling
+  2026-09-05: "one key, many models — use the setup Hermes has"; the earlier new-scoped-key directive dated from
+  the orphan-instance 401s and is withdrawn). Read from the owner's Hermes config at launch; never copied into
+  the repo, printed, or passed in argv. **Finding 2026-09-05:** that key's prefix matches no row of the authoritative
+  `api_keys` table (`/v1/models` → 401 with it); the owner's Hermes works only because the plane runs
+  `REQUIRE_API_KEY=false` (task #34). So the owner's earlier `/v1/models` → 200 precondition is unsatisfiable until the
+  owner regenerates the `hermes` key; the exploratory prompt turn below runs the way the owner's Hermes runs today —
+  credential NOT validated by OmniRoute — and says so. That is not S0-03 evidence.
+- wire mode: ADR 0002 / `docs/03_INTEGRATION_CONTRACTS.md` §2 pin `api_mode: codex_responses` + `extra_headers:
+  {x-omniroute-compression: "off"}`; the pinned hermes 0.21.0 supports both (`agent/codex_responses_adapter.py`,
+  `hermes_cli/config.py normalize_extra_headers`). The bring-up config currently says `chat_completions` (it mirrored
+  the live profiles, which the Codex repair set to `chat_completions` — an ADR deviation, task #35); the proof run
+  switches the pinned config to the ADR shape and records any failure as a finding.
+- an existing route: `auto/best-coding-fast` (the model the key is restricted to).
 This is **NOT** S0-03: S0-01 proves ACP behavior; S0-03 later proves OmniRoute's upstream identity and the
 credential boundary. No new OmniRoute deploy; no OmniRoute config change unless the existing route genuinely
 cannot support a deterministic test.
@@ -127,14 +139,48 @@ normalized away. The normalized transcript is then deterministic across runs →
 - [ ] Re-verify ALL THREE trees (commit + `HEAD^{tree}` + porcelain-empty + `git archive` sha256) immediately
       BEFORE and AFTER both proof runs; any source-tree change invalidates the run.
 - [ ] Model egress ONLY through the existing OmniRoute (`:20128/v1`, `OMNIROUTE_API_KEY`); never print/commit keys. Not S0-03.
-- [ ] Throwaway Buzz relay + Nostr identity kept isolated from production (`buzz-prod-*`).
+- [x] Throwaway Buzz relay + Nostr identity isolated from production (`buzz-prod-*`): own ports (3999/3998/3997,
+      postgres 5471, redis 6471, minio 9471), own containers `s0-01-harness-*`, own keys. **CAVEAT (AF-AP-34):** four
+      `pkill -x buzz-relay` calls on 2026-09-04 aimed at THIS relay restarted the production `buzz-prod-relay-1`
+      (its binary shares the bare name in the host process table) — reported to the owner; teardown now goes
+      through pidfiles + `/proc/<pid>/exe`, never names.
 - [ ] Golden normalized-compare run TWICE byte-identical (structure-preserving) + the malformed-initialize negative.
 - [ ] If pinned components cannot integrate faithfully → STOP and report with evidence (no patch, no re-pin).
 
+## Reached 2026-09-04/05 (relay path) — still RUNTIME INTEGRATION UNVERIFIED
+
+- Isolated relay stack up on the PC (relay `127.0.0.1:3999`, `RELAY_URL=ws://127.0.0.1:3999` — identical
+  authority everywhere, the fail-closed tenant binding bit once as a WebSocket 404); relay/agent/owner Nostr
+  identities registered; channel `73701f66-…` created (kind 9007) with the agent as member (kind 39002);
+  buzz-acp (`BUZZ_ACP_RESPOND_TO=owner-only`, `SESSION_POLICY=thread`, idle timeout set) subscribed; an owner
+  `buzz messages send --mention` was `accepted: true` with the `h` + `p` tags. buzz-acp prompted hermes-acp,
+  hermes reached OmniRoute — and hit the orphan's `401`. Frame capture (`frame_tee.py` as `--agent-command`
+  wrapper) and the recursive checkout manifest (`manifest.sh`, baselines for all three trees) are in place.
+- **Initialize milestone (recorded precisely, owner wording 2026-09-05): the pinned `buzz-acp` launched the
+  pinned `hermes-acp` and exchanged ACP initialize messages. Client offered protocol `2`. Agent returned
+  protocol `1`. Initialize exchange succeeded with the required capabilities** (the pinned v1
+  `InitializeResponse` requires only `protocolVersion`; the response carried it plus `agentCapabilities`,
+  `agentInfo`, `authMethods`; v1 defines the returned value as "the protocol version the client specified if
+  supported by the agent, or the latest protocol version supported by the agent"). Evidence = RAW JSON-RPC
+  frames, not logs: `evidence/initialize-20260905T062959Z/` (`frames-client-to-agent.jsonl` sha256 `1df85efc…`,
+  `frames-agent-to-client.jsonl` sha256 `af61e42a…`, `argv.txt`, `env-names.txt`, `capture.json`) bound to the
+  pinned binaries (buzz-acp `a5a17ffc…`, hermes-acp entrypoint `f90a0cc3…`), the three source trees (recursive
+  manifests pre = post = baseline), the pinned v1 schema (`fixtures/acp-schema-v1.json`, sha256 `caf62ff9…`,
+  acp@37a7d4f8) and the tee instrument (`tools/frame_tee.py`, `a7a0c367…`). buzz-acp spawns the agent at daemon
+  start, so the capture issued NO prompt and carried NO OmniRoute credential (env names recorded). Checked by
+  `check_initialize.py` (schema layer) and `tests/test_s0_01_initialize_capture.py` (5 tests, incl. the seed's
+  negative `fixtures/neg-malformed-initialize.json` ⇒ `protocol-violation: missing required initialize field`,
+  de-vacuoused both ways). **S0-01 overall REMAINS INCOMPLETE:** nothing here proves relay-authenticated
+  prompting, OmniRoute egress, streaming/terminal behavior, cancellation, shutdown, concurrent-session mapping,
+  timeout configuration, determinism, or the negative control in a live run; assertion 1 closes only inside the
+  full proof run.
+
 ## NOT yet done (next increment)
 
-- Nostr identity for buzz-acp (`buzz-admin generate-key`, register as relay member) + relay target
-  (owner runs `buzz-prod-relay-1`; confirm its WS URL, or stand up a throwaway local relay).
+- Preflight `/v1/models` 200 with the owner's Hermes key → mirror the owner's working provider wiring into the
+  pinned config → re-run the owner mention through `frame_tee.py` → capture the full turn (session/new, prompt,
+  session/update stream, terminal stop_reason) as raw frames.
+  ADR wire shape → re-run the owner mention through `frame_tee.py` → capture the full turn.
 - Canonical fixtures + the malformed-initialize negative.
 - The runner: drive buzz-acp→hermes-acp over the relay, capture the ACP transcript, normalize, golden ×2,
   assert the 6 properties + the negative; emit `proofs/S0-01/result.json` via the canonical proof-runner;

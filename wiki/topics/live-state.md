@@ -7,11 +7,11 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `328bef1` 2026-09-04 (`claude/soundbox-kit-migration-iz1jwf`) — sandbox chat-digest sync after the S0-11 cycle-7 acceptance-guard commit
-- **Local HEAD:** 1 commit ahead of origin at write time (the S0-11 cycle-8 governance increment:
-  slug-bypass guard fix + acceptance record). SHAs are rewritten by `push_clean.sh` at push, so
-  this page names commits by subject; the tree is what is pinned.
-- **Today:** 2026-09-04
+- **Origin tip:** `61c9f77` 2026-09-04 (`claude/soundbox-kit-migration-iz1jwf`) — chat-digest sync after the S0-01 grounding corrections
+- **Local HEAD:** 1 commit ahead of origin at write time (the 2026-09-05 handoff-reconciliation
+  increment: OmniRoute invariants monitor + tests, incidents AF-AP-33/34/35, docs sync). SHAs are
+  rewritten by `push_clean.sh` at push, so this page names commits by subject.
+- **Today:** 2026-09-05
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (task #10) — IN PROGRESS, grounded 2026-09-04.**
@@ -27,9 +27,25 @@ last_compiled: 2026-09-03
   (tree a36bba5e, git-archive sha256 b65c4990, direct_url→pinned clone, entrypoint f90a0cc3,
   PYTHONDONTWRITEBYTECODE=1, recheck all 3 trees before+after each run); model egress OmniRoute-ONLY
   (`:20128/v1`, env OMNIROUTE_API_KEY never printed/committed, codex_responses+compression-off, ADR 0002) —
-  NOT S0-03; throwaway relay+Nostr isolated from buzz-prod-*. NEXT: relay+identity, fixtures, runner
+  NOT S0-03; throwaway relay+Nostr isolated from buzz-prod-*. **2026-09-05 state:** relay stack + identities +
+  channel + buzz-acp owner-gate subscription + accepted owner mention (h+p tags) all REACHED on the PC;
+  hermes reached OmniRoute and hit an orphan instance's 401 — root cause fixed by the owner's Codex session
+  (`docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md`, reviewed + committed). **Initialize milestone captured as RAW frames 2026-09-05**
+  (client offered 2, agent returned 1; `proofs/S0-01/evidence/initialize-20260905T062959Z/`; no prompt, no
+  credential). **Owner ruling 2026-09-05: no new key** — S0-01 uses the same OmniRoute client key the owner's
+  Hermes uses (the earlier scoped-key directive dated from the orphan 401s). FINDING: that key is in no row of the
+  authoritative key table (`/v1/models` 401) — Hermes works only because the plane is open; owner regenerates `hermes`. NEXT: preflight → mirror the
+  owner's provider wiring into the pinned config → frame-captured relay prompt turn. Then: `/v1/models` 200 preflight → pinned config to the ADR
+  wire shape (`codex_responses` + compression-off header) → owner mention through `frame_tee.py` → runner
   (capture→structure-preserving-normalize→golden ×2 + schema negative), result.json, ledger. Do NOT touch
   live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.
+- **Handoff reconciliation (task #31) — DONE 2026-09-05:** Codex's OmniRoute/Hermes handoff ported verbatim
+  under a review header (reproduced vs reported); `scripts/omniroute_invariants.sh` (read-only, 7 checks,
+  11 deterministic tests) — live: 5 OK, `require_api_key` FAIL, `catalog` FAIL (no key file); offload map +
+  `pc-lane.sh` comment synced to the 2026-09-05 combo orders; focused lane tests 33/33 ×2, full harness
+  suite green. **Incidents logged:** AF-AP-33 (orphan listener), AF-AP-34 (the coordinator's `pkill -x`
+  restarted the PRODUCTION Buzz relay 4× on 2026-09-04 — reported), AF-AP-35 (the coordinator leaked the
+  OmniRoute `STORAGE_ENCRYPTION_KEY` into the session log).
 - **S0-11 eval hardening `s0-18-s0-11-eval-hardening` — ACCEPTED 2026-09-04** (owner process
   decision after 8 reviews; technical proof + trust binding accepted). Cycle 8 fixed the last live
   guard bug: `check-proof-status.py` now BINDS the visible `PROOF-STATUS` line to the ONE canonical
@@ -88,6 +104,15 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
+- **(#34) OmniRoute inference plane UNAUTHENTICATED on `0.0.0.0`** (and the Hermes configs carry a key that is in no row of the key table — regenerate `hermes` first, THEN flip the requirement)**:** `REQUIRE_API_KEY=false` in the first-loaded
+  `~/.omniroute-migrated/.env`; firewalld default zone opens 1025-65535; LAN + Tailscale reachable. Fix =
+  `REQUIRE_API_KEY=true` and/or a Tailscale-only bind + service restart (owner's service — not touched).
+- **(#33) Rotate the leaked `STORAGE_ENCRYPTION_KEY`:** 29/32 provider connections encrypted under it; OmniRoute
+  3.8.50 has no in-app rotation — procedure in the handoff's review header (owner-run: export → new key in both
+  loaded env files → re-OAuth/re-add → shred).
+- **(#35) ADR 0002 wire mode:** live Hermes profiles use `chat_completions`; the ADR pins `codex_responses` +
+  `x-omniroute-compression: off` — amend or revert.
+- Handoff items 6 (Web2API re-auth + real generation test) and 7 (Google keys' Cloud project/billing identity).
 - **BUILD lane = Hermes on the PC (owner ruling 2026-09-03):** bring-up in progress (clone, venv,
   config merge, trial lane); the OmniRoute model id for the lane is being resolved from `/v1/models`.
 - **Build-direction review** (`tasks/stage0-build-direction.md`, 2026-09-03): the owner asked for
@@ -119,7 +144,7 @@ build-status or count disagreement.
 
 ## Last updated
 
-S0-01 ACP conformance grounding (pinned clones built on the PC, provenance + design in
-`proofs/S0-01/GROUNDING.md`) — 2026-09-04; next update when the S0-01 runner + fixtures land. This
+Handoff reconciliation + OmniRoute invariants monitor + incidents AF-AP-33/34/35 — 2026-09-05; S0-01
+waits on the owner's scoped client key; next update when the frame-captured relay turn lands. This
 page's pre-09-04 lane entries are being brought forward incrementally; the ledger
 (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.

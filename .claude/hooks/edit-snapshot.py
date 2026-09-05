@@ -110,6 +110,17 @@ TEST_SCREEN = [
     # finds — the PC's system python carried jsonschema and minted a green the venv could not.
     ("AF-AP-11", re.compile(r"subprocess\.(?:run|Popen|check_output|check_call|call)\(\s*\[\s*str\("),
      "CLI spawned through its shebang — inherits the host interpreter's site-packages, not the declared toolchain; put sys.executable first (AF-AP-11)"),
+    # AF-AP-33 (2026-09-05): an unmanaged OmniRoute squatted :20128 serving the wrong DB while
+    # /api/health said 200 — port-level health is blind to WHICH instance answers.
+    ("AF-AP-33", re.compile(r"""/(?:api/)?health["']"""),
+     "health-endpoint-only liveness — a squatting duplicate answers 200 while serving the wrong dataset; also assert ownership (pid -> cgroup/pidfile) and a dataset-discriminating probe (AF-AP-33)"),
+    # AF-AP-34 (2026-09-04): four `pkill -x buzz-relay` aimed at an isolated relay restarted the
+    # owner's production relay container — a bare binary name is shared across installs.
+    ("AF-AP-34", re.compile(r"\b(?:pkill|killall)\b|\bkill\b[^\n]*\$\(\s*pgrep"),
+     "name-based process kill — matches other installs and container processes on a shared host; kill the PID from YOUR pidfile after /proc/<pid>/exe or the cgroup confirms ownership (AF-AP-34)"),
+    # AF-AP-35 (2026-09-04): a redaction built from the secret's VALUE echoed the value into the log.
+    ("AF-AP-35", re.compile(r"(?:re\.sub|\.replace)\(\s*(?:re\.escape\()?\s*\w*(?:key|secret|token|password|passwd)\w*\b", re.I),
+     "redaction keyed on a secret's VALUE — the value lands in argv/output/transcript; redact by KEY NAME or pattern class and dry-run on a dummy (AF-AP-35)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),
     # TN3-F4 (2026-09-02): a blanket except in a test hollows any call-count
