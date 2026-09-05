@@ -222,3 +222,12 @@ into the port increment; resolve hits by CLASS, never by count — fail-loud the
 vendored trees from the gate the way the edit-snapshot screen already does, and take the hook's
 own sanctioned bypass ONLY for by-design hits with each one named in the commit body. Never edit a
 test to silence the screen.
+
+**Pre-mint gate and mechanical test counts (2026-09-05, S0-01 owner review — AF-AP-36 / AF-AP-37).**
+Owner review of S0-01 found five reported mutations still passed the checker after minting, and
+the test count in the report was hand-typed rather than machine-pasted. Two rules:
+1. PRE-MINT GATE (AF-AP-36): a reviewer-reported mutation of a proof's evidence becomes a
+   committed FAILING regression test before the artifact is minted or re-minted; a checker is
+   graded against hostile bundles, never only its own golden.
+2. Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output
+   verbatim, never typed (AF-AP-37).

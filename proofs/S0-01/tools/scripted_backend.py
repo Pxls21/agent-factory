@@ -23,6 +23,7 @@ Determinism: identical request bodies -> byte-identical responses (fixed ids, ti
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -60,16 +61,21 @@ class State:
         self.seq = 0
         self.lock = threading.Lock()
 
-    def record(self, method: str, path: str, headers, body) -> int:
+    def record(self, method: str, path: str, headers, body,
+               remote_addr: str, bearer_token: str | None) -> int:
         with self.lock:
             self.seq += 1
             n = self.seq
-        masked = {}
-        for k, v in headers.items():
-            masked[k] = f"<bearer fp={_fingerprint(v.split(' ', 1)[-1])}>" if k.lower() == "authorization" else v
+        now = datetime.datetime.now(datetime.timezone.utc)
+        received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
+        mono_ns = time.monotonic_ns()
+        clean = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+        auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
-            {"seq": n, "method": method, "path": path, "headers": masked, "body": body}, indent=2, sort_keys=True) + "\n")
+            {"seq": n, "method": method, "path": path, "headers": clean, "body": body,
+             "received_at": received_at, "t_mono_ns": mono_ns, "remote_addr": remote_addr,
+             "authorization_fingerprint": auth_fp}, indent=2, sort_keys=True) + "\n")
         return n
 
 
@@ -99,6 +105,10 @@ def make_handler(state: State):
             auth = self.headers.get("Authorization", "")
             return auth == f"Bearer {state.token}"
 
+        def _bearer_token(self):
+            auth = self.headers.get("Authorization", "")
+            return auth[7:] if auth.startswith("Bearer ") else None
+
         def _read_body(self):
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
@@ -108,8 +118,13 @@ def make_handler(state: State):
 
         # -- routes --------------------------------------------------------
         def do_GET(self):
+            if self.path.split("?", 1)[0] == "/healthz":
+                with state.lock:
+                    count = state.seq
+                return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
             body = None
-            state.record("GET", self.path, self.headers, body)
+            state.record("GET", self.path, self.headers, body,
+                         self.client_address[0], self._bearer_token())
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] == "/v1/models":
@@ -121,9 +136,11 @@ def make_handler(state: State):
             try:
                 body = self._read_body()
             except (ValueError, UnicodeDecodeError):
-                state.record("POST", self.path, self.headers, "<invalid json>")
+                state.record("POST", self.path, self.headers, "<invalid json>",
+                             self.client_address[0], self._bearer_token())
                 return self._error(400, "body is not JSON", "invalid_request_error", "bad_request")
-            state.record("POST", self.path, self.headers, body)
+            state.record("POST", self.path, self.headers, body,
+                         self.client_address[0], self._bearer_token())
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] != "/v1/chat/completions":
@@ -177,8 +194,19 @@ def main(argv=None) -> int:
     ap.add_argument("--record-dir", required=True, type=Path)
     ap.add_argument("--slow-delay", type=float, default=2.0, help="seconds between s0-01-slow chunks")
     ap.add_argument("--pidfile", type=Path)
+    ap.add_argument("--allow-existing-records", action="store_true")
     args = ap.parse_args(argv)
+    mode = args.token_file.stat().st_mode & 0o7777
+    if mode != 0o600:
+        print(f"scripted_backend: token file mode is {oct(mode)}, required 0o600",
+              file=sys.stderr)
+        return 2
     token = load_token(args.token_file)
+    if args.record_dir.is_dir() and any(args.record_dir.iterdir()):
+        if not args.allow_existing_records:
+            print(f"scripted_backend: --record-dir {args.record_dir} is non-empty; "
+                  f"pass --allow-existing-records to override", file=sys.stderr)
+            return 2
     state = State(token, args.record_dir, args.slow_delay)
     server = ThreadingHTTPServer((args.bind, args.port), make_handler(state))
     if args.pidfile:

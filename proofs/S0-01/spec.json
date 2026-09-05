@@ -12,7 +12,7 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-01/check_initialize.py", "request", "proofs/S0-01/fixtures/neg-malformed-initialize.json"],
+      "cmd": ["python3", "proofs/S0-01/check_initialize.py", "request", "proofs/S0-01/evidence/golden/negative"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {

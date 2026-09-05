@@ -7,6 +7,7 @@ reduced to a fingerprint, and that the token never appears in argv.
 """
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import socket
@@ -120,12 +121,103 @@ def test_unknown_model_and_bad_body_are_exact_errors(backend):
     assert status == 400 and json.loads(data)["error"]["message"] == "messages: Expected array"
 
 
-def test_requests_are_recorded_with_masked_bearer_and_token_absent_from_argv(backend):
+def test_requests_are_recorded_with_fingerprint_and_token_absent_from_argv(backend):
     recs = sorted(backend["rec"].glob("*.json"))
     assert recs, "no request records written"
     last = json.loads(recs[-1].read_text())
     assert last["method"] == "POST" and last["path"] == "/v1/chat/completions"
-    auth = {k: v for k, v in last["headers"].items() if k.lower() == "authorization"}
-    assert auth and all(v.startswith("<bearer fp=") and TOKEN not in v for v in auth.values())
+    # Authorization header dropped entirely from stored headers
+    assert not any(k.lower() == "authorization" for k in last["headers"])
+    # authorization_fingerprint is the full sha256 of the presented token
+    expected_fp = hashlib.sha256(TOKEN.encode()).hexdigest()
+    assert last["authorization_fingerprint"] == expected_fp
+    # New record fields present
+    assert last["received_at"].endswith("Z") and "T" in last["received_at"]
+    assert isinstance(last["t_mono_ns"], int) and last["t_mono_ns"] > 0
+    assert "127.0.0.1" in last["remote_addr"]
+    # TOKEN never appears in argv
     assert all(TOKEN not in a for a in backend["argv"])
     assert int(backend["pidfile"].read_text()) == backend["proc"].pid
+
+
+# -- new safeguard tests ---------------------------------------------------
+
+def test_token_file_mode_0644_refuses_to_start(tmp_path):
+    """Negative control: token file with 0644 mode must be rejected (exit 2)."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o644)
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec")],
+        capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 2
+    assert "0o644" in proc.stderr
+
+
+def test_nonempty_record_dir_refuses_without_flag(tmp_path):
+    """Negative control: non-empty record dir without --allow-existing-records → exit 2."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    (rec / "old.json").write_text("{}\n")
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(tf), "--record-dir", str(rec)],
+        capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 2
+    assert "non-empty" in proc.stderr
+
+
+def test_allow_existing_records_flag_overrides(tmp_path):
+    """Positive control: --allow-existing-records lets the server start despite non-empty dir."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    (rec / "old.json").write_text("{}\n")
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SERVER), "--port", str(port),
+         "--token-file", str(tf), "--record-dir", str(rec),
+         "--allow-existing-records", "--slow-delay", "0.05"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    started = False
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+            if resp.status == 200:
+                started = True
+                break
+        except OSError:
+            time.sleep(0.05)
+    proc.terminate()
+    proc.wait(timeout=10)
+    assert started, "server should start with --allow-existing-records"
+
+
+def test_healthz_unauthenticated(backend):
+    """GET /healthz returns 200 without authentication, with models and record count."""
+    status, data = _call(backend["port"], "GET", "/healthz", token=None)
+    assert status == 200
+    obj = json.loads(data)
+    assert obj["ok"] is True
+    assert obj["models"] == ["s0-01-pong", "s0-01-slow"]
+    assert isinstance(obj["records"], int) and obj["records"] >= 0
+
+
+def test_record_null_fingerprint_when_no_bearer(backend):
+    """A request without Bearer gets authorization_fingerprint: null and no auth header stored."""
+    _call(backend["port"], "GET", "/v1/models", token=None)
+    recs = sorted(backend["rec"].glob("*.json"))
+    last = json.loads(recs[-1].read_text())
+    assert last["authorization_fingerprint"] is None
+    assert not any(k.lower() == "authorization" for k in last["headers"])

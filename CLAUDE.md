@@ -467,6 +467,7 @@ Model-agnostic, per increment, no skipping steps. The operative core:
    alternative, ordering rationale, primary source; enumerate disjoint hunks). Commit BEFORE any
    destructive probe. Deterministic tests: run twice, bitwise. Forced to commit mid-increment →
    embed recovery state in the message (acceptance bar + where it stands, WHY short, the plan).
+   PRE-MINT GATE (AF-AP-36): a reviewer-reported mutation of a proof's evidence becomes a committed FAILING regression test before the artifact is minted or re-minted; a checker is graded against hostile bundles, never only its own golden.
 3. **An unexpected test failure indicts YOUR assumption first** — ladder: telemetry → isolation →
    code; reproduce before believing any recorded diagnosis; `${PIPESTATUS[0]}`, never a piped rc.
 4. **The live run is the real proof — live failures are FINDINGS.** Paired positive + negative
@@ -484,6 +485,7 @@ Model-agnostic, per increment, no skipping steps. The operative core:
    status lines open with the OUTCOME: `Verified live:` ≠ `DONE:` ≠ `NOT built.` (stated
    first-class). Ledger denominators are FOUR-WAY (execution / conformance-checked decision /
    blocked-on-external-input / blocked-on-capability) — never a flat count over the twelve proofs.
+   Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total).
 
 ## The deep-work protocol ("Fable deep" — serious increments and reviews)
 

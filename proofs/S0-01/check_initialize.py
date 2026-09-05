@@ -9,7 +9,10 @@ erroring), so a missing required field is a violation of the pinned CONTRACT, ca
 
 CLI:  check_initialize.py request  <frame.jsonl | params.json>
       check_initialize.py response <frame.jsonl | result.json>
-Prints the classification; exit 0 on `ok`, 1 on `protocol-violation: …`, 2 on usage/input errors.
+      check_initialize.py request  <probe-capture-dir>   (reads timeline.jsonl from the directory)
+Prints the classification; exit 0 on `ok`, 1 on `protocol-violation: …`, 2 on usage/deferred.
+When given a directory, reads timeline.jsonl, classifies the initialize request, and prints the
+observed agent response summary on a second line as `observed: <accepted|error|none>: <short>`.
 """
 from __future__ import annotations
 
@@ -73,11 +76,57 @@ def load_payload(path: Path, kind: str) -> object:
     return obj
 
 
+def _check_directory(dirpath: Path, kind: str) -> int:
+    """Check a probe capture directory: read timeline.jsonl, classify the initialize request,
+    and print the observed agent response."""
+    if not dirpath.is_dir():
+        print(f"deferred: {dirpath.name} directory absent")
+        return 2
+    tl_path = dirpath / "timeline.jsonl"
+    if not tl_path.exists():
+        print(f"deferred: {dirpath.name}/timeline.jsonl absent")
+        return 2
+    entries = []
+    for line in tl_path.read_text().splitlines():
+        if line.strip():
+            entries.append(json.loads(line))
+    c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+    a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+    if not c2a:
+        print("deferred: no c2a frames in timeline")
+        return 2
+    init_req = c2a[0]
+    if init_req.get("method") != "initialize":
+        print(f"protocol-violation: first frame is {init_req.get('method')!r}, not initialize")
+        return 1
+    params = init_req.get("params") or {}
+    verdict = classify_request(params) if kind == "request" else classify_response(params)
+    print(verdict)
+    # observed agent response
+    if a2c:
+        resp = a2c[0]
+        if "error" in resp:
+            err = resp["error"]
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            print(f"observed: error: {msg}")
+        elif "result" in resp:
+            pv = (resp.get("result") or {}).get("protocolVersion")
+            print(f"observed: accepted: protocolVersion={pv}")
+        else:
+            print("observed: none: unparseable response")
+    else:
+        print("observed: none: no agent response")
+    return 0 if verdict == "ok" else 1
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] not in ("request", "response"):
-        print(__doc__.strip().splitlines()[-4].strip(), file=sys.stderr)
+        print("usage: check_initialize.py request|response <file|dir>", file=sys.stderr)
         return 2
     kind, path = argv[1], Path(argv[2])
+    # directory mode: probe capture (existing dir, or path with no file extension)
+    if path.is_dir() or (not path.exists() and path.suffix not in (".json", ".jsonl")):
+        return _check_directory(path, kind)
     try:
         payload = load_payload(path, kind)
     except (OSError, ValueError, json.JSONDecodeError, IndexError) as exc:

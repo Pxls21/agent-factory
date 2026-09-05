@@ -1,103 +1,147 @@
 #!/usr/bin/env python3
-"""Build a leg's capture.json from a fetched frame directory (deterministic, no network).
+"""Build capture.json from v2 raw files for human reading (the checker never trusts it).
 
-Usage: build_capture_record.py <leg-dir> <leg-name> [--facts shutdown-facts.json|cancel-facts.json]
-       [--components <initialize capture.json to copy the pinned-component block from>]
+Usage: build_capture_record.py <leg-dir> <leg-name>
 
-The record binds the raw frames to the pinned components, the recursive source-tree manifests taken
-immediately before and after the run (manifest-pre/post.summary vs the recorded baseline), the exact
-argv and environment NAMES of the buzz-acp process, the config-echo startup line, the mention events
-that drove the turn, and every file's sha256. Volatile text is never copied out of the frames.
+Reads timeline.jsonl, runtime-identity.json, env.json, startup-line.txt, hermes-model.txt,
+mentions/*.event.json, upstream-records/*.json, manifest-pre/post.txt.gz, buzz-acp.exit.
 """
 from __future__ import annotations
 
-import argparse
+import gzip
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
-BASELINE = {
-    "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb",
-    "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
-    "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
-}
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def sha(p: Path) -> str:
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+def _sha256_file(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def manifest_summary(p: Path):
-    digests, when = {}, None
-    for line in p.read_text().splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[0] in BASELINE:
-            digests[parts[0]] = parts[1]
-        elif re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", line.strip()):
-            when = line.strip()
-    return digests, when
+def _parse_manifest_gz(gz_path: Path) -> dict:
+    body = gzip.decompress(gz_path.read_bytes())
+    text = body.decode("utf-8")
+    current, sections = None, {}
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            sections[current] = ""
+        elif current is not None:
+            sections[current] += line + "\n"
+    return {k: _sha256(v.encode("utf-8")) for k, v in sections.items()}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("leg_dir"); ap.add_argument("leg_name")
-    ap.add_argument("--facts", default=None); ap.add_argument("--components", default=None)
-    a = ap.parse_args()
-    d = Path(a.leg_dir)
-    c2a = [json.loads(l) for l in (d / "frames-client-to-agent.jsonl").read_text().splitlines() if l.strip()]
-    a2c = [json.loads(l) for l in (d / "frames-agent-to-client.jsonl").read_text().splitlines() if l.strip()]
-    pre, pre_t = manifest_summary(d / "manifest-pre.summary")
-    post, post_t = manifest_summary(d / "manifest-post.summary")
-    argv = (d / "argv.txt").read_text().split("\n")[:-1]
-    env_names = (d / "env-names.txt").read_text().split()
-    startup = (d / "startup-line.txt").read_text().strip()
-    echo = dict(re.findall(r"(idle_timeout|max_turn|session_policy|respond_to|subscribe|dedup)=([^\s]+)", startup))
-    m_start = re.match(r"(\d{4}-\d\d-\d\dT[\d:.]+Z)", startup)
-    mentions = {}
-    for mp in sorted(d.glob("mention-*.json")):
-        try:
-            mj = json.loads(mp.read_text())
-        except Exception:
-            continue
-        mentions[mp.stem.replace("mention-", "")] = {"accepted": mj.get("accepted"), "event_id": mj.get("event_id"),
-                                                     "mention_pubkeys": mj.get("mention_pubkeys")}
-    sids = [o["result"]["sessionId"] for o in a2c if "id" in o and isinstance(o.get("result"), dict) and "sessionId" in o["result"]]
-    terminals = [(o["id"], o["result"]["stopReason"]) for o in a2c if "id" in o and isinstance(o.get("result"), dict) and "stopReason" in o["result"]]
-    kinds = Counter(((o.get("params") or {}).get("update") or {}).get("sessionUpdate") for o in a2c if "method" in o and "id" not in o)
-    rec = {
-        "capture": f"s0-01-golden-leg:{a.leg_name}",
-        "venue": "pc-bridge:fedora (isolated pinned clones under /home/rocco/s0-01-pinned; isolated relay ws://127.0.0.1:3999; model route s0-01-scripted via the managed OmniRoute)",
-        "timestamps_utc": {"manifest_pre": pre_t, "buzz_acp_start": m_start.group(1) if m_start else None, "manifest_post": post_t},
-        "model_route": (d / "hermes-model.txt").read_text().strip().split(":", 1)[-1].strip() if (d / "hermes-model.txt").exists() else None,
-        "hermes_config_sha256_prefix": (d / "hermes-config.sha256").read_text().strip() if (d / "hermes-config.sha256").exists() else None,
-        "mentions": mentions,
-        "acp_sequence": {
-            "client_to_agent": [[o.get("id"), o.get("method")] for o in c2a],
-            "agent_to_client_order": [["RESP", o["id"]] if "id" in o else ["NOTIF", ((o.get("params") or {}).get("update") or {}).get("sessionUpdate")] for o in a2c],
-            "session_update_kind_counts": dict(kinds), "session_ids": sids, "terminals": terminals,
-        },
-        "config_echo": {"source": "startup-line.txt", "idle_timeout": echo.get("idle_timeout"), "max_turn": echo.get("max_turn"),
-                        "session_policy": echo.get("session_policy"), "respond_to": echo.get("respond_to"),
-                        "argv_idle_timeout": argv[argv.index("--idle-timeout") + 1] if "--idle-timeout" in argv else None},
-        "manifests": {"method": "manifest.sh: find <tree> -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; digest = sha256 of that manifest",
-                      "baseline": BASELINE, "pre_capture": pre, "post_capture": post, "identical": pre == post == BASELINE},
-        "process": {"argv": argv, "env_names": env_names, "omniroute_credential_in_env": any(n.startswith("OMNIROUTE") for n in env_names),
-                    "credential_source": "the owner's Hermes lane profile env (the rotated key), read at launch, never printed",
-                    "buzz_acp_exit_code": int((d / "buzz-acp.exit").read_text().strip()) if (d / "buzz-acp.exit").exists() else None},
-        "frames": {name.replace("-", "_").replace(".jsonl", "").replace(".txt", ""): {"file": name, "sha256": sha(d / name), "lines": len((d / name).read_text().splitlines())}
-                   for name in ("frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl", "argv.txt", "env-names.txt", "startup-line.txt") if (d / name).exists()},
-    }
-    if a.components:
-        rec["components"] = json.loads(Path(a.components).read_text())["components"]
-    if a.facts:
-        facts = json.loads((d / a.facts).read_text())
-        key = "shutdown" if "shutdown" in a.facts else "orphan_check"
-        rec[key] = facts
-        rec["frames"][a.facts.replace("-", "_").replace(".json", "")] = {"file": a.facts, "sha256": sha(d / a.facts)}
-    (d / "capture.json").write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
-    print(f"{a.leg_name}: identical_manifests={rec['manifests']['identical']} terminals={terminals} kinds={dict(kinds)} exit={rec['process']['buzz_acp_exit_code']}")
+    if len(sys.argv) < 3:
+        print("usage: build_capture_record.py <leg-dir> <leg-name>", file=sys.stderr)
+        return 2
+    d = Path(sys.argv[1])
+    leg = sys.argv[2]
+
+    rec = {"capture": f"s0-01-golden-leg:{leg}", "version": 2}
+
+    # timeline summary
+    tl_path = d / "timeline.jsonl"
+    if tl_path.exists():
+        entries = [json.loads(l) for l in tl_path.read_text().splitlines() if l.strip()]
+        c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+        a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+        sids = []
+        resps = {}
+        for e in a2c:
+            if "id" in e and "method" not in e:
+                resps[e["id"]] = e
+                r = e.get("result") or {}
+                if "sessionId" in r:
+                    sids.append(r["sessionId"])
+        terminals = [(e["id"], (e.get("result") or {}).get("stopReason"))
+                     for e in a2c if "id" in e and "method" not in e
+                     and (e.get("result") or {}).get("stopReason")]
+        kinds = Counter(((e.get("params") or {}).get("update") or {}).get("sessionUpdate")
+                        for e in a2c if "method" in e and "id" not in e)
+        rec["timeline"] = {
+            "entries": len(entries), "c2a": len(c2a), "a2c": len(a2c),
+            "sessions": sids, "terminals": terminals, "update_kinds": dict(kinds),
+        }
+
+    # runtime identity
+    rid_path = d / "runtime-identity.json"
+    if rid_path.exists():
+        rec["runtime_identity"] = json.loads(rid_path.read_text())
+
+    # env (just the names, not values)
+    env_path = d / "env.json"
+    if env_path.exists():
+        env = json.loads(env_path.read_text())
+        rec["env_names"] = sorted(env.keys())
+
+    # startup + config echo
+    startup_path = d / "startup-line.txt"
+    if startup_path.exists():
+        startup = startup_path.read_text().strip()
+        kvs = dict(re.findall(r"(idle_timeout|max_turn|session_policy)=(\S+)", startup))
+        rec["config_echo"] = kvs
+
+    # model
+    model_path = d / "hermes-model.txt"
+    if model_path.exists():
+        rec["model"] = model_path.read_text().strip()
+
+    # mentions
+    mentions_dir = d / "mentions"
+    if mentions_dir.is_dir():
+        mentions = {}
+        for ep in sorted(mentions_dir.glob("*.event.json")):
+            tag = ep.name.replace(".event.json", "")
+            event = json.loads(ep.read_text())
+            rp = mentions_dir / f"{tag}.receipt.json"
+            receipt = json.loads(rp.read_text()) if rp.exists() else {}
+            mentions[tag] = {
+                "event_id": event.get("id"), "pubkey": event.get("pubkey"),
+                "content": event.get("content"), "accepted": receipt.get("accepted"),
+            }
+        rec["mentions"] = mentions
+
+    # upstream records
+    urec_dir = d / "upstream-records"
+    if urec_dir.is_dir():
+        rec["upstream_records"] = len(list(urec_dir.glob("*.json")))
+
+    # manifests
+    for gz_name in ("manifest-pre.txt.gz", "manifest-post.txt.gz"):
+        gz_path = d / gz_name
+        if gz_path.exists():
+            rec.setdefault("manifests", {})[gz_name] = _parse_manifest_gz(gz_path)
+
+    # exit code
+    exit_path = d / "buzz-acp.exit"
+    if exit_path.exists():
+        rec["buzz_acp_exit"] = exit_path.read_text().strip()
+
+    # file digests
+    files = {}
+    for name in ("timeline.jsonl", "runtime-identity.json", "env.json",
+                 "startup-line.txt", "hermes-model.txt", "buzzacp.log",
+                 "process-scan-after.txt", "buzz-acp.pid", "buzz-acp.exit"):
+        p = d / name
+        if p.exists():
+            files[name] = {"sha256": _sha256_file(p), "size": p.stat().st_size}
+    rec["files"] = files
+
+    out = d / "capture.json"
+    out.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    print(f"{leg}: {len(files)} raw files, {rec.get('timeline', {}).get('entries', 0)} timeline entries")
     return 0
 
 
