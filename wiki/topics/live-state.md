@@ -37,7 +37,10 @@ last_compiled: 2026-09-03
   authoritative key table (`/v1/models` 401) — Hermes works only because the plane is open; owner regenerates `hermes`. **Milestone 2 reached 2026-09-05:** relay-driven prompt turn ×2 (mention → session/new →
   session/prompt → update stream → end_turn; Hermes reached OmniRoute; credential NOT validated — plane open).
   FINDING: live-route event structure varies run to run → golden needs the deterministic scripted backend behind
-  an OmniRoute test route (owner-run). NEXT: that route, then cancel/shutdown/two-user legs + the runner. Then: `/v1/models` 200 preflight → pinned config to the ADR
+  an OmniRoute test route (owner-run). Staged: scripted backend RUNNING on the PC (:20201), user2 fixture identity admitted (owner-only gate
+  observed holding). NEXT: the OmniRoute provider connection (task #36, owner/Codex) → golden ×2 on `s0-01-pong`,
+  cancel on `s0-01-slow`, shutdown, two users under allowlist → freeze golden.jsonl → proof-runner on the PC venue → result.json
+  (checker + spec already wired; the positive leg defers until the bundle exists). Then: `/v1/models` 200 preflight → pinned config to the ADR
   wire shape (`codex_responses` + compression-off header) → owner mention through `frame_tee.py` → runner
   (capture→structure-preserving-normalize→golden ×2 + schema negative), result.json, ledger. Do NOT touch
   live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.

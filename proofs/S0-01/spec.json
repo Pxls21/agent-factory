@@ -1,0 +1,24 @@
+{
+  "proof_id": "S0-01",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-01/check_acp_conformance.py", "proofs/S0-01/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-01/check_initialize.py", "request", "proofs/S0-01/fixtures/neg-malformed-initialize.json"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "protocol-violation: missing required initialize field"
+      }
+    }
+  ]
+}

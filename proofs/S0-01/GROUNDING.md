@@ -207,6 +207,15 @@ normalized away. The normalized transcript is then deterministic across runs →
   the agent identity). (2) The pinned hermes-acp executed a terminal tool with the owner's `HOME` and `PATH` and NO
   policy gate — standing rule 9's fail-closed `pre_tool_call` hook is absent at the pin; Stage 0 must not treat the ACP
   proof as containment evidence (S0-08).
+- **Fixtures staged 2026-09-05 for the remaining legs (no model calls):** second fixture user `user2`
+  (`.secrets/user2.env`/`.pub`, relay-admitted with the relay signing key, channel member via the owner). Gate
+  observation: under `respond_to=owner-only` a user2 mention was ACCEPTED by the relay yet produced NO prompt
+  (client→agent frames stayed at the initialize) — the owner gate holds; assertion 5 runs under
+  `respond_to=allowlist` with user2 listed. Relay membership facts: only the agent was relay-admitted before, yet the
+  owner posted fine — this isolated relay does not gate writes on relay-level membership (S0-02 territory). The
+  scripted backend runs on the PC (`.markers/scripted-backend.pid`, port 20201; no-bearer 401, bearer 200,
+  `s0-01-pong` streams 4 SSE frames; requests recorded under `.markers/upstream-records/`), waiting for the
+  OmniRoute provider connection (task #36, owner/Codex).
 - **What this does NOT prove:** cancellation (assertion 3), clean shutdown (4), two-user session separation (5),
   the negative control in a live run, the golden ×2, validated egress. Assertions 1, 2 and 6 have raw-frame evidence
   from exploratory runs; they close only inside the runner's recorded proof run.
@@ -224,9 +233,19 @@ normalized away. The normalized transcript is then deterministic across runs →
   then points the pinned hermes config's `model.default` at the pong id for the golden and at the slow id for the
   cancellation leg. The backend never emits tool calls, so the ACP structure is fixed; it records every upstream request
   with the bearer reduced to a fingerprint (S0-04-grade evidence later). Not S0-03 evidence.
-- Runner: golden ×2 on the scripted route (structure-preserving normalization), the live-route leg (run-invariant
-  structure), cancel mid-turn (`session/cancel` → `cancelled`, no orphan), clean shutdown (exit 0), two users
-  (`respond_to=allowlist`, second member, two top-level mentions under `session_policy=thread`), config echo, the
-  schema-layer negative; `result.json` via the canonical proof-runner; ledger integrity.
+- **Checker + spec BUILT (2026-09-05):** `check_acp_conformance.py` grades the evidence bundle `evidence/golden/{run-1,run-2,
+  cancel,shutdown,two-users}` against all six assertions and the golden discipline (structure-preserving normalizer:
+  ids/session ids → order-of-appearance placeholders, text/paths/timestamps/token counts dropped; message-type sequence,
+  event counts, tool-call structure, stop reasons and session separation preserved; run-1 == run-2 == frozen
+  `golden.jsonl`). Exit 0 PASS · 1 FAIL with `failure_reason:` · 2 DEFERRED while the bundle is absent — which is
+  today's state: `spec.json` is wired into the canonical proof-runner and its positive leg DEFERS (no `result.json`
+  minted); the negative leg is `check_initialize.py` on the seed fixture. Tests: `tests/test_s0_01_check_acp_conformance.py`
+  (bundles built from the REAL frames; missing/duplicated/reordered/cross-session events, cancel/shutdown/two-user/echo/
+  provenance negatives, deferral) and `tests/test_s0_01_spec_runner.py` (the real runner defers and preserves).
+  Normalizer note: two adjacent chunks of the same kind are interchangeable once text is stripped — not a reorder.
+- CAPTURE still to run (needs task #36): golden ×2 on `s0-01-pong`, cancel on `s0-01-slow` (`session/cancel` →
+  `cancelled`, agent process gone), clean shutdown after a completed turn (exit code captured by a wrapper), two
+  users under `respond_to=allowlist` (owner + user2, two top-level mentions under `session_policy=thread`); then freeze
+  `golden.jsonl` from a reviewed run-1 normalization, run the proof-runner on the PC venue, ledger integrity.
 - Stack state: the isolated relay stack and the tee'd buzz-acp (pidfile `.markers/buzz-acp.pid`) stay up on the PC
   for the next runs; teardown goes through pidfiles, never names (AF-AP-34).
