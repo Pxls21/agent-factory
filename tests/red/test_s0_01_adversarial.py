@@ -129,7 +129,7 @@ def test_result_requires_a_negative_leg_after_schema_mutation(tmp_path):
         ).hexdigest(),
     }
     result = root / "proofs" / "S0-01" / "result.json"
-    result.parent.mkdir()
+    result.parent.mkdir(exist_ok=True)  # proofs/S0-01/ exists since GROUNDING.md landed (2026-09-04)
     result.write_text(json.dumps(artifact))
 
     completed = _run(root)
