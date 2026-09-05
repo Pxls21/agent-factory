@@ -43,11 +43,13 @@ def _parse_manifest_gz(gz_path: Path) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) < 3:
-        print("usage: build_capture_record.py <leg-dir> <leg-name>", file=sys.stderr)
+    check_mode = "--check" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    if len(args) < 2:
+        print("usage: build_capture_record.py [--check] <leg-dir> <leg-name>", file=sys.stderr)
         return 2
-    d = Path(sys.argv[1])
-    leg = sys.argv[2]
+    d = Path(args[0])
+    leg = args[1]
 
     rec = {"capture": f"s0-01-golden-leg:{leg}", "version": 2}
 
@@ -139,8 +141,20 @@ def main() -> int:
             files[name] = {"sha256": _sha256_file(p), "size": p.stat().st_size}
     rec["files"] = files
 
+    new_text = json.dumps(rec, indent=2, sort_keys=True) + "\n"
     out = d / "capture.json"
-    out.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    if check_mode:
+        if not out.exists():
+            print(f"{leg}: capture.json does not exist (--check)", file=sys.stderr)
+            return 1
+        existing = out.read_text()
+        if existing != new_text:
+            print(f"{leg}: capture.json differs from re-derived content (--check)",
+                  file=sys.stderr)
+            return 1
+        print(f"{leg}: capture.json matches (--check)")
+        return 0
+    out.write_text(new_text)
     print(f"{leg}: {len(files)} raw files, {rec.get('timeline', {}).get('entries', 0)} timeline entries")
     return 0
 

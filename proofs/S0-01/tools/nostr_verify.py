@@ -1,15 +1,17 @@
-#!/usr/bin/python3
 """BIP-340 Schnorr verification over secp256k1 for NIP-01 Nostr events.
 
 Public API:
     event_id(event)                  -> hex str
     verify_event(event)              -> (ok: bool, reason: str)
     sign_event(privkey_hex, fields)  -> event dict   (TEST/FIXTURE use only)
+    schnorr_verify(pubkey32, msg32, sig64) -> (ok: bool, reason: str)
+    schnorr_sign(seckey32, msg32, aux32)   -> bytes (64-byte signature)
 
 Pure Python, stdlib only.  Deterministic aux = 32 zero bytes for signing.
 """
 import hashlib
 import json
+import re
 
 # ---------------------------------------------------------------------------
 # secp256k1 constants
@@ -42,6 +44,8 @@ def _point_add(P, Q):
 
 def _point_mul(k, P):
     """Scalar multiplication k*P (double-and-add)."""
+    if k <= 0:
+        raise ValueError("scalar out of range")
     R = None
     Q = P
     while k > 0:
@@ -89,10 +93,10 @@ def event_id(event):
 
 
 # ---------------------------------------------------------------------------
-# BIP-340 Schnorr verify (internal)
+# BIP-340 Schnorr verify (public)
 # ---------------------------------------------------------------------------
-def _schnorr_verify(pubkey_bytes, msg, sig_bytes):
-    """Returns (ok, reason)."""
+def schnorr_verify(pubkey_bytes, msg, sig_bytes):
+    """BIP-340 Schnorr verification.  Returns (ok: bool, reason: str)."""
     P = _lift_x(int.from_bytes(pubkey_bytes, "big"))
     if P is None:
         return (False, "pubkey not on curve")
@@ -109,7 +113,9 @@ def _schnorr_verify(pubkey_bytes, msg, sig_bytes):
                           sig_bytes[:32] + pubkey_bytes + msg)
     e = int.from_bytes(e_hash, "big") % n
 
-    R = _point_add(_point_mul(s, G), _point_mul(n - e, P))
+    # s=0 is valid per BIP-340 (0 < n); s*G = infinity in that case.
+    sG = None if s == 0 else _point_mul(s, G)
+    R = _point_add(sG, _point_mul(n - e, P))
 
     if R is None:
         return (False, "verification failed: R is infinity")
@@ -121,40 +127,89 @@ def _schnorr_verify(pubkey_bytes, msg, sig_bytes):
     return (True, "valid")
 
 
+# Keep the private name as an alias so existing callers (if any) don't break.
+_schnorr_verify = schnorr_verify
+
+
+# ---------------------------------------------------------------------------
+# BIP-340 Schnorr sign (public, raw bytes)
+# ---------------------------------------------------------------------------
+def schnorr_sign(seckey32, msg32, aux32):
+    """BIP-340 Schnorr sign.  Returns 64-byte signature.
+
+    *seckey32*: 32-byte secret key.
+    *msg32*: 32-byte message.
+    *aux32*: 32-byte auxiliary randomness (deterministic aux = zeros).
+    """
+    d_prime = int.from_bytes(seckey32, "big")
+    if d_prime == 0 or d_prime >= n:
+        raise ValueError("invalid private key")
+
+    P = _point_mul(d_prime, G)
+    d = d_prime if P[1] % 2 == 0 else n - d_prime
+
+    d_bytes = d.to_bytes(32, "big")
+    t = bytes(a ^ b for a, b in zip(d_bytes, _tagged_hash("BIP0340/aux", aux32)))
+
+    pk_bytes = P[0].to_bytes(32, "big")
+    rand = _tagged_hash("BIP0340/nonce", t + pk_bytes + msg32)
+    k_prime = int.from_bytes(rand, "big") % n
+    if k_prime == 0:
+        raise ValueError("nonce is zero")
+
+    R = _point_mul(k_prime, G)
+    k = k_prime if R[1] % 2 == 0 else n - k_prime
+
+    e_hash = _tagged_hash("BIP0340/challenge",
+                          R[0].to_bytes(32, "big") + pk_bytes + msg32)
+    e = int.from_bytes(e_hash, "big") % n
+
+    return R[0].to_bytes(32, "big") + ((k + e * d) % n).to_bytes(32, "big")
+
+
 # ---------------------------------------------------------------------------
 # Public: verify_event
 # ---------------------------------------------------------------------------
 def verify_event(event):
     """Verify a NIP-01 Nostr event: recompute id, BIP-340-verify signature.
 
-    Returns (ok: bool, reason: str).
+    Returns (ok: bool, reason: str).  Never raises on JSON-typed input.
     """
+    if not isinstance(event, dict):
+        return (False, "event is not a dict")
+
     for field in ("id", "pubkey", "created_at", "kind", "tags", "content", "sig"):
         if field not in event:
             return (False, f"missing field: {field}")
 
-    computed = event_id(event)
+    try:
+        computed = event_id(event)
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        return (False, f"malformed event: {type(exc).__name__}: {exc}")
+
     if computed != event["id"]:
         return (False, f"id mismatch: computed {computed}")
 
     pubkey_hex = event["pubkey"]
+    if not isinstance(pubkey_hex, str):
+        return (False, f"pubkey: expected str, got {type(pubkey_hex).__name__}")
     if len(pubkey_hex) != 64:
         return (False, f"pubkey length {len(pubkey_hex)}, expected 64")
-    try:
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-    except ValueError:
-        return (False, "pubkey not valid hex")
+    if not re.fullmatch(r'[0-9a-f]{64}', pubkey_hex):
+        return (False, "pubkey not lowercase hex")
+    pubkey_bytes = bytes.fromhex(pubkey_hex)
 
     sig_hex = event["sig"]
+    if not isinstance(sig_hex, str):
+        return (False, f"sig: expected str, got {type(sig_hex).__name__}")
     if len(sig_hex) != 128:
         return (False, f"sig length {len(sig_hex)}, expected 128")
-    try:
-        sig_bytes = bytes.fromhex(sig_hex)
-    except ValueError:
-        return (False, "sig not valid hex")
+    if not re.fullmatch(r'[0-9a-f]{128}', sig_hex):
+        return (False, "sig not lowercase hex")
+    sig_bytes = bytes.fromhex(sig_hex)
 
     msg = bytes.fromhex(event["id"])
-    return _schnorr_verify(pubkey_bytes, msg, sig_bytes)
+    return schnorr_verify(pubkey_bytes, msg, sig_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +219,19 @@ def sign_event(privkey_hex, fields):
     """BIP-340 sign a Nostr event.  TEST/FIXTURE use only.
 
     Deterministic aux = 32 zero bytes.
+    *privkey_hex*: exactly 64 lowercase hex characters.
     *fields*: dict with created_at, kind, tags, content.
     Returns the complete event dict (id, pubkey, sig filled in).
     """
+    if not isinstance(privkey_hex, str) or not re.fullmatch(r'[0-9a-f]{64}', privkey_hex):
+        raise ValueError("private key must be exactly 64 lowercase hex characters")
+
     d_prime = int(privkey_hex, 16)
     if d_prime == 0 or d_prime >= n:
         raise ValueError("invalid private key")
 
     P = _point_mul(d_prime, G)
     pubkey_hex_out = format(P[0], "064x")
-
-    d = d_prime if P[1] % 2 == 0 else n - d_prime
 
     event = {
         "pubkey": pubkey_hex_out,
@@ -188,24 +245,14 @@ def sign_event(privkey_hex, fields):
 
     msg = bytes.fromhex(eid)
     aux = b"\x00" * 32
+    seckey32 = bytes.fromhex(privkey_hex)
 
-    d_bytes = d.to_bytes(32, "big")
-    t = bytes(a ^ b for a, b in zip(d_bytes, _tagged_hash("BIP0340/aux", aux)))
-
-    pk_bytes = P[0].to_bytes(32, "big")
-    rand = _tagged_hash("BIP0340/nonce", t + pk_bytes + msg)
-    k_prime = int.from_bytes(rand, "big") % n
-    if k_prime == 0:
-        raise ValueError("nonce is zero")
-
-    R = _point_mul(k_prime, G)
-    k = k_prime if R[1] % 2 == 0 else n - k_prime
-
-    e_hash = _tagged_hash("BIP0340/challenge",
-                          R[0].to_bytes(32, "big") + pk_bytes + msg)
-    e = int.from_bytes(e_hash, "big") % n
-
-    sig = R[0].to_bytes(32, "big") + ((k + e * d) % n).to_bytes(32, "big")
+    sig = schnorr_sign(seckey32, msg, aux)
     event["sig"] = sig.hex()
+
+    # Self-verify before returning.
+    ok, reason = verify_event(event)
+    if not ok:
+        raise ValueError(f"self-verification failed: {reason}")
 
     return event

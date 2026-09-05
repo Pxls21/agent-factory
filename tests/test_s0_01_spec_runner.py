@@ -46,7 +46,7 @@ def test_negative_leg_defers_today(tmp_path):
         cwd=root, capture_output=True, text=True, timeout=60,
     )
     assert r.returncode == 2, f"expected exit 2 (deferred), got {r.returncode}: {r.stdout}"
-    assert "deferred:" in r.stdout
+    assert r.stdout.strip() == "deferred: negative probe not captured"
 
 
 def test_spec_structure_matches_brief(tmp_path):

@@ -38,6 +38,12 @@ REPLY = "pong"
 SLOW_CHUNKS = ("po", "n", "g", "")  # "" = the final content-less finish chunk
 FIXED_CREATED = 1788566400  # 2026-09-05T00:00:00Z, frozen
 FIXED_USAGE = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+MAX_CONTENT_LENGTH = 1_048_576
+# Credential-bearing header names (lowercased) to drop from records (V-c F10).
+_CREDENTIAL_HEADERS = frozenset({
+    "authorization", "proxy-authorization", "x-api-key", "api-key",
+    "x-auth-token", "cookie",
+})
 
 
 def _fingerprint(value: str) -> str:
@@ -69,7 +75,9 @@ class State:
         now = datetime.datetime.now(datetime.timezone.utc)
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
-        clean = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+        # V-c F3: lowercase keys; V-c F10: drop all credential-bearing headers by name
+        clean = {k.lower(): v for k, v in headers.items()
+                 if k.lower() not in _CREDENTIAL_HEADERS}
         auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
@@ -77,6 +85,26 @@ class State:
              "received_at": received_at, "t_mono_ns": mono_ns, "remote_addr": remote_addr,
              "authorization_fingerprint": auth_fp}, indent=2, sort_keys=True) + "\n")
         return n
+
+    def _check_credential_leak(self, method: str, path: str, headers,
+                                body, remote_addr: str,
+                                bearer_token: str | None) -> bool:
+        """Fail-closed: if the bearer token appears ANYWHERE outside the Authorization
+        header (path, query, body, any remaining header value), return True.
+        V-c F10 / AF-AP-35."""
+        if not bearer_token:
+            return False
+        # Check path (includes query string)
+        if bearer_token in path:
+            return True
+        # Check remaining header values (after credential headers are removed)
+        for k, v in headers.items():
+            if k.lower() not in _CREDENTIAL_HEADERS and bearer_token in str(v):
+                return True
+        # Check body
+        if body is not None and bearer_token in json.dumps(body):
+            return True
+        return False
 
 
 def make_handler(state: State):
@@ -110,7 +138,20 @@ def make_handler(state: State):
             return auth[7:] if auth.startswith("Bearer ") else None
 
         def _read_body(self):
-            length = int(self.headers.get("Content-Length") or 0)
+            # V-c F11: reject chunked transfer encoding
+            te = self.headers.get("Transfer-Encoding", "")
+            if "chunked" in te.lower():
+                return "CHUNKED"
+            cl_raw = self.headers.get("Content-Length")
+            if cl_raw is None:
+                return None
+            try:
+                length = int(cl_raw)
+            except (ValueError, TypeError):
+                return "BAD_CL"
+            # V-c F12: reject negative or oversized Content-Length
+            if length < 0 or length > MAX_CONTENT_LENGTH:
+                return "BAD_CL"
             raw = self.rfile.read(length) if length else b""
             if not raw:
                 return None
@@ -122,9 +163,18 @@ def make_handler(state: State):
                 with state.lock:
                     count = state.seq
                 return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
+            bearer = self._bearer_token()
             body = None
+            # V-c F10: fail-closed credential leak check
+            if state._check_credential_leak("GET", self.path, self.headers,
+                                            body, self.client_address[0], bearer):
+                state.record("GET", self.path, self.headers,
+                             {"credential_in_unexpected_location": True},
+                             self.client_address[0], bearer)
+                return self._error(400, "credential in unexpected location",
+                                   "invalid_request_error", "bad_request")
             state.record("GET", self.path, self.headers, body,
-                         self.client_address[0], self._bearer_token())
+                         self.client_address[0], bearer)
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] == "/v1/models":
@@ -133,14 +183,37 @@ def make_handler(state: State):
             return self._error(404, f"no route {self.path}", "invalid_request_error", "not_found")
 
         def do_POST(self):
+            bearer = self._bearer_token()
             try:
                 body = self._read_body()
             except (ValueError, UnicodeDecodeError):
                 state.record("POST", self.path, self.headers, "<invalid json>",
-                             self.client_address[0], self._bearer_token())
+                             self.client_address[0], bearer)
                 return self._error(400, "body is not JSON", "invalid_request_error", "bad_request")
+            # V-c F11: reject chunked transfer encoding with 411
+            if body == "CHUNKED":
+                self.send_response(411)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            # V-c F12: reject bad Content-Length
+            if body == "BAD_CL":
+                self.send_response(400)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            # V-c F10: fail-closed credential leak check
+            if state._check_credential_leak("POST", self.path, self.headers,
+                                            body, self.client_address[0], bearer):
+                state.record("POST", self.path, self.headers,
+                             {"credential_in_unexpected_location": True},
+                             self.client_address[0], bearer)
+                return self._error(400, "credential in unexpected location",
+                                   "invalid_request_error", "bad_request")
             state.record("POST", self.path, self.headers, body,
-                         self.client_address[0], self._bearer_token())
+                         self.client_address[0], bearer)
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] != "/v1/chat/completions":
@@ -196,12 +269,24 @@ def main(argv=None) -> int:
     ap.add_argument("--pidfile", type=Path)
     ap.add_argument("--allow-existing-records", action="store_true")
     args = ap.parse_args(argv)
+    # V-d F21: check existence before stat
+    if not args.token_file.exists():
+        print(f"scripted_backend: token file not found: {args.token_file}",
+              file=sys.stderr)
+        return 2
     mode = args.token_file.stat().st_mode & 0o7777
-    if mode != 0o600:
-        print(f"scripted_backend: token file mode is {oct(mode)}, required 0o600",
+    # V-c F15: accept 0600 and 0400 (no group/other bits)
+    if mode & 0o077:
+        print(f"scripted_backend: token file mode is {oct(mode)}, "
+              f"must have no group/other bits (0o600 or 0o400)",
               file=sys.stderr)
         return 2
     token = load_token(args.token_file)
+    # V-c F13: refuse when record-dir exists but is not a directory
+    if args.record_dir.exists() and not args.record_dir.is_dir():
+        print(f"scripted_backend: --record-dir {args.record_dir} exists but is not a directory",
+              file=sys.stderr)
+        return 2
     if args.record_dir.is_dir() and any(args.record_dir.iterdir()):
         if not args.allow_existing_records:
             print(f"scripted_backend: --record-dir {args.record_dir} is non-empty; "

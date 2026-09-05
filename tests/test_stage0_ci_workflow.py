@@ -53,3 +53,24 @@ def test_permissions_contents_read():
     assert re.search(r"^permissions:", text, re.MULTILINE)
     assert re.search(r"^\s+contents:\s*read", text, re.MULTILINE), \
         "permissions.contents must be read"
+
+
+def test_ledger_diff_step_positioned_correctly():
+    """V-d F15: the 'Committed ledger equals the regenerated one' step must exist with the
+    exact `git diff --exit-code -- proofs/ledger.json` run command, positioned after
+    'Generate ledger' and before 'Validate ledger integrity'."""
+    text = _read()
+    # Find step names with their positions to assert ordering
+    gen_pos = text.find("Generate ledger")
+    diff_pos = text.find("Committed ledger equals the regenerated one")
+    validate_pos = text.find("Validate ledger integrity")
+    assert gen_pos >= 0, "step 'Generate ledger' missing"
+    assert diff_pos >= 0, "step 'Committed ledger equals the regenerated one' missing"
+    assert validate_pos >= 0, "step 'Validate ledger integrity' missing"
+    assert gen_pos < diff_pos < validate_pos, \
+        f"wrong ordering: Generate({gen_pos}) < Diff({diff_pos}) < Validate({validate_pos})"
+    # Assert the exact run command
+    assert re.search(
+        r"Committed ledger equals the regenerated one.*?\n\s+run:\s*git diff --exit-code -- proofs/ledger\.json",
+        text, re.DOTALL
+    ), "ledger diff step run command must be 'git diff --exit-code -- proofs/ledger.json'"

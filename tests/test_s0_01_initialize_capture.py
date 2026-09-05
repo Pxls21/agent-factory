@@ -76,7 +76,8 @@ def test_record_binds_frames_instrument_schema_and_pinned_trees():
     for key in ("client_to_agent", "agent_to_client", "argv", "env_names"):
         f = rec["frames"][key]
         assert _sha(EV / f["file"]) == f["sha256"], key
-    assert _sha(P / "tools" / "frame_tee.py") == rec["components"]["frame_tee"]["sha256"]
+    # The v1 captures were produced by the v1 tee; pin against the archived copy (V-d F1).
+    assert _sha(P / "tools" / "archive" / "frame_tee_v1.py") == rec["components"]["frame_tee"]["sha256"]
     assert _sha(P / "fixtures" / "acp-schema-v1.json") == rec["components"]["acp-schema-v1"]["sha256"]
     m = rec["manifests"]
     assert m["baseline"] == m["pre_capture"] == m["post_capture"] and m["identical"] is True

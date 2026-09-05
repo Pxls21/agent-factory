@@ -98,6 +98,16 @@ AP_SCREEN = [
      "decision emit with a literal-None kwarg — if that field is a CONJUNCT of the decision, thread the value or NARRATE the absence in `reason` (UNMEASURED, not zero); pattern to copy: stages.py:3088-3104 (AP-59)"),
     ("AP-54", re.compile(r"generate_signals\((?![^)]*(?:flat_specialist_enabled|\*\*))"),
      "generate_signals without flat_specialist_enabled and without a **flags splat — resolve_blend_flags returns ONLY the 4 _BLEND_FLAG_KEYS, so an un-merged **blend_flags does NOT carry the flat flag; check the sibling callees in this same function (AP-54)"),
+    # AF-AP-36 (2026-09-05): a PASS/"checks" literal in a checker's success line — the success
+    # line must be DERIVED from the executed-check list, never a literal string.
+    ("AF-AP-36", re.compile(r"""PASS:\s*\d+\s*checks"""),
+     "PASS line with a literal check count — the success line must be DERIVED from the executed-check list, never hardcoded (AF-AP-36)"),
+    # AF-AP-37 (2026-09-05): hand-typed test counts in code/prose.
+    ("AF-AP-37", re.compile(r"""\d+\s+(?:tests?|passed)\s+green""", re.I),
+     "hand-typed test count — paste the test_summary.sh line verbatim, never type it (AF-AP-37)"),
+    # AF-AP-38 (2026-09-05): presence instead of exact value on a pin.
+    ("AF-AP-38", re.compile(r"""if\s+\w+\.get\([^)]*\)\s*:"""),
+     "presence/truthiness check on a value that should be compared == against a pin (AF-AP-38)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its
