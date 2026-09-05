@@ -175,7 +175,8 @@ def test_requests_are_recorded_with_fingerprint_and_token_absent_from_argv(backe
     assert _RECEIVED_AT_RE.match(last["received_at"]), \
         f"received_at format wrong: {last['received_at']!r}"
     assert isinstance(last["t_mono_ns"], int) and last["t_mono_ns"] > 0
-    assert "127.0.0.1" in last["remote_addr"]
+    # L13/L6: exact remote_addr on POST records
+    assert last["remote_addr"] == "127.0.0.1"
     # TOKEN never appears in argv
     assert all(TOKEN not in a for a in backend["argv"])
     assert int(backend["pidfile"].read_text()) == backend["proc"].pid
@@ -204,49 +205,6 @@ def test_t_mono_ns_strictly_increasing_across_requests(backend):
 
 
 # -- new safeguard tests ---------------------------------------------------
-
-def test_token_file_mode_0644_refuses_to_start(tmp_path):
-    """Negative control: token file with 0644 mode must be rejected (exit 2)."""
-    tf = tmp_path / "token.env"
-    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
-    tf.chmod(0o644)
-    proc = subprocess.run(
-        [sys.executable, str(SERVER), "--port", str(_free_port()),
-         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec")],
-        capture_output=True, text=True, timeout=10)
-    assert proc.returncode == 2
-    assert "no group/other bits" in proc.stderr
-
-
-def test_token_file_mode_0400_accepted(tmp_path):
-    """V-c F15: 0400 (owner-read-only) must be accepted."""
-    tf = tmp_path / "token.env"
-    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
-    tf.chmod(0o400)
-    port = _free_port()
-    proc = subprocess.Popen(
-        [sys.executable, str(SERVER), "--port", str(port),
-         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
-         "--slow-delay", "0.05"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    started = False
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/healthz")
-            resp = conn.getresponse()
-            resp.read()
-            conn.close()
-            if resp.status == 200:
-                started = True
-                break
-        except OSError:
-            time.sleep(0.05)
-    proc.terminate()
-    proc.wait(timeout=10)
-    assert started, "server should start with 0400 token file"
-
 
 def test_nonempty_record_dir_refuses_without_flag(tmp_path):
     """Negative control: non-empty record dir without --allow-existing-records -> exit 2."""
@@ -353,8 +311,8 @@ def test_missing_token_file_named_refusal(tmp_path):
     assert "Traceback" not in proc.stderr
 
 
-def test_chunked_transfer_encoding_rejected_with_411(backend):
-    """V-c F11: Transfer-Encoding: chunked must yield 411 and close."""
+def test_chunked_post_rejected_with_411(backend):
+    """V-c F11: Transfer-Encoding: chunked on POST must yield 411 and close."""
     body_bytes = b'5\r\nhello\r\n0\r\n\r\n'
     raw = (
         f"POST /v1/chat/completions HTTP/1.1\r\n"
@@ -365,7 +323,21 @@ def test_chunked_transfer_encoding_rejected_with_411(backend):
         f"\r\n"
     ).encode() + body_bytes
     resp = _raw_request(backend["port"], raw)
-    assert b"411" in resp, f"expected 411 in response, got: {resp[:200]}"
+    # L6: exact status-line assertion
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
+
+
+def test_chunked_get_rejected_with_411(backend):
+    """M4: Transfer-Encoding: chunked on GET must also yield 411."""
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{backend['port']}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Transfer-Encoding: chunked\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(backend["port"], raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
 
 
 def test_content_length_negative_rejected(backend):
@@ -379,7 +351,8 @@ def test_content_length_negative_rejected(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(backend["port"], raw)
-    assert b"400" in resp, f"expected 400 in response, got: {resp[:200]}"
+    # L6: exact status-line assertion
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
 
 
 def test_content_length_oversized_rejected(backend):
@@ -393,7 +366,21 @@ def test_content_length_oversized_rejected(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(backend["port"], raw)
-    assert b"400" in resp, f"expected 400 in response, got: {resp[:200]}"
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+
+
+def test_content_length_underscore_rejected(backend):
+    """L5: Content-Length with underscores (Python int() accepts '1_0') must be rejected."""
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{backend['port']}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: 1_0\r\n"
+        f"Content-Type: application/json\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(backend["port"], raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
 
 
 def test_credential_in_query_string_returns_400(backend):
@@ -413,12 +400,23 @@ def test_credential_in_body_returns_400(backend):
     assert obj["error"]["message"] == "credential in unexpected location"
 
 
-def test_credential_in_extra_header_returns_400(backend):
-    """V-c F10: token in x-api-key (a non-authorization credential header) does NOT leak
-    because x-api-key is dropped; but token in a custom header value triggers 400."""
-    # x-api-key is dropped from the record, so it does not leak; token in another header:
+def test_credential_in_custom_header_returns_400(backend):
+    """V-c F10: token in a non-credential header value triggers 400."""
     status, data = _call(backend["port"], "GET", "/v1/models",
                          extra_headers={"X-Custom": TOKEN})
+    assert status == 400
+    obj = json.loads(data)
+    assert obj["error"]["message"] == "credential in unexpected location"
+
+
+@pytest.mark.parametrize("header_name", [
+    "api-key", "x-api-key", "cookie", "x-auth-token", "proxy-authorization",
+])
+def test_credential_in_credential_header_returns_400(backend, header_name):
+    """M12: token in api-key/x-api-key/cookie/x-auth-token/proxy-authorization
+    must return 400 + marker record (exempts ONLY 'authorization')."""
+    status, data = _call(backend["port"], "GET", "/v1/models",
+                         extra_headers={header_name: TOKEN})
     assert status == 400
     obj = json.loads(data)
     assert obj["error"]["message"] == "credential in unexpected location"
@@ -445,6 +443,80 @@ def test_header_keys_lowercase_in_records(backend):
     last = json.loads(recs[-1].read_text())
     for k in last["headers"]:
         assert k == k.lower(), f"header key {k!r} not lowercase"
+
+
+def test_leak_record_does_not_contain_token(backend):
+    """H1: the leak marker record must NOT contain the bearer token verbatim.
+    path=None, headers={} so the token never reaches committed evidence."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    _call(backend["port"], "GET", f"/v1/models?key={TOKEN}")
+    recs = sorted(backend["rec"].glob("*.json"))
+    # A new record should have been written
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    # The token must NOT appear anywhere in the written record
+    assert TOKEN.encode() not in last_bytes, \
+        "the bearer token appears verbatim in the leak marker record"
+    last = json.loads(last_bytes)
+    assert last["path"] is None, "leak record path must be null"
+    assert last["headers"] == {}, "leak record headers must be empty"
+    assert last["body"] == {"credential_in_unexpected_location": True}
+
+
+def test_remote_addr_exact_on_get_record(backend):
+    """L13: remote_addr must be exact '127.0.0.1' on GET records too."""
+    _call(backend["port"], "GET", "/v1/models")
+    recs = sorted(backend["rec"].glob("*.json"))
+    last = json.loads(recs[-1].read_text())
+    assert last["method"] == "GET"
+    assert last["remote_addr"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("mode,accept", [
+    (0o600, True),
+    (0o400, True),
+    (0o640, False),
+    (0o644, False),
+    (0o660, False),
+])
+def test_token_file_mode_guard(tmp_path, mode, accept):
+    """M5: mode tests over 0o600/0o400 accept; 0o640/0o644/0o660 refuse with exact message."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(mode)
+    port = _free_port()
+    if accept:
+        proc = subprocess.Popen(
+            [sys.executable, str(SERVER), "--port", str(port),
+             "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
+             "--slow-delay", "0.05"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        started = False
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                conn.request("GET", "/healthz")
+                resp = conn.getresponse()
+                resp.read()
+                conn.close()
+                if resp.status == 200:
+                    started = True
+                    break
+            except OSError:
+                time.sleep(0.05)
+        proc.terminate()
+        proc.wait(timeout=10)
+        assert started, f"server should start with mode {oct(mode)}"
+    else:
+        proc = subprocess.run(
+            [sys.executable, str(SERVER), "--port", str(port),
+             "--token-file", str(tf), "--record-dir", str(tmp_path / "rec")],
+            capture_output=True, text=True, timeout=10)
+        assert proc.returncode == 2
+        expected_msg = (f"scripted_backend: token file mode is {oct(mode)}, "
+                        f"must have no group/other bits (0o600 or 0o400)")
+        assert expected_msg in proc.stderr
 
 
 # -- build_capture_record.py tests (V-d F12) ---------------------------------
@@ -493,7 +565,8 @@ def test_build_capture_record_roundtrip_check(tmp_path):
         [sys.executable, str(BUILD_CAPTURE), "--check", str(leg), "test-leg"],
         capture_output=True, text=True, timeout=10)
     assert r2.returncode == 0, f"--check failed: {r2.stderr}"
-    assert "matches" in r2.stdout
+    # F13: exact assertion, not substring
+    assert r2.stdout.strip() == "test-leg: capture.json matches (--check)"
 
     # Tamper with capture.json and verify --check fails
     cj = leg / "capture.json"
@@ -502,4 +575,4 @@ def test_build_capture_record_roundtrip_check(tmp_path):
         [sys.executable, str(BUILD_CAPTURE), "--check", str(leg), "test-leg"],
         capture_output=True, text=True, timeout=10)
     assert r3.returncode == 1, f"--check should fail after tamper: {r3.stderr}"
-    assert "differs" in r3.stderr
+    assert r3.stderr.strip() == "test-leg: capture.json differs from re-derived content (--check)"

@@ -17,3 +17,10 @@ The live `tools/frame_tee.py` is the v2 instrument (timestamps inside lock,
 os.read stdin pump, bounded stdout join, signal exit codes, raw_b64 for
 non-JSON frames, tee_pid in identity). The v1 captures bind to the archived
 sha256; new v2 captures will bind to the live sha256.
+
+## build_capture_record_v1.py
+
+The capture record builder that produced the v1 evidence bundle structure.
+
+Byte-exact copy from `git show 2e5ccf5:proofs/S0-01/tools/build_capture_record.py`.
+sha256: `2b3da13a325408c26231a7ad2240ab439bcc6189d3500acf370d166e29d6d605`.

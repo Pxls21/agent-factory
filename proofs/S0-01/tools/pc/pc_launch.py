@@ -136,6 +136,16 @@ def main():
         subprocess.Popen(["setsid", "bash", os.path.join(REPO, "proofs/S0-01/tools/pc/pc_manifest.sh")],
                          env=man_env, stdin=subprocess.DEVNULL, stdout=mlog, stderr=subprocess.STDOUT)
 
+    # the PRE manifest must COMPLETE before anything spawns (its timestamp is the "before" mark)
+    pre_done = os.path.join(FD, "manifest-pre.done")
+    for _ in range(600):
+        if os.path.exists(pre_done):
+            break
+        time.sleep(0.5)
+    else:
+        raise SystemExit("pc_launch: pre manifest did not finish within 300 s")
+    print(f"[{utc_now()}] pre manifest done: {open(os.path.join(FD, 'manifest-pre.summary')).read().splitlines()[-1]}")
+
     # --- env from files (never argv) ---
     env = {
         "PATH": pins.PINNED_PATH,

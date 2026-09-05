@@ -1,7 +1,9 @@
 """tests/test_s0_01_check_initialize.py — check_initialize.py directory mode + file mode.
 
 Tests exact exit codes and output for all directory-mode paths (request + response),
-file mode (unchanged from v1), and pin validation failures.
+file mode (unchanged from v1), pin validation failures, malformed evidence wrapper (6-verify F13),
+usage error exit 64 (8-verify F10 / A10), required-files check (A11), NaN rejection (A11),
+seq==1 check (A11), and fixture-absent guard (A11).
 """
 from __future__ import annotations
 
@@ -28,7 +30,8 @@ def _run(kind, target):
 
 
 def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
-                      has_timeline=True, has_rid=True):
+                      has_timeline=True, has_rid=True, has_env=True,
+                      has_stderr=True, extra_files=None):
     """Build a minimal negative probe capture directory."""
     d = tmp_path / "capture"
     d.mkdir(exist_ok=True)
@@ -66,6 +69,17 @@ def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
         }
         actual_rid = rid if rid is not None else default_rid
         (d / "runtime-identity.json").write_text(json.dumps(actual_rid, indent=2))
+
+    if has_env:
+        (d / "env.json").write_text('{"HERMES_HOME": "/home/rocco/s0-01-pinned/.hermes-home", '
+                                    '"PYTHONDONTWRITEBYTECODE": "1"}\n')
+
+    if has_stderr:
+        (d / "agent-stderr.txt").write_text("")
+
+    if extra_files:
+        for name, content in extra_files.items():
+            (d / name).write_text(content)
 
     return d
 
@@ -130,6 +144,8 @@ def test_request_dir_fails_no_c2a_frames(tmp_path):
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "result": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: no c2a frames in timeline"
@@ -143,6 +159,8 @@ def test_request_dir_fails_first_not_initialize(tmp_path):
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "method": "session/new", "params": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: first c2a frame is 'session/new', not initialize"
@@ -312,12 +330,137 @@ def test_response_dir_distinct_from_request(tmp_path):
     assert r_req.stdout != r_resp.stdout
 
 
-# ---- Negative control: bad usage ----
+# ---- 8-verify F10 / A10: usage error exits 64, not 2 ----
 
-def test_usage_error_exits_2():
-    """Bad CLI usage exits 2."""
+def test_usage_error_exits_64():
+    """Bad CLI usage exits 64 (EX_USAGE), not 2."""
     r = subprocess.run(
         [sys.executable, str(CHECK_INIT), "bogus", str(FIXTURE)],
         capture_output=True, text=True, timeout=30,
     )
-    assert r.returncode == 2
+    assert r.returncode == 64
+
+
+def test_usage_error_no_args_exits_64():
+    """No args at all exits 64."""
+    r = subprocess.run(
+        [sys.executable, str(CHECK_INIT)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode == 64
+
+
+# ---- 6-verify F13: malformed evidence ----
+
+def test_malformed_timeline_non_json(tmp_path):
+    """F13: non-JSON timeline line → exit 1 with failure_reason: malformed evidence."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    (d / "timeline.jsonl").write_text("not json\n")
+    (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip().startswith("failure_reason: malformed evidence: JSONDecodeError:")
+
+
+def test_malformed_timeline_missing_dir_key(tmp_path):
+    """F13: entry without 'dir' key → exit 1 with failure_reason: malformed evidence."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    entry = {"seq": 1, "frame": {"method": "initialize"}}
+    (d / "timeline.jsonl").write_text(json.dumps(entry) + "\n")
+    (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip().startswith("failure_reason: malformed evidence: KeyError:")
+
+
+# ---- A11: required files ----
+
+def test_request_dir_fails_missing_env_json(tmp_path):
+    """A11: env.json absent → failure naming the file."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c, has_env=False)
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: env.json absent"
+
+
+def test_request_dir_fails_missing_agent_stderr(tmp_path):
+    """A11: agent-stderr.txt absent → failure naming the file."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c, has_stderr=False)
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: agent-stderr.txt absent"
+
+
+def test_request_dir_fails_extra_file(tmp_path):
+    """A11: extra file in directory → failure."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c, extra_files={"bogus.txt": "evil"})
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: unexpected file bogus.txt"
+
+
+# ---- A11: NaN rejection ----
+
+def test_request_dir_fails_nan_in_timeline(tmp_path):
+    """A11: NaN in timeline → failure_reason: malformed evidence."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    # Write a timeline line with NaN manually
+    (d / "timeline.jsonl").write_text(
+        '{"seq":1,"dir":"c2a","t_utc":"2026-09-05T00:00:00.000000Z","t_mono_ns":NaN,"frame":null}\n'
+    )
+    (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip().startswith("failure_reason: malformed evidence: ValueError:")
+
+
+# ---- A11: seq == 1 check ----
+
+def test_request_dir_fails_seq_not_1(tmp_path):
+    """A11: c2a initialize seq is not 1 → failure."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    fixture = json.loads(FIXTURE.read_text())
+    c2a_frame = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": fixture}
+    entry = {"seq": 5, "dir": "c2a", "t_utc": "2026-09-05T00:00:00.000000Z",
+             "t_mono_ns": 1000000, "frame": c2a_frame}
+    (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
+    (d / "runtime-identity.json").write_text("{}")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: c2a initialize seq is 5, expected 1"
+
+
+# ---- A11: fixture absent ----
+
+def test_request_dir_fails_fixture_absent(tmp_path):
+    """A11: neg-malformed-initialize.json absent → failure."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    # Use subprocess with inline Python to patch FIXTURE at import time
+    r2 = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r); "
+         "from pathlib import Path; "
+         "import check_initialize; "
+         "check_initialize.FIXTURE = Path('/nonexistent/fixture.json'); "
+         "rc = check_initialize._check_request_directory(Path(%r)); "
+         "raise SystemExit(rc)" % (str(P), str(d))],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r2.returncode == 1
+    assert r2.stdout.strip() == "failure_reason: negative: fixtures/neg-malformed-initialize.json absent"

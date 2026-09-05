@@ -155,7 +155,7 @@ class TestNonAsciiNIP01:
         const created_at = 1700000000;
         const kind = 1;
         const tags = [['t', 'test']];
-        const content = 'pong \\U0001f41d caf\\u00e9';
+        const content = 'pong \\u{1F41D} caf\\u00e9';
         const serialized = JSON.stringify([0, pubkey, created_at, kind, tags, content]);
         const hash = crypto.createHash('sha256').update(serialized).digest('hex');
         console.log(hash);
@@ -609,3 +609,140 @@ class TestSignEventValidation:
             nv.sign_event(3, {
                 "created_at": 1, "kind": 1, "tags": [], "content": "",
             })
+
+
+# ---------------------------------------------------------------------------
+# sign_event self-verification path — closes 5-verify L9
+# ---------------------------------------------------------------------------
+class TestSignEventSelfVerify:
+    """sign_event's self-verify catches a bad signature.
+
+    Monkeypatch schnorr_sign to return 64 zero bytes (an invalid signature)
+    and assert sign_event raises ValueError with the self-verification message.
+    The reverted fix (deleting lines 253-256 of nostr_verify.py) lets the bad
+    sig through silently.
+    """
+
+    def test_self_verify_catches_bad_sig(self, monkeypatch):
+        monkeypatch.setattr(nv, "schnorr_sign", lambda *_args: b"\x00" * 64)
+        with pytest.raises(ValueError, match="self-verification failed: "):
+            nv.sign_event(
+                "0000000000000000000000000000000000000000000000000000000000000003",
+                {"created_at": 1, "kind": 1, "tags": [], "content": ""},
+            )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic aux pin — closes 5-verify L10
+# ---------------------------------------------------------------------------
+class TestDeterministicAuxPin:
+    """A fixed (privkey, fields) pair produces the exact id and sig.
+
+    This pins the deterministic aux (32 zero bytes) in sign_event.  Changing
+    the aux to any other value produces a different (still valid) signature,
+    so this test kills the mutant that replaces b'\\x00'*32 with b'\\x01'*32.
+
+    Independent oracle verification of the event id:
+      /opt/node22/bin/node -e "
+        const crypto = require('crypto');
+        const pubkey = 'f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9';
+        const created_at = 1700000000;
+        const kind = 1;
+        const tags = [['t', 'test']];
+        const content = 'deterministic aux pin test';
+        const serialized = JSON.stringify([0, pubkey, created_at, kind, tags, content]);
+        const hash = crypto.createHash('sha256').update(serialized).digest('hex');
+        console.log(hash);
+      "
+      -> 37938928643dbfdcb47e6e2efc2fb48685dbb3a63bb127c2d68b4648110eb0e9
+    """
+    PRIVKEY = "0000000000000000000000000000000000000000000000000000000000000003"
+    EXPECTED_ID = "37938928643dbfdcb47e6e2efc2fb48685dbb3a63bb127c2d68b4648110eb0e9"
+    EXPECTED_SIG = (
+        "7417a30b4756e1644627a76d323dd9cfdb5505ffacf7df9402cc26bab770dadc"
+        "380931266fdcd18b472f3fbe6e0026b53cf3f267e4c1d70b890ed2708fbebd03"
+    )
+
+    def test_pinned_id_and_sig(self):
+        fields = {
+            "created_at": 1700000000,
+            "kind": 1,
+            "tags": [["t", "test"]],
+            "content": "deterministic aux pin test",
+        }
+        ev = nv.sign_event(self.PRIVKEY, fields)
+        assert ev["id"] == self.EXPECTED_ID, (
+            f"id mismatch: got {ev['id']}"
+        )
+        assert ev["sig"] == self.EXPECTED_SIG, (
+            f"sig mismatch: got {ev['sig']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# schnorr_sign range guard — closes 5-verify L11
+# ---------------------------------------------------------------------------
+class TestSchnorrSignRangeGuard:
+    """schnorr_sign's private-key range guard (d_prime >= n) is reachable and tested.
+
+    The reverted fix (deleting lines 145-146 of nostr_verify.py) removes the
+    guard, which would let an out-of-range key through or produce undefined
+    behavior in the modular arithmetic.
+    """
+
+    def test_seckey_equals_n_raises(self):
+        """seckey == n (the curve order) is rejected."""
+        with pytest.raises(ValueError, match="invalid private key"):
+            nv.schnorr_sign(nv.n.to_bytes(32, "big"), b"\x00" * 32, b"\x00" * 32)
+
+    def test_seckey_above_n_raises(self):
+        """seckey == n+1 is rejected."""
+        with pytest.raises(ValueError, match="invalid private key"):
+            nv.schnorr_sign((nv.n + 1).to_bytes(32, "big"), b"\x00" * 32, b"\x00" * 32)
+
+    def test_seckey_zero_raises(self):
+        """seckey == 0 is rejected."""
+        with pytest.raises(ValueError, match="invalid private key"):
+            nv.schnorr_sign(b"\x00" * 32, b"\x00" * 32, b"\x00" * 32)
+
+
+# ---------------------------------------------------------------------------
+# schnorr_verify byte-length guards — closes 5-verify L12
+# ---------------------------------------------------------------------------
+class TestSchnorrVerifyByteLength:
+    """schnorr_verify returns specific reasons for wrong-length raw inputs.
+
+    Without the guards, a 31-byte pubkey returns 'pubkey not on curve' and a
+    63-byte sig returns misleading reasons. The guards give the caller the
+    actual problem.
+    """
+
+    def test_pubkey_31_bytes(self):
+        ok, reason = nv.schnorr_verify(b"\x02" * 31, b"\x00" * 32, b"\x00" * 64)
+        assert not ok
+        assert reason == "pubkey length 31, expected 32"
+
+    def test_pubkey_33_bytes(self):
+        ok, reason = nv.schnorr_verify(b"\x02" * 33, b"\x00" * 32, b"\x00" * 64)
+        assert not ok
+        assert reason == "pubkey length 33, expected 32"
+
+    def test_pubkey_0_bytes(self):
+        ok, reason = nv.schnorr_verify(b"", b"\x00" * 32, b"\x00" * 64)
+        assert not ok
+        assert reason == "pubkey length 0, expected 32"
+
+    def test_sig_63_bytes(self):
+        ok, reason = nv.schnorr_verify(b"\x02" * 32, b"\x00" * 32, b"\x00" * 63)
+        assert not ok
+        assert reason == "sig length 63, expected 64"
+
+    def test_sig_65_bytes(self):
+        ok, reason = nv.schnorr_verify(b"\x02" * 32, b"\x00" * 32, b"\x00" * 65)
+        assert not ok
+        assert reason == "sig length 65, expected 64"
+
+    def test_sig_0_bytes(self):
+        ok, reason = nv.schnorr_verify(b"\x02" * 32, b"\x00" * 32, b"")
+        assert not ok
+        assert reason == "sig length 0, expected 64"

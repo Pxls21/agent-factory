@@ -69,11 +69,15 @@ def test_pass_and_skip():
 
 
 def test_failure():
-    """A failing test yields exit 1 and summary containing '1 failed'."""
+    """A failing test yields exit 1 and summary matching the full regex."""
     code = textwrap.dedent("""\
         def test_bad():
             assert False, "intentional"
     """)
+    # F13: the failing case also uses the full regex, not substring
+    _FAIL_RE = re.compile(
+        r"^(\d+ failed(?:, \d+ passed)?) in \d+\.\d+s$"
+    )
     with tempfile.NamedTemporaryFile(
         suffix=".py", prefix="tmp_test_", mode="w", delete=False
     ) as f:
@@ -89,7 +93,9 @@ def test_failure():
         assert summary_line, f"No pytest-summary line in output:\n{result.stdout}"
         assert exit_line[-1] == "pytest-exit: 1"
         body = summary_line[-1].removeprefix("pytest-summary: ")
-        assert "1 failed" in body
+        m = _FAIL_RE.match(body)
+        assert m, f"summary line does not match exact format: {body!r}"
+        assert m.group(1) == "1 failed"
         assert result.returncode == 1
     finally:
         os.unlink(tmp)

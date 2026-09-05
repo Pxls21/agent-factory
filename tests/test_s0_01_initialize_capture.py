@@ -121,4 +121,6 @@ def test_checker_cli_exit_codes_and_messages(tmp_path):
     bad = tmp_path / "not-initialize.jsonl"
     bad.write_text(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {}}) + "\n")
     usage = run("request", bad)
-    assert usage.returncode == 2 and "not 'initialize'" in usage.stderr
+    # A10 (round 3): an INPUT error is a usage-class failure — exit 64, never the runner's "deferred" 2
+    assert (usage.returncode, usage.stdout, usage.stderr.strip()) == (
+        64, "", "input error: frame method is 'session/new', not 'initialize'")

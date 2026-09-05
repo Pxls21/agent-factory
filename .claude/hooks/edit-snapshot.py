@@ -106,7 +106,8 @@ AP_SCREEN = [
     ("AF-AP-37", re.compile(r"""\d+\s+(?:tests?|passed)\s+green""", re.I),
      "hand-typed test count — paste the test_summary.sh line verbatim, never type it (AF-AP-37)"),
     # AF-AP-38 (2026-09-05): presence instead of exact value on a pin.
-    ("AF-AP-38", re.compile(r"""if\s+\w+\.get\([^)]*\)\s*:"""),
+    # F21: pin-adjacent `if x.get():` OR `assert x.get()` — both are presence, not exact value.
+    ("AF-AP-38", re.compile(r"""(?:if\s+\w+\.get\([^)]*\)\s*:(?=[^\n]*PINNED_)|assert\s+\w+\.get\()"""),
      "presence/truthiness check on a value that should be compared == against a pin (AF-AP-38)"),
 ]
 

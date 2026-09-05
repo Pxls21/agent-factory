@@ -54,9 +54,20 @@ def _read_lines_from_fd(fd):
         yield buf  # partial last line without terminator
 
 
+def _reject_nan_inf(constant):
+    """parse_constant callback: reject NaN/Infinity so they take the raw/raw_b64 branch."""
+    raise ValueError(constant)
+
+
 def main():
-    framedir = os.environ["S0_01_FRAMEDIR"]
-    agent = os.environ["S0_01_AGENT"]
+    framedir = os.environ.get("S0_01_FRAMEDIR")
+    if framedir is None:
+        print("frame_tee: S0_01_FRAMEDIR is not set", file=sys.stderr)
+        raise SystemExit(64)
+    agent = os.environ.get("S0_01_AGENT")
+    if agent is None:
+        print("frame_tee: S0_01_AGENT is not set", file=sys.stderr)
+        raise SystemExit(64)
     os.makedirs(framedir, exist_ok=True)
 
     proc = subprocess.Popen([agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -109,7 +120,7 @@ def main():
                 else:
                     stripped = text
                 try:
-                    frame = json.loads(stripped)
+                    frame = json.loads(stripped, parse_constant=_reject_nan_inf)
                     with lock:
                         t_utc = _utc_now()
                         t_mono = time.monotonic_ns()
@@ -160,7 +171,7 @@ def main():
                 else:
                     stripped = text
                 try:
-                    frame = json.loads(stripped)
+                    frame = json.loads(stripped, parse_constant=_reject_nan_inf)
                     with lock:
                         t_utc = _utc_now()
                         t_mono = time.monotonic_ns()

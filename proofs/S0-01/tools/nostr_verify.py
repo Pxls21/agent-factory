@@ -97,6 +97,10 @@ def event_id(event):
 # ---------------------------------------------------------------------------
 def schnorr_verify(pubkey_bytes, msg, sig_bytes):
     """BIP-340 Schnorr verification.  Returns (ok: bool, reason: str)."""
+    if len(pubkey_bytes) != 32:
+        return (False, f"pubkey length {len(pubkey_bytes)}, expected 32")
+    if len(sig_bytes) != 64:
+        return (False, f"sig length {len(sig_bytes)}, expected 64")
     P = _lift_x(int.from_bytes(pubkey_bytes, "big"))
     if P is None:
         return (False, "pubkey not on curve")

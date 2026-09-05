@@ -1,6 +1,6 @@
 """S0-01 ACP conformance checker v2.1 — derives EVERYTHING from raw files, exact values.
 
-Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>`.
+Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error.
 DEFERRAL RULE: exits 2 iff golden/ is absent or NO leg directory contains timeline.jsonl.
 Once ANY leg carries a timeline, EVERY absence of a required file is a Failure, never a deferral.
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -30,8 +29,10 @@ from pins import (  # noqa: E402
     PINNED_AGENT_ENTRYPOINT_SHA256,
     PINNED_AGENT_INTERPRETER_REALPATH,
     PINNED_AGENT_INTERPRETER_SHA256,
+    PINNED_AGENT_PROTOCOL_VERSION,
     PINNED_AGENT_REALPATH,
     PINNED_BASELINE_DIGESTS,
+    PINNED_BASELINE_FILE_COUNTS,
     PINNED_BASELINE_GZ_SHA256,
     PINNED_BUZZ_ACP_EXE_REALPATH,
     PINNED_BUZZ_ACP_SHA256,
@@ -62,14 +63,35 @@ import nostr_verify  # noqa: E402
 VOLATILE_UPDATE_FIELDS = {"content", "text", "title", "rawInput", "rawOutput",
                           "locations", "_meta", "usage"}
 
-EXPECTED_CHECK_SEQUENCE = [
-    "check_timeline", "check_initialize_frames", "check_runtime_identity",
-    "check_env", "check_mentions", "check_route",
-    "check_prompt_turn", "check_config_echo", "check_manifests",
-    "check_process_evidence", "check_buzzacp_log",
-    "check_cancel", "check_shutdown", "check_two_users",
-    "check_golden", "check_negative",
-]
+# The expected key set for runtime-identity.json (§3 / A5).
+EXPECTED_RID_KEYS = frozenset({
+    "tee_path", "tee_sha256", "tee_pid", "agent_argv", "agent_realpath",
+    "agent_entrypoint_sha256", "agent_child_pid", "agent_interpreter_realpath",
+    "agent_interpreter_sha256", "python_dont_write_bytecode", "spawned_at_utc",
+    "buzz_acp_pid", "buzz_acp_exe_realpath", "buzz_acp_exe_sha256",
+    "buzz_acp_version", "launch_argv",
+})
+
+# The expected key set for upstream records (§6 / A3).
+EXPECTED_RECORD_KEYS = frozenset({
+    "seq", "received_at", "t_mono_ns", "remote_addr", "method", "path",
+    "headers", "body", "authorization_fingerprint",
+})
+
+# The expected key set for mention receipts (§5 / A4).
+EXPECTED_RECEIPT_KEYS = frozenset({"accepted", "event_id", "mention_pubkeys", "message"})
+
+# The required files in the negative directory (A11).
+NEGATIVE_REQUIRED_FILES = frozenset({"timeline.jsonl", "runtime-identity.json", "env.json", "agent-stderr.txt"})
+
+# The filename pattern for upstream records (A3).
+_RECORD_FILENAME_RE = re.compile(r"^\d{6}\.json$")
+
+# The line format for manifest body lines (A13).
+_MANIFEST_LINE_RE = re.compile(r"^[0-9a-f]{64}  \./.+$")
+
+# The hex-leak guard pattern (A9: case-insensitive 64-hex anywhere in the value).
+_HEX64_ANYWHERE_RE = re.compile(r"[0-9a-fA-F]{64}")
 
 
 class Deferred(Exception):
@@ -118,6 +140,33 @@ def _require_dir(path: Path, leg: str, name: str):
     return path
 
 
+def _is_strict_int(v):
+    """True iff v is an int and NOT a bool."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+# --- dispatcher for the executed-check-sequence guard (A12) ---
+# Each check function is registered here and called through _run_check.
+# The dispatcher appends f"{fn.__name__}:{leg}" AFTER the function returns.
+_executed = []
+
+EXPECTED_CHECK_SEQUENCE = [
+    "check_timeline", "check_initialize_frames", "check_runtime_identity",
+    "check_env", "check_mentions", "check_route",
+    "check_prompt_turn", "check_config_echo", "check_manifests",
+    "check_process_evidence", "check_buzzacp_log",
+    "check_cancel", "check_shutdown", "check_two_users",
+    "check_golden", "check_negative",
+]
+
+
+def _run_check(fn, leg, *args, **kwargs):
+    """Call fn and record its name in the executed list on successful return."""
+    result = fn(*args, **kwargs)
+    _executed.append(f"{fn.__name__}:{leg}")
+    return result
+
+
 def check_timeline(entries, leg, leg_dir):
     if not entries:
         raise Failure(f"{leg}: timeline.jsonl is empty")
@@ -130,12 +179,12 @@ def check_timeline(entries, leg, leg_dir):
         if ks != valid_keys:
             raise Failure(f"{leg}: timeline entry at seq {i + 1} has unexpected keys {sorted(ks)}")
         seq_val = e["seq"]
-        if not isinstance(seq_val, int) or isinstance(seq_val, bool):
+        if not _is_strict_int(seq_val):
             raise Failure(f"{leg}: timeline seq at index {i} is not int")
         if seq_val != i + 1:
             raise Failure(f"{leg}: timeline seq not strictly 1..N at index {i}")
         mono = e["t_mono_ns"]
-        if not isinstance(mono, int) or isinstance(mono, bool):
+        if not _is_strict_int(mono):
             raise Failure(f"{leg}: timeline t_mono_ns at seq {seq_val} is not int")
         t_utc = e["t_utc"]
         if not isinstance(t_utc, str) or not utc_re.match(t_utc):
@@ -155,11 +204,16 @@ def check_timeline(entries, leg, leg_dir):
     c2a_path = _require_file(leg_dir / "frames-client-to-agent.jsonl", leg, "frames-client-to-agent.jsonl")
     a2c_path = _require_file(leg_dir / "frames-agent-to-client.jsonl", leg, "frames-agent-to-client.jsonl")
 
-    def _load_dir(fpath, name):
+    def _load_dir(fpath, name, expected_split):
         raw = fpath.read_bytes()
         frames = []
         for lineno, lb in enumerate(raw.split(b"\n"), 1):
-            if not lb or (lineno > 1 and not lb.strip()):
+            if not lb and lineno > len(raw.split(b"\n")) - 1:
+                # trailing empty after final newline is ok
+                continue
+            if not lb or not lb.strip():
+                if lb is not None and lb != b"":
+                    raise Failure(f"{leg}: {name} blank line at line {lineno}")
                 continue
             if lb.endswith(b"\r"):
                 lb = lb[:-1]
@@ -171,10 +225,12 @@ def check_timeline(entries, leg, leg_dir):
                 frames.append(json.loads(text))
             except json.JSONDecodeError:
                 raise Failure(f"{leg}: {name} line {lineno} not valid JSON")
+        if len(frames) != len(expected_split):
+            raise Failure(f"{leg}: {name} line count {len(frames)} != timeline split count {len(expected_split)}")
         return frames
 
-    c2a_file = _load_dir(c2a_path, "frames-client-to-agent.jsonl")
-    a2c_file = _load_dir(a2c_path, "frames-agent-to-client.jsonl")
+    c2a_file = _load_dir(c2a_path, "frames-client-to-agent.jsonl", c2a_split)
+    a2c_file = _load_dir(a2c_path, "frames-agent-to-client.jsonl", a2c_split)
     if c2a_file != c2a_split:
         raise Failure(f"{leg}: frames-client-to-agent.jsonl does not match timeline c2a split")
     if a2c_file != a2c_split:
@@ -199,14 +255,24 @@ def check_initialize_frames(c2a, a2c, leg):
         raise Failure(f"{leg}: initialize response {v}")
     if req["params"].get("protocolVersion") != PINNED_CLIENT_PROTOCOL_VERSION:
         raise Failure(f"{leg}: client protocolVersion is not {PINNED_CLIENT_PROTOCOL_VERSION}")
-    if resp["result"].get("protocolVersion") != 1:
-        raise Failure(f"{leg}: agent protocolVersion is not 1")
+    if resp["result"].get("protocolVersion") != PINNED_AGENT_PROTOCOL_VERSION:
+        raise Failure(f"{leg}: agent protocolVersion is not {PINNED_AGENT_PROTOCOL_VERSION}")
     if resp["result"].get("agentCapabilities") != PINNED_AGENT_CAPABILITIES:
         raise Failure(f"{leg}: agentCapabilities differ from pinned")
 
 
 def check_runtime_identity(leg_dir, leg):
     rid = json.loads(_require_file(leg_dir / "runtime-identity.json", leg, "runtime-identity.json").read_text())
+    # A5: exact key set
+    if set(rid.keys()) != EXPECTED_RID_KEYS:
+        extra = sorted(set(rid.keys()) - EXPECTED_RID_KEYS)
+        missing = sorted(EXPECTED_RID_KEYS - set(rid.keys()))
+        raise Failure(f"{leg}: runtime-identity.json key set mismatch (extra={extra}, missing={missing})")
+    # Type checks for tee_pid and agent_child_pid
+    if not _is_strict_int(rid["tee_pid"]):
+        raise Failure(f"{leg}: tee_pid is not int")
+    if not _is_strict_int(rid["agent_child_pid"]):
+        raise Failure(f"{leg}: agent_child_pid is not int")
 
     def _chk(field, expected, desc=None):
         if rid.get(field) != expected:
@@ -227,9 +293,12 @@ def check_runtime_identity(leg_dir, leg):
     if rid.get("python_dont_write_bytecode") is not True:
         raise Failure(f"{leg}: python_dont_write_bytecode is not true")
     pid_path = _require_file(leg_dir / "buzz-acp.pid", leg, "buzz-acp.pid")
-    expected_pid = int(pid_path.read_text().strip())
+    try:
+        expected_pid = int(pid_path.read_text().strip())
+    except ValueError:
+        raise Failure(f"{leg}: buzz-acp.pid is not a valid integer")
     pid_val = rid.get("buzz_acp_pid")
-    if not isinstance(pid_val, int) or isinstance(pid_val, bool) or pid_val != expected_pid:
+    if not _is_strict_int(pid_val) or pid_val != expected_pid:
         raise Failure(f"{leg}: buzz_acp_pid mismatch")
     argv_path = _require_file(leg_dir / "argv.txt", leg, "argv.txt")
     argv_lines = argv_path.read_text().splitlines()
@@ -249,7 +318,6 @@ def check_env(leg_dir, leg, identities):
     if leg != "two-users" and ENV_ALLOWLIST_KEY in env:
         raise Failure(f"{leg}: {ENV_ALLOWLIST_KEY} present in non-two-users leg")
     redact_re = re.compile(REDACTED_ENV_KEY_RE)
-    hex64_re = re.compile(r"^[0-9a-f]{64}$")
     for key, val in env.items():
         if redact_re.search(key):
             if not isinstance(val, dict):
@@ -257,7 +325,7 @@ def check_env(leg_dir, leg, identities):
             if val.get("redacted") is not True:
                 raise Failure(f"{leg}: env {key} redacted is not true")
             length = val.get("len")
-            if not isinstance(length, int) or isinstance(length, bool) or length <= 0:
+            if not _is_strict_int(length) or length <= 0:
                 raise Failure(f"{leg}: env {key} redacted len is not a positive int")
             sha12 = val.get("sha256_12")
             if not isinstance(sha12, str) or not re.fullmatch(r"[0-9a-f]{12}", sha12):
@@ -293,15 +361,16 @@ def check_env(leg_dir, leg, identities):
     else:
         if rt != "owner-only":
             raise Failure(f"{leg}: env BUZZ_ACP_RESPOND_TO should be owner-only")
+    # A9: hex-leak guard — case-insensitive 64-hex anywhere in any plain string value
     exempt_keys = {"BUZZ_ACP_AGENT_OWNER", ENV_ALLOWLIST_KEY}
     for key, val in env.items():
         if key in exempt_keys:
             continue
-        if isinstance(val, str) and hex64_re.match(val):
+        if isinstance(val, str) and _HEX64_ANYWHERE_RE.search(val):
             raise Failure(f"{leg}: env {key} contains a 64-hex string (possible secret leak)")
 
 
-def check_mentions(leg_dir, leg, identities, entries):
+def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None):
     expected = EXPECTED_MENTIONS.get(leg, [])
     mentions_dir = _require_dir(leg_dir / "mentions", leg, "mentions/")
     expected_files = set()
@@ -311,8 +380,15 @@ def check_mentions(leg_dir, leg, identities, entries):
     extra = actual_files - expected_files
     if extra:
         raise Failure(f"{leg}: mentions/ has unexpected files: {sorted(extra)}")
+    # A1: window lower = floor(first timeline t_utc) - 5, upper = post summary ts + 5
     first_utc = _parse_utc(entries[0]["t_utc"])
-    last_utc = _parse_utc(entries[-1]["t_utc"])
+    floor_first = int(first_utc.timestamp()) - MENTION_WINDOW_SLACK_S
+    if post_summary_ts is not None:
+        ceil_post = int(post_summary_ts.timestamp()) + 1 + MENTION_WINDOW_SLACK_S
+    else:
+        # Fallback: last timeline entry + 5
+        last_utc = _parse_utc(entries[-1]["t_utc"])
+        ceil_post = int(last_utc.timestamp()) + 1 + MENTION_WINDOW_SLACK_S
     event_ids = []
     for tag, id_key, content, replies_to in expected:
         event_path = _require_file(mentions_dir / f"{tag}.event.json", leg, f"mentions/{tag}.event.json")
@@ -322,11 +398,30 @@ def check_mentions(leg_dir, leg, identities, entries):
             raise Failure(f"{leg}: mentions/{tag}.receipt.err is not empty")
         event = json.loads(event_path.read_text())
         receipt = json.loads(receipt_path.read_text())
+        # A4: receipt exact key set
+        if set(receipt.keys()) != EXPECTED_RECEIPT_KEYS:
+            raise Failure(f"{leg}: mention {tag} receipt key set mismatch")
         if receipt.get("accepted") is not True:
             raise Failure(f"{leg}: mention {tag} receipt not accepted")
-        if receipt.get("event_id") != event.get("id"):
+        # A4: event_id must be 64 lowercase hex
+        eid = receipt.get("event_id")
+        if not isinstance(eid, str) or not re.fullmatch(r"[0-9a-f]{64}", eid):
+            raise Failure(f"{leg}: mention {tag} receipt event_id is not 64 lowercase hex")
+        if eid != event.get("id"):
             raise Failure(f"{leg}: mention {tag} receipt event_id != event.id")
-        if event.get("kind") != 9:
+        # A4: mention_pubkeys is a list of 64-hex strings
+        mpk = receipt.get("mention_pubkeys")
+        if not isinstance(mpk, list):
+            raise Failure(f"{leg}: mention {tag} receipt mention_pubkeys is not a list")
+        for pk in mpk:
+            if not isinstance(pk, str) or not re.fullmatch(r"[0-9a-f]{64}", pk):
+                raise Failure(f"{leg}: mention {tag} receipt mention_pubkeys contains non-64-hex")
+        # A4: message must be ""
+        if receipt.get("message") != "":
+            raise Failure(f"{leg}: mention {tag} receipt message is not empty string")
+        # A4: kind must be int (not bool/float)
+        kind_val = event.get("kind")
+        if not _is_strict_int(kind_val) or kind_val != 9:
             raise Failure(f"{leg}: mention {tag} event kind is not 9")
         computed_id = nostr_verify.event_id(event)
         if computed_id != event["id"]:
@@ -349,12 +444,10 @@ def check_mentions(leg_dir, leg, identities, entries):
             if not any(t[1] == ref_event["id"] for t in e_tags):
                 raise Failure(f"{leg}: mention {tag} e-tag does not reference {replies_to}")
         created_at = event.get("created_at")
-        if not isinstance(created_at, int) or isinstance(created_at, bool):
+        if not _is_strict_int(created_at):
             raise Failure(f"{leg}: mention {tag} created_at is not int")
-        floor_first = int(first_utc.timestamp()) - MENTION_WINDOW_SLACK_S
-        ceil_last = int(last_utc.timestamp()) + 1 + MENTION_WINDOW_SLACK_S
-        if not (floor_first <= created_at <= ceil_last):
-            raise Failure(f"{leg}: mention {tag} created_at {created_at} outside window [{floor_first}, {ceil_last}]")
+        if not (floor_first <= created_at <= ceil_post):
+            raise Failure(f"{leg}: mention {tag} created_at {created_at} outside window [{floor_first}, {ceil_post}]")
         event_ids.append(event["id"])
     return event_ids
 
@@ -369,13 +462,23 @@ def check_route(leg_dir, leg, entries):
     rec_dir = leg_dir / "upstream-records"
     if not rec_dir.is_dir():
         raise Failure(f"{leg}: zero upstream records / upstream-records/ absent")
+    # A3: only files matching ^\d{6}\.json$
+    for item in rec_dir.iterdir():
+        if not _RECORD_FILENAME_RE.match(item.name):
+            raise Failure(f"{leg}: upstream-records/ contains invalid filename {item.name!r}")
     records = [json.loads(rp.read_text()) for rp in sorted(rec_dir.glob("*.json"))]
     if not records:
         raise Failure(f"{leg}: zero upstream records / upstream-records/ absent")
+    # A3: validate upstream-token.fingerprint is exactly 64 lowercase hex
     fp_path = _require_file(HERE / "fixtures" / "upstream-token.fingerprint", leg, "fixtures/upstream-token.fingerprint")
     expected_fp = fp_path.read_text().strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_fp):
+        raise Failure("golden: upstream-token.fingerprint is not a 64-hex digest")
     allowed_pairs = ALLOWED_UPSTREAM_GET | {("POST", UPSTREAM_POST_PATH)}
     for rec in records:
+        # A3: validate record key set
+        if set(rec.keys()) != EXPECTED_RECORD_KEYS:
+            raise Failure(f"{leg}: upstream record key set mismatch: {sorted(set(rec.keys()) ^ EXPECTED_RECORD_KEYS)}")
         mp = (rec.get("method"), rec.get("path"))
         if mp not in allowed_pairs:
             raise Failure(f"{leg}: upstream record ({mp[0]}, {mp[1]}) not in allowed set")
@@ -398,9 +501,13 @@ def check_route(leg_dir, leg, entries):
         ra = _parse_utc(ra_str)
         if not any(s - slack <= ra <= e + slack for s, e in prompt_windows):
             raise Failure(f"{leg}: upstream POST record received_at {ra_str} outside all prompt windows")
+    # A3: windows consume records one-to-one
+    used = [False] * len(post_records)
     for pw_start, pw_end in prompt_windows:
         found = False
-        for rec in post_records:
+        for ri, rec in enumerate(post_records):
+            if used[ri]:
+                continue
             ra = _parse_utc(rec.get("received_at", "2000-01-01T00:00:00.000000Z"))
             if pw_start - slack <= ra <= pw_end + slack:
                 body = rec.get("body") or {}
@@ -417,6 +524,7 @@ def check_route(leg_dir, leg, entries):
                         if found:
                             break
                 if found:
+                    used[ri] = True
                     break
         if not found:
             raise Failure(f"{leg}: no upstream POST with stream=true and mention text for a prompt window")
@@ -442,6 +550,30 @@ def check_prompt_turn(c2a, a2c, leg, entries, expect_stop="end_turn"):
     resps = {json.dumps(o["id"], sort_keys=True): o for o in a2c if "id" in o and "method" not in o}
     news = [o for o in c2a if o.get("method") == "session/new"]
     prompts = [o for o in c2a if o.get("method") == "session/prompt"]
+    # A6: request discipline — the c2a request multiset must be exactly {initialize x1, session/new x1, session/prompt x1}
+    c2a_requests = [o for o in c2a if "method" in o and "id" in o]
+    c2a_methods = [o["method"] for o in c2a_requests]
+    expected_methods = sorted(["initialize", "session/new", "session/prompt"])
+    if sorted(c2a_methods) != expected_methods:
+        raise Failure(f"{leg}: c2a request methods {sorted(c2a_methods)} != expected {expected_methods}")
+    # A6: every a2c response id maps to one of those requests
+    c2a_ids = {json.dumps(o["id"], sort_keys=True) for o in c2a_requests}
+    a2c_resps = [o for o in a2c if "id" in o and "method" not in o]
+    for r in a2c_resps:
+        if json.dumps(r["id"], sort_keys=True) not in c2a_ids:
+            raise Failure(f"{leg}: a2c response id {r['id']} does not map to any c2a request")
+    # A6: c2a notifications allowed: session/cancel (cancel leg only, exactly once)
+    c2a_notifs = [o for o in c2a if "method" in o and "id" not in o]
+    if leg == "cancel":
+        cancel_notifs = [o for o in c2a_notifs if o.get("method") == "session/cancel"]
+        non_cancel = [o for o in c2a_notifs if o.get("method") != "session/cancel"]
+        if len(cancel_notifs) != 1:
+            raise Failure(f"{leg}: expected exactly 1 session/cancel notification, got {len(cancel_notifs)}")
+        if non_cancel:
+            raise Failure(f"{leg}: unexpected c2a notification method {non_cancel[0].get('method')!r}")
+    else:
+        if c2a_notifs:
+            raise Failure(f"{leg}: unexpected c2a notification {c2a_notifs[0].get('method')!r}")
     if len(news) != 1 or len(prompts) != 1:
         raise Failure(f"{leg}: expected 1 session/new + 1 session/prompt, saw {len(news)}/{len(prompts)}")
     new_resp = resps.get(json.dumps(news[0]["id"], sort_keys=True))
@@ -484,6 +616,7 @@ def _shape(value):
 
 
 def normalize_timeline(entries):
+    """Structure-preserving normalization of interleaved timeline entries."""
     ids, sids = {}, {}
 
     def id_ph(v):
@@ -511,8 +644,6 @@ def normalize_timeline(entries):
                 elif o["method"] == "session/prompt":
                     rec["sessionId"] = sid_ph(params.get("sessionId"))
                     rec["prompt"] = [b.get("type") for b in params.get("prompt") or []]
-                elif o["method"] == "session/cancel":
-                    rec["sessionId"] = sid_ph(params.get("sessionId"))
                 else:
                     rec["params"] = _shape(params)
             elif "method" in o:
@@ -530,9 +661,11 @@ def normalize_timeline(entries):
                            sessionId=sid_ph(params.get("sessionId")))
                 upd = params.get("update") if isinstance(params.get("update"), dict) else {}
                 rec["sessionUpdate"] = upd.get("sessionUpdate")
-                rec["update"] = _shape({k: v for k, v in upd.items() if k not in ("sessionUpdate",)})
+                rec["update"] = _shape({k: v for k, v in upd.items()
+                                        if k not in ("sessionUpdate",)})
             elif "method" in o:
-                rec.update(kind="req", id=id_ph(o["id"]), method=o["method"], params=_shape(o.get("params")))
+                rec.update(kind="req", id=id_ph(o["id"]), method=o["method"],
+                           params=_shape(o.get("params")))
             else:
                 res = o.get("result")
                 rec.update(kind="resp", id=id_ph(o.get("id")), error="error" in o)
@@ -586,10 +719,26 @@ def check_shutdown(entries, c2a, a2c, leg_dir, leg="shutdown"):
         raise Failure(f"{leg}: buzz-acp.exit is {exit_val!r}, expected '0'")
 
 
-def check_two_users(c2a, a2c, entries, leg="two-users"):
+def check_two_users(c2a, a2c, entries, identities, leg="two-users"):
     resps = {json.dumps(o["id"], sort_keys=True): o for o in a2c if "id" in o and "method" not in o}
     news = [o for o in c2a if o.get("method") == "session/new"]
     prompts = [o for o in c2a if o.get("method") == "session/prompt"]
+    # A6: request discipline for two-users: {initialize x1, session/new x2, session/prompt x2}
+    c2a_requests = [o for o in c2a if "method" in o and "id" in o]
+    c2a_methods = sorted([o["method"] for o in c2a_requests])
+    expected_methods = sorted(["initialize", "session/new", "session/new", "session/prompt", "session/prompt"])
+    if c2a_methods != expected_methods:
+        raise Failure(f"{leg}: c2a request methods {c2a_methods} != expected {expected_methods}")
+    # No c2a notifications allowed in two-users
+    c2a_notifs = [o for o in c2a if "method" in o and "id" not in o]
+    if c2a_notifs:
+        raise Failure(f"{leg}: unexpected c2a notification {c2a_notifs[0].get('method')!r}")
+    # A2c response ids map to c2a request ids
+    c2a_ids = {json.dumps(o["id"], sort_keys=True) for o in c2a_requests}
+    a2c_resps = [o for o in a2c if "id" in o and "method" not in o]
+    for r in a2c_resps:
+        if json.dumps(r["id"], sort_keys=True) not in c2a_ids:
+            raise Failure(f"{leg}: a2c response id {r['id']} does not map to any c2a request")
     if len(news) != 2 or len(prompts) != 2:
         raise Failure(f"{leg}: expected 2 session/new + 2 session/prompt, saw {len(news)}/{len(prompts)}")
     sids = []
@@ -615,6 +764,9 @@ def check_two_users(c2a, a2c, entries, leg="two-users"):
                           if ((o.get("params") or {}).get("update") or {}).get("sessionUpdate") == "agent_message_chunk")
     if set(per_session) != set(sids):
         raise Failure(f"{leg}: not every session streamed its own message chunks")
+    # A4: two-users mention pubkeys must differ AND identities.owner != identities.user2
+    if identities["owner"] == identities["user2"]:
+        raise Failure(f"{leg}: identities owner and user2 are identical")
 
 
 def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
@@ -649,6 +801,7 @@ def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
     last_entry = json.loads(tl_lines[-1])
     if not (post_ts > _parse_utc(last_entry["t_utc"])):
         raise Failure(f"{leg}: manifest-post timestamp not after last timeline t_utc")
+    return post_ts
 
 
 def _parse_manifest_body(body: bytes, leg: str) -> dict:
@@ -659,6 +812,7 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
     digests = {}
     current_tree = None
     tree_order = []
+    line_counts = {}
     for line in lines:
         if line.startswith("## "):
             tree_name = line[3:].strip()
@@ -667,14 +821,25 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
             current_tree = tree_name
             tree_order.append(tree_name)
             digests[tree_name] = ""
+            line_counts[tree_name] = 0
         elif current_tree is not None:
+            # A13: validate line format
+            if not line:
+                raise Failure(f"{leg}: manifest body has blank line in section {current_tree}")
+            if not _MANIFEST_LINE_RE.match(line):
+                raise Failure(f"{leg}: manifest body line does not match format in section {current_tree}")
             digests[current_tree] += line + "\n"
+            line_counts[current_tree] += 1
         else:
             raise Failure(f"{leg}: manifest body has content before first header")
     if not tree_order or tree_order[0] != "hermes-agent":
         raise Failure(f"{leg}: manifest first header is not '## hermes-agent'")
     if tuple(tree_order) != MANIFEST_TREES:
         raise Failure(f"{leg}: manifest tree order {tree_order} != {list(MANIFEST_TREES)}")
+    # A13: per-tree file counts == PINNED_BASELINE_FILE_COUNTS
+    for tree in MANIFEST_TREES:
+        if line_counts.get(tree, 0) != PINNED_BASELINE_FILE_COUNTS.get(tree, 0):
+            raise Failure(f"{leg}: manifest {tree} file count {line_counts.get(tree, 0)} != pinned {PINNED_BASELINE_FILE_COUNTS.get(tree, 0)}")
     return {tree: _sha256_bytes(content.encode("utf-8")) for tree, content in digests.items()}
 
 
@@ -694,6 +859,18 @@ def _parse_summary(summary_path, leg, name):
 def check_config_echo(leg_dir, leg):
     startup_path = _require_file(leg_dir / "startup-line.txt", leg, "startup-line.txt")
     startup = startup_path.read_text().strip()
+    # A7: startup-line.txt must equal the FIRST line of buzzacp.log containing "buzz-acp starting:"
+    log_path = _require_file(leg_dir / "buzzacp.log", leg, "buzzacp.log")
+    log_text = log_path.read_text()
+    log_startup = None
+    for log_line in log_text.splitlines():
+        if "buzz-acp starting:" in log_line:
+            log_startup = log_line
+            break
+    if log_startup is None:
+        raise Failure(f"{leg}: buzzacp.log has no line containing 'buzz-acp starting:'")
+    if startup != log_startup:
+        raise Failure(f"{leg}: startup-line.txt does not match buzzacp.log startup line")
     m = re.match(r'^(\S+)\s+INFO buzz_acp: buzz-acp starting: (.*)$', startup)
     if not m:
         raise Failure(f"{leg}: startup-line.txt does not match expected format")
@@ -742,12 +919,25 @@ def check_process_evidence(leg_dir, leg):
         buzz_pid = int(pid_path.read_text().strip())
     except ValueError:
         raise Failure(f"{leg}: buzz-acp.pid is not a valid integer")
+    # A2: buzz-acp.exit REQUIRED in every leg, content parses as int
+    exit_path = _require_file(leg_dir / "buzz-acp.exit", leg, "buzz-acp.exit")
+    exit_text = exit_path.read_text().strip()
+    try:
+        int(exit_text)
+    except ValueError:
+        raise Failure(f"{leg}: buzz-acp.exit is not a valid integer")
     if leg == "shutdown":
         scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
         for line in scan_path.read_text().strip().splitlines():
             parts = line.split(None, 2)
+            # A2: every scan line must parse as <int> <int> <cmd>
             if len(parts) < 3:
-                continue
+                raise Failure(f"{leg}: process-scan-after.txt unparsable line: {line!r}")
+            try:
+                int(parts[0])
+                int(parts[1])
+            except ValueError:
+                raise Failure(f"{leg}: process-scan-after.txt unparsable line: {line!r}")
             cmd = parts[2]
             if PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd or PINNED_BUZZ_ACP_EXE_REALPATH in cmd:
                 raise Failure(f"{leg}: process-scan-after has tee/hermes-acp lines after shutdown")
@@ -756,12 +946,13 @@ def check_process_evidence(leg_dir, leg):
         all_procs = []
         for line in scan_path.read_text().strip().splitlines():
             parts = line.split(None, 2)
+            # A2: every scan line must parse as <int> <int> <cmd>
             if len(parts) < 3:
-                continue
+                raise Failure(f"{leg}: process-scan-after.txt unparsable line: {line!r}")
             try:
                 pid, ppid = int(parts[0]), int(parts[1])
             except ValueError:
-                continue
+                raise Failure(f"{leg}: process-scan-after.txt unparsable line: {line!r}")
             all_procs.append((pid, ppid, parts[2]))
         pids_in_tree = {buzz_pid}
         changed = True
@@ -771,7 +962,9 @@ def check_process_evidence(leg_dir, leg):
                 if ppid in pids_in_tree and pid not in pids_in_tree:
                     pids_in_tree.add(pid)
                     changed = True
-        buzz_found = any(pid == buzz_pid and cmd.startswith(PINNED_BUZZ_ACP_EXE_REALPATH) for pid, _, cmd in all_procs)
+        # A2 / 7-F24: buzz-acp line matched with cmd.split(" ")[0] == PINNED_BUZZ_ACP_EXE_REALPATH
+        buzz_found = any(pid == buzz_pid and cmd.split(" ")[0] == PINNED_BUZZ_ACP_EXE_REALPATH
+                         for pid, _, cmd in all_procs)
         if not buzz_found:
             raise Failure(f"{leg}: process-scan-after has no buzz-acp line with pid {buzz_pid}")
         tee_pids = {pid for pid, ppid, cmd in all_procs if PINNED_TEE_PATH in cmd and ppid == buzz_pid}
@@ -779,9 +972,16 @@ def check_process_evidence(leg_dir, leg):
             raise Failure(f"{leg}: no tee process parented by buzz-acp")
         if not any(PINNED_AGENT_REALPATH in cmd and ppid in tee_pids for _, ppid, cmd in all_procs):
             raise Failure(f"{leg}: no agent process parented by a tee process")
+        # A2: descendant closure check — exempt only the launcher whose pid == buzz-acp ppid
+        buzz_ppid = None
+        for pid, ppid, cmd in all_procs:
+            if pid == buzz_pid:
+                buzz_ppid = ppid
+                break
         for pid, ppid, cmd in all_procs:
             if PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd or PINNED_BUZZ_ACP_EXE_REALPATH in cmd:
-                if "pc_launch.py" in cmd:
+                # A2: exempt only the scan line whose pid == buzz-acp ppid (the launcher)
+                if buzz_ppid is not None and pid == buzz_ppid:
                     continue
                 if pid not in pids_in_tree:
                     raise Failure(f"{leg}: process {pid} ({cmd[:40]}) not in buzz-acp descendant tree")
@@ -789,7 +989,12 @@ def check_process_evidence(leg_dir, leg):
         for line in teardown_path.read_text().strip().splitlines():
             parts = line.split(None, 2)
             if len(parts) < 3:
-                continue
+                raise Failure(f"{leg}: process-scan-teardown.txt unparsable line: {line!r}")
+            try:
+                int(parts[0])
+                int(parts[1])
+            except ValueError:
+                raise Failure(f"{leg}: process-scan-teardown.txt unparsable line: {line!r}")
             if PINNED_TEE_PATH in parts[2] or PINNED_AGENT_REALPATH in parts[2] or PINNED_BUZZ_ACP_EXE_REALPATH in parts[2]:
                 raise Failure(f"{leg}: process-scan-teardown has tee/agent/buzz-acp lines after teardown")
 
@@ -811,50 +1016,72 @@ def check_buzzacp_log(leg_dir, leg):
 
 def check_negative(neg_dir, leg="negative"):
     tl_path = neg_dir / "timeline.jsonl"
-    if not tl_path.exists():
-        raise Failure(f"{leg}: timeline.jsonl absent")
-    entries = [json.loads(l) for l in tl_path.read_text().splitlines() if l.strip()]
-    c2a = [e for e in entries if e["dir"] == "c2a"]
+    _require_file(tl_path, leg, "timeline.jsonl")
+    # A11: required files exactly
+    actual_files = {f.name for f in neg_dir.iterdir() if f.is_file()}
+    extra = actual_files - NEGATIVE_REQUIRED_FILES
+    if extra:
+        raise Failure(f"{leg}: unexpected files: {sorted(extra)}")
+    missing = NEGATIVE_REQUIRED_FILES - actual_files
+    if missing:
+        raise Failure(f"{leg}: {sorted(missing)[0]} absent")
+    # A11: NaN-rejecting loader
+    raw_lines = tl_path.read_text().splitlines()
+    entries = []
+    for i, line in enumerate(raw_lines):
+        if not line.strip():
+            continue
+        entries.append(_reject_nan(line, leg, i + 1))
+    c2a = [e for e in entries if e.get("dir") == "c2a"]
     if not c2a:
         raise Failure(f"{leg}: no c2a frames in timeline")
-    init_req = c2a[0]["frame"]
+    # A11: the c2a initialize MUST be seq 1
+    if not _is_strict_int(entries[0].get("seq")) or entries[0]["seq"] != 1:
+        raise Failure(f"{leg}: first entry is not seq 1")
+    if entries[0].get("dir") != "c2a":
+        raise Failure(f"{leg}: seq 1 is not c2a")
+    init_req = entries[0]["frame"]
     if init_req.get("method") != "initialize":
         raise Failure(f"{leg}: first c2a frame is not an initialize request")
-    fixture_path = HERE / "fixtures" / "neg-malformed-initialize.json"
-    if fixture_path.exists():
-        if init_req.get("params") != json.loads(fixture_path.read_text()):
-            raise Failure(f"{leg}: initialize params != fixture")
+    # A11: fixture absent -> Failure
+    fixture_path = _require_file(HERE / "fixtures" / "neg-malformed-initialize.json", leg, "fixtures/neg-malformed-initialize.json")
+    if init_req.get("params") != json.loads(fixture_path.read_text()):
+        raise Failure(f"{leg}: initialize params != fixture")
     params = init_req.get("params") or {}
     v = ci.classify_request(params)
     if v == "ok":
         raise Failure(f"{leg}: malformed initialize classified as ok")
     if v != ci.MISSING_REQUIRED:
         raise Failure(f"{leg}: expected {ci.MISSING_REQUIRED!r}, got {v!r}")
+    # A11: required files are fail-closed (already checked above)
     rid_path = neg_dir / "runtime-identity.json"
-    if rid_path.exists():
-        rid = json.loads(rid_path.read_text())
-        for field, pin in [("agent_realpath", PINNED_AGENT_REALPATH),
-                           ("agent_entrypoint_sha256", PINNED_AGENT_ENTRYPOINT_SHA256),
-                           ("agent_interpreter_realpath", PINNED_AGENT_INTERPRETER_REALPATH),
-                           ("agent_interpreter_sha256", PINNED_AGENT_INTERPRETER_SHA256)]:
-            if rid.get(field) != pin:
-                raise Failure(f"{leg}: runtime identity {field} mismatch")
-        if rid.get("python_dont_write_bytecode") is not True:
-            raise Failure(f"{leg}: runtime identity python_dont_write_bytecode is not true")
+    rid = json.loads(rid_path.read_text())
+    for field, pin in [("agent_realpath", PINNED_AGENT_REALPATH),
+                       ("agent_entrypoint_sha256", PINNED_AGENT_ENTRYPOINT_SHA256),
+                       ("agent_interpreter_realpath", PINNED_AGENT_INTERPRETER_REALPATH),
+                       ("agent_interpreter_sha256", PINNED_AGENT_INTERPRETER_SHA256)]:
+        if rid.get(field) != pin:
+            raise Failure(f"{leg}: runtime identity {field} mismatch")
+    if rid.get("python_dont_write_bytecode") is not True:
+        raise Failure(f"{leg}: runtime identity python_dont_write_bytecode is not true")
     env_path = neg_dir / "env.json"
-    if env_path.exists():
-        neg_env = json.loads(env_path.read_text())
-        if neg_env.get("HERMES_HOME") != PINNED_HERMES_HOME:
-            raise Failure(f"{leg}: env HERMES_HOME mismatch")
-        if neg_env.get("PYTHONDONTWRITEBYTECODE") != "1":
-            raise Failure(f"{leg}: env PYTHONDONTWRITEBYTECODE is not '1'")
-    a2c = [e for e in entries if e["dir"] == "a2c"]
-    if not a2c:
-        raise Failure(f"{leg}: no agent response captured")
-    resp = a2c[0]["frame"]
+    neg_env = json.loads(env_path.read_text())
+    if neg_env.get("HERMES_HOME") != PINNED_HERMES_HOME:
+        raise Failure(f"{leg}: env HERMES_HOME mismatch")
+    if neg_env.get("PYTHONDONTWRITEBYTECODE") != "1":
+        raise Failure(f"{leg}: env PYTHONDONTWRITEBYTECODE is not '1'")
+    # A11: observed response matched by request id (not a2c[0])
+    req_id = init_req.get("id")
+    a2c = [e for e in entries if e.get("dir") == "a2c"]
+    resp = None
+    for e in a2c:
+        frame = e.get("frame")
+        if frame is not None and "id" in frame and frame["id"] == req_id:
+            resp = frame
+            break
     if resp is None:
-        observed = "none: no parseable response"
-    elif "error" in resp:
+        raise Failure(f"{leg}: no agent response captured")
+    if "error" in resp:
         err = resp["error"]
         code = err.get("code", "?") if isinstance(err, dict) else "?"
         message = err.get("message", "?") if isinstance(err, dict) else str(err)
@@ -887,11 +1114,53 @@ def check_golden(golden_dir, leg="golden"):
         raise Failure(f"{leg}: normalized runs differ from the frozen golden.jsonl")
     if not n1:
         raise Failure(f"{leg}: golden is empty")
+    # A6 / §8 structural assertions on the normalized sequence
     first_rec = json.loads(n1[0])
     if first_rec.get("dir") != "c2a" or first_rec.get("method") != "initialize":
         raise Failure(f"{leg}: first normalized line is not c2a initialize request")
     if first_rec.get("protocolVersion") != PINNED_CLIENT_PROTOCOL_VERSION:
         raise Failure(f"{leg}: first normalized line protocolVersion is not {PINNED_CLIENT_PROTOCOL_VERSION}")
+    # §8: exactly one of each request kind
+    req_methods = [json.loads(l).get("method") for l in n1
+                   if json.loads(l).get("kind") == "req" and json.loads(l).get("dir") == "c2a"]
+    if sorted(req_methods) != sorted(["initialize", "session/new", "session/prompt"]):
+        raise Failure(f"{leg}: golden does not have exactly one of each request kind")
+    # §8: a2c initialize response precedes c2a session/new
+    init_resp_idx = None
+    session_new_idx = None
+    for i, line in enumerate(n1):
+        r = json.loads(line)
+        if r.get("dir") == "a2c" and r.get("kind") == "resp" and r.get("protocolVersion") is not None:
+            if init_resp_idx is None:
+                init_resp_idx = i
+        if r.get("dir") == "c2a" and r.get("method") == "session/new":
+            if session_new_idx is None:
+                session_new_idx = i
+    if init_resp_idx is not None and session_new_idx is not None and init_resp_idx >= session_new_idx:
+        raise Failure(f"{leg}: a2c initialize response does not precede c2a session/new")
+    # §8: session/new response precedes session/prompt
+    new_resp_idx = None
+    prompt_idx = None
+    for i, line in enumerate(n1):
+        r = json.loads(line)
+        if r.get("dir") == "a2c" and r.get("kind") == "resp" and r.get("sessionId") is not None:
+            if new_resp_idx is None:
+                new_resp_idx = i
+        if r.get("dir") == "c2a" and r.get("method") == "session/prompt":
+            if prompt_idx is None:
+                prompt_idx = i
+    if new_resp_idx is not None and prompt_idx is not None and new_resp_idx >= prompt_idx:
+        raise Failure(f"{leg}: session/new response does not precede session/prompt")
+    # §8: every a2c notification carries <SID1>
+    for i, line in enumerate(n1):
+        r = json.loads(line)
+        if r.get("dir") == "a2c" and r.get("kind") == "notif":
+            if r.get("sessionId") != "<SID1>":
+                raise Failure(f"{leg}: a2c notification at line {i} does not carry <SID1>")
+    # §8: >= 1 agent_message_chunk
+    chunks = [l for l in n1 if '"agent_message_chunk"' in l]
+    if not chunks:
+        raise Failure(f"{leg}: golden has no agent_message_chunk")
     last_rec = json.loads(n1[-1])
     if last_rec.get("stopReason") != "end_turn":
         raise Failure(f"{leg}: last normalized line is not end_turn terminal")
@@ -920,14 +1189,14 @@ def check_golden(golden_dir, leg="golden"):
 
 
 def _load_timeline_raw(leg_dir, leg):
-    tl_path = leg_dir / "timeline.jsonl"
+    tl_path = _require_file(leg_dir / "timeline.jsonl", leg, "timeline.jsonl")
     return [_reject_nan(line, leg, i + 1) for i, line in enumerate(tl_path.read_text().splitlines()) if line.strip()]
 
 
 def check_bundle(root: Path) -> str:
     golden = root / "golden"
     if not golden.is_dir():
-        raise Deferred("golden evidence bundle absent")
+        raise Deferred("v2 evidence not captured")
     has_any_timeline = any((golden / leg / "timeline.jsonl").exists() for leg in LEGS)
     if not has_any_timeline:
         raise Deferred("v2 evidence not captured")
@@ -935,6 +1204,12 @@ def check_bundle(root: Path) -> str:
     _require_file(identities_path, "golden", "fixtures/identities.json")
     identities = json.loads(identities_path.read_text())
     baseline_path = golden / "manifests" / "manifest-baseline.txt.gz"
+    # A13: golden/manifests/ contains exactly manifest-baseline.txt.gz
+    _require_dir(golden / "manifests", "golden", "manifests/")
+    _require_file(baseline_path, "golden", "manifests/manifest-baseline.txt.gz")
+    manifest_entries = {f.name for f in (golden / "manifests").iterdir()}
+    if manifest_entries != {"manifest-baseline.txt.gz"}:
+        raise Failure(f"golden: manifests/ contains unexpected entries: {sorted(manifest_entries - {'manifest-baseline.txt.gz'})}")
     expected_dirs = set(LEGS) | {"negative", "manifests"}
     expected_files = {"golden.jsonl"}
     for item in golden.iterdir():
@@ -942,80 +1217,87 @@ def check_bundle(root: Path) -> str:
             raise Failure(f"golden: unexpected directory golden/{item.name}")
         if item.is_file() and item.name not in expected_files:
             raise Failure(f"golden: unexpected file golden/{item.name}")
-    executed = []
+    global _executed
+    _executed = []
     all_mention_event_ids = []
+    # A1: pre-read post-summary timestamps for the mention window
+    post_summary_ts_map = {}
+    for leg in LEGS:
+        d = golden / leg
+        post_sum_path = d / "manifest-post.summary"
+        if post_sum_path.exists():
+            _, post_ts = _parse_summary(post_sum_path, leg, "manifest-post.summary")
+            post_summary_ts_map[leg] = post_ts
     for leg in LEGS:
         d = golden / leg
         if not d.is_dir():
             raise Failure(f"golden: golden/{leg} absent")
         entries = _load_timeline_raw(d, leg)
-        c2a_split, a2c_split = check_timeline(entries, leg, d)
-        check_initialize_frames(c2a_split, a2c_split, leg)
-        check_runtime_identity(d, leg)
-        check_env(d, leg, identities)
-        leg_event_ids = check_mentions(d, leg, identities, entries)
+        c2a_split, a2c_split = _run_check(check_timeline, leg, entries, leg, d)
+        _run_check(check_initialize_frames, leg, c2a_split, a2c_split, leg)
+        _run_check(check_runtime_identity, leg, d, leg)
+        _run_check(check_env, leg, d, leg, identities)
+        post_summary_ts = post_summary_ts_map.get(leg)
+        leg_event_ids = _run_check(check_mentions, leg, d, leg, identities, entries, post_summary_ts)
         all_mention_event_ids.extend(leg_event_ids)
-        check_route(d, leg, entries)
-    executed.extend(["check_timeline", "check_initialize_frames", "check_runtime_identity",
-                     "check_env", "check_mentions", "check_route"])
+        _run_check(check_route, leg, d, leg, entries)
     for leg in ("run-1", "run-2", "shutdown"):
         d = golden / leg
         entries = _load_timeline_raw(d, leg)
         c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
         a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
-        check_prompt_turn(c2a, a2c, leg, entries)
-    executed.append("check_prompt_turn")
+        _run_check(check_prompt_turn, leg, c2a, a2c, leg, entries)
     for leg in LEGS:
-        check_config_echo(golden / leg, leg)
-    executed.append("check_config_echo")
+        _run_check(check_config_echo, leg, golden / leg, leg)
     for leg in LEGS:
-        check_manifests(golden / leg, leg, baseline_path, PINNED_BASELINE_GZ_SHA256)
-    executed.append("check_manifests")
+        _run_check(check_manifests, leg, golden / leg, leg, baseline_path, PINNED_BASELINE_GZ_SHA256)
     for leg in LEGS:
-        check_process_evidence(golden / leg, leg)
-    executed.append("check_process_evidence")
+        _run_check(check_process_evidence, leg, golden / leg, leg)
     for leg in LEGS:
-        check_buzzacp_log(golden / leg, leg)
-    executed.append("check_buzzacp_log")
+        _run_check(check_buzzacp_log, leg, golden / leg, leg)
     d = golden / "cancel"
     entries = _load_timeline_raw(d, "cancel")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
-    check_cancel(entries, c2a, a2c, d)
-    executed.append("check_cancel")
+    _run_check(check_cancel, "cancel", entries, c2a, a2c, d)
     d = golden / "shutdown"
     entries = _load_timeline_raw(d, "shutdown")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
-    check_shutdown(entries, c2a, a2c, d)
-    executed.append("check_shutdown")
+    _run_check(check_shutdown, "shutdown", entries, c2a, a2c, d)
     d = golden / "two-users"
     entries = _load_timeline_raw(d, "two-users")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
-    check_two_users(c2a, a2c, entries)
-    executed.append("check_two_users")
+    _run_check(check_two_users, "two-users", c2a, a2c, entries, identities)
     if len(all_mention_event_ids) != len(set(all_mention_event_ids)):
         raise Failure("golden: mention event id replayed across legs")
-    golden_lines = check_golden(golden)
-    executed.append("check_golden")
+    golden_lines = _run_check(check_golden, "golden", golden)
     neg_dir = golden / "negative"
     _require_dir(neg_dir, "golden", "negative/")
-    neg_reason, neg_observed = check_negative(neg_dir)
-    executed.append("check_negative")
-    if executed != EXPECTED_CHECK_SEQUENCE:
-        raise Failure("golden: check sequence mismatch")
+    neg_reason, neg_observed = _run_check(check_negative, "negative", neg_dir)
+    # A12: derive the executed check sequence from the dispatcher
+    executed_fns = [s.split(":")[0] for s in _executed]
+    # Deduplicate while preserving order (each fn appears once in the sequence)
+    seen = set()
+    deduped = []
+    for fn_name in executed_fns:
+        if fn_name not in seen:
+            seen.add(fn_name)
+            deduped.append(fn_name)
+    if deduped != EXPECTED_CHECK_SEQUENCE:
+        raise Failure(f"golden: check sequence mismatch ({len(deduped)} executed, {len(EXPECTED_CHECK_SEQUENCE)} expected)")
     count = len(golden_lines)
     golden_sha_12 = _sha256_bytes("\n".join(golden_lines).encode("utf-8") + b"\n")[:12]
-    return (f"PASS: S0-01 acp-conformance — {len(executed)} checks executed over "
+    return (f"PASS: S0-01 acp-conformance — {len(deduped)} checks executed over "
             f"{len(LEGS)} legs; golden x2 identical ({count} normalized lines, "
-            f"sha256 {golden_sha_12}); {neg_observed}")
+            f"sha256 {golden_sha_12}); negative: {neg_observed}")
 
 
 def main(argv) -> int:
     if len(argv) != 2:
         print("usage: check_acp_conformance.py <evidence-root>", file=sys.stderr)
-        return 2
+        return 64
     try:
         print(check_bundle(Path(argv[1])))
         return 0

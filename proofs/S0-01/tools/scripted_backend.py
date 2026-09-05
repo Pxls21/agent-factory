@@ -27,6 +27,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -39,6 +40,10 @@ SLOW_CHUNKS = ("po", "n", "g", "")  # "" = the final content-less finish chunk
 FIXED_CREATED = 1788566400  # 2026-09-05T00:00:00Z, frozen
 FIXED_USAGE = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
 MAX_CONTENT_LENGTH = 1_048_576
+# Sentinel objects for _read_body control flow (L3: never bare strings — a client
+# POSTing the JSON document "CHUNKED" must not collide with the sentinel).
+_CHUNKED = object()
+_BAD_CL = object()
 # Credential-bearing header names (lowercased) to drop from records (V-c F10).
 _CREDENTIAL_HEADERS = frozenset({
     "authorization", "proxy-authorization", "x-api-key", "api-key",
@@ -91,15 +96,17 @@ class State:
                                 bearer_token: str | None) -> bool:
         """Fail-closed: if the bearer token appears ANYWHERE outside the Authorization
         header (path, query, body, any remaining header value), return True.
+        M12: exempts ONLY 'authorization'; token in api-key/x-api-key/cookie/
+        x-auth-token/proxy-authorization -> 400 + marker record.
         V-c F10 / AF-AP-35."""
         if not bearer_token:
             return False
         # Check path (includes query string)
         if bearer_token in path:
             return True
-        # Check remaining header values (after credential headers are removed)
+        # Check ALL header values except 'authorization' (the one the bearer arrives in)
         for k, v in headers.items():
-            if k.lower() not in _CREDENTIAL_HEADERS and bearer_token in str(v):
+            if k.lower() != "authorization" and bearer_token in str(v):
                 return True
         # Check body
         if body is not None and bearer_token in json.dumps(body):
@@ -111,6 +118,7 @@ def make_handler(state: State):
     class Handler(BaseHTTPRequestHandler):
         server_version = "s0-01-scripted/1"
         protocol_version = "HTTP/1.1"
+        timeout = 30  # L4: bound handler threads so an incomplete body cannot block forever
 
         def log_message(self, fmt, *args):  # quiet; the record dir is the log
             return
@@ -137,21 +145,28 @@ def make_handler(state: State):
             auth = self.headers.get("Authorization", "")
             return auth[7:] if auth.startswith("Bearer ") else None
 
-        def _read_body(self):
-            # V-c F11: reject chunked transfer encoding
+        def _check_transfer_encoding(self):
+            """M4: reject chunked TE on both GET and POST. Returns True if chunked."""
             te = self.headers.get("Transfer-Encoding", "")
             if "chunked" in te.lower():
-                return "CHUNKED"
+                self.send_response(411)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return True
+            return False
+
+        def _read_body(self):
             cl_raw = self.headers.get("Content-Length")
             if cl_raw is None:
                 return None
-            try:
-                length = int(cl_raw)
-            except (ValueError, TypeError):
-                return "BAD_CL"
+            # L5: Content-Length must match ^[0-9]+$ (RFC 9110 1*DIGIT)
+            if not re.fullmatch(r"[0-9]+", cl_raw or ""):
+                return _BAD_CL
+            length = int(cl_raw)
             # V-c F12: reject negative or oversized Content-Length
             if length < 0 or length > MAX_CONTENT_LENGTH:
-                return "BAD_CL"
+                return _BAD_CL
             raw = self.rfile.read(length) if length else b""
             if not raw:
                 return None
@@ -163,13 +178,16 @@ def make_handler(state: State):
                 with state.lock:
                     count = state.seq
                 return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
+            # M4: reject chunked TE on GET too
+            if self._check_transfer_encoding():
+                return
             bearer = self._bearer_token()
             body = None
             # V-c F10: fail-closed credential leak check
             if state._check_credential_leak("GET", self.path, self.headers,
                                             body, self.client_address[0], bearer):
-                state.record("GET", self.path, self.headers,
-                             {"credential_in_unexpected_location": True},
+                # H1: record with path=None, headers={} so the token is never written
+                state.record("GET", None, {}, {"credential_in_unexpected_location": True},
                              self.client_address[0], bearer)
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
@@ -183,6 +201,9 @@ def make_handler(state: State):
             return self._error(404, f"no route {self.path}", "invalid_request_error", "not_found")
 
         def do_POST(self):
+            # M4: reject chunked TE on POST too (shared method)
+            if self._check_transfer_encoding():
+                return
             bearer = self._bearer_token()
             try:
                 body = self._read_body()
@@ -190,15 +211,8 @@ def make_handler(state: State):
                 state.record("POST", self.path, self.headers, "<invalid json>",
                              self.client_address[0], bearer)
                 return self._error(400, "body is not JSON", "invalid_request_error", "bad_request")
-            # V-c F11: reject chunked transfer encoding with 411
-            if body == "CHUNKED":
-                self.send_response(411)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
-                return
-            # V-c F12: reject bad Content-Length
-            if body == "BAD_CL":
+            # L3: sentinels are module-level objects compared with `is`
+            if body is _BAD_CL:
                 self.send_response(400)
                 self.send_header("Connection", "close")
                 self.end_headers()
@@ -207,8 +221,8 @@ def make_handler(state: State):
             # V-c F10: fail-closed credential leak check
             if state._check_credential_leak("POST", self.path, self.headers,
                                             body, self.client_address[0], bearer):
-                state.record("POST", self.path, self.headers,
-                             {"credential_in_unexpected_location": True},
+                # H1: record with path=None, headers={} so the token is never written
+                state.record("POST", None, {}, {"credential_in_unexpected_location": True},
                              self.client_address[0], bearer)
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")

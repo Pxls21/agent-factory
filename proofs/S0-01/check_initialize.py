@@ -10,7 +10,8 @@ CLI:  check_initialize.py request  <frame.jsonl | params.json>
       check_initialize.py response <frame.jsonl | result.json>
       check_initialize.py request  <probe-capture-dir>   (negative probe: validates capture + classifies)
       check_initialize.py response <probe-capture-dir>   (classifies the a2c response's result)
-Prints the classification; exit 0 on `ok`, 1 on `protocol-violation: …` or `failure_reason: …`, 2 on deferred.
+Prints the classification; exit 0 on `ok`, 1 on `protocol-violation: …` or `failure_reason: …`,
+2 on deferred, 64 on CLI usage error.
 Directory mode `request <dir>`: validates the negative probe capture (params == fixture, identity pins,
 a2c response present) then classifies the request and prints the observed agent response on line 2.
 Directory mode `response <dir>`: classifies the a2c response's result against InitializeResponse.
@@ -28,10 +29,18 @@ SCHEMA = HERE / "fixtures" / "acp-schema-v1.json"
 FIXTURE = HERE / "fixtures" / "neg-malformed-initialize.json"
 MISSING_REQUIRED = "protocol-violation: missing required initialize field"
 
+# Required files in the negative probe capture directory (A11)
+_NEGATIVE_REQUIRED_FILES = frozenset({"timeline.jsonl", "runtime-identity.json", "env.json", "agent-stderr.txt"})
+
 # Import pins for runtime-identity checks in directory mode.
 # S0-01 is not a valid Python package name, so use sys.path.
 sys.path.insert(0, str(HERE))
 import pins  # noqa: E402
+
+
+def _nan_raising(x):
+    """parse_constant callback that rejects NaN/Infinity in JSON (A11)."""
+    raise ValueError(f"NaN/Infinity not allowed in timeline: {x!r}")
 
 
 def load_schema(path: Path = SCHEMA) -> dict:
@@ -117,19 +126,40 @@ def _check_request_directory(dirpath: Path) -> int:
         print("deferred: negative probe not captured")
         return 2
 
+    # A11: Check fixture exists
+    if not FIXTURE.exists():
+        print("failure_reason: negative: fixtures/neg-malformed-initialize.json absent")
+        return 1
+
+    # A11: Required files exactly
+    actual_files = frozenset(e.name for e in dirpath.iterdir() if e.is_file())
+    missing = _NEGATIVE_REQUIRED_FILES - actual_files
+    if missing:
+        print(f"failure_reason: negative: {sorted(missing)[0]} absent")
+        return 1
+    extra = actual_files - _NEGATIVE_REQUIRED_FILES
+    if extra:
+        print(f"failure_reason: negative: unexpected file {sorted(extra)[0]}")
+        return 1
+
+    # Parse timeline with NaN-rejecting loader (A11)
     entries = []
     for line in tl_path.read_text().splitlines():
         if line.strip():
-            entries.append(json.loads(line))
+            entries.append(json.loads(line, parse_constant=_nan_raising))
 
     c2a = [e for e in entries if e["dir"] == "c2a"]
     a2c = [e for e in entries if e["dir"] == "a2c"]
 
-    # seq-1 must be a c2a initialize request
+    # A11: c2a initialize MUST be seq 1
     if not c2a:
         print("failure_reason: negative: no c2a frames in timeline")
         return 1
-    init_req = c2a[0]["frame"]
+    first_c2a = c2a[0]
+    if first_c2a.get("seq") != 1:
+        print(f"failure_reason: negative: c2a initialize seq is {first_c2a.get('seq')}, expected 1")
+        return 1
+    init_req = first_c2a["frame"]
     if init_req.get("method") != "initialize":
         print(f"failure_reason: negative: first c2a frame is {init_req.get('method')!r}, not initialize")
         return 1
@@ -143,9 +173,6 @@ def _check_request_directory(dirpath: Path) -> int:
 
     # Runtime identity pins
     rid_path = dirpath / "runtime-identity.json"
-    if not rid_path.exists():
-        print("failure_reason: negative: runtime-identity.json absent")
-        return 1
     rid = json.loads(rid_path.read_text())
     pin_checks = [
         ("agent_realpath", pins.PINNED_AGENT_REALPATH),
@@ -161,7 +188,7 @@ def _check_request_directory(dirpath: Path) -> int:
         print("failure_reason: negative: python_dont_write_bytecode is not True")
         return 1
 
-    # Must have an a2c response to the request id
+    # A11: observed response is the a2c frame whose id == the request id
     req_id = init_req.get("id")
     matching_responses = [e for e in a2c if e["frame"] is not None and e["frame"].get("id") == req_id]
     if not matching_responses:
@@ -194,7 +221,7 @@ def _check_response_directory(dirpath: Path) -> int:
     entries = []
     for line in tl_path.read_text().splitlines():
         if line.strip():
-            entries.append(json.loads(line))
+            entries.append(json.loads(line, parse_constant=_nan_raising))
 
     a2c = [e for e in entries if e["dir"] == "a2c"]
     if not a2c:
@@ -224,18 +251,23 @@ def _check_response_directory(dirpath: Path) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] not in ("request", "response"):
         print("usage: check_initialize.py request|response <file|dir>", file=sys.stderr)
-        return 2
+        return 64  # A10: usage error exits 64 (EX_USAGE), never 2
     kind, path = argv[1], Path(argv[2])
     # directory mode: probe capture (existing dir, or path with no file extension)
     if path.is_dir() or (not path.exists() and path.suffix not in (".json", ".jsonl")):
-        if kind == "request":
-            return _check_request_directory(path)
-        return _check_response_directory(path)
+        # 6-verify F13: wrap directory mode so any exception → failure_reason: malformed evidence
+        try:
+            if kind == "request":
+                return _check_request_directory(path)
+            return _check_response_directory(path)
+        except Exception as exc:
+            print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
+            return 1
     try:
         payload = load_payload(path, kind)
     except (OSError, ValueError, json.JSONDecodeError, IndexError) as exc:
         print(f"input error: {exc}", file=sys.stderr)
-        return 2
+        return 64  # A10: input errors are usage-class
     verdict = classify_request(payload) if kind == "request" else classify_response(payload)
     print(verdict)
     return 0 if verdict == "ok" else 1

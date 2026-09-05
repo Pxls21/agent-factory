@@ -3,8 +3,10 @@
 Tests the v2 tee contract: timestamps + seq inside the lock, os.read stdin pump,
 bounded stdout join, signal exit codes, raw_b64 for non-JSON, tee_pid in identity.
 
-Mutant-killing tests (V-c F7): lock removal, 64 KiB truncation, dropped partial line,
-CRLF normalisation, hardcoded bytecode flag, frozen timestamps.
+Mutant-killing tests (V-c F7): lock removal (bursty two-pump stress >= 2000 frames
+per direction), 64 KiB truncation, dropped c2a partial line, dropped a2c partial line,
+CRLF normalisation, hardcoded bytecode flag, frozen timestamps, NaN/Infinity -> raw/raw_b64,
+t_mono_ns window bracket, missing env vars.
 """
 from __future__ import annotations
 
@@ -421,41 +423,49 @@ class TestGrandchildStdout:
 
 
 # ---------------------------------------------------------------------------
-# V-c F7 mutant killers: lock removed (concurrent stress)
+# Mutant killer: lock removed — bursty two-pump stress (8-verify F4)
+# Client burst >= 2000 frames, agent independently bursts >= 2000 frames.
+# The agent reads ONE trigger, then writes >= 2000 frames independently
+# while the tee's c2a pump still processes the remaining client frames.
 # ---------------------------------------------------------------------------
 class TestLockContention:
     def test_seq_contiguous_and_mono_nondecreasing_under_contention(self, tmp_path):
-        """Stress with many frames from both directions; assert seq is contiguous 1..N
-        and t_mono_ns is non-decreasing. Kills the 'lock removed' mutant."""
-        n_frames = 1000
+        """Bursty stress with >= 2000 frames from EACH direction (not lock-step echo).
+        Assert seq contiguous 1..N, t_mono_ns non-decreasing, t_utc non-decreasing.
+        Kills the 'lock removed' mutant (8-verify F4)."""
+        n_c2a = 5000
+        n_a2c = 5000
+        # Agent: read one trigger, then burst n_a2c frames while draining stdin.
+        # Write each frame individually (no batch flush) to maximize interleaving.
         agent_code = textwrap.dedent("""\
-            import sys, json
-            count = 0
-            for line in sys.stdin:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    obj = json.loads(stripped)
-                except Exception:
-                    continue
-                # Echo back a burst of frames for each input
-                for i in range(2):
-                    r = {"jsonrpc": "2.0", "method": "echo", "params": {"n": count, "i": i}}
-                    sys.stdout.write(json.dumps(r, separators=(",", ":")) + "\\n")
-                    sys.stdout.flush()
-                    count += 1
+            import sys, json, threading
+            def burst_writer(n):
+                for i in range(n):
+                    r = {"jsonrpc": "2.0", "method": "burst", "params": {"n": i}}
+                    line = json.dumps(r, separators=(",", ":")).encode() + b"\\n"
+                    sys.stdout.buffer.write(line)
+                    if i %% 50 == 0:
+                        sys.stdout.buffer.flush()
+                sys.stdout.buffer.flush()
+            sys.stdin.readline()  # read trigger
+            t = threading.Thread(target=burst_writer, args=(%d,))
+            t.start()
+            sys.stdin.read()  # drain remaining client frames
+            t.join()
             sys.exit(0)
-        """)
+        """ % n_a2c)
+
+        # Build input: 1 trigger + (n_c2a - 1) more frames
         lines = []
-        for i in range(n_frames):
+        for i in range(n_c2a):
             lines.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "m", "params": {}},
                                     separators=(",", ":")) + "\n")
         input_bytes = "".join(lines).encode("utf-8")
 
-        result = _run_tee(tmp_path, agent_code, input_bytes, timeout=30)
+        result = _run_tee(tmp_path, agent_code, input_bytes, timeout=60)
         tl = result["timeline"]
-        assert len(tl) >= n_frames, f"expected >= {n_frames} entries, got {len(tl)}"
+        assert len(tl) >= n_c2a + n_a2c, \
+            f"expected >= {n_c2a + n_a2c} entries, got {len(tl)}"
 
         # seq must be contiguous 1..N
         for i, entry in enumerate(tl):
@@ -465,6 +475,11 @@ class TestLockContention:
         for i in range(1, len(tl)):
             assert tl[i]["t_mono_ns"] >= tl[i - 1]["t_mono_ns"], \
                 f"t_mono_ns decreased at seq {tl[i]['seq']}: {tl[i]['t_mono_ns']} < {tl[i - 1]['t_mono_ns']}"
+
+        # t_utc must be non-decreasing
+        for i in range(1, len(tl)):
+            assert tl[i]["t_utc"] >= tl[i - 1]["t_utc"], \
+                f"t_utc decreased at seq {tl[i]['seq']}: {tl[i]['t_utc']} < {tl[i - 1]['t_utc']}"
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +515,34 @@ class TestLargeLineRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# V-c F7 mutant killer: partial last line without terminator is recorded
+# Mutant killer: partial last line — c2a direction (5-verify M6, 8-verify F6)
+# The c2a path uses _read_lines_from_fd; `if buf: yield buf` is the guard.
+# ---------------------------------------------------------------------------
+class TestPartialLastLineC2A:
+    def test_c2a_partial_line_at_eof(self, tmp_path):
+        """A final CLIENT line without a trailing newline must be recorded in
+        frames-client-to-agent.jsonl and timeline.jsonl.  Kills the
+        'drop-partial-last-line' mutant (5-verify M6, 8-verify F6)."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            # Drain stdin so the tee pump can finish
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        # Input WITHOUT a trailing newline
+        partial_line = b'{"jsonrpc":"2.0","id":99,"method":"partial","params":{}}'
+        result = _run_tee(tmp_path, agent_code, partial_line)
+        assert result["proc"].returncode == 0
+        # The c2a directional file must contain the partial line bytes exactly
+        assert result["c2a_bytes"] == partial_line
+        # Timeline must have a c2a entry with the parsed frame
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) == 1, f"expected 1 c2a entry, got {len(c2a)}"
+        assert c2a[0]["frame"] == {"jsonrpc": "2.0", "id": 99, "method": "partial", "params": {}}
+
+
+# ---------------------------------------------------------------------------
+# V-c F7 mutant killer: partial last line — a2c direction (existing test)
 # ---------------------------------------------------------------------------
 class TestPartialLastLine:
     def test_partial_line_at_eof(self, tmp_path):
@@ -607,3 +649,149 @@ class TestTimestampsAreReal:
         utcs = [e["t_utc"] for e in tee_run["timeline"]]
         for i in range(1, len(utcs)):
             assert utcs[i] >= utcs[i - 1], f"t_utc decreased at {i}: {utcs[i]} < {utcs[i - 1]}"
+
+
+# ---------------------------------------------------------------------------
+# L2 mutant killer: t_mono_ns is monotonic_ns, not wall clock (5-verify L2)
+# Bracket the tee run with time.monotonic_ns() and assert all recorded
+# t_mono_ns values lie inside that window.
+# ---------------------------------------------------------------------------
+class TestMonoNsWindow:
+    def test_t_mono_ns_within_monotonic_window(self, tmp_path):
+        """All t_mono_ns values must lie within the test's own monotonic_ns window.
+        Kills the 'time.time_ns() instead of monotonic_ns()' mutant (5-verify L2)."""
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\\n")
+            sys.stdout.flush()
+            sys.exit(0)
+        """)
+        input_bytes = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            separators=(",", ":")).encode() + b"\n"
+
+        before = time.monotonic_ns()
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        after = time.monotonic_ns()
+
+        assert result["proc"].returncode == 0
+        tl = result["timeline"]
+        assert len(tl) >= 1, "timeline is empty"
+        for e in tl:
+            mono = e["t_mono_ns"]
+            assert before <= mono <= after, \
+                f"t_mono_ns {mono} outside monotonic window [{before}, {after}]"
+
+
+# ---------------------------------------------------------------------------
+# M9 mutant killer: NaN/Infinity lines take the raw/raw_b64 branch
+# (5-verify M9)
+# ---------------------------------------------------------------------------
+class TestNanInfinityRawBranch:
+    def test_nan_line_takes_raw_branch(self, tmp_path):
+        """A line containing NaN must be recorded as frame=null with raw/raw_b64,
+        NOT re-emitted as non-strict JSON.  Kills the NaN-passthrough mutant
+        (5-verify M9)."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            # Agent echoes the NaN line back
+            sys.stdout.buffer.write(b'{"value": NaN}\\n')
+            sys.stdout.buffer.flush()
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        # Client sends a NaN line
+        input_bytes = b'{"value": NaN}\n'
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 0
+        # Both c2a and a2c should have raw/raw_b64 entries (frame=null)
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) >= 1, "no c2a entry"
+        assert c2a[0]["frame"] is None, "NaN line should have frame=null"
+        assert c2a[0]["raw"] == '{"value": NaN}'
+        decoded = base64.b64decode(c2a[0]["raw_b64"])
+        assert decoded == b'{"value": NaN}\n'
+
+        a2c = [e for e in result["timeline"] if e["dir"] == "a2c"]
+        assert len(a2c) >= 1, "no a2c entry"
+        assert a2c[0]["frame"] is None, "NaN line should have frame=null"
+        assert a2c[0]["raw"] == '{"value": NaN}'
+
+    def test_infinity_line_takes_raw_branch(self, tmp_path):
+        """A line containing Infinity must be recorded as frame=null."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            sys.stdout.buffer.write(b'{"value": Infinity}\\n')
+            sys.stdout.buffer.flush()
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        input_bytes = b'{"value": Infinity}\n'
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 0
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) >= 1, "no c2a entry"
+        assert c2a[0]["frame"] is None, "Infinity line should have frame=null"
+        assert c2a[0]["raw"] == '{"value": Infinity}'
+
+    def test_neg_infinity_line_takes_raw_branch(self, tmp_path):
+        """A line containing -Infinity must be recorded as frame=null."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        input_bytes = b'{"value": -Infinity}\n'
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 0
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) >= 1, "no c2a entry"
+        assert c2a[0]["frame"] is None, "-Infinity line should have frame=null"
+        assert c2a[0]["raw"] == '{"value": -Infinity}'
+
+    def test_nan_line_directional_file_byte_exact(self, tmp_path):
+        """The directional file preserves NaN lines byte-exactly."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        input_bytes = b'{"value": NaN}\n'
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["c2a_bytes"] == input_bytes
+
+
+# ---------------------------------------------------------------------------
+# L15: missing env vars -> named error + exit 64 (5-verify L15)
+# ---------------------------------------------------------------------------
+class TestMissingEnvVars:
+    def test_missing_framedir(self, tmp_path):
+        """Missing S0_01_FRAMEDIR prints a named error and exits 64."""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("S0_01_FRAMEDIR", "S0_01_AGENT")}
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=b"",
+            capture_output=True,
+            env=env,
+            timeout=10,
+        )
+        assert proc.returncode == 64
+        assert proc.stderr.decode().strip() == "frame_tee: S0_01_FRAMEDIR is not set"
+
+    def test_missing_agent(self, tmp_path):
+        """Missing S0_01_AGENT prints a named error and exits 64."""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("S0_01_FRAMEDIR", "S0_01_AGENT")}
+        env["S0_01_FRAMEDIR"] = str(tmp_path)
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=b"",
+            capture_output=True,
+            env=env,
+            timeout=10,
+        )
+        assert proc.returncode == 64
+        assert proc.stderr.decode().strip() == "frame_tee: S0_01_AGENT is not set"

@@ -1,11 +1,13 @@
 """Structural checks for .github/workflows/stage0-ci.yml.
 
-Uses line-anchored regexes, not YAML parsing — PyYAML is not a declared
-project dependency. Each assertion pins a structural property from the
+Uses YAML parsing for step-level assertions and line-anchored regexes for
+whole-file structure. Each assertion pins a structural property from the
 review-fixes brief's contract C1.
 """
 import re
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "stage0-ci.yml"
@@ -56,21 +58,22 @@ def test_permissions_contents_read():
 
 
 def test_ledger_diff_step_positioned_correctly():
-    """V-d F15: the 'Committed ledger equals the regenerated one' step must exist with the
-    exact `git diff --exit-code -- proofs/ledger.json` run command, positioned after
-    'Generate ledger' and before 'Validate ledger integrity'."""
-    text = _read()
-    # Find step names with their positions to assert ordering
-    gen_pos = text.find("Generate ledger")
-    diff_pos = text.find("Committed ledger equals the regenerated one")
-    validate_pos = text.find("Validate ledger integrity")
-    assert gen_pos >= 0, "step 'Generate ledger' missing"
-    assert diff_pos >= 0, "step 'Committed ledger equals the regenerated one' missing"
-    assert validate_pos >= 0, "step 'Validate ledger integrity' missing"
-    assert gen_pos < diff_pos < validate_pos, \
-        f"wrong ordering: Generate({gen_pos}) < Diff({diff_pos}) < Validate({validate_pos})"
-    # Assert the exact run command
-    assert re.search(
-        r"Committed ledger equals the regenerated one.*?\n\s+run:\s*git diff --exit-code -- proofs/ledger\.json",
-        text, re.DOTALL
-    ), "ledger diff step run command must be 'git diff --exit-code -- proofs/ledger.json'"
+    """F5: the ledger-diff step's `run` value must == the exact command (not regex),
+    and its position asserted by index between 'Generate ledger' and
+    'Validate ledger integrity'."""
+    wf = yaml.safe_load(_read())
+    steps = wf["jobs"]["ledger-integrity"]["steps"]
+    # Find step indices by name
+    gen_idx = next((i for i, s in enumerate(steps) if s.get("name") == "Generate ledger"), None)
+    diff_idx = next((i for i, s in enumerate(steps)
+                     if s.get("name") == "Committed ledger equals the regenerated one"), None)
+    val_idx = next((i for i, s in enumerate(steps)
+                    if s.get("name") == "Validate ledger integrity"), None)
+    assert gen_idx is not None, "step 'Generate ledger' missing"
+    assert diff_idx is not None, "step 'Committed ledger equals the regenerated one' missing"
+    assert val_idx is not None, "step 'Validate ledger integrity' missing"
+    # Position by index
+    assert gen_idx < diff_idx < val_idx, \
+        f"wrong step ordering: Generate({gen_idx}) < Diff({diff_idx}) < Validate({val_idx})"
+    # Exact run command equality (not regex)
+    assert steps[diff_idx]["run"] == "git diff --exit-code -- proofs/ledger.json"
