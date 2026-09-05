@@ -34,8 +34,10 @@ last_compiled: 2026-09-03
   (client offered 2, agent returned 1; `proofs/S0-01/evidence/initialize-20260905T062959Z/`; no prompt, no
   credential). **Owner ruling 2026-09-05: no new key** — S0-01 uses the same OmniRoute client key the owner's
   Hermes uses (the earlier scoped-key directive dated from the orphan 401s). FINDING: that key is in no row of the
-  authoritative key table (`/v1/models` 401) — Hermes works only because the plane is open; owner regenerates `hermes`. NEXT: preflight → mirror the
-  owner's provider wiring into the pinned config → frame-captured relay prompt turn. Then: `/v1/models` 200 preflight → pinned config to the ADR
+  authoritative key table (`/v1/models` 401) — Hermes works only because the plane is open; owner regenerates `hermes`. **Milestone 2 reached 2026-09-05:** relay-driven prompt turn ×2 (mention → session/new →
+  session/prompt → update stream → end_turn; Hermes reached OmniRoute; credential NOT validated — plane open).
+  FINDING: live-route event structure varies run to run → golden needs the deterministic scripted backend behind
+  an OmniRoute test route (owner-run). NEXT: that route, then cancel/shutdown/two-user legs + the runner. Then: `/v1/models` 200 preflight → pinned config to the ADR
   wire shape (`codex_responses` + compression-off header) → owner mention through `frame_tee.py` → runner
   (capture→structure-preserving-normalize→golden ×2 + schema negative), result.json, ledger. Do NOT touch
   live installs or upstream.lock.yaml; STOP+report if pinned components cannot integrate.

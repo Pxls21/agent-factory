@@ -1,0 +1,1 @@
+2026-09-05T07:08:08.985344Z  INFO buzz_acp: buzz-acp starting: relay=ws://127.0.0.1:3999 pubkey=<HEX> agent_cmd=/home/rocco/s0-01-pinned/.markers/frame_tee.py  mcp_cmd= idle_timeout=900s max_turn=7200s agents=1 heartbeat=0s subscribe=Mentions dedup=Queue session_policy=thread meh=Steer ignore_self=t

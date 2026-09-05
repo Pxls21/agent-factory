@@ -76,6 +76,18 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-05 sync (S0-01 milestone 2: relay-driven prompt turn reached twice; determinism finding; S0-01 still INCOMPLETE):**
+An owner mention (accepted, h+p) drove the pinned buzz-acp → `session/new` + `session/prompt` on the pinned hermes-acp →
+`session/update` stream → `stopReason=end_turn`; Hermes reached the managed OmniRoute (auto/best-coding-fast, 3 API
+calls) — two identical runs, raw frames + argv + env names + config echo (`idle_timeout=900s`) + three-tree manifests
+in `proofs/S0-01/evidence/turn-*/`, every frame v1-conformant (`tests/test_s0_01_turn_capture.py`, 5 tests). Credential
+NOT validated (plane open; Hermes' key is in no key-table row) — not S0-03 evidence. FINDING: the live route's
+`session/update` STRUCTURE differs across identical runs (49+27 vs 59+1 chunks) → the golden needs the sanctioned
+deterministic scripted backend behind a dedicated OmniRoute test route (owner-run config change). Notes: no agent reply
+reached the thread (this buzz-acp delegates replying to the agent via a Buzz MCP tool it was not given — S0-02
+territory); the pinned hermes-acp ran a terminal tool with no policy gate (S0-08 territory). Still unproven:
+cancellation, shutdown, two-user separation, live negative, golden ×2. Denominators unchanged.
+
 **2026-09-05 sync (Codex OmniRoute/Hermes handoff reconciled; OmniRoute invariants monitor; three incidents; S0-01 initialize milestone recorded, S0-01 still INCOMPLETE):**
 Tasks created this increment (subject slugs): `handoff-reconciliation-omniroute` (#31, DONE this
 commit), `incident-prod-relay-pkill-af-ap-34` (#32, logged + rule baked; OPEN until the owner

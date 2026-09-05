@@ -1,0 +1,51 @@
+{
+  "consequence": "Structure-preserving normalization (strip volatile VALUES only; keep message-type sequence, event COUNTS, terminal state) cannot yield byte-identical goldens on the live model route: chunk counts and tool-call rounds are the model's choice. Per the owner's determinism procedure (2026-09-04) the golden runs against a deterministic scripted backend behind a dedicated OmniRoute test route \u2014 sanctioned once the need is demonstrated; demonstrated here with two runs. The live route stays a separate non-golden leg that asserts only the run-invariant structure above.",
+  "finding": "live-route ACP event STRUCTURE is not reproducible across identical inputs",
+  "inputs_identical": {
+    "buzz_acp_argv_modulo_framedir": true,
+    "channel": true,
+    "hermes_config": true,
+    "mention_text": true,
+    "model_route": "auto/best-coding-fast",
+    "owner_identity": true,
+    "pinned_trees": "manifests identical across both runs"
+  },
+  "invariant_across_runs": {
+    "all_notifications_carry_the_session_id": true,
+    "client_sequence": true,
+    "every_frame_v1_conformant": true,
+    "response_ids": true,
+    "single_session_id_per_run": true,
+    "terminal_stop_reason": true
+  },
+  "run1": {
+    "agent_to_client_lines": 87,
+    "evidence_dir": "turn-20260905T070807Z",
+    "kind_counts": {
+      "agent_message_chunk": 27,
+      "agent_thought_chunk": 49,
+      "available_commands_update": 1,
+      "session_info_update": 1,
+      "tool_call": 2,
+      "tool_call_update": 2,
+      "usage_update": 2
+    },
+    "post_terminal": [
+      "session_info_update"
+    ]
+  },
+  "run2": {
+    "agent_to_client_lines": 70,
+    "evidence_dir": "turn-20260905T071639Z",
+    "kind_counts": {
+      "agent_message_chunk": 1,
+      "agent_thought_chunk": 59,
+      "available_commands_update": 1,
+      "tool_call": 2,
+      "tool_call_update": 2,
+      "usage_update": 2
+    },
+    "post_terminal": []
+  },
+  "structure_identical": false
+}
