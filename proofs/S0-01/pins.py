@@ -134,6 +134,17 @@ PINNED_STARTUP_PERMISSION_MODE = "bypassPermissions"
 # `allowlist(1)` on two-users — read 2026-09-06 from the same golden corpus (4 + 1 startup lines).
 PINNED_STARTUP_RESPOND_TO = "owner-only"
 PINNED_STARTUP_RESPOND_TO_TWO_USERS = "allowlist(1)"
+# The remaining startup-line values (VERIFY-CK8 F6: 10 of 21 keys were unconstrained), read 2026-09-06 from the same golden
+# corpus — identical on all five legs; `pubkey` stays per-capture (format-checked only). Consumed by lane A5g.
+PINNED_STARTUP_SUBSCRIBE = "Mentions"
+PINNED_STARTUP_CONTEXT_LIMIT = "12"
+PINNED_STARTUP_MAX_TURNS_PER_SESSION = "0"
+PINNED_STARTUP_HEARTBEAT = "0s"
+PINNED_STARTUP_MEH = "Steer"
+PINNED_STARTUP_MEMORY = "true"
+PINNED_STARTUP_PRESENCE = "true"
+PINNED_STARTUP_TYPING = "true"
+PINNED_STARTUP_MODEL = "(agent default)"
 
 # tee-status.json (A21d) key set — ONE pin for the three consumers (the tee test, the checker; the tee itself stays
 # a standalone tool whose own key set a test asserts EQUAL to this pin — R6-B5b-F16, AF-AP-42 "no local copy").
