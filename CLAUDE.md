@@ -286,7 +286,9 @@ scripts, all ported from the source repo and re-pointed at this one: `scripts/re
 reindex; judgment steps stay yours) · `scripts/orient.sh` (three-layer startup orientation:
 quartet liveness → chat intent via `chat_tail.py` → last commits → ready-to-run `graft ask`
 suggestions; hooked at session start) · `scripts/relaunch-suite.sh` (the detached full suite,
-`pytest proofs/ spikes/ tests/`, survives the Bash cap) · `scripts/why.sh <file> [fn]`
+`pytest proofs/ spikes/ tests/`, survives the Bash cap) · **`scripts/pc_suite.sh launch|wait|log` (the SAME suite on
+the PC's 12 cores with 8 xdist workers, on the pushed head + the working tree as a sha-verified patch — the default
+gate venue when the bridge is up; `spikes/` stays sandbox-only)** · `scripts/why.sh <file> [fn]`
 (on-demand chronology from primary sources) · `scripts/replay_transcript_edits.py` (recover a
 dead delegate's edits from its transcript) · `scripts/lint_delta.py` (the pre-commit pyflakes
 DELTA gate: new hits only) · `scripts/verify-planning-repo.sh` (the planning docs' own check).

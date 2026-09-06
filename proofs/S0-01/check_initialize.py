@@ -6,10 +6,10 @@ v1 is ACP's stable wire version). The seed's negative control is enforced HERE b
 hermes-acp's own `initialize` handler is lenient (a missing `protocolVersion` defaults instead of
 erroring), so a missing required field is a violation of the pinned CONTRACT, caught at the schema layer.
 
-CLI:  check_initialize.py request  <frame.jsonl | params.json>
-      check_initialize.py response <frame.jsonl | result.json>
-      check_initialize.py request  <probe-capture-dir>   (negative probe: validates capture + classifies)
-      check_initialize.py response <probe-capture-dir>   (classifies the a2c response's result)
+CLI:  check_initialize.py request  <frame.jsonl | params.json> [--fixtures-dir <dir>]
+      check_initialize.py response <frame.jsonl | result.json> [--fixtures-dir <dir>]
+      check_initialize.py request  <probe-capture-dir>   [--fixtures-dir <dir>]
+      check_initialize.py response <probe-capture-dir>   [--fixtures-dir <dir>]
 Prints the classification; exit 0 on `ok`, 1 on `protocol-violation: …` or `failure_reason: …`,
 2 on deferred, 64 on CLI usage error.
 Directory mode `request <dir>`: validates the negative probe capture (params == fixture, identity pins,

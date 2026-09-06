@@ -350,3 +350,70 @@ def test_t_utc_without_microseconds_is_rejected(neg):
     entries[1]["t_utc"] = "2026-09-05T17:57:21Z"
     _write_timeline(neg, entries)
     _expect(neg, "timestamp '2026-09-05T17:57:21Z' does not match YYYY-MM-DDTHH:MM:SS.ffffffZ")
+
+
+# ---- R6-N5b-F15 / AF-AP-42 (2026-09-06): the builder is pinned to ONE live run of the real producer ----
+
+_FAKE_AGENT = """#!%s
+import json, sys
+line = sys.stdin.readline()
+req = json.loads(line)
+resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32602, "message": "Invalid params",
+        "data": {"errors": [{"type": "missing", "loc": ["protocolVersion"], "msg": "Field required"}]}}}
+sys.stdout.write(json.dumps(resp) + "\\n")
+sys.stdout.flush()
+"""
+
+
+def _run_real_probe(tmp_path: Path) -> Path:
+    """One live run of proofs/S0-01/tools/acp_probe.py — the producer every fixture in this file imitates."""
+    import os
+    import subprocess
+    agent = tmp_path / "fake_agent.py"
+    agent.write_text(_FAKE_AGENT % sys.executable)
+    agent.chmod(0o755)
+    neg = tmp_path / "live-negative"
+    neg.mkdir()
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), "S0_01_FRAMEDIR": str(neg),
+           "S0_01_AGENT": str(agent), "ACP_PROBE_TIMEOUT": "20", "PYTHONDONTWRITEBYTECODE": "1",
+           "OMNIROUTE_API_KEY": "dummy-value-for-the-redaction-shape-0123456789"}
+    r = subprocess.run([sys.executable, str(P / "tools" / "acp_probe.py")], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return neg
+
+
+def test_build_valid_matches_the_live_producer_shape(tmp_path):
+    live = _run_real_probe(tmp_path)
+    built = tmp_path / "built-negative"
+    build_valid(built)
+    # the file set
+    assert sorted(p.name for p in live.iterdir()) == sorted(p.name for p in built.iterdir())
+    # runtime-identity.json: key SET (JSON object order is not semantics; the producer sorts keys, the builder need not)
+    live_rid = json.loads((live / "runtime-identity.json").read_text())
+    built_rid = json.loads((built / "runtime-identity.json").read_text())
+    assert sorted(built_rid) == sorted(live_rid)
+    # timeline entries: key sets per direction and the a2c envelope keys
+    def entries(d):
+        return [json.loads(l) for l in (d / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    le, be = entries(live), entries(built)
+    assert [e["dir"] for e in le] == [e["dir"] for e in be] == ["c2a", "a2c"]
+    for l, b in zip(le, be):
+        assert sorted(b) == sorted(l)
+        assert sorted(b["frame"]) == sorted(l["frame"])
+    assert sorted(be[1]["frame"]["error"]) == sorted(le[1]["frame"]["error"])
+    # env.json: the redacted-dict SHAPE the producer writes, and the required keys the validator reads
+    live_env = json.loads((live / "env.json").read_text())
+    built_env = json.loads((built / "env.json").read_text())
+    live_red = live_env["OMNIROUTE_API_KEY"]
+    built_red = built_env["OMNIROUTE_API_KEY"]
+    assert sorted(built_red) == sorted(live_red) == ["len", "redacted", "sha256_12"]
+    assert built_red["redacted"] is True and live_red["redacted"] is True
+    assert isinstance(live_red["len"], int) and len(live_red["sha256_12"]) == 12
+    for key in ("PATH", "HOME", "S0_01_FRAMEDIR", "S0_01_AGENT", "PYTHONDONTWRITEBYTECODE", "OMNIROUTE_API_KEY"):
+        assert key in live_env and key in built_env
+    # the live run itself satisfies everything the validator asks except the venue pins — prove the reason is a PIN, not shape
+    with pytest.raises(nc.NegativeFailure) as ei:
+        nc.validate_negative_dir(live, P / "fixtures")
+    assert str(ei.value) in {"agent_argv mismatch", "agent_realpath mismatch", "agent_entrypoint_sha256 mismatch",
+                             "agent_interpreter_realpath mismatch", "env HERMES_HOME mismatch", "env PATH mismatch",
+                             "env HOME mismatch"}, str(ei.value)

@@ -16,11 +16,30 @@ OpenAI-compatible surface (what OmniRoute's `openai-compatible` provider speaks)
 Auth: every request must carry `Authorization: Bearer <token>`; the token is read from
 `--token-file` (a 0600 file with `UPSTREAM_TOKEN=...`), never from argv. A request without it gets
 401 — this proves the call came through OmniRoute carrying the connection's configured credential.
-Recorded requests go to `--record-dir/<seq>.json` (method, path, headers with Authorization
-reduced to a fingerprint, parsed body) — raw upstream evidence.
-Not recorded: GET /healthz (operational, pre-auth); Transfer-Encoding present (411);
-duplicate Content-Length (400); GET with Content-Length > 0 (400); malformed or oversized
-Content-Length (400); short body (400). These all close the connection.
+Authorization equality is == (Bearer <token>X -> 401; Bearer <token> extra -> 401).
+/healthz matches the exact path only (/healthzXYZ -> 401 + record).
+
+Framing gate (_framing_gate, first statement of do_GET and do_POST):
+  1. headers.defects non-empty (parse error, e.g. 'Content-Length : N') -> 400 + close.
+  2. Transfer-Encoding present (any value, any count) -> 411 + close.
+  3. Duplicate Content-Length -> 400 + close.
+  4. Single Content-Length must match [0-9]+ (no sign, space, underscore, exponent);
+     POST with int > MAX_CONTENT_LENGTH -> 400 + close;
+     GET with int > 0 -> read min(int, MAX) bytes, 400 + close;
+     GET with int == 0 -> accepted.
+  5. Expect header present -> 417 + close (prevents interim 100-continue).
+  6. Method not in {GET, POST} -> 501 + close (http.server's default, kept explicit).
+  Every rejection sends Connection: close and never parses a tail as a second request.
+
+Credential screen (_carries_secret): token in s, unquote(s), whitespace-stripped s, or
+  unquote(whitespace-stripped s); applied at the record boundary to path, header names
+  (Authorization exempt), header values, serialized JSON body, and raw body.
+
+Not recorded: GET /healthz (operational, pre-auth); any gate rejection (TE, dup CL,
+  malformed CL, oversized CL, GET with CL > 0, defects, Expect). These all close the
+  connection.  Duplicate non-framing headers collapse to the last value in the record
+  (email.message.Message.items() yields all, but dict() takes the last -- documented,
+  not a defect; evidence combed from the full headers object when needed).
 Determinism: identical request bodies -> byte-identical responses (fixed ids, timestamps, usage).
 """
 from __future__ import annotations
@@ -95,6 +114,13 @@ class State:
         self.seq = 0
         self.lock = threading.Lock()
 
+    def _carries_secret(self, s: str) -> bool:
+        """True if the configured token appears in s under any of four normalizations:
+        literal, percent-decoded, whitespace-stripped, or both."""
+        t = self.token
+        stripped = re.sub(r"\s+", "", s)
+        return t in s or t in unquote(s) or t in stripped or t in unquote(stripped)
+
     def record(self, method: str, path: str, headers, body,
                remote_addr: str, bearer_token: str | None,
                *, raw_body: bytes | None = None) -> tuple[int, bool]:
@@ -105,25 +131,22 @@ class State:
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
-        # If the CONFIGURED token (self.token) appears ANYWHERE outside Authorization
-        # (path, query, body, any header value, raw bytes), the record is sanitized
-        # to path=None, headers={}, body=marker so the token never reaches committed
-        # evidence.  Keyed on the configured secret, not the request-supplied bearer,
+        # _carries_secret checks: literal, unquote, whitespace-strip, unquote+strip.
+        # Keyed on the configured secret, not the request-supplied bearer,
         # so a request without Authorization is still screened (4-F1/6-F3).
-        # M12: exempts ONLY 'authorization'.
+        # M12: exempts ONLY 'authorization' by name.
         leaked = False
-        secret = self.token
-        # R5-D5-F6: screen unquoted path too (percent-encoded token bypass)
-        if path and (secret in path or secret in unquote(path)):
+        if path and self._carries_secret(path):
             leaked = True
-        # R5-D5-F3: screen header NAMES too, not just values
         for k, v in headers.items():
-            if k.lower() != "authorization" and (secret in str(k) or secret in str(v)):
+            if k.lower() != "authorization":
+                if self._carries_secret(str(k)) or self._carries_secret(str(v)):
+                    leaked = True
+        if body is not None:
+            body_str = body if isinstance(body, str) else json.dumps(body)
+            if self._carries_secret(body_str):
                 leaked = True
-        if body is not None and secret in (
-                body if isinstance(body, str) else json.dumps(body)):
-            leaked = True
-        if raw_body and secret.encode() in raw_body:
+        if raw_body and self._carries_secret(raw_body.decode("latin-1")):
             leaked = True
         if leaked:
             rec_path = None
@@ -155,6 +178,63 @@ def make_handler(state: State):
         def log_message(self, fmt, *args):  # quiet; the record dir is the log
             return
 
+        # -- framing gate (allow-list) ----------------------------------------
+        def _reject(self, code: int):
+            """Send a bare rejection response with Connection: close."""
+            self.send_response(code)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+        def _framing_gate(self) -> bool:
+            """Unified allow-list framing gate.  Returns True if rejected
+            (response sent, connection closed).  Called as the FIRST statement
+            of do_GET and do_POST."""
+            # 1. Header parse defects (e.g. 'Content-Length : N' with space before colon)
+            if self.headers.defects:
+                self._reject(400)
+                return True
+            # 2. Transfer-Encoding present (any value, any count)
+            if self.headers.get_all("Transfer-Encoding"):
+                self._reject(411)
+                return True
+            # 3. Duplicate Content-Length
+            cls = self.headers.get_all("Content-Length") or []
+            if len(cls) > 1:
+                self._reject(400)
+                return True
+            # 4. Single Content-Length: must be [0-9]+ and within bounds
+            if len(cls) == 1:
+                cl = cls[0]
+                if not re.fullmatch(r"[0-9]+", cl):
+                    self._reject(400)
+                    return True
+                n = int(cl)
+                if self.command == "POST":
+                    if n > MAX_CONTENT_LENGTH:
+                        self._reject(400)
+                        return True
+                else:  # GET
+                    if n > 0:
+                        self.rfile.read(min(n, MAX_CONTENT_LENGTH))
+                        self._reject(400)
+                        return True
+            # 5. Expect header present (prevents interim 100-continue — F21)
+            if self.headers.get("Expect"):
+                self._reject(417)
+                return True
+            # 6. Method not in {GET, POST} — kept explicit though http.server
+            #    also sends 501 for unhandled methods
+            if self.command not in ("GET", "POST"):
+                self._reject(501)
+                return True
+            return False
+
+        def handle_expect_100(self):
+            """Override: suppress 100-continue interim response;
+            _framing_gate sends 417 instead."""
+            return True  # proceed to do_ method; gate will reject
+
         # -- helpers -------------------------------------------------------
         def _send_json(self, code: int, obj, extra=None):
             data = (json.dumps(obj, sort_keys=True, separators=(",", ":")) + "\n").encode()
@@ -177,37 +257,14 @@ def make_handler(state: State):
             auth = self.headers.get("Authorization", "")
             return auth[7:] if auth.startswith("Bearer ") else None
 
-        def _check_transfer_encoding(self):
-            """M4: reject chunked TE on both GET and POST. Returns True if chunked."""
-            te = self.headers.get("Transfer-Encoding", "")
-            if "chunked" in te.lower():
-                self.send_response(411)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
-                return True
-            return False
-
-        def _check_duplicate_content_length(self):
-            """R5-D5-F4: reject duplicate Content-Length headers (RFC 9112 s6.3)."""
-            vals = self.headers.get_all("Content-Length")
-            if vals is not None and len(vals) > 1:
-                self.send_response(400)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
-                return True
-            return False
-
         def _read_body(self):
             cl_raw = self.headers.get("Content-Length")
             if cl_raw is None:
                 return None
-            # L5: Content-Length must match ^[0-9]+$ (RFC 9110 1*DIGIT)
+            # Defense-in-depth: gate already validated, but keep for safety
             if not re.fullmatch(r"[0-9]+", cl_raw or ""):
                 return _BAD_CL
             length = int(cl_raw)
-            # V-c F12: reject negative or oversized Content-Length
             if length < 0 or length > MAX_CONTENT_LENGTH:
                 return _BAD_CL
             raw = self.rfile.read(length) if length else b""
@@ -223,26 +280,8 @@ def make_handler(state: State):
 
         # -- routes --------------------------------------------------------
         def do_GET(self):
-            # R5-D5-F1: framing gate BEFORE any route dispatch (including /healthz)
-            if self._check_transfer_encoding():
+            if self._framing_gate():
                 return
-            if self._check_duplicate_content_length():
-                return
-            # R5-D5-F5: GET with CL > 0 -> read body and reject (anti-smuggling);
-            # CL == 0 -> accepted, falls through to normal routing.
-            cl_raw = self.headers.get("Content-Length")
-            if cl_raw is not None:
-                try:
-                    cl = int(cl_raw)
-                except (ValueError, OverflowError):
-                    cl = 1  # treat invalid as non-zero
-                if cl > 0:
-                    self.rfile.read(min(cl, MAX_CONTENT_LENGTH))
-                    self.send_response(400)
-                    self.send_header("Connection", "close")
-                    self.end_headers()
-                    self.close_connection = True
-                    return
             if self.path.split("?", 1)[0] == "/healthz":
                 with state.lock:
                     count = state.seq
@@ -263,10 +302,7 @@ def make_handler(state: State):
             return self._error(404, f"no route {self.path}", "invalid_request_error", "not_found")
 
         def do_POST(self):
-            # R5-D5-F1: framing gate BEFORE any route dispatch
-            if self._check_transfer_encoding():
-                return
-            if self._check_duplicate_content_length():
+            if self._framing_gate():
                 return
             bearer = self._bearer_token()
             try:
@@ -281,10 +317,7 @@ def make_handler(state: State):
                 return self._error(400, "body is not JSON", "invalid_request_error", "bad_request")
             # L3: sentinels are module-level objects compared with `is`
             if body is _BAD_CL:
-                self.send_response(400)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
+                self._reject(400)
                 return
             # Record at the single boundary; credential leak handled inside record()
             _seq, leaked = state.record("POST", self.path, self.headers, body,

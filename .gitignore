@@ -35,3 +35,6 @@ vendor/
 
 # sentrux (advisory instrument) runtime: composed scan tree + baseline — regenerable, never committed
 /.sentrux-runtime/
+
+# pc_suite.sh run dirs on the PC clone (patch, worktree, log, rc) — regenerable, never committed
+/.suite/

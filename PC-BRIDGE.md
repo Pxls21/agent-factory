@@ -39,6 +39,12 @@ does both.
 - `scripts/pc.sh '<command>'` — JSON-encodes the command, posts with the right header, prints
   stdout/stderr, exits with the remote rc. Committed here so it never needs rebuilding.
 - Long jobs (installs, builds, spikes): fire-and-poll — one call launches
+  PRECEDENCE (bit 2026-09-06 by pc_suite.sh): `a && b && setsid x … &` backgrounds the WHOLE and-list in a
+  subshell that still holds the bridge's stdout pipe, so the call blocks until the job ends and the client's
+  retries launch duplicates — separate the statements with `;` (or a wrapper script) so only the setsid
+  command is backgrounded, and guard INSIDE the same call on state the job creates (`if [ -s pid ]`).
+  The PC's `/tmp` is a 63 GB tmpfs: point pytest at `--basetemp` under a disk-backed dir (one 8-worker
+  run writes ~5 GB); the replayed launches above filled it and the next run crashed at startup.
   `setsid bash <guard.sh> > /tmp/<job>.log 2>&1 < /dev/null &`, later calls poll
   `ps -p <pid>` + `tail` the log. NEVER hold an HTTP call open past ~2 min. A plain `nohup … &`
   inside a bridge call dies with the command's process group — use `setsid` + a `flock` guard.

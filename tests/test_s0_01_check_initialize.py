@@ -622,8 +622,9 @@ def test_response_dir_rejects_null_c2a_frame(tmp_path):
 # ---- R5-N5-F5: schema resolution via --fixtures-dir ----
 
 def test_request_file_mode_uses_fixtures_dir_schema(tmp_path):
-    """R5-N5-F5: a mutated schema in --fixtures-dir changes classification.
-    Kills CI-06/CI-06b (schema load mutation survivors)."""
+    """R5-N5-F5: a mutated schema in --fixtures-dir changes file-mode classification.
+    Kills CI-06c (file-mode schema load mutant). Directory-mode mutants CI-06/CI-06b
+    are killed by the separate request-dir and response-dir schema tests below."""
     # Create a custom fixtures dir with a modified schema that DOES NOT
     # require protocolVersion, so the fixture classifies as "ok" instead.
     fx = tmp_path / "fixtures"
@@ -732,3 +733,116 @@ def test_make_capture_dir_keys_match_live_producer(tmp_path):
     assert set(live_tl[0].keys()) == set(builder_tl[0].keys()), (
         f"timeline c2a keys differ: live={set(live_tl[0].keys())} builder={set(builder_tl[0].keys())}"
     )
+
+
+# ---- R6-N5b-F1: directory-mode schema via --fixtures-dir ----
+
+def _make_relaxed_fixtures_dir(tmp_path):
+    """Create a fixtures dir with a RELAXED schema (protocolVersion not required)
+    and a copy of the neg-malformed-initialize.json fixture."""
+    import shutil
+    fx = tmp_path / "relaxed_fixtures"
+    fx.mkdir(exist_ok=True)
+    schema_src = ROOT / "proofs" / "S0-01" / "fixtures" / "acp-schema-v1.json"
+    schema = json.loads(schema_src.read_text())
+    for defn_name in ("InitializeRequest", "InitializeResponse"):
+        defn = schema.get("$defs", {}).get(defn_name, {})
+        if "required" in defn and "protocolVersion" in defn["required"]:
+            defn["required"].remove("protocolVersion")
+    (fx / "acp-schema-v1.json").write_text(json.dumps(schema, indent=2))
+    shutil.copy2(ROOT / "proofs" / "S0-01" / "fixtures" / "neg-malformed-initialize.json",
+                 fx / "neg-malformed-initialize.json")
+    return fx
+
+
+def test_request_dir_uses_fixtures_dir_schema(tmp_path):
+    """R6-N5b-F1: request <dir> with --fixtures-dir carrying a RELAXED schema
+    changes the classification to 'ok'. Kills CI-06 (schema = load_schema() mutant)."""
+    d = _make_capture_dir(tmp_path)
+    fx = _make_relaxed_fixtures_dir(tmp_path)
+    r = _run("request", d, fixtures_dir=fx)
+    assert r.returncode == 1  # request dir always returns 1
+    lines = r.stdout.strip().splitlines()
+    # With the relaxed schema, protocolVersion is not required → classification is "ok"
+    assert lines[0] == "ok", (
+        f"expected 'ok' with relaxed schema, got {lines[0]!r} (CI-06 may survive)"
+    )
+
+
+def test_response_dir_uses_fixtures_dir_schema(tmp_path):
+    """R6-N5b-F1: response <dir> with --fixtures-dir carrying a RELAXED schema
+    classifies a result lacking protocolVersion as 'ok'. Kills CI-06b."""
+    # Build a capture with a result that is MISSING protocolVersion
+    a2c_frame = {"jsonrpc": "2.0", "id": 0, "result": {"agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c_frame)
+    fx = _make_relaxed_fixtures_dir(tmp_path)
+    r = _run("response", d, fixtures_dir=fx)
+    # With relaxed schema: "ok" → exit 0
+    assert r.returncode == 0, (
+        f"expected exit 0 with relaxed schema, got {r.returncode}: {r.stdout}"
+    )
+    assert r.stdout.strip() == "ok"
+
+
+# ---- R6-N5b-F9: response-dir with zero c2a entries ----
+
+def test_response_dir_no_c2a_frames_exits_1(tmp_path):
+    """R6-N5b-F9: response <dir> with a timeline of zero c2a entries outputs
+    the exact line 'no c2a frames in timeline'. Kills CI-09."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    # Only a2c entries, no c2a
+    a2c = {"seq": 1, "dir": "a2c", "t_utc": "2026-09-05T17:57:21.031783Z",
+           "t_mono_ns": 4649102335384757,
+           "frame": {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1}}}
+    (d / "timeline.jsonl").write_text(json.dumps(a2c, separators=(",", ":")) + "\n")
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "no c2a frames in timeline"
+
+
+# ---- R6-N5b-F11: response-dir with schema-invalid result ----
+
+def test_response_dir_invalid_result_exits_1(tmp_path):
+    """R6-N5b-F11: response <dir> with a result missing protocolVersion → exit 1
+    with the exact classification line. Kills CI-16 (return 0 mutant)."""
+    a2c_frame = {"jsonrpc": "2.0", "id": 0, "result": {"agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c_frame)
+    r = _run("response", d)
+    assert r.returncode == 1, (
+        f"expected exit 1 for schema-invalid result, got {r.returncode}: {r.stdout}"
+    )
+    assert r.stdout.strip() == "protocol-violation: missing required initialize field"
+
+
+# ---- R6-N5b-F13: response-dir NaN rejection ----
+
+def test_response_dir_nan_in_a2c_frame(tmp_path):
+    """R6-N5b-F13: NaN in a response-mode a2c frame triggers the NaN rejection.
+    Kills CI-14 (parse_constant removed mutant)."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    c2a = {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T17:57:20.411449Z",
+           "t_mono_ns": 4649101715037563,
+           "frame": {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}}
+    (d / "timeline.jsonl").write_text(
+        json.dumps(c2a, separators=(",", ":")) + "\n"
+        + '{"seq":2,"dir":"a2c","t_utc":"2026-09-05T17:57:21.031783Z","t_mono_ns":NaN,'
+          '"frame":{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1}}}\n'
+    )
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert "NaN/Infinity not allowed in timeline" in r.stdout.strip()
+
+
+# ---- R6-N5b-F14: --fixtures-dir with no value ----
+
+def test_fixtures_dir_no_value_exits_64():
+    """R6-N5b-F14: --fixtures-dir with no value after it → usage + exit 64.
+    Kills CI-18 (return 0 mutant)."""
+    r = subprocess.run(
+        [sys.executable, str(CHECK_INIT), "request", str(FIXTURE), "--fixtures-dir"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode == 64
+    assert "usage:" in r.stderr

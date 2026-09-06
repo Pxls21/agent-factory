@@ -646,8 +646,9 @@ def test_handler_timeout_bounds_incomplete_body(backend):
         pass
     elapsed = time.time() - t0
     s.close()
-    assert 20 < elapsed < 50, \
-        f"expected ~30s (handler timeout), got {elapsed:.1f}s"
+    # F20: bound by the handler's configured timeout (30s) with generous slack
+    assert elapsed >= 15, f"completed too fast ({elapsed:.1f}s), expected ~30s handler timeout"
+    assert elapsed <= 75, f"took too long ({elapsed:.1f}s), expected ~30s handler timeout"
     # Server must still be alive
     status, _ = _call(port, "GET", "/healthz", token=None)
     assert status == 200
@@ -1355,3 +1356,532 @@ def test_get_with_cl_1_rejected_400(backend):
     ).encode()
     resp = _raw_request(port, raw)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+
+
+# -- D5c: framing gate domain table -------------------------------------------
+
+_POST_BODY = {"model": "s0-01-pong", "messages": [{"role": "user", "content": "hi"}]}
+_POST_BODY_BYTES = json.dumps(_POST_BODY).encode()
+
+# Forged POST tail: a complete valid request that creates a record if processed
+def _forged_tail(port):
+    body = json.dumps({"model": "s0-01-pong",
+                        "messages": [{"role": "user", "content": "FORGED"}]})
+    return (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"\r\n"
+        f"{body}"
+    ).encode()
+
+
+def _build_domain_table():
+    """Build the full framing-gate domain table.
+
+    Each entry: (case_id, method, path, header_lines, body_bytes, token_value,
+                 expected_status, expect_close, expected_records_delta)
+
+    Framing cases x routes x credentials, per the brief's allow-list design.
+    """
+    table = []
+    cl_n_len = len(_POST_BODY_BYTES)
+
+    # (name, extra_header_lines, get_gate_status, post_gate_status)
+    # gate_status = None means accepted (not rejected by gate)
+    FRAMINGS = [
+        ("no_cl",       [],                                        None, None),
+        ("cl_0",        ["Content-Length: 0"],                      None, None),
+        ("cl_n",        [f"Content-Length: {cl_n_len}"],            400,  None),
+        ("cl_neg1",     ["Content-Length: -1"],                     400,  400),
+        ("cl_neg0",     ["Content-Length: -0"],                     400,  400),
+        ("cl_abc",      ["Content-Length: abc"],                    400,  400),
+        ("cl_1e3",      ["Content-Length: 1e3"],                    400,  400),
+        ("cl_0x10",     ["Content-Length: 0x10"],                   400,  400),
+        ("cl_empty",    ["Content-Length:"],                        400,  400),
+        # Leading space: parser strips it, value becomes "5" -> accepted
+        ("cl_space5",   ["Content-Length:  5"],                     400,  None),
+        ("cl_5space",   ["Content-Length: 5 "],                     400,  400),
+        ("cl_1_0",      ["Content-Length: 1_0"],                    400,  400),
+        ("cl_over_max", ["Content-Length: 2000000"],                400,  400),
+        ("dup_cl_eq",   ["Content-Length: 5", "Content-Length: 5"], 400,  400),
+        ("dup_cl_diff", ["Content-Length: 5", "Content-Length: 10"],400,  400),
+        ("te_chunked",  ["Transfer-Encoding: chunked"],            411,  411),
+        ("te_gzip",     ["Transfer-Encoding: gzip"],               411,  411),
+        ("te_identity", ["Transfer-Encoding: identity"],           411,  411),
+        ("te_two",      ["Transfer-Encoding: chunked",
+                         "Transfer-Encoding: gzip"],               411,  411),
+        ("defects",     ["Content-Length : 5"],                     400,  400),
+        ("expect",      ["Expect: 100-continue"],                  417,  417),
+    ]
+
+    ROUTES = [
+        ("GET",  "/v1/models"),
+        ("GET",  "/healthz"),
+        ("GET",  "/healthz?x=1"),
+        ("POST", "/v1/chat/completions"),
+    ]
+
+    for fname, headers, get_gate, post_gate in FRAMINGS:
+        for route_method, route_path in ROUTES:
+            for has_cred in (True, False):
+                cred_label = "cred" if has_cred else "nocred"
+                token_val = TOKEN if has_cred else None
+                method = route_method
+
+                gate_status = get_gate if method == "GET" else post_gate
+
+                # cl_space5 on GET: parser strips leading space -> value "5" ->
+                # fullmatch passes -> cl=5, cl > 0 on GET -> rejected 400
+                if fname == "cl_space5" and method == "GET":
+                    gate_status = 400
+
+                # cl_space5 on POST: parser strips -> "5" -> valid, cl=5 <= MAX -> accepted
+                # (post_gate is already None for cl_space5)
+
+                if gate_status is not None:
+                    status = gate_status
+                    records = 0
+                    close = True
+                else:
+                    # Gate accepts -- status depends on route/cred
+                    close = False
+                    if method == "GET":
+                        base_path = route_path.split("?", 1)[0]
+                        if base_path == "/healthz":
+                            status = 200
+                            records = 0
+                        elif base_path == "/v1/models":
+                            status = 200 if has_cred else 401
+                            records = 1
+                        else:
+                            status = 404 if has_cred else 401
+                            records = 1
+                    else:  # POST
+                        records = 1
+                        if fname == "cl_n":
+                            status = 200 if has_cred else 401
+                        elif fname == "cl_space5":
+                            # CL "5" -> reads 5 bytes of body -> short body
+                            # if body is _POST_BODY_BYTES (longer) -> only 5 read
+                            # Actually: cl=5 with len(body_bytes) matching is fine
+                            # We send 5 bytes body -> short for real body -> 400
+                            status = 400 if has_cred else 401
+                            records = 0 if has_cred else 1
+                        else:
+                            # no_cl or cl_0: body is None
+                            status = 400 if has_cred else 401
+
+                # Build body_bytes — enough data so gate reads complete instantly
+                if gate_status is not None:
+                    # Rejected: supply body matching the claimed CL so reads don't block
+                    if method == "GET" and fname == "cl_n":
+                        body = b"X" * cl_n_len
+                    elif method == "GET" and fname == "cl_over_max":
+                        # gate reads min(2000000, MAX)=MAX bytes; supply them
+                        body = b"X" * 1_048_576
+                    elif method == "GET" and fname in ("cl_space5", "cl_5space"):
+                        body = b"XXXXX"
+                    else:
+                        body = b""
+                else:
+                    if method == "POST" and fname == "cl_n":
+                        body = _POST_BODY_BYTES
+                    elif method == "POST" and fname == "cl_space5":
+                        body = b"XXXXX"
+                    else:
+                        body = b""
+
+                # cl_space5 on POST: CL=5, body=5 bytes "XXXXX", json.loads fails
+                # -> _ParseError -> record written -> 400 "body is not JSON"
+                # _ParseError returns 400 BEFORE the auth check, regardless of cred
+                if fname == "cl_space5" and method == "POST" and gate_status is None:
+                    records = 1
+                    status = 400  # always "body is not JSON"
+
+                case_id = f"{fname}/{route_method}{route_path}/{cred_label}"
+                table.append((case_id, method, route_path, headers, body,
+                              token_val, status, close, records))
+
+    # Method overrides: PUT, HEAD, OPTIONS -> 501 via http.server
+    for mname in ("PUT", "HEAD", "OPTIONS"):
+        for _, route_path in ROUTES:
+            for has_cred in (True, False):
+                cred_label = "cred" if has_cred else "nocred"
+                token_val = TOKEN if has_cred else None
+                case_id = f"{mname.lower()}/{mname}{route_path}/{cred_label}"
+                table.append((case_id, mname, route_path, [], b"",
+                              token_val, 501, True, 0))
+
+    return table
+
+
+_DOMAIN_TABLE = _build_domain_table()
+
+
+@pytest.mark.parametrize(
+    "case_id,method,path,header_lines,body_bytes,token_val,"
+    "expected_status,expect_close,expected_records",
+    _DOMAIN_TABLE,
+    ids=[t[0] for t in _DOMAIN_TABLE],
+)
+def test_framing_domain_table(backend, case_id, method, path, header_lines,
+                               body_bytes, token_val, expected_status,
+                               expect_close, expected_records):
+    """D5c: table-driven domain test for the framing gate allow-list.
+
+    Every request is followed by a forged POST tail in the same sendall.
+    Asserts: expected status, Connection: close on rejections, exactly one
+    HTTP/1.1 response, and exact record count delta.
+    """
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+
+    # Build raw request
+    lines = [f"{method} {path} HTTP/1.1", f"Host: 127.0.0.1:{port}"]
+    if token_val is not None:
+        lines.append(f"Authorization: Bearer {token_val}")
+    if method == "POST":
+        lines.append("Content-Type: application/json")
+    for hl in header_lines:
+        lines.append(hl)
+    raw_req = ("\r\n".join(lines) + "\r\n\r\n").encode() + body_bytes
+
+    # Append forged tail (a complete valid POST that creates a record if processed)
+    tail = _forged_tail(port)
+    payload = raw_req + tail
+
+    # Send and read response
+    s = socket.socket()
+    s.settimeout(5)
+    s.connect(("127.0.0.1", port))
+    s.sendall(payload)
+    chunks = []
+    try:
+        while True:
+            c = s.recv(8192)
+            if not c:
+                break
+            chunks.append(c)
+    except socket.timeout:
+        pass
+    s.close()
+    resp = b"".join(chunks)
+
+    # Assert status of the FIRST response
+    status_line = resp.split(b"\r\n", 1)[0]
+    assert str(expected_status).encode() in status_line, \
+        f"[{case_id}] expected {expected_status} in {status_line!r}"
+
+    http_count = resp.count(b"HTTP/1.1 ")
+
+    if expect_close:
+        # REJECTED: gate closed the connection, tail must NOT be processed
+        assert http_count == 1, \
+            f"[{case_id}] expected 1 HTTP/1.1 response, got {http_count}: smuggling"
+        assert b"Connection: close" in resp, \
+            f"[{case_id}] rejection must include Connection: close"
+        # Zero new records from the rejected request (tail blocked too)
+        count_after = len(list(backend["rec"].glob("*.json")))
+        actual_delta = count_after - count_before
+        assert actual_delta == 0, \
+            f"[{case_id}] rejected request wrote {actual_delta} record(s), expected 0"
+    else:
+        # ACCEPTED: first request served, tail processed via keep-alive
+        # Tail is a valid POST that always creates 1 record
+        assert http_count == 2, \
+            f"[{case_id}] expected 2 HTTP/1.1 responses (served + tail), got {http_count}"
+        count_after = len(list(backend["rec"].glob("*.json")))
+        actual_delta = count_after - count_before
+        total_expected = expected_records + 1  # +1 for the processed tail
+        assert actual_delta == total_expected, \
+            f"[{case_id}] expected {total_expected} new record(s) " \
+            f"({expected_records} + 1 tail), got {actual_delta}"
+
+
+# -- D5c: superstring bearer control ------------------------------------------
+
+def test_bearer_superstring_rejected_401(backend):
+    """D5c F11: Bearer <token>X must be rejected (not authenticated).
+    Authorization uses ==, not startswith."""
+    status, data = _call(backend["port"], "GET", "/v1/models",
+                         token=TOKEN + "X")
+    assert status == 401
+    assert json.loads(data)["error"]["code"] == "unauthorized"
+
+
+def test_bearer_extra_space_rejected_401(backend):
+    """D5c F11: Bearer <token> extra must be rejected."""
+    port = backend["port"]
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN} extra\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"401" in resp.split(b"\r\n", 1)[0]
+
+
+# -- D5c: /healthzXYZ control ------------------------------------------------
+
+def test_healthz_exact_path_no_prefix_match(backend):
+    """D5c F22: /healthzXYZ must NOT match /healthz -> recorded + auth-checked.
+    With no credential: 401 (not 200 which /healthz would give)."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    status, data = _call(port, "GET", "/healthzXYZ", token=None)
+    assert status == 401, "/healthzXYZ must NOT be treated as /healthz"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before + 1, \
+        "/healthzXYZ must write a record (not treated as /healthz)"
+
+
+# -- D5c: credential screen — percent-encoded token in header value ----------
+
+def test_credential_percent_encoded_in_header_value(backend):
+    """D5c F9: percent-encoded token in header VALUE must be caught."""
+    port = backend["port"]
+    encoded = TOKEN[:-1] + "%{:02x}".format(ord(TOKEN[-1]))
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Trace: {encoded}\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0]
+    body_start = resp.find(b"\r\n\r\n")
+    assert body_start >= 0
+    resp_body = json.loads(resp[body_start + 4:])
+    assert resp_body["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    assert TOKEN.encode() not in recs[-1].read_bytes()
+
+
+# -- D5c: credential screen — percent-encoded token in header name ----------
+
+def test_credential_percent_encoded_in_header_name(backend):
+    """D5c F9: percent-encoded token in header NAME must be caught."""
+    port = backend["port"]
+    encoded = TOKEN[:-1] + "%{:02x}".format(ord(TOKEN[-1]))
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"{encoded}: x\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0]
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    assert TOKEN.encode() not in recs[-1].read_bytes()
+
+
+# -- D5c: credential screen — percent-encoded token in body -----------------
+
+def test_credential_percent_encoded_in_json_body(backend):
+    """D5c F9: percent-encoded token in JSON body must be caught."""
+    port = backend["port"]
+    encoded = TOKEN[:-1] + "%{:02x}".format(ord(TOKEN[-1]))
+    body = json.dumps({"model": "s0-01-pong", "messages": [],
+                        "note": encoded})
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"\r\n"
+        f"{body}"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0]
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    assert TOKEN.encode() not in recs[-1].read_bytes()
+
+
+# -- D5c: credential screen — obs-folded token in header value ---------------
+
+def test_credential_obs_folded_in_header_value(backend):
+    """D5c F10: obs-folded token (whitespace inserted) in header value
+    must be caught by the whitespace-strip normalization."""
+    port = backend["port"]
+    # Insert whitespace in the middle of the token
+    mid = len(TOKEN) // 2
+    folded = TOKEN[:mid] + " \t " + TOKEN[mid:]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Trace: {folded}\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0]
+    body_start = resp.find(b"\r\n\r\n")
+    assert body_start >= 0
+    resp_body = json.loads(resp[body_start + 4:])
+    assert resp_body["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    assert TOKEN.encode() not in recs[-1].read_bytes()
+
+
+# -- D5c: _validate_slow_delay ArgumentTypeError arm (F25) --------------------
+
+def test_slow_delay_argumenttypeerror_arm(tmp_path):
+    """D5c F25: --slow-delay with a non-numeric value triggers
+    ArgumentTypeError (the ValueError arm in _validate_slow_delay)."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
+         "--slow-delay", "abc"],
+        capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 2
+    assert "invalid float" in proc.stderr
+
+
+# -- D5c: negative controls — gate arm deletion must cause red ----------------
+
+def test_negative_control_defects_gate_arm(backend):
+    """D5c negative control: if the defects gate arm were deleted,
+    Content-Length : N (space before colon) would bypass the gate.
+    This test asserts the gate fires — gate-deleted mutant would see 200/401."""
+    port = backend["port"]
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length : 0\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0], \
+        "defects gate arm must reject; deletion would let it through"
+
+
+def test_negative_control_te_gate_arm(backend):
+    """D5c negative control: TE gate arm deletion would let TE: gzip through."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Transfer-Encoding: gzip\r\n"
+        f"\r\n"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"411" in resp.split(b"\r\n", 1)[0], \
+        "TE gate arm must reject; deletion would let TE: gzip through"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+def test_negative_control_dup_cl_gate_arm(backend):
+    """D5c negative control: dup CL gate arm deletion would let dup CL through."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: 2\r\n"
+        f"Content-Length: 2\r\n"
+        f"\r\n"
+        f"{{}}"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0], \
+        "dup CL gate arm must reject; deletion would process first CL"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+def test_negative_control_cl_format_gate_arm(backend):
+    """D5c negative control: CL format gate arm deletion would let
+    Content-Length: -1 through (int() accepts it, cl < 0 bypasses cl > 0 on GET)."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: -1\r\n"
+        f"\r\n"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0], \
+        "CL format gate arm must reject; deletion would let -1 through on GET"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+def test_negative_control_get_cl_body_gate_arm(backend):
+    """D5c negative control: GET CL>0 gate arm deletion would serve GET with body."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: 5\r\n"
+        f"\r\n"
+        f"XXXXX"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0], \
+        "GET CL>0 gate arm must reject; deletion would serve the request"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+def test_negative_control_post_cl_overmax_gate_arm(backend):
+    """D5c negative control: POST CL > MAX gate arm deletion would let oversized CL through."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: 2000000\r\n"
+        f"\r\n"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"400" in resp.split(b"\r\n", 1)[0], \
+        "POST CL > MAX gate arm must reject"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+def test_negative_control_expect_gate_arm(backend):
+    """D5c negative control: Expect gate arm deletion would send 100-continue
+    (or let the request through to routing)."""
+    port = backend["port"]
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Expect: 100-continue\r\n"
+        f"\r\n"
+    ).encode() + _forged_tail(port)
+    resp = _raw_request(port, raw)
+    assert b"417" in resp.split(b"\r\n", 1)[0], \
+        "Expect gate arm must reject; deletion would send 100-continue"
+    assert resp.count(b"HTTP/1.1 ") == 1

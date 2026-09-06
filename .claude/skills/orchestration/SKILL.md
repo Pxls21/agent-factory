@@ -156,6 +156,14 @@ costs more than doing it in the main loop.
 
 ## Parallel agents, liveness, coordinator economy
 
+- **DISK BUDGET for parallel verifiers (2026-09-06: the session allowance hit 0 MB mid-gate).** Every
+  scratch copy is `git archive HEAD | tar -x` (120-180 MB here), never `cp -a` of a tree with `.git`
+  (680 MB); a verifier materialises at most ONE mutant tree at a time and deletes it when the run ends
+  (overlay the scope files onto one shared copy instead); the coordinator reads `df` before dispatching
+  a multi-verifier round and again mid-round. An ENOSPC red is an environment red — every run inside
+  the window is VOID, never a kill; tell the live verifiers the window and demand the re-runs in their
+  report. Heavy suites belong on the PC (`scripts/pc_suite.sh`), not beside the verifiers.
+
 - **Parallel agents for breadth, yourself for depth — and CAP the solo probe loop.** Fan out for
   reading/searching/auditing; design decisions, root-cause calls, final verification stay in the
   main loop. After ~3 FALSIFIED hypotheses on one defect, stop probing and delegate an

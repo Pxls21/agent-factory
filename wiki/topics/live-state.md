@@ -8,14 +8,20 @@ last_compiled: 2026-09-03
 ## Clocks
 
 - **Origin tip:** `08a4a7d` 2026-09-05 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 WIP checkpoint 3
-- **Local HEAD:** checkpoint 6 (this commit) — Codex-audit repairs (CI collection, scan v2.3, red controls), round-6 lanes
-  N5b/D5b/A5b landed, bridge rehearsals; the tee lane (B5b) is in flight and excluded. Origin carries checkpoint 5
-  (`541648c`) + a transcripts sync. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
+- **Local HEAD:** checkpoint 7 (this commit) — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
+  survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
   Owner review 2026-09-05 DECLINED closure (five mutations passed the checker; result.json WITHDRAWN, S0-01 ABSENT).
+  Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
+  table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
+  B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
+  `tasks/briefs/s0-01-b5c-*`); D5c NOT-READY (credential screen: 4 blockers, red tests committed) → lane D5d on the PC; CHECKER NOT-READY (47 findings,
+  21/24 guards untested, A20 v2.3 rules 4-5 unenforced, FIFO hang) → lane A5d on the PC; the N5c verifier grades this head; tree-wide suites now
+  run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,
+  420 records, PC clone at checkpoint 5 — ff-sync before the re-capture).
   Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule
   AF-AP-45 with a real-producer sandbox test and committed controls; tee-status consumed per A21d; two-POST = fixture realism);
   round-6 repairs N5b/D5b/A5b landed, B5b (tee) in flight; BRIDGE BACK — five legs + negative rehearsed, finding: buzz-acp
@@ -146,7 +152,7 @@ build-status or count disagreement.
 
 ## Last updated
 
-S0-01 proof run recorded (five legs, golden ×2, checker PASS) — 2026-09-05; next update when result.json + ledger
-land from the PC venue and the owner reviews. This
+S0-01 repair checkpoint 7 — 2026-09-06; next update at the final re-capture with the final tools (golden pin, real-bundle
+mutation suite, canonical runner on pc-bridge) or the owner's review. This
 page's pre-09-04 lane entries are being brought forward incrementally; the ledger
 (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.

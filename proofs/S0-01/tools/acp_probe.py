@@ -206,8 +206,12 @@ def main():
                         try:
                             interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
                             interp_sha256 = _sha256_file(interp_realpath)
-                        except (OSError, IOError):
-                            pass
+                        except (OSError, IOError) as exc:
+                            # Fail-loud only if the child is still alive (poll()
+                            # returns None). If the child already exited, the
+                            # /proc/<pid>/exe disappearance is expected.
+                            if proc.poll() is None:
+                                probe_error = f"interpreter sample failed: {exc}"
                         _interp_sampled = True
                     buf += chunk
                     # Process complete lines

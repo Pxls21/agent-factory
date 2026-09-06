@@ -92,7 +92,6 @@ def test_spec_structure_matches_brief(tmp_path):
     assert neg["expect"]["failure_reason"] == "protocol-violation: missing required initialize field"
 
 
-
 def test_runner_records_negative_leg_met_s0_99(tmp_path):
     """V3(b): a synthetic proof S0-99 with one negative leg running a tiny script
     that prints 'protocol-violation: missing required initialize field' then
@@ -427,3 +426,73 @@ def test_runner_unmet_when_reason_split_across_lines(tmp_path):
         f"stdout={r.stdout!r} stderr={r.stderr!r}"
     )
     assert r.stderr.strip() == "negative-control-unmet: S0-96"
+
+
+def test_runner_unmet_when_reason_split_across_streams(tmp_path):
+    """R6-N5b-F7/SR-04: the reason's first half on stdout (no trailing newline)
+    and the rest on stderr. The runner joins with '\\n' so neither line contains
+    the full reason → UNMET. Kills SR-04 (no-separator mutant: stdout+stderr
+    concatenation would forge a matching line)."""
+    root = _copy(tmp_path)
+
+    spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
+    spec_schema = json.loads(spec_schema_path.read_text())
+    spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
+
+    result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
+    result_schema = json.loads(result_schema_path.read_text())
+    result_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    result_schema_path.write_text(json.dumps(result_schema, indent=2))
+
+    reg_path = root / "proofs" / "registry.yaml"
+    reg_text = "\n".join(
+        line for line in reg_path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    reg = json.loads(reg_text)
+    reg["proofs"].append({
+        "proof_id": "S0-95",
+        "title": "reason split across streams",
+        "classification": "execution_proof",
+        "wave": 0,
+        "spike_dependencies": [],
+        "required_negative_controls": 1,
+        "assertion_count": 1,
+    })
+    reg_path.write_text(json.dumps(reg, indent=2))
+
+    s95 = root / "proofs" / "S0-95"
+    s95.mkdir(parents=True)
+    (s95 / "pass.py").write_text("import sys; sys.exit(0)\n")
+    # Reason first half on stdout (no trailing newline), rest on stderr
+    (s95 / "checker.py").write_text(
+        "import sys\n"
+        'sys.stdout.write("protocol-violation: missing")\n'
+        'sys.stderr.write(" required initialize field\\n")\n'
+        "sys.exit(1)\n"
+    )
+    spec = {
+        "proof_id": "S0-95",
+        "legs": [
+            {"leg": "positive", "cmd": [sys.executable, "proofs/S0-95/pass.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {"exit_code": 0}},
+            {"leg": "negative", "cmd": [sys.executable, "proofs/S0-95/checker.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {
+                 "exit_code": 1,
+                 "failure_reason": "protocol-violation: missing required initialize field",
+             }},
+        ],
+    }
+    (s95 / "spec.json").write_text(json.dumps(spec, indent=2))
+
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-95",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode != 0, (
+        f"runner should fail (reason split across streams), got rc=0: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert r.stderr.strip() == "negative-control-unmet: S0-95"

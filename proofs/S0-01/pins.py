@@ -122,3 +122,12 @@ PINNED_LOG_LINES_TWO_USERS = (
 PINNED_STARTUP_AGENTS = "1"
 PINNED_STARTUP_DEDUP = "Queue"
 PINNED_STARTUP_IGNORE_SELF = "true"
+
+# tee-status.json (A21d) key set — ONE pin for the three consumers (the tee test, the checker; the tee itself stays
+# a standalone tool whose own key set a test asserts EQUAL to this pin — R6-B5b-F16, AF-AP-42 "no local copy").
+# Order = the tee's write order (proofs/S0-01/tools/frame_tee.py _write_status, read 2026-09-06).
+PINNED_TEE_STATUS_KEYS = (
+    "final", "agent_returncode", "drained", "stdin_reader_done",
+    "recorded_c2a", "recorded_a2c", "forwarded_c2a", "forwarded_a2c",
+    "write_errors", "exit_code", "updated_seq", "updated_utc",
+)

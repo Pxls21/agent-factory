@@ -123,3 +123,5 @@ output — that is instrument data, not an evaluation. Never label it a PASS.
 The adversary is only as good as the contract — a weak contract passes weak builds. The value
 is in negotiating assertions that cover the edges, which is why step 1 is coordinator work,
 not boilerplate.
+
+**A lane's own mutation report is a claim, not evidence (2026-09-06, S0-01 round 6).** Two build lanes reported "19/19 killed, survivors none" and "11/15, four equivalents"; the independent verifiers found 17 and 6 surviving mutants respectively, each proven non-equivalent with a live probe. A lane mutates the lines it just changed; the class lives in the lines it did not. Rules: (1) the verifier's mutant set (ids + file:line) is the acceptance bar of the NEXT repair brief — "make these N mutants red", never "re-check your fix"; (2) a survivor a lane calls equivalent is graded by the verifier with a live differential, never by reading the library; (3) `not_done: none` beside any unmet item or any survivor is itself a report defect that reopens the lane.

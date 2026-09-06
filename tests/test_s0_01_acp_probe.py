@@ -440,7 +440,8 @@ def test_probe_spawned_at_precedes_first_frame(tmp_path, agent_result):
 
 def test_probe_bad_agent_path_writes_probe_error(tmp_path):
     """M3: nonexistent agent path -> exit 1 + probe_error in runtime-identity.json,
-    not a bare traceback."""
+    not a bare traceback. R6-N5b-F18: the M3 handler also writes whatever timeline
+    entries have accumulated (partial timeline). Kills AP-35."""
     r, framedir = _run_probe(tmp_path, "/nonexistent/agent/binary")
     assert r.returncode == 1
     assert "Traceback" not in r.stderr
@@ -449,6 +450,10 @@ def test_probe_bad_agent_path_writes_probe_error(tmp_path):
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["probe_error"] == (
         "FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent/agent/binary'"
+    )
+    # M3 handler must write timeline.jsonl (even if empty — kills AP-35)
+    assert (framedir / "timeline.jsonl").exists(), (
+        "timeline.jsonl absent after M3 exception — the partial-timeline write is missing"
     )
 
 
@@ -730,17 +735,20 @@ def test_probe_timeout_abc_writes_probe_error(tmp_path, agent_result):
 
 def test_probe_empty_framedir_exits_64_no_probe_error(tmp_path):
     """4-F11/R5-N5-F4: S0_01_FRAMEDIR='' -> exit 64 with 'is empty' message.
-    No probe_error is written (documented exception: failure before the wrapped body)."""
+    No probe_error is written (documented exception: failure before the wrapped body).
+    R6-N5b-F12: runtime-identity.json must be ABSENT."""
     env = os.environ.copy()
     env["S0_01_AGENT"] = "/some/agent"
     env["S0_01_FRAMEDIR"] = ""
     r = subprocess.run(
         [sys.executable, str(PROBE)],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True, text=True, timeout=30, env=env, cwd=str(tmp_path),
     )
     assert r.returncode == 64
     assert r.stderr.strip() == "acp_probe: required environment variable S0_01_FRAMEDIR is empty"
     assert "Traceback" not in r.stderr
+    # No runtime-identity.json created (failure before the wrapped body)
+    assert not (tmp_path / "runtime-identity.json").exists()
 
 
 def test_probe_framedir_is_file_exits_64(tmp_path, agent_result):
@@ -807,12 +815,46 @@ def test_probe_spawned_at_two_sided(tmp_path, agent_result):
 
 # ---- R5-N5-F7: producer identity fields pinned against a live run ----
 
-def test_probe_identity_fields_all_pinned(tmp_path, agent_result):
-    """R5-N5-F7: every runtime-identity field the validator pins is asserted against
-    the live producer run: probe_sha256, agent_child_pid (positive int from /proc),
-    interpreter sha, and redacted dict sha256_12. Kills AP-17/AP-12/AP-11/AP-19."""
+def test_probe_identity_fields_all_pinned(tmp_path):
+    """R5-N5-F7/R6-N5b-F2: every runtime-identity field the validator pins is asserted
+    against the live producer run: probe_sha256, agent_child_pid (== the pid the agent
+    itself reports), agent_realpath, agent_entrypoint_sha256, interpreter sha, and
+    redacted dict sha256_12. Kills AP-17/AP-12/AP-12b/AP-12c/AP-19/AP-21/AP-22."""
     import hashlib
-    r, framedir = _run_probe(tmp_path, agent_result)
+    # Agent that writes its own PID to a file so we can verify agent_child_pid
+    pid_file = tmp_path / "agent_pid.txt"
+    agent_script = tmp_path / "agent_with_pid.py"
+    agent_script.write_text(textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, sys, os
+        pid_path = os.environ.get("_TEST_PID_FILE", "")
+        if pid_path:
+            with open(pid_path, "w") as f:
+                f.write(str(os.getpid()))
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            if msg.get("method") == "initialize":
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": msg["id"],
+                    "result": {
+                        "protocolVersion": 1,
+                        "agentInfo": {"name": "pid-agent", "version": "0.0.1"},
+                        "agentCapabilities": {},
+                    }
+                }
+                sys.stdout.write(json.dumps(resp) + "\\n")
+                sys.stdout.flush()
+            break
+    """))
+    agent_script.chmod(0o755)
+    sentinel_val = "sentinel_for_sha_check_42"
+    r, framedir = _run_probe(tmp_path, str(agent_script),
+                             extra_env={"_TEST_PID_FILE": str(pid_file),
+                                        "MY_SENTINEL_SECRET": sentinel_val})
     assert r.returncode == 0
 
     rid = json.loads((framedir / "runtime-identity.json").read_text())
@@ -821,25 +863,40 @@ def test_probe_identity_fields_all_pinned(tmp_path, agent_result):
     assert rid["probe_sha256"] == expected_probe_sha, (
         f"probe_sha256 {rid['probe_sha256']!r} != committed {expected_probe_sha!r}"
     )
-    # agent_child_pid must be a positive int (not -1, not True, not None)
-    assert isinstance(rid["agent_child_pid"], int)
-    assert not isinstance(rid["agent_child_pid"], bool)
-    assert rid["agent_child_pid"] > 0, f"agent_child_pid {rid['agent_child_pid']!r} <= 0"
+    # agent_child_pid == the pid the agent itself reports (kills AP-12b/AP-12c)
+    reported_pid = int(pid_file.read_text())
+    assert rid["agent_child_pid"] == reported_pid, (
+        f"agent_child_pid {rid['agent_child_pid']!r} != agent-reported {reported_pid}"
+    )
+    # agent_realpath == os.path.realpath(agent) (kills AP-21)
+    assert rid["agent_realpath"] == os.path.realpath(str(agent_script)), (
+        f"agent_realpath {rid['agent_realpath']!r} != {os.path.realpath(str(agent_script))!r}"
+    )
+    # agent_entrypoint_sha256 == sha256 of agent file bytes (kills AP-22)
+    expected_entry_sha = hashlib.sha256(
+        Path(os.path.realpath(str(agent_script))).read_bytes()
+    ).hexdigest()
+    assert rid["agent_entrypoint_sha256"] == expected_entry_sha, (
+        f"agent_entrypoint_sha256 {rid['agent_entrypoint_sha256']!r} != {expected_entry_sha!r}"
+    )
     # interpreter sha matches the sha of the file at the realpath
     expected_interp = os.path.realpath(sys.executable)
     expected_interp_sha = hashlib.sha256(Path(expected_interp).read_bytes()).hexdigest()
     assert rid["agent_interpreter_sha256"] == expected_interp_sha
-    # env.json redacted dict has correct sha256_12
+    # env.json: explicit sentinel must be redacted with correct sha256_12
     env_data = json.loads((framedir / "env.json").read_text())
-    # Check that any redacted key has the correct sha256_12
-    for k, v in env_data.items():
-        if isinstance(v, dict) and v.get("redacted") is True:
-            # Verify sha256_12 matches the actual env value
-            real_val = os.environ.get(k, "")
-            expected_12 = hashlib.sha256(real_val.encode("utf-8")).hexdigest()[:12]
-            assert v["sha256_12"] == expected_12, (
-                f"redacted env {k} sha256_12 {v['sha256_12']!r} != {expected_12!r}"
-            )
+    sentinel_entry = env_data.get("MY_SENTINEL_SECRET")
+    assert isinstance(sentinel_entry, dict) and sentinel_entry.get("redacted") is True, (
+        "MY_SENTINEL_SECRET was not redacted"
+    )
+    expected_12 = hashlib.sha256(sentinel_val.encode("utf-8")).hexdigest()[:12]
+    assert sentinel_entry["sha256_12"] == expected_12, (
+        f"sentinel sha256_12 {sentinel_entry['sha256_12']!r} != {expected_12!r}"
+    )
+    # At least one redacted key overall
+    redacted_seen = sum(1 for v in env_data.values()
+                        if isinstance(v, dict) and v.get("redacted") is True)
+    assert redacted_seen >= 1
 
 
 # ---- R5-N5-F16: makedirs branch (absent-but-creatable framedir) ----
@@ -861,3 +918,89 @@ def test_probe_creates_absent_framedir(tmp_path, agent_result):
     assert framedir.is_dir()
     assert (framedir / "timeline.jsonl").exists()
     assert (framedir / "runtime-identity.json").exists()
+
+
+# ---- R6-N5b-F10: S0_01_AGENT="" ----
+
+def test_probe_empty_agent_exits_64(tmp_path):
+    """R6-N5b-F10: S0_01_AGENT='' -> exit 64 with exact 'is empty' message.
+    Kills AP-29 (empty check applies only to FRAMEDIR mutant)."""
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = ""
+    env["S0_01_FRAMEDIR"] = str(tmp_path)
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 64
+    assert r.stderr.strip() == "acp_probe: required environment variable S0_01_AGENT is empty"
+
+
+# ---- R6-N5b-F8: redaction regex covers all alternatives ----
+
+def test_probe_env_redaction_all_alternatives(tmp_path, agent_result):
+    """R6-N5b-F8: one sentinel per regex alternative (SECRET, PASSWORD, NSEC, PRIV),
+    each asserted redacted. Kills AP-25 (regex narrowed to KEY|TOKEN)."""
+    import hashlib
+    sentinels = {
+        "MY_SECRET_VALUE": "secret_test_val_1",
+        "DB_PASSWORD_1": "password_test_val_2",
+        "NOSTR_NSEC_HEX": "nsec_test_val_3",
+        "APP_PRIV_CONFIG": "priv_test_val_4",
+    }
+    r, framedir = _run_probe(tmp_path, agent_result, extra_env=sentinels)
+    assert r.returncode == 0
+    env_data = json.loads((framedir / "env.json").read_text())
+    for key_name, raw_val in sentinels.items():
+        entry = env_data.get(key_name)
+        assert isinstance(entry, dict) and entry.get("redacted") is True, (
+            f"{key_name} was not redacted (regex alternative missing)"
+        )
+        expected_12 = hashlib.sha256(raw_val.encode("utf-8")).hexdigest()[:12]
+        assert entry["sha256_12"] == expected_12, (
+            f"{key_name} sha256_12 {entry['sha256_12']!r} != {expected_12!r}"
+        )
+
+
+# ---- R6-N5b-F5: interpreter sample failure is FAIL-LOUD ----
+
+def test_probe_interpreter_sample_failure(tmp_path, agent_result):
+    """R6-N5b-F5: OSError while sampling /proc/<pid>/exe sets probe_error
+    'interpreter sample failed: <exc>' and exits 1. Uses monkeypatch via
+    a wrapper to force os.readlink to raise on /proc/*/exe."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir(exist_ok=True)
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    wrapper = tmp_path / "run_probe_readlink_fail.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_readlink = os.readlink
+        def _failing_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                raise OSError("No such process")
+            return _orig_readlink(path)
+
+        with unittest.mock.patch.object(os, 'readlink', _failing_readlink):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_error"] == "interpreter sample failed: No such process"
+    assert r.stderr.strip() == "acp_probe: interpreter sample failed: No such process"
