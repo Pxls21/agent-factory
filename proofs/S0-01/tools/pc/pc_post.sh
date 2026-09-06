@@ -28,7 +28,9 @@ import pins  # the ONLY pin source — the pinned paths are never repeated as li
 PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
 rows = []
 zombies = set()
-for line in subprocess.run(["ps", "-eo", "pid,ppid,etimes,stat,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
+# -ww: unlimited width. Without it procps clips every row at 80 columns when stdout is not a tty, so a long
+# interpreter path pushed the survivor's real command AND any pinned path out of the evidence (PC gate, 2026-09-06).
+for line in subprocess.run(["ps", "-eww", "-o", "pid,ppid,etimes,stat,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
     parts = line.split(None, 4)
     if len(parts) < 5:
         continue
@@ -60,7 +62,9 @@ if mode == "after":
 else:
     owned = set(json.load(open(f"{fd}/owned-pids.json"))["owned"])
 keep = [r for r in rows if r[0] in owned or any(p in r[3] for p in PINNED)]
-keep = [r for r in keep if "pc_post.sh" not in r[3] and " ps -eo " not in r[3]]
+# The scan's own helper rows are dropped ONLY when they are not owned: an owned row is evidence and is never filtered,
+# so owned_present (counted over the full table) equals the owned rows in the body by construction (VERIFY-CK7).
+keep = [r for r in keep if r[0] in owned or ("pc_post.sh" not in r[3] and " ps -e" not in r[3])]
 table_pids = {r[0] for r in rows}
 header = (f"# process-scan v2.3 mode={mode} rows={len(rows)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
           f"buzz_present={int(buzz in table_pids)} owned={len(owned)} owned_present={len(owned & table_pids)} "

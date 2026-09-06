@@ -148,3 +148,54 @@ def test_scan_rejects_an_unknown_mode(tmp_path):
     assert r.returncode != 0
     assert "scan: mode must be after|teardown, got 'bogus'" in r.stderr
     assert not (tmp_path / "process-scan-bogus.txt").exists()
+
+
+def test_scan_rows_are_not_clipped_at_80_columns(tmp_path):
+    """PC gate 2026-09-06: on the PC, `ps -eo args` off a tty clipped every row at 80 columns, so the long venv path
+    pushed the survivor's real command (and would push a pinned path) out of the evidence; the producer now uses -ww.
+    The sandbox's ps did NOT clip (this test was green there before the fix), so its red proof is the PC venue —
+    `scripts/pc_suite.sh` is where this test guards the property."""
+    marker = "S0_01_LONG_ARGV_MARKER_" + "x" * 90
+    parent = subprocess.Popen([sys.executable, "-c",
+                               "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120) # %s']);"
+                               " print(g.pid, flush=True); time.sleep(120)" % marker], stdout=subprocess.PIPE, text=True)
+    try:
+        child = int(parent.stdout.readline())
+        (tmp_path / "buzz-acp.pid").write_text(f"{parent.pid}\n")
+        r = _scan("after", tmp_path)
+        assert r.returncode == 0, r.stderr
+        rows = _parse(tmp_path / "process-scan-after.txt")[1]
+        by_pid = {row[0]: row for row in rows}
+        assert child in by_pid
+        assert marker in by_pid[child][3]
+        assert len(by_pid[child][3]) > 100
+    finally:
+        for p in (child, parent.pid):
+            try:
+                os.kill(p, 9)
+            except ProcessLookupError:
+                pass
+        parent.wait(timeout=10)
+
+
+def test_owned_row_is_never_dropped_by_the_helper_filter(tmp_path):
+    """VERIFY-CK7 producer/consumer note: the scan drops its own helper rows (`pc_post.sh`, `ps -e…`) — an OWNED row
+    whose command happens to contain those strings is evidence and must stay, so owned_present == owned body rows."""
+    parent = subprocess.Popen([sys.executable, "-c",
+                               "import subprocess, sys, time; g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120) # pc_post.sh ps -eo']);"
+                               " print(g.pid, flush=True); time.sleep(120)"], stdout=subprocess.PIPE, text=True)
+    try:
+        child = int(parent.stdout.readline())
+        _seed(tmp_path, parent.pid, [parent.pid, child])
+        r = _scan("after", tmp_path)
+        assert r.returncode == 0, r.stderr
+        m, rows = _parse(tmp_path / "process-scan-after.txt")
+        assert {row[0] for row in rows} == {parent.pid, child}
+        assert m.group(6) == "2" and len(rows) == 2          # owned_present equals the owned rows in the body
+    finally:
+        for p in (child, parent.pid):
+            try:
+                os.kill(p, 9)
+            except ProcessLookupError:
+                pass
+        parent.wait(timeout=10)
