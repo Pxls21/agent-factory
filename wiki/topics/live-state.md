@@ -21,7 +21,7 @@ last_compiled: 2026-09-03
   `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f LANDED at checkpoint 8j, sandbox + PC gates green on 3.11 and 3.13, VERIFY-N5f grading (the later reading wins); VERIFY-D5e NOT-READY (fail-open "fail-closed",
   tautological oracle) → lane D5f LANDED (checkpoint 8h: boolean fail-closed, self-proving oracle; sandbox + PC gates green) → VERIFY-D5f grading; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d LANDED at checkpoint 8i, sandbox + PC gates green, VERIFY-B5d grading (drain to EOF,
   status inside the lock); A5f landed (8g) → VERIFY-CK8 grading; all in the sandbox (Kimi cooled three times; codex out ~31 h);
-  checker lane A5g queued for the A21d non-final relaxation; pushes run through `--lanes-live` (detached-worktree rewrite; the ref follows origin on tree identity); nothing minted; tree-wide suites now
+  VERIFY-CK8 NOT-READY (5 blockers: untested F13/F19 guards, F14 on 2/5 legs, two A20a rules un-gated, a hollow hardlink source scan) → checker lane A5g RUNNING on the PC Hermes lane (Kimi K3) with every startup value now pinned; pushes run through `--lanes-live` (detached-worktree rewrite; the ref follows origin on tree identity); nothing minted; tree-wide suites now
   run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,
   420 records, PC clone at checkpoint 5 — ff-sync before the re-capture).
   Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule

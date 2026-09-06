@@ -199,3 +199,51 @@ def test_owned_row_is_never_dropped_by_the_helper_filter(tmp_path):
             except ProcessLookupError:
                 pass
         parent.wait(timeout=10)
+
+
+def test_scan_fails_loud_on_an_unparsable_ps_row(tmp_path):
+    """VERIFY-CK8 F13: a ps row with fewer than five fields used to be skipped silently — and a skipped row is absent from
+    rows=, owned_present and pinned_present alike, so an owned survivor lost that way would be invisible to every checker
+    rule. The scan now exits 1 naming the row. Driven through a `ps` shim on PATH that prints one short row first."""
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "ps"
+    shim.write_text("#!/bin/sh\necho '4242 1 7 S'\nexec /usr/bin/ps \"$@\"\n")
+    shim.chmod(0o755)
+    fd = tmp_path / "fd"
+    fd.mkdir()
+    r = subprocess.run(["bash", str(PC_POST), "scan", "after", str(fd)], capture_output=True, text=True,
+                       env={**os.environ, "S0_01_REPO": str(ROOT), "PATH": f"{shim_dir}:{os.environ['PATH']}"}, timeout=60)
+    assert r.returncode == 1, (r.returncode, r.stderr)
+    assert r.stderr.strip() == "scan: unparsable ps row (4 fields): '4242 1 7 S'"
+    assert not (fd / "process-scan-after.txt").exists()
+
+
+def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_counted_in_the_header(tmp_path):
+    """VERIFY-CK8 F14: the helper filter drops an UNOWNED row whose command contains `pc_post.sh` or ` ps -e` even when
+    it names a pinned path — deliberately, and never silently: pinned_present is counted over the FULL table while the
+    checker counts the body, so the drop surfaces as `pinned_present … inconsistent with body`, a loud fail-closed
+    Failure (a legitimate concurrent capture whose helper names a pinned path reds the leg — a false positive, not a
+    hole). A foreign pinned-naming row WITHOUT the helper strings stays in the body (A20e then rejects it)."""
+    sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
+    import pins  # noqa: E402 — the pinned tee path, never repeated as a literal
+    tee = pins.PINNED_TEE_PATH
+    buzz = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    helper = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep(120) # {tee} pc_post.sh"])
+    plain = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep(120) # {tee}"])
+    try:
+        _seed(tmp_path, buzz.pid, [buzz.pid])
+        r = _scan("after", tmp_path)
+        assert r.returncode == 0, r.stderr
+        m, rows = _parse(tmp_path / "process-scan-after.txt")
+        body_pids = {row[0] for row in rows}
+        assert buzz.pid in body_pids                       # owned root kept
+        assert plain.pid in body_pids                      # foreign row naming a pinned path: evidence, kept
+        assert helper.pid not in body_pids                 # foreign helper-shaped row: dropped from the body
+        assert int(m.group(7)) >= 2                        # …but counted in pinned_present (full-table count)
+        assert int(m.group(7)) > sum(1 for row in rows if tee in row[3])   # header > body: the loud mismatch
+    finally:
+        for proc in (helper, plain, buzz):
+            proc.kill()
+            proc.wait(timeout=10)
+

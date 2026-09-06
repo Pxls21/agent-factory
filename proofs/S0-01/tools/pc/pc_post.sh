@@ -33,7 +33,10 @@ zombies = set()
 for line in subprocess.run(["ps", "-eww", "-o", "pid,ppid,etimes,stat,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
     parts = line.split(None, 4)
     if len(parts) < 5:
-        continue
+        # VERIFY-CK8 F13: a row the parser cannot place would vanish from rows=, owned_present and pinned_present ALIKE —
+        # self-consistently invisible to every checker rule. procps always emits five fields ([comm] stands in for an
+        # empty args), so anything shorter is a fault to surface, never a row to skip.
+        sys.exit(f"scan: unparsable ps row ({len(parts)} fields): {line!r}")
     if parts[3].startswith("Z"):
         # exited but not yet reaped by its parent: no execution, no resources — never a survivor
         # (a SIGKILLed child stays in the table as <defunct> until its parent waits on it)

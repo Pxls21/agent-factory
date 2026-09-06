@@ -1,5 +1,5 @@
 # BRIEF — S0-01 lane A5g: the checker's A21d non-final arms follow the tee's contract, every startup value is pinned, `_PINS_PENDING` retires, the exact-reason debt (F36/F37), the A25 omission test (F38), the dead presence gates (F40/F41), the real-leg tee-status test (F35), and VERIFY-CK8's F1-F22
-PIN: (set at dispatch)
+PIN: ddf01c93febdf0bf08d9c1c40775b05f3c0f2848
 
 Build lane (sandbox Opus 4.6 `code-implementer`, or the PC Hermes lane if Kimi K3 has cooled down — the dispatcher says which). honey:
 ultra. Your output is a PROPOSAL graded by VERIFY-CK9; never self-accept. THE CHECKER SUITE IS HEAVY: ~13 min serial in the sandbox,
