@@ -18,9 +18,8 @@ last_compiled: 2026-09-03
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
   B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
-  `tasks/briefs/s0-01-b5c-*`); checkpoint 8a: D5d DONE in the sandbox (verify next); A5d PARTIAL (16 rules; 21 guards still untested → A5e);
-  N5c NOT-READY (probe fail-soft, SR-03, venue coincidence → N5d; coordinator hunks F3/F5/F6 landed); B5c PC lane died → sandbox
-  B5c; the model route is out (codex 429 ~35 h, Kimi/GLM cooling) — build lanes in the sandbox, suites on the PC; tree-wide suites now
+  `tasks/briefs/s0-01-b5c-*`); checkpoints 8b-8e pushed (0f96585): N5d, A5e item 1, B5c, D5e landed; VERIFY-B5c + VERIFY-D5e grading in the
+  sandbox; lanes N5e + A5f running on the PC Hermes lane on Kimi K3 (owner routing; codex out ~35 h); nothing minted; tree-wide suites now
   run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,
   420 records, PC clone at checkpoint 5 — ff-sync before the re-capture).
   Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule
