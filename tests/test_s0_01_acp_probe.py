@@ -1173,9 +1173,13 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
     """N5e-F3: the post-loop sample block must report the REAL exception when
     readlink succeeded but sha256 failed, not the fixed 'agent exited before
     its first a2c byte' wording.  This test exercises the post-loop block by
-    defeating the early retry loop (readlink fails for 0.3 s) and using a
-    silent agent (no a2c data, so the in-loop sample never fires).  After the
-    a2c timeout the post-loop readlink succeeds but sha256 fails."""
+    defeating the early retry loop DETERMINISTICALLY (its deadline patched to 0,
+    so it makes exactly one attempt, which fails) and using a silent agent (no
+    a2c data, so the in-loop sample never fires).  After the a2c timeout the
+    post-loop readlink — the SECOND readlink of the run — succeeds with the fake
+    path but sha256 fails.  VERIFY-N5g F1: the gated readlink is path-aware — a
+    read of /proc/self/exe returns a sentinel, so the post-loop site must read
+    the CHILD's exe (kills mutant LG2-POST); no wall clock anywhere."""
     agent = tmp_path / "agent_silent_stdin.py"
     agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import sys
@@ -1203,14 +1207,17 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
         import acp_probe
 
         _orig_readlink = os.readlink
-        _start = time.monotonic()
         _fake_path = "/tmp/fake_interp (deleted)"
+        _rl_calls = [0]
 
         def _gated_readlink(path):
+            if "/proc/self/exe" in str(path):
+                return "/SELF/should-never-be-sampled"   # the site must read the CHILD's exe (LG2-POST)
             if "/proc/" in str(path) and "/exe" in str(path):
-                if time.monotonic() - _start < 0.3:
+                _rl_calls[0] += 1
+                if _rl_calls[0] == 1:                    # the early loop's single attempt (deadline 0)
                     raise OSError("No such process")
-                return _fake_path
+                return _fake_path                        # call 2 = the post-loop site
             return _orig_readlink(path)
 
         _orig_sha256 = acp_probe._sha256_file
@@ -1220,7 +1227,8 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
             return _orig_sha256(path)
 
         with unittest.mock.patch.object(os, 'readlink', _gated_readlink), \\
-             unittest.mock.patch.object(acp_probe, '_sha256_file', _gated_sha256):
+             unittest.mock.patch.object(acp_probe, '_sha256_file', _gated_sha256), \\
+             unittest.mock.patch.object(acp_probe, '_EARLY_SAMPLE_DEADLINE_S', 0.0):
             try:
                 acp_probe.main()
             except SystemExit as e:
@@ -1930,8 +1938,8 @@ def test_probe_interpreter_deleted_after_start_is_a_loud_probe_error(tmp_path):
     distro-specific path, AF-AP-4) is unlinked after Popen, then the agent
     closes stdout and sleeps.  rc 1, realpath ends with ' (deleted)', sha256 None,
     probe_error carries the exact FileNotFoundError.
-    Uses an in-process wrapper to delete the hardlink before the first
-    readlink — deterministic, no race."""
+    Uses an in-process wrapper to delete the copied interpreter before the
+    first readlink — deterministic, no race."""
     import shutil
     # A private copy of the system shell in tmp_path (a copy, not a hardlink: /tmp is
     # tmpfs on the PC, and /bin/dash does not exist there — the first PC gate of 8k was red)

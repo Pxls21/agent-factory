@@ -291,10 +291,12 @@ def main():
                         break  # EOF
                     # N5f-F1: at the first a2c chunk, ALWAYS re-read the
                     # interpreter — the later reading wins over the early loop.
-                    # sampled once, at the first a2c byte: the stage that wrote
-                    # the first protocol byte is the interpreter of record; an
-                    # agent that execs later is recorded as the stage that spoke
-                    # first; pinned by test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte
+                    # sampled ONCE, at the moment the probe consumes the first a2c
+                    # chunk (pinned by test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte).
+                    # An agent that execs AFTER its first byte may be recorded as
+                    # either stage — the read races its execve (VERIFY-N5g measured
+                    # 41/48 first stage, 7/48 second): a multi-stage agent must not
+                    # exec after speaking.
                     if not _late_sampled:
                         _late_sampled = True
                         try:
