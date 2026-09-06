@@ -342,9 +342,10 @@ class TestLateClientFrameRecorded:
         assert b"Fatal Python error" not in stderr
 
     def test_late_frame_after_reap_with_client_holding_stdin(self, tmp_path):
-        """F1/p9 shape: agent closes stdin BEFORE the handshake, client sends
-        the late frame AFTER reading the handshake response.  Deterministic:
-        the forward hits EPIPE whatever the scheduling."""
+        """R1/F1: agent closes stdin BEFORE the handshake, client sends
+        the late frame AFTER reading the handshake response, then closes
+        stdin (client EOF).  The drain-to-EOF records the frame.
+        Deterministic: the forward hits EPIPE whatever the scheduling."""
         agent_code = textwrap.dedent("""\
             import os, sys, json, time
             line = sys.stdin.readline()
@@ -377,12 +378,13 @@ class TestLateClientFrameRecorded:
             assert json.loads(answer)["id"] == 1
             tee_proc.stdin.write(late_frame.encode())
             tee_proc.stdin.flush()
-            # Hold stdin open (do NOT close it) -- the drain must stall
+            # R1: close stdin (client EOF) so the drain-to-EOF completes
+            tee_proc.stdin.close()
             tee_proc.wait(timeout=30)
         finally:
             if tee_proc.poll() is None:
                 tee_proc.kill()
-            tee_proc.stdin.close()
+                tee_proc.wait(timeout=5)
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         c2a = (framedir / "frames-client-to-agent.jsonl").read_bytes()
@@ -392,15 +394,14 @@ class TestLateClientFrameRecorded:
         assert status["recorded_c2a"] == 2
         assert status["forwarded_c2a"] < status["recorded_c2a"]
         assert status["drained"] is False
-        assert status["write_errors"] == [
-            "forward c2a: BrokenPipeError",
-            "drain c2a: stopped with 2 recorded, 1 forwarded",
-        ]
+        assert status["stdin_reader_done"] is True
+        assert status["write_errors"] == ["forward c2a: BrokenPipeError"]
 
     def test_tee_exits_cleanly_with_agent_code(self, tmp_path):
         """F2: restored round-5 test under the round-6 contract.
         Agent closes stdin BEFORE answering; client sends frame 2 AFTER the
-        handshake.  Deterministic: rc 70, frame 2 recorded."""
+        handshake, then closes stdin (client EOF).  Deterministic: rc 70,
+        frame 2 recorded."""
         agent_code = textwrap.dedent("""\
             import os, sys, json, time
             line = sys.stdin.readline()
@@ -433,21 +434,19 @@ class TestLateClientFrameRecorded:
             assert json.loads(answer)["id"] == 1
             tee_proc.stdin.write(frame2.encode())
             tee_proc.stdin.flush()
-            # Hold stdin open -- drain must stall
+            # R1: close stdin (client EOF) so the drain-to-EOF completes
+            tee_proc.stdin.close()
             tee_proc.wait(timeout=30)
         finally:
             if tee_proc.poll() is None:
                 tee_proc.kill()
-            tee_proc.stdin.close()
+                tee_proc.wait(timeout=5)
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
         status = json.loads((framedir / "tee-status.json").read_text())
         assert status["recorded_c2a"] == 2
-        assert status["write_errors"] == [
-            "forward c2a: BrokenPipeError",
-            "drain c2a: stopped with 2 recorded, 1 forwarded",
-        ]
+        assert status["write_errors"] == ["forward c2a: BrokenPipeError"]
 
 
 # ---------------------------------------------------------------------------
@@ -960,9 +959,10 @@ class TestTeeStatus:
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
         status = json.loads((framedir / "tee-status.json").read_text())
-        dir_errors = [e for e in status["write_errors"] if e.startswith("directional c2a:")]
-        assert len(dir_errors) == 1
-        assert "(5 occurrences)" in dir_errors[0]
+        assert status["write_errors"] == [
+            "directional c2a: [Errno 28] No space left on device (5 occurrences)",
+            "directional c2a close: [Errno 28] No space left on device",
+        ]
 
     def test_initial_status_before_first_frame(self, tmp_path):
         """F10: tee-status.json exists immediately after runtime-identity.json,
@@ -1125,10 +1125,10 @@ class TestDirectionalWriteErrorBothDirections:
         assert proc.returncode == 70
         status = json.loads((framedir / "tee-status.json").read_text())
         direction = "c2a" if "client-to-agent" in target_file else "a2c"
-        assert status["write_errors"][0] == "directional %s: [Errno 28] No space left on device" % direction
-        # F3/F19: close error may also be recorded
-        for e in status["write_errors"][1:]:
-            assert e.startswith("directional %s close:" % direction)
+        assert status["write_errors"] == [
+            "directional %s: [Errno 28] No space left on device" % direction,
+            "directional %s close: [Errno 28] No space left on device" % direction,
+        ]
 
     def test_c2a_directional_enospc_eof_agent_exits_70(self, tmp_path):
         """F3: unwritable c2a directional with EOF-consuming agent must not hang;
@@ -1156,8 +1156,10 @@ class TestDirectionalWriteErrorBothDirections:
                               capture_output=True, env=env, timeout=15)
         assert proc.returncode == 70
         status = json.loads((framedir / "tee-status.json").read_text())
-        dir_errors = [e for e in status["write_errors"] if e.startswith("directional c2a")]
-        assert len(dir_errors) >= 1
+        assert status["write_errors"] == [
+            "directional c2a: [Errno 28] No space left on device",
+            "directional c2a close: [Errno 28] No space left on device",
+        ]
         assert status["stdin_reader_done"] is True
 
     def test_a2c_directional_close_error_recorded(self, tmp_path):
@@ -1188,8 +1190,10 @@ class TestDirectionalWriteErrorBothDirections:
                               capture_output=True, env=env, timeout=15)
         assert proc.returncode == 70
         status = json.loads((framedir / "tee-status.json").read_text())
-        a2c_errors = [e for e in status["write_errors"] if "a2c" in e]
-        assert len(a2c_errors) >= 1
+        assert status["write_errors"] == [
+            "directional a2c: [Errno 28] No space left on device (3 occurrences)",
+            "directional a2c close: [Errno 28] No space left on device",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1199,7 +1203,8 @@ class TestStdinReaderDoneValue:
         assert status["stdin_reader_done"] is True
 
     def test_stdin_reader_done_false_when_client_never_closes(self, tmp_path):
-        """F11: stdin never closed -> stdin_reader_done False, returncode 0, drained True."""
+        """R1: stdin never closed -> tee stays alive (drain-to-EOF).
+        SIGTERM required -> exit 70, stdin_reader_done False."""
         agent_code = textwrap.dedent("""\
             import sys, json
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
@@ -1208,7 +1213,7 @@ class TestStdinReaderDoneValue:
             sys.exit(0)
         """)
         helper = tmp_path / "holder.py"
-        helper.write_text("import time\ntime.sleep(30)\n")
+        helper.write_text("import time\ntime.sleep(60)\n")
         framedir = tmp_path / "frames"
         framedir.mkdir()
         agent_script = tmp_path / "agent.py"
@@ -1223,15 +1228,35 @@ class TestStdinReaderDoneValue:
                                     stdin=holder_proc.stdout, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, env=env)
         holder_proc.stdout.close()
-        tee_proc.wait(timeout=20)
-        holder_proc.kill()
-        holder_proc.wait(timeout=5)
+        try:
+            # Wait for agent to exit (status appears with updated_seq >= 0)
+            status_path = framedir / "tee-status.json"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if status_path.exists():
+                    try:
+                        s = json.loads(status_path.read_text())
+                        if s.get("final") is False and s.get("updated_seq", -1) >= 0:
+                            break
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                time.sleep(0.1)
+            # R1: tee stays alive because client never closes stdin.
+            # SIGTERM it (buzz-acp's shutdown responsibility).
+            tee_proc.send_signal(sig.SIGTERM)
+            tee_proc.wait(timeout=10)
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+                tee_proc.wait(timeout=5)
+            holder_proc.kill()
+            holder_proc.wait(timeout=5)
         tee_proc.stdout.close()
         tee_proc.stderr.close()
-        status = json.loads((framedir / "tee-status.json").read_text())
+        status = json.loads(status_path.read_text())
         assert status["stdin_reader_done"] is False
-        assert tee_proc.returncode == 0
-        assert status["drained"] is True
+        assert tee_proc.returncode == 70
+        assert status["write_errors"] == ["terminated: SIGTERM"]
 
 
 # ---------------------------------------------------------------------------
@@ -1576,9 +1601,10 @@ class TestRunningStatus:
         assert status["agent_returncode"] is None
         assert status["exit_code"] is None
         assert status["updated_seq"] > 0
-        assert status["forwarded_a2c"] == status["recorded_a2c"]
+        # R2: on non-final snapshot, recorded - forwarded in {0, 1}
+        assert 0 <= status["recorded_a2c"] - status["forwarded_a2c"] <= 1
         assert set(status.keys()) == set(PINNED_TEE_STATUS_KEYS)
-        # F5: seq consistency on the surviving snapshot
+        # R2: seq consistency on the surviving snapshot
         assert status["updated_seq"] == status["recorded_c2a"] + status["recorded_a2c"]
 
     def test_clean_exit_has_final_true(self, tee_run):
@@ -1591,14 +1617,20 @@ class TestRunningStatus:
         assert status["updated_utc"].endswith("Z")
 
     def test_rewrite_is_atomic(self, tmp_path):
-        """A21d: no torn JSON under a concurrent reader.
+        """R2: no torn JSON under a concurrent reader.  BIDIRECTIONAL load
+        (client streams while the agent echoes) so both pumps write status
+        concurrently -- kills N4 (snapshot outside lock) and D3 (no status_lock).
         F-PC-1: drains stdout concurrently to prevent pipe deadlock.
-        F5: every snapshot satisfies updated_seq == recorded_c2a + recorded_a2c."""
+        F5: every snapshot satisfies updated_seq == recorded_c2a + recorded_a2c.
+        R2: recorded_<dir> - forwarded_<dir> in {0, 1} on running snapshots."""
+        n_frames = 5000
         agent_code = textwrap.dedent("""\
             import sys, json
-            for i in range(500):
-                f = {"jsonrpc": "2.0", "method": "d", "params": {"i": i}}
-                sys.stdout.write(json.dumps(f, separators=(",", ":")) + "\\n")
+            for line in sys.stdin:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                sys.stdout.write(line)
                 sys.stdout.flush()
             sys.exit(0)
         """)
@@ -1611,56 +1643,93 @@ class TestRunningStatus:
         env["S0_01_FRAMEDIR"] = str(framedir)
         env["S0_01_AGENT"] = str(agent_script)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        lines = []
+        for i in range(n_frames):
+            lines.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "m",
+                                     "params": {}}, separators=(",", ":")) + "\n")
+        input_bytes = "".join(lines).encode()
         tee_proc = subprocess.Popen([sys.executable, str(TEE)],
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, env=env)
-        tee_proc.stdin.close()
-        # F-PC-1: drain stdout on a reader thread to prevent pipe deadlock
-        def _drain():
-            while True:
-                chunk = tee_proc.stdout.read(65536)
-                if not chunk:
-                    break
-        drainer = threading.Thread(target=_drain, daemon=True)
-        drainer.start()
-        status_path = framedir / "tee-status.json"
-        torn = 0
-        reads = 0
-        seq_violations = 0
-        deadline = time.monotonic() + 30
-        while tee_proc.poll() is None and time.monotonic() < deadline:
-            if status_path.exists():
+        try:
+            # F-PC-1: drain stdout on a reader thread to prevent pipe deadlock
+            def _drain():
+                while True:
+                    chunk = tee_proc.stdout.read(65536)
+                    if not chunk:
+                        break
+            drainer = threading.Thread(target=_drain, daemon=True)
+            drainer.start()
+            # Feed input on a writer thread so we can spin-read the status
+            def _feed():
                 try:
-                    s = json.loads(status_path.read_text())
-                    reads += 1
-                    # F5: every snapshot must satisfy seq == rec_c2a + rec_a2c
-                    if s["updated_seq"] != s["recorded_c2a"] + s["recorded_a2c"]:
-                        seq_violations += 1
-                except (json.JSONDecodeError, ValueError):
-                    torn += 1
-            time.sleep(0.001)
-        tee_proc.wait(timeout=30)
-        drainer.join(timeout=5)
+                    tee_proc.stdin.write(input_bytes)
+                    tee_proc.stdin.close()
+                except (BrokenPipeError, OSError):
+                    pass
+            feeder = threading.Thread(target=_feed, daemon=True)
+            feeder.start()
+            status_path = framedir / "tee-status.json"
+            torn = 0
+            reads = 0
+            seq_violations = 0
+            fwd_violations = 0
+            deadline = time.monotonic() + 60
+            while tee_proc.poll() is None and time.monotonic() < deadline:
+                if status_path.exists():
+                    try:
+                        s = json.loads(status_path.read_text())
+                        reads += 1
+                        # R2: seq consistency
+                        if s["updated_seq"] != s["recorded_c2a"] + s["recorded_a2c"]:
+                            seq_violations += 1
+                        # R2: forwarded never more than 1 behind recorded (running)
+                        if not s["final"]:
+                            for d in ("c2a", "a2c"):
+                                diff = s["recorded_%s" % d] - s["forwarded_%s" % d]
+                                if diff < 0 or diff > 1:
+                                    fwd_violations += 1
+                    except (json.JSONDecodeError, ValueError):
+                        torn += 1
+                # spin with no sleep for maximum read density
+            tee_proc.wait(timeout=60)
+            drainer.join(timeout=5)
+            feeder.join(timeout=5)
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+                tee_proc.wait(timeout=5)
         tee_proc.stdout.close()
         tee_proc.stderr.close()
-        assert reads > 0, "never read a valid status"
-        assert torn == 0, f"{torn} torn reads out of {reads + torn}"
-        assert seq_violations == 0, f"{seq_violations} snapshots where updated_seq != recorded_c2a + recorded_a2c"
+        assert reads > 10000, "only %d reads -- need >= 10000" % reads
+        assert torn == 0, "%d torn reads out of %d" % (torn, reads + torn)
+        assert seq_violations == 0, (
+            "%d snapshots where updated_seq != recorded_c2a + recorded_a2c" % seq_violations)
+        assert fwd_violations == 0, (
+            "%d snapshots where recorded - forwarded not in {0, 1}" % fwd_violations)
+        # final status: forwarded == recorded
+        final = json.loads(status_path.read_text())
+        assert final["final"] is True
+        assert final["forwarded_c2a"] == final["recorded_c2a"]
+        assert final["forwarded_a2c"] == final["recorded_a2c"]
 
     def test_directional_trails_timeline_after_sigkill(self, tmp_path):
-        """F17: after SIGKILL the directional file may be one frame SHORT of the
-        timeline (timeline written first), never AHEAD."""
+        """R2/F17/N3: after SIGKILL the directional file may be one frame SHORT
+        of the timeline (timeline written first), never AHEAD.  12 trials,
+        BOTH directions loaded, len(results) == 12."""
+        n_frames = 20000
         agent_code = textwrap.dedent("""\
-            import sys, json, time
-            for i in range(500):
-                f = {"jsonrpc": "2.0", "method": "d", "params": {"i": i}}
-                sys.stdout.write(json.dumps(f, separators=(",", ":")) + "\\n")
+            import sys, json
+            for line in sys.stdin:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                sys.stdout.write(line)
                 sys.stdout.flush()
-                time.sleep(0.005)
             sys.exit(0)
         """)
         results = []
-        for trial in range(5):
+        for trial in range(12):
             framedir = tmp_path / ("frames_%d" % trial)
             framedir.mkdir()
             agent_script = tmp_path / ("agent_%d.py" % trial)
@@ -1670,55 +1739,318 @@ class TestRunningStatus:
             env["S0_01_FRAMEDIR"] = str(framedir)
             env["S0_01_AGENT"] = str(agent_script)
             env["PYTHONDONTWRITEBYTECODE"] = "1"
+            lines = []
+            for i in range(n_frames):
+                lines.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "m",
+                                         "params": {}}, separators=(",", ":")) + "\n")
+            input_bytes = "".join(lines).encode()
             tee_proc = subprocess.Popen([sys.executable, str(TEE)],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, env=env)
+            try:
+                # Drain stdout concurrently
+                def _drain(p=tee_proc):
+                    while True:
+                        chunk = p.stdout.read(65536)
+                        if not chunk:
+                            break
+                drainer = threading.Thread(target=_drain, daemon=True)
+                drainer.start()
+                # Feed input concurrently
+                def _feed(p=tee_proc):
+                    try:
+                        p.stdin.write(input_bytes)
+                        p.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
+                feeder = threading.Thread(target=_feed, daemon=True)
+                feeder.start()
+                # Wait for some frames then SIGKILL
+                status_path = framedir / "tee-status.json"
+                kill_delay = 0.15 + trial * 0.05  # spread kill instants
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    if status_path.exists():
+                        try:
+                            s = json.loads(status_path.read_text())
+                            if s.get("updated_seq", 0) >= 100:
+                                time.sleep(kill_delay)
+                                break
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                    time.sleep(0.01)
+                tee_proc.send_signal(sig.SIGKILL)
+                tee_proc.wait(timeout=5)
+                drainer.join(timeout=5)
+                feeder.join(timeout=5)
+            finally:
+                if tee_proc.poll() is None:
+                    tee_proc.kill()
+                    tee_proc.wait(timeout=5)
+            tee_proc.stdout.close()
+            tee_proc.stderr.close()
+            # Count timeline entries vs directional entries, BOTH directions
+            tl_path = framedir / "timeline.jsonl"
+            if not tl_path.exists():
+                results.append(None)
+                continue
+            tl_c2a = tl_a2c = 0
+            for raw in tl_path.read_bytes().split(b"\n"):
+                if raw.strip():
+                    try:
+                        e = json.loads(raw)
+                        if e.get("dir") == "c2a":
+                            tl_c2a += 1
+                        elif e.get("dir") == "a2c":
+                            tl_a2c += 1
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            c2a_path = framedir / "frames-client-to-agent.jsonl"
+            a2c_path = framedir / "frames-agent-to-client.jsonl"
+            dir_c2a = dir_a2c = 0
+            if c2a_path.exists():
+                for raw in c2a_path.read_bytes().split(b"\n"):
+                    if raw.strip():
+                        dir_c2a += 1
+            if a2c_path.exists():
+                for raw in a2c_path.read_bytes().split(b"\n"):
+                    if raw.strip():
+                        dir_a2c += 1
+            results.append({"tl_c2a": tl_c2a, "tl_a2c": tl_a2c,
+                            "dir_c2a": dir_c2a, "dir_a2c": dir_a2c})
+            # directional must never LEAD the timeline in either direction
+            assert dir_c2a <= tl_c2a, (
+                "trial %d: dir c2a (%d) > timeline c2a (%d)" % (trial, dir_c2a, tl_c2a))
+            assert dir_a2c <= tl_a2c, (
+                "trial %d: dir a2c (%d) > timeline a2c (%d)" % (trial, dir_a2c, tl_a2c))
+        assert len(results) == 12, "expected 12 completed trials, got %d" % len(results)
+
+
+# ---------------------------------------------------------------------------
+# R1: p9 gap sweep -- late frame recorded with gaps 1, 6, 8 s after agent death
+# ---------------------------------------------------------------------------
+class TestLateFrameAfterAgentDeath:
+    @pytest.mark.parametrize("gap", [1, 6, 8])
+    def test_late_frame_after_agent_death_recorded(self, tmp_path, gap):
+        """R1/A2: agent writes a sentinel and exits; the test waits for the
+        sentinel (genuine reap), sleeps ``gap`` seconds, sends the late frame,
+        closes stdin.  The drain-to-EOF records the frame regardless of gap.
+        Kills mutant A2 (the old stall-timeout drain that exits early)."""
+        sentinel = tmp_path / "agent_done"
+        agent_code = textwrap.dedent("""\
+            import os, sys, json
+            line = sys.stdin.readline()
+            os.close(0)
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            open(%r, "w").write("done")
+            os._exit(0)
+        """ % str(sentinel))
+        framedir = tmp_path / ("frames_%d" % gap)
+        framedir.mkdir(parents=True, exist_ok=True)
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        frame1 = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                             "params": {}}, separators=(",", ":")) + "\n"
+        late_frame = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "late",
+                                 "params": {}}, separators=(",", ":")) + "\n"
+        tee_proc = subprocess.Popen([sys.executable, str(TEE)], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        try:
+            tee_proc.stdin.write(frame1.encode())
+            tee_proc.stdin.flush()
+            answer = tee_proc.stdout.readline()
+            assert json.loads(answer)["id"] == 1
+            # Wait for agent death via sentinel
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if sentinel.exists():
+                    break
+                time.sleep(0.05)
+            assert sentinel.exists(), "agent did not write sentinel"
+            time.sleep(0.5)  # margin for process exit
+            # Now wait the gap -- the agent is dead
+            time.sleep(gap)
+            # Send the late frame AFTER the gap
+            tee_proc.stdin.write(late_frame.encode())
+            tee_proc.stdin.flush()
+            # Close stdin (client EOF) so the drain completes
             tee_proc.stdin.close()
-            # Drain stdout concurrently
-            def _drain(p=tee_proc):
-                while True:
-                    chunk = p.stdout.read(65536)
-                    if not chunk:
-                        break
-            drainer = threading.Thread(target=_drain, daemon=True)
-            drainer.start()
+            tee_proc.wait(timeout=30)
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+                tee_proc.wait(timeout=5)
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+        c2a = (framedir / "frames-client-to-agent.jsonl").read_bytes()
+        assert c2a.count(b'"method":"late"') == 1, "late frame NOT recorded"
+        assert tee_proc.returncode == 70
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["recorded_c2a"] == 2
+        assert status["forwarded_c2a"] == 1
+        assert status["drained"] is False
+        assert status["stdin_reader_done"] is True
+        assert status["write_errors"] == ["forward c2a: BrokenPipeError"]
+
+
+# ---------------------------------------------------------------------------
+# R2/C1: running status tracks c2a BEFORE the agent exits
+# ---------------------------------------------------------------------------
+class TestRunningStatusTracksC2a:
+    def test_running_status_tracks_c2a_before_agent_exits(self, tmp_path):
+        """C1 killer: a long-lived agent that consumes stdin and stays silent.
+        Client sends N frames; poll tee-status.json and assert recorded_c2a
+        reaches N while the tee is still running.  C1 (no running status from
+        pump_fd) freezes recorded_c2a at 0 in the status file."""
+        n_frames = 20
+        agent_code = textwrap.dedent("""\
+            import sys, time
+            for line in sys.stdin:
+                pass
+            time.sleep(0.5)
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        lines = []
+        for i in range(n_frames):
+            lines.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "m",
+                                     "params": {}}, separators=(",", ":")) + "\n")
+        tee_proc = subprocess.Popen([sys.executable, str(TEE)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=env)
+        try:
+            # Send frames one at a time with a small delay to give status time to update
+            for line in lines:
+                tee_proc.stdin.write(line.encode())
+                tee_proc.stdin.flush()
+                time.sleep(0.05)
+            # Poll status before closing stdin -- the tee is still running
+            status_path = framedir / "tee-status.json"
+            deadline = time.monotonic() + 10
+            rec_c2a = 0
+            while time.monotonic() < deadline:
+                if status_path.exists():
+                    try:
+                        s = json.loads(status_path.read_text())
+                        rec_c2a = s.get("recorded_c2a", 0)
+                        if rec_c2a >= n_frames:
+                            break
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                time.sleep(0.05)
+            assert rec_c2a >= n_frames, (
+                "running status recorded_c2a=%d, expected >=%d" % (rec_c2a, n_frames))
+            tee_proc.stdin.close()
+            tee_proc.wait(timeout=15)
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+                tee_proc.wait(timeout=5)
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+
+
+# ---------------------------------------------------------------------------
+# R3: SIGTERM status through the real checker (xfail-strict)
+# ---------------------------------------------------------------------------
+class TestSigtermStatusVsChecker:
+    @pytest.mark.xfail(strict=True,
+                       reason="checker A21d non-final arms pending (lane A5g)")
+    def test_sigterm_status_satisfies_check_tee_status(self, tmp_path):
+        """R3: the SIGTERM status (non-final, exit 70, write_errors includes
+        'terminated: SIGTERM') must pass check_tee_status once the checker's
+        non-final arm is implemented.  Until then this is xfail-strict."""
+        from proofs.S0_01.check_acp_conformance import check_tee_status
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            for line in sys.stdin:
+                resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+                sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\\n")
+                sys.stdout.flush()
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        frame = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "init", "params": {}},
+                           separators=(",", ":")).encode() + b"\n"
+        tee_proc = subprocess.Popen([sys.executable, str(TEE)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=env)
+        try:
+            tee_proc.stdin.write(frame)
+            tee_proc.stdin.flush()
             status_path = framedir / "tee-status.json"
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if status_path.exists():
                     try:
                         s = json.loads(status_path.read_text())
-                        if s.get("forwarded_a2c", 0) >= 10:
+                        if s.get("updated_seq", 0) >= 1:
                             break
                     except (json.JSONDecodeError, ValueError):
                         pass
-                time.sleep(0.01)
-            tee_proc.send_signal(sig.SIGKILL)
-            tee_proc.wait(timeout=5)
-            drainer.join(timeout=5)
-            tee_proc.stdout.close()
-            tee_proc.stderr.close()
-            # Count timeline entries vs directional entries
-            tl_path = framedir / "timeline.jsonl"
-            if not tl_path.exists():
-                continue
-            tl_a2c = 0
-            for raw in tl_path.read_bytes().split(b"\n"):
-                if raw.strip():
-                    try:
-                        e = json.loads(raw)
-                        if e.get("dir") == "a2c":
-                            tl_a2c += 1
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-            a2c_path = framedir / "frames-agent-to-client.jsonl"
-            dir_a2c = 0
-            if a2c_path.exists():
-                for raw in a2c_path.read_bytes().split(b"\n"):
-                    if raw.strip():
-                        dir_a2c += 1
-            results.append((tl_a2c, dir_a2c))
-            # directional must never LEAD the timeline
-            assert dir_a2c <= tl_a2c, (
-                f"trial {trial}: directional ({dir_a2c}) > timeline ({tl_a2c})")
-        assert len(results) >= 3, "too few completed trials"
+                time.sleep(0.1)
+            tee_proc.send_signal(sig.SIGTERM)
+            tee_proc.wait(timeout=10)
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+                tee_proc.wait(timeout=5)
+            tee_proc.stdin.close()
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+        assert tee_proc.returncode == 70
+        # This should pass once the checker whitelists non-final SIGTERM legs
+        check_tee_status(str(framedir))
+
+
+# ---------------------------------------------------------------------------
+# F10/N6: the SIGTERM handler body is exactly `raise _Terminated()`
+# ---------------------------------------------------------------------------
+class TestSigtermHandlerStructure:
+    def test_sigterm_handler_is_raise_terminated(self, tmp_path):
+        """F10: ast-level assertion that the SIGTERM handler body is exactly
+        ``raise _Terminated()``.  Kills N6 (handler that takes a lock and
+        writes status itself)."""
+        import ast
+        source = Path(TEE).read_text()
+        tree = ast.parse(source)
+        # Find the _sigterm_handler function
+        handler = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_sigterm_handler":
+                handler = node
+                break
+        assert handler is not None, "_sigterm_handler not found"
+        # The body must be exactly one statement: raise _Terminated()
+        assert len(handler.body) == 1, (
+            "handler body has %d statements, expected 1" % len(handler.body))
+        stmt = handler.body[0]
+        assert isinstance(stmt, ast.Raise), "handler body is not a raise"
+        assert isinstance(stmt.exc, ast.Call), "raise is not a call"
+        assert isinstance(stmt.exc.func, ast.Name), "raised is not a name"
+        assert stmt.exc.func.id == "_Terminated", (
+            "raised %s, expected _Terminated" % stmt.exc.func.id)
+        assert len(stmt.exc.args) == 0, "raise has arguments"

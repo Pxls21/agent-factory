@@ -6,18 +6,18 @@ Writes into S0_01_FRAMEDIR:
   frames-client-to-agent.jsonl - byte-identical relay c2a
   frames-agent-to-client.jsonl - byte-identical relay a2c
   runtime-identity.json        - written once at spawn (includes tee_pid)
-  tee-status.json              - RUNNING status, rewritten atomically (A21d)
+  tee-status.json              - RUNNING status, rewritten after every recorded
+                                 frame under the timeline lock (A21d)
 
-tee-status.json is rewritten after every forwarded frame, every recorded write
-error, each drain checkpoint, and at exit.  The ``final`` field is true only on
-the exit write; until then agent_returncode and exit_code are null.
+The ``final`` field is true only on the clean-exit write; the SIGTERM
+write is non-final (final=false, exit fields null, write_errors includes
+"terminated: SIGTERM", exit 70).
 
-After the agent exits, the tee drains both pumps to EOF (or a 5 s stall
-timeout).  When the client holds stdin open (the production shape --
-buzz-acp keeps the pipe open for the session), the tee blocks the full
-stall timeout (5 s) in the c2a drain before exiting.  buzz-acp's own
-5 s shutdown kill can land inside the drain, which is why the status is
-a running file.
+After the agent exits, the tee drains the a2c pump to EOF (or a 5 s stall
+timeout for grandchild stragglers) and drains the c2a pump UNTIL CLIENT
+EOF -- there is no stall timeout on the c2a side.  A client that never
+closes keeps the tee alive; that is buzz-acp's shutdown responsibility
+(it TERMs/KILLs the group), and the SIGTERM path covers it.
 
 A frame the client wrote before the tee exits MUST be recorded in
 frames-client-to-agent.jsonl, or the tee exits 70 (EX_SOFTWARE).  An agent
@@ -25,9 +25,6 @@ that exits without consuming the full client stream causes exit 70 when any
 recorded c2a frame was not forwarded into the agent's stdin pipe (note:
 "forwarded" means written into the pipe, not received or processed by
 the agent).
-
-On SIGTERM the tee writes a NON-final status (final=false, exit fields null,
-write_errors includes "terminated: SIGTERM") and exits 70.
 """
 import base64
 import datetime
@@ -148,7 +145,7 @@ def main():
         f.write("\n")
 
     # --- shared timeline state ---
-    lock = threading.Lock()
+    lock = threading.RLock()
     seq = [0]
     tl = open(os.path.join(framedir, "timeline.jsonl"), "ab")
 
@@ -269,13 +266,17 @@ def main():
                     except OSError as e:
                         _record_write_error("directional", direction, str(e))
                     state["recorded_%s" % direction] += 1
+                    # R2: status snapshot inside the timeline lock so that
+                    # timeline_last_seq - updated_seq is at most 1 after SIGKILL
+                    _write_status()
+                # forward outside the lock (can block on pipe full)
+                forward_error = None
                 if not forward_broken:
                     try:
                         dst.write(line)
                         dst.flush()
-                        state["forwarded_%s" % direction] += 1
                     except BrokenPipeError:
-                        state["write_errors"].append("forward %s: BrokenPipeError" % direction)
+                        forward_error = "forward %s: BrokenPipeError" % direction
                         forward_broken = True
                         if close_dst:
                             try:
@@ -283,19 +284,25 @@ def main():
                             except Exception:
                                 pass
                     except OSError as e:
-                        state["write_errors"].append("forward %s: %s" % (direction, e))
+                        forward_error = "forward %s: %s" % (direction, e)
                         forward_broken = True
                         if close_dst:
                             try:
                                 dst.close()
                             except Exception:
                                 pass
-                _write_status()
+                # R2: update forwarded under the timeline lock
+                with lock:
+                    if forward_error is not None:
+                        state["write_errors"].append(forward_error)
+                    elif not forward_broken:
+                        state["forwarded_%s" % direction] += 1
         finally:
             try:
                 df.close()
             except OSError as e:
-                state["write_errors"].append("directional %s close: %s" % (direction, e))
+                with lock:
+                    state["write_errors"].append("directional %s close: %s" % (direction, e))
             if direction == "c2a":
                 state["stdin_reader_done"] = True
             if close_dst and not forward_broken:
@@ -349,23 +356,32 @@ def main():
                     except OSError as e:
                         _record_write_error("directional", direction, str(e))
                     state["recorded_%s" % direction] += 1
+                    # R2: status snapshot inside the timeline lock
+                    _write_status()
+                # forward outside the lock (can block on pipe full)
+                forward_error = None
                 if not forward_broken:
                     try:
                         dst.write(line)
                         dst.flush()
-                        state["forwarded_%s" % direction] += 1
                     except BrokenPipeError:
-                        state["write_errors"].append("forward %s: BrokenPipeError" % direction)
+                        forward_error = "forward %s: BrokenPipeError" % direction
                         forward_broken = True
                     except OSError as e:
-                        state["write_errors"].append("forward %s: %s" % (direction, e))
+                        forward_error = "forward %s: %s" % (direction, e)
                         forward_broken = True
-                _write_status()
+                # R2: update forwarded under the timeline lock
+                with lock:
+                    if forward_error is not None:
+                        state["write_errors"].append(forward_error)
+                    elif not forward_broken:
+                        state["forwarded_%s" % direction] += 1
         finally:
             try:
                 df.close()
             except OSError as e:
-                state["write_errors"].append("directional %s close: %s" % (direction, e))
+                with lock:
+                    state["write_errors"].append("directional %s close: %s" % (direction, e))
             if close_dst and not forward_broken:
                 try:
                     dst.close()
@@ -418,24 +434,11 @@ def main():
                 "drain a2c: stopped with %d recorded, %d forwarded"
                 % (state["recorded_a2c"], state["forwarded_a2c"]))
             _write_status()
-        # Progress-based drain of stdin pump (c2a -- F1: record pending client frames)
-        last_rec_c2a = state["recorded_c2a"]
-        stall_start_c2a = time.monotonic()
-        c2a_stalled = False
+        # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
+        # A client that never closes keeps the tee alive; that is buzz-acp's
+        # shutdown responsibility (it TERMs/KILLs the group).
         while ti.is_alive():
             time.sleep(0.1)
-            current_rec = state["recorded_c2a"]
-            if current_rec > last_rec_c2a:
-                last_rec_c2a = current_rec
-                stall_start_c2a = time.monotonic()
-            elif time.monotonic() - stall_start_c2a >= stall_timeout:
-                c2a_stalled = True
-                break
-            _write_status()
-        if c2a_stalled and state["forwarded_c2a"] < state["recorded_c2a"]:
-            state["write_errors"].append(
-                "drain c2a: stopped with %d recorded, %d forwarded"
-                % (state["recorded_c2a"], state["forwarded_c2a"]))
             _write_status()
         try:
             tl.close()
