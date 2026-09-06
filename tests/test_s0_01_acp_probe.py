@@ -37,8 +37,7 @@ CHECK_INIT = P / "check_initialize.py"
 def agent_result(tmp_path):
     """An ACP agent that answers initialize with a valid result (protocolVersion 1)."""
     script = tmp_path / "agent_result.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         for line in sys.stdin:
             line = line.strip()
@@ -58,6 +57,7 @@ def agent_result(tmp_path):
                 sys.stdout.write(json.dumps(resp) + "\\n")
                 sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     script.chmod(0o755)
     return str(script)
@@ -67,8 +67,7 @@ def agent_result(tmp_path):
 def agent_error(tmp_path):
     """An ACP agent that answers initialize with a JSON-RPC error."""
     script = tmp_path / "agent_error.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         for line in sys.stdin:
             line = line.strip()
@@ -83,6 +82,7 @@ def agent_error(tmp_path):
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     script.chmod(0o755)
     return str(script)
@@ -92,8 +92,7 @@ def agent_error(tmp_path):
 def agent_silent(tmp_path):
     """An ACP agent that never answers (hangs on stdin)."""
     script = tmp_path / "agent_silent.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import sys, time
         # Read input but never answer
         for line in sys.stdin:
@@ -108,8 +107,7 @@ def agent_silent(tmp_path):
 def agent_stderr_heavy(tmp_path):
     """An ACP agent that writes 200 KB to stderr before answering on stdout."""
     script = tmp_path / "agent_stderr.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         # Write 200 KB to stderr first
         sys.stderr.write("X" * 204800)
@@ -131,6 +129,7 @@ def agent_stderr_heavy(tmp_path):
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     script.chmod(0o755)
     return str(script)
@@ -140,8 +139,7 @@ def agent_stderr_heavy(tmp_path):
 def agent_partial_line(tmp_path):
     """An ACP agent that writes a partial a2c line (no terminator), then sleeps (H2)."""
     script = tmp_path / "agent_partial.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import sys, time
         for line in sys.stdin:
             # Write a partial JSON line with NO newline
@@ -158,8 +156,7 @@ def agent_partial_line(tmp_path):
 def agent_notification_then_response(tmp_path):
     """An ACP agent that emits a notification before the real response (M1)."""
     script = tmp_path / "agent_notify.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         for line in sys.stdin:
             line = line.strip()
@@ -183,6 +180,7 @@ def agent_notification_then_response(tmp_path):
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     script.chmod(0o755)
     return str(script)
@@ -192,8 +190,7 @@ def agent_notification_then_response(tmp_path):
 def agent_non_json(tmp_path):
     """An ACP agent that writes a non-JSON line before the real response (M11)."""
     script = tmp_path / "agent_nonjson.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         for line in sys.stdin:
             line = line.strip()
@@ -216,6 +213,7 @@ def agent_non_json(tmp_path):
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     script.chmod(0o755)
     return str(script)
@@ -225,8 +223,7 @@ def agent_non_json(tmp_path):
 def agent_sigterm(tmp_path):
     """An ACP agent that kills itself with SIGTERM after reading stdin (M7)."""
     script = tmp_path / "agent_sigterm.py"
-    script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import os, signal, sys
         for line in sys.stdin:
             # Read the line, then kill self with SIGTERM
@@ -289,14 +286,6 @@ def test_probe_result_response_and_check_initialize(tmp_path, agent_result):
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_argv"] == [agent_result]
     assert "probe_path" in rid
-    assert "probe_sha256" in rid
-    assert rid["agent_exit_code"] == 0  # M7: exact value
-    assert "spawned_at_utc" in rid
-    # V2: interpreter fields are populated, not null
-    assert rid["agent_interpreter_realpath"] is not None, \
-        "agent_interpreter_realpath is null (V2: readlink must happen before proc.wait)"
-    assert rid["agent_interpreter_sha256"] is not None, \
-        "agent_interpreter_sha256 is null (V2: sha must be sampled before proc.wait)"
 
     # env.json exists with redaction
     env_data = json.loads((framedir / "env.json").read_text())
@@ -573,7 +562,7 @@ def test_probe_broken_pipe_deterministic(tmp_path, agent_result):
     tl_path = framedir / "timeline.jsonl"
     assert tl_path.exists()
     entries = [json.loads(line) for line in tl_path.read_text().splitlines() if line.strip()]
-    assert len(entries) >= 1
+    assert len(entries) == 1
     c2a = entries[0]
     assert c2a["dir"] == "c2a"
     assert c2a["delivered"] is False
@@ -824,8 +813,7 @@ def test_probe_identity_fields_all_pinned(tmp_path):
     # Agent that writes its own PID to a file so we can verify agent_child_pid
     pid_file = tmp_path / "agent_pid.txt"
     agent_script = tmp_path / "agent_with_pid.py"
-    agent_script.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    agent_script.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys, os
         pid_path = os.environ.get("_TEST_PID_FILE", "")
         if pid_path:
@@ -849,6 +837,7 @@ def test_probe_identity_fields_all_pinned(tmp_path):
                 sys.stdout.write(json.dumps(resp) + "\\n")
                 sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     agent_script.chmod(0o755)
     sentinel_val = "sentinel_for_sha_check_42"
@@ -991,6 +980,93 @@ def test_probe_interpreter_sample_failure(tmp_path, agent_result):
             return _orig_readlink(path)
 
         with unittest.mock.patch.object(os, 'readlink', _failing_readlink):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_error"] == "interpreter sample failed: No such process"
+    assert r.stderr.strip() == "acp_probe: interpreter sample failed: No such process"
+
+
+# ---- N5d-F1: probe never exits 0 with unsampled interpreter identity ----
+
+def test_probe_agent_exits_without_output_is_fail_loud(tmp_path):
+    """N5d-F1 shape A: agent does import sys; sys.exit(0) without writing to stdout.
+    The probe must exit 1 with probe_error naming the cause, not exit 0 with null
+    interpreter fields."""
+    agent = tmp_path / "agent_silent_exit.py"
+    agent.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(0)\n")
+    agent.chmod(0o755)
+    r, framedir = _run_probe(tmp_path, str(agent))
+    assert r.returncode == 1, (
+        f"probe exited {r.returncode} (expected 1): stderr={r.stderr!r}"
+    )
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_error"] == \
+        "interpreter sample failed: agent exited before its first a2c byte"
+    assert r.stderr.strip() == \
+        "acp_probe: interpreter sample failed: agent exited before its first a2c byte"
+
+
+def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
+    """N5d-F1: readlink patched to sleep 1 s then raise (child reaped by then).
+    Without the poll() guard the failure must still be loud: exit 1 + exact reason.
+    Uses a quick-exit agent (no sys.stdin.read) so the child is dead after the delay."""
+    # Dedicated quick-exit agent: writes response then exits immediately
+    agent = tmp_path / "agent_quick_exit.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import json, sys
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            if msg.get("method") == "initialize":
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": msg["id"],
+                    "result": {
+                        "protocolVersion": 1,
+                        "agentInfo": {"name": "quick-exit", "version": "0.0.1"},
+                        "agentCapabilities": {},
+                    }
+                }
+                sys.stdout.write(json.dumps(resp) + "\\n")
+                sys.stdout.flush()
+            break
+    """))
+    agent.chmod(0o755)
+    framedir = tmp_path / "capture"
+    framedir.mkdir(exist_ok=True)
+    env = {
+        "S0_01_AGENT": str(agent),
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    wrapper = tmp_path / "run_probe_readlink_delay_fail.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, time, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_readlink = os.readlink
+        def _delayed_failing_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                time.sleep(1)
+                raise OSError("No such process")
+            return _orig_readlink(path)
+
+        with unittest.mock.patch.object(os, 'readlink', _delayed_failing_readlink):
             try:
                 acp_probe.main()
             except SystemExit as e:

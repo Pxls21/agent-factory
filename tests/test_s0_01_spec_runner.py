@@ -360,9 +360,11 @@ def test_runner_matches_reason_on_non_first_line(tmp_path):
         "protocol-violation: missing required initialize field"
 
 
-def test_runner_unmet_when_reason_split_across_lines(tmp_path):
-    """R5-N5-F14/SR-03: the expected reason split across two lines is UNMET.
-    Kills the 'whole-output substring' mutant."""
+def test_runner_records_the_observed_line_not_the_expected_reason(tmp_path):
+    """N5d-F2/SR-03 CASE B: the checker prints a line that is a superset of the
+    expected reason. The runner must record the OBSERVED line as
+    observed_failure_reason, not the expected reason string. Reds on the
+    SR-03 mutant (expected in whole_text returns the expected reason verbatim)."""
     root = _copy(tmp_path)
 
     spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
@@ -383,7 +385,7 @@ def test_runner_unmet_when_reason_split_across_lines(tmp_path):
     reg = json.loads(reg_text)
     reg["proofs"].append({
         "proof_id": "S0-96",
-        "title": "reason split across lines",
+        "title": "observed line is a superset",
         "classification": "execution_proof",
         "wave": 0,
         "spike_dependencies": [],
@@ -392,14 +394,14 @@ def test_runner_unmet_when_reason_split_across_lines(tmp_path):
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
+    expected_reason = "protocol-violation: missing required initialize field"
+    observed_line = f"failure_reason: negative: {expected_reason} (seq 2, id 0)"
     s96 = root / "proofs" / "S0-96"
     s96.mkdir(parents=True)
     (s96 / "pass.py").write_text("import sys; sys.exit(0)\n")
-    # The reason is split across two lines: neither line contains the full reason
     (s96 / "checker.py").write_text(
         "import sys\n"
-        'print("protocol-violation: missing")\n'
-        'print("required initialize field")\n'
+        f'print({observed_line!r})\n'
         "sys.exit(1)\n"
     )
     spec = {
@@ -410,7 +412,7 @@ def test_runner_unmet_when_reason_split_across_lines(tmp_path):
             {"leg": "negative", "cmd": [sys.executable, "proofs/S0-96/checker.py"],
              "cwd": ".", "timeout_s": 30, "expect": {
                  "exit_code": 1,
-                 "failure_reason": "protocol-violation: missing required initialize field",
+                 "failure_reason": expected_reason,
              }},
         ],
     }
@@ -421,11 +423,85 @@ def test_runner_unmet_when_reason_split_across_lines(tmp_path):
          "--venue", "sandbox", "--root", str(root)],
         capture_output=True, text=True, timeout=60,
     )
-    assert r.returncode != 0, (
-        f"runner should fail (reason split across lines), got rc=0: "
-        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    assert r.returncode == 0, (
+        f"runner should succeed (observed line contains expected reason), "
+        f"got rc={r.returncode}: stdout={r.stdout!r} stderr={r.stderr!r}"
     )
-    assert r.stderr.strip() == "negative-control-unmet: S0-96"
+    result = json.loads((s96 / "result.json").read_text())
+    assert result["negative_control"]["observed_failure_reason"] == observed_line, (
+        f"observed_failure_reason should be the full observed line, not the expected reason; "
+        f"got {result['negative_control']['observed_failure_reason']!r}"
+    )
+
+
+def test_runner_unmet_when_expected_reason_is_multiline(tmp_path):
+    """N5d-F2/SR-03 CASE A: a newline in the expected failure_reason makes the
+    match impossible under the per-line rule, so the runner must report
+    negative-control-unmet. Reds on the SR-03 mutant (expected in whole_text
+    matches across the newline boundary)."""
+    root = _copy(tmp_path)
+
+    spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
+    spec_schema = json.loads(spec_schema_path.read_text())
+    spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
+
+    result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
+    result_schema = json.loads(result_schema_path.read_text())
+    result_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    result_schema_path.write_text(json.dumps(result_schema, indent=2))
+
+    reg_path = root / "proofs" / "registry.yaml"
+    reg_text = "\n".join(
+        line for line in reg_path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    reg = json.loads(reg_text)
+    reg["proofs"].append({
+        "proof_id": "S0-95",
+        "title": "multiline expected reason",
+        "classification": "execution_proof",
+        "wave": 0,
+        "spike_dependencies": [],
+        "required_negative_controls": 1,
+        "assertion_count": 1,
+    })
+    reg_path.write_text(json.dumps(reg, indent=2))
+
+    s95 = root / "proofs" / "S0-95"
+    s95.mkdir(parents=True)
+    (s95 / "pass.py").write_text("import sys; sys.exit(0)\n")
+    # Checker prints the two halves as two lines
+    (s95 / "checker.py").write_text(
+        "import sys\n"
+        'print("alpha-violation: part-one")\n'
+        'print("part-two tail")\n'
+        "sys.exit(1)\n"
+    )
+    spec = {
+        "proof_id": "S0-95",
+        "legs": [
+            {"leg": "positive", "cmd": [sys.executable, "proofs/S0-95/pass.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {"exit_code": 0}},
+            {"leg": "negative", "cmd": [sys.executable, "proofs/S0-95/checker.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {
+                 "exit_code": 1,
+                 "failure_reason": "alpha-violation: part-one\npart-two tail",
+             }},
+        ],
+    }
+    (s95 / "spec.json").write_text(json.dumps(spec, indent=2))
+
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-95",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode != 0, (
+        f"runner should fail (multiline expected reason is unmatchable per-line), "
+        f"got rc=0: stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert r.stderr.strip() == "negative-control-unmet: S0-95"
 
 
 def test_runner_unmet_when_reason_split_across_streams(tmp_path):

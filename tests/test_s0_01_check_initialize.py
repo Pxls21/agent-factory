@@ -390,6 +390,7 @@ def test_usage_error_exits_64():
         capture_output=True, text=True, timeout=30,
     )
     assert r.returncode == 64
+    assert r.stderr.strip() == "usage: check_initialize.py request|response <file|dir> [--fixtures-dir <dir>]"
 
 
 def test_usage_error_no_args_exits_64():
@@ -399,6 +400,7 @@ def test_usage_error_no_args_exits_64():
         capture_output=True, text=True, timeout=30,
     )
     assert r.returncode == 64
+    assert r.stderr.strip() == "usage: check_initialize.py request|response <file|dir> [--fixtures-dir <dir>]"
 
 
 # ---- 6-verify F13: malformed evidence ----
@@ -832,7 +834,7 @@ def test_response_dir_nan_in_a2c_frame(tmp_path):
     )
     r = _run("response", d)
     assert r.returncode == 1
-    assert "NaN/Infinity not allowed in timeline" in r.stdout.strip()
+    assert r.stdout.strip() == "failure_reason: malformed evidence: ValueError: NaN/Infinity not allowed in timeline: 'NaN'"
 
 
 # ---- R6-N5b-F14: --fixtures-dir with no value ----
@@ -845,4 +847,4 @@ def test_fixtures_dir_no_value_exits_64():
         capture_output=True, text=True, timeout=30,
     )
     assert r.returncode == 64
-    assert "usage:" in r.stderr
+    assert r.stderr.strip() == "usage: check_initialize.py request|response <file|dir> [--fixtures-dir <dir>]"

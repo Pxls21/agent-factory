@@ -148,7 +148,7 @@ def main():
         spawned_at_utc = _utc_now()
 
         # 6-F7: interpreter identity sampled from the CHILD's /proc/<pid>/exe
-        # AFTER the first a2c byte and BEFORE wait — not from /proc/self/exe.
+        # at the first a2c byte OR at EOF/exit — not from /proc/self/exe.
         agent_realpath = os.path.realpath(agent)
         interp_realpath = None
         interp_sha256 = None
@@ -207,11 +207,7 @@ def main():
                             interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
                             interp_sha256 = _sha256_file(interp_realpath)
                         except (OSError, IOError) as exc:
-                            # Fail-loud only if the child is still alive (poll()
-                            # returns None). If the child already exited, the
-                            # /proc/<pid>/exe disappearance is expected.
-                            if proc.poll() is None:
-                                probe_error = f"interpreter sample failed: {exc}"
+                            probe_error = f"interpreter sample failed: {exc}"
                         _interp_sampled = True
                     buf += chunk
                     # Process complete lines
@@ -258,6 +254,15 @@ def main():
                     "raw_b64": base64.b64encode(buf).decode("ascii"),
                 }
                 timeline.append(entry)
+
+            # N5d-F1: sample interpreter at EOF/exit if not yet sampled
+            if not _interp_sampled:
+                try:
+                    interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
+                    interp_sha256 = _sha256_file(interp_realpath)
+                except (OSError, IOError):
+                    probe_error = "interpreter sample failed: agent exited before its first a2c byte"
+                _interp_sampled = True
 
         # Close stdin to signal EOF
         try:
