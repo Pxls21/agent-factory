@@ -303,16 +303,14 @@ def test_probe_result_response_and_check_initialize(tmp_path, agent_result):
     assert isinstance(env_data, dict)
     assert env_data.get("PYTHONDONTWRITEBYTECODE") == "1"
 
-    # check_initialize.py request <dir> -- in the sandbox, env.json lacks HERMES_HOME,
-    # so the checker hits the HERMES_HOME mismatch before reaching identity pins.
+    # check_initialize.py request <dir> -- the A22 validator rejects the
+    # result response (pinned agent accepted a malformed initialize).
     r2 = subprocess.run(
         [sys.executable, str(CHECK_INIT), "request", str(framedir)],
         capture_output=True, text=True, timeout=30,
     )
     assert r2.returncode == 1
-    assert r2.returncode == 1
-    # A22 validator rejects the result response before reaching env checks
-    assert "failure_reason: negative:" in r2.stdout
+    assert r2.stdout.splitlines()[0] == "failure_reason: negative: pinned agent accepted a malformed initialize (result protocolVersion=1)"
 
 
 def test_probe_error_response(tmp_path, agent_error):
@@ -617,6 +615,20 @@ def test_probe_timeout_zero_exits_64(tmp_path, agent_result):
     assert r.stderr.strip() == "acp_probe: ACP_PROBE_TIMEOUT must be a finite float > 0, got '0'"
 
 
+def test_probe_timeout_space_exits_64(tmp_path, agent_result):
+    """R5-N5-F15: ACP_PROBE_TIMEOUT=' ' -> exit 64."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override=" ")
+    assert r.returncode == 64
+    assert r.stderr.strip() == "acp_probe: ACP_PROBE_TIMEOUT is not a valid number: ' '"
+
+
+def test_probe_timeout_empty_string_exits_64(tmp_path, agent_result):
+    """R5-N5-F15: ACP_PROBE_TIMEOUT='' -> exit 64."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override="")
+    assert r.returncode == 64
+    assert r.stderr.strip() == "acp_probe: ACP_PROBE_TIMEOUT is not a valid number: ''"
+
+
 # ---- V9/A16: c2a params == fixture deep comparison ----
 
 def test_probe_c2a_params_match_fixture(tmp_path, agent_result):
@@ -635,25 +647,28 @@ def test_probe_c2a_params_match_fixture(tmp_path, agent_result):
 
 # ---- V2: interpreter fields not null ----
 
-def test_probe_interpreter_fields_not_null(tmp_path, agent_result):
-    """V2: readlink(/proc/<pid>/exe) is sampled BEFORE proc.wait, so interpreter
-    fields must NOT be null for a normal Python agent."""
+def test_probe_interpreter_fields_pinned(tmp_path, agent_result):
+    """R5-N5-F1: with an env-shebang agent, the recorded interpreter must equal
+    os.path.realpath(sys.executable) and its sha. The agent_result fixture uses
+    #!/usr/bin/env python3, so the child's /proc/<pid>/exe resolves to python."""
     r, framedir = _run_probe(tmp_path, agent_result)
     assert r.returncode == 0
 
     rid = json.loads((framedir / "runtime-identity.json").read_text())
-    assert rid["agent_interpreter_realpath"] is not None
-    assert rid["agent_interpreter_sha256"] is not None
-    # The interpreter must be a real path
-    assert rid["agent_interpreter_realpath"] is not None
-    assert os.path.isabs(rid["agent_interpreter_realpath"])
-    # The sha256 must be 64 hex chars
-    assert len(rid["agent_interpreter_sha256"]) == 64
+    expected_interp = os.path.realpath(sys.executable)
+    assert rid["agent_interpreter_realpath"] == expected_interp, (
+        f"interpreter realpath {rid['agent_interpreter_realpath']!r} != {expected_interp!r}"
+    )
+    import hashlib
+    expected_sha = hashlib.sha256(Path(expected_interp).read_bytes()).hexdigest()
+    assert rid["agent_interpreter_sha256"] == expected_sha, (
+        f"interpreter sha {rid['agent_interpreter_sha256']!r} != {expected_sha!r}"
+    )
 
 
 # ---- L15: missing env vars ----
 
-def test_probe_missing_framedir_exits_64(tmp_path):
+def test_probe_missing_framedir_exits_64():
     """L15/A10: missing S0_01_FRAMEDIR -> exit 64 with named message."""
     env = os.environ.copy()
     env["S0_01_AGENT"] = "/some/agent"
@@ -713,8 +728,9 @@ def test_probe_timeout_abc_writes_probe_error(tmp_path, agent_result):
 
 # ---- 4-F11: empty/invalid S0_01_FRAMEDIR ----
 
-def test_probe_empty_framedir_exits_64(tmp_path):
-    """4-F11: S0_01_FRAMEDIR='' -> exit 64 with named message, not a traceback."""
+def test_probe_empty_framedir_exits_64_no_probe_error(tmp_path):
+    """4-F11/R5-N5-F4: S0_01_FRAMEDIR='' -> exit 64 with 'is empty' message.
+    No probe_error is written (documented exception: failure before the wrapped body)."""
     env = os.environ.copy()
     env["S0_01_AGENT"] = "/some/agent"
     env["S0_01_FRAMEDIR"] = ""
@@ -723,16 +739,14 @@ def test_probe_empty_framedir_exits_64(tmp_path):
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert r.returncode == 64
-    assert r.stderr.strip() == "acp_probe: required environment variable S0_01_FRAMEDIR is not set"
+    assert r.stderr.strip() == "acp_probe: required environment variable S0_01_FRAMEDIR is empty"
     assert "Traceback" not in r.stderr
 
 
 def test_probe_framedir_is_file_exits_64(tmp_path, agent_result):
-    """4-F11: S0_01_FRAMEDIR pointing to a regular file -> probe_error + exit 64."""
+    """4-F11: S0_01_FRAMEDIR pointing to a regular file -> exit 64 (makedirs OSError)."""
     notadir = tmp_path / "notadir"
     notadir.write_text("x")
-    framedir = tmp_path / "capture"
-    framedir.mkdir(exist_ok=True)
     env = os.environ.copy()
     env["S0_01_AGENT"] = agent_result
     env["S0_01_FRAMEDIR"] = str(notadir)
@@ -742,7 +756,7 @@ def test_probe_framedir_is_file_exits_64(tmp_path, agent_result):
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert r.returncode == 64
-    assert "acp_probe:" in r.stderr
+    assert r.stderr.splitlines()[0] == "acp_probe: S0_01_FRAMEDIR error: [Errno 17] File exists: '%s'" % str(notadir)
     assert "Traceback" not in r.stderr
 
 
@@ -789,3 +803,61 @@ def test_probe_spawned_at_two_sided(tmp_path, agent_result):
     first_t = entries[0]["t_utc"]
     assert t0 <= spawned, f"spawned_at {spawned} is before the test's pre-Popen time {t0}"
     assert spawned <= first_t, f"spawned_at {spawned} > first frame {first_t}"
+
+
+# ---- R5-N5-F7: producer identity fields pinned against a live run ----
+
+def test_probe_identity_fields_all_pinned(tmp_path, agent_result):
+    """R5-N5-F7: every runtime-identity field the validator pins is asserted against
+    the live producer run: probe_sha256, agent_child_pid (positive int from /proc),
+    interpreter sha, and redacted dict sha256_12. Kills AP-17/AP-12/AP-11/AP-19."""
+    import hashlib
+    r, framedir = _run_probe(tmp_path, agent_result)
+    assert r.returncode == 0
+
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    probe_file = P / "tools" / "acp_probe.py"
+    expected_probe_sha = hashlib.sha256(probe_file.read_bytes()).hexdigest()
+    assert rid["probe_sha256"] == expected_probe_sha, (
+        f"probe_sha256 {rid['probe_sha256']!r} != committed {expected_probe_sha!r}"
+    )
+    # agent_child_pid must be a positive int (not -1, not True, not None)
+    assert isinstance(rid["agent_child_pid"], int)
+    assert not isinstance(rid["agent_child_pid"], bool)
+    assert rid["agent_child_pid"] > 0, f"agent_child_pid {rid['agent_child_pid']!r} <= 0"
+    # interpreter sha matches the sha of the file at the realpath
+    expected_interp = os.path.realpath(sys.executable)
+    expected_interp_sha = hashlib.sha256(Path(expected_interp).read_bytes()).hexdigest()
+    assert rid["agent_interpreter_sha256"] == expected_interp_sha
+    # env.json redacted dict has correct sha256_12
+    env_data = json.loads((framedir / "env.json").read_text())
+    # Check that any redacted key has the correct sha256_12
+    for k, v in env_data.items():
+        if isinstance(v, dict) and v.get("redacted") is True:
+            # Verify sha256_12 matches the actual env value
+            real_val = os.environ.get(k, "")
+            expected_12 = hashlib.sha256(real_val.encode("utf-8")).hexdigest()[:12]
+            assert v["sha256_12"] == expected_12, (
+                f"redacted env {k} sha256_12 {v['sha256_12']!r} != {expected_12!r}"
+            )
+
+
+# ---- R5-N5-F16: makedirs branch (absent-but-creatable framedir) ----
+
+def test_probe_creates_absent_framedir(tmp_path, agent_result):
+    """R5-N5-F16: S0_01_FRAMEDIR pointing to a nonexistent-but-creatable dir
+    is created by makedirs and the probe succeeds."""
+    framedir = tmp_path / "deep" / "nested" / "capture"
+    assert not framedir.exists()
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = agent_result
+    env["S0_01_FRAMEDIR"] = str(framedir)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"probe failed: stderr={r.stderr}"
+    assert framedir.is_dir()
+    assert (framedir / "timeline.jsonl").exists()
+    assert (framedir / "runtime-identity.json").exists()

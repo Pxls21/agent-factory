@@ -72,6 +72,8 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    skew. One grep of the live call site would have caught it at design time.)
 **A PIN-SHAPE change is a producer/consumer split until every consumer literal of the OLD shape is found (2026-09-06, S0-01 checkpoint 4).** Changing a pin's SHAPE (tree count, line format, summary length, field count) — not just its value — leaves every consumer that encoded the old shape as a literal (`len(lines) != 4`, a local line regex) silently wrong; the lane suites stayed green because they were written against the old pins. Before committing a pin-shape change: grep every consumer for the old literal (the count, the regex, the index), derive it from the pin module, and run the FULL suite at the boundary — the split showed up only there (154 reds from one literal `4`; the per-lane runs never saw it).
 
+**A pushed head is green only when ITS CI run has been read (2026-09-06, checkpoints 4-5).** Local summaries prove the sandbox, not the runner: the `tests` job died at COLLECTION on four consecutive pushes (a module-scope `Path.exists()` on `/root/...` raises PermissionError under CI's non-root identity — AF-AP-44) while every pasted local line said green. Boundary rule: after every push, read the workflow runs for that SHA (`actions_list` + `get_job_logs`), and treat CI's identity, cwd and capability set as a second venue — every venue probe returns absent on OSError, never raises.
+
 2. **One increment = code + deterministic test + commit.** Test is LLM-free, in-sandbox, with a
    NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
    gate runs RED and provably never touches the cwd). **A capability-gated proof is tested under

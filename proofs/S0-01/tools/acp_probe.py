@@ -12,6 +12,10 @@ Writes timeline.jsonl (same shape as frame_tee.py), runtime-identity.json (probe
 env.json (caller's environment with sensitive keys redacted), and agent-stderr.txt (drained).
 
 The agent is run with the caller's environment (the PC launcher sets HERMES_HOME etc.).
+
+Documented exceptions to probe_error: when S0_01_FRAMEDIR or S0_01_AGENT is unset or empty,
+the probe exits 64 with a named stderr message but does NOT write runtime-identity.json
+(and therefore no probe_error field) because the failure occurs before the wrapped body opens.
 """
 import base64
 import datetime
@@ -72,12 +76,20 @@ def _redact_env(env):
 
 
 def main():
-    # Validate required env vars early with a named message (L15/A10: exit 64)
-    missing = [k for k in ("S0_01_FRAMEDIR", "S0_01_AGENT") if not os.environ.get(k)]
-    if missing:
-        print(f"acp_probe: required environment variable {missing[0]} is not set",
-              file=sys.stderr)
-        raise SystemExit(64)
+    # Validate required env vars early with a named message (L15/A10: exit 64).
+    # Empty/unset cases exit 64 WITHOUT probe_error because the try block (which
+    # writes runtime-identity.json) has not started yet — this is a documented
+    # exception: probe_error requires the wrapped body to have opened.
+    for k in ("S0_01_FRAMEDIR", "S0_01_AGENT"):
+        v = os.environ.get(k)
+        if v is None:
+            print(f"acp_probe: required environment variable {k} is not set",
+                  file=sys.stderr)
+            raise SystemExit(64)
+        if v == "":
+            print(f"acp_probe: required environment variable {k} is empty",
+                  file=sys.stderr)
+            raise SystemExit(64)
 
     framedir = os.environ["S0_01_FRAMEDIR"]
     agent = os.environ["S0_01_AGENT"]

@@ -240,7 +240,7 @@ class TestTamperFails:
         ev["sig"] = flipped
         ok, reason = nv.verify_event(ev)
         assert not ok
-        # Exact reason depends on the mutation; it always starts with "verification failed:"
+        # Flipping byte 0 of this fixture's sig produces exactly this reason
         assert reason == "verification failed: R.y is odd", (
             f"expected a verification failure reason, got {reason!r}"
         )

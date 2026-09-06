@@ -3,25 +3,41 @@
 # teardown BY PIDFILE (non-shutdown legs), teardown scan, leak guard.
 # Contract v2.1 §12-§14. Kills ONLY pids recorded by our own instruments after an exe check (AF-AP-34).
 set -u
-BASE=/home/rocco/s0-01-pinned; L=$BASE/.markers; SEC=$BASE/.secrets; REPO=/home/rocco/agent-factory
-FD=$(cat $L/current-framedir); RECDIR=$(cat $L/backend-recdir)
+BASE=/home/rocco/s0-01-pinned; L=$BASE/.markers; SEC=$BASE/.secrets; REPO=${S0_01_REPO:-/home/rocco/agent-factory}
+# `pc_post.sh scan after|teardown <framedir>` runs ONLY the scan (the sandbox producer test drives it this way;
+# S0_01_REPO points at the checkout whose pins.py to read). Everything else needs the PC markers.
+FD=$(cat $L/current-framedir 2>/dev/null || true); RECDIR=$(cat $L/backend-recdir 2>/dev/null || true)
 BA=$BASE/buzz/target/release/buzz-acp; TEE=$REPO/proofs/S0-01/tools/frame_tee.py; HERMES=$BASE/.venv-hermes/bin/hermes-acp
-# Process observation v2.2 (audit P1 "cleanup and identity"): the OWNED set is the full descendant closure
-# of the buzz-acp pid (generic children included), computed from the complete process table IN MEMORY
-# (never persisted — other users' argv stay private). Persisted lines: `<pid> <ppid> <etimes> <cmd>` for
-# every owned process plus every line naming a pinned path; owned-pids.json lists the closure.
+# Process observation v2.3 (audit P1 "cleanup and identity"; checkpoint-5 audit "empty scan rejected /
+# owned survivor accepted"): the OWNED set is the full descendant closure of the buzz-acp pid (generic
+# children included), computed from the complete process table IN MEMORY (never persisted — other users'
+# argv stay private). Line 1 is the ENUMERATION HEADER `# process-scan v2.3 mode=<after|teardown>
+# rows=<live full-table rows> buzz_acp_pid=<pid|none> buzz_present=<0|1> owned=<closure size>
+# owned_present=<owned pids still LIVE> pinned_present=<live rows naming a pinned path>
+# owned_zombies=<owned pids exited but not yet reaped — never survivors> utc=<ts>` —
+# it lets the checker tell "enumeration ran and found nothing owned" (a successful shutdown) from "no
+# scan ran"; then one `<pid> <ppid> <etimes> <cmd>` line per owned process plus every line naming a pinned
+# path; owned-pids.json lists the closure.
 scan() { python3 - "$1" "$2" "$REPO" <<'PY'
-import json, subprocess, sys
+import datetime, json, subprocess, sys
 mode, fd, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+if mode not in ("after", "teardown"):
+    sys.exit(f"scan: mode must be after|teardown, got {mode!r}")
 sys.path.insert(0, f"{repo}/proofs/S0-01")
 import pins  # the ONLY pin source — the pinned paths are never repeated as literals here
 PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
 rows = []
-for line in subprocess.run(["ps", "-eo", "pid,ppid,etimes,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
-    parts = line.split(None, 3)
-    if len(parts) < 4:
+zombies = set()
+for line in subprocess.run(["ps", "-eo", "pid,ppid,etimes,stat,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
+    parts = line.split(None, 4)
+    if len(parts) < 5:
         continue
-    rows.append((int(parts[0]), int(parts[1]), int(parts[2]), parts[3]))
+    if parts[3].startswith("Z"):
+        # exited but not yet reaped by its parent: no execution, no resources — never a survivor
+        # (a SIGKILLed child stays in the table as <defunct> until its parent waits on it)
+        zombies.add(int(parts[0]))
+        continue
+    rows.append((int(parts[0]), int(parts[1]), int(parts[2]), parts[4]))
 try:
     buzz = int(open(f"{fd}/buzz-acp.pid").read().strip())
 except (OSError, ValueError):
@@ -45,12 +61,19 @@ else:
     owned = set(json.load(open(f"{fd}/owned-pids.json"))["owned"])
 keep = [r for r in rows if r[0] in owned or any(p in r[3] for p in PINNED)]
 keep = [r for r in keep if "pc_post.sh" not in r[3] and " ps -eo " not in r[3]]
+table_pids = {r[0] for r in rows}
+header = (f"# process-scan v2.3 mode={mode} rows={len(rows)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
+          f"buzz_present={int(buzz in table_pids)} owned={len(owned)} owned_present={len(owned & table_pids)} "
+          f"pinned_present={sum(1 for r in rows if any(p in r[3] for p in PINNED))} owned_zombies={len(owned & zombies)} "
+          f"utc={datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
 with open(f"{fd}/process-scan-{mode}.txt", "w") as out:
+    out.write(header + "\n")
     for pid, ppid, et, cmd in sorted(keep):
         out.write(f"{pid} {ppid} {et} {cmd}\n")
-print(f"scan-{mode}: {len(keep)} lines, owned={len(owned)}")
+print(f"scan-{mode}: {len(keep)} lines, owned={len(owned)}, owned_present={len(owned & table_pids)}")
 PY
 }
+if [ "${1:-}" = "scan" ]; then scan "${2:?after|teardown}" "${3:?framedir}"; exit $?; fi
 mask() { tr -d "\000" < "$1" | sed -E "s#\x1b\[[0-9;]*m##g; s#[a-f0-9]{64}#<HEX>#g"; }
 echo "=== post: $FD ==="
 scan after "$FD"

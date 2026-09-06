@@ -16,8 +16,11 @@ OpenAI-compatible surface (what OmniRoute's `openai-compatible` provider speaks)
 Auth: every request must carry `Authorization: Bearer <token>`; the token is read from
 `--token-file` (a 0600 file with `UPSTREAM_TOKEN=...`), never from argv. A request without it gets
 401 — this proves the call came through OmniRoute carrying the connection's configured credential.
-Every request is recorded to `--record-dir/<seq>.json` (method, path, headers with Authorization
+Recorded requests go to `--record-dir/<seq>.json` (method, path, headers with Authorization
 reduced to a fingerprint, parsed body) — raw upstream evidence.
+Not recorded: GET /healthz (operational, pre-auth); Transfer-Encoding present (411);
+duplicate Content-Length (400); GET with Content-Length > 0 (400); malformed or oversized
+Content-Length (400); short body (400). These all close the connection.
 Determinism: identical request bodies -> byte-identical responses (fixed ids, timestamps, usage).
 """
 from __future__ import annotations
@@ -34,6 +37,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 MODELS = ("s0-01-pong", "s0-01-slow")
 REPLY = "pong"
@@ -70,6 +74,19 @@ def load_token(path: Path) -> str:
     raise SystemExit(f"scripted_backend: no UPSTREAM_TOKEN= line in {path}")
 
 
+def _validate_slow_delay(s):
+    """type= callable for --slow-delay: finite non-negative float (R5-D5-F7)."""
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid float: {s!r}")
+    if not (math.isfinite(v) and v >= 0):
+        print(f"scripted_backend: --slow-delay {v} "
+              f"must be a finite number >= 0", file=sys.stderr)
+        raise SystemExit(2)
+    return v
+
+
 class State:
     def __init__(self, token: str, record_dir: Path, slow_delay: float):
         self.token = token
@@ -96,10 +113,12 @@ class State:
         # M12: exempts ONLY 'authorization'.
         leaked = False
         secret = self.token
-        if path and secret in path:
+        # R5-D5-F6: screen unquoted path too (percent-encoded token bypass)
+        if path and (secret in path or secret in unquote(path)):
             leaked = True
+        # R5-D5-F3: screen header NAMES too, not just values
         for k, v in headers.items():
-            if k.lower() != "authorization" and secret in str(v):
+            if k.lower() != "authorization" and (secret in str(k) or secret in str(v)):
                 leaked = True
         if body is not None and secret in (
                 body if isinstance(body, str) else json.dumps(body)):
@@ -169,6 +188,17 @@ def make_handler(state: State):
                 return True
             return False
 
+        def _check_duplicate_content_length(self):
+            """R5-D5-F4: reject duplicate Content-Length headers (RFC 9112 s6.3)."""
+            vals = self.headers.get_all("Content-Length")
+            if vals is not None and len(vals) > 1:
+                self.send_response(400)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return True
+            return False
+
         def _read_body(self):
             cl_raw = self.headers.get("Content-Length")
             if cl_raw is None:
@@ -193,14 +223,13 @@ def make_handler(state: State):
 
         # -- routes --------------------------------------------------------
         def do_GET(self):
-            if self.path.split("?", 1)[0] == "/healthz":
-                with state.lock:
-                    count = state.seq
-                return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
-            # M4: reject chunked TE on GET too
+            # R5-D5-F1: framing gate BEFORE any route dispatch (including /healthz)
             if self._check_transfer_encoding():
                 return
-            # 4-F4: a GET with a body is a request-smuggling vector — read and reject
+            if self._check_duplicate_content_length():
+                return
+            # R5-D5-F5: GET with CL > 0 -> read body and reject (anti-smuggling);
+            # CL == 0 -> accepted, falls through to normal routing.
             cl_raw = self.headers.get("Content-Length")
             if cl_raw is not None:
                 try:
@@ -209,11 +238,15 @@ def make_handler(state: State):
                     cl = 1  # treat invalid as non-zero
                 if cl > 0:
                     self.rfile.read(min(cl, MAX_CONTENT_LENGTH))
-                self.send_response(400)
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
-                return
+                    self.send_response(400)
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    return
+            if self.path.split("?", 1)[0] == "/healthz":
+                with state.lock:
+                    count = state.seq
+                return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
             bearer = self._bearer_token()
             body = None
             # Record at the single boundary; credential leak handled inside record()
@@ -230,8 +263,10 @@ def make_handler(state: State):
             return self._error(404, f"no route {self.path}", "invalid_request_error", "not_found")
 
         def do_POST(self):
-            # M4: reject chunked TE on POST too (shared method)
+            # R5-D5-F1: framing gate BEFORE any route dispatch
             if self._check_transfer_encoding():
+                return
+            if self._check_duplicate_content_length():
                 return
             bearer = self._bearer_token()
             try:
@@ -308,7 +343,7 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=20201)
     ap.add_argument("--token-file", required=True, type=Path)
     ap.add_argument("--record-dir", required=True, type=Path)
-    ap.add_argument("--slow-delay", type=float, default=2.0, help="seconds between s0-01-slow chunks")
+    ap.add_argument("--slow-delay", type=_validate_slow_delay, default=2.0, help="seconds between s0-01-slow chunks")
     ap.add_argument("--pidfile", type=Path)
     ap.add_argument("--allow-existing-records", action="store_true")
     args = ap.parse_args(argv)
@@ -316,11 +351,6 @@ def main(argv=None) -> int:
     if not (1 <= args.port <= 65535):
         print(f"scripted_backend: --port {args.port} is outside the valid range 1-65535",
               file=sys.stderr)
-        return 2
-    # 4-F12: --slow-delay must be finite and non-negative
-    if not (math.isfinite(args.slow_delay) and args.slow_delay >= 0):
-        print(f"scripted_backend: --slow-delay {args.slow_delay} "
-              f"must be a finite number >= 0", file=sys.stderr)
         return 2
     # V-d F21: check existence before stat
     if not args.token_file.exists():

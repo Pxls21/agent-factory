@@ -14,6 +14,14 @@ V-c F14: received_at microsecond format regex; t_mono_ns strictly increasing.
 V-c F15: 0400 token file mode accepted.
 V-d F19: healthz record count pinned; /healthz not recorded.
 V-d F21: missing token file yields named refusal, exit 2.
+R5-D5-F1: framing gate (TE/CL) before any route dispatch incl. /healthz.
+R5-D5-F2: close_connection anti-smuggling proven via 1-response assertions.
+R5-D5-F3: credential screen covers header NAMES (not just values).
+R5-D5-F4: duplicate Content-Length rejected (RFC 9112 s6.3).
+R5-D5-F5: GET with Content-Length: 0 accepted and recorded.
+R5-D5-F6: percent-encoded token in query caught via unquote(path).
+R5-D5-F7: --slow-delay type= callable; -inf/-nan/-1e-9 get named refusal.
+R5-D5-F10: exact assertions on named refusals and record values.
 """
 from __future__ import annotations
 
@@ -58,8 +66,13 @@ def backend(tmp_path_factory):
     deadline = time.time() + 10
     while time.time() < deadline:
         try:
-            http.client.HTTPConnection("127.0.0.1", port, timeout=1).request("GET", "/v1/models")
-            break
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+            if resp.status == 200:
+                break
         except OSError:
             time.sleep(0.05)
     yield {"port": port, "proc": proc, "argv": argv, "rec": tmp / "rec", "pidfile": tmp / "pid"}
@@ -519,8 +532,8 @@ def test_token_file_mode_guard(tmp_path, mode, accept):
             capture_output=True, text=True, timeout=10)
         assert proc.returncode == 2
         expected_msg = (f"scripted_backend: token file mode is {oct(mode)}, "
-                        f"must have no group/other bits (0o600 or 0o400)")
-        assert expected_msg in proc.stderr
+                        f"must have no group/other bits (0o600 or 0o400)\n")
+        assert proc.stderr == expected_msg
 
 
 # -- V5/S23: POST-arm leak record mutant killer --------------------------------
@@ -952,7 +965,9 @@ def test_short_bogus_bearer_does_not_collapse_records(backend):
     last = json.loads(recs[-1].read_bytes())
     # Record must contain the real path, not a marker
     assert last["path"] == "/v1/models"
-    assert last["headers"] != {}
+    # R5-D5-F10: exact value — credential headers dropped, content-type preserved
+    assert "authorization" not in last["headers"]
+    assert last["headers"]["content-type"] == "application/json"
 
 
 # -- 4-F4: GET with Content-Length rejected, no request smuggling ----------------
@@ -994,22 +1009,349 @@ def test_get_with_body_rejected_no_smuggling(backend):
 
 # -- 4-F12: --slow-delay validation ---------------------------------------------
 
-@pytest.mark.parametrize("delay,printed", [
-    ("nan", "nan"),
-    ("-1", "-1.0"),
-    ("inf", "inf"),
+@pytest.mark.parametrize("delay_args,printed", [
+    (["--slow-delay", "nan"], "nan"),
+    (["--slow-delay", "-1"], "-1.0"),
+    (["--slow-delay", "inf"], "inf"),
+    (["--slow-delay=-inf"], "-inf"),
+    (["--slow-delay=-nan"], "nan"),
+    (["--slow-delay=-1e-9"], "-1e-09"),
 ])
-def test_slow_delay_invalid_refuses_exit_2(tmp_path, delay, printed):
-    """4-F12: --slow-delay nan/-1/inf -> named refusal exit 2."""
+def test_slow_delay_invalid_refuses_exit_2(tmp_path, delay_args, printed):
+    """R5-D5-F7: --slow-delay nan/-1/inf/-inf/-nan/-1e-9 -> named refusal exit 2."""
     tf = tmp_path / "token.env"
     tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
     tf.chmod(0o600)
     proc = subprocess.run(
         [sys.executable, str(SERVER), "--port", str(_free_port()),
-         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
-         "--slow-delay", delay],
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec")]
+        + delay_args,
         capture_output=True, text=True, timeout=10)
     assert proc.returncode == 2
     expected = (f"scripted_backend: --slow-delay {printed} "
                 f"must be a finite number >= 0\n")
     assert proc.stderr == expected
+
+
+# -- R5-D5-F1: /healthz smuggling vectors ----------------------------------------
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_healthz_with_cl_body_rejected_one_response_zero_records(backend, token):
+    """R5-D5-F1: GET /healthz with Content-Length body must be rejected (400),
+    exactly 1 response, zero new records — the framing gate sits BEFORE /healthz."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"GET /healthz HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Content-Length: {len(smuggled)}\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: smuggling via /healthz"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"/healthz+CL smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_healthz_with_te_body_rejected_one_response_zero_records(backend, token):
+    """R5-D5-F1: GET /healthz with Transfer-Encoding: chunked must be rejected (411),
+    exactly 1 response, zero new records."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"GET /healthz HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Transfer-Encoding: chunked\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: smuggling via /healthz+TE"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"/healthz+TE smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_healthz_query_with_cl_body_rejected_one_response_zero_records(backend, token):
+    """R5-D5-F1: GET /healthz?x=1 with Content-Length body must be rejected (400),
+    exactly 1 response, zero new records."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"GET /healthz?x=1 HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Content-Length: {len(smuggled)}\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: smuggling via /healthz?x=1"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"/healthz?x=1+CL smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+# -- R5-D5-F2: close_connection anti-smuggling proven ----------------------------
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_chunked_te_post_smuggling_one_response_zero_records(backend, token):
+    """R5-D5-F2: chunked-TE POST whose body is a complete request -> exactly 1
+    response (411), zero new records. Dropping close_connection lets the smuggled
+    request parse -> 2 responses."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Transfer-Encoding: chunked\r\n"
+        f"Content-Type: application/json\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: TE POST smuggling"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"TE POST smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_chunked_te_get_smuggling_one_response_zero_records(backend, token):
+    """R5-D5-F2: chunked-TE GET whose body is a complete request -> exactly 1
+    response (411), zero new records."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Transfer-Encoding: chunked\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: TE GET smuggling"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"TE GET smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_get_cl_over_max_smuggling_one_response_zero_records(backend, token):
+    """R5-D5-F2: GET with CL > MAX_CONTENT_LENGTH and a forged request past the
+    cut -> exactly 1 response (400), zero new records."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    # CL larger than MAX (1_048_576); send MAX+1 bytes of padding + smuggled request
+    padding = b"X" * 1_048_577
+    total_len = len(padding) + len(smuggled)
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Content-Length: {total_len}\r\n"
+        f"\r\n"
+    ).encode() + padding + smuggled.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: GET CL>MAX smuggling"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"GET CL>MAX smuggle wrote {count_after - count_before} record(s), expected 0"
+
+
+# -- R5-D5-F3: credential screen covers header NAMES -----------------------------
+
+def test_credential_in_header_name_returns_400(backend):
+    """R5-D5-F3: the CONFIGURED token as a header NAME (not value) must trigger
+    the credential-leak screen -> 400 + sanitized record."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"{TOKEN}: x\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    body_start = resp.find(b"\r\n\r\n")
+    assert body_start >= 0
+    resp_body = json.loads(resp[body_start + 4:])
+    assert resp_body["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+# -- R5-D5-F4: duplicate Content-Length rejected ----------------------------------
+
+@pytest.mark.parametrize("token", [TOKEN, None], ids=["with_cred", "no_cred"])
+def test_duplicate_content_length_rejected_400(backend, token):
+    """R5-D5-F4: duplicate Content-Length headers -> 400 + close, zero new records."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED2"}]})
+    inner_len = len(smuggled_body)
+    auth = f"Authorization: Bearer {token}\r\n" if token else ""
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"{auth}"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: 2\r\n"
+        f"Content-Length: {2 + inner_len}\r\n"
+        f"\r\n"
+    ).encode() + b"{}" + smuggled_body.encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: duplicate CL smuggling"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"duplicate CL wrote {count_after - count_before} record(s), expected 0"
+
+
+# -- R5-D5-F5: GET with Content-Length: 0 accepted and recorded -------------------
+
+def test_get_content_length_zero_accepted_and_recorded(backend):
+    """R5-D5-F5: GET with Content-Length: 0 must be accepted (200), served, and
+    recorded — CL:0 is NOT a smuggling vector."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: 0\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before + 1, \
+        f"CL:0 GET should write 1 record, wrote {count_after - count_before}"
+
+
+# -- R5-D5-F6: percent-encoded token in query ------------------------------------
+
+def test_credential_percent_encoded_in_query_returns_400(backend):
+    """R5-D5-F6: percent-encoded token in query must be caught via unquote(path)."""
+    port = backend["port"]
+    # Encode the last character so the literal doesn't match but unquote does
+    encoded_token = TOKEN[:-1] + "%{:02x}".format(ord(TOKEN[-1]))
+    count_before = len(list(backend["rec"].glob("*.json")))
+    status, data = _call(port, "GET", f"/v1/models?key={encoded_token}")
+    assert status == 400
+    assert json.loads(data)["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+# -- R5-D5-F8: GET with CL:1 kills M11 mutant (cl > 0 -> cl > 1) ----------------
+
+def test_get_with_cl_1_rejected_400(backend):
+    """R5-D5-F8/M11: GET with Content-Length: 1 must be rejected (400).
+    The M11 mutant (cl > 0 -> cl > 1) lets CL:1 fall through -> 200/401."""
+    port = backend["port"]
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: 1\r\n"
+        f"\r\n"
+        f"X"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"

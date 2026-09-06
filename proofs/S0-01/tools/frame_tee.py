@@ -6,7 +6,17 @@ Writes into S0_01_FRAMEDIR:
   frames-client-to-agent.jsonl - byte-identical relay c2a
   frames-agent-to-client.jsonl - byte-identical relay a2c
   runtime-identity.json        - written once at spawn (includes tee_pid)
-  tee-status.json              - written at exit (drain status, counters, exit code)
+  tee-status.json              - RUNNING status, rewritten atomically (A21d)
+
+tee-status.json is rewritten after every forwarded frame, every recorded write
+error, each drain checkpoint, and at exit.  The ``final`` field is true only on
+the exit write; until then agent_returncode and exit_code are null.
+
+After the agent exits, the tee drains both pumps to EOF (or a stall timeout).
+A frame the client wrote before the tee exits MUST be recorded in
+frames-client-to-agent.jsonl, or the tee exits 70 (EX_SOFTWARE).  An agent
+that exits without consuming the full client stream causes exit 70 when any
+recorded c2a frame was not forwarded.
 """
 import base64
 import datetime
@@ -14,6 +24,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -77,7 +88,7 @@ def main():
     if not framedir:
         print("frame_tee: S0_01_FRAMEDIR is empty", file=sys.stderr)
         raise SystemExit(64)
-    if os.path.exists(framedir) and not os.path.isdir(framedir):
+    if os.path.lexists(framedir) and not os.path.isdir(framedir):
         print("frame_tee: S0_01_FRAMEDIR is not a directory: %s" % framedir, file=sys.stderr)
         raise SystemExit(64)
     agent = os.environ.get("S0_01_AGENT")
@@ -129,9 +140,46 @@ def main():
         "stdin_reader_done": False,
     }
 
+    # --- A21d: atomic running-status writer ---
+    status_lock = threading.Lock()
+    _status_path = os.path.join(framedir, "tee-status.json")
+    _status_tmp = os.path.join(framedir, ".tee-status.tmp")
+
+    def _write_status(final=False, exit_code_val=None, agent_rc=None):
+        with status_lock:
+            _drained = (state["forwarded_a2c"] == state["recorded_a2c"]
+                        and state["forwarded_c2a"] == state["recorded_c2a"])
+            obj = {
+                "final": final,
+                "agent_returncode": agent_rc if final else None,
+                "drained": _drained,
+                "stdin_reader_done": state["stdin_reader_done"],
+                "recorded_c2a": state["recorded_c2a"],
+                "recorded_a2c": state["recorded_a2c"],
+                "forwarded_c2a": state["forwarded_c2a"],
+                "forwarded_a2c": state["forwarded_a2c"],
+                "write_errors": list(state["write_errors"]),
+                "exit_code": exit_code_val if final else None,
+                "updated_seq": seq[0],
+                "updated_utc": _utc_now(),
+            }
+            try:
+                with open(_status_tmp, "w") as f:
+                    json.dump(obj, f, indent=2)
+                    f.write("\n")
+                os.replace(_status_tmp, _status_path)
+            except OSError as e:
+                if final:
+                    print("frame_tee: failed to write tee-status.json: %s" % e, file=sys.stderr)
+
     def pump_fd(fd, dst, direction, dir_path, close_dst):
-        """Pump from a raw file descriptor (stdin fd 0)."""
+        """Pump from a raw file descriptor (stdin fd 0).
+
+        After a forward error (agent exited), continues recording remaining
+        frames so they are preserved in the directional file and timeline.
+        """
         df = open(dir_path, "ab")
+        forward_broken = False
         try:
             for line in _read_lines_from_fd(fd):
                 try:
@@ -176,26 +224,45 @@ def main():
                         except OSError as e:
                             state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
                         state["recorded_%s" % direction] += 1
-                try:
-                    dst.write(line)
-                    dst.flush()
-                    state["forwarded_%s" % direction] += 1
-                except BrokenPipeError:
-                    state["write_errors"].append("forward %s: BrokenPipeError" % direction)
-                    break
+                if not forward_broken:
+                    try:
+                        dst.write(line)
+                        dst.flush()
+                        state["forwarded_%s" % direction] += 1
+                    except BrokenPipeError:
+                        state["write_errors"].append("forward %s: BrokenPipeError" % direction)
+                        forward_broken = True
+                        if close_dst:
+                            try:
+                                dst.close()
+                            except Exception:
+                                pass
+                    except OSError as e:
+                        state["write_errors"].append("forward %s: %s" % (direction, e))
+                        forward_broken = True
+                        if close_dst:
+                            try:
+                                dst.close()
+                            except Exception:
+                                pass
+                _write_status()
         finally:
             df.close()
             if direction == "c2a":
                 state["stdin_reader_done"] = True
-            if close_dst:
+            if close_dst and not forward_broken:
                 try:
                     dst.close()
                 except Exception:
                     pass
 
     def pump_pipe(src, dst, direction, dir_path, close_dst):
-        """Pump from a subprocess pipe (proc.stdout)."""
+        """Pump from a subprocess pipe (proc.stdout).
+
+        After a forward error, continues recording remaining frames.
+        """
         df = open(dir_path, "ab")
+        forward_broken = False
         try:
             while True:
                 line = src.readline()
@@ -243,16 +310,21 @@ def main():
                         except OSError as e:
                             state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
                         state["recorded_%s" % direction] += 1
-                try:
-                    dst.write(line)
-                    dst.flush()
-                    state["forwarded_%s" % direction] += 1
-                except BrokenPipeError:
-                    state["write_errors"].append("forward %s: BrokenPipeError" % direction)
-                    break
+                if not forward_broken:
+                    try:
+                        dst.write(line)
+                        dst.flush()
+                        state["forwarded_%s" % direction] += 1
+                    except BrokenPipeError:
+                        state["write_errors"].append("forward %s: BrokenPipeError" % direction)
+                        forward_broken = True
+                    except OSError as e:
+                        state["write_errors"].append("forward %s: %s" % (direction, e))
+                        forward_broken = True
+                _write_status()
         finally:
             df.close()
-            if close_dst:
+            if close_dst and not forward_broken:
                 try:
                     dst.close()
                 except Exception:
@@ -268,15 +340,29 @@ def main():
     to = threading.Thread(target=pump_pipe,
                           args=(proc.stdout, sys.stdout.buffer, "a2c", a2c, False),
                           daemon=True)
+
+    # --- SIGTERM handler (F4): write tee-status and exit 70 on TERM ---
+    def _sigterm_handler(signum, _frame):
+        state["write_errors"].append("terminated: SIGTERM")
+        agent_rc = proc.poll()
+        rc_val = agent_rc
+        if rc_val is not None and rc_val < 0:
+            rc_val = 128 + (-rc_val)
+        _write_status(final=True, exit_code_val=70, agent_rc=agent_rc)
+        os._exit(70)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     ti.start()
     to.start()
     # Wait for the agent process to exit
     proc.wait()
-    # Progress-based drain of stdout pump (P2: keep forwarding while making progress;
+    # Progress-based drain of stdout pump (a2c — P2: keep forwarding while making progress;
     # give up only after a 5 s stall with no bytes forwarded)
     stall_timeout = 5
     last_fwd = state["forwarded_a2c"]
     stall_start = time.monotonic()
+    a2c_stalled = False
     while to.is_alive():
         time.sleep(0.1)
         current_fwd = state["forwarded_a2c"]
@@ -284,8 +370,33 @@ def main():
             last_fwd = current_fwd
             stall_start = time.monotonic()
         elif time.monotonic() - stall_start >= stall_timeout:
+            a2c_stalled = True
             break
-    # The stdin pump is a daemon thread reading a raw fd; it will exit when we do.
+        _write_status()
+    if a2c_stalled and state["forwarded_a2c"] < state["recorded_a2c"]:
+        state["write_errors"].append(
+            "drain a2c: stopped with %d recorded, %d forwarded"
+            % (state["recorded_a2c"], state["forwarded_a2c"]))
+        _write_status()
+    # Progress-based drain of stdin pump (c2a — F1: record pending client frames)
+    last_rec_c2a = state["recorded_c2a"]
+    stall_start_c2a = time.monotonic()
+    c2a_stalled = False
+    while ti.is_alive():
+        time.sleep(0.1)
+        current_rec = state["recorded_c2a"]
+        if current_rec > last_rec_c2a:
+            last_rec_c2a = current_rec
+            stall_start_c2a = time.monotonic()
+        elif time.monotonic() - stall_start_c2a >= stall_timeout:
+            c2a_stalled = True
+            break
+        _write_status()
+    if c2a_stalled and state["forwarded_c2a"] < state["recorded_c2a"]:
+        state["write_errors"].append(
+            "drain c2a: stopped with %d recorded, %d forwarded"
+            % (state["recorded_c2a"], state["forwarded_c2a"]))
+        _write_status()
     try:
         tl.close()
     except OSError:
@@ -293,7 +404,7 @@ def main():
     # Determine drain status: forwarded everything recorded in BOTH directions?
     drained = (state["forwarded_a2c"] == state["recorded_a2c"]
                and state["forwarded_c2a"] == state["recorded_c2a"])
-    # Compute exit code (V-c F8: signal-killed agent -> 128+signal)
+    # Compute exit code (V-c F8 / A21b: signal-killed agent -> 128+signal)
     rc = proc.returncode
     if rc < 0:
         agent_code = 128 + (-rc)
@@ -304,24 +415,8 @@ def main():
         exit_code = agent_code
     else:
         exit_code = 70
-    # Write tee-status.json (best-effort)
-    status = {
-        "agent_returncode": proc.returncode,
-        "drained": drained,
-        "stdin_reader_done": state["stdin_reader_done"],
-        "recorded_c2a": state["recorded_c2a"],
-        "recorded_a2c": state["recorded_a2c"],
-        "forwarded_c2a": state["forwarded_c2a"],
-        "forwarded_a2c": state["forwarded_a2c"],
-        "write_errors": list(state["write_errors"]),
-        "exit_code": exit_code,
-    }
-    try:
-        with open(os.path.join(framedir, "tee-status.json"), "w") as f:
-            json.dump(status, f, indent=2)
-            f.write("\n")
-    except OSError:
-        pass
+    # Final status write (A21d)
+    _write_status(final=True, exit_code_val=exit_code, agent_rc=proc.returncode)
     os._exit(exit_code)
 
 

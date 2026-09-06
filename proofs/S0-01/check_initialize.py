@@ -29,7 +29,7 @@ SCHEMA = HERE / "fixtures" / "acp-schema-v1.json"
 MISSING_REQUIRED = "protocol-violation: missing required initialize field"
 
 
-# Import pins for runtime-identity checks in directory mode.
+# Import the shared negative-control validator (A22).
 # S0-01 is not a valid Python package name, so use sys.path.
 sys.path.insert(0, str(HERE))
 import negative_contract as nc  # noqa: E402
@@ -139,12 +139,19 @@ def _check_response_directory(dirpath: Path, fixtures_dir: Path = None) -> int:
     c2a = [e for e in entries if e["dir"] == "c2a"]
     a2c = [e for e in entries if e["dir"] == "a2c"]
     if not c2a:
-        print("failure_reason: negative: no c2a frames in timeline")
+        print("no c2a frames in timeline")
         return 1
-    req_id = c2a[0]["frame"].get("id") if c2a[0]["frame"] is not None else None
+    c2a_frame = c2a[0].get("frame")
+    if not isinstance(c2a_frame, dict) or "id" not in c2a_frame:
+        print("c2a frame has no id")
+        return 1
+    req_id = c2a_frame["id"]
     matching = [e for e in a2c if e["frame"] is not None and e["frame"].get("id") == req_id]
     if not matching:
-        print("failure_reason: negative: no a2c response to classify")
+        print("no a2c response to classify")
+        return 1
+    if len(matching) > 1:
+        print(f"Failure: {len(matching)} a2c responses carry request id {req_id}")
         return 1
 
     resp = matching[0]["frame"]

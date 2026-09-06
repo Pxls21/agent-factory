@@ -8,15 +8,20 @@ last_compiled: 2026-09-03
 ## Clocks
 
 - **Origin tip:** `08a4a7d` 2026-09-05 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 WIP checkpoint 3
-- **Local HEAD:** checkpoint 5 (this commit) — round-5 lanes D5/N5/B5 closed, A5 partial (→ A5b), boundary edits.
-  Origin carries checkpoint 4 + the startup pins (`8465445`) + a transcripts sync. SHAs are rewritten by
-  `push_clean.sh` at push, so this page names commits by subject.
+- **Local HEAD:** checkpoint 6 (this commit) — Codex-audit repairs (CI collection, scan v2.3, red controls), round-6 lanes
+  N5b/D5b/A5b landed, bridge rehearsals; the tee lane (B5b) is in flight and excluded. Origin carries checkpoint 5
+  (`541648c`) + a transcripts sync. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
   Owner review 2026-09-05 DECLINED closure (five mutations passed the checker; result.json WITHDRAWN, S0-01 ABSENT).
-  Round 5 (checkpoint 5, 2026-09-06): D5/N5/B5 CLOSED every assigned finding with revert-reds (69/158/60 passed ×2);
+  Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule
+  AF-AP-45 with a real-producer sandbox test and committed controls; tee-status consumed per A21d; two-POST = fixture realism);
+  round-6 repairs N5b/D5b/A5b landed, B5b (tee) in flight; BRIDGE BACK — five legs + negative rehearsed, finding: buzz-acp
+  SIGKILLs the agent group at shutdown (A21d running status); fresh corpus passes 44/46 real-leg checks. NEXT: B5b → A5c → verifies →
+  final re-capture → golden pin → real-bundle mutation suite → canonical runner. Round 5 (checkpoint 5): D5/N5/B5 CLOSED every
+  assigned finding with revert-reds (69/158/60 passed ×2);
   A5 implemented A19-A26 but left the audit's four mutation tests, the mutation harness, suite speed (~500 s) and three
   ungated screens → lane A5b; verify lanes for N5/B5/D5 run alongside A5b. Repair rounds 2-4 landed at checkpoint 4: single pin module `proofs/S0-01/pins.py` (manifest v2.2, four
   trees incl. the venv, symlinks + modes, baseline re-pinned), `negative_contract.py` (live negative: `-32602 Invalid

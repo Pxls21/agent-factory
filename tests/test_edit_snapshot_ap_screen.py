@@ -1,6 +1,6 @@
 """Tests for .claude/hooks/edit-snapshot.py AP_SCREEN and TEST_SCREEN rows.
 
-8-verify F17: asserts fire/no-fire pairs for AF-AP-33..43 so the screen rows
+8-verify F17: asserts fire/no-fire pairs for AF-AP-33..45 so the screen rows
 have a test gate and cannot be silently weakened.
 """
 import importlib.util
@@ -219,3 +219,37 @@ class TestAFAP43:
 
     def test_no_fire_on_lock_named_otherwise(self):
         assert not self.rx.search("t = time.monotonic_ns()\nwith self._writer_guard:\n    pass")
+
+
+
+# ---- AF-AP-44 (TEST_SCREEN): module-scope venue probe that can raise ----
+
+class TestAFAP44:
+    rx = _TEST_BY_ID["AF-AP-44"]
+
+    def test_fires_on_skipif_exists(self):
+        assert self.rx.search('@pytest.mark.skipif(not BIN.exists(), reason="pinned binary not installed")')
+
+    def test_fires_on_skipif_is_file(self):
+        assert self.rx.search("@pytest.mark.skipif(not Path(HOME).is_file(), reason=\"x\")")
+
+    def test_no_fire_on_wrapped_probe(self):
+        assert not self.rx.search('@pytest.mark.skipif(not _binary_available(), reason="not visible in this venue")')
+
+
+# ---- AF-AP-45 (AP_SCREEN): liveness without the process state column ----
+
+class TestAFAP45:
+    rx = _AP_BY_ID["AF-AP-45"]
+
+    def test_fires_on_ps_without_stat(self):
+        assert self.rx.search('subprocess.run(["ps", "-eo", "pid,ppid,etimes,args", "--no-headers"])')
+
+    def test_fires_on_proc_existence_liveness(self):
+        assert self.rx.search('while os.path.exists(f"/proc/{pid}"):')
+
+    def test_no_fire_on_ps_with_stat(self):
+        assert not self.rx.search('subprocess.run(["ps", "-eo", "pid,ppid,etimes,stat,args", "--no-headers"])')
+
+    def test_no_fire_on_proc_stat_read(self):
+        assert not self.rx.search('Path(f"/proc/{pid}/stat").read_text()')

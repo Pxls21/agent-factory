@@ -17,6 +17,32 @@ WRAPPER = ROOT / "scripts" / "sentrux_review.sh"
 BIN = Path("/root/.local/bin/sentrux")
 
 
+def _binary_available(path: Path = BIN) -> bool:
+    """True only when the pinned binary is present AND this identity can see it.
+
+    AF-AP-44 (2026-09-06): CI runs as a non-root user and /root is 0700, so `Path.exists()` raises
+    PermissionError instead of returning False — at module scope that error aborts pytest COLLECTION for
+    the whole tests job (four red workflow runs across checkpoints 4-5). Any OSError means "not available
+    here": the venue-gated tests skip, they never error."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def test_binary_probe_never_raises(monkeypatch):
+    """AF-AP-44 control: a PermissionError from the filesystem probe is 'unavailable', not a collection error."""
+    def _denied(self):
+        raise PermissionError(13, "Permission denied", str(self))
+    monkeypatch.setattr(Path, "is_file", _denied)
+    assert _binary_available(Path("/root/.local/bin/sentrux")) is False
+
+
+def test_binary_probe_true_for_an_existing_file(tmp_path):
+    f = tmp_path / "sentrux"; f.write_bytes(b"#!/bin/sh\n"); f.chmod(0o755)
+    assert _binary_available(f) is True
+
+
 def _run(*args, env_extra=None):
     env = dict(os.environ)
     env.update(env_extra or {})
@@ -35,7 +61,7 @@ def test_usage_error_exits_64(tmp_path):
     assert (r.returncode, r.stdout.strip()) == (64, "usage: sentrux_review.sh check|save|compare [--strict]")
 
 
-@pytest.mark.skipif(not BIN.exists(), reason="pinned sentrux binary not installed in this venue")
+@pytest.mark.skipif(not _binary_available(), reason="pinned sentrux binary not installed in this venue")
 def test_check_reports_and_exits_zero(tmp_path):
     rt = tmp_path / "rt"
     r = _run("check", env_extra={"SENTRUX_RUNTIME_DIR": str(rt)})
@@ -47,21 +73,21 @@ def test_check_reports_and_exits_zero(tmp_path):
     assert last.startswith("sentrux check: tool exit ") and last.endswith("(advisory — never a gate; --strict passes it through)")
 
 
-@pytest.mark.skipif(not BIN.exists(), reason="pinned sentrux binary not installed in this venue")
+@pytest.mark.skipif(not _binary_available(), reason="pinned sentrux binary not installed in this venue")
 def test_strict_propagates_tool_exit(tmp_path):
     r = _run("check", "--strict", env_extra={"SENTRUX_RUNTIME_DIR": str(tmp_path / "rt")})
     tool_rc = int(r.stdout.strip().splitlines()[-1].split("tool exit ")[1].split()[0])
     assert r.returncode == tool_rc
 
 
-@pytest.mark.skipif(not BIN.exists(), reason="pinned sentrux binary not installed")
+@pytest.mark.skipif(not _binary_available(), reason="pinned sentrux binary not installed")
 def test_compare_without_baseline_is_advisory(tmp_path):
     r = _run("compare", env_extra={"SENTRUX_RUNTIME_DIR": str(tmp_path / "rt")})
     assert r.returncode == 0
     assert r.stdout.strip() == "sentrux_review: no baseline — run 'save' before the lane"
 
 
-@pytest.mark.skipif(not BIN.exists(), reason="pinned sentrux binary not installed")
+@pytest.mark.skipif(not _binary_available(), reason="pinned sentrux binary not installed")
 def test_save_then_compare_in_tmp_runtime(tmp_path):
     rt = tmp_path / "rt"
     assert _run("save", env_extra={"SENTRUX_RUNTIME_DIR": str(rt)}).returncode == 0

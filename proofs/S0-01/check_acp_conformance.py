@@ -100,6 +100,13 @@ EXPECTED_RECEIPT_KEYS = frozenset({"accepted", "event_id", "mention_pubkeys", "m
 # The expected key set for redacted-dict values (5-F07: exactly {redacted, len, sha256_12}).
 _REDACTED_DICT_KEYS = frozenset({"redacted", "len", "sha256_12"})
 
+# A21d: expected key set for tee-status.json (running status, twelve keys).
+_TEE_STATUS_KEYS = frozenset({
+    "final", "agent_returncode", "drained", "stdin_reader_done",
+    "recorded_c2a", "recorded_a2c", "forwarded_c2a", "forwarded_a2c",
+    "write_errors", "exit_code", "updated_seq", "updated_utc",
+})
+
 # The filename pattern for upstream records (A3).
 _RECORD_FILENAME_RE = re.compile(r"^\d{6}\.json$")
 
@@ -178,7 +185,7 @@ _CHECK_NAMES = [
     "check_timeline", "check_initialize_frames", "check_runtime_identity",
     "check_env", "check_mentions", "check_route",
     "check_prompt_turn", "check_config_echo", "check_manifests",
-    "check_process_evidence", "check_buzzacp_log",
+    "check_process_evidence", "check_buzzacp_log", "check_tee_status",
     "check_cancel", "check_shutdown", "check_two_users",
     "check_golden", "check_negative",
 ]
@@ -193,8 +200,8 @@ for _lg in LEGS:
 # prompt_turn for run-1, run-2, shutdown
 for _lg in ("run-1", "run-2", "shutdown"):
     EXPECTED_CHECK_SEQUENCE.append(("check_prompt_turn", _lg))
-# config_echo, manifests, process_evidence, buzzacp_log each for all LEGS
-for _cn in ("check_config_echo", "check_manifests", "check_process_evidence", "check_buzzacp_log"):
+# config_echo, manifests, process_evidence, buzzacp_log, tee_status each for all LEGS
+for _cn in ("check_config_echo", "check_manifests", "check_process_evidence", "check_buzzacp_log", "check_tee_status"):
     for _lg in LEGS:
         EXPECTED_CHECK_SEQUENCE.append((_cn, _lg))
 EXPECTED_CHECK_SEQUENCE.append(("check_cancel", "cancel"))
@@ -812,7 +819,7 @@ def check_shutdown(entries, c2a, a2c, leg_dir, leg="shutdown"):
         raise Failure(f"{leg}: buzz-acp.exit is {exit_val!r}, expected '0'")
 
 
-def check_two_users(c2a, a2c, entries, identities, leg="two-users", leg_dir=None):
+def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     resps = {json.dumps(o["id"], sort_keys=True): o for o in a2c if "id" in o and "method" not in o}
     news = [o for o in c2a if o.get("method") == "session/new"]
     prompts = [o for o in c2a if o.get("method") == "session/prompt"]
@@ -862,29 +869,30 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", leg_dir=None
         raise Failure(f"{leg}: identities owner and user2 are identical")
     # A24: assert INGRESS concurrency + OBSERVED serialization
     # Both mentions' created_at precede the FIRST session's terminal t_utc
-    mentions_dir = leg_dir / "mentions" if isinstance(leg_dir, Path) else None
-    if mentions_dir is not None and mentions_dir.is_dir():
-        owner_ev = json.loads((mentions_dir / "owner.event.json").read_text())
-        user2_ev = json.loads((mentions_dir / "user2.event.json").read_text())
-        # Find the first session's terminal t_utc
-        first_term = None
-        for e in entries:
-            if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
-                r = e["frame"].get("result") or {}
-                if r.get("stopReason") == "end_turn":
-                    first_term = _parse_utc(e["t_utc"])
-                    break
-        if first_term is not None:
-            first_term_epoch = int(first_term.timestamp())
-            if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
-                raise Failure(f"{leg}: second mention not pending during the first turn")
-        # The second session/new follows the first terminal
-        new_seqs = [e for e in entries if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
-        term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
-                     and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
-        if len(new_seqs) >= 2 and len(term_seqs) >= 1:
-            if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
-                raise Failure(f"{leg}: second session/new precedes the first terminal")
+    mentions_dir = leg_dir / "mentions"
+    if not mentions_dir.is_dir():
+        raise Failure(f"{leg}: mentions/ absent in {leg_dir.name}")
+    owner_ev = json.loads((mentions_dir / "owner.event.json").read_text())
+    user2_ev = json.loads((mentions_dir / "user2.event.json").read_text())
+    # Find the first session's terminal t_utc
+    first_term = None
+    for e in entries:
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            r = e["frame"].get("result") or {}
+            if r.get("stopReason") == "end_turn":
+                first_term = _parse_utc(e["t_utc"])
+                break
+    if first_term is not None:
+        first_term_epoch = int(first_term.timestamp())
+        if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
+            raise Failure(f"{leg}: second mention not pending during the first turn")
+    # The second session/new follows the first terminal
+    new_seqs = [e for e in entries if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
+    term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
+                 and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
+    if len(new_seqs) >= 2 and len(term_seqs) >= 1:
+        if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
+            raise Failure(f"{leg}: second session/new precedes the first terminal")
 
 
 def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
@@ -1037,12 +1045,15 @@ def check_config_echo(leg_dir, leg):
 
 
 def _parse_scan_lines(path, leg, name):
-    """Parse v2.2 scan lines: <pid> <ppid> <etimes> <cmd>."""
+    """Parse v2.2 scan lines: <pid> <ppid> <etimes> <cmd>.
+    Tolerates lines starting with '#' (enumeration header)."""
     text = path.read_text().strip()
     if not text:
         return []
     procs = []
     for line in text.splitlines():
+        if line.startswith("#"):
+            continue
         parts = line.split(None, 3)
         if len(parts) < 4:
             raise Failure(f"{leg}: {name} unparsable line: {line!r}")
@@ -1076,13 +1087,13 @@ def check_process_evidence(leg_dir, leg):
     scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
     all_procs = _parse_scan_lines(scan_path, leg, "process-scan-after.txt")
     if leg == "shutdown":
-        # A20d: shutdown still requires non-empty after-scan
-        if not all_procs:
+        # A20d: shutdown still requires non-empty after-scan (file has content)
+        if not scan_path.read_text().strip():
             raise Failure(f"{leg}: process-scan-after.txt is empty")
-        # Shutdown: no tee/agent/buzz-acp lines expected
+        # Shutdown: any owned pid in the after-scan is a SURVIVOR
         for pid, ppid, etimes, cmd in all_procs:
-            if cmd.split(" ")[0] == PINNED_BUZZ_ACP_EXE_REALPATH or PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd:
-                raise Failure(f"{leg}: process-scan-after has tee/hermes-acp lines after shutdown")
+            if pid in owned_set:
+                raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived shutdown")
     else:
         # A20d: non-shutdown legs require non-empty after-scan with tee and agent lines
         if not all_procs:
@@ -1146,16 +1157,14 @@ def check_process_evidence(leg_dir, leg):
                     continue
                 if pid not in recomputed:
                     raise Failure(f"{leg}: process {pid} ({cmd[:40]}) not in buzz-acp descendant tree")
-        # A20c: teardown scan — survivor check
-        teardown_path = _require_file(leg_dir / "process-scan-teardown.txt", leg, "process-scan-teardown.txt")
-        teardown_procs = _parse_scan_lines(teardown_path, leg, "process-scan-teardown.txt")
-        # Build etimes map from after-scan
-        after_etimes = {pid: et for pid, _, et, _ in all_procs}
-        for pid, ppid, etimes, cmd in teardown_procs:
-            if pid in owned_set and pid in after_etimes:
-                if etimes >= after_etimes[pid]:
-                    # Same process survived (not pid reuse)
-                    raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
+    # A20c: teardown scan — survivor check (ALL legs)
+    teardown_path = _require_file(leg_dir / "process-scan-teardown.txt", leg, "process-scan-teardown.txt")
+    teardown_procs = _parse_scan_lines(teardown_path, leg, "process-scan-teardown.txt")
+    after_etimes = {pid: et for pid, _, et, _ in all_procs}
+    for pid, ppid, etimes, cmd in teardown_procs:
+        if pid in owned_set and pid in after_etimes:
+            if etimes >= after_etimes[pid]:
+                raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
 
 
 def check_buzzacp_log(leg_dir, leg):
@@ -1178,6 +1187,51 @@ def check_buzzacp_log(leg_dir, leg):
             count = log_text.count(expected_line)
             if count != 1:
                 raise Failure(f"{leg}: buzzacp.log expected exactly 1 occurrence of {expected_line!r}, got {count}")
+
+
+def check_tee_status(leg_dir, leg, entries):
+    """A21d: validate tee-status.json — twelve-key running status."""
+    ts_path = _require_file(leg_dir / "tee-status.json", leg, "tee-status.json")
+    ts = json.loads(ts_path.read_text())
+    if not isinstance(ts, dict):
+        raise Failure(f"{leg}: tee-status.json is not an object")
+    if set(ts.keys()) != _TEE_STATUS_KEYS:
+        extra = sorted(set(ts.keys()) - _TEE_STATUS_KEYS)
+        missing = sorted(_TEE_STATUS_KEYS - set(ts.keys()))
+        raise Failure(f"{leg}: tee-status.json key set mismatch (extra={extra}, missing={missing})")
+    if ts["drained"] is not True:
+        raise Failure(f"{leg}: tee-status.json drained is not true")
+    if ts["write_errors"] != []:
+        raise Failure(f"{leg}: tee-status.json write_errors is not empty")
+    if ts["forwarded_c2a"] != ts["recorded_c2a"]:
+        raise Failure(f"{leg}: tee-status.json forwarded_c2a != recorded_c2a")
+    if ts["forwarded_a2c"] != ts["recorded_a2c"]:
+        raise Failure(f"{leg}: tee-status.json forwarded_a2c != recorded_a2c")
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    if ts["recorded_c2a"] != c2a_count:
+        raise Failure(f"{leg}: tee-status.json recorded_c2a {ts['recorded_c2a']} != timeline c2a count {c2a_count}")
+    if ts["recorded_a2c"] != a2c_count:
+        raise Failure(f"{leg}: tee-status.json recorded_a2c {ts['recorded_a2c']} != timeline a2c count {a2c_count}")
+    last_seq = entries[-1]["seq"] if entries else 0
+    if ts["updated_seq"] != last_seq:
+        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != timeline last seq {last_seq}")
+    utc_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+    if not isinstance(ts["updated_utc"], str) or not utc_re.match(ts["updated_utc"]):
+        raise Failure(f"{leg}: tee-status.json updated_utc does not match format")
+    # A21d: when final, A21b exit_code rule; when not final, both exit fields null
+    if ts["final"]:
+        rc = ts["agent_returncode"]
+        if not _is_strict_int(rc):
+            raise Failure(f"{leg}: tee-status.json final but agent_returncode is not int")
+        expected_exit = rc if rc >= 0 else 128 + (-rc)
+        if ts["exit_code"] != expected_exit:
+            raise Failure(f"{leg}: tee-status.json exit_code {ts['exit_code']} != expected {expected_exit}")
+    else:
+        if ts["agent_returncode"] is not None:
+            raise Failure(f"{leg}: tee-status.json not final but agent_returncode is not null")
+        if ts["exit_code"] is not None:
+            raise Failure(f"{leg}: tee-status.json not final but exit_code is not null")
 
 
 def check_negative(neg_dir, leg="negative"):
@@ -1378,6 +1432,10 @@ def check_bundle(root: Path) -> str:
         _run_check(check_process_evidence, leg, golden / leg, leg)
     for leg in LEGS:
         _run_check(check_buzzacp_log, leg, golden / leg, leg)
+    for leg in LEGS:
+        d = golden / leg
+        entries = _load_timeline_raw(d, leg)
+        _run_check(check_tee_status, leg, d, leg, entries)
     d = golden / "cancel"
     entries = _load_timeline_raw(d, "cancel")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]

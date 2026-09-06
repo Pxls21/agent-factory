@@ -355,7 +355,7 @@ def test_response_dir_no_a2c_fails(tmp_path):
     d = _make_capture_dir(tmp_path, a2c_frame=None)
     r = _run("response", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: no a2c response to classify"
+    assert r.stdout.strip() == "no a2c response to classify"
 
 
 def test_response_dir_error_response(tmp_path):
@@ -368,13 +368,17 @@ def test_response_dir_error_response(tmp_path):
 
 
 def test_response_dir_distinct_from_request(tmp_path):
-    """response <dir> produces different output from request <dir> on the same capture."""
+    """response <dir> produces different output from request <dir> on the same capture.
+    R5-N5-F17: assert exact output of each mode, not just inequality."""
     d = _make_capture_dir(tmp_path)
     r_req = _run("request", d)
     r_resp = _run("response", d)
     assert r_req.returncode == 1
     assert r_resp.returncode == 1
-    assert r_req.stdout != r_resp.stdout
+    req_lines = r_req.stdout.strip().splitlines()
+    assert req_lines[0] == "protocol-violation: missing required initialize field"
+    assert req_lines[1] == "observed: error code=-32602 message=Invalid params"
+    assert r_resp.stdout.strip() == "error code=-32602 message=Invalid params"
 
 
 # ---- 8-verify F10 / A10: usage error exits 64, not 2 ----
@@ -560,3 +564,171 @@ def test_request_dir_fails_empty_env_json(tmp_path):
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: env HERMES_HOME mismatch"
+
+
+# ---- R5-N5-F8: response <dir> cardinality gate ----
+
+def test_response_dir_rejects_duplicate_id_responses(tmp_path):
+    """R5-N5-F8: two a2c responses carrying the same request id is a Failure.
+    Kills CI-10 (matching[-1] mutant)."""
+    first_resp = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32602, "message": "Invalid params"}}
+    second_resp = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path,
+                          extra_a2c_before=[(first_resp, "2026-09-05T17:57:20.800000Z", 4649102100000000)],
+                          a2c_frame=second_resp)
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "Failure: 2 a2c responses carry request id 0"
+
+
+# ---- R5-N5-F18: response <dir> with unparseable c2a frame ----
+
+def test_response_dir_rejects_unparseable_c2a(tmp_path):
+    """R5-N5-F18: c2a frame with no 'id' key does not silently match notifications."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    c2a = {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T17:57:20.411449Z",
+           "t_mono_ns": 4649101715037563, "frame": {"jsonrpc": "2.0", "method": "initialize"}}
+    a2c = {"seq": 2, "dir": "a2c", "t_utc": "2026-09-05T17:57:21.031783Z",
+           "t_mono_ns": 4649102335384757,
+           "frame": {"jsonrpc": "2.0", "method": "log", "params": {"msg": "hi"}}}
+    (d / "timeline.jsonl").write_text(
+        json.dumps(c2a, separators=(",", ":")) + "\n" +
+        json.dumps(a2c, separators=(",", ":")) + "\n"
+    )
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "c2a frame has no id"
+
+
+def test_response_dir_rejects_null_c2a_frame(tmp_path):
+    """R5-N5-F18: c2a with frame=null does not match notifications with missing id."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    c2a = {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T17:57:20.411449Z",
+           "t_mono_ns": 4649101715037563, "frame": None}
+    a2c_notif = {"seq": 2, "dir": "a2c", "t_utc": "2026-09-05T17:57:21.031783Z",
+                 "t_mono_ns": 4649102335384757,
+                 "frame": {"jsonrpc": "2.0", "method": "log", "params": {"msg": "hi"}}}
+    (d / "timeline.jsonl").write_text(
+        json.dumps(c2a, separators=(",", ":")) + "\n" +
+        json.dumps(a2c_notif, separators=(",", ":")) + "\n"
+    )
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "c2a frame has no id"
+
+
+# ---- R5-N5-F5: schema resolution via --fixtures-dir ----
+
+def test_request_file_mode_uses_fixtures_dir_schema(tmp_path):
+    """R5-N5-F5: a mutated schema in --fixtures-dir changes classification.
+    Kills CI-06/CI-06b (schema load mutation survivors)."""
+    # Create a custom fixtures dir with a modified schema that DOES NOT
+    # require protocolVersion, so the fixture classifies as "ok" instead.
+    fx = tmp_path / "fixtures"
+    fx.mkdir()
+    import shutil
+    schema_src = ROOT / "proofs" / "S0-01" / "fixtures" / "acp-schema-v1.json"
+    schema = json.loads(schema_src.read_text())
+    # Remove protocolVersion from required in InitializeRequest
+    if "InitializeRequest" in schema.get("$defs", {}):
+        ir = schema["$defs"]["InitializeRequest"]
+        if "required" in ir and "protocolVersion" in ir["required"]:
+            ir["required"].remove("protocolVersion")
+    (fx / "acp-schema-v1.json").write_text(json.dumps(schema, indent=2))
+    # Also copy the fixture file needed by the validator
+    shutil.copy2(ROOT / "proofs" / "S0-01" / "fixtures" / "neg-malformed-initialize.json",
+                 fx / "neg-malformed-initialize.json")
+
+    r = _run("request", FIXTURE, fixtures_dir=fx)
+    # With protocolVersion not required, the fixture should classify as "ok"
+    assert r.returncode == 0, f"expected exit 0 with relaxed schema, got {r.returncode}: {r.stdout}"
+    assert r.stdout.strip() == "ok"
+
+
+# ---- R5-N5-F6: malformed evidence arm gated (CI-08 killer) ----
+
+def test_malformed_evidence_exits_1_not_0(tmp_path):
+    """R5-N5-F6: the malformed evidence handler returns 1. Kills CI-08
+    (return 1 -> return 0 mutant)."""
+    d = tmp_path / "capture"
+    d.mkdir()
+    (d / "timeline.jsonl").write_text("not json\n")
+    # Intentionally corrupt runtime-identity.json too
+    (d / "runtime-identity.json").write_text("{corrupt")
+    (d / "env.json").write_text("{}")
+    (d / "agent-stderr.txt").write_text("")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: timeline.jsonl line 1 is not strict JSON: Expecting value: line 1 column 1 (char 0)"
+
+
+def test_malformed_rid_json_exits_1(tmp_path):
+    """R5-N5-F6: invalid JSON in runtime-identity.json triggers malformed evidence arm."""
+    d = _make_capture_dir(tmp_path)
+    (d / "runtime-identity.json").write_text("{bad json")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: malformed evidence: JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+
+
+# ---- R5-N5-F10: capture dir builder pinned to a live producer run ----
+
+def test_make_capture_dir_keys_match_live_producer(tmp_path):
+    """R5-N5-F10: _make_capture_dir produces a RID with the same key set and
+    key order as a live acp_probe run. Kills AP-02/AP-16 (extra/missing key)."""
+    import textwrap
+    PROBE = ROOT / "proofs" / "S0-01" / "tools" / "acp_probe.py"
+    # Run the actual probe to get a live producer sample
+    agent = tmp_path / "agent_live.py"
+    agent.write_text(textwrap.dedent("""\
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            resp = {
+                "jsonrpc": "2.0", "id": msg["id"],
+                "error": {"code": -32602, "message": "Invalid params",
+                          "data": {"errors": [{"type": "missing",
+                                               "loc": ["protocolVersion"],
+                                               "msg": "Field required"}]}},
+            }
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            break
+    """))
+    agent.chmod(0o755)
+    import os
+    framedir = tmp_path / "live_capture"
+    framedir.mkdir()
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = str(agent)
+    env["S0_01_FRAMEDIR"] = str(framedir)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"probe failed: {r.stderr}"
+    live_rid = json.loads((framedir / "runtime-identity.json").read_text())
+    live_keys = list(live_rid.keys())
+    # Compare with _make_capture_dir's default
+    d = _make_capture_dir(tmp_path)
+    builder_rid = json.loads((d / "runtime-identity.json").read_text())
+    builder_keys = list(builder_rid.keys())
+    assert set(builder_keys) == set(live_keys), (
+        f"builder keys {set(builder_keys)} != live keys {set(live_keys)}"
+    )
+    assert builder_keys == live_keys, (
+        f"builder key order {builder_keys} != live key order {live_keys}"
+    )
+    # Timeline key set also matches
+    live_tl = [json.loads(l) for l in (framedir / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    builder_tl = [json.loads(l) for l in (d / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    assert set(live_tl[0].keys()) == set(builder_tl[0].keys()), (
+        f"timeline c2a keys differ: live={set(live_tl[0].keys())} builder={set(builder_tl[0].keys())}"
+    )

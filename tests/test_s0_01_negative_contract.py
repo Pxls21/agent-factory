@@ -314,3 +314,39 @@ def test_env_key_not_redacted(neg):
     env["OMNIROUTE_API_KEY"] = "sk-plaintext"
     (neg / "env.json").write_text(json.dumps(env))
     _expect(neg, "env OMNIROUTE_API_KEY not redacted or empty")
+
+
+# ---- R5-N5-F11 (2026-09-06): guards that had no killing test (mutants NC-08 / NC-12 / NC-22 / NC-27 survived) ----
+
+def _timeline(neg: Path):
+    return [json.loads(l) for l in (neg / "timeline.jsonl").read_text().splitlines() if l.strip()]
+
+
+def test_agent_child_pid_bool_is_not_an_int(neg):
+    """NC-08: `_is_int` must exclude bool — `true` is an int subclass and would pass a naive isinstance check."""
+    _set_rid(neg, agent_child_pid=True)
+    _expect(neg, "agent_child_pid is not a positive int")
+
+
+def test_t_mono_ns_must_not_decrease(neg):
+    """NC-12: the monotonic clock decreasing between consecutive entries is a Failure naming the seq."""
+    entries = _timeline(neg)
+    entries[1]["t_mono_ns"] = entries[0]["t_mono_ns"] - 1
+    _write_timeline(neg, entries)
+    _expect(neg, "t_mono_ns decreases at seq 2")
+
+
+def test_timeline_entry_with_an_unexpected_key_is_rejected(neg):
+    """NC-22: the entry key set is closed — an extra key is a Failure naming the entry."""
+    entries = _timeline(neg)
+    entries[0]["note"] = "smuggled"
+    _write_timeline(neg, entries)
+    _expect(neg, "timeline entry 1 has unexpected keys")
+
+
+def test_t_utc_without_microseconds_is_rejected(neg):
+    """NC-27: t_utc must match YYYY-MM-DDTHH:MM:SS.ffffffZ exactly — a second-resolution stamp is a Failure."""
+    entries = _timeline(neg)
+    entries[1]["t_utc"] = "2026-09-05T17:57:21Z"
+    _write_timeline(neg, entries)
+    _expect(neg, "timestamp '2026-09-05T17:57:21Z' does not match YYYY-MM-DDTHH:MM:SS.ffffffZ")

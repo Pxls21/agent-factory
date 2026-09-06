@@ -121,6 +121,10 @@ AP_SCREEN = [
     # the real value.
     ("AF-AP-41", re.compile(r"""dict\(\s*(?:re|\w+)\.findall\("""),
      "last-wins parse of an echo line — require each pinned key EXACTLY ONCE, then compare == (AF-AP-41)"),
+    # AF-AP-45 (2026-09-06): liveness from ps presence / /proc existence without the state column — a
+    # zombie (<defunct>) reads as a running survivor until its parent reaps it.
+    ("AF-AP-45", re.compile(r"""ps\b[^\n]*-e?o\b[^\n]*?\b(?:pid|ppid)\b(?![^\n]*\bstat\b)|(?:exists|isdir|is_dir)\(\s*f?["'][^"'\n]*/proc/"""),
+     "process liveness without the STATE column — a killed-but-unreaped child is a zombie, not a survivor; enumerate `stat`, exclude Z, count zombies separately (AF-AP-45)"),
     # AF-AP-43 (2026-09-05): a timestamp sampled before the lock that assigns the sequence number
     # yields inversions under honest concurrency.
     ("AF-AP-43", re.compile(r"""(?:monotonic(?:_ns)?|time\.time|perf_counter(?:_ns)?|datetime\.now|utcnow)\(\)[\s\S]{0,240}?\bwith\s+[\w.]*lock\b"""),
@@ -148,6 +152,10 @@ TEST_SCREEN = [
     # AF-AP-35 (2026-09-04): a redaction built from the secret's VALUE echoed the value into the log.
     ("AF-AP-35", re.compile(r"(?:re\.sub|\.replace)\(\s*(?:re\.escape\()?\s*\w*(?:key|secret|token|password|passwd)\w*\b", re.I),
      "redaction keyed on a secret's VALUE — the value lands in argv/output/transcript; redact by KEY NAME or pattern class and dry-run on a dummy (AF-AP-35)"),
+    # AF-AP-44 (2026-09-06): a module-scope venue probe that can RAISE (PermissionError under CI's non-root
+    # identity) aborts collection for the whole job — probe inside try/except OSError, return absent.
+    ("AF-AP-44", re.compile(r"""skipif\(\s*not\s+[\w.]+(?:\([^()\n]*\))?\.(?:exists|is_file|is_dir)\(\)"""),
+     "module-scope venue probe in a skipif — Path.exists() RAISES PermissionError under another identity and kills collection; wrap the probe (return absent on OSError) (AF-AP-44)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),
     # TN3-F4 (2026-09-02): a blanket except in a test hollows any call-count

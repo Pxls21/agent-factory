@@ -77,6 +77,24 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-06 sync (S0-01 repair checkpoint 6: Codex-audit repairs, round-6 lanes N5b/D5b/A5b landed, bridge rehearsals; tee lane in flight; still REVIEW-PENDING, nothing minted):**
+The owner's Codex audit of checkpoint 5 reproduced from primary sources and repaired: (1) CI `tests` job had died at COLLECTION on four
+pushes — a module-scope `Path.exists()` on `/root/...` raises PermissionError under the runner's non-root identity (AF-AP-44; fixed,
+reproduced as uid 65534); (2) the shutdown process check demanded a non-empty scan where a successful shutdown produces an empty one and
+screened only pinned command names — producer scan v2.3 (standalone entry point, enumeration header, zombie exclusion — AF-AP-45) with
+a real-producer sandbox test, plus committed controls that feed the real producer's output to the checker (two green vs A5b's checker,
+the header requirement strict-xfail until lane A5c); (3) the hollow real-leg process test and the `/sbin/init` fixture divergence
+(AF-AP-42 recurrence 2) fixed in A5b; (4) tee-status consumed by the checker (A21d); (5) the two-POST claim corrected to fixture
+realism (AF-AP-36 recurrence). Round-5 adversarial verifiers returned NOT-READY on all three lanes (N5: interpreter fix ungated, 17
+survivors; D5: `/healthz` smuggling below the new guard; B5: c2a frame loss with exit 0, A21 unsatisfiable on signal exits) → round-6
+repairs: N5b DONE (18 findings, 19/19 self-mutants, 213 passed ×2), D5b DONE (framing gate before every route, 90 passed ×2), A5b DONE
+(audit mutations as named tests, 48/65 harness kills with 17 lane-classified survivors, A21d, survivors on every leg; 225 passed ×2),
+B5b IN FLIGHT (excluded from this checkpoint). BRIDGE RESTORED: PC clone synced to origin, backend restarted, negative + five legs
+rehearsed; FINDING — the pinned buzz-acp SIGKILLs the agent process group at shutdown (acp.rs:417-442), so the tee status must be a
+RUNNING file (A21d); the fresh corpus passes 44/46 real-leg checks (shutdown scan awaits the v2.3 header; negative awaits the final
+probe). NEXT: B5b → checker lane A5c (header requirement) → verify lanes → final re-capture with the final tools → golden pin →
+mutation suite on the REAL bundle → canonical runner on pc-bridge → ledger → owner review. PROOF-STATUS stays REVIEW-PENDING (AF-AP-32).
+
 **2026-09-06 sync (S0-01 repair checkpoint 5: round-5 lanes D5/N5/B5 CLOSED, A5 PARTIAL → lane A5b; still REVIEW-PENDING, nothing minted):**
 Four build lanes ran in parallel against brief r5 (amendments A19-A28 + every open round-4 verifier finding). D5
 (backend: configured-token credential screen at the record boundary, GET-with-body rejected without a second-request
@@ -88,7 +106,7 @@ exact; 158 passed ×2), B5 (tee: progress-gated drain proven past the pipe buffe
 lock mutant red 5/5, directional write errors gated both ways, `stdin_reader_done` value asserted, framedir exit 64; 60
 passed ×2) closed every assigned finding with a revert-red. A5 (checker) implemented A19-A26 (4-field scans + owned-pid
 closure + identity binding + survivors, frame classes + response cardinality, sequence guard without dedup, startup
-pins, two-users ingress concurrency, TWO POSTs per window) but left NOT DONE: the audit's four verbatim mutations as
+pins, two-users ingress concurrency; the fixture now carries TWO POSTs per window — fixture realism, NOT an enforced check, per the checkpoint-5 audit) but left NOT DONE: the audit's four verbatim mutations as
 named tests, the mutation harness (not run), the suite at ~500 s (target 200 s), dedicated tests for the header/symlink/
 stderr screens and the two structural guards, and it wrote a presence-gated `if mentions_dir is not None` around the
 new two-users assertion (AF-AP-40 recurrence 2) — all → lane A5b. Boundary edits: `pc_post.sh` derives its pinned
