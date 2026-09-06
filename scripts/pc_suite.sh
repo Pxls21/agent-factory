@@ -5,7 +5,7 @@
 # plus the working tree as ONE binary patch (tracked edits + untracked files, .gitignore honoured), applied
 # in a detached git worktree under the PC clone. Never touches the PC clone's checked-out branch.
 #
-#   scripts/pc_suite.sh launch [-n <workers>] [-- <pytest paths/args>]  → prints RUN_ID (default set: tests/ proofs/ spikes/)
+#   scripts/pc_suite.sh launch [-n <workers>] [-- <pytest paths/args>]  → prints RUN_ID (default set: tests/ proofs/ spikes/); PC_SUITE_BASE=<pushed sha> when HEAD is unpushed
 #   scripts/pc_suite.sh wait <RUN_ID> [max-minutes]                      → polls with SHORT bridge probes; prints the pasted
 #                                                                           summary line + FAILED lines; exit = pytest's rc
 #   scripts/pc_suite.sh log <RUN_ID> [tail-bytes]                         → the log's tail (bridge replies cap ~45 KB, AF-AP-15)
@@ -31,7 +31,9 @@ launch)
   while [ $# -gt 0 ]; do case "$1" in -n) WORKERS="$2"; shift 2;; --) shift; break;; *) die "unknown arg $1";; esac; done
   SET="${*:-tests/ proofs/ spikes/}"
   cd "$ROOT" || die "no repo"
-  BASE=$(git rev-parse HEAD) || die "no HEAD"
+  # PC_SUITE_BASE=<sha>: diff against a commit the PC already has (e.g. the last pushed head) when HEAD is a local,
+  # unpushed commit — the patch then carries the unpushed commits AND the working tree (lane A5e hit this 2026-09-06).
+  BASE=$(git rev-parse "${PC_SUITE_BASE:-HEAD}") || die "no such base: ${PC_SUITE_BASE:-HEAD}"
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${BASE:0:7}"
   RD="$PC_AF_REPO/.suite/$RUN_ID"; WT="$RD/tree"
   # the working tree as ONE binary patch against HEAD, untracked files included (temp index — the real index is untouched)

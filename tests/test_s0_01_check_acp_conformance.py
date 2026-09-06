@@ -2738,3 +2738,453 @@ def test_real_leg_normalize_timeline():
     entries = cc._load_timeline_raw(leg_dir, "run-1")
     n = cc.normalize_timeline(entries)
     assert len(n) > 0
+
+
+# ============================================================================
+# VERIFY-CK7 F1-F9: killing tests for the 21 previously-unkilled guards.
+# Each test constructs the verifier's hostile bundle and asserts the EXACT
+# failure reason.  The mutation audit proves each red on the guard-disabled
+# copy (see the combined-mutant run in the report).
+# ============================================================================
+
+# -- F1: A24 ingress concurrency (C:890-893) --
+def test_ck7_f1_second_mention_after_first_terminal(bundle):
+    """F1: two-users second mention created_at AFTER the first terminal must fail."""
+    ld = bundle / "golden" / "two-users"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find the first terminal t_utc
+    first_term_utc = None
+    for e in es:
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            r = e["frame"].get("result") or {}
+            if r.get("stopReason") == "end_turn":
+                first_term_utc = e["t_utc"]
+                break
+    assert first_term_utc is not None, "test setup: no terminal found"
+    from datetime import datetime, timezone
+    ft = datetime.strptime(first_term_utc, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    after_epoch = int(ft.timestamp()) + 10  # well after the terminal
+    # Rewrite user2 mention with created_at after the terminal
+    md = ld / "mentions"
+    u2 = json.loads((md / "user2.event.json").read_text())
+    u2["created_at"] = after_epoch
+    # Re-sign with the correct id for the new created_at
+    content = u2["content"]
+    tags = u2["tags"]
+    new_ev = nv.sign_event(USER2_SECKEY, {"created_at": after_epoch, "kind": 9,
+                                          "tags": tags, "content": content})
+    (md / "user2.event.json").write_text(json.dumps(new_ev, indent=2) + "\n")
+    # Update receipt to match new event id
+    rcpt = json.loads((md / "user2.receipt.json").read_text())
+    rcpt["event_id"] = new_ev["id"]
+    (md / "user2.receipt.json").write_text(json.dumps(rcpt, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: two-users: second mention not pending during the first turn"
+
+
+# -- F2: A24 observed serialization (C:898-900) --
+def test_ck7_f2_second_session_new_before_first_terminal(bundle):
+    """F2: two-users second session/new before the first terminal must fail."""
+    ld = bundle / "golden" / "two-users"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find indices of the two session/new frames and the first terminal
+    new_idxs = [i for i, e in enumerate(es) if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
+    term_idxs = [i for i, e in enumerate(es) if e["dir"] == "a2c" and "id" in e["frame"]
+                 and "method" not in e["frame"]
+                 and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
+    assert len(new_idxs) >= 2 and len(term_idxs) >= 1, "test setup: need 2 session/new + 1 terminal"
+    # Move the second session/new frame before the first terminal by swapping frames
+    # Put the second session/new's frame into a position before the first terminal
+    second_new_idx = new_idxs[1]
+    first_term_idx = term_idxs[0]
+    if second_new_idx > first_term_idx:
+        # Swap the frames (not timestamps) so the second new comes before the terminal
+        es[second_new_idx]["frame"], es[first_term_idx]["frame"] = \
+            es[first_term_idx]["frame"], es[second_new_idx]["frame"]
+        es[second_new_idx]["dir"], es[first_term_idx]["dir"] = \
+            es[first_term_idx]["dir"], es[second_new_idx]["dir"]
+    _write_timeline(ld, es)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: two-users: second session/new precedes the first terminal"
+
+
+# -- F3: A23 response cardinality (C:318-321) --
+def test_ck7_f3_duplicate_response_id(bundle):
+    """F3: duplicate response for the same id must fail."""
+    ld = bundle / "golden" / "run-1"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find the first a2c response (has id, no method) and its id
+    resp_idx = None
+    resp_id = None
+    for i, e in enumerate(es):
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            resp_idx = i
+            resp_id = e["frame"]["id"]
+            break
+    assert resp_idx is not None, "test setup: no response found"
+    # Insert a duplicate error response with the same id right before the end_turn
+    end_turn_idx = None
+    for i, e in enumerate(es):
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            r = e["frame"].get("result") or {}
+            if r.get("stopReason") == "end_turn":
+                end_turn_idx = i
+                break
+    assert end_turn_idx is not None, "test setup: no end_turn found"
+    dup = {"seq": 0, "dir": "a2c", "t_utc": es[end_turn_idx]["t_utc"],
+           "t_mono_ns": es[end_turn_idx]["t_mono_ns"] - 1,
+           "frame": {"jsonrpc": "2.0", "id": resp_id,
+                     "error": {"code": -32600, "message": "Injected duplicate"}}}
+    es.insert(end_turn_idx, dup)
+    for i, e in enumerate(es):
+        e["seq"] = i + 1
+    _write_timeline(ld, es)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == f"failure_reason: run-1: duplicate response for id {resp_id} at seqs [{resp_idx + 1}, {end_turn_idx + 1}]"
+
+
+# -- F4a: A23 frame classes — a2c agent request (C:302-303) --
+def test_ck7_f4a_a2c_agent_request(bundle):
+    """F4a: an a2c frame with method AND id (an agent request) must fail."""
+    ld = bundle / "golden" / "run-1"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find the first a2c notification (has method, no id) and inject method+id
+    for i, e in enumerate(es):
+        if e["dir"] == "a2c" and "method" in e["frame"] and "id" not in e["frame"]:
+            e["frame"]["id"] = 901
+            break
+    _write_timeline(ld, es)
+    rc, out = _check(bundle)
+    assert rc == 1
+    method = es[i]["frame"]["method"]
+    assert out == f"failure_reason: run-1: a2c frame at seq {es[i]['seq']} is an agent request (method={method!r})"
+
+
+# -- F4b: A23 frame classes — c2a client response (C:304-305) --
+def test_ck7_f4b_c2a_client_response(bundle):
+    """F4b: a c2a frame with id and NO method (a client response) must fail."""
+    ld = bundle / "golden" / "run-1"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find a c2a frame with method and replace it to have id but no method
+    for i, e in enumerate(es):
+        if e["dir"] == "c2a" and "method" in e["frame"]:
+            e["frame"].pop("method")
+            if "id" not in e["frame"]:
+                e["frame"]["id"] = 901
+            break
+    _write_timeline(ld, es)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == f"failure_reason: run-1: c2a frame at seq {es[i]['seq']} is a client response (id={es[i]['frame']['id']!r})"
+
+
+# -- F5: A23 response envelope validity (C:325-328) --
+def test_ck7_f5_invalid_response_envelope(bundle):
+    """F5: response with wrong jsonrpc version (not '2.0') must fail.
+    Uses a non-initialize response (the session/prompt terminal) so the attack
+    is not caught by check_initialize_frames.  The guard at C:326 has two clauses
+    joined by 'or'; the 'if False and' mutation disables only the first clause
+    (jsonrpc != '2.0'), so the attack must trigger THAT clause while keeping
+    result/error normal (exactly one of the two)."""
+    ld = bundle / "golden" / "run-1"
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find the LAST a2c response (the end_turn terminal) — not the initialize response
+    target_idx = None
+    for i in range(len(es) - 1, -1, -1):
+        e = es[i]
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            target_idx = i
+            break
+    assert target_idx is not None, "test setup: no a2c response found"
+    es[target_idx]["frame"]["jsonrpc"] = "3.0"
+    _write_timeline(ld, es)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == f"failure_reason: run-1: response at seq {es[target_idx]['seq']} is not a valid JSON-RPC envelope"
+
+
+# -- F6a: A20b tee_pid ppid binding (C:1187-1188) --
+def test_ck7_f6a_tee_pid_wrong_ppid(tmp_path):
+    """F6a: tee_pid with wrong ppid (not buzz_acp_pid) must fail.
+    Two tee processes: one structural (ppid=buzz, passes structural check) and
+    the rid tee_pid (ppid=structural_tee, fails the identity ppid binding)."""
+    ld = tmp_path
+    buzz_pid = 12300
+    structural_tee = 12350  # passes structural check (ppid=buzz, PINNED_TEE_PATH)
+    rid_tee = 12340         # rid's tee_pid, ppid=structural_tee (not buzz_pid)
+    agent_pid = 12345
+    owned = sorted([buzz_pid, structural_tee, rid_tee, agent_pid])
+    (ld / "buzz-acp.pid").write_text(f"{buzz_pid}\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps(
+        {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
+    (ld / "runtime-identity.json").write_text(json.dumps(
+        {"tee_pid": rid_tee, "agent_child_pid": agent_pid}))
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+        + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+        + f"{structural_tee} {buzz_pid} 95 /usr/bin/python3 {PINNED_TEE_PATH} --wrapper\n"
+        + f"{rid_tee} {structural_tee} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+        + f"{agent_pid} {structural_tee} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    (ld / "process-scan-teardown.txt").write_text(
+        _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: tee_pid 12340 ppid is not buzz_acp_pid"
+
+
+# -- F6b: A20b agent_child_pid ppid binding (C:1195-1196) --
+def test_ck7_f6b_agent_pid_wrong_ppid(tmp_path):
+    """F6b: agent_child_pid with wrong ppid (not tee_pid) must fail.
+    Two agent processes: one structural (ppid=tee, passes structural check) and
+    the rid agent_child_pid (ppid=buzz, fails the identity ppid binding)."""
+    ld = tmp_path
+    buzz_pid = 12300
+    tee_pid = 12340
+    structural_agent = 12346  # passes structural check (ppid=tee, PINNED_AGENT_REALPATH)
+    rid_agent = 12345         # rid's agent_child_pid, ppid=buzz (not tee_pid)
+    owned = sorted([buzz_pid, tee_pid, structural_agent, rid_agent])
+    (ld / "buzz-acp.pid").write_text(f"{buzz_pid}\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps(
+        {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
+    (ld / "runtime-identity.json").write_text(json.dumps(
+        {"tee_pid": tee_pid, "agent_child_pid": rid_agent}))
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+        + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+        + f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+        + f"{structural_agent} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
+        + f"{rid_agent} {buzz_pid} 75 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    (ld / "process-scan-teardown.txt").write_text(
+        _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: agent_child_pid 12345 ppid is not tee_pid"
+
+
+# -- F7a: teardown header mode mismatch (C:1215-1216) --
+def test_ck7_f7a_teardown_mode_mismatch(bundle):
+    """F7a: teardown scan with mode=after in header must fail."""
+    ld = bundle / "golden" / "run-1"
+    td = ld / "process-scan-teardown.txt"
+    td.write_text(_scan_header("after", buzz_present=0, owned_present=0) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-teardown.txt header mode is 'after', expected 'teardown'"
+
+
+# -- F7b: teardown header rows=0 (C:1217-1218) --
+def test_ck7_f7b_teardown_rows_zero(bundle):
+    """F7b: teardown scan with rows=0 must fail."""
+    ld = bundle / "golden" / "run-1"
+    td = ld / "process-scan-teardown.txt"
+    td.write_text(_scan_header("teardown", rows=0, buzz_present=0, owned_present=0) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-teardown.txt header rows=0 (enumeration did not run)"
+
+
+# -- F7c: teardown header owned count mismatch (C:1219-1220) --
+def test_ck7_f7c_teardown_owned_mismatch(bundle):
+    """F7c: teardown header owned != len(owned-pids.json owned) must fail."""
+    ld = bundle / "golden" / "run-1"
+    td = ld / "process-scan-teardown.txt"
+    td.write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-teardown.txt header owned=1 != owned-pids.json (3)"
+
+
+# -- F7d: teardown header owned_present inconsistent (C:1222-1223) --
+def test_ck7_f7d_teardown_owned_present_mismatch(bundle):
+    """F7d: teardown header owned_present inconsistent with body must fail."""
+    ld = bundle / "golden" / "run-1"
+    td = ld / "process-scan-teardown.txt"
+    # Empty body but header says owned_present=1
+    td.write_text(_scan_header("teardown", buzz_present=0, owned_present=1) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-teardown.txt header owned_present=1 inconsistent with body (0)"
+
+
+# -- F8a: A21d write_errors non-empty (C:1272) --
+def test_ck7_f8a_tee_status_write_errors(bundle):
+    """F8a: tee-status.json with non-empty write_errors must fail."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["write_errors"] = ["disk full"]
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json write_errors is not empty"
+
+
+# -- F8b: A21d forwarded_a2c != recorded_a2c (C:1276) --
+def test_ck7_f8b_tee_status_forwarded_a2c_mismatch(bundle):
+    """F8b: tee-status.json forwarded_a2c != recorded_a2c must fail."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["forwarded_a2c"] = ts["recorded_a2c"] - 1
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json forwarded_a2c != recorded_a2c"
+
+
+# -- F8c: A21d recorded_c2a != timeline (C:1280) --
+def test_ck7_f8c_tee_status_recorded_c2a_wrong(bundle):
+    """F8c: tee-status.json recorded_c2a != timeline c2a count must fail."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    real_c2a = ts["recorded_c2a"]
+    ts["recorded_c2a"] = real_c2a + 1
+    ts["forwarded_c2a"] = real_c2a + 1  # keep forwarded == recorded to pass that check
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    expected_c2a = sum(1 for e in es if e["dir"] == "c2a")
+    assert out == f"failure_reason: run-1: tee-status.json recorded_c2a {real_c2a + 1} != timeline c2a count {expected_c2a}"
+
+
+# -- F8d: A21d updated_utc format (C:1288) --
+def test_ck7_f8d_tee_status_updated_utc_bad_format(bundle):
+    """F8d: tee-status.json updated_utc as non-string must fail.
+    The guard at C:1288 has two clauses joined by 'or': isinstance check and
+    regex match. The 'if False and' mutation disables only the first clause;
+    a bad-format string triggers the second clause even on the mutant.
+    Using a non-string (int) triggers the isinstance clause specifically and
+    causes a TypeError on the mutant (which fails the test's exact assertion)."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["updated_utc"] = 42  # not a string — triggers isinstance clause
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json updated_utc does not match format"
+
+
+# -- F8e: A21d final but agent_returncode not int (C:1299) --
+def test_ck7_f8e_tee_status_final_returncode_not_int(bundle):
+    """F8e: final=true but agent_returncode not int must fail."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["stdin_reader_done"] = True
+    ts["agent_returncode"] = "zero"
+    ts["exit_code"] = 0
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json final but agent_returncode is not int"
+
+
+# -- F8f: A21d not final but exit_code not null (C:1307) --
+def test_ck7_f8f_tee_status_not_final_exit_not_null(bundle):
+    """F8f: not final but exit_code not null must fail."""
+    ld = bundle / "golden" / "run-1"
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = False
+    ts["agent_returncode"] = None
+    ts["exit_code"] = 42
+    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json not final but exit_code is not null"
+
+
+# -- F9a: golden exactly one of each request kind (C:1365) --
+def test_ck7_f9a_golden_request_kinds(bundle, monkeypatch):
+    """F9a: golden without exactly one of each request kind must fail.
+    Direct call to check_golden: inject an extra c2a request into both runs
+    so the normalized golden has four request kinds instead of three."""
+    gd = bundle / "golden"
+    for leg in ("run-1", "run-2"):
+        ld = gd / leg
+        es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+        init_idx = next(i for i, e in enumerate(es) if e["dir"] == "c2a" and e["frame"].get("method") == "initialize")
+        dup_req = {"seq": 0, "dir": "c2a", "t_utc": es[init_idx]["t_utc"],
+                   "t_mono_ns": es[init_idx]["t_mono_ns"] + 1,
+                   "frame": {"jsonrpc": "2.0", "id": 9999, "method": "tools/list", "params": {}}}
+        dup_resp = {"seq": 0, "dir": "a2c", "t_utc": es[init_idx]["t_utc"],
+                    "t_mono_ns": es[init_idx]["t_mono_ns"] + 2,
+                    "frame": {"jsonrpc": "2.0", "id": 9999, "result": {}}}
+        es.insert(init_idx + 1, dup_req)
+        es.insert(init_idx + 2, dup_resp)
+        for j, e in enumerate(es):
+            e["seq"] = j + 1
+        _write_timeline(ld, es)
+    n1 = cc.normalize_timeline(cc._load_timeline_raw(gd / "run-1", "run-1"))
+    golden_text = "\n".join(n1) + "\n"
+    (gd / "golden.jsonl").write_text(golden_text)
+    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_golden(gd)
+    assert str(ei.value) == "golden: golden does not have exactly one of each request kind"
+
+
+# -- F9b: golden run-1/run-2 raw sessionIds identical (C:1418) --
+def test_ck7_f9b_golden_same_session_ids(bundle, monkeypatch):
+    """F9b: run-1 and run-2 with identical raw sessionIds must fail."""
+    ld1 = bundle / "golden" / "run-1"
+    ld2 = bundle / "golden" / "run-2"
+    es1 = [json.loads(l) for l in (ld1 / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    es2 = [json.loads(l) for l in (ld2 / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Find the sessionId in run-1
+    sid1 = None
+    for e in es1:
+        if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]:
+            r = e["frame"].get("result") or {}
+            if "sessionId" in r:
+                sid1 = r["sessionId"]
+                break
+    assert sid1 is not None, "test setup: no sessionId in run-1"
+    # Set run-2's sessionId to match run-1 everywhere: responses, notifications, AND prompts
+    for e in es2:
+        if e["dir"] == "a2c":
+            if "id" in e["frame"] and "method" not in e["frame"]:
+                r = e["frame"].get("result") or {}
+                if "sessionId" in r:
+                    r["sessionId"] = sid1
+            elif "method" in e["frame"] and "id" not in e["frame"]:
+                params = e["frame"].get("params") or {}
+                if "sessionId" in params:
+                    params["sessionId"] = sid1
+        elif e["dir"] == "c2a":
+            if e["frame"].get("method") == "session/prompt":
+                params = e["frame"].get("params") or {}
+                if "sessionId" in params:
+                    params["sessionId"] = sid1
+    _write_timeline(ld2, es2)
+    # The normalized golden uses placeholders, so run-1 and run-2 produce the same normalized form
+    n1 = cc.normalize_timeline(cc._load_timeline_raw(ld1, "run-1"))
+    golden_text = "\n".join(n1) + "\n"
+    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: golden: run-1 and run-2 raw sessionIds are identical"
+
+
+# -- F9c: golden run-1/run-2 first t_utc identical (C:1420) --
+def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
+    """F9c: run-1 and run-2 with identical first t_utc must fail."""
+    ld1 = bundle / "golden" / "run-1"
+    ld2 = bundle / "golden" / "run-2"
+    es1 = [json.loads(l) for l in (ld1 / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    es2 = [json.loads(l) for l in (ld2 / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    # Set run-2's first t_utc to match run-1
+    es2[0]["t_utc"] = es1[0]["t_utc"]
+    _write_timeline(ld2, es2)
+    # Regenerate golden.jsonl
+    n1 = cc.normalize_timeline(cc._load_timeline_raw(ld1, "run-1"))
+    golden_text = "\n".join(n1) + "\n"
+    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: golden: run-1 and run-2 first t_utc are identical"
