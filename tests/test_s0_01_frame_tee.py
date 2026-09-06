@@ -291,28 +291,57 @@ class TestSignalExitCode:
 # ---------------------------------------------------------------------------
 class TestLateClientFrameRecorded:
     def test_late_client_frame_recorded_or_exit_70(self, tmp_path):
-        """F1: agent reads one frame, replies, exits immediately. The remaining
-        49 frames must be recorded in c2a.jsonl and tee must exit 70."""
+        """F1: a client frame the agent can no longer receive must still be RECORDED, and the tee
+        must exit 70 — never 0 with the frame missing.
+
+        Deterministic by construction (CI on ec270f3 caught the racy version: on a fast runner the
+        tee had forwarded all 50 frames into the pipe before the agent exited, so nothing broke and
+        it exited 0). The agent CLOSES ITS STDIN BEFORE it answers frame 1, so the moment the client
+        sees the answer the agent's read end is already gone: every later forward hits EPIPE
+        whatever the scheduling, while the recorder must keep going."""
         agent_code = textwrap.dedent("""\
-            import os, sys, json
+            import os, sys, json, time
             line = sys.stdin.readline()
+            os.close(0)                       # the precondition, established BEFORE the handshake
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
+            time.sleep(1.0)                   # lifetime is irrelevant to the outcome; keeps the run short
             os._exit(0)
         """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir(parents=True, exist_ok=True)
+        agent_script = tmp_path / "fake_agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         frame1 = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                              "params": {}}, separators=(",", ":")) + "\n"
-        late_frames = []
-        for i in range(2, 51):
-            late_frames.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "late",
-                                           "params": {}}, separators=(",", ":")) + "\n")
-        input_bytes = (frame1 + "".join(late_frames)).encode("utf-8")
-        result = _run_tee(tmp_path, agent_code, input_bytes)
-        # Late frames must be in c2a.jsonl (pump continues recording after forward error)
-        assert b'"method":"late"' in result["c2a_bytes"]
-        assert result["proc"].returncode == 70
-        assert b"Fatal Python error" not in result["proc"].stderr
+        late_frames = [json.dumps({"jsonrpc": "2.0", "id": i, "method": "late", "params": {}},
+                                  separators=(",", ":")) + "\n" for i in range(2, 51)]
+        tee_proc = subprocess.Popen([sys.executable, str(TEE)], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        try:
+            tee_proc.stdin.write(frame1.encode()); tee_proc.stdin.flush()
+            answer = tee_proc.stdout.readline()          # the handshake: agent stdin is closed by now
+            assert json.loads(answer)["id"] == 1
+            tee_proc.stdin.write("".join(late_frames).encode())
+            _, stderr = tee_proc.communicate(timeout=30)   # flushes + closes stdin (EOF), reaps the tee
+        finally:
+            if tee_proc.poll() is None:
+                tee_proc.kill()
+        c2a = (framedir / "frames-client-to-agent.jsonl").read_bytes()
+        assert c2a.count(b'"method":"late"') == 49        # every late frame RECORDED
+        assert tee_proc.returncode == 70                 # and the loss is LOUD, never a silent 0
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["recorded_c2a"] == 50
+        assert status["forwarded_c2a"] < status["recorded_c2a"]
+        assert status["drained"] is False
+        assert status["write_errors"] == ["forward c2a: BrokenPipeError"]
+        assert b"Fatal Python error" not in stderr
 
 
 # ---------------------------------------------------------------------------
