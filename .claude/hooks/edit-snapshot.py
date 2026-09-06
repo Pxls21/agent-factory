@@ -129,6 +129,11 @@ AP_SCREEN = [
     # yields inversions under honest concurrency.
     ("AF-AP-43", re.compile(r"""(?:monotonic(?:_ns)?|time\.time|perf_counter(?:_ns)?|datetime\.now|utcnow)\(\)[\s\S]{0,240}?\bwith\s+[\w.]*lock\b"""),
      "ordering field sampled OUTSIDE the ordering lock — take seq and every timestamp in the same critical section (AF-AP-43)"),
+    # AF-AP-55 (2026-09-06): an identity read from /proc/<pid>/exe right after spawn is the identity of whatever exec
+    # stage exists at that instant — env, a shell wrapper — not of the worker (VERIFY-N5e F1: 9/12 env, 3/3 dash). The
+    # reading must be pinned to the first event only the final stage can produce (the first protocol byte).
+    ("AF-AP-55", re.compile(r"""readlink\(\s*f?["']/proc/[^"'\n]*/exe"""),
+     "identity sampled from /proc/<pid>/exe — pin the reading to the first event only the FINAL exec stage can produce (the first protocol byte) and keep a multi-stage fixture (env shebang / exec wrapper) in the suite (AF-AP-55)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its

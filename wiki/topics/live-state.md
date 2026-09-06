@@ -7,8 +7,8 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `08a4a7d` 2026-09-05 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 WIP checkpoint 3
-- **Local HEAD:** checkpoint 7 (this commit) — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
+- **Origin tip:** `1eb764a` 2026-09-06 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 checkpoint 8g + briefs N5f + the F7 hunk (SHAs are rewritten at push; names by subject)
+- **Local HEAD:** = origin (pushed through `push_clean.sh --lanes-live` while lanes hold the tree); the tree carries the UNCOMMITTED live edits of lanes D5f, B5d, N5f. Earlier: checkpoint 7 — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
   survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
@@ -18,10 +18,10 @@ last_compiled: 2026-09-03
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
   B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
-  `tasks/briefs/s0-01-b5c-*`); checkpoint 8f local (N5e + coordinator F4/F9; VERIFY-N5e grading); VERIFY-D5e NOT-READY (fail-open "fail-closed",
+  `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f (the later reading wins) building; VERIFY-D5e NOT-READY (fail-open "fail-closed",
   tautological oracle) → lane D5f; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d (drain to EOF,
-  status inside the lock); A5f (checker items 2-7) running; all four in the sandbox (Kimi cooled three times; codex out ~31 h);
-  checker lane A5g queued for the A21d non-final relaxation; push waits for a lane to land; nothing minted; tree-wide suites now
+  status inside the lock); A5f landed (8g) → VERIFY-CK8 grading; all in the sandbox (Kimi cooled three times; codex out ~31 h);
+  checker lane A5g queued for the A21d non-final relaxation; pushes run through `--lanes-live` (detached-worktree rewrite; the ref follows origin on tree identity); nothing minted; tree-wide suites now
   run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,
   420 records, PC clone at checkpoint 5 — ff-sync before the re-capture).
   Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule

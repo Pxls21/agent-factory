@@ -23,8 +23,10 @@ branch; the tooling port and the Stage 0 build both land there. `main` receives 
 a pull request the owner merges (PR #2 carried the kit migration); never push to `main` directly,
 and never push to any other branch without the owner's explicit say-so.
 
-- **Push only through `scripts/push_clean.sh --no-delegates-live`** (the ONLY argument it takes;
-  set `PUSH_BRANCH=<branch>` when not on the branch). It strips model-identifier trailers from
+- **Push only through `scripts/push_clean.sh --no-delegates-live`** (clean tree) **or `--lanes-live`** (sandbox lanes hold the
+  tree: the dirty set must equal the untracked `.lanes-live` list written at dispatch; the rewrite + push run from a detached
+  worktree and the branch ref then follows origin on tree identity — no other argument exists; set `PUSH_BRANCH=<branch>` when not
+  on the branch). It strips model-identifier trailers from
   the unpushed range, proves tree identity across the rewrite, verifies zero trailers remain, and
   pushes the rev-parsed SHA — never `HEAD`. The pre-push hook BLOCKS any outgoing commit still
   carrying `Co-Authored-By: Claude` / `Claude-Session:` lines (owner policy: no model identifiers

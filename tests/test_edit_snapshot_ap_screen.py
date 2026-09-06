@@ -253,3 +253,21 @@ class TestAFAP45:
 
     def test_no_fire_on_proc_stat_read(self):
         assert not self.rx.search('Path(f"/proc/{pid}/stat").read_text()')
+
+
+# ---- AF-AP-55 (AP_SCREEN): identity sampled from /proc/<pid>/exe at spawn time ----
+
+class TestAFAP55:
+    rx = _AP_BY_ID["AF-AP-55"]
+
+    def test_fires_on_percent_format_pid(self):
+        assert self.rx.search('candidate = os.readlink("/proc/%d/exe" % proc.pid)')
+
+    def test_fires_on_fstring_pid(self):
+        assert self.rx.search('interp = os.readlink(f"/proc/{proc.pid}/exe")')
+
+    def test_no_fire_on_cwd_link(self):
+        assert not self.rx.search('cwd = os.readlink("/proc/%d/cwd" % pid)')
+
+    def test_no_fire_on_realpath_of_executable(self):
+        assert not self.rx.search('expected = os.path.realpath(sys.executable)')

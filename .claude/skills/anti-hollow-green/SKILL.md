@@ -180,6 +180,21 @@ expansion.
    green; drive the actual write/collect/cleanup (or send/receive, or persist/read-back) so an
    unusable-but-present resource fails loud.
 
+15. **An identity sampled at SPAWN time is the identity of a STAGE, not of the worker (AF-AP-55,
+   VERIFY-N5e F1, 2026-09-06).** The S0-01 probe read `/proc/<pid>/exe` right after `Popen` and took
+   the first reading as authoritative; for a `#!/usr/bin/env python3` or sh-wrapper agent that
+   reading is `/usr/bin/env` or `/usr/bin/dash` — the launcher, not the interpreter that speaks the
+   protocol — silently and run-to-run variable (9/12, 3/3) while the parent commit read python
+   12/12. A lane minted the regression because every fixture was single-exec (`#!{sys.executable}`):
+   the suite could not see the class. Rule: pin any identity reading (interpreter, argv, cwd, a
+   connection's peer) to the first event that ONLY the final stage can produce (here the first
+   protocol byte) and let that reading overwrite the earlier one; the early reading is a fallback
+   for workers that never emit; and the fixture set MUST carry a multi-stage shape (an `env`
+   shebang, a wrapper with `exec`) or the pin is untested. Corollary: a comment or commit that
+   describes a fallback arm is a CLAIM — prove it reachable (a raise-instrument inside it fires in
+   some test) or delete it (VERIFY-N5e F2: the `_last_good` arm was dead across 242 tests and 14
+   agent shapes).
+
 Related requirement (from the #1 rule): **every benchmark/eval MUST exercise the ACTUAL
 pipeline**, score against a **real independent oracle**, and report the **hollow-green
 (gate-false-positive) rate**. A harness that re-implements or stubs the spine it claims to prove
