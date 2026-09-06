@@ -328,6 +328,14 @@ def test_empty_probe_error_is_still_an_error(neg):
     _expect(neg, "probe reported an error: (empty reason)")
 
 
+@pytest.mark.parametrize("value, shown", [(0, "0"), (False, "False"), ([], "[]"), ({}, "{}")])
+def test_falsy_non_string_probe_error_is_shown_by_repr(neg, value, shown):
+    """R9-N5e-F7: a falsy non-string probe_error must surface its value, never '(empty reason)'."""
+    _set_rid(neg, probe_error=value)
+    _expect(neg, f"probe reported an error: {shown}")
+
+
+
 @pytest.mark.parametrize("bad", ["/x", None, 12345], ids=["wrong-path", "null", "int"])
 def test_probe_path_value_is_pinned_to_the_probe_tail(neg, bad):
     """R7-N5c-F3: probe_path was required to exist but never read — /x, null and 12345 all validated."""

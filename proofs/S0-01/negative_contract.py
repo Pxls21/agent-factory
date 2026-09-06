@@ -161,7 +161,16 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
         raise NegativeFailure("runtime-identity.json is not an object")
     # R8-N5d-F9: only an ABSENT/null probe_error is clean; an empty string is a reported error with no reason.
     if rid.get("probe_error") is not None:
-        raise NegativeFailure(f"probe reported an error: {rid['probe_error'] or '(empty reason)'}")
+        # R9-N5e-F7: a string is shown as-is (an empty one names itself); any other type is shown by repr, so a
+        # falsy non-string value (0, [], {}, false) is never flattened into "(empty reason)".
+        reason = rid["probe_error"]
+        if reason == "":
+            shown = "(empty reason)"
+        elif isinstance(reason, str):
+            shown = reason
+        else:
+            shown = repr(reason)
+        raise NegativeFailure(f"probe reported an error: {shown}")
     missing = sorted(set(pins.NEGATIVE_IDENTITY_KEYS) - set(rid))
     if missing:
         raise NegativeFailure(f"runtime identity key {missing[0]} absent")
