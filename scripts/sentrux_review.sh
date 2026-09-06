@@ -19,6 +19,9 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE=${1:-check}; STRICT=0; [ "${2:-}" = "--strict" ] && STRICT=1
+# Usage errors are venue-independent: validate the mode BEFORE the binary probe (CI has no binary and
+# reported "missing"/exit 0 for a bogus mode — the 2026-09-06 run on 79f8f5b).
+case "$MODE" in check|save|compare) ;; *) echo "usage: sentrux_review.sh check|save|compare [--strict]"; exit 64 ;; esac
 BIN=${SENTRUX_BIN:-/root/.local/bin/sentrux}
 [ -x "$BIN" ] || { echo "sentrux_review: $BIN missing — run scripts/setup.sh (pinned install)"; exit 0; }
 RT="${SENTRUX_RUNTIME_DIR:-$ROOT/.sentrux-runtime}"; TREE="$RT/tree"; mkdir -p "$RT"
@@ -32,7 +35,6 @@ case "$MODE" in
   save)    "$BIN" gate --save "$TREE" 2>&1 | grep -v '^\[' | tee "$RT/last-save.txt"; rc=${PIPESTATUS[0]}; cp "$TREE/.sentrux/baseline.json" "$RT/baseline.json" && echo "baseline kept at $RT/baseline.json (untracked)" ;;
   compare) [ -f "$RT/baseline.json" ] || { echo "sentrux_review: no baseline — run 'save' before the lane"; exit 0; }
            "$BIN" gate "$TREE" 2>&1 | grep -v '^\[' | tee "$RT/last-compare.txt"; rc=${PIPESTATUS[0]} ;;
-  *) echo "usage: sentrux_review.sh check|save|compare [--strict]"; exit 64 ;;
 esac
 echo "sentrux $MODE: tool exit $rc (advisory — never a gate; --strict passes it through)"
 [ "$STRICT" = 1 ] && exit "$rc"
