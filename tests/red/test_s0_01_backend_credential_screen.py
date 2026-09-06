@@ -305,6 +305,36 @@ def test_duplicate_json_key_hiding_token_returns_400(backend):
 
 
 # ---- R8-D5d-F10: depth-1000 JSON body -> 400 + close, 0 records -------------------------------------------------
+MAX_JSON_DEPTH = int(re.search(r"^MAX_JSON_DEPTH\s*=\s*([0-9_]+)", SERVER.read_text(), re.M).group(1))
+
+
+def _nested_note_body(depth: int) -> bytes:
+    """A valid chat body whose `note` value is nested `depth` levels deep (the outer object is level 1)."""
+    inner = "[" * (depth - 1) + "1" + "]" * (depth - 1)
+    return ('{"model": "s0-01-pong", "messages": [{"role": "user", "content": "hi"}], "note": ' + inner + "}").encode()
+
+
+def test_json_depth_over_limit_returns_400_no_record(backend):
+    """CI runs 87-89 (Python 3.12): depth 1000 parsed fine and the handler crashed later with NO response; the bound
+    must come from a raw-byte scan, not from the interpreter's recursion limit — depth MAX+1 is a 400 on every venue."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, _nested_note_body(MAX_JSON_DEPTH + 1), tail=TAIL))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert b"\r\nConnection: close\r\n" in resp
+    assert len(_records(backend)) == n0
+
+
+def test_json_depth_at_limit_is_served(backend):
+    """The bound is exact: depth MAX is an ordinary request (200 + one record) — the gate must not fire early."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, _nested_note_body(MAX_JSON_DEPTH)))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    assert len(_records(backend)) == n0 + 1
+
+
 def test_depth_1000_json_body_returns_400_no_record(backend):
     """A body nested 1000 deep must trigger RecursionError in _read_body -> 400."""
     port = backend["port"]

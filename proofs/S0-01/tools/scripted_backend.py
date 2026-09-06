@@ -46,7 +46,7 @@ Credential screen (_normal_forms / _carries_secret): breadth-first closure of
   JSON body, every parsed JSON string, raw body); cross-sink splits are out of
   contract by design. A body the parser cannot decode gets 400 + close.
   F11: records are written with allow_nan=False after coercing non-finite
-  floats to the string "<non-finite>". F10: _read_body catches RecursionError
+  floats to the string "<non-finite>". F10: _read_body refuses a JSON nesting deeper than MAX_JSON_DEPTH (32) before parsing (400 + close, no record, on every interpreter) and still catches RecursionError
   (depth-bomb JSON) and _iter_json_strings is iterative to avoid the same.
 
 Not recorded: GET /healthz (operational, pre-auth); any gate rejection (TE, dup CL,
@@ -79,6 +79,10 @@ SLOW_CHUNKS = ("po", "n", "g", "")  # "" = the final content-less finish chunk
 FIXED_CREATED = 1788566400  # 2026-09-05T00:00:00Z, frozen
 FIXED_USAGE = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
 MAX_CONTENT_LENGTH = 1_048_576
+# Deepest JSON nesting a body may carry. CPython's C decoder accepts depth 1000 on 3.12/3.13 (only 3.11 raised
+# RecursionError there), so a depth bomb then crashed the handler in the record serializer with NO response
+# (CI runs 87-89, 2026-09-06). The gate is a linear scan of the raw bytes, interpreter-independent.
+MAX_JSON_DEPTH = 32
 # Sentinel object for _read_body control flow (L3: never a bare string — a client
 # POSTing the JSON document "BAD_CL" must not collide with the sentinel).
 _BAD_CL = object()
@@ -119,6 +123,33 @@ def _normal_forms(s: str) -> frozenset[str]:
         frontier = new_frontier
     # Still producing new forms at depth 5: fail closed
     return frozenset({s, "FAIL_CLOSED"})
+
+
+def _json_nesting_depth(raw: bytes) -> int:
+    """Maximum bracket nesting of a JSON document, counted on the raw bytes outside strings.
+
+    Runs BEFORE json.loads so the bound does not depend on the interpreter's recursion behaviour.
+    A malformed document still gets a number; json.loads decides validity afterwards.
+    """
+    depth = max_depth = 0
+    in_string = escaped = False
+    for b in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif b == 0x5C:      # backslash
+                escaped = True
+            elif b == 0x22:      # closing quote
+                in_string = False
+        elif b == 0x22:
+            in_string = True
+        elif b in (0x5B, 0x7B):  # [ {
+            depth += 1
+            if depth > max_depth:
+                max_depth = depth
+        elif b in (0x5D, 0x7D):  # ] }
+            depth -= 1
+    return max_depth
 
 
 def _iter_json_strings(obj):
@@ -362,6 +393,10 @@ def make_handler(state: State):
             self._last_raw_body = raw if raw else None
             if not raw:
                 return None
+            # F10 (venue-independent): a nesting deeper than MAX_JSON_DEPTH is refused BEFORE parsing —
+            # 400 + close, no record — on every interpreter; the RecursionError arm below stays as defence.
+            if _json_nesting_depth(raw) > MAX_JSON_DEPTH:
+                return _BAD_CL
             try:
                 return json.loads(raw.decode())
             except (ValueError, UnicodeDecodeError) as e:
