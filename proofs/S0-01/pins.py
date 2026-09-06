@@ -123,6 +123,14 @@ PINNED_STARTUP_AGENTS = "1"
 PINNED_STARTUP_DEDUP = "Queue"
 PINNED_STARTUP_IGNORE_SELF = "true"
 
+# Startup-line pins for the checker's mcp_cmd / permission_mode tokens (A5f-F42; the checker's local `_PINS_PENDING`
+# dict is retired by lane A5g). Re-resolved 2026-09-06 against the committed golden corpus
+# (proofs/S0-01/evidence/golden/*/startup-line.txt): `mcp_cmd=` empty on 7/7 legs, `permission_mode=bypassPermissions`
+# on every leg that carries the key (5/5). The value records what the pinned buzz-acp ECHOES in the proof configuration;
+# it is not a governance ruling — effectful tools still pass the fail-closed pre_tool_call policy hook (standing rule 9).
+PINNED_STARTUP_MCP_CMD = ""
+PINNED_STARTUP_PERMISSION_MODE = "bypassPermissions"
+
 # tee-status.json (A21d) key set — ONE pin for the three consumers (the tee test, the checker; the tee itself stays
 # a standalone tool whose own key set a test asserts EQUAL to this pin — R6-B5b-F16, AF-AP-42 "no local copy").
 # Order = the tee's write order (proofs/S0-01/tools/frame_tee.py _write_status, read 2026-09-06).
