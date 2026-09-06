@@ -38,10 +38,16 @@ Framing gate (_framing_gate, first statement of do_GET and do_POST):
   Connection: close sent).
   Every rejection sends Connection: close and never parses a tail as a second request.
 
-Credential screen (_carries_secret): iterative percent-decode (to a fixed point,
-  bounded at 3 passes; fail closed if still changing) and whitespace-strip, applied
-  at the record boundary to path, header names (Authorization exempt), header values,
-  serialized JSON body, and raw body (all recording paths).
+Credential screen (_normal_forms / _carries_secret): breadth-first closure of
+  {unquote, strip_ws} applied to each item, deduplicated, bounded at depth 5 —
+  the depth bound affects false-positive breadth, not detection: if the frontier
+  is still producing new forms at the bound the screen fails closed (True).
+  The screen is applied per item (path, header names, header values, serialized
+  JSON body, every parsed JSON string, raw body); cross-sink splits are out of
+  contract by design. A body the parser cannot decode gets 400 + close.
+  F11: records are written with allow_nan=False after coercing non-finite
+  floats to the string "<non-finite>". F10: _read_body catches RecursionError
+  (depth-bomb JSON) and _iter_json_strings is iterative to avoid the same.
 
 Not recorded: GET /healthz (operational, pre-auth); any gate rejection (TE, dup CL,
   malformed CL, oversized CL, GET with CL > 0, defects, obs-fold, Expect). These all
@@ -65,7 +71,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 MODELS = ("s0-01-pong", "s0-01-slow")
 REPLY = "pong"
@@ -89,6 +95,32 @@ class _ParseError(Exception):
         self.raw = raw
 
 
+def _normal_forms(s: str) -> frozenset[str]:
+    """Breadth-first over the words of {unquote, unquote_plus, strip_ws} applied to *s*.
+
+    Deduplicated, bounded at depth 5; if the frontier is still producing new
+    forms at the bound we fail closed by returning the token itself (so
+    _carries_secret returns True).
+    """
+    strip_ws = lambda x: re.sub(r"\s+", "", x)
+    ops = (unquote, unquote_plus, strip_ws)
+    frontier = {s}
+    seen = {s}
+    for _depth in range(5):
+        new_frontier = set()
+        for form in frontier:
+            for op in ops:
+                v = op(form)
+                if v not in seen:
+                    seen.add(v)
+                    new_frontier.add(v)
+        if not new_frontier:
+            return frozenset(seen)
+        frontier = new_frontier
+    # Still producing new forms at depth 5: fail closed
+    return frozenset({s, "FAIL_CLOSED"})
+
+
 def _iter_json_strings(obj):
     """Yield every string leaf (keys and values) from a parsed JSON value.
 
@@ -96,15 +128,17 @@ def _iter_json_strings(obj):
     whitespace-split token.  Walking the parsed values preserves the actual
     whitespace characters that json.loads decoded.
     """
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, dict):
-        for k, v in obj.items():
-            yield k
-            yield from _iter_json_strings(v)
-    elif isinstance(obj, list):
-        for item in obj:
-            yield from _iter_json_strings(item)
+    stack = [obj]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            yield item
+        elif isinstance(item, dict):
+            for k, v in item.items():
+                stack.append(v)
+                yield k
+        elif isinstance(item, list):
+            stack.extend(item)
 
 
 def _fingerprint(value: str) -> str:
@@ -142,28 +176,15 @@ class State:
         self.lock = threading.Lock()
 
     def _carries_secret(self, s: str) -> bool:
-        """True if the configured token appears in s under iterated normalization.
+        """True if the configured token appears in ANY normal form of *s*.
 
-        Checks: literal, whitespace-stripped, and iterative percent-decode of each
-        (to a fixed point, bounded at 3 passes; fail closed if still changing).
+        Normal forms are the closure of {unquote, strip_ws} over *s*, bounded
+        at depth 5; if the bound is exceeded the screen fails closed.
         """
         t = self.token
-        stripped = re.sub(r"\s+", "", s)
-        for base in (s, stripped):
-            v = base
-            for _ in range(3):
-                if t in v:
-                    return True
-                prev = v
-                v = unquote(v)
-                if v == prev:
-                    break
-            else:
-                if t in v:
-                    return True
-                # Still changing after 3 passes: fail closed
-                if unquote(v) != v:
-                    return True
+        for form in _normal_forms(s):
+            if t in form:
+                return True
         return False
 
     def record(self, method: str, path: str, headers, body,
@@ -213,11 +234,21 @@ class State:
             rec_body = body
             auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
+        # F11: coerce non-finite floats to the string "<non-finite>" before
+        # serialising with allow_nan=False, so the record is always valid JSON.
+        def _json_safe(o):
+            if isinstance(o, float) and not math.isfinite(o):
+                return "<non-finite>"
+            if isinstance(o, dict):
+                return {k: _json_safe(v) for k, v in o.items()}
+            if isinstance(o, list):
+                return [_json_safe(v) for v in o]
+            return o
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
             {"seq": n, "method": method, "path": rec_path, "headers": clean,
-             "body": rec_body, "received_at": received_at, "t_mono_ns": mono_ns,
+             "body": _json_safe(rec_body), "received_at": received_at, "t_mono_ns": mono_ns,
              "remote_addr": remote_addr, "authorization_fingerprint": auth_fp},
-            indent=2, sort_keys=True) + "\n")
+            indent=2, sort_keys=True, allow_nan=False) + "\n")
         return n, leaked
 
 
@@ -335,6 +366,9 @@ def make_handler(state: State):
                 return json.loads(raw.decode())
             except (ValueError, UnicodeDecodeError) as e:
                 raise _ParseError(raw) from e
+            except RecursionError:
+                # F10: depth-bomb JSON -> 400 + close, 0 records
+                return _BAD_CL
 
         # -- routes --------------------------------------------------------
         def do_GET(self):

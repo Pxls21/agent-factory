@@ -631,6 +631,9 @@ def test_handler_timeout_bounds_incomplete_body(backend):
     spec.loader.exec_module(mod)
     _st = mod.State("x", Path("/tmp/unused-timeout-test"), 0)
     handler_timeout = mod.make_handler(_st).timeout
+    # F13: assert the timeout is a positive number before deriving bounds
+    assert isinstance(handler_timeout, (int, float)) and handler_timeout > 0, \
+        f"Handler.timeout {handler_timeout!r} is not a positive number"
     port = backend["port"]
     s = socket.socket()
     s.settimeout(handler_timeout * 3)
@@ -1426,6 +1429,12 @@ def _build_domain_table():
                          "Transfer-Encoding: gzip"],               411,  411),
         ("defects",     ["Content-Length : 5"],                     400,  400),
         ("expect",      ["Expect: 100-continue"],                  417,  417),
+        # F16: five additional framing domain rows
+        ("fold_cl",     ["X-Foo: bar\r\n Content-Length: 5"],      400,  400),
+        ("fold_te",     ["X-Foo: bar\r\n Transfer-Encoding: chunked"], 400, 400),
+        ("fold_benign", ["X-Foo: bar\r\n baz"],                    400,  400),
+        ("expect_empty",["Expect:"],                                417,  417),
+        ("expect_bogus",["Expect: banana"],                         417,  417),
     ]
 
     ROUTES = [
