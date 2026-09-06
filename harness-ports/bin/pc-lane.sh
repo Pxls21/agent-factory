@@ -179,7 +179,11 @@ rc=0
 # ATTEMPT on that exact signature only, with a doubling backoff, keeping every refused report.
 : "${LANE_CAPACITY_RETRIES:=3}"     # extra attempts after a capacity refusal; 0 disables
 : "${LANE_CAPACITY_BACKOFF:=60}"    # seconds before the first retry, doubling; tests pass 0
-CAPACITY_RX='^API call failed after [0-9]+ retries: HTTP 503'
+# 2026-09-06: a 429 is the same transient class when it is a per-credential cooldown (Ollama Cloud rate limit under two
+# concurrent Kimi lanes) or the tail of a fallback chain whose members are all cooling; the codex quota 429 ("exhausted their
+# quota (reset after NNh") is NOT transient, so it is excluded — retrying it would burn the backoff for nothing.
+CAPACITY_RX='^API call failed after [0-9]+ retries: HTTP (503|429)'
+QUOTA_RX='exhausted their quota'
 # INCREMENTAL REPORT (2026-09-03): a 167-call verify lane died mid-stream with report.md EMPTY —
 # the report was all-or-nothing, so 66 minutes of grading came home only via state.db forensics.
 # Every lane now gets LANE_REPORT_DRAFT in its environment and a standing prompt line telling it
@@ -282,10 +286,10 @@ else
   rc=$?
 fi
 
-if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null; then
+if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
   cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
-  echo "pc-lane: attempt $attempt refused by route capacity (HTTP 503) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  echo "pc-lane: attempt $attempt refused by route capacity / rate limit (HTTP 503 or 429) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
   sleep "$wait_s"
   continue
 fi

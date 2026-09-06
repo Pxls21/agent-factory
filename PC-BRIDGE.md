@@ -148,7 +148,7 @@ runsc), so NO resource limits apply in this configuration even though `user@1000
 question; the containment proof itself does not depend on cgroups. Platform: systrap (runsc default;
 `/dev/kvm` absent).
 
-**PC-lane concurrency cap (2026-09-06):** the model route behind `hermes -z` admits about TWO concurrent lane sessions; a third `scripts/pc_lane.sh` dispatch is refused with `HTTP 503: Chat admission capacity is temporarily unavailable` on every retry while the first two run. Launch at most two build lanes at once and queue the rest until a report lands.
+**PC-lane concurrency cap (2026-09-06):** the model route behind `hermes -z` admits about TWO concurrent lane sessions on the codex members; a third `scripts/pc_lane.sh` dispatch is refused with `HTTP 503: Chat admission capacity is temporarily unavailable`. On the Ollama Cloud members (`ollama-cloud/kimi-k3`, `glm-5.2`) the cap is ONE lane: two concurrent Kimi lanes tripped the per-credential cooldown (`429 … cooling down`) within minutes and the second lane died through the exhausted codex fallback chain (13:4xZ). Launch one Kimi lane at a time; dispatch with an explicit `HERMES_MODEL` after a 24-token probe that records the SERVED model, never the combo (it degrades silently to `big-pickle`). `harness-ports/bin/pc-lane.sh` retries the 503/429 cooldown class with backoff and never the quota 429 (`exhausted their quota`). The PC clone must be ff-synced to the pushed tip for the PC-side script to carry a fix.
 
 ## OmniRoute on the PC — the managed unit, and the process-kill rule (2026-09-05)
 

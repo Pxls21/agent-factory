@@ -179,6 +179,48 @@ check "NEGATIVE CONTROL: with LANE_CAPACITY_RETRIES=0 the refusal is the final r
   "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "HTTP 503" "$LD9/report.md" && ! grep -q "retrying" "$TMP/err9" && echo 0 || echo 1)" \
   "a retry loop that fired on every report (not the signature) would pass the test above and mask real failures"
 
+# --- the 429 COOLDOWN is the same transient class; the 429 QUOTA is not (2026-09-06) ----
+# TEST DOUBLE: refuses with the Ollama Cloud cooldown 429 on its first call, reports on the second.
+COOL="$TMP/cool-harness.sh"
+cat > "$COOL" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. First call: the verbatim per-credential cooldown line; later calls: a report.
+COUNT="${FLAKY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+if [ "$n" -eq 1 ]; then
+  echo "API call failed after 3 retries: HTTP 429: All credentials for model kimi-k3 are cooling down"
+else
+  echo "COOL-HARNESS-REPORT after $n attempts"; cat >/dev/null
+fi
+EOF
+chmod +x "$COOL"
+BRIEF11="$TMP/tests/brief-retry429.md"; { echo "PIN: $SHA"; echo; echo "retry me on cooldown"; } > "$BRIEF11"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-11"
+LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$COOL" bash "$LANE" "$BRIEF11" codex >"$TMP/out11" 2>"$TMP/err11"; rc11=$?
+LD11="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-retry429.md' | head -1)"
+check "a 429 per-credential COOLDOWN refusal is retried and the second attempt's report stands" \
+  "$([ $rc11 -eq 0 ] && grep -q "after 2 attempts" "$LD11/report.md" && grep -q "HTTP 429" "$LD11/report.attempt1.md" && echo 0 || echo 1)" \
+  "2026-09-06: two concurrent Kimi lanes tripped the cooldown and the second lane died through the exhausted fallback chain — a transient, retry it"
+
+# TEST DOUBLE: the codex QUOTA 429 — not transient; must NOT be retried even with retries enabled.
+QUOTA="$TMP/quota-harness.sh"
+cat > "$QUOTA" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. Every call: the verbatim quota-exhausted line.
+COUNT="${FLAKY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+echo "API call failed after 3 retries: HTTP 429: [codex/gpt-5.5-xhigh] All codex accounts have exhausted their quota (reset after 32h 19m 41s)"
+cat >/dev/null
+EOF
+chmod +x "$QUOTA"
+BRIEF12="$TMP/tests/brief-quota429.md"; { echo "PIN: $SHA"; echo; echo "do not retry a quota"; } > "$BRIEF12"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-12"
+LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$QUOTA" bash "$LANE" "$BRIEF12" codex >"$TMP/out12" 2>"$TMP/err12"
+LD12="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-quota429.md' | head -1)"
+check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt, the refusal is the final report)" \
+  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/report.md" && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
+  "a quota reset is hours away; retrying it three times with backoff would only delay the fallback"
+
 # --- a lane that dies before its final report still leaves its draft ------------
 # TEST DOUBLE: writes two sections to $LANE_REPORT_DRAFT, then exits with an EMPTY report.
 DRAFTY="$TMP/drafty-harness.sh"
