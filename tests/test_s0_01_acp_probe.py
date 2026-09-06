@@ -1925,16 +1925,18 @@ def test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte(tmp_path):
 
 
 def test_probe_interpreter_deleted_after_start_is_a_loud_probe_error(tmp_path):
-    """N5g-F8 shape N: agent whose shebang interpreter (a hardlink of
-    /bin/dash) is unlinked after Popen, then the agent closes stdout and
-    sleeps.  rc 1, realpath ends with ' (deleted)', sha256 None,
+    """N5g-F8 shape N: agent whose shebang interpreter (a private COPY of the
+    system shell — `/bin/sh` resolved, dash on Debian, bash on Fedora; never a
+    distro-specific path, AF-AP-4) is unlinked after Popen, then the agent
+    closes stdout and sleeps.  rc 1, realpath ends with ' (deleted)', sha256 None,
     probe_error carries the exact FileNotFoundError.
     Uses an in-process wrapper to delete the hardlink before the first
     readlink — deterministic, no race."""
     import shutil
-    # Create a hardlink to /bin/dash in tmp_path
+    # A private copy of the system shell in tmp_path (a copy, not a hardlink: /tmp is
+    # tmpfs on the PC, and /bin/dash does not exist there — the first PC gate of 8k was red)
     myshell = tmp_path / "myshell"
-    shutil.copy2("/bin/dash", str(myshell))
+    shutil.copy2(os.path.realpath("/bin/sh"), str(myshell))
     myshell.chmod(0o755)
     myshell_path = str(myshell)
 
