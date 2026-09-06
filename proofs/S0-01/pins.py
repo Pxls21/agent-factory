@@ -115,3 +115,10 @@ PINNED_LOG_LINES_TWO_USERS = (
     'agent initialized agent=0 name="hermes-agent" steering_supported=false',
     "agent_pool_ready agents=1",
 )
+
+# Startup-line pins consumed by check_config_echo (round 5, A26): the production configuration that the
+# two-users serialization finding depends on (docs/03: BUZZ_ACP_AGENTS=1; buzz-acp echoes `dedup=Queue`).
+# Read 2026-09-06 from a real capture's startup-line.txt (scratchpad/realleg/golden/run-1).
+PINNED_STARTUP_AGENTS = "1"
+PINNED_STARTUP_DEDUP = "Queue"
+PINNED_STARTUP_IGNORE_SELF = "true"
