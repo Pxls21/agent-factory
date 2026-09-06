@@ -137,7 +137,12 @@ def _make_interleaved_timeline(c2a, a2c, leg):
 
 
 def _write_timeline(leg_dir, entries):
+    """Write timeline + frames files.  F43: unlinks before writing so hardlinked
+    copies of the session bundle are not corrupted."""
     leg_dir.mkdir(parents=True, exist_ok=True)
+    for fn in ("timeline.jsonl", "frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl"):
+        p = leg_dir / fn
+        p.unlink(missing_ok=True)
     with open(leg_dir / "timeline.jsonl", "w") as f:
         for e in entries:
             f.write(json.dumps(e, separators=(",", ":")) + "\n")
@@ -295,7 +300,7 @@ def _write_upstream_records(leg_dir, leg, entries, fingerprint):
         (rec_dir / f"{idx:06d}.json").write_text(json.dumps(rec, indent=2) + "\n")
         idx += 1
     get_rec = {"seq": idx, "method": "GET", "path": "/models", "body": None,
-               "headers": {"host": PINNED_UPSTREAM_HOST}, "authorization_fingerprint": None,
+               "headers": {"host": PINNED_UPSTREAM_HOST}, "authorization_fingerprint": fingerprint,
                "received_at": prompt_times[0] if prompt_times else "2026-09-05T06:00:00.000000Z",
                "t_mono_ns": 1_000_000_000_000 + idx * 1_000_000, "remote_addr": "127.0.0.1"}
     (rec_dir / f"{idx:06d}.json").write_text(json.dumps(get_rec, indent=2) + "\n")
@@ -342,7 +347,9 @@ def _write_tee_status(leg_dir, entries):
     """A21d: write a valid twelve-key tee-status.json matching the timeline.
     Produces the running-status shape (final=false, exit fields null) since the
     real tee is SIGKILLed before it can finalize. Derived from the committed
-    frame_tee.py output plus the three running-status fields."""
+    frame_tee.py output plus the three running-status fields.
+    F43: unlinks before writing so hardlinked session copies are safe."""
+    (leg_dir / "tee-status.json").unlink(missing_ok=True)
     c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
     a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
     last_seq = entries[-1]["seq"] if entries else 0
@@ -441,23 +448,35 @@ def _session_bundle(tmp_path_factory):
 
 @pytest.fixture
 def bundle(_session_bundle, tmp_path, monkeypatch):
-    """Per-test: copytree from session fixture; monkeypatch the checker.
-    F43/5-F10/6-F14: session-scoped bundle built once; per-test copytree.
-    Hardlink overlay is unsafe because write_text() modifies the shared inode."""
+    """Per-test: hardlink copy from session fixture; monkeypatch the checker.
+    F43: hardlink overlay (cp -al) — every mutation must go through _rewrite()
+    which unlinks before writing so the pristine session copy is never corrupted."""
     base, golden_sha, tmp_fixtures = _session_bundle
     dest = tmp_path / "evidence"
-    shutil.copytree(base / "evidence", dest)
+    shutil.copytree(base / "evidence", dest, copy_function=os.link)
     # Copy fixtures and tools into tmp_path so monkeypatching HERE works
     dest_fixtures = tmp_path / "fixtures"
-    shutil.copytree(tmp_fixtures, dest_fixtures)
+    shutil.copytree(tmp_fixtures, dest_fixtures, copy_function=os.link)
     dest_tools = tmp_path / "tools"
-    shutil.copytree(P / "tools", dest_tools)
+    shutil.copytree(P / "tools", dest_tools, copy_function=os.link)
     # Monkeypatch PINNED_GOLDEN_SHA256 (the ONLY patched pin -- commented)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", golden_sha)
     # Monkeypatch HERE so the checker reads identities.json from tmp fixtures
     # and tools/frame_tee.py from tmp tools (never touching the tracked tree)
     monkeypatch.setattr("check_acp_conformance.HERE", tmp_path)
     yield dest
+
+
+def _rewrite(path, data):
+    """F43: unlink before write to preserve the hardlinked pristine copy.
+    Every test-function mutation on a bundle file MUST go through this helper.
+    Handles both str (write_text) and bytes (write_bytes)."""
+    path = Path(path)
+    path.unlink(missing_ok=True)
+    if isinstance(data, bytes):
+        path.write_bytes(data)
+    else:
+        path.write_text(data)
 
 
 def _run(root: Path, fixtures_dir: Path = None):
@@ -533,8 +552,8 @@ def test_no_timelines_defers(tmp_path):
 def test_m1_manifest_zeroed(bundle):
     gz = gzip.compress(b"## hermes-agent\nZ\n## buzz\nZ\n## acp\nZ\n", mtime=0)
     for leg in LEGS:
-        (bundle / "golden" / leg / "manifest-pre.txt.gz").write_bytes(gz)
-        (bundle / "golden" / leg / "manifest-post.txt.gz").write_bytes(gz)
+        _rewrite(bundle / "golden" / leg / "manifest-pre.txt.gz", gz)
+        _rewrite(bundle / "golden" / leg / "manifest-post.txt.gz", gz)
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest body != baseline body"
@@ -543,7 +562,7 @@ def test_m1_manifest_zeroed(bundle):
 def test_m2_tampered_sig(bundle):
     ep = bundle / "golden" / "run-1" / "mentions" / "owner.event.json"
     ev = json.loads(ep.read_text()); ev["sig"] = "ff" * 64
-    ep.write_text(json.dumps(ev) + "\n")
+    _rewrite(ep, json.dumps(ev) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner BIP-340 signature invalid: r >= p"
@@ -553,10 +572,10 @@ def test_m2_wrong_pubkey(bundle):
     ep = bundle / "golden" / "run-1" / "mentions" / "owner.event.json"
     ev = _sign_mention(USER2_SECKEY, MENTION_TEXT,
                        [["h", SYNTH_IDENTITIES["channel"]], ["p", SYNTH_IDENTITIES["agent"]]])
-    ep.write_text(json.dumps(ev) + "\n")
+    _rewrite(ep, json.dumps(ev) + "\n")
     rp = bundle / "golden" / "run-1" / "mentions" / "owner.receipt.json"
     receipt = json.loads(rp.read_text()); receipt["event_id"] = ev["id"]
-    rp.write_text(json.dumps(receipt) + "\n")
+    _rewrite(rp, json.dumps(receipt) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner pubkey != identities[owner]"
@@ -594,10 +613,10 @@ def test_m5_1s(bundle):
         sp = bundle / "golden" / leg / "startup-line.txt"
         old = sp.read_text()
         new = old.replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=1s")
-        sp.write_text(new)
+        _rewrite(sp, new)
         # Also update buzzacp.log (A7: startup line must be in log)
         lp = bundle / "golden" / leg / "buzzacp.log"
-        lp.write_text(lp.read_text().replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=1s"))
+        _rewrite(lp, lp.read_text().replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=1s"))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: run-1: startup max_turn is '1s', expected '{PINNED_MAX_TURN}'"
@@ -608,9 +627,9 @@ def test_m5_7200(bundle):
         sp = bundle / "golden" / leg / "startup-line.txt"
         old = sp.read_text()
         new = old.replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=7200s")
-        sp.write_text(new)
+        _rewrite(sp, new)
         lp = bundle / "golden" / leg / "buzzacp.log"
-        lp.write_text(lp.read_text().replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=7200s"))
+        _rewrite(lp, lp.read_text().replace(f"max_turn={PINNED_MAX_TURN}", "max_turn=7200s"))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: run-1: startup max_turn is '7200s', expected '{PINNED_MAX_TURN}'"
@@ -740,8 +759,7 @@ def test_seq_gap(bundle):
     ld = bundle / "golden" / "run-1"
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
     es[3]["seq"] = es[3]["seq"] + 1
-    with open(ld / "timeline.jsonl", "w") as f:
-        for e in es: f.write(json.dumps(e, separators=(",", ":")) + "\n")
+    _rewrite(ld / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: timeline seq not strictly 1..N at index 3"
@@ -760,7 +778,7 @@ def test_mono_backwards(bundle):
 
 def test_nan(bundle):
     tl = bundle / "golden" / "run-1" / "timeline.jsonl"
-    tl.write_text(re.sub(r'"t_mono_ns":(\d+)', '"t_mono_ns":NaN', tl.read_text(), count=1))
+    _rewrite(tl, re.sub(r'"t_mono_ns":(\d+)', '"t_mono_ns":NaN', tl.read_text(), count=1))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: NaN or Infinity in timeline at seq 1"
@@ -788,7 +806,7 @@ def test_dir_unknown(bundle):
 def test_frames_c2a_extra_line(bundle):
     """m05: extra line in frames-client-to-agent.jsonl."""
     p = bundle / "golden" / "run-1" / "frames-client-to-agent.jsonl"
-    p.write_text(p.read_text() + '{"jsonrpc":"2.0","method":"evil","id":99}\n')
+    _rewrite(p, p.read_text() + '{"jsonrpc":"2.0","method":"evil","id":99}\n')
     rc, out = _check(bundle)
     assert rc == 1
     # Line count mismatch fires first
@@ -801,7 +819,7 @@ def test_frames_a2c_reordered(bundle):
     lines = p.read_text().splitlines()
     if len(lines) >= 2:
         lines[0], lines[1] = lines[1], lines[0]
-    p.write_text("\n".join(lines) + "\n")
+    _rewrite(p, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: frames-agent-to-client.jsonl does not match timeline a2c split"
@@ -811,7 +829,7 @@ def test_blank_line_in_frames(bundle):
     """6-F19 / 7-F18: blank line -> Failure."""
     p = bundle / "golden" / "run-1" / "frames-agent-to-client.jsonl"
     lines = p.read_text().splitlines()
-    p.write_text(lines[0] + "\n   \n" + "\n".join(lines[1:]) + "\n")
+    _rewrite(p, lines[0] + "\n   \n" + "\n".join(lines[1:]) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: frames-agent-to-client.jsonl blank line at line 2"
@@ -822,7 +840,7 @@ def test_rid_missing_tee_pid(bundle):
     """6-F11 / 7-F19: missing tee_pid."""
     ld = bundle / "golden" / "run-1"
     p = ld / "runtime-identity.json"
-    o = json.loads(p.read_text()); del o["tee_pid"]; p.write_text(json.dumps(o) + "\n")
+    o = json.loads(p.read_text()); del o["tee_pid"]; _rewrite(p, json.dumps(o) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: runtime-identity.json key set mismatch (extra=[], missing=['tee_pid'])"
@@ -832,7 +850,7 @@ def test_rid_buzz_sha_wrong(bundle):
     """m09."""
     ld = bundle / "golden" / "run-1"
     p = ld / "runtime-identity.json"
-    o = json.loads(p.read_text()); o["buzz_acp_exe_sha256"] = "0" * 64; p.write_text(json.dumps(o) + "\n")
+    o = json.loads(p.read_text()); o["buzz_acp_exe_sha256"] = "0" * 64; _rewrite(p, json.dumps(o) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: buzz_acp_exe_sha256 mismatch"
@@ -842,7 +860,7 @@ def test_rid_tee_sha_wrong(bundle):
     """m10."""
     ld = bundle / "golden" / "run-1"
     p = ld / "runtime-identity.json"
-    o = json.loads(p.read_text()); o["tee_sha256"] = "0" * 64; p.write_text(json.dumps(o) + "\n")
+    o = json.loads(p.read_text()); o["tee_sha256"] = "0" * 64; _rewrite(p, json.dumps(o) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: tee_sha256 mismatch"
@@ -853,7 +871,7 @@ def test_rid_argv_wrong(bundle):
     ld = bundle / "golden" / "run-1"
     p = ld / "runtime-identity.json"
     o = json.loads(p.read_text()); a = list(o["launch_argv"]); a[1], a[3] = a[3], a[1]; o["launch_argv"] = a
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: launch_argv mismatch"
@@ -863,7 +881,7 @@ def test_rid_entrypoint_sha_wrong(bundle):
     """m12."""
     ld = bundle / "golden" / "run-1"
     p = ld / "runtime-identity.json"
-    o = json.loads(p.read_text()); o["agent_entrypoint_sha256"] = "0" * 64; p.write_text(json.dumps(o) + "\n")
+    o = json.loads(p.read_text()); o["agent_entrypoint_sha256"] = "0" * 64; _rewrite(p, json.dumps(o) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: agent_entrypoint_sha256 mismatch"
@@ -872,7 +890,7 @@ def test_rid_entrypoint_sha_wrong(bundle):
 def test_argv_tampered(bundle):
     ld = bundle / "golden" / "run-1"
     rp = ld / "runtime-identity.json"
-    rid = json.loads(rp.read_text()); rid["agent_argv"] = ["/tmp/evil"]; rp.write_text(json.dumps(rid) + "\n")
+    rid = json.loads(rp.read_text()); rid["agent_argv"] = ["/tmp/evil"]; _rewrite(rp, json.dumps(rid) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: agent_argv mismatch"
@@ -881,7 +899,7 @@ def test_argv_tampered(bundle):
 def test_interp_tampered(bundle):
     ld = bundle / "golden" / "run-1"
     rp = ld / "runtime-identity.json"
-    rid = json.loads(rp.read_text()); rid["agent_interpreter_realpath"] = "/tmp/evil"; rp.write_text(json.dumps(rid) + "\n")
+    rid = json.loads(rp.read_text()); rid["agent_interpreter_realpath"] = "/tmp/evil"; _rewrite(rp, json.dumps(rid) + "\n")
     ok, result = _run_check_safe(cc.check_runtime_identity, ld, "run-1")
     assert not ok
     assert result == "run-1: agent_interpreter_realpath mismatch"
@@ -895,7 +913,7 @@ def _ids(bundle):
 def test_env_extra_key(bundle):
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["X"] = "v"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["X"] = "v"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env.json key set mismatch (extra=['X'], missing=[])"
@@ -905,7 +923,7 @@ def test_env_hermes_home_wrong(bundle):
     """m14."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["HERMES_HOME"] = "/tmp/evil"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["HERMES_HOME"] = "/tmp/evil"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env HERMES_HOME mismatch"
@@ -915,7 +933,7 @@ def test_env_path_wrong(bundle):
     """m15."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["PATH"] = "/evil"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["PATH"] = "/evil"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env PATH mismatch"
@@ -925,7 +943,7 @@ def test_env_policy_wrong(bundle):
     """m16."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["BUZZ_ACP_SESSION_POLICY"] = "wrong"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["BUZZ_ACP_SESSION_POLICY"] = "wrong"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env BUZZ_ACP_SESSION_POLICY mismatch"
@@ -935,7 +953,7 @@ def test_env_pdwb_wrong(bundle):
     """m17."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["PYTHONDONTWRITEBYTECODE"] = "0"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["PYTHONDONTWRITEBYTECODE"] = "0"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env PYTHONDONTWRITEBYTECODE is not '1'"
@@ -944,7 +962,7 @@ def test_env_pdwb_wrong(bundle):
 def test_owner_swap(bundle):
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["BUZZ_ACP_AGENT_OWNER"] = "de" * 32; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["BUZZ_ACP_AGENT_OWNER"] = "de" * 32; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env BUZZ_ACP_AGENT_OWNER mismatch"
@@ -953,7 +971,7 @@ def test_owner_swap(bundle):
 def test_env_leak(bundle):
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["BUZZ_PRIVATE_KEY"] = "plaintext"; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["BUZZ_PRIVATE_KEY"] = "plaintext"; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env BUZZ_PRIVATE_KEY should be redacted but is not a dict"
@@ -962,7 +980,7 @@ def test_env_leak(bundle):
 def test_hex_leak_env(bundle):
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "ab" * 32; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "ab" * 32; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env S0_01_FRAMEDIR contains a 64-hex string (possible secret leak)"
@@ -972,7 +990,7 @@ def test_hex_leak_uppercase(bundle):
     """A9 / 7-F17: uppercase hex detected."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "AB" * 32; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "AB" * 32; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env S0_01_FRAMEDIR contains a 64-hex string (possible secret leak)"
@@ -982,7 +1000,7 @@ def test_hex_leak_with_prefix(bundle):
     """A9: hex with prefix detected."""
     ld = bundle / "golden" / "run-1"
     ep = ld / "env.json"
-    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "sk-" + "ab" * 32; ep.write_text(json.dumps(env) + "\n")
+    env = json.loads(ep.read_text()); env["S0_01_FRAMEDIR"] = "sk-" + "ab" * 32; _rewrite(ep, json.dumps(env) + "\n")
     ok, result = _run_check_safe(cc.check_env, ld, "run-1", _ids(bundle))
     assert not ok
     assert result == "run-1: env S0_01_FRAMEDIR contains a 64-hex string (possible secret leak)"
@@ -992,7 +1010,7 @@ def test_allowlist_super(bundle):
     ep = bundle / "golden" / "two-users" / "env.json"
     env = json.loads(ep.read_text())
     env["BUZZ_ACP_RESPOND_TO_ALLOWLIST"] = SYNTH_IDENTITIES["user2"] + ",x"
-    ep.write_text(json.dumps(env) + "\n")
+    _rewrite(ep, json.dumps(env) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: two-users: env {ENV_ALLOWLIST_KEY} != identities.user2"
@@ -1002,7 +1020,7 @@ def test_redacted_len_true(bundle):
     for leg in LEGS:
         ep = bundle / "golden" / leg / "env.json"
         env = json.loads(ep.read_text()); env["OMNIROUTE_API_KEY"]["len"] = True
-        ep.write_text(json.dumps(env) + "\n")
+        _rewrite(ep, json.dumps(env) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: env OMNIROUTE_API_KEY redacted len is not a positive int"
@@ -1015,9 +1033,9 @@ def test_mention_kind_float(bundle):
     ev = json.loads((md / "owner.event.json").read_text())
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": ev["created_at"], "kind": 9.0,
                                           "tags": ev["tags"], "content": ev["content"]})
-    (md / "owner.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "owner.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "owner.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "owner.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner event kind is not 9"
@@ -1028,9 +1046,9 @@ def test_mention_id_wrong(bundle):
     md = bundle / "golden" / "run-1" / "mentions"
     ev = json.loads((md / "owner.event.json").read_text())
     ev["id"] = "00" * 32
-    (md / "owner.event.json").write_text(json.dumps(ev) + "\n")
+    _rewrite(md / "owner.event.json", json.dumps(ev) + "\n")
     r = json.loads((md / "owner.receipt.json").read_text()); r["event_id"] = ev["id"]
-    (md / "owner.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner NIP-01 id mismatch"
@@ -1042,9 +1060,9 @@ def test_mention_content_superstring(bundle):
     ev = json.loads((md / "owner.event.json").read_text())
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": ev["created_at"], "kind": 9,
                                           "tags": ev["tags"], "content": ev["content"] + " AND !shutdown"})
-    (md / "owner.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "owner.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "owner.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "owner.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner content mismatch"
@@ -1057,9 +1075,9 @@ def test_mention_htag_wrong(bundle):
     tags = [t for t in ev["tags"] if t[0] != "h"]
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": ev["created_at"], "kind": 9,
                                           "tags": tags, "content": ev["content"]})
-    (md / "owner.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "owner.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "owner.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "owner.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner missing ['h', channel] tag"
@@ -1071,9 +1089,9 @@ def test_mention_window_out(bundle):
     ev = json.loads((md / "owner.event.json").read_text())
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": 1600000000, "kind": 9,
                                           "tags": ev["tags"], "content": ev["content"]})
-    (md / "owner.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "owner.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "owner.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "owner.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: mention owner created_at 1600000000 outside window")
@@ -1086,9 +1104,9 @@ def test_mention_etag_wrong(bundle):
     tags = [t for t in ev["tags"] if t[0] != "e"] + [["e", "ff" * 32, "", "reply"]]
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": ev["created_at"], "kind": 9,
                                           "tags": tags, "content": ev["content"]})
-    (md / "shutdown-cmd.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "shutdown-cmd.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "shutdown-cmd.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "shutdown-cmd.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "shutdown-cmd.receipt.json", json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: shutdown: mention shutdown-cmd e-tag does not reference owner"
@@ -1098,7 +1116,7 @@ def test_receipt_missing_keys(bundle):
     """6-F17 / 7-F19: receipt without mention_pubkeys/message."""
     p = bundle / "golden" / "run-1" / "mentions" / "owner.receipt.json"
     o = json.loads(p.read_text()); del o["mention_pubkeys"]; del o["message"]
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner receipt key set mismatch"
@@ -1108,7 +1126,7 @@ def test_receipt_accepted_false(bundle):
     """m80."""
     p = bundle / "golden" / "run-1" / "mentions" / "owner.receipt.json"
     o = json.loads(p.read_text()); o["accepted"] = 1
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner receipt not accepted"
@@ -1118,7 +1136,7 @@ def test_receipt_event_id_mismatch(bundle):
     """m81."""
     p = bundle / "golden" / "run-1" / "mentions" / "owner.receipt.json"
     o = json.loads(p.read_text()); o["event_id"] = "00" * 32
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mention owner receipt event_id != event.id"
@@ -1126,14 +1144,14 @@ def test_receipt_event_id_mismatch(bundle):
 
 def test_receipt_err_nonempty(bundle):
     """m82."""
-    (bundle / "golden" / "run-1" / "mentions" / "owner.receipt.err").write_text("error\n")
+    _rewrite(bundle / "golden" / "run-1" / "mentions" / "owner.receipt.err", "error\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mentions/owner.receipt.err is not empty"
 
 
 def test_extra_mention_file(bundle):
-    (bundle / "golden" / "run-1" / "mentions" / "extra.event.json").write_text("{}")
+    _rewrite(bundle / "golden" / "run-1" / "mentions" / "extra.event.json", "{}")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: mentions/ has unexpected entries: ['extra.event.json']"
@@ -1153,10 +1171,10 @@ def test_replay_mention(bundle):
     new_ev["pubkey"] = ev1["pubkey"]
     new_ev["created_at"] = ev2_orig["created_at"]
     # The NIP-01 id will now mismatch because we forced the old id
-    (bundle / "golden" / "run-2" / "mentions" / "owner.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(bundle / "golden" / "run-2" / "mentions" / "owner.event.json", json.dumps(new_ev) + "\n")
     rp = bundle / "golden" / "run-2" / "mentions" / "owner.receipt.json"
     r = json.loads(rp.read_text()); r["event_id"] = ev1["id"]
-    rp.write_text(json.dumps(r) + "\n")
+    _rewrite(rp, json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     # NIP-01 id mismatch fires because we forced the old id with new created_at
@@ -1168,18 +1186,18 @@ def test_identities_owner_equals_user2(bundle):
     ids_path = bundle.parent / "fixtures" / "identities.json"
     ids = json.loads(ids_path.read_text())
     ids["user2"] = ids["owner"]
-    ids_path.write_text(json.dumps(ids, indent=2) + "\n")
+    _rewrite(ids_path, json.dumps(ids, indent=2) + "\n")
     # Re-sign user2 mention with owner key and update env
     md = bundle / "golden" / "two-users" / "mentions"
     ev = json.loads((md / "owner.event.json").read_text())
     new_ev = nv.sign_event(OWNER_SECKEY, {"created_at": ev["created_at"] + 100, "kind": 9,
                                           "tags": ev["tags"], "content": MENTION_TEXT})
-    (md / "user2.event.json").write_text(json.dumps(new_ev) + "\n")
+    _rewrite(md / "user2.event.json", json.dumps(new_ev) + "\n")
     r = json.loads((md / "user2.receipt.json").read_text()); r["event_id"] = new_ev["id"]
-    (md / "user2.receipt.json").write_text(json.dumps(r) + "\n")
+    _rewrite(md / "user2.receipt.json", json.dumps(r) + "\n")
     ep = bundle / "golden" / "two-users" / "env.json"
     env = json.loads(ep.read_text()); env["BUZZ_ACP_RESPOND_TO_ALLOWLIST"] = ids["owner"]
-    ep.write_text(json.dumps(env) + "\n")
+    _rewrite(ep, json.dumps(env) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: two-users: identities owner and user2 are identical"
@@ -1190,7 +1208,7 @@ def test_route_pairs_evil(bundle):
     """m28: method/path not in allowed set."""
     rd = bundle / "golden" / "run-1" / "upstream-records"
     p = sorted(rd.glob("*.json"))[-1]; o = json.loads(p.read_text()); o["path"] = "/evil"
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream record (GET, /evil) not in allowed set"
@@ -1202,7 +1220,7 @@ def test_route_fingerprint_mismatch(bundle):
     for p in rd.glob("*.json"):
         o = json.loads(p.read_text())
         if o.get("method") == "POST":
-            o["authorization_fingerprint"] = "0" * 64; p.write_text(json.dumps(o) + "\n")
+            o["authorization_fingerprint"] = "0" * 64; _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream record authorization_fingerprint mismatch"
@@ -1211,7 +1229,7 @@ def test_route_fingerprint_mismatch(bundle):
 def test_record_extension_evasion(bundle):
     """7-F14: record with wrong extension bypasses all checks."""
     rd = bundle / "golden" / "run-1" / "upstream-records"
-    (rd / "999999.jsonl").write_text('{"method":"DELETE","path":"/evil"}\n')
+    _rewrite(rd / "999999.jsonl", '{"method":"DELETE","path":"/evil"}\n')
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream-records/ contains invalid filename '999999.jsonl'"
@@ -1222,7 +1240,7 @@ def test_record_key_set_wrong(bundle):
     rd = bundle / "golden" / "run-1" / "upstream-records"
     p = sorted(rd.glob("*.json"))[0]
     o = json.loads(p.read_text()); del o["seq"]; del o["t_mono_ns"]; del o["remote_addr"]
-    p.write_text(json.dumps(o) + "\n")
+    _rewrite(p, json.dumps(o) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: upstream record key set mismatch")
@@ -1231,7 +1249,7 @@ def test_record_key_set_wrong(bundle):
 def test_fingerprint_file_emptied(bundle):
     """7-F16: empty fingerprint file -> Failure."""
     fp = bundle.parent / "fixtures" / "upstream-token.fingerprint"
-    fp.write_text("\n")
+    _rewrite(fp, "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: golden: upstream-token.fingerprint is not a 64-hex digest"
@@ -1239,7 +1257,7 @@ def test_fingerprint_file_emptied(bundle):
 
 def test_route_prefix_dropped(bundle):
     for leg in LEGS:
-        (bundle / "golden" / leg / "hermes-model.txt").write_text(f"  default: {EXPECTED_MODEL[leg]}\n")
+        _rewrite(bundle / "golden" / leg / "hermes-model.txt", f"  default: {EXPECTED_MODEL[leg]}\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: hermes-model.txt is")
@@ -1250,7 +1268,7 @@ def test_body_model_super(bundle):
         for rp in (bundle / "golden" / leg / "upstream-records").glob("*.json"):
             r = json.loads(rp.read_text())
             if r.get("method") == "POST":
-                r["body"]["model"] = "evil-" + r["body"]["model"]; rp.write_text(json.dumps(r) + "\n")
+                r["body"]["model"] = "evil-" + r["body"]["model"]; _rewrite(rp, json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: upstream record body.model is")
@@ -1260,7 +1278,7 @@ def test_host_super(bundle):
     for leg in LEGS:
         for rp in (bundle / "golden" / leg / "upstream-records").glob("*.json"):
             r = json.loads(rp.read_text())
-            r["headers"]["host"] = "evil#" + PINNED_UPSTREAM_HOST; rp.write_text(json.dumps(r) + "\n")
+            r["headers"]["host"] = "evil#" + PINNED_UPSTREAM_HOST; _rewrite(rp, json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: upstream record host is")
@@ -1271,7 +1289,7 @@ def test_record_out_window(bundle):
         for rp in (bundle / "golden" / leg / "upstream-records").glob("*.json"):
             r = json.loads(rp.read_text())
             if r.get("method") == "POST":
-                r["received_at"] = "1999-01-01T00:00:00.000000Z"; rp.write_text(json.dumps(r) + "\n")
+                r["received_at"] = "1999-01-01T00:00:00.000000Z"; _rewrite(rp, json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream POST record received_at 1999-01-01T00:00:00.000000Z outside all prompt windows"
@@ -1296,7 +1314,7 @@ def test_no_mention_text(bundle):
         for rp in (bundle / "golden" / leg / "upstream-records").glob("*.json"):
             r = json.loads(rp.read_text())
             if r.get("method") == "POST":
-                r["body"]["messages"] = [{"role": "user", "content": "other"}]; rp.write_text(json.dumps(r) + "\n")
+                r["body"]["messages"] = [{"role": "user", "content": "other"}]; _rewrite(rp, json.dumps(r) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: no upstream POST with stream=true and mention text for a prompt window"
@@ -1384,7 +1402,7 @@ def test_init_resp_after_session_new(bundle, monkeypatch):
         _write_timeline(ld, es)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1402,7 +1420,7 @@ def test_session_new_resp_after_prompt(bundle, monkeypatch):
         _write_timeline(ld, es)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1432,7 +1450,7 @@ def test_cancel_order(bundle):
 def test_cancel_log_no_mode(bundle):
     """m62."""
     p = bundle / "golden" / "cancel" / "buzzacp.log"
-    p.write_text(p.read_text().replace("mode=Cancel", "mode=Steer"))
+    _rewrite(p, p.read_text().replace("mode=Cancel", "mode=Steer"))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: cancel: buzzacp.log missing 'mode=Cancel'"
@@ -1440,7 +1458,7 @@ def test_cancel_log_no_mode(bundle):
 
 # === §10 shutdown attacks ===
 def test_shutdown_exit1(bundle):
-    (bundle / "golden" / "shutdown" / "buzz-acp.exit").write_text("1\n")
+    _rewrite(bundle / "golden" / "shutdown" / "buzz-acp.exit", "1\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: shutdown: buzz-acp.exit is '1', expected '0'"
@@ -1486,54 +1504,61 @@ def test_twousers_chunks_missing(bundle):
 # === §12 process evidence attacks ===
 def test_exit_garbage_nonshutdown(bundle):
     """6-F10 / 7-F7: buzz-acp.exit not integer."""
-    (bundle / "golden" / "run-1" / "buzz-acp.exit").write_text("not-an-int\n")
+    _rewrite(bundle / "golden" / "run-1" / "buzz-acp.exit", "not-an-int\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: buzz-acp.exit is not a valid integer"
 
 
 def test_proc_buzz_found(bundle):
-    """m55: no buzz-acp line with matching pid — buzz cmd does not match the pin."""
+    """m55: no buzz-acp line with matching pid — buzz cmd does not match the pin.
+    F14: owned set includes all three rid pids; all three in scan for closure match."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
-                  + "12300 1 100 NOT-BUZZ-ACP --flag\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
-        {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
+    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=2) + "\n"
+                  + "12300 1 100 NOT-BUZZ-ACP --flag\n"
+                  + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+                  + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
+        {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-after has no buzz-acp line with pid 12300"
 
 
 def test_proc_tee_parent(bundle):
-    """m56: no tee process parented by buzz-acp."""
+    """m56: tee_pid ppid not buzz-acp — tee is parented by another process.
+    F14: owned set includes all three rid pids, closure includes only buzz_pid
+    (12340 has ppid=9999 not in closure, breaking the ppid chain)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
-        {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
+        {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: no tee process parented by buzz-acp"
+    assert out == "failure_reason: run-1: recomputed owned closure != owned-pids.json"
 
 
 def test_proc_agent_parent(bundle):
-    """m57: no agent process parented by a tee."""
+    """m57: agent_child_pid ppid not tee_pid — agent is parented by another process.
+    F14: owned set includes all three rid pids, closure includes buzz+tee
+    (12345 has ppid=9999 not in closure)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=2, owned_present=2, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 9999 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
-        {"buzz_acp_pid": 12300, "owned": [12300, 12340], "taken_at": "ready+after"}))
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
+        {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: no agent process parented by a tee process"
+    assert out == "failure_reason: run-1: recomputed owned closure != owned-pids.json"
 
 
 def test_proc_closure(bundle):
     """m58: process outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", pinned_present=4) + "\n"
+    _rewrite(sp, _scan_header("after", pinned_present=4) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1541,21 +1566,21 @@ def test_proc_closure(bundle):
 
 
 def test_proc_closure_seed(bundle):
-    """m59: mutual-parent attack (V-b F19)."""
+    """m59: mutual-parent attack (V-b F19).  F14: owned=[12300] excludes rid pids → caught first."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: no tee process parented by buzz-acp"
+    assert out == "failure_reason: run-1: owned-pids.json does not contain rid tee_pid 12340"
 
 
 def test_proc_unparsable_line(bundle):
     """6-F12: unparsable line in process-scan-after.txt."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(sp.read_text() + f"999 nope badtime /usr/bin/python3 {PINNED_TEE_PATH} --evil\n")
+    _rewrite(sp, sp.read_text() + f"999 nope badtime /usr/bin/python3 {PINNED_TEE_PATH} --evil\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: run-1: process-scan-after.txt unparsable line: '999 nope badtime /usr/bin/python3 {PINNED_TEE_PATH} --evil'"
@@ -1564,7 +1589,7 @@ def test_proc_unparsable_line(bundle):
 def test_teardown_has_tee(bundle):
     """m60: A20c survivor check — owned pid in teardown body."""
     p = bundle / "golden" / "run-1" / "process-scan-teardown.txt"
-    p.write_text(_scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+    _rewrite(p, _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
                  + f"12340 12300 95 python3 {PINNED_TEE_PATH}\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -1574,9 +1599,9 @@ def test_teardown_has_tee(bundle):
 def test_orphan_pair(bundle):
     """6-F2: orphan process pair outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", pinned_present=5) + "\n"
+    _rewrite(sp, _scan_header("after", pinned_present=5) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
-    (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
+    _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1586,7 +1611,7 @@ def test_orphan_pair(bundle):
 def test_pc_launch_exemption(bundle):
     """7-F8 / A2: pc_launch.py exemption only for the launcher (pid == buzz ppid)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", pinned_present=4) + "\n"
+    _rewrite(sp, _scan_header("after", pinned_present=4) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
                   + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
                   + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
@@ -1601,7 +1626,7 @@ def test_buzz_exe_superstring(bundle):
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     txt = sp.read_text().replace(f" {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url",
                                  f" {PINNED_BUZZ_ACP_EXE_REALPATH}-EVIL --relay-url")
-    sp.write_text(txt)
+    _rewrite(sp, txt)
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-after has no buzz-acp line with pid 12300"
@@ -1611,9 +1636,9 @@ def test_buzz_exe_superstring(bundle):
 def test_dup_startup_key(bundle):
     sp = bundle / "golden" / "run-1" / "startup-line.txt"
     new_line = sp.read_text().strip() + " max_turn=3600s"
-    sp.write_text(new_line + "\n")
+    _rewrite(sp, new_line + "\n")
     lp = bundle / "golden" / "run-1" / "buzzacp.log"
-    lp.write_text(new_line + "\n")
+    _rewrite(lp, new_line + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: startup-line duplicate key 'max_turn'"
@@ -1622,7 +1647,7 @@ def test_dup_startup_key(bundle):
 def test_startup_not_in_log(bundle):
     """7-F4 / A7: startup-line.txt not matching log."""
     lp = bundle / "golden" / "run-1" / "buzzacp.log"
-    lp.write_text("2026-09-05T05:00:00Z  INFO buzz_acp: starting with relay=<HEX>\n")
+    _rewrite(lp, "2026-09-05T05:00:00Z  INFO buzz_acp: starting with relay=<HEX>\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: buzzacp.log has no line containing 'buzz-acp starting:'"
@@ -1633,11 +1658,11 @@ def test_startup_values_substr(bundle):
     for leg in LEGS:
         sp = bundle / "golden" / leg / "startup-line.txt"
         new_line = sp.read_text().strip().replace("idle_timeout=900s", "idle_timeout=900seconds")
-        sp.write_text(new_line + "\n")
+        _rewrite(sp, new_line + "\n")
         lp = bundle / "golden" / leg / "buzzacp.log"
         lines = lp.read_text().splitlines()
         lines[0] = new_line
-        lp.write_text("\n".join(lines) + "\n")
+        _rewrite(lp, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: startup idle_timeout is '900seconds', expected '900s'"
@@ -1648,11 +1673,11 @@ def test_startup_respond_to_wrong(bundle):
     for leg in LEGS:
         sp = bundle / "golden" / leg / "startup-line.txt"
         new_line = sp.read_text().strip().replace("respond_to=owner-only", "respond_to=everyone")
-        sp.write_text(new_line + "\n")
+        _rewrite(sp, new_line + "\n")
         lp = bundle / "golden" / leg / "buzzacp.log"
         lines = lp.read_text().splitlines()
         lines[0] = new_line
-        lp.write_text("\n".join(lines) + "\n")
+        _rewrite(lp, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: startup respond_to is 'everyone', expected 'owner-only'"
@@ -1667,18 +1692,17 @@ def test_argv_idle_pin(bundle, monkeypatch):
     monkeypatch.setattr("check_acp_conformance.PINNED_LAUNCH_ARGV", new_argv)
     for leg in LEGS:
         ap = bundle / "golden" / leg / "argv.txt"
-        ap.write_text("\n".join(new_argv) + "\n")
+        _rewrite(ap, "\n".join(new_argv) + "\n")
         rp = bundle / "golden" / leg / "runtime-identity.json"
         rid = json.loads(rp.read_text()); rid["launch_argv"] = new_argv
-        rp.write_text(json.dumps(rid, indent=2) + "\n")
+        _rewrite(rp, json.dumps(rid, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: run-1: argv --idle-timeout is not {PINNED_IDLE_TIMEOUT_ARG}"
 
 
 def test_log_unmasked(bundle):
-    (bundle / "golden" / "run-1" / "buzzacp.log").write_text(
-        (bundle / "golden" / "run-1" / "startup-line.txt").read_text() + "INFO relay=" + "ab" * 32 + "\n")
+    _rewrite(bundle / "golden" / "run-1" / "buzzacp.log", (bundle / "golden" / "run-1" / "startup-line.txt").read_text() + "INFO relay=" + "ab" * 32 + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: buzzacp.log contains unmasked 64-hex string"
@@ -1689,8 +1713,8 @@ def test_manifest_dup_header(bundle):
     """m48."""
     gz = gzip.compress(b"## hermes-agent\na f\n## hermes-agent\nb g\n## buzz\nc m\n## acp\nd l\n", mtime=0)
     for leg in LEGS:
-        (bundle / "golden" / leg / "manifest-pre.txt.gz").write_bytes(gz)
-        (bundle / "golden" / leg / "manifest-post.txt.gz").write_bytes(gz)
+        _rewrite(bundle / "golden" / leg / "manifest-pre.txt.gz", gz)
+        _rewrite(bundle / "golden" / leg / "manifest-post.txt.gz", gz)
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest body != baseline body"
@@ -1701,8 +1725,8 @@ def test_manifest_preamble(bundle):
     body = b"EVIL\n" + gzip.decompress((GOLDEN / "manifests" / "manifest-baseline.txt.gz").read_bytes())
     gz = gzip.compress(body, mtime=0)
     for leg in LEGS:
-        (bundle / "golden" / leg / "manifest-pre.txt.gz").write_bytes(gz)
-        (bundle / "golden" / leg / "manifest-post.txt.gz").write_bytes(gz)
+        _rewrite(bundle / "golden" / leg / "manifest-pre.txt.gz", gz)
+        _rewrite(bundle / "golden" / leg / "manifest-post.txt.gz", gz)
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest body != baseline body"
@@ -1718,8 +1742,8 @@ def test_manifest_digests_pin(bundle):
     body = "\n".join(lines) + "\n"
     gz = gzip.compress(body.encode(), mtime=0)
     for leg in LEGS:
-        (bundle / "golden" / leg / "manifest-pre.txt.gz").write_bytes(gz)
-        (bundle / "golden" / leg / "manifest-post.txt.gz").write_bytes(gz)
+        _rewrite(bundle / "golden" / leg / "manifest-pre.txt.gz", gz)
+        _rewrite(bundle / "golden" / leg / "manifest-post.txt.gz", gz)
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest body != baseline body"
@@ -1729,7 +1753,7 @@ def test_manifest_baseline_sha_pin(bundle):
     """m45: baseline gz sha mismatch."""
     bl = bundle / "golden" / "manifests" / "manifest-baseline.txt.gz"
     body = gzip.decompress(bl.read_bytes())
-    bl.write_bytes(gzip.compress(body, mtime=1))
+    _rewrite(bl, gzip.compress(body, mtime=1))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: baseline gz sha256 mismatch"
@@ -1741,7 +1765,7 @@ def test_manifest_ts_order(bundle):
     for leg in LEGS:
         lines = (bundle / "golden" / leg / "manifest-pre.summary").read_text().splitlines()
         lines[len(MANIFEST_TREES)] = "2026-09-05T06:00:00Z"  # after spawned_at_utc 05:30:00
-        (bundle / "golden" / leg / "manifest-pre.summary").write_text("\n".join(lines) + "\n")
+        _rewrite(bundle / "golden" / leg / "manifest-pre.summary", "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest timestamps not pre < start < post"
@@ -1754,7 +1778,7 @@ def test_manifest_post_after_tl(bundle):
     05:00:01Z = 05:00:01.000 is after spawned_at but before last entry."""
     lines = (bundle / "golden" / "run-1" / "manifest-post.summary").read_text().splitlines()
     lines[len(MANIFEST_TREES)] = "2026-09-05T05:00:01Z"
-    (bundle / "golden" / "run-1" / "manifest-post.summary").write_text("\n".join(lines) + "\n")
+    _rewrite(bundle / "golden" / "run-1" / "manifest-post.summary", "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest-post timestamp not after last timeline t_utc"
@@ -1766,7 +1790,7 @@ def test_summary_digests_zeroed(bundle):
         for name in ("manifest-pre.summary", "manifest-post.summary"):
             sp = bundle / "golden" / leg / name
             lines = sp.read_text().splitlines()
-            sp.write_text("\n".join(f"{l.split()[0]} {'0'*64}" if len(l.split()) == 2 and l.split()[0] in PINNED_BASELINE_DIGESTS else l for l in lines) + "\n")
+            _rewrite(sp, "\n".join(f"{l.split()[0]} {'0'*64}" if len(l.split()) == 2 and l.split()[0] in PINNED_BASELINE_DIGESTS else l for l in lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: manifest-pre.summary digests != body digests"
@@ -1781,7 +1805,7 @@ def test_golden_run_eq(bundle, monkeypatch):
     (bundle / "golden" / "run-2-copy").rename(bundle / "golden" / "run-2")
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1794,7 +1818,7 @@ def test_golden_frozen_lines(bundle, monkeypatch):
     lines = p.read_text().splitlines()
     lines[0] = lines[0].replace('"initialize"', '"evil"')
     new_text = "\n".join(lines) + "\n"
-    p.write_text(new_text)
+    _rewrite(p, new_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(new_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1839,7 +1863,7 @@ def test_golden_distinctness_all(bundle, monkeypatch):
     (bundle / "golden" / "run-2-copy").rename(bundle / "golden" / "run-2")
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -1855,7 +1879,7 @@ def test_golden_regen(bundle):
         _write_timeline(ld, es)
         _write_tee_status(ld, es)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))
-    (bundle / "golden" / "golden.jsonl").write_text("\n".join(n1) + "\n")
+    _rewrite(bundle / "golden" / "golden.jsonl", "\n".join(n1) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: golden: golden.jsonl sha256")
@@ -1893,7 +1917,7 @@ def test_agent_caps_wrong(bundle):
 # === negative directory attacks ===
 def test_neg_extra_file(bundle):
     """7-F23 / A11: extra file under negative/."""
-    (bundle / "golden" / "negative" / "evil.txt").write_text("x")
+    _rewrite(bundle / "golden" / "negative" / "evil.txt", "x")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: negative: unexpected entries: ['evil.txt']"
@@ -1902,7 +1926,7 @@ def test_neg_extra_file(bundle):
 def test_neg_nan_timeline(bundle):
     """7-F23: NaN in negative timeline (A22: via shared validator)."""
     p = bundle / "golden" / "negative" / "timeline.jsonl"
-    p.write_text(p.read_text().replace('"t_mono_ns":1000000000001', '"t_mono_ns":NaN', 1))
+    _rewrite(p, p.read_text().replace('"t_mono_ns":1000000000001', '"t_mono_ns":NaN', 1))
     rc, out = _check(bundle)
     assert rc == 1
     assert "negative:" in out and "not strict JSON" in out
@@ -1916,7 +1940,7 @@ def test_neg_c2a_not_seq1(bundle):
             "t_mono_ns": 1_000_000_000_000, "frame": {"jsonrpc": "2.0", "method": "hello", "params": {}}}
     es = [junk] + es
     for i, e in enumerate(es): e["seq"] = i + 1
-    p.write_text("".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
+    _rewrite(p, "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
     assert "negative:" in out and "seq 1 is not a c2a frame" in out
@@ -1927,8 +1951,7 @@ def test_neg_classify_wrong(bundle):
     nd = bundle / "golden" / "negative"
     es = [json.loads(l) for l in (nd / "timeline.jsonl").read_text().splitlines() if l.strip()]
     es[0]["frame"]["params"]["protocolVersion"] = 2
-    with open(nd / "timeline.jsonl", "w") as f:
-        for e in es: f.write(json.dumps(e, separators=(",", ":")) + "\n")
+    _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
     assert "negative:" in out and "initialize params != fixture" in out
@@ -1942,8 +1965,7 @@ def test_neg_extra_a2c_junk_first(bundle):
             "frame": {"jsonrpc": "2.0", "method": "log", "params": {}}}
     es.insert(1, junk)
     for i, e in enumerate(es): e["seq"] = i + 1
-    with open(nd / "timeline.jsonl", "w") as f:
-        for e in es: f.write(json.dumps(e, separators=(",", ":")) + "\n")
+    _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     # The shared validator DOES pass: the response is matched by id
     rc, out = _check(bundle)
     assert rc == 0
@@ -1969,14 +1991,14 @@ def test_sequence_guard_skip_one_leg(bundle, monkeypatch):
 
 # === Extra golden entries ===
 def test_extra_leg_dir(bundle):
-    (bundle / "golden" / "run-3").mkdir(); (bundle / "golden" / "run-3" / "x").write_text("")
+    (bundle / "golden" / "run-3").mkdir(); _rewrite(bundle / "golden" / "run-3" / "x", "")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: golden: unexpected directory golden/run-3"
 
 
 def test_extra_golden_file(bundle):
-    (bundle / "golden" / "NOTES.md").write_text("hi\n")
+    _rewrite(bundle / "golden" / "NOTES.md", "hi\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: golden: unexpected file golden/NOTES.md"
@@ -1984,7 +2006,7 @@ def test_extra_golden_file(bundle):
 
 def test_extra_manifests_file(bundle):
     """A13: manifests/ should contain only manifest-baseline.txt.gz."""
-    (bundle / "golden" / "manifests" / "evil.txt").write_text("hi\n")
+    _rewrite(bundle / "golden" / "manifests" / "evil.txt", "hi\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: golden: manifests/ contains unexpected entries")
@@ -1994,14 +2016,14 @@ def test_extra_manifests_file(bundle):
 def test_bad_json_timeline(bundle):
     tl = bundle / "golden" / "run-1" / "timeline.jsonl"
     lines = tl.read_text().splitlines(); lines[0] = "bad"
-    tl.write_text("\n".join(lines) + "\n")
+    _rewrite(tl, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: malformed evidence:")
 
 
 def test_bad_pid(bundle):
-    (bundle / "golden" / "run-1" / "buzz-acp.pid").write_text("bad\n")
+    _rewrite(bundle / "golden" / "run-1" / "buzz-acp.pid", "bad\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: buzz-acp.pid is not a valid integer"
@@ -2034,9 +2056,7 @@ def test_audit_p1_negative_response_is_a2c_request(bundle):
     es = [json.loads(l) for l in (nd / "timeline.jsonl").read_text().splitlines() if l.strip()]
     # Replace the a2c error response (seq 2) with an a2c REQUEST of the same id
     es[1]["frame"] = {"jsonrpc": "2.0", "method": "tools/list", "id": 0, "params": {}}
-    with open(nd / "timeline.jsonl", "w") as f:
-        for e in es:
-            f.write(json.dumps(e, separators=(",", ":")) + "\n")
+    _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 mutation should fail, got rc={rc}: {out}"
 
@@ -2051,7 +2071,7 @@ def test_audit_p1_negative_probe_failed_identity(bundle):
     rid["agent_exit_code"] = -9
     rid["agent_argv"] = ["/usr/bin/true"]
     rid["agent_child_pid"] = -1
-    (nd / "runtime-identity.json").write_text(json.dumps(rid, indent=2) + "\n")
+    _rewrite(nd / "runtime-identity.json", json.dumps(rid, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 probe_error mutation should fail, got rc={rc}: {out}"
 
@@ -2063,7 +2083,7 @@ def test_audit_p1_rid_pids_unbound_to_scan(bundle):
     rid = json.loads((ld / "runtime-identity.json").read_text())
     rid["tee_pid"] = 77777
     rid["agent_child_pid"] = 88888
-    (ld / "runtime-identity.json").write_text(json.dumps(rid, indent=2) + "\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps(rid, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 unbound-pids mutation should fail, got rc={rc}: {out}"
 
@@ -2081,12 +2101,12 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
     body_lines.append("54321 12345 80 /usr/bin/sleep 60")
     owned_data["owned"].append(54321)
     owned_data["owned"].sort()
-    owned_path.write_text(json.dumps(owned_data) + "\n")
-    scan.write_text(_scan_header("after", owned=4, owned_present=4, pinned_present=3) + "\n"
+    _rewrite(owned_path, json.dumps(owned_data) + "\n")
+    _rewrite(scan, _scan_header("after", owned=4, owned_present=4, pinned_present=3) + "\n"
                     + "\n".join(body_lines) + "\n")
     # Same child in teardown — owned pid = survivor
     td = ld / "process-scan-teardown.txt"
-    td.write_text(_scan_header("teardown", buzz_present=0, owned=4, owned_present=1) + "\n"
+    _rewrite(td, _scan_header("teardown", buzz_present=0, owned=4, owned_present=1) + "\n"
                   + "54321 1 90 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 teardown survivor mutation should fail, got rc={rc}: {out}"
@@ -2103,7 +2123,7 @@ def test_upstream_header_sensitive_name(bundle):
     first_rec = sorted(recs_dir.glob("*.json"))[0]
     rec = json.loads(first_rec.read_text())
     rec["headers"]["x-api-key"] = "sk-live-DEADBEEF1234"
-    first_rec.write_text(json.dumps(rec, indent=2) + "\n")
+    _rewrite(first_rec, json.dumps(rec, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream record has sensitive header 'x-api-key'"
@@ -2116,7 +2136,7 @@ def test_upstream_header_sensitive_value(bundle):
     first_rec = sorted(recs_dir.glob("*.json"))[0]
     rec = json.loads(first_rec.read_text())
     rec["headers"]["x-custom"] = "Bearer eyJhbGciOiJI"
-    first_rec.write_text(json.dumps(rec, indent=2) + "\n")
+    _rewrite(first_rec, json.dumps(rec, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: upstream record header 'x-custom' has sensitive value"
@@ -2152,7 +2172,7 @@ def test_stderr_64hex_token(bundle):
     """5-F19: a 64-hex token in agent-stderr.txt fails naming the file."""
     ld = bundle / "golden" / "run-1"
     stderr = ld / "agent-stderr.txt"
-    stderr.write_text("leaked: " + "ab" * 32 + "\n")
+    _rewrite(stderr, "leaked: " + "ab" * 32 + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: agent-stderr.txt contains a secret-shaped string"
@@ -2162,7 +2182,7 @@ def test_stderr_bearer_token(bundle):
     """5-F19: a Bearer token in agent-stderr.txt fails naming the file."""
     ld = bundle / "golden" / "run-1"
     stderr = ld / "agent-stderr.txt"
-    stderr.write_text("Authorization: Bearer eyJhbGciOiJI\n")
+    _rewrite(stderr, "Authorization: Bearer eyJhbGciOiJI\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: agent-stderr.txt contains a secret-shaped string"
@@ -2187,9 +2207,7 @@ def test_neg_foreign_id_response_before_real(bundle):
     es.insert(1, junk)
     for i, e in enumerate(es):
         e["seq"] = i + 1
-    with open(nd / "timeline.jsonl", "w") as f:
-        for e in es:
-            f.write(json.dumps(e, separators=(",", ":")) + "\n")
+    _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
     assert "99999" in out and "does not match" in out
@@ -2200,7 +2218,7 @@ def test_neg_foreign_id_response_before_real(bundle):
 def test_empty_timeline_guard(bundle):
     """5-F20: an empty timeline.jsonl must fail with the exact guard reason."""
     ld = bundle / "golden" / "run-1"
-    (ld / "timeline.jsonl").write_text("")
+    _rewrite(ld / "timeline.jsonl", "")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: timeline.jsonl is empty"
@@ -2266,7 +2284,7 @@ def test_tee_status_extra_key(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["extra_field"] = True
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json key set mismatch (extra=['extra_field'], missing=[])"
@@ -2277,7 +2295,7 @@ def test_tee_status_drained_false(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["drained"] = False
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json drained is not true"
@@ -2288,7 +2306,7 @@ def test_tee_status_forwarded_lt_recorded(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["forwarded_c2a"] = ts["recorded_c2a"] - 1
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json forwarded_c2a != recorded_c2a"
@@ -2300,7 +2318,7 @@ def test_tee_status_recorded_ne_timeline(bundle):
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["recorded_c2a"] = ts["recorded_c2a"] + 5
     ts["forwarded_c2a"] = ts["recorded_c2a"]  # keep forwarded == recorded
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert "tee-status.json recorded_c2a" in out and "timeline c2a count" in out
@@ -2311,7 +2329,7 @@ def test_tee_status_not_final_exit_not_null(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["agent_returncode"] = 0  # not null when final=false
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json not final but agent_returncode is not null"
@@ -2324,7 +2342,7 @@ def test_tee_status_final_signal_exit_pass(bundle):
     ts["final"] = True
     ts["agent_returncode"] = -15
     ts["exit_code"] = 143  # 128 + 15
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
     ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
     assert ok, f"signal exit should pass: {result}"
@@ -2337,7 +2355,7 @@ def test_tee_status_final_signal_exit_raw_fails(bundle):
     ts["final"] = True
     ts["agent_returncode"] = -15
     ts["exit_code"] = -15
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
     ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
     assert not ok
@@ -2349,7 +2367,7 @@ def test_tee_status_updated_seq_wrong(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["updated_seq"] = 99999
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
     ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
     assert not ok
@@ -2362,8 +2380,7 @@ def test_shutdown_owned_pid_survives(bundle):
     """Addendum B: an owned pid in the shutdown after-scan must fail as a survivor."""
     ld = bundle / "golden" / "shutdown"
     # Add an owned pid to the after-scan (12300 is in owned-pids.json)
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", buzz_present=1, owned_present=1) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", buzz_present=1, owned_present=1) + "\n"
         + "12300 1 200 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -2375,11 +2392,12 @@ def test_shutdown_owned_pid_survives(bundle):
 def test_v23_no_header_after(tmp_path):
     """A20 v2.3 rule 1: after-scan without the v2.3 header is rejected."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
-    (ld / "process-scan-after.txt").write_text("")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "process-scan-after.txt", "")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=3, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: process-scan-after.txt has no enumeration header"
@@ -2388,16 +2406,15 @@ def test_v23_no_header_after(tmp_path):
 def test_v23_no_header_teardown(tmp_path):
     """A20 v2.3 rule 1: teardown without the v2.3 header is rejected."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
-    (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (ld / "process-scan-teardown.txt").write_text("old format\n")
+    _rewrite(ld / "process-scan-teardown.txt", "old format\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: process-scan-teardown.txt has no enumeration header"
@@ -2406,11 +2423,12 @@ def test_v23_no_header_teardown(tmp_path):
 def test_v23_rows_zero(tmp_path):
     """A20 v2.3 rule 2: rows=0 means enumeration did not run."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
-    (ld / "process-scan-after.txt").write_text(_scan_header("after", rows=0, owned=1, owned_present=0) + "\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=0, owned=3, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=3, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "shutdown")
     assert str(ei.value) == "shutdown: process-scan-after.txt header rows=0 (enumeration did not run)"
@@ -2419,16 +2437,16 @@ def test_v23_rows_zero(tmp_path):
 def test_v23_owned_present_mismatch(tmp_path):
     """A20 v2.3 rule 3: owned_present inconsistent with body → Failure."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     # Header says owned_present=2 but body has 3 owned pids
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", owned_present=2, pinned_present=3) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned_present=2, pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: process-scan-after.txt header owned_present=2 inconsistent with body (3)"
@@ -2437,12 +2455,13 @@ def test_v23_owned_present_mismatch(tmp_path):
 def test_v23_buzz_present_shutdown(tmp_path):
     """A20 v2.3 rule 4: shutdown after-scan with buzz_present=1 → Failure."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     # buzz_present=1 but empty body (lying header — a clean shutdown)
-    (ld / "process-scan-after.txt").write_text(_scan_header("after", buzz_present=1, owned_present=0) + "\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", buzz_present=1, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "shutdown")
     assert str(ei.value) == "shutdown: process-scan-after.txt buzz_present=1 in shutdown (expected 0)"
@@ -2451,11 +2470,12 @@ def test_v23_buzz_present_shutdown(tmp_path):
 def test_v23_mode_mismatch(tmp_path):
     """A20 v2.3 rule 1b: after-scan file with mode=teardown in header → Failure."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
-    (ld / "process-scan-after.txt").write_text(_scan_header("teardown", owned=1, owned_present=0) + "\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "process-scan-after.txt", _scan_header("teardown", owned=3, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=3, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "shutdown")
     assert str(ei.value) == "shutdown: process-scan-after.txt header mode is 'teardown', expected 'after'"
@@ -2464,12 +2484,13 @@ def test_v23_mode_mismatch(tmp_path):
 def test_v23_owned_count_mismatch(tmp_path):
     """A20 v2.3 rule 8: header owned != len(owned-pids.json owned) → Failure."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     # Header says owned=2 but owned-pids.json has 3
-    (ld / "process-scan-after.txt").write_text(_scan_header("after", owned=2, owned_present=0) + "\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned=2, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "shutdown")
     assert str(ei.value) == "shutdown: process-scan-after.txt header owned=2 != owned-pids.json (3)"
@@ -2478,28 +2499,27 @@ def test_v23_owned_count_mismatch(tmp_path):
 def test_v23_shutdown_clean_pass(tmp_path):
     """A20 v2.3 rule 4: valid header + empty body in shutdown → PASS."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
-    (ld / "process-scan-after.txt").write_text(_scan_header("after", buzz_present=0, owned_present=0) + "\n")
-    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
     cc.check_process_evidence(ld, "shutdown")  # must not raise
 
 
 def test_v23_teardown_survivor(tmp_path):
     """A20 v2.3 rule 6: owned pid in teardown body → survivor Failure."""
     ld = tmp_path
-    (ld / "buzz-acp.pid").write_text("12300\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
-    (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(ld / "buzz-acp.pid", "12300\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (ld / "process-scan-teardown.txt").write_text(
-        _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
         + "12340 1 95 python3 /some/tee\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
@@ -2773,11 +2793,11 @@ def test_ck7_f1_second_mention_after_first_terminal(bundle):
     tags = u2["tags"]
     new_ev = nv.sign_event(USER2_SECKEY, {"created_at": after_epoch, "kind": 9,
                                           "tags": tags, "content": content})
-    (md / "user2.event.json").write_text(json.dumps(new_ev, indent=2) + "\n")
+    _rewrite(md / "user2.event.json", json.dumps(new_ev, indent=2) + "\n")
     # Update receipt to match new event id
     rcpt = json.loads((md / "user2.receipt.json").read_text())
     rcpt["event_id"] = new_ev["id"]
-    (md / "user2.receipt.json").write_text(json.dumps(rcpt, indent=2) + "\n")
+    _rewrite(md / "user2.receipt.json", json.dumps(rcpt, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: two-users: second mention not pending during the first turn"
@@ -2917,20 +2937,18 @@ def test_ck7_f6a_tee_pid_wrong_ppid(tmp_path):
     rid_tee = 12340         # rid's tee_pid, ppid=structural_tee (not buzz_pid)
     agent_pid = 12345
     owned = sorted([buzz_pid, structural_tee, rid_tee, agent_pid])
-    (ld / "buzz-acp.pid").write_text(f"{buzz_pid}\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps(
+    _rewrite(ld / "buzz-acp.pid", f"{buzz_pid}\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
-    (ld / "runtime-identity.json").write_text(json.dumps(
+    _rewrite(ld / "runtime-identity.json", json.dumps(
         {"tee_pid": rid_tee, "agent_child_pid": agent_pid}))
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
         + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"{structural_tee} {buzz_pid} 95 /usr/bin/python3 {PINNED_TEE_PATH} --wrapper\n"
         + f"{rid_tee} {structural_tee} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"{agent_pid} {structural_tee} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (ld / "process-scan-teardown.txt").write_text(
-        _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: tee_pid 12340 ppid is not buzz_acp_pid"
@@ -2947,20 +2965,18 @@ def test_ck7_f6b_agent_pid_wrong_ppid(tmp_path):
     structural_agent = 12346  # passes structural check (ppid=tee, PINNED_AGENT_REALPATH)
     rid_agent = 12345         # rid's agent_child_pid, ppid=buzz (not tee_pid)
     owned = sorted([buzz_pid, tee_pid, structural_agent, rid_agent])
-    (ld / "buzz-acp.pid").write_text(f"{buzz_pid}\n")
-    (ld / "buzz-acp.exit").write_text("0\n")
-    (ld / "owned-pids.json").write_text(json.dumps(
+    _rewrite(ld / "buzz-acp.pid", f"{buzz_pid}\n")
+    _rewrite(ld / "buzz-acp.exit", "0\n")
+    _rewrite(ld / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
-    (ld / "runtime-identity.json").write_text(json.dumps(
+    _rewrite(ld / "runtime-identity.json", json.dumps(
         {"tee_pid": tee_pid, "agent_child_pid": rid_agent}))
-    (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
         + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"{structural_agent} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
         + f"{rid_agent} {buzz_pid} 75 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    (ld / "process-scan-teardown.txt").write_text(
-        _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: agent_child_pid 12345 ppid is not tee_pid"
@@ -2971,7 +2987,7 @@ def test_ck7_f7a_teardown_mode_mismatch(bundle):
     """F7a: teardown scan with mode=after in header must fail."""
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
-    td.write_text(_scan_header("after", buzz_present=0, owned_present=0) + "\n")
+    _rewrite(td, _scan_header("after", buzz_present=0, owned_present=0) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header mode is 'after', expected 'teardown'"
@@ -2982,7 +2998,7 @@ def test_ck7_f7b_teardown_rows_zero(bundle):
     """F7b: teardown scan with rows=0 must fail."""
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
-    td.write_text(_scan_header("teardown", rows=0, buzz_present=0, owned_present=0) + "\n")
+    _rewrite(td, _scan_header("teardown", rows=0, buzz_present=0, owned_present=0) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header rows=0 (enumeration did not run)"
@@ -2993,7 +3009,7 @@ def test_ck7_f7c_teardown_owned_mismatch(bundle):
     """F7c: teardown header owned != len(owned-pids.json owned) must fail."""
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
-    td.write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    _rewrite(td, _scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header owned=1 != owned-pids.json (3)"
@@ -3005,7 +3021,7 @@ def test_ck7_f7d_teardown_owned_present_mismatch(bundle):
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
     # Empty body but header says owned_present=1
-    td.write_text(_scan_header("teardown", buzz_present=0, owned_present=1) + "\n")
+    _rewrite(td, _scan_header("teardown", buzz_present=0, owned_present=1) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header owned_present=1 inconsistent with body (0)"
@@ -3017,7 +3033,7 @@ def test_ck7_f8a_tee_status_write_errors(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["write_errors"] = ["disk full"]
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json write_errors is not empty"
@@ -3029,7 +3045,7 @@ def test_ck7_f8b_tee_status_forwarded_a2c_mismatch(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["forwarded_a2c"] = ts["recorded_a2c"] - 1
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json forwarded_a2c != recorded_a2c"
@@ -3043,7 +3059,7 @@ def test_ck7_f8c_tee_status_recorded_c2a_wrong(bundle):
     real_c2a = ts["recorded_c2a"]
     ts["recorded_c2a"] = real_c2a + 1
     ts["forwarded_c2a"] = real_c2a + 1  # keep forwarded == recorded to pass that check
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
@@ -3062,7 +3078,7 @@ def test_ck7_f8d_tee_status_updated_utc_bad_format(bundle):
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["updated_utc"] = 42  # not a string — triggers isinstance clause
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json updated_utc does not match format"
@@ -3077,7 +3093,7 @@ def test_ck7_f8e_tee_status_final_returncode_not_int(bundle):
     ts["stdin_reader_done"] = True
     ts["agent_returncode"] = "zero"
     ts["exit_code"] = 0
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json final but agent_returncode is not int"
@@ -3091,7 +3107,7 @@ def test_ck7_f8f_tee_status_not_final_exit_not_null(bundle):
     ts["final"] = False
     ts["agent_returncode"] = None
     ts["exit_code"] = 42
-    (ld / "tee-status.json").write_text(json.dumps(ts, indent=2) + "\n")
+    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: tee-status.json not final but exit_code is not null"
@@ -3120,7 +3136,7 @@ def test_ck7_f9a_golden_request_kinds(bundle, monkeypatch):
         _write_timeline(ld, es)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(gd / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (gd / "golden.jsonl").write_text(golden_text)
+    _rewrite(gd / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     with pytest.raises(cc.Failure) as ei:
         cc.check_golden(gd)
@@ -3163,7 +3179,7 @@ def test_ck7_f9b_golden_same_session_ids(bundle, monkeypatch):
     # The normalized golden uses placeholders, so run-1 and run-2 produce the same normalized form
     n1 = cc.normalize_timeline(cc._load_timeline_raw(ld1, "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
@@ -3183,8 +3199,172 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
     # Regenerate golden.jsonl
     n1 = cc.normalize_timeline(cc._load_timeline_raw(ld1, "run-1"))
     golden_text = "\n".join(n1) + "\n"
-    (bundle / "golden" / "golden.jsonl").write_text(golden_text)
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", _sha256(golden_text.encode()))
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: golden: run-1 and run-2 first t_utc are identical"
+
+
+# === F43 source-scan test: no direct writes on bundle paths outside _rewrite ===
+def test_f43_no_direct_writes_outside_rewrite():
+    """F43: test functions must not use .write_text()/.write_bytes()/open(,'w') on
+    bundle paths outside the _rewrite helper.  Scans the test source itself."""
+    import inspect
+    src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
+    tree = __import__("ast").parse(src)
+    test_ranges = []
+    for node in __import__("ast").iter_child_nodes(tree):
+        if isinstance(node, __import__("ast").FunctionDef) and node.name.startswith("test_"):
+            test_ranges.append((node.lineno, node.end_lineno))
+    violations = []
+    for node in __import__("ast").walk(tree):
+        if not isinstance(node, __import__("ast").Call):
+            continue
+        if not isinstance(node.func, __import__("ast").Attribute):
+            continue
+        if node.func.attr not in ("write_text", "write_bytes"):
+            continue
+        for start, end in test_ranges:
+            if start <= node.lineno <= end:
+                violations.append(f"line {node.lineno}: .{node.func.attr}()")
+                break
+    assert violations == [], f"F43: direct writes in test functions (use _rewrite): {violations}"
+
+
+# === F22-F26: records / receipts / startup exact-match tests ===
+
+def test_ck7_f22_post_body_extra_key(bundle):
+    """F22: upstream POST body rejects extra keys."""
+    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
+        r = json.loads(rp.read_text())
+        if r.get("method") == "POST":
+            r["body"]["evil_tool_calls"] = [{"exfil": "yes"}]
+            _rewrite(rp, json.dumps(r) + "\n")
+            break
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: upstream POST record body has extra keys: ['evil_tool_calls']"
+
+
+def test_ck7_f23_post_body_wrong_role(bundle):
+    """F23: upstream POST message roles pinned to system/user/assistant."""
+    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
+        r = json.loads(rp.read_text())
+        if r.get("method") == "POST" and r.get("body", {}).get("messages"):
+            r["body"]["messages"] = [{"role": "tool", "content": "x"}]
+            _rewrite(rp, json.dumps(r) + "\n")
+            break
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: upstream POST record message role 'tool' not in allowed set"
+
+
+def test_ck7_f24_get_fingerprint_bogus(bundle):
+    """F24: GET records' authorization_fingerprint must equal pinned."""
+    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
+        r = json.loads(rp.read_text())
+        if r.get("method") == "GET":
+            r["authorization_fingerprint"] = "f" * 64
+            _rewrite(rp, json.dumps(r) + "\n")
+            break
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: upstream GET record authorization_fingerprint mismatch"
+
+
+def test_ck7_f25_startup_extra_token(bundle):
+    """F25: startup-line rejects unknown keys."""
+    sp = bundle / "golden" / "run-1" / "startup-line.txt"
+    old = sp.read_text().rstrip("\n")
+    _rewrite(sp, old + " backdoor=on\n")
+    lp = bundle / "golden" / "run-1" / "buzzacp.log"
+    old_log = lp.read_text()
+    lines = old_log.splitlines()
+    lines[0] = lines[0] + " backdoor=on"
+    _rewrite(lp, "\n".join(lines) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: startup-line unknown key 'backdoor'"
+
+
+def test_ck7_f26_mention_pubkeys_extra(bundle):
+    """F26: receipt mention_pubkeys must equal exactly [identities.agent]."""
+    md = bundle / "golden" / "run-1" / "mentions"
+    rp = md / "owner.receipt.json"
+    receipt = json.loads(rp.read_text())
+    extra_pk = "a" * 64
+    receipt["mention_pubkeys"].append(extra_pk)
+    _rewrite(rp, json.dumps(receipt) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    expected_mpk = [SYNTH_IDENTITIES["agent"]]
+    assert out == f"failure_reason: run-1: mention owner receipt mention_pubkeys {receipt['mention_pubkeys']!r} != expected {expected_mpk!r}"
+
+
+def test_ck7_f26_mention_pubkeys_empty(bundle):
+    """F26: receipt mention_pubkeys must not be empty."""
+    md = bundle / "golden" / "run-1" / "mentions"
+    rp = md / "owner.receipt.json"
+    receipt = json.loads(rp.read_text())
+    receipt["mention_pubkeys"] = []
+    _rewrite(rp, json.dumps(receipt) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    expected_mpk = [SYNTH_IDENTITIES["agent"]]
+    assert out == f"failure_reason: run-1: mention owner receipt mention_pubkeys [] != expected {expected_mpk!r}"
+
+
+# === F14: rid tee_pid/agent_child_pid in owned_set on shutdown ===
+
+def test_ck7_f14_shutdown_rid_pids_not_in_owned(bundle):
+    """F14: shutdown rid tee_pid/agent_child_pid must be in owned_set."""
+    sd = bundle / "golden" / "shutdown"
+    rid = json.loads((sd / "runtime-identity.json").read_text())
+    rid["tee_pid"] = 77777
+    _rewrite(sd / "runtime-identity.json", json.dumps(rid) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: shutdown: owned-pids.json does not contain rid tee_pid 77777"
+
+
+# === F30: after-scan duplicate rows ===
+
+def test_ck7_f30_after_scan_duplicate_pid(bundle):
+    """F30: duplicate scan rows for one pid in after-scan are rejected."""
+    sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
+    lines = sp.read_text().splitlines()
+    # Duplicate the second body row (tee_pid=12340)
+    assert len(lines) > 2, "expected at least 3 lines in after-scan"
+    lines.append(lines[2])
+    _rewrite(sp, "\n".join(lines) + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-after.txt duplicate rows for pid(s) [12340]"
+
+
+# === F34: _TEE_STATUS_KEYS → pins.PINNED_TEE_STATUS_KEYS ===
+
+def test_ck7_f34_frame_tee_keys_match_pin():
+    """F34: run the committed frame_tee.py and verify its emitted key set == PINNED_TEE_STATUS_KEYS."""
+    from pins import PINNED_TEE_STATUS_KEYS
+    tee_path = P / "tools" / "frame_tee.py"
+    assert tee_path.exists(), "frame_tee.py absent"
+    # Read frame_tee.py to find the _write_status key set
+    src = tee_path.read_text()
+    # The status dict keys are defined in _write_status; extract them from the source
+    import ast as _ast
+    tree = _ast.parse(src)
+    status_keys = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == "_write_status":
+            for child in _ast.walk(node):
+                if isinstance(child, _ast.Dict):
+                    for k in child.keys:
+                        if isinstance(k, _ast.Constant) and isinstance(k.value, str):
+                            status_keys.add(k.value)
+            break
+    assert status_keys, "could not extract keys from frame_tee.py _write_status"
+    assert status_keys == set(PINNED_TEE_STATUS_KEYS), (
+        f"frame_tee.py status keys {sorted(status_keys)} != PINNED_TEE_STATUS_KEYS {sorted(PINNED_TEE_STATUS_KEYS)}"
+    )

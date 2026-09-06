@@ -66,6 +66,7 @@ from pins import (  # noqa: E402
     PINNED_STARTUP_DEDUP,
     PINNED_STARTUP_IGNORE_SELF,
     PINNED_TEE_PATH,
+    PINNED_TEE_STATUS_KEYS,
     PINNED_UPSTREAM_HOST,
     REDACTED_ENV_KEY_RE,
     UPSTREAM_POST_PATH,
@@ -100,12 +101,8 @@ EXPECTED_RECEIPT_KEYS = frozenset({"accepted", "event_id", "mention_pubkeys", "m
 # The expected key set for redacted-dict values (5-F07: exactly {redacted, len, sha256_12}).
 _REDACTED_DICT_KEYS = frozenset({"redacted", "len", "sha256_12"})
 
-# A21d: expected key set for tee-status.json (running status, twelve keys).
-_TEE_STATUS_KEYS = frozenset({
-    "final", "agent_returncode", "drained", "stdin_reader_done",
-    "recorded_c2a", "recorded_a2c", "forwarded_c2a", "forwarded_a2c",
-    "write_errors", "exit_code", "updated_seq", "updated_utc",
-})
+# A21d / F34: tee-status.json key set from pins, never a local copy (AF-AP-42).
+_TEE_STATUS_KEYS = frozenset(PINNED_TEE_STATUS_KEYS)
 
 # The filename pattern for upstream records (A3).
 _RECORD_FILENAME_RE = re.compile(r"^\d{6}\.json$")
@@ -508,13 +505,13 @@ def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None):
             raise Failure(f"{leg}: mention {tag} receipt event_id is not 64 lowercase hex")
         if eid != event.get("id"):
             raise Failure(f"{leg}: mention {tag} receipt event_id != event.id")
-        # A4: mention_pubkeys is a list of 64-hex strings
+        # A4 / F26: mention_pubkeys must equal exactly [identities["agent"]] — no extras, never empty
         mpk = receipt.get("mention_pubkeys")
         if not isinstance(mpk, list):
             raise Failure(f"{leg}: mention {tag} receipt mention_pubkeys is not a list")
-        for pk in mpk:
-            if not isinstance(pk, str) or not re.fullmatch(r"[0-9a-f]{64}", pk):
-                raise Failure(f"{leg}: mention {tag} receipt mention_pubkeys contains non-64-hex")
+        expected_mpk = [identities["agent"]]
+        if mpk != expected_mpk:
+            raise Failure(f"{leg}: mention {tag} receipt mention_pubkeys {mpk!r} != expected {expected_mpk!r}")
         # A4: message must be ""
         if receipt.get("message") != "":
             raise Failure(f"{leg}: mention {tag} receipt message is not empty string")
@@ -591,12 +588,35 @@ def check_route(leg_dir, leg, entries):
             if isinstance(hval, str) and _SENSITIVE_HEADER_VALUE_RE.search(hval):
                 raise Failure(f"{leg}: upstream record header {hname!r} has sensitive value")
     post_records = [r for r in records if r.get("method") == "POST"]
+    get_records = [r for r in records if r.get("method") == "GET"]
+    # F24: GET records' authorization_fingerprint must equal the pinned fingerprint or be null
+    for rec in get_records:
+        get_fp = rec.get("authorization_fingerprint")
+        if get_fp is not None and get_fp != expected_fp:
+            raise Failure(f"{leg}: upstream GET record authorization_fingerprint mismatch")
+    # F22/F23: POST body key set and message roles pinned
+    # The full set includes model/messages/stream (always) plus optional OmniRoute-proxied fields
+    _ALLOWED_POST_BODY_KEYS = frozenset({
+        "model", "messages", "stream",
+        "max_tokens", "stream_options", "tools",
+        "response_format", "temperature",
+    })
+    _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant"})
     for rec in post_records:
         if rec.get("authorization_fingerprint") != expected_fp:
             raise Failure(f"{leg}: upstream record authorization_fingerprint mismatch")
         body = rec.get("body") or {}
         if body.get("model") != expected_model:
             raise Failure(f"{leg}: upstream record body.model is {body.get('model')!r}, expected {expected_model!r}")
+        # F22: reject extra body keys
+        extra_body = set(body.keys()) - _ALLOWED_POST_BODY_KEYS
+        if extra_body:
+            raise Failure(f"{leg}: upstream POST record body has extra keys: {sorted(extra_body)}")
+        # F23: message roles pinned
+        for msg in body.get("messages", []):
+            role = msg.get("role")
+            if role not in _ALLOWED_MESSAGE_ROLES:
+                raise Failure(f"{leg}: upstream POST record message role {role!r} not in allowed set")
     prompt_windows = _prompt_windows(entries, leg)
     slack = timedelta(seconds=UPSTREAM_WINDOW_SLACK_S)
     for rec in post_records:
@@ -1006,29 +1026,63 @@ def check_config_echo(leg_dir, leg):
     m = re.match(r'^(\S+)\s+INFO buzz_acp: buzz-acp starting: (.*)$', startup)
     if not m:
         raise Failure(f"{leg}: startup-line.txt does not match expected format")
-    tokens = m.group(2).split(" ")
+    # F25: parse key=value tokens; handle parenthesized values like model=(agent default)
+    _EXPECTED_STARTUP_KEYS = frozenset({
+        "relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
+        "agents", "heartbeat", "subscribe", "dedup", "session_policy", "meh",
+        "ignore_self", "context_limit", "max_turns_per_session", "presence",
+        "typing", "memory", "model", "permission_mode", "respond_to",
+    })
     required_keys = {"relay", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
                      "agents", "dedup", "session_policy", "ignore_self", "permission_mode", "respond_to"}
     kvs = {}
-    for token in tokens:
-        if "=" not in token:
-            continue
-        key, _, val = token.partition("=")
-        if key in required_keys:
-            if key in kvs:
-                raise Failure(f"{leg}: startup-line duplicate key {key!r}")
-            kvs[key] = val
+    kv_re = re.compile(r'(\w+)=(.+)')
+    remainder = m.group(2)
+    while remainder:
+        remainder = remainder.lstrip()
+        if not remainder:
+            break
+        km = kv_re.match(remainder)
+        if not km:
+            raise Failure(f"{leg}: startup-line unparsable token at {remainder[:20]!r}")
+        key = km.group(1)
+        val_start = km.start(2)
+        # Handle parenthesized values: model=(agent default)
+        val_text = remainder[val_start:]
+        if val_text.startswith("("):
+            close = val_text.find(")")
+            if close < 0:
+                raise Failure(f"{leg}: startup-line unclosed paren in {key}")
+            val = val_text[:close + 1]
+            remainder = remainder[val_start + close + 1:]
+        else:
+            sp = val_text.find(" ")
+            if sp < 0:
+                val = val_text
+                remainder = ""
+            else:
+                val = val_text[:sp]
+                remainder = val_text[sp:]
+        if key not in _EXPECTED_STARTUP_KEYS:
+            raise Failure(f"{leg}: startup-line unknown key {key!r}")
+        if key in kvs:
+            raise Failure(f"{leg}: startup-line duplicate key {key!r}")
+        kvs[key] = val
     missing = required_keys - set(kvs.keys())
     if missing:
         raise Failure(f"{leg}: startup-line missing keys: {sorted(missing)}")
     # A26: agents/dedup/ignore_self from pins, never local literals
-    checks = {"relay": PINNED_RELAY_URL, "agent_cmd": PINNED_TEE_PATH, "mcp_cmd": "",
+    # TODO(A5f-F42): consume mcp_cmd and permission_mode from pins.py once the
+    # coordinator lands the PINNED_STARTUP_MCP_CMD / PINNED_STARTUP_PERMISSION_MODE hunk.
+    _PINS_PENDING = {"mcp_cmd": "", "permission_mode": "bypassPermissions"}
+    checks = {"relay": PINNED_RELAY_URL, "agent_cmd": PINNED_TEE_PATH,
+              "mcp_cmd": _PINS_PENDING["mcp_cmd"],
               "idle_timeout": PINNED_IDLE_TIMEOUT, "max_turn": PINNED_MAX_TURN,
               "agents": PINNED_STARTUP_AGENTS,
               "dedup": PINNED_STARTUP_DEDUP,
               "session_policy": PINNED_SESSION_POLICY,
               "ignore_self": PINNED_STARTUP_IGNORE_SELF,
-              "permission_mode": "bypassPermissions"}
+              "permission_mode": _PINS_PENDING["permission_mode"]}
     for k, exp in checks.items():
         if kvs[k] != exp:
             raise Failure(f"{leg}: startup {k} is {kvs[k]!r}, expected {exp!r}")
@@ -1116,9 +1170,14 @@ def check_process_evidence(leg_dir, leg):
     # F16: header buzz_acp_pid must equal buzz-acp.pid
     if owned_data["buzz_acp_pid"] != buzz_pid:
         raise Failure(f"{leg}: owned-pids.json buzz_acp_pid {owned_data['buzz_acp_pid']} != buzz-acp.pid {buzz_pid}")
-    # F13/F14: the identity-binding check for rid pids in the scan-level
-    # branch (non-shutdown) already validates tee_pid and agent_child_pid presence;
-    # here we only enforce that the owned set is non-vacuous (contains buzz_pid).
+    # F13/F14: owned set must contain buzz_pid, tee_pid, and agent_child_pid on EVERY leg
+    rid = json.loads((leg_dir / "runtime-identity.json").read_text())
+    rid_tee = rid.get("tee_pid")
+    rid_agent = rid.get("agent_child_pid")
+    if rid_tee not in owned_set:
+        raise Failure(f"{leg}: owned-pids.json does not contain rid tee_pid {rid_tee}")
+    if rid_agent not in owned_set:
+        raise Failure(f"{leg}: owned-pids.json does not contain rid agent_child_pid {rid_agent}")
     # A20 v2.3: parse and validate after-scan header
     scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
     hdr, all_procs = _parse_scan_v23(scan_path, leg, "process-scan-after.txt")
@@ -1126,6 +1185,12 @@ def check_process_evidence(leg_dir, leg):
         raise Failure(f"{leg}: process-scan-after.txt header mode is '{hdr.group(1)}', expected 'after'")
     if int(hdr.group(2)) == 0:
         raise Failure(f"{leg}: process-scan-after.txt header rows=0 (enumeration did not run)")
+    # F30: duplicate scan rows for one pid in after-scan (before consistency checks)
+    after_pids = [pid for pid, _, _, _ in all_procs]
+    if len(after_pids) != len(set(after_pids)):
+        from collections import Counter as _Counter
+        dups = [p for p, c in _Counter(after_pids).items() if c > 1]
+        raise Failure(f"{leg}: process-scan-after.txt duplicate rows for pid(s) {dups}")
     if int(hdr.group(5)) != len(owned_set):
         raise Failure(f"{leg}: process-scan-after.txt header owned={hdr.group(5)} != owned-pids.json ({len(owned_set)})")
     body_owned = sum(1 for pid, _, _, _ in all_procs if pid in owned_set)

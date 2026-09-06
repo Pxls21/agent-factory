@@ -18,9 +18,10 @@ last_compiled: 2026-09-03
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
   B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
-  `tasks/briefs/s0-01-b5c-*`); checkpoints 8b-8e pushed + the depth gate (3c9a172; CI tip green at run 94): N5d, A5e item 1, B5c, D5e landed;
-  VERIFY-B5c + VERIFY-D5e grading in the sandbox; lane N5e on the PC/Kimi (alive); A5f died on the Kimi cooldown (pc-lane 429
-  retry fixed, ff6e492) and relaunches alone when N5e lands (ONE Ollama-Cloud lane at a time); nothing minted; tree-wide suites now
+  `tasks/briefs/s0-01-b5c-*`); checkpoint 8f local (N5e + coordinator F4/F9; VERIFY-N5e grading); VERIFY-D5e NOT-READY (fail-open "fail-closed",
+  tautological oracle) → lane D5f; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d (drain to EOF,
+  status inside the lock); A5f (checker items 2-7) running; all four in the sandbox (Kimi cooled three times; codex out ~31 h);
+  checker lane A5g queued for the A21d non-final relaxation; push waits for a lane to land; nothing minted; tree-wide suites now
   run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,
   420 records, PC clone at checkpoint 5 — ff-sync before the re-capture).
   Checkpoint 6 (2026-09-06): the Codex audit of checkpoint 5 repaired (CI collection fix AF-AP-44; scan v2.3 header + zombie rule
