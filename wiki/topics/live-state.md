@@ -7,8 +7,8 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `1eb764a` 2026-09-06 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 checkpoint 8g + briefs N5f + the F7 hunk (SHAs are rewritten at push; names by subject)
-- **Local HEAD:** = origin (pushed through `push_clean.sh --lanes-live` while lanes hold the tree); the tree carries the UNCOMMITTED live edits of lanes D5f, B5d, N5f. Earlier: checkpoint 7 — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
+- **Origin tip:** `628a8c9` 2026-09-06 (`claude/soundbox-kit-migration-iz1jwf`) — checkpoints 8h/8i/8j + the regenerated attestations + briefs A5g/N5g (SHAs are rewritten at push; names by subject)
+- **Local HEAD:** = origin (pushed through `push_clean.sh --lanes-live` while lanes hold the tree); the tree carries the UNCOMMITTED live edits of lane N5g only (D5f/B5d/N5f landed; A5g runs on the PC). Earlier: checkpoint 7 — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
   survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
@@ -18,7 +18,7 @@ last_compiled: 2026-09-03
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
   B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
-  `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f LANDED at checkpoint 8j, sandbox + PC gates green on 3.11 and 3.13, VERIFY-N5f grading (the later reading wins); VERIFY-D5e NOT-READY (fail-open "fail-closed",
+  `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f LANDED at checkpoint 8j (sandbox + PC gates green on 3.11 and 3.13) → VERIFY-N5f NOT-READY (the kept-early-reading arm never executed; the early site can self-sample; the schema pattern accepts a trailing newline) → lane N5g building in the sandbox (every sample site pinned, the pattern's true end anchor with the four attestations regenerated). CI went RED at 8j (runs 106-110): the schema is an ATTESTED input of the four minted proofs — regenerated at f1e1316 (AF-AP-56); VERIFY-D5e NOT-READY (fail-open "fail-closed",
   tautological oracle) → lane D5f LANDED (checkpoint 8h: boolean fail-closed, self-proving oracle; sandbox + PC gates green) → VERIFY-D5f grading; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d LANDED at checkpoint 8i, sandbox + PC gates green, VERIFY-B5d grading (drain to EOF,
   status inside the lock); A5f landed (8g) → VERIFY-CK8 grading; all in the sandbox (Kimi cooled three times; codex out ~31 h);
   VERIFY-CK8 NOT-READY (5 blockers: untested F13/F19 guards, F14 on 2/5 legs, two A20a rules un-gated, a hollow hardlink source scan) → checker lane A5g RUNNING on the PC Hermes lane (Kimi K3) with every startup value now pinned; pushes run through `--lanes-live` (detached-worktree rewrite; the ref follows origin on tree identity); nothing minted; tree-wide suites now
