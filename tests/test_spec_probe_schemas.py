@@ -95,11 +95,13 @@ def test_probe_schema_accepts_the_canonical_probe_with_key_env():
 @pytest.mark.parametrize("bad_reason", [
     " leading-space",
     "trailing-space ",
-], ids=["leading-space", "trailing-space"])
-def test_spec_failure_reason_rejects_edge_whitespace(bad_reason):
-    """N5f-F9: failure_reason with leading or trailing whitespace must be
-    rejected by the pattern constraint.  The validator's error path must
-    name failure_reason."""
+    "a\nb",
+    "foo\n",
+], ids=["leading-space", "trailing-space", "multiline", "trailing-newline"])
+def test_spec_failure_reason_rejects_edge_whitespace_and_newlines(bad_reason):
+    """N5f-F9/N5g-F4/F5: failure_reason with leading or trailing whitespace,
+    embedded newlines, or a trailing newline must be rejected by the pattern
+    constraint.  The validator's error path must name failure_reason."""
     spec = _spec()
     spec["legs"][1]["expect"]["failure_reason"] = bad_reason
     validator = jsonschema.Draft202012Validator(SPEC)

@@ -291,6 +291,10 @@ def main():
                         break  # EOF
                     # N5f-F1: at the first a2c chunk, ALWAYS re-read the
                     # interpreter — the later reading wins over the early loop.
+                    # sampled once, at the first a2c byte: the stage that wrote
+                    # the first protocol byte is the interpreter of record; an
+                    # agent that execs later is recorded as the stage that spoke
+                    # first; pinned by test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte
                     if not _late_sampled:
                         _late_sampled = True
                         try:
@@ -301,13 +305,18 @@ def main():
                                 interp_sha256 = None
                                 probe_error = f"interpreter sample failed: {exc}"
                             else:
-                                # Clear an early "interpreter sample failed:" error
+                                # Clear an early "interpreter sample failed:" error.
+                                # Defensive: no other probe_error class can be live
+                                # here — :263 sets BrokenPipe but also c2a_delivered=False,
+                                # which skips this whole block; no test, no kill count.
                                 if (probe_error is not None and
                                         probe_error.startswith("interpreter sample failed: ")):
                                     probe_error = None
                         except (OSError, IOError) as exc:
                             # Child exited between its first byte and the readlink;
-                            # keep the early reading silently when there is one.
+                            # keeps the early reading — a wrong early reading fails
+                            # the pinned interpreter checks downstream; pinned by
+                            # test_probe_late_readlink_failure_keeps_the_early_reading
                             if interp_realpath is None:
                                 probe_error = f"interpreter sample failed: {exc}"
                     buf += chunk
@@ -356,7 +365,11 @@ def main():
                 }
                 timeline.append(entry)
 
-            # N5d-F1: sample interpreter at EOF/exit if not yet sampled
+            # N5d-F1: sample interpreter at EOF/exit if not yet sampled.
+            # This block is reached only under fault injection (readlink
+            # patched to fail for longer than the early loop's deadline);
+            # for real agents the early loop or the a2c-triggered sample
+            # always fires first.
             if not _late_sampled:
                 # N5e-F3: split readlink and sha256 — report the REAL exception
                 # when readlink succeeded but sha256 failed; the fixed wording

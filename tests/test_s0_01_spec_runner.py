@@ -434,11 +434,12 @@ def test_runner_records_the_observed_line_not_the_expected_reason(tmp_path):
     )
 
 
-def test_runner_unmet_when_expected_reason_is_multiline(tmp_path):
-    """N5d-F2/SR-03 CASE A: a newline in the expected failure_reason makes the
-    match impossible under the per-line rule, so the runner must report
-    negative-control-unmet. Reds on the SR-03 mutant (expected in whole_text
-    matches across the newline boundary)."""
+def test_runner_per_line_rule_holds_for_a_multiline_expected_reason(tmp_path):
+    """The schema forbids a multiline reason in production
+    (see test_spec_failure_reason_rejects_edge_whitespace_and_newlines);
+    this pins the matcher itself, with the pattern lifted from the schema
+    copy so the reason can reach the loop.  SR-03 mutant killer
+    (expected in whole_text matches across the newline boundary)."""
     root = _copy(tmp_path)
 
     spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
