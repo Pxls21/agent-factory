@@ -21,6 +21,8 @@ jobs:
         run: python -m pytest tests/ -q
       - name: Lint scripts
         run: python -m pyflakes scripts/validate-ledger scripts/proof-runner
+      - name: Lint proofs and tests
+        run: python -m pyflakes proofs/S0-01 tests/
 
   harness-suites:
     runs-on: ubuntu-latest

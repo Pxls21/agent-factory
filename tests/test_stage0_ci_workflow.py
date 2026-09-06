@@ -77,3 +77,14 @@ def test_ledger_diff_step_positioned_correctly():
         f"wrong step ordering: Generate({gen_idx}) < Diff({diff_idx}) < Validate({val_idx})"
     # Exact run command equality (not regex)
     assert steps[diff_idx]["run"] == "git diff --exit-code -- proofs/ledger.json"
+
+
+def test_lint_proofs_and_tests_step():
+    """6-F23: CI lints proofs/S0-01 and tests/ with pyflakes."""
+    wf = yaml.safe_load(_read())
+    steps = wf["jobs"]["tests"]["steps"]
+    lint_step = next((s for s in steps
+                      if s.get("name") == "Lint proofs and tests"), None)
+    assert lint_step is not None, \
+        "step 'Lint proofs and tests' missing from tests job"
+    assert lint_step["run"] == "python -m pyflakes proofs/S0-01 tests/"

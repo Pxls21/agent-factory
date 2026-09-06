@@ -583,24 +583,23 @@ def test_body_literal_bad_cl_is_not_sentinel(backend):
     assert b"messages: Expected array" in resp
 
 
-def test_body_literal_chunked_string_is_not_sentinel(backend):
-    """V10/S27: a POST whose JSON body is the string 'CHUNKED' must not collide
-    with the _CHUNKED sentinel and must be processed as a normal request."""
+def test_chunked_transfer_encoding_411_writes_no_record(backend):
+    """4-F9: chunked Transfer-Encoding on POST yields 411 and writes NO record."""
     count_before = len(list(backend["rec"].glob("*.json")))
-    body_bytes = b'"CHUNKED"'
+    body_bytes = b'5\r\nhello\r\n0\r\n\r\n'
     raw = (
         f"POST /v1/chat/completions HTTP/1.1\r\n"
         f"Host: 127.0.0.1:{backend['port']}\r\n"
         f"Authorization: Bearer {TOKEN}\r\n"
+        f"Transfer-Encoding: chunked\r\n"
         f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(body_bytes)}\r\n"
         f"\r\n"
     ).encode() + body_bytes
     resp = _raw_request(backend["port"], raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required"
     count_after = len(list(backend["rec"].glob("*.json")))
-    assert count_after > count_before, \
-        "S27 mutant: body literal 'CHUNKED' matched the sentinel"
-    assert b"messages: Expected array" in resp
+    assert count_after == count_before, \
+        f"chunked TE wrote {count_after - count_before} record(s), expected 0"
 
 
 # -- V11/S28: handler timeout mutant killer ------------------------------------
@@ -747,8 +746,9 @@ def test_malformed_json_with_token_in_header_redacted(backend):
 
 
 def test_malformed_json_with_token_in_body_redacted(backend):
-    """P1: malformed-JSON POST with token embedded in the raw body -> 400,
-    token NOT in record."""
+    """P1/4-F7/6-F17: malformed-JSON POST with token in raw body -> 400
+    with 'credential in unexpected location' (not 'body is not JSON'),
+    record is marker.  Dropping raw_body=e.raw makes the error message change."""
     count_before = len(list(backend["rec"].glob("*.json")))
     port = backend["port"]
     # Malformed JSON body containing the token
@@ -763,11 +763,21 @@ def test_malformed_json_with_token_in_body_redacted(backend):
     ).encode() + malformed_body
     resp = _raw_request(port, raw)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    # 4-F7/6-F17: exact error message gates the raw_body arm — without it
+    # the response would be "body is not JSON" and this assertion fails.
+    body_start = resp.find(b"\r\n\r\n")
+    assert body_start >= 0
+    resp_body = json.loads(resp[body_start + 4:])
+    assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
     assert len(recs) > count_before
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes, \
         "P1 mutant: token leaked through JSON-error recording path (body)"
+    last = json.loads(last_bytes)
+    assert last["path"] is None
+    assert last["headers"] == {}
+    assert last["body"] == {"credential_in_unexpected_location": True}
 
 
 def test_p1_boundary_credential_check_in_record(tmp_path):
@@ -857,3 +867,149 @@ def test_build_capture_record_roundtrip_check(tmp_path):
         capture_output=True, text=True, timeout=10)
     assert r3.returncode == 1, f"--check should fail after tamper: {r3.stderr}"
     assert r3.stderr.strip() == "test-leg: capture.json differs from re-derived content (--check)"
+
+
+# -- 4-F1/6-F3: credential screen keyed on CONFIGURED token (not request bearer) --
+
+def test_credential_in_query_no_auth_header_returns_400(backend):
+    """4-F1/6-F3: token in URL query with NO Authorization header -> 400,
+    record does not contain the token (keyed on configured token)."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    status, data = _call(backend["port"], "GET", f"/v1/models?key={TOKEN}", token=None)
+    assert status == 400
+    assert json.loads(data)["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+def test_credential_in_header_no_auth_returns_400(backend):
+    """4-F1/6-F3: token in a custom header with NO Authorization header -> 400,
+    record does not contain the token."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    status, data = _call(backend["port"], "GET", "/v1/models",
+                         token=None, extra_headers={"X-Trace-Id": TOKEN})
+    assert status == 400
+    assert json.loads(data)["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+def test_credential_in_body_no_auth_returns_400(backend):
+    """4-F1/6-F3: token in JSON body with NO Authorization header -> 400,
+    record does not contain the token."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    body = {"model": "s0-01-pong", "messages": [{"role": "user", "content": TOKEN}]}
+    status, data = _call(backend["port"], "POST", "/v1/chat/completions",
+                         body, token=None)
+    assert status == 400
+    assert json.loads(data)["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+def test_credential_in_raw_body_no_auth_returns_400(backend):
+    """4-F1/6-F3: token in malformed JSON body with NO Authorization header -> 400
+    with 'credential in unexpected location', record does not contain the token."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    port = backend["port"]
+    malformed_body = (f'{{"key": "{TOKEN}" invalid').encode()
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(malformed_body)}\r\n"
+        f"\r\n"
+    ).encode() + malformed_body
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    # Exact error message: without the configured-token screen this would be
+    # "body is not JSON" (bearer_token is None so the old check was skipped).
+    body_start = resp.find(b"\r\n\r\n")
+    assert body_start >= 0
+    resp_body = json.loads(resp[body_start + 4:])
+    assert resp_body["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+def test_short_bogus_bearer_does_not_collapse_records(backend):
+    """4-F1 DoE inverse: Authorization: Bearer 1 must NOT collapse records.
+    The screen uses self.token (the configured secret), so a short bearer
+    cannot match substrings of unrelated fields."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    status, data = _call(backend["port"], "GET", "/v1/models", token="1")
+    assert status == 401  # wrong bearer, not a leak
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last = json.loads(recs[-1].read_bytes())
+    # Record must contain the real path, not a marker
+    assert last["path"] == "/v1/models"
+    assert last["headers"] != {}
+
+
+# -- 4-F4: GET with Content-Length rejected, no request smuggling ----------------
+
+def test_get_with_body_rejected_no_smuggling(backend):
+    """4-F4: GET with Content-Length > 0 reads the body, returns 400 with
+    Connection: close, and does NOT parse a second request from the leftover."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    smuggled_body = json.dumps({"model": "s0-01-pong",
+                                "messages": [{"role": "user", "content": "FORGED"}]})
+    smuggled = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(smuggled_body)}\r\n"
+        f"\r\n"
+        f"{smuggled_body}"
+    )
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Length: {len(smuggled)}\r\n"
+        f"\r\n"
+    ).encode() + smuggled.encode()
+    resp = _raw_request(port, raw)
+    # Must get 400 (GET with body rejected), not 200/401 from normal GET
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    # Only ONE HTTP response — no smuggling
+    assert resp.count(b"HTTP/1.1 ") == 1, \
+        f"expected 1 response but got {resp.count(b'HTTP/1.1 ')}: smuggling likely"
+    # No new records created (rejected before recording)
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"GET-with-body wrote {count_after - count_before} record(s), expected 0"
+
+
+# -- 4-F12: --slow-delay validation ---------------------------------------------
+
+@pytest.mark.parametrize("delay,printed", [
+    ("nan", "nan"),
+    ("-1", "-1.0"),
+    ("inf", "inf"),
+])
+def test_slow_delay_invalid_refuses_exit_2(tmp_path, delay, printed):
+    """4-F12: --slow-delay nan/-1/inf -> named refusal exit 2."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
+         "--slow-delay", delay],
+        capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 2
+    expected = (f"scripted_backend: --slow-delay {printed} "
+                f"must be a finite number >= 0\n")
+    assert proc.stderr == expected

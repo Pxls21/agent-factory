@@ -8,14 +8,17 @@ last_compiled: 2026-09-03
 ## Clocks
 
 - **Origin tip:** `08a4a7d` 2026-09-05 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 WIP checkpoint 3
-- **Local HEAD:** checkpoint 4 (this commit) on top of it — repair rounds 2-4, the Codex audit filed, incidents
-  AF-AP-39..43, sentrux adopted. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
+- **Local HEAD:** checkpoint 5 (this commit) — round-5 lanes D5/N5/B5 closed, A5 partial (→ A5b), boundary edits.
+  Origin carries checkpoint 4 + the startup pins (`8465445`) + a transcripts sync. SHAs are rewritten by
+  `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
   Owner review 2026-09-05 DECLINED closure (five mutations passed the checker; result.json WITHDRAWN, S0-01 ABSENT).
-  Repair rounds 2-4 landed at checkpoint 4 (2026-09-06): single pin module `proofs/S0-01/pins.py` (manifest v2.2, four
+  Round 5 (checkpoint 5, 2026-09-06): D5/N5/B5 CLOSED every assigned finding with revert-reds (69/158/60 passed ×2);
+  A5 implemented A19-A26 but left the audit's four mutation tests, the mutation harness, suite speed (~500 s) and three
+  ungated screens → lane A5b; verify lanes for N5/B5/D5 run alongside A5b. Repair rounds 2-4 landed at checkpoint 4: single pin module `proofs/S0-01/pins.py` (manifest v2.2, four
   trees incl. the venv, symlinks + modes, baseline re-pinned), `negative_contract.py` (live negative: `-32602 Invalid
   params` from the pinned agent; 42 tests; wiring = round 5), PC capture toolchain under `proofs/S0-01/tools/pc/` (env
   from secret files, owned-pid closure, teardown scans; validated on real PC dry runs), tee `tee-status.json`, backend

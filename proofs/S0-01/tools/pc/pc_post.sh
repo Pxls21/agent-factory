@@ -10,11 +10,12 @@ BA=$BASE/buzz/target/release/buzz-acp; TEE=$REPO/proofs/S0-01/tools/frame_tee.py
 # of the buzz-acp pid (generic children included), computed from the complete process table IN MEMORY
 # (never persisted — other users' argv stay private). Persisted lines: `<pid> <ppid> <etimes> <cmd>` for
 # every owned process plus every line naming a pinned path; owned-pids.json lists the closure.
-scan() { python3 - "$1" "$2" <<'PY'
+scan() { python3 - "$1" "$2" "$REPO" <<'PY'
 import json, subprocess, sys
-mode, fd = sys.argv[1], sys.argv[2]
-BA = "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp"
-PINNED = (BA, "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp", "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py")
+mode, fd, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, f"{repo}/proofs/S0-01")
+import pins  # the ONLY pin source — the pinned paths are never repeated as literals here
+PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
 rows = []
 for line in subprocess.run(["ps", "-eo", "pid,ppid,etimes,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
     parts = line.split(None, 3)

@@ -92,24 +92,7 @@ def test_spec_structure_matches_brief(tmp_path):
     assert neg["expect"]["failure_reason"] == "protocol-violation: missing required initialize field"
 
 
-def test_runner_failure_reason_matching():
-    """Verify the runner's failure_reason matching rule is per-line substring.
-    With check_initialize's two-line output:
-      line 1: protocol-violation: missing required initialize field
-      line 2: observed: error code=-32600 message=Invalid request
-    The expected failure_reason is the line 1 text, and the runner's substring
-    match finds it on line 1."""
-    expected_reason = "protocol-violation: missing required initialize field"
-    stdout = ("protocol-violation: missing required initialize field\n"
-              "observed: error code=-32600 message=Invalid request")
-    stderr = ""
-    # Reproduce the runner's matching logic (scripts/proof-runner:196)
-    observed = next(
-        (line for line in (stdout + "\n" + stderr).splitlines() if expected_reason in line),
-        None,
-    )
-    assert observed is not None
-    assert observed == "protocol-violation: missing required initialize field"
+
 
 
 def test_runner_records_negative_leg_met_s0_99(tmp_path):
@@ -217,3 +200,93 @@ def test_runner_records_negative_leg_met_s0_99(tmp_path):
     assert neg_run["exit_code"] == 1
     assert neg_run["failure_reason"] == \
         "protocol-violation: missing required initialize field"
+
+
+def test_runner_records_unmet_when_reason_absent(tmp_path):
+    """4-F16/6-F22: a negative leg whose output LACKS the expected failure_reason
+    causes the runner to exit non-zero (negative-control-unmet).
+    Kills the R07 mutant (negative-control-unmet never raised)."""
+    root = _copy(tmp_path)
+
+    # Widen spec schema to accept S0-98
+    spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
+    spec_schema = json.loads(spec_schema_path.read_text())
+    spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
+
+    # Widen result schema
+    result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
+    result_schema = json.loads(result_schema_path.read_text())
+    result_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    result_schema_path.write_text(json.dumps(result_schema, indent=2))
+
+    # Add S0-98 to registry
+    reg_path = root / "proofs" / "registry.yaml"
+    reg_text = "\n".join(
+        line for line in reg_path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    reg = json.loads(reg_text)
+    reg["proofs"].append({
+        "proof_id": "S0-98",
+        "title": "synthetic unmet test",
+        "classification": "execution_proof",
+        "wave": 0,
+        "spike_dependencies": [],
+        "required_negative_controls": 1,
+        "assertion_count": 1,
+    })
+    reg_path.write_text(json.dumps(reg, indent=2))
+
+    # Create synthetic proof dir
+    s98 = root / "proofs" / "S0-98"
+    s98.mkdir(parents=True)
+
+    # Positive leg: exits 0
+    pos_script = s98 / "pass.py"
+    pos_script.write_text("import sys; sys.exit(0)\n")
+
+    # Negative leg: prints something that does NOT contain the expected reason
+    neg_script = s98 / "checker.py"
+    neg_script.write_text(
+        "import sys\n"
+        'print("some unrelated output")\n'
+        "sys.exit(1)\n"
+    )
+
+    spec = {
+        "proof_id": "S0-98",
+        "legs": [
+            {
+                "leg": "positive",
+                "cmd": [sys.executable, "proofs/S0-98/pass.py"],
+                "cwd": ".",
+                "timeout_s": 30,
+                "expect": {"exit_code": 0},
+            },
+            {
+                "leg": "negative",
+                "cmd": [sys.executable, "proofs/S0-98/checker.py"],
+                "cwd": ".",
+                "timeout_s": 30,
+                "expect": {
+                    "exit_code": 1,
+                    "failure_reason": "protocol-violation: missing required initialize field",
+                },
+            },
+        ],
+    }
+    (s98 / "spec.json").write_text(json.dumps(spec, indent=2))
+
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-98",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode != 0, (
+        f"runner should fail (unmet negative), got rc=0: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert "negative-control-unmet" in r.stderr, (
+        f"expected negative-control-unmet in stderr, got: {r.stderr!r}"
+    )

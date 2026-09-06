@@ -74,6 +74,12 @@ def main():
     if framedir is None:
         print("frame_tee: S0_01_FRAMEDIR is not set", file=sys.stderr)
         raise SystemExit(64)
+    if not framedir:
+        print("frame_tee: S0_01_FRAMEDIR is empty", file=sys.stderr)
+        raise SystemExit(64)
+    if os.path.exists(framedir) and not os.path.isdir(framedir):
+        print("frame_tee: S0_01_FRAMEDIR is not a directory: %s" % framedir, file=sys.stderr)
+        raise SystemExit(64)
     agent = os.environ.get("S0_01_AGENT")
     if agent is None:
         print("frame_tee: S0_01_AGENT is not set", file=sys.stderr)
@@ -175,6 +181,7 @@ def main():
                     dst.flush()
                     state["forwarded_%s" % direction] += 1
                 except BrokenPipeError:
+                    state["write_errors"].append("forward %s: BrokenPipeError" % direction)
                     break
         finally:
             df.close()
@@ -241,6 +248,7 @@ def main():
                     dst.flush()
                     state["forwarded_%s" % direction] += 1
                 except BrokenPipeError:
+                    state["write_errors"].append("forward %s: BrokenPipeError" % direction)
                     break
         finally:
             df.close()
@@ -282,8 +290,9 @@ def main():
         tl.close()
     except OSError:
         pass
-    # Determine drain status: forwarded everything recorded?
-    drained = (state["forwarded_a2c"] == state["recorded_a2c"])
+    # Determine drain status: forwarded everything recorded in BOTH directions?
+    drained = (state["forwarded_a2c"] == state["recorded_a2c"]
+               and state["forwarded_c2a"] == state["recorded_c2a"])
     # Compute exit code (V-c F8: signal-killed agent -> 128+signal)
     rc = proc.returncode
     if rc < 0:

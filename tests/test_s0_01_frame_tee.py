@@ -430,23 +430,23 @@ class TestGrandchildStdout:
 # ---------------------------------------------------------------------------
 class TestLockContention:
     def test_seq_contiguous_and_mono_nondecreasing_under_contention(self, tmp_path):
-        """Bursty stress with >= 2000 frames from EACH direction (not lock-step echo).
+        """Bursty stress with >= 10000 frames from EACH direction (not lock-step echo).
         Assert seq contiguous 1..N, t_mono_ns non-decreasing, t_utc non-decreasing.
-        Kills the 'lock removed' mutant (8-verify F4)."""
-        n_c2a = 5000
-        n_a2c = 5000
+        Kills the 'lock removed' mutant (6-verify F6): without the lock, two threads
+        race on seq[0] += 1 / t_mono assignment, producing seq gaps or t_mono inversions
+        with probability ~1 at this frame count (10000 per direction, each flushed
+        individually so both pumps are active simultaneously)."""
+        n_c2a = 10000
+        n_a2c = 10000
         # Agent: read one trigger, then burst n_a2c frames while draining stdin.
-        # Write each frame individually (no batch flush) to maximize interleaving.
+        # Flush EVERY frame individually to maximize thread interleaving.
         agent_code = textwrap.dedent("""\
             import sys, json, threading
             def burst_writer(n):
                 for i in range(n):
-                    r = {"jsonrpc": "2.0", "method": "burst", "params": {"n": i}}
-                    line = json.dumps(r, separators=(",", ":")).encode() + b"\\n"
-                    sys.stdout.buffer.write(line)
-                    if i %% 50 == 0:
-                        sys.stdout.buffer.flush()
-                sys.stdout.buffer.flush()
+                    r = {"jsonrpc": "2.0", "method": "b", "params": {"n": i}}
+                    sys.stdout.buffer.write(json.dumps(r, separators=(",", ":")).encode() + b"\\n")
+                    sys.stdout.buffer.flush()
             sys.stdin.readline()  # read trigger
             t = threading.Thread(target=burst_writer, args=(%d,))
             t.start()
@@ -462,7 +462,7 @@ class TestLockContention:
                                     separators=(",", ":")) + "\n")
         input_bytes = "".join(lines).encode("utf-8")
 
-        result = _run_tee(tmp_path, agent_code, input_bytes, timeout=60)
+        result = _run_tee(tmp_path, agent_code, input_bytes, timeout=120)
         tl = result["timeline"]
         assert len(tl) >= n_c2a + n_a2c, \
             f"expected >= {n_c2a + n_a2c} entries, got {len(tl)}"
@@ -549,6 +549,7 @@ class TestPartialLastLine:
         """A final line without a trailing newline must still be recorded."""
         agent_code = textwrap.dedent("""\
             import sys
+            sys.stdin.read()
             sys.stdout.buffer.write(b'{"jsonrpc":"2.0","id":1,"result":{}}')
             sys.stdout.buffer.flush()
             sys.exit(0)
@@ -573,6 +574,7 @@ class TestCrlfPreservation:
         """A CRLF-terminated line must appear byte-exact in the directional file."""
         agent_code = textwrap.dedent("""\
             import sys
+            sys.stdin.read()
             sys.stdout.buffer.write(b'{"jsonrpc":"2.0","id":1,"result":{}}\\r\\n')
             sys.stdout.buffer.flush()
             sys.exit(0)
@@ -1099,3 +1101,278 @@ class TestTeeStatus:
         assert status["agent_returncode"] == -15
         assert status["exit_code"] == 143
         assert status["drained"] is True
+
+
+# ---------------------------------------------------------------------------
+# 4-F2/6-F5: progress-gated drain — payload > pipe buffer, late reader
+# Kills the 'progress loop -> plain join(5)' mutant.
+# ---------------------------------------------------------------------------
+class TestProgressGatedDrain:
+    def test_large_payload_late_reader_drained(self, tmp_path):
+        """Agent emits 2000 small frames (~100 KB total, fits in two 64 KB pipe
+        buffers so the agent is NOT back-pressured) then exits.
+        Client reads slowly (2 KiB / 0.5 s = 4 KB/s).  The pump forwards ~1310
+        frames into the tee's 64 KB stdout pipe buffer instantly, then blocks.
+        Progress drain: keeps going as the reader slowly unblocks the pump (~9 s).
+        join(5): only unblocks ~410 more frames, truncating at ~1720/2000."""
+        n_lines = 2000
+        # Each line is ~50 bytes, total ~100 KB < 2 * 65536 = no back-pressure
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            for i in range(%d):
+                f = {"jsonrpc": "2.0", "method": "d", "params": {"i": i}}
+                sys.stdout.write(json.dumps(f, separators=(",", ":")) + "\\n")
+                sys.stdout.flush()
+            sys.exit(7)
+        """ % n_lines)
+
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        # Helper script: reads slowly (2 KiB / 0.5 s = 4 KB/s).
+        # join(5) drains 65536 + 5*4096 = 86016 bytes ~ 1720 frames.
+        # Progress drain: remaining ~34 KB at 4 KB/s ~ 9 s total.
+        reader = tmp_path / "reader.py"
+        reader.write_text(textwrap.dedent("""\
+            import sys, time
+            while True:
+                chunk = sys.stdin.buffer.read(2048)
+                if not chunk:
+                    break
+                time.sleep(0.5)
+        """))
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        # Pipe tee stdout into the slow reader
+        tee_proc = subprocess.Popen(
+            [sys.executable, str(TEE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        reader_proc = subprocess.Popen(
+            [sys.executable, str(reader)],
+            stdin=tee_proc.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        tee_proc.stdout.close()  # let tee get SIGPIPE when reader closes
+        tee_proc.stdin.close()
+
+        tee_proc.wait(timeout=45)
+        reader_proc.wait(timeout=30)
+        tee_proc.stderr.close()
+
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["drained"] is True, \
+            "drained should be True: forwarded_a2c=%d recorded_a2c=%d" % (
+                status["forwarded_a2c"], status["recorded_a2c"])
+        assert status["forwarded_a2c"] == n_lines, \
+            "forwarded_a2c %d != %d" % (status["forwarded_a2c"], n_lines)
+        assert status["recorded_a2c"] == n_lines
+        assert status["forwarded_a2c"] == status["recorded_a2c"]
+        assert status["write_errors"] == []
+        assert status["exit_code"] == 7
+        assert tee_proc.returncode == 7
+
+
+# ---------------------------------------------------------------------------
+# 4-F8/6-F21: drained covers BOTH directions; c2a BrokenPipe -> write_error + exit 70
+# ---------------------------------------------------------------------------
+class TestDrainedBothDirections:
+    def test_c2a_broken_pipe_is_write_error(self, tmp_path):
+        """Agent reads one frame then exits immediately while 5000 large frames
+        are still being pumped c2a.  The c2a BrokenPipeError must appear in
+        write_errors, drained must be False, and exit must be 70.
+        The large frame count ensures the pump is still writing when the agent exits."""
+        # Agent: read one frame, reply, exit fast.  When the agent process exits,
+        # the kernel closes fd 0 (read end of proc.stdin pipe).  The c2a pump's
+        # subsequent writes to the write end raise BrokenPipeError.
+        agent_code = textwrap.dedent("""\
+            import sys, json, os
+            sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\\n")
+            sys.stdout.flush()
+            os._exit(5)
+        """)
+        # Build 5000 large c2a frames — each ~500 bytes to slow down the pump
+        # (JSON parse + timeline write per frame).  Total ~2.5 MB.
+        pad = "x" * 400
+        lines = []
+        for i in range(5000):
+            lines.append(json.dumps({"jsonrpc": "2.0", "id": i, "method": "m",
+                                     "params": {"p": pad}},
+                                    separators=(",", ":")) + "\n")
+        input_bytes = "".join(lines).encode("utf-8")
+
+        result = _run_tee(tmp_path, agent_code, input_bytes, timeout=60)
+        assert result["proc"].returncode == 70
+        status = json.loads((result["framedir"] / "tee-status.json").read_text())
+        assert status["drained"] is False
+        assert any("BrokenPipeError" in e for e in status["write_errors"]), \
+            "write_errors should contain BrokenPipeError: %s" % status["write_errors"]
+        assert status["exit_code"] == 70
+        # forwarded_c2a < recorded_c2a (some frames recorded but not forwarded)
+        assert status["forwarded_c2a"] < status["recorded_c2a"]
+
+
+# ---------------------------------------------------------------------------
+# 4-F13: directional write-error arms gated — BOTH directions
+# ---------------------------------------------------------------------------
+class TestDirectionalWriteErrorBothDirections:
+    @pytest.mark.parametrize("target_file", [
+        "frames-client-to-agent.jsonl",
+        "frames-agent-to-client.jsonl",
+    ])
+    def test_directional_enospc(self, tmp_path, target_file):
+        """ENOSPC on a directional file -> exit 70, write_errors names the direction."""
+        if not os.path.exists("/dev/full"):
+            pytest.skip("/dev/full not available")
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        # Symlink the target directional file to /dev/full
+        os.symlink("/dev/full", str(framedir / target_file))
+
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        input_bytes = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            separators=(",", ":")).encode() + b"\n"
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=input_bytes,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert proc.returncode == 70
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["exit_code"] == 70
+        assert len(status["write_errors"]) > 0
+        direction = "c2a" if "client-to-agent" in target_file else "a2c"
+        assert any("directional %s" % direction in e for e in status["write_errors"]), \
+            "write_errors should name direction '%s': %s" % (direction, status["write_errors"])
+
+
+# ---------------------------------------------------------------------------
+# 4-F14: stdin_reader_done VALUE asserted
+# ---------------------------------------------------------------------------
+class TestStdinReaderDoneValue:
+    def test_stdin_reader_done_true_on_clean_exit(self, tee_run):
+        """stdin_reader_done is True when the c2a pump completes normally."""
+        status = json.loads((tee_run["framedir"] / "tee-status.json").read_text())
+        assert status["stdin_reader_done"] is True
+
+    def test_stdin_reader_done_false_when_client_never_closes(self, tmp_path):
+        """When the client never closes stdin (agent exits first, tee exits via drain),
+        stdin_reader_done is False because the c2a pump is still alive as a daemon thread."""
+        # Agent: emit a frame, exit immediately — stdin never EOF'd
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\\n")
+            sys.stdout.flush()
+            sys.exit(0)
+        """)
+        # Helper that holds stdin open for 30s
+        helper = tmp_path / "holder.py"
+        helper.write_text(textwrap.dedent("""\
+            import sys, time
+            time.sleep(30)
+        """))
+
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        holder_proc = subprocess.Popen(
+            [sys.executable, str(helper)],
+            stdout=subprocess.PIPE,
+        )
+        tee_proc = subprocess.Popen(
+            [sys.executable, str(TEE)],
+            stdin=holder_proc.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        holder_proc.stdout.close()
+        tee_proc.wait(timeout=15)
+        holder_proc.kill()
+        holder_proc.wait(timeout=5)
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["stdin_reader_done"] is False
+
+
+# ---------------------------------------------------------------------------
+# Framedir validation: empty / not-a-dir -> named stderr line + exit 64
+# ---------------------------------------------------------------------------
+class TestFramedirValidation:
+    def test_empty_framedir(self, tmp_path):
+        """S0_01_FRAMEDIR='' -> named error + exit 64."""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("S0_01_FRAMEDIR", "S0_01_AGENT")}
+        env["S0_01_FRAMEDIR"] = ""
+        env["S0_01_AGENT"] = "/bin/true"
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=b"",
+            capture_output=True,
+            env=env,
+            timeout=10,
+        )
+        assert proc.returncode == 64
+        assert proc.stderr.decode().strip() == "frame_tee: S0_01_FRAMEDIR is empty"
+
+    def test_framedir_is_plain_file(self, tmp_path):
+        """S0_01_FRAMEDIR pointing to a regular file -> named error + exit 64."""
+        notadir = tmp_path / "notadir"
+        notadir.write_text("x")
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("S0_01_FRAMEDIR", "S0_01_AGENT")}
+        env["S0_01_FRAMEDIR"] = str(notadir)
+        env["S0_01_AGENT"] = "/bin/true"
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=b"",
+            capture_output=True,
+            env=env,
+            timeout=10,
+        )
+        assert proc.returncode == 64
+        assert proc.stderr.decode().strip() == "frame_tee: S0_01_FRAMEDIR is not a directory: %s" % notadir

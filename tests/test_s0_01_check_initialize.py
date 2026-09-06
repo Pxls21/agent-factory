@@ -1,12 +1,14 @@
 """tests/test_s0_01_check_initialize.py — check_initialize.py directory mode + file mode.
 
 Tests exact exit codes and output for all directory-mode paths (request + response),
-file mode (unchanged from v1), pin validation failures, malformed evidence wrapper (6-verify F13),
-usage error exit 64 (8-verify F10 / A10), required-files check (A11), NaN rejection (A11),
-seq==1 check (A11), and fixture-absent guard (A11).
+file mode (unchanged from v1), pin validation failures via A22 shared validator,
+malformed evidence wrapper (6-verify F13), usage error exit 64 (8-verify F10 / A10),
+required-files check (A11), NaN rejection (A11), seq==1 check (A11), fixture-absent guard (A11),
+interpreter pin tests (4-F6), response-mode id matching (4-F5/6-F10), and --fixtures-dir.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -21,18 +23,38 @@ sys.path.insert(0, str(P))
 import pins  # noqa: E402
 
 
-def _run(kind, target):
-    r = subprocess.run(
-        [sys.executable, str(CHECK_INIT), kind, str(target)],
-        capture_output=True, text=True, timeout=30,
-    )
+def _run(kind, target, fixtures_dir=None):
+    cmd = [sys.executable, str(CHECK_INIT), kind, str(target)]
+    if fixtures_dir is not None:
+        cmd += ["--fixtures-dir", str(fixtures_dir)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     return r
 
 
-def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
+def _probe_sha():
+    """SHA256 of the actual acp_probe.py file."""
+    return hashlib.sha256((P / "tools" / "acp_probe.py").read_bytes()).hexdigest()
+
+
+# The PINNED error response the validator requires (A22)
+_PINNED_ERROR_RESPONSE = {
+    "jsonrpc": "2.0", "id": 0,
+    "error": {"code": pins.PINNED_NEGATIVE_ERROR_CODE,
+              "message": pins.PINNED_NEGATIVE_ERROR_MESSAGE,
+              "data": {"errors": [{"type": "missing", "loc": ["protocolVersion"],
+                                   "msg": "Field required"}]}},
+}
+
+
+def _make_capture_dir(tmp_path, *, params=None, a2c_frame="DEFAULT", rid_overrides=None,
                       has_timeline=True, has_rid=True, has_env=True,
-                      has_stderr=True, extra_files=None):
-    """Build a minimal negative probe capture directory."""
+                      has_stderr=True, extra_files=None, extra_a2c_before=None):
+    """Build a negative probe capture directory valid for the A22 shared validator.
+
+    a2c_frame="DEFAULT" uses the pinned error response; pass None for no a2c, or a
+    specific frame dict to override. rid_overrides merges into the valid default RID.
+    extra_a2c_before: list of (frame, t_utc, t_mono) to prepend before the main a2c.
+    """
     d = tmp_path / "capture"
     d.mkdir(exist_ok=True)
 
@@ -41,13 +63,20 @@ def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
         p = params if params is not None else fixture
         c2a_frame = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": p}
         entries = [
-            {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T00:00:00.000000Z",
-             "t_mono_ns": 1000000, "frame": c2a_frame},
+            {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T17:57:20.411449Z",
+             "t_mono_ns": 4649101715037563, "frame": c2a_frame},
         ]
-        if a2c_frame is not None:
+        seq = 2
+        if extra_a2c_before:
+            for frame, t_utc, t_mono in extra_a2c_before:
+                entries.append({"seq": seq, "dir": "a2c", "t_utc": t_utc,
+                                "t_mono_ns": t_mono, "frame": frame})
+                seq += 1
+        actual_a2c = _PINNED_ERROR_RESPONSE if a2c_frame == "DEFAULT" else a2c_frame
+        if actual_a2c is not None:
             entries.append({
-                "seq": 2, "dir": "a2c", "t_utc": "2026-09-05T00:00:01.000000Z",
-                "t_mono_ns": 2000000, "frame": a2c_frame,
+                "seq": seq, "dir": "a2c", "t_utc": "2026-09-05T17:57:21.031783Z",
+                "t_mono_ns": 4649102335384757, "frame": actual_a2c,
             })
         (d / "timeline.jsonl").write_text(
             "\n".join(json.dumps(e, separators=(",", ":")) for e in entries) + "\n"
@@ -55,26 +84,32 @@ def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
 
     if has_rid:
         default_rid = {
-            "probe_path": "/tmp/probe.py",
-            "probe_sha256": "0" * 64,
+            "probe_path": "/home/rocco/agent-factory/proofs/S0-01/tools/acp_probe.py",
+            "probe_sha256": _probe_sha(),
             "agent_argv": [pins.PINNED_AGENT_REALPATH],
             "agent_realpath": pins.PINNED_AGENT_REALPATH,
             "agent_entrypoint_sha256": pins.PINNED_AGENT_ENTRYPOINT_SHA256,
-            "agent_child_pid": 12345,
+            "agent_child_pid": 1975441,
             "agent_interpreter_realpath": pins.PINNED_AGENT_INTERPRETER_REALPATH,
             "agent_interpreter_sha256": pins.PINNED_AGENT_INTERPRETER_SHA256,
             "python_dont_write_bytecode": True,
-            "spawned_at_utc": "2026-09-05T00:00:00.000000Z",
+            "spawned_at_utc": "2026-09-05T17:57:20.395720Z",
             "agent_exit_code": 0,
         }
-        actual_rid = rid if rid is not None else default_rid
-        (d / "runtime-identity.json").write_text(json.dumps(actual_rid, indent=2))
+        if rid_overrides:
+            default_rid.update(rid_overrides)
+        (d / "runtime-identity.json").write_text(json.dumps(default_rid, indent=2))
 
     if has_env:
         (d / "env.json").write_text(json.dumps({
+            "PATH": pins.PINNED_PATH,
+            "HOME": pins.PINNED_HOME,
             "HERMES_HOME": pins.PINNED_HERMES_HOME,
             "PYTHONDONTWRITEBYTECODE": "1",
-        }) + "\n")
+            "S0_01_AGENT": pins.PINNED_AGENT_REALPATH,
+            "S0_01_FRAMEDIR": "/home/rocco/s0-01-pinned/.markers/v2-negative",
+            "OMNIROUTE_API_KEY": {"redacted": True, "len": 35, "sha256_12": "fe5d1f1b287b"},
+        }, indent=1, sort_keys=True) + "\n")
 
     if has_stderr:
         (d / "agent-stderr.txt").write_text("")
@@ -138,27 +173,20 @@ def test_response_dir_defers_when_no_timeline(tmp_path):
 
 # ---- Directory mode request: validation failures (each names negative:) ----
 
-def _valid_env_json():
-    """Return valid env.json content for tests that need to get past the env check."""
-    return json.dumps({
-        "HERMES_HOME": pins.PINNED_HERMES_HOME,
-        "PYTHONDONTWRITEBYTECODE": "1",
-    })
-
-
 def test_request_dir_fails_no_c2a_frames(tmp_path):
-    """Empty timeline (only a2c) fails with the right failure_reason."""
+    """Empty timeline (only a2c) fails via validator."""
     d = tmp_path / "capture"
     d.mkdir()
     entry = {"seq": 1, "dir": "a2c", "t_utc": "2026-09-05T00:00:00.000000Z",
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "result": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: no c2a frames in timeline"
+    assert r.stdout.strip() == "failure_reason: negative: seq 1 is not a c2a frame"
 
 
 def test_request_dir_fails_first_not_initialize(tmp_path):
@@ -169,43 +197,34 @@ def test_request_dir_fails_first_not_initialize(tmp_path):
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "method": "session/new", "params": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: first c2a frame is 'session/new', not initialize"
+    assert r.stdout.strip() == "failure_reason: negative: seq 1 is not an initialize request"
 
 
 def test_request_dir_fails_params_mismatch(tmp_path):
     """Params not matching the fixture is a failure."""
     wrong_params = {"protocolVersion": 2, "clientInfo": {"name": "test"}}
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, params=wrong_params, a2c_frame=a2c)
+    d = _make_capture_dir(tmp_path, params=wrong_params)
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: params != fixture"
+    assert r.stdout.strip() == "failure_reason: negative: initialize params != fixture"
 
 
 def test_request_dir_fails_no_rid(tmp_path):
     """Missing runtime-identity.json is a failure."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, has_rid=False)
+    d = _make_capture_dir(tmp_path, has_rid=False)
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: runtime-identity.json absent"
 
 
 def test_request_dir_fails_agent_realpath_mismatch(tmp_path):
-    """agent_realpath mismatch fails naming the field."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    rid = {
-        "agent_realpath": "/tmp/evil/fake-agent",
-        "agent_entrypoint_sha256": pins.PINNED_AGENT_ENTRYPOINT_SHA256,
-        "agent_interpreter_realpath": pins.PINNED_AGENT_INTERPRETER_REALPATH,
-        "agent_interpreter_sha256": pins.PINNED_AGENT_INTERPRETER_SHA256,
-        "python_dont_write_bytecode": True,
-    }
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, rid=rid)
+    """agent_realpath mismatch fails naming the field (A22 validator)."""
+    d = _make_capture_dir(tmp_path, rid_overrides={"agent_realpath": "/tmp/evil/fake-agent"})
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: agent_realpath mismatch"
@@ -213,15 +232,7 @@ def test_request_dir_fails_agent_realpath_mismatch(tmp_path):
 
 def test_request_dir_fails_entrypoint_sha_mismatch(tmp_path):
     """agent_entrypoint_sha256 mismatch fails naming the field."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    rid = {
-        "agent_realpath": pins.PINNED_AGENT_REALPATH,
-        "agent_entrypoint_sha256": "0" * 64,
-        "agent_interpreter_realpath": pins.PINNED_AGENT_INTERPRETER_REALPATH,
-        "agent_interpreter_sha256": pins.PINNED_AGENT_INTERPRETER_SHA256,
-        "python_dont_write_bytecode": True,
-    }
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, rid=rid)
+    d = _make_capture_dir(tmp_path, rid_overrides={"agent_entrypoint_sha256": "0" * 64})
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: agent_entrypoint_sha256 mismatch"
@@ -229,15 +240,7 @@ def test_request_dir_fails_entrypoint_sha_mismatch(tmp_path):
 
 def test_request_dir_fails_bytecode_not_true(tmp_path):
     """python_dont_write_bytecode not True fails."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    rid = {
-        "agent_realpath": pins.PINNED_AGENT_REALPATH,
-        "agent_entrypoint_sha256": pins.PINNED_AGENT_ENTRYPOINT_SHA256,
-        "agent_interpreter_realpath": pins.PINNED_AGENT_INTERPRETER_REALPATH,
-        "agent_interpreter_sha256": pins.PINNED_AGENT_INTERPRETER_SHA256,
-        "python_dont_write_bytecode": False,
-    }
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, rid=rid)
+    d = _make_capture_dir(tmp_path, rid_overrides={"python_dont_write_bytecode": False})
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: python_dont_write_bytecode is not True"
@@ -245,7 +248,6 @@ def test_request_dir_fails_bytecode_not_true(tmp_path):
 
 def test_request_dir_fails_no_a2c_response(tmp_path):
     """No a2c response matching the request id is a failure."""
-    # Build a capture with c2a but no a2c
     d = _make_capture_dir(tmp_path, a2c_frame=None)
     r = _run("request", d)
     assert r.returncode == 1
@@ -254,53 +256,95 @@ def test_request_dir_fails_no_a2c_response(tmp_path):
 
 def test_request_dir_fails_no_matching_id(tmp_path):
     """a2c response with wrong id does not match."""
-    a2c = {"jsonrpc": "2.0", "id": 999, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    a2c = {"jsonrpc": "2.0", "id": 999, "error": {"code": -32602, "message": "Invalid params"}}
     d = _make_capture_dir(tmp_path, a2c_frame=a2c)
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: no agent response captured"
+    assert r.stdout.strip() == "failure_reason: negative: agent response id 999 does not match the request id at seq 2"
 
 
 # ---- Directory mode request: success path ----
 
 def test_request_dir_valid_capture_exits_1_with_classification_and_observed(tmp_path):
-    """Valid capture: line 1 is the classification, line 2 is the observed response."""
+    """A22: valid capture with the pinned error response: line 1 = seed reason, line 2 = observed."""
+    d = _make_capture_dir(tmp_path)
+    r = _run("request", d)
+    assert r.returncode == 1
+    lines = r.stdout.strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0] == "protocol-violation: missing required initialize field"
+    assert lines[1] == "observed: error code=-32602 message=Invalid params"
+
+
+def test_request_dir_result_response_rejected_by_validator(tmp_path):
+    """A22/4-F3: agent accepting the malformed initialize is now a validator FAILURE."""
     a2c = {"jsonrpc": "2.0", "id": 0, "result": {
-        "protocolVersion": 1,
-        "agentInfo": {"name": "hermes", "version": "0.0.1"},
-        "agentCapabilities": {},
+        "protocolVersion": 1, "agentCapabilities": {},
     }}
     d = _make_capture_dir(tmp_path, a2c_frame=a2c)
     r = _run("request", d)
     assert r.returncode == 1
-    lines = r.stdout.strip().splitlines()
-    assert len(lines) == 2
-    assert lines[0] == "protocol-violation: missing required initialize field"
-    assert lines[1] == "observed: result protocolVersion=1 agentCapabilities={}"
+    assert r.stdout.strip() == "failure_reason: negative: pinned agent accepted a malformed initialize (result protocolVersion=1)"
 
 
-def test_request_dir_valid_capture_error_response(tmp_path):
-    """Valid capture where agent returns a JSON-RPC error."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32600, "message": "Invalid request"}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+# ---- 4-F6: interpreter pin tests ----
+
+def test_request_dir_fails_interpreter_realpath_mismatch(tmp_path):
+    """4-F6: forged agent_interpreter_realpath fails with exact reason."""
+    d = _make_capture_dir(tmp_path, rid_overrides={
+        "agent_interpreter_realpath": "/usr/bin/attacker-python"})
     r = _run("request", d)
     assert r.returncode == 1
-    lines = r.stdout.strip().splitlines()
-    assert len(lines) == 2
-    assert lines[0] == "protocol-violation: missing required initialize field"
-    assert lines[1] == "observed: error code=-32600 message=Invalid request"
+    assert r.stdout.strip() == "failure_reason: negative: agent_interpreter_realpath mismatch"
 
 
-# ---- Directory mode response: distinct from request ----
+def test_request_dir_fails_interpreter_sha_mismatch(tmp_path):
+    """4-F6: forged agent_interpreter_sha256 fails with exact reason."""
+    d = _make_capture_dir(tmp_path, rid_overrides={
+        "agent_interpreter_sha256": "0" * 64})
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: agent_interpreter_sha256 mismatch"
+
+
+# ---- 4-F5/6-F10: response-mode id matching with many a2c frames ----
+
+def test_response_dir_skips_notification_finds_matching_id(tmp_path):
+    """4-F5/6-F10: response <dir> with a junk notification before the real response
+    finds the response by id matching, not a2c[0]."""
+    notification = {"jsonrpc": "2.0", "method": "log", "params": {"message": "starting"}}
+    result_frame = {"jsonrpc": "2.0", "id": 0, "result": {
+        "protocolVersion": 1, "agentCapabilities": {},
+    }}
+    d = _make_capture_dir(tmp_path,
+                          extra_a2c_before=[(notification, "2026-09-05T17:57:20.800000Z", 4649102100000000)],
+                          a2c_frame=result_frame)
+    r = _run("response", d)
+    assert r.returncode == 0
+    assert r.stdout.strip() == "ok"
+
+
+def test_response_dir_foreign_id_a2c_response_first(tmp_path):
+    """4-F5/6-F10: response <dir> with a foreign-id a2c RESPONSE before the real one.
+    The a2c[0] is a response with id=999 (not matching); the real one has id=0."""
+    foreign = {"jsonrpc": "2.0", "id": 999, "error": {"code": -32600, "message": "Invalid"}}
+    result_frame = {"jsonrpc": "2.0", "id": 0, "error": {"code": -32602, "message": "Invalid params"}}
+    d = _make_capture_dir(tmp_path,
+                          extra_a2c_before=[(foreign, "2026-09-05T17:57:20.800000Z", 4649102100000000)],
+                          a2c_frame=result_frame)
+    r = _run("response", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "error code=-32602 message=Invalid params"
+
+
+# ---- Directory mode response ----
 
 def test_response_dir_classifies_result(tmp_path):
-    """response <dir> classifies the a2c response's result, NOT the c2a request's params."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {
-        "protocolVersion": 1,
-        "agentInfo": {"name": "hermes", "version": "0.0.1"},
-        "agentCapabilities": {},
+    """response <dir> classifies the a2c response's result."""
+    result_frame = {"jsonrpc": "2.0", "id": 0, "result": {
+        "protocolVersion": 1, "agentCapabilities": {},
     }}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    d = _make_capture_dir(tmp_path, a2c_frame=result_frame)
     r = _run("response", d)
     assert r.returncode == 0
     assert r.stdout.strip() == "ok"
@@ -324,19 +368,12 @@ def test_response_dir_error_response(tmp_path):
 
 
 def test_response_dir_distinct_from_request(tmp_path):
-    """response <dir> produces different output from request <dir> on the same capture (V-d F20)."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {
-        "protocolVersion": 1,
-        "agentInfo": {"name": "hermes", "version": "0.0.1"},
-        "agentCapabilities": {},
-    }}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    """response <dir> produces different output from request <dir> on the same capture."""
+    d = _make_capture_dir(tmp_path)
     r_req = _run("request", d)
     r_resp = _run("response", d)
-    # request exits 1 (classification = protocol violation), response exits 0 (result is ok)
     assert r_req.returncode == 1
-    assert r_resp.returncode == 0
-    # outputs are distinct
+    assert r_resp.returncode == 1
     assert r_req.stdout != r_resp.stdout
 
 
@@ -363,83 +400,82 @@ def test_usage_error_no_args_exits_64():
 # ---- 6-verify F13: malformed evidence ----
 
 def test_malformed_timeline_non_json(tmp_path):
-    """F13: non-JSON timeline line → exit 1 with failure_reason: malformed evidence."""
+    """F13: non-JSON timeline line via validator."""
     d = tmp_path / "capture"
     d.mkdir()
     (d / "timeline.jsonl").write_text("not json\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: malformed evidence: JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
+    assert r.stdout.strip() == "failure_reason: negative: timeline.jsonl line 1 is not strict JSON: Expecting value: line 1 column 1 (char 0)"
 
 
 def test_malformed_timeline_missing_dir_key(tmp_path):
-    """F13: entry without 'dir' key → exit 1 with failure_reason: malformed evidence."""
+    """F13: entry without 'dir' key via validator."""
     d = tmp_path / "capture"
     d.mkdir()
     entry = {"seq": 1, "frame": {"method": "initialize"}}
     (d / "timeline.jsonl").write_text(json.dumps(entry) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: malformed evidence: KeyError: 'dir'"
+    assert r.stdout.strip() == "failure_reason: negative: timeline seq 1 has an invalid dir"
 
 
 # ---- A11: required files ----
 
 def test_request_dir_fails_missing_env_json(tmp_path):
-    """A11: env.json absent → failure naming the file."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, has_env=False)
+    """A11: env.json absent."""
+    d = _make_capture_dir(tmp_path, has_env=False)
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: env.json absent"
 
 
 def test_request_dir_fails_missing_agent_stderr(tmp_path):
-    """A11: agent-stderr.txt absent → failure naming the file."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, has_stderr=False)
+    """A11: agent-stderr.txt absent."""
+    d = _make_capture_dir(tmp_path, has_stderr=False)
     r = _run("request", d)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: negative: agent-stderr.txt absent"
 
 
 def test_request_dir_fails_extra_file(tmp_path):
-    """A11: extra file in directory → failure."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c, extra_files={"bogus.txt": "evil"})
+    """A11: extra file in directory."""
+    d = _make_capture_dir(tmp_path, extra_files={"bogus.txt": "evil"})
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: unexpected file bogus.txt"
+    assert r.stdout.strip() == "failure_reason: negative: unexpected entry bogus.txt"
 
 
 # ---- A11: NaN rejection ----
 
 def test_request_dir_fails_nan_in_timeline(tmp_path):
-    """A11: NaN in timeline → failure_reason: malformed evidence."""
+    """A11: NaN in timeline via validator."""
     d = tmp_path / "capture"
     d.mkdir()
-    # Write a timeline line with NaN manually
     (d / "timeline.jsonl").write_text(
         '{"seq":1,"dir":"c2a","t_utc":"2026-09-05T00:00:00.000000Z","t_mono_ns":NaN,"frame":null}\n'
     )
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: malformed evidence: ValueError: NaN/Infinity not allowed in timeline: 'NaN'"
+    assert r.stdout.strip() == "failure_reason: negative: timeline.jsonl line 1 is not strict JSON: non-finite JSON constant NaN"
 
 
 # ---- A11: seq == 1 check ----
 
 def test_request_dir_fails_seq_not_1(tmp_path):
-    """A11: c2a initialize seq is not 1 → failure."""
+    """A11: c2a initialize seq is not 1."""
     d = tmp_path / "capture"
     d.mkdir()
     fixture = json.loads(FIXTURE.read_text())
@@ -448,39 +484,31 @@ def test_request_dir_fails_seq_not_1(tmp_path):
              "t_mono_ns": 1000000, "frame": c2a_frame}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text(_valid_env_json())
+    (d / "env.json").write_text(json.dumps({"HERMES_HOME": pins.PINNED_HERMES_HOME,
+                                            "PYTHONDONTWRITEBYTECODE": "1"}) + "\n")
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: c2a initialize seq is 5, expected 1"
+    assert r.stdout.strip() == "failure_reason: negative: timeline seq not 1..N at index 0"
 
 
 # ---- A11: fixture absent ----
 
 def test_request_dir_fails_fixture_absent(tmp_path):
-    """A11: neg-malformed-initialize.json absent → failure."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
-    # Use subprocess with inline Python to patch FIXTURE at import time
-    r2 = subprocess.run(
-        [sys.executable, "-c",
-         "import sys; sys.path.insert(0, %r); "
-         "from pathlib import Path; "
-         "import check_initialize; "
-         "check_initialize.FIXTURE = Path('/nonexistent/fixture.json'); "
-         "rc = check_initialize._check_request_directory(Path(%r)); "
-         "raise SystemExit(rc)" % (str(P), str(d))],
-        capture_output=True, text=True, timeout=30,
-    )
-    assert r2.returncode == 1
-    assert r2.stdout.strip() == "failure_reason: negative: fixtures/neg-malformed-initialize.json absent"
+    """A11: neg-malformed-initialize.json absent → failure via validator."""
+    d = _make_capture_dir(tmp_path)
+    # Use a fixtures_dir that lacks the fixture file
+    fx = tmp_path / "fixtures"
+    fx.mkdir()
+    r = _run("request", d, fixtures_dir=fx)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: fixtures/neg-malformed-initialize.json absent"
 
 
 # ---- V12: input-error exit 64, not 2 (mutant C02 killer) ----
 
 def test_input_error_non_initialize_frame_exits_64(tmp_path):
-    """V12: file mode with a non-initialize frame exits 64 (input error, not deferred).
-    This kills the mutant that reverts the exit code from 64 back to 2."""
+    """V12: file mode with a non-initialize frame exits 64."""
     f = tmp_path / "session_new.jsonl"
     f.write_text(json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {}
@@ -490,54 +518,45 @@ def test_input_error_non_initialize_frame_exits_64(tmp_path):
     assert r.stderr.strip() == "input error: frame method is 'session/new', not 'initialize'"
 
 
-# ---- V13: extra subdirectory rejected (not just files) ----
+# ---- V13: extra subdirectory rejected ----
 
 def test_request_dir_fails_extra_subdirectory(tmp_path):
-    """V13: extra subdirectory under the capture dir is a Failure, same as extra files.
-    This kills the mutant that filters with is_file() instead of iterdir()."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    """V13: extra subdirectory under the capture dir is a Failure."""
+    d = _make_capture_dir(tmp_path)
     (d / "sneaky_subdir").mkdir()
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: unexpected file sneaky_subdir"
+    assert r.stdout.strip() == "failure_reason: negative: unexpected entry sneaky_subdir"
 
 
-# ---- V14: env.json HERMES_HOME and PYTHONDONTWRITEBYTECODE validated ----
+# ---- V14: env.json validated ----
 
 def test_request_dir_fails_hermes_home_mismatch(tmp_path):
-    """V14/A17: env.json with wrong HERMES_HOME → failure."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
-    # Overwrite env.json with wrong HERMES_HOME
+    """V14/A17: env.json with wrong HERMES_HOME via validator."""
+    d = _make_capture_dir(tmp_path)
     (d / "env.json").write_text(json.dumps({
-        "HERMES_HOME": "/wrong/path",
-        "PYTHONDONTWRITEBYTECODE": "1",
+        "HERMES_HOME": "/wrong/path", "PYTHONDONTWRITEBYTECODE": "1",
     }))
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: HERMES_HOME mismatch"
+    assert r.stdout.strip() == "failure_reason: negative: env HERMES_HOME mismatch"
 
 
 def test_request_dir_fails_pythondontwritebytecode_mismatch(tmp_path):
-    """V14/A17: env.json with wrong PYTHONDONTWRITEBYTECODE → failure."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
-    # Overwrite env.json with correct HERMES_HOME but wrong bytecode
+    """V14/A17: env.json with wrong PYTHONDONTWRITEBYTECODE via validator."""
+    d = _make_capture_dir(tmp_path)
     (d / "env.json").write_text(json.dumps({
-        "HERMES_HOME": pins.PINNED_HERMES_HOME,
-        "PYTHONDONTWRITEBYTECODE": "0",
+        "HERMES_HOME": pins.PINNED_HERMES_HOME, "PYTHONDONTWRITEBYTECODE": "0",
     }))
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: PYTHONDONTWRITEBYTECODE mismatch"
+    assert r.stdout.strip() == "failure_reason: negative: env PYTHONDONTWRITEBYTECODE mismatch"
 
 
 def test_request_dir_fails_empty_env_json(tmp_path):
-    """V14/A17: env.json with {} (no keys) → HERMES_HOME mismatch."""
-    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
-    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    """V14/A17: env.json with {} → env HERMES_HOME mismatch."""
+    d = _make_capture_dir(tmp_path)
     (d / "env.json").write_text("{}")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: negative: HERMES_HOME mismatch"
+    assert r.stdout.strip() == "failure_reason: negative: env HERMES_HOME mismatch"

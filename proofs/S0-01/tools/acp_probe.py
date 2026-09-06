@@ -73,7 +73,7 @@ def _redact_env(env):
 
 def main():
     # Validate required env vars early with a named message (L15/A10: exit 64)
-    missing = [k for k in ("S0_01_FRAMEDIR", "S0_01_AGENT") if k not in os.environ]
+    missing = [k for k in ("S0_01_FRAMEDIR", "S0_01_AGENT") if not os.environ.get(k)]
     if missing:
         print(f"acp_probe: required environment variable {missing[0]} is not set",
               file=sys.stderr)
@@ -81,7 +81,6 @@ def main():
 
     framedir = os.environ["S0_01_FRAMEDIR"]
     agent = os.environ["S0_01_AGENT"]
-    os.makedirs(framedir, exist_ok=True)
 
     # Load the malformed initialize fixture
     here = os.path.dirname(os.path.abspath(__file__))
@@ -100,19 +99,33 @@ def main():
     # Wrap the main body so any exception lands in runtime-identity.json
     # under probe_error + exit 1 with a one-line stderr message (M3)
     try:
+        # 4-F11: validate/create framedir inside the wrapped body
+        if not os.path.isdir(framedir):
+            try:
+                os.makedirs(framedir, exist_ok=True)
+            except OSError as exc:
+                print(f"acp_probe: S0_01_FRAMEDIR error: {exc}", file=sys.stderr)
+                raise SystemExit(64)
+
         # A16: validate ACP_PROBE_TIMEOUT inside the wrapped body — must be
         # a finite float > 0, else probe_error + exit 64
         timeout_raw = os.environ.get("ACP_PROBE_TIMEOUT", "30")
         try:
             timeout = float(timeout_raw)
         except (ValueError, OverflowError):
-            print(f"acp_probe: ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}",
-                  file=sys.stderr)
+            msg = f"ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}"
+            with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+                json.dump({"probe_error": msg}, f, indent=2)
+                f.write("\n")
+            print(f"acp_probe: {msg}", file=sys.stderr)
             raise SystemExit(64)
         import math
         if not math.isfinite(timeout) or timeout <= 0:
-            print(f"acp_probe: ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}",
-                  file=sys.stderr)
+            msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
+            with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+                json.dump({"probe_error": msg}, f, indent=2)
+                f.write("\n")
+            print(f"acp_probe: {msg}", file=sys.stderr)
             raise SystemExit(64)
 
         proc = subprocess.Popen(
@@ -122,16 +135,12 @@ def main():
         # Sample spawned_at_utc right after Popen (M2: not after proc.wait)
         spawned_at_utc = _utc_now()
 
-        # V2/A16: sample readlink(/proc/<pid>/exe) and its sha right after Popen,
-        # BEFORE any wait — the /proc/<pid>/exe link disappears after the process exits
+        # 6-F7: interpreter identity sampled from the CHILD's /proc/<pid>/exe
+        # AFTER the first a2c byte and BEFORE wait — not from /proc/self/exe.
         agent_realpath = os.path.realpath(agent)
         interp_realpath = None
         interp_sha256 = None
-        try:
-            interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
-            interp_sha256 = _sha256_file(interp_realpath)
-        except (OSError, IOError):
-            pass
+        _interp_sampled = False
 
         # Start draining stderr in a background thread
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
@@ -180,6 +189,14 @@ def main():
                         break
                     if not chunk:
                         break  # EOF
+                    # 6-F7: sample interpreter after first a2c byte, before wait
+                    if not _interp_sampled:
+                        try:
+                            interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
+                            interp_sha256 = _sha256_file(interp_realpath)
+                        except (OSError, IOError):
+                            pass
+                        _interp_sampled = True
                     buf += chunk
                     # Process complete lines
                     while b"\n" in buf:

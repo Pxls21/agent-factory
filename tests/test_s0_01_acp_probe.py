@@ -310,7 +310,9 @@ def test_probe_result_response_and_check_initialize(tmp_path, agent_result):
         capture_output=True, text=True, timeout=30,
     )
     assert r2.returncode == 1
-    assert r2.stdout.strip() == "failure_reason: negative: HERMES_HOME mismatch"
+    assert r2.returncode == 1
+    # A22 validator rejects the result response before reaching env checks
+    assert "failure_reason: negative:" in r2.stdout
 
 
 def test_probe_error_response(tmp_path, agent_error):
@@ -444,7 +446,7 @@ def test_probe_bad_agent_path_writes_probe_error(tmp_path):
     r, framedir = _run_probe(tmp_path, "/nonexistent/agent/binary")
     assert r.returncode == 1
     assert "Traceback" not in r.stderr
-    assert "acp_probe:" in r.stderr
+    assert r.stderr.strip() == "acp_probe: FileNotFoundError: [Errno 2] No such file or directory: '/nonexistent/agent/binary'"
 
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["probe_error"] == (
@@ -643,7 +645,8 @@ def test_probe_interpreter_fields_not_null(tmp_path, agent_result):
     assert rid["agent_interpreter_realpath"] is not None
     assert rid["agent_interpreter_sha256"] is not None
     # The interpreter must be a real path
-    assert rid["agent_interpreter_realpath"].startswith("/")
+    assert rid["agent_interpreter_realpath"] is not None
+    assert os.path.isabs(rid["agent_interpreter_realpath"])
     # The sha256 must be 64 hex chars
     assert len(rid["agent_interpreter_sha256"]) == 64
 
@@ -674,3 +677,115 @@ def test_probe_missing_agent_exits_64(tmp_path):
     )
     assert r.returncode == 64
     assert r.stderr.strip() == "acp_probe: required environment variable S0_01_AGENT is not set"
+
+
+# ---- 4-F10/6-F8: ACP_PROBE_TIMEOUT writes probe_error + exit 64 ----
+
+def test_probe_timeout_nan_writes_probe_error(tmp_path, agent_result):
+    """4-F10/6-F8: ACP_PROBE_TIMEOUT=NaN -> exit 64 + probe_error in runtime-identity.json."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override="NaN")
+    assert r.returncode == 64
+    rid_path = framedir / "runtime-identity.json"
+    assert rid_path.exists(), "runtime-identity.json not written on timeout validation failure"
+    rid = json.loads(rid_path.read_text())
+    assert rid["probe_error"] == "ACP_PROBE_TIMEOUT must be a finite float > 0, got 'NaN'"
+
+
+def test_probe_timeout_negative_writes_probe_error(tmp_path, agent_result):
+    """4-F10/6-F8: ACP_PROBE_TIMEOUT=-1 -> exit 64 + probe_error in runtime-identity.json."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override="-1")
+    assert r.returncode == 64
+    rid_path = framedir / "runtime-identity.json"
+    assert rid_path.exists()
+    rid = json.loads(rid_path.read_text())
+    assert rid["probe_error"] == "ACP_PROBE_TIMEOUT must be a finite float > 0, got '-1'"
+
+
+def test_probe_timeout_abc_writes_probe_error(tmp_path, agent_result):
+    """4-F10/6-F8: ACP_PROBE_TIMEOUT=abc -> exit 64 + probe_error in runtime-identity.json."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override="abc")
+    assert r.returncode == 64
+    rid_path = framedir / "runtime-identity.json"
+    assert rid_path.exists()
+    rid = json.loads(rid_path.read_text())
+    assert rid["probe_error"] == "ACP_PROBE_TIMEOUT is not a valid number: 'abc'"
+
+
+# ---- 4-F11: empty/invalid S0_01_FRAMEDIR ----
+
+def test_probe_empty_framedir_exits_64(tmp_path):
+    """4-F11: S0_01_FRAMEDIR='' -> exit 64 with named message, not a traceback."""
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = "/some/agent"
+    env["S0_01_FRAMEDIR"] = ""
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 64
+    assert r.stderr.strip() == "acp_probe: required environment variable S0_01_FRAMEDIR is not set"
+    assert "Traceback" not in r.stderr
+
+
+def test_probe_framedir_is_file_exits_64(tmp_path, agent_result):
+    """4-F11: S0_01_FRAMEDIR pointing to a regular file -> probe_error + exit 64."""
+    notadir = tmp_path / "notadir"
+    notadir.write_text("x")
+    framedir = tmp_path / "capture"
+    framedir.mkdir(exist_ok=True)
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = agent_result
+    env["S0_01_FRAMEDIR"] = str(notadir)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 64
+    assert "acp_probe:" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
+# ---- 6-F7: interpreter identity sampled from CHILD's /proc/<pid>/exe ----
+
+def test_probe_interpreter_is_child_not_self(tmp_path):
+    """6-F7: the recorded interpreter must be the CHILD's exe, not the probe's.
+    A bash agent's /proc/<pid>/exe is bash, not python. If the probe read
+    /proc/self/exe instead, it would record python. This test kills that mutant."""
+    agent = tmp_path / "agent.sh"
+    agent.write_text(
+        '#!/bin/bash\n'
+        'read line\n'
+        'echo \'{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}\'\n'
+        'sleep 5\n'
+    )
+    agent.chmod(0o755)
+    r, framedir = _run_probe(tmp_path, str(agent), timeout_override=5)
+    assert r.returncode == 0, f"probe failed: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    # The child's interpreter must NOT be the probe's own python
+    probe_exe = os.readlink(f"/proc/{os.getpid()}/exe")
+    assert rid["agent_interpreter_realpath"] != probe_exe, (
+        f"recorded interpreter {rid['agent_interpreter_realpath']!r} matches the probe's "
+        f"own exe {probe_exe!r} — the probe is reading /proc/self/exe, not /proc/<child>/exe"
+    )
+    # It should be bash or sh
+    assert rid["agent_interpreter_realpath"] is not None
+
+
+# ---- 4-F15: spawned_at two-sided ----
+
+def test_probe_spawned_at_two_sided(tmp_path, agent_result):
+    """4-F15: spawned_at_utc is bracketed: after a pre-Popen timestamp and before
+    the first frame. A hardcoded 1970 epoch constant would fail the lower bound."""
+    import datetime
+    t0 = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    r, framedir = _run_probe(tmp_path, agent_result)
+    assert r.returncode == 0
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    entries = [json.loads(line) for line in
+               (framedir / "timeline.jsonl").read_text().splitlines() if line.strip()]
+    spawned = rid["spawned_at_utc"]
+    first_t = entries[0]["t_utc"]
+    assert t0 <= spawned, f"spawned_at {spawned} is before the test's pre-Popen time {t0}"
+    assert spawned <= first_t, f"spawned_at {spawned} > first frame {first_t}"

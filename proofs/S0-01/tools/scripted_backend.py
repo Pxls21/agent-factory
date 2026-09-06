@@ -26,6 +26,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -40,9 +41,8 @@ SLOW_CHUNKS = ("po", "n", "g", "")  # "" = the final content-less finish chunk
 FIXED_CREATED = 1788566400  # 2026-09-05T00:00:00Z, frozen
 FIXED_USAGE = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
 MAX_CONTENT_LENGTH = 1_048_576
-# Sentinel objects for _read_body control flow (L3: never bare strings — a client
-# POSTing the JSON document "CHUNKED" must not collide with the sentinel).
-_CHUNKED = object()
+# Sentinel object for _read_body control flow (L3: never a bare string — a client
+# POSTing the JSON document "BAD_CL" must not collide with the sentinel).
 _BAD_CL = object()
 # Credential-bearing header names (lowercased) to drop from records (V-c F10).
 _CREDENTIAL_HEADERS = frozenset({
@@ -88,22 +88,24 @@ class State:
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
-        # If the bearer token appears ANYWHERE outside Authorization (path, query,
-        # body, any header value, raw bytes), the record is sanitized to path=None,
-        # headers={}, body=marker so the token never reaches committed evidence.
+        # If the CONFIGURED token (self.token) appears ANYWHERE outside Authorization
+        # (path, query, body, any header value, raw bytes), the record is sanitized
+        # to path=None, headers={}, body=marker so the token never reaches committed
+        # evidence.  Keyed on the configured secret, not the request-supplied bearer,
+        # so a request without Authorization is still screened (4-F1/6-F3).
         # M12: exempts ONLY 'authorization'.
         leaked = False
-        if bearer_token:
-            if path and bearer_token in path:
+        secret = self.token
+        if path and secret in path:
+            leaked = True
+        for k, v in headers.items():
+            if k.lower() != "authorization" and secret in str(v):
                 leaked = True
-            for k, v in headers.items():
-                if k.lower() != "authorization" and bearer_token in str(v):
-                    leaked = True
-            if body is not None and bearer_token in (
-                    body if isinstance(body, str) else json.dumps(body)):
-                leaked = True
-            if raw_body and bearer_token.encode() in raw_body:
-                leaked = True
+        if body is not None and secret in (
+                body if isinstance(body, str) else json.dumps(body)):
+            leaked = True
+        if raw_body and secret.encode() in raw_body:
+            leaked = True
         if leaked:
             rec_path = None
             clean = {}
@@ -197,6 +199,20 @@ def make_handler(state: State):
                 return self._send_json(200, {"ok": True, "models": list(MODELS), "records": count})
             # M4: reject chunked TE on GET too
             if self._check_transfer_encoding():
+                return
+            # 4-F4: a GET with a body is a request-smuggling vector — read and reject
+            cl_raw = self.headers.get("Content-Length")
+            if cl_raw is not None:
+                try:
+                    cl = int(cl_raw)
+                except (ValueError, OverflowError):
+                    cl = 1  # treat invalid as non-zero
+                if cl > 0:
+                    self.rfile.read(min(cl, MAX_CONTENT_LENGTH))
+                self.send_response(400)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
                 return
             bearer = self._bearer_token()
             body = None
@@ -300,6 +316,11 @@ def main(argv=None) -> int:
     if not (1 <= args.port <= 65535):
         print(f"scripted_backend: --port {args.port} is outside the valid range 1-65535",
               file=sys.stderr)
+        return 2
+    # 4-F12: --slow-delay must be finite and non-negative
+    if not (math.isfinite(args.slow_delay) and args.slow_delay >= 0):
+        print(f"scripted_backend: --slow-delay {args.slow_delay} "
+              f"must be a finite number >= 0", file=sys.stderr)
         return 2
     # V-d F21: check existence before stat
     if not args.token_file.exists():

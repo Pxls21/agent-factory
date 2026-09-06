@@ -70,6 +70,8 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    doc named; the live producer was a different class entirely — VolatilityBucket — so the
    causality certificate was falsified as written and every downstream argument inherited the
    skew. One grep of the live call site would have caught it at design time.)
+**A PIN-SHAPE change is a producer/consumer split until every consumer literal of the OLD shape is found (2026-09-06, S0-01 checkpoint 4).** Changing a pin's SHAPE (tree count, line format, summary length, field count) — not just its value — leaves every consumer that encoded the old shape as a literal (`len(lines) != 4`, a local line regex) silently wrong; the lane suites stayed green because they were written against the old pins. Before committing a pin-shape change: grep every consumer for the old literal (the count, the regex, the index), derive it from the pin module, and run the FULL suite at the boundary — the split showed up only there (154 reds from one literal `4`; the per-lane runs never saw it).
+
 2. **One increment = code + deterministic test + commit.** Test is LLM-free, in-sandbox, with a
    NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
    gate runs RED and provably never touches the cwd). **A capability-gated proof is tested under

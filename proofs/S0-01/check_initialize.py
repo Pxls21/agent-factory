@@ -26,16 +26,13 @@ from jsonschema import Draft202012Validator
 
 HERE = Path(__file__).resolve().parent
 SCHEMA = HERE / "fixtures" / "acp-schema-v1.json"
-FIXTURE = HERE / "fixtures" / "neg-malformed-initialize.json"
 MISSING_REQUIRED = "protocol-violation: missing required initialize field"
 
-# Required files in the negative probe capture directory (A11)
-_NEGATIVE_REQUIRED_FILES = frozenset({"timeline.jsonl", "runtime-identity.json", "env.json", "agent-stderr.txt"})
 
 # Import pins for runtime-identity checks in directory mode.
 # S0-01 is not a valid Python package name, so use sys.path.
 sys.path.insert(0, str(HERE))
-import pins  # noqa: E402
+import negative_contract as nc  # noqa: E402
 
 
 def _nan_raising(x):
@@ -92,129 +89,33 @@ def load_payload(path: Path, kind: str) -> object:
     return obj
 
 
-def _format_observed(resp: dict) -> str:
-    """Format the observed agent response line from an a2c JSON-RPC frame."""
-    if "error" in resp:
-        err = resp["error"]
-        if isinstance(err, dict):
-            code = err.get("code", "?")
-            message = err.get("message", str(err))
-        else:
-            code = "?"
-            message = str(err)
-        return f"observed: error code={code} message={message}"
-    if "result" in resp:
-        result = resp.get("result") or {}
-        pv = result.get("protocolVersion")
-        caps = json.dumps(result.get("agentCapabilities"), separators=(",", ":"))
-        return f"observed: result protocolVersion={pv} agentCapabilities={caps}"
-    return "observed: none: unparseable response"
+def _check_request_directory(dirpath: Path, fixtures_dir: Path = None) -> int:
+    """Validate a negative probe capture directory for `request <dir>` via A22 shared validator.
 
-
-def _check_request_directory(dirpath: Path) -> int:
-    """Validate a negative probe capture directory for `request <dir>`.
-
-    Contract: exit 2 if directory or timeline absent; exit 1 with `failure_reason: negative: ...`
-    on any validation failure; exit 1 with the classification on line 1 and the observed agent
-    response on line 2 when the capture is valid.
+    Contract: exit 2 if deferred; exit 1 with `failure_reason: negative: <reason>` on any
+    validation failure; exit 1 with the classification on line 1 and the validator's observed
+    line on line 2 when the capture is valid.
     """
-    if not dirpath.is_dir():
-        print("deferred: negative probe not captured")
+    fixtures_dir = fixtures_dir or (HERE / "fixtures")
+    try:
+        observed = nc.validate_negative_dir(dirpath, fixtures_dir)
+    except nc.NegativeDeferred as exc:
+        print(f"deferred: {exc}")
         return 2
-    tl_path = dirpath / "timeline.jsonl"
-    if not tl_path.exists():
-        print("deferred: negative probe not captured")
-        return 2
-
-    # A11: Check fixture exists
-    if not FIXTURE.exists():
-        print("failure_reason: negative: fixtures/neg-malformed-initialize.json absent")
+    except nc.NegativeFailure as exc:
+        print(f"failure_reason: negative: {exc}")
         return 1
-
-    # A11/A17: Required files exactly; extra ENTRIES (files or dirs) are a Failure
-    actual_entries = frozenset(e.name for e in dirpath.iterdir())
-    missing = _NEGATIVE_REQUIRED_FILES - actual_entries
-    if missing:
-        print(f"failure_reason: negative: {sorted(missing)[0]} absent")
-        return 1
-    extra = actual_entries - _NEGATIVE_REQUIRED_FILES
-    if extra:
-        print(f"failure_reason: negative: unexpected file {sorted(extra)[0]}")
-        return 1
-
-    # A17: env.json must contain HERMES_HOME == pins.PINNED_HERMES_HOME
-    # and PYTHONDONTWRITEBYTECODE == "1"
-    env_data = json.loads((dirpath / "env.json").read_text())
-    if env_data.get("HERMES_HOME") != pins.PINNED_HERMES_HOME:
-        print("failure_reason: negative: HERMES_HOME mismatch")
-        return 1
-    if env_data.get("PYTHONDONTWRITEBYTECODE") != "1":
-        print("failure_reason: negative: PYTHONDONTWRITEBYTECODE mismatch")
-        return 1
-
-    # Parse timeline with NaN-rejecting loader (A11)
-    entries = []
-    for line in tl_path.read_text().splitlines():
-        if line.strip():
-            entries.append(json.loads(line, parse_constant=_nan_raising))
-
-    c2a = [e for e in entries if e["dir"] == "c2a"]
-    a2c = [e for e in entries if e["dir"] == "a2c"]
-
-    # A11: c2a initialize MUST be seq 1
-    if not c2a:
-        print("failure_reason: negative: no c2a frames in timeline")
-        return 1
-    first_c2a = c2a[0]
-    if first_c2a.get("seq") != 1:
-        print(f"failure_reason: negative: c2a initialize seq is {first_c2a.get('seq')}, expected 1")
-        return 1
-    init_req = first_c2a["frame"]
-    if init_req.get("method") != "initialize":
-        print(f"failure_reason: negative: first c2a frame is {init_req.get('method')!r}, not initialize")
-        return 1
-
-    # params must deep-equal the fixture JSON
-    params = init_req.get("params")
-    fixture = json.loads(FIXTURE.read_text())
-    if params != fixture:
-        print("failure_reason: negative: params != fixture")
-        return 1
-
-    # Runtime identity pins
-    rid_path = dirpath / "runtime-identity.json"
-    rid = json.loads(rid_path.read_text())
-    pin_checks = [
-        ("agent_realpath", pins.PINNED_AGENT_REALPATH),
-        ("agent_entrypoint_sha256", pins.PINNED_AGENT_ENTRYPOINT_SHA256),
-        ("agent_interpreter_realpath", pins.PINNED_AGENT_INTERPRETER_REALPATH),
-        ("agent_interpreter_sha256", pins.PINNED_AGENT_INTERPRETER_SHA256),
-    ]
-    for field, expected in pin_checks:
-        if rid.get(field) != expected:
-            print(f"failure_reason: negative: {field} mismatch")
-            return 1
-    if rid.get("python_dont_write_bytecode") is not True:
-        print("failure_reason: negative: python_dont_write_bytecode is not True")
-        return 1
-
-    # A11: observed response is the a2c frame whose id == the request id
-    req_id = init_req.get("id")
-    matching_responses = [e for e in a2c if e["frame"] is not None and e["frame"].get("id") == req_id]
-    if not matching_responses:
-        print("failure_reason: negative: no agent response captured")
-        return 1
-
-    # Classify the request params
-    verdict = classify_request(params)
+    # The validator passed — classify the request params.
+    first_line = (dirpath / "timeline.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    params = json.loads(first_line)["frame"]["params"]
+    schema = load_schema(fixtures_dir / "acp-schema-v1.json")
+    verdict = classify_request(params, schema)
     print(verdict)
-    # Print the observed agent response
-    resp = matching_responses[0]["frame"]
-    print(_format_observed(resp))
+    print(observed)
     return 1
 
 
-def _check_response_directory(dirpath: Path) -> int:
+def _check_response_directory(dirpath: Path, fixtures_dir: Path = None) -> int:
     """Classify the a2c response's result for `response <dir>`.
 
     Reads the timeline, finds the a2c frame whose id == the request id,
@@ -258,23 +159,37 @@ def _check_response_directory(dirpath: Path) -> int:
         print(f"error code={code} message={message}")
         return 1
     result = resp.get("result")
-    verdict = classify_response(result)
+    fixtures_dir = fixtures_dir or (HERE / "fixtures")
+    schema = load_schema(fixtures_dir / "acp-schema-v1.json")
+    verdict = classify_response(result, schema)
     print(verdict)
     return 0 if verdict == "ok" else 1
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] not in ("request", "response"):
-        print("usage: check_initialize.py request|response <file|dir>", file=sys.stderr)
+    # Parse --fixtures-dir (optional, default proofs/S0-01/fixtures)
+    args = list(argv[1:])
+    fixtures_dir = HERE / "fixtures"
+    if "--fixtures-dir" in args:
+        idx = args.index("--fixtures-dir")
+        if idx + 1 >= len(args):
+            print("usage: check_initialize.py request|response <file|dir> [--fixtures-dir <dir>]",
+                  file=sys.stderr)
+            return 64
+        fixtures_dir = Path(args[idx + 1])
+        args = args[:idx] + args[idx + 2:]
+    if len(args) != 2 or args[0] not in ("request", "response"):
+        print("usage: check_initialize.py request|response <file|dir> [--fixtures-dir <dir>]",
+              file=sys.stderr)
         return 64  # A10: usage error exits 64 (EX_USAGE), never 2
-    kind, path = argv[1], Path(argv[2])
+    kind, path = args[0], Path(args[1])
     # directory mode: probe capture (existing dir, or path with no file extension)
     if path.is_dir() or (not path.exists() and path.suffix not in (".json", ".jsonl")):
         # 6-verify F13: wrap directory mode so any exception → failure_reason: malformed evidence
         try:
             if kind == "request":
-                return _check_request_directory(path)
-            return _check_response_directory(path)
+                return _check_request_directory(path, fixtures_dir)
+            return _check_response_directory(path, fixtures_dir)
         except Exception as exc:
             print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
             return 1
@@ -283,7 +198,8 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError, json.JSONDecodeError, IndexError) as exc:
         print(f"input error: {exc}", file=sys.stderr)
         return 64  # A10: input errors are usage-class
-    verdict = classify_request(payload) if kind == "request" else classify_response(payload)
+    schema = load_schema(fixtures_dir / "acp-schema-v1.json")
+    verdict = classify_request(payload, schema) if kind == "request" else classify_response(payload, schema)
     print(verdict)
     return 0 if verdict == "ok" else 1
 

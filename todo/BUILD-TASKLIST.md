@@ -77,6 +77,27 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-06 sync (S0-01 repair checkpoint 5: round-5 lanes D5/N5/B5 CLOSED, A5 PARTIAL → lane A5b; still REVIEW-PENDING, nothing minted):**
+Four build lanes ran in parallel against brief r5 (amendments A19-A28 + every open round-4 verifier finding). D5
+(backend: configured-token credential screen at the record boundary, GET-with-body rejected without a second-request
+parse, raw-body arm gated, dead `_CHUNKED` gone, `--slow-delay` validated, CI pyflakes over proofs/S0-01 + tests; 69
+passed ×2), N5 (probe/classifier: the shared negative validator wired into `check_initialize` with `--fixtures-dir`,
+interpreter identity sampled from the CHILD after the first a2c byte, invalid timeout/framedir → probe_error + exit 64,
+two-sided spawned_at, the tautological runner test replaced by a real UNMET run, seven inexact nostr assertions made
+exact; 158 passed ×2), B5 (tee: progress-gated drain proven past the pipe buffer, `drained` covers both directions,
+lock mutant red 5/5, directional write errors gated both ways, `stdin_reader_done` value asserted, framedir exit 64; 60
+passed ×2) closed every assigned finding with a revert-red. A5 (checker) implemented A19-A26 (4-field scans + owned-pid
+closure + identity binding + survivors, frame classes + response cardinality, sequence guard without dedup, startup
+pins, two-users ingress concurrency, TWO POSTs per window) but left NOT DONE: the audit's four verbatim mutations as
+named tests, the mutation harness (not run), the suite at ~500 s (target 200 s), dedicated tests for the header/symlink/
+stderr screens and the two structural guards, and it wrote a presence-gated `if mentions_dir is not None` around the
+new two-users assertion (AF-AP-40 recurrence 2) — all → lane A5b. Boundary edits: `pc_post.sh` derives its pinned
+paths from pins.py (a duplicated pin literal in the producer), dead `_format_observed` removed from check_initialize,
+build-loop skill carries the pin-shape lesson from checkpoint 4. Bridge DOWN (task #38): every PC-side step is
+`NOT run here`; the round-5 fixtures come from RUNNING the real producers locally (A27). NEXT: A5b + verify lanes
+(N5/B5/D5 now, checker + whole tree after A5b) → PC re-capture → golden pin → mutation suite on the REAL bundle →
+canonical runner on pc-bridge → ledger → owner review. PROOF-STATUS stays REVIEW-PENDING (AF-AP-32).
+
 **2026-09-05/06 sync (S0-01 repair checkpoint 4: repair rounds 2-4 landed, Codex audit of `08a4a7d` filed, sentrux adopted; still REVIEW-PENDING, nothing minted):**
 Three adversarial-verify rounds ran BEFORE any re-capture (AF-AP-36 working as designed): round 1 left 36/47 checker
 mutants alive and 40+ hostile bundles passing; the round-4 suite kills 85/85 of the round-2 harness. Landed in the tree:

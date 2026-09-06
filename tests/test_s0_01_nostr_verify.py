@@ -229,7 +229,8 @@ class TestTamperFails:
         ev["content"] = "tampered"
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("id mismatch: computed ")
+        expected_id = nv.event_id(ev)
+        assert reason == f"id mismatch: computed {expected_id}"
 
     def test_tampered_sig(self, fixture_events):
         """Flip a byte in the signature — reaches schnorr_verify."""
@@ -240,7 +241,7 @@ class TestTamperFails:
         ok, reason = nv.verify_event(ev)
         assert not ok
         # Exact reason depends on the mutation; it always starts with "verification failed:"
-        assert reason.startswith("verification failed:"), (
+        assert reason == "verification failed: R.y is odd", (
             f"expected a verification failure reason, got {reason!r}"
         )
 
@@ -257,7 +258,7 @@ class TestTamperFails:
         ev["id"] = nv.event_id(ev)
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("verification failed:") or reason == "pubkey not on curve", (
+        assert reason == "verification failed: R.y is odd", (
             f"expected a schnorr-level failure, got {reason!r}"
         )
 
@@ -268,14 +269,16 @@ class TestTamperFails:
         ev["pubkey"] = identities["user2"]
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("id mismatch: computed ")
+        expected_id = nv.event_id(ev)
+        assert reason == f"id mismatch: computed {expected_id}"
 
     def test_tampered_tags(self, fixture_events):
         ev = copy.deepcopy(fixture_events[0])
         ev["tags"] = [["h", "bogus"]]
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("id mismatch: computed ")
+        expected_id = nv.event_id(ev)
+        assert reason == f"id mismatch: computed {expected_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -377,14 +380,14 @@ class TestVerifyEventNeverRaises:
         ev["content"] = "test \ud800 surrogate"
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("malformed event: UnicodeEncodeError:")
+        assert reason == "malformed event: UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 209: surrogates not allowed"
 
     def test_tags_non_serializable(self, fixture_events):
         ev = copy.deepcopy(fixture_events[0])
         ev["tags"] = [[object()]]
         ok, reason = nv.verify_event(ev)
         assert not ok
-        assert reason.startswith("malformed event: TypeError:")
+        assert reason == "malformed event: TypeError: Object of type object is not JSON serializable"
 
     def test_event_is_not_dict(self):
         ok, reason = nv.verify_event("not a dict")
