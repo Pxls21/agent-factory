@@ -41,6 +41,7 @@ from pins import (  # noqa: E402
     PINNED_AGENT_REALPATH,
     PINNED_BASELINE_DIGESTS,
     PINNED_BUZZ_ACP_EXE_REALPATH,
+    PINNED_BASELINE_GZ_SHA256,
     PINNED_BUZZ_ACP_SHA256, PINNED_CLIENT_PROTOCOL_VERSION,
     PINNED_HOME, PINNED_HERMES_HOME,
     PINNED_IDLE_TIMEOUT, PINNED_IDLE_TIMEOUT_ARG,
@@ -369,9 +370,12 @@ def bundle(_session_bundle, tmp_path, monkeypatch):
     yield dest
 
 
-def _run(root: Path):
-    return subprocess.run([sys.executable, str(CHECKER), str(root)],
-                          capture_output=True, text=True, timeout=60, env=os.environ.copy())
+def _run(root: Path, fixtures_dir: Path = None):
+    cmd = [sys.executable, str(CHECKER)]
+    if fixtures_dir is not None:
+        cmd.extend(["--fixtures-dir", str(fixtures_dir)])
+    cmd.append(str(root))
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=os.environ.copy())
 
 
 def _check(bndl):
@@ -402,9 +406,11 @@ def test_passing_v2_bundle(bundle):
     assert "negative: observed:" in result
 
 
-def test_cli_pass_path_fails_on_golden_pin(bundle):
-    """The subprocess does NOT have monkeypatched PINNED_GOLDEN_SHA256=None, so golden not pinned."""
-    r = _run(bundle)
+def test_cli_pass_path_fails_on_golden_pin(bundle, _session_bundle):
+    """The subprocess does NOT have monkeypatched PINNED_GOLDEN_SHA256=None, so golden not pinned.
+    A15: --fixtures-dir points the subprocess at the synthetic identities (not the tracked ones)."""
+    _, _, tmp_fixtures = _session_bundle
+    r = _run(bundle, fixtures_dir=tmp_fixtures)
     assert r.returncode == 1
     assert r.stdout.strip() == "failure_reason: golden: golden not pinned"
 
@@ -1601,7 +1607,7 @@ def test_manifest_ts_order(bundle):
     Set pre timestamp AFTER spawned_at_utc (05:30:00) to violate pre < start."""
     for leg in LEGS:
         lines = (bundle / "golden" / leg / "manifest-pre.summary").read_text().splitlines()
-        lines[3] = "2026-09-05T06:00:00Z"  # after spawned_at_utc 05:30:00
+        lines[len(MANIFEST_TREES)] = "2026-09-05T06:00:00Z"  # after spawned_at_utc 05:30:00
         (bundle / "golden" / leg / "manifest-pre.summary").write_text("\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -1614,7 +1620,7 @@ def test_manifest_post_after_tl(bundle):
     timeline entry. spawned_at=05:00:00.050, last entry ~05:00:01.100.
     05:00:01Z = 05:00:01.000 is after spawned_at but before last entry."""
     lines = (bundle / "golden" / "run-1" / "manifest-post.summary").read_text().splitlines()
-    lines[3] = "2026-09-05T05:00:01Z"
+    lines[len(MANIFEST_TREES)] = "2026-09-05T05:00:01Z"
     (bundle / "golden" / "run-1" / "manifest-post.summary").write_text("\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -1872,3 +1878,219 @@ def test_utc_backwards(bundle):
 def test_pass_line_has_negative_prefix(bundle):
     result = cc.check_bundle(bundle)
     assert "; negative: observed:" in result
+
+
+# === Real-producer conformance (item 3) ===
+# Runs per-leg checks against REAL captured legs from the PC when available.
+# The ONLY expected failures are:
+#   - tee_sha256 mismatch (tee sha differs from the committed tee — expected)
+#   - manifest timestamps not pre < start < post (legs captured before the launcher fix)
+# For the negative leg, agent_interpreter_realpath mismatch is expected (V2: probe
+# reads /proc/<pid>/exe after proc.wait()).
+# Skip when the directory is absent.
+
+_REAL_LEG_DIR = Path("/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/realleg/golden")
+
+_POSITIVE_LEGS = ("run-1", "cancel", "shutdown", "two-users")
+
+
+def _run_check_safe(fn, *args, **kwargs):
+    """Run a checker function, return (True, result) on PASS, (False, reason) on Failure."""
+    try:
+        return (True, fn(*args, **kwargs))
+    except cc.Failure as f:
+        return (False, str(f))
+    except cc.Deferred as d:
+        return (False, f"deferred: {d}")
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_timeline(leg):
+    """Real-producer: timeline loads and passes check_timeline."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, leg)
+    ok, result = _run_check_safe(cc.check_timeline, entries, leg, leg_dir)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_initialize_frames(leg):
+    """Real-producer: initialize frames pass."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, leg)
+    c2a, a2c = cc.check_timeline(entries, leg, leg_dir)
+    ok, result = _run_check_safe(cc.check_initialize_frames, c2a, a2c, leg)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_runtime_identity(leg):
+    """Real-producer: runtime identity fails ONLY on tee_sha256 mismatch."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    ok, result = _run_check_safe(cc.check_runtime_identity, leg_dir, leg)
+    if ok:
+        pass  # no failure at all — acceptable
+    else:
+        assert "tee_sha256 mismatch" in result, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_env(leg):
+    """Real-producer: env passes."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    identities = json.loads((P / "fixtures" / "identities.json").read_text())
+    ok, result = _run_check_safe(cc.check_env, leg_dir, leg, identities)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_mentions(leg):
+    """Real-producer: mentions pass."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, leg)
+    identities = json.loads((P / "fixtures" / "identities.json").read_text())
+    ok, result = _run_check_safe(cc.check_mentions, leg_dir, leg, identities, entries)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_route(leg):
+    """Real-producer: route check passes."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, leg)
+    ok, result = _run_check_safe(cc.check_route, leg_dir, leg, entries)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_config_echo(leg):
+    """Real-producer: config echo passes."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    ok, result = _run_check_safe(cc.check_config_echo, leg_dir, leg)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_manifests(leg):
+    """Real-producer: manifests fail ONLY on timestamps not pre < start < post."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    baseline = P / "evidence" / "golden" / "manifests" / "manifest-baseline.txt.gz"
+    if not baseline.exists():
+        pytest.skip("baseline manifest absent")
+    ok, result = _run_check_safe(cc.check_manifests, leg_dir, leg, baseline,
+                                  PINNED_BASELINE_GZ_SHA256)
+    if ok:
+        pass  # no failure — acceptable
+    else:
+        assert "manifest timestamps not pre < start < post" in result, \
+            f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_process_evidence(leg):
+    """Real-producer: process evidence passes."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    ok, result = _run_check_safe(cc.check_process_evidence, leg_dir, leg)
+    assert ok, f"unexpected failure: {result}"
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_buzzacp_log(leg):
+    """Real-producer: buzzacp log passes."""
+    leg_dir = _REAL_LEG_DIR / leg
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    ok, result = _run_check_safe(cc.check_buzzacp_log, leg_dir, leg)
+    assert ok, f"unexpected failure: {result}"
+
+
+def test_real_leg_prompt_turn():
+    """Real-producer: prompt turn passes for run-1 and shutdown."""
+    for leg in ("run-1", "shutdown"):
+        leg_dir = _REAL_LEG_DIR / leg
+        if not leg_dir.is_dir():
+            pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+        entries = cc._load_timeline_raw(leg_dir, leg)
+        c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+        a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+        ok, result = _run_check_safe(cc.check_prompt_turn, c2a, a2c, leg, entries)
+        assert ok, f"unexpected failure in {leg}: {result}"
+
+
+def test_real_leg_cancel():
+    """Real-producer: cancel leg passes check_cancel."""
+    leg_dir = _REAL_LEG_DIR / "cancel"
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, "cancel")
+    c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+    a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+    ok, result = _run_check_safe(cc.check_cancel, entries, c2a, a2c, leg_dir)
+    assert ok, f"unexpected failure: {result}"
+
+
+def test_real_leg_shutdown():
+    """Real-producer: shutdown leg passes check_shutdown."""
+    leg_dir = _REAL_LEG_DIR / "shutdown"
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, "shutdown")
+    c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+    a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+    ok, result = _run_check_safe(cc.check_shutdown, entries, c2a, a2c, leg_dir)
+    assert ok, f"unexpected failure: {result}"
+
+
+def test_real_leg_two_users():
+    """Real-producer: two-users leg passes check_two_users."""
+    leg_dir = _REAL_LEG_DIR / "two-users"
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, "two-users")
+    c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
+    a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
+    identities = json.loads((P / "fixtures" / "identities.json").read_text())
+    ok, result = _run_check_safe(cc.check_two_users, c2a, a2c, entries, identities)
+    assert ok, f"unexpected failure: {result}"
+
+
+def test_real_leg_negative():
+    """Real-producer: negative leg fails on interpreter fields (V2 known issue)."""
+    neg_dir = _REAL_LEG_DIR / "negative"
+    if not neg_dir.is_dir():
+        pytest.skip(f"real negative directory absent: {_REAL_LEG_DIR}")
+    ok, result = _run_check_safe(cc.check_negative, neg_dir)
+    if ok:
+        pass  # if it passes after N4 fixes the probe, that is fine
+    else:
+        # V2: probe reads /proc/<pid>/exe after proc.wait() -> interpreter fields null
+        assert "agent_interpreter_realpath mismatch" in result, \
+            f"unexpected failure: {result}"
+
+
+def test_real_leg_normalize_timeline():
+    """Real-producer: normalize_timeline produces a non-empty result for run-1."""
+    leg_dir = _REAL_LEG_DIR / "run-1"
+    if not leg_dir.is_dir():
+        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    entries = cc._load_timeline_raw(leg_dir, "run-1")
+    n = cc.normalize_timeline(entries)
+    assert len(n) > 0

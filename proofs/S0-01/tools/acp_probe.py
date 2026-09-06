@@ -81,7 +81,6 @@ def main():
 
     framedir = os.environ["S0_01_FRAMEDIR"]
     agent = os.environ["S0_01_AGENT"]
-    timeout = float(os.environ.get("ACP_PROBE_TIMEOUT", "30"))
     os.makedirs(framedir, exist_ok=True)
 
     # Load the malformed initialize fixture
@@ -101,12 +100,38 @@ def main():
     # Wrap the main body so any exception lands in runtime-identity.json
     # under probe_error + exit 1 with a one-line stderr message (M3)
     try:
+        # A16: validate ACP_PROBE_TIMEOUT inside the wrapped body — must be
+        # a finite float > 0, else probe_error + exit 64
+        timeout_raw = os.environ.get("ACP_PROBE_TIMEOUT", "30")
+        try:
+            timeout = float(timeout_raw)
+        except (ValueError, OverflowError):
+            print(f"acp_probe: ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}",
+                  file=sys.stderr)
+            raise SystemExit(64)
+        import math
+        if not math.isfinite(timeout) or timeout <= 0:
+            print(f"acp_probe: ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}",
+                  file=sys.stderr)
+            raise SystemExit(64)
+
         proc = subprocess.Popen(
             [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
         # Sample spawned_at_utc right after Popen (M2: not after proc.wait)
         spawned_at_utc = _utc_now()
+
+        # V2/A16: sample readlink(/proc/<pid>/exe) and its sha right after Popen,
+        # BEFORE any wait — the /proc/<pid>/exe link disappears after the process exits
+        agent_realpath = os.path.realpath(agent)
+        interp_realpath = None
+        interp_sha256 = None
+        try:
+            interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
+            interp_sha256 = _sha256_file(interp_realpath)
+        except (OSError, IOError):
+            pass
 
         # Start draining stderr in a background thread
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
@@ -218,16 +243,6 @@ def main():
         stderr_thread.join(timeout=3)
 
         agent_exit_code = proc.returncode
-
-        # Resolve agent identity
-        agent_realpath = os.path.realpath(agent)
-        interp_realpath = None
-        interp_sha256 = None
-        try:
-            interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
-            interp_sha256 = _sha256_file(interp_realpath)
-        except (OSError, IOError):
-            pass
 
     except SystemExit:
         raise

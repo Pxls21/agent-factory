@@ -58,15 +58,19 @@ PINNED_AGENT_CAPABILITIES = {
     "sessionCapabilities": {"fork": {}, "list": {}, "resume": {}},
 }
 
-# --- source immutability: recursive sha256 manifests of the three pinned trees ---
-MANIFEST_TREES = ("hermes-agent", "buzz", "acp")  # header order in the manifest body
+# --- source immutability (manifest v2.2): typed entries `<sha256> <f|l> <mode4>  ./path[ -> target]` of the
+# FOUR trees that constitute the executed code (hermes-agent editable install, buzz incl. the buzz-acp
+# binary, the acp schema tree, and the hermes venv with the acp SDK + deps); symlinks listed with targets ---
+MANIFEST_LINE_RE = r"^[0-9a-f]{64} [fl] [0-7]{4}  \./.+$"
+MANIFEST_TREES = ("hermes-agent", "buzz", "acp", "venv-hermes")  # header order in the manifest body (v2.2: the venv is executed code too)
 PINNED_BASELINE_DIGESTS = {
-    "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb",
-    "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
-    "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
+    "hermes-agent": "6087cfeffd1026f3f26752bd32eb8943bd63c733b3429fadbb1a1b9f31f4d777",
+    "buzz": "a5614f3c1d904c145c26d5a49e670fa49fc9075b9e0e39ccbed93bc2771e1e95",
+    "acp": "0039fb357d4170d9e67313210b8933726a6b82ea2f2882e17164c08c41603122",
+    "venv-hermes": "c181f47c563cdc6edfbe4550352ac0cfc7221760e2ddf0396d6efed2a39ee523",
 }
-PINNED_BASELINE_FILE_COUNTS = {"hermes-agent": 11340, "buzz": 11612, "acp": 269}
-PINNED_BASELINE_GZ_SHA256 = "a3f5732eceab3da83382a75ac1e78a02c431727f0d48d862428ccd08f48ead68"
+PINNED_BASELINE_FILE_COUNTS = {"hermes-agent": 11340, "buzz": 11665, "acp": 270, "venv-hermes": 10653}  # entries incl. symlinks (v2.2)
+PINNED_BASELINE_GZ_SHA256 = "e8fd76015376f2db4ffca2c4f0fd632743df6ce6655df6986729122e9214381d"
 
 # --- legs, mentions, models ---
 LEGS = ("run-1", "run-2", "cancel", "shutdown", "two-users")
@@ -90,3 +94,24 @@ UPSTREAM_WINDOW_SLACK_S = 5.0    # backend received_at vs the prompt/terminal fr
 # --- the frozen golden: set to the sha256 of golden/golden.jsonl by the coordinator AFTER the
 # first accepted v2 capture; None means "no golden pinned yet" and the checker FAILS on it. ---
 PINNED_GOLDEN_SHA256 = None
+
+# --- the negative control (audit 2026-09-05 P1 "negative execution"): the pinned hermes-acp REJECTS a
+# malformed initialize (missing protocolVersion) with this JSON-RPC error — observed live on the PC
+# 2026-09-05 17:57Z; the negative leg requires exactly this response, never a mere classification. ---
+PINNED_NEGATIVE_ERROR_CODE = -32602
+PINNED_NEGATIVE_ERROR_MESSAGE = "Invalid params"
+NEGATIVE_REQUIRED_FILES = frozenset({"timeline.jsonl", "runtime-identity.json", "env.json", "agent-stderr.txt"})
+NEGATIVE_IDENTITY_KEYS = frozenset({
+    "probe_path", "probe_sha256", "agent_argv", "agent_realpath", "agent_entrypoint_sha256",
+    "agent_child_pid", "agent_interpreter_realpath", "agent_interpreter_sha256",
+    "python_dont_write_bytecode", "spawned_at_utc", "agent_exit_code",
+})
+
+# --- two-users leg (audit 2026-09-05 P1 "sequential users"): the production config BUZZ_ACP_AGENTS=1
+# (docs/03) plus hermes' steering_supported=false make turn execution SERIAL by construction; the leg
+# proves concurrency at the ingress (both mentions pending before the first terminal) and asserts the
+# serialization it observes. These log lines must appear exactly once in the leg's buzzacp.log. ---
+PINNED_LOG_LINES_TWO_USERS = (
+    'agent initialized agent=0 name="hermes-agent" steering_supported=false',
+    "agent_pool_ready agents=1",
+)

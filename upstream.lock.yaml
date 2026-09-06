@@ -120,3 +120,17 @@ not_selected_as_stock_runtimes:
   pi:
     repository: https://github.com/earendil-works/pi.git
     commit: e266507b606b9552fa277252644054afd4384b11
+
+# Advisory sandbox tooling (never in the production spine, never a gate) — pinned by release digest.
+advisory_tooling:
+  sentrux:
+    repository: https://github.com/sentrux/sentrux.git
+    release_tag: v0.5.7
+    binary_asset: sentrux-linux-x86_64
+    binary_sha256: 3237f80fe20d54aad4deefa8a143f0d60543bb5d2d6ad891eb42432f155725a6
+    grammars_asset: grammars-linux-x86_64.tar.gz
+    grammars_sha256: 8849f1eb07df3f6d4ea1ed422d8dee4b9b79a250682fa5646675dae466554454
+    license: MIT
+    role: advisory_architecture_health_sensor_for_build_lanes
+    adopted: "2026-09-05 (owner decision; same standing as slopo)"
+    telemetry: "opted out (sentrux analytics off); update check disabled (SENTRUX_DEV=1); grammars from the pinned tarball only"

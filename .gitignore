@@ -32,3 +32,6 @@ vendor/
 
 # PC-lane scratch (spawn path writes per-lane logs/reports here; ported from the source repo)
 /.lanes/
+
+# sentrux (advisory instrument) runtime: composed scan tree + baseline — regenerable, never committed
+/.sentrux-runtime/

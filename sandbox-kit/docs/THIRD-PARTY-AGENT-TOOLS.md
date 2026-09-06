@@ -84,3 +84,33 @@ parts with the SAME durability boundary (git push) and no coverage of our actual
 recovery, verify_cell.sh). STEAL-LATER: entity-frontmatter + FTS5 hybrid retrieval as a
 wiki-context.py matcher upgrade IF keyword-injection misses become a felt pain (rebuildable
 index, no daemon required). Re-evaluate only after a concrete retrieval-miss incident.
+
+## sentrux (github.com/sentrux/sentrux) — ADOPTED 2026-09-05 as the fifth, ADVISORY instrument (owner decision)
+
+What it is: a Rust single binary (MIT) that scores a codebase's architecture health (modularity,
+acyclicity, depth, equality, redundancy → one 0–10000 signal), enforces `.sentrux/rules.toml`
+(cycles, cyclomatic complexity, function length, god files, layers, boundaries) and compares a
+saved baseline before/after a session (`gate --save` / `gate`). The owner's trading-system agent
+adopted it the same day with the same framing: a distinct axis from the quartet (which answers
+reachability), an advisory sensor for whether a lane made the structure worse.
+
+How it is wired here: `scripts/sentrux_review.sh check|save|compare` (never a gate; `--strict`
+passes the tool's exit through for CI use only). It scans a COPY of the project code directories
+(proofs/ scripts/ tests/ harness-ports/ spikes/ src/) under `.sentrux-runtime/tree` because the
+tool's walker skips hidden dirs and .gitignore'd paths but not `sandbox-kit/`, does not follow
+symlinks, and reads no custom ignore file. Rules: `.sentrux/rules.toml` (tracked). Pins:
+`upstream.lock.yaml` → `advisory_tooling.sentrux` (release v0.5.7, binary and grammar-tarball
+sha256; `scripts/setup.sh` installs by digest). Telemetry: `sentrux analytics off`
+(`~/.sentrux/telemetry_opt_out`); update check disabled with `SENTRUX_DEV=1`; grammars unpacked
+from the pinned tarball with `SENTRUX_SKIP_GRAMMAR_DOWNLOAD=1` set by the wrapper.
+
+Audit notes (read from the source at main 6f8ff3c and the v0.5.7 binary, 2026-09-05): the free
+tier caps the MCP `check_rules` tool at 3 rules and up-sells root-cause diagnostics ("Sentrux Pro",
+a `pro.dylib` loaded from `~/.sentrux/license.key`) — the MCP server is NOT used here, only the
+CLI; the binary phones home for update checks (`api.sentrux.dev/version`) unless `SENTRUX_DEV=1`;
+language grammars are fetched at first run from the GitHub release unless pre-unpacked; `plugin
+add` downloads from a separate releases repo (never used here). Python import resolution on this
+tree is weak (4 of 390 import specs resolved on 2026-09-05), so the dependency-graph metrics
+(coupling, cycles, distance from main sequence) are near-empty for this repo today — the live
+signal is complexity and function length. Last upstream commit on main: 2026-03-18 (six months
+before adoption); releases continued to v0.5.7.

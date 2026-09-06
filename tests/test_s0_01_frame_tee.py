@@ -795,3 +795,307 @@ class TestMissingEnvVars:
         )
         assert proc.returncode == 64
         assert proc.stderr.decode().strip() == "frame_tee: S0_01_AGENT is not set"
+
+
+# ---------------------------------------------------------------------------
+# V6: overflow float (1e999) + all non-finite tokens take the raw/raw_b64
+# branch.  Uses the checker's strict loader (json.loads with parse_constant=
+# raise) as the oracle to verify the timeline is safe.
+# ---------------------------------------------------------------------------
+class TestNonFiniteRawBranchWithOracle:
+    """V6 closure: NaN, Infinity, -Infinity, and 1e999 all take the raw/raw_b64
+    branch in BOTH directions.  The checker's strict loader is the oracle — every
+    timeline line the tee writes must pass json.loads(line, parse_constant=raise).
+    Reverting parse_float=_reject_overflow_float makes the 1e999 case write
+    Infinity into the timeline, which the oracle then rejects."""
+
+    @pytest.mark.parametrize("input_text", [
+        '{"a":NaN}',
+        '{"a":Infinity}',
+        '{"a":-Infinity}',
+        '{"a":1e999}',
+    ])
+    def test_both_directions_raw_and_oracle(self, tmp_path, input_text):
+        agent_code = textwrap.dedent("""\
+            import sys
+            for line in sys.stdin:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            sys.exit(0)
+        """)
+        input_bytes = (input_text + "\n").encode("utf-8")
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 0
+
+        # c2a direction
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) == 1
+        assert c2a[0]["frame"] is None
+        assert c2a[0]["raw"] == input_text
+        assert base64.b64decode(c2a[0]["raw_b64"]) == input_bytes
+
+        # a2c direction (agent echoes)
+        a2c = [e for e in result["timeline"] if e["dir"] == "a2c"]
+        assert len(a2c) == 1
+        assert a2c[0]["frame"] is None
+        assert a2c[0]["raw"] == input_text
+        assert base64.b64decode(a2c[0]["raw_b64"]) == input_bytes
+
+        # Oracle: checker's strict loader accepts every timeline line
+        def _raise_on_nonfinite(c):
+            raise ValueError("non-finite: %s" % c)
+        tl_path = result["framedir"] / "timeline.jsonl"
+        for raw_line in tl_path.read_bytes().split(b"\n"):
+            if raw_line.strip():
+                json.loads(raw_line, parse_constant=_raise_on_nonfinite)
+
+    def test_normal_float_still_parsed(self, tmp_path):
+        """A normal float like 1.5 must still parse as a frame, not go raw."""
+        agent_code = textwrap.dedent("""\
+            import sys
+            sys.stdin.read()
+            sys.exit(0)
+        """)
+        input_bytes = b'{"a":1.5}\n'
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 0
+        c2a = [e for e in result["timeline"] if e["dir"] == "c2a"]
+        assert len(c2a) == 1
+        assert c2a[0]["frame"] == {"a": 1.5}
+
+
+# ---------------------------------------------------------------------------
+# P2: tee-status.json — drain tracking and exit code discipline
+# ---------------------------------------------------------------------------
+class TestTeeStatus:
+    def test_normal_run_writes_status(self, tee_run):
+        """A normal tee run writes tee-status.json with correct counters."""
+        status_path = tee_run["framedir"] / "tee-status.json"
+        assert status_path.exists(), "tee-status.json not written"
+        status = json.loads(status_path.read_text())
+        assert status["drained"] is True
+        assert status["recorded_c2a"] == 3
+        assert status["recorded_a2c"] == 5
+        assert status["forwarded_c2a"] == status["recorded_c2a"]
+        assert status["forwarded_a2c"] == status["recorded_a2c"]
+        assert status["write_errors"] == []
+        assert status["exit_code"] == 42
+        assert status["agent_returncode"] == 42
+
+    def test_status_keys_exact(self, tee_run):
+        """tee-status.json has exactly the required key set."""
+        status = json.loads((tee_run["framedir"] / "tee-status.json").read_text())
+        expected_keys = {
+            "agent_returncode", "drained", "stdin_reader_done",
+            "recorded_c2a", "recorded_a2c",
+            "forwarded_c2a", "forwarded_a2c",
+            "write_errors", "exit_code",
+        }
+        assert set(status.keys()) == expected_keys
+
+    def test_slow_client_all_forwarded(self, tmp_path):
+        """Client delays reading 6 s, agent emits 1000 small frames.
+        All frames fit in the pipe buffer, so all are forwarded.
+        drained=true, exit = agent rc."""
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            for i in range(1000):
+                f = {"jsonrpc": "2.0", "method": "c", "params": {"i": i}}
+                sys.stdout.write(json.dumps(f, separators=(",", ":")) + "\\n")
+                sys.stdout.flush()
+            sys.exit(7)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        tee_proc = subprocess.Popen(
+            [sys.executable, str(TEE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        tee_proc.stdin.close()
+        # Delay reading for 6 seconds — pipe buffer holds the small frames
+        time.sleep(6)
+        tee_proc.wait(timeout=15)
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+
+        assert tee_proc.returncode == 7
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["forwarded_a2c"] == 1000
+        assert status["recorded_a2c"] == 1000
+        assert status["drained"] is True
+        assert status["write_errors"] == []
+        assert status["exit_code"] == 7
+
+    def test_never_reading_client(self, tmp_path):
+        """Client NEVER reads -> exit 70, drained false, forwarded < recorded."""
+        # Agent emits large frames to overflow the pipe buffer, then exits via timer
+        agent_code = textwrap.dedent("""\
+            import os, sys, threading
+            def kill_self():
+                os._exit(3)
+            timer = threading.Timer(2, kill_self)
+            timer.daemon = True
+            timer.start()
+            payload = "x" * 10000
+            for i in range(200):
+                line = '{"i":' + str(i) + ',"p":"' + payload + '"}\\n'
+                try:
+                    sys.stdout.buffer.write(line.encode())
+                    sys.stdout.buffer.flush()
+                except (BrokenPipeError, OSError):
+                    break
+            os._exit(3)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        # stdout=PIPE but we never read — the pipe buffer fills up
+        tee_proc = subprocess.Popen(
+            [sys.executable, str(TEE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        tee_proc.stdin.close()
+        tee_proc.wait(timeout=20)  # 2s agent + 5s stall + margin
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+
+        assert tee_proc.returncode == 70
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["drained"] is False
+        assert status["forwarded_a2c"] < status["recorded_a2c"]
+        assert status["exit_code"] == 70
+        assert status["write_errors"] == []
+
+    def test_write_failure_exit_70(self, tmp_path):
+        """Recording write failure (ENOSPC via /dev/full) -> exit 70, error listed."""
+        if not os.path.exists("/dev/full"):
+            pytest.skip("/dev/full not available")
+        agent_code = textwrap.dedent("""\
+            import sys, json
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        # Symlink timeline.jsonl to /dev/full to cause ENOSPC on every write
+        os.symlink("/dev/full", str(framedir / "timeline.jsonl"))
+
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        input_bytes = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            separators=(",", ":")).encode() + b"\n"
+        proc = subprocess.run(
+            [sys.executable, str(TEE)],
+            input=input_bytes,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert proc.returncode == 70
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["exit_code"] == 70
+        assert len(status["write_errors"]) > 0
+
+    def test_grandchild_holds_stdout_drained(self, tmp_path):
+        """Grandchild holding stdout: drained true, bounded exit, status written."""
+        agent_code = textwrap.dedent("""\
+            import subprocess, sys, json
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        input_bytes = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            separators=(",", ":")).encode() + b"\n"
+
+        tee_proc = subprocess.Popen(
+            [sys.executable, str(TEE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        start = time.monotonic()
+        tee_proc.stdin.write(input_bytes)
+        tee_proc.stdin.close()
+        tee_proc.wait(timeout=12)
+        elapsed = time.monotonic() - start
+        tee_proc.stdout.close()
+        tee_proc.stderr.close()
+
+        assert tee_proc.returncode == 0
+        assert elapsed < 10
+        status = json.loads((framedir / "tee-status.json").read_text())
+        assert status["drained"] is True
+        assert status["forwarded_a2c"] == status["recorded_a2c"]
+        assert status["write_errors"] == []
+        assert status["exit_code"] == 0
+
+    def test_signal_exit_status(self, tmp_path):
+        """SIGTERM agent: agent_returncode is raw (-15), exit_code is 143."""
+        agent_code = textwrap.dedent("""\
+            import os, signal, sys, json
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            os.kill(os.getpid(), signal.SIGTERM)
+        """)
+        input_bytes = json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            separators=(",", ":")).encode() + b"\n"
+        result = _run_tee(tmp_path, agent_code, input_bytes)
+        assert result["proc"].returncode == 143
+        status = json.loads((result["framedir"] / "tee-status.json").read_text())
+        assert status["agent_returncode"] == -15
+        assert status["exit_code"] == 143
+        assert status["drained"] is True

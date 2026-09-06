@@ -241,6 +241,25 @@ def main():
         print("config echo:", " ".join(echo.values()))
         if echo.get("max_turn") != f"max_turn={pins.PINNED_MAX_TURN}" or echo.get("idle_timeout") != f"idle_timeout={pins.PINNED_IDLE_TIMEOUT}":
             print("CONFIG ECHO MISMATCH — the checker will fail this leg")
+    # owned process set at READY: the closure of buzz-acp's descendants from the live process table
+    # (recomputed in memory; only owned lines are persisted by pc_post.sh)
+    rows = []
+    for line in subprocess.run(["ps", "-eo", "pid,ppid", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            rows.append((int(parts[0]), int(parts[1])))
+    owned = {pid}
+    changed = True
+    while changed:
+        changed = False
+        for cpid, cppid in rows:
+            if cppid in owned and cpid not in owned:
+                owned.add(cpid); changed = True
+    for key in ("tee_pid", "agent_child_pid"):
+        if isinstance(ident.get(key), int) and ident[key] not in owned:
+            print(f"OWNED-SET DRIFT: identity {key}={ident[key]} not in the descendant closure {sorted(owned)}")
+    open(os.path.join(FD, "owned-pids.json"), "w").write(json.dumps({"buzz_acp_pid": pid, "owned": sorted(owned), "taken_at": "ready"}, indent=1) + "\n")
+    print("owned pids at ready:", sorted(owned))
     open(os.path.join(FD, "launch.ready"), "w").write(utc_now() + "\n")
     print(f"[{utc_now()}] ready; waiting for buzz-acp exit")
     sys.stdout.flush()

@@ -91,3 +91,20 @@ exactly load_ohlcv/load_ohlcv_aligned/load_batch + 1 direct test).
   `codebase-memory-mcp cli list_projects` · `ls /root/venv-crg/bin/`. Tick-cadence
   time pressure is exactly when unverified single-instrument claims slip out.
 - These are DEV-PLANE tools: never in the gate spine, never a production dependency.
+
+## sentrux — the fifth, ADVISORY instrument (architecture health; adopted 2026-09-05)
+
+Axis: not reachability (the quartet) but STRUCTURE — did a lane make the codebase worse?
+Invocations (sandbox; the wrapper composes a copy of proofs/ scripts/ tests/ harness-ports/ spikes/
+src/ under `.sentrux-runtime/tree` because the tool cannot exclude `sandbox-kit/` any other way):
+- `bash scripts/sentrux_review.sh save` — baseline BEFORE a build lane (kept in `.sentrux-runtime/`).
+- `bash scripts/sentrux_review.sh compare` — after the lane: quality / coupling / cycles / god-files
+  delta and "No degradation detected" or the degradation list. Paste the block into the verify brief.
+- `bash scripts/sentrux_review.sh check` — the `.sentrux/rules.toml` report (max_cycles 0, max_cc 25,
+  max_fn_lines 100). Long single-pass validators (the S0-01 checker functions) exceed max_cc by
+  design — a report line, not a verdict.
+Never a gate: the wrapper exits 0; `--strict` exists only for a future CI opt-in.
+Blind spot (measured 2026-09-05): Python import resolution here is 4/390 specs, so coupling, cycles
+and the main-sequence distance are near-empty on this tree; complexity/length are the live signal.
+Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.sentrux`;
+`sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §sentrux. Missing binary → `scripts/setup.sh`.

@@ -2,11 +2,8 @@
 (no timeline.jsonl), the runner's positive leg must DEFER (exit 2, no result.json).
 The negative leg also defers today (the negative/ directory does not exist yet).
 
-This test invokes scripts/proof-runner for real (F11: not just the leg cmd directly)
-and asserts the runner's failure_reason match rule (per-line substring over stdout+stderr)
-by feeding it a two-line stdout fixture.
-
-The runner matches failure_reason with:
+V3: this test invokes scripts/proof-runner run --proof <id> --venue sandbox --root <root>
+for real (not just the leg cmd directly). The runner matches failure_reason with:
     next((line for line in (stdout + "\\n" + stderr).splitlines() if expected_reason in line), None)
 This is a per-line substring match. check_initialize's two-line output
 (classification on line 1, observed on line 2) is compatible because the expected
@@ -38,35 +35,41 @@ def test_positive_leg_defers_on_v1_evidence(tmp_path):
     (no timeline.jsonl). The runner must NOT create a result.json."""
     root = _copy(tmp_path)
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
-    pos = next(l for l in spec["legs"] if l["leg"] == "positive")
+    pos = next(leg for leg in spec["legs"] if leg["leg"] == "positive")
     r = subprocess.run(
         [sys.executable, *pos["cmd"][1:]],
         cwd=root, capture_output=True, text=True, timeout=120,
     )
     assert r.returncode == 2, f"expected exit 2 (deferred), got {r.returncode}: {r.stdout}"
-    assert r.stdout.startswith("deferred:")
+    assert r.stdout.strip() == "deferred: v2 evidence not captured"
     assert not (root / "proofs" / "S0-01" / "result.json").exists()
 
 
-def test_negative_leg_defers_via_runner(tmp_path):
-    """F11: invoke the CANONICAL proof-runner for the negative leg.
-    The negative/ directory does not exist yet, so check_initialize exits 2 (deferred),
-    and the runner raises Deferred (exits 2) preserving any existing artifact.
-    The runner's stdout carries the Deferred message."""
+def test_runner_defers_s0_01_via_real_runner(tmp_path):
+    """V3(a): invoke proof-runner run --proof S0-01 --venue sandbox --root <root>
+    for real → exact deferral stderr and exit 2. The positive leg defers first."""
     root = _copy(tmp_path)
     r = subprocess.run(
-        [sys.executable, str(RUNNER), "--proof", "S0-01", "--venue", "sandbox"],
-        cwd=root, capture_output=True, text=True, timeout=120,
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-01",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=120,
     )
-    # The runner itself exits 2 on Deferred (raised by the capability-unavailable branch)
-    assert r.returncode == 2, f"expected exit 2 (deferred), got {r.returncode}: stdout={r.stdout} stderr={r.stderr}"
+    assert r.returncode == 2, (
+        f"expected exit 2 (deferred), got {r.returncode}: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert r.stderr.strip() == (
+        "deferred: S0-01 positive capability-unavailable (exit 2); "
+        "artifact preserved — run on a capable venue"
+    )
+    assert not (root / "proofs" / "S0-01" / "result.json").exists()
 
 
 def test_negative_leg_defers_directly(tmp_path):
     """The negative leg cmd defers today (directory absent) with the exact text."""
     root = _copy(tmp_path)
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
-    neg = next(l for l in spec["legs"] if l["leg"] == "negative")
+    neg = next(leg for leg in spec["legs"] if leg["leg"] == "negative")
     r = subprocess.run(
         [sys.executable, *neg["cmd"][1:]],
         cwd=root, capture_output=True, text=True, timeout=60,
@@ -80,8 +83,8 @@ def test_spec_structure_matches_brief(tmp_path):
     and the positive leg still runs check_acp_conformance.py."""
     root = _copy(tmp_path)
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
-    pos = next(l for l in spec["legs"] if l["leg"] == "positive")
-    neg = next(l for l in spec["legs"] if l["leg"] == "negative")
+    pos = next(leg for leg in spec["legs"] if leg["leg"] == "positive")
+    neg = next(leg for leg in spec["legs"] if leg["leg"] == "negative")
     assert pos["cmd"][1].endswith("check_acp_conformance.py")
     assert neg["cmd"] == ["python3", "proofs/S0-01/check_initialize.py", "request",
                           "proofs/S0-01/evidence/golden/negative"]
@@ -107,3 +110,110 @@ def test_runner_failure_reason_matching():
     )
     assert observed is not None
     assert observed == "protocol-violation: missing required initialize field"
+
+
+def test_runner_records_negative_leg_met_s0_99(tmp_path):
+    """V3(b): a synthetic proof S0-99 with one negative leg running a tiny script
+    that prints 'protocol-violation: missing required initialize field' then
+    'observed: ...' and exits 1. The runner records the leg as met (exit 0,
+    result.json created with negative_control populated), proving the per-line
+    substring match rule against the REAL runner, not a re-implementation.
+
+    The spec schema restricts proof_id to S0-01..S0-12 and requires both positive
+    and negative legs, so the tmp copy's schemas are widened to accept S0-99."""
+    root = _copy(tmp_path)
+
+    # Widen spec schema to accept S0-99
+    spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
+    spec_schema = json.loads(spec_schema_path.read_text())
+    spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
+
+    # Widen result schema to accept S0-99
+    result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
+    result_schema = json.loads(result_schema_path.read_text())
+    result_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    result_schema_path.write_text(json.dumps(result_schema, indent=2))
+
+    # Add S0-99 to registry (strip comment lines first, same as the runner)
+    reg_path = root / "proofs" / "registry.yaml"
+    reg_text = "\n".join(
+        line for line in reg_path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    reg = json.loads(reg_text)
+    reg["proofs"].append({
+        "proof_id": "S0-99",
+        "title": "synthetic runner-match test",
+        "classification": "execution_proof",
+        "wave": 0,
+        "spike_dependencies": [],
+        "required_negative_controls": 1,
+        "assertion_count": 1,
+    })
+    reg_path.write_text(json.dumps(reg, indent=2))
+
+    # Create synthetic proof dir
+    s99 = root / "proofs" / "S0-99"
+    s99.mkdir(parents=True)
+
+    # Positive leg: exits 0 (passes)
+    pos_script = s99 / "pass.py"
+    pos_script.write_text("import sys; sys.exit(0)\n")
+
+    # Negative leg: prints the expected two-line output and exits 1
+    neg_script = s99 / "checker.py"
+    neg_script.write_text(
+        "import sys\n"
+        'print("protocol-violation: missing required initialize field")\n'
+        'print("observed: error code=-32602 message=Invalid params")\n'
+        "sys.exit(1)\n"
+    )
+
+    spec = {
+        "proof_id": "S0-99",
+        "legs": [
+            {
+                "leg": "positive",
+                "cmd": [sys.executable, "proofs/S0-99/pass.py"],
+                "cwd": ".",
+                "timeout_s": 30,
+                "expect": {"exit_code": 0},
+            },
+            {
+                "leg": "negative",
+                "cmd": [sys.executable, "proofs/S0-99/checker.py"],
+                "cwd": ".",
+                "timeout_s": 30,
+                "expect": {
+                    "exit_code": 1,
+                    "failure_reason": "protocol-violation: missing required initialize field",
+                },
+            },
+        ],
+    }
+    (s99 / "spec.json").write_text(json.dumps(spec, indent=2))
+
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-99",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, (
+        f"runner failed: rc={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+
+    # The runner creates result.json
+    result_path = s99 / "result.json"
+    assert result_path.exists(), "result.json not created"
+    result = json.loads(result_path.read_text())
+    assert result["proof_id"] == "S0-99"
+    # The negative_control block must be populated with the observed failure_reason
+    assert result["negative_control"] is not None
+    assert result["negative_control"]["observed_failure_reason"] == \
+        "protocol-violation: missing required initialize field"
+    # The run for the negative leg must carry the failure_reason
+    neg_run = next(run for run in result["runs"] if run["leg"] == "negative")
+    assert neg_run["exit_code"] == 1
+    assert neg_run["failure_reason"] == \
+        "protocol-violation: missing required initialize field"

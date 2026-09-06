@@ -6,10 +6,53 @@ set -u
 BASE=/home/rocco/s0-01-pinned; L=$BASE/.markers; SEC=$BASE/.secrets; REPO=/home/rocco/agent-factory
 FD=$(cat $L/current-framedir); RECDIR=$(cat $L/backend-recdir)
 BA=$BASE/buzz/target/release/buzz-acp; TEE=$REPO/proofs/S0-01/tools/frame_tee.py; HERMES=$BASE/.venv-hermes/bin/hermes-acp
-scan() { ps -eo pid,ppid,cmd --no-headers | grep -E "s0-01-pinned|frame_tee|proofs/S0-01" | grep -vE " grep -E | ps -eo " ; }
+# Process observation v2.2 (audit P1 "cleanup and identity"): the OWNED set is the full descendant closure
+# of the buzz-acp pid (generic children included), computed from the complete process table IN MEMORY
+# (never persisted — other users' argv stay private). Persisted lines: `<pid> <ppid> <etimes> <cmd>` for
+# every owned process plus every line naming a pinned path; owned-pids.json lists the closure.
+scan() { python3 - "$1" "$2" <<'PY'
+import json, subprocess, sys
+mode, fd = sys.argv[1], sys.argv[2]
+BA = "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp"
+PINNED = (BA, "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp", "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py")
+rows = []
+for line in subprocess.run(["ps", "-eo", "pid,ppid,etimes,args", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
+    parts = line.split(None, 3)
+    if len(parts) < 4:
+        continue
+    rows.append((int(parts[0]), int(parts[1]), int(parts[2]), parts[3]))
+try:
+    buzz = int(open(f"{fd}/buzz-acp.pid").read().strip())
+except (OSError, ValueError):
+    buzz = None
+if mode == "after":
+    try:
+        ready = json.load(open(f"{fd}/owned-pids.json"))
+        owned = set(ready.get("owned", []))
+    except (OSError, ValueError):
+        owned = set()
+    if buzz is not None and any(r[0] == buzz for r in rows):
+        owned.add(buzz)
+        changed = True
+        while changed:
+            changed = False
+            for pid, ppid, _, _ in rows:
+                if ppid in owned and pid not in owned:
+                    owned.add(pid); changed = True
+    json.dump({"buzz_acp_pid": buzz, "owned": sorted(owned), "taken_at": "ready+after"}, open(f"{fd}/owned-pids.json", "w"), indent=1)
+else:
+    owned = set(json.load(open(f"{fd}/owned-pids.json"))["owned"])
+keep = [r for r in rows if r[0] in owned or any(p in r[3] for p in PINNED)]
+keep = [r for r in keep if "pc_post.sh" not in r[3] and " ps -eo " not in r[3]]
+with open(f"{fd}/process-scan-{mode}.txt", "w") as out:
+    for pid, ppid, et, cmd in sorted(keep):
+        out.write(f"{pid} {ppid} {et} {cmd}\n")
+print(f"scan-{mode}: {len(keep)} lines, owned={len(owned)}")
+PY
+}
 mask() { tr -d "\000" < "$1" | sed -E "s#\x1b\[[0-9;]*m##g; s#[a-f0-9]{64}#<HEX>#g"; }
 echo "=== post: $FD ==="
-scan > "$FD/process-scan-after.txt" || true; echo "scan-after lines: $(wc -l < "$FD/process-scan-after.txt")"
+scan after "$FD"
 mask "$FD/buzzacp.raw.log" > "$FD/buzzacp.log"
 curl -s -m 5 http://127.0.0.1:20201/healthz > "$FD/backend-healthz-after.json"
 B0=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["records"])' "$FD/backend-healthz-before.json")
@@ -34,8 +77,9 @@ if [ ! -f "$FD/buzz-acp.exit" ]; then
     echo "teardown: buzz-acp pid $PID not alive or not the pinned exe" | tee "$FD/teardown.txt"
   fi
   for i in $(seq 1 30); do [ -f "$FD/buzz-acp.exit" ] && break; sleep 0.5; done
-  sleep 1; scan > "$FD/process-scan-teardown.txt" || true; echo "scan-teardown lines: $(wc -l < "$FD/process-scan-teardown.txt")"
+  sleep 1; scan teardown "$FD"
 fi
+[ -f "$FD/process-scan-teardown.txt" ] || scan teardown "$FD"
 echo "buzz-acp.exit: $(cat "$FD/buzz-acp.exit" 2>/dev/null || echo '<absent>')"
 # --- leak guard: no secret VALUE may appear in any evidence file (pattern file is 0600, never printed) ---
 PAT=$(mktemp -p "$L" .leakpat.XXXXXX); chmod 600 "$PAT"

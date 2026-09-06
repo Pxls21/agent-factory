@@ -6,11 +6,13 @@ Writes into S0_01_FRAMEDIR:
   frames-client-to-agent.jsonl - byte-identical relay c2a
   frames-agent-to-client.jsonl - byte-identical relay a2c
   runtime-identity.json        - written once at spawn (includes tee_pid)
+  tee-status.json              - written at exit (drain status, counters, exit code)
 """
 import base64
 import datetime
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -59,6 +61,14 @@ def _reject_nan_inf(constant):
     raise ValueError(constant)
 
 
+def _reject_overflow_float(s):
+    """parse_float callback: reject non-finite floats (e.g. 1e999 -> inf)."""
+    val = float(s)
+    if not math.isfinite(val):
+        raise ValueError(s)
+    return val
+
+
 def main():
     framedir = os.environ.get("S0_01_FRAMEDIR")
     if framedir is None:
@@ -105,13 +115,24 @@ def main():
     seq = [0]
     tl = open(os.path.join(framedir, "timeline.jsonl"), "ab")
 
+    # --- shared counters for tee-status (P2 drain tracking) ---
+    state = {
+        "recorded_c2a": 0, "recorded_a2c": 0,
+        "forwarded_c2a": 0, "forwarded_a2c": 0,
+        "write_errors": [],
+        "stdin_reader_done": False,
+    }
+
     def pump_fd(fd, dst, direction, dir_path, close_dst):
         """Pump from a raw file descriptor (stdin fd 0)."""
         df = open(dir_path, "ab")
         try:
             for line in _read_lines_from_fd(fd):
-                df.write(line)
-                df.flush()
+                try:
+                    df.write(line)
+                    df.flush()
+                except OSError as e:
+                    state["write_errors"].append("directional %s: %s" % (direction, e))
                 text = line.decode("utf-8", errors="replace")
                 if text.endswith("\r\n"):
                     stripped = text[:-2]
@@ -120,15 +141,20 @@ def main():
                 else:
                     stripped = text
                 try:
-                    frame = json.loads(stripped, parse_constant=_reject_nan_inf)
+                    frame = json.loads(stripped, parse_constant=_reject_nan_inf,
+                                       parse_float=_reject_overflow_float)
                     with lock:
                         t_utc = _utc_now()
                         t_mono = time.monotonic_ns()
                         seq[0] += 1
                         entry = {"seq": seq[0], "dir": direction, "t_utc": t_utc,
                                  "t_mono_ns": t_mono, "frame": frame}
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
+                        state["recorded_%s" % direction] += 1
                 except (json.JSONDecodeError, ValueError):
                     raw_b64 = base64.b64encode(line).decode("ascii")
                     with lock:
@@ -138,15 +164,22 @@ def main():
                         entry = {"seq": seq[0], "dir": direction, "t_utc": t_utc,
                                  "t_mono_ns": t_mono, "frame": None,
                                  "raw": stripped, "raw_b64": raw_b64}
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
+                        state["recorded_%s" % direction] += 1
                 try:
                     dst.write(line)
                     dst.flush()
+                    state["forwarded_%s" % direction] += 1
                 except BrokenPipeError:
                     break
         finally:
             df.close()
+            if direction == "c2a":
+                state["stdin_reader_done"] = True
             if close_dst:
                 try:
                     dst.close()
@@ -161,8 +194,11 @@ def main():
                 line = src.readline()
                 if not line:
                     break
-                df.write(line)
-                df.flush()
+                try:
+                    df.write(line)
+                    df.flush()
+                except OSError as e:
+                    state["write_errors"].append("directional %s: %s" % (direction, e))
                 text = line.decode("utf-8", errors="replace")
                 if text.endswith("\r\n"):
                     stripped = text[:-2]
@@ -171,15 +207,20 @@ def main():
                 else:
                     stripped = text
                 try:
-                    frame = json.loads(stripped, parse_constant=_reject_nan_inf)
+                    frame = json.loads(stripped, parse_constant=_reject_nan_inf,
+                                       parse_float=_reject_overflow_float)
                     with lock:
                         t_utc = _utc_now()
                         t_mono = time.monotonic_ns()
                         seq[0] += 1
                         entry = {"seq": seq[0], "dir": direction, "t_utc": t_utc,
                                  "t_mono_ns": t_mono, "frame": frame}
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
+                        state["recorded_%s" % direction] += 1
                 except (json.JSONDecodeError, ValueError):
                     raw_b64 = base64.b64encode(line).decode("ascii")
                     with lock:
@@ -189,11 +230,16 @@ def main():
                         entry = {"seq": seq[0], "dir": direction, "t_utc": t_utc,
                                  "t_mono_ns": t_mono, "frame": None,
                                  "raw": stripped, "raw_b64": raw_b64}
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            state["write_errors"].append("timeline %s seq %d: %s" % (direction, seq[0], e))
+                        state["recorded_%s" % direction] += 1
                 try:
                     dst.write(line)
                     dst.flush()
+                    state["forwarded_%s" % direction] += 1
                 except BrokenPipeError:
                     break
         finally:
@@ -218,18 +264,56 @@ def main():
     to.start()
     # Wait for the agent process to exit
     proc.wait()
-    # Bounded join on stdout pump (V-c F9: grandchild holding stdout cannot stall the tee)
-    to.join(timeout=5)
+    # Progress-based drain of stdout pump (P2: keep forwarding while making progress;
+    # give up only after a 5 s stall with no bytes forwarded)
+    stall_timeout = 5
+    last_fwd = state["forwarded_a2c"]
+    stall_start = time.monotonic()
+    while to.is_alive():
+        time.sleep(0.1)
+        current_fwd = state["forwarded_a2c"]
+        if current_fwd > last_fwd:
+            last_fwd = current_fwd
+            stall_start = time.monotonic()
+        elif time.monotonic() - stall_start >= stall_timeout:
+            break
     # The stdin pump is a daemon thread reading a raw fd; it will exit when we do.
-    # No join needed — os._exit below terminates cleanly.
-    tl.close()
+    try:
+        tl.close()
+    except OSError:
+        pass
+    # Determine drain status: forwarded everything recorded?
+    drained = (state["forwarded_a2c"] == state["recorded_a2c"])
     # Compute exit code (V-c F8: signal-killed agent -> 128+signal)
     rc = proc.returncode
     if rc < 0:
-        code = 128 + (-rc)
+        agent_code = 128 + (-rc)
     else:
-        code = rc
-    os._exit(code)
+        agent_code = rc
+    # Exit code: agent's code when drained and error-free, else 70 (EX_SOFTWARE)
+    if drained and not state["write_errors"]:
+        exit_code = agent_code
+    else:
+        exit_code = 70
+    # Write tee-status.json (best-effort)
+    status = {
+        "agent_returncode": proc.returncode,
+        "drained": drained,
+        "stdin_reader_done": state["stdin_reader_done"],
+        "recorded_c2a": state["recorded_c2a"],
+        "recorded_a2c": state["recorded_a2c"],
+        "forwarded_c2a": state["forwarded_c2a"],
+        "forwarded_a2c": state["forwarded_a2c"],
+        "write_errors": list(state["write_errors"]),
+        "exit_code": exit_code,
+    }
+    try:
+        with open(os.path.join(framedir, "tee-status.json"), "w") as f:
+            json.dump(status, f, indent=2)
+            f.write("\n")
+    except OSError:
+        pass
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

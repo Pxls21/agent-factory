@@ -71,8 +71,10 @@ def _make_capture_dir(tmp_path, *, params=None, a2c_frame=None, rid=None,
         (d / "runtime-identity.json").write_text(json.dumps(actual_rid, indent=2))
 
     if has_env:
-        (d / "env.json").write_text('{"HERMES_HOME": "/home/rocco/s0-01-pinned/.hermes-home", '
-                                    '"PYTHONDONTWRITEBYTECODE": "1"}\n')
+        (d / "env.json").write_text(json.dumps({
+            "HERMES_HOME": pins.PINNED_HERMES_HOME,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }) + "\n")
 
     if has_stderr:
         (d / "agent-stderr.txt").write_text("")
@@ -97,7 +99,7 @@ def test_file_mode_response_fixture():
     """response <fixture> classifies the fixture (no protocolVersion) as a protocol violation."""
     r = _run("response", FIXTURE)
     assert r.returncode == 1
-    assert r.stdout.strip().startswith("protocol-violation:")
+    assert r.stdout.strip() == "protocol-violation: missing required initialize field"
 
 
 # ---- Directory mode: deferral ----
@@ -136,6 +138,14 @@ def test_response_dir_defers_when_no_timeline(tmp_path):
 
 # ---- Directory mode request: validation failures (each names negative:) ----
 
+def _valid_env_json():
+    """Return valid env.json content for tests that need to get past the env check."""
+    return json.dumps({
+        "HERMES_HOME": pins.PINNED_HERMES_HOME,
+        "PYTHONDONTWRITEBYTECODE": "1",
+    })
+
+
 def test_request_dir_fails_no_c2a_frames(tmp_path):
     """Empty timeline (only a2c) fails with the right failure_reason."""
     d = tmp_path / "capture"
@@ -144,7 +154,7 @@ def test_request_dir_fails_no_c2a_frames(tmp_path):
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "result": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
@@ -159,7 +169,7 @@ def test_request_dir_fails_first_not_initialize(tmp_path):
              "t_mono_ns": 1000000, "frame": {"jsonrpc": "2.0", "id": 0, "method": "session/new", "params": {}}}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
@@ -358,11 +368,11 @@ def test_malformed_timeline_non_json(tmp_path):
     d.mkdir()
     (d / "timeline.jsonl").write_text("not json\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip().startswith("failure_reason: malformed evidence: JSONDecodeError:")
+    assert r.stdout.strip() == "failure_reason: malformed evidence: JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
 
 
 def test_malformed_timeline_missing_dir_key(tmp_path):
@@ -372,11 +382,11 @@ def test_malformed_timeline_missing_dir_key(tmp_path):
     entry = {"seq": 1, "frame": {"method": "initialize"}}
     (d / "timeline.jsonl").write_text(json.dumps(entry) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip().startswith("failure_reason: malformed evidence: KeyError:")
+    assert r.stdout.strip() == "failure_reason: malformed evidence: KeyError: 'dir'"
 
 
 # ---- A11: required files ----
@@ -419,11 +429,11 @@ def test_request_dir_fails_nan_in_timeline(tmp_path):
         '{"seq":1,"dir":"c2a","t_utc":"2026-09-05T00:00:00.000000Z","t_mono_ns":NaN,"frame":null}\n'
     )
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
-    assert r.stdout.strip().startswith("failure_reason: malformed evidence: ValueError:")
+    assert r.stdout.strip() == "failure_reason: malformed evidence: ValueError: NaN/Infinity not allowed in timeline: 'NaN'"
 
 
 # ---- A11: seq == 1 check ----
@@ -438,7 +448,7 @@ def test_request_dir_fails_seq_not_1(tmp_path):
              "t_mono_ns": 1000000, "frame": c2a_frame}
     (d / "timeline.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
     (d / "runtime-identity.json").write_text("{}")
-    (d / "env.json").write_text("{}")
+    (d / "env.json").write_text(_valid_env_json())
     (d / "agent-stderr.txt").write_text("")
     r = _run("request", d)
     assert r.returncode == 1
@@ -464,3 +474,70 @@ def test_request_dir_fails_fixture_absent(tmp_path):
     )
     assert r2.returncode == 1
     assert r2.stdout.strip() == "failure_reason: negative: fixtures/neg-malformed-initialize.json absent"
+
+
+# ---- V12: input-error exit 64, not 2 (mutant C02 killer) ----
+
+def test_input_error_non_initialize_frame_exits_64(tmp_path):
+    """V12: file mode with a non-initialize frame exits 64 (input error, not deferred).
+    This kills the mutant that reverts the exit code from 64 back to 2."""
+    f = tmp_path / "session_new.jsonl"
+    f.write_text(json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {}
+    }) + "\n")
+    r = _run("request", f)
+    assert r.returncode == 64
+    assert r.stderr.strip() == "input error: frame method is 'session/new', not 'initialize'"
+
+
+# ---- V13: extra subdirectory rejected (not just files) ----
+
+def test_request_dir_fails_extra_subdirectory(tmp_path):
+    """V13: extra subdirectory under the capture dir is a Failure, same as extra files.
+    This kills the mutant that filters with is_file() instead of iterdir()."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    (d / "sneaky_subdir").mkdir()
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: unexpected file sneaky_subdir"
+
+
+# ---- V14: env.json HERMES_HOME and PYTHONDONTWRITEBYTECODE validated ----
+
+def test_request_dir_fails_hermes_home_mismatch(tmp_path):
+    """V14/A17: env.json with wrong HERMES_HOME → failure."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    # Overwrite env.json with wrong HERMES_HOME
+    (d / "env.json").write_text(json.dumps({
+        "HERMES_HOME": "/wrong/path",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }))
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: HERMES_HOME mismatch"
+
+
+def test_request_dir_fails_pythondontwritebytecode_mismatch(tmp_path):
+    """V14/A17: env.json with wrong PYTHONDONTWRITEBYTECODE → failure."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    # Overwrite env.json with correct HERMES_HOME but wrong bytecode
+    (d / "env.json").write_text(json.dumps({
+        "HERMES_HOME": pins.PINNED_HERMES_HOME,
+        "PYTHONDONTWRITEBYTECODE": "0",
+    }))
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: PYTHONDONTWRITEBYTECODE mismatch"
+
+
+def test_request_dir_fails_empty_env_json(tmp_path):
+    """V14/A17: env.json with {} (no keys) → HERMES_HOME mismatch."""
+    a2c = {"jsonrpc": "2.0", "id": 0, "result": {"protocolVersion": 1, "agentCapabilities": {}}}
+    d = _make_capture_dir(tmp_path, a2c_frame=a2c)
+    (d / "env.json").write_text("{}")
+    r = _run("request", d)
+    assert r.returncode == 1
+    assert r.stdout.strip() == "failure_reason: negative: HERMES_HOME mismatch"

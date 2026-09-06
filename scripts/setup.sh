@@ -133,6 +133,37 @@ else
   warn "codebase-memory-mcp: no binary and no install.sh"
 fi
 
+# sentrux (owner decision 2026-09-05): the FIFTH, ADVISORY code-intel instrument — architecture-health
+# scorer + before/after gate for build lanes (`scripts/sentrux_review.sh`; never a gate). Pinned by
+# digest (upstream.lock.yaml `advisory_tooling.sentrux`); telemetry off; no update check (SENTRUX_DEV=1
+# is set by the wrapper); grammars unpacked from the pinned per-release tarball, never auto-downloaded.
+SENTRUX_VER="v0.5.7"
+SENTRUX_BIN_SHA="3237f80fe20d54aad4deefa8a143f0d60543bb5d2d6ad891eb42432f155725a6"
+SENTRUX_GRAM_SHA="8849f1eb07df3f6d4ea1ed422d8dee4b9b79a250682fa5646675dae466554454"
+if [ -x /root/.local/bin/sentrux ] && [ "$(sha256sum /root/.local/bin/sentrux | cut -d" " -f1)" = "$SENTRUX_BIN_SHA" ]; then
+  ok "sentrux $SENTRUX_VER present (digest verified)"
+else
+  TMPD=$(mktemp -d)
+  if curl -fsSL -m 300 -o "$TMPD/sentrux" "https://github.com/sentrux/sentrux/releases/download/$SENTRUX_VER/sentrux-linux-x86_64" \
+     && [ "$(sha256sum "$TMPD/sentrux" | cut -d" " -f1)" = "$SENTRUX_BIN_SHA" ]; then
+    install -m 0755 "$TMPD/sentrux" /root/.local/bin/sentrux && ok "sentrux $SENTRUX_VER installed (digest verified)"
+  else
+    warn "sentrux: download or digest check failed (network?) — advisory instrument unavailable this session"
+  fi
+  rm -rf "$TMPD"
+fi
+if [ -x /root/.local/bin/sentrux ] && [ ! -d /root/.sentrux/plugins/python ]; then
+  TMPD=$(mktemp -d)
+  if curl -fsSL -m 300 -o "$TMPD/grammars.tgz" "https://github.com/sentrux/sentrux/releases/download/$SENTRUX_VER/grammars-linux-x86_64.tar.gz" \
+     && [ "$(sha256sum "$TMPD/grammars.tgz" | cut -d" " -f1)" = "$SENTRUX_GRAM_SHA" ]; then
+    mkdir -p /root/.sentrux/plugins && tar xzf "$TMPD/grammars.tgz" -C /root/.sentrux/plugins && ok "sentrux grammars unpacked (digest verified)"
+  else
+    warn "sentrux grammars: download or digest check failed"
+  fi
+  rm -rf "$TMPD"
+fi
+[ -x /root/.local/bin/sentrux ] && SENTRUX_DEV=1 SENTRUX_SKIP_GRAMMAR_DOWNLOAD=1 /root/.local/bin/sentrux analytics off >/dev/null 2>&1 || true
+
 # GitNexus: pinned global install (1.6.10). --ignore-scripts avoids the
 # @ladybugdb/core postinstall network fetch racing npm's extract; the explicit
 # rebuild then runs it once, deterministically.

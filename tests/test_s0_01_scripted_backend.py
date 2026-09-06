@@ -219,7 +219,9 @@ def test_nonempty_record_dir_refuses_without_flag(tmp_path):
          "--token-file", str(tf), "--record-dir", str(rec)],
         capture_output=True, text=True, timeout=10)
     assert proc.returncode == 2
-    assert "non-empty" in proc.stderr
+    expected_msg = (f"scripted_backend: --record-dir {rec} is non-empty; "
+                    f"pass --allow-existing-records to override\n")
+    assert proc.stderr == expected_msg
 
 
 def test_allow_existing_records_flag_overrides(tmp_path):
@@ -295,7 +297,9 @@ def test_record_dir_as_file_refuses_startup(tmp_path):
          "--token-file", str(tf), "--record-dir", str(recfile)],
         capture_output=True, text=True, timeout=10)
     assert proc.returncode == 2
-    assert "not a directory" in proc.stderr
+    expected_msg = (f"scripted_backend: --record-dir {recfile} "
+                    f"exists but is not a directory\n")
+    assert proc.stderr == expected_msg
 
 
 def test_missing_token_file_named_refusal(tmp_path):
@@ -306,9 +310,9 @@ def test_missing_token_file_named_refusal(tmp_path):
          "--record-dir", str(tmp_path / "rec")],
         capture_output=True, text=True, timeout=10)
     assert proc.returncode == 2
-    assert "not found" in proc.stderr
-    # Must NOT be a Python traceback
-    assert "Traceback" not in proc.stderr
+    missing_path = tmp_path / "nonexistent.env"
+    expected_msg = f"scripted_backend: token file not found: {missing_path}\n"
+    assert proc.stderr == expected_msg
 
 
 def test_chunked_post_rejected_with_411(backend):
@@ -517,6 +521,283 @@ def test_token_file_mode_guard(tmp_path, mode, accept):
         expected_msg = (f"scripted_backend: token file mode is {oct(mode)}, "
                         f"must have no group/other bits (0o600 or 0o400)")
         assert expected_msg in proc.stderr
+
+
+# -- V5/S23: POST-arm leak record mutant killer --------------------------------
+
+def test_post_arm_leak_record_does_not_contain_token(backend):
+    """V5/S23: the POST arm of the credential-leak must produce a sanitized record
+    (path=None, headers={}) with the token absent from the written bytes."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    body = {"model": "s0-01-pong", "messages": [{"role": "user", "content": "hello"}]}
+    status, data = _call(backend["port"], "POST",
+                         f"/v1/chat/completions?key={TOKEN}", body)
+    assert status == 400
+    assert json.loads(data)["error"]["message"] == "credential in unexpected location"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes, \
+        "S23 mutant: the bearer token appears in the POST-arm leak record"
+    last = json.loads(last_bytes)
+    assert last["path"] is None
+    assert last["headers"] == {}
+    assert last["body"] == {"credential_in_unexpected_location": True}
+
+
+def test_post_arm_leak_via_header_redacted(backend):
+    """V5/S23: credential in a non-Authorization header on a POST -> sanitized record."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    body = {"model": "s0-01-pong", "messages": []}
+    status, data = _call(backend["port"], "POST", "/v1/chat/completions",
+                         body, extra_headers={"X-Trace-Id": TOKEN})
+    assert status == 400
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes
+
+
+# -- V10/S27b: sentinel mutant killers -----------------------------------------
+
+def test_body_literal_bad_cl_is_not_sentinel(backend):
+    """V10/S27b: a POST whose JSON body is the string 'BAD_CL' must be processed
+    normally — not matched by the _BAD_CL sentinel. With bare-string sentinels
+    and == comparison, this body matches and skips recording."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    body_bytes = b'"BAD_CL"'
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{backend['port']}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body_bytes)}\r\n"
+        f"\r\n"
+    ).encode() + body_bytes
+    resp = _raw_request(backend["port"], raw)
+    # Must be the normal error path (record written), not the _BAD_CL path (no record)
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after > count_before, \
+        "S27b mutant: body literal 'BAD_CL' matched the sentinel, no record written"
+    # The response should carry the JSON error, not a bare 400+close
+    assert b"messages: Expected array" in resp
+
+
+def test_body_literal_chunked_string_is_not_sentinel(backend):
+    """V10/S27: a POST whose JSON body is the string 'CHUNKED' must not collide
+    with the _CHUNKED sentinel and must be processed as a normal request."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    body_bytes = b'"CHUNKED"'
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{backend['port']}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body_bytes)}\r\n"
+        f"\r\n"
+    ).encode() + body_bytes
+    resp = _raw_request(backend["port"], raw)
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after > count_before, \
+        "S27 mutant: body literal 'CHUNKED' matched the sentinel"
+    assert b"messages: Expected array" in resp
+
+
+# -- V11/S28: handler timeout mutant killer ------------------------------------
+
+def test_handler_timeout_bounds_incomplete_body(backend):
+    """V11/S28: timeout=30 prevents an incomplete body from blocking forever.
+    A client sending headers + partial body but keeping the connection open must
+    see the connection close within ~35s (the handler timeout). If timeout is
+    removed (S28 mutant), this hangs indefinitely."""
+    port = backend["port"]
+    s = socket.socket()
+    s.settimeout(60)
+    s.connect(("127.0.0.1", port))
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: 1048576\r\n"
+        f"\r\n"
+    ).encode() + b'{"model":"s0-01-pong"}'
+    t0 = time.time()
+    s.sendall(raw)
+    # Keep connection open — no SHUT_WR — the server must timeout at 30s
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+    except (socket.timeout, ConnectionResetError, BrokenPipeError, OSError):
+        pass
+    elapsed = time.time() - t0
+    s.close()
+    assert 20 < elapsed < 50, \
+        f"expected ~30s (handler timeout), got {elapsed:.1f}s"
+    # Server must still be alive
+    status, _ = _call(port, "GET", "/healthz", token=None)
+    assert status == 200
+
+
+# -- V17/A18: port range validation --------------------------------------------
+
+@pytest.mark.parametrize("port", [-1, 0, 65536, 70000])
+def test_port_outside_valid_range_refuses_exit_2(tmp_path, port):
+    """V17/A18: --port outside 1..65535 -> named refusal exit 2."""
+    tf = tmp_path / "token.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(port),
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec")],
+        capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 2
+    expected_msg = (f"scripted_backend: --port {port} "
+                    f"is outside the valid range 1-65535\n")
+    assert proc.stderr == expected_msg
+
+
+# -- V18/A18: short body -> 400 + zero records ---------------------------------
+
+def test_short_body_returns_400_no_record(backend):
+    """V18/A18: a body shorter than declared Content-Length (client hangs up early)
+    must yield 400 and zero new records."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    port = backend["port"]
+    body = b'{"model":"s0-01-pong","messages":[{"role":"user","content":"hi"}]}'
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: 100000\r\n"
+        f"\r\n"
+    ).encode() + body
+    s = socket.socket()
+    s.settimeout(5)
+    s.connect(("127.0.0.1", port))
+    s.sendall(raw)
+    s.shutdown(socket.SHUT_WR)
+    resp = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+    except socket.timeout:
+        pass
+    s.close()
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    count_after = len(list(backend["rec"].glob("*.json")))
+    assert count_after == count_before, \
+        f"short body wrote {count_after - count_before} record(s), expected 0"
+
+
+# -- P1: malformed-JSON credential redaction at recording boundary --------------
+
+def test_malformed_json_with_token_in_url_redacted(backend):
+    """P1: malformed-JSON POST with token in URL -> 400, token NOT in record.
+    Kills the P1 mutant: moving the credential check outside record()
+    lets the JSON-error path write the URL (with the token) verbatim."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    port = backend["port"]
+    malformed_body = b'{bad json'
+    raw = (
+        f"POST /v1/chat/completions?key={TOKEN} HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(malformed_body)}\r\n"
+        f"\r\n"
+    ).encode() + malformed_body
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes, \
+        "P1 mutant: token leaked through JSON-error recording path (URL)"
+
+
+def test_malformed_json_with_token_in_header_redacted(backend):
+    """P1: malformed-JSON POST with token in an ordinary header -> 400,
+    token NOT in record."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    port = backend["port"]
+    malformed_body = b'{bad json'
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Custom: {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(malformed_body)}\r\n"
+        f"\r\n"
+    ).encode() + malformed_body
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes, \
+        "P1 mutant: token leaked through JSON-error recording path (header)"
+
+
+def test_malformed_json_with_token_in_body_redacted(backend):
+    """P1: malformed-JSON POST with token embedded in the raw body -> 400,
+    token NOT in record."""
+    count_before = len(list(backend["rec"].glob("*.json")))
+    port = backend["port"]
+    # Malformed JSON body containing the token
+    malformed_body = (f'{{"key": "{TOKEN}" invalid').encode()
+    raw = (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(malformed_body)}\r\n"
+        f"\r\n"
+    ).encode() + malformed_body
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) > count_before
+    last_bytes = recs[-1].read_bytes()
+    assert TOKEN.encode() not in last_bytes, \
+        "P1 mutant: token leaked through JSON-error recording path (body)"
+
+
+def test_p1_boundary_credential_check_in_record(tmp_path):
+    """P1 boundary mutant: proves the credential-leak check inside record()
+    sanitizes the written file. If the check were moved back to the handler
+    (pre-P1 state), any direct record() call with the token in the path
+    would write it verbatim."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "scripted_backend", str(SERVER))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rec = tmp_path / "rec"
+    st = mod.State(TOKEN, rec, 0.05)
+    # Call with token in path — record() must sanitize
+    n, leaked = st.record("POST", f"/v1/chat?key={TOKEN}", {},
+                          "<invalid json>", "127.0.0.1", TOKEN)
+    assert leaked is True
+    written = (rec / f"{n:06d}.json").read_bytes()
+    assert TOKEN.encode() not in written
+    data = json.loads(written)
+    assert data["path"] is None
+    assert data["headers"] == {}
+    assert data["body"] == {"credential_in_unexpected_location": True}
+    # Normal call without leak — record() returns leaked=False
+    n2, leaked2 = st.record("POST", "/v1/chat/completions", {},
+                            {"model": "test"}, "127.0.0.1", TOKEN)
+    assert leaked2 is False
+    data2 = json.loads((rec / f"{n2:06d}.json").read_bytes())
+    assert data2["path"] == "/v1/chat/completions"
 
 
 # -- build_capture_record.py tests (V-d F12) ---------------------------------

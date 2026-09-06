@@ -7,23 +7,32 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `61c9f77` 2026-09-04 (`claude/soundbox-kit-migration-iz1jwf`) — chat-digest sync after the S0-01 grounding corrections
-- **Local HEAD:** 1 commit ahead of origin at write time (the 2026-09-05 handoff-reconciliation
-  increment: OmniRoute invariants monitor + tests, incidents AF-AP-33/34/35, docs sync). SHAs are
-  rewritten by `push_clean.sh` at push, so this page names commits by subject.
-- **Today:** 2026-09-05
+- **Origin tip:** `08a4a7d` 2026-09-05 (`claude/soundbox-kit-migration-iz1jwf`) — S0-01 WIP checkpoint 3
+- **Local HEAD:** checkpoint 4 (this commit) on top of it — repair rounds 2-4, the Codex audit filed, incidents
+  AF-AP-39..43, sentrux adopted. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
+- **Today:** 2026-09-06
 
 ## Active lanes
-- **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (task #10) — PROOF RUN RECORDED 2026-09-05, REVIEW-PENDING.**
-  Pinned clones on the PC (`~/s0-01-pinned/{hermes-agent@527da60,buzz@1c8321c,acp@37a7d4f8}`), isolated relay stack,
-  sanctioned scripted route `s0-01-scripted` behind the real OmniRoute (task #36, owner/Codex). Five legs captured as RAW
-  frames with identical pre/post manifests: golden ×2 (11 normalized lines, byte-identical), `!cancel` → cancelled with
-  zero orphans, `!shutdown` → exit 0, two users under allowlist → two sessions. `check_acp_conformance.py` PASS; spec
-  wired into the canonical runner. OWNER REVIEW 2026-09-05: closure DECLINED — five mutations passed the checker; result.json WITHDRAWN (S0-01 ABSENT).
-  NEXT: evidence bundle v2 + checker v2 + mutation regression tests (AF-AP-36 gate) → re-capture with `max_turn=3600s` →
-  adversarial verify → re-mint → owner review. Note: `proofs/S0-01/` is attested — edits there require re-running the canonical runner.
-  History: initialize milestone (client offered 2 / agent returned 1) and two live-model turns (structure
-  non-reproducible → scripted golden) on 2026-09-05. Credential caveat applies only to the two live runs.
+- **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
+  Owner review 2026-09-05 DECLINED closure (five mutations passed the checker; result.json WITHDRAWN, S0-01 ABSENT).
+  Repair rounds 2-4 landed at checkpoint 4 (2026-09-06): single pin module `proofs/S0-01/pins.py` (manifest v2.2, four
+  trees incl. the venv, symlinks + modes, baseline re-pinned), `negative_contract.py` (live negative: `-32602 Invalid
+  params` from the pinned agent; 42 tests; wiring = round 5), PC capture toolchain under `proofs/S0-01/tools/pc/` (env
+  from secret files, owned-pid closure, teardown scans; validated on real PC dry runs), tee `tee-status.json`, backend
+  credential screen at the record boundary, checker `--fixtures-dir` + real-leg conformance against four REAL PC
+  captures + the real negative. Round-4 suite kills 85/85 round-2 mutants. The owner's Codex audit of `08a4a7d`
+  (`docs/reviews/2026-09-05-codex-audit-08a4a7d.md`): six P1 + two P2 — the open ones are round 5 (brief drafted,
+  amendments A19-A26: request/response classification, duplicate responses, (check, leg) SEQUENCE guard, header
+  credential screen, negative wiring, tee drain gating, backend GET-with-body). FINDING: production `BUZZ_ACP_AGENTS=1`
+  + `steering_supported=false` ⇒ two-user turns serialized; the proof asserts ingress concurrency + observed
+  serialization. NEXT: round 5 → PC re-capture with the final tools (`run_leg.sh` × 5 + negative; first `git checkout --`
+  the staged pc files on the PC clone, ff-sync, `pc_backend_restart.sh`) → pin golden sha → mutation suite on the REAL
+  bundle → canonical runner on `pc-bridge` → ledger → owner review. Pending owner: ADR 0002 transport (#35), firewall
+  narrowing, #30 acceptance anchor.
+- **Code-intel: sentrux adopted 2026-09-05 as the FIFTH, ADVISORY instrument** (owner decision; same standing as
+  slopo): `scripts/sentrux_review.sh save|compare|check`, rules `.sentrux/rules.toml`, pinned by digest in
+  `upstream.lock.yaml`; never a gate. Blind spot: Python import resolution is weak here (4/390 specs), so
+  complexity/length are the live signal.
 - **Handoff reconciliation (task #31) — DONE 2026-09-05:** Codex's OmniRoute/Hermes handoff ported verbatim
   under a review header (reproduced vs reported); `scripts/omniroute_invariants.sh` (read-only, 7 checks,
   11 deterministic tests) — live: 5 OK, `require_api_key` FAIL, `catalog` FAIL (no key file); offload map +

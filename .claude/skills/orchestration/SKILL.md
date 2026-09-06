@@ -240,6 +240,9 @@ the mutant's killer list against the gate file before committing.
 `.slopo-runtime/`), run `slopo review --base origin/claude/soundbox-kit-migration-iz1jwf` over
 a landed build lane's diff — ADVISORY only, never a gate; attach flagged clusters to verify
 briefs.**
+**Architecture-health lens (sentrux, adopted 2026-09-05): `scripts/sentrux_review.sh save` before a
+build lane and `compare` after it — ADVISORY only, never a gate; paste the delta block into the
+verify brief (skill `code-intel-trio` §sentrux).**
 **(c2) THE LANE EXIT GATE IS A SCRIPT, NOT A PARAGRAPH (owner mandate 2026-09-02, after
 seven RP-30b verify rounds).** Every build/repair brief ends with: run
 `scripts/lane_gate.sh <push-base> <gate-files.txt> [--mutants scripts/mutants/<lane>.py]

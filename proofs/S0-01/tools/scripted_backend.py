@@ -51,6 +51,12 @@ _CREDENTIAL_HEADERS = frozenset({
 })
 
 
+class _ParseError(Exception):
+    """Raised by _read_body when JSON parsing fails; carries the raw bytes."""
+    def __init__(self, raw: bytes):
+        self.raw = raw
+
+
 def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
@@ -73,45 +79,50 @@ class State:
         self.lock = threading.Lock()
 
     def record(self, method: str, path: str, headers, body,
-               remote_addr: str, bearer_token: str | None) -> int:
+               remote_addr: str, bearer_token: str | None,
+               *, raw_body: bytes | None = None) -> tuple[int, bool]:
         with self.lock:
             self.seq += 1
             n = self.seq
         now = datetime.datetime.now(datetime.timezone.utc)
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
-        # V-c F3: lowercase keys; V-c F10: drop all credential-bearing headers by name
-        clean = {k.lower(): v for k, v in headers.items()
-                 if k.lower() not in _CREDENTIAL_HEADERS}
-        auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
+        # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
+        # If the bearer token appears ANYWHERE outside Authorization (path, query,
+        # body, any header value, raw bytes), the record is sanitized to path=None,
+        # headers={}, body=marker so the token never reaches committed evidence.
+        # M12: exempts ONLY 'authorization'.
+        leaked = False
+        if bearer_token:
+            if path and bearer_token in path:
+                leaked = True
+            for k, v in headers.items():
+                if k.lower() != "authorization" and bearer_token in str(v):
+                    leaked = True
+            if body is not None and bearer_token in (
+                    body if isinstance(body, str) else json.dumps(body)):
+                leaked = True
+            if raw_body and bearer_token.encode() in raw_body:
+                leaked = True
+        if leaked:
+            rec_path = None
+            clean = {}
+            rec_body = {"credential_in_unexpected_location": True}
+            auth_fp = None
+        else:
+            rec_path = path
+            # V-c F3: lowercase keys; V-c F10: drop all credential-bearing headers
+            clean = {k.lower(): v for k, v in headers.items()
+                     if k.lower() not in _CREDENTIAL_HEADERS}
+            rec_body = body
+            auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
-            {"seq": n, "method": method, "path": path, "headers": clean, "body": body,
-             "received_at": received_at, "t_mono_ns": mono_ns, "remote_addr": remote_addr,
-             "authorization_fingerprint": auth_fp}, indent=2, sort_keys=True) + "\n")
-        return n
-
-    def _check_credential_leak(self, method: str, path: str, headers,
-                                body, remote_addr: str,
-                                bearer_token: str | None) -> bool:
-        """Fail-closed: if the bearer token appears ANYWHERE outside the Authorization
-        header (path, query, body, any remaining header value), return True.
-        M12: exempts ONLY 'authorization'; token in api-key/x-api-key/cookie/
-        x-auth-token/proxy-authorization -> 400 + marker record.
-        V-c F10 / AF-AP-35."""
-        if not bearer_token:
-            return False
-        # Check path (includes query string)
-        if bearer_token in path:
-            return True
-        # Check ALL header values except 'authorization' (the one the bearer arrives in)
-        for k, v in headers.items():
-            if k.lower() != "authorization" and bearer_token in str(v):
-                return True
-        # Check body
-        if body is not None and bearer_token in json.dumps(body):
-            return True
-        return False
+            {"seq": n, "method": method, "path": rec_path, "headers": clean,
+             "body": rec_body, "received_at": received_at, "t_mono_ns": mono_ns,
+             "remote_addr": remote_addr, "authorization_fingerprint": auth_fp},
+            indent=2, sort_keys=True) + "\n")
+        return n, leaked
 
 
 def make_handler(state: State):
@@ -168,9 +179,15 @@ def make_handler(state: State):
             if length < 0 or length > MAX_CONTENT_LENGTH:
                 return _BAD_CL
             raw = self.rfile.read(length) if length else b""
+            # A18: short body (client hung up early) -> _BAD_CL -> 400, no record
+            if length and len(raw) < length:
+                return _BAD_CL
             if not raw:
                 return None
-            return json.loads(raw.decode())
+            try:
+                return json.loads(raw.decode())
+            except (ValueError, UnicodeDecodeError) as e:
+                raise _ParseError(raw) from e
 
         # -- routes --------------------------------------------------------
         def do_GET(self):
@@ -183,16 +200,12 @@ def make_handler(state: State):
                 return
             bearer = self._bearer_token()
             body = None
-            # V-c F10: fail-closed credential leak check
-            if state._check_credential_leak("GET", self.path, self.headers,
-                                            body, self.client_address[0], bearer):
-                # H1: record with path=None, headers={} so the token is never written
-                state.record("GET", None, {}, {"credential_in_unexpected_location": True},
-                             self.client_address[0], bearer)
+            # Record at the single boundary; credential leak handled inside record()
+            _seq, leaked = state.record("GET", self.path, self.headers, body,
+                                        self.client_address[0], bearer)
+            if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
-            state.record("GET", self.path, self.headers, body,
-                         self.client_address[0], bearer)
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] == "/v1/models":
@@ -207,9 +220,13 @@ def make_handler(state: State):
             bearer = self._bearer_token()
             try:
                 body = self._read_body()
-            except (ValueError, UnicodeDecodeError):
-                state.record("POST", self.path, self.headers, "<invalid json>",
-                             self.client_address[0], bearer)
+            except _ParseError as e:
+                _seq, leaked = state.record(
+                    "POST", self.path, self.headers, "<invalid json>",
+                    self.client_address[0], bearer, raw_body=e.raw)
+                if leaked:
+                    return self._error(400, "credential in unexpected location",
+                                       "invalid_request_error", "bad_request")
                 return self._error(400, "body is not JSON", "invalid_request_error", "bad_request")
             # L3: sentinels are module-level objects compared with `is`
             if body is _BAD_CL:
@@ -218,16 +235,12 @@ def make_handler(state: State):
                 self.end_headers()
                 self.close_connection = True
                 return
-            # V-c F10: fail-closed credential leak check
-            if state._check_credential_leak("POST", self.path, self.headers,
-                                            body, self.client_address[0], bearer):
-                # H1: record with path=None, headers={} so the token is never written
-                state.record("POST", None, {}, {"credential_in_unexpected_location": True},
-                             self.client_address[0], bearer)
+            # Record at the single boundary; credential leak handled inside record()
+            _seq, leaked = state.record("POST", self.path, self.headers, body,
+                                        self.client_address[0], bearer)
+            if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
-            state.record("POST", self.path, self.headers, body,
-                         self.client_address[0], bearer)
             if not self._authorized():
                 return self._error(401, "missing or invalid upstream bearer", "authentication_error", "unauthorized")
             if self.path.split("?", 1)[0] != "/v1/chat/completions":
@@ -283,6 +296,11 @@ def main(argv=None) -> int:
     ap.add_argument("--pidfile", type=Path)
     ap.add_argument("--allow-existing-records", action="store_true")
     args = ap.parse_args(argv)
+    # V17/A18: port range validation
+    if not (1 <= args.port <= 65535):
+        print(f"scripted_backend: --port {args.port} is outside the valid range 1-65535",
+              file=sys.stderr)
+        return 2
     # V-d F21: check existence before stat
     if not args.token_file.exists():
         print(f"scripted_backend: token file not found: {args.token_file}",

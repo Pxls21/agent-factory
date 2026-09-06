@@ -15,6 +15,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# A15: optional fixtures-dir override (default: HERE / "fixtures").
+# Set via --fixtures-dir on the CLI; tests use monkeypatch on this module attribute.
+_FIXTURES_DIR = None
+
+
+def _fixtures() -> Path:
+    return Path(_FIXTURES_DIR) if _FIXTURES_DIR is not None else HERE / "fixtures"
 sys.path.insert(0, str(HERE))
 from pins import (  # noqa: E402
     ALLOWED_UPSTREAM_GET,
@@ -22,6 +30,7 @@ from pins import (  # noqa: E402
     EXPECTED_MENTIONS,
     EXPECTED_MODEL,
     LEGS,
+    MANIFEST_LINE_RE,
     MANIFEST_TREES,
     MENTION_TEXT,
     MENTION_WINDOW_SLACK_S,
@@ -88,7 +97,7 @@ NEGATIVE_REQUIRED_FILES = frozenset({"timeline.jsonl", "runtime-identity.json", 
 _RECORD_FILENAME_RE = re.compile(r"^\d{6}\.json$")
 
 # The line format for manifest body lines (A13).
-_MANIFEST_LINE_RE = re.compile(r"^[0-9a-f]{64}  \./.+$")
+_MANIFEST_LINE_RE = re.compile(MANIFEST_LINE_RE)  # manifest v2.2 line shape, from pins
 
 # The hex-leak guard pattern (A9: case-insensitive 64-hex anywhere in the value).
 _HEX64_ANYWHERE_RE = re.compile(r"[0-9a-fA-F]{64}")
@@ -470,7 +479,7 @@ def check_route(leg_dir, leg, entries):
     if not records:
         raise Failure(f"{leg}: zero upstream records / upstream-records/ absent")
     # A3: validate upstream-token.fingerprint is exactly 64 lowercase hex
-    fp_path = _require_file(HERE / "fixtures" / "upstream-token.fingerprint", leg, "fixtures/upstream-token.fingerprint")
+    fp_path = _require_file(_fixtures() / "upstream-token.fingerprint", leg, "fixtures/upstream-token.fingerprint")
     expected_fp = fp_path.read_text().strip()
     if not re.fullmatch(r"[0-9a-f]{64}", expected_fp):
         raise Failure("golden: upstream-token.fingerprint is not a 64-hex digest")
@@ -845,15 +854,16 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
 
 def _parse_summary(summary_path, leg, name):
     lines = summary_path.read_text().splitlines()
-    if len(lines) != 4:
-        raise Failure(f"{leg}: {name} has {len(lines)} lines, expected 4")
+    expected = len(MANIFEST_TREES) + 1  # one digest line per pinned tree + the UTC timestamp
+    if len(lines) != expected:
+        raise Failure(f"{leg}: {name} has {len(lines)} lines, expected {expected}")
     digests = {}
     for i, tree_name in enumerate(MANIFEST_TREES):
         parts = lines[i].split()
         if len(parts) != 2 or parts[0] != tree_name:
             raise Failure(f"{leg}: {name} format error at line {i + 1}")
         digests[tree_name] = parts[1]
-    return digests, _parse_utc_summary(lines[3].strip())
+    return digests, _parse_utc_summary(lines[len(MANIFEST_TREES)].strip())
 
 
 def check_config_echo(leg_dir, leg):
@@ -1044,7 +1054,7 @@ def check_negative(neg_dir, leg="negative"):
     if init_req.get("method") != "initialize":
         raise Failure(f"{leg}: first c2a frame is not an initialize request")
     # A11: fixture absent -> Failure
-    fixture_path = _require_file(HERE / "fixtures" / "neg-malformed-initialize.json", leg, "fixtures/neg-malformed-initialize.json")
+    fixture_path = _require_file(_fixtures() / "neg-malformed-initialize.json", leg, "fixtures/neg-malformed-initialize.json")
     if init_req.get("params") != json.loads(fixture_path.read_text()):
         raise Failure(f"{leg}: initialize params != fixture")
     params = init_req.get("params") or {}
@@ -1200,7 +1210,7 @@ def check_bundle(root: Path) -> str:
     has_any_timeline = any((golden / leg / "timeline.jsonl").exists() for leg in LEGS)
     if not has_any_timeline:
         raise Deferred("v2 evidence not captured")
-    identities_path = HERE / "fixtures" / "identities.json"
+    identities_path = _fixtures() / "identities.json"
     _require_file(identities_path, "golden", "fixtures/identities.json")
     identities = json.loads(identities_path.read_text())
     baseline_path = golden / "manifests" / "manifest-baseline.txt.gz"
@@ -1295,11 +1305,22 @@ def check_bundle(root: Path) -> str:
 
 
 def main(argv) -> int:
-    if len(argv) != 2:
-        print("usage: check_acp_conformance.py <evidence-root>", file=sys.stderr)
+    global _FIXTURES_DIR
+    # A15: optional --fixtures-dir <dir> (default: proofs/S0-01/fixtures).
+    # spec.json does NOT pass it; tests use it to point at throwaway fixtures.
+    args = list(argv[1:])
+    if "--fixtures-dir" in args:
+        idx = args.index("--fixtures-dir")
+        if idx + 1 >= len(args):
+            print("usage: check_acp_conformance.py [--fixtures-dir <dir>] <evidence-root>", file=sys.stderr)
+            return 64
+        _FIXTURES_DIR = args[idx + 1]
+        del args[idx:idx + 2]
+    if len(args) != 1:
+        print("usage: check_acp_conformance.py [--fixtures-dir <dir>] <evidence-root>", file=sys.stderr)
         return 64
     try:
-        print(check_bundle(Path(argv[1])))
+        print(check_bundle(Path(args[0])))
         return 0
     except Deferred as d:
         print(f"deferred: {d}")

@@ -131,15 +131,25 @@ def _check_request_directory(dirpath: Path) -> int:
         print("failure_reason: negative: fixtures/neg-malformed-initialize.json absent")
         return 1
 
-    # A11: Required files exactly
-    actual_files = frozenset(e.name for e in dirpath.iterdir() if e.is_file())
-    missing = _NEGATIVE_REQUIRED_FILES - actual_files
+    # A11/A17: Required files exactly; extra ENTRIES (files or dirs) are a Failure
+    actual_entries = frozenset(e.name for e in dirpath.iterdir())
+    missing = _NEGATIVE_REQUIRED_FILES - actual_entries
     if missing:
         print(f"failure_reason: negative: {sorted(missing)[0]} absent")
         return 1
-    extra = actual_files - _NEGATIVE_REQUIRED_FILES
+    extra = actual_entries - _NEGATIVE_REQUIRED_FILES
     if extra:
         print(f"failure_reason: negative: unexpected file {sorted(extra)[0]}")
+        return 1
+
+    # A17: env.json must contain HERMES_HOME == pins.PINNED_HERMES_HOME
+    # and PYTHONDONTWRITEBYTECODE == "1"
+    env_data = json.loads((dirpath / "env.json").read_text())
+    if env_data.get("HERMES_HOME") != pins.PINNED_HERMES_HOME:
+        print("failure_reason: negative: HERMES_HOME mismatch")
+        return 1
+    if env_data.get("PYTHONDONTWRITEBYTECODE") != "1":
+        print("failure_reason: negative: PYTHONDONTWRITEBYTECODE mismatch")
         return 1
 
     # Parse timeline with NaN-rejecting loader (A11)
@@ -207,8 +217,9 @@ def _check_request_directory(dirpath: Path) -> int:
 def _check_response_directory(dirpath: Path) -> int:
     """Classify the a2c response's result for `response <dir>`.
 
-    Reads the timeline, finds the first a2c response, and classifies its result
-    against InitializeResponse. Distinct output from request <dir>.
+    Reads the timeline, finds the a2c frame whose id == the request id,
+    and classifies its result against InitializeResponse.
+    Distinct output from request <dir> (V15: match by id, not a2c[0]).
     """
     if not dirpath.is_dir():
         print("deferred: negative probe not captured")
@@ -223,15 +234,19 @@ def _check_response_directory(dirpath: Path) -> int:
         if line.strip():
             entries.append(json.loads(line, parse_constant=_nan_raising))
 
+    # V15: find the c2a initialize request id, then match the a2c response by id
+    c2a = [e for e in entries if e["dir"] == "c2a"]
     a2c = [e for e in entries if e["dir"] == "a2c"]
-    if not a2c:
+    if not c2a:
+        print("failure_reason: negative: no c2a frames in timeline")
+        return 1
+    req_id = c2a[0]["frame"].get("id") if c2a[0]["frame"] is not None else None
+    matching = [e for e in a2c if e["frame"] is not None and e["frame"].get("id") == req_id]
+    if not matching:
         print("failure_reason: negative: no a2c response to classify")
         return 1
 
-    resp = a2c[0]["frame"]
-    if resp is None:
-        print("failure_reason: negative: a2c frame is null (non-JSON)")
-        return 1
+    resp = matching[0]["frame"]
     if "error" in resp:
         err = resp["error"]
         if isinstance(err, dict):

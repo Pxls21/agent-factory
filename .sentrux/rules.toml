@@ -1,0 +1,17 @@
+# sentrux architectural rules — ADVISORY instrument (never a gate; owner decision 2026-09-05, same
+# standing as slopo). Read by `scripts/sentrux_review.sh`, which scans a COPY of the project code
+# directories only (proofs/ scripts/ tests/ harness-ports/ spikes/ src/) — the vendored trees
+# (sandbox-kit/, graft/, transcripts/, wiki/) are never scored.
+# Limits mirror the tool's defaults; the checker files are long single-pass validators by design
+# and WILL exceed max_cc — that is a report line, not a verdict.
+[constraints]
+max_cycles = 0
+max_cc = 25
+max_fn_lines = 100
+no_god_files = false
+
+# Layers/boundaries: none yet — add them when src/ exists (Stage 1). Example shape:
+# [[layers]]
+# name = "core"
+# paths = ["src/core/*"]
+# order = 0

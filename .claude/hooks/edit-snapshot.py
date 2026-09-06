@@ -109,6 +109,22 @@ AP_SCREEN = [
     # F21: pin-adjacent `if x.get():` OR `assert x.get()` — both are presence, not exact value.
     ("AF-AP-38", re.compile(r"""(?:if\s+\w+\.get\([^)]*\)\s*:(?=[^\n]*PINNED_)|assert\s+\w+\.get\()"""),
      "presence/truthiness check on a value that should be compared == against a pin (AF-AP-38)"),
+    # AF-AP-39 (2026-09-05): a secret interpolated into a command line (`KEY='$VALUE'`, `KEY=${V}`,
+    # f"...KEY={v}") lives in /proc/<pid>/cmdline and lands in ps-derived evidence.
+    ("AF-AP-39", re.compile(r"""^(?![^\n]*\.write(?:_text|lines)?\()[^\n]*?\b\w*(?:_KEY|TOKEN|SECRET|PASSWORD)\w*=(?:'?\$|\{)""", re.MULTILINE),
+     "secret interpolated into a command line — argv is world-readable for the process lifetime; build the env from files and Popen(argv, env=...) (AF-AP-39)"),
+    # AF-AP-40 (2026-09-05): a presence-gated check makes a required artifact optional — deleting
+    # the file switches the check off. The `if not x.exists(): raise` form is the correct one.
+    ("AF-AP-40", re.compile(r"""if\s+(?:\([^()\n]*\)|\w[\w.]*(?:\([^()\n]*\))?)\.(?:exists|is_file|is_dir)\(\)\s*(?::|and\b)"""),
+     "presence-gated check — a required artifact must FAIL when absent, never skip its check (AF-AP-40)"),
+    # AF-AP-41 (2026-09-05): dict(re.findall(...)) is last-wins — a duplicated key token overrides
+    # the real value.
+    ("AF-AP-41", re.compile(r"""dict\(\s*(?:re|\w+)\.findall\("""),
+     "last-wins parse of an echo line — require each pinned key EXACTLY ONCE, then compare == (AF-AP-41)"),
+    # AF-AP-43 (2026-09-05): a timestamp sampled before the lock that assigns the sequence number
+    # yields inversions under honest concurrency.
+    ("AF-AP-43", re.compile(r"""(?:monotonic(?:_ns)?|time\.time|perf_counter(?:_ns)?|datetime\.now|utcnow)\(\)[\s\S]{0,240}?\bwith\s+[\w.]*lock\b"""),
+     "ordering field sampled OUTSIDE the ordering lock — take seq and every timestamp in the same critical section (AF-AP-43)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its
