@@ -620,20 +620,21 @@ def test_chunked_transfer_encoding_411_writes_no_record(backend):
 
 # -- V11/S28: handler timeout mutant killer ------------------------------------
 
-def test_handler_timeout_bounds_incomplete_body(backend):
+def test_handler_timeout_bounds_incomplete_body(backend, tmp_path):
     """V11/S28: Handler.timeout prevents an incomplete body from blocking forever.
     A client sending headers + partial body but keeping the connection open must
     see the connection close within the handler timeout. If timeout is removed
     (S28 mutant), this hangs indefinitely."""
     import importlib.util
+    import math as _math
     spec = importlib.util.spec_from_file_location("scripted_backend", str(SERVER))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _st = mod.State("x", Path("/tmp/unused-timeout-test"), 0)
+    _st = mod.State("x", tmp_path / "unused-timeout-test", 0)
     handler_timeout = mod.make_handler(_st).timeout
-    # F13: assert the timeout is a positive number before deriving bounds
-    assert isinstance(handler_timeout, (int, float)) and handler_timeout > 0, \
-        f"Handler.timeout {handler_timeout!r} is not a positive number"
+    # F13/F17: assert the timeout is a finite positive number before deriving bounds
+    assert isinstance(handler_timeout, (int, float)) and _math.isfinite(handler_timeout) and handler_timeout > 0, \
+        f"Handler.timeout {handler_timeout!r} is not a finite positive number"
     port = backend["port"]
     s = socket.socket()
     s.settimeout(handler_timeout * 3)
@@ -1521,6 +1522,11 @@ def _build_domain_table():
                     records = 1
                     status = 400  # always "body is not JSON"
 
+                # F5: _error() sends Connection: close on all error responses,
+                # so non-200 results close even when the framing gate accepted.
+                if not close and status != 200:
+                    close = True
+
                 case_id = f"{fname}/{route_method}{route_path}/{cred_label}"
                 table.append((case_id, method, route_path, headers, body,
                               token_val, status, close, records))
@@ -1598,16 +1604,15 @@ def test_framing_domain_table(backend, case_id, method, path, header_lines,
     http_count = resp.count(b"HTTP/1.1 ")
 
     if expect_close:
-        # REJECTED: gate closed the connection, tail must NOT be processed
+        # REJECTED or ERROR: connection closed, tail must NOT be processed
         assert http_count == 1, \
             f"[{case_id}] expected 1 HTTP/1.1 response, got {http_count}: smuggling"
         assert b"Connection: close" in resp, \
-            f"[{case_id}] rejection must include Connection: close"
-        # Zero new records from the rejected request (tail blocked too)
+            f"[{case_id}] rejection/error must include Connection: close"
         count_after = len(list(backend["rec"].glob("*.json")))
         actual_delta = count_after - count_before
-        assert actual_delta == 0, \
-            f"[{case_id}] rejected request wrote {actual_delta} record(s), expected 0"
+        assert actual_delta == expected_records, \
+            f"[{case_id}] expected {expected_records} record(s), got {actual_delta}"
     else:
         # ACCEPTED: first request served, tail processed via keep-alive
         # Tail is a valid POST that always creates 1 record

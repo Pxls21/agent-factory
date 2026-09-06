@@ -2,7 +2,6 @@
 
 Findings R7-D5c-F1/F2/F6/F7 are now fixed (lane D5d). The xfail markers have been removed; all tests pass.
 F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
-they pass and must keep passing. F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
 they pass today and must keep passing. Self-contained: own backend fixture, own raw-socket helper, tmp_path only.
 """
 import http.client
@@ -93,15 +92,17 @@ def _post(port, body: bytes, extra_headers: str = "", tail: bytes = b""):
 def _absent_under_all_normalizations(text: str) -> bool:
     """F2: STRICTLY WIDER oracle than the backend's _normal_forms.
 
-    Enumerates every word over {unquote, strip_ws, lower, unquote_plus} up to
-    length 4 (a different lattice, more operators, its own code — never imports
-    the backend's helper). Asserts the token absent under all of them.
+    Enumerates every word over {unquote, unquote_plus, strip_ws, lower,
+    strip_zwc} up to depth 6 (the backend uses depth 5 with the same
+    operators; this oracle goes one depth level further).  Never imports
+    the backend's helper.  strip_zwc removes U+200B, U+FEFF, U+00AD, U+2060.
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
-    ops = (unquote, strip_ws, str.lower, unquote_plus)
+    strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc)
     forms = {text}
     frontier = {text}
-    for _depth in range(4):
+    for _depth in range(6):
         new_frontier = set()
         for form in frontier:
             for op in ops:
@@ -271,8 +272,8 @@ def test_credential_whitespace_split_as_json_key_returns_400(backend, sep):
 
 
 # ---- R8-D5d-F4: QUADRUPLE percent-encoded token must fail closed ----------------------------------------------
-def test_credential_quad_percent_encoded_fails_closed(backend):
-    """Token encoded four times must still trigger the fail-closed branch (400)."""
+def test_credential_quad_percent_encoded_at_depth4(backend):
+    """Token encoded four times reaches the token at closure depth 4 (400)."""
     port = backend["port"]
     once = TOKEN[:-1] + "%%%02x" % ord(TOKEN[-1])
     twice = once.replace("%", "%25")
@@ -305,7 +306,10 @@ def test_duplicate_json_key_hiding_token_returns_400(backend):
 
 
 # ---- R8-D5d-F10: depth-1000 JSON body -> 400 + close, 0 records -------------------------------------------------
-MAX_JSON_DEPTH = int(re.search(r"^MAX_JSON_DEPTH\s*=\s*([0-9_]+)", SERVER.read_text(), re.M).group(1))
+_MJD_MATCH = re.search(r"^MAX_JSON_DEPTH\s*=\s*([0-9_]+)", SERVER.read_text(), re.M)
+if _MJD_MATCH is None:
+    pytest.fail("MAX_JSON_DEPTH missing from the backend")
+MAX_JSON_DEPTH = int(_MJD_MATCH.group(1))
 
 
 def _nested_note_body(depth: int) -> bytes:
@@ -336,7 +340,7 @@ def test_json_depth_at_limit_is_served(backend):
 
 
 def test_depth_1000_json_body_returns_400_no_record(backend):
-    """A body nested 1000 deep must trigger RecursionError in _read_body -> 400."""
+    """A body nested 1000 deep is refused by the depth gate (400, no record)."""
     port = backend["port"]
     # Build depth-1000 JSON array nesting: [[[[...]]]]
     depth = 1000
@@ -368,3 +372,195 @@ def test_non_finite_float_body_coerced_and_recorded(backend):
     rec = json.loads(rec_text, parse_constant=_raise)
     assert rec["body"]["x"] == "<non-finite>"
     assert rec["body"]["y"] == "<non-finite>"
+
+
+# ---- ORACLE SELF-TESTS (ruling 2): prove the oracle is not a tautology -----------
+
+class TestOracleSelfTests:
+    """The oracle must return False on known-bad inputs and True on known-good ones.
+    If the oracle is mutated to ``return True``, the False assertions fail."""
+
+    @pytest.mark.parametrize("text,expected", [
+        # Known-bad: oracle must detect the token (return False)
+        ("s0-01-upstream-tok%20en-0123456789abcdef-%25252541", False),
+        ("s0-01-upstream-tok%25252520en-0123456789abcdef", False),
+        (TOKEN.upper(), False),
+        ("s0-01-upstream-tok​en-0123456789abcdef", False),
+        ("s0-01-upstream-tok\ten-0123456789abcdef", False),
+        # Known-good: oracle must NOT detect the token (return True)
+        ('{"credential_in_unexpected_location": true}', True),
+        ("Mozilla/5.0 (X11; Linux x86_64)", True),
+        ("%25252540", True),
+    ], ids=["junk_suffix", "depth5_nesting", "uppercased", "zwsp_split",
+            "tab_split", "marker_record", "user_agent", "junk_alone"])
+    def test_oracle_known_vectors(self, text, expected):
+        assert _absent_under_all_normalizations(text) is expected
+
+
+# ---- F1/F3: trailing nested escape with separator (5 seps x 3 sinks) -------------
+
+@pytest.mark.parametrize("sep", ["%20", "%09", "%0A", "%0d", "+"], ids=["%20", "%09", "%0A", "%0d", "PLUS"])
+@pytest.mark.parametrize("sink", ["header_value", "json_body_value", "query_string"], ids=["header", "json_body", "query"])
+def test_credential_split_with_trailing_nested_escape_returns_400(backend, sep, sink):
+    """F1: a 9-char suffix (%25252541) that pushes the closure past depth 5 must not
+    disable the credential screen — the screen fails closed when the bound is exceeded."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    split_token = TOKEN[:mid] + sep + TOKEN[mid:] + "-%25252541"
+    n0 = len(_records(backend))
+
+    if sink == "header_value":
+        resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {split_token}\r\n"))
+    elif sink == "json_body_value":
+        body = json.dumps({"model": "s0-01-pong", "messages": [], "note": split_token}).encode()
+        resp = _raw(port, _post(port, body))
+    else:  # query_string
+        resp = _raw(port, (f"GET /v1/models?note={split_token} HTTP/1.1\r\n"
+                          f"Host: 127.0.0.1:{port}\r\n"
+                          f"Authorization: Bearer {TOKEN}\r\n"
+                          f"Content-Length: 0\r\n\r\n").encode())
+
+    status_line = resp.split(b"\r\n", 1)[0]
+    assert status_line == b"HTTP/1.1 400 Bad Request", \
+        f"[{sink}/{sep}] expected 400, got {status_line!r}"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- F1: depth-5 percent nesting in all sinks -----------------------------------
+
+@pytest.mark.parametrize("vector", [
+    "%25252520",
+    "%2525252520",
+    "%25252B",
+    "%2+B",
+], ids=["d5_space", "d6_space", "d5_plus", "d5_plus_alt"])
+@pytest.mark.parametrize("sink", [
+    "header_value", "query", "path", "json_value", "json_key",
+], ids=["header", "query", "path", "json_val", "json_key"])
+def test_credential_depth5_percent_nesting_returns_400(backend, vector, sink):
+    """Depth-5+ percent-nesting of the token separator must be caught."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    split_token = TOKEN[:mid] + vector + TOKEN[mid:]
+    n0 = len(_records(backend))
+
+    if sink == "header_value":
+        resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {split_token}\r\n"))
+    elif sink == "query":
+        resp = _raw(port, (f"GET /v1/models?note={split_token} HTTP/1.1\r\n"
+                          f"Host: 127.0.0.1:{port}\r\n"
+                          f"Authorization: Bearer {TOKEN}\r\n"
+                          f"Content-Length: 0\r\n\r\n").encode())
+    elif sink == "path":
+        resp = _raw(port, (f"GET /v1/models/{split_token} HTTP/1.1\r\n"
+                          f"Host: 127.0.0.1:{port}\r\n"
+                          f"Authorization: Bearer {TOKEN}\r\n"
+                          f"Content-Length: 0\r\n\r\n").encode())
+    elif sink == "json_value":
+        body = json.dumps({"model": "s0-01-pong", "messages": [], "note": split_token}).encode()
+        resp = _raw(port, _post(port, body))
+    else:  # json_key
+        body = json.dumps({"model": "s0-01-pong", "messages": [], split_token: 1}).encode()
+        resp = _raw(port, _post(port, body))
+
+    status_line = resp.split(b"\r\n", 1)[0]
+    assert status_line == b"HTTP/1.1 400 Bad Request", \
+        f"[{sink}/{vector}] expected 400, got {status_line!r}"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- F8: whitespace-split token in a JSON list element (kills MC9) ---------------
+
+@pytest.mark.parametrize("sep", ["\t", "\n", "\r", "\f", "\v"], ids=["TAB", "LF", "CR", "FF", "VT"])
+def test_credential_whitespace_split_in_json_list_element_returns_400(backend, sep):
+    """F8: token split by whitespace inside a JSON list element must be caught."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    n0 = len(_records(backend))
+    body = json.dumps({"model": "s0-01-pong", "messages": [],
+                       "n": ["x", TOKEN[:mid] + sep + TOKEN[mid:]]}).encode()
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- F12: JSON depth gate handles brackets inside strings (kills MG4/MG5) --------
+
+def test_json_depth_ignores_brackets_inside_strings(backend):
+    """40 '[' inside a JSON string value must not inflate the depth count (kills MG4)."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    body = ('{"model": "s0-01-pong", "messages": [{"role": "user", "content": "hi"}], '
+            '"note": "' + '[' * 40 + '"}').encode()
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    assert len(_records(backend)) == n0 + 1
+
+
+def test_json_depth_handles_escaped_quote(backend):
+    r"""An escaped quote (q\") followed by 40 '[' stays inside the string (kills MG5)."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    body = b'{"model":"s0-01-pong","messages":[{"role":"user","content":"hi"}],"note":"q\\"' + b'[' * 40 + b'"}'
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    assert len(_records(backend)) == n0 + 1
+
+
+# ---- F14: uppercased token (kills str.lower omission) ----------------------------
+
+def test_credential_uppercased_token_in_header_returns_400(backend):
+    """F14: an uppercased token (recoverable by str.lower) must be caught."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {TOKEN.upper()}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- F15: zero-width separators -------------------------------------------------
+
+@pytest.mark.parametrize("vector,name", [
+    ("%E2%80%8B", "ZWSP"),
+    ("%EF%BB%BF", "BOM"),
+    ("%C2%AD", "SOFT_HYPHEN"),
+], ids=["ZWSP", "BOM", "SOFT_HYPHEN"])
+def test_credential_zero_width_pct_encoded_returns_400(backend, vector, name):
+    """F15: percent-encoded zero-width char splitting the token must be caught."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    split_token = TOKEN[:mid] + vector + TOKEN[mid:]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {split_token}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+def test_credential_zero_width_json_escape_returns_400(backend):
+    r"""F15: JSON-escaped ​ splitting the token must be caught."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = (b'{"model":"s0-01-pong","messages":[],"note":"'
+            + TOKEN[:mid].encode() + b'\\u200b' + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())

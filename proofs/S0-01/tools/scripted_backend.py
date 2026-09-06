@@ -39,19 +39,25 @@ Framing gate (_framing_gate, first statement of do_GET and do_POST):
   Every rejection sends Connection: close and never parses a tail as a second request.
 
 Credential screen (_normal_forms / _carries_secret): breadth-first closure of
-  {unquote, strip_ws} applied to each item, deduplicated, bounded at depth 5 —
-  the depth bound affects false-positive breadth, not detection: if the frontier
-  is still producing new forms at the bound the screen fails closed (True).
+  {unquote, unquote_plus, strip_ws, lower, strip_zwc} applied to each item,
+  deduplicated, bounded at depth 5.  _normal_forms returns (forms, saturated);
+  if saturated is False (bound exceeded) the screen fails closed (True) — the
+  depth bound affects false-positive breadth, not detection.  strip_zwc removes
+  U+200B (ZWSP), U+FEFF (BOM/ZWNBSP), U+00AD (soft hyphen), U+2060 (word joiner).
+  Accepted risk (D5d-F12, restored): junk like %25252540 triggers the
+  bound-exceeded path and blanks the record (false positive).
   The screen is applied per item (path, header names, header values, serialized
-  JSON body, every parsed JSON string, raw body); cross-sink splits are out of
-  contract by design. A body the parser cannot decode gets 400 + close.
+  JSON body, every parsed JSON string — keys AND values — and raw body);
+  cross-sink splits are out of contract by design.
+  A body the parser cannot decode gets 400 + close.
   F11: records are written with allow_nan=False after coercing non-finite
-  floats to the string "<non-finite>". F10: _read_body refuses a JSON nesting deeper than MAX_JSON_DEPTH (32) before parsing (400 + close, no record, on every interpreter) and still catches RecursionError
-  (depth-bomb JSON) and _iter_json_strings is iterative to avoid the same.
+  floats to the string "<non-finite>". F10: _read_body refuses a JSON nesting
+  deeper than MAX_JSON_DEPTH (32) before parsing (400 + close, no record, on
+  every interpreter) and _iter_json_strings is iterative to avoid the same.
 
 Not recorded: GET /healthz (operational, pre-auth); any gate rejection (TE, dup CL,
-  malformed CL, oversized CL, GET with CL > 0, defects, obs-fold, Expect). These all
-  close the connection.  Duplicate non-framing headers collapse to the last value in
+  malformed CL, oversized CL, GET with CL > 0, defects, obs-fold, Expect,
+  JSON depth > MAX_JSON_DEPTH, short body). These all close the connection.  Duplicate non-framing headers collapse to the last value in
   the record (email.message.Message.items() yields all, but dict() takes the last --
   documented, not a defect; the dropped duplicate values are discarded and
   unrecoverable from the record).
@@ -99,15 +105,19 @@ class _ParseError(Exception):
         self.raw = raw
 
 
-def _normal_forms(s: str) -> frozenset[str]:
-    """Breadth-first over the words of {unquote, unquote_plus, strip_ws} applied to *s*.
+def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
+    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc}.
 
-    Deduplicated, bounded at depth 5; if the frontier is still producing new
-    forms at the bound we fail closed by returning the token itself (so
-    _carries_secret returns True).
+    Returns (forms, saturated).  *saturated* is True when the frontier was
+    exhausted (all reachable forms found); False when the depth bound (5) was
+    exceeded — the caller fails closed on ``not saturated``.
+
+    Accepted risk (D5d-F12, restored): junk like ``%25252540`` triggers the
+    bound-exceeded path and blanks the record (false positive).
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
-    ops = (unquote, unquote_plus, strip_ws)
+    strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc)
     frontier = {s}
     seen = {s}
     for _depth in range(5):
@@ -119,10 +129,9 @@ def _normal_forms(s: str) -> frozenset[str]:
                     seen.add(v)
                     new_frontier.add(v)
         if not new_frontier:
-            return frozenset(seen)
+            return frozenset(seen), True      # saturated
         frontier = new_frontier
-    # Still producing new forms at depth 5: fail closed
-    return frozenset({s, "FAIL_CLOSED"})
+    return frozenset(seen), False             # bound exceeded — keep what we found
 
 
 def _json_nesting_depth(raw: bytes) -> int:
@@ -207,16 +216,18 @@ class State:
         self.lock = threading.Lock()
 
     def _carries_secret(self, s: str) -> bool:
-        """True if the configured token appears in ANY normal form of *s*.
+        """True if the configured token appears in ANY normal form of *s*,
+        or if the closure did not saturate (fail closed).
 
-        Normal forms are the closure of {unquote, strip_ws} over *s*, bounded
-        at depth 5; if the bound is exceeded the screen fails closed.
+        Normal forms are the closure of {unquote, unquote_plus, strip_ws,
+        lower, strip_zwc} over *s*, bounded at depth 5; if the bound is
+        exceeded the screen fails closed.
         """
         t = self.token
-        for form in _normal_forms(s):
-            if t in form:
-                return True
-        return False
+        forms, saturated = _normal_forms(s)
+        if any(t in f for f in forms):
+            return True
+        return not saturated                  # actually fail closed
 
     def record(self, method: str, path: str, headers, body,
                remote_addr: str, bearer_token: str | None,
@@ -228,7 +239,8 @@ class State:
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
-        # _carries_secret checks: literal, unquote, whitespace-strip, unquote+strip.
+        # _carries_secret checks: the closure of {unquote, unquote_plus, strip_ws,
+        # lower, strip_zwc} at depth 5; fails closed when the bound is exceeded.
         # Keyed on the configured secret, not the request-supplied bearer,
         # so a request without Authorization is still screened (4-F1/6-F3).
         # M12: exempts ONLY 'authorization' by name.
@@ -267,13 +279,29 @@ class State:
         self.record_dir.mkdir(parents=True, exist_ok=True)
         # F11: coerce non-finite floats to the string "<non-finite>" before
         # serialising with allow_nan=False, so the record is always valid JSON.
+        # Iterative (F10): no recursion risk regardless of nesting depth.
         def _json_safe(o):
             if isinstance(o, float) and not math.isfinite(o):
                 return "<non-finite>"
-            if isinstance(o, dict):
-                return {k: _json_safe(v) for k, v in o.items()}
-            if isinstance(o, list):
-                return [_json_safe(v) for v in o]
+            if not isinstance(o, (dict, list)):
+                return o
+            stack = [o]
+            while stack:
+                item = stack.pop()
+                if isinstance(item, dict):
+                    for k in list(item):
+                        v = item[k]
+                        if isinstance(v, float) and not math.isfinite(v):
+                            item[k] = "<non-finite>"
+                        elif isinstance(v, (dict, list)):
+                            stack.append(v)
+                elif isinstance(item, list):
+                    for i in range(len(item)):
+                        v = item[i]
+                        if isinstance(v, float) and not math.isfinite(v):
+                            item[i] = "<non-finite>"
+                        elif isinstance(v, (dict, list)):
+                            stack.append(v)
             return o
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
             {"seq": n, "method": method, "path": rec_path, "headers": clean,
@@ -365,7 +393,9 @@ def make_handler(state: State):
             self.wfile.write(data)
 
         def _error(self, code: int, message: str, err_type: str, err_code: str):
-            self._send_json(code, {"error": {"message": message, "type": err_type, "code": err_code}})
+            self._send_json(code, {"error": {"message": message, "type": err_type, "code": err_code}},
+                            extra={"Connection": "close"})
+            self.close_connection = True
 
         def _authorized(self) -> bool:
             auth = self.headers.get("Authorization", "")
@@ -402,7 +432,9 @@ def make_handler(state: State):
             except (ValueError, UnicodeDecodeError) as e:
                 raise _ParseError(raw) from e
             except RecursionError:
-                # F10: depth-bomb JSON -> 400 + close, 0 records
+                # Defence-in-depth: unreachable while MAX_JSON_DEPTH <= 32 (the
+                # depth gate catches everything above); retained in case the
+                # constant is ever raised.
                 return _BAD_CL
 
         # -- routes --------------------------------------------------------
