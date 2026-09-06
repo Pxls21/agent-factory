@@ -148,6 +148,8 @@ runsc), so NO resource limits apply in this configuration even though `user@1000
 question; the containment proof itself does not depend on cgroups. Platform: systrap (runsc default;
 `/dev/kvm` absent).
 
+**PC-lane concurrency cap (2026-09-06):** the model route behind `hermes -z` admits about TWO concurrent lane sessions; a third `scripts/pc_lane.sh` dispatch is refused with `HTTP 503: Chat admission capacity is temporarily unavailable` on every retry while the first two run. Launch at most two build lanes at once and queue the rest until a report lands.
+
 ## OmniRoute on the PC — the managed unit, and the process-kill rule (2026-09-05)
 
 - **The authoritative OmniRoute is `omniroute-migrated.service`** (systemd --user; exec
