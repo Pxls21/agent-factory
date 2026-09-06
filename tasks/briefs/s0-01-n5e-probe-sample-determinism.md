@@ -60,3 +60,7 @@ lines); pyflakes rc 0 on the four files. Report fields: done (finding â†’ test â
 summaries, discrepancies, adjacent defects (report only), the proposed `tests/test_s0_01_negative_contract.py` hunk (F4).
 Standing rules: no subagents; no outward-facing actions; never `git stash`/reset the worktree; tests write only under tmp_path.
 Authorization context: defensive verification tooling on the owner's own pinned ACP agent; no credentials are involved.
+
+## Attempt 1 (PC/Kimi, 13:28-14:0xZ) died on the exhausted fallback chain after ~40 min; its UNVERIFIED partial diff is in the tree at
+`tasks/briefs/s0-01-n5e-support/attempt1-partial.diff` (4 files, applies cleanly to this PIN). Optional reference only: read it,
+adopt what passes YOUR red-before-green proof, never apply it wholesale, and say in the report which hunks you kept.
