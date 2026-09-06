@@ -322,6 +322,12 @@ def _timeline(neg: Path):
     return [json.loads(l) for l in (neg / "timeline.jsonl").read_text().splitlines() if l.strip()]
 
 
+def test_empty_probe_error_is_still_an_error(neg):
+    """R8-N5d-F9: `probe_error == ""` validated — an empty reason is a reported error, not an absence."""
+    _set_rid(neg, probe_error="")
+    _expect(neg, "probe reported an error: (empty reason)")
+
+
 @pytest.mark.parametrize("bad", ["/x", None, 12345], ids=["wrong-path", "null", "int"])
 def test_probe_path_value_is_pinned_to_the_probe_tail(neg, bad):
     """R7-N5c-F3: probe_path was required to exist but never read — /x, null and 12345 all validated."""
@@ -369,6 +375,7 @@ resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": %d, "message": %r,
         "data": {"errors": [{"type": "missing", "loc": ["protocolVersion"], "msg": "Field required"}]}}}
 sys.stdout.write(json.dumps(resp) + "\\n")
 sys.stdout.flush()
+sys.stdin.read()  # R8-N5d-F4: stay alive until the probe closes stdin (the interpreter sample must find a live child)
 """
 
 

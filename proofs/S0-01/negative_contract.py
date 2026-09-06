@@ -159,8 +159,9 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
     rid = json.loads((neg_dir / "runtime-identity.json").read_text(encoding="utf-8"))
     if not isinstance(rid, dict):
         raise NegativeFailure("runtime-identity.json is not an object")
-    if rid.get("probe_error") not in (None, ""):
-        raise NegativeFailure(f"probe reported an error: {rid['probe_error']}")
+    # R8-N5d-F9: only an ABSENT/null probe_error is clean; an empty string is a reported error with no reason.
+    if rid.get("probe_error") is not None:
+        raise NegativeFailure(f"probe reported an error: {rid['probe_error'] or '(empty reason)'}")
     missing = sorted(set(pins.NEGATIVE_IDENTITY_KEYS) - set(rid))
     if missing:
         raise NegativeFailure(f"runtime identity key {missing[0]} absent")

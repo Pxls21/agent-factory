@@ -685,8 +685,7 @@ def test_make_capture_dir_keys_match_live_producer(tmp_path):
     PROBE = ROOT / "proofs" / "S0-01" / "tools" / "acp_probe.py"
     # Run the actual probe to get a live producer sample
     agent = tmp_path / "agent_live.py"
-    agent.write_text(textwrap.dedent("""\
-        #!/usr/bin/env python3
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import json, sys
         for line in sys.stdin:
             line = line.strip()
@@ -703,6 +702,7 @@ def test_make_capture_dir_keys_match_live_producer(tmp_path):
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             break
+        sys.stdin.read()
     """))
     agent.chmod(0o755)
     import os

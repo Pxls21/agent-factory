@@ -255,8 +255,7 @@ def _run_probe(tmp_path, agent, timeout_override=None, extra_env=None):
 # ---- Core scenarios ----
 
 def test_probe_result_response_and_check_initialize(tmp_path, agent_result):
-    """(b) Agent returns a result: probe captures it, check_initialize classifies correctly.
-    V2: interpreter fields must NOT be null (sampled before proc.wait)."""
+    """(b) Agent returns a result: probe captures it, check_initialize classifies correctly."""
     r, framedir = _run_probe(tmp_path, agent_result)
     assert r.returncode == 0, f"probe failed: stderr={r.stderr}"
 
@@ -282,7 +281,6 @@ def test_probe_result_response_and_check_initialize(tmp_path, agent_result):
     assert entries[1]["seq"] == 2
     assert entries[1]["frame"]["result"]["protocolVersion"] == 1
 
-    # V2: Runtime identity has interpreter fields NOT null (sampled before wait)
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_argv"] == [agent_result]
     assert "probe_path" in rid
@@ -341,7 +339,7 @@ def test_probe_stderr_heavy_no_deadlock(tmp_path, agent_stderr_heavy):
 
     stderr_file = framedir / "agent-stderr.txt"
     assert stderr_file.exists()
-    assert stderr_file.stat().st_size >= 200000
+    assert stderr_file.stat().st_size == 204800
 
     entries = [json.loads(line) for line in
                (framedir / "timeline.jsonl").read_text().splitlines() if line.strip()]
@@ -449,10 +447,15 @@ def test_probe_bad_agent_path_writes_probe_error(tmp_path):
 # ---- M7: agent_exit_code exact value ----
 
 def test_probe_sigterm_killed_agent_exit_code(tmp_path, agent_sigterm):
-    """M7: SIGTERM-killed agent -> agent_exit_code == -15 (negative signal number)."""
+    """M7: SIGTERM-killed agent -> agent_exit_code == -15 (negative signal number).
+    N5e-F10: the bounded post-Popen retry loop samples while the agent still
+    blocks on stdin, so the interpreter is always sampled (rc 0)."""
     r, framedir = _run_probe(tmp_path, agent_sigterm, timeout_override=5)
+    assert r.returncode == 0, f"expected exit 0, got {r.returncode}: stderr={r.stderr}"
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_exit_code"] == -signal.SIGTERM  # -15
+    assert rid["agent_interpreter_realpath"] == os.path.realpath(sys.executable)
+    assert rid["agent_interpreter_sha256"] is not None
 
 
 # ---- M8: python_dont_write_bytecode not hardcoded ----
@@ -570,6 +573,10 @@ def test_probe_broken_pipe_deterministic(tmp_path, agent_result):
     # probe_error must be set in runtime-identity.json
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["probe_error"] == "BrokenPipeError: agent process exited before c2a write landed"
+    # N5e-F2: the early retry loop samples the interpreter while the child is
+    # still alive, so on a BrokenPipe capture the fields are NON-null.
+    assert rid["agent_interpreter_realpath"] is not None
+    assert rid["agent_interpreter_sha256"] is not None
 
 
 # ---- V8/A16: ACP_PROBE_TIMEOUT validation ----
@@ -642,9 +649,9 @@ def test_probe_c2a_params_match_fixture(tmp_path, agent_result):
 # ---- V2: interpreter fields not null ----
 
 def test_probe_interpreter_fields_pinned(tmp_path, agent_result):
-    """R5-N5-F1: with an env-shebang agent, the recorded interpreter must equal
-    os.path.realpath(sys.executable) and its sha. The agent_result fixture uses
-    #!/usr/bin/env python3, so the child's /proc/<pid>/exe resolves to python."""
+    """R5-N5-F1: the recorded interpreter must equal os.path.realpath(sys.executable)
+    and its sha. The agent_result fixture uses #!{sys.executable}, so the
+    child's /proc/<pid>/exe resolves to the runner's interpreter."""
     r, framedir = _run_probe(tmp_path, agent_result)
     assert r.returncode == 0
 
@@ -841,10 +848,26 @@ def test_probe_identity_fields_all_pinned(tmp_path):
     """))
     agent_script.chmod(0o755)
     sentinel_val = "sentinel_for_sha_check_42"
-    r, framedir = _run_probe(tmp_path, str(agent_script),
-                             extra_env={"_TEST_PID_FILE": str(pid_file),
-                                        "MY_SENTINEL_SECRET": sentinel_val})
-    assert r.returncode == 0
+    # N5e-F11: sanitized env so the redacted tally is pinned at exactly the
+    # sentinel — a live CI env full of real *KEY*/*TOKEN*/*SECRET* variables
+    # would otherwise inflate the count.
+    framedir = tmp_path / "capture"
+    framedir.mkdir(exist_ok=True)
+    env = {
+        "S0_01_AGENT": str(agent_script),
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "_TEST_PID_FILE": str(pid_file),
+        "MY_SENTINEL_SECRET": sentinel_val,
+    }
+    r = subprocess.run(
+        [sys.executable, str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"probe failed: {r.stderr}"
 
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     probe_file = P / "tools" / "acp_probe.py"
@@ -882,10 +905,12 @@ def test_probe_identity_fields_all_pinned(tmp_path):
     assert sentinel_entry["sha256_12"] == expected_12, (
         f"sentinel sha256_12 {sentinel_entry['sha256_12']!r} != {expected_12!r}"
     )
-    # At least one redacted key overall
+    # Exactly one redacted key under the sanitized test env (the sentinel)
     redacted_seen = sum(1 for v in env_data.values()
                         if isinstance(v, dict) and v.get("redacted") is True)
-    assert redacted_seen >= 1
+    assert redacted_seen == 1, (
+        f"expected exactly 1 redacted key (the sentinel), got {redacted_seen}"
+    )
 
 
 # ---- R5-N5-F16: makedirs branch (absent-but-creatable framedir) ----
@@ -999,30 +1024,36 @@ def test_probe_interpreter_sample_failure(tmp_path, agent_result):
 
 def test_probe_agent_exits_without_output_is_fail_loud(tmp_path):
     """N5d-F1 shape A: agent does import sys; sys.exit(0) without writing to stdout.
-    The probe must exit 1 with probe_error naming the cause, not exit 0 with null
-    interpreter fields."""
+    N5e-F1: the bounded post-Popen retry loop samples the interpreter while the
+    child is still alive (Python startup outlasts the loop), so the interpreter
+    identity is always non-null.  The probe may exit 0 (c2a delivery succeeded)
+    or 1 (BrokenPipe if the child exited before stdin.write); in either case
+    the old 'interpreter sample failed' error never fires."""
     agent = tmp_path / "agent_silent_exit.py"
     agent.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(0)\n")
     agent.chmod(0o755)
     r, framedir = _run_probe(tmp_path, str(agent))
-    assert r.returncode == 1, (
-        f"probe exited {r.returncode} (expected 1): stderr={r.stderr!r}"
-    )
     rid = json.loads((framedir / "runtime-identity.json").read_text())
-    assert rid["probe_error"] == \
-        "interpreter sample failed: agent exited before its first a2c byte"
-    assert r.stderr.strip() == \
-        "acp_probe: interpreter sample failed: agent exited before its first a2c byte"
+    assert rid["agent_exit_code"] == 0
+    # Interpreter identity is always sampled (early retry loop)
+    assert rid["agent_interpreter_realpath"] is not None
+    assert rid["agent_interpreter_sha256"] is not None
+    # The old "interpreter sample failed" never fires
+    if "probe_error" in rid:
+        assert "BrokenPipeError" in rid["probe_error"], (
+            f"expected no probe_error or BrokenPipe, got {rid['probe_error']!r}"
+        )
 
 
 def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
     """N5d-F1: readlink patched to sleep 1 s then raise (child reaped by then).
     Without the poll() guard the failure must still be loud: exit 1 + exact reason.
-    Uses a quick-exit agent (no sys.stdin.read) so the child is dead after the delay."""
-    # Dedicated quick-exit agent: writes response then exits immediately
+    Uses a quick-exit agent (os._exit after response, no sys.stdin.read) so the
+    child is dead before the in-loop readlink returns."""
+    # Dedicated quick-exit agent: writes response then exits immediately via os._exit
     agent = tmp_path / "agent_quick_exit.py"
     agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
-        import json, sys
+        import json, sys, os
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -1040,7 +1071,7 @@ def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
                 }
                 sys.stdout.write(json.dumps(resp) + "\\n")
                 sys.stdout.flush()
-            break
+            os._exit(0)
     """))
     agent.chmod(0o755)
     framedir = tmp_path / "capture"
@@ -1056,6 +1087,7 @@ def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
     wrapper = tmp_path / "run_probe_readlink_delay_fail.py"
     wrapper.write_text(textwrap.dedent(f"""\
         import sys, os, time, unittest.mock
+        import select as _select_mod
         sys.path.insert(0, {str(P / "tools")!r})
         import acp_probe
 
@@ -1066,7 +1098,18 @@ def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
                 raise OSError("No such process")
             return _orig_readlink(path)
 
-        with unittest.mock.patch.object(os, 'readlink', _delayed_failing_readlink):
+        # N5e: add a brief delay before select to ensure the os._exit agent is
+        # dead by the time the in-loop poll() check runs — kills mutant G2.
+        _orig_select = _select_mod.select
+        _select_called = [False]
+        def _settling_select(*a, **kw):
+            if not _select_called[0]:
+                _select_called[0] = True
+                time.sleep(0.1)
+            return _orig_select(*a, **kw)
+
+        with unittest.mock.patch.object(os, 'readlink', _delayed_failing_readlink), \\
+             unittest.mock.patch.object(_select_mod, 'select', _settling_select):
             try:
                 acp_probe.main()
             except SystemExit as e:
@@ -1080,3 +1123,276 @@ def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["probe_error"] == "interpreter sample failed: No such process"
     assert r.stderr.strip() == "acp_probe: interpreter sample failed: No such process"
+
+
+# ---- N5e: F1/F2/F3/F8 agent-independence scenarios ----
+
+
+def test_probe_fast_exit_agent_is_deterministic(tmp_path):
+    """N5e-F1: an agent that writes one byte and os._exit(0)s immediately must
+    yield a CONSTANT interpreter-sample result across 20 runs.  The post-Popen
+    retry loop makes the interpreter identity deterministic (always sampled);
+    rc may vary (BrokenPipe if stdin.write races with the child's exit)."""
+    agent = tmp_path / "agent_fast_exit.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import sys, os
+        sys.stdout.write('x')
+        sys.stdout.flush()
+        os._exit(0)
+    """))
+    agent.chmod(0o755)
+    interp_outcomes = set()
+    for i in range(20):
+        framedir = tmp_path / f"capture_{i}"
+        framedir.mkdir()
+        env = os.environ.copy()
+        env["S0_01_AGENT"] = str(agent)
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["ACP_PROBE_TIMEOUT"] = "5"
+        subprocess.run(
+            [sys.executable, str(PROBE)],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        rid = json.loads((framedir / "runtime-identity.json").read_text())
+        interp_outcomes.add((
+            rid["agent_interpreter_realpath"] is None,
+            rid["agent_interpreter_sha256"] is None,
+            rid["agent_exit_code"],
+        ))
+    assert len(interp_outcomes) == 1, (
+        f"fast-exit agent gave {len(interp_outcomes)} distinct interpreter "
+        f"outcomes across 20 runs: {interp_outcomes}"
+    )
+    # The interpreter must always be sampled (never null)
+    sole_outcome = interp_outcomes.pop()
+    assert sole_outcome == (False, False, 0), (
+        f"expected (interp_null=False, sha_null=False, exit=0), got {sole_outcome}"
+    )
+
+
+def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
+    """N5e-F3: the post-loop sample block must report the REAL exception when
+    readlink succeeded but sha256 failed, not the fixed 'agent exited before
+    its first a2c byte' wording.  This test exercises the post-loop block by
+    defeating the early retry loop (readlink fails for 0.3 s) and using a
+    silent agent (no a2c data, so the in-loop sample never fires).  After the
+    a2c timeout the post-loop readlink succeeds but sha256 fails."""
+    agent = tmp_path / "agent_silent_stdin.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import sys
+        sys.stdin.readline()
+        import time
+        time.sleep(30)
+    """))
+    agent.chmod(0o755)
+
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": str(agent),
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "1",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "f3_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, time, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_readlink = os.readlink
+        _start = time.monotonic()
+        _fake_path = "/tmp/fake_interp (deleted)"
+
+        def _gated_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                if time.monotonic() - _start < 0.3:
+                    raise OSError("No such process")
+                return _fake_path
+            return _orig_readlink(path)
+
+        _orig_sha256 = acp_probe._sha256_file
+        def _gated_sha256(path):
+            if path == _fake_path:
+                raise FileNotFoundError(2, "No such file or directory", path)
+            return _orig_sha256(path)
+
+        with unittest.mock.patch.object(os, 'readlink', _gated_readlink), \\
+             unittest.mock.patch.object(acp_probe, '_sha256_file', _gated_sha256):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    # With F3 fix: real exception, not fixed wording
+    assert "No such file or directory" in rid["probe_error"], (
+        f"expected real FileNotFoundError in probe_error, got {rid['probe_error']!r}"
+    )
+    assert rid["probe_error"] != (
+        "interpreter sample failed: agent exited before its first a2c byte"
+    )
+    assert rid["agent_interpreter_realpath"] == "/tmp/fake_interp (deleted)"
+    assert rid["agent_interpreter_sha256"] is None
+
+
+def test_probe_self_deleting_script_is_probe_error_not_traceback(tmp_path):
+    """N5e-F8: an agent that unlinks its OWN SCRIPT file at start.  The
+    entrypoint sha256 of the now-deleted agent raises FileNotFoundError
+    inside the evidence writes — the M3 handler must catch it: rc 1,
+    no Traceback on stderr, runtime-identity.json present with probe_error
+    starting 'FileNotFoundError'."""
+    agent = tmp_path / "agent_self_delete.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import os, sys, json
+        os.unlink(os.path.abspath(__file__))
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            resp = {
+                "jsonrpc": "2.0",
+                "id": msg.get("id"),
+                "error": {"code": -32602, "message": "Invalid params"},
+            }
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """))
+    agent.chmod(0o755)
+    r, framedir = _run_probe(tmp_path, str(agent), timeout_override=5)
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    assert "Traceback" not in r.stderr, (
+        f"uncaught traceback leaked to stderr — evidence writes are outside M3: {r.stderr}"
+    )
+    rid_path = framedir / "runtime-identity.json"
+    assert rid_path.exists(), "runtime-identity.json absent after M3 crash"
+    rid = json.loads(rid_path.read_text())
+    assert rid["probe_error"].startswith("FileNotFoundError"), (
+        f"probe_error should name the real exception, got {rid['probe_error']!r}"
+    )
+
+
+def test_probe_broken_pipe_post_loop_placement(tmp_path, agent_result):
+    """N5e-F2/N8: the post-loop sample block MUST sit inside 'if c2a_delivered:'.
+    Dedenting it (mutant N8) overwrites the BrokenPipe probe_error with the
+    interpreter-sample error when both the early retry loop and the in-loop
+    sample are defeated.  This test patches readlink to fail everywhere AND
+    forces BrokenPipe on stdin.write — the only remaining sample path is the
+    post-loop block, which runs only if c2a_delivered is True (i.e. it stays
+    skipped on the not-delivered path)."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "n8_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, unittest.mock, subprocess as _sub
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_readlink = os.readlink
+        def _always_fail_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                raise OSError("No such process")
+            return _orig_readlink(path)
+
+        _OrigPopen = _sub.Popen
+        class _PatchedPopen(_OrigPopen):
+            def __new__(cls, *a, **kw):
+                return _OrigPopen.__new__(cls)
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                def _raise_broken(*args, **kwargs):
+                    raise BrokenPipeError("simulated broken pipe")
+                self.stdin.write = _raise_broken
+
+        with unittest.mock.patch.object(os, 'readlink', _always_fail_readlink), \\
+             unittest.mock.patch.object(_sub, 'Popen', _PatchedPopen):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    # The BrokenPipe error must NOT be overwritten by an interpreter-sample error
+    assert rid["probe_error"] == "BrokenPipeError: agent process exited before c2a write landed", (
+        f"expected BrokenPipe probe_error (post-loop block skipped), got {rid['probe_error']!r}"
+    )
+    assert rid["agent_interpreter_realpath"] is None
+    assert rid["agent_interpreter_sha256"] is None
+
+
+def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, agent_result):
+    """N5e-F1/AP-F1a: readlink patched to fail the first 3 calls, then succeed.
+    The retry loop recovers; a single-shot AP-F1a sample does not.  Assert the
+    interpreter IS sampled and no probe_error from the interpreter path."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "apf1a_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_readlink = os.readlink
+        _call_count = [0]
+        def _transient_fail_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                _call_count[0] += 1
+                if _call_count[0] <= 3:
+                    raise OSError("transient failure")
+            return _orig_readlink(path)
+
+        with unittest.mock.patch.object(os, 'readlink', _transient_fail_readlink):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"expected exit 0 (retry recovered), got {r.returncode}: {r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["agent_interpreter_realpath"] is not None, (
+        "retry loop failed to recover from transient readlink failures"
+    )
+    assert rid["agent_interpreter_sha256"] is not None
+    assert "probe_error" not in rid

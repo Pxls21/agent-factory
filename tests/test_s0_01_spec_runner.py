@@ -572,3 +572,111 @@ def test_runner_unmet_when_reason_split_across_streams(tmp_path):
         f"stdout={r.stdout!r} stderr={r.stderr!r}"
     )
     assert r.stderr.strip() == "negative-control-unmet: S0-95"
+
+
+def _register_runner_proof(root, proof_id, title, reason, checker_src):
+    """Register a synthetic proof (schema pattern + registry + S0-N dir) running
+    the given checker as its negative leg; return the proof dir."""
+    spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
+    spec_schema = json.loads(spec_schema_path.read_text())
+    spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
+
+    result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
+    result_schema = json.loads(result_schema_path.read_text())
+    result_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    result_schema_path.write_text(json.dumps(result_schema, indent=2))
+
+    reg_path = root / "proofs" / "registry.yaml"
+    reg_text = "\n".join(
+        line for line in reg_path.read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    reg = json.loads(reg_text)
+    reg["proofs"].append({
+        "proof_id": proof_id,
+        "title": title,
+        "classification": "execution_proof",
+        "wave": 0,
+        "spike_dependencies": [],
+        "required_negative_controls": 1,
+        "assertion_count": 1,
+    })
+    reg_path.write_text(json.dumps(reg, indent=2))
+
+    sdir = root / "proofs" / proof_id
+    sdir.mkdir(parents=True)
+    (sdir / "pass.py").write_text("import sys; sys.exit(0)\n")
+    (sdir / "checker.py").write_text(checker_src)
+    spec = {
+        "proof_id": proof_id,
+        "legs": [
+            {"leg": "positive", "cmd": [sys.executable, f"proofs/{proof_id}/pass.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {"exit_code": 0}},
+            {"leg": "negative", "cmd": [sys.executable, f"proofs/{proof_id}/checker.py"],
+             "cwd": ".", "timeout_s": 30, "expect": {
+                 "exit_code": 1,
+                 "failure_reason": reason,
+             }},
+        ],
+    }
+    (sdir / "spec.json").write_text(json.dumps(spec, indent=2))
+    return sdir
+
+
+def test_runner_reason_match_is_case_sensitive(tmp_path):
+    """N5e-F7/SR-07: the checker prints the expected reason UPPER-CASED while
+    the spec expects it lower-case.  A case-insensitive match would forge a
+    pass; the runner's per-line 'expected in line' is case-SENSITIVE, so this
+    must report negative-control-unmet."""
+    root = _copy(tmp_path)
+    reason = "protocol-violation: missing required initialize field"
+    checker_src = (
+        "import sys\n"
+        f"print({reason.upper()!r})\n"
+        "sys.exit(1)\n"
+    )
+    _register_runner_proof(root, "S0-96", "case-sensitive reason match",
+                           reason, checker_src)
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-96",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode != 0, (
+        f"runner should fail (case-insensitive match would forge a pass), "
+        f"got rc=0: stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert r.stderr.strip() == "negative-control-unmet: S0-96"
+
+
+def test_runner_records_the_first_matching_line(tmp_path):
+    """N5e-F7/SR-08: TWO lines both contain the expected reason.  The
+    runner's next(...) generator must record the FIRST occurrence, not the
+    last."""
+    root = _copy(tmp_path)
+    reason = "protocol-violation: missing required initialize field"
+    first_line = f"failure_reason: negative: {reason} (first occurrence)"
+    second_line = f"failure_reason: negative: {reason} (second occurrence)"
+    checker_src = (
+        "import sys\n"
+        f"print({first_line!r})\n"
+        f"print({second_line!r})\n"
+        "sys.exit(1)\n"
+    )
+    sdir = _register_runner_proof(root, "S0-94", "first matching line recorded",
+                                  reason, checker_src)
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-94",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, (
+        f"runner should succeed (reason present), got rc={r.returncode}: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    result = json.loads((sdir / "result.json").read_text())
+    assert result["negative_control"]["observed_failure_reason"] == first_line, (
+        f"observed_failure_reason should be the FIRST matching line, got "
+        f"{result['negative_control']['observed_failure_reason']!r}"
+    )
