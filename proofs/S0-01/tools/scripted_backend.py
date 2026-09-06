@@ -21,25 +21,34 @@ Authorization equality is == (Bearer <token>X -> 401; Bearer <token> extra -> 40
 
 Framing gate (_framing_gate, first statement of do_GET and do_POST):
   1. headers.defects non-empty (parse error, e.g. 'Content-Length : N') -> 400 + close.
+  1b. Header value containing CR/LF (obs-fold, RFC 9112 §5.2) -> 400 + close.
   2. Transfer-Encoding present (any value, any count) -> 411 + close.
   3. Duplicate Content-Length -> 400 + close.
-  4. Single Content-Length must match [0-9]+ (no sign, space, underscore, exponent);
+  4. Single Content-Length must match [0-9]+ (no sign, underscore, exponent);
+     leading OWS in the field value is stripped by the parser
+     (Content-Length:  5 -> "5", accepted); trailing OWS is rejected (stricter
+     than RFC 9110 §5.5, fail-closed).
      POST with int > MAX_CONTENT_LENGTH -> 400 + close;
      GET with int > 0 -> read min(int, MAX) bytes, 400 + close;
      GET with int == 0 -> accepted.
-  5. Expect header present -> 417 + close (prevents interim 100-continue).
-  6. Method not in {GET, POST} -> 501 + close (http.server's default, kept explicit).
+  5. Expect header present (any value, including empty) -> 417 + close
+     (prevents interim 100-continue).
+  Unsupported methods (not GET/POST) receive 501 from http.server's
+  handle_one_request before dispatch (proven safe: no tail served,
+  Connection: close sent).
   Every rejection sends Connection: close and never parses a tail as a second request.
 
-Credential screen (_carries_secret): token in s, unquote(s), whitespace-stripped s, or
-  unquote(whitespace-stripped s); applied at the record boundary to path, header names
-  (Authorization exempt), header values, serialized JSON body, and raw body.
+Credential screen (_carries_secret): iterative percent-decode (to a fixed point,
+  bounded at 3 passes; fail closed if still changing) and whitespace-strip, applied
+  at the record boundary to path, header names (Authorization exempt), header values,
+  serialized JSON body, and raw body (all recording paths).
 
 Not recorded: GET /healthz (operational, pre-auth); any gate rejection (TE, dup CL,
-  malformed CL, oversized CL, GET with CL > 0, defects, Expect). These all close the
-  connection.  Duplicate non-framing headers collapse to the last value in the record
-  (email.message.Message.items() yields all, but dict() takes the last -- documented,
-  not a defect; evidence combed from the full headers object when needed).
+  malformed CL, oversized CL, GET with CL > 0, defects, obs-fold, Expect). These all
+  close the connection.  Duplicate non-framing headers collapse to the last value in
+  the record (email.message.Message.items() yields all, but dict() takes the last --
+  documented, not a defect; the dropped duplicate values are discarded and
+  unrecoverable from the record).
 Determinism: identical request bodies -> byte-identical responses (fixed ids, timestamps, usage).
 """
 from __future__ import annotations
@@ -80,6 +89,24 @@ class _ParseError(Exception):
         self.raw = raw
 
 
+def _iter_json_strings(obj):
+    """Yield every string leaf (keys and values) from a parsed JSON value.
+
+    F1: json.dumps re-escapes whitespace chars (tab -> \\t, etc.), hiding a
+    whitespace-split token.  Walking the parsed values preserves the actual
+    whitespace characters that json.loads decoded.
+    """
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            yield k
+            yield from _iter_json_strings(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _iter_json_strings(item)
+
+
 def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
@@ -115,11 +142,29 @@ class State:
         self.lock = threading.Lock()
 
     def _carries_secret(self, s: str) -> bool:
-        """True if the configured token appears in s under any of four normalizations:
-        literal, percent-decoded, whitespace-stripped, or both."""
+        """True if the configured token appears in s under iterated normalization.
+
+        Checks: literal, whitespace-stripped, and iterative percent-decode of each
+        (to a fixed point, bounded at 3 passes; fail closed if still changing).
+        """
         t = self.token
         stripped = re.sub(r"\s+", "", s)
-        return t in s or t in unquote(s) or t in stripped or t in unquote(stripped)
+        for base in (s, stripped):
+            v = base
+            for _ in range(3):
+                if t in v:
+                    return True
+                prev = v
+                v = unquote(v)
+                if v == prev:
+                    break
+            else:
+                if t in v:
+                    return True
+                # Still changing after 3 passes: fail closed
+                if unquote(v) != v:
+                    return True
+        return False
 
     def record(self, method: str, path: str, headers, body,
                remote_addr: str, bearer_token: str | None,
@@ -146,6 +191,13 @@ class State:
             body_str = body if isinstance(body, str) else json.dumps(body)
             if self._carries_secret(body_str):
                 leaked = True
+            # F1: json.dumps re-escapes whitespace chars to \t \n etc., hiding
+            # a whitespace-split token. Walk parsed string values directly.
+            if not leaked and not isinstance(body, str):
+                for s in _iter_json_strings(body):
+                    if self._carries_secret(s):
+                        leaked = True
+                        break
         if raw_body and self._carries_secret(raw_body.decode("latin-1")):
             leaked = True
         if leaked:
@@ -194,6 +246,12 @@ def make_handler(state: State):
             if self.headers.defects:
                 self._reject(400)
                 return True
+            # 1b. Obs-fold (RFC 9112 §5.2): any header value with CR/LF is a
+            #     framing defect — a folded CL/TE is invisible to later arms.
+            for _k, _v in self.headers.items():
+                if '\r' in _v or '\n' in _v:
+                    self._reject(400)
+                    return True
             # 2. Transfer-Encoding present (any value, any count)
             if self.headers.get_all("Transfer-Encoding"):
                 self._reject(411)
@@ -219,15 +277,13 @@ def make_handler(state: State):
                         self.rfile.read(min(n, MAX_CONTENT_LENGTH))
                         self._reject(400)
                         return True
-            # 5. Expect header present (prevents interim 100-continue — F21)
-            if self.headers.get("Expect"):
+            # 5. Expect header present (any value, including empty — F21/F2)
+            if self.headers.get_all("Expect") is not None:
                 self._reject(417)
                 return True
-            # 6. Method not in {GET, POST} — kept explicit though http.server
-            #    also sends 501 for unhandled methods
-            if self.command not in ("GET", "POST"):
-                self._reject(501)
-                return True
+            # Unsupported methods (not GET/POST) receive 501 from http.server's
+            # handle_one_request before dispatch (proven safe: no tail served,
+            # Connection: close sent). No gate arm needed here.
             return False
 
         def handle_expect_100(self):
@@ -258,6 +314,7 @@ def make_handler(state: State):
             return auth[7:] if auth.startswith("Bearer ") else None
 
         def _read_body(self):
+            self._last_raw_body = None
             cl_raw = self.headers.get("Content-Length")
             if cl_raw is None:
                 return None
@@ -271,6 +328,7 @@ def make_handler(state: State):
             # A18: short body (client hung up early) -> _BAD_CL -> 400, no record
             if length and len(raw) < length:
                 return _BAD_CL
+            self._last_raw_body = raw if raw else None
             if not raw:
                 return None
             try:
@@ -290,7 +348,8 @@ def make_handler(state: State):
             body = None
             # Record at the single boundary; credential leak handled inside record()
             _seq, leaked = state.record("GET", self.path, self.headers, body,
-                                        self.client_address[0], bearer)
+                                        self.client_address[0], bearer,
+                                        raw_body=None)
             if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
@@ -321,7 +380,8 @@ def make_handler(state: State):
                 return
             # Record at the single boundary; credential leak handled inside record()
             _seq, leaked = state.record("POST", self.path, self.headers, body,
-                                        self.client_address[0], bearer)
+                                        self.client_address[0], bearer,
+                                        raw_body=self._last_raw_body)
             if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")

@@ -172,6 +172,9 @@ def test_unknown_model_and_bad_body_are_exact_errors(backend):
 
 
 def test_requests_are_recorded_with_fingerprint_and_token_absent_from_argv(backend):
+    # F8/F18: self-contained -- issue own POST before reading records
+    _call(backend["port"], "POST", "/v1/chat/completions",
+          {"model": "s0-01-pong", "messages": [{"role": "user", "content": "x"}]})
     recs = sorted(backend["rec"].glob("*.json"))
     assert recs, "no request records written"
     last = json.loads(recs[-1].read_text())
@@ -469,7 +472,7 @@ def test_leak_record_does_not_contain_token(backend):
     _call(backend["port"], "GET", f"/v1/models?key={TOKEN}")
     recs = sorted(backend["rec"].glob("*.json"))
     # A new record should have been written
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     # The token must NOT appear anywhere in the written record
     assert TOKEN.encode() not in last_bytes, \
@@ -548,7 +551,7 @@ def test_post_arm_leak_record_does_not_contain_token(backend):
     assert status == 400
     assert json.loads(data)["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes, \
         "S23 mutant: the bearer token appears in the POST-arm leak record"
@@ -566,7 +569,7 @@ def test_post_arm_leak_via_header_redacted(backend):
                          body, extra_headers={"X-Trace-Id": TOKEN})
     assert status == 400
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -590,7 +593,7 @@ def test_body_literal_bad_cl_is_not_sentinel(backend):
     resp = _raw_request(backend["port"], raw)
     # Must be the normal error path (record written), not the _BAD_CL path (no record)
     count_after = len(list(backend["rec"].glob("*.json")))
-    assert count_after > count_before, \
+    assert count_after == count_before + 1, \
         "S27b mutant: body literal 'BAD_CL' matched the sentinel, no record written"
     # The response should carry the JSON error, not a bare 400+close
     assert b"messages: Expected array" in resp
@@ -618,13 +621,19 @@ def test_chunked_transfer_encoding_411_writes_no_record(backend):
 # -- V11/S28: handler timeout mutant killer ------------------------------------
 
 def test_handler_timeout_bounds_incomplete_body(backend):
-    """V11/S28: timeout=30 prevents an incomplete body from blocking forever.
+    """V11/S28: Handler.timeout prevents an incomplete body from blocking forever.
     A client sending headers + partial body but keeping the connection open must
-    see the connection close within ~35s (the handler timeout). If timeout is
-    removed (S28 mutant), this hangs indefinitely."""
+    see the connection close within the handler timeout. If timeout is removed
+    (S28 mutant), this hangs indefinitely."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scripted_backend", str(SERVER))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _st = mod.State("x", Path("/tmp/unused-timeout-test"), 0)
+    handler_timeout = mod.make_handler(_st).timeout
     port = backend["port"]
     s = socket.socket()
-    s.settimeout(60)
+    s.settimeout(handler_timeout * 3)
     s.connect(("127.0.0.1", port))
     raw = (
         f"POST /v1/chat/completions HTTP/1.1\r\n"
@@ -636,7 +645,7 @@ def test_handler_timeout_bounds_incomplete_body(backend):
     ).encode() + b'{"model":"s0-01-pong"}'
     t0 = time.time()
     s.sendall(raw)
-    # Keep connection open — no SHUT_WR — the server must timeout at 30s
+    # Keep connection open — no SHUT_WR — the server must timeout
     try:
         while True:
             chunk = s.recv(4096)
@@ -646,9 +655,11 @@ def test_handler_timeout_bounds_incomplete_body(backend):
         pass
     elapsed = time.time() - t0
     s.close()
-    # F20: bound by the handler's configured timeout (30s) with generous slack
-    assert elapsed >= 15, f"completed too fast ({elapsed:.1f}s), expected ~30s handler timeout"
-    assert elapsed <= 75, f"took too long ({elapsed:.1f}s), expected ~30s handler timeout"
+    # F15/F20: bound derived from the handler's configured timeout, not hand-copied
+    assert elapsed >= handler_timeout * 0.5, \
+        f"completed too fast ({elapsed:.1f}s), expected >= {handler_timeout * 0.5:.0f}s"
+    assert elapsed <= handler_timeout * 2.5, \
+        f"took too long ({elapsed:.1f}s), expected <= {handler_timeout * 2.5:.0f}s"
     # Server must still be alive
     status, _ = _call(port, "GET", "/healthz", token=None)
     assert status == 200
@@ -729,7 +740,7 @@ def test_malformed_json_with_token_in_url_redacted(backend):
     resp = _raw_request(port, raw)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes, \
         "P1 mutant: token leaked through JSON-error recording path (URL)"
@@ -753,7 +764,7 @@ def test_malformed_json_with_token_in_header_redacted(backend):
     resp = _raw_request(port, raw)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes, \
         "P1 mutant: token leaked through JSON-error recording path (header)"
@@ -784,7 +795,7 @@ def test_malformed_json_with_token_in_body_redacted(backend):
     resp_body = json.loads(resp[body_start + 4:])
     assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes, \
         "P1 mutant: token leaked through JSON-error recording path (body)"
@@ -893,7 +904,7 @@ def test_credential_in_query_no_auth_header_returns_400(backend):
     assert status == 400
     assert json.loads(data)["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -907,7 +918,7 @@ def test_credential_in_header_no_auth_returns_400(backend):
     assert status == 400
     assert json.loads(data)["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -922,7 +933,7 @@ def test_credential_in_body_no_auth_returns_400(backend):
     assert status == 400
     assert json.loads(data)["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -949,7 +960,7 @@ def test_credential_in_raw_body_no_auth_returns_400(backend):
     resp_body = json.loads(resp[body_start + 4:])
     assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -962,7 +973,7 @@ def test_short_bogus_bearer_does_not_collapse_records(backend):
     status, data = _call(backend["port"], "GET", "/v1/models", token="1")
     assert status == 401  # wrong bearer, not a leak
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last = json.loads(recs[-1].read_bytes())
     # Record must contain the real path, not a marker
     assert last["path"] == "/v1/models"
@@ -1268,7 +1279,7 @@ def test_credential_in_header_name_returns_400(backend):
     resp_body = json.loads(resp[body_start + 4:])
     assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -1335,7 +1346,7 @@ def test_credential_percent_encoded_in_query_returns_400(backend):
     assert status == 400
     assert json.loads(data)["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     last_bytes = recs[-1].read_bytes()
     assert TOKEN.encode() not in last_bytes
 
@@ -1572,8 +1583,8 @@ def test_framing_domain_table(backend, case_id, method, path, header_lines,
 
     # Assert status of the FIRST response
     status_line = resp.split(b"\r\n", 1)[0]
-    assert str(expected_status).encode() in status_line, \
-        f"[{case_id}] expected {expected_status} in {status_line!r}"
+    assert status_line.split()[1] == str(expected_status).encode(), \
+        f"[{case_id}] expected {expected_status}, got {status_line!r}"
 
     http_count = resp.count(b"HTTP/1.1 ")
 
@@ -1622,7 +1633,7 @@ def test_bearer_extra_space_rejected_401(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(port, raw)
-    assert b"401" in resp.split(b"\r\n", 1)[0]
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 401 Unauthorized"
 
 
 # -- D5c: /healthzXYZ control ------------------------------------------------
@@ -1654,13 +1665,13 @@ def test_credential_percent_encoded_in_header_value(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0]
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     body_start = resp.find(b"\r\n\r\n")
     assert body_start >= 0
     resp_body = json.loads(resp[body_start + 4:])
     assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     assert TOKEN.encode() not in recs[-1].read_bytes()
 
 
@@ -1679,9 +1690,9 @@ def test_credential_percent_encoded_in_header_name(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0]
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     assert TOKEN.encode() not in recs[-1].read_bytes()
 
 
@@ -1704,9 +1715,9 @@ def test_credential_percent_encoded_in_json_body(backend):
         f"{body}"
     ).encode()
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0]
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
     assert TOKEN.encode() not in recs[-1].read_bytes()
 
 
@@ -1728,13 +1739,40 @@ def test_credential_obs_folded_in_header_value(backend):
         f"\r\n"
     ).encode()
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0]
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     body_start = resp.find(b"\r\n\r\n")
     assert body_start >= 0
     resp_body = json.loads(resp[body_start + 4:])
     assert resp_body["error"]["message"] == "credential in unexpected location"
     recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) > count_before
+    assert len(recs) == count_before + 1
+    assert TOKEN.encode() not in recs[-1].read_bytes()
+
+
+# -- D5d/F7: triple percent-encoding caught by fixed-point unquote ------------
+
+def test_credential_triple_percent_encoded_in_header_value(backend):
+    """D5d/F7: triple percent-encoded token in header value must be caught.
+    Proves the fixed-point unquote (bounded at 3 passes)."""
+    port = backend["port"]
+    # Single-encode the last char
+    once = TOKEN[:-1] + "%%%02x" % ord(TOKEN[-1])
+    # Double-encode: replace each % with %25
+    twice = once.replace("%", "%25")
+    # Triple-encode: replace each % with %25 again
+    triple = twice.replace("%", "%25")
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Trace: {triple}\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == count_before + 1
     assert TOKEN.encode() not in recs[-1].read_bytes()
 
 
@@ -1762,16 +1800,20 @@ def test_negative_control_defects_gate_arm(backend):
     Content-Length : N (space before colon) would bypass the gate.
     This test asserts the gate fires — gate-deleted mutant would see 200/401."""
     port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
     raw = (
         f"GET /v1/models HTTP/1.1\r\n"
         f"Host: 127.0.0.1:{port}\r\n"
         f"Authorization: Bearer {TOKEN}\r\n"
         f"Content-Length : 0\r\n"
         f"\r\n"
-    ).encode()
+    ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request", \
         "defects gate arm must reject; deletion would let it through"
+    assert resp.count(b"HTTP/1.1 ") == 1
+    assert b"\r\nConnection: close\r\n" in resp
+    assert len(list(backend["rec"].glob("*.json"))) == count_before
 
 
 def test_negative_control_te_gate_arm(backend):
@@ -1786,7 +1828,7 @@ def test_negative_control_te_gate_arm(backend):
         f"\r\n"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"411" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 411 Length Required", \
         "TE gate arm must reject; deletion would let TE: gzip through"
     assert resp.count(b"HTTP/1.1 ") == 1
     assert len(list(backend["rec"].glob("*.json"))) == count_before
@@ -1807,7 +1849,7 @@ def test_negative_control_dup_cl_gate_arm(backend):
         f"{{}}"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request", \
         "dup CL gate arm must reject; deletion would process first CL"
     assert resp.count(b"HTTP/1.1 ") == 1
     assert len(list(backend["rec"].glob("*.json"))) == count_before
@@ -1826,7 +1868,7 @@ def test_negative_control_cl_format_gate_arm(backend):
         f"\r\n"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request", \
         "CL format gate arm must reject; deletion would let -1 through on GET"
     assert resp.count(b"HTTP/1.1 ") == 1
     assert len(list(backend["rec"].glob("*.json"))) == count_before
@@ -1845,14 +1887,15 @@ def test_negative_control_get_cl_body_gate_arm(backend):
         f"XXXXX"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request", \
         "GET CL>0 gate arm must reject; deletion would serve the request"
     assert resp.count(b"HTTP/1.1 ") == 1
     assert len(list(backend["rec"].glob("*.json"))) == count_before
 
 
-def test_negative_control_post_cl_overmax_gate_arm(backend):
-    """D5c negative control: POST CL > MAX gate arm deletion would let oversized CL through."""
+def test_post_cl_overmax_ordering_beats_expect(backend):
+    """D5c/M18: CL > MAX + Expect: 100-continue -> 400 (not 417).
+    Proves the CL > MAX arm fires before the Expect arm (ordering)."""
     port = backend["port"]
     count_before = len(list(backend["rec"].glob("*.json")))
     raw = (
@@ -1861,12 +1904,14 @@ def test_negative_control_post_cl_overmax_gate_arm(backend):
         f"Authorization: Bearer {TOKEN}\r\n"
         f"Content-Type: application/json\r\n"
         f"Content-Length: 2000000\r\n"
+        f"Expect: 100-continue\r\n"
         f"\r\n"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"400" in resp.split(b"\r\n", 1)[0], \
-        "POST CL > MAX gate arm must reject"
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request", \
+        "CL > MAX must fire before Expect (400, not 417)"
     assert resp.count(b"HTTP/1.1 ") == 1
+    assert b"\r\nConnection: close\r\n" in resp
     assert len(list(backend["rec"].glob("*.json"))) == count_before
 
 
@@ -1874,6 +1919,7 @@ def test_negative_control_expect_gate_arm(backend):
     """D5c negative control: Expect gate arm deletion would send 100-continue
     (or let the request through to routing)."""
     port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
     raw = (
         f"GET /v1/models HTTP/1.1\r\n"
         f"Host: 127.0.0.1:{port}\r\n"
@@ -1882,6 +1928,8 @@ def test_negative_control_expect_gate_arm(backend):
         f"\r\n"
     ).encode() + _forged_tail(port)
     resp = _raw_request(port, raw)
-    assert b"417" in resp.split(b"\r\n", 1)[0], \
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 417 Expectation Failed", \
         "Expect gate arm must reject; deletion would send 100-continue"
     assert resp.count(b"HTTP/1.1 ") == 1
+    assert b"\r\nConnection: close\r\n" in resp
+    assert len(list(backend["rec"].glob("*.json"))) == count_before

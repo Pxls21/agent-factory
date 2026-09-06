@@ -303,7 +303,8 @@ def _write_upstream_records(leg_dir, leg, entries, fingerprint):
 
 def _scan_header(mode, *, rows=50, buzz_pid=12300, buzz_present=1, owned=3,
                  owned_present=3, pinned_present=0, owned_zombies=0):
-    """Build a v2.3 scan enumeration header line."""
+    """Build a v2.3 scan enumeration header line.
+    pinned_present defaults to 0; callers set it to match their body rows."""
     return (f"# process-scan v2.3 mode={mode} rows={rows} buzz_acp_pid={buzz_pid} "
             f"buzz_present={buzz_present} owned={owned} owned_present={owned_present} "
             f"pinned_present={pinned_present} owned_zombies={owned_zombies} "
@@ -326,15 +327,15 @@ def _write_process_scan(leg_dir, leg):
     if leg == "shutdown":
         # After a clean shutdown, all owned pids have exited — empty body with v2.3 header.
         (leg_dir / "process-scan-after.txt").write_text(
-            _scan_header("after", buzz_present=0, owned_present=0) + "\n")
+            _scan_header("after", buzz_present=0, owned_present=0, pinned_present=0) + "\n")
     else:
-        lines = [_scan_header("after"),
+        lines = [_scan_header("after", pinned_present=3),
                  f"{buzz_pid} {launcher_pid} 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999",
                  f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}",
                  f"{agent_pid} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}"]
         (leg_dir / "process-scan-after.txt").write_text("\n".join(lines) + "\n")
     (leg_dir / "process-scan-teardown.txt").write_text(
-        _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+        _scan_header("teardown", buzz_present=0, owned_present=0, pinned_present=0) + "\n")
 
 
 def _write_tee_status(leg_dir, entries):
@@ -441,7 +442,8 @@ def _session_bundle(tmp_path_factory):
 @pytest.fixture
 def bundle(_session_bundle, tmp_path, monkeypatch):
     """Per-test: copytree from session fixture; monkeypatch the checker.
-    5-F10/6-F14: session-scoped bundle built once; per-test is a fast copytree."""
+    F43/5-F10/6-F14: session-scoped bundle built once; per-test copytree.
+    Hardlink overlay is unsafe because write_text() modifies the shared inode."""
     base, golden_sha, tmp_fixtures = _session_bundle
     dest = tmp_path / "evidence"
     shutil.copytree(base / "evidence", dest)
@@ -1505,7 +1507,7 @@ def test_proc_buzz_found(bundle):
 def test_proc_tee_parent(bundle):
     """m56: no tee process parented by buzz-acp."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
+    sp.write_text(_scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
@@ -1517,7 +1519,7 @@ def test_proc_tee_parent(bundle):
 def test_proc_agent_parent(bundle):
     """m57: no agent process parented by a tee."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=2, owned_present=2) + "\n"
+    sp.write_text(_scan_header("after", owned=2, owned_present=2, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 9999 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340], "taken_at": "ready+after"}))
@@ -1529,7 +1531,7 @@ def test_proc_agent_parent(bundle):
 def test_proc_closure(bundle):
     """m58: process outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after") + "\n"
+    sp.write_text(_scan_header("after", pinned_present=4) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1541,7 +1543,7 @@ def test_proc_closure(bundle):
 def test_proc_closure_seed(bundle):
     """m59: mutual-parent attack (V-b F19)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
+    sp.write_text(_scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
@@ -1572,7 +1574,7 @@ def test_teardown_has_tee(bundle):
 def test_orphan_pair(bundle):
     """6-F2: orphan process pair outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(_scan_header("after") + "\n"
+    sp.write_text(_scan_header("after", pinned_present=5) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1584,7 +1586,11 @@ def test_orphan_pair(bundle):
 def test_pc_launch_exemption(bundle):
     """7-F8 / A2: pc_launch.py exemption only for the launcher (pid == buzz ppid)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(sp.read_text() + f"31337 1 50 python3 /somewhere/pc_launch.py --agent {PINNED_AGENT_REALPATH}\n")
+    sp.write_text(_scan_header("after", pinned_present=4) + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+                  + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+                  + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
+                  + f"31337 1 50 python3 /somewhere/pc_launch.py --agent {PINNED_AGENT_REALPATH}\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out.startswith("failure_reason: run-1: process 31337")
@@ -2076,7 +2082,7 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
     owned_data["owned"].append(54321)
     owned_data["owned"].sort()
     owned_path.write_text(json.dumps(owned_data) + "\n")
-    scan.write_text(_scan_header("after", owned=4, owned_present=4) + "\n"
+    scan.write_text(_scan_header("after", owned=4, owned_present=4, pinned_present=3) + "\n"
                     + "\n".join(body_lines) + "\n")
     # Same child in teardown — owned pid = survivor
     td = ld / "process-scan-teardown.txt"
@@ -2387,7 +2393,7 @@ def test_v23_no_header_teardown(tmp_path):
     (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
     (ld / "process-scan-after.txt").write_text(
-        _scan_header("after") + "\n"
+        _scan_header("after", pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -2418,7 +2424,7 @@ def test_v23_owned_present_mismatch(tmp_path):
     (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     # Header says owned_present=2 but body has 3 owned pids
     (ld / "process-scan-after.txt").write_text(
-        _scan_header("after", owned_present=2) + "\n"
+        _scan_header("after", owned_present=2, pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -2488,7 +2494,7 @@ def test_v23_teardown_survivor(tmp_path):
     (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
     (ld / "process-scan-after.txt").write_text(
-        _scan_header("after") + "\n"
+        _scan_header("after", pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")

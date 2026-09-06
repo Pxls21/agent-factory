@@ -1060,9 +1060,9 @@ def _parse_scan_v23(path, leg, name):
     if not m:
         raise Failure(f"{leg}: {name} has no enumeration header")
     procs = []
-    for line in lines[1:]:
-        if not line.strip():
-            continue
+    for lineno, line in enumerate(lines[1:], 2):
+        if not line or not line.strip():
+            raise Failure(f"{leg}: {name} blank line at line {lineno}")
         parts = line.split(None, 3)
         if len(parts) < 4:
             raise Failure(f"{leg}: {name} unparsable line: {line!r}")
@@ -1080,19 +1080,45 @@ def check_process_evidence(leg_dir, leg):
         buzz_pid = int(pid_path.read_text().strip())
     except ValueError:
         raise Failure(f"{leg}: buzz-acp.pid is not a valid integer")
-    # A2: buzz-acp.exit REQUIRED in every leg, content parses as int
+    # A2 / F28: buzz-acp.exit REQUIRED in every leg, must be "0"
     exit_path = _require_file(leg_dir / "buzz-acp.exit", leg, "buzz-acp.exit")
     exit_text = exit_path.read_text().strip()
     try:
         int(exit_text)
     except ValueError:
         raise Failure(f"{leg}: buzz-acp.exit is not a valid integer")
-    # A20: load owned-pids.json
+    if exit_text != "0":
+        raise Failure(f"{leg}: buzz-acp.exit is {exit_text!r}, expected '0'")
+    # A20 / F15: load and validate owned-pids.json shape
     owned_path = _require_file(leg_dir / "owned-pids.json", leg, "owned-pids.json")
     owned_data = json.loads(owned_path.read_text())
     if not isinstance(owned_data, dict):
         raise Failure(f"{leg}: owned-pids.json is not an object")
-    owned_set = set(owned_data.get("owned", []))
+    _OWNED_REQUIRED_KEYS = {"buzz_acp_pid", "owned", "taken_at"}
+    if not _OWNED_REQUIRED_KEYS.issubset(set(owned_data.keys())):
+        missing = sorted(_OWNED_REQUIRED_KEYS - set(owned_data.keys()))
+        raise Failure(f"{leg}: owned-pids.json missing required keys: {missing}")
+    extra_owned_keys = set(owned_data.keys()) - _OWNED_REQUIRED_KEYS
+    if extra_owned_keys:
+        raise Failure(f"{leg}: owned-pids.json has extra keys: {sorted(extra_owned_keys)}")
+    if not _is_strict_int(owned_data["buzz_acp_pid"]):
+        raise Failure(f"{leg}: owned-pids.json buzz_acp_pid is not int")
+    if not isinstance(owned_data["owned"], list) or not owned_data["owned"]:
+        raise Failure(f"{leg}: owned-pids.json owned is empty or not a list")
+    if not all(_is_strict_int(p) for p in owned_data["owned"]):
+        raise Failure(f"{leg}: owned-pids.json owned contains non-int")
+    if not isinstance(owned_data["taken_at"], str):
+        raise Failure(f"{leg}: owned-pids.json taken_at is not a string")
+    owned_set = set(owned_data["owned"])
+    # F13: owned must contain buzz_acp_pid
+    if buzz_pid not in owned_set:
+        raise Failure(f"{leg}: owned-pids.json does not contain buzz-acp.pid {buzz_pid}")
+    # F16: header buzz_acp_pid must equal buzz-acp.pid
+    if owned_data["buzz_acp_pid"] != buzz_pid:
+        raise Failure(f"{leg}: owned-pids.json buzz_acp_pid {owned_data['buzz_acp_pid']} != buzz-acp.pid {buzz_pid}")
+    # F13/F14: the identity-binding check for rid pids in the scan-level
+    # branch (non-shutdown) already validates tee_pid and agent_child_pid presence;
+    # here we only enforce that the owned set is non-vacuous (contains buzz_pid).
     # A20 v2.3: parse and validate after-scan header
     scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
     hdr, all_procs = _parse_scan_v23(scan_path, leg, "process-scan-after.txt")
@@ -1105,11 +1131,18 @@ def check_process_evidence(leg_dir, leg):
     body_owned = sum(1 for pid, _, _, _ in all_procs if pid in owned_set)
     if int(hdr.group(6)) != body_owned:
         raise Failure(f"{leg}: process-scan-after.txt header owned_present={hdr.group(6)} inconsistent with body ({body_owned})")
+    # F16: header buzz_acp_pid must equal buzz-acp.pid file
+    if int(hdr.group(3)) != buzz_pid:
+        raise Failure(f"{leg}: process-scan-after.txt header buzz_acp_pid={hdr.group(3)} != buzz-acp.pid {buzz_pid}")
+    # F17: pinned_present must equal count of body rows whose cmd names a pinned path
+    body_pinned = sum(1 for _, _, _, cmd in all_procs
+                      if PINNED_BUZZ_ACP_EXE_REALPATH in cmd or PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd)
+    if int(hdr.group(7)) != body_pinned:
+        raise Failure(f"{leg}: process-scan-after.txt header pinned_present={hdr.group(7)} inconsistent with body ({body_pinned})")
     if leg == "shutdown":
-        # A20 v2.3 rule 6: any owned pid in the shutdown after-scan is a SURVIVOR
+        # A20 v2.3 rule 4 / F10: shutdown after-scan body must be EMPTY — any row is a survivor
         for pid, ppid, etimes, cmd in all_procs:
-            if pid in owned_set:
-                raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived shutdown")
+            raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived shutdown")
         # A20 v2.3 rule 4: shutdown after-scan must have buzz_present=0
         if int(hdr.group(4)) != 0:
             raise Failure(f"{leg}: process-scan-after.txt buzz_present={hdr.group(4)} in shutdown (expected 0)")
@@ -1188,10 +1221,18 @@ def check_process_evidence(leg_dir, leg):
     td_body_owned = sum(1 for pid, _, _, _ in teardown_procs if pid in owned_set)
     if int(td_hdr.group(6)) != td_body_owned:
         raise Failure(f"{leg}: process-scan-teardown.txt header owned_present={td_hdr.group(6)} inconsistent with body ({td_body_owned})")
-    # A20 v2.3 rule 6: any owned pid in teardown body is a survivor
+    # F12: teardown buzz_present must be 0
+    if int(td_hdr.group(4)) != 0:
+        raise Failure(f"{leg}: process-scan-teardown.txt buzz_present={td_hdr.group(4)} (expected 0)")
+    # F30: duplicate scan rows for one pid
+    td_pids = [pid for pid, _, _, _ in teardown_procs]
+    if len(td_pids) != len(set(td_pids)):
+        from collections import Counter
+        dups = [p for p, c in Counter(td_pids).items() if c > 1]
+        raise Failure(f"{leg}: process-scan-teardown.txt duplicate rows for pid(s) {dups}")
+    # A20 v2.3 rule 5 / F11: teardown body must be EMPTY — any row is a survivor
     for pid, ppid, etimes, cmd in teardown_procs:
-        if pid in owned_set:
-            raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
+        raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
 
 
 def check_buzzacp_log(leg_dir, leg):
@@ -1247,7 +1288,13 @@ def check_tee_status(leg_dir, leg, entries):
     if not isinstance(ts["updated_utc"], str) or not utc_re.match(ts["updated_utc"]):
         raise Failure(f"{leg}: tee-status.json updated_utc does not match format")
     # A21d: when final, A21b exit_code rule; when not final, both exit fields null
-    if ts["final"]:
+    # F31: final must be a strict bool
+    if ts["final"] is not True and ts["final"] is not False:
+        raise Failure(f"{leg}: tee-status.json final is not a bool")
+    # F32: stdin_reader_done must be True when final is true
+    if ts["final"] is True and ts.get("stdin_reader_done") is not True:
+        raise Failure(f"{leg}: tee-status.json stdin_reader_done is not true when final")
+    if ts["final"] is True:
         rc = ts["agent_returncode"]
         if not _is_strict_int(rc):
             raise Failure(f"{leg}: tee-status.json final but agent_returncode is not int")
@@ -1297,7 +1344,11 @@ def check_golden(golden_dir, leg="golden"):
         raise Failure(f"{leg}: golden not pinned")
     if frozen_sha != PINNED_GOLDEN_SHA256:
         raise Failure(f"{leg}: golden.jsonl sha256 {frozen_sha[:12]} != pinned {PINNED_GOLDEN_SHA256[:12]}")
-    frozen_lines = [l for l in frozen_bytes.decode("utf-8").splitlines() if l.strip()]
+    frozen_raw = frozen_bytes.decode("utf-8").splitlines()
+    for lineno, fl in enumerate(frozen_raw, 1):
+        if not fl or not fl.strip():
+            raise Failure(f"{leg}: golden.jsonl blank line at line {lineno}")
+    frozen_lines = frozen_raw
     if frozen_lines != n1:
         raise Failure(f"{leg}: normalized runs differ from the frozen golden.jsonl")
     if not n1:
@@ -1378,7 +1429,12 @@ def check_golden(golden_dir, leg="golden"):
 
 def _load_timeline_raw(leg_dir, leg):
     tl_path = _require_file(leg_dir / "timeline.jsonl", leg, "timeline.jsonl")
-    return [_reject_nan(line, leg, i + 1) for i, line in enumerate(tl_path.read_text().splitlines()) if line.strip()]
+    entries = []
+    for lineno, line in enumerate(tl_path.read_text().splitlines(), 1):
+        if not line or not line.strip():
+            raise Failure(f"{leg}: timeline.jsonl blank line at line {lineno}")
+        entries.append(_reject_nan(line, leg, lineno))
+    return entries
 
 
 def check_bundle(root: Path) -> str:
@@ -1405,13 +1461,20 @@ def check_bundle(root: Path) -> str:
             raise Failure(f"golden: unexpected directory golden/{item.name}")
         if item.is_file() and item.name not in expected_files:
             raise Failure(f"golden: unexpected file golden/{item.name}")
-    # 5-F18: any symlink inside the evidence tree is a Failure
+    # 5-F18 / F19: any non-regular, non-directory entry (symlink, FIFO, socket, device) is a Failure
+    import stat as _stat
     for dirpath, dirnames, filenames in os.walk(golden, followlinks=False):
         dp = Path(dirpath)
         for name in dirnames + filenames:
             p = dp / name
+            try:
+                st = p.lstat()
+            except OSError as e:
+                raise Failure(f"golden: cannot stat {p.relative_to(root)}: {e}")
             if p.is_symlink():
                 raise Failure(f"golden: symlink in evidence tree: {p.relative_to(root)}")
+            if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
+                raise Failure(f"golden: non-regular entry in evidence tree: {p.relative_to(root)}")
     global _executed
     _executed = []
     all_mention_event_ids = []
@@ -1426,10 +1489,27 @@ def check_bundle(root: Path) -> str:
         if post_sum_path.exists():
             _, post_ts = _parse_summary(post_sum_path, leg, "manifest-post.summary")
             post_summary_ts_map[leg] = post_ts
+    # F20/F21: per-leg entry allowlist — required + optional files
+    _LEG_REQUIRED_FILES = {
+        "timeline.jsonl", "frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl",
+        "runtime-identity.json", "env.json", "hermes-model.txt", "startup-line.txt",
+        "argv.txt", "buzz-acp.pid", "buzz-acp.exit", "buzzacp.log",
+        "manifest-pre.txt.gz", "manifest-post.txt.gz", "manifest-pre.summary",
+        "manifest-post.summary", "process-scan-after.txt", "process-scan-teardown.txt",
+        "owned-pids.json", "tee-status.json", "agent-stderr.txt",
+    }
+    _LEG_OPTIONAL_DIRS = {"mentions", "upstream-records"}
     for leg in LEGS:
         d = golden / leg
         if not d.is_dir():
             raise Failure(f"golden: golden/{leg} absent")
+        # F21: entry allowlist
+        allowed = _LEG_REQUIRED_FILES | _LEG_OPTIONAL_DIRS
+        for item in d.iterdir():
+            if item.name not in allowed:
+                raise Failure(f"{leg}: unexpected entry {item.name}")
+        # F20: agent-stderr.txt is REQUIRED in every positive leg
+        _require_file(d / "agent-stderr.txt", leg, "agent-stderr.txt")
         entries = _load_timeline_raw(d, leg)
         c2a_split, a2c_split = _run_check(check_timeline, leg, entries, leg, d)
         _run_check(check_initialize_frames, leg, c2a_split, a2c_split, leg, schema=schema)
@@ -1439,12 +1519,10 @@ def check_bundle(root: Path) -> str:
         leg_event_ids = _run_check(check_mentions, leg, d, leg, identities, entries, post_summary_ts)
         all_mention_event_ids.extend(leg_event_ids)
         _run_check(check_route, leg, d, leg, entries)
-        # 5-F19: screen agent-stderr.txt for secret shapes
-        stderr_path = d / "agent-stderr.txt"
-        if stderr_path.exists():
-            stderr_text = stderr_path.read_text()
-            if _STDERR_LEAK_RE.search(stderr_text):
-                raise Failure(f"{leg}: agent-stderr.txt contains a secret-shaped string")
+        # F20: screen agent-stderr.txt for secret shapes (unconditional — file is required)
+        stderr_text = (d / "agent-stderr.txt").read_text()
+        if _STDERR_LEAK_RE.search(stderr_text):
+            raise Failure(f"{leg}: agent-stderr.txt contains a secret-shaped string")
     for leg in ("run-1", "run-2", "shutdown"):
         d = golden / leg
         entries = _load_timeline_raw(d, leg)
@@ -1498,20 +1576,39 @@ def check_bundle(root: Path) -> str:
 
 
 def main(argv) -> int:
+    import signal as _signal
     global _FIXTURES_DIR
     # A15: optional --fixtures-dir <dir> (default: proofs/S0-01/fixtures).
     # spec.json does NOT pass it; tests use it to point at throwaway fixtures.
     args = list(argv[1:])
+    timeout_s = 120  # F19: default wall-clock cap
     if "--fixtures-dir" in args:
         idx = args.index("--fixtures-dir")
         if idx + 1 >= len(args):
-            print("usage: check_acp_conformance.py [--fixtures-dir <dir>] <evidence-root>", file=sys.stderr)
+            print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
             return 64
         _FIXTURES_DIR = args[idx + 1]
         del args[idx:idx + 2]
+    if "--timeout-s" in args:
+        idx = args.index("--timeout-s")
+        if idx + 1 >= len(args):
+            print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
+            return 64
+        try:
+            timeout_s = int(args[idx + 1])
+        except ValueError:
+            print("usage: --timeout-s requires an integer", file=sys.stderr)
+            return 64
+        del args[idx:idx + 2]
     if len(args) != 1:
-        print("usage: check_acp_conformance.py [--fixtures-dir <dir>] <evidence-root>", file=sys.stderr)
+        print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
         return 64
+    # F19: wall-clock cap — a FIFO in the evidence tree would hang read_text() forever
+    def _timeout_handler(signum, frame):
+        print(f"failure_reason: checker timed out after {timeout_s}s")
+        sys.exit(70)
+    _signal.signal(_signal.SIGALRM, _timeout_handler)
+    _signal.alarm(timeout_s)
     try:
         print(check_bundle(Path(args[0])))
         return 0
@@ -1524,6 +1621,8 @@ def main(argv) -> int:
     except Exception as exc:
         print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
         return 1
+    finally:
+        _signal.alarm(0)
 
 
 if __name__ == "__main__":

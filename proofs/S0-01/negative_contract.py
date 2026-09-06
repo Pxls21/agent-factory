@@ -167,7 +167,10 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
     probe_file = HERE / "tools" / "acp_probe.py"
     if not probe_file.exists():
         raise NegativeFailure("tools/acp_probe.py absent")
-    # probe_path is venue-specific (the PC clone path); probe_sha256 is the pin.
+    # probe_path is venue-specific (the PC clone path) so only its repo-relative tail is pinned; probe_sha256 is the pin.
+    # R7-N5c-F3: before this check the key was required to exist and its value was never read.
+    if not isinstance(rid.get("probe_path"), str) or not rid["probe_path"].endswith("proofs/S0-01/tools/acp_probe.py"):
+        raise NegativeFailure("probe_path is not the probe's path")
     if rid.get("probe_sha256") != _sha256_file(probe_file):
         raise NegativeFailure("probe_sha256 mismatch")
     if rid.get("agent_argv") != [pins.PINNED_AGENT_REALPATH]:

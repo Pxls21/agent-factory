@@ -322,6 +322,13 @@ def _timeline(neg: Path):
     return [json.loads(l) for l in (neg / "timeline.jsonl").read_text().splitlines() if l.strip()]
 
 
+@pytest.mark.parametrize("bad", ["/x", None, 12345], ids=["wrong-path", "null", "int"])
+def test_probe_path_value_is_pinned_to_the_probe_tail(neg, bad):
+    """R7-N5c-F3: probe_path was required to exist but never read — /x, null and 12345 all validated."""
+    _set_rid(neg, probe_path=bad)
+    _expect(neg, "probe_path is not the probe's path")
+
+
 def test_agent_child_pid_bool_is_not_an_int(neg):
     """NC-08: `_is_int` must exclude bool — `true` is an int subclass and would pass a naive isinstance check."""
     _set_rid(neg, agent_child_pid=True)
@@ -358,7 +365,7 @@ _FAKE_AGENT = """#!%s
 import json, sys
 line = sys.stdin.readline()
 req = json.loads(line)
-resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": -32602, "message": "Invalid params",
+resp = {"jsonrpc": "2.0", "id": req["id"], "error": {"code": %d, "message": %r,
         "data": {"errors": [{"type": "missing", "loc": ["protocolVersion"], "msg": "Field required"}]}}}
 sys.stdout.write(json.dumps(resp) + "\\n")
 sys.stdout.flush()
@@ -370,7 +377,8 @@ def _run_real_probe(tmp_path: Path) -> Path:
     import os
     import subprocess
     agent = tmp_path / "fake_agent.py"
-    agent.write_text(_FAKE_AGENT % sys.executable)
+    # R7-N5c-F6: the fixture's envelope is built FROM the pins, never a literal copy of them
+    agent.write_text(_FAKE_AGENT % (sys.executable, pins.PINNED_NEGATIVE_ERROR_CODE, pins.PINNED_NEGATIVE_ERROR_MESSAGE))
     agent.chmod(0o755)
     neg = tmp_path / "live-negative"
     neg.mkdir()
@@ -414,6 +422,5 @@ def test_build_valid_matches_the_live_producer_shape(tmp_path):
     # the live run itself satisfies everything the validator asks except the venue pins — prove the reason is a PIN, not shape
     with pytest.raises(nc.NegativeFailure) as ei:
         nc.validate_negative_dir(live, P / "fixtures")
-    assert str(ei.value) in {"agent_argv mismatch", "agent_realpath mismatch", "agent_entrypoint_sha256 mismatch",
-                             "agent_interpreter_realpath mismatch", "env HERMES_HOME mismatch", "env PATH mismatch",
-                             "env HOME mismatch"}, str(ei.value)
+    # R7-N5c-F5: the live run fails on exactly ONE venue pin, deterministically — assert it, never a set of candidates.
+    assert str(ei.value) == "agent_argv mismatch"

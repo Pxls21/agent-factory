@@ -156,6 +156,11 @@ TEST_SCREEN = [
     # identity) aborts collection for the whole job — probe inside try/except OSError, return absent.
     ("AF-AP-44", re.compile(r"""skipif\(\s*not\s+[\w.]+(?:\([^()\n]*\))?\.(?:exists|is_file|is_dir)\(\)"""),
      "module-scope venue probe in a skipif — Path.exists() RAISES PermissionError under another identity and kills collection; wrap the probe (return absent on OSError) (AF-AP-44)"),
+    # AF-AP-48 (2026-09-06): a set-shaped reason assertion — `assert reason in {c1, c2, …}` where the reason is
+    # deterministic — is the set-shaped sibling of `ok or <substring>`: a reordering of the checks, or a different pin
+    # failing first, passes unnoticed (VERIFY-N5c F5 on the coordinator's own producer-pin test).
+    ("AF-AP-48", re.compile(r"""assert\s+[^\n=]+?\s+in\s*\{\s*["']"""),
+     "set-shaped reason assertion — assert the ONE exact value; a set is admissible only for a genuinely nondeterministic outcome, each member with its own producing test (AF-AP-48)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),
     # TN3-F4 (2026-09-02): a blanket except in a test hollows any call-count

@@ -1,9 +1,8 @@
 """VERIFY-D5c (round 7, 2026-09-06) RED tests for the scripted backend's credential screen + allow-list gate.
 
-Findings R7-D5c-F1/F2/F6/F7 are open defects: their tests carry a STRICT xfail marker so CI stays green while the
-defect is open and turns red the moment the fix lands without the marker being removed (pre-mint gate, AF-AP-36).
-Lane D5d makes them green by fixing proofs/S0-01/tools/scripted_backend.py and REMOVING the markers — never by
-editing the assertions. F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
+Findings R7-D5c-F1/F2/F6/F7 are now fixed (lane D5d). The xfail markers have been removed; all tests pass.
+F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
+they pass and must keep passing. F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
 they pass today and must keep passing. Self-contained: own backend fixture, own raw-socket helper, tmp_path only.
 """
 import http.client
@@ -97,7 +96,6 @@ def _absent_under_all_normalizations(text: str) -> bool:
 
 
 # ---- R7-D5c-F1 (BLOCKING): a whitespace-split token inside a VALID JSON body is recorded verbatim ---------------
-@pytest.mark.xfail(strict=True, reason="R7-D5c-F1: raw body not screened on the valid-JSON POST path (json.dumps re-escapes the separator)")
 @pytest.mark.parametrize("sep", ["\t", "\n", "\r", "\f", "\v"], ids=["TAB", "LF", "CR", "FF", "VT"])
 def test_credential_whitespace_split_in_valid_json_body_returns_400(backend, sep):
     port = backend["port"]
@@ -114,7 +112,7 @@ def test_credential_whitespace_split_in_valid_json_body_returns_400(backend, sep
 
 # ---- R7-D5c-F2 (BLOCKING): the Expect arm tests truthiness, not presence ---------------------------------------
 @pytest.mark.parametrize("value", [
-    pytest.param("", marks=pytest.mark.xfail(strict=True, reason="R7-D5c-F2: `Expect:` (empty) is present but falsy — served with the tail")),
+    "",
     "bogus", "100-Continue", "100-continue",
 ])
 @pytest.mark.parametrize("method", ["GET", "POST"])
@@ -173,7 +171,6 @@ def test_post_content_length_exactly_max_is_accepted(backend):
 
 
 # ---- R7-D5c-F6: an obs-folded header hiding a framing header passes the allow-list ------------------------------
-@pytest.mark.xfail(strict=True, reason="R7-D5c-F6: obs-fold (RFC 9112 §5.2) is neither rejected nor unfolded — the folded Content-Length/Transfer-Encoding is invisible to the gate")
 @pytest.mark.parametrize("folded", ["Content-Length: 5", "Transfer-Encoding: chunked"], ids=["CL", "TE"])
 def test_obs_folded_header_rejected_400(backend, folded):
     port = backend["port"]
@@ -188,7 +185,6 @@ def test_obs_folded_header_rejected_400(backend, folded):
 
 
 # ---- R7-D5c-F7: a double percent-encoded token defeats the single-unquote screen -------------------------------
-@pytest.mark.xfail(strict=True, reason="R7-D5c-F7: one unquote pass; the token is recovered by a second pass over the record")
 def test_credential_double_percent_encoded_in_header_value_returns_400(backend):
     port = backend["port"]
     n0 = len(_records(backend))
