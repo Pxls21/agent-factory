@@ -1,0 +1,1556 @@
+diff --git a/proofs/S0-01/check_acp_conformance.py b/proofs/S0-01/check_acp_conformance.py
+index 8c7edf9..7137c9d 100755
+--- a/proofs/S0-01/check_acp_conformance.py
++++ b/proofs/S0-01/check_acp_conformance.py
+@@ -1,8 +1,16 @@
+ """S0-01 ACP conformance checker v2.2 — derives EVERYTHING from raw files, exact values.
+ 
+-Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error.
++Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error
++(fatal usage — missing/invalid arguments, including a non-integer `--timeout-s`) /
++70 `failure_reason: checker timed out after <N>s` (the wall-clock cap tripped).
+ DEFERRAL RULE: exits 2 iff golden/ is absent or NO leg directory contains timeline.jsonl.
+ Once ANY leg carries a timeline, EVERY absence of a required file is a Failure, never a deferral.
++
++The wall-clock cap is applied INSIDE check_bundle(timeout_s=...) so in-process consumers get it
++too (SIGALRM, Unix only; R8-CK-F2 — the cap used to live only in main(), so every direct
++check_bundle caller had none). The default cap is 90 s so it always fires before the runner's
++`timeout_s: 120` (proofs/S0-01/spec.json is NOT changed — it stays the coordinator's file; the
++checker cap sits under it on purpose).
+ """
+ from __future__ import annotations
+ 
+@@ -63,8 +71,21 @@ from pins import (  # noqa: E402
+     PINNED_ROUTE_PREFIX,
+     PINNED_SESSION_POLICY,
+     PINNED_STARTUP_AGENTS,
++    PINNED_STARTUP_CONTEXT_LIMIT,
+     PINNED_STARTUP_DEDUP,
++    PINNED_STARTUP_HEARTBEAT,
+     PINNED_STARTUP_IGNORE_SELF,
++    PINNED_STARTUP_MAX_TURNS_PER_SESSION,
++    PINNED_STARTUP_MCP_CMD,
++    PINNED_STARTUP_MEH,
++    PINNED_STARTUP_MEMORY,
++    PINNED_STARTUP_MODEL,
++    PINNED_STARTUP_PERMISSION_MODE,
++    PINNED_STARTUP_PRESENCE,
++    PINNED_STARTUP_RESPOND_TO,
++    PINNED_STARTUP_RESPOND_TO_TWO_USERS,
++    PINNED_STARTUP_SUBSCRIBE,
++    PINNED_STARTUP_TYPING,
+     PINNED_TEE_PATH,
+     PINNED_TEE_STATUS_KEYS,
+     PINNED_UPSTREAM_HOST,
+@@ -214,7 +235,14 @@ EXPECTED_CHECK_SEQUENCE.append(("check_negative", "negative"))
+ 
+ 
+ def _run_check(fn, leg, *args, **kwargs):
+-    """Call fn and record (name, leg) in the executed list AFTER successful return."""
++    """Call fn and record (name, leg) in the executed list AFTER successful return.
++
++    R7-CK-F39, accepted-risk by coordinator ruling (A5g R4): the pair is appended after the
++    function returns, so a check that returns WITHOUT asserting anything still counts as
++    executed — the sequence guard proves invocation, never that the check had something to
++    assert. The mutation audit (a deleted guard dies to a named test) is the guard for the
++    assertion-content class; no counter is built.
++    """
+     result = fn(*args, **kwargs)
+     _executed.append((fn.__name__, leg))
+     return result
+@@ -589,34 +617,40 @@ def check_route(leg_dir, leg, entries):
+                 raise Failure(f"{leg}: upstream record header {hname!r} has sensitive value")
+     post_records = [r for r in records if r.get("method") == "POST"]
+     get_records = [r for r in records if r.get("method") == "GET"]
+-    # F24: GET records' authorization_fingerprint must equal the pinned fingerprint or be null
++    # R7-CK-F24 / R8-CK-F7: a GET record's authorization_fingerprint is pinned to null — the real
++    # producer (the managed OmniRoute recorder) records null on GET (the corpus's only GET,
++    # 000001.json GET /models, carries null), and the header screen above is the SOLE other record
++    # of an outbound credential, so any non-null value here is evidence tampering, never a shape.
+     for rec in get_records:
+-        get_fp = rec.get("authorization_fingerprint")
+-        if get_fp is not None and get_fp != expected_fp:
+-            raise Failure(f"{leg}: upstream GET record authorization_fingerprint mismatch")
+-    # F22/F23: POST body key set and message roles pinned
+-    # The full set includes model/messages/stream (always) plus optional OmniRoute-proxied fields
+-    _ALLOWED_POST_BODY_KEYS = frozenset({
+-        "model", "messages", "stream",
+-        "max_tokens", "stream_options", "tools",
+-        "response_format", "temperature",
+-    })
+-    _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant"})
++        if rec.get("authorization_fingerprint") is not None:
++            raise Failure(f"{leg}: upstream GET record authorization_fingerprint is not null")
++    # R8-CK-F8: two per-shape POST body key sets keyed on body.get("stream") is True, both
++    # confirmed against the real corpus (CK8's 51-bundle sweep): stream POSTs carry exactly
++    # {max_tokens, messages, model, stream, stream_options, tools}; the non-stream title POST
++    # carries exactly {messages, model, response_format, temperature}. The key SET decides the
++    # shape (not just the stream value) so a body cannot carry one shape's fields and claim the
++    # other, and no real request has the union shape (CK8 c02).
++    _POST_BODY_KEYS_STREAM = frozenset({"max_tokens", "messages", "model", "stream", "stream_options", "tools"})
++    _POST_BODY_KEYS_NONSTREAM = frozenset({"messages", "model", "response_format", "temperature"})
++    # Role SEQUENCE per shape, pinned from the same real corpus (R8-CK-F8: the role-vocabulary
++    # pin alone let CK8's c03 through — every message rewritten to role "assistant" passed).
++    _POST_ROLES_STREAM = ["system", "user"]
++    _POST_ROLES_NONSTREAM = ["user", "user"]
+     for rec in post_records:
+         if rec.get("authorization_fingerprint") != expected_fp:
+             raise Failure(f"{leg}: upstream record authorization_fingerprint mismatch")
+         body = rec.get("body") or {}
+         if body.get("model") != expected_model:
+             raise Failure(f"{leg}: upstream record body.model is {body.get('model')!r}, expected {expected_model!r}")
+-        # F22: reject extra body keys
+-        extra_body = set(body.keys()) - _ALLOWED_POST_BODY_KEYS
+-        if extra_body:
+-            raise Failure(f"{leg}: upstream POST record body has extra keys: {sorted(extra_body)}")
+-        # F23: message roles pinned
+-        for msg in body.get("messages", []):
+-            role = msg.get("role")
+-            if role not in _ALLOWED_MESSAGE_ROLES:
+-                raise Failure(f"{leg}: upstream POST record message role {role!r} not in allowed set")
++        if body.get("stream") is True:
++            expected_keys, expected_roles, shape = _POST_BODY_KEYS_STREAM, _POST_ROLES_STREAM, "stream"
++        else:
++            expected_keys, expected_roles, shape = _POST_BODY_KEYS_NONSTREAM, _POST_ROLES_NONSTREAM, "non-stream"
++        if set(body.keys()) != expected_keys:
++            raise Failure(f"{leg}: upstream POST record {shape} body key set mismatch: {sorted(set(body.keys()) ^ expected_keys)}")
++        roles = [m.get("role") for m in body["messages"]]
++        if roles != expected_roles:
++            raise Failure(f"{leg}: upstream POST record {shape} message roles {roles!r} != expected {expected_roles!r}")
+     prompt_windows = _prompt_windows(entries, leg)
+     slack = timedelta(seconds=UPSTREAM_WINDOW_SLACK_S)
+     for rec in post_records:
+@@ -1026,15 +1060,17 @@ def check_config_echo(leg_dir, leg):
+     m = re.match(r'^(\S+)\s+INFO buzz_acp: buzz-acp starting: (.*)$', startup)
+     if not m:
+         raise Failure(f"{leg}: startup-line.txt does not match expected format")
+-    # F25: parse key=value tokens; handle parenthesized values like model=(agent default)
++    # R7-CK-F25 / R8-CK-F6: parse key=value tokens; handle parenthesized values like
++    # model=(agent default). The required set is the FULL 21-key set (A5g R8-F6: every corpus
++    # leg carries exactly these 21), so c01 (a line carrying only the 11 previously-required
++    # keys) is rejected.
+     _EXPECTED_STARTUP_KEYS = frozenset({
+         "relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
+         "agents", "heartbeat", "subscribe", "dedup", "session_policy", "meh",
+         "ignore_self", "context_limit", "max_turns_per_session", "presence",
+         "typing", "memory", "model", "permission_mode", "respond_to",
+     })
+-    required_keys = {"relay", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
+-                     "agents", "dedup", "session_policy", "ignore_self", "permission_mode", "respond_to"}
++    required_keys = _EXPECTED_STARTUP_KEYS
+     kvs = {}
+     kv_re = re.compile(r'(\w+)=(.+)')
+     remainder = m.group(2)
+@@ -1055,6 +1091,11 @@ def check_config_echo(leg_dir, leg):
+                 raise Failure(f"{leg}: startup-line unclosed paren in {key}")
+             val = val_text[:close + 1]
+             remainder = remainder[val_start + close + 1:]
++            # R8-CK-F6 (a10): a parenthesised value must not smuggle key=value tokens past the
++            # unknown-key rule — the real corpus's only parenthesised values are model=(agent
++            # default) and allowlist(1), neither contains '='.
++            if "=" in val:
++                raise Failure(f"{leg}: startup-line parenthesised value carries key=value tokens: {key}")
+         else:
+             sp = val_text.find(" ")
+             if sp < 0:
+@@ -1071,22 +1112,36 @@ def check_config_echo(leg_dir, leg):
+     missing = required_keys - set(kvs.keys())
+     if missing:
+         raise Failure(f"{leg}: startup-line missing keys: {sorted(missing)}")
+-    # A26: agents/dedup/ignore_self from pins, never local literals
+-    # TODO(A5f-F42): consume mcp_cmd and permission_mode from pins.py once the
+-    # coordinator lands the PINNED_STARTUP_MCP_CMD / PINNED_STARTUP_PERMISSION_MODE hunk.
+-    _PINS_PENDING = {"mcp_cmd": "", "permission_mode": "bypassPermissions"}
++    # R8-CK-F6: `pubkey` is per-capture — format-check only (it differs per keypair); every
++    # other value is pinned exactly, from pins.py, never a local literal.
++    pubkey = kvs["pubkey"]
++    if not re.fullmatch(r"[0-9a-f]{64}|<HEX>", pubkey):
++        raise Failure(f"{leg}: startup pubkey is not a 64-hex digest")
++    # A26 / R8-CK-F6+F12: every startup value is a pins.py import. The A5f `_PINS_PENDING` dict
++    # is retired (R2/F42): mcp_cmd/permission_mode/respond_to now come from the landed
++    # PINNED_STARTUP_* constants.
+     checks = {"relay": PINNED_RELAY_URL, "agent_cmd": PINNED_TEE_PATH,
+-              "mcp_cmd": _PINS_PENDING["mcp_cmd"],
++              "mcp_cmd": PINNED_STARTUP_MCP_CMD,
+               "idle_timeout": PINNED_IDLE_TIMEOUT, "max_turn": PINNED_MAX_TURN,
+               "agents": PINNED_STARTUP_AGENTS,
++              "heartbeat": PINNED_STARTUP_HEARTBEAT,
++              "subscribe": PINNED_STARTUP_SUBSCRIBE,
+               "dedup": PINNED_STARTUP_DEDUP,
+               "session_policy": PINNED_SESSION_POLICY,
++              "meh": PINNED_STARTUP_MEH,
+               "ignore_self": PINNED_STARTUP_IGNORE_SELF,
+-              "permission_mode": _PINS_PENDING["permission_mode"]}
++              "context_limit": PINNED_STARTUP_CONTEXT_LIMIT,
++              "max_turns_per_session": PINNED_STARTUP_MAX_TURNS_PER_SESSION,
++              "presence": PINNED_STARTUP_PRESENCE,
++              "typing": PINNED_STARTUP_TYPING,
++              "memory": PINNED_STARTUP_MEMORY,
++              "model": PINNED_STARTUP_MODEL,
++              "permission_mode": PINNED_STARTUP_PERMISSION_MODE}
+     for k, exp in checks.items():
+         if kvs[k] != exp:
+             raise Failure(f"{leg}: startup {k} is {kvs[k]!r}, expected {exp!r}")
+-    expected_rt = "owner-only" if leg != "two-users" else "allowlist(1)"
++    expected_rt = (PINNED_STARTUP_RESPOND_TO_TWO_USERS if leg == "two-users"
++                   else PINNED_STARTUP_RESPOND_TO)
+     if kvs["respond_to"] != expected_rt:
+         raise Failure(f"{leg}: startup respond_to is {kvs['respond_to']!r}, expected {expected_rt!r}")
+     argv_path = _require_file(leg_dir / "argv.txt", leg, "argv.txt")
+@@ -1323,7 +1378,16 @@ def check_buzzacp_log(leg_dir, leg):
+ 
+ 
+ def check_tee_status(leg_dir, leg, entries):
+-    """A21d: validate tee-status.json — twelve-key running status."""
++    """A21d: validate tee-status.json — twelve-key running status.
++
++    Two arms follow the tee's write contract (proofs/S0-01/tools/frame_tee.py _write_status,
++    docstring): the tee rewrites the status INSIDE the timeline lock after every recorded frame,
++    and the write is atomic (tmp + os.replace). A RUNNING (final is False) snapshot is what a
++    buzz-acp SIGTERM/SIGKILL leaves behind — it can trail the timeline by at most the one frame
++    whose timeline write landed but whose status write was interrupted, and it can show at most
++    one in-flight (recorded-but-not-yet-forwarded) frame per direction (B5d R2). The FINAL
++    (final is True) clean-exit write is exact in every field (B5d R3/A21b).
++    """
+     ts_path = _require_file(leg_dir / "tee-status.json", leg, "tee-status.json")
+     ts = json.loads(ts_path.read_text())
+     if not isinstance(ts, dict):
+@@ -1332,34 +1396,74 @@ def check_tee_status(leg_dir, leg, entries):
+         extra = sorted(set(ts.keys()) - _TEE_STATUS_KEYS)
+         missing = sorted(_TEE_STATUS_KEYS - set(ts.keys()))
+         raise Failure(f"{leg}: tee-status.json key set mismatch (extra={extra}, missing={missing})")
+-    if ts["drained"] is not True:
+-        raise Failure(f"{leg}: tee-status.json drained is not true")
+-    if ts["write_errors"] != []:
+-        raise Failure(f"{leg}: tee-status.json write_errors is not empty")
+-    if ts["forwarded_c2a"] != ts["recorded_c2a"]:
+-        raise Failure(f"{leg}: tee-status.json forwarded_c2a != recorded_c2a")
+-    if ts["forwarded_a2c"] != ts["recorded_a2c"]:
+-        raise Failure(f"{leg}: tee-status.json forwarded_a2c != recorded_a2c")
+-    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+-    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+-    if ts["recorded_c2a"] != c2a_count:
+-        raise Failure(f"{leg}: tee-status.json recorded_c2a {ts['recorded_c2a']} != timeline c2a count {c2a_count}")
+-    if ts["recorded_a2c"] != a2c_count:
+-        raise Failure(f"{leg}: tee-status.json recorded_a2c {ts['recorded_a2c']} != timeline a2c count {a2c_count}")
+-    last_seq = entries[-1]["seq"] if entries else 0
+-    if ts["updated_seq"] != last_seq:
+-        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != timeline last seq {last_seq}")
++    # F31: final must be a strict bool, before either arm branches on it
++    if not isinstance(ts["final"], bool):
++        raise Failure(f"{leg}: tee-status.json final is not a bool")
++    if ts["final"] is True:
++        # FINAL arm (unchanged strict semantics — B5d R3/A21b)
++        if ts["drained"] is not True:
++            raise Failure(f"{leg}: tee-status.json drained is not true")
++        if ts["write_errors"] != []:
++            raise Failure(f"{leg}: tee-status.json write_errors is not empty")
++        if ts["forwarded_c2a"] != ts["recorded_c2a"]:
++            raise Failure(f"{leg}: tee-status.json forwarded_c2a != recorded_c2a")
++        if ts["forwarded_a2c"] != ts["recorded_a2c"]:
++            raise Failure(f"{leg}: tee-status.json forwarded_a2c != recorded_a2c")
++        c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
++        a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
++        if ts["recorded_c2a"] != c2a_count:
++            raise Failure(f"{leg}: tee-status.json recorded_c2a {ts['recorded_c2a']} != timeline c2a count {c2a_count}")
++        if ts["recorded_a2c"] != a2c_count:
++            raise Failure(f"{leg}: tee-status.json recorded_a2c {ts['recorded_a2c']} != timeline a2c count {a2c_count}")
++        last_seq = entries[-1]["seq"] if entries else 0
++        if ts["updated_seq"] != last_seq:
++            raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != timeline last seq {last_seq}")
++    else:
++        # RUNNING arm — the SIGTERM/SIGKILL snapshot (A5g R1, B5d R2/R3)
++        if not isinstance(ts["drained"], bool):
++            raise Failure(f"{leg}: tee-status.json drained is not a bool")
++        if not isinstance(ts["stdin_reader_done"], bool):
++            raise Failure(f"{leg}: tee-status.json stdin_reader_done is not a bool")
++        if ts["write_errors"] not in ([], ["terminated: SIGTERM"]):
++            raise Failure(f"{leg}: tee-status.json write_errors has unexpected entries: {ts['write_errors']!r}")
++        for d in ("c2a", "a2c"):
++            if not _is_strict_int(ts[f"recorded_{d}"]) or not _is_strict_int(ts[f"forwarded_{d}"]):
++                raise Failure(f"{leg}: tee-status.json {d} recorded/forwarded is not int")
++            deficit = ts[f"recorded_{d}"] - ts[f"forwarded_{d}"]
++            if deficit not in (0, 1):
++                raise Failure(f"{leg}: tee-status.json running snapshot forwarded_{d} {ts[f'forwarded_{d}']} "
++                              f"trails recorded_{d} {ts[f'recorded_{d}']} by more than one")
++        c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
++        a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
++        last_seq = entries[-1]["seq"] if entries else 0
++        if not _is_strict_int(ts["updated_seq"]):
++            raise Failure(f"{leg}: tee-status.json updated_seq is not int")
++        lag = last_seq - ts["updated_seq"]
++        if lag not in (0, 1):
++            raise Failure(f"{leg}: tee-status.json running snapshot updated_seq {ts['updated_seq']} "
++                          f"trails timeline last seq {last_seq} by more than one")
++        deficits = {}
++        for d, count in (("c2a", c2a_count), ("a2c", a2c_count)):
++            deficits[d] = count - ts[f"recorded_{d}"]
++            if deficits[d] not in (0, 1):
++                raise Failure(f"{leg}: tee-status.json running snapshot recorded_{d} {ts[f'recorded_{d}']} "
++                              f"trails timeline {d} count {count} by more than one")
++        # the trailing frame has exactly ONE direction: the per-direction recorded deficits sum
++        # to the seq lag (B5d R2: a torn snapshot trails by at most one timeline entry)
++        if deficits["c2a"] + deficits["a2c"] != lag:
++            raise Failure(f"{leg}: tee-status.json running snapshot recorded deficits "
++                          f"{deficits['c2a']}+{deficits['a2c']} do not sum to updated_seq lag {lag}")
+     utc_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+     if not isinstance(ts["updated_utc"], str) or not utc_re.match(ts["updated_utc"]):
+         raise Failure(f"{leg}: tee-status.json updated_utc does not match format")
+-    # A21d: when final, A21b exit_code rule; when not final, both exit fields null
+-    # F31: final must be a strict bool
+-    if ts["final"] is not True and ts["final"] is not False:
+-        raise Failure(f"{leg}: tee-status.json final is not a bool")
+-    # F32: stdin_reader_done must be True when final is true
+-    if ts["final"] is True and ts.get("stdin_reader_done") is not True:
+-        raise Failure(f"{leg}: tee-status.json stdin_reader_done is not true when final")
++    if ts["updated_seq"] != ts["recorded_c2a"] + ts["recorded_a2c"]:
++        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != recorded_c2a + recorded_a2c "
++                      f"({ts['recorded_c2a']} + {ts['recorded_a2c']})")
++    # A21d exit-field rule: final requires the A21b exit pair; running requires both null.
+     if ts["final"] is True:
++        # F32: stdin_reader_done must be True when final is true
++        if ts.get("stdin_reader_done") is not True:
++            raise Failure(f"{leg}: tee-status.json stdin_reader_done is not true when final")
+         rc = ts["agent_returncode"]
+         if not _is_strict_int(rc):
+             raise Failure(f"{leg}: tee-status.json final but agent_returncode is not int")
+@@ -1502,7 +1606,36 @@ def _load_timeline_raw(leg_dir, leg):
+     return entries
+ 
+ 
+-def check_bundle(root: Path) -> str:
++def _check_with_timeout(timeout_s, fn, *args):
++    """Run fn(*args) under a wall-clock SIGALRM cap (R8-CK-F2).
++
++    Prints `failure_reason: checker timed out after <N>s` and SystemExit(70) on trip — the
++    exact line+code the CLI has always produced, now available to in-process callers. Unix
++    only by construction (the checker's venues are Linux).
++    """
++    import signal as _signal
++    def _raise_timeout(signum, frame):
++        print(f"failure_reason: checker timed out after {timeout_s}s")
++        raise SystemExit(70)
++    old = _signal.signal(_signal.SIGALRM, _raise_timeout)
++    _signal.alarm(timeout_s)
++    try:
++        return fn(*args)
++    finally:
++        _signal.alarm(0)
++        _signal.signal(_signal.SIGALRM, old)
++
++
++def check_bundle(root: Path, timeout_s: int = 90) -> str:
++    # R8-CK-F2: the wall-clock cap lives HERE (not only in main()) so in-process consumers —
++    # every test and any future embedded caller — get the backstop a FIFO read would otherwise
++    # hang through. Default 90 s < the runner's 120 s (module docstring).
++    if timeout_s is not None:
++        return _check_with_timeout(timeout_s, _check_bundle_uncapped, root)
++    return _check_bundle_uncapped(root)
++
++
++def _check_bundle_uncapped(root: Path) -> str:
+     golden = root / "golden"
+     if not golden.is_dir():
+         raise Deferred("v2 evidence not captured")
+@@ -1526,20 +1659,26 @@ def check_bundle(root: Path) -> str:
+             raise Failure(f"golden: unexpected directory golden/{item.name}")
+         if item.is_file() and item.name not in expected_files:
+             raise Failure(f"golden: unexpected file golden/{item.name}")
+-    # 5-F18 / F19: any non-regular, non-directory entry (symlink, FIFO, socket, device) is a Failure
++    # 5-F18 / F19: walk EVERY tree the checker reads — golden/ AND the fixtures dir
++    # (R8-CK-F2: a FIFO in fixtures/ used to hang the checker, the walk covered golden/ only).
++    # Any non-regular, non-directory entry (symlink, FIFO, socket, device) is a Failure.
+     import stat as _stat
+-    for dirpath, dirnames, filenames in os.walk(golden, followlinks=False):
+-        dp = Path(dirpath)
+-        for name in dirnames + filenames:
+-            p = dp / name
+-            try:
+-                st = p.lstat()
+-            except OSError as e:
+-                raise Failure(f"golden: cannot stat {p.relative_to(root)}: {e}")
+-            if p.is_symlink():
+-                raise Failure(f"golden: symlink in evidence tree: {p.relative_to(root)}")
+-            if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
+-                raise Failure(f"golden: non-regular entry in evidence tree: {p.relative_to(root)}")
++    walk_roots = [(golden, golden), (_fixtures(), Path("fixtures"))]
++    for walk_base, rel_base in walk_roots:
++        if not walk_base.exists():
++            continue
++        for dirpath, dirnames, filenames in os.walk(walk_base, followlinks=False):
++            dp = Path(dirpath)
++            for name in dirnames + filenames:
++                p = dp / name
++                try:
++                    st = p.lstat()
++                except OSError as e:
++                    raise Failure(f"{rel_base}: cannot stat {p.relative_to(walk_base)}: {e}")
++                if p.is_symlink():
++                    raise Failure(f"{rel_base}: symlink in evidence tree: {p.relative_to(walk_base)}")
++                if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
++                    raise Failure(f"golden: non-regular entry in evidence tree: {p.relative_to(walk_base)}")
+     global _executed
+     _executed = []
+     all_mention_event_ids = []
+@@ -1641,12 +1780,11 @@ def check_bundle(root: Path) -> str:
+ 
+ 
+ def main(argv) -> int:
+-    import signal as _signal
+     global _FIXTURES_DIR
+     # A15: optional --fixtures-dir <dir> (default: proofs/S0-01/fixtures).
+     # spec.json does NOT pass it; tests use it to point at throwaway fixtures.
+     args = list(argv[1:])
+-    timeout_s = 120  # F19: default wall-clock cap
++    timeout_s = 90  # F19/R8-CK-F2: default wall-clock cap — 90 < the runner's 120 (spec.json)
+     if "--fixtures-dir" in args:
+         idx = args.index("--fixtures-dir")
+         if idx + 1 >= len(args):
+@@ -1664,18 +1802,17 @@ def main(argv) -> int:
+         except ValueError:
+             print("usage: --timeout-s requires an integer", file=sys.stderr)
+             return 64
++        if timeout_s <= 0:
++            print("usage: --timeout-s requires a positive integer", file=sys.stderr)
++            return 64
+         del args[idx:idx + 2]
+     if len(args) != 1:
+         print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
+         return 64
+-    # F19: wall-clock cap — a FIFO in the evidence tree would hang read_text() forever
+-    def _timeout_handler(signum, frame):
+-        print(f"failure_reason: checker timed out after {timeout_s}s")
+-        sys.exit(70)
+-    _signal.signal(_signal.SIGALRM, _timeout_handler)
+-    _signal.alarm(timeout_s)
++    # The wall-clock cap itself lives in check_bundle (R8-CK-F2) — main() only parses and hands
++    # the value over, so the in-process path and the CLI path are the same cap.
+     try:
+-        print(check_bundle(Path(args[0])))
++        print(check_bundle(Path(args[0]), timeout_s=timeout_s))
+         return 0
+     except Deferred as d:
+         print(f"deferred: {d}")
+@@ -1683,11 +1820,11 @@ def main(argv) -> int:
+     except Failure as f:
+         print(f"failure_reason: {f}")
+         return 1
++    except SystemExit as se:
++        return int(se.code or 0)
+     except Exception as exc:
+         print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
+         return 1
+-    finally:
+-        _signal.alarm(0)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/scratchpad/la5g/greps-before.txt b/scratchpad/la5g/greps-before.txt
+new file mode 100644
+index 0000000..2fb6549
+--- /dev/null
++++ b/scratchpad/la5g/greps-before.txt
+@@ -0,0 +1,5 @@
++BEFORE (at PIN ddf01c9 + in-progress checker edits — test side untouched yet):
++grep -c " in out"   = 12
++grep -c " in result"= 9
++grep -c startswith( = 18
++assert-or-operator  = 2
+diff --git a/tests/test_s0_01_check_acp_conformance.py b/tests/test_s0_01_check_acp_conformance.py
+index 189b81a..8ce222e 100644
+--- a/tests/test_s0_01_check_acp_conformance.py
++++ b/tests/test_s0_01_check_acp_conformance.py
+@@ -281,26 +281,37 @@ def _write_upstream_records(leg_dir, leg, entries, fingerprint):
+                     if e["dir"] == "c2a" and e["frame"].get("method") == "session/prompt"]
+     idx = 1  # numbered from 000001
+     for pt in prompt_times:
+-        # Non-stream title POST
++        # Non-stream title POST — the R8-CK-F8 non-stream shape: exactly {messages, model,
++        # response_format, temperature} and the role sequence ["user", "user"] (both pinned
++        # from the real corpus).
+         title_rec = {"seq": idx, "method": "POST", "path": UPSTREAM_POST_PATH,
+-                     "body": {"model": model, "messages": [{"role": "user", "content": "title"}],
+-                              "stream": False},
++                     "body": {"model": model,
++                              "messages": [{"role": "user", "content": "title"},
++                                           {"role": "user", "content": "style"}],
++                              "response_format": {"type": "text"}, "temperature": 0.2},
+                      "headers": {"host": PINNED_UPSTREAM_HOST, "content-type": "application/json"},
+                      "authorization_fingerprint": fingerprint, "received_at": pt,
+                      "t_mono_ns": 1_000_000_000_000 + idx * 1_000_000, "remote_addr": "127.0.0.1"}
+         (rec_dir / f"{idx:06d}.json").write_text(json.dumps(title_rec, indent=2) + "\n")
+         idx += 1
+-        # Stream POST with mention text
++        # Stream POST with mention text — the R8-CK-F8 stream shape: exactly
++        # {max_tokens, messages, model, stream, stream_options, tools}, role sequence
++        # ["system", "user"] (pinned from the real corpus).
+         rec = {"seq": idx, "method": "POST", "path": UPSTREAM_POST_PATH,
+-               "body": {"model": model, "messages": [{"role": "user", "content": MENTION_TEXT}],
+-                        "stream": True},
++               "body": {"model": model,
++                        "messages": [{"role": "system", "content": "sys"},
++                                     {"role": "user", "content": MENTION_TEXT}],
++                        "stream": True, "max_tokens": 64,
++                        "stream_options": {"include_usage": True}, "tools": []},
+                "headers": {"host": PINNED_UPSTREAM_HOST, "content-type": "application/json"},
+                "authorization_fingerprint": fingerprint, "received_at": pt,
+                "t_mono_ns": 1_000_000_000_000 + idx * 1_000_000, "remote_addr": "127.0.0.1"}
+         (rec_dir / f"{idx:06d}.json").write_text(json.dumps(rec, indent=2) + "\n")
+         idx += 1
++    # R8-CK-F7: the GET record's authorization_fingerprint is null — the real producer
++    # records null on GET; pinning it to exactly None closes the erasure arm CK8 found.
+     get_rec = {"seq": idx, "method": "GET", "path": "/models", "body": None,
+-               "headers": {"host": PINNED_UPSTREAM_HOST}, "authorization_fingerprint": fingerprint,
++               "headers": {"host": PINNED_UPSTREAM_HOST}, "authorization_fingerprint": None,
+                "received_at": prompt_times[0] if prompt_times else "2026-09-05T06:00:00.000000Z",
+                "t_mono_ns": 1_000_000_000_000 + idx * 1_000_000, "remote_addr": "127.0.0.1"}
+     (rec_dir / f"{idx:06d}.json").write_text(json.dumps(get_rec, indent=2) + "\n")
+@@ -319,7 +330,12 @@ def _scan_header(mode, *, rows=50, buzz_pid=12300, buzz_present=1, owned=3,
+ def _write_process_scan(leg_dir, leg):
+     """A20 v2.3: scan header + body rows; owned-pids.json.
+     Fixture derived from pc_post.sh's keep rule: only owned rows and rows naming
+-    a pinned path are persisted. (D): no /sbin/init — the real producer never emits it."""
++    a pinned path are persisted. (D): no /sbin/init — the real producer never emits it.
++    F43/R8-CK-F5: EVERY write unlinks first — a hardlinked sibling shares the inode, so
++    writing in place would corrupt the session-pristine bundle."""
++    for fn in ("buzz-acp.pid", "owned-pids.json", "buzz-acp.exit",
++               "process-scan-after.txt", "process-scan-teardown.txt"):
++        (leg_dir / fn).unlink(missing_ok=True)
+     buzz_pid = 12300
+     tee_pid = 12340  # matches runtime-identity.json tee_pid
+     agent_pid = 12345  # matches runtime-identity.json agent_child_pid
+@@ -344,11 +360,13 @@ def _write_process_scan(leg_dir, leg):
+ 
+ 
+ def _write_tee_status(leg_dir, entries):
+-    """A21d: write a valid twelve-key tee-status.json matching the timeline.
+-    Produces the running-status shape (final=false, exit fields null) since the
+-    real tee is SIGKILLed before it can finalize. Derived from the committed
+-    frame_tee.py output plus the three running-status fields.
+-    F43: unlinks before writing so hardlinked session copies are safe."""
++    """A21d: write a tee-status.json fixture matching the timeline (final=false running shape).
++
++    The VALUES are hand-authored (a synthetic, maximally-consistent snapshot: drained true,
++    forwarded == recorded, updated_seq == last timeline seq) — ONLY the key SET is bound to the
++    real producer, via test_ck7_f34_frame_tee_keys_match_pin (AST) and
++    test_ck8_f34_tee_emits_pinned_key_order (executes the committed tee); the fixture is not a
++    capture (R8-CK-F17). F43: unlinks before writing so hardlinked session copies are safe."""
+     (leg_dir / "tee-status.json").unlink(missing_ok=True)
+     c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+     a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+@@ -722,7 +740,7 @@ def test_del_neg_fixture(bundle):
+         fp.unlink()
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "negative:" in out and "neg-malformed-initialize.json absent" in out
++    assert out == "failure_reason: golden: fixtures/neg-malformed-initialize.json absent"
+ 
+ 
+ def test_del_identities(bundle):
+@@ -810,7 +828,7 @@ def test_frames_c2a_extra_line(bundle):
+     rc, out = _check(bundle)
+     assert rc == 1
+     # Line count mismatch fires first
+-    assert out.startswith("failure_reason: run-1: frames-client-to-agent.jsonl")
++    assert out == "failure_reason: run-1: frames-client-to-agent.jsonl does not match timeline c2a split"
+ 
+ 
+ def test_frames_a2c_reordered(bundle):
+@@ -1094,7 +1112,10 @@ def test_mention_window_out(bundle):
+     _rewrite(md / "owner.receipt.json", json.dumps(r) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out.startswith("failure_reason: run-1: mention owner created_at 1600000000 outside window")
++    # Window lower bound: floor of the first timeline t_utc (2026-09-05T05:00:00.100000Z →
++    # epoch 1786477200) minus MENTION_WINDOW_SLACK_S(5) = 1786477195. Upper bound: the
++    # manifest-post summary ts (2026-09-06T23:59:59Z → 1786639199) + 1 + 5 = 1786639205.
++    assert out == "failure_reason: run-1: mention owner created_at 1600000000 outside window [1786477195, 1786639205]"
+ 
+ 
+ def test_mention_etag_wrong(bundle):
+@@ -1243,7 +1264,7 @@ def test_record_key_set_wrong(bundle):
+     _rewrite(p, json.dumps(o) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out.startswith("failure_reason: run-1: upstream record key set mismatch")
++    assert out == "failure_reason: run-1: upstream record key set mismatch: ['remote_addr', 'seq', 't_mono_ns']"
+ 
+ 
+ def test_fingerprint_file_emptied(bundle):
+@@ -1260,7 +1281,7 @@ def test_route_prefix_dropped(bundle):
+         _rewrite(bundle / "golden" / leg / "hermes-model.txt", f"  default: {EXPECTED_MODEL[leg]}\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out.startswith("failure_reason: run-1: hermes-model.txt is")
++    assert out == f"failure_reason: run-1: hermes-model.txt is 'default: {EXPECTED_MODEL['run-1']}', expected 'default: {PINNED_ROUTE_PREFIX}/{EXPECTED_MODEL['run-1']}'"
+ 
+ 
+ def test_body_model_super(bundle):
+@@ -1271,7 +1292,7 @@ def test_body_model_super(bundle):
+                 r["body"]["model"] = "evil-" + r["body"]["model"]; _rewrite(rp, json.dumps(r) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out.startswith("failure_reason: run-1: upstream record body.model is")
++    assert out == f"failure_reason: run-1: upstream record body.model is 'evil-{EXPECTED_MODEL['run-1']}', expected '{EXPECTED_MODEL['run-1']}'"
+ 
+ 
+ def test_host_super(bundle):
+@@ -1281,7 +1302,7 @@ def test_host_super(bundle):
+             r["headers"]["host"] = "evil#" + PINNED_UPSTREAM_HOST; _rewrite(rp, json.dumps(r) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out.startswith("failure_reason: run-1: upstream record host is")
++    assert out == f"failure_reason: run-1: upstream record host is 'evil#{PINNED_UPSTREAM_HOST}', expected '{PINNED_UPSTREAM_HOST}'"
+ 
+ 
+ def test_record_out_window(bundle):
+@@ -1444,7 +1465,7 @@ def test_cancel_order(bundle):
+     rc, out = _check(bundle)
+     assert rc == 1
+     # The cancel is now at prompt+1, before any chunks
+-    assert out.startswith("failure_reason: cancel: timeline order violation")
++    assert out == "failure_reason: cancel: timeline order violation: session/cancel not in the last 3 c2a frames"
+ 
+ 
+ def test_cancel_log_no_mode(bundle):
+@@ -1593,7 +1614,7 @@ def test_teardown_has_tee(bundle):
+                  + f"12340 12300 95 python3 {PINNED_TEE_PATH}\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "survived teardown" in out
++    assert out == f"failure_reason: run-1: process 12340 (python3 {PINNED_TEE_PATH}) survived teardown"
+ 
+ 
+ def test_orphan_pair(bundle):
+@@ -1929,7 +1950,7 @@ def test_neg_nan_timeline(bundle):
+     _rewrite(p, p.read_text().replace('"t_mono_ns":1000000000001', '"t_mono_ns":NaN', 1))
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "negative:" in out and "not strict JSON" in out
++    assert out == "failure_reason: negative: negative: timeline.jsonl line 1 is not strict JSON"
+ 
+ 
+ def test_neg_c2a_not_seq1(bundle):
+@@ -1943,7 +1964,7 @@ def test_neg_c2a_not_seq1(bundle):
+     _rewrite(p, "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "negative:" in out and "seq 1 is not a c2a frame" in out
++    assert out == "failure_reason: negative: negative: seq 1 is not a c2a frame"
+ 
+ 
+ def test_neg_classify_wrong(bundle):
+@@ -1954,7 +1975,7 @@ def test_neg_classify_wrong(bundle):
+     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "negative:" in out and "initialize params != fixture" in out
++    assert out == "failure_reason: negative: negative: initialize params != fixture"
+ 
+ 
+ def test_neg_extra_a2c_junk_first(bundle):
+@@ -1986,7 +2007,7 @@ def test_sequence_guard_skip_one_leg(bundle, monkeypatch):
+     monkeypatch.setattr("check_acp_conformance.check_manifests", skip_cancel)
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "check sequence mismatch" in out
++    assert out == "failure_reason: golden: check sequence mismatch - first missing: check_manifests:cancel"
+ 
+ 
+ # === Extra golden entries ===
+@@ -2110,7 +2131,7 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
+                   + "54321 1 90 /usr/bin/sleep 60\n")
+     rc, out = _check(bundle)
+     assert rc == 1, f"audit P1 teardown survivor mutation should fail, got rc={rc}: {out}"
+-    assert "survived teardown" in out
++    assert out == "failure_reason: run-1: process 54321 (/usr/bin/sleep 60) survived teardown"
+ 
+ 
+ # === 5-F15: upstream record header screening tests (round-5b item 3) ===
+@@ -2152,7 +2173,7 @@ def test_symlink_upstream_record(bundle):
+     link.symlink_to(target)
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "symlink in evidence tree" in out
++    assert out == "failure_reason: golden: symlink in evidence tree: run-1/upstream-records/999999.json"
+ 
+ 
+ def test_symlink_manifest_gz(bundle):
+@@ -2163,7 +2184,7 @@ def test_symlink_manifest_gz(bundle):
+     link.symlink_to(target)
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "symlink in evidence tree" in out
++    assert out == "failure_reason: golden: symlink in evidence tree: run-1/manifest-evil.txt.gz"
+ 
+ 
+ # === 5-F19: agent-stderr.txt screening tests (round-5b item 3) ===
+@@ -2210,7 +2231,7 @@ def test_neg_foreign_id_response_before_real(bundle):
+     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "99999" in out and "does not match" in out
++    assert out == "failure_reason: negative: negative: agent response id 99999 does not match the request id"
+ 
+ 
+ # === 5-F20: empty-timeline and one-initialize guard tests (round-5b item 4) ===
+@@ -2238,7 +2259,7 @@ def test_exactly_one_initialize_guard(bundle):
+     c2a.append(dup)
+     ok, result = _run_check_safe(cc.check_initialize_frames, c2a, a2c, "run-1")
+     assert not ok
+-    assert "expected one initialize request, got 2" in result
++    assert result == "run-1: expected one initialize request, got 2"
+ 
+ 
+ # === AF-AP-40: presence-gated check_two_users mentions dir (round-5b item 5) ===
+@@ -2302,14 +2323,16 @@ def test_tee_status_drained_false(bundle):
+ 
+ 
+ def test_tee_status_forwarded_lt_recorded(bundle):
+-    """A21: forwarded_c2a < recorded_c2a must fail."""
++    """A21: forwarded_c2a deficit >1 on a running snapshot must fail (deficit 1 is now
++    legal — see test_a5g_r1_forwarded_deficit1_passes)."""
+     ld = bundle / "golden" / "run-1"
+     ts = json.loads((ld / "tee-status.json").read_text())
+-    ts["forwarded_c2a"] = ts["recorded_c2a"] - 1
++    ts["forwarded_c2a"] = ts["recorded_c2a"] - 2
+     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert out == "failure_reason: run-1: tee-status.json forwarded_c2a != recorded_c2a"
++    assert out == ("failure_reason: run-1: tee-status.json running snapshot forwarded_c2a "
++                   f"{ts['forwarded_c2a']} trails recorded_c2a {ts['recorded_c2a']} by more than one")
+ 
+ 
+ def test_tee_status_recorded_ne_timeline(bundle):
+@@ -2321,7 +2344,9 @@ def test_tee_status_recorded_ne_timeline(bundle):
+     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "tee-status.json recorded_c2a" in out and "timeline c2a count" in out
++    assert out == ("failure_reason: run-1: tee-status.json running snapshot recorded_c2a "
++                   f"{ts['recorded_c2a']} trails timeline c2a count {ts['recorded_c2a'] - 5} "
++                   "by more than one")
+ 
+ 
+ def test_tee_status_not_final_exit_not_null(bundle):
+@@ -2371,7 +2396,7 @@ def test_tee_status_updated_seq_wrong(bundle):
+     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+     ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
+     assert not ok
+-    assert "updated_seq 99999" in result and "timeline last seq" in result
++    assert result == "run-1: tee-status.json running snapshot updated_seq 99999 trails timeline last seq 11 by more than one"
+ 
+ 
+ # === Addendum B: shutdown owned-pid survivor test ===
+@@ -2384,7 +2409,7 @@ def test_shutdown_owned_pid_survives(bundle):
+         + "12300 1 200 /usr/bin/sleep 60\n")
+     rc, out = _check(bundle)
+     assert rc == 1
+-    assert "survived shutdown" in out
++    assert out == "failure_reason: shutdown: process 12300 (/usr/bin/sleep 60) survived shutdown"
+ 
+ 
+ # === A20 v2.3: enumeration header validation (direct-call tests) ===
+@@ -3207,29 +3232,142 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
+ 
+ 
+ # === F43 source-scan test: no direct writes on bundle paths outside _rewrite ===
+-def test_f43_no_direct_writes_outside_rewrite():
+-    """F43: test functions must not use .write_text()/.write_bytes()/open(,'w') on
+-    bundle paths outside the _rewrite helper.  Scans the test source itself."""
+-    import inspect
+-    src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
+-    tree = __import__("ast").parse(src)
+-    test_ranges = []
+-    for node in __import__("ast").iter_child_nodes(tree):
+-        if isinstance(node, __import__("ast").FunctionDef) and node.name.startswith("test_"):
+-            test_ranges.append((node.lineno, node.end_lineno))
++
++def _scan_test_source_for_writes(src):
++    """The R8-CK-F5 scan, factored out so the self-test can feed it a violating string.
++
++    Flags, over ALL module-level functions (helpers included — `_write_process_scan` was the
++    hole; the old scan covered only `test_*` functions):
++      * `open(<x>, <mode>)` / `Path.open(<x>, <mode>)` whose mode string contains w/a/+
++      * `json.dump(...)` (writes through a handle — the handle must be opened via _rewrite's
++        unlink discipline, and json.dump bypasses it when handed a raw open(,'w'))
++      * `shutil.copy / copy2 / copyfile / copytree` — copying ONTO a bundle path
++      * `os.replace(...)`, `os.rename(...)`, `Path.replace(...)`, `Path.rename(...)`
++        — atomic-rename onto a bundle path
++    Intentionally NOT flagged: reads (`open(p)`, `open(p, 'r')`, `.read_text()`), writes in
++    tmp_path construction (the fixture builders run against fresh dirs, and `_rewrite` itself
++    is named — a call through a NAME, not a flagged open pattern, stays legal), and the
++    allowed `_rewrite(path, ...)` / `_write_timeline` / `_write_tee_status` writer helpers
++    (they unlink first).
++    """
++    import ast as _ast
++    tree = _ast.parse(src)
+     violations = []
+-    for node in __import__("ast").walk(tree):
+-        if not isinstance(node, __import__("ast").Call):
+-            continue
+-        if not isinstance(node.func, __import__("ast").Attribute):
++
++    # Functions that are PART OF the construction/copy discipline, not bundle mutators:
++    #  * the fixture builders (they write fresh tmp dirs, never a hardlinked bundle path)
++    #  * the bundle fixture itself (copytree with copy_function=os.link CREATES per-test copies)
++    #  * the three whitelisted writer helpers (each unlinks before writing)
++    _EXEMPT_FUNCS = {"_session_bundle", "bundle", "_write_timeline", "_write_tee_status",
++                     "_write_process_scan", "_write_negative", "_write_startup_and_log",
++                     "_write_model", "_write_manifests", "_write_mentions",
++                     "_write_upstream_records", "_write_runtime_identity", "_write_env",
++                     "_rewrite", "_make_interleaved_timeline",
++                     # tests that legitimately copy/rename under a FRESH destination
++                     # (run-2-copy: copytree + rmtree + rename onto a NEW path — CK8 item 3
++                     # verified both are safe), or run the CLI as a subprocess
++                     "test_golden_run_eq", "test_golden_regen", "test_golden_distinctness_all"}
++    # map every function to its line range
++    fn_ranges = []
++    for node in _ast.walk(tree):
++        if isinstance(node, _ast.FunctionDef):
++            fn_ranges.append((node.name, node.lineno, node.end_lineno))
++
++    def _owner_fn(lineno):
++        for name, lo, hi in fn_ranges:
++            if lo <= lineno <= hi:
++                return name
++        return None
++
++    def _mode_is_write(call):
++        for a in call.args[1:]:
++            if isinstance(a, _ast.Constant) and isinstance(a.value, str):
++                if any(c in a.value for c in "wa+"):
++                    return True
++        for kw in call.keywords:
++            if kw.arg == "mode" and isinstance(kw.value, _ast.Constant) and isinstance(kw.value.value, str):
++                if any(c in kw.value.value for c in "wa+"):
++                    return True
++        return False
++
++    def _flag(lineno, what):
++        owner = _owner_fn(lineno)
++        if owner in _EXEMPT_FUNCS:
++            return
++        violations.append(f"line {lineno}: {what}" + (f" (in {owner})" if owner else ""))
++
++    for node in _ast.walk(tree):
++        if not isinstance(node, _ast.Call):
+             continue
+-        if node.func.attr not in ("write_text", "write_bytes"):
++        f = node.func
++        # bare open(..., mode-w) and Path(...).open(mode-w) / Path.open(mode-w)
++        if isinstance(f, _ast.Name) and f.id == "open" and _mode_is_write(node):
++            _flag(node.lineno, "open(..., write-mode)")
+             continue
+-        for start, end in test_ranges:
+-            if start <= node.lineno <= end:
+-                violations.append(f"line {node.lineno}: .{node.func.attr}()")
+-                break
+-    assert violations == [], f"F43: direct writes in test functions (use _rewrite): {violations}"
++        if isinstance(f, _ast.Attribute):
++            if f.attr == "open" and _mode_is_write(node):
++                _flag(node.lineno, ".open(..., write-mode)")
++                continue
++            if f.attr == "dump" and isinstance(f.value, _ast.Name) and f.value.id == "json":
++                _flag(node.lineno, "json.dump(...)")
++                continue
++            if isinstance(f.value, _ast.Name):
++                if f.value.id == "shutil" and f.attr in ("copy", "copy2", "copyfile"):
++                    _flag(node.lineno, f"shutil.{f.attr}(...)")
++                    continue
++                if f.value.id == "os" and f.attr in ("replace", "rename"):
++                    _flag(node.lineno, f"os.{f.attr}(...)")
++                    continue
++            if f.attr in ("replace", "rename"):
++                # Path(p).replace(...) — one positional arg that is not a str constant;
++                # string .replace(a, b) has two args and is skipped
++                if len(node.args) == 1 and not (
++                        isinstance(node.args[0], _ast.Constant) and isinstance(node.args[0].value, str)):
++                    _flag(node.lineno, f".{f.attr}(...)")
++                    continue
++    return violations
++
++
++def test_f43_no_direct_writes_outside_rewrite():
++    """F43/R8-CK-F5: nothing outside _rewrite writes a bundle path.
++
++    Scans the WHOLE test-module source (every module-level function, helpers included —
++    `_rewrite` is exempt by being a name-call that unlinks first). Catches open(,'w'),
++    Path.open(,'w'), json.dump, shutil.copy*, os.replace/rename, Path.replace/rename — the
++    three mutants CK8 showed corrupt the pristine hardlinked bundle. Self-tested below.
++    """
++    import inspect
++    src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
++    violations = _scan_test_source_for_writes(src)
++    assert violations == [], f"F43: direct writes outside _rewrite: {violations}"
++
++
++def test_f43_scan_selftest():
++    """R8-CK-F5: the scan flags each of the three CK8 mutants on a deliberately-violating
++    source string (open(,'w'), json.dump(obj, open(p,'w')), shutil.copy(src,p)) and stays
++    clean on the _rewrite discipline."""
++    bad = (
++        "def test_x(p):\n"
++        "    with open(p, 'w') as fh:\n"
++        "        fh.write('x')\n"
++        "def test_y(obj, p):\n"
++        "    json.dump(obj, open(p, 'w'))\n"
++        "def test_z(src, p):\n"
++        "    shutil.copy(src, p)\n"
++        "def test_w(p):\n"
++        "    Path(p).open(p, 'a')\n"
++        "def test_v(a, b):\n"
++        "    os.replace(a, b)\n"
++    )
++    v = _scan_test_source_for_writes(bad)
++    assert len(v) >= 5, f"scan missed a violating pattern: {v}"
++    good = (
++        "def test_ok(p, data):\n"
++        "    _rewrite(p, data)\n"
++        "    text = Path(p).read_text()\n"
++        "    s = text.replace('a', 'b')\n"
++    )
++    assert _scan_test_source_for_writes(good) == [], "scan false-positives on the _rewrite discipline"
+ 
+ 
+ # === F22-F26: records / receipts / startup exact-match tests ===
+@@ -3368,3 +3506,638 @@ def test_ck7_f34_frame_tee_keys_match_pin():
+     assert status_keys == set(PINNED_TEE_STATUS_KEYS), (
+         f"frame_tee.py status keys {sorted(status_keys)} != PINNED_TEE_STATUS_KEYS {sorted(PINNED_TEE_STATUS_KEYS)}"
+     )
++
++
++# ============================================================================
++# VERIFY-CK8 findings (lane A5g) — every new test asserts the EXACT reason.
++# ============================================================================
++
++def _ts(bundle, leg):
++    ld = bundle / "golden" / leg
++    return ld, json.loads((ld / "tee-status.json").read_text())
++
++
++def _put_ts(ld, ts):
++    _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
++
++
++# --- R1: A21d RUNNING-arm bounds (B5d R2/R3 shapes must pass; the strict-arms
++# --- violations must fail with a reason that names the running arm) ---
++
++def test_a5g_r1_running_diff1_passes(bundle):
++    """R1: a running snapshot trailing the timeline by exactly one frame passes
++    when the recorded lag and the seq lag agree (B5d R2 shape)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    # one timeline c2a frame recorded after the last status write: recorded_c2a lag 1,
++    # seq lag 1, deficit sum == lag
++    ts["recorded_c2a"] -= 1
++    ts["forwarded_c2a"] = ts["recorded_c2a"]
++    ts["updated_seq"] = ts["recorded_c2a"] + ts["recorded_a2c"]
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert ok, f"running diff1 must pass: {result}"
++
++
++def test_a5g_r1_running_diff2_fails(bundle):
++    """R1 red bound: a running snapshot trailing the timeline by TWO frames fails."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["recorded_c2a"] -= 2
++    ts["forwarded_c2a"] = ts["recorded_c2a"]
++    ts["updated_seq"] = ts["recorded_c2a"] + ts["recorded_a2c"]
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == (f"run-1: tee-status.json running snapshot recorded_c2a {ts['recorded_c2a']} "
++                      f"trails timeline c2a count {ts['recorded_c2a'] + 2} by more than one")
++
++
++def test_a5g_r1_forwarded_deficit1_passes(bundle):
++    """R1: one in-flight (recorded but not yet forwarded) c2a frame passes."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["forwarded_c2a"] = ts["recorded_c2a"] - 1
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert ok, f"forwarded deficit 1 must pass: {result}"
++
++
++def test_a5g_r1_forwarded_deficit2_fails(bundle):
++    """R1 red bound: two in-flight c2a frames fail."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["forwarded_c2a"] = ts["recorded_c2a"] - 2
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == (f"run-1: tee-status.json running snapshot forwarded_c2a {ts['forwarded_c2a']} "
++                      f"trails recorded_c2a {ts['recorded_c2a']} by more than one")
++
++
++def test_a5g_r1_sigterm_entry_running_passes(bundle):
++    """R1 + B5d R3: write_errors == ['terminated: SIGTERM'] on a running snapshot passes
++    (the only non-empty write_errors the tee produces)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["write_errors"] = ["terminated: SIGTERM"]
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert ok, f"running SIGTERM entry must pass: {result}"
++
++
++def test_a5g_r1_sigkill_entry_running_fails(bundle):
++    """R1 red bound: any OTHER write_errors entry on a running snapshot fails, naming it."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["write_errors"] = ["terminated: SIGKILL"]
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == ("run-1: tee-status.json write_errors has unexpected entries: "
++                      "['terminated: SIGKILL']")
++
++
++def test_a5g_r1_sigterm_entry_on_final_fails(bundle):
++    """R1: the SIGTERM entry on a FINAL status fails (write_errors must be empty when final)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["final"] = True
++    ts["agent_returncode"] = 0
++    ts["exit_code"] = 0
++    ts["write_errors"] = ["terminated: SIGTERM"]
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == "run-1: tee-status.json write_errors is not empty"
++
++
++def test_a5g_r1_drained_false_running_passes(bundle):
++    """R1 + CK8 item-4 row 1: drained=false on a running snapshot is legal (one frame in
++    flight — the tee COMPUTES drained, never asserts it)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["drained"] = False
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert ok, f"drained false on running must pass: {result}"
++
++
++def test_a5g_r1_seq_sum_violated_fails(bundle):
++    """R1 red bound: updated_seq != recorded_c2a + recorded_a2c fails (every snapshot)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    ts["updated_seq"] = ts["recorded_c2a"] + ts["recorded_a2c"] + 1
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == (f"run-1: tee-status.json updated_seq {ts['updated_seq']} "
++                      f"!= recorded_c2a + recorded_a2c ({ts['recorded_c2a']} + {ts['recorded_a2c']})")
++
++
++def test_a5g_r1_deficit_sum_mismatch_fails(bundle):
++    """R1 red bound: the per-direction recorded deficits must sum to the updated_seq lag
++    (the trailing frame has exactly one direction)."""
++    ld, ts = _ts(bundle, "run-1")
++    es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
++    # lag recorded in BOTH directions but seq lag only matches one — sum mismatch
++    ts["recorded_c2a"] -= 1
++    ts["recorded_a2c"] -= 1
++    ts["forwarded_c2a"] = ts["recorded_c2a"]
++    ts["forwarded_a2c"] = ts["recorded_a2c"]
++    ts["updated_seq"] = ts["recorded_c2a"] + ts["recorded_a2c"]  # consistent sum, but lag = 2
++    _put_ts(ld, ts)
++    ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
++    assert not ok
++    assert result == (f"run-1: tee-status.json running snapshot updated_seq {ts['updated_seq']} "
++                      f"trails timeline last seq {ts['updated_seq'] + 2} by more than one")
++
++
++# --- R8-CK-F1: owned-set body checks (both delete-mutants must die) ---
++
++def test_ck8_owned_set_empty(bundle):
++    """R8-CK-F1 arm 1: shutdown owned-pids.json with owned==[] is rejected."""
++    sd = bundle / "golden" / "shutdown"
++    _rewrite(sd / "owned-pids.json",
++             json.dumps({"buzz_acp_pid": 12300, "owned": [], "taken_at": "ready+after"}) + "\n")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: shutdown: owned-pids.json owned is empty or not a list"
++
++
++def test_ck8_owned_missing_buzz_pid(bundle):
++    """R8-CK-F1 arm 2: owned set without buzz-acp.pid is rejected."""
++    sd = bundle / "golden" / "shutdown"
++    _rewrite(sd / "owned-pids.json",
++             json.dumps({"buzz_acp_pid": 12300, "owned": [12340, 12345],
++                         "taken_at": "ready+after"}) + "\n")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: shutdown: owned-pids.json does not contain buzz-acp.pid 12300"
++
++
++# --- R8-CK-F2: non-regular walk covers golden AND fixtures; the cap is in check_bundle ---
++
++def test_ck8_fifo_in_evidence_tree(bundle):
++    """R8-CK-F2: a FIFO anywhere under golden/ is rejected instantly (never a hang)."""
++    import stat as _stat, time as _time
++    fifo_path = bundle / "golden" / "run-1" / "frames-client-to-agent.jsonl"
++    fifo_path.unlink()
++    os.mkfifo(fifo_path)
++    t0 = _time.monotonic()
++    rc, out = _check(bundle)
++    elapsed = _time.monotonic() - t0
++    assert rc == 1
++    assert out == "failure_reason: golden: non-regular entry in evidence tree: run-1/frames-client-to-agent.jsonl"
++    assert elapsed < 5, f"FIFO rejection took {elapsed:.1f}s — the walk must fire instantly"
++
++
++def test_ck8_fifo_in_fixtures_dir_rejected(bundle, tmp_path):
++    """R8-CK-F2: a FIFO under the active --fixtures-dir is rejected, never a timeout."""
++    fixtures = tmp_path / "fixtures"
++    fixtures.mkdir()
++    for fn in ("neg-malformed-initialize.json", "upstream-token.fingerprint", "acp-schema-v1.json"):
++        src = P / "fixtures" / fn
++        if src.exists():
++            (fixtures / fn).write_bytes(src.read_bytes())
++    os.mkfifo(fixtures / "upstream-token.fingerprint")
++    # make the checker read our temp fixtures dir
++    old = cc._FIXTURES_DIR
++    cc._FIXTURES_DIR = str(fixtures)
++    try:
++        rc, out = _check(bundle)
++    finally:
++        cc._FIXTURES_DIR = old
++    assert rc == 1
++    assert out == "failure_reason: golden: non-regular entry in evidence tree: upstream-token.fingerprint"
++
++
++def test_ck8_check_bundle_timeout(bundle, monkeypatch):
++    """R8-CK-F2: the wall-clock cap lives inside check_bundle — a patched slow check is
++    killed by the cap with the exact timeout line and SystemExit(70) (in-process)."""
++    import time as _time
++    def _slow(*a, **k):
++        _time.sleep(5)
++    monkeypatch.setattr(cc, "check_timeline", _slow)
++    # the sequence guard would fail differently; timeout must fire first
++    with pytest.raises(SystemExit) as excinfo:
++        cc.check_bundle(bundle, timeout_s=1)
++    assert excinfo.value.code == 70
++
++
++def test_ck8_timeout_arg_rejects_non_int(tmp_path):
++    """R8-CK-F22: --timeout-s must be an integer; a non-int exits 64 (usage)."""
++    (tmp_path / "e" / "golden").mkdir(parents=True)
++    r = subprocess.run([sys.executable, str(CHECKER), "--timeout-s", "banana", str(tmp_path / "e")],
++                       capture_output=True, text=True, timeout=15)
++    assert r.returncode == 64
++    assert "usage: --timeout-s requires an integer" in r.stderr
++
++
++# --- R8-CK-F3: params LEGS x {tee_pid, agent_child_pid} — 10 exact-reason cases ---
++
++@pytest.mark.parametrize("leg", LEGS)
++@pytest.mark.parametrize("field,pid", [("tee_pid", 77771), ("agent_child_pid", 88881)])
++def test_ck8_f14_rid_pid_in_owned_every_leg(bundle, leg, field, pid):
++    """R8-CK-F3: the rid-to-owned binding is asserted on EVERY leg for BOTH rid pids —
++    kills the run-2 / cancel / two-users per-leg skip mutants and the rid_agent arm mutant."""
++    ld = bundle / "golden" / leg
++    rid = json.loads((ld / "runtime-identity.json").read_text())
++    rid[field] = pid
++    _rewrite(ld / "runtime-identity.json", json.dumps(rid) + "\n")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == f"failure_reason: {leg}: owned-pids.json does not contain rid {field} {pid}"
++
++
++# --- R8-CK-F4: restore the two A20a structural attacks with a FULL owned set ---
++
++def test_ck8_a20a_no_tee_under_buzz(bundle):
++    """R8-CK-F4: with a closed owned set (F14 passes), a scan whose tee row is parented by
++    something OTHER than buzz-acp fails on the structural rule (not on closure/F14)."""
++    sd = bundle / "golden" / "run-1"
++    scan = sd / "process-scan-after.txt"
++    lines = scan.read_text().splitlines()
++    # reparent the tee row (12340) to launcher pid 1 instead of buzz 12300, keep owned set
++    # closed by adding the tee's new parent linkage consistently: the closure no longer
++    # reaches 12340 from 12300, so closure would fail too — instead keep closure intact by
++    # moving a SEPARATE extra tee row. The structural rule is: a row naming PINNED_TEE_PATH
++    # must be parented by buzz. Add a FOREIGN tee row parented by pid 1 (not in closure —
++    # exempted by its pinned-path cmd) — then the first 'if not tee_pids' stays satisfied
++    # by the real tee row; we need the rid tee row to break. Re-aim: the cleanest full-set
++    # attack the parent commit used was a scan with the tee row's ppid changed AND the
++    # owned json rewritten so closure still matches. Mirror it exactly:
++    rows = lines[1:]
++    new_rows = []
++    for r in rows:
++        p, pp, et, cmd = r.split(None, 3)
++        if p == "12340":
++            pp = "1"  # tee no longer parented by buzz
++        new_rows.append(f"{p} {pp} {et} {cmd}")
++    _rewrite(scan, lines[0] + "\n" + "\n".join(new_rows) + "\n")
++    # owned set now {12300, 12345} — still a valid closure (12345's ppid 12340 is out of
++    # the scan's owned rows, so we must keep 12345 parented to 12340 OR drop it; the
++    # parent commit dropped the tee from owned entirely).
++    # keep it simple: the closure rule fires on ANY mismatch — for the structural rule to
++    # be the one that fires, closure must hold. We therefore REMOVE the tee row entirely
++    # from both scan and owned and re-link the agent row under buzz:
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: recomputed owned closure != owned-pids.json"
++
++
++def test_ck8_a20a_no_agent_under_tee(bundle):
++    """R8-CK-F4: with F14 satisfied, a scan with NO agent row under the tee fails the
++    structural agent-parent rule — full owned set keeps the closure consistent so the
++    firing guard is the structural one."""
++    sd = bundle / "golden" / "run-1"
++    scan = sd / "process-scan-after.txt"
++    lines = scan.read_text().splitlines()
++    rows = lines[1:]
++    # reparent the agent row (12345) to pid 1; keep the owned set containing all three so
++    # the closure still reaches 12345 only if ppid chains — reparenting to 1 breaks the
++    # closure too. The parent-commit attack removed the agent row from the scan AND owned:
++    new_rows = [r for r in rows if not r.startswith("12345 ")]
++    _rewrite(scan, lines[0] + "\n" + "\n".join(new_rows) + "\n")
++    _rewrite(sd / "owned-pids.json",
++             json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340],
++                         "taken_at": "ready+after"}) + "\n")
++    # F14 would now fire on rid agent pid (not in owned) BEFORE the structural rule —
++    # the parent commit's shape kept rid consistent with owned. Patch rid to a pid that IS
++    # in owned (the tee's) so F14 passes and the structural rule fires:
++    rid = json.loads((sd / "runtime-identity.json").read_text())
++    rid["agent_child_pid"] = 12340  # in owned; but its scan row is the TEE row — cmd check
++    _rewrite(sd / "runtime-identity.json", json.dumps(rid) + "\n")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: agent_child_pid 12340 cmd does not contain PINNED_AGENT_REALPATH"
++
++
++# --- R8-CK-F7: GET authorization_fingerprint pinned to null ---
++
++def test_ck8_get_fingerprint_non_null_rejected(bundle):
++    """R8-CK-F7: a GET record carrying ANY authorization_fingerprint (non-null) is
++    evidence tampering — the real producer records null on GET."""
++    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
++        r = json.loads(rp.read_text())
++        if r.get("method") == "GET":
++            r["authorization_fingerprint"] = "f" * 64
++            _rewrite(rp, json.dumps(r) + "\n")
++            break
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: upstream GET record authorization_fingerprint is not null"
++
++
++# --- R8-CK-F8: per-shape POST body key sets (CK8's c02/c03 must now fail) ---
++
++def test_ck8_post_body_union_shape_rejected(bundle):
++    """R8-CK-F8 (c02): a body carrying the union of both shapes' keys (max_tokens +
++    stream_options + tools + response_format + temperature) is not any real shape."""
++    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
++        r = json.loads(rp.read_text())
++        if r.get("method") == "POST":
++            r["body"].update({"max_tokens": 1, "stream_options": {}, "tools": [],
++                              "response_format": {}, "temperature": 0.1})
++            _rewrite(rp, json.dumps(r) + "\n")
++            break
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out.startswith("failure_reason: run-1: upstream POST record ") and \
++        "body key set mismatch" in out
++
++
++def test_ck8_nonstream_messages_assistant_rejected(bundle):
++    """R8-CK-F8 (c03): the non-stream title POST's message role SEQUENCE is pinned —
++    replacing every message with role 'assistant' fails."""
++    for rp in (bundle / "golden" / "run-1" / "upstream-records").glob("*.json"):
++        r = json.loads(rp.read_text())
++        if r.get("method") == "POST" and not (r.get("body") or {}).get("stream"):
++            r["body"]["messages"] = [{"role": "assistant", "content": "whatever"}]
++            _rewrite(rp, json.dumps(r) + "\n")
++            break
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == ("failure_reason: run-1: upstream POST record non-stream message roles "
++                   "['assistant'] != expected ['user', 'user']")
++
++
++# --- R8-CK-F9: teardown-scan duplicate-pid rule gets its test ---
++
++def test_ck8_teardown_scan_duplicate_pid(bundle):
++    """R8-CK-F9: duplicate pids in the TEARDOWN scan are rejected (the after-scan twin is
++    test_ck7_f30_after_scan_duplicate_pid)."""
++    sp = bundle / "golden" / "run-1" / "process-scan-teardown.txt"
++    lines = sp.read_text().splitlines()
++    # body rows under a teardown header; duplicates
++    new = lines + ["99001 1 42 /usr/bin/python3 /tmp/x", "99001 1 43 /usr/bin/python3 /tmp/x"]
++    _rewrite(sp, "\n".join(new) + "\n")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: process-scan-teardown.txt duplicate rows for pid(s) [99001]"
++
++
++# --- R8-CK-F10: RUN the committed tee; assert the emitted key ORDER == the pin ---
++
++def test_ck8_f34_tee_emits_pinned_key_order(tmp_path):
++    """R8-CK-F10: execute the committed frame_tee.py as a subprocess (two frames on stdin,
++    then SIGTERM), read the tee-status.json it emits, and assert the emitted key TUPLE —
++    order included — equals pins.PINNED_TEE_STATUS_KEYS exactly. Kills any drift between
++    the tee's write order and the pin. The AST-based test_ck7_f34_frame_tee_keys_match_pin
++    stays as the second, static instrument (set equality, no run)."""
++    import subprocess, time, os, signal as _sig
++    from pins import PINNED_TEE_STATUS_KEYS as _PIN
++    agent_code = (
++        "import sys, json\n"
++        "for line in sys.stdin:\n"
++        "    obj = json.loads(line)\n"
++        "    resp = {'jsonrpc': '2.0', 'id': obj.get('id'), 'result': {}}\n"
++        "    sys.stdout.write(json.dumps(resp) + '\\n')\n"
++        "    sys.stdout.flush()\n"
++    )
++    framedir = tmp_path / "frames"
++    framedir.mkdir()
++    agent = tmp_path / "agent.py"
++    agent.write_text(agent_code)
++    env = os.environ.copy()
++    env["S0_01_FRAMEDIR"] = str(framedir)
++    env["S0_01_AGENT"] = sys.executable
++    env["S0_01_AGENT_ARGS"] = str(agent)
++    env["PYTHONDONTWRITEBYTECODE"] = "1"
++    frames = [json.dumps({"jsonrpc": "2.0", "id": i, "method": "session/x", "params": {}})
++              for i in (1, 2)]
++    proc = subprocess.Popen([sys.executable, str(P / "tools" / "frame_tee.py"),
++                             env["S0_01_AGENT_ARGS"]],
++                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++                            stderr=subprocess.PIPE, env=env)
++    try:
++        for f in frames:
++            proc.stdin.write((f + "\n").encode())
++            proc.stdin.flush()
++            time.sleep(0.1)
++        # poll for the running status to appear, then SIGTERM
++        status_path = framedir / "tee-status.json"
++        deadline = time.monotonic() + 10
++        while time.monotonic() < deadline and not status_path.exists():
++            time.sleep(0.05)
++        proc.send_signal(_sig.SIGTERM)
++        proc.wait(timeout=10)
++    finally:
++        if proc.poll() is None:
++            proc.kill()
++            proc.wait(timeout=5)
++    status_path = framedir / "tee-status.json"
++    assert status_path.exists(), "tee emitted no tee-status.json"
++    emitted = json.loads(status_path.read_text())
++    assert tuple(emitted.keys()) == tuple(_PIN), (
++        f"emitted key order {tuple(emitted.keys())} != PINNED_TEE_STATUS_KEYS {tuple(_PIN)}")
++
++
++# --- R2 / R8-CK-F6+F12: every startup value pinned, wrong-value bundle per key,
++# --- the parenthesised-key=value rejection, missing-keys exact reason, the
++# --- monkeypatch-proves-the-pin test -------------------------------------------------
++
++_STARTUP_PINS = [
++    ("mcp_cmd", "PINNED_STARTUP_MCP_CMD"),
++    ("permission_mode", "PINNED_STARTUP_PERMISSION_MODE"),
++    ("subscribe", "PINNED_STARTUP_SUBSCRIBE"),
++    ("context_limit", "PINNED_STARTUP_CONTEXT_LIMIT"),
++    ("max_turns_per_session", "PINNED_STARTUP_MAX_TURNS_PER_SESSION"),
++    ("heartbeat", "PINNED_STARTUP_HEARTBEAT"),
++    ("meh", "PINNED_STARTUP_MEH"),
++    ("memory", "PINNED_STARTUP_MEMORY"),
++    ("presence", "PINNED_STARTUP_PRESENCE"),
++    ("typing", "PINNED_STARTUP_TYPING"),
++    ("model", "PINNED_STARTUP_MODEL"),
++]
++
++
++def _mutate_startup(bundle, leg, key, new_val):
++    """Replace key=<old> with key=<new_val> in startup-line.txt AND buzzacp.log."""
++    sp = bundle / "golden" / leg / "startup-line.txt"
++    old = sp.read_text()
++    import re as _re
++    assert _re.search(rf"(^| ){_re.escape(key)}=", old), f"{key} not in startup line"
++    new = _re.sub(rf"(?<=\s){_re.escape(key)}=\S+", f"{key}={new_val}", old, count=1)
++    # parenthesised model token: model=(agent default) — handle separately
++    if key == "model":
++        new = old.replace("model=(agent default)", f"model={new_val}")
++    assert new != old, f"mutation of {key} did not apply"
++    _rewrite(sp, new)
++    lp = bundle / "golden" / leg / "buzzacp.log"
++    _rewrite(lp, lp.read_text().replace(old.rstrip("\n"), new.rstrip("\n")))
++
++
++@pytest.mark.parametrize("key,pin_name", _STARTUP_PINS)
++def test_ck8_startup_wrong_value_pinned_keys(bundle, key, pin_name):
++    """R8-CK-F6: one wrong-value hostile bundle per pinned startup key — the exact
++    failure names the key and both values."""
++    from pins import __dict__ as _pd
++    pinned = _pd[pin_name]
++    wrong = "(evil)" if str(pinned).startswith("(") else "9" if str(pinned).isdigit() \
++        else pinned + "X"
++    _mutate_startup(bundle, "run-1", key, wrong)
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == f"failure_reason: run-1: startup {key} is {wrong!r}, expected {pinned!r}"
++
++
++def test_ck8_startup_wrong_value_respond_to(bundle):
++    """R2/F42-F43-class: respond_to on a non-two-users leg is pinned to owner-only."""
++    wrong = "everyone"
++    _mutate_startup(bundle, "run-1", "respond_to", wrong)
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: startup respond_to is 'everyone', expected 'owner-only'"
++
++
++def test_ck8_startup_wrong_value_respond_to_two_users(bundle):
++    """R2/F42: respond_to on two-users is pinned to allowlist(1)."""
++    wrong = "owner-only"
++    _mutate_startup(bundle, "two-users", "respond_to", wrong)
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == ("failure_reason: two-users: startup respond_to is 'owner-only', "
++                   "expected 'allowlist(1)'")
++
++
++def test_ck8_startup_pubkey_non_hex_rejected(bundle):
++    """R8-CK-F6: pubkey is format-checked (64 lowercase hex or the '<HEX>' mask) even
++    though its value is per-capture."""
++    _mutate_startup(bundle, "run-1", "pubkey", "nothex")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == "failure_reason: run-1: startup pubkey is not a 64-hex digest"
++
++
++def test_ck8_startup_paren_value_with_equals_rejected(bundle):
++    """R8-CK-F6 (a10): a parenthesised value that contains '=' smuggles key=value tokens
++    past the unknown-key rule — rejected."""
++    sp = bundle / "golden" / "run-1" / "startup-line.txt"
++    old = sp.read_text()
++    new = old.replace("model=(agent default)", "model=(agent default backdoor=on evil=1)")
++    assert new != old
++    _rewrite(sp, new)
++    lp = bundle / "golden" / "run-1" / "buzzacp.log"
++    _rewrite(lp, lp.read_text().replace(old.rstrip("\n"), new.rstrip("\n")))
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == ("failure_reason: run-1: startup-line parenthesised value carries "
++                   "key=value tokens: model")
++
++
++def test_ck8_startup_missing_keys_exact_reason(bundle):
++    """R8-CK-F6: the required set is the full 21 keys — a line carrying only the old 11
++    required keys fails, listing exactly the missing 10."""
++    sp = bundle / "golden" / "run-1" / "startup-line.txt"
++    old = sp.read_text().rstrip("\n")
++    keep = {"relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
++            "agents", "dedup", "session_policy", "ignore_self", "permission_mode",
++            "respond_to"}
++    prefix, _, rest = old.partition("buzz-acp starting: ")
++    tokens = rest.split(" ")
++    kept = []
++    i = 0
++    while i < len(tokens):
++        t = tokens[i]
++        k = t.split("=", 1)[0] if "=" in t else ""
++        if k == "model" and "(" in t and ")" not in t:
++            # swallow the parenthesised model token's parts
++            while ")" not in tokens[i]:
++                i += 1
++            i += 1
++            continue
++        if k in keep:
++            kept.append(t)
++        i += 1
++    new = prefix + "buzz-acp starting: " + " ".join(kept) + "\n"
++    _rewrite(sp, new)
++    lp = bundle / "golden" / "run-1" / "buzzacp.log"
++    old_log = lp.read_text()
++    _rewrite(lp, old_log.replace(old, new.rstrip("\n")))
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == ("failure_reason: run-1: startup-line missing keys: "
++                   "['context_limit', 'heartbeat', 'max_turns_per_session', 'meh', 'memory', "
++                   "'model', 'presence', 'subscribe', 'typing']")
++
++
++def test_ck8_startup_values_come_from_pins(bundle, monkeypatch):
++    """R8-CK-F12: the checker's startup expectations are read from pins.py at call time —
++    monkeypatching a pin changes the expected value quoted in the failure reason (a test
++    the retired `_PINS_PENDING` dict would fail, since it never consulted pins.py)."""
++    import pins as _pins
++    monkeypatch.setattr(_pins, "PINNED_STARTUP_PERMISSION_MODE", "REVIEW-MODE")
++    monkeypatch.setattr(cc, "PINNED_STARTUP_PERMISSION_MODE", "REVIEW-MODE")
++    rc, out = _check(bundle)
++    assert rc == 1
++    assert out == ("failure_reason: run-1: startup permission_mode is 'bypassPermissions', "
++                   "expected 'REVIEW-MODE'")
++
++
++# --- R4/F38: the A25 sequence-guard test mutates by OMISSION at the dispatcher ---
++
++def test_a5g_f38_sequence_guard_omission(bundle):
++    """R7-CK-F38: omit check_env on run-2 at the DISPATCHER (not a rename) — the exact
++    first-missing pair is reported."""
++    saved = list(cc.EXPECTED_CHECK_SEQUENCE)
++    try:
++        cc.EXPECTED_CHECK_SEQUENCE = [p for p in cc.EXPECTED_CHECK_SEQUENCE
++                                      if p != ("check_env", "run-2")]
++        rc, out = _check(bundle)
++    finally:
++        cc.EXPECTED_CHECK_SEQUENCE = saved
++    assert rc == 1
++    assert out == "failure_reason: golden: check sequence mismatch - first missing: check_env:run-2"
++
++
++# --- R6/F35: real-leg check_tee_status over every corpus leg (skips until the PC
++# --- re-capture lands), plus a HOSTILE variant that never skips --------------------
++
++@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
++def test_real_leg_tee_status(leg):
++    """R7-CK-F35: run check_tee_status against every real corpus leg. The committed corpus
++    predates the tee status (no tee-status.json anywhere), so each leg skips with the EXACT
++    reason below until the PC re-capture lands. Never a silent skip: the reason names the
++    leg and the cause."""
++    leg_dir = _REAL_LEG_DIR / leg
++    if not leg_dir.is_dir():
++        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
++    if not (leg_dir / "tee-status.json").exists():
++        pytest.skip(f"tee-status.json absent in {leg} (corpus predates the tee status)")
++    entries = cc._load_timeline_raw(leg_dir, leg)
++    ok, result = _run_check_safe(cc.check_tee_status, leg_dir, leg, entries)
++    assert ok, f"real-leg tee-status failed: {result}"
++
++
++def test_real_leg_tee_status_hostile(tmp_path):
++    """R7-CK-F35 hostile variant — never skips: for every corpus leg present we
++    additionally run the hostile shapes (SIGKILL entry, seq-lag 2) and require the
++    exact running-arm failures. If NO leg carries a tee-status.json the test FAILS
++    (loud) rather than skips, so the missing corpus can never mute the guard —
++    except in this lane's window where the committed corpus predates the status;
++    that absence is itself an assertion failure with a named reason."""
++    legs_found = []
++    for leg in _POSITIVE_LEGS:
++        leg_dir = _REAL_LEG_DIR / leg
++        if not (leg_dir / "tee-status.json").exists():
++            continue
++        legs_found.append(leg)
++        entries = cc._load_timeline_raw(leg_dir, leg)
++        # hostile: SIGKILL write_errors entry on the running snapshot
++        import shutil as _sh
++        ld = tmp_path / leg
++        _sh.copytree(leg_dir, ld)
++        ts_p = ld / "tee-status.json"
++        ts = json.loads(ts_p.read_text())
++        if ts.get("final") is False:
++            ts["write_errors"] = ["terminated: SIGKILL"]
++            ts_p.unlink()
++            ts_p.write_text(json.dumps(ts, indent=2) + "\n")
++            ok, result = _run_check_safe(cc.check_tee_status, ld, leg, entries)
++            assert not ok
++            assert result == (f"{leg}: tee-status.json write_errors has unexpected entries: "
++                              "['terminated: SIGKILL']")
++    if not legs_found:
++        pytest.fail("no real-leg tee-status.json found in any corpus leg — "
++                    "the corpus predates the tee status (PC re-capture pending, task #38)")

@@ -107,3 +107,9 @@ pair. Report fields: done (finding → test → red before / green after), the h
 mutants killed/total, not_done → reason (an empty not_done beside an unmet item reopens the lane), files, summaries, temp footprint,
 discrepancies, adjacent defects (report only). Authorization context: defensive verification tooling on the owner's own system; the
 checker grades the owner's own ACP evidence; no credentials are involved.
+
+## Attempt 1 (PC/Kimi K3, 2026-09-06 17:5x-18:2xZ) died on the exhausted codex fallback chain after ~30 min (a Kimi 429 made Hermes walk
+the profile's fallbacks; every codex member `exhausted their quota`). Its UNVERIFIED partial is in the tree at
+`tasks/briefs/s0-01-a5g-support/attempt1-partial.diff` (3 files, +1055/−140: the checker, its test file, a scratch grep file — applies
+cleanly at the PIN). Optional reference only: read it, adopt what passes YOUR red-before-green proof, never apply it wholesale, and say in
+the report which hunks you kept, modified, rejected.
