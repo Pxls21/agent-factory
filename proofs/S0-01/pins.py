@@ -130,6 +130,10 @@ PINNED_STARTUP_IGNORE_SELF = "true"
 # it is not a governance ruling — effectful tools still pass the fail-closed pre_tool_call policy hook (standing rule 9).
 PINNED_STARTUP_MCP_CMD = ""
 PINNED_STARTUP_PERMISSION_MODE = "bypassPermissions"
+# `respond_to` as buzz-acp echoes it (CK7-F42's last local literal, checker ~:1089): `owner-only` on run-1/run-2/cancel/shutdown,
+# `allowlist(1)` on two-users — read 2026-09-06 from the same golden corpus (4 + 1 startup lines).
+PINNED_STARTUP_RESPOND_TO = "owner-only"
+PINNED_STARTUP_RESPOND_TO_TWO_USERS = "allowlist(1)"
 
 # tee-status.json (A21d) key set — ONE pin for the three consumers (the tee test, the checker; the tee itself stays
 # a standalone tool whose own key set a test asserts EQUAL to this pin — R6-B5b-F16, AF-AP-42 "no local copy").
