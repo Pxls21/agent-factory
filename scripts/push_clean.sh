@@ -31,7 +31,18 @@ if [ "$MODE" = "--lanes-live" ]; then
   echo "== --lanes-live: dirty set is exactly the declared lane files; rewriting/pushing from a detached worktree =="
   ( cd "$WT" && TRANSCRIPT_SYNC=0 PUSH_BRANCH="$BRANCH" bash "$OLDPWD/scripts/push_clean.sh" --no-delegates-live ); rc=$?
   git worktree remove --force "$WT" 2>/dev/null; git worktree prune
-  [ $rc -eq 0 ] && echo "== branch now at $(git rev-parse --short HEAD) (tree unchanged, lane edits untouched) =="
+  if [ $rc -eq 0 ]; then
+    # The rewrite ran in the worktree: origin now carries the stripped SHAs while this branch ref still names the
+    # pre-rewrite commits (same tree — bit 2026-09-06: local 152d023 vs origin 220ffde). Follow origin ONLY when the
+    # trees are identical; never move the ref otherwise.
+    LT=$(git rev-parse "refs/heads/$BRANCH^{tree}"); OT=$(git rev-parse "refs/remotes/origin/$BRANCH^{tree}")
+    if [ "$LT" = "$OT" ]; then
+      git update-ref "refs/heads/$BRANCH" "$(git rev-parse "refs/remotes/origin/$BRANCH")"
+      echo "== branch ref followed origin to $(git rev-parse --short "refs/heads/$BRANCH") (identical tree; lane edits untouched) =="
+    else
+      echo "WARNING: origin/$BRANCH tree differs from the branch tree after the push — ref NOT moved; reconcile by hand." >&2
+    fi
+  fi
   exit $rc
 fi
 [ "$MODE" = "--no-delegates-live" ] || {
