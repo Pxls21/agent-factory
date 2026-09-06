@@ -18,8 +18,8 @@ last_compiled: 2026-09-03
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
   B5b (tee) verdict NOT-READY (20 findings) → lane B5c on the PC Hermes lane (`pc_lane.sh`; brief + probes under
-  `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f (the later reading wins) building; VERIFY-D5e NOT-READY (fail-open "fail-closed",
-  tautological oracle) → lane D5f LANDED (checkpoint 8h: boolean fail-closed, self-proving oracle; sandbox + PC gates green) → VERIFY-D5f grading; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d (drain to EOF,
+  `tasks/briefs/s0-01-b5c-*`); checkpoints 8f/8g pushed; VERIFY-N5e NOT-READY (an intermediate exec stage recorded as the interpreter, a dead fallback arm, a partial crash evidence set) → lane N5f LANDED at checkpoint 8j, gates green, VERIFY-N5f next (the later reading wins); VERIFY-D5e NOT-READY (fail-open "fail-closed",
+  tautological oracle) → lane D5f LANDED (checkpoint 8h: boolean fail-closed, self-proving oracle; sandbox + PC gates green) → VERIFY-D5f grading; VERIFY-B5c NOT-READY (loss cliff moved to 5 s; status vs timeline) → lane B5d LANDED at checkpoint 8i, sandbox + PC gates green, VERIFY-B5d grading (drain to EOF,
   status inside the lock); A5f landed (8g) → VERIFY-CK8 grading; all in the sandbox (Kimi cooled three times; codex out ~31 h);
   checker lane A5g queued for the A21d non-final relaxation; pushes run through `--lanes-live` (detached-worktree rewrite; the ref follows origin on tree identity); nothing minted; tree-wide suites now
   run on the PC (`scripts/pc_suite.sh`, 8 workers) after the sandbox disk filled mid-gate; the PC bridge is UP (backend on :20201,

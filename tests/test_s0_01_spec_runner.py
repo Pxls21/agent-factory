@@ -444,6 +444,9 @@ def test_runner_unmet_when_expected_reason_is_multiline(tmp_path):
     spec_schema_path = root / "proofs" / "schemas" / "spec.schema.json"
     spec_schema = json.loads(spec_schema_path.read_text())
     spec_schema["properties"]["proof_id"]["pattern"] = r"^S0-\d+$"
+    # Remove the failure_reason pattern so the multiline reason passes schema validation
+    fr_props = spec_schema["$defs"]["leg"]["properties"]["expect"]["properties"]["failure_reason"]
+    fr_props.pop("pattern", None)
     spec_schema_path.write_text(json.dumps(spec_schema, indent=2))
 
     result_schema_path = root / "proofs" / "schemas" / "result.schema.json"
@@ -678,5 +681,35 @@ def test_runner_records_the_first_matching_line(tmp_path):
     result = json.loads((sdir / "result.json").read_text())
     assert result["negative_control"]["observed_failure_reason"] == first_line, (
         f"observed_failure_reason should be the FIRST matching line, got "
+        f"{result['negative_control']['observed_failure_reason']!r}"
+    )
+
+
+def test_runner_records_the_raw_line_not_the_stripped_line(tmp_path):
+    """N5f-F9/SR-09: the checker prints a padded line.  The runner must record
+    the RAW observed line (with padding), not the stripped version.
+    Kills SR-09 (line.strip() recorded)."""
+    root = _copy(tmp_path)
+    reason = "protocol-violation: whitespace test"
+    padded_line = f"   failure_reason: negative: {reason}   "
+    checker_src = (
+        "import sys\n"
+        f"print({padded_line!r})\n"
+        "sys.exit(1)\n"
+    )
+    sdir = _register_runner_proof(root, "S0-93", "raw line not stripped",
+                                  reason, checker_src)
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-93",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, (
+        f"runner should succeed (reason present in padded line), got rc={r.returncode}: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    result = json.loads((sdir / "result.json").read_text())
+    assert result["negative_control"]["observed_failure_reason"] == padded_line, (
+        f"observed_failure_reason should be the RAW padded line, got "
         f"{result['negative_control']['observed_failure_reason']!r}"
     )

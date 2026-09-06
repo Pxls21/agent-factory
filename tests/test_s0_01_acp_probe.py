@@ -448,8 +448,8 @@ def test_probe_bad_agent_path_writes_probe_error(tmp_path):
 
 def test_probe_sigterm_killed_agent_exit_code(tmp_path, agent_sigterm):
     """M7: SIGTERM-killed agent -> agent_exit_code == -15 (negative signal number).
-    N5e-F10: the bounded post-Popen retry loop samples while the agent still
-    blocks on stdin, so the interpreter is always sampled (rc 0)."""
+    The early retry loop samples right after Popen, before the agent reaches
+    stdin, so the interpreter is always sampled (rc 0)."""
     r, framedir = _run_probe(tmp_path, agent_sigterm, timeout_override=5)
     assert r.returncode == 0, f"expected exit 0, got {r.returncode}: stderr={r.stderr}"
     rid = json.loads((framedir / "runtime-identity.json").read_text())
@@ -1022,27 +1022,25 @@ def test_probe_interpreter_sample_failure(tmp_path, agent_result):
 
 # ---- N5d-F1: probe never exits 0 with unsampled interpreter identity ----
 
-def test_probe_agent_exits_without_output_is_fail_loud(tmp_path):
+def test_probe_agent_exits_without_output_keeps_interpreter_identity(tmp_path):
     """N5d-F1 shape A: agent does import sys; sys.exit(0) without writing to stdout.
-    N5e-F1: the bounded post-Popen retry loop samples the interpreter while the
-    child is still alive (Python startup outlasts the loop), so the interpreter
-    identity is always non-null.  The probe may exit 0 (c2a delivery succeeded)
-    or 1 (BrokenPipe if the child exited before stdin.write); in either case
-    the old 'interpreter sample failed' error never fires."""
+    rc is race-decided (the c2a write lands before or after the exit); the
+    interpreter triple is constant."""
     agent = tmp_path / "agent_silent_exit.py"
     agent.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(0)\n")
     agent.chmod(0o755)
     r, framedir = _run_probe(tmp_path, str(agent))
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_exit_code"] == 0
+    assert r.returncode in (0, 1)
+    if r.returncode == 1:
+        assert rid["probe_error"] == "BrokenPipeError: agent process exited before c2a write landed"
+        assert r.stderr.strip() == "acp_probe: BrokenPipeError: agent process exited before c2a write landed"
+    else:
+        assert "probe_error" not in rid
     # Interpreter identity is always sampled (early retry loop)
     assert rid["agent_interpreter_realpath"] is not None
     assert rid["agent_interpreter_sha256"] is not None
-    # The old "interpreter sample failed" never fires
-    if "probe_error" in rid:
-        assert "BrokenPipeError" in rid["probe_error"], (
-            f"expected no probe_error or BrokenPipe, got {rid['probe_error']!r}"
-        )
 
 
 def test_probe_interpreter_sample_failure_after_child_exit(tmp_path):
@@ -1235,24 +1233,26 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
     )
     assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
     rid = json.loads((framedir / "runtime-identity.json").read_text())
-    # With F3 fix: real exception, not fixed wording
-    assert "No such file or directory" in rid["probe_error"], (
-        f"expected real FileNotFoundError in probe_error, got {rid['probe_error']!r}"
+    # N5f-F3: exact equality — the probe_error must carry the full prefix + path
+    expected_f3_error = (
+        "interpreter sample failed: [Errno 2] No such file or directory: "
+        "'/tmp/fake_interp (deleted)'"
     )
-    assert rid["probe_error"] != (
-        "interpreter sample failed: agent exited before its first a2c byte"
+    assert rid["probe_error"] == expected_f3_error, (
+        f"expected exact probe_error, got {rid['probe_error']!r}"
     )
     assert rid["agent_interpreter_realpath"] == "/tmp/fake_interp (deleted)"
     assert rid["agent_interpreter_sha256"] is None
 
 
 def test_probe_self_deleting_script_is_probe_error_not_traceback(tmp_path):
-    """N5e-F8: an agent that unlinks its OWN SCRIPT file at start.  The
-    entrypoint sha256 of the now-deleted agent raises FileNotFoundError
-    inside the evidence writes — the M3 handler must catch it: rc 1,
-    no Traceback on stderr, runtime-identity.json present with probe_error
-    starting 'FileNotFoundError'."""
+    """N5f-F6: an agent that unlinks its OWN SCRIPT file at start.  The
+    entrypoint sha256 of the now-deleted agent produces a graceful degradation:
+    rc 1, no Traceback, all four files present, 11 identity keys +
+    probe_error with agent_entrypoint_sha256=None.  The REAL checker
+    must print the producer error, never 'env.json absent'."""
     agent = tmp_path / "agent_self_delete.py"
+    agent_path = str(agent)
     agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import os, sys, json
         os.unlink(os.path.abspath(__file__))
@@ -1272,17 +1272,45 @@ def test_probe_self_deleting_script_is_probe_error_not_traceback(tmp_path):
         sys.stdin.read()
     """))
     agent.chmod(0o755)
-    r, framedir = _run_probe(tmp_path, str(agent), timeout_override=5)
+    r, framedir = _run_probe(tmp_path, agent_path, timeout_override=5)
     assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
     assert "Traceback" not in r.stderr, (
-        f"uncaught traceback leaked to stderr — evidence writes are outside M3: {r.stderr}"
+        f"uncaught traceback leaked to stderr: {r.stderr}"
     )
-    rid_path = framedir / "runtime-identity.json"
-    assert rid_path.exists(), "runtime-identity.json absent after M3 crash"
-    rid = json.loads(rid_path.read_text())
-    assert rid["probe_error"].startswith("FileNotFoundError"), (
-        f"probe_error should name the real exception, got {rid['probe_error']!r}"
+    # All four files must exist
+    for name in ("runtime-identity.json", "env.json", "timeline.jsonl", "agent-stderr.txt"):
+        assert (framedir / name).exists(), f"{name} absent in capture"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    # 11 identity keys + probe_error
+    expected_keys = {
+        "probe_path", "probe_sha256", "agent_argv", "agent_realpath",
+        "agent_entrypoint_sha256", "agent_child_pid", "agent_interpreter_realpath",
+        "agent_interpreter_sha256", "python_dont_write_bytecode", "spawned_at_utc",
+        "agent_exit_code", "probe_error",
+    }
+    assert set(rid.keys()) == expected_keys, (
+        f"identity keys mismatch: missing={expected_keys - set(rid.keys())}, "
+        f"extra={set(rid.keys()) - expected_keys}"
     )
+    agent_realpath = os.path.realpath(agent_path)
+    expected_error = (
+        f"FileNotFoundError: [Errno 2] No such file or directory: '{agent_realpath}'"
+    )
+    assert rid["probe_error"] == expected_error, (
+        f"probe_error {rid['probe_error']!r} != {expected_error!r}"
+    )
+    assert rid["agent_entrypoint_sha256"] is None
+    # The REAL checker must report the producer error, never 'env.json absent'
+    r2 = subprocess.run(
+        [sys.executable, str(CHECK_INIT), "request", str(framedir)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r2.returncode == 1
+    first_line = r2.stdout.splitlines()[0]
+    assert first_line == (
+        f"failure_reason: negative: probe reported an error: "
+        f"FileNotFoundError: [Errno 2] No such file or directory: '{agent_realpath}'"
+    ), f"checker line: {first_line!r}"
 
 
 def test_probe_broken_pipe_post_loop_placement(tmp_path, agent_result):
@@ -1396,3 +1424,303 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
     )
     assert rid["agent_interpreter_sha256"] is not None
     assert "probe_error" not in rid
+
+
+# ---- N5f-F1: the later reading wins ----
+
+
+def test_probe_interpreter_is_the_final_exec_not_a_wrapper(tmp_path):
+    """N5f-F1: a #!/bin/sh wrapper doing sleep 0.05 then exec python real_agent.py.
+    The probe must record the PYTHON interpreter (the final exec stage), not the
+    shell wrapper.  rc 0, no probe_error."""
+    real_agent = tmp_path / "real_agent.py"
+    real_agent.write_text(textwrap.dedent("""\
+        import json, sys
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            if msg.get("method") == "initialize":
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": msg["id"],
+                    "result": {
+                        "protocolVersion": 1,
+                        "agentInfo": {"name": "wrapper-test", "version": "0.0.1"},
+                        "agentCapabilities": {},
+                    }
+                }
+                sys.stdout.write(json.dumps(resp) + "\\n")
+                sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """))
+    wrapper = tmp_path / "wrapper_agent.sh"
+    wrapper.write_text(
+        "#!/bin/sh\nsleep 0.05\n"
+        f'exec "{sys.executable}" "{real_agent}"\n'
+    )
+    wrapper.chmod(0o755)
+    r, framedir = _run_probe(tmp_path, str(wrapper), timeout_override=5)
+    assert r.returncode == 0, f"probe failed: stderr={r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    expected_interp = os.path.realpath(sys.executable)
+    assert rid["agent_interpreter_realpath"] == expected_interp, (
+        f"wrapper agent: interpreter {rid['agent_interpreter_realpath']!r} != "
+        f"expected python {expected_interp!r}"
+    )
+    import hashlib
+    expected_sha = hashlib.sha256(Path(expected_interp).read_bytes()).hexdigest()
+    assert rid["agent_interpreter_sha256"] == expected_sha
+    assert "probe_error" not in rid
+
+
+def test_probe_env_shebang_interpreter_is_constant(tmp_path):
+    """N5f-F1: #!/usr/bin/env python3 agent, 12 runs → exactly one distinct
+    (realpath, sha256) pair equal to python's, and never /usr/bin/env."""
+    import shutil
+    agent = tmp_path / "env_agent.py"
+    agent.write_text("#!/usr/bin/env python3\n" + textwrap.dedent("""\
+        import json, sys
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            msg = json.loads(line)
+            if msg.get("method") == "initialize":
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": msg["id"],
+                    "result": {
+                        "protocolVersion": 1,
+                        "agentInfo": {"name": "env-agent", "version": "0.0.1"},
+                        "agentCapabilities": {},
+                    }
+                }
+                sys.stdout.write(json.dumps(resp) + "\\n")
+                sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """))
+    agent.chmod(0o755)
+    python_realpath = os.path.realpath(shutil.which("python3"))
+    import hashlib
+    python_sha = hashlib.sha256(Path(python_realpath).read_bytes()).hexdigest()
+    pairs = set()
+    for i in range(12):
+        framedir = tmp_path / f"env_cap_{i}"
+        framedir.mkdir()
+        env = os.environ.copy()
+        env["S0_01_AGENT"] = str(agent)
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["ACP_PROBE_TIMEOUT"] = "5"
+        subprocess.run(
+            [sys.executable, str(PROBE)],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        rid = json.loads((framedir / "runtime-identity.json").read_text())
+        pairs.add((rid["agent_interpreter_realpath"], rid["agent_interpreter_sha256"]))
+    assert len(pairs) == 1, (
+        f"env-shebang agent gave {len(pairs)} distinct interpreter pairs "
+        f"across 12 runs: {pairs}"
+    )
+    sole = pairs.pop()
+    assert sole == (python_realpath, python_sha), (
+        f"expected ({python_realpath!r}, {python_sha!r}), got {sole}"
+    )
+    env_realpath = os.path.realpath("/usr/bin/env")
+    assert sole[0] != env_realpath, (
+        f"interpreter should never be /usr/bin/env, got {sole[0]!r}"
+    )
+
+
+# ---- N5f-F4: early sample loop bound is pinned ----
+
+
+def test_probe_early_sample_loop_bound_is_pinned(tmp_path, agent_result):
+    """N5f-F4: the early sample loop attempts exactly ceil(0.2/0.002)+1 = 101
+    readlinks when every readlink fails.  Uses a fake clock that advances
+    only in sleep (no wall-clock timing)."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "f4_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        # Fake clock: monotonic_ns driven by an integer-microsecond counter
+        # that advances ONLY in sleep.
+        _clock_us = [0]
+        _post_deadline = [False]
+        _dl = acp_probe._EARLY_SAMPLE_DEADLINE_S
+        class _FakeClock:
+            def monotonic(self):
+                v = _clock_us[0] / 1_000_000.0
+                if v >= _dl:
+                    _post_deadline[0] = True
+                return v
+            def monotonic_ns(self):
+                return _clock_us[0] * 1000
+            def sleep(self, seconds):
+                _clock_us[0] += int(seconds * 1_000_000)
+        _fake = _FakeClock()
+
+        _orig_readlink = os.readlink
+        _early_readlink_count = [0]
+        def _always_fail_readlink(path):
+            if "/proc/" in str(path) and "/exe" in str(path):
+                if not _post_deadline[0]:
+                    _early_readlink_count[0] += 1
+                raise OSError("No such process")
+            return _orig_readlink(path)
+
+        with unittest.mock.patch.object(acp_probe, 'time', _fake), \\
+             unittest.mock.patch.object(os, 'readlink', _always_fail_readlink):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                pass
+        # Print the EARLY readlink attempt count for the test to read
+        print(f"READLINK_COUNT={{_early_readlink_count[0]}}")
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    # Extract readlink count from stdout
+    count_line = [l for l in r.stdout.splitlines() if l.startswith("READLINK_COUNT=")]
+    assert count_line, f"no READLINK_COUNT in stdout: {r.stdout!r}"
+    count = int(count_line[0].split("=")[1])
+    assert count == 101, (
+        f"early sample loop attempted {count} readlinks, expected 101 "
+        f"(ceil(0.2/0.002) + 1)"
+    )
+
+
+# ---- N5f-LATE-NOCLEAR: early interpreter-sample-failed error cleared on late success ----
+
+
+def test_probe_late_sample_clears_early_interpreter_error(tmp_path, agent_result):
+    """LATE-NOCLEAR mutant killer: sha256 patched to fail during the early
+    loop (readlink succeeds, sha256 raises → probe_error set to
+    'interpreter sample failed: ...'), but sha256 succeeds at the late
+    a2c-triggered sample.  The late success must CLEAR the early error:
+    'probe_error' not in rid, rc 0."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "late_noclear_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, time, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_sha256 = acp_probe._sha256_file
+        _start = time.monotonic()
+        _sha_call = [0]
+        def _early_fail_sha256(path):
+            _sha_call[0] += 1
+            # Fail during the early loop (first call on an interpreter path)
+            if _sha_call[0] == 1 and time.monotonic() - _start < 0.3:
+                raise OSError("early sha failure")
+            return _orig_sha256(path)
+
+        with unittest.mock.patch.object(acp_probe, '_sha256_file', _early_fail_sha256):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"expected exit 0, got {r.returncode}: {r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert "probe_error" not in rid, (
+        f"early 'interpreter sample failed' error not cleared on late success: "
+        f"{rid.get('probe_error')!r}"
+    )
+    assert rid["agent_interpreter_realpath"] is not None
+    assert rid["agent_interpreter_sha256"] is not None
+
+
+# ---- N5f-F6: M3 handler writes complete evidence ----
+
+
+def test_probe_m3_handler_writes_complete_evidence(tmp_path, agent_result):
+    """N5f-F6: the M3 crash path (exception inside the wrapped body) writes
+    all four files with all 11 identity keys + probe_error.  Simulated by
+    patching _write_evidence to raise RuntimeError('boom')."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    wrapper = tmp_path / "m3_wrapper.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, os, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+
+        _orig_write = acp_probe._write_evidence
+        def _raise_boom(*a, **kw):
+            raise RuntimeError("boom")
+
+        with unittest.mock.patch.object(acp_probe, '_write_evidence', _raise_boom):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+
+    r = subprocess.run(
+        [sys.executable, str(wrapper)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    assert r.stderr.strip() == "acp_probe: RuntimeError: boom"
+    # All four files must exist
+    for name in ("runtime-identity.json", "env.json", "timeline.jsonl", "agent-stderr.txt"):
+        assert (framedir / name).exists(), f"{name} absent after M3 crash"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_error"] == "RuntimeError: boom"
+    # 11 identity keys + probe_error
+    expected_keys = {
+        "probe_path", "probe_sha256", "agent_argv", "agent_realpath",
+        "agent_entrypoint_sha256", "agent_child_pid", "agent_interpreter_realpath",
+        "agent_interpreter_sha256", "python_dont_write_bytecode", "spawned_at_utc",
+        "agent_exit_code", "probe_error",
+    }
+    assert set(rid.keys()) == expected_keys, (
+        f"M3 identity keys mismatch: missing={expected_keys - set(rid.keys())}, "
+        f"extra={set(rid.keys()) - expected_keys}"
+    )

@@ -33,7 +33,7 @@
           "required": ["exit_code"],
           "properties": {
             "exit_code": {"type": "integer"},
-            "failure_reason": {"type": "string", "minLength": 1}
+            "failure_reason": {"type": "string", "minLength": 1, "pattern": "^\\S(.*\\S)?$"}
           }
         }
       },

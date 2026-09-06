@@ -33,6 +33,10 @@ import time
 # Redaction regex matching pins.REDACTED_ENV_KEY_RE (hardcoded to avoid import issues on the PC)
 _REDACTED_ENV_KEY_RE = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)")
 
+# N5f-F4: pinned early-sample loop parameters (consumed by the retry loop)
+_EARLY_SAMPLE_DEADLINE_S = 0.2
+_EARLY_SAMPLE_STEP_S = 0.002
+
 
 def _sha256_file(path):
     h = hashlib.sha256()
@@ -75,19 +79,34 @@ def _redact_env(env):
     return result
 
 
+def _write_env(framedir):
+    """Write env.json (caller's environment with redaction)."""
+    env_data = _redact_env(dict(os.environ))
+    with open(os.path.join(framedir, "env.json"), "w") as f:
+        json.dump(env_data, indent=1, sort_keys=True, fp=f)
+        f.write("\n")
+
+
 def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
                     interp_realpath, interp_sha256, spawned_at_utc,
                     agent_exit_code, probe_error):
     """Write runtime-identity.json, env.json and timeline.jsonl.  N5e-F8: called
-    INSIDE the wrapped body so a crash here is probe_error + exit 1 (M3), with
-    runtime-identity.json present — never an uncaught traceback whose capture
-    dir check_initialize.py would classify DEFERRED (rc 2)."""
+    INSIDE the wrapped body so a crash here degrades gracefully — a self-deleting
+    agent produces probe_error + all four files with agent_entrypoint_sha256=None,
+    and the M3 handler is the last resort."""
+    # N5f-F6: guard the entrypoint hash — a self-deleting agent raises here
+    try:
+        agent_entrypoint_sha256 = _sha256_file(agent_realpath)
+    except OSError as exc:
+        agent_entrypoint_sha256 = None
+        if probe_error is None:
+            probe_error = f"{type(exc).__name__}: {exc}"
     identity = {
         "probe_path": os.path.realpath(__file__),
         "probe_sha256": _sha256_file(os.path.realpath(__file__)),
         "agent_argv": [agent],
         "agent_realpath": agent_realpath,
-        "agent_entrypoint_sha256": _sha256_file(agent_realpath),
+        "agent_entrypoint_sha256": agent_entrypoint_sha256,
         "agent_child_pid": child_pid,
         "agent_interpreter_realpath": interp_realpath,
         "agent_interpreter_sha256": interp_sha256,
@@ -101,17 +120,15 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
         json.dump(identity, f, indent=2)
         f.write("\n")
 
-    # env.json (caller's environment with redaction)
-    env_data = _redact_env(dict(os.environ))
-    with open(os.path.join(framedir, "env.json"), "w") as f:
-        json.dump(env_data, indent=1, sort_keys=True, fp=f)
-        f.write("\n")
+    _write_env(framedir)
 
     # timeline.jsonl
     tl_path = os.path.join(framedir, "timeline.jsonl")
     with open(tl_path, "w") as f:
         for entry in timeline:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+
+    return probe_error
 
 
 def main():
@@ -147,6 +164,15 @@ def main():
     seq = 0
     probe_error = None
 
+    # N5f-F6: pre-initialise identity fields before the try so they are
+    # always in scope for the M3 handler's full identity write.
+    agent_realpath = None
+    interp_realpath = None
+    interp_sha256 = None
+    spawned_at_utc = None
+    agent_exit_code = None
+    child_pid = None
+
     # Wrap the main body so any exception lands in runtime-identity.json
     # under probe_error + exit 1 with a one-line stderr message (M3)
     try:
@@ -179,52 +205,42 @@ def main():
             print(f"acp_probe: {msg}", file=sys.stderr)
             raise SystemExit(64)
 
+        agent_realpath = os.path.realpath(agent)
+
         proc = subprocess.Popen(
             [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
+        child_pid = proc.pid
 
         # Sample spawned_at_utc right after Popen (M2: not after proc.wait)
         spawned_at_utc = _utc_now()
 
-        # 6-F7: interpreter identity sampled from the CHILD's /proc/<pid>/exe
-        agent_realpath = os.path.realpath(agent)
+        # 6-F7: interpreter identity sampled from the CHILD's /proc/<pid>/exe,
+        # never from /proc/self/exe (the probe's own interpreter).
         interp_realpath = None
         interp_sha256 = None
-        _interp_sampled = False
+        _late_sampled = False
 
-        # N5e-F1: sample right after Popen in a bounded retry loop (<=200 ms).
-        # Accept the first successful readlink; if a later readlink fails
-        # (child died), fall back to the last good reading.  The loop makes
-        # the interpreter sample deterministic for any child that lives long
-        # enough for at least one successful /proc/<pid>/exe read.
-        _sample_deadline = time.monotonic() + 0.2
-        _last_good = None
+        # N5f-F1: early sample in a bounded retry loop.  This is the FALLBACK
+        # for agents that exit before their first a2c byte; the reading at the
+        # first a2c byte is authoritative (the later reading wins).  The early
+        # loop covers agents that never write.
+        _sample_deadline = time.monotonic() + _EARLY_SAMPLE_DEADLINE_S
         while True:
             try:
                 candidate = os.readlink("/proc/%d/exe" % proc.pid)
             except (OSError, IOError):
-                # Child may have died — accept the last good reading if any
-                if _last_good is not None:
-                    interp_realpath = _last_good
-                    try:
-                        interp_sha256 = _sha256_file(_last_good)
-                    except (OSError, IOError) as exc:
-                        probe_error = f"interpreter sample failed: {exc}"
-                    _interp_sampled = True
-                    break
                 candidate = None
             if candidate is not None:
-                _last_good = candidate
                 interp_realpath = candidate
                 try:
                     interp_sha256 = _sha256_file(candidate)
                 except (OSError, IOError) as exc:
                     probe_error = f"interpreter sample failed: {exc}"
-                _interp_sampled = True
                 break
             if time.monotonic() >= _sample_deadline:
                 break
-            time.sleep(0.002)
+            time.sleep(_EARLY_SAMPLE_STEP_S)
 
         # Start draining stderr in a background thread
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
@@ -273,14 +289,27 @@ def main():
                         break
                     if not chunk:
                         break  # EOF
-                    # 6-F7: sample interpreter after first a2c byte, before wait
-                    if not _interp_sampled:
+                    # N5f-F1: at the first a2c chunk, ALWAYS re-read the
+                    # interpreter — the later reading wins over the early loop.
+                    if not _late_sampled:
+                        _late_sampled = True
                         try:
                             interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
-                            interp_sha256 = _sha256_file(interp_realpath)
+                            try:
+                                interp_sha256 = _sha256_file(interp_realpath)
+                            except (OSError, IOError) as exc:
+                                interp_sha256 = None
+                                probe_error = f"interpreter sample failed: {exc}"
+                            else:
+                                # Clear an early "interpreter sample failed:" error
+                                if (probe_error is not None and
+                                        probe_error.startswith("interpreter sample failed: ")):
+                                    probe_error = None
                         except (OSError, IOError) as exc:
-                            probe_error = f"interpreter sample failed: {exc}"
-                        _interp_sampled = True
+                            # Child exited between its first byte and the readlink;
+                            # keep the early reading silently when there is one.
+                            if interp_realpath is None:
+                                probe_error = f"interpreter sample failed: {exc}"
                     buf += chunk
                     # Process complete lines
                     while b"\n" in buf:
@@ -328,7 +357,7 @@ def main():
                 timeline.append(entry)
 
             # N5d-F1: sample interpreter at EOF/exit if not yet sampled
-            if not _interp_sampled:
+            if not _late_sampled:
                 # N5e-F3: split readlink and sha256 — report the REAL exception
                 # when readlink succeeded but sha256 failed; the fixed wording
                 # is reserved for "nothing was ever sampled" (interp_realpath is None).
@@ -343,7 +372,7 @@ def main():
                         interp_sha256 = _sha256_file(interp_realpath)
                     except (OSError, IOError) as exc:
                         probe_error = f"interpreter sample failed: {exc}"
-                _interp_sampled = True
+                _late_sampled = True
 
         # Close stdin to signal EOF
         try:
@@ -363,12 +392,11 @@ def main():
 
         agent_exit_code = proc.returncode
 
-        # N5e-F8: evidence writes INSIDE the wrapped body — a crash here
-        # (e.g. the agent unlinked its own script so _sha256_file(agent_realpath)
-        # raises) is probe_error + exit 1 with runtime-identity.json present,
-        # not an uncaught traceback classified DEFERRED (rc 2).
-        _write_evidence(
-            framedir, timeline, agent, agent_realpath, proc.pid,
+        # N5e-F8: evidence writes INSIDE the wrapped body.  A self-deleting
+        # agent degrades gracefully (agent_entrypoint_sha256=None, probe_error
+        # set, all four files written); the M3 handler is the last resort.
+        probe_error = _write_evidence(
+            framedir, timeline, agent, agent_realpath, child_pid,
             interp_realpath, interp_sha256, spawned_at_utc,
             agent_exit_code, probe_error,
         )
@@ -376,18 +404,37 @@ def main():
     except SystemExit:
         raise
     except Exception as exc:
-        # M3: any exception → write probe_error into runtime-identity.json + exit 1
+        # M3: last resort — write all four files with all 11 identity keys
+        # (pre-initialised to None, filled with whatever was reached).
         probe_error = f"{type(exc).__name__}: {exc}"
-        identity = {"probe_error": probe_error}
+        identity = {
+            "probe_path": os.path.realpath(__file__),
+            "probe_sha256": _sha256_file(os.path.realpath(__file__)),
+            "agent_argv": [agent],
+            "agent_realpath": agent_realpath,
+            "agent_entrypoint_sha256": None,
+            "agent_child_pid": child_pid,
+            "agent_interpreter_realpath": interp_realpath,
+            "agent_interpreter_sha256": interp_sha256,
+            "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
+            "spawned_at_utc": spawned_at_utc,
+            "agent_exit_code": agent_exit_code,
+            "probe_error": probe_error,
+        }
         rid_path = os.path.join(framedir, "runtime-identity.json")
         with open(rid_path, "w") as f:
             json.dump(identity, f, indent=2)
             f.write("\n")
+        _write_env(framedir)
         # Write whatever timeline we have
         tl_path = os.path.join(framedir, "timeline.jsonl")
         with open(tl_path, "w") as f:
             for entry in timeline:
                 f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        # agent-stderr.txt — create if missing (stderr drain may not have started)
+        stderr_path = os.path.join(framedir, "agent-stderr.txt")
+        if not os.path.exists(stderr_path):
+            open(stderr_path, "wb").close()
         print(f"acp_probe: {probe_error}", file=sys.stderr)
         raise SystemExit(1)
 

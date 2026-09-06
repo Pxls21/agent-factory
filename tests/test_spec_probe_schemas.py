@@ -87,3 +87,25 @@ def test_probe_schema_accepts_the_canonical_probe_with_key_env():
     probe = _probe()
     probe["key_env"] = "OMNIROUTE_API_KEY"
     assert _errors(PROBE, probe) == []
+
+
+# ---- N5f-F9: failure_reason rejects edge whitespace ----
+
+
+@pytest.mark.parametrize("bad_reason", [
+    " leading-space",
+    "trailing-space ",
+], ids=["leading-space", "trailing-space"])
+def test_spec_failure_reason_rejects_edge_whitespace(bad_reason):
+    """N5f-F9: failure_reason with leading or trailing whitespace must be
+    rejected by the pattern constraint.  The validator's error path must
+    name failure_reason."""
+    spec = _spec()
+    spec["legs"][1]["expect"]["failure_reason"] = bad_reason
+    validator = jsonschema.Draft202012Validator(SPEC)
+    errors = list(validator.iter_errors(spec))
+    assert errors, f"spec with failure_reason={bad_reason!r} validated OK"
+    fr_errors = [e for e in errors if "failure_reason" in list(e.path)]
+    assert fr_errors, (
+        f"no error path names 'failure_reason'; errors={[e.message for e in errors]}"
+    )
