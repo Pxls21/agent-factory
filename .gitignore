@@ -38,3 +38,4 @@ vendor/
 
 # pc_suite.sh run dirs on the PC clone (patch, worktree, log, rc) — regenerable, never committed
 /.suite/
+/.lanes-live

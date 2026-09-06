@@ -12,8 +12,30 @@
 set -euo pipefail
 
 BRANCH="${PUSH_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
-[ "${1:-}" = "--no-delegates-live" ] || {
-  echo "REFUSED: pass --no-delegates-live only after confirming zero delegate lanes are active." >&2
+# --lanes-live (2026-09-06): sandbox build lanes edit the SHARED tree for hours, so a clean-tree push never comes.
+# The reviewed commits never contain their files (safe_commit stages named paths only); what blocks the push is
+# filter-branch refusing a dirty worktree. In this mode the dirty set must be EXACTLY a subset of the paths declared
+# in .lanes-live (one path per line — the live lanes' files, written at dispatch), the rewrite + push run in a
+# throwaway DETACHED worktree of HEAD (clean by construction; the branch ref moves, the shared tree does not), and
+# the transcript sync is skipped (it commits from the worktree). Any other dirty path → refuse.
+MODE="${1:-}"
+if [ "$MODE" = "--lanes-live" ]; then
+  [ -f .lanes-live ] || { echo "REFUSED: --lanes-live needs a .lanes-live file listing the live lanes' paths." >&2; exit 1; }
+  DIRTY=$(git status --porcelain --untracked-files=no | awk '{print $2}' | sort -u)
+  ALLOWED=$(grep -v "^#" .lanes-live | sed "/^$/d" | sort -u)
+  EXTRA=$(comm -23 <(echo "$DIRTY") <(echo "$ALLOWED"))
+  [ -z "$EXTRA" ] || { echo "REFUSED: dirty paths outside the declared live lanes: $EXTRA" >&2; exit 1; }
+  [ -n "$DIRTY" ] || { echo "tree is clean — use --no-delegates-live"; exit 1; }
+  WT="$(mktemp -d /tmp/push-clean-wt.XXXXXX)"
+  git worktree add -q --detach "$WT" HEAD || { echo "REFUSED: worktree add failed" >&2; exit 1; }
+  echo "== --lanes-live: dirty set is exactly the declared lane files; rewriting/pushing from a detached worktree =="
+  ( cd "$WT" && TRANSCRIPT_SYNC=0 PUSH_BRANCH="$BRANCH" bash "$OLDPWD/scripts/push_clean.sh" --no-delegates-live ); rc=$?
+  git worktree remove --force "$WT" 2>/dev/null; git worktree prune
+  [ $rc -eq 0 ] && echo "== branch now at $(git rev-parse --short HEAD) (tree unchanged, lane edits untouched) =="
+  exit $rc
+fi
+[ "$MODE" = "--no-delegates-live" ] || {
+  echo "REFUSED: pass --no-delegates-live only after confirming zero delegate lanes are active (or --lanes-live with .lanes-live)." >&2
   exit 1
 }
 
