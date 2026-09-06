@@ -1947,3 +1947,70 @@ def test_negative_control_expect_gate_arm(backend):
     assert resp.count(b"HTTP/1.1 ") == 1
     assert b"\r\nConnection: close\r\n" in resp
     assert len(list(backend["rec"].glob("*.json"))) == count_before
+
+
+# -- R9-D5g-F3/F7: depth bound pinned from BOTH sides ----------------------------
+
+def test_bound_exceeded_blanks_the_record(backend):
+    """Pins depth == 5 from above: %25252541 does not saturate at depth 5, so
+    the fail-closed arm fires -> 400 + marker record.
+    Red at depth 6 (mutant MC2).  The D5f lane called both MC1 and MC2
+    'strengthening' -- wrong: MC2 LOOSENS, MC1 TIGHTENS."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Trace: %25252541\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == count_before + 1
+    assert json.loads(recs[-1].read_text())["body"] == {
+        "credential_in_unexpected_location": True}
+
+
+def test_saturating_junk_is_served(backend):
+    """Pins depth == 5 from below: %252B saturates at depth 5 (all forms found),
+    so 'not saturated' is False -> no fail-closed -> 200 served.
+    Red at depth 4 (mutant MC1)."""
+    port = backend["port"]
+    count_before = len(list(backend["rec"].glob("*.json")))
+    raw = (
+        f"GET /v1/models HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"X-Trace: %252B\r\n"
+        f"\r\n"
+    ).encode()
+    resp = _raw_request(port, raw)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == count_before + 1
+    rec = json.loads(recs[-1].read_text())
+    assert rec["body"] is None or rec["body"] != {
+        "credential_in_unexpected_location": True}
+
+
+# -- R9-D5g-F12: _json_safe copy-on-write ---
+
+def test_json_safe_does_not_mutate_request_body(backend):
+    """F12: _json_safe returns a new structure, never mutates the caller's body."""
+    port = backend["port"]
+    body = json.dumps({"model": "s0-01-pong", "messages": [], "x": float("nan")}).encode()
+    count_before = len(list(backend["rec"].glob("*.json")))
+    resp = _raw_request(port, (
+        f"POST /v1/chat/completions HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        f"Authorization: Bearer {TOKEN}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"\r\n").encode() + body)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == count_before + 1
+    rec = json.loads(recs[-1].read_text())
+    assert rec["body"]["x"] == "<non-finite>"

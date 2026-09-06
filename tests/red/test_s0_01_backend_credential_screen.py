@@ -99,9 +99,20 @@ def _absent_under_all_normalizations(text: str) -> bool:
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
     strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc)
+    def utf8_redecode(x):
+        try:
+            return x.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return x
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode)
+    # F4: seed with JSON-unescaped text of every JSON string literal
     forms = {text}
-    frontier = {text}
+    for m in re.findall(r'"(?:[^"\\]|\\.)*"', text):
+        try:
+            forms.add(json.loads(m))
+        except (ValueError, json.JSONDecodeError):
+            pass
+    frontier = set(forms)
     for _depth in range(6):
         new_frontier = set()
         for form in frontier:
@@ -387,12 +398,18 @@ class TestOracleSelfTests:
         (TOKEN.upper(), False),
         ("s0-01-upstream-tok​en-0123456789abcdef", False),
         ("s0-01-upstream-tok\ten-0123456789abcdef", False),
+        # F6: + axis
+        (TOKEN[:len(TOKEN)//2] + "+" + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + "%2B" + TOKEN[len(TOKEN)//2:], False),
+        # F4: record-shaped JSON with escaped separator
+        ('{"body": "s0-01-upstream-tok\\ten-0123456789abcdef"}', False),
         # Known-good: oracle must NOT detect the token (return True)
         ('{"credential_in_unexpected_location": true}', True),
         ("Mozilla/5.0 (X11; Linux x86_64)", True),
         ("%25252540", True),
     ], ids=["junk_suffix", "depth5_nesting", "uppercased", "zwsp_split",
-            "tab_split", "marker_record", "user_agent", "junk_alone"])
+            "tab_split", "plus_split", "pct2b_split", "json_escaped_tab",
+            "marker_record", "user_agent", "junk_alone"])
     def test_oracle_known_vectors(self, text, expected):
         assert _absent_under_all_normalizations(text) is expected
 
@@ -438,17 +455,22 @@ def test_credential_split_with_trailing_nested_escape_returns_400(backend, sep, 
     "%2+B",
 ], ids=["d5_space", "d6_space", "d5_plus", "d5_plus_alt"])
 @pytest.mark.parametrize("sink", [
-    "header_value", "query", "path", "json_value", "json_key",
-], ids=["header", "query", "path", "json_val", "json_key"])
+    "header_value", "header_name", "query", "path", "json_value", "json_key",
+], ids=["header", "header_name", "query", "path", "json_val", "json_key"])
 def test_credential_depth5_percent_nesting_returns_400(backend, vector, sink):
-    """Depth-5+ percent-nesting of the token separator must be caught."""
+    """Depth-5+ percent-nesting of the token separator must be caught.
+    F8: header_name included -- %, + and digits are RFC 9110 tchar; no parser
+    interaction (the lane's stated reason for omitting it was false)."""
     port = backend["port"]
     mid = len(TOKEN) // 2
     split_token = TOKEN[:mid] + vector + TOKEN[mid:]
     n0 = len(_records(backend))
+    VALID = b'{"model":"s0-01-pong","messages":[]}'
 
     if sink == "header_value":
         resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {split_token}\r\n"))
+    elif sink == "header_name":
+        resp = _raw(port, _post(port, VALID, extra_headers=f"X-{split_token}: v\r\n"))
     elif sink == "query":
         resp = _raw(port, (f"GET /v1/models?note={split_token} HTTP/1.1\r\n"
                           f"Host: 127.0.0.1:{port}\r\n"
@@ -563,4 +585,61 @@ def test_credential_zero_width_json_escape_returns_400(backend):
     recs = _records(backend)
     assert len(recs) == n0 + 1
     assert json.loads(recs[-1].read_text())["body"] == MARKER
+    assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- R9-D5g-F1: keep `seen` -------
+
+def test_credential_plus_split_with_pct2520_suffix_returns_400(backend):
+    """Pins ruling 1's 'keep seen': the token is found at an INTERMEDIATE closure
+    layer, not the final one.  Red if _normal_forms returns only the last frontier
+    (mutant V3)."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    vec = TOKEN[:mid] + "+" + TOKEN[mid:] + "%2520"
+    resp = _raw(port, _post(port, b'{"model":"s0-01-pong","messages":[]}',
+                            extra_headers=f"X-Trace: {vec}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- R9-D5g-F2: raw UTF-8 zero-width separator ------
+
+@pytest.mark.parametrize("sep", [
+    "​", "﻿", "­", "⁠", " ", "　",
+], ids=["ZWSP", "BOM", "SOFT_HYPHEN", "WORD_JOINER", "NBSP", "IDEOGRAPHIC_SPACE"])
+def test_credential_raw_utf8_zero_width_in_header_returns_400(backend, sep):
+    """F2/F15 'raw': the separator arrives as UTF-8 BYTES on the wire;
+    http.server decodes header lines as latin-1, producing 2-3 latin-1 chars
+    that neither strip_ws nor strip_zwc touches without utf8_redecode."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (f"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               f"Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n"
+               f"X-Trace: ").encode() + TOKEN[:mid].encode() + sep.encode("utf-8") \
+              + TOKEN[mid:].encode() + f"\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- R9-D5g-F5: ruling 2(b) ----
+
+def test_record_text_carries_no_token_under_any_normalization(backend):
+    """A TAB-split request must be caught, and the RECORD TEXT must pass the oracle.
+    Asserts ONLY the oracle -- no == MARKER check.  The negative control (the oracle
+    DETECTS the token in the raw input) ensures O1 (oracle -> return True) kills this
+    test: `not True` -> False."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    raw_input = TOKEN[:mid] + "\t" + TOKEN[mid:]
+    n0 = len(_records(backend))
+    body = json.dumps({"model": "s0-01-pong", "messages": [],
+                       "note": raw_input}).encode()
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert not _absent_under_all_normalizations(raw_input)
     assert _absent_under_all_normalizations(recs[-1].read_text())

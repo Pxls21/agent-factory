@@ -39,12 +39,12 @@ Framing gate (_framing_gate, first statement of do_GET and do_POST):
   Every rejection sends Connection: close and never parses a tail as a second request.
 
 Credential screen (_normal_forms / _carries_secret): breadth-first closure of
-  {unquote, unquote_plus, strip_ws, lower, strip_zwc} applied to each item,
+  {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode} applied to each item,
   deduplicated, bounded at depth 5.  _normal_forms returns (forms, saturated);
   if saturated is False (bound exceeded) the screen fails closed (True) — the
   depth bound affects false-positive breadth, not detection.  strip_zwc removes
   U+200B (ZWSP), U+FEFF (BOM/ZWNBSP), U+00AD (soft hyphen), U+2060 (word joiner).
-  Accepted risk (D5d-F12, restored): junk like %25252540 triggers the
+  Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
   bound-exceeded path and blanks the record (false positive).
   The screen is applied per item (path, header names, header values, serialized
   JSON body, every parsed JSON string — keys AND values — and raw body);
@@ -106,18 +106,27 @@ class _ParseError(Exception):
 
 
 def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
-    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc}.
+    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode}.
 
     Returns (forms, saturated).  *saturated* is True when the frontier was
     exhausted (all reachable forms found); False when the depth bound (5) was
     exceeded — the caller fails closed on ``not saturated``.
 
-    Accepted risk (D5d-F12, restored): junk like ``%25252540`` triggers the
+    Accepted risk (D5d-F12, restored): junk like ``%25252541`` triggers the
     bound-exceeded path and blanks the record (false positive).
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
     strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc)
+    def utf8_redecode(x):
+        """latin-1 re-decode: http.server reads header bytes as latin-1, so
+        a UTF-8-encoded separator (e.g. U+200B = e2 80 8b) arrives as three
+        latin-1 chars that strip_ws/strip_zwc never touch.  This op recovers
+        the real Unicode and the next closure layers strip it."""
+        try:
+            return x.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return x
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode)
     frontier = {s}
     seen = {s}
     for _depth in range(5):
@@ -220,8 +229,8 @@ class State:
         or if the closure did not saturate (fail closed).
 
         Normal forms are the closure of {unquote, unquote_plus, strip_ws,
-        lower, strip_zwc} over *s*, bounded at depth 5; if the bound is
-        exceeded the screen fails closed.
+        lower, strip_zwc, utf8_redecode} over *s*, bounded at depth 5;
+        if the bound is exceeded the screen fails closed.
         """
         t = self.token
         forms, saturated = _normal_forms(s)
@@ -240,7 +249,8 @@ class State:
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
         # _carries_secret checks: the closure of {unquote, unquote_plus, strip_ws,
-        # lower, strip_zwc} at depth 5; fails closed when the bound is exceeded.
+        # lower, strip_zwc, utf8_redecode} at depth 5; fails closed when
+        # the bound is exceeded.
         # Keyed on the configured secret, not the request-supplied bearer,
         # so a request without Authorization is still screened (4-F1/6-F3).
         # M12: exempts ONLY 'authorization' by name.
@@ -285,7 +295,9 @@ class State:
                 return "<non-finite>"
             if not isinstance(o, (dict, list)):
                 return o
-            stack = [o]
+            # F12: copy-on-write — never mutates the caller's object.
+            root = dict(o) if isinstance(o, dict) else list(o)
+            stack = [root]
             while stack:
                 item = stack.pop()
                 if isinstance(item, dict):
@@ -293,16 +305,20 @@ class State:
                         v = item[k]
                         if isinstance(v, float) and not math.isfinite(v):
                             item[k] = "<non-finite>"
-                        elif isinstance(v, (dict, list)):
-                            stack.append(v)
+                        elif isinstance(v, dict):
+                            c = dict(v); item[k] = c; stack.append(c)
+                        elif isinstance(v, list):
+                            c = list(v); item[k] = c; stack.append(c)
                 elif isinstance(item, list):
                     for i in range(len(item)):
                         v = item[i]
                         if isinstance(v, float) and not math.isfinite(v):
                             item[i] = "<non-finite>"
-                        elif isinstance(v, (dict, list)):
-                            stack.append(v)
-            return o
+                        elif isinstance(v, dict):
+                            c = dict(v); item[i] = c; stack.append(c)
+                        elif isinstance(v, list):
+                            c = list(v); item[i] = c; stack.append(c)
+            return root
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
             {"seq": n, "method": method, "path": rec_path, "headers": clean,
              "body": _json_safe(rec_body), "received_at": received_at, "t_mono_ns": mono_ns,
@@ -431,11 +447,6 @@ def make_handler(state: State):
                 return json.loads(raw.decode())
             except (ValueError, UnicodeDecodeError) as e:
                 raise _ParseError(raw) from e
-            except RecursionError:
-                # Defence-in-depth: unreachable while MAX_JSON_DEPTH <= 32 (the
-                # depth gate catches everything above); retained in case the
-                # constant is ever raised.
-                return _BAD_CL
 
         # -- routes --------------------------------------------------------
         def do_GET(self):
