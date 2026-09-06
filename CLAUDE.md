@@ -379,6 +379,7 @@ dirty tree — commit or stash first (bit 2026-09-03).
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
+**ATTESTED INPUTS (AF-AP-56, CI runs 106-110 red 2026-09-06):** every minted `proofs/<id>/result.json` hashes its tooling — `proofs/schemas/*`, `scripts/proof-runner`, `scripts/validate-ledger`, `proofs/registry.yaml` and the proof's own files. Any change to one of those is a tooling change: regenerate the dependent artifacts in the SAME increment (`python3 scripts/proof-runner run --proof <id> --venue sandbox --root .` for each minted id), then gate on `python3 scripts/validate-ledger integrity --root .` (PRESENT, never INVALID) + `python3 scripts/ledger-gen --root .` + `git diff --exit-code proofs/ledger.json`. A lane brief whose boundary contains an attested path names this gate.
 **PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
 from a clean detached worktree (`WT=$(mktemp -d) && git worktree add -q --detach $WT HEAD && cp .pc-bridge.env $WT/ && cd $WT &&
 bash scripts/pc_suite.sh launch -n 8 -- <files>`; ff-sync the PC clone first; `wait <RUN_ID>` takes the id `launch` prints; remove

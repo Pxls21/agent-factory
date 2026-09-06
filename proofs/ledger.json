@@ -44,25 +44,25 @@
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "3a603c12b738cbcbb7a9828f041237db26975b75800ac3fa501a322c6ab46825",
+      "normalized_digest": "bd7c90dc437082ca5d43addf624c12c889fe7f0f8a609db47d0ac8944469191a",
       "proof_id": "S0-09",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "28ff8cff58069cdc3cbf3a6976b150a0c2f875a1d2db93f6a0e52364aaedde9f",
+      "normalized_digest": "e9a068d432f0688786b40c6665684d5298d5dcacc39d2a2fbf0cdd4bb186f471",
       "proof_id": "S0-10",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "93b4b2d7b49228328fa2e1b4f3adc874c9ed037425916cdd68b04d637021d307",
+      "normalized_digest": "fd0319f0b4ce71fa99b3c592f198046f3c0f57f6f92430fffb267f206604690d",
       "proof_id": "S0-11",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "9148a598b15f3b256d9cc7876f32a463c1b50a07aaab0631a219151384950255",
+      "normalized_digest": "18609d865b302947e1bee1fca75581ad4f2dac54f43fd9123eb86b5887dffcf4",
       "proof_id": "S0-12",
       "state": "PRESENT"
     }
