@@ -37,7 +37,9 @@ launch)
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${BASE:0:7}"
   RD="$PC_AF_REPO/.suite/$RUN_ID"; WT="$RD/tree"
   # the working tree as ONE binary patch against HEAD, untracked files included (temp index — the real index is untouched)
-  TMPI=$(mktemp); cp "$ROOT/.git/index" "$TMPI"
+  # worktree-safe: in a detached worktree .git is a FILE and the index lives under the common dir (bit 2026-09-06)
+  IDX=$(git -C "$ROOT" rev-parse --git-path index); case "$IDX" in /*) ;; *) IDX="$ROOT/$IDX";; esac
+  TMPI=$(mktemp); cp "$IDX" "$TMPI"
   GIT_INDEX_FILE="$TMPI" git add -A . >/dev/null 2>&1
   PATCH=$(mktemp); GIT_INDEX_FILE="$TMPI" git diff --cached --binary "$BASE" > "$PATCH"; rm -f "$TMPI"
   PSHA=$(sha256sum "$PATCH" | cut -d' ' -f1); PBYTES=$(wc -c < "$PATCH")

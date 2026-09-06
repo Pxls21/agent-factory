@@ -379,6 +379,10 @@ dirty tree — commit or stash first (bit 2026-09-03).
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
+**PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
+from a clean detached worktree (`WT=$(mktemp -d) && git worktree add -q --detach $WT HEAD && cp .pc-bridge.env $WT/ && cd $WT &&
+bash scripts/pc_suite.sh launch -n 8 -- <files>`; ff-sync the PC clone first; `wait <RUN_ID>` takes the id `launch` prints; remove
+the worktree after). `launch` resolves the index via `git rev-parse --git-path index` (a worktree's `.git` is a file — bit 2026-09-06).
 
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.
