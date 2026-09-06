@@ -5,8 +5,8 @@ process tables and fed its output to `check_process_evidence`: a successful clea
 REJECTED and an owned `/usr/bin/sleep 60` survivor was ACCEPTED, because the shutdown branch demanded a
 non-empty scan and screened only the pinned command names. These controls encode the contract the
 checker must meet, built from the REAL producer (`pc_post.sh scan`, v2.3 with the enumeration header)
-run on a process tree this test owns. They are committed RED and made green by the next checker lane —
-the lane may not edit this file.
+run on a process tree this test owns. They were committed RED (AF-AP-36 pre-mint gate) and made green by lane A5c —
+no lane may edit this file.
 
 Contract under test (A20 v2.3):
   * a scan file's first line is the enumeration header; `rows > 0` proves enumeration ran;
@@ -129,7 +129,6 @@ def test_shutdown_owned_survivor_is_named_whatever_its_command(tree, tmp_path):
     assert str(ei.value) == f"shutdown: process {agent} ({cmd[:40]}) survived shutdown"
 
 
-@pytest.mark.xfail(strict=True, reason="RED CONTROL for lane A5c: the checker does not yet require the v2.3 enumeration header (AF-AP-36 pre-mint gate)")
 def test_scan_without_the_enumeration_header_is_rejected(tree, tmp_path):
     """A scan file that lacks the v2.3 header cannot prove enumeration ran — Failure naming the file."""
     proc, (buzz, tee, agent) = tree

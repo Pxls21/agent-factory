@@ -123,6 +123,11 @@ _SENSITIVE_HEADER_VALUE_RE = re.compile(r"(?i)bearer\s|sk-|[0-9a-fA-F]{64}")
 # 5-F19: agent-stderr screening patterns.
 _STDERR_LEAK_RE = re.compile(r"(?i)[0-9a-fA-F]{64}|bearer\s|token[=:]\S")
 
+# A20 v2.3: scan file enumeration header shape.
+_SCAN_HEADER_RE = re.compile(
+    r"^# process-scan v2\.3 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
+
 
 class Deferred(Exception):
     pass
@@ -1044,15 +1049,19 @@ def check_config_echo(leg_dir, leg):
         raise Failure(f"{leg}: argv --max-turn-duration is not {PINNED_MAX_TURN_DURATION_ARG}")
 
 
-def _parse_scan_lines(path, leg, name):
-    """Parse v2.2 scan lines: <pid> <ppid> <etimes> <cmd>.
-    Tolerates lines starting with '#' (enumeration header)."""
-    text = path.read_text().strip()
-    if not text:
-        return []
+def _parse_scan_v23(path, leg, name):
+    """Parse v2.3 scan file: enumeration header (required) + body rows.
+    Returns (header_match, [(pid, ppid, etimes, cmd), ...]).
+    Raises Failure if the header is absent or does not match the v2.3 shape."""
+    lines = path.read_text().splitlines()
+    if not lines:
+        raise Failure(f"{leg}: {name} has no enumeration header")
+    m = _SCAN_HEADER_RE.match(lines[0])
+    if not m:
+        raise Failure(f"{leg}: {name} has no enumeration header")
     procs = []
-    for line in text.splitlines():
-        if line.startswith("#"):
+    for line in lines[1:]:
+        if not line.strip():
             continue
         parts = line.split(None, 3)
         if len(parts) < 4:
@@ -1062,7 +1071,7 @@ def _parse_scan_lines(path, leg, name):
         except ValueError:
             raise Failure(f"{leg}: {name} unparsable line: {line!r}")
         procs.append((pid, ppid, etimes, parts[3]))
-    return procs
+    return m, procs
 
 
 def check_process_evidence(leg_dir, leg):
@@ -1084,18 +1093,28 @@ def check_process_evidence(leg_dir, leg):
     if not isinstance(owned_data, dict):
         raise Failure(f"{leg}: owned-pids.json is not an object")
     owned_set = set(owned_data.get("owned", []))
+    # A20 v2.3: parse and validate after-scan header
     scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
-    all_procs = _parse_scan_lines(scan_path, leg, "process-scan-after.txt")
+    hdr, all_procs = _parse_scan_v23(scan_path, leg, "process-scan-after.txt")
+    if hdr.group(1) != "after":
+        raise Failure(f"{leg}: process-scan-after.txt header mode is '{hdr.group(1)}', expected 'after'")
+    if int(hdr.group(2)) == 0:
+        raise Failure(f"{leg}: process-scan-after.txt header rows=0 (enumeration did not run)")
+    if int(hdr.group(5)) != len(owned_set):
+        raise Failure(f"{leg}: process-scan-after.txt header owned={hdr.group(5)} != owned-pids.json ({len(owned_set)})")
+    body_owned = sum(1 for pid, _, _, _ in all_procs if pid in owned_set)
+    if int(hdr.group(6)) != body_owned:
+        raise Failure(f"{leg}: process-scan-after.txt header owned_present={hdr.group(6)} inconsistent with body ({body_owned})")
     if leg == "shutdown":
-        # A20d: shutdown still requires non-empty after-scan (file has content)
-        if not scan_path.read_text().strip():
-            raise Failure(f"{leg}: process-scan-after.txt is empty")
-        # Shutdown: any owned pid in the after-scan is a SURVIVOR
+        # A20 v2.3 rule 6: any owned pid in the shutdown after-scan is a SURVIVOR
         for pid, ppid, etimes, cmd in all_procs:
             if pid in owned_set:
                 raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived shutdown")
+        # A20 v2.3 rule 4: shutdown after-scan must have buzz_present=0
+        if int(hdr.group(4)) != 0:
+            raise Failure(f"{leg}: process-scan-after.txt buzz_present={hdr.group(4)} in shutdown (expected 0)")
     else:
-        # A20d: non-shutdown legs require non-empty after-scan with tee and agent lines
+        # A20d: non-shutdown legs require non-empty after-scan body
         if not all_procs:
             raise Failure(f"{leg}: process-scan-after.txt is empty")
         # A20a: recompute closure from ppid links starting at buzz_pid
@@ -1157,14 +1176,22 @@ def check_process_evidence(leg_dir, leg):
                     continue
                 if pid not in recomputed:
                     raise Failure(f"{leg}: process {pid} ({cmd[:40]}) not in buzz-acp descendant tree")
-    # A20c: teardown scan — survivor check (ALL legs)
+    # A20c v2.3: teardown scan — header + survivor check (ALL legs)
     teardown_path = _require_file(leg_dir / "process-scan-teardown.txt", leg, "process-scan-teardown.txt")
-    teardown_procs = _parse_scan_lines(teardown_path, leg, "process-scan-teardown.txt")
-    after_etimes = {pid: et for pid, _, et, _ in all_procs}
+    td_hdr, teardown_procs = _parse_scan_v23(teardown_path, leg, "process-scan-teardown.txt")
+    if td_hdr.group(1) != "teardown":
+        raise Failure(f"{leg}: process-scan-teardown.txt header mode is '{td_hdr.group(1)}', expected 'teardown'")
+    if int(td_hdr.group(2)) == 0:
+        raise Failure(f"{leg}: process-scan-teardown.txt header rows=0 (enumeration did not run)")
+    if int(td_hdr.group(5)) != len(owned_set):
+        raise Failure(f"{leg}: process-scan-teardown.txt header owned={td_hdr.group(5)} != owned-pids.json ({len(owned_set)})")
+    td_body_owned = sum(1 for pid, _, _, _ in teardown_procs if pid in owned_set)
+    if int(td_hdr.group(6)) != td_body_owned:
+        raise Failure(f"{leg}: process-scan-teardown.txt header owned_present={td_hdr.group(6)} inconsistent with body ({td_body_owned})")
+    # A20 v2.3 rule 6: any owned pid in teardown body is a survivor
     for pid, ppid, etimes, cmd in teardown_procs:
-        if pid in owned_set and pid in after_etimes:
-            if etimes >= after_etimes[pid]:
-                raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
+        if pid in owned_set:
+            raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
 
 
 def check_buzzacp_log(leg_dir, leg):

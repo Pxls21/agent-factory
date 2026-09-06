@@ -301,34 +301,40 @@ def _write_upstream_records(leg_dir, leg, entries, fingerprint):
     (rec_dir / f"{idx:06d}.json").write_text(json.dumps(get_rec, indent=2) + "\n")
 
 
+def _scan_header(mode, *, rows=50, buzz_pid=12300, buzz_present=1, owned=3,
+                 owned_present=3, pinned_present=0, owned_zombies=0):
+    """Build a v2.3 scan enumeration header line."""
+    return (f"# process-scan v2.3 mode={mode} rows={rows} buzz_acp_pid={buzz_pid} "
+            f"buzz_present={buzz_present} owned={owned} owned_present={owned_present} "
+            f"pinned_present={pinned_present} owned_zombies={owned_zombies} "
+            f"utc=2026-09-05T12:00:00Z")
+
+
 def _write_process_scan(leg_dir, leg):
-    """A20: v2.2 scan lines: <pid> <ppid> <etimes> <cmd>; owned-pids.json.
+    """A20 v2.3: scan header + body rows; owned-pids.json.
     Fixture derived from pc_post.sh's keep rule: only owned rows and rows naming
     a pinned path are persisted. (D): no /sbin/init — the real producer never emits it."""
     buzz_pid = 12300
     tee_pid = 12340  # matches runtime-identity.json tee_pid
     agent_pid = 12345  # matches runtime-identity.json agent_child_pid
     launcher_pid = 1
+    owned = sorted([buzz_pid, tee_pid, agent_pid])
     (leg_dir / "buzz-acp.pid").write_text(f"{buzz_pid}\n")
+    (leg_dir / "owned-pids.json").write_text(json.dumps(
+        {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}) + "\n")
+    (leg_dir / "buzz-acp.exit").write_text("0\n")
     if leg == "shutdown":
-        # After a clean shutdown, all owned pids have exited. The scan carries a
-        # comment header (upcoming producer feature) to satisfy the non-empty rule.
-        owned = sorted([buzz_pid, tee_pid, agent_pid])
-        (leg_dir / "process-scan-after.txt").write_text("# scan after 0 owned alive\n")
-        (leg_dir / "owned-pids.json").write_text(json.dumps(
-            {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}) + "\n")
-        (leg_dir / "process-scan-teardown.txt").write_text("# scan teardown\n")
-        (leg_dir / "buzz-acp.exit").write_text("0\n")
+        # After a clean shutdown, all owned pids have exited — empty body with v2.3 header.
+        (leg_dir / "process-scan-after.txt").write_text(
+            _scan_header("after", buzz_present=0, owned_present=0) + "\n")
     else:
-        owned = sorted([buzz_pid, tee_pid, agent_pid])
-        lines = [f"{buzz_pid} {launcher_pid} 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999",
+        lines = [_scan_header("after"),
+                 f"{buzz_pid} {launcher_pid} 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999",
                  f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}",
                  f"{agent_pid} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}"]
         (leg_dir / "process-scan-after.txt").write_text("\n".join(lines) + "\n")
-        (leg_dir / "owned-pids.json").write_text(json.dumps(
-            {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}) + "\n")
-        (leg_dir / "process-scan-teardown.txt").write_text("# scan teardown\n")
-        (leg_dir / "buzz-acp.exit").write_text("0\n")
+    (leg_dir / "process-scan-teardown.txt").write_text(
+        _scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
 
 
 def _write_tee_status(leg_dir, entries):
@@ -1485,22 +1491,22 @@ def test_exit_garbage_nonshutdown(bundle):
 
 
 def test_proc_buzz_found(bundle):
-    """m55: no buzz-acp line with matching pid -- recompute closure check fails first."""
+    """m55: no buzz-acp line with matching pid — buzz cmd does not match the pin."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    # Write a scan that only has the launcher; owned = [12300] but pid 12300 absent
-    # -> recomputed closure will be empty set, != [12300] -> closure mismatch
-    sp.write_text("1 0 100 /sbin/init\n")
+    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
+                  + "12300 1 100 NOT-BUZZ-ACP --flag\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "process" in out and "run-1" in out
+    assert out == "failure_reason: run-1: process-scan-after has no buzz-acp line with pid 12300"
 
 
 def test_proc_tee_parent(bundle):
     """m56: no tee process parented by buzz-acp."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
@@ -1511,7 +1517,8 @@ def test_proc_tee_parent(bundle):
 def test_proc_agent_parent(bundle):
     """m57: no agent process parented by a tee."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 9999 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    sp.write_text(_scan_header("after", owned=2, owned_present=2) + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 9999 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
@@ -1522,7 +1529,8 @@ def test_proc_agent_parent(bundle):
 def test_proc_closure(bundle):
     """m58: process outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n")
+    sp.write_text(_scan_header("after") + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
@@ -1533,7 +1541,8 @@ def test_proc_closure(bundle):
 def test_proc_closure_seed(bundle):
     """m59: mutual-parent attack (V-b F19)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
+    sp.write_text(_scan_header("after", owned=1, owned_present=1) + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
@@ -1551,10 +1560,10 @@ def test_proc_unparsable_line(bundle):
 
 
 def test_teardown_has_tee(bundle):
-    """m60: A20c survivor check."""
+    """m60: A20c survivor check — owned pid in teardown body."""
     p = bundle / "golden" / "run-1" / "process-scan-teardown.txt"
-    # Use tee_pid 12340 from the owned set with etimes >= after-scan etimes (90)
-    p.write_text(f"12340 12300 95 python3 {PINNED_TEE_PATH}\n")
+    p.write_text(_scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+                 + f"12340 12300 95 python3 {PINNED_TEE_PATH}\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert "survived teardown" in out
@@ -1563,7 +1572,8 @@ def test_teardown_has_tee(bundle):
 def test_orphan_pair(bundle):
     """6-F2: orphan process pair outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    sp.write_text(f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
+    sp.write_text(_scan_header("after") + "\n"
+                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     (bundle / "golden" / "run-1" / "owned-pids.json").write_text(json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     rc, out = _check(bundle)
@@ -2056,20 +2066,22 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
     """Audit P1: a generic descendant surviving teardown must fail.
     Pre-round-5: PASS (check_process_evidence only rejected tee/agent/buzz paths)."""
     ld = bundle / "golden" / "run-1"
-    # Add a generic child to the after-scan
     scan = ld / "process-scan-after.txt"
-    existing = scan.read_text().strip()
+    existing_lines = scan.read_text().splitlines()
     owned_path = ld / "owned-pids.json"
     owned_data = json.loads(owned_path.read_text())
-    # Add child 54321 parented by agent (12345)
-    existing += "\n54321 12345 80 /usr/bin/sleep 60\n"
-    scan.write_text(existing)
+    # Add child 54321 parented by agent (12345) — update header to match
+    body_lines = existing_lines[1:]
+    body_lines.append("54321 12345 80 /usr/bin/sleep 60")
     owned_data["owned"].append(54321)
     owned_data["owned"].sort()
     owned_path.write_text(json.dumps(owned_data) + "\n")
-    # Same child in teardown with >= etimes (not pid reuse, so a survivor)
+    scan.write_text(_scan_header("after", owned=4, owned_present=4) + "\n"
+                    + "\n".join(body_lines) + "\n")
+    # Same child in teardown — owned pid = survivor
     td = ld / "process-scan-teardown.txt"
-    td.write_text("54321 1 90 /usr/bin/sleep 60\n")
+    td.write_text(_scan_header("teardown", buzz_present=0, owned=4, owned_present=1) + "\n"
+                  + "54321 1 90 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 teardown survivor mutation should fail, got rc={rc}: {out}"
     assert "survived teardown" in out
@@ -2344,10 +2356,148 @@ def test_shutdown_owned_pid_survives(bundle):
     """Addendum B: an owned pid in the shutdown after-scan must fail as a survivor."""
     ld = bundle / "golden" / "shutdown"
     # Add an owned pid to the after-scan (12300 is in owned-pids.json)
-    (ld / "process-scan-after.txt").write_text("# scan after\n12300 1 200 /usr/bin/sleep 60\n")
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after", buzz_present=1, owned_present=1) + "\n"
+        + "12300 1 200 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert "survived shutdown" in out
+
+
+# === A20 v2.3: enumeration header validation (direct-call tests) ===
+
+def test_v23_no_header_after(tmp_path):
+    """A20 v2.3 rule 1: after-scan without the v2.3 header is rejected."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
+    (ld / "process-scan-after.txt").write_text("")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: process-scan-after.txt has no enumeration header"
+
+
+def test_v23_no_header_teardown(tmp_path):
+    """A20 v2.3 rule 1: teardown without the v2.3 header is rejected."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after") + "\n"
+        + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+        + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+        + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    (ld / "process-scan-teardown.txt").write_text("old format\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: process-scan-teardown.txt has no enumeration header"
+
+
+def test_v23_rows_zero(tmp_path):
+    """A20 v2.3 rule 2: rows=0 means enumeration did not run."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
+    (ld / "process-scan-after.txt").write_text(_scan_header("after", rows=0, owned=1, owned_present=0) + "\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "shutdown")
+    assert str(ei.value) == "shutdown: process-scan-after.txt header rows=0 (enumeration did not run)"
+
+
+def test_v23_owned_present_mismatch(tmp_path):
+    """A20 v2.3 rule 3: owned_present inconsistent with body → Failure."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    # Header says owned_present=2 but body has 3 owned pids
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after", owned_present=2) + "\n"
+        + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+        + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+        + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: process-scan-after.txt header owned_present=2 inconsistent with body (3)"
+
+
+def test_v23_buzz_present_shutdown(tmp_path):
+    """A20 v2.3 rule 4: shutdown after-scan with buzz_present=1 → Failure."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    # buzz_present=1 but empty body (lying header — a clean shutdown)
+    (ld / "process-scan-after.txt").write_text(_scan_header("after", buzz_present=1, owned_present=0) + "\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "shutdown")
+    assert str(ei.value) == "shutdown: process-scan-after.txt buzz_present=1 in shutdown (expected 0)"
+
+
+def test_v23_mode_mismatch(tmp_path):
+    """A20 v2.3 rule 1b: after-scan file with mode=teardown in header → Failure."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
+    (ld / "process-scan-after.txt").write_text(_scan_header("teardown", owned=1, owned_present=0) + "\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "shutdown")
+    assert str(ei.value) == "shutdown: process-scan-after.txt header mode is 'teardown', expected 'after'"
+
+
+def test_v23_owned_count_mismatch(tmp_path):
+    """A20 v2.3 rule 8: header owned != len(owned-pids.json owned) → Failure."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    # Header says owned=2 but owned-pids.json has 3
+    (ld / "process-scan-after.txt").write_text(_scan_header("after", owned=2, owned_present=0) + "\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "shutdown")
+    assert str(ei.value) == "shutdown: process-scan-after.txt header owned=2 != owned-pids.json (3)"
+
+
+def test_v23_shutdown_clean_pass(tmp_path):
+    """A20 v2.3 rule 4: valid header + empty body in shutdown → PASS."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    (ld / "process-scan-after.txt").write_text(_scan_header("after", buzz_present=0, owned_present=0) + "\n")
+    (ld / "process-scan-teardown.txt").write_text(_scan_header("teardown", buzz_present=0, owned_present=0) + "\n")
+    cc.check_process_evidence(ld, "shutdown")  # must not raise
+
+
+def test_v23_teardown_survivor(tmp_path):
+    """A20 v2.3 rule 6: owned pid in teardown body → survivor Failure."""
+    ld = tmp_path
+    (ld / "buzz-acp.pid").write_text("12300\n")
+    (ld / "buzz-acp.exit").write_text("0\n")
+    (ld / "owned-pids.json").write_text(json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
+    (ld / "runtime-identity.json").write_text(json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
+    (ld / "process-scan-after.txt").write_text(
+        _scan_header("after") + "\n"
+        + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
+        + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
+        + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    (ld / "process-scan-teardown.txt").write_text(
+        _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+        + "12340 1 95 python3 /some/tee\n")
+    with pytest.raises(cc.Failure) as ei:
+        cc.check_process_evidence(ld, "run-1")
+    assert str(ei.value) == "run-1: process 12340 (python3 /some/tee) survived teardown"
 
 
 # === Real-producer conformance (item 3) ===
@@ -2474,12 +2624,18 @@ def test_real_leg_manifests(leg):
 
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_process_evidence(leg):
-    """Real-producer: process evidence — skip if v2.2 sample absent (bridge down)."""
+    """Real-producer: process evidence — skip if v2.3 header absent."""
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
     if not (leg_dir / "owned-pids.json").exists():
         pytest.skip("real v2.2 sample absent: bridge down 2026-09-06")
+    scan = leg_dir / "process-scan-after.txt"
+    if not scan.exists():
+        pytest.skip("real leg predates scan v2.3 (no enumeration header)")
+    first_line = scan.read_text().splitlines()
+    if not first_line or not first_line[0].startswith("# process-scan v2.3 "):
+        pytest.skip("real leg predates scan v2.3 (no enumeration header)")
     ok, result = _run_check_safe(cc.check_process_evidence, leg_dir, leg)
     assert ok, f"unexpected failure: {result}"
 
