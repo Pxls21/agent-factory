@@ -21,6 +21,9 @@ PC_AF_REPO="${PC_AF_REPO:-/home/rocco/agent-factory}"
 # The project venv on the PC (harness-ports/bin/pc-setup.sh installs the pinned deps there); /usr/bin/python3 lacks
 # rfc3339-validator, so scripts/validate-ledger fails closed under it (39 venue reds on the first PC run, 2026-09-06).
 PC_PY="${PC_PY:-/home/rocco/venv-agent-factory/bin/python}"
+# The declared S0-01 real-leg corpus on the PC (scripts/realleg_sync.sh pc-build; byte-identical to the sandbox copy by
+# sha256) — exported to every PC run so the checker's real-leg tests FAIL loud when it is absent, never skip (VERIFY-CK10 F-R10-25).
+PC_REAL_LEG_DIR="${PC_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg/golden}"
 die() { echo "pc_suite: $*" >&2; exit 2; }
 bridge() { "$PC" "$1"; }
 
@@ -61,7 +64,7 @@ launch)
   # guard keys on state the run creates (rule 1b), and a replayed launch call is a no-op.
   RUNSH="#!/bin/bash
 cd $WT || exit 97
-$PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
+S0_01_VENUE=pc S0_01_REAL_LEG_DIR=$PC_REAL_LEG_DIR $PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
 echo \$? > $RD/rc
 [ \"\$(cat $RD/rc)\" = 0 ] && rm -rf $RD/tmp
 "
