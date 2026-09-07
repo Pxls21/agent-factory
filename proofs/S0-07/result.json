@@ -1,0 +1,59 @@
+{
+  "proof_id": "S0-07",
+  "classification": "execution_proof",
+  "recorded_at": "2026-09-07T23:46:16.763007Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-07/check_fubuki_corrections.py",
+        "/home/user/nerdherderdani/fubuki-os"
+      ],
+      "started_at": "2026-09-07T23:46:16.677523Z",
+      "finished_at": "2026-09-07T23:46:16.729631Z",
+      "exit_code": 0,
+      "stdout_sha256": "87cac7a832176d520d52f65ea38ded27d51f8a6bd2b63658d9572a58cf0b7418",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-07/check_fubuki_corrections.py",
+        "--lint-check",
+        "proofs/S0-07/fixtures/neg-violating-persona",
+        "/home/user/nerdherderdani/fubuki-os"
+      ],
+      "started_at": "2026-09-07T23:46:16.729786Z",
+      "finished_at": "2026-09-07T23:46:16.757125Z",
+      "exit_code": 1,
+      "stdout_sha256": "0bc7b601818a2467f8e63dfaeea3a5dab894bcad9f516fb6874b6dce03b2bb84",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reason": "lint-violation: corporate-filler, exit 1 per contract"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-07/check_fubuki_corrections.py --lint-check proofs/S0-07/fixtures/neg-violating-persona /home/user/nerdherderdani/fubuki-os",
+    "expected_failure_reason": "lint-violation: corporate-filler, exit 1 per contract",
+    "observed_failure_reason": "lint-violation: corporate-filler, exit 1 per contract"
+  },
+  "attestation": {
+    "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
+    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
+    "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
+    "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
+    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/spec.schema.json": "30a2806e7825b0f0e99e1d4918264b8e19f026a570096243018ca1ed72c7c305",
+    "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
+    "proofs/S0-07/check_fubuki_corrections.py": "a2337d2a51fbf226d92dc1d56714cf476ff1b177b3dd00ad4b278f5985982d7a",
+    "proofs/S0-07/fixtures/neg-violating-persona/violation.txt": "78b7e384ce481b94160907346ee24a5c5b6aec745c88743cf7d702bc4256f24b",
+    "proofs/S0-07/fixtures/ordered-lint/01-review-only.txt": "97bb8f5b93882d907b6e2a8d20e4e9ae3e9534e8601f7cbfe26473ef82bdbd00",
+    "proofs/S0-07/fixtures/ordered-lint/02-has-violation.txt": "f4a38ef916261fd19d68f84dc9fbcc1e64f67c722c5eb2269785cd412e25f6f8",
+    "proofs/S0-07/fixtures/ordered-lint/clean.txt": "2a393f13c05bb16f92f5c8cc7c2668f4f893f3a21b4c5729426386c1fb03f18c",
+    "proofs/S0-07/spec.json": "bc4954affea29122d0a552f409e34e6a38ae75e5988de9d5a1b0b4a10c162c01"
+  },
+  "digest": "6e4d69c2c2789c96a08fd582e8cce880dc3ebb94af8eabbda8136d5027654be3"
+}

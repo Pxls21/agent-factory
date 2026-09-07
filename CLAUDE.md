@@ -66,6 +66,12 @@ artifacts.
 
 Model routing — cheapest tier that cannot mint an expensive wrong green; honey mode per role:
 
+**THROUGHPUT RULING (owner 2026-09-07 23:4xZ: "do as much as you can in parallel … use Hermes, use codex, use 5.6 sol … even have it do
+the verify round"):** the remaining Stage 0 proofs run as PARALLEL lanes on every venue at once — build lanes on the PC Hermes lane
+(`agentfactory-build` = the owner's OpenAI model through OmniRoute; ONE admission slot while the owner's own Hermes sessions run) and in the
+sandbox (`code-implementer`), verify lanes on the PC (`scripts/pc_lane.sh <brief> hermes adversarial-verifier`, route `agentfactory-verify`)
+when a slot is free and in the sandbox (Opus 5) otherwise; the codex CLI is NOT installed on the PC (2026-09-07 probe) — "codex" means the
+OmniRoute codex route Hermes already uses. Disjoint file boundaries per proof; the class list of the S0-01 sweeps is every new brief's preflight.
 **STAGE ROUTING (owner ruling 2026-07-28, inherited; BUILD lane re-ruled by the owner
 2026-09-03): plan/orchestrate = Fable (the main loop) · every EXPLORE/VERIFY lane = Opus 5 ·
 every BUILD lane = the owner's HERMES CLI ON THE PC (`hermes -z`, model = the owner's OpenAI

@@ -33,8 +33,9 @@
     },
     {
       "classification": "execution_proof",
+      "normalized_digest": "95af721b5d9b22085ab8a421afbd260593260dd318843f56dbf814e11701cd6a",
       "proof_id": "S0-07",
-      "state": "ABSENT"
+      "state": "PRESENT"
     },
     {
       "classification": "blocked_host",
