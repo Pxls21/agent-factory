@@ -398,7 +398,9 @@ copy: S0-11 drops to `nobody` and cannot read `0700` paths) — a real proof fai
 `S0_01_VENUE` sandbox/pc — corpus absent or incomplete = the suite FAILS by design, never skips; CI (venue unset) skips by
 declaration. A fresh container restores it with `bash scripts/realleg_sync.sh pull` (20 s over the bridge, every sha verified
 against the PC tree; `check` re-verifies).
-**PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
+**Sandbox static-copy gate in ONE command:** `scripts/lane_gate.sh -r <rev> -f "<lane files>" -t "<tests>" [-n 2]` — a `git archive`
+copy + exactly the lane's working-tree files, the identity table, N `test_summary.sh` runs whose counts must agree, one RESULT line the
+checkpoint commit pastes; long sets run it DETACHED (`nohup … > gate.log 2>&1 &`) and read the log. **PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
 from a clean detached worktree (`WT=$(mktemp -d) && git worktree add -q --detach $WT HEAD && cp .pc-bridge.env $WT/ && cd $WT &&
 bash scripts/pc_suite.sh launch -n 8 -- <files>`; ff-sync the PC clone first; `wait <RUN_ID>` takes the id `launch` prints; remove
 the worktree after). `launch` resolves the index via `git rev-parse --git-path index` (a worktree's `.git` is a file — bit 2026-09-06).
