@@ -375,7 +375,9 @@ churn can regrow between its clean-check and filter-branch ("Cannot rewrite bran
 unstaged changes" → "N trailer(s) remain — ABORT"). Run `git checkout -- AGENTS.md CLAUDE.md &&
 PUSH_BRANCH=<branch> bash scripts/push_clean.sh --no-delegates-live` as ONE compound command; on
 that abort, re-check `git status` before suspecting real leftover trailers. It also REFUSES on a
-dirty tree — commit or stash first (bit 2026-09-03).
+dirty tree — commit or stash first (bit 2026-09-03). **`--lanes-live` with an EMPTY declared list refuses SILENTLY (rc 1, no
+message; bit 2026-09-07 after the last lane landed) — once no lane is live, push the clean tree with
+`--no-delegates-live`; the untracked `.lanes-live` file itself is gitignored and does not count as dirt.**
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
