@@ -236,4 +236,7 @@ the test count in the report was hand-typed rather than machine-pasted. Two rule
    committed FAILING regression test before the artifact is minted or re-minted; a checker is
    graded against hostile bundles, never only its own golden.
 2. Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output
-   verbatim, never typed (AF-AP-37).
+   verbatim, never typed (AF-AP-37). Timestamps are the same rule: a ledger / wiki / task-DB stamp is pasted
+   from `date -u +%H:%MZ` or the commit clock (`git log -1 --date=format:%H:%MZ --format=%cd`), never
+   typed from a running mental clock (2026-09-07: the day's stamps drifted up to 2.8 h ahead of the
+   commits and the task DB copied the drift; every stamp was re-derived from the commit clock).

@@ -121,7 +121,11 @@ def test_after_scan_persists_the_owned_closure_and_the_header(tree, tmp_path):
     assert m.group(3) == str(buzz) and m.group(4) == "1"
     assert m.group(5) == "3" and m.group(6) == "3"   # closure = buzz, tee, agent; all present
     own, foreign = _split_world(rows, {buzz, tee, agent})
-    assert int(m.group(7)) >= len(foreign)            # pinned_present counts the FULL table; 0 when the world is empty
+    # pinned_present is counted over the FULL table (a helper-shaped foreign row is dropped from the body but still
+    # counted — VERIFY-CK8 F14), so from inside one test it is a LOWER bound, never an exact number: under a parallel
+    # venue a sibling worker's helper naming a pinned path can sit in the table between two of THIS test's reads
+    # (AF-AP-59). The EXACT contract is pinned by test_pinned_present_is_exact_over_a_synthetic_table (shim, no world).
+    assert int(m.group(7)) >= len(foreign)
     assert {row[0] for row in own} == {buzz, tee, agent}
     by_pid = {row[0]: row for row in rows}
     assert by_pid[tee][1] == buzz and by_pid[agent][1] == tee
@@ -269,3 +273,49 @@ def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_co
             proc.kill()
             proc.wait(timeout=10)
 
+
+def test_split_world_rejects_an_unexplained_foreign_row():
+    """VERIFY-CK10 F-R10-20: the negative control of the world-aware helper, COMMITTED. A foreign row that names no
+    pinned path is an unexplained process in the scan body — the helper must FAIL, never characterise it away."""
+    with pytest.raises(AssertionError, match="unexplained foreign row"):
+        _split_world([(1, 0, 5, "/usr/bin/sleep 60")], owned={2})
+
+
+def test_split_world_admits_a_foreign_row_naming_a_pinned_path():
+    """The positive twin: a foreign row naming a pinned path is admissible evidence (the producer's only other rule)
+    and comes back in `foreign`, never in `own`; the owned row comes back in `own` whatever its command."""
+    rows = [(2, 0, 5, "/usr/bin/sleep 60"), (1, 0, 5, f"python3 -c 'time.sleep(1) # {pins.PINNED_TEE_PATH}'")]
+    own, foreign = _split_world(rows, owned={2})
+    assert [r[0] for r in own] == [2]
+    assert [r[0] for r in foreign] == [1]
+
+
+def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
+    """VERIFY-CK10 F-R10-20 asked for `pinned_present == 0` whenever `foreign` is empty; from inside a test that number
+    is WORLD-scoped (a sibling worker's helper can name a pinned path between two of one test's reads — AF-AP-59), so
+    the EXACT contract is pinned here through a `ps` shim that prints a synthetic table and nothing else: the header
+    counts EVERY row naming a pinned path over the full table (2 — a plain foreign row and a helper-shaped one), the
+    body keeps the owned row and the plain pinned row, drops the helper-shaped row, omits the unpinned foreign row;
+    owned_present is exactly the owned rows present (1)."""
+    tee = pins.PINNED_TEE_PATH
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    shim = shim_dir / "ps"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "echo '4242 1 7 S /usr/bin/sleep 120'\n"
+        f"echo '5001 1 7 S python3 -c \"time.sleep(120) # {tee}\"'\n"
+        f"echo '5002 1 7 S bash pc_post.sh scan after {tee}'\n"
+        "echo '5003 1 7 S /usr/bin/sleep 60'\n"
+    )
+    shim.chmod(0o755)
+    fd = tmp_path / "fd"
+    fd.mkdir()
+    _seed(fd, 4242, [4242])
+    r = subprocess.run(["bash", str(PC_POST), "scan", "after", str(fd)], capture_output=True, text=True,
+                       env={**os.environ, "S0_01_REPO": str(ROOT), "PATH": f"{shim_dir}:{os.environ['PATH']}"}, timeout=60)
+    assert r.returncode == 0, (r.returncode, r.stderr)
+    m, rows = _parse(fd / "process-scan-after.txt")
+    assert m.group(2) == "4"                                    # the whole synthetic table was enumerated
+    assert (m.group(6), m.group(7)) == ("1", "2"), m.group(0)   # owned_present exact; pinned_present exact over the FULL table
+    assert {row[0] for row in rows} == {4242, 5001}             # body: the owned row + the plain pinned row, nothing else

@@ -497,7 +497,7 @@ Model-agnostic, per increment, no skipping steps. The operative core:
    status lines open with the OUTCOME: `Verified live:` ≠ `DONE:` ≠ `NOT built.` (stated
    first-class). Ledger denominators are FOUR-WAY (execution / conformance-checked decision /
    blocked-on-external-input / blocked-on-capability) — never a flat count over the twelve proofs.
-   Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total).
+   Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total). Timestamps are the same rule — pasted from `date -u` or the commit clock (2026-09-07: the day's ledger stamps drifted 2.8 h ahead).
 
 ## The deep-work protocol ("Fable deep" — serious increments and reviews)
 
