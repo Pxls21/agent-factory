@@ -2576,7 +2576,7 @@ def test_v23_teardown_survivor(tmp_path):
 # reads /proc/<pid>/exe after proc.wait()).
 # Skip when the directory is absent.
 
-_REAL_LEG_DIR = Path("/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/realleg/golden")
+_REAL_LEG_DIR = Path(os.environ["S0_01_REAL_LEG_DIR"]) if os.environ.get("S0_01_REAL_LEG_DIR") else None
 
 _POSITIVE_LEGS = ("run-1", "cancel", "shutdown", "two-users")
 
@@ -2591,9 +2591,32 @@ def _run_check_safe(fn, *args, **kwargs):
         return (False, f"deferred: {d}")
 
 
+_EXPECTED_REAL_LEGS = {"cancel", "negative", "run-1", "shutdown", "two-users"}
+
+
+def test_real_leg_corpus_declared():
+    """R10-F25: if S0_01_VENUE is sandbox or pc, S0_01_REAL_LEG_DIR MUST be set
+    (FAIL otherwise) — CI (S0_01_VENUE unset or 'ci') may skip by declaration."""
+    venue = os.environ.get("S0_01_VENUE", "")
+    if venue in ("sandbox", "pc"):
+        assert _REAL_LEG_DIR is not None, (
+            f"S0_01_VENUE={venue} but S0_01_REAL_LEG_DIR is unset "
+            f"(real-leg corpus not declared for this venue)")
+        assert _REAL_LEG_DIR.is_dir(), (
+            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} does not exist")
+        present = {d.name for d in _REAL_LEG_DIR.iterdir() if d.is_dir()}
+        missing = _EXPECTED_REAL_LEGS - present
+        assert not missing, (
+            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} incomplete: missing legs {sorted(missing)}")
+    elif _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset and S0_01_VENUE is not sandbox/pc")
+
+
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_timeline(leg):
     """Real-producer: timeline loads and passes check_timeline."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2605,6 +2628,8 @@ def test_real_leg_timeline(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_initialize_frames(leg):
     """Real-producer: initialize frames pass."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2617,6 +2642,8 @@ def test_real_leg_initialize_frames(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_runtime_identity(leg):
     """Real-producer: runtime identity fails ONLY on tee_sha256 mismatch."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2630,6 +2657,8 @@ def test_real_leg_runtime_identity(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_env(leg):
     """Real-producer: env passes."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2641,6 +2670,8 @@ def test_real_leg_env(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_mentions(leg):
     """Real-producer: mentions pass."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2653,6 +2684,8 @@ def test_real_leg_mentions(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_route(leg):
     """Real-producer: route check passes."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2664,6 +2697,8 @@ def test_real_leg_route(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_config_echo(leg):
     """Real-producer: config echo passes."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2674,6 +2709,8 @@ def test_real_leg_config_echo(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_manifests(leg):
     """Real-producer: manifests fail ONLY on timestamps not pre < start < post."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2692,6 +2729,8 @@ def test_real_leg_manifests(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_process_evidence(leg):
     """Real-producer: process evidence — skip if v2.3 header absent."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2710,6 +2749,8 @@ def test_real_leg_process_evidence(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_buzzacp_log(leg):
     """Real-producer: buzzacp log passes."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2719,6 +2760,8 @@ def test_real_leg_buzzacp_log(leg):
 
 def test_real_leg_prompt_turn():
     """Real-producer: prompt turn passes for run-1 and shutdown."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     for leg in ("run-1", "shutdown"):
         leg_dir = _REAL_LEG_DIR / leg
         if not leg_dir.is_dir():
@@ -2732,6 +2775,8 @@ def test_real_leg_prompt_turn():
 
 def test_real_leg_cancel():
     """Real-producer: cancel leg passes check_cancel."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / "cancel"
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2744,6 +2789,8 @@ def test_real_leg_cancel():
 
 def test_real_leg_shutdown():
     """Real-producer: shutdown leg passes check_shutdown."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / "shutdown"
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2756,6 +2803,8 @@ def test_real_leg_shutdown():
 
 def test_real_leg_two_users():
     """Real-producer: two-users leg passes check_two_users."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / "two-users"
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -2767,36 +2816,40 @@ def test_real_leg_two_users():
     assert ok, f"unexpected failure: {result}"
 
 
-def test_real_leg_negative():
-    """Real-producer: negative leg — 5-F04: skip if failure is one of the three known
-    pre-capture defects (must be re-captured after probe change — bridge down, task #38)."""
+def test_real_leg_negative(request):
+    """Real-producer: negative leg — 5-F04/R9-CK-F21: anchored strict xfail.
+    Match on the reason's LAST segment (result.rsplit(': ', 1)[-1]) so a substring
+    injection cannot widen the gate.  strict=True via request.node.add_marker so that
+    a repaired capture (the known reason disappears, check passes) turns the xfail
+    into a FAILURE by design — the _KNOWN_XFAIL_REASONS set must then be retired."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     neg_dir = _REAL_LEG_DIR / "negative"
     if not neg_dir.is_dir():
         pytest.skip(f"real negative directory absent: {_REAL_LEG_DIR}")
     if not (neg_dir / "timeline.jsonl").exists():
         pytest.skip("real v2.2 sample absent: bridge down 2026-09-06")
-    # R9-CK-F21: strict xfails keyed on the EXACT three known-stale reasons.
-    # The golden captures predate the current tools; a re-capture retires them.
-    # After re-capture these xfails turn into failures by design — the strict=True
-    # ensures the test suite goes RED when the stale reason disappears.
     _KNOWN_XFAIL_REASONS = {
         "probe_sha256 mismatch",
         "agent_interpreter_realpath mismatch",
         "spawned_at_utc is later than the first frame",
     }
     ok, result = _run_check_safe(cc.check_negative, neg_dir)
-    if ok:
-        pass
-    else:
-        matched = [r for r in _KNOWN_XFAIL_REASONS if r == result or r in result]
-        if matched:
-            pytest.xfail(f"real v2.2 sample: {matched[0]} (capture predates current probe)")
+    if not ok:
+        tail = result.rsplit(": ", 1)[-1] if result else ""
+        if tail in _KNOWN_XFAIL_REASONS:
+            request.node.add_marker(pytest.mark.xfail(
+                strict=True, raises=AssertionError,
+                reason=f"real v2.2 sample: {tail} (capture predates current probe)"))
+            assert False, f"real v2.2 sample: {tail} (capture predates current probe)"
         else:
-            assert False, f"unexpected failure: {result}"
+            assert False, f"unexpected failure: negative: {result}"
 
 
 def test_real_leg_normalize_timeline():
     """Real-producer: normalize_timeline produces a non-empty result for run-1."""
+    if _REAL_LEG_DIR is None:
+        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / "run-1"
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
@@ -3259,7 +3312,7 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
 # The real assertion and the self-test BOTH call _scan_direct_writes so the scan
 # cannot be disabled without the self-test also going red.
 
-_WRITE_ATTRS = {"write_text", "write_bytes"}
+_WRITE_ATTRS = {"write_text", "write_bytes", "touch", "rename"}
 _WRITE_MODES = set("wa+")
 _SHUTIL_WRITERS = {"copy", "copy2", "copyfile"}
 _OS_WRITERS = {"replace", "rename"}
@@ -3269,13 +3322,18 @@ _EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
                "_write_upstream_records", "_write_process_scan", "_write_negative",
                "_sign_mention", "_session_bundle", "_patch_nostr_verify",
                "test_ck8_f34_frame_tee_subprocess_keys",
-               "test_ck9_tools_not_hardlinked"}
+               "test_ck9_tools_not_hardlinked",
+               "test_golden_run_eq", "test_golden_distinctness_all",
+               "test_ck10_fifo_at_tools_frame_tee_is_named"}
 
 
 def _scan_direct_writes(src: str) -> list[str]:
     """R9-CK-F3: scan Python source for writes that bypass _rewrite.  Returns a list
-    of violation descriptions (empty = clean).  Both the real test and the self-test
-    call this function — disabling the scan disables both."""
+    of violation descriptions (empty = clean).  The self-test asserts the CATEGORIES
+    detected so disabling any single pattern family makes it fail.
+    Known limits (AF-AP-30 — static scanning is the losing game): os.open+os.write,
+    variable mode (m='w'; open(p,m)), shutil.copytree/move (would flag the bundle
+    fixture), subprocess cp, module-level writes (fn_name is None -> continue)."""
     import ast as _ast
     tree = _ast.parse(src)
     fn_ranges = []
@@ -3320,6 +3378,12 @@ def _scan_direct_writes(src: str) -> list[str]:
                     if _WRITE_MODES & set(mode_arg.value):
                         violations.append(f"line {lineno}: .open({mode_arg.value!r})")
                         continue
+            # R10: also check keyword mode= on the .open() method (asymmetry fix)
+            for kw in node.keywords:
+                if kw.arg == "mode" and isinstance(kw.value, _ast.Constant):
+                    if isinstance(kw.value.value, str) and _WRITE_MODES & set(kw.value.value):
+                        violations.append(f"line {lineno}: .open(mode={kw.value.value!r})")
+                        break
         if isinstance(func, _ast.Attribute) and func.attr == "dump":
             if isinstance(func.value, _ast.Name) and func.value.id == "json":
                 violations.append(f"line {lineno}: json.dump()")
@@ -3332,6 +3396,15 @@ def _scan_direct_writes(src: str) -> list[str]:
             if isinstance(func.value, _ast.Name) and func.value.id == "os":
                 violations.append(f"line {lineno}: os.{func.attr}()")
                 continue
+        # R10: io.open is a write-capable alias of builtin open
+        if isinstance(func, _ast.Attribute) and func.attr == "open":
+            if isinstance(func.value, _ast.Name) and func.value.id == "io":
+                if len(node.args) >= 2:
+                    mode_arg = node.args[1]
+                    if isinstance(mode_arg, _ast.Constant) and isinstance(mode_arg.value, str):
+                        if _WRITE_MODES & set(mode_arg.value):
+                            violations.append(f"line {lineno}: io.open(..., {mode_arg.value!r})")
+                            continue
     return violations
 
 
@@ -3356,11 +3429,22 @@ def test_ck8_inplace_write_mutant_e():
     p.write_bytes(b"evil")
 def test_ck8_inplace_write_mutant_f():
     os.replace(src, dst)
+def test_ck8_inplace_write_mutant_g():
+    p.touch()
+def test_ck8_inplace_write_mutant_h():
+    p.rename(dst)
+def test_ck8_inplace_write_mutant_i():
+    p.open(mode="w")
+def test_ck8_inplace_write_mutant_j():
+    io.open(p, "w")
 '''
     self_violations = _scan_direct_writes(_SELF_TEST_SRC)
-    # Must find all six patterns; emptying _WRITE_ATTRS or short-circuiting the loop
-    # makes this fail — proven by mutants F43-ATTRS-OFF and F43-SCAN-OFF.
-    assert len(self_violations) >= 6, f"F43 self-test: expected >= 6 violations, got {self_violations}"
+    # R10: assert the CATEGORIES detected, not just a count — prevents any single
+    # pattern family from being deleted with the self-test still green.
+    cats = {v.split(": ", 1)[1].split("(")[0].strip() for v in self_violations}
+    assert cats == {".write_text", ".write_bytes", "open", "json.dump",
+                    "shutil.copy", "os.replace", ".touch", ".rename",
+                    ".open", "io.open"}, f"F43 self-test categories: {self_violations}"
 
 
 # === F22-F26: records / receipts / startup exact-match tests ===
@@ -4264,7 +4348,7 @@ def test_ck9_owned_zombies_exceeds_owned(bundle):
     _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=99"))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: process-scan-after.txt owned_zombies=99 exceeds owned=3"
+    assert out == "failure_reason: run-1: process-scan-after.txt owned_present=3+owned_zombies=99 exceeds owned=3"
 
 
 def test_ck9_owned_zombies_abc(bundle):
@@ -4276,7 +4360,7 @@ def test_ck9_owned_zombies_abc(bundle):
     rc, out = _check(bundle)
     assert rc == 1
     # The regex match fails, so the header is not recognized
-    assert "process-scan-after.txt" in out
+    assert out == "failure_reason: run-1: process-scan-after.txt has no enumeration header"
 
 
 # F12: check_env reads pins, not literals
@@ -4285,7 +4369,7 @@ def test_ck9_env_respond_to_from_pin(bundle, monkeypatch):
     monkeypatch.setattr("check_acp_conformance.PINNED_STARTUP_RESPOND_TO", "PATCHED_RT")
     rc, out = _check(bundle)
     assert rc == 1
-    assert "BUZZ_ACP_RESPOND_TO should be 'PATCHED_RT'" in out
+    assert out == "failure_reason: run-1: env BUZZ_ACP_RESPOND_TO should be 'PATCHED_RT'"
 
 
 # F20: POST role SEQUENCE — ROLES-SET mutant killer
@@ -4353,7 +4437,9 @@ def test_ck9_a25_reorder_diagnostic(bundle, monkeypatch):
     monkeypatch.setattr(cc, "_run_check", reorder_run_check)
     rc, out = _check(bundle)
     assert rc == 1
-    assert "first out of order at #" in out
+    exp = cc.EXPECTED_CHECK_SEQUENCE
+    assert out == (f"failure_reason: golden: check sequence mismatch - first out of order at #0: "
+                   f"got {exp[1][0]}:{exp[1][1]}, expected {exp[0][0]}:{exp[0][1]}")
 
 
 # F13: startup keys parametrised over the checks dict
@@ -4376,6 +4462,7 @@ def test_ck9_startup_wrong_value_parametrised(bundle):
               "memory": cc.PINNED_STARTUP_MEMORY,
               "model": cc.PINNED_STARTUP_MODEL,
               "permission_mode": cc.PINNED_STARTUP_PERMISSION_MODE}
+    ran = []
     for k, exp in checks.items():
         wrong = "EVIL_" + k.upper()
         sp = bundle / "golden" / "run-1" / "startup-line.txt"
@@ -4383,6 +4470,7 @@ def test_ck9_startup_wrong_value_parametrised(bundle):
         new_startup = old.replace(f"{k}={exp}", f"{k}={wrong}")
         if new_startup == old:
             continue  # parenthesised values need special handling, skip
+        ran.append(k)
         _rewrite(sp, new_startup + "\n")
         lp = bundle / "golden" / "run-1" / "buzzacp.log"
         _rewrite(lp, lp.read_text().replace(f"{k}={exp}", f"{k}={wrong}"))
@@ -4392,6 +4480,8 @@ def test_ck9_startup_wrong_value_parametrised(bundle):
         # Restore for the next key
         _rewrite(sp, old + "\n")
         _rewrite(lp, lp.read_text().replace(f"{k}={wrong}", f"{k}={exp}"))
+    # R10-F16: ensure every key was actually exercised (detect silent skips)
+    assert len(ran) == len(checks), f"only {len(ran)}/{len(checks)} keys ran: skipped {sorted(set(checks) - set(ran))}"
 
 
 # F23: _EXPECTED_STARTUP_KEYS is importable
@@ -4415,7 +4505,10 @@ def test_ck9_startup_missing_keys_exact(bundle):
     _rewrite(lp, log_tokens[0] + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert out.startswith("failure_reason: run-1: startup-line missing keys:")
+    # R10-F24: compute the exact missing key list from the surviving tokens
+    present = {tok.split("=", 1)[0] for tok in tokens[0].split() if "=" in tok}
+    missing = sorted(cc._EXPECTED_STARTUP_KEYS - present)
+    assert out == f"failure_reason: run-1: startup-line missing keys: {missing}"
 
 
 # F28: the default timeout is 90
@@ -4424,3 +4517,161 @@ def test_ck9_default_timeout_is_90():
     import inspect
     sig = inspect.signature(cc.check_bundle)
     assert sig.parameters["timeout_s"].default == 90
+
+
+# ============================================================================
+# VERIFY-CK10: round 11 tests (items 1-9)
+# ============================================================================
+
+# B1: xfail anchored match — verifier's three states are reproduced on scratch copies
+# of the corpus by the gate run (see the report's PROBE table).
+
+
+# B2: F43 self-test categories — tested inline by the rewritten assertion above.
+
+
+# B3: tee_file through _require_file; manifest-post.summary through _require_file
+def test_ck10_fifo_at_tools_frame_tee_is_named(bundle, tmp_path, monkeypatch):
+    """R10-B3: a FIFO at tools/frame_tee.py is named as non-regular in < 5 s."""
+    import time
+    # monkeypatch HERE so the checker reads from tmp_path/tools/frame_tee.py
+    monkeypatch.setattr(cc, "HERE", tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir(exist_ok=True)
+    tee = tools / "frame_tee.py"
+    tee.write_text("placeholder")  # _session_bundle wrote a copy; overwrite with FIFO
+    tee.unlink()
+    os.mkfifo(tee)
+    t0 = time.monotonic()
+    rc, out = _check(bundle, timeout_s=10)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5, f"FIFO blocked for {elapsed:.1f}s"
+    assert (rc, out) == (1, "failure_reason: run-1: tools/frame_tee.py is not a regular file")
+
+
+def test_ck10_dir_named_manifest_post_summary(bundle):
+    """R10-B3: a directory named manifest-post.summary produces the exact reason."""
+    p = bundle / "golden" / "run-1" / "manifest-post.summary"
+    p.unlink()
+    p.mkdir()
+    rc, out = _check(bundle)
+    assert (rc, out) == (1, "failure_reason: run-1: manifest-post.summary is not a regular file")
+
+
+# B4: single default cap — main() omits timeout_s, check_bundle's default governs
+def test_ck10_cli_default_cap_is_below_the_runner_timeout():
+    """R10-B4: the default cap (check_bundle signature) is 0 < N < spec.json timeout_s."""
+    import inspect
+    sig_default = inspect.signature(cc.check_bundle).parameters["timeout_s"].default
+    spec = json.loads((P / "spec.json").read_text())
+    runner_timeout = spec["legs"][0]["timeout_s"]
+    assert 0 < sig_default < runner_timeout, (
+        f"default {sig_default} not in (0, {runner_timeout})")
+
+
+# B5: two-users pin consumption test
+def test_ck10_env_respond_to_two_users_from_pin(bundle, monkeypatch):
+    """R10-B5: monkeypatching the two-users pin changes the env check's expectation."""
+    monkeypatch.setattr("check_acp_conformance.PINNED_STARTUP_RESPOND_TO_TWO_USERS", "PATCHED(9)")
+    rc, out = _check(bundle)
+    assert (rc, out) == (1, "failure_reason: two-users: env BUZZ_ACP_RESPOND_TO should be 'PATCHED' for two-users")
+
+
+# Item 6: cap domain validation
+def test_ck10_cap_rejects_bool(tmp_path):
+    """R10-F03: timeout_s=True is rejected (bool is not a strict int)."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s=True)
+
+
+def test_ck10_cap_rejects_nan(tmp_path):
+    """R10-F05: timeout_s=NaN is rejected."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s=float("nan"))
+
+
+def test_ck10_cap_rejects_inf(tmp_path):
+    """R10-F05: timeout_s=inf is rejected."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s=float("inf"))
+
+
+def test_ck10_cap_rejects_float(tmp_path):
+    """R10-F05: timeout_s=1.0 is rejected."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s=1.0)
+
+
+def test_ck10_cap_rejects_string(tmp_path):
+    """R10-F05: timeout_s='5' is rejected."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s="5")
+
+
+def test_ck10_cap_rejects_overflow(tmp_path):
+    """R10-F03: timeout_s=2**31 is rejected as ValueError, not OverflowError."""
+    with pytest.raises(ValueError, match="positive integer"):
+        cc.check_bundle(tmp_path, timeout_s=2**31)
+
+
+def test_ck10_timeout_arg_out_of_range_is_a_usage_error():
+    """R10-F04: --timeout-s 2**31 is a usage error (rc 64), not malformed evidence."""
+    r = subprocess.run([sys.executable, str(CHECKER), "--timeout-s", str(2**31), "/tmp/x"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 64
+    assert r.stderr.strip() == "usage: --timeout-s must be a positive integer"
+
+
+def test_ck10_sigalrm_handler_restored_after_a_bad_cap():
+    """R10-F15: SIGALRM disposition unchanged after a failing check_bundle (AF-AP-58 sibling)."""
+    import signal
+    before = signal.getsignal(signal.SIGALRM)
+    with pytest.raises(Exception):
+        cc.check_bundle(Path("/tmp"), timeout_s=2**31)
+    after = signal.getsignal(signal.SIGALRM)
+    assert after is before, f"LEAKED: before={before}, after={after}"
+
+
+# Item 7: owned_zombies full invariant
+def test_ck10_owned_zombies_plus_present_exceeds_owned(bundle):
+    """R10-F11: owned=3 owned_present=3 owned_zombies=3 is rejected (impossible header)."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-after.txt"
+    old = sp.read_text()
+    _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=3"))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-after.txt owned_present=3+owned_zombies=3 exceeds owned=3"
+
+
+def test_ck10_teardown_zombies_plus_present_exceeds_owned(bundle):
+    """R10-F11: teardown scan also validates owned_present + owned_zombies <= owned.
+    The fixture teardown has owned=3, owned_present=0, so zombies=4 triggers the check."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-teardown.txt"
+    old = sp.read_text()
+    _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=4"))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-teardown.txt owned_present=0+owned_zombies=4 exceeds owned=3"
+
+
+# Item 8: dead-branch comments cite the real guard
+def test_ck10_dead_branch_comments_cite_a_real_guard():
+    """R10-F10: each dead-branch deletion comment names the function that actually fires."""
+    src = CHECKER.read_text().splitlines()
+    # Each (lineno-1, expected_fn) pair — line numbers are 0-based index into src
+    checks = []
+    for i, line in enumerate(src):
+        if "R9-CK-F6:" in line and "first_term is guaranteed" in line:
+            checks.append((i, "check_two_users"))
+        elif "R9-CK-F6:" in line and "new_seqs >= 2 guaranteed" in line:
+            checks.append((i, "check_two_users"))
+        elif "R9-CK-F6:" in line and "new_resp_idx guaranteed" in line:
+            checks.append((i, "check_prompt_turn"))
+        elif "R9-CK-F6:" in line and "sid1/sid2 guaranteed" in line:
+            checks.append((i, "check_prompt_turn"))
+    assert len(checks) == 4, f"expected 4 dead-branch comments, found {len(checks)}"
+    for idx, fn in checks:
+        block = "\n".join(src[max(0, idx - 1):idx + 3])
+        assert fn in block, f"line {idx + 1} cites the wrong guard: {block}"

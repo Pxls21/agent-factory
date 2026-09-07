@@ -383,6 +383,11 @@ with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
 **ATTESTED INPUTS (AF-AP-56, CI runs 106-110 red 2026-09-06):** every minted `proofs/<id>/result.json` hashes its tooling — `proofs/schemas/*`, `scripts/proof-runner`, `scripts/validate-ledger`, `proofs/registry.yaml` and the proof's own files. Any change to one of those is a tooling change: regenerate the dependent artifacts in the SAME increment (`python3 scripts/proof-runner run --proof <id> --venue sandbox --root .` for each minted id), then gate on `python3 scripts/validate-ledger integrity --root .` (PRESENT, never INVALID) + `python3 scripts/ledger-gen --root .` + `git diff --exit-code proofs/ledger.json`. A lane brief whose boundary contains an attested path names this gate. Regenerate ONLY from a world-traversable tree (the repo, never a root-only scratch
 copy: S0-11 drops to `nobody` and cannot read `0700` paths) — a real proof failure DELETES the minted artifact by design (VERIFY-N5g F8).
+**REAL-LEG CORPUS = a DECLARED input (VERIFY-CK10 F-R10-25):** the checker's real-producer tests read `S0_01_REAL_LEG_DIR`
+(sandbox default `/root/s0-01-realleg/golden`, exported by `scripts/test_summary.sh`; the PC tree by `pc_suite.sh`) under
+`S0_01_VENUE` sandbox/pc — corpus absent or incomplete = the suite FAILS by design, never skips; CI (venue unset) skips by
+declaration. A fresh container restores it with `bash scripts/realleg_sync.sh pull` (20 s over the bridge, every sha verified
+against the PC tree; `check` re-verifies).
 **PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
 from a clean detached worktree (`WT=$(mktemp -d) && git worktree add -q --detach $WT HEAD && cp .pc-bridge.env $WT/ && cd $WT &&
 bash scripts/pc_suite.sh launch -n 8 -- <files>`; ff-sync the PC clone first; `wait <RUN_ID>` takes the id `launch` prints; remove

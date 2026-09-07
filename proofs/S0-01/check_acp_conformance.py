@@ -1,6 +1,6 @@
 """S0-01 ACP conformance checker v2.2 — derives EVERYTHING from raw files, exact values.
-NOTE: ``--timeout-s`` must be a positive integer (R9-CK-F1); zero or negative silently
-cancels the SIGALRM cap.
+NOTE: ``--timeout-s`` must be a positive integer (R9-CK-F1): alarm(0) would cancel the
+cap and alarm(-N) is undefined, so a non-positive value is refused with exit 64.
 
 Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error
 (fatal usage — missing/invalid arguments, including a non-integer ``--timeout-s``) /
@@ -413,9 +413,7 @@ def check_runtime_identity(leg_dir, leg):
     _chk("agent_interpreter_realpath", PINNED_AGENT_INTERPRETER_REALPATH)
     _chk("agent_interpreter_sha256", PINNED_AGENT_INTERPRETER_SHA256)
     _chk("tee_path", PINNED_TEE_PATH)
-    tee_file = HERE / "tools" / "frame_tee.py"
-    if not tee_file.exists():
-        raise Failure(f"{leg}: tools/frame_tee.py absent (needed for tee_sha256)")
+    tee_file = _require_file(HERE / "tools" / "frame_tee.py", leg, "tools/frame_tee.py")
     _chk("tee_sha256", _sha256_file(tee_file))
     if rid.get("python_dont_write_bytecode") is not True:
         raise Failure(f"{leg}: python_dont_write_bytecode is not true")
@@ -945,9 +943,9 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
             if r.get("stopReason") == "end_turn":
                 first_term = _parse_utc(e["t_utc"])
                 break
-    # R9-CK-F6: first_term is guaranteed non-None — check_initialize_frames (runs before
-    # check_two_users via EXPECTED_CHECK_SEQUENCE) requires stopReason=="end_turn" for every
-    # prompt response, so the loop above always finds at least one end_turn.
+    # R9-CK-F6: first_term is guaranteed non-None — check_two_users' own guard at
+    # C:922-925 requires stopReason=="end_turn" for every prompt response,
+    # so the loop above always finds at least one end_turn.
     first_term_epoch = int(first_term.timestamp())
     if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
         raise Failure(f"{leg}: second mention not pending during the first turn")
@@ -955,8 +953,8 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     new_seqs = [e for e in entries if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
     term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
                  and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
-    # R9-CK-F6: new_seqs >= 2 guaranteed by check_initialize_frames (exactly 2 session/new);
-    # term_seqs >= 1 guaranteed by the stopReason=="end_turn" requirement.
+    # R9-CK-F6: new_seqs >= 2 guaranteed by check_two_users' own req_methods check
+    # at C:894-895 and C:906-907; term_seqs >= 1 by the stopReason guard above.
     if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
         raise Failure(f"{leg}: second session/new precedes the first terminal")
 
@@ -1255,9 +1253,12 @@ def check_process_evidence(leg_dir, leg):
         raise Failure(f"{leg}: process-scan-after.txt header pinned_present={hdr.group(7)} inconsistent with body ({body_pinned})")
     # R9-CK-F11: owned_zombies is validated as a non-negative int by the header regex
     # (\d+ does not match negative values); consumed for consistency checking.
-    _owned_zombies = int(hdr.group(8))  # noqa: F841 — consumed by the regex, checked below
-    if _owned_zombies > int(hdr.group(5)):
-        raise Failure(f"{leg}: process-scan-after.txt owned_zombies={_owned_zombies} exceeds owned={hdr.group(5)}")
+    # R9-CK-F11 / R10: owned_present and owned_zombies are disjoint subsets of owned
+    # (the producer's Z-state rows are excluded from table_pids before owned_present
+    # is computed, so owned_present + owned_zombies <= owned is the true invariant).
+    _owned_zombies = int(hdr.group(8))
+    if _owned_zombies + int(hdr.group(6)) > int(hdr.group(5)):
+        raise Failure(f"{leg}: process-scan-after.txt owned_present={hdr.group(6)}+owned_zombies={_owned_zombies} exceeds owned={hdr.group(5)}")
     if leg == "shutdown":
         # A20 v2.3 rule 4 / F10: shutdown after-scan body must be EMPTY — any row is a survivor
         for pid, ppid, etimes, cmd in all_procs:
@@ -1340,6 +1341,10 @@ def check_process_evidence(leg_dir, leg):
     td_body_owned = sum(1 for pid, _, _, _ in teardown_procs if pid in owned_set)
     if int(td_hdr.group(6)) != td_body_owned:
         raise Failure(f"{leg}: process-scan-teardown.txt header owned_present={td_hdr.group(6)} inconsistent with body ({td_body_owned})")
+    # R10: teardown owned_zombies + owned_present <= owned (same invariant as after-scan)
+    _td_zombies = int(td_hdr.group(8))
+    if _td_zombies + int(td_hdr.group(6)) > int(td_hdr.group(5)):
+        raise Failure(f"{leg}: process-scan-teardown.txt owned_present={td_hdr.group(6)}+owned_zombies={_td_zombies} exceeds owned={td_hdr.group(5)}")
     # F12: teardown buzz_present must be 0
     if int(td_hdr.group(4)) != 0:
         raise Failure(f"{leg}: process-scan-teardown.txt buzz_present={td_hdr.group(4)} (expected 0)")
@@ -1544,9 +1549,9 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/new":
             if session_new_idx is None:
                 session_new_idx = i
-    # R9-CK-F6: init_resp_idx is guaranteed non-None — check_initialize_frames (runs
-    # before check_golden) validates the a2c initialize response; session_new_idx is
-    # guaranteed by the req_methods check above (exactly one session/new).
+    # R9-CK-F6: init_resp_idx is guaranteed non-None — check_initialize_frames
+    # validates the a2c initialize response (protocolVersion); session_new_idx is
+    # guaranteed by the req_methods check at C:1533-1535 (exactly one session/new).
     if init_resp_idx >= session_new_idx:
         raise Failure(f"{leg}: a2c initialize response does not precede c2a session/new")
     # §8: session/new response precedes session/prompt
@@ -1560,8 +1565,8 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/prompt":
             if prompt_idx is None:
                 prompt_idx = i
-    # R9-CK-F6: new_resp_idx guaranteed by check_initialize_frames (session/new has
-    # sessionId response); prompt_idx guaranteed by req_methods (exactly one session/prompt).
+    # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:747-749 (session/new
+    # has sessionId response); prompt_idx by req_methods (exactly one session/prompt).
     if new_resp_idx >= prompt_idx:
         raise Failure(f"{leg}: session/new response does not precede session/prompt")
     # §8: every a2c notification carries <SID1>
@@ -1589,8 +1594,8 @@ def check_golden(golden_dir, leg="golden"):
         return None
 
     sid1, sid2 = _raw_sid(run1_entries), _raw_sid(run2_entries)
-    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_initialize_frames validates the
-    # session/new response (which carries sessionId) for run-1 and run-2.
+    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_prompt_turn C:747-749 validates
+    # the session/new response (which carries sessionId) for run-1 and run-2.
     if sid1 == sid2:
         raise Failure(f"{leg}: run-1 and run-2 raw sessionIds are identical")
     if run1_entries[0]["t_utc"] == run2_entries[0]["t_utc"]:
@@ -1621,8 +1626,10 @@ def _check_with_timeout(timeout_s, fn, *args):
         print(f"failure_reason: checker timed out after {timeout_s}s")
         raise SystemExit(70)
     old = _signal.signal(_signal.SIGALRM, _raise_timeout)
-    _signal.alarm(timeout_s)
     try:
+        # R10: alarm() inside the try so a raising alarm() (e.g. OverflowError on
+        # values >= 2**31) cannot leak the handler (AF-AP-58 sibling).
+        _signal.alarm(timeout_s)
         return fn(*args)
     finally:
         _signal.alarm(0)
@@ -1632,9 +1639,12 @@ def _check_with_timeout(timeout_s, fn, *args):
 def check_bundle(root: Path, timeout_s: int = 90) -> str:
     # R8-CK-F2: the wall-clock cap lives HERE so in-process consumers get it too.
     # Default 90 s < the runner's 120 s.
-    # R9-CK-F1: reject non-positive caps — alarm(0) cancels the alarm silently.
-    if timeout_s is not None and timeout_s <= 0:
-        raise ValueError("timeout_s must be a positive integer")
+    # R9-CK-F1: reject non-positive, non-int, and out-of-range caps.
+    # alarm(0) cancels the alarm silently; bool/float/NaN/inf/str are not ints;
+    # values >= 2**31 overflow signal.alarm's C int (AF-AP-58 sibling).
+    if timeout_s is not None:
+        if not (_is_strict_int(timeout_s) and 0 < timeout_s <= 2**31 - 1):
+            raise ValueError("timeout_s must be a positive integer")
     if timeout_s is not None:
         return _check_with_timeout(timeout_s, _check_bundle_uncapped, root)
     return _check_bundle_uncapped(root)
@@ -1649,7 +1659,9 @@ def _check_bundle_uncapped(root: Path) -> str:
         raise Deferred("v2 evidence not captured")
     # R9-CK-F2: walk BEFORE any read_text — a FIFO at identities.json blocks the read;
     # the walk names it as non-regular before we ever open it.
-    # 5-F18 / F19 / R8-CK-F2: walk EVERY tree the checker reads — golden/ AND fixtures dir.
+    # 5-F18 / F19 / R8-CK-F2: walk golden/ AND fixtures/ for non-regular entries.
+    # tools/frame_tee.py and the A1 manifest-post.summary pre-read go through
+    # _require_file (S_ISREG gate) instead of the walk.
     import stat as _stat
     walk_roots = [(golden, "golden"), (_fixtures(), "fixtures")]
     for walk_base, rel_base in walk_roots:
@@ -1696,6 +1708,7 @@ def _check_bundle_uncapped(root: Path) -> str:
         d = golden / leg
         post_sum_path = d / "manifest-post.summary"
         if post_sum_path.exists():
+            _require_file(post_sum_path, leg, "manifest-post.summary")
             _, post_ts = _parse_summary(post_sum_path, leg, "manifest-post.summary")
             post_summary_ts_map[leg] = post_ts
     # F20/F21: per-leg entry allowlist — required + optional files
@@ -1795,7 +1808,7 @@ def main(argv) -> int:
     # A15: optional --fixtures-dir <dir> (default: proofs/S0-01/fixtures).
     # spec.json does NOT pass it; tests use it to point at throwaway fixtures.
     args = list(argv[1:])
-    timeout_s = 90  # R8-CK-F2: default cap — 90 < the runner's 120 (spec.json)
+    timeout_s = None  # R8-CK-F2: let check_bundle's signature default apply
     if "--fixtures-dir" in args:
         idx = args.index("--fixtures-dir")
         if idx + 1 >= len(args):
@@ -1813,7 +1826,7 @@ def main(argv) -> int:
         except ValueError:
             print("usage: --timeout-s must be a positive integer", file=sys.stderr)
             return 64
-        if timeout_s <= 0:
+        if not (0 < timeout_s <= 2**31 - 1):
             print("usage: --timeout-s must be a positive integer", file=sys.stderr)
             return 64
         del args[idx:idx + 2]
@@ -1821,7 +1834,8 @@ def main(argv) -> int:
         print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
         return 64
     try:
-        print(check_bundle(Path(args[0]), timeout_s=timeout_s))
+        kwargs = {"timeout_s": timeout_s} if timeout_s is not None else {}
+        print(check_bundle(Path(args[0]), **kwargs))
         return 0
     except Deferred as d:
         print(f"deferred: {d}")
