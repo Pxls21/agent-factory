@@ -65,8 +65,11 @@ emit() {
     if [ -f .gitnexus/run.cjs ]; then run "gitnexus impact" node .gitnexus/run.cjs impact "$s" --direction upstream --repo . | grep -E '"impactedCount"|"risk"|"epistemic"|"direct"|"processes_affected"|riskNote' | head -8; else echo "unmapped — GitNexus index absent"; fi
     echo "### code-review-graph callers_of / tests_for"
     if [ -x /root/venv-crg/bin/code-review-graph ] && [ -f .code-review-graph/graph.db ]; then
-      run "crg callers_of" /root/venv-crg/bin/code-review-graph query callers_of "$s" | grep -E '"summary"|"name"' | head -12
-      run "crg tests_for" /root/venv-crg/bin/code-review-graph query tests_for "$s" | grep -E '"summary"|"name"' | head -12
+      # a bare name that several files define answers "matches N node(s), re-run with a qualified_name" — qualify it
+      # with the first FILE that defines it (crg's node id is <abs path>::<name>); the bare name stays the fallback
+      q=""; for f in "${FILES[@]}"; do grep -qE "^[[:space:]]*(async[[:space:]]+)?(def|class)[[:space:]]+$s\b" "$f" 2>/dev/null && { q="$ROOT/$f::$s"; break; }; done
+      run "crg callers_of" /root/venv-crg/bin/code-review-graph query callers_of "${q:-$s}" | grep -E '"summary"|"name"' | head -12
+      run "crg tests_for" /root/venv-crg/bin/code-review-graph query tests_for "${q:-$s}" | grep -E '"summary"|"name"' | head -12
     else echo "unmapped — code-review-graph graph absent (run: /root/venv-crg/bin/code-review-graph build)"; fi
     echo "### ripwire callers"
     if [ -x scripts/ripwire_review.sh ]; then run "ripwire callers" bash scripts/ripwire_review.sh callers "$s" | grep -oE '<callers[^>]*>|<c [^>]*/>' | head -12; else echo "unmapped — ripwire wrapper absent"; fi
