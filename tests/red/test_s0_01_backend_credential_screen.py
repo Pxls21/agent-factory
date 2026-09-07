@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
 from urllib.parse import unquote, unquote_plus
 
 import pytest
@@ -89,33 +90,40 @@ def _post(port, body: bytes, extra_headers: str = "", tail: bytes = b""):
             f"Content-Length: {len(body)}\r\n\r\n").encode() + body + tail
 
 
+_INVIS_CATEGORIES = frozenset({"Cf", "Cs", "Cc", "Mn", "Me", "Zs", "Zl", "Zp"})
+_INVISIBLE_EXTRA = frozenset({
+    chr(0x115F), chr(0x1160), chr(0x3164), chr(0xFFA0),
+    chr(0x2800), chr(0x180E),
+})
+
+
 def _absent_under_all_normalizations(text: str) -> bool:
     """F2: STRICTLY WIDER oracle than the backend's _normal_forms.
 
-    Enumerates every word over {unquote, unquote_plus, strip_ws, lower,
-    strip_zwc, utf8_redecode_lenient, strip_ctl} up to depth 6 (the backend
-    uses depth 5 with the same operators except utf8_redecode strict instead
-    of lenient; this oracle goes one depth level further and uses the lenient
-    decode so it recovers through junk bytes even when the impl regresses).
-    Never imports the backend's helper.
-    strip_zwc removes U+200B, U+FEFF, U+00AD, U+2060.
-    strip_ctl removes U+0000-U+0008, U+000B, U+000C, U+000E-U+001F,
-    U+007F-U+009F (keeps TAB/LF/CR).
+    Enumerates every word over {unquote, unquote_plus, lower,
+    utf8_redecode_lenient, strip_invis} up to depth 6 (the backend uses
+    depth 5 with the same operators plus utf8_redecode strict; this oracle
+    goes one depth level further).  Never imports the backend's helper.
+    strip_invis drops every code point whose unicodedata.category is in
+    {Cf, Cs, Cc, Mn, Me, Zs, Zl, Zp} plus _INVISIBLE_EXTRA (Lo/So fillers
+    and MVS) — subsumes the former strip_ws, strip_zwc, and strip_ctl
+    (all fully redundant, removed D5i).
     utf8_redecode_lenient: encode("latin-1").decode("utf-8", errors="ignore");
-    strictly wider than the impl's strict utf8_redecode — handles both valid
-    and invalid UTF-8 byte sequences.
+    strictly wider than the impl's strict utf8_redecode.
+    ``unquote`` is redundant with ``unquote_plus`` only for a token
+    containing no ``+``; it stays so the oracle is token-agnostic (D5h-F12).
     Seeds with json.loads of every JSON string literal (F4/F7).
     """
-    strip_ws = lambda x: re.sub(r"\s+", "", x)
-    strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
-    strip_ctl = lambda x: re.sub("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", x)
+    def strip_invis(x):
+        return "".join(c for c in x
+                       if unicodedata.category(c) not in _INVIS_CATEGORIES
+                       and c not in _INVISIBLE_EXTRA)
     def utf8_redecode_lenient(x):
         try:
             return x.encode("latin-1").decode("utf-8", errors="ignore")
         except UnicodeEncodeError:
             return x
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc,
-           utf8_redecode_lenient, strip_ctl)
+    ops = (unquote, unquote_plus, str.lower, utf8_redecode_lenient, strip_invis)
     # F4: seed with JSON-unescaped text of every JSON string literal
     forms = {text}
     for m in re.findall(r'"(?:[^"\\]|\\.)*"', text):
@@ -422,6 +430,13 @@ class TestOracleSelfTests:
         (TOKEN[:len(TOKEN)//2] + chr(0x85) + TOKEN[len(TOKEN)//2:], False),
         # D5h-F13: strip_ctl self-test (U+007F = DEL)
         (TOKEN[:len(TOKEN)//2] + chr(0x7F) + TOKEN[len(TOKEN)//2:], False),
+        # D5i: strip_invis self-tests (invisible separators by category)
+        (TOKEN[:len(TOKEN)//2] + chr(0x200C) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x200E) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x2800) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x3164) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0xFE00) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x0301) + TOKEN[len(TOKEN)//2:], False),
         # Known-good: oracle must NOT detect the token (return True)
         ('{"credential_in_unexpected_location": true}', True),
         ("Mozilla/5.0 (X11; Linux x86_64)", True),
@@ -430,6 +445,8 @@ class TestOracleSelfTests:
             "tab_split", "plus_split", "pct2b_split", "json_escaped_tab",
             "raw_utf8_mojibake", "raw_utf8_mojibake_junk",
             "c1_control_split", "del_split",
+            "zwnj_split", "lrm_split", "braille_split",
+            "hangul_filler_split", "vs1_split", "combining_split",
             "marker_record", "user_agent", "junk_alone"])
     def test_oracle_known_vectors(self, text, expected):
         assert _absent_under_all_normalizations(text) is expected
@@ -685,9 +702,12 @@ def test_credential_invalid_utf8_separator_in_header_returns_400(backend, sep):
                f"Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n"
                f"X-Trace: ").encode() + TOKEN[:mid].encode() + sep \
               + TOKEN[mid:].encode() + f"\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
+    n0 = len(_records(backend))
     resp = _raw(port, payload)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- D5h-F1: invalid UTF-8 separator via JSON escapes in body ----
@@ -707,9 +727,12 @@ def test_credential_invalid_utf8_separator_in_json_body_returns_400(backend, jso
     mid = len(TOKEN) // 2
     body = (b'{"model":"s0-01-pong","messages":[],"note":"'
             + TOKEN[:mid].encode() + json_sep.encode() + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
     resp = _raw(port, _post(port, body))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- D5h-F13: control characters in header -> 400 ----
@@ -737,14 +760,17 @@ def test_credential_control_char_in_header_value_returns_400(backend, ctl_char):
 ], ids=["DEL", "SOH"])
 def test_credential_control_char_in_json_body_returns_400(backend, json_sep, sep_id):
     """D5h-F13 JSON twin: JSON-escaped control characters splitting the token
-    must be caught by strip_ctl in the parsed-JSON-string walk."""
+    must be caught by strip_invis in the parsed-JSON-string walk."""
     port = backend["port"]
     mid = len(TOKEN) // 2
     body = (b'{"model":"s0-01-pong","messages":[],"note":"'
             + TOKEN[:mid].encode() + json_sep.encode() + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
     resp = _raw(port, _post(port, body))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- D5h-F4: unquote op is required for the bound ----
@@ -779,3 +805,163 @@ def test_raw_non_ascii_header_name_rejected_by_gate_no_record(backend):
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     assert b"\r\nConnection: close\r\n" in resp
     assert len(_records(backend)) == n0  # zero new records
+
+
+# ---- D5i-F1: ordinary accented text in a JSON body must be served (not rejected) ----
+
+@pytest.mark.parametrize("content", [
+    "caf" + chr(0xE9), chr(0x4D) + chr(0xFC) + "ller",
+    "se" + chr(0xF1) + "or", chr(0xA3) + "100",
+    "50" + chr(0xB0) + "C", chr(0xA9) + " 2026",
+], ids=["e_acute", "u_uml", "n_tilde", "pound", "degree", "copyright"])
+def test_ordinary_latin1_text_in_json_body_is_served(backend, content):
+    """D5h-F1 / D5i item 1: a well-formed UTF-8 body carrying no credential
+    must not be rejected.  RED on the PIN (the precheck re-encodes an
+    already-decoded JSON leaf to latin-1 and falsely rejects it)."""
+    port = backend["port"]
+    body = json.dumps({"model": "s0-01-pong", "messages": [
+        {"role": "user", "content": content}]}, ensure_ascii=False).encode("utf-8")
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"]["messages"][0]["content"] == content
+
+
+# ---- D5i-F2: invisible separator in header -> 400 (closed by category) ----
+
+@pytest.mark.parametrize("cp", [0x200C, 0x200D, 0x200E, 0x200F, 0x2800, 0x3164, 0xFE00, 0x180E],
+                         ids=["ZWNJ", "ZWJ", "LRM", "RLM", "BRAILLE_BLANK", "HANGUL_FILLER", "VS1", "MVS"])
+def test_credential_invisible_separator_in_header_returns_400(backend, cp):
+    """D5h-F2 / D5i item 3: invisible separators (closed by Unicode category,
+    not by a hand-written list) must be caught.  RED on the PIN (strip_zwc
+    covers only U+200B/FEFF/AD/2060; these are outside that set)."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+               b"Content-Type: application/json\r\nX-Trace: "
+               + TOKEN[:mid].encode() + chr(cp).encode("utf-8") + TOKEN[mid:].encode()
+               + b"\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    n0 = len(_records(backend))
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5i-F2: invisible separator via JSON escapes in body ----
+
+@pytest.mark.parametrize("cp,cp_id", [
+    (0x200C, "ZWNJ"), (0x200D, "ZWJ"), (0x200E, "LRM"),
+    (0x0301, "COMBINING_ACUTE"),
+], ids=["ZWNJ", "ZWJ", "LRM", "COMBINING_ACUTE"])
+def test_credential_invisible_separator_in_json_body_returns_400(backend, cp, cp_id):
+    """D5i item 3 JSON twin: invisible separator via JSON \\uNNNN escape
+    splitting the token in a JSON body value."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    esc = "\\u%04x" % cp
+    body = (b'{"model":"s0-01-pong","messages":[],"note":"'
+            + TOKEN[:mid].encode() + esc.encode() + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5i-F2: INVIS_LIST_ONLY killer: a vector OUTSIDE the _INVISIBLE_EXTRA list ----
+
+def test_credential_function_application_separator_in_header_returns_400(backend):
+    """D5i: U+2061 FUNCTION APPLICATION (category Cf, NOT in _INVISIBLE_EXTRA)
+    must be caught by the category check.  Kills INVIS_LIST_ONLY mutant."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+               b"Content-Type: application/json\r\nX-Trace: "
+               + TOKEN[:mid].encode() + chr(0x2061).encode("utf-8") + TOKEN[mid:].encode()
+               + b"\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    n0 = len(_records(backend))
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F4: C1 control wire form (valid UTF-8 → only strip_ctl/strip_invis catches it) ----
+
+@pytest.mark.parametrize("cp", [0x80, 0x85, 0x9F], ids=["PAD", "NEL", "APC"])
+def test_credential_c1_control_wire_form_returns_400(backend, cp):
+    """D5h-F4 / D5i: the UTF-8 wire form of a C1 control is VALID UTF-8, so
+    the precheck passes; only strip_invis's Cc arm catches it.  CONTROL:
+    kills CTL_PARTIAL_noC1."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+               b"Content-Type: application/json\r\nX-Trace: "
+               + TOKEN[:mid].encode() + chr(cp).encode("utf-8") + TOKEN[mid:].encode()
+               + b"\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    n0 = len(_records(backend))
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F5: refuse ≠ repair — invalid UTF-8 WITHOUT the token is still refused ----
+
+def test_invalid_utf8_without_the_token_is_refused_not_repaired(backend):
+    """D5h-F5 / D5i: the pinned design REFUSES invalid UTF-8 on byte-view sinks;
+    a lenient re-decode would serve this 200.  CONTROL: kills LENIENT_IN_IMPL."""
+    port = backend["port"]
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+               b"Content-Type: application/json\r\nX-Trace: ua-"
+               + bytes([0x80, 0xC0]) + b"-probe\r\nContent-Length: "
+               + str(len(body)).encode() + b"\r\n\r\n" + body)
+    n0 = len(_records(backend))
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F14: precheck ordering — _normal_forms not entered for invalid UTF-8 ----
+
+def test_precheck_before_closure_on_invalid_utf8(backend):
+    """D5i item 5 / D5h-F14: the precheck fires BEFORE the closure, so
+    _normal_forms is never called for an invalid-UTF-8 byte-view input.
+    Timing-free: monkeypatches _normal_forms with a counter."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sb_ordering", str(SERVER))
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    call_count = [0]
+    original_nf = sb._normal_forms
+
+    def counting_nf(s):
+        call_count[0] += 1
+        return original_nf(s)
+
+    sb._normal_forms = counting_nf
+    state = sb.State("tok", pathlib.Path("/dev/null"), 0.0)
+    # invalid UTF-8 byte view: 0x80 0xC0 are not valid UTF-8
+    s = "ua-" + bytes([0x80, 0xC0]).decode("latin-1") + "-probe"
+    result = state._carries_secret(s, byte_view=True)
+    assert result is True, "invalid UTF-8 byte view must return True"
+    assert call_count[0] == 0, (
+        f"_normal_forms was called {call_count[0]} times; precheck should short-circuit"
+    )

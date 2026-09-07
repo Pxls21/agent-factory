@@ -39,16 +39,26 @@ Framing gate (_framing_gate, first statement of do_GET and do_POST):
   Every rejection sends Connection: close and never parses a tail as a second request.
 
 Credential screen (_normal_forms / _carries_secret): breadth-first closure of
-  {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode, strip_ctl} applied to each item,
-  deduplicated, bounded at depth 5.  _normal_forms returns (forms, saturated);
-  if saturated is False (bound exceeded) the screen fails closed (True) — the
-  depth bound affects false-positive breadth, not detection.  strip_zwc removes
-  U+200B (ZWSP), U+FEFF (BOM/ZWNBSP), U+00AD (soft hyphen), U+2060 (word joiner).
-  strip_ctl removes U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F-U+009F
-  (keeps TAB/LF/CR — strip_ws already covers them; D5h-F13).
+  {unquote, unquote_plus, lower, utf8_redecode_lenient, strip_invis}
+  applied to each item, deduplicated, bounded at depth 5.
+  _normal_forms returns (forms, saturated); if saturated is False (bound
+  exceeded) the screen fails closed (True) — the depth bound affects
+  false-positive breadth, not detection.
+  strip_invis drops every code point whose unicodedata.category is in
+  {Cf, Cs, Cc, Mn, Me, Zs, Zl, Zp} plus _INVISIBLE_EXTRA (Lo/So fillers
+  and the Mongolian vowel separator) — D5i item 3.  This subsumes the former
+  strip_ws, strip_zwc, and strip_ctl ops (all fully redundant, removed D5i).
+  utf8_redecode_lenient (errors="ignore") is the sole re-decode path in
+  both closure and oracle; it handles valid UTF-8 byte-view recovery and
+  junk bytes between token halves in already-decoded JSON leaves (D5i).
   _has_invalid_utf8_bytes rejects the request (fail closed) when the latin-1
-  view of a screened field contains bytes >= 0x80 that are not part of a valid
-  UTF-8 sequence (D5h-F1).
+  view of a BYTE-VIEW field (headers, path/query, raw body) contains bytes
+  >= 0x80 that are not part of a valid UTF-8 sequence (D5h-F1).  It does
+  NOT run on parsed-JSON leaves (byte_view=False, D5i item 1) — those
+  strings are already decoded and re-encoding them manufactures bytes that
+  were never on the wire.
+  Confusable substitution (homoglyphs) is out of contract — the token's
+  bytes are then not in the record.
   Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
   bound-exceeded path and blanks the record (false positive).
   The screen is applied per item (path, header names, header values, serialized
@@ -80,6 +90,7 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, unquote_plus
@@ -102,6 +113,16 @@ _CREDENTIAL_HEADERS = frozenset({
     "authorization", "proxy-authorization", "x-api-key", "api-key",
     "x-auth-token", "cookie",
 })
+# Characters that are invisible/zero-width but whose Unicode general category
+# is NOT in _INVIS_CATEGORIES (they are Lo or So): Hangul fillers, Braille
+# blank, and the Mongolian vowel separator (Cf in Unicode 15.0 but historically
+# unstable — belt-and-suspenders).
+_INVISIBLE_EXTRA = frozenset({
+    chr(0x115F), chr(0x1160), chr(0x3164), chr(0xFFA0),  # Hangul/halfwidth fillers (Lo)
+    chr(0x2800),  # Braille blank (So)
+    chr(0x180E),  # Mongolian vowel separator (Cf in 15.0)
+})
+_INVIS_CATEGORIES = frozenset({"Cf", "Cs", "Cc", "Mn", "Me", "Zs", "Zl", "Zp"})
 
 
 class _ParseError(Exception):
@@ -114,10 +135,12 @@ def _has_invalid_utf8_bytes(s: str) -> bool:
     """True if *s* contains bytes >= 0x80 (in its latin-1 view) that do not
     form a valid UTF-8 sequence.
 
-    This fixture serves ONE pinned client through OmniRoute; invalid UTF-8 in
-    any screened field has no legitimate producer here, and a strict decoder's
-    failure was the only thing hiding a real Unicode separator (VERIFY-D5g F1:
-    bytes 0xE2 0x80 0x80 -> 400, bytes 0xE2 0x80 0x80 0x80 -> 200 verbatim).
+    Called ONLY on byte-view sinks (headers, path/query, raw body) where
+    ``http.server`` hands over a latin-1 view of wire bytes.  Invalid UTF-8
+    in those fields has no legitimate producer (this fixture serves ONE
+    pinned client through OmniRoute).  NOT called on parsed-JSON leaves
+    (``json.loads`` has already decoded them — re-encoding manufactures
+    bytes that were never on the wire; D5h-F1 / D5i item 1).
     A string that cannot latin-1-encode is not a byte view and passes.
     """
     try:
@@ -134,8 +157,8 @@ def _has_invalid_utf8_bytes(s: str) -> bool:
 
 
 def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
-    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc,
-    utf8_redecode, strip_ctl}.
+    """Breadth-first closure of {unquote, unquote_plus, lower,
+    utf8_redecode_lenient, strip_invis}.
 
     Returns (forms, saturated).  *saturated* is True when the frontier was
     exhausted (all reachable forms found); False when the depth bound (5) was
@@ -143,20 +166,31 @@ def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
 
     Accepted risk (D5d-F12, restored): junk like ``%25252541`` triggers the
     bound-exceeded path and blanks the record (false positive).
+
+    strip_invis subsumes the former strip_ws, strip_zwc, and strip_ctl ops —
+    all three are fully redundant under its category set and were removed
+    (D5i).  utf8_redecode_lenient (errors="ignore") is the sole re-decode
+    path in both closure and oracle; the strict utf8_redecode was removed
+    (D5i follow-up: subsumed, no test could pin it).
     """
-    strip_ws = lambda x: re.sub(r"\s+", "", x)
-    strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
-    strip_ctl = lambda x: re.sub("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", x)
-    def utf8_redecode(x):
-        """latin-1 re-decode: http.server reads header bytes as latin-1, so
-        a UTF-8-encoded separator (e.g. U+200B = e2 80 8b) arrives as three
-        latin-1 chars that strip_ws/strip_zwc never touch.  This op recovers
-        the real Unicode and the next closure layers strip it."""
+    def strip_invis(x):
+        """Drop every code point whose category is in _INVIS_CATEGORIES or
+        that is in _INVISIBLE_EXTRA.  The C1 arm (U+0080-U+009F, category Cc)
+        is doubly covered: strip_invis catches it at depth 1, and
+        utf8_redecode_lenient recovers the token through the lone 0x80 byte
+        at depth 2 (D5i CTL_PARTIAL_noC1 equivalence)."""
+        return "".join(c for c in x
+                       if unicodedata.category(c) not in _INVIS_CATEGORIES
+                       and c not in _INVISIBLE_EXTRA)
+    def utf8_redecode_lenient(x):
+        """latin-1 re-decode (lenient, errors="ignore"): recovers real
+        Unicode from byte-view latin-1 chars and drops invalid bytes.
+        Sole re-decode path in both closure and oracle (D5i follow-up)."""
         try:
-            return x.encode("latin-1").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
+            return x.encode("latin-1").decode("utf-8", errors="ignore")
+        except UnicodeEncodeError:
             return x
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode, strip_ctl)
+    ops = (unquote, unquote_plus, str.lower, utf8_redecode_lenient, strip_invis)
     frontier = {s}
     seen = {s}
     for _depth in range(5):
@@ -288,19 +322,24 @@ class State:
         self.seq = 0
         self.lock = threading.Lock()
 
-    def _carries_secret(self, s: str) -> bool:
+    def _carries_secret(self, s: str, *, byte_view: bool) -> bool:
         """True if the configured token appears in ANY normal form of *s*,
-        or if the closure did not saturate (fail closed), or if *s* contains
-        invalid UTF-8 bytes in its latin-1 view (fail closed — D5h-F1).
+        or if the closure did not saturate (fail closed), or — when
+        *byte_view* is True — if *s* contains invalid UTF-8 bytes in its
+        latin-1 view (fail closed — D5h-F1).
 
-        Normal forms are the closure of {unquote, unquote_plus, strip_ws,
-        lower, strip_zwc, utf8_redecode, strip_ctl} over *s*, bounded at
-        depth 5; if the bound is exceeded the screen fails closed.
+        *byte_view* is True for strings ``http.server`` hands over as a
+        latin-1 view of wire bytes (header names, header values, path/query,
+        the raw body): there the invalid-UTF-8 precheck is correct.
+        *byte_view* is False for strings ``json.loads`` has already decoded
+        (the parsed-JSON leaf walk): re-encoding them to latin-1 manufactures
+        bytes that were never on the wire, and rejects ordinary accented text
+        such as ``cafe`` + U+00E9 (D5h-F1 / D5i item 1).
 
-        The false-positive cost of the bound-exceeded arm is the D5d-F12
-        accepted risk (see ``_normal_forms``).
+        Confusable substitution (homoglyphs) is out of contract — the
+        token's bytes are then not in the record.
         """
-        if _has_invalid_utf8_bytes(s):
+        if byte_view and _has_invalid_utf8_bytes(s):
             return True                       # fail closed on invalid UTF-8
         t = self.token
         forms, saturated = _normal_forms(s)
@@ -318,31 +357,33 @@ class State:
         received_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond:06d}Z"
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
-        # _carries_secret checks: the closure of {unquote, unquote_plus, strip_ws,
-        # lower, strip_zwc, utf8_redecode, strip_ctl} at depth 5; fails closed when
+        # _carries_secret checks: the closure of {unquote, unquote_plus, lower,
+        # utf8_redecode_lenient, strip_invis} at depth 5; fails closed when
         # the bound is exceeded.
         # Keyed on the configured secret, not the request-supplied bearer,
         # so a request without Authorization is still screened (4-F1/6-F3).
         # M12: exempts ONLY 'authorization' by name.
         leaked = False
-        if path and self._carries_secret(path):
+        if path and self._carries_secret(path, byte_view=True):
             leaked = True
         for k, v in headers.items():
             if k.lower() != "authorization":
-                if self._carries_secret(str(k)) or self._carries_secret(str(v)):
+                if self._carries_secret(str(k), byte_view=True) or self._carries_secret(str(v), byte_view=True):
                     leaked = True
         if body is not None:
             body_str = body if isinstance(body, str) else json.dumps(body)
-            if self._carries_secret(body_str):
+            if self._carries_secret(body_str, byte_view=True):
                 leaked = True
             # F1: json.dumps re-escapes whitespace chars to \t \n etc., hiding
             # a whitespace-split token. Walk parsed string values directly.
+            # byte_view=False: json.loads already decoded these; the precheck
+            # must NOT re-encode them (D5h-F1 / D5i item 1).
             if not leaked and not isinstance(body, str):
                 for s in _iter_json_strings(body):
-                    if self._carries_secret(s):
+                    if self._carries_secret(s, byte_view=False):
                         leaked = True
                         break
-        if raw_body and self._carries_secret(raw_body.decode("latin-1")):
+        if raw_body and self._carries_secret(raw_body.decode("latin-1"), byte_view=True):
             leaked = True
         if leaked:
             rec_path = None

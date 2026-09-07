@@ -2012,3 +2012,20 @@ def test_json_safe_copy_on_write():
     assert body == before, "_json_safe mutated the input"
     assert out is not body, "_json_safe returned the same object"
     assert out["a"][0]["x"] == "<non-finite>"
+
+
+# -- D5h-F3 / D5i item 4: State.record does not mutate the caller body ---
+
+def test_record_does_not_mutate_the_caller_body(tmp_path):
+    """D5h-F3 / D5i: State.record must not mutate the body dict the caller
+    still reads (model, messages, stream fields).  Mutant JSONSAFE_INLINE_IN_RECORD
+    (module _json_safe kept, record calls an in-place walk) dies here."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scripted_backend", str(SERVER))
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    st = sb.State("tok", tmp_path / "rec", 0.0)
+    body = {"a": [{"x": float("nan")}]}
+    before = copy.deepcopy(body)
+    st.record("POST", "/v1/chat/completions", {}, body, "127.0.0.1", None)
+    assert body == before, "State.record mutated the caller's body"
