@@ -651,7 +651,10 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
   `slopo review --base <push-base>`) and **sentrux** (architecture health: `scripts/sentrux_review.sh
   save` BEFORE a build lane, `compare` after it, `check` any time; rules in `.sentrux/rules.toml`;
   pinned by digest in `upstream.lock.yaml`; provenance `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`
-  §sentrux). Attach a lane's `compare` delta to its verify brief; a "degraded" line is information
+  §sentrux). **ripwire** (owner ask 2026-09-07, adopted as the SIXTH advisory instrument): ranked symbol map + static call
+  graph, `scripts/ripwire_review.sh map|for|callers|impact|exercises|test-gate|edit-check|skipped`; blind to subprocess
+  edges (a zero is "none found", never "none exists"); binary pinned by digest in `upstream.lock.yaml`, the bundled
+  skills/hooks are never installed. Attach a lane's `compare` delta to its verify brief; a "degraded" line is information
   for the verifier, not a verdict. Known blind spot: Python import resolution is weak on this tree,
   so its coupling/cycle numbers are near-empty here; complexity and function length are the live signal.
 - **DORMANT/reachability claims need TWO independent instruments, named in the report** (e.g.

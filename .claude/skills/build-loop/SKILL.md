@@ -160,6 +160,11 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    where the failure was observed** — re-run the exact entry point that failed (server E2E, full
    solve()), not a narrower harness (a bug "fixed" twice at an inner layer was still broken at the
    outer entry point).
+   **4a. A fix that moves an install EARLIER moves its catching scope with it (2026-09-07, tee F13).** A
+   signal handler, hook or callback registered before the `try:` that catches what it raises turns every event
+   in the gap into an uncaught exception; the fix's test must reach the WINDOW it names deterministically —
+   make the window long (a 200 MB entrypoint, a child-exists poll), never a fixed delay, and paste the red
+   state on the unfixed tree (AF-AP-58).
 5. **Close the loop in writing — and ECHO before closing (owner mandate, ratified into the
    light loop 2026-08-22).** Any real defect this increment FOUND or FIXED gets `/bug-echo`
    run on its anti-pattern and the class registered in the ANTI-PATTERN REGISTRY atop

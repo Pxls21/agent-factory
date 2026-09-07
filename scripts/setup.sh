@@ -164,6 +164,32 @@ if [ -x /root/.local/bin/sentrux ] && [ ! -d /root/.sentrux/plugins/python ]; th
 fi
 [ -x /root/.local/bin/sentrux ] && SENTRUX_DEV=1 SENTRUX_SKIP_GRAMMAR_DOWNLOAD=1 /root/.local/bin/sentrux analytics off >/dev/null 2>&1 || true
 
+# ripwire (owner ask 2026-09-07): the SIXTH, ADVISORY code-intel instrument — ranked symbol map
+# + static call graph (`scripts/ripwire_review.sh`; never a gate). Pinned by digest
+# (upstream.lock.yaml `advisory_tooling.ripwire`); no telemetry found (documented offline binary).
+# RULE: install ONLY the binary; never run the bundled skills/install.sh; never copy the hooks.
+RIPWIRE_VER="v0.4.0"
+RIPWIRE_ASSET_SHA="fd0bd0fa849c0e08db59a6a7e5c2d3e9bc062d3089b54196daf9332cd21bbfc8"
+RIPWIRE_BIN_SHA="6a1957b829f74e29b16caf550e90ea5504afa3ebd200c0b253f2f3afaae76aa3"
+if [ -x /root/.local/bin/ripwire ] && [ "$(sha256sum /root/.local/bin/ripwire | cut -d" " -f1)" = "$RIPWIRE_BIN_SHA" ]; then
+  ok "ripwire $RIPWIRE_VER present (digest verified)"
+else
+  TMPD=$(mktemp -d)
+  if curl -fsSL -m 300 -o "$TMPD/ripwire.tar.gz" "https://github.com/redhat-et/ripwire/releases/download/$RIPWIRE_VER/ripwire-${RIPWIRE_VER#v}-linux-x64.tar.gz" \
+     && [ "$(sha256sum "$TMPD/ripwire.tar.gz" | cut -d" " -f1)" = "$RIPWIRE_ASSET_SHA" ]; then
+    tar xzf "$TMPD/ripwire.tar.gz" -C "$TMPD" --strip-components=1 ripwire-${RIPWIRE_VER#v}-linux-x64/ripwire \
+      && [ "$(sha256sum "$TMPD/ripwire" | cut -d" " -f1)" = "$RIPWIRE_BIN_SHA" ] \
+      && install -m 0755 "$TMPD/ripwire" /root/.local/bin/ripwire \
+      && ok "ripwire $RIPWIRE_VER installed (digest verified)"
+    if [ $? -ne 0 ]; then
+      warn "ripwire: extraction, binary digest check or install failed — advisory instrument unavailable this session"
+    fi
+  else
+    warn "ripwire: download or asset digest check failed (network?) — advisory instrument unavailable this session"
+  fi
+  rm -rf "$TMPD"
+fi
+
 # GitNexus: pinned global install (1.6.10). --ignore-scripts avoids the
 # @ladybugdb/core postinstall network fetch racing npm's extract; the explicit
 # rebuild then runs it once, deterministically.

@@ -114,3 +114,45 @@ tree is weak (4 of 390 import specs resolved on 2026-09-05), so the dependency-g
 (coupling, cycles, distance from main sequence) are near-empty for this repo today — the live
 signal is complexity and function length. Last upstream commit on main: 2026-03-18 (six months
 before adoption); releases continued to v0.5.7.
+
+## ripwire (github.com/redhat-et/ripwire) — ADOPTED 2026-09-07 as an ADVISORY instrument (owner ask)
+
+What it is: a C++ single binary (Apache-2.0) that parses a codebase with tree-sitter, builds a
+static call graph, ranks symbols by Personalized PageRank, and streams a deterministic minified XML
+map to stdout. Zero runtime deps. Supports 18 languages (C/C++, Python, TypeScript, JavaScript,
+Go, Rust, Java, Ruby, PHP, Lua, Bash, Swift, C#, ObjC, Metal, CUDA, plus JSON/TOML/YAML/Markdown
+for config keys and section headings).
+
+Provenance: tag `v0.4.0` = commit `e663ca8f8a9340ffc38c777138c24825509a87d2`. Asset
+`ripwire-0.4.0-linux-x64.tar.gz` sha256 `fd0bd0fa849c0e08db59a6a7e5c2d3e9bc062d3089b54196daf9332cd21bbfc8`
+(matches the published `.tar.gz.sha256`; INTEGRITY ONLY — unsigned release, no GPG or Sigstore
+signature). Binary sha256 `6a1957b829f74e29b16caf550e90ea5504afa3ebd200c0b253f2f3afaae76aa3`.
+The tarball also contains `skills/` (18 SKILL dirs + `install.sh` that symlinks into
+`~/.claude/skills`) and `hooks/` (5 shell hooks for claude/codex). **RULE: install ONLY the binary
+to `/root/.local/bin/ripwire`; never run `skills/install.sh`; never copy the hooks.**
+
+How it is wired here: `scripts/ripwire_review.sh map|for|callers|impact|exercises|test-gate|edit-check|skipped`
+(never a gate). The wrapper bakes in the exclude set (`sandbox-kit`, `.claude`, `graft`, `.agents`,
+`harness-ports/ports`) and routes `--limit` to flat verbs, `--top-k` to `map` only (the tool
+rejects `--top-k` on flat verbs with exit 1). Pins: `upstream.lock.yaml` →
+`advisory_tooling.ripwire` (release v0.4.0, asset + binary sha256; `scripts/setup.sh` installs by
+digest). The binary writes a per-root cache under `TMPDIR`; `--no-cache` forces cold.
+
+Telemetry: `strings` and `--help` audit found no telemetry subcommands, no analytics, no outbound
+URLs beyond localhost (`http://127.0.0.1`, `http://localhost` for the MCP loopback listener) and
+documentation references. The binary is documented as offline. No opt-out needed — there is
+nothing to opt out of.
+
+Flag quirks (verified 2026-09-07): flat verbs (`--callers`, `--impact`, `--exercises`,
+`--test-gate`, `--edit-check`, `--skipped` and others) reject `--top-k` (exit 1) — use
+`--limit=N` instead. `--for` ignores `--top-k`; it routes BM25 and self-limits via
+`--pack-top-n`. `--top-k` applies to the default map, `--query`, and `--format=candidates`.
+
+KNOWN BLIND SPOT (documented by the tool itself): subprocess-exercised tools (e.g.
+`Popen([sys.executable, tool])`) produce zero call edges. `--exercises` and `--test-gate` report
+`tests="0" impacted="0"` for them. A ripwire zero is "none found", never "none exists". This
+means repo tooling tested through subprocess (like this project's `frame_tee.py`) reads
+all-untested. The two-instrument rule for DORMANT claims stands regardless.
+
+PC install (owner-run, NOT done by setup.sh): download the same tarball, verify the asset digest,
+extract the binary only, verify the binary digest, install to `~/.local/bin/ripwire`.

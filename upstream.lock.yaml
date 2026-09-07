@@ -134,3 +134,14 @@ advisory_tooling:
     role: advisory_architecture_health_sensor_for_build_lanes
     adopted: "2026-09-05 (owner decision; same standing as slopo)"
     telemetry: "opted out (sentrux analytics off); update check disabled (SENTRUX_DEV=1); grammars from the pinned tarball only"
+  ripwire:
+    repository: https://github.com/redhat-et/ripwire.git
+    release_tag: v0.4.0
+    commit: e663ca8f8a9340ffc38c777138c24825509a87d2
+    asset_name: ripwire-0.4.0-linux-x64.tar.gz
+    asset_sha256: fd0bd0fa849c0e08db59a6a7e5c2d3e9bc062d3089b54196daf9332cd21bbfc8
+    binary_sha256: 6a1957b829f74e29b16caf550e90ea5504afa3ebd200c0b253f2f3afaae76aa3
+    license: Apache-2.0
+    role: advisory_code_intel_instrument_ranked_symbol_map_and_call_graph
+    adopted: "2026-09-07 (owner ask; advisory, never a gate; binary only — bundled skills/hooks NOT installed)"
+    telemetry: "no phone-home found (strings + --help audit: no telemetry/analytics subcommands, no outbound URLs beyond localhost/docs; the binary is documented offline — writes a per-root cache under TMPDIR only)"

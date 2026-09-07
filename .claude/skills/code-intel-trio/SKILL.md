@@ -108,3 +108,32 @@ Blind spot (measured 2026-09-05): Python import resolution here is 4/390 specs, 
 and the main-sequence distance are near-empty on this tree; complexity/length are the live signal.
 Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.sentrux`;
 `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §sentrux. Missing binary → `scripts/setup.sh`.
+
+## ripwire — the sixth, ADVISORY instrument (ranked symbol map + call graph; adopted 2026-09-07)
+
+Axis: not reachability (the quartet) or structure (sentrux) but ORIENTATION and CALL-GRAPH QUERIES
+in a single deterministic binary. Use for:
+- **Cold orientation map:** `bash scripts/ripwire_review.sh map --top-k=60` — ranked symbols by
+  PageRank with call edges, ~2.8k tokens, 1.6 s cold. The starting point when reading a new
+  subsystem.
+- **Semantic lookup (SECOND opinion after `graft ask`, never instead):**
+  `bash scripts/ripwire_review.sh for "where is the status file written"` — BM25 route, ~7 s /
+  ~4.1k tokens. Use when graft returned nothing or you want a second instrument's take.
+- **Pre-edit advisory line:** `bash scripts/ripwire_review.sh edit-check SYMBOL` — callers +
+  exercises + test-gate in one pass. An advisory complement to the mandatory GitNexus `impact`.
+- **Test coverage advisory:** `bash scripts/ripwire_review.sh test-gate FILE...` — reports
+  tested/untested symbols. Advisory only, never a gate.
+- **DORMANT claim (direct-call edges ONLY):** `bash scripts/ripwire_review.sh exercises TESTFILE`
+  as a SECOND instrument when the edge is a direct call — NEVER for subprocess-exercised tools
+  (the tool reports `tests="0" impacted="0"` for them; the blind spot is documented and
+  `counts_floor="1"` is the tool's own disclosure). For subprocess edges, use the quartet.
+- **Call hierarchy:** `bash scripts/ripwire_review.sh callers SYM` /
+  `bash scripts/ripwire_review.sh impact SYM`.
+- **Parser coverage:** `bash scripts/ripwire_review.sh skipped` — files the parser could not
+  index (extension-less scripts, unsupported extensions).
+
+Wrapper: `scripts/ripwire_review.sh` bakes in the five `--exclude` flags and routes `--limit` to
+flat verbs (default `RIPWIRE_LIMIT=20`), `--top-k` to `map` only.
+Never a gate: a ripwire zero is "none found", never "none exists".
+Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.ripwire`; no telemetry found.
+`sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §ripwire. Missing binary → `scripts/setup.sh`.
