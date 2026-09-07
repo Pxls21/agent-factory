@@ -5,7 +5,8 @@
 #   scripts/realleg_sync.sh pc-build   materialise /home/rocco/s0-01-pinned/realleg/golden/<leg> on the PC from the
 #                                      captured framedirs .markers/v2-<leg> with collect_leg.sh's exclusions plus the
 #                                      manifest sidecars (which the graded sandbox corpus never carried); prints the
-#                                      tree's sha256 manifest
+#                                      tree's sha256 manifest and writes it beside the tree as golden.pc.sha256 (the
+#                                      checker's declaration test verifies every sha against that sidecar on both venues)
 #   scripts/realleg_sync.sh pull       bring that tree home to ${S0_01_REAL_LEG_DIR:-/root/s0-01-realleg/golden}: one
 #                                      tar.gz WITHOUT the 1.5 MB manifest bodies (each is byte-identical to the
 #                                      committed baseline gz — checked by sha256, materialised from it), then EVERY
@@ -26,7 +27,7 @@ manifest() { (cd "$1" && LC_ALL=C find . -type f | LC_ALL=C sort | xargs sha256s
 
 case "${1:-}" in
 pc-build)
-  pc "set -e; for leg in $LEGS; do rm -rf $G/\$leg; mkdir -p $G/\$leg; (cd $M/v2-\$leg && tar cf - --exclude=buzzacp.raw.log --exclude='manifest-*.log' --exclude='*.launch.log' --exclude='manifest-*.txt.gz.sha256' .) | tar xf - -C $G/\$leg; done; cd $G && LC_ALL=C find . -type f | LC_ALL=C sort | xargs sha256sum" ;;
+  pc "set -e; for leg in $LEGS; do rm -rf $G/\$leg; mkdir -p $G/\$leg; (cd $M/v2-\$leg && tar cf - --exclude=buzzacp.raw.log --exclude='manifest-*.log' --exclude='*.launch.log' --exclude='manifest-*.txt.gz.sha256' .) | tar xf - -C $G/\$leg; done; cd $G && LC_ALL=C find . -type f | LC_ALL=C sort | xargs sha256sum | tee $G/../golden.pc.sha256" ;;
 pull)
   S=$(mktemp -d)
   pc "cd $G && tar czf /tmp/s0-01-realleg.tgz --exclude='manifest-*.txt.gz' . && LC_ALL=C find . -type f | LC_ALL=C sort | xargs sha256sum > /tmp/s0-01-realleg.sha256 && wc -c /tmp/s0-01-realleg.tgz /tmp/s0-01-realleg.sha256"
