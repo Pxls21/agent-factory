@@ -13,11 +13,13 @@ The ``final`` field is true only on the clean-exit write; the SIGTERM
 write is non-final (final=false, exit fields null, write_errors includes
 "terminated: SIGTERM", exit 70).
 
-After the agent exits, the tee drains the a2c pump to EOF (or a 5 s stall
-timeout for grandchild stragglers) and drains the c2a pump UNTIL CLIENT
-EOF -- there is no stall timeout on the c2a side.  A client that never
-closes keeps the tee alive; that is buzz-acp's shutdown responsibility
-(it TERMs/KILLs the group), and the SIGTERM path covers it.
+After the agent exits, the tee drains BOTH pumps to EOF -- there is no
+stall timeout on either side.  A client that never closes (c2a) or a
+grandchild that holds the agent's stdout (a2c) keeps the tee alive; that
+is buzz-acp's shutdown responsibility (it TERMs/KILLs the group), and
+the SIGTERM path covers it.  The only uncovered SIGTERM window is Python
+interpreter startup before the handler install (default disposition:
+rc -15, no status file).
 
 A frame the client wrote before the tee exits MUST be recorded in
 frames-client-to-agent.jsonl, or the tee exits 70 (EX_SOFTWARE).  An agent
@@ -114,50 +116,19 @@ def main():
         raise SystemExit(64)
     os.makedirs(framedir, exist_ok=True)
 
-    proc = subprocess.Popen([agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    # --- All state that _write_status and the _Terminated handler need,
+    #     initialised BEFORE the handler install so the except path never
+    #     hits an uninitialised closure variable. ---
+    proc = None  # pre-init: handler checks before terminate
 
-    # --- runtime-identity.json (written at spawn) ---
-    tee_path = os.path.realpath(__file__)
-    agent_realpath = os.path.realpath(agent)
-    interp_realpath = None
-    interp_sha256 = None
-    try:
-        interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
-        interp_sha256 = _sha256_file(interp_realpath)
-    except (OSError, IOError):
-        pass
-
-    identity = {
-        "tee_path": tee_path,
-        "tee_sha256": _sha256_file(tee_path),
-        "tee_pid": os.getpid(),
-        "agent_argv": [agent],
-        "agent_realpath": agent_realpath,
-        "agent_entrypoint_sha256": _sha256_file(agent_realpath),
-        "agent_child_pid": proc.pid,
-        "agent_interpreter_realpath": interp_realpath,
-        "agent_interpreter_sha256": interp_sha256,
-        "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
-        "spawned_at_utc": _utc_now(),
-    }
-    with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
-        json.dump(identity, f, indent=2)
-        f.write("\n")
-
-    # --- shared timeline state ---
     lock = threading.RLock()
     seq = [0]
-    tl = open(os.path.join(framedir, "timeline.jsonl"), "ab")
-
-    # --- shared counters for tee-status (P2 drain tracking) ---
     state = {
         "recorded_c2a": 0, "recorded_a2c": 0,
         "forwarded_c2a": 0, "forwarded_a2c": 0,
         "write_errors": [],
         "stdin_reader_done": False,
     }
-
-    # --- F7: bounded write-error tracking (one entry per arm+direction) ---
     _error_counts = {}
 
     def _record_write_error(arm, direction, error_text):
@@ -178,7 +149,6 @@ def main():
                     state["write_errors"][i] = "%s (%d occurrences)" % (base, count)
                     break
 
-    # --- A21d: atomic running-status writer ---
     status_lock = threading.Lock()
     _status_path = os.path.join(framedir, "tee-status.json")
     _status_tmp = os.path.join(framedir, ".tee-status.tmp")
@@ -222,217 +192,232 @@ def main():
                 _status_write_failures[0] += 1
                 return False
 
-    def pump_fd(fd, dst, direction, dir_path, close_dst):
-        """Pump from a raw file descriptor (stdin fd 0).
-
-        After a forward error (agent exited), continues recording remaining
-        frames so they are preserved in the directional file and timeline.
-        """
-        df = open(dir_path, "ab")
-        forward_broken = False
-        try:
-            for line in _read_lines_from_fd(fd):
-                text = line.decode("utf-8", errors="replace")
-                if text.endswith("\r\n"):
-                    stripped = text[:-2]
-                elif text.endswith("\n"):
-                    stripped = text[:-1]
-                else:
-                    stripped = text
-                try:
-                    frame = json.loads(stripped, parse_constant=_reject_nan_inf,
-                                       parse_float=_reject_overflow_float)
-                    entry = {"dir": direction, "frame": frame}
-                except (json.JSONDecodeError, ValueError):
-                    raw_b64 = base64.b64encode(line).decode("ascii")
-                    entry = {"dir": direction, "frame": None,
-                             "raw": stripped, "raw_b64": raw_b64}
-                with lock:
-                    t_utc = _utc_now()
-                    t_mono = time.monotonic_ns()
-                    seq[0] += 1
-                    entry["seq"] = seq[0]
-                    entry["t_utc"] = t_utc
-                    entry["t_mono_ns"] = t_mono
-                    # F17: timeline FIRST, then directional
-                    try:
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
-                    except OSError as e:
-                        _record_write_error("timeline", direction, str(e))
-                    try:
-                        df.write(line)
-                        df.flush()
-                    except OSError as e:
-                        _record_write_error("directional", direction, str(e))
-                    state["recorded_%s" % direction] += 1
-                    # R2: status snapshot inside the timeline lock so that
-                    # timeline_last_seq - updated_seq is at most 1 after SIGKILL
-                    _write_status()
-                # forward outside the lock (can block on pipe full)
-                forward_error = None
-                if not forward_broken:
-                    try:
-                        dst.write(line)
-                        dst.flush()
-                    except BrokenPipeError:
-                        forward_error = "forward %s: BrokenPipeError" % direction
-                        forward_broken = True
-                        if close_dst:
-                            try:
-                                dst.close()
-                            except Exception:
-                                pass
-                    except OSError as e:
-                        forward_error = "forward %s: %s" % (direction, e)
-                        forward_broken = True
-                        if close_dst:
-                            try:
-                                dst.close()
-                            except Exception:
-                                pass
-                # R2: update forwarded under the timeline lock
-                with lock:
-                    if forward_error is not None:
-                        state["write_errors"].append(forward_error)
-                    elif not forward_broken:
-                        state["forwarded_%s" % direction] += 1
-        finally:
-            try:
-                df.close()
-            except OSError as e:
-                with lock:
-                    state["write_errors"].append("directional %s close: %s" % (direction, e))
-            if direction == "c2a":
-                state["stdin_reader_done"] = True
-            if close_dst and not forward_broken:
-                try:
-                    dst.close()
-                except Exception:
-                    pass
-
-    def pump_pipe(src, dst, direction, dir_path, close_dst):
-        """Pump from a subprocess pipe (proc.stdout).
-
-        After a forward error, continues recording remaining frames.
-        """
-        df = open(dir_path, "ab")
-        forward_broken = False
-        try:
-            while True:
-                line = src.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace")
-                if text.endswith("\r\n"):
-                    stripped = text[:-2]
-                elif text.endswith("\n"):
-                    stripped = text[:-1]
-                else:
-                    stripped = text
-                try:
-                    frame = json.loads(stripped, parse_constant=_reject_nan_inf,
-                                       parse_float=_reject_overflow_float)
-                    entry = {"dir": direction, "frame": frame}
-                except (json.JSONDecodeError, ValueError):
-                    raw_b64 = base64.b64encode(line).decode("ascii")
-                    entry = {"dir": direction, "frame": None,
-                             "raw": stripped, "raw_b64": raw_b64}
-                with lock:
-                    t_utc = _utc_now()
-                    t_mono = time.monotonic_ns()
-                    seq[0] += 1
-                    entry["seq"] = seq[0]
-                    entry["t_utc"] = t_utc
-                    entry["t_mono_ns"] = t_mono
-                    try:
-                        tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
-                        tl.flush()
-                    except OSError as e:
-                        _record_write_error("timeline", direction, str(e))
-                    try:
-                        df.write(line)
-                        df.flush()
-                    except OSError as e:
-                        _record_write_error("directional", direction, str(e))
-                    state["recorded_%s" % direction] += 1
-                    # R2: status snapshot inside the timeline lock
-                    _write_status()
-                # forward outside the lock (can block on pipe full)
-                forward_error = None
-                if not forward_broken:
-                    try:
-                        dst.write(line)
-                        dst.flush()
-                    except BrokenPipeError:
-                        forward_error = "forward %s: BrokenPipeError" % direction
-                        forward_broken = True
-                    except OSError as e:
-                        forward_error = "forward %s: %s" % (direction, e)
-                        forward_broken = True
-                # R2: update forwarded under the timeline lock
-                with lock:
-                    if forward_error is not None:
-                        state["write_errors"].append(forward_error)
-                    elif not forward_broken:
-                        state["forwarded_%s" % direction] += 1
-        finally:
-            try:
-                df.close()
-            except OSError as e:
-                with lock:
-                    state["write_errors"].append("directional %s close: %s" % (direction, e))
-            if close_dst and not forward_broken:
-                try:
-                    dst.close()
-                except Exception:
-                    pass
-
     c2a = os.path.join(framedir, "frames-client-to-agent.jsonl")
     a2c = os.path.join(framedir, "frames-agent-to-client.jsonl")
-    # stdin pump: use raw fd to avoid BufferedReader lock SIGABRT at shutdown (V-c F1)
-    stdin_fd = sys.stdin.buffer.fileno()
-    ti = threading.Thread(target=pump_fd,
-                          args=(stdin_fd, proc.stdin, "c2a", c2a, True),
-                          daemon=True)
-    to = threading.Thread(target=pump_pipe,
-                          args=(proc.stdout, sys.stdout.buffer, "a2c", a2c, False),
-                          daemon=True)
 
-    # --- SIGTERM handler (F11): raise _Terminated, no lock ---
+    # --- SIGTERM handler (F11/F13): raise _Terminated, no lock.
+    #     Installed AFTER all _write_status dependencies and BEFORE any
+    #     statement that could take appreciable time (Popen, sha256 reads).
+    #     The try: immediately follows -- ZERO statements between.
+    #     The only uncovered window is Python interpreter startup BEFORE
+    #     this install (the default SIGTERM disposition: rc -15, no status).
     def _sigterm_handler(signum, _frame):
         raise _Terminated()
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
-
-    # F10: initial status (12 keys, all zeros) before the first frame
-    _write_status()
-
     try:
+        proc = subprocess.Popen([agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        # --- runtime-identity.json (written at spawn) ---
+        tee_path = os.path.realpath(__file__)
+        agent_realpath = os.path.realpath(agent)
+        interp_realpath = None
+        interp_sha256 = None
+        try:
+            interp_realpath = os.readlink("/proc/%d/exe" % proc.pid)
+            interp_sha256 = _sha256_file(interp_realpath)
+        except (OSError, IOError):
+            pass
+
+        identity = {
+            "tee_path": tee_path,
+            "tee_sha256": _sha256_file(tee_path),
+            "tee_pid": os.getpid(),
+            "agent_argv": [agent],
+            "agent_realpath": agent_realpath,
+            "agent_entrypoint_sha256": _sha256_file(agent_realpath),
+            "agent_child_pid": proc.pid,
+            "agent_interpreter_realpath": interp_realpath,
+            "agent_interpreter_sha256": interp_sha256,
+            "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
+            "spawned_at_utc": _utc_now(),
+        }
+        with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+            json.dump(identity, f, indent=2)
+            f.write("\n")
+
+        # --- shared timeline file ---
+        tl = open(os.path.join(framedir, "timeline.jsonl"), "ab")
+
+        def pump_fd(fd, dst, direction, dir_path, close_dst):
+            """Pump from a raw file descriptor (stdin fd 0)."""
+            df = open(dir_path, "ab")
+            forward_broken = False
+            try:
+                for line in _read_lines_from_fd(fd):
+                    text = line.decode("utf-8", errors="replace")
+                    if text.endswith("\r\n"):
+                        stripped = text[:-2]
+                    elif text.endswith("\n"):
+                        stripped = text[:-1]
+                    else:
+                        stripped = text
+                    try:
+                        frame = json.loads(stripped, parse_constant=_reject_nan_inf,
+                                           parse_float=_reject_overflow_float)
+                        entry = {"dir": direction, "frame": frame}
+                    except (json.JSONDecodeError, ValueError):
+                        raw_b64 = base64.b64encode(line).decode("ascii")
+                        entry = {"dir": direction, "frame": None,
+                                 "raw": stripped, "raw_b64": raw_b64}
+                    with lock:
+                        t_utc = _utc_now()
+                        t_mono = time.monotonic_ns()
+                        seq[0] += 1
+                        entry["seq"] = seq[0]
+                        entry["t_utc"] = t_utc
+                        entry["t_mono_ns"] = t_mono
+                        # F17: timeline FIRST, then directional
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            _record_write_error("timeline", direction, str(e))
+                        try:
+                            df.write(line)
+                            df.flush()
+                        except OSError as e:
+                            _record_write_error("directional", direction, str(e))
+                        state["recorded_%s" % direction] += 1
+                        # R2: status snapshot inside the timeline lock
+                        _write_status()
+                    # forward outside the lock (can block on pipe full)
+                    forward_error = None
+                    if not forward_broken:
+                        try:
+                            dst.write(line)
+                            dst.flush()
+                        except BrokenPipeError:
+                            forward_error = "forward %s: BrokenPipeError" % direction
+                            forward_broken = True
+                            if close_dst:
+                                try:
+                                    dst.close()
+                                except Exception:
+                                    pass
+                        except OSError as e:
+                            forward_error = "forward %s: %s" % (direction, e)
+                            forward_broken = True
+                            if close_dst:
+                                try:
+                                    dst.close()
+                                except Exception:
+                                    pass
+                    # R2: update forwarded under the timeline lock
+                    with lock:
+                        if forward_error is not None:
+                            state["write_errors"].append(forward_error)
+                        elif not forward_broken:
+                            state["forwarded_%s" % direction] += 1
+            finally:
+                try:
+                    df.close()
+                except OSError as e:
+                    with lock:
+                        state["write_errors"].append("directional %s close: %s" % (direction, e))
+                if direction == "c2a":
+                    state["stdin_reader_done"] = True
+                if close_dst and not forward_broken:
+                    try:
+                        dst.close()
+                    except Exception:
+                        pass
+
+        def pump_pipe(src, dst, direction, dir_path, close_dst):
+            """Pump from a subprocess pipe (proc.stdout)."""
+            df = open(dir_path, "ab")
+            forward_broken = False
+            try:
+                while True:
+                    line = src.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace")
+                    if text.endswith("\r\n"):
+                        stripped = text[:-2]
+                    elif text.endswith("\n"):
+                        stripped = text[:-1]
+                    else:
+                        stripped = text
+                    try:
+                        frame = json.loads(stripped, parse_constant=_reject_nan_inf,
+                                           parse_float=_reject_overflow_float)
+                        entry = {"dir": direction, "frame": frame}
+                    except (json.JSONDecodeError, ValueError):
+                        raw_b64 = base64.b64encode(line).decode("ascii")
+                        entry = {"dir": direction, "frame": None,
+                                 "raw": stripped, "raw_b64": raw_b64}
+                    with lock:
+                        t_utc = _utc_now()
+                        t_mono = time.monotonic_ns()
+                        seq[0] += 1
+                        entry["seq"] = seq[0]
+                        entry["t_utc"] = t_utc
+                        entry["t_mono_ns"] = t_mono
+                        try:
+                            tl.write(json.dumps(entry, separators=(",", ":")).encode("utf-8") + b"\n")
+                            tl.flush()
+                        except OSError as e:
+                            _record_write_error("timeline", direction, str(e))
+                        try:
+                            df.write(line)
+                            df.flush()
+                        except OSError as e:
+                            _record_write_error("directional", direction, str(e))
+                        state["recorded_%s" % direction] += 1
+                        # R2: status snapshot inside the timeline lock
+                        _write_status()
+                    # forward outside the lock (can block on pipe full)
+                    forward_error = None
+                    if not forward_broken:
+                        try:
+                            dst.write(line)
+                            dst.flush()
+                        except BrokenPipeError:
+                            forward_error = "forward %s: BrokenPipeError" % direction
+                            forward_broken = True
+                        except OSError as e:
+                            forward_error = "forward %s: %s" % (direction, e)
+                            forward_broken = True
+                    # R2: update forwarded under the timeline lock
+                    with lock:
+                        if forward_error is not None:
+                            state["write_errors"].append(forward_error)
+                        elif not forward_broken:
+                            state["forwarded_%s" % direction] += 1
+            finally:
+                try:
+                    df.close()
+                except OSError as e:
+                    with lock:
+                        state["write_errors"].append("directional %s close: %s" % (direction, e))
+                if close_dst and not forward_broken:
+                    try:
+                        dst.close()
+                    except Exception:
+                        pass
+
+        # stdin pump: use raw fd to avoid BufferedReader lock SIGABRT at shutdown (V-c F1)
+        stdin_fd = sys.stdin.buffer.fileno()
+        ti = threading.Thread(target=pump_fd,
+                              args=(stdin_fd, proc.stdin, "c2a", c2a, True),
+                              daemon=True)
+        to = threading.Thread(target=pump_pipe,
+                              args=(proc.stdout, sys.stdout.buffer, "a2c", a2c, False),
+                              daemon=True)
+
+        # F10: initial status (12 keys, all zeros) before the first frame
+        _write_status()
+
         ti.start()
         to.start()
         # Wait for the agent process to exit
         proc.wait()
-        # Progress-based drain of stdout pump (a2c -- P2: keep forwarding while making progress;
-        # give up only after a 5 s stall with no bytes forwarded)
-        stall_timeout = 5
-        last_fwd = state["forwarded_a2c"]
-        stall_start = time.monotonic()
-        a2c_stalled = False
+        # R1: drain a2c until EOF -- no stall timeout.  A grandchild that
+        # holds the agent's stdout keeps the tee alive; buzz-acp TERMs/KILLs
+        # the group (the SIGTERM path covers it).
         while to.is_alive():
             time.sleep(0.1)
-            current_fwd = state["forwarded_a2c"]
-            if current_fwd > last_fwd:
-                last_fwd = current_fwd
-                stall_start = time.monotonic()
-            elif time.monotonic() - stall_start >= stall_timeout:
-                a2c_stalled = True
-                break
-            _write_status()
-        if a2c_stalled and state["forwarded_a2c"] < state["recorded_a2c"]:
-            state["write_errors"].append(
-                "drain a2c: stopped with %d recorded, %d forwarded"
-                % (state["recorded_a2c"], state["forwarded_a2c"]))
             _write_status()
         # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
         # A client that never closes keeps the tee alive; that is buzz-acp's
@@ -469,6 +454,11 @@ def main():
     except _Terminated:
         state["write_errors"].append("terminated: SIGTERM")
         _write_status(final=False)
+        # F14: terminate the agent child so it does not outlive the tee.
+        # Popen.terminate() -> send_signal() polls first and absorbs
+        # ProcessLookupError on an already-exited child (subprocess.py:1866).
+        if proc is not None:
+            proc.terminate()
         os._exit(70)
 
 
