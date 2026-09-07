@@ -1,7 +1,7 @@
 # Lane D5l — S0-01 scripted backend, round 15: the CLASS closed, not the instance — a structural ban with a negative control on its own tooling, every "served" test pinning the record, one extras literal, a token file that cannot hang the backend, and a report the linter passes (PC Hermes lane, role `code-implementer`)
 
-PIN: 13c1bd28713a61fdf1106e2872775ce47c1a7fe6
-(HEAD at dispatch; the three scope files are byte-identical to checkpoint 8w = 8695636. Your work lands in the CHILD
+PIN: 58741bb23b28ecd574b4f8472cd88dba658ceaad
+(HEAD at dispatch = the commit carrying this brief; the three scope files are byte-identical to checkpoint 8w = 8695636. Your work lands in the CHILD
 commit — the report header says "PIN: `13c1bd2`; landing = the coordinator's checkpoint, made after this report".)
 
 **Verdict graded:** `tasks/briefs/s0-01-d5l-support/verify-D5k.md` (VERIFY-D5k, round 14 on 8w — NOT-READY on F1/F2/F3/

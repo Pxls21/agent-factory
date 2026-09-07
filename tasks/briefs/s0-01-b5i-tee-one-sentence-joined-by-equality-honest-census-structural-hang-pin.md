@@ -1,7 +1,7 @@
 # Lane B5i — S0-01 frame tee, round 14: one sentence in the repo, joined to the source by EQUALITY; the census helper honest about which branch it takes; the hang class closed by a structural pin; the identity sampled at the right stage (PC Hermes lane, role `code-implementer`)
 
-PIN: (set at dispatch)
-(HEAD at dispatch; the two scope files are byte-identical to checkpoint 8v = 63b582c. Your work lands in the CHILD
+PIN: 58741bb23b28ecd574b4f8472cd88dba658ceaad
+(HEAD at dispatch = the commit carrying this brief; the two scope files are byte-identical to checkpoint 8v = 63b582c. Your work lands in the CHILD
 commit — the report header says "PIN: `<sha>`; landing = the coordinator's checkpoint, made after this report".)
 
 **Verdict graded:** `tasks/briefs/s0-01-b5i-support/verify-B5h.md` (VERIFY-B5h, round 13 on 8v — NOT-READY on F1/F2/F4/
