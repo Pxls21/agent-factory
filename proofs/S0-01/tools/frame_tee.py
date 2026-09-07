@@ -420,13 +420,15 @@ def main():
         proc.wait()
         # R1: drain a2c until EOF -- no stall timeout.  A grandchild that
         # holds the agent's stdout keeps the tee alive; buzz-acp SIGKILLs
-        # the group after 5 s (acp.rs:421-444, pinned 1c8321cd).
+        # the group (killpg) and then waits up to 5 s for it to exit
+        # (acp.rs:421-444, pinned 1c8321cd).
         while to.is_alive():
             time.sleep(0.1)
             _write_status()
         # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
         # A client that never closes keeps the tee alive; buzz-acp SIGKILLs
-        # the group after 5 s (acp.rs:421-444, pinned 1c8321cd).
+        # the group (killpg) and then waits up to 5 s for it to exit
+        # (acp.rs:421-444, pinned 1c8321cd).
         while ti.is_alive():
             time.sleep(0.1)
             _write_status()
