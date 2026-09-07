@@ -2029,3 +2029,74 @@ def test_record_does_not_mutate_the_caller_body(tmp_path):
     before = copy.deepcopy(body)
     st.record("POST", "/v1/chat/completions", {}, body, "127.0.0.1", None)
     assert body == before, "State.record mutated the caller's body"
+
+
+# -- D5j item 3 (D5i-F3): the invisible class is pinned to UCD 15.1.0 -----------
+
+def test_invisible_table_is_the_ucd_15_1_class():
+    """The committed _INVIS_PINNED must cover UCD 15.1.0 exactly.  On python3.11
+    (UCD 14.0.0) the live category set is 42 code points NARROWER — those 42 are
+    the Unicode-15 Mn/Cf additions, computed below and asserted as a sorted literal.
+    On 15.0.0 and 15.1.0 the pinned set equals the live set.
+    On any other version the test FAILS naming the diff (regenerate _INVIS_RANGES
+    or extend the expectation)."""
+    import importlib.util
+    import unicodedata
+    spec = importlib.util.spec_from_file_location("sb_invis", str(SERVER))
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    pinned = sb._INVIS_PINNED
+    assert len(pinned) == 4305, f"expected 4305, got {len(pinned)}"
+    # Compute the live set under the running interpreter
+    cats = frozenset({"Cf", "Cs", "Cc", "Mn", "Me", "Zs", "Zl", "Zp"})
+    extra = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E}
+    live = set()
+    for cp in range(0x110000):
+        if unicodedata.category(chr(cp)) in cats or cp in extra:
+            live.add(cp)
+    # The pinned set must be >= the live set (no code point the live table catches
+    # that the pinned table misses).
+    assert live - pinned == set(), \
+        f"live - pinned = {sorted(live - pinned)[:20]}"
+    ucd = unicodedata.unidata_version
+    # The 42 code points that are in UCD 15.x but not UCD 14.0 (computed on this
+    # sandbox under python3.11.15 / UCD 14.0.0):
+    _UCD_15_ADDITIONS = frozenset({
+        0x0ECE, 0x10EFD, 0x10EFE, 0x10EFF, 0x11241, 0x11F00, 0x11F01,
+        0x11F36, 0x11F37, 0x11F38, 0x11F39, 0x11F3A, 0x11F40, 0x11F42,
+        0x13439, 0x1343A, 0x1343B, 0x1343C, 0x1343D, 0x1343E, 0x1343F,
+        0x13440, 0x13447, 0x13448, 0x13449, 0x1344A, 0x1344B, 0x1344C,
+        0x1344D, 0x1344E, 0x1344F, 0x13450, 0x13451, 0x13452, 0x13453,
+        0x13454, 0x13455, 0x1E08F, 0x1E4EC, 0x1E4ED, 0x1E4EE, 0x1E4EF,
+    })
+    if ucd == "14.0.0":
+        expected_extra = _UCD_15_ADDITIONS
+        assert pinned - live == expected_extra, \
+            f"pinned - live on UCD {ucd} = {sorted(pinned - live)[:20]}, expected 42"
+    elif ucd in ("15.0.0", "15.1.0"):
+        assert pinned - live == set(), \
+            f"pinned - live on UCD {ucd} should be empty, got {sorted(pinned - live)[:20]}"
+    else:
+        diff = sorted(pinned.symmetric_difference(live))
+        assert False, (
+            f"unknown UCD {ucd}: pinned ^ live = {len(diff)} code points "
+            f"({[hex(x) for x in diff[:20]]}); regenerate _INVIS_RANGES "
+            f"or extend this expectation"
+        )
+
+
+# -- D5j item 3: invisible class test through the backend (in-process) ----
+
+def test_invisible_class_does_not_depend_on_the_runtime_unicode_table():
+    """U+10EFD (Mn in UCD 15.0, Cn in 14.0) must be caught on every interpreter.
+    RED on the PIN's runtime category test (python3.11 / UCD 14.0.0).
+    The pinned table makes it interpreter-independent.  D5i-F3."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sb_f3", str(SERVER))
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    st = sb.State(TOKEN, Path("/dev/null"), 0.0)
+    mid = len(TOKEN) // 2
+    for cp in (0x10EFD, 0x1E08F, 0x11F36, 0x13439, 0x0ECE):
+        assert st._carries_secret(TOKEN[:mid] + chr(cp) + TOKEN[mid:], byte_view=False), \
+            f"U+{cp:04X} splits the token and is served on this interpreter"

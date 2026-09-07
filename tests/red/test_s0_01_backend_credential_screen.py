@@ -95,35 +95,108 @@ _INVISIBLE_EXTRA = frozenset({
     chr(0x115F), chr(0x1160), chr(0x3164), chr(0xFFA0),
     chr(0x2800), chr(0x180E),
 })
+# Oracle's OWN copy of the committed range string (D5i-F3); the oracle unions
+# this with the LIVE categories so it is >= the impl on every interpreter.
+_ORACLE_INVIS_RANGES = (
+    "0000-0020 007F-00A0 00AD 0300-036F 0483-0489 0591-05BD 05BF 05C1-05C2 "
+    "05C4-05C5 05C7 0600-0605 0610-061A 061C 064B-065F 0670 06D6-06DD "
+    "06DF-06E4 06E7-06E8 06EA-06ED 070F 0711 0730-074A 07A6-07B0 07EB-07F3 "
+    "07FD 0816-0819 081B-0823 0825-0827 0829-082D 0859-085B 0890-0891 "
+    "0898-089F 08CA-0902 093A 093C 0941-0948 094D 0951-0957 0962-0963 0981 "
+    "09BC 09C1-09C4 09CD 09E2-09E3 09FE 0A01-0A02 0A3C 0A41-0A42 0A47-0A48 "
+    "0A4B-0A4D 0A51 0A70-0A71 0A75 0A81-0A82 0ABC 0AC1-0AC5 0AC7-0AC8 0ACD "
+    "0AE2-0AE3 0AFA-0AFF 0B01 0B3C 0B3F 0B41-0B44 0B4D 0B55-0B56 0B62-0B63 "
+    "0B82 0BC0 0BCD 0C00 0C04 0C3C 0C3E-0C40 0C46-0C48 0C4A-0C4D 0C55-0C56 "
+    "0C62-0C63 0C81 0CBC 0CBF 0CC6 0CCC-0CCD 0CE2-0CE3 0D00-0D01 0D3B-0D3C "
+    "0D41-0D44 0D4D 0D62-0D63 0D81 0DCA 0DD2-0DD4 0DD6 0E31 0E34-0E3A "
+    "0E47-0E4E 0EB1 0EB4-0EBC 0EC8-0ECE 0F18-0F19 0F35 0F37 0F39 0F71-0F7E "
+    "0F80-0F84 0F86-0F87 0F8D-0F97 0F99-0FBC 0FC6 102D-1030 1032-1037 "
+    "1039-103A 103D-103E 1058-1059 105E-1060 1071-1074 1082 1085-1086 108D "
+    "109D 115F-1160 135D-135F 1680 1712-1714 1732-1733 1752-1753 1772-1773 "
+    "17B4-17B5 17B7-17BD 17C6 17C9-17D3 17DD 180B-180F 1885-1886 18A9 "
+    "1920-1922 1927-1928 1932 1939-193B 1A17-1A18 1A1B 1A56 1A58-1A5E 1A60 "
+    "1A62 1A65-1A6C 1A73-1A7C 1A7F 1AB0-1ACE 1B00-1B03 1B34 1B36-1B3A 1B3C "
+    "1B42 1B6B-1B73 1B80-1B81 1BA2-1BA5 1BA8-1BA9 1BAB-1BAD 1BE6 1BE8-1BE9 "
+    "1BED 1BEF-1BF1 1C2C-1C33 1C36-1C37 1CD0-1CD2 1CD4-1CE0 1CE2-1CE8 1CED "
+    "1CF4 1CF8-1CF9 1DC0-1DFF 2000-200F 2028-202F 205F-2064 2066-206F "
+    "20D0-20F0 2800 2CEF-2CF1 2D7F 2DE0-2DFF 3000 302A-302D 3099-309A 3164 "
+    "A66F-A672 A674-A67D A69E-A69F A6F0-A6F1 A802 A806 A80B A825-A826 A82C "
+    "A8C4-A8C5 A8E0-A8F1 A8FF A926-A92D A947-A951 A980-A982 A9B3 A9B6-A9B9 "
+    "A9BC-A9BD A9E5 AA29-AA2E AA31-AA32 AA35-AA36 AA43 AA4C AA7C AAB0 "
+    "AAB2-AAB4 AAB7-AAB8 AABE-AABF AAC1 AAEC-AAED AAF6 ABE5 ABE8 ABED "
+    "D800-DFFF FB1E FE00-FE0F FE20-FE2F FEFF FFA0 FFF9-FFFB 101FD 102E0 "
+    "10376-1037A 10A01-10A03 10A05-10A06 10A0C-10A0F 10A38-10A3A 10A3F "
+    "10AE5-10AE6 10D24-10D27 10EAB-10EAC 10EFD-10EFF 10F46-10F50 10F82-10F85 "
+    "11001 11038-11046 11070 11073-11074 1107F-11081 110B3-110B6 110B9-110BA "
+    "110BD 110C2 110CD 11100-11102 11127-1112B 1112D-11134 11173 11180-11181 "
+    "111B6-111BE 111C9-111CC 111CF 1122F-11231 11234 11236-11237 1123E 11241 "
+    "112DF 112E3-112EA 11300-11301 1133B-1133C 11340 11366-1136C 11370-11374 "
+    "11438-1143F 11442-11444 11446 1145E 114B3-114B8 114BA 114BF-114C0 "
+    "114C2-114C3 115B2-115B5 115BC-115BD 115BF-115C0 115DC-115DD 11633-1163A "
+    "1163D 1163F-11640 116AB 116AD 116B0-116B5 116B7 1171D-1171F 11722-11725 "
+    "11727-1172B 1182F-11837 11839-1183A 1193B-1193C 1193E 11943 119D4-119D7 "
+    "119DA-119DB 119E0 11A01-11A0A 11A33-11A38 11A3B-11A3E 11A47 11A51-11A56 "
+    "11A59-11A5B 11A8A-11A96 11A98-11A99 11C30-11C36 11C38-11C3D 11C3F "
+    "11C92-11CA7 11CAA-11CB0 11CB2-11CB3 11CB5-11CB6 11D31-11D36 11D3A "
+    "11D3C-11D3D 11D3F-11D45 11D47 11D90-11D91 11D95 11D97 11EF3-11EF4 "
+    "11F00-11F01 11F36-11F3A 11F40 11F42 13430-13440 13447-13455 16AF0-16AF4 "
+    "16B30-16B36 16F4F 16F8F-16F92 16FE4 1BC9D-1BC9E 1BCA0-1BCA3 "
+    "1CF00-1CF2D 1CF30-1CF46 1D167-1D169 1D173-1D182 1D185-1D18B 1D1AA-1D1AD "
+    "1D242-1D244 1DA00-1DA36 1DA3B-1DA6C 1DA75 1DA84 1DA9B-1DA9F 1DAA1-1DAAF "
+    "1E000-1E006 1E008-1E018 1E01B-1E021 1E023-1E024 1E026-1E02A 1E08F "
+    "1E130-1E136 1E2AE 1E2EC-1E2EF 1E4EC-1E4EF 1E8D0-1E8D6 1E944-1E94A "
+    "E0001 E0020-E007F E0100-E01EF"
+)
+
+
+def _parse_oracle_ranges(s):
+    result = set()
+    for part in s.split():
+        if '-' in part:
+            lo, hi = part.split('-')
+            for cp in range(int(lo, 16), int(hi, 16) + 1):
+                result.add(cp)
+        else:
+            result.add(int(part, 16))
+    return frozenset(result)
+
+
+_ORACLE_INVIS_PINNED = _parse_oracle_ranges(_ORACLE_INVIS_RANGES)
 
 
 def _absent_under_all_normalizations(text: str) -> bool:
     """F2: STRICTLY WIDER oracle than the backend's _normal_forms.
 
-    Enumerates every word over {unquote, unquote_plus, lower,
+    Enumerates every word over {unquote_drop, unquote_plus_drop, lower,
     utf8_redecode_lenient, strip_invis} up to depth 6 (the backend uses
-    depth 5 with the same operators plus utf8_redecode strict; this oracle
-    goes one depth level further).  Never imports the backend's helper.
-    strip_invis drops every code point whose unicodedata.category is in
-    {Cf, Cs, Cc, Mn, Me, Zs, Zl, Zp} plus _INVISIBLE_EXTRA (Lo/So fillers
-    and MVS) — subsumes the former strip_ws, strip_zwc, and strip_ctl
-    (all fully redundant, removed D5i).
-    utf8_redecode_lenient: encode("latin-1").decode("utf-8", errors="ignore");
-    strictly wider than the impl's strict utf8_redecode.
-    ``unquote`` is redundant with ``unquote_plus`` only for a token
-    containing no ``+``; it stays so the oracle is token-agnostic (D5h-F12).
+    the same five operators at depth 5; D5i).  Never imports the backend's
+    helper.  strip_invis drops every code point in _ORACLE_INVIS_PINNED
+    (the committed UCD-15.1 table) OR whose live unicodedata.category is in
+    _INVIS_CATEGORIES — the oracle is >= the impl on every interpreter and
+    wider on a newer UCD (D5i-F3).
+    unquote_drop / unquote_plus_drop use errors="ignore" so that an invalid
+    percent-encoded UTF-8 byte (e.g. %80) is dropped, not replaced with
+    U+FFFD which would survive strip_invis (D5i-F2).
+    ``unquote`` with default errors is redundant with ``unquote_plus`` only
+    for a token containing no ``+``; the drop-variant replaces it and stays
+    so the oracle is token-agnostic (D5h-F12).
     Seeds with json.loads of every JSON string literal (F4/F7).
     """
     def strip_invis(x):
         return "".join(c for c in x
-                       if unicodedata.category(c) not in _INVIS_CATEGORIES
+                       if ord(c) not in _ORACLE_INVIS_PINNED
+                       and unicodedata.category(c) not in _INVIS_CATEGORIES
                        and c not in _INVISIBLE_EXTRA)
     def utf8_redecode_lenient(x):
         try:
             return x.encode("latin-1").decode("utf-8", errors="ignore")
         except UnicodeEncodeError:
             return x
-    ops = (unquote, unquote_plus, str.lower, utf8_redecode_lenient, strip_invis)
+    def unquote_drop(x):
+        return unquote(x, errors="ignore")
+    def unquote_plus_drop(x):
+        return unquote_plus(x, errors="ignore")
+    ops = (unquote_drop, unquote_plus_drop, str.lower, utf8_redecode_lenient, strip_invis)
     # F4: seed with JSON-unescaped text of every JSON string literal
     forms = {text}
     for m in re.findall(r'"(?:[^"\\]|\\.)*"', text):
@@ -426,9 +499,9 @@ class TestOracleSelfTests:
         (TOKEN[:len(TOKEN)//2] + bytes([0xE2, 0x80, 0x8B]).decode("latin-1") + TOKEN[len(TOKEN)//2:], False),
         # D5h-F3: utf8_redecode_lenient on invalid UTF-8 (ZWSP + one junk byte)
         (TOKEN[:len(TOKEN)//2] + bytes([0xE2, 0x80, 0x8B, 0x80]).decode("latin-1") + TOKEN[len(TOKEN)//2:], False),
-        # D5h-F13: strip_ctl self-test (U+0085 = NEL, a C1 control)
+        # D5h-F13: strip_invis Cc arm (U+0085 = NEL, a C1 control)
         (TOKEN[:len(TOKEN)//2] + chr(0x85) + TOKEN[len(TOKEN)//2:], False),
-        # D5h-F13: strip_ctl self-test (U+007F = DEL)
+        # D5h-F13: strip_invis Cc arm (U+007F = DEL)
         (TOKEN[:len(TOKEN)//2] + chr(0x7F) + TOKEN[len(TOKEN)//2:], False),
         # D5i: strip_invis self-tests (invisible separators by category)
         (TOKEN[:len(TOKEN)//2] + chr(0x200C) + TOKEN[len(TOKEN)//2:], False),
@@ -437,6 +510,18 @@ class TestOracleSelfTests:
         (TOKEN[:len(TOKEN)//2] + chr(0x3164) + TOKEN[len(TOKEN)//2:], False),
         (TOKEN[:len(TOKEN)//2] + chr(0xFE00) + TOKEN[len(TOKEN)//2:], False),
         (TOKEN[:len(TOKEN)//2] + chr(0x0301) + TOKEN[len(TOKEN)//2:], False),
+        # D5j: _INVISIBLE_EXTRA members pinned (D5i-F4)
+        (TOKEN[:len(TOKEN)//2] + chr(0xFFA0) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x115F) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x1160) + TOKEN[len(TOKEN)//2:], False),
+        # D5j: Me/Zl/Zp/Cs members pinned (D5i-F5/F16)
+        (TOKEN[:len(TOKEN)//2] + chr(0x2028) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x2029) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x20DD) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0x0488) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0xD800) + TOKEN[len(TOKEN)//2:], False),
+        # D5j: percent-encoded invalid UTF-8 separator (D5i-F2)
+        (TOKEN[:len(TOKEN)//2] + "%80" + TOKEN[len(TOKEN)//2:], False),
         # Known-good: oracle must NOT detect the token (return True)
         ('{"credential_in_unexpected_location": true}', True),
         ("Mozilla/5.0 (X11; Linux x86_64)", True),
@@ -447,6 +532,11 @@ class TestOracleSelfTests:
             "c1_control_split", "del_split",
             "zwnj_split", "lrm_split", "braille_split",
             "hangul_filler_split", "vs1_split", "combining_split",
+            "halfwidth_filler_split", "choseong_split", "jungseong_split",
+            "line_sep_split", "para_sep_split",
+            "enclosing_circle_split", "cyrillic_enclosing_split",
+            "lone_surrogate_split",
+            "pct_lone_continuation_split",
             "marker_record", "user_agent", "junk_alone"])
     def test_oracle_known_vectors(self, text, expected):
         assert _absent_under_all_normalizations(text) is expected
@@ -634,11 +724,14 @@ def test_credential_plus_split_with_pct2520_suffix_returns_400(backend):
     (mutant V3)."""
     port = backend["port"]
     mid = len(TOKEN) // 2
+    n0 = len(_records(backend))
     vec = TOKEN[:mid] + "+" + TOKEN[mid:] + "%2520"
     resp = _raw(port, _post(port, b'{"model":"s0-01-pong","messages":[]}',
                             extra_headers=f"X-Trace: {vec}\r\n"))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- R9-D5g-F2: raw UTF-8 zero-width separator ------
@@ -649,9 +742,11 @@ def test_credential_plus_split_with_pct2520_suffix_returns_400(backend):
 def test_credential_raw_utf8_zero_width_in_header_returns_400(backend, sep):
     """F2/F15 'raw': the separator arrives as UTF-8 BYTES on the wire;
     http.server decodes header lines as latin-1, producing 2-3 latin-1 chars
-    that neither strip_ws nor strip_zwc touches without utf8_redecode."""
+    that strip_invis does not touch until utf8_redecode_lenient has
+    recovered the real code point."""
     port = backend["port"]
     mid = len(TOKEN) // 2
+    n0 = len(_records(backend))
     body = b'{"model":"s0-01-pong","messages":[]}'
     payload = (f"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
                f"Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n"
@@ -659,7 +754,9 @@ def test_credential_raw_utf8_zero_width_in_header_returns_400(backend, sep):
               + TOKEN[mid:].encode() + f"\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
     resp = _raw(port, payload)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- R9-D5g-F5: ruling 2(b) ----
@@ -740,7 +837,7 @@ def test_credential_invalid_utf8_separator_in_json_body_returns_400(backend, jso
 @pytest.mark.parametrize("ctl_char", [chr(0x7F), chr(0x01)], ids=["DEL", "SOH"])
 def test_credential_control_char_in_header_value_returns_400(backend, ctl_char):
     """D5h-F13: control characters (DEL, C0) splitting the token in a header
-    value must be caught by strip_ctl."""
+    value must be caught by strip_invis (Cc arm)."""
     port = backend["port"]
     mid = len(TOKEN) // 2
     split_token = TOKEN[:mid] + ctl_char + TOKEN[mid:]
@@ -776,13 +873,16 @@ def test_credential_control_char_in_json_body_returns_400(backend, json_sep, sep
 # ---- D5h-F4: unquote op is required for the bound ----
 
 def test_unquote_op_is_required_for_the_bound(backend):
-    """%252520%252B fails to saturate at depth 5 only because unquote is in
-    the op set.  Mutant M_UQ_DEL dies on this test."""
+    """%252520%252B fails to saturate at depth 5 only because unquote_drop is
+    in the op set.  Mutant M_UQ_DEL dies on this test."""
     port = backend["port"]
+    n0 = len(_records(backend))
     resp = _raw(port, _post(port, b'{"model":"s0-01-pong","messages":[]}',
                             extra_headers="X-Trace: %252520%252B\r\n"))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
-    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
 # ---- D5h-F5: raw non-ASCII header name -> 400 by gate, no record ----
@@ -835,8 +935,8 @@ def test_ordinary_latin1_text_in_json_body_is_served(backend, content):
                          ids=["ZWNJ", "ZWJ", "LRM", "RLM", "BRAILLE_BLANK", "HANGUL_FILLER", "VS1", "MVS"])
 def test_credential_invisible_separator_in_header_returns_400(backend, cp):
     """D5h-F2 / D5i item 3: invisible separators (closed by Unicode category,
-    not by a hand-written list) must be caught.  RED on the PIN (strip_zwc
-    covers only U+200B/FEFF/AD/2060; these are outside that set)."""
+    not by a hand-written list) must be caught.  RED on the D5h PIN
+    (the old strip_zwc covered only U+200B/FEFF/AD/2060)."""
     port = backend["port"]
     mid = len(TOKEN) // 2
     body = b'{"model":"s0-01-pong","messages":[]}'
@@ -858,7 +958,16 @@ def test_credential_invisible_separator_in_header_returns_400(backend, cp):
 @pytest.mark.parametrize("cp,cp_id", [
     (0x200C, "ZWNJ"), (0x200D, "ZWJ"), (0x200E, "LRM"),
     (0x0301, "COMBINING_ACUTE"),
-], ids=["ZWNJ", "ZWJ", "LRM", "COMBINING_ACUTE"])
+    (0x2800, "BRAILLE_BLANK"), (0x3164, "HANGUL_FILLER"),
+    (0xFFA0, "HALFWIDTH_FILLER"), (0x115F, "CHOSEONG_FILLER"),
+    (0x1160, "JUNGSEONG_FILLER"),
+    (0x2028, "LINE_SEPARATOR"), (0x2029, "PARAGRAPH_SEPARATOR"),
+    (0x20DD, "ENCLOSING_CIRCLE"), (0x0488, "CYRILLIC_ENCLOSING"),
+], ids=["ZWNJ", "ZWJ", "LRM", "COMBINING_ACUTE",
+        "BRAILLE_BLANK", "HANGUL_FILLER", "HALFWIDTH_FILLER",
+        "CHOSEONG_FILLER", "JUNGSEONG_FILLER",
+        "LINE_SEPARATOR", "PARAGRAPH_SEPARATOR",
+        "ENCLOSING_CIRCLE", "CYRILLIC_ENCLOSING"])
 def test_credential_invisible_separator_in_json_body_returns_400(backend, cp, cp_id):
     """D5i item 3 JSON twin: invisible separator via JSON \\uNNNN escape
     splitting the token in a JSON body value."""
@@ -896,7 +1005,7 @@ def test_credential_function_application_separator_in_header_returns_400(backend
     assert json.loads(recs[-1].read_text())["body"] == MARKER
 
 
-# ---- D5h-F4: C1 control wire form (valid UTF-8 → only strip_ctl/strip_invis catches it) ----
+# ---- D5h-F4: C1 control wire form (valid UTF-8 → only strip_invis Cc arm catches it) ----
 
 @pytest.mark.parametrize("cp", [0x80, 0x85, 0x9F], ids=["PAD", "NEL", "APC"])
 def test_credential_c1_control_wire_form_returns_400(backend, cp):
@@ -965,3 +1074,70 @@ def test_precheck_before_closure_on_invalid_utf8(backend):
     assert call_count[0] == 0, (
         f"_normal_forms was called {call_count[0]} times; precheck should short-circuit"
     )
+
+
+# ---- D5j item 1 (D5i-F1): top-level JSON string body is not a byte view ----
+
+@pytest.mark.parametrize("doc", [
+    b'"caf\xc3\xa9"', b'"M\xc3\xbcller"', b'"\xc2\xa3100"',
+], ids=["e_acute", "u_uml", "pound"])
+def test_top_level_json_string_body_is_not_a_byte_view(backend, doc):
+    """A top-level JSON string is DECODED by json.loads; the precheck must not
+    re-encode it.  UTF-8 on the wire, no credential -> ordinary route 400,
+    record verbatim (not the credential MARKER).  D5i-F1."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, doc))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] != MARKER
+
+
+def test_top_level_json_string_hello_control(backend):
+    """Control for D5i-F1: 'hello' is pure ASCII, served 400 + verbatim
+    both before and after the fix."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, b'"hello"'))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] != MARKER
+
+
+# ---- D5j item 2 (D5i-F2): percent-encoded invalid UTF-8 separator ----
+
+@pytest.mark.parametrize("sep", ["%80", "%C0", "%FF", "%ED%A0%80"],
+                         ids=["lone_cont", "overlong_lead", "ff", "surrogate"])
+def test_credential_pct_encoded_invalid_utf8_separator_returns_400(backend, sep):
+    """unquote() defaults to errors='replace', so %80 becomes U+FFFD (So)
+    and survives strip_invis.  With errors='ignore' (unquote_drop) the
+    byte is dropped and the token is found.  D5i-F2."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    split = TOKEN[:mid] + sep + TOKEN[mid:]
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body, extra_headers=f"X-Trace: {split}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5j item 4 (D5i-F5): lone surrogate in JSON body ----
+
+def test_credential_lone_surrogate_separator_in_json_body_returns_400(backend):
+    """A lone surrogate escape (category Cs) splitting the token must be
+    caught by strip_invis.  D5i-F5."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = (b'{"model":"s0-01-pong","messages":[],"t":"'
+            + TOKEN[:mid].encode() + b'\\ud800' + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
