@@ -460,12 +460,15 @@ class TestGrandchildStdout:
         After confirming the handshake, verify the tee is still running at 3 s,
         then SIGTERM it.  Exit 70, non-final."""
         agent_code = textwrap.dedent("""\
-            import subprocess, sys, json
+            import subprocess, sys, json, os
             line = sys.stdin.readline()
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
-            subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            fd = os.environ.get("S0_01_FRAMEDIR", "")
+            if fd:
+                open(os.path.join(fd, "grandchild.pid"), "w").write(str(gc.pid))
             sys.exit(0)
         """)
         framedir = tmp_path / "frames"
@@ -496,6 +499,7 @@ class TestGrandchildStdout:
             drainer = threading.Thread(target=_drain, daemon=True)
             drainer.start()
             status_path = framedir / "tee-status.json"
+            s = None
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if status_path.exists():
@@ -506,6 +510,8 @@ class TestGrandchildStdout:
                     except (json.JSONDecodeError, ValueError):
                         pass
                 time.sleep(0.1)
+            assert s is not None and s.get("recorded_a2c", 0) >= 1, \
+                "no a2c frame recorded before the liveness window"
             time.sleep(3)
             assert tee_proc.poll() is None, "tee exited early"
             tee_proc.send_signal(sig.SIGTERM)
@@ -515,6 +521,33 @@ class TestGrandchildStdout:
             if tee_proc.poll() is None:
                 tee_proc.kill()
                 tee_proc.wait(timeout=5)
+            # F-B5e-12: kill THIS test's grandchild; assert it is gone
+            gc_pid_path = framedir / "grandchild.pid"
+            gc_pid = None
+            if gc_pid_path.exists():
+                try:
+                    gc_pid = int(gc_pid_path.read_text().strip())
+                    os.kill(gc_pid, sig.SIGKILL)
+                except (OSError, ValueError):
+                    pass
+            if gc_pid is not None:
+                deadline_gc = time.monotonic() + 2
+                while time.monotonic() < deadline_gc:
+                    try:
+                        st = open("/proc/%d/stat" % gc_pid).read().split()
+                        if len(st) >= 3 and st[2] == "Z":
+                            break
+                    except (OSError, IOError):
+                        break
+                    time.sleep(0.1)
+                gone = True
+                try:
+                    st = open("/proc/%d/stat" % gc_pid).read().split()
+                    if len(st) >= 3 and st[2] != "Z":
+                        gone = False
+                except (OSError, IOError):
+                    pass
+                assert gone, "grandchild pid %d still alive after kill" % gc_pid
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
@@ -817,8 +850,11 @@ class TestTeeStatus:
     def test_never_reading_client(self, tmp_path):
         """Client NEVER reads a2c -> the a2c pump blocks on the full pipe;
         after the agent dies the tee stays alive (symmetric drain-to-EOF on
-        a2c), so SIGTERM is required (buzz-acp's responsibility).  Exit 70,
-        non-final, write_errors includes 'terminated: SIGTERM'."""
+        a2c).  buzz-acp SIGKILLs the group after 5 s (acp.rs:421-444,
+        pinned 1c8321cd); SIGKILL cannot be handled, so that leg's evidence
+        is its last RUNNING status (A21d).  The SIGTERM path covers an
+        operator/systemd TERM.  Exit 70, non-final,
+        write_errors includes 'terminated: SIGTERM'."""
         agent_code = textwrap.dedent("""\
             import os, sys, threading
             def kill_self():
@@ -852,6 +888,7 @@ class TestTeeStatus:
             tee_proc.stdin.close()
             # Wait for some a2c frames to be recorded
             status_path = framedir / "tee-status.json"
+            s = None
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if status_path.exists():
@@ -862,8 +899,9 @@ class TestTeeStatus:
                     except (json.JSONDecodeError, ValueError):
                         pass
                 time.sleep(0.1)
+            assert s is not None and s.get("recorded_a2c", 0) >= 1, \
+                "no a2c frame recorded before SIGTERM"
             # Symmetric drain: tee stays alive (pump blocked on full pipe).
-            # SIGTERM it (buzz-acp's shutdown responsibility).
             tee_proc.send_signal(sig.SIGTERM)
             tee_proc.wait(timeout=10)
         finally:
@@ -915,7 +953,8 @@ class TestTeeStatus:
         6 s after the agent exits, then closes.  Symmetric drain-to-EOF:
         the frame IS recorded in the timeline and a2c file, forwarded to the
         client, rc 0, drained true, write_errors [].
-        Kills the a2c stall-timeout mutants (0 / 5 / 30 s)."""
+        Kills a2c stall timeouts shorter than the 6 s straggler gap (0 and
+        5 s); the 30 s case is killed by test_drain_loops_have_no_break_or_timeout."""
         agent_code = textwrap.dedent("""\
             import subprocess, sys, json, os
             line = sys.stdin.readline()
@@ -977,16 +1016,22 @@ class TestTeeStatus:
 
     def test_grandchild_never_closes_sigterm_required(self, tmp_path):
         """F3/B5e: grandchild holds the agent's stdout forever (never closes).
-        Symmetric drain-to-EOF: the tee stays alive.  SIGTERM required.
+        Symmetric drain-to-EOF: the tee stays alive.  buzz-acp SIGKILLs the
+        group after 5 s (acp.rs:421-444, pinned 1c8321cd); SIGKILL cannot be
+        handled, so that leg's evidence is its last RUNNING status (A21d).
+        The SIGTERM path covers an operator/systemd TERM.
         Assert the tee is still alive at 15 s (/proc state), then SIGTERM ->
         rc 70, non-final, write_errors ['terminated: SIGTERM']."""
         agent_code = textwrap.dedent("""\
-            import subprocess, sys, json
+            import subprocess, sys, json, os
             line = sys.stdin.readline()
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
-            subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            fd = os.environ.get("S0_01_FRAMEDIR", "")
+            if fd:
+                open(os.path.join(fd, "grandchild.pid"), "w").write(str(gc.pid))
             sys.exit(0)
         """)
         framedir = tmp_path / "frames"
@@ -1016,6 +1061,7 @@ class TestTeeStatus:
             drainer.start()
             # Wait for the tee to process the handshake
             status_path = framedir / "tee-status.json"
+            s = None
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if status_path.exists():
@@ -1026,6 +1072,8 @@ class TestTeeStatus:
                     except (json.JSONDecodeError, ValueError):
                         pass
                 time.sleep(0.1)
+            assert s is not None and s.get("recorded_a2c", 0) >= 1, \
+                "no a2c frame recorded before the liveness window"
             # The tee must be alive at 15 s (grandchild holds the pipe)
             time.sleep(15)
             assert tee_proc.poll() is None, "tee exited before 15 s"
@@ -1037,6 +1085,33 @@ class TestTeeStatus:
             if tee_proc.poll() is None:
                 tee_proc.kill()
                 tee_proc.wait(timeout=5)
+            # F-B5e-12: kill THIS test's grandchild; assert it is gone
+            gc_pid_path = framedir / "grandchild.pid"
+            gc_pid = None
+            if gc_pid_path.exists():
+                try:
+                    gc_pid = int(gc_pid_path.read_text().strip())
+                    os.kill(gc_pid, sig.SIGKILL)
+                except (OSError, ValueError):
+                    pass
+            if gc_pid is not None:
+                deadline_gc = time.monotonic() + 2
+                while time.monotonic() < deadline_gc:
+                    try:
+                        st = open("/proc/%d/stat" % gc_pid).read().split()
+                        if len(st) >= 3 and st[2] == "Z":
+                            break
+                    except (OSError, IOError):
+                        break
+                    time.sleep(0.1)
+                gone = True
+                try:
+                    st = open("/proc/%d/stat" % gc_pid).read().split()
+                    if len(st) >= 3 and st[2] != "Z":
+                        gone = False
+                except (OSError, IOError):
+                    pass
+                assert gone, "grandchild pid %d still alive after kill" % gc_pid
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
@@ -1376,7 +1451,11 @@ class TestStdinReaderDoneValue:
         """R1/F8: stdin never closed -> tee stays alive (drain-to-EOF).
         Proves LIVENESS: gate on recorded_a2c >= 1 and stdin_reader_done is
         False, then sleep 15 s and assert tee is still alive (poll is None)
-        BEFORE the SIGTERM.  Exit 70, stdin_reader_done False."""
+        BEFORE the SIGTERM.  buzz-acp SIGKILLs the group after 5 s
+        (acp.rs:421-444, pinned 1c8321cd); SIGKILL cannot be handled, so
+        that leg's evidence is its last RUNNING status (A21d).  The SIGTERM
+        path covers an operator/systemd TERM.
+        Exit 70, stdin_reader_done False."""
         agent_code = textwrap.dedent("""\
             import sys, json
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
@@ -1561,16 +1640,19 @@ class TestSigtermHandler:
             drainer.start()
             # Wait for some frames to be processed
             status_path = framedir / "tee-status.json"
+            loaded = False
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 if status_path.exists():
                     try:
                         s = json.loads(status_path.read_text())
                         if s.get("updated_seq", 0) >= 100:
+                            loaded = True
                             break
                     except (json.JSONDecodeError, ValueError):
                         pass
                 time.sleep(0.01)
+            assert loaded, "no contention: the wait for updated_seq >= 100 timed out"
             tee_proc.send_signal(sig.SIGTERM)
             tee_proc.wait(timeout=5)  # must answer within 5s, not hang
             drainer.join(timeout=5)
@@ -2032,6 +2114,17 @@ class TestRunningStatus:
                 "trial %d: dir c2a (%d) > timeline c2a (%d)" % (trial, dir_c2a, tl_c2a))
             assert dir_a2c <= tl_a2c, (
                 "trial %d: dir a2c (%d) > timeline a2c (%d)" % (trial, dir_a2c, tl_a2c))
+            # F-B5e-2/S1: status updated_seq is never AHEAD of the timeline
+            tl_last_seq = tl_c2a + tl_a2c  # timeline entries == total seq
+            sp = framedir / "tee-status.json"
+            if sp.exists():
+                try:
+                    st = json.loads(sp.read_text())
+                    assert 0 <= tl_last_seq - st["updated_seq"] <= 1, (
+                        "trial %d: lag %d not in {0,1}: tl_last_seq=%d updated_seq=%d"
+                        % (trial, tl_last_seq - st["updated_seq"], tl_last_seq, st["updated_seq"]))
+                except (json.JSONDecodeError, ValueError):
+                    pass  # torn status after SIGKILL -- not actionable
         assert len(results) == 12, "expected 12 completed trials, got %d" % len(results)
         # F15: every trial must have recorded enough frames to be meaningful
         assert all(r and r["tl_c2a"] >= 100 for r in results), (
@@ -2363,6 +2456,53 @@ class TestStructuralPins:
                 "%s: tl.write at line %d is NOT before df.write at line %d"
                 % (pump_name, tl_line, df_line))
 
+    def test_status_write_follows_timeline_write_in_pumps(self, tmp_path):
+        """F-B5e-2/S1: in both pump_fd and pump_pipe, inside the `with lock:`
+        body, the tl.write call's lineno is LESS THAN the _write_status() call's
+        lineno.  Kills S1 (status before timeline) deterministically."""
+        tree = ast.parse(Path(TEE).read_text())
+        for pump in ("pump_fd", "pump_pipe"):
+            fn = next(n for n in ast.walk(tree)
+                      if isinstance(n, ast.FunctionDef) and n.name == pump)
+            wl = next(n for n in ast.walk(fn) if isinstance(n, ast.With)
+                      and any(isinstance(i.context_expr, ast.Name) and i.context_expr.id == "lock"
+                              for i in n.items))
+            tl = next(c.lineno for c in ast.walk(wl)
+                      if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                      and c.func.attr == "write" and getattr(c.func.value, "id", None) == "tl")
+            ws = next(c.lineno for c in ast.walk(wl)
+                      if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                      and c.func.id == "_write_status")
+            assert tl < ws, "%s: _write_status at %d precedes tl.write at %d" % (pump, ws, tl)
+
+    def test_write_status_snapshot_and_rewrite_are_locked(self, tmp_path):
+        """F-B5e-3/N4/D3: _write_status takes `with lock:` containing the seq
+        snapshot, and `with status_lock:` containing os.replace.
+        Kills N4 (snapshot outside lock) and D3 (no status_lock)
+        deterministically."""
+        tree = ast.parse(Path(TEE).read_text())
+        ws = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "_write_status")
+        withs = {}
+        for n in ast.walk(ws):
+            if isinstance(n, ast.With):
+                for i in n.items:
+                    if isinstance(i.context_expr, ast.Name):
+                        withs.setdefault(i.context_expr.id, n)
+        assert "lock" in withs, "_write_status takes no `with lock:`"
+        assert "status_lock" in withs, "_write_status takes no `with status_lock:`"
+        assert any(isinstance(c, ast.Name) and c.id == "seq" for c in ast.walk(withs["lock"])), \
+            "the counter snapshot is not inside `with lock:`"
+        # F-B5e-13: stdin_reader_done and write_errors must also be read inside the lock
+        lock_src = ast.dump(withs["lock"])
+        assert "stdin_reader_done" in lock_src, \
+            "stdin_reader_done is not read inside `with lock:`"
+        assert "write_errors" in lock_src, \
+            "write_errors is not read inside `with lock:`"
+        assert any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                   and c.func.attr == "replace" for c in ast.walk(withs["status_lock"])), \
+            "os.replace is not inside `with status_lock:`"
+
     def test_concurrent_main_thread_status_vs_pump(self, tmp_path):
         """F2/N4/D3/B5e: agent exits while client holds stdin open AND the
         agent's grandchild keeps streaming a2c frames.  The c2a drain loop
@@ -2378,12 +2518,15 @@ class TestStructuralPins:
             sys.stdout.write(json.dumps(resp) + "\\n")
             sys.stdout.flush()
             # grandchild streams a2c frames for 30 s
-            subprocess.Popen([sys.executable, "-c",
+            gc = subprocess.Popen([sys.executable, "-c",
                 "import sys, json, time\\n"
                 "for i in range(3000):\\n"
                 "    sys.stdout.write(json.dumps({'jsonrpc':'2.0','method':'gc','params':{'i':i}}) + chr(10))\\n"
                 "    sys.stdout.flush()\\n"
                 "    time.sleep(0.01)\\n"])
+            fd = os.environ.get("S0_01_FRAMEDIR", "")
+            if fd:
+                open(os.path.join(fd, "grandchild.pid"), "w").write(str(gc.pid))
             sys.exit(0)
         """)
         framedir = tmp_path / "frames"
@@ -2445,6 +2588,33 @@ class TestStructuralPins:
             if tee_proc.poll() is None:
                 tee_proc.kill()
                 tee_proc.wait(timeout=5)
+            # F-B5e-12: kill THIS test's grandchild; assert it is gone
+            gc_pid_path = framedir / "grandchild.pid"
+            gc_pid = None
+            if gc_pid_path.exists():
+                try:
+                    gc_pid = int(gc_pid_path.read_text().strip())
+                    os.kill(gc_pid, sig.SIGKILL)
+                except (OSError, ValueError):
+                    pass
+            if gc_pid is not None:
+                deadline_gc = time.monotonic() + 2
+                while time.monotonic() < deadline_gc:
+                    try:
+                        st = open("/proc/%d/stat" % gc_pid).read().split()
+                        if len(st) >= 3 and st[2] == "Z":
+                            break
+                    except (OSError, IOError):
+                        break
+                    time.sleep(0.1)
+                gone = True
+                try:
+                    st = open("/proc/%d/stat" % gc_pid).read().split()
+                    if len(st) >= 3 and st[2] != "Z":
+                        gone = False
+                except (OSError, IOError):
+                    pass
+                assert gone, "grandchild pid %d still alive after kill" % gc_pid
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert reads >= 10000, "only %d reads -- need >= 10000" % reads
@@ -2460,8 +2630,11 @@ class TestStructuralPins:
 # ---------------------------------------------------------------------------
 class TestEarlySigterm:
     def test_sigterm_during_sha256_produces_status(self, tmp_path):
-        """F13/B5e: entrypoint >= 200 MB of comment lines (sha256 >= 0.3 s);
-        poll pgrep -P <tee_pid> every 2 ms until child appears, then SIGTERM.
+        """F13/B5e: the child cannot be visible to pgrep -P before the fork at
+        Popen (after the handler install at signal.signal), so the TERM sent
+        after pgrep succeeds can never precede the handler -- structural lower
+        flake bound of 0.  The 234 MB entrypoint (sha256 >= 0.3 s) widens the
+        in-try region as load insurance, not as the mechanism.
         Assert rc 70, status present, write_errors == ["terminated: SIGTERM"],
         final false, updated_seq 0, agent child gone within 2 s.
 
@@ -2569,6 +2742,21 @@ class TestEarlySigterm:
         assert isinstance(next_stmt, ast.Try), (
             "statement after signal.signal is %s at line %d, expected Try"
             % (type(next_stmt).__name__, next_stmt.lineno))
+        # F-B5e-5: no Popen call precedes the handler install in main() body
+        assert not any(
+            isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "Popen"
+            for s in main_fn.body[:signal_idx] for c in ast.walk(s)
+        ), "Popen precedes the handler install"
+        # F-B5e-6: proc = None is assigned before the install
+        assert any(
+            isinstance(s, ast.Assign)
+            and len(s.targets) == 1
+            and isinstance(s.targets[0], ast.Name)
+            and s.targets[0].id == "proc"
+            and isinstance(s.value, ast.Constant) and s.value.value is None
+            for s in main_fn.body[:signal_idx]
+        ), "proc is not pre-initialised to None before the handler install"
 
 
 # ---------------------------------------------------------------------------
@@ -2605,6 +2793,7 @@ class TestSigtermTerminatesAgent:
             tee_proc.stdin.flush()
             # Wait for identity to get agent pid
             id_path = framedir / "runtime-identity.json"
+            identity = None
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 if id_path.exists():
@@ -2615,6 +2804,7 @@ class TestSigtermTerminatesAgent:
                     except (json.JSONDecodeError, ValueError):
                         pass
                 time.sleep(0.05)
+            assert identity is not None, "runtime-identity.json never appeared"
             agent_pid = identity["agent_child_pid"]
             # Confirm agent is alive (AF-AP-45: check /proc/stat state, not just path)
             stat_path = "/proc/%d/stat" % agent_pid
@@ -2653,3 +2843,20 @@ class TestSigtermTerminatesAgent:
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
+
+
+# ---------------------------------------------------------------------------
+# F-B5e-1: doc-anchor guard for the honest shutdown bound
+# ---------------------------------------------------------------------------
+class TestDocstringAnchor:
+    def test_docstring_names_the_pinned_shutdown_signal(self, tmp_path):
+        """F-B5e-1: the module docstring names SIGKILL and cites acp.rs;
+        it does NOT contain the old 'TERMs/KILLs' wording."""
+        source = Path(TEE).read_text()
+        tree = ast.parse(source)
+        docstring = ast.get_docstring(tree)
+        assert docstring is not None, "module docstring missing"
+        assert "SIGKILL" in docstring, "module docstring does not name SIGKILL"
+        assert "acp.rs" in docstring, "module docstring does not cite acp.rs"
+        assert "TERMs/KILLs" not in docstring, (
+            "module docstring still contains the old 'TERMs/KILLs' wording")

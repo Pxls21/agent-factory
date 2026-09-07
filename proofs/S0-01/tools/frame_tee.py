@@ -15,11 +15,14 @@ write is non-final (final=false, exit fields null, write_errors includes
 
 After the agent exits, the tee drains BOTH pumps to EOF -- there is no
 stall timeout on either side.  A client that never closes (c2a) or a
-grandchild that holds the agent's stdout (a2c) keeps the tee alive; that
-is buzz-acp's shutdown responsibility (it TERMs/KILLs the group), and
-the SIGTERM path covers it.  The only uncovered SIGTERM window is Python
-interpreter startup before the handler install (default disposition:
-rc -15, no status file).
+grandchild that holds the agent's stdout (a2c) keeps the tee alive;
+buzz-acp ends such a leg with ``killpg(SIGKILL)`` on the whole process
+group and a bounded 5 s wait (``crates/buzz-acp/src/acp.rs:421-444``,
+``:2323-2328``, pinned ``1c8321cd``); SIGKILL cannot be handled, so the
+leg's evidence is its last RUNNING status (A21d).  The SIGTERM path
+below covers an operator/systemd TERM, not buzz-acp.  The only uncovered
+SIGTERM window is Python interpreter startup before the handler install
+(default disposition: rc -15, no status file).
 
 A frame the client wrote before the tee exits MUST be recorded in
 frames-client-to-agent.jsonl, or the tee exits 70 (EX_SOFTWARE).  An agent
@@ -165,18 +168,20 @@ def main():
             snap_rec_a2c = state["recorded_a2c"]
             snap_fwd_c2a = state["forwarded_c2a"]
             snap_fwd_a2c = state["forwarded_a2c"]
+            snap_stdin_done = state["stdin_reader_done"]
+            snap_errors = list(state["write_errors"])
         _drained = (snap_fwd_a2c == snap_rec_a2c
                     and snap_fwd_c2a == snap_rec_c2a)
         obj = {
             "final": final,
             "agent_returncode": agent_rc if final else None,
             "drained": _drained,
-            "stdin_reader_done": state["stdin_reader_done"],
+            "stdin_reader_done": snap_stdin_done,
             "recorded_c2a": snap_rec_c2a,
             "recorded_a2c": snap_rec_a2c,
             "forwarded_c2a": snap_fwd_c2a,
             "forwarded_a2c": snap_fwd_a2c,
-            "write_errors": list(state["write_errors"]),
+            "write_errors": snap_errors,
             "exit_code": exit_code_val if final else None,
             "updated_seq": snap_seq,
             "updated_utc": _utc_now(),
@@ -414,14 +419,14 @@ def main():
         # Wait for the agent process to exit
         proc.wait()
         # R1: drain a2c until EOF -- no stall timeout.  A grandchild that
-        # holds the agent's stdout keeps the tee alive; buzz-acp TERMs/KILLs
-        # the group (the SIGTERM path covers it).
+        # holds the agent's stdout keeps the tee alive; buzz-acp SIGKILLs
+        # the group after 5 s (acp.rs:421-444, pinned 1c8321cd).
         while to.is_alive():
             time.sleep(0.1)
             _write_status()
         # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
-        # A client that never closes keeps the tee alive; that is buzz-acp's
-        # shutdown responsibility (it TERMs/KILLs the group).
+        # A client that never closes keeps the tee alive; buzz-acp SIGKILLs
+        # the group after 5 s (acp.rs:421-444, pinned 1c8321cd).
         while ti.is_alive():
             time.sleep(0.1)
             _write_status()
