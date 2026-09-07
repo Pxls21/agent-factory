@@ -221,7 +221,7 @@ export FLAKY_COUNT_FILE="$TMP/flaky-count-12"
 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$QUOTA" bash "$LANE" "$BRIEF12" codex >"$TMP/out12" 2>"$TMP/err12"
 LD12="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-quota429.md' | head -1)"
 check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt) and the lane is FAILED, not reported" \
-  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/FAILED" \&\& [ ! -f "$LD12/report.md" ] && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
+  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/FAILED" && [ ! -f "$LD12/report.md" ] && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
   "a quota reset is hours away; retrying it three times with backoff would only delay the fallback"
 
 # --- a lane that dies before its final report still leaves its draft ------------
