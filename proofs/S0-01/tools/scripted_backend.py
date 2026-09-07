@@ -39,11 +39,16 @@ Framing gate (_framing_gate, first statement of do_GET and do_POST):
   Every rejection sends Connection: close and never parses a tail as a second request.
 
 Credential screen (_normal_forms / _carries_secret): breadth-first closure of
-  {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode} applied to each item,
+  {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode, strip_ctl} applied to each item,
   deduplicated, bounded at depth 5.  _normal_forms returns (forms, saturated);
   if saturated is False (bound exceeded) the screen fails closed (True) — the
   depth bound affects false-positive breadth, not detection.  strip_zwc removes
   U+200B (ZWSP), U+FEFF (BOM/ZWNBSP), U+00AD (soft hyphen), U+2060 (word joiner).
+  strip_ctl removes U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+007F-U+009F
+  (keeps TAB/LF/CR — strip_ws already covers them; D5h-F13).
+  _has_invalid_utf8_bytes rejects the request (fail closed) when the latin-1
+  view of a screened field contains bytes >= 0x80 that are not part of a valid
+  UTF-8 sequence (D5h-F1).
   Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
   bound-exceeded path and blanks the record (false positive).
   The screen is applied per item (path, header names, header values, serialized
@@ -105,8 +110,32 @@ class _ParseError(Exception):
         self.raw = raw
 
 
+def _has_invalid_utf8_bytes(s: str) -> bool:
+    """True if *s* contains bytes >= 0x80 (in its latin-1 view) that do not
+    form a valid UTF-8 sequence.
+
+    This fixture serves ONE pinned client through OmniRoute; invalid UTF-8 in
+    any screened field has no legitimate producer here, and a strict decoder's
+    failure was the only thing hiding a real Unicode separator (VERIFY-D5g F1:
+    bytes 0xE2 0x80 0x80 -> 400, bytes 0xE2 0x80 0x80 0x80 -> 200 verbatim).
+    A string that cannot latin-1-encode is not a byte view and passes.
+    """
+    try:
+        raw = s.encode("latin-1")
+    except UnicodeEncodeError:
+        return False  # not a byte view — passes
+    if not any(b >= 0x80 for b in raw):
+        return False  # pure ASCII — no invalid UTF-8 possible
+    try:
+        raw.decode("utf-8")
+        return False  # valid UTF-8
+    except UnicodeDecodeError:
+        return True   # invalid UTF-8 bytes present
+
+
 def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
-    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc, utf8_redecode}.
+    """Breadth-first closure of {unquote, unquote_plus, strip_ws, lower, strip_zwc,
+    utf8_redecode, strip_ctl}.
 
     Returns (forms, saturated).  *saturated* is True when the frontier was
     exhausted (all reachable forms found); False when the depth bound (5) was
@@ -117,6 +146,7 @@ def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
     strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
+    strip_ctl = lambda x: re.sub("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", x)
     def utf8_redecode(x):
         """latin-1 re-decode: http.server reads header bytes as latin-1, so
         a UTF-8-encoded separator (e.g. U+200B = e2 80 8b) arrives as three
@@ -126,7 +156,7 @@ def _normal_forms(s: str) -> tuple[frozenset[str], bool]:
             return x.encode("latin-1").decode("utf-8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             return x
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode)
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode, strip_ctl)
     frontier = {s}
     seen = {s}
     for _depth in range(5):
@@ -216,6 +246,40 @@ def _validate_slow_delay(s):
     return v
 
 
+def _json_safe(o):
+    """F11: coerce non-finite floats to the string "<non-finite>" before
+    serialising with allow_nan=False, so the record is always valid JSON.
+    Iterative (F10): no recursion risk regardless of nesting depth.
+    F12: copy-on-write — never mutates the caller's object."""
+    if isinstance(o, float) and not math.isfinite(o):
+        return "<non-finite>"
+    if not isinstance(o, (dict, list)):
+        return o
+    root = dict(o) if isinstance(o, dict) else list(o)
+    stack = [root]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for k in list(item):
+                v = item[k]
+                if isinstance(v, float) and not math.isfinite(v):
+                    item[k] = "<non-finite>"
+                elif isinstance(v, dict):
+                    c = dict(v); item[k] = c; stack.append(c)
+                elif isinstance(v, list):
+                    c = list(v); item[k] = c; stack.append(c)
+        elif isinstance(item, list):
+            for i in range(len(item)):
+                v = item[i]
+                if isinstance(v, float) and not math.isfinite(v):
+                    item[i] = "<non-finite>"
+                elif isinstance(v, dict):
+                    c = dict(v); item[i] = c; stack.append(c)
+                elif isinstance(v, list):
+                    c = list(v); item[i] = c; stack.append(c)
+    return root
+
+
 class State:
     def __init__(self, token: str, record_dir: Path, slow_delay: float):
         self.token = token
@@ -226,12 +290,18 @@ class State:
 
     def _carries_secret(self, s: str) -> bool:
         """True if the configured token appears in ANY normal form of *s*,
-        or if the closure did not saturate (fail closed).
+        or if the closure did not saturate (fail closed), or if *s* contains
+        invalid UTF-8 bytes in its latin-1 view (fail closed — D5h-F1).
 
         Normal forms are the closure of {unquote, unquote_plus, strip_ws,
-        lower, strip_zwc, utf8_redecode} over *s*, bounded at depth 5;
-        if the bound is exceeded the screen fails closed.
+        lower, strip_zwc, utf8_redecode, strip_ctl} over *s*, bounded at
+        depth 5; if the bound is exceeded the screen fails closed.
+
+        The false-positive cost of the bound-exceeded arm is the D5d-F12
+        accepted risk (see ``_normal_forms``).
         """
+        if _has_invalid_utf8_bytes(s):
+            return True                       # fail closed on invalid UTF-8
         t = self.token
         forms, saturated = _normal_forms(s)
         if any(t in f for f in forms):
@@ -249,7 +319,7 @@ class State:
         mono_ns = time.monotonic_ns()
         # P1/V5/AF-AP-35: credential-leak check at the ONE recording boundary.
         # _carries_secret checks: the closure of {unquote, unquote_plus, strip_ws,
-        # lower, strip_zwc, utf8_redecode} at depth 5; fails closed when
+        # lower, strip_zwc, utf8_redecode, strip_ctl} at depth 5; fails closed when
         # the bound is exceeded.
         # Keyed on the configured secret, not the request-supplied bearer,
         # so a request without Authorization is still screened (4-F1/6-F3).
@@ -287,38 +357,6 @@ class State:
             rec_body = body
             auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
-        # F11: coerce non-finite floats to the string "<non-finite>" before
-        # serialising with allow_nan=False, so the record is always valid JSON.
-        # Iterative (F10): no recursion risk regardless of nesting depth.
-        def _json_safe(o):
-            if isinstance(o, float) and not math.isfinite(o):
-                return "<non-finite>"
-            if not isinstance(o, (dict, list)):
-                return o
-            # F12: copy-on-write — never mutates the caller's object.
-            root = dict(o) if isinstance(o, dict) else list(o)
-            stack = [root]
-            while stack:
-                item = stack.pop()
-                if isinstance(item, dict):
-                    for k in list(item):
-                        v = item[k]
-                        if isinstance(v, float) and not math.isfinite(v):
-                            item[k] = "<non-finite>"
-                        elif isinstance(v, dict):
-                            c = dict(v); item[k] = c; stack.append(c)
-                        elif isinstance(v, list):
-                            c = list(v); item[k] = c; stack.append(c)
-                elif isinstance(item, list):
-                    for i in range(len(item)):
-                        v = item[i]
-                        if isinstance(v, float) and not math.isfinite(v):
-                            item[i] = "<non-finite>"
-                        elif isinstance(v, dict):
-                            c = dict(v); item[i] = c; stack.append(c)
-                        elif isinstance(v, list):
-                            c = list(v); item[i] = c; stack.append(c)
-            return root
         (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
             {"seq": n, "method": method, "path": rec_path, "headers": clean,
              "body": _json_safe(rec_body), "received_at": received_at, "t_mono_ns": mono_ns,
@@ -440,7 +478,7 @@ def make_handler(state: State):
             if not raw:
                 return None
             # F10 (venue-independent): a nesting deeper than MAX_JSON_DEPTH is refused BEFORE parsing —
-            # 400 + close, no record — on every interpreter; the RecursionError arm below stays as defence.
+            # 400 + close, no record — on every interpreter.
             if _json_nesting_depth(raw) > MAX_JSON_DEPTH:
                 return _BAD_CL
             try:

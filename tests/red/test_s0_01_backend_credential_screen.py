@@ -93,18 +93,29 @@ def _absent_under_all_normalizations(text: str) -> bool:
     """F2: STRICTLY WIDER oracle than the backend's _normal_forms.
 
     Enumerates every word over {unquote, unquote_plus, strip_ws, lower,
-    strip_zwc} up to depth 6 (the backend uses depth 5 with the same
-    operators; this oracle goes one depth level further).  Never imports
-    the backend's helper.  strip_zwc removes U+200B, U+FEFF, U+00AD, U+2060.
+    strip_zwc, utf8_redecode_lenient, strip_ctl} up to depth 6 (the backend
+    uses depth 5 with the same operators except utf8_redecode strict instead
+    of lenient; this oracle goes one depth level further and uses the lenient
+    decode so it recovers through junk bytes even when the impl regresses).
+    Never imports the backend's helper.
+    strip_zwc removes U+200B, U+FEFF, U+00AD, U+2060.
+    strip_ctl removes U+0000-U+0008, U+000B, U+000C, U+000E-U+001F,
+    U+007F-U+009F (keeps TAB/LF/CR).
+    utf8_redecode_lenient: encode("latin-1").decode("utf-8", errors="ignore");
+    strictly wider than the impl's strict utf8_redecode — handles both valid
+    and invalid UTF-8 byte sequences.
+    Seeds with json.loads of every JSON string literal (F4/F7).
     """
     strip_ws = lambda x: re.sub(r"\s+", "", x)
     strip_zwc = lambda x: re.sub("[​﻿­⁠]", "", x)
-    def utf8_redecode(x):
+    strip_ctl = lambda x: re.sub("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", x)
+    def utf8_redecode_lenient(x):
         try:
-            return x.encode("latin-1").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
+            return x.encode("latin-1").decode("utf-8", errors="ignore")
+        except UnicodeEncodeError:
             return x
-    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc, utf8_redecode)
+    ops = (unquote, unquote_plus, strip_ws, str.lower, strip_zwc,
+           utf8_redecode_lenient, strip_ctl)
     # F4: seed with JSON-unescaped text of every JSON string literal
     forms = {text}
     for m in re.findall(r'"(?:[^"\\]|\\.)*"', text):
@@ -403,12 +414,22 @@ class TestOracleSelfTests:
         (TOKEN[:len(TOKEN)//2] + "%2B" + TOKEN[len(TOKEN)//2:], False),
         # F4: record-shaped JSON with escaped separator
         ('{"body": "s0-01-upstream-tok\\ten-0123456789abcdef"}', False),
+        # D5h-F3: utf8_redecode_lenient on valid UTF-8 (latin-1 view of UTF-8 ZWSP between halves)
+        (TOKEN[:len(TOKEN)//2] + bytes([0xE2, 0x80, 0x8B]).decode("latin-1") + TOKEN[len(TOKEN)//2:], False),
+        # D5h-F3: utf8_redecode_lenient on invalid UTF-8 (ZWSP + one junk byte)
+        (TOKEN[:len(TOKEN)//2] + bytes([0xE2, 0x80, 0x8B, 0x80]).decode("latin-1") + TOKEN[len(TOKEN)//2:], False),
+        # D5h-F13: strip_ctl self-test (U+0085 = NEL, a C1 control)
+        (TOKEN[:len(TOKEN)//2] + chr(0x85) + TOKEN[len(TOKEN)//2:], False),
+        # D5h-F13: strip_ctl self-test (U+007F = DEL)
+        (TOKEN[:len(TOKEN)//2] + chr(0x7F) + TOKEN[len(TOKEN)//2:], False),
         # Known-good: oracle must NOT detect the token (return True)
         ('{"credential_in_unexpected_location": true}', True),
         ("Mozilla/5.0 (X11; Linux x86_64)", True),
         ("%25252540", True),
     ], ids=["junk_suffix", "depth5_nesting", "uppercased", "zwsp_split",
             "tab_split", "plus_split", "pct2b_split", "json_escaped_tab",
+            "raw_utf8_mojibake", "raw_utf8_mojibake_junk",
+            "c1_control_split", "del_split",
             "marker_record", "user_agent", "junk_alone"])
     def test_oracle_known_vectors(self, text, expected):
         assert _absent_under_all_normalizations(text) is expected
@@ -643,3 +664,118 @@ def test_record_text_carries_no_token_under_any_normalization(backend):
     assert len(recs) == n0 + 1
     assert not _absent_under_all_normalizations(raw_input)
     assert _absent_under_all_normalizations(recs[-1].read_text())
+
+
+# ---- D5h-F1: invalid UTF-8 separator in header -> 400 (fail closed) ----
+
+@pytest.mark.parametrize("sep", [
+    bytes([0xE2, 0x80, 0x80, 0x80]),
+    bytes([0xC2, 0xA0, 0x80]),
+    bytes([0xC0, 0xA0]),
+    bytes([0x80]),
+], ids=["enquad_plus_junk", "nbsp_plus_junk", "overlong_space", "lone_continuation"])
+def test_credential_invalid_utf8_separator_in_header_returns_400(backend, sep):
+    """D5h-F1: invalid UTF-8 bytes in the latin-1 view of a header value must
+    fail closed (400 + MARKER + Connection: close).  The PIN's implementation
+    failed open on these (200 OK, verbatim record)."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    payload = (f"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               f"Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n"
+               f"X-Trace: ").encode() + TOKEN[:mid].encode() + sep \
+              + TOKEN[mid:].encode() + f"\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F1: invalid UTF-8 separator via JSON escapes in body ----
+
+@pytest.mark.parametrize("json_sep,sep_id", [
+    # U+0080 is a C1 control; its latin-1 byte 0x80 is a lone continuation byte
+    ("\\u0080", "u0080"),
+    # U+00C0 U+00A0: their latin-1 view is bytes 0xC0 0xA0 (overlong encoding of space)
+    ("\\u00c0\\u00a0", "u00c0_u00a0"),
+    # U+00E2 U+0080 U+0080 U+0080: latin-1 view = 0xE2 0x80 0x80 0x80 (valid 3-byte + junk)
+    ("\\u00e2\\u0080\\u0080\\u0080", "u00e2_u0080_u0080_u0080"),
+], ids=["u0080", "overlong_pair", "enquad_plus_junk"])
+def test_credential_invalid_utf8_separator_in_json_body_returns_400(backend, json_sep, sep_id):
+    """D5h-F1 JSON twin: JSON escapes that decode to characters whose latin-1
+    view contains invalid UTF-8 must fail closed."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = (b'{"model":"s0-01-pong","messages":[],"note":"'
+            + TOKEN[:mid].encode() + json_sep.encode() + TOKEN[mid:].encode() + b'"}')
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F13: control characters in header -> 400 ----
+
+@pytest.mark.parametrize("ctl_char", [chr(0x7F), chr(0x01)], ids=["DEL", "SOH"])
+def test_credential_control_char_in_header_value_returns_400(backend, ctl_char):
+    """D5h-F13: control characters (DEL, C0) splitting the token in a header
+    value must be caught by strip_ctl."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    split_token = TOKEN[:mid] + ctl_char + TOKEN[mid:]
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, b"{}", extra_headers=f"X-Trace: {split_token}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F13: control characters via JSON escapes in body -> 400 ----
+
+@pytest.mark.parametrize("json_sep,sep_id", [
+    ("\\u007f", "DEL"),
+    ("\\u0001", "SOH"),
+], ids=["DEL", "SOH"])
+def test_credential_control_char_in_json_body_returns_400(backend, json_sep, sep_id):
+    """D5h-F13 JSON twin: JSON-escaped control characters splitting the token
+    must be caught by strip_ctl in the parsed-JSON-string walk."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    body = (b'{"model":"s0-01-pong","messages":[],"note":"'
+            + TOKEN[:mid].encode() + json_sep.encode() + TOKEN[mid:].encode() + b'"}')
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F4: unquote op is required for the bound ----
+
+def test_unquote_op_is_required_for_the_bound(backend):
+    """%252520%252B fails to saturate at depth 5 only because unquote is in
+    the op set.  Mutant M_UQ_DEL dies on this test."""
+    port = backend["port"]
+    resp = _raw(port, _post(port, b'{"model":"s0-01-pong","messages":[]}',
+                            extra_headers="X-Trace: %252520%252B\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert json.loads(_records(backend)[-1].read_text())["body"] == MARKER
+
+
+# ---- D5h-F5: raw non-ASCII header name -> 400 by gate, no record ----
+
+def test_raw_non_ascii_header_name_rejected_by_gate_no_record(backend):
+    """Raw non-ASCII bytes in a header NAME produce 400 with zero records:
+    the email parser reports MissingHeaderBodySeparatorDefect, so _framing_gate
+    arm 1 rejects before state.record is ever called."""
+    port = backend["port"]
+    n0 = len(_records(backend))
+    body = b'{"model":"s0-01-pong","messages":[]}'
+    # 0xC2 0xA0 in header name -> email parser defect -> gate 400
+    header_name_bytes = b"X-" + bytes([0xC2, 0xA0]) + b"Test"
+    payload = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+               b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
+               b"Content-Type: application/json\r\n"
+               + header_name_bytes + b": value\r\n"
+               b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    resp = _raw(port, payload)
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    assert b"\r\nConnection: close\r\n" in resp
+    assert len(_records(backend)) == n0  # zero new records

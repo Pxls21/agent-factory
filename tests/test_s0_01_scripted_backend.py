@@ -25,6 +25,7 @@ R5-D5-F10: exact assertions on named refusals and record values.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import http.client
 import json
@@ -1995,22 +1996,19 @@ def test_saturating_junk_is_served(backend):
         "credential_in_unexpected_location": True}
 
 
-# -- R9-D5g-F12: _json_safe copy-on-write ---
+# -- R9-D5g-F12 / D5h-F2: _json_safe copy-on-write (direct test) ---
 
-def test_json_safe_does_not_mutate_request_body(backend):
-    """F12: _json_safe returns a new structure, never mutates the caller's body."""
-    port = backend["port"]
-    body = json.dumps({"model": "s0-01-pong", "messages": [], "x": float("nan")}).encode()
-    count_before = len(list(backend["rec"].glob("*.json")))
-    resp = _raw_request(port, (
-        f"POST /v1/chat/completions HTTP/1.1\r\n"
-        f"Host: 127.0.0.1:{port}\r\n"
-        f"Authorization: Bearer {TOKEN}\r\n"
-        f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n"
-        f"\r\n").encode() + body)
-    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
-    recs = sorted(backend["rec"].glob("*.json"))
-    assert len(recs) == count_before + 1
-    rec = json.loads(recs[-1].read_text())
-    assert rec["body"]["x"] == "<non-finite>"
+def test_json_safe_copy_on_write():
+    """D5h-F2: _json_safe returns a new structure, never mutates the caller's body.
+    Tests the module-level function directly (lifted from State.record).
+    Mutant M_JSONSAFE_INPLACE (in-place walk) dies here: body == before fails."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scripted_backend", str(SERVER))
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    body = {"a": [{"x": float("nan")}]}
+    before = copy.deepcopy(body)
+    out = sb._json_safe(body)
+    assert body == before, "_json_safe mutated the input"
+    assert out is not body, "_json_safe returned the same object"
+    assert out["a"][0]["x"] == "<non-finite>"
