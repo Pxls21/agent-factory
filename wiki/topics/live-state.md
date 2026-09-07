@@ -7,8 +7,8 @@ last_compiled: 2026-09-03
 
 ## Clocks
 
-- **Origin tip:** `628a8c9` 2026-09-06 (`claude/soundbox-kit-migration-iz1jwf`) — checkpoints 8h/8i/8j + the regenerated attestations + briefs A5g/N5g (SHAs are rewritten at push; names by subject)
-- **Local HEAD:** = origin (pushed through `push_clean.sh --lanes-live` while lanes hold the tree); the tree carries the UNCOMMITTED live edits of lane N5g only (D5f/B5d/N5f landed; A5g runs on the PC). Earlier: checkpoint 7 — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
+- **Origin tip:** `f42fe7f` 2026-09-07 (`claude/soundbox-kit-migration-iz1jwf`) — checkpoints 8h-8m (the four components' round-9/10 repairs) + the regenerated attestations (SHAs are rewritten at push; names by subject)
+- **Local HEAD:** = origin (pushed through `push_clean.sh --lanes-live` while lanes hold the tree); the tree carries the UNCOMMITTED live edits of lane B5e only (D5g, N5g, A5g landed as 8l/8k/8m). An account quota stop at 2026-09-06 20:57Z killed VERIFY-D5g and VERIFY-N5g-b mid-run; both relaunched 2026-09-07 12:4xZ, VERIFY-CK9 dispatched, B5e dispatched. Earlier: checkpoint 7 — round-7 lanes D5c (allow-list framing gate) + N5c (probe/classifier
   survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-06
 
