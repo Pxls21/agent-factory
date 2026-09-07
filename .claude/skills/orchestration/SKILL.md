@@ -110,7 +110,8 @@ tier. When Opus coordinates:
    (verified seams, prior mistake-patterns as do-nots, evidence demands, foreground long
    gates); an under-briefed strong model loses to a well-briefed cheap one. Every delegate
    brief carries the standing do-not: NEVER take outward-facing actions (open/close PRs,
-   post comments, publish) — a delegate once opened a clean-build→main PR to deliver a
+   post comments, publish; the ONE carve-out, owner ruling 2026-09-07: a VERIFY lane may run
+   pytest-only PC gates through `scripts/pc_suite.sh launch|wait`, nothing else on the bridge) — a delegate once opened a clean-build→main PR to deliver a
    one-line docs edit, minting a 256k-line phantom diff whose failing fork-CI checks
    mailed the owner on every subsequent push for a day (closed 2026-07-22, PR #1).
 5. **Keep compounding.** The retrospective rule runs identically — bake lessons in the same

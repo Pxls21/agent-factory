@@ -121,7 +121,9 @@ liveness, coordinator token economy, and the full ORCHESTRATOR protocol (worktre
 brief-as-file · push-reviewed-SHA-never-HEAD · vocabulary lock tests): skill `orchestration` —
 load it before authoring any brief, dispatching agents, or pushing delegate work.** Standing
 do-nots that must survive even without the skill loaded: delegates NEVER take outward-facing
-actions (PRs, comments, publishing); long gates in ONE foreground call (a delegate that
+actions (PRs, comments, publishing; the ONE carve-out, owner ruling 2026-09-07: a VERIFY lane may run
+pytest-only gates on the PC through `scripts/pc_suite.sh launch|wait` — no other bridge use, no lane
+dispatch, no server touch); long gates in ONE foreground call (a delegate that
 backgrounds a run and stops is never rewoken by its completion); `git log origin/<branch>..HEAD`
 before ANY push and push the reviewed SHA explicitly; commit+push BEFORE any multi-agent dispatch
 (2026-09-02: a container restart killed a council agent mid-round with the brief's source doc
@@ -274,7 +276,9 @@ pending increment is named in the ledger.
 to use PC bridge").** Development + verification lanes stay in the sandbox (parallel delegates,
 isolation, rollback safety); everything HEAVY or LIVE runs on the PC over the bridge — container
 stacks (podman), gVisor/runsc, Rust builds against the owner's toolchain (rustup 1.95.0 is
-there), model round trips, long suites. **The model egress is the OmniRoute instance ALREADY
+there), model round trips, long suites. Every code-intel instrument runs on BOTH venues (owner directive
+2026-09-07): `harness-ports/bin/pc-setup.sh` installs/builds them on the PC (digest-pinned sentrux + ripwire, the
+four graphs, a stale graft/gitnexus index refreshed) so `scripts/lane_context.sh` works for the PC build lanes. **The model egress is the OmniRoute instance ALREADY
 RUNNING on the PC (`:20128`)** — never a sandbox model server, and vLLM is NOT a dependency of
 this project (owner ruling 2026-09-03: "just use omniroute"); S0-03's identity assertion is the
 routed model id OmniRoute reports. Never stop or restart the owner's running servers (Buzz relay,
@@ -378,11 +382,12 @@ that abort, re-check `git status` before suspecting real leftover trailers. It a
 dirty tree — commit or stash first (bit 2026-09-03). **`--lanes-live` with an EMPTY declared list refuses SILENTLY (rc 1, no
 message; bit 2026-09-07 after the last lane landed) — once no lane is live, push the clean tree with
 `--no-delegates-live`; the untracked `.lanes-live` file itself is gitignored and does not count as dirt.**
-**MCP servers time out at session start on a FRESH container (graft CONNECT_TIMEOUT 2026-09-07 12:37Z):** the server
-answers `initialize` in 0.5 s on an idle box; the 30 s limit was hit while setup's reindex jobs saturated the cores. The
-background builds are now delayed 45 s and niced; the durable fix is the environment variable `MCP_TIMEOUT=120000` set in
-the CCR environment's env vars (owner step — Claude Code reads it for the server-startup limit). Same session after a
-failed connect = the CLI (`graft ask`, `scripts/gn_mcp.py`); a failed server never reconnects mid-session.
+**MCP servers are NOT the path (owner ruling 2026-09-07: "the MCP server not working — just use the CLI, it's more reliable").**
+The graft CONNECT_TIMEOUT on a fresh container (2026-09-07 12:37Z: the startup reindex stampede hit the 30 s limit; the server
+answers `initialize` in 0.5 s idle) was the symptom; the rule is the CLI on every venue — `graft ask` / `graft skeleton`,
+`node .gitnexus/run.cjs` (or `scripts/gn_mcp.py`), `codebase-memory-mcp cli <tool> --flag value`, `/root/venv-crg/bin/code-review-graph`,
+`scripts/ripwire_review.sh` — all wrapped by `scripts/lane_context.sh`. A failed MCP connect is never worked around and needs no
+`MCP_TIMEOUT`; the background builds stay delayed and niced so a connect that does happen is quiet.
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.

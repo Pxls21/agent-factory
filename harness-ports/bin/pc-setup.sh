@@ -6,6 +6,9 @@
 #   AF_REPO   clone of this repo                default $HOME/agent-factory
 #   AF_VENV   project venv (pyflakes/pytest/aleph) default $HOME/venv-agent-factory
 #   CRG_VENV  code-review-graph venv           default $HOME/venv-crg
+# Also installs the two advisory instruments (sentrux, ripwire) digest-pinned into ~/.local/bin, builds the code-review-graph
+# and codebase-memory graphs, and refreshes a graft/gitnexus index that is older than HEAD (owner directive 2026-09-07:
+# every instrument runs on the PC too — scripts/lane_context.sh must work here for the build lanes).
 # Heavy index builds (gitnexus analyze, graft build) run DETACHED at the end — they outlive
 # any bridge call; watch $AF_REPO/.lanes/pc-setup.log and the two index logs.
 # Run it over the bridge detached:  nohup bash harness-ports/bin/pc-setup.sh > .lanes/pc-setup.log 2>&1 &
@@ -53,6 +56,37 @@ say "code-review-graph ($CRG_VENV)"
 [ -x "$CRG_VENV/bin/code-review-graph" ] || { "$PY311" -m venv "$CRG_VENV" && "$CRG_VENV/bin/pip" install -q code-review-graph >/dev/null 2>&1; }
 [ -x "$CRG_VENV/bin/code-review-graph" ] && ok "present" || warn "install failed"
 
+say "sentrux + ripwire (advisory instruments, digest-pinned — the same pins as scripts/setup.sh; binary only)"
+# Owner directive 2026-09-07: EVERY instrument runs on the PC too (the build lanes live here). User-level, no sudo.
+SENTRUX_VER="v0.5.7"
+SENTRUX_BIN_SHA="3237f80fe20d54aad4deefa8a143f0d60543bb5d2d6ad891eb42432f155725a6"
+SENTRUX_GRAM_SHA="8849f1eb07df3f6d4ea1ed422d8dee4b9b79a250682fa5646675dae466554454"
+RIPWIRE_VER="v0.4.0"
+RIPWIRE_ASSET_SHA="fd0bd0fa849c0e08db59a6a7e5c2d3e9bc062d3089b54196daf9332cd21bbfc8"
+RIPWIRE_BIN_SHA="6a1957b829f74e29b16caf550e90ea5504afa3ebd200c0b253f2f3afaae76aa3"
+TMPD="$(mktemp -d)"
+if [ -x "$HOME/.local/bin/sentrux" ] && [ "$(sha256sum "$HOME/.local/bin/sentrux" | cut -d" " -f1)" = "$SENTRUX_BIN_SHA" ]; then
+  ok "sentrux $SENTRUX_VER present (digest verified)"
+elif curl -fsSL -m 300 -o "$TMPD/sentrux" "https://github.com/sentrux/sentrux/releases/download/$SENTRUX_VER/sentrux-linux-x86_64" \
+     && [ "$(sha256sum "$TMPD/sentrux" | cut -d" " -f1)" = "$SENTRUX_BIN_SHA" ]; then
+  install -m 0755 "$TMPD/sentrux" "$HOME/.local/bin/sentrux" && ok "sentrux $SENTRUX_VER installed (digest verified)"
+else warn "sentrux: download or digest check failed"; fi
+if [ -x "$HOME/.local/bin/sentrux" ] && [ ! -d "$HOME/.sentrux/plugins/python" ]; then
+  if curl -fsSL -m 300 -o "$TMPD/grammars.tgz" "https://github.com/sentrux/sentrux/releases/download/$SENTRUX_VER/grammars-linux-x86_64.tar.gz" \
+     && [ "$(sha256sum "$TMPD/grammars.tgz" | cut -d" " -f1)" = "$SENTRUX_GRAM_SHA" ]; then
+    mkdir -p "$HOME/.sentrux/plugins" && tar xzf "$TMPD/grammars.tgz" -C "$HOME/.sentrux/plugins" && ok "sentrux grammars unpacked (digest verified)"
+  else warn "sentrux grammars: download or digest check failed"; fi
+fi
+[ -x "$HOME/.local/bin/sentrux" ] && SENTRUX_DEV=1 SENTRUX_SKIP_GRAMMAR_DOWNLOAD=1 "$HOME/.local/bin/sentrux" analytics off >/dev/null 2>&1 || true
+if [ -x "$HOME/.local/bin/ripwire" ] && [ "$(sha256sum "$HOME/.local/bin/ripwire" | cut -d" " -f1)" = "$RIPWIRE_BIN_SHA" ]; then
+  ok "ripwire $RIPWIRE_VER present (digest verified)"
+elif curl -fsSL -m 300 -o "$TMPD/ripwire.tar.gz" "https://github.com/redhat-et/ripwire/releases/download/$RIPWIRE_VER/ripwire-${RIPWIRE_VER#v}-linux-x64.tar.gz" \
+     && [ "$(sha256sum "$TMPD/ripwire.tar.gz" | cut -d" " -f1)" = "$RIPWIRE_ASSET_SHA" ] \
+     && tar xzf "$TMPD/ripwire.tar.gz" -C "$TMPD" --strip-components=1 "ripwire-${RIPWIRE_VER#v}-linux-x64/ripwire" \
+     && [ "$(sha256sum "$TMPD/ripwire" | cut -d" " -f1)" = "$RIPWIRE_BIN_SHA" ]; then
+  install -m 0755 "$TMPD/ripwire" "$HOME/.local/bin/ripwire" && ok "ripwire $RIPWIRE_VER installed (digest verified; binary only — the bundled skills/hooks are never installed)"
+else warn "ripwire: download, asset or binary digest check failed"; fi
+rm -rf "$TMPD"
 say "ouroboros (uv tool)"
 command -v ouroboros >/dev/null 2>&1 || uv tool install ouroboros-ai==0.53.0 >/dev/null 2>&1
 if command -v ouroboros >/dev/null 2>&1; then
@@ -72,4 +106,22 @@ else ok "gitnexus index present or tool absent"; fi
 if command -v graft >/dev/null 2>&1 && [ ! -f graft/INDEX.md ]; then
   ( flock -n 9 || exit 0; nohup graft build > .lanes/graft-build.log 2>&1 ) 9>.lanes/graft-build.lock & ok "graft build launched (.lanes/graft-build.log)"
 else ok "graft index present or tool absent"; fi
+# The other two quartet graphs (owner directive 2026-09-07: the instruments run on the PC too). code-review-graph builds
+# its graph when absent (~80 s here); codebase-memory indexes the clone in fast mode when its project DB is absent
+# (the DB is per-machine under ~/.cache/codebase-memory-mcp/). A STALE graft/gitnexus index (older than HEAD's commit)
+# is refreshed the same detached way — the post-commit hook keeps them fresh only for commits made ON this machine,
+# and lanes here build on commits fetched from origin.
+if [ -x "$CRG_VENV/bin/code-review-graph" ] && [ ! -f .code-review-graph/graph.db ]; then
+  ( flock -n 9 || exit 0; nohup "$CRG_VENV/bin/code-review-graph" build > .lanes/crg-build.log 2>&1 ) 9>.lanes/crg-build.lock & ok "code-review-graph build launched (.lanes/crg-build.log)"
+else ok "code-review-graph graph present or tool absent"; fi
+if [ -x "$HOME/.local/bin/codebase-memory-mcp" ] && ! ls "$HOME/.cache/codebase-memory-mcp/"*agent-factory*.db >/dev/null 2>&1; then
+  ( flock -n 9 || exit 0; nohup "$HOME/.local/bin/codebase-memory-mcp" cli index_repository --repo-path "$AF_REPO" --mode fast > .lanes/cbm-index.log 2>&1 ) 9>.lanes/cbm-index.lock & ok "codebase-memory index launched (.lanes/cbm-index.log)"
+else ok "codebase-memory index present or tool absent"; fi
+HEAD_T="$(git log -1 --format=%ct)"
+if command -v gitnexus >/dev/null 2>&1 && [ -f .gitnexus/run.cjs ] && [ "$(stat -c %Y .gitnexus/run.cjs)" -lt "$HEAD_T" ]; then
+  ( flock -n 9 || exit 0; nohup gitnexus analyze > .lanes/gitnexus-analyze.log 2>&1 ) 9>.lanes/gitnexus-analyze.lock & ok "gitnexus index older than HEAD — analyze relaunched"
+fi
+if command -v graft >/dev/null 2>&1 && [ -f graft/INDEX.md ] && [ "$(stat -c %Y graft/INDEX.md)" -lt "$HEAD_T" ]; then
+  ( flock -n 9 || exit 0; nohup graft build > .lanes/graft-build.log 2>&1 ) 9>.lanes/graft-build.lock & ok "graft index older than HEAD — build relaunched"
+fi
 echo "pc-setup done $(date -u +%FT%TZ)"
