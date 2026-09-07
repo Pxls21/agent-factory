@@ -176,7 +176,9 @@ TEST_SCREEN = [
     # AF-AP-59 (2026-09-07): a world-scoped process sweep in a test (`pgrep -f <pattern>` over the whole box, a bare
     # `ps -e` census) asserts an empty world that only a serial venue provides; a sibling xdist worker's process lands in
     # it (the PC gate, run 20260907T161133Z). Own-pid checks (`pgrep -P <own pid>`, /proc/<own pid>/stat) do not match.
-    ("AF-AP-59", re.compile(r"""["']pgrep["']\s*,\s*["']-f["']|\bpgrep\s+-f\b|["']ps["']\s*,\s*["']-e[a-z]*["']"""),
+    # VERIFY-B5h F2/F3a (2026-09-07): the row must carry pkill (the member of the class that KILLS — a deleted hand-typed
+    # pin had caught it) and a -f that is not adjacent to the command (`["pgrep", "-a", "-f", …]`). `pgrep -P <pid>` stays legal.
+    ("AF-AP-59", re.compile(r"""["']p(?:grep|kill)["'](?:\s*,\s*["']-[a-zA-Z]+["'])*\s*,\s*["']-f["']|\bp(?:grep|kill)\s+(?:-[a-zA-Z]+\s+)*-f\b|["']ps["']\s*,\s*["']-e[a-z]*["']"""),
      "world-scoped process sweep in a test — the result includes every sibling worker's processes; assert your OWN pids (from a pid file / pgrep -P <own pid> / /proc/<own pid>/stat) exactly and the admissibility of the rest, never emptiness (AF-AP-59)"),
     # AF-AP-57 (2026-09-07): a fake that picks its behaviour by call ORDINAL ("call 1 fails, call 2 succeeds") encodes the
     # current loop shape — the first thing a mutant changes (DL-INLINE survived a call-count killer: the mutated loop's
