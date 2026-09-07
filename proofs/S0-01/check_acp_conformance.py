@@ -1,4 +1,6 @@
 """S0-01 ACP conformance checker v2.2 — derives EVERYTHING from raw files, exact values.
+NOTE: ``--timeout-s`` must be a positive integer (R9-CK-F1); zero or negative silently
+cancels the SIGALRM cap.
 
 Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error
 (fatal usage — missing/invalid arguments, including a non-integer ``--timeout-s``) /
@@ -123,6 +125,14 @@ _REDACTED_DICT_KEYS = frozenset({"redacted", "len", "sha256_12"})
 # A21d / F34: tee-status.json key set from pins, never a local copy (AF-AP-42).
 _TEE_STATUS_KEYS = frozenset(PINNED_TEE_STATUS_KEYS)
 
+# R9-CK-F23: the full 21-key startup key set, hoisted from check_config_echo for test access.
+_EXPECTED_STARTUP_KEYS = frozenset({
+    "relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
+    "agents", "heartbeat", "subscribe", "dedup", "session_policy", "meh",
+    "ignore_self", "context_limit", "max_turns_per_session", "presence",
+    "typing", "memory", "model", "permission_mode", "respond_to",
+})
+
 # The filename pattern for upstream records (A3).
 _RECORD_FILENAME_RE = re.compile(r"^\d{6}\.json$")
 
@@ -180,8 +190,13 @@ def _reject_nan(line: str, leg: str, seq_hint: int):
 
 
 def _require_file(path: Path, leg: str, name: str):
+    """R9-CK-F2/F27: reject non-regular files (FIFOs, directories, sockets, devices)
+    with a named reason BEFORE any read; existence alone is not enough."""
+    import stat as _stat
     if not path.exists():
         raise Failure(f"{leg}: {name} absent")
+    if not _stat.S_ISREG(path.lstat().st_mode):
+        raise Failure(f"{leg}: {name} is not a regular file")
     return path
 
 
@@ -467,15 +482,19 @@ def check_env(leg_dir, leg, identities):
     framedir = env.get("S0_01_FRAMEDIR")
     if not isinstance(framedir, str) or not framedir:
         raise Failure(f"{leg}: env S0_01_FRAMEDIR empty or missing")
+    # R9-CK-F12: read the pinned respond_to values from pins.py, not literals.
     rt = env.get("BUZZ_ACP_RESPOND_TO")
     if leg == "two-users":
-        if rt != "allowlist":
-            raise Failure(f"{leg}: env BUZZ_ACP_RESPOND_TO should be 'allowlist' for two-users")
+        # two-users env carries the allowlist variant — the env value is the first token
+        # before the parenthesised argument (e.g. "allowlist" from "allowlist(1)").
+        _expected_rt_env = PINNED_STARTUP_RESPOND_TO_TWO_USERS.split("(")[0]
+        if rt != _expected_rt_env:
+            raise Failure(f"{leg}: env BUZZ_ACP_RESPOND_TO should be {_expected_rt_env!r} for two-users")
         if env.get(ENV_ALLOWLIST_KEY) != identities["user2"]:
             raise Failure(f"{leg}: env {ENV_ALLOWLIST_KEY} != identities.user2")
     else:
-        if rt != "owner-only":
-            raise Failure(f"{leg}: env BUZZ_ACP_RESPOND_TO should be owner-only")
+        if rt != PINNED_STARTUP_RESPOND_TO:
+            raise Failure(f"{leg}: env BUZZ_ACP_RESPOND_TO should be {PINNED_STARTUP_RESPOND_TO!r}")
     # A9/5-F07: hex-leak guard — case-insensitive 64-hex; descends into dicts
     exempt_keys = {"BUZZ_ACP_AGENT_OWNER", ENV_ALLOWLIST_KEY}
     for key, val in env.items():
@@ -926,17 +945,20 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
             if r.get("stopReason") == "end_turn":
                 first_term = _parse_utc(e["t_utc"])
                 break
-    if first_term is not None:
-        first_term_epoch = int(first_term.timestamp())
-        if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
-            raise Failure(f"{leg}: second mention not pending during the first turn")
+    # R9-CK-F6: first_term is guaranteed non-None — check_initialize_frames (runs before
+    # check_two_users via EXPECTED_CHECK_SEQUENCE) requires stopReason=="end_turn" for every
+    # prompt response, so the loop above always finds at least one end_turn.
+    first_term_epoch = int(first_term.timestamp())
+    if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
+        raise Failure(f"{leg}: second mention not pending during the first turn")
     # The second session/new follows the first terminal
     new_seqs = [e for e in entries if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
     term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
                  and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
-    if len(new_seqs) >= 2 and len(term_seqs) >= 1:
-        if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
-            raise Failure(f"{leg}: second session/new precedes the first terminal")
+    # R9-CK-F6: new_seqs >= 2 guaranteed by check_initialize_frames (exactly 2 session/new);
+    # term_seqs >= 1 guaranteed by the stopReason=="end_turn" requirement.
+    if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
+        raise Failure(f"{leg}: second session/new precedes the first terminal")
 
 
 def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
@@ -1046,12 +1068,7 @@ def check_config_echo(leg_dir, leg):
     if not m:
         raise Failure(f"{leg}: startup-line.txt does not match expected format")
     # R8-CK-F6: parse key=value tokens; required set is the FULL 21-key set.
-    _EXPECTED_STARTUP_KEYS = frozenset({
-        "relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
-        "agents", "heartbeat", "subscribe", "dedup", "session_policy", "meh",
-        "ignore_self", "context_limit", "max_turns_per_session", "presence",
-        "typing", "memory", "model", "permission_mode", "respond_to",
-    })
+    # R9-CK-F23: _EXPECTED_STARTUP_KEYS hoisted to module scope for test access.
     required_keys = _EXPECTED_STARTUP_KEYS
     kvs = {}
     kv_re = re.compile(r'(\w+)=(.+)')
@@ -1236,6 +1253,11 @@ def check_process_evidence(leg_dir, leg):
                       if PINNED_BUZZ_ACP_EXE_REALPATH in cmd or PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd)
     if int(hdr.group(7)) != body_pinned:
         raise Failure(f"{leg}: process-scan-after.txt header pinned_present={hdr.group(7)} inconsistent with body ({body_pinned})")
+    # R9-CK-F11: owned_zombies is validated as a non-negative int by the header regex
+    # (\d+ does not match negative values); consumed for consistency checking.
+    _owned_zombies = int(hdr.group(8))  # noqa: F841 — consumed by the regex, checked below
+    if _owned_zombies > int(hdr.group(5)):
+        raise Failure(f"{leg}: process-scan-after.txt owned_zombies={_owned_zombies} exceeds owned={hdr.group(5)}")
     if leg == "shutdown":
         # A20 v2.3 rule 4 / F10: shutdown after-scan body must be EMPTY — any row is a survivor
         for pid, ppid, etimes, cmd in all_procs:
@@ -1379,6 +1401,10 @@ def check_tee_status(leg_dir, leg, entries):
     c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
     a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
     last_seq = entries[-1]["seq"] if entries else 0
+    # R9-CK-F18: type-strict on BOTH arms — a float 3.0 must be rejected before either arm.
+    for _nf in ("recorded_c2a", "recorded_a2c", "forwarded_c2a", "forwarded_a2c", "updated_seq"):
+        if not _is_strict_int(ts[_nf]):
+            raise Failure(f"{leg}: tee-status.json {_nf} is not int")
     if ts["final"] is True:
         # FINAL arm (strict semantics — B5d R3/A21b)
         if ts["drained"] is not True:
@@ -1404,14 +1430,12 @@ def check_tee_status(leg_dir, leg, entries):
         if ts["write_errors"] not in ([], ["terminated: SIGTERM"]):
             raise Failure(f"{leg}: tee-status.json write_errors has unexpected entries: {ts['write_errors']!r}")
         for d in ("c2a", "a2c"):
-            if not _is_strict_int(ts[f"recorded_{d}"]) or not _is_strict_int(ts[f"forwarded_{d}"]):
-                raise Failure(f"{leg}: tee-status.json {d} recorded/forwarded is not int")
+            # Type gate is now before the arm split (R9-CK-F18).
             deficit = ts[f"recorded_{d}"] - ts[f"forwarded_{d}"]
             if deficit not in (0, 1):
                 raise Failure(f"{leg}: tee-status.json running snapshot forwarded_{d} {ts[f'forwarded_{d}']} "
                               f"trails recorded_{d} {ts[f'recorded_{d}']} by more than one")
-        if not _is_strict_int(ts["updated_seq"]):
-            raise Failure(f"{leg}: tee-status.json updated_seq is not int")
+        # updated_seq type gate is now before the arm split (R9-CK-F18).
         lag = last_seq - ts["updated_seq"]
         if lag not in (0, 1):
             raise Failure(f"{leg}: tee-status.json running snapshot updated_seq {ts['updated_seq']} "
@@ -1428,9 +1452,13 @@ def check_tee_status(leg_dir, leg, entries):
     utc_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
     if not isinstance(ts["updated_utc"], str) or not utc_re.match(ts["updated_utc"]):
         raise Failure(f"{leg}: tee-status.json updated_utc does not match format")
-    if ts["updated_seq"] != ts["recorded_c2a"] + ts["recorded_a2c"]:
-        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != recorded_c2a + recorded_a2c "
-                      f"({ts['recorded_c2a']} + {ts['recorded_a2c']})")
+    # R9-CK-F17: the global seq-sum rule (updated_seq == recorded_c2a + recorded_a2c)
+    # is dead through the live entry point: check_timeline (C:261-262) enforces seq 1..N
+    # for every leg before check_tee_status, so last_seq == c2a_count + a2c_count;
+    # the RUNNING arm's deficit-sum rule (above) is the same predicate and fires first;
+    # the FINAL arm's three exact equalities make it unreachable there too.
+    # Deleted — the deficit-sum rule on the RUNNING arm covers it; verified by
+    # mutant RUN-NOSUM surviving the full suite.
     # A21d exit-field rule: final requires the A21b exit pair; running requires both null.
     if ts["final"] is True:
         # F32: stdin_reader_done must be True when final
@@ -1516,7 +1544,10 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/new":
             if session_new_idx is None:
                 session_new_idx = i
-    if init_resp_idx is not None and session_new_idx is not None and init_resp_idx >= session_new_idx:
+    # R9-CK-F6: init_resp_idx is guaranteed non-None — check_initialize_frames (runs
+    # before check_golden) validates the a2c initialize response; session_new_idx is
+    # guaranteed by the req_methods check above (exactly one session/new).
+    if init_resp_idx >= session_new_idx:
         raise Failure(f"{leg}: a2c initialize response does not precede c2a session/new")
     # §8: session/new response precedes session/prompt
     new_resp_idx = None
@@ -1529,7 +1560,9 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/prompt":
             if prompt_idx is None:
                 prompt_idx = i
-    if new_resp_idx is not None and prompt_idx is not None and new_resp_idx >= prompt_idx:
+    # R9-CK-F6: new_resp_idx guaranteed by check_initialize_frames (session/new has
+    # sessionId response); prompt_idx guaranteed by req_methods (exactly one session/prompt).
+    if new_resp_idx >= prompt_idx:
         raise Failure(f"{leg}: session/new response does not precede session/prompt")
     # §8: every a2c notification carries <SID1>
     for i, line in enumerate(n1):
@@ -1556,15 +1589,18 @@ def check_golden(golden_dir, leg="golden"):
         return None
 
     sid1, sid2 = _raw_sid(run1_entries), _raw_sid(run2_entries)
-    if sid1 is not None and sid2 is not None and sid1 == sid2:
+    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_initialize_frames validates the
+    # session/new response (which carries sessionId) for run-1 and run-2.
+    if sid1 == sid2:
         raise Failure(f"{leg}: run-1 and run-2 raw sessionIds are identical")
     if run1_entries[0]["t_utc"] == run2_entries[0]["t_utc"]:
         raise Failure(f"{leg}: run-1 and run-2 first t_utc are identical")
     r1m = golden_dir / "run-1" / "mentions" / "owner.event.json"
     r2m = golden_dir / "run-2" / "mentions" / "owner.event.json"
-    if r1m.exists() and r2m.exists():
-        if json.loads(r1m.read_text()).get("id") == json.loads(r2m.read_text()).get("id"):
-            raise Failure(f"{leg}: run-1 and run-2 owner mention event ids are identical")
+    # R9-CK-F6: r1m/r2m guaranteed to exist — check_mentions (runs for run-1/run-2 in
+    # EXPECTED_CHECK_SEQUENCE before check_golden) requires owner.event.json via EXPECTED_MENTIONS.
+    if json.loads(r1m.read_text()).get("id") == json.loads(r2m.read_text()).get("id"):
+        raise Failure(f"{leg}: run-1 and run-2 owner mention event ids are identical")
     return n1
 
 
@@ -1596,6 +1632,9 @@ def _check_with_timeout(timeout_s, fn, *args):
 def check_bundle(root: Path, timeout_s: int = 90) -> str:
     # R8-CK-F2: the wall-clock cap lives HERE so in-process consumers get it too.
     # Default 90 s < the runner's 120 s.
+    # R9-CK-F1: reject non-positive caps — alarm(0) cancels the alarm silently.
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("timeout_s must be a positive integer")
     if timeout_s is not None:
         return _check_with_timeout(timeout_s, _check_bundle_uncapped, root)
     return _check_bundle_uncapped(root)
@@ -1608,23 +1647,8 @@ def _check_bundle_uncapped(root: Path) -> str:
     has_any_timeline = any((golden / leg / "timeline.jsonl").exists() for leg in LEGS)
     if not has_any_timeline:
         raise Deferred("v2 evidence not captured")
-    identities_path = _fixtures() / "identities.json"
-    _require_file(identities_path, "golden", "fixtures/identities.json")
-    identities = json.loads(identities_path.read_text())
-    baseline_path = golden / "manifests" / "manifest-baseline.txt.gz"
-    # A13: golden/manifests/ contains exactly manifest-baseline.txt.gz
-    _require_dir(golden / "manifests", "golden", "manifests/")
-    _require_file(baseline_path, "golden", "manifests/manifest-baseline.txt.gz")
-    manifest_entries = {f.name for f in (golden / "manifests").iterdir()}
-    if manifest_entries != {"manifest-baseline.txt.gz"}:
-        raise Failure(f"golden: manifests/ contains unexpected entries: {sorted(manifest_entries - {'manifest-baseline.txt.gz'})}")
-    expected_dirs = set(LEGS) | {"negative", "manifests"}
-    expected_files = {"golden.jsonl"}
-    for item in golden.iterdir():
-        if item.is_dir() and item.name not in expected_dirs:
-            raise Failure(f"golden: unexpected directory golden/{item.name}")
-        if item.is_file() and item.name not in expected_files:
-            raise Failure(f"golden: unexpected file golden/{item.name}")
+    # R9-CK-F2: walk BEFORE any read_text — a FIFO at identities.json blocks the read;
+    # the walk names it as non-regular before we ever open it.
     # 5-F18 / F19 / R8-CK-F2: walk EVERY tree the checker reads — golden/ AND fixtures dir.
     import stat as _stat
     walk_roots = [(golden, "golden"), (_fixtures(), "fixtures")]
@@ -1643,6 +1667,23 @@ def _check_bundle_uncapped(root: Path) -> str:
                     raise Failure(f"{rel_base}: symlink in evidence tree: {p.relative_to(walk_base)}")
                 if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
                     raise Failure(f"{rel_base}: non-regular entry in evidence tree: {p.relative_to(walk_base)}")
+    identities_path = _fixtures() / "identities.json"
+    _require_file(identities_path, "golden", "fixtures/identities.json")
+    identities = json.loads(identities_path.read_text())
+    baseline_path = golden / "manifests" / "manifest-baseline.txt.gz"
+    # A13: golden/manifests/ contains exactly manifest-baseline.txt.gz
+    _require_dir(golden / "manifests", "golden", "manifests/")
+    _require_file(baseline_path, "golden", "manifests/manifest-baseline.txt.gz")
+    manifest_entries = {f.name for f in (golden / "manifests").iterdir()}
+    if manifest_entries != {"manifest-baseline.txt.gz"}:
+        raise Failure(f"golden: manifests/ contains unexpected entries: {sorted(manifest_entries - {'manifest-baseline.txt.gz'})}")
+    expected_dirs = set(LEGS) | {"negative", "manifests"}
+    expected_files = {"golden.jsonl"}
+    for item in golden.iterdir():
+        if item.is_dir() and item.name not in expected_dirs:
+            raise Failure(f"golden: unexpected directory golden/{item.name}")
+        if item.is_file() and item.name not in expected_files:
+            raise Failure(f"golden: unexpected file golden/{item.name}")
     global _executed
     _executed = []
     all_mention_event_ids = []
@@ -1735,6 +1776,12 @@ def _check_bundle_uncapped(root: Path) -> str:
         for pair in EXPECTED_CHECK_SEQUENCE:
             if pair not in _executed:
                 raise Failure(f"golden: check sequence mismatch - first missing: {pair[0]}:{pair[1]}")
+        # R9-CK-F25: on a pure reorder (same multiset, different order), report the first
+        # index where the executed sequence diverges from the expected one.
+        for k, (ex_pair, got_pair) in enumerate(zip(EXPECTED_CHECK_SEQUENCE, _executed)):
+            if ex_pair != got_pair:
+                raise Failure(f"golden: check sequence mismatch - first out of order at "
+                              f"#{k}: got {got_pair[0]}:{got_pair[1]}, expected {ex_pair[0]}:{ex_pair[1]}")
         raise Failure(f"golden: check sequence mismatch ({len(_executed)} vs {len(EXPECTED_CHECK_SEQUENCE)} expected)")
     count = len(golden_lines)
     golden_sha_12 = _sha256_bytes("\n".join(golden_lines).encode("utf-8") + b"\n")[:12]
@@ -1764,7 +1811,10 @@ def main(argv) -> int:
         try:
             timeout_s = int(args[idx + 1])
         except ValueError:
-            print("usage: --timeout-s requires an integer", file=sys.stderr)
+            print("usage: --timeout-s must be a positive integer", file=sys.stderr)
+            return 64
+        if timeout_s <= 0:
+            print("usage: --timeout-s must be a positive integer", file=sys.stderr)
             return 64
         del args[idx:idx + 2]
     if len(args) != 1:

@@ -1,4 +1,4 @@
-"""proofs/S0-01/check_acp_conformance.py v2.1 test suite.
+"""proofs/S0-01/check_acp_conformance.py v2.2 test suite.
 
 Synthesized PASS bundle uses nostr_verify.sign_event with throwaway keys for ALL
 mention events. The bundle fixture writes a synthetic identities.json into tmp_path
@@ -464,8 +464,10 @@ def bundle(_session_bundle, tmp_path, monkeypatch):
     # Copy fixtures and tools into tmp_path so monkeypatching HERE works
     dest_fixtures = tmp_path / "fixtures"
     shutil.copytree(tmp_fixtures, dest_fixtures, copy_function=os.link)
+    # R9-CK-F19: copy tools with shutil.copy2 (real copy), never os.link —
+    # a hardlink to tracked sources means an in-place write corrupts the repo.
     dest_tools = tmp_path / "tools"
-    shutil.copytree(P / "tools", dest_tools, copy_function=os.link)
+    shutil.copytree(P / "tools", dest_tools, copy_function=shutil.copy2)
     # Monkeypatch PINNED_GOLDEN_SHA256 (the ONLY patched pin -- commented)
     monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256", golden_sha)
     # Monkeypatch HERE so the checker reads identities.json from tmp fixtures
@@ -494,9 +496,11 @@ def _run(root: Path, fixtures_dir: Path = None):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=os.environ.copy())
 
 
-def _check(bndl):
+def _check(bndl, timeout_s=60):
+    """R9-CK-F28: pass a generous but finite cap (60 s) so a walk regression fails
+    loudly instead of wedging the suite. None disables for explicit timeout tests."""
     try:
-        return 0, cc.check_bundle(bndl, timeout_s=None)
+        return 0, cc.check_bundle(bndl, timeout_s=timeout_s)
     except cc.Deferred as d:
         return 2, f"deferred: {d}"
     except cc.Failure as f:
@@ -731,7 +735,7 @@ def test_del_neg_fixture(bundle):
         fp.unlink()
     rc, out = _check(bundle)
     assert rc == 1
-    assert "negative:" in out and "neg-malformed-initialize.json absent" in out
+    assert out == "failure_reason: negative: negative: fixtures/neg-malformed-initialize.json absent"
 
 
 def test_del_identities(bundle):
@@ -1958,7 +1962,7 @@ def test_neg_c2a_not_seq1(bundle):
     _rewrite(p, "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "negative:" in out and "seq 1 is not a c2a frame" in out
+    assert out == "failure_reason: negative: negative: seq 1 is not a c2a frame"
 
 
 def test_neg_classify_wrong(bundle):
@@ -1969,7 +1973,7 @@ def test_neg_classify_wrong(bundle):
     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "negative:" in out and "initialize params != fixture" in out
+    assert out == "failure_reason: negative: negative: initialize params != fixture"
 
 
 def test_neg_extra_a2c_junk_first(bundle):
@@ -2125,7 +2129,7 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
                   + "54321 1 90 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 teardown survivor mutation should fail, got rc={rc}: {out}"
-    assert "survived teardown" in out
+    assert out == "failure_reason: run-1: process 54321 (/usr/bin/sleep 60) survived teardown"
 
 
 # === 5-F15: upstream record header screening tests (round-5b item 3) ===
@@ -2167,7 +2171,7 @@ def test_symlink_upstream_record(bundle):
     link.symlink_to(target)
     rc, out = _check(bundle)
     assert rc == 1
-    assert "symlink in evidence tree" in out
+    assert out == "failure_reason: golden: symlink in evidence tree: run-1/upstream-records/999999.json"
 
 
 def test_symlink_manifest_gz(bundle):
@@ -2178,7 +2182,7 @@ def test_symlink_manifest_gz(bundle):
     link.symlink_to(target)
     rc, out = _check(bundle)
     assert rc == 1
-    assert "symlink in evidence tree" in out
+    assert out == "failure_reason: golden: symlink in evidence tree: run-1/manifest-evil.txt.gz"
 
 
 # === 5-F19: agent-stderr.txt screening tests (round-5b item 3) ===
@@ -2225,7 +2229,7 @@ def test_neg_foreign_id_response_before_real(bundle):
     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "99999" in out and "does not match" in out
+    assert out == "failure_reason: negative: negative: agent response id 99999 does not match the request id at seq 2"
 
 
 # === 5-F20: empty-timeline and one-initialize guard tests (round-5b item 4) ===
@@ -2280,8 +2284,9 @@ def test_twousers_mentions_dir_absent_direct(bundle):
     identities = json.loads((bundle.parent / "fixtures" / "identities.json").read_text())
     import shutil as _s
     _s.rmtree(ld / "mentions")
-    # check_two_users no longer validates mentions/ — it raises FileNotFoundError
-    with pytest.raises((FileNotFoundError, cc.Failure)):
+    # R9-CK-F10: check_two_users no longer validates mentions/ (the dead gate was
+    # deleted per R5/F40) — it raises FileNotFoundError, not Failure.
+    with pytest.raises(FileNotFoundError):
         cc.check_two_users(c2a, a2c, es, identities, leg_dir=ld)
 
 
@@ -2329,25 +2334,30 @@ def test_tee_status_forwarded_lt_recorded(bundle):
     """A21: forwarded_c2a trails recorded by 2 → fail on running arm."""
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
-    ts["forwarded_c2a"] = ts["recorded_c2a"] - 2
+    r = ts["recorded_c2a"]
+    ts["forwarded_c2a"] = r - 2
     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert "trails recorded_c2a" in out and "by more than one" in out
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"forwarded_c2a {r - 2} trails recorded_c2a {r} by more than one")
 
 
 def test_tee_status_recorded_ne_timeline(bundle):
-    """A21: recorded_c2a off by 5 → fails on the running arm's recorded deficit check
-    or the updated_seq consistency check."""
+    """A21 / R9-CK-F8: recorded_c2a off by 5 → the running arm's per-direction recorded
+    deficit fires because c2a_count - recorded_c2a is far outside (0,1)."""
     ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
     ts = json.loads((ld / "tee-status.json").read_text())
-    ts["recorded_c2a"] = ts["recorded_c2a"] + 5
-    ts["forwarded_c2a"] = ts["recorded_c2a"]
-    # updated_seq is now != recorded_c2a + recorded_a2c
+    new_rec = ts["recorded_c2a"] + 5
+    ts["recorded_c2a"] = new_rec
+    ts["forwarded_c2a"] = new_rec
     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert "tee-status.json" in out
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"recorded_c2a {new_rec} trails timeline c2a count {c2a_count} by more than one")
 
 
 def test_tee_status_not_final_exit_not_null(bundle):
@@ -2389,16 +2399,20 @@ def test_tee_status_final_signal_exit_raw_fails(bundle):
 
 
 def test_tee_status_updated_seq_wrong(bundle):
-    """A21d: updated_seq far from timeline → running arm 'trails by more than one'."""
+    """A21d: updated_seq far from timeline → R9-CK-F18's pre-arm type check passes
+    (it IS an int), then the running arm's lag check fires because lag is far outside (0,1)."""
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
     ts["updated_seq"] = 99999
     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    last_seq = es[-1]["seq"]
     ok, result = _run_check_safe(cc.check_tee_status, ld, "run-1", es)
     assert not ok
-    # updated_seq 99999 is way ahead of the timeline, so updated_seq != rec_c2a + rec_a2c fires
-    assert "updated_seq" in result
+    # R9-CK-F9: the comment was stale — updated_seq ahead of the timeline hits the
+    # lag check (C:1416 area), not the global seq-sum rule (now deleted, F17).
+    assert result == (f"run-1: tee-status.json running snapshot updated_seq 99999 "
+                      f"trails timeline last seq {last_seq} by more than one")
 
 
 # === Addendum B: shutdown owned-pid survivor test ===
@@ -2411,7 +2425,7 @@ def test_shutdown_owned_pid_survives(bundle):
         + "12300 1 200 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert "survived shutdown" in out
+    assert out == "failure_reason: shutdown: process 12300 (/usr/bin/sleep 60) survived shutdown"
 
 
 # === A20 v2.3: enumeration header validation (direct-call tests) ===
@@ -2761,7 +2775,11 @@ def test_real_leg_negative():
         pytest.skip(f"real negative directory absent: {_REAL_LEG_DIR}")
     if not (neg_dir / "timeline.jsonl").exists():
         pytest.skip("real v2.2 sample absent: bridge down 2026-09-06")
-    _KNOWN_SKIP_REASONS = {
+    # R9-CK-F21: strict xfails keyed on the EXACT three known-stale reasons.
+    # The golden captures predate the current tools; a re-capture retires them.
+    # After re-capture these xfails turn into failures by design — the strict=True
+    # ensures the test suite goes RED when the stale reason disappears.
+    _KNOWN_XFAIL_REASONS = {
         "probe_sha256 mismatch",
         "agent_interpreter_realpath mismatch",
         "spawned_at_utc is later than the first frame",
@@ -2770,9 +2788,9 @@ def test_real_leg_negative():
     if ok:
         pass
     else:
-        matched = [r for r in _KNOWN_SKIP_REASONS if r in result]
+        matched = [r for r in _KNOWN_XFAIL_REASONS if r == result or r in result]
         if matched:
-            pytest.skip(f"real v2.2 sample: {matched[0]} (capture predates current probe)")
+            pytest.xfail(f"real v2.2 sample: {matched[0]} (capture predates current probe)")
         else:
             assert False, f"unexpected failure: {result}"
 
@@ -3072,11 +3090,13 @@ def test_ck7_f8b_tee_status_forwarded_a2c_mismatch(bundle):
     """F8b: tee-status.json forwarded_a2c trails recorded_a2c by 2 → running arm fails."""
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
-    ts["forwarded_a2c"] = max(0, ts["recorded_a2c"] - 2)
+    r = ts["recorded_a2c"]
+    ts["forwarded_a2c"] = max(0, r - 2)
     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert "trails recorded_a2c" in out and "by more than one" in out
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"forwarded_a2c {max(0, r - 2)} trails recorded_a2c {r} by more than one")
 
 
 # -- F8c: A21d recorded_c2a > timeline c2a count → running arm's recorded deficit check --
@@ -3088,10 +3108,12 @@ def test_ck7_f8c_tee_status_recorded_c2a_wrong(bundle):
     ts["recorded_c2a"] = real_c2a + 1
     ts["forwarded_c2a"] = real_c2a + 1
     _rewrite(ld / "tee-status.json", json.dumps(ts, indent=2) + "\n")
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
     rc, out = _check(bundle)
     assert rc == 1
-    # Running arm: timeline c2a count - recorded_c2a < 0, not in {0,1}
-    assert "recorded_c2a" in out and "trails timeline c2a count" in out
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"recorded_c2a {real_c2a + 1} trails timeline c2a count {c2a_count} by more than one")
 
 
 # -- F8d: A21d updated_utc format (C:1288) --
@@ -3233,17 +3255,29 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
     assert out == "failure_reason: golden: run-1 and run-2 first t_utc are identical"
 
 
-# === F43 / R8-CK-F5: source-scan test — catches open(,'w'), json.dump, shutil.copy*, os.replace/rename ===
-def test_f43_no_direct_writes_outside_rewrite():
-    """R8-CK-F5: ALL module-level functions (not just test_*) are scanned for writes that
-    bypass _rewrite.  Catches open(,'w'|'a'|'+'), Path.open(,'w'|'a'|'+'), json.dump,
-    shutil.copy*/copyfile, os.replace/os.rename onto bundle paths.  Self-tests with a
-    deliberately-violating source string so the scan itself is proven non-hollow."""
+# === F43 / R8-CK-F5 / R9-CK-F3: source-scan function extracted to module scope ===
+# The real assertion and the self-test BOTH call _scan_direct_writes so the scan
+# cannot be disabled without the self-test also going red.
+
+_WRITE_ATTRS = {"write_text", "write_bytes"}
+_WRITE_MODES = set("wa+")
+_SHUTIL_WRITERS = {"copy", "copy2", "copyfile"}
+_OS_WRITERS = {"replace", "rename"}
+_EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
+               "_write_runtime_identity", "_write_env", "_write_startup_and_log",
+               "_write_model", "_write_manifests", "_write_mentions",
+               "_write_upstream_records", "_write_process_scan", "_write_negative",
+               "_sign_mention", "_session_bundle", "_patch_nostr_verify",
+               "test_ck8_f34_frame_tee_subprocess_keys",
+               "test_ck9_tools_not_hardlinked"}
+
+
+def _scan_direct_writes(src: str) -> list[str]:
+    """R9-CK-F3: scan Python source for writes that bypass _rewrite.  Returns a list
+    of violation descriptions (empty = clean).  Both the real test and the self-test
+    call this function — disabling the scan disables both."""
     import ast as _ast
-    import inspect
-    src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
     tree = _ast.parse(src)
-    # Collect ALL module-level function ranges (not just test_*)
     fn_ranges = []
     for node in _ast.iter_child_nodes(tree):
         if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
@@ -3252,24 +3286,11 @@ def test_f43_no_direct_writes_outside_rewrite():
             for child in _ast.iter_child_nodes(node):
                 if isinstance(child, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
                     fn_ranges.append((f"{node.name}.{child.name}", child.lineno, child.end_lineno))
-    # Exempt helpers that unlink-before-write or are bundle-building setup (session fixture)
-    _EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
-                   "_write_runtime_identity", "_write_env", "_write_startup_and_log",
-                   "_write_model", "_write_manifests", "_write_mentions",
-                   "_write_upstream_records", "_write_process_scan", "_write_negative",
-                   "_sign_mention", "_session_bundle", "_patch_nostr_verify",
-                   "test_ck8_f34_frame_tee_subprocess_keys"}
-    _WRITE_ATTRS = {"write_text", "write_bytes"}
-    _WRITE_MODES = set("wa+")
-    # shutil and os writer function names
-    _SHUTIL_WRITERS = {"copy", "copy2", "copyfile"}
-    _OS_WRITERS = {"replace", "rename"}
     violations = []
     for node in _ast.walk(tree):
         if not isinstance(node, _ast.Call):
             continue
         lineno = node.lineno
-        # Which function is this in?
         fn_name = None
         for name, start, end in fn_ranges:
             if start <= lineno <= end:
@@ -3278,11 +3299,9 @@ def test_f43_no_direct_writes_outside_rewrite():
         if fn_name is None or fn_name in _EXEMPT_FNS:
             continue
         func = node.func
-        # .write_text() / .write_bytes()
         if isinstance(func, _ast.Attribute) and func.attr in _WRITE_ATTRS:
             violations.append(f"line {lineno}: .{func.attr}()")
             continue
-        # open(..., 'w'/'a'/'+') or Path.open(...)
         if isinstance(func, _ast.Name) and func.id == "open":
             if len(node.args) >= 2:
                 mode_arg = node.args[1]
@@ -3301,23 +3320,29 @@ def test_f43_no_direct_writes_outside_rewrite():
                     if _WRITE_MODES & set(mode_arg.value):
                         violations.append(f"line {lineno}: .open({mode_arg.value!r})")
                         continue
-        # json.dump (not json.dumps — dump writes to a file object)
         if isinstance(func, _ast.Attribute) and func.attr == "dump":
             if isinstance(func.value, _ast.Name) and func.value.id == "json":
                 violations.append(f"line {lineno}: json.dump()")
                 continue
-        # shutil.copy / copy2 / copyfile
         if isinstance(func, _ast.Attribute) and func.attr in _SHUTIL_WRITERS:
             if isinstance(func.value, _ast.Name) and func.value.id == "shutil":
                 violations.append(f"line {lineno}: shutil.{func.attr}()")
                 continue
-        # os.replace / os.rename
         if isinstance(func, _ast.Attribute) and func.attr in _OS_WRITERS:
             if isinstance(func.value, _ast.Name) and func.value.id == "os":
                 violations.append(f"line {lineno}: os.{func.attr}()")
                 continue
-    assert violations == [], f"F43: direct writes outside _rewrite (use _rewrite or add to exempt): {violations}"
-    # Self-test: a deliberately-violating source string must trigger the scan
+    return violations
+
+
+def test_f43_no_direct_writes_outside_rewrite():
+    """R9-CK-F3: scan the test file for writes that bypass _rewrite.  The scan function
+    is at module scope so the self-test exercises the SAME code path."""
+    import inspect
+    src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
+    violations = _scan_direct_writes(src)
+    assert violations == [], f"F43: direct writes outside _rewrite: {violations}"
+    # Self-test: a deliberately-violating source string must trigger the same scan.
     _SELF_TEST_SRC = '''
 def test_ck8_inplace_write_mutant():
     with open(p, "w") as f: f.write("evil")
@@ -3325,22 +3350,17 @@ def test_ck8_inplace_write_mutant_b():
     json.dump(obj, open(p, "w"))
 def test_ck8_inplace_write_mutant_c():
     shutil.copy(src, p)
+def test_ck8_inplace_write_mutant_d():
+    p.write_text("evil")
+def test_ck8_inplace_write_mutant_e():
+    p.write_bytes(b"evil")
+def test_ck8_inplace_write_mutant_f():
+    os.replace(src, dst)
 '''
-    test_tree = _ast.parse(_SELF_TEST_SRC)
-    self_violations = []
-    for node in _ast.walk(test_tree):
-        if not isinstance(node, _ast.Call):
-            continue
-        func = node.func
-        if isinstance(func, _ast.Name) and func.id == "open" and len(node.args) >= 2:
-            m = node.args[1]
-            if isinstance(m, _ast.Constant) and isinstance(m.value, str) and _WRITE_MODES & set(m.value):
-                self_violations.append(f"line {node.lineno}")
-        if isinstance(func, _ast.Attribute) and func.attr == "dump":
-            self_violations.append(f"line {node.lineno}")
-        if isinstance(func, _ast.Attribute) and func.attr in _SHUTIL_WRITERS:
-            self_violations.append(f"line {node.lineno}")
-    assert len(self_violations) >= 3, f"F43 self-test: expected >= 3 violations, got {self_violations}"
+    self_violations = _scan_direct_writes(_SELF_TEST_SRC)
+    # Must find all six patterns; emptying _WRITE_ATTRS or short-circuiting the loop
+    # makes this fail — proven by mutants F43-ATTRS-OFF and F43-SCAN-OFF.
+    assert len(self_violations) >= 6, f"F43 self-test: expected >= 6 violations, got {self_violations}"
 
 
 # === F22-F26: records / receipts / startup exact-match tests ===
@@ -3929,11 +3949,13 @@ def test_ck8_running_forwarded_deficit_2_rejected(bundle):
     """R1: running snapshot with forwarded trailing recorded by 2 is rejected."""
     ld = bundle / "golden" / "run-1"
     ts = json.loads((ld / "tee-status.json").read_text())
-    ts["forwarded_c2a"] = ts["recorded_c2a"] - 2
+    r = ts["recorded_c2a"]
+    ts["forwarded_c2a"] = r - 2
     _rewrite(ld / "tee-status.json", json.dumps(ts))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "trails recorded_c2a" in out and "by more than one" in out
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"forwarded_c2a {r - 2} trails recorded_c2a {r} by more than one")
 
 
 def test_ck8_running_seq_sum_invariant(bundle):
@@ -3953,4 +3975,452 @@ def test_ck8_running_seq_sum_invariant(bundle):
     _rewrite(ld / "tee-status.json", json.dumps(ts))
     rc, out = _check(bundle)
     assert rc == 1
-    assert "do not sum to updated_seq lag" in out
+    assert out == ("failure_reason: run-1: tee-status.json running snapshot "
+                   "recorded deficits 0+0 do not sum to updated_seq lag 1")
+
+
+# === R9-CK: round 10 — domain floors, walk-before-read, FINAL arm pinned ===
+
+# F1: --timeout-s positivity floor
+def test_ck9_timeout_arg_zero_rejected():
+    """R9-CK-F1: --timeout-s 0 must exit 64, not silently disable the cap."""
+    r = subprocess.run([sys.executable, str(CHECKER), "--timeout-s", "0", "/tmp/x"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 64
+    assert r.stderr.strip() == "usage: --timeout-s must be a positive integer"
+
+
+def test_ck9_timeout_arg_negative_rejected():
+    """R9-CK-F1: --timeout-s -1 must exit 64."""
+    r = subprocess.run([sys.executable, str(CHECKER), "--timeout-s", "-1", "/tmp/x"],
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 64
+    assert r.stderr.strip() == "usage: --timeout-s must be a positive integer"
+
+
+def test_ck9_timeout_inprocess_zero_raises():
+    """R9-CK-F1: in-process check_bundle(timeout_s=0) raises ValueError."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(ValueError, match="positive integer"):
+            cc.check_bundle(Path(td), timeout_s=0)
+
+
+# F2: walk before read — a FIFO at identities.json is named, not timed out
+def test_ck9_fifo_at_identities_json_is_named(bundle):
+    """R9-CK-F2: a FIFO at identities.json must be named as non-regular, not block."""
+    import time
+    fx = bundle.parent / "fixtures"
+    (fx / "identities.json").unlink()
+    os.mkfifo(fx / "identities.json")
+    start = time.monotonic()
+    rc, out = _check(bundle, timeout_s=10)
+    elapsed = time.monotonic() - start
+    assert elapsed < 5, f"took {elapsed:.1f}s — the FIFO blocked the read"
+    assert rc == 1
+    assert out == "failure_reason: fixtures: non-regular entry in evidence tree: identities.json"
+
+
+# F2/F27: _require_file rejects a FIFO
+def test_ck9_require_file_rejects_fifo(tmp_path):
+    """R9-CK-F2/F27: _require_file must reject a FIFO with a named reason."""
+    fifo = tmp_path / "evil.fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(cc.Failure, match="is not a regular file"):
+        cc._require_file(fifo, "test", "evil.fifo")
+
+
+# F2/F27: _require_file rejects a directory
+def test_ck9_require_file_rejects_dir(tmp_path):
+    """R9-CK-F27: a directory named like a required file is rejected."""
+    d = tmp_path / "tee-status.json"
+    d.mkdir()
+    with pytest.raises(cc.Failure, match="is not a regular file"):
+        cc._require_file(d, "test", "tee-status.json")
+
+
+# F4: "no tee process parented by buzz-acp" — TEEPAR-OFF killer
+def test_ck9_no_tee_parented_by_buzz(bundle):
+    """R9-CK-F4: a process tree where buzz-acp parents a non-tee child that parents the
+    agent must fire 'no tee process parented by buzz-acp'."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-after.txt"
+    owned_path = ld / "owned-pids.json"
+    owned_data = json.loads(owned_path.read_text())
+    buzz_pid = owned_data["buzz_acp_pid"]
+    # Build a tree: buzz -> NOT-the-tee -> agent. The tee_pid from runtime-identity
+    # is NOT in the tree, but the owned set matches for the closure check.
+    not_tee_pid = 12340  # same slot as tee_pid in owned-pids
+    agent_pid = 12345
+    _rewrite(sp, _scan_header("after", pinned_present=2) + "\n"
+             + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n"
+             + f"{not_tee_pid} {buzz_pid} 90 /usr/bin/python3 /tmp/not-the-tee.py\n"
+             + f"{agent_pid} {not_tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: no tee process parented by buzz-acp"
+
+
+# F5: FINAL arm exact — one wrong-value bundle per rule
+@pytest.mark.parametrize("field,delta,reason_tpl", [
+    ("forwarded_c2a", -1, "forwarded_c2a != recorded_c2a"),
+    ("forwarded_a2c", -1, "forwarded_a2c != recorded_a2c"),
+])
+def test_ck9_final_arm_forwarded_exact(bundle, field, delta, reason_tpl):
+    """R9-CK-F5: FINAL arm forwarded must exactly equal recorded."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["drained"] = True
+    ts["write_errors"] = []
+    ts["stdin_reader_done"] = True
+    ts["agent_returncode"] = 0
+    ts["exit_code"] = 0
+    ts["recorded_c2a"] = c2a_count
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_c2a"] = c2a_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq
+    ts[field] = ts[field] + delta
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == f"failure_reason: run-1: tee-status.json {reason_tpl}"
+
+
+@pytest.mark.parametrize("field,count_key,reason_tpl", [
+    ("recorded_c2a", "c2a", "recorded_c2a {n} != timeline c2a count {c}"),
+    ("recorded_a2c", "a2c", "recorded_a2c {n} != timeline a2c count {c}"),
+])
+def test_ck9_final_arm_recorded_exact(bundle, field, count_key, reason_tpl):
+    """R9-CK-F5: FINAL arm recorded must exactly equal timeline count."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    count = c2a_count if count_key == "c2a" else a2c_count
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["drained"] = True
+    ts["write_errors"] = []
+    ts["stdin_reader_done"] = True
+    ts["agent_returncode"] = 0
+    ts["exit_code"] = 0
+    ts["recorded_c2a"] = c2a_count
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_c2a"] = c2a_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq
+    ts[field] = count - 1
+    ts[f"forwarded_{count_key}"] = count - 1
+    # fix updated_seq so type check doesn't fire on updated_seq
+    ts["updated_seq"] = ts["recorded_c2a"] + ts["recorded_a2c"]
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    expected = reason_tpl.format(n=count - 1, c=count)
+    assert out == f"failure_reason: run-1: tee-status.json {expected}"
+
+
+def test_ck9_final_arm_updated_seq_exact(bundle):
+    """R9-CK-F5: FINAL arm updated_seq must equal timeline last seq."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["drained"] = True
+    ts["write_errors"] = []
+    ts["stdin_reader_done"] = True
+    ts["agent_returncode"] = 0
+    ts["exit_code"] = 0
+    ts["recorded_c2a"] = c2a_count
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_c2a"] = c2a_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq - 1
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == (f"failure_reason: run-1: tee-status.json "
+                   f"updated_seq {last_seq - 1} != timeline last seq {last_seq}")
+
+
+def test_ck9_final_stdin_reader_done_false_rejected(bundle):
+    """R9-CK-F5: FINAL arm requires stdin_reader_done == True."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["drained"] = True
+    ts["write_errors"] = []
+    ts["stdin_reader_done"] = False
+    ts["agent_returncode"] = 0
+    ts["exit_code"] = 0
+    ts["recorded_c2a"] = c2a_count
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_c2a"] = c2a_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: tee-status.json stdin_reader_done is not true when final"
+
+
+# F18: FINAL arm type-strict — float counters rejected on both arms
+@pytest.mark.parametrize("field", ["recorded_c2a", "forwarded_c2a", "updated_seq"])
+def test_ck9_final_arm_float_rejected(bundle, field):
+    """R9-CK-F18: a float value on the FINAL arm must be rejected (pre-arm type gate)."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["final"] = True
+    ts["drained"] = True
+    ts["write_errors"] = []
+    ts["stdin_reader_done"] = True
+    ts["agent_returncode"] = 0
+    ts["exit_code"] = 0
+    ts["recorded_c2a"] = c2a_count
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_c2a"] = c2a_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq
+    ts[field] = float(ts[field])
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == f"failure_reason: run-1: tee-status.json {field} is not int"
+
+
+# F5/F29: RUNNING upper bounds — seq lag 2 and recorded deficit 2
+def test_ck9_running_seq_lag_2_rejected(bundle):
+    """R9-CK-F29: running snapshot with updated_seq = last_seq - 2 is rejected."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["updated_seq"] = last_seq - 2
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"updated_seq {last_seq - 2} trails timeline last seq {last_seq} by more than one")
+
+
+def test_ck9_running_recorded_deficit_2_rejected(bundle):
+    """R9-CK-F29: running snapshot with recorded_c2a trailing by 2 is rejected.
+    Set updated_seq = last_seq (lag=0) so the lag check passes and the per-direction
+    recorded deficit check fires first."""
+    ld = bundle / "golden" / "run-1"
+    entries = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
+    a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
+    last_seq = entries[-1]["seq"]
+    ts = json.loads((ld / "tee-status.json").read_text())
+    ts["recorded_c2a"] = c2a_count - 2
+    ts["forwarded_c2a"] = c2a_count - 2
+    ts["recorded_a2c"] = a2c_count
+    ts["forwarded_a2c"] = a2c_count
+    ts["updated_seq"] = last_seq  # lag = 0, so lag check passes
+    _rewrite(ld / "tee-status.json", json.dumps(ts))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == (f"failure_reason: run-1: tee-status.json running snapshot "
+                   f"recorded_c2a {c2a_count - 2} trails timeline c2a count {c2a_count} by more than one")
+
+
+# F11: owned_zombies validation
+def test_ck9_owned_zombies_negative(bundle):
+    """R9-CK-F11: owned_zombies=-1 in the scan header is rejected by the regex
+    (\\d+ does not match -1), so the header is not recognized."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-after.txt"
+    old = sp.read_text()
+    _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=-1"))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-after.txt has no enumeration header"
+
+
+def test_ck9_owned_zombies_exceeds_owned(bundle):
+    """R9-CK-F11: owned_zombies=99 exceeds owned=3 in the scan header."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-after.txt"
+    old = sp.read_text()
+    _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=99"))
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: run-1: process-scan-after.txt owned_zombies=99 exceeds owned=3"
+
+
+def test_ck9_owned_zombies_abc(bundle):
+    """R9-CK-F11: non-numeric owned_zombies is rejected by the header regex."""
+    ld = bundle / "golden" / "run-1"
+    sp = ld / "process-scan-after.txt"
+    old = sp.read_text()
+    _rewrite(sp, old.replace("owned_zombies=0", "owned_zombies=abc"))
+    rc, out = _check(bundle)
+    assert rc == 1
+    # The regex match fails, so the header is not recognized
+    assert "process-scan-after.txt" in out
+
+
+# F12: check_env reads pins, not literals
+def test_ck9_env_respond_to_from_pin(bundle, monkeypatch):
+    """R9-CK-F12: monkeypatching the pin changes the env check's expectation."""
+    monkeypatch.setattr("check_acp_conformance.PINNED_STARTUP_RESPOND_TO", "PATCHED_RT")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert "BUZZ_ACP_RESPOND_TO should be 'PATCHED_RT'" in out
+
+
+# F20: POST role SEQUENCE — ROLES-SET mutant killer
+def test_ck9_post_roles_reordered(bundle):
+    """R9-CK-F20: a reordered ['user','system'] body is rejected (ROLES-SET killer)."""
+    ld = bundle / "golden" / "run-1" / "upstream-records"
+    for rp in ld.glob("*.json"):
+        r = json.loads(rp.read_text())
+        if r.get("method") == "POST" and r.get("body", {}).get("stream") is True:
+            body = r["body"]
+            body["messages"] = [body["messages"][1], body["messages"][0]]
+            _rewrite(rp, json.dumps(r, indent=2))
+            break
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == ("failure_reason: run-1: upstream POST record stream message roles "
+                   "['user', 'system'] != expected ['system', 'user']")
+
+
+def test_ck9_post_roles_duplicated(bundle):
+    """R9-CK-F20: a duplicated ['system','system','user'] body is rejected."""
+    ld = bundle / "golden" / "run-1" / "upstream-records"
+    for rp in ld.glob("*.json"):
+        r = json.loads(rp.read_text())
+        if r.get("method") == "POST" and r.get("body", {}).get("stream") is True:
+            body = r["body"]
+            body["messages"] = [body["messages"][0], body["messages"][0], body["messages"][1]]
+            _rewrite(rp, json.dumps(r, indent=2))
+            break
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == ("failure_reason: run-1: upstream POST record stream message roles "
+                   "['system', 'system', 'user'] != expected ['system', 'user']")
+
+
+# F19: st_nlink test proves the fixture does NOT hardlink
+def test_ck9_tools_not_hardlinked(bundle):
+    """R9-CK-F19: the tools copy in the bundle fixture is a real copy (nlink==1),
+    and writing the copy does not change the tracked file's sha."""
+    tee_copy = bundle.parent / "tools" / "frame_tee.py"
+    assert tee_copy.exists()
+    assert os.stat(str(tee_copy)).st_nlink == 1, "tools/frame_tee.py is hardlinked to tracked"
+    tracked = P / "tools" / "frame_tee.py"
+    import hashlib as _hl
+    sha_before = _hl.sha256(tracked.read_bytes()).hexdigest()
+    # Write to the copy — must not affect the tracked file
+    tee_copy.write_text("# tampered\n")
+    sha_after = _hl.sha256(tracked.read_bytes()).hexdigest()
+    assert sha_before == sha_after, "writing the copy changed the tracked file"
+
+
+# F25: A25 reorder fallback
+def test_ck9_a25_reorder_diagnostic(bundle, monkeypatch):
+    """R9-CK-F25: a pure reorder of the check sequence reports the first divergence."""
+    call_count = [0]
+    def reorder_run_check(fn, leg, *args, **kwargs):
+        call_count[0] += 1
+        # Swap the first two calls
+        result = fn(*args, **kwargs)
+        cc._executed.append((fn.__name__, leg))
+        if call_count[0] == 2:
+            # Swap positions 0 and 1 in _executed
+            cc._executed[0], cc._executed[1] = cc._executed[1], cc._executed[0]
+        return result
+    monkeypatch.setattr(cc, "_run_check", reorder_run_check)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert "first out of order at #" in out
+
+
+# F13: startup keys parametrised over the checks dict
+def test_ck9_startup_wrong_value_parametrised(bundle):
+    """R9-CK-F13: every key in the checks dict gets a wrong-value test, exact reason."""
+    checks = {"relay": cc.PINNED_RELAY_URL, "agent_cmd": cc.PINNED_TEE_PATH,
+              "mcp_cmd": cc.PINNED_STARTUP_MCP_CMD,
+              "idle_timeout": cc.PINNED_IDLE_TIMEOUT, "max_turn": cc.PINNED_MAX_TURN,
+              "agents": cc.PINNED_STARTUP_AGENTS,
+              "heartbeat": cc.PINNED_STARTUP_HEARTBEAT,
+              "subscribe": cc.PINNED_STARTUP_SUBSCRIBE,
+              "dedup": cc.PINNED_STARTUP_DEDUP,
+              "session_policy": cc.PINNED_SESSION_POLICY,
+              "meh": cc.PINNED_STARTUP_MEH,
+              "ignore_self": cc.PINNED_STARTUP_IGNORE_SELF,
+              "context_limit": cc.PINNED_STARTUP_CONTEXT_LIMIT,
+              "max_turns_per_session": cc.PINNED_STARTUP_MAX_TURNS_PER_SESSION,
+              "presence": cc.PINNED_STARTUP_PRESENCE,
+              "typing": cc.PINNED_STARTUP_TYPING,
+              "memory": cc.PINNED_STARTUP_MEMORY,
+              "model": cc.PINNED_STARTUP_MODEL,
+              "permission_mode": cc.PINNED_STARTUP_PERMISSION_MODE}
+    for k, exp in checks.items():
+        wrong = "EVIL_" + k.upper()
+        sp = bundle / "golden" / "run-1" / "startup-line.txt"
+        old = sp.read_text().rstrip("\n")
+        new_startup = old.replace(f"{k}={exp}", f"{k}={wrong}")
+        if new_startup == old:
+            continue  # parenthesised values need special handling, skip
+        _rewrite(sp, new_startup + "\n")
+        lp = bundle / "golden" / "run-1" / "buzzacp.log"
+        _rewrite(lp, lp.read_text().replace(f"{k}={exp}", f"{k}={wrong}"))
+        rc, out = _check(bundle)
+        assert rc == 1, f"key {k}: expected rc=1, got {rc}: {out}"
+        assert out == f"failure_reason: run-1: startup {k} is {wrong!r}, expected {exp!r}", f"key {k}"
+        # Restore for the next key
+        _rewrite(sp, old + "\n")
+        _rewrite(lp, lp.read_text().replace(f"{k}={wrong}", f"{k}={exp}"))
+
+
+# F23: _EXPECTED_STARTUP_KEYS is importable
+def test_ck9_expected_startup_keys_importable():
+    """R9-CK-F23: _EXPECTED_STARTUP_KEYS is at module scope and has 21 keys."""
+    assert hasattr(cc, "_EXPECTED_STARTUP_KEYS")
+    assert len(cc._EXPECTED_STARTUP_KEYS) == 21
+
+
+# F23: startup missing keys uses the exact computed list
+def test_ck9_startup_missing_keys_exact(bundle):
+    """R9-CK-F23: missing startup key → exact sorted missing-keys list."""
+    sp = bundle / "golden" / "run-1" / "startup-line.txt"
+    old = sp.read_text().rstrip("\n")
+    # Remove the last key=value token
+    tokens = old.rsplit(" ", 1)
+    _rewrite(sp, tokens[0] + "\n")
+    lp = bundle / "golden" / "run-1" / "buzzacp.log"
+    log_text = lp.read_text()
+    log_tokens = log_text.rsplit(" ", 1)
+    _rewrite(lp, log_tokens[0] + "\n")
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out.startswith("failure_reason: run-1: startup-line missing keys:")
+
+
+# F28: the default timeout is 90
+def test_ck9_default_timeout_is_90():
+    """R9-CK-F28: check_bundle's default timeout_s is 90."""
+    import inspect
+    sig = inspect.signature(cc.check_bundle)
+    assert sig.parameters["timeout_s"].default == 90

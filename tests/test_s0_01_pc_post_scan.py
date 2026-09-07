@@ -74,6 +74,24 @@ def _parse(path: Path):
     return m, rows
 
 
+sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
+import pins  # noqa: E402 — the producer's only pin source; the pinned paths are never repeated as literals here
+_PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
+
+
+def _split_world(rows, owned):
+    """The scan is WORLD-scoped by design: its body carries every owned row AND every live row naming a pinned
+    path, whoever spawned it. Under a parallel venue (the PC gate runs 8 xdist workers) a sibling worker's real
+    tee or pinned-path sleeper lands in THIS test's body — PC run 20260907T161133Z, AF-AP-59. So a test asserts
+    the OWNED subset exactly and characterises the rest: every foreign row must be admissible under the
+    producer's only other rule (it names a pinned path); anything else is an unexplained row and fails."""
+    own = [r for r in rows if r[0] in owned]
+    foreign = [r for r in rows if r[0] not in owned]
+    for r in foreign:
+        assert any(p in r[3] for p in _PINNED), f"unexplained foreign row in the scan body: {r!r}"
+    return own, foreign
+
+
 def _gone_or_zombie(pid: int) -> bool:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
@@ -102,8 +120,9 @@ def test_after_scan_persists_the_owned_closure_and_the_header(tree, tmp_path):
     assert int(m.group(2)) > 3                       # the full table was enumerated (ps, this test, the tree ...)
     assert m.group(3) == str(buzz) and m.group(4) == "1"
     assert m.group(5) == "3" and m.group(6) == "3"   # closure = buzz, tee, agent; all present
-    assert m.group(7) == "0"                          # no pinned path runs in the sandbox
-    assert {row[0] for row in rows} == {buzz, tee, agent}
+    own, foreign = _split_world(rows, {buzz, tee, agent})
+    assert int(m.group(7)) >= len(foreign)            # pinned_present counts the FULL table; 0 when the world is empty
+    assert {row[0] for row in own} == {buzz, tee, agent}
     by_pid = {row[0]: row for row in rows}
     assert by_pid[tee][1] == buzz and by_pid[agent][1] == tee
     owned = json.loads((tmp_path / "owned-pids.json").read_text())
@@ -123,7 +142,8 @@ def test_teardown_scan_after_a_clean_exit_is_empty_with_owned_present_zero(tree,
     assert m.group(1) == "teardown" and int(m.group(2)) > 0
     assert m.group(4) == "0"                          # buzz gone
     assert m.group(5) == "3" and m.group(6) == "0"    # closure remembered, nothing of it LIVE
-    assert rows == []                                 # a clean cleanup IS an empty body
+    own, _foreign = _split_world(rows, {buzz, tee, agent})
+    assert own == []                                  # a clean cleanup IS an empty OWNED body
     assert int(m.group(8)) <= 3                       # unreaped members are counted, never listed as survivors
 
 
@@ -138,8 +158,9 @@ def test_teardown_scan_names_an_owned_survivor_whatever_its_command(tree, tmp_pa
     assert r.returncode == 0, r.stderr
     m, rows = _parse(tmp_path / "process-scan-teardown.txt")
     assert m.group(6) == "1"                          # exactly one owned process still LIVE
-    assert [row[0] for row in rows] == [agent]
-    assert "time.sleep(120)" in rows[0][3]            # its real command line, not a pinned path
+    own, _foreign = _split_world(rows, {buzz, tee, agent})
+    assert [row[0] for row in own] == [agent]
+    assert "time.sleep(120)" in own[0][3]             # its real command line, not a pinned path
 
 
 def test_scan_rejects_an_unknown_mode(tmp_path):
@@ -190,8 +211,9 @@ def test_owned_row_is_never_dropped_by_the_helper_filter(tmp_path):
         r = _scan("after", tmp_path)
         assert r.returncode == 0, r.stderr
         m, rows = _parse(tmp_path / "process-scan-after.txt")
-        assert {row[0] for row in rows} == {parent.pid, child}
-        assert m.group(6) == "2" and len(rows) == 2          # owned_present equals the owned rows in the body
+        own, _foreign = _split_world(rows, {parent.pid, child})
+        assert {row[0] for row in own} == {parent.pid, child}
+        assert m.group(6) == "2" and len(own) == 2           # owned_present equals the OWNED rows in the body
     finally:
         for p in (child, parent.pid):
             try:
