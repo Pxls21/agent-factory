@@ -238,6 +238,10 @@ has two honest shapes and one flake.
    producer mutants (count over the body instead of the table; helper filter off) die on it.
 3. **The flake:** `if not foreign: assert pinned_present == "0"` — exact over the LIVE world, green only
    while the test is alone on the box (VERIFY-CK10 F-R10-20 asked for it; rejected on this evidence).
+   VERIFY-CK11 then showed the rejection was right on STRONGER grounds: the header counts the full table and
+   the body is a filtered subset, so the two numbers count DIFFERENT populations and the equality fails
+   deterministically (one owned row + one helper-shaped pinned row → body empty, header 1) — no sibling worker
+   needed. Before asserting a relation between two counters, check they count the same population.
 War story: the PC checker gate's first rerun of checkpoint 8p went red on a sibling xdist worker's
 `frame_tee.py` sleeper inside a world-scoped scan body (run 20260907T161133Z); the fix was shape 1 plus the
 two committed controls, and shape 2 for the count (`tests/test_s0_01_pc_post_scan.py`).
