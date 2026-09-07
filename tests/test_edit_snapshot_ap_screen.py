@@ -271,3 +271,45 @@ class TestAFAP55:
 
     def test_no_fire_on_realpath_of_executable(self):
         assert not self.rx.search('expected = os.path.realpath(sys.executable)')
+
+
+# ---- AF-AP-57 (TEST_SCREEN): ordinal gate in a test fake ----
+
+class TestAFAP57:
+    rx = _TEST_BY_ID["AF-AP-57"]
+
+    def test_fires_on_rl_calls_ordinal(self):
+        assert self.rx.search("                if _rl_calls[0] == 1:                    # the early loop's single attempt")
+
+    def test_fires_on_call_count_lt(self):
+        assert self.rx.search("    if call_count < 2:\n        raise OSError()")
+
+    def test_fires_on_attempts_ge(self):
+        assert self.rx.search("        if attempts[0] >= 3: return path")
+
+    def test_no_fire_on_call_count_assertion(self):
+        assert not self.rx.search("    assert spy.call_count == 1")
+
+    def test_no_fire_on_counter_increment(self):
+        assert not self.rx.search("                _rl_calls[0] += 1")
+
+    def test_no_fire_on_phase_gate(self):
+        assert not self.rx.search("                if threading.active_count() == 1:")
+
+
+# ---- AF-AP-58 (AP_SCREEN): raising signal handler installed before its catching scope ----
+
+class TestAFAP58:
+    rx = _AP_BY_ID["AF-AP-58"]
+
+    def test_fires_on_sigterm_install(self):
+        assert self.rx.search("    signal.signal(signal.SIGTERM, _sigterm_handler)")
+
+    def test_fires_on_sigalrm_install_with_alias(self):
+        assert self.rx.search("    old = signal.signal(signal.SIGALRM, _raise_timeout)")
+
+    def test_no_fire_on_alarm(self):
+        assert not self.rx.search("    signal.alarm(timeout_s)")
+
+    def test_no_fire_on_send_signal(self):
+        assert not self.rx.search("    proc.send_signal(signal.SIGTERM)")

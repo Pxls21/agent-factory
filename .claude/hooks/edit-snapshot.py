@@ -134,6 +134,11 @@ AP_SCREEN = [
     # reading must be pinned to the first event only the final stage can produce (the first protocol byte).
     ("AF-AP-55", re.compile(r"""readlink\(\s*f?["']/proc/[^"'\n]*/exe"""),
      "identity sampled from /proc/<pid>/exe — pin the reading to the first event only the FINAL exec stage can produce (the first protocol byte) and keep a multi-stage fixture (env shebang / exec wrapper) in the suite (AF-AP-55)"),
+    # AF-AP-58 (2026-09-07): a RAISING signal handler installed before the `try:` that catches it turns every event in
+    # the gap into an uncaught exception (tee F13: TERM at 51/68 ms -> traceback, rc 1, no status file). Advisory: every
+    # install fires; confirm the catching scope starts on the very next statement.
+    ("AF-AP-58", re.compile(r"""\bsignal\.signal\(\s*signal\.SIG[A-Z]+\s*,"""),
+     "signal handler install — if the handler RAISES, the try that catches it must begin on the NEXT statement and wrap everything after (pre-init every local the except path reads); test the gap deterministically (long window, child-exists poll), never with a fixed delay (AF-AP-58)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its
@@ -166,6 +171,11 @@ TEST_SCREEN = [
     # failing first, passes unnoticed (VERIFY-N5c F5 on the coordinator's own producer-pin test).
     ("AF-AP-48", re.compile(r"""assert\s+[^\n=]+?\s+in\s*\{\s*["']"""),
      "set-shaped reason assertion — assert the ONE exact value; a set is admissible only for a genuinely nondeterministic outcome, each member with its own producing test (AF-AP-48)"),
+    # AF-AP-57 (2026-09-07): a fake that picks its behaviour by call ORDINAL ("call 1 fails, call 2 succeeds") encodes the
+    # current loop shape — the first thing a mutant changes (DL-INLINE survived a call-count killer: the mutated loop's
+    # 2nd attempt landed on the success ordinal with the identical error text). Gate fakes on PHASE/state instead.
+    ("AF-AP-57", re.compile(r"""\bif\s+(?:not\s+)?\w*(?:calls?\[0\]|call_count|n_calls|attempts?\[0\])\s*(?:==|!=|<=|>=|<|>)\s*\d"""),
+     "ordinal gate in a fake — behaviour selected by call count encodes the loop shape a mutant changes; gate on observable PHASE/state (a thread the code starts later, a file the later stage writes) and assert the mechanism from the wrapper (AF-AP-57)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),
     # TN3-F4 (2026-09-02): a blanket except in a test hollows any call-count
