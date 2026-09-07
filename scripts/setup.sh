@@ -125,6 +125,14 @@ fi
 say "Codebase Memory MCP"
 if [ -x "/root/.local/bin/codebase-memory-mcp" ]; then
   ok "codebase-memory-mcp binary present"
+  # The graph is CONTAINER-SCOPED (/root/.cache/codebase-memory-mcp/<slug>.db): a fresh container has none, and the
+  # MCP server's own index_repository blocks the main loop (~30 s fast; moderate failed outright, "Pipeline failed",
+  # 2026-09-07). Build it here in the background, niced, after the graft + crg builds, so the graph exists before
+  # anyone asks — an instrument that is not built is not in the loop (owner escalation 2026-09-07).
+  if [ ! -f "/root/.cache/codebase-memory-mcp/home-user-agent-factory.db" ]; then
+    (cd "$REPO_ROOT" && nohup nice -n 19 ionice -c 3 sh -c "sleep 150; /root/.local/bin/codebase-memory-mcp cli index_repository --repo-path '$REPO_ROOT' --mode fast" >/tmp/cbm-index.log 2>&1 &)
+    ok "codebase-memory index launched in background (log: /tmp/cbm-index.log)"
+  fi
 elif [ -f "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" ]; then
   bash "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" --dir=/root/.local/bin >/dev/null 2>&1 \
     && ok "codebase-memory-mcp installed (prebuilt release)" \

@@ -48,4 +48,17 @@ if command -v gitnexus >/dev/null 2>&1; then
     cd "$REPO_ROOT" && nice -n 19 ionice -c 3 gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1
   ) 9>/tmp/gitnexus-analyze.lock >/dev/null 2>&1 &
 fi
+# The other two quartet graphs refresh here too (owner escalation 2026-09-07: "re-index after each landed increment so
+# the map never lags the tree" was written down and never wired): codebase-memory (fast mode, ~30 s) and
+# code-review-graph (`update` when it exists, else `build`, ~80 s). Both niced, one at a time per graph via flock.
+if [ -x /root/.local/bin/codebase-memory-mcp ]; then
+  ( flock -n 9 || exit 0
+    cd "$REPO_ROOT" && nice -n 19 ionice -c 3 /root/.local/bin/codebase-memory-mcp cli index_repository --repo-path "$REPO_ROOT" --mode fast >/tmp/cbm-index.log 2>&1
+  ) 9>/tmp/cbm-index.lock >/dev/null 2>&1 &
+fi
+if [ -x /root/venv-crg/bin/code-review-graph ]; then
+  ( flock -n 9 || exit 0
+    cd "$REPO_ROOT" && { /root/venv-crg/bin/code-review-graph update >/tmp/crg-build.log 2>&1 || nice -n 19 ionice -c 3 /root/venv-crg/bin/code-review-graph build >/tmp/crg-build.log 2>&1; }
+  ) 9>/tmp/crg-build.lock >/dev/null 2>&1 &
+fi
 exit 0
