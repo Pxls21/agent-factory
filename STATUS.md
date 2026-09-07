@@ -3,9 +3,9 @@
 **Phase:** Stage 0 proof pack in progress. No feature work until the proof pack validates the spine
 (Buzz → `buzz-acp` → Hermes → OmniRoute, memory composition, Fubuki seams, policy failure behaviour, gVisor compatibility).
 **Implementation:** branch `claude/soundbox-kit-migration-iz1jwf`. The proof machinery is built. The Wave 0 spikes are all
-positive. Four of the twelve proofs are minted (three conformance-checked decisions, one execution proof — the ledger's count; S0-07's
-corrections landed without a minted result). S0-01 is REVIEW-PENDING inside a build-then-adversarial-verify repair loop (rounds 12-15
-on 2026-09-07; five components, the PC capture tools still unrepaired) after the owner's 2026-09-05 review declined closure. Five
+positive. Five of the twelve proofs are minted (three conformance-checked decisions, two execution proofs — S0-11 accepted, S0-07 minted
+2026-09-07 and awaiting the owner's review). S0-01 is REVIEW-PENDING inside a build-then-adversarial-verify repair loop (rounds 12-15
+on 2026-09-07; five components, the PC capture tools still unrepaired) after the owner's 2026-09-05 review declined closure. Four
 execution proofs are absent and two carry blocked markers. No application code
 for the production spine exists yet, by design. Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
 a distillation and the ledger wins on any disagreement).

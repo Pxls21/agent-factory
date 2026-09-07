@@ -44,6 +44,8 @@ TRACKED = {
     "S0-11": "s0-18-s0-11-eval-hardening",
     # S0-01 proof run recorded 2026-09-05 (pc-bridge venue); REVIEW-PENDING until the owner accepts.
     "S0-01": "s0-07-s0-01-acp-conformance",
+    # S0-07 minted 2026-09-07 23:46Z by the real runner (sandbox venue); REVIEW-PENDING until the owner accepts.
+    "S0-07": "s0-09-s0-07-fubuki",
 }
 # The ledger's status vocabulary. ACCEPTED records an owner process decision
 # (see the module docstring); DONE/CLOSED/other are not the governance words and
