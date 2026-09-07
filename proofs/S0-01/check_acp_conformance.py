@@ -1,8 +1,14 @@
 """S0-01 ACP conformance checker v2.2 — derives EVERYTHING from raw files, exact values.
 
-Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error.
+Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error
+(fatal usage — missing/invalid arguments, including a non-integer ``--timeout-s``) /
+70 ``failure_reason: checker timed out after <N>s`` (the wall-clock cap tripped).
 DEFERRAL RULE: exits 2 iff golden/ is absent or NO leg directory contains timeline.jsonl.
 Once ANY leg carries a timeline, EVERY absence of a required file is a Failure, never a deferral.
+
+The wall-clock cap is applied INSIDE check_bundle(timeout_s=...) so in-process consumers get it
+too (SIGALRM, Unix only; R8-CK-F2). The default cap is 90 s so it always fires before the
+runner's ``timeout_s: 120`` (proofs/S0-01/spec.json is NOT changed).
 """
 from __future__ import annotations
 
@@ -63,8 +69,21 @@ from pins import (  # noqa: E402
     PINNED_ROUTE_PREFIX,
     PINNED_SESSION_POLICY,
     PINNED_STARTUP_AGENTS,
+    PINNED_STARTUP_CONTEXT_LIMIT,
     PINNED_STARTUP_DEDUP,
+    PINNED_STARTUP_HEARTBEAT,
     PINNED_STARTUP_IGNORE_SELF,
+    PINNED_STARTUP_MAX_TURNS_PER_SESSION,
+    PINNED_STARTUP_MCP_CMD,
+    PINNED_STARTUP_MEH,
+    PINNED_STARTUP_MEMORY,
+    PINNED_STARTUP_MODEL,
+    PINNED_STARTUP_PERMISSION_MODE,
+    PINNED_STARTUP_PRESENCE,
+    PINNED_STARTUP_RESPOND_TO,
+    PINNED_STARTUP_RESPOND_TO_TWO_USERS,
+    PINNED_STARTUP_SUBSCRIBE,
+    PINNED_STARTUP_TYPING,
     PINNED_TEE_PATH,
     PINNED_TEE_STATUS_KEYS,
     PINNED_UPSTREAM_HOST,
@@ -214,7 +233,12 @@ EXPECTED_CHECK_SEQUENCE.append(("check_negative", "negative"))
 
 
 def _run_check(fn, leg, *args, **kwargs):
-    """Call fn and record (name, leg) in the executed list AFTER successful return."""
+    """Call fn and record (name, leg) in the executed list AFTER successful return.
+
+    R4/F39 accepted-risk: a check that returns without asserting still counts as executed —
+    the sequence guard proves invocation, not assertion content. The mutation audit is the
+    guard for the assertion-content class; no counter is built.
+    """
     result = fn(*args, **kwargs)
     _executed.append((fn.__name__, leg))
     return result
@@ -589,34 +613,30 @@ def check_route(leg_dir, leg, entries):
                 raise Failure(f"{leg}: upstream record header {hname!r} has sensitive value")
     post_records = [r for r in records if r.get("method") == "POST"]
     get_records = [r for r in records if r.get("method") == "GET"]
-    # F24: GET records' authorization_fingerprint must equal the pinned fingerprint or be null
+    # R8-CK-F7: GET fingerprint pinned to null — the real producer records null on GET.
     for rec in get_records:
-        get_fp = rec.get("authorization_fingerprint")
-        if get_fp is not None and get_fp != expected_fp:
-            raise Failure(f"{leg}: upstream GET record authorization_fingerprint mismatch")
-    # F22/F23: POST body key set and message roles pinned
-    # The full set includes model/messages/stream (always) plus optional OmniRoute-proxied fields
-    _ALLOWED_POST_BODY_KEYS = frozenset({
-        "model", "messages", "stream",
-        "max_tokens", "stream_options", "tools",
-        "response_format", "temperature",
-    })
-    _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant"})
+        if rec.get("authorization_fingerprint") is not None:
+            raise Failure(f"{leg}: upstream GET record authorization_fingerprint is not null")
+    # R8-CK-F8: two per-shape POST body key sets keyed on body.get("stream") is True.
+    _POST_BODY_KEYS_STREAM = frozenset({"max_tokens", "messages", "model", "stream", "stream_options", "tools"})
+    _POST_BODY_KEYS_NONSTREAM = frozenset({"messages", "model", "response_format", "temperature"})
+    _POST_ROLES_STREAM = ["system", "user"]
+    _POST_ROLES_NONSTREAM = ["system", "user"]
     for rec in post_records:
         if rec.get("authorization_fingerprint") != expected_fp:
             raise Failure(f"{leg}: upstream record authorization_fingerprint mismatch")
         body = rec.get("body") or {}
         if body.get("model") != expected_model:
             raise Failure(f"{leg}: upstream record body.model is {body.get('model')!r}, expected {expected_model!r}")
-        # F22: reject extra body keys
-        extra_body = set(body.keys()) - _ALLOWED_POST_BODY_KEYS
-        if extra_body:
-            raise Failure(f"{leg}: upstream POST record body has extra keys: {sorted(extra_body)}")
-        # F23: message roles pinned
-        for msg in body.get("messages", []):
-            role = msg.get("role")
-            if role not in _ALLOWED_MESSAGE_ROLES:
-                raise Failure(f"{leg}: upstream POST record message role {role!r} not in allowed set")
+        if body.get("stream") is True:
+            expected_keys, expected_roles, shape = _POST_BODY_KEYS_STREAM, _POST_ROLES_STREAM, "stream"
+        else:
+            expected_keys, expected_roles, shape = _POST_BODY_KEYS_NONSTREAM, _POST_ROLES_NONSTREAM, "non-stream"
+        if set(body.keys()) != expected_keys:
+            raise Failure(f"{leg}: upstream POST record {shape} body key set mismatch: {sorted(set(body.keys()) ^ expected_keys)}")
+        roles = [m.get("role") for m in body.get("messages", [])]
+        if roles != expected_roles:
+            raise Failure(f"{leg}: upstream POST record {shape} message roles {roles!r} != expected {expected_roles!r}")
     prompt_windows = _prompt_windows(entries, leg)
     slack = timedelta(seconds=UPSTREAM_WINDOW_SLACK_S)
     for rec in post_records:
@@ -894,9 +914,8 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
         raise Failure(f"{leg}: identities owner and user2 are identical")
     # A24: assert INGRESS concurrency + OBSERVED serialization
     # Both mentions' created_at precede the FIRST session's terminal t_utc
+    # R5: check_mentions already validates mentions/ via _require_dir before this point.
     mentions_dir = leg_dir / "mentions"
-    if not mentions_dir.is_dir():
-        raise Failure(f"{leg}: mentions/ absent in {leg_dir.name}")
     owner_ev = json.loads((mentions_dir / "owner.event.json").read_text())
     user2_ev = json.loads((mentions_dir / "user2.event.json").read_text())
     # Find the first session's terminal t_utc
@@ -1026,15 +1045,14 @@ def check_config_echo(leg_dir, leg):
     m = re.match(r'^(\S+)\s+INFO buzz_acp: buzz-acp starting: (.*)$', startup)
     if not m:
         raise Failure(f"{leg}: startup-line.txt does not match expected format")
-    # F25: parse key=value tokens; handle parenthesized values like model=(agent default)
+    # R8-CK-F6: parse key=value tokens; required set is the FULL 21-key set.
     _EXPECTED_STARTUP_KEYS = frozenset({
         "relay", "pubkey", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
         "agents", "heartbeat", "subscribe", "dedup", "session_policy", "meh",
         "ignore_self", "context_limit", "max_turns_per_session", "presence",
         "typing", "memory", "model", "permission_mode", "respond_to",
     })
-    required_keys = {"relay", "agent_cmd", "mcp_cmd", "idle_timeout", "max_turn",
-                     "agents", "dedup", "session_policy", "ignore_self", "permission_mode", "respond_to"}
+    required_keys = _EXPECTED_STARTUP_KEYS
     kvs = {}
     kv_re = re.compile(r'(\w+)=(.+)')
     remainder = m.group(2)
@@ -1055,6 +1073,9 @@ def check_config_echo(leg_dir, leg):
                 raise Failure(f"{leg}: startup-line unclosed paren in {key}")
             val = val_text[:close + 1]
             remainder = remainder[val_start + close + 1:]
+            # R8-CK-F6: parenthesised values must not smuggle key=value tokens.
+            if "=" in val:
+                raise Failure(f"{leg}: startup-line parenthesised value carries key=value tokens: {key}")
         else:
             sp = val_text.find(" ")
             if sp < 0:
@@ -1071,22 +1092,33 @@ def check_config_echo(leg_dir, leg):
     missing = required_keys - set(kvs.keys())
     if missing:
         raise Failure(f"{leg}: startup-line missing keys: {sorted(missing)}")
-    # A26: agents/dedup/ignore_self from pins, never local literals
-    # TODO(A5f-F42): consume mcp_cmd and permission_mode from pins.py once the
-    # coordinator lands the PINNED_STARTUP_MCP_CMD / PINNED_STARTUP_PERMISSION_MODE hunk.
-    _PINS_PENDING = {"mcp_cmd": "", "permission_mode": "bypassPermissions"}
+    # R8-CK-F6: pubkey is per-capture — format-check only.
+    pubkey = kvs["pubkey"]
+    if not re.fullmatch(r"[0-9a-f]{64}|<HEX>", pubkey):
+        raise Failure(f"{leg}: startup pubkey is not a 64-hex digest")
+    # A26 / R2/F42: every startup value from pins.py, _PINS_PENDING retired.
     checks = {"relay": PINNED_RELAY_URL, "agent_cmd": PINNED_TEE_PATH,
-              "mcp_cmd": _PINS_PENDING["mcp_cmd"],
+              "mcp_cmd": PINNED_STARTUP_MCP_CMD,
               "idle_timeout": PINNED_IDLE_TIMEOUT, "max_turn": PINNED_MAX_TURN,
               "agents": PINNED_STARTUP_AGENTS,
+              "heartbeat": PINNED_STARTUP_HEARTBEAT,
+              "subscribe": PINNED_STARTUP_SUBSCRIBE,
               "dedup": PINNED_STARTUP_DEDUP,
               "session_policy": PINNED_SESSION_POLICY,
+              "meh": PINNED_STARTUP_MEH,
               "ignore_self": PINNED_STARTUP_IGNORE_SELF,
-              "permission_mode": _PINS_PENDING["permission_mode"]}
+              "context_limit": PINNED_STARTUP_CONTEXT_LIMIT,
+              "max_turns_per_session": PINNED_STARTUP_MAX_TURNS_PER_SESSION,
+              "presence": PINNED_STARTUP_PRESENCE,
+              "typing": PINNED_STARTUP_TYPING,
+              "memory": PINNED_STARTUP_MEMORY,
+              "model": PINNED_STARTUP_MODEL,
+              "permission_mode": PINNED_STARTUP_PERMISSION_MODE}
     for k, exp in checks.items():
         if kvs[k] != exp:
             raise Failure(f"{leg}: startup {k} is {kvs[k]!r}, expected {exp!r}")
-    expected_rt = "owner-only" if leg != "two-users" else "allowlist(1)"
+    expected_rt = (PINNED_STARTUP_RESPOND_TO_TWO_USERS if leg == "two-users"
+                   else PINNED_STARTUP_RESPOND_TO)
     if kvs["respond_to"] != expected_rt:
         raise Failure(f"{leg}: startup respond_to is {kvs['respond_to']!r}, expected {expected_rt!r}")
     argv_path = _require_file(leg_dir / "argv.txt", leg, "argv.txt")
@@ -1323,7 +1355,16 @@ def check_buzzacp_log(leg_dir, leg):
 
 
 def check_tee_status(leg_dir, leg, entries):
-    """A21d: validate tee-status.json — twelve-key running status."""
+    """A21d: validate tee-status.json — twelve-key status with FINAL and RUNNING arms.
+
+    Two arms follow the tee's write contract (proofs/S0-01/tools/frame_tee.py _write_status):
+    the tee rewrites the status INSIDE the timeline lock after every recorded frame, and the
+    write is atomic (tmp + os.replace).  A RUNNING (final is False) snapshot is what a
+    buzz-acp SIGTERM/SIGKILL leaves behind — it can trail the timeline by at most the one
+    frame whose timeline write landed but whose status write was interrupted, and it can show
+    at most one in-flight (recorded-but-not-yet-forwarded) frame per direction (B5d R2).
+    The FINAL (final is True) clean-exit write is exact in every field (B5d R3/A21b).
+    """
     ts_path = _require_file(leg_dir / "tee-status.json", leg, "tee-status.json")
     ts = json.loads(ts_path.read_text())
     if not isinstance(ts, dict):
@@ -1332,34 +1373,69 @@ def check_tee_status(leg_dir, leg, entries):
         extra = sorted(set(ts.keys()) - _TEE_STATUS_KEYS)
         missing = sorted(_TEE_STATUS_KEYS - set(ts.keys()))
         raise Failure(f"{leg}: tee-status.json key set mismatch (extra={extra}, missing={missing})")
-    if ts["drained"] is not True:
-        raise Failure(f"{leg}: tee-status.json drained is not true")
-    if ts["write_errors"] != []:
-        raise Failure(f"{leg}: tee-status.json write_errors is not empty")
-    if ts["forwarded_c2a"] != ts["recorded_c2a"]:
-        raise Failure(f"{leg}: tee-status.json forwarded_c2a != recorded_c2a")
-    if ts["forwarded_a2c"] != ts["recorded_a2c"]:
-        raise Failure(f"{leg}: tee-status.json forwarded_a2c != recorded_a2c")
+    # F31: final must be a strict bool, before either arm branches on it
+    if not isinstance(ts["final"], bool):
+        raise Failure(f"{leg}: tee-status.json final is not a bool")
     c2a_count = sum(1 for e in entries if e["dir"] == "c2a")
     a2c_count = sum(1 for e in entries if e["dir"] == "a2c")
-    if ts["recorded_c2a"] != c2a_count:
-        raise Failure(f"{leg}: tee-status.json recorded_c2a {ts['recorded_c2a']} != timeline c2a count {c2a_count}")
-    if ts["recorded_a2c"] != a2c_count:
-        raise Failure(f"{leg}: tee-status.json recorded_a2c {ts['recorded_a2c']} != timeline a2c count {a2c_count}")
     last_seq = entries[-1]["seq"] if entries else 0
-    if ts["updated_seq"] != last_seq:
-        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != timeline last seq {last_seq}")
+    if ts["final"] is True:
+        # FINAL arm (strict semantics — B5d R3/A21b)
+        if ts["drained"] is not True:
+            raise Failure(f"{leg}: tee-status.json drained is not true")
+        if ts["write_errors"] != []:
+            raise Failure(f"{leg}: tee-status.json write_errors is not empty")
+        if ts["forwarded_c2a"] != ts["recorded_c2a"]:
+            raise Failure(f"{leg}: tee-status.json forwarded_c2a != recorded_c2a")
+        if ts["forwarded_a2c"] != ts["recorded_a2c"]:
+            raise Failure(f"{leg}: tee-status.json forwarded_a2c != recorded_a2c")
+        if ts["recorded_c2a"] != c2a_count:
+            raise Failure(f"{leg}: tee-status.json recorded_c2a {ts['recorded_c2a']} != timeline c2a count {c2a_count}")
+        if ts["recorded_a2c"] != a2c_count:
+            raise Failure(f"{leg}: tee-status.json recorded_a2c {ts['recorded_a2c']} != timeline a2c count {a2c_count}")
+        if ts["updated_seq"] != last_seq:
+            raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != timeline last seq {last_seq}")
+    else:
+        # RUNNING arm — the SIGTERM/SIGKILL snapshot (R1, B5d R2/R3)
+        if not isinstance(ts["drained"], bool):
+            raise Failure(f"{leg}: tee-status.json drained is not a bool")
+        if not isinstance(ts["stdin_reader_done"], bool):
+            raise Failure(f"{leg}: tee-status.json stdin_reader_done is not a bool")
+        if ts["write_errors"] not in ([], ["terminated: SIGTERM"]):
+            raise Failure(f"{leg}: tee-status.json write_errors has unexpected entries: {ts['write_errors']!r}")
+        for d in ("c2a", "a2c"):
+            if not _is_strict_int(ts[f"recorded_{d}"]) or not _is_strict_int(ts[f"forwarded_{d}"]):
+                raise Failure(f"{leg}: tee-status.json {d} recorded/forwarded is not int")
+            deficit = ts[f"recorded_{d}"] - ts[f"forwarded_{d}"]
+            if deficit not in (0, 1):
+                raise Failure(f"{leg}: tee-status.json running snapshot forwarded_{d} {ts[f'forwarded_{d}']} "
+                              f"trails recorded_{d} {ts[f'recorded_{d}']} by more than one")
+        if not _is_strict_int(ts["updated_seq"]):
+            raise Failure(f"{leg}: tee-status.json updated_seq is not int")
+        lag = last_seq - ts["updated_seq"]
+        if lag not in (0, 1):
+            raise Failure(f"{leg}: tee-status.json running snapshot updated_seq {ts['updated_seq']} "
+                          f"trails timeline last seq {last_seq} by more than one")
+        deficits = {}
+        for d, count in (("c2a", c2a_count), ("a2c", a2c_count)):
+            deficits[d] = count - ts[f"recorded_{d}"]
+            if deficits[d] not in (0, 1):
+                raise Failure(f"{leg}: tee-status.json running snapshot recorded_{d} {ts[f'recorded_{d}']} "
+                              f"trails timeline {d} count {count} by more than one")
+        if deficits["c2a"] + deficits["a2c"] != lag:
+            raise Failure(f"{leg}: tee-status.json running snapshot recorded deficits "
+                          f"{deficits['c2a']}+{deficits['a2c']} do not sum to updated_seq lag {lag}")
     utc_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
     if not isinstance(ts["updated_utc"], str) or not utc_re.match(ts["updated_utc"]):
         raise Failure(f"{leg}: tee-status.json updated_utc does not match format")
-    # A21d: when final, A21b exit_code rule; when not final, both exit fields null
-    # F31: final must be a strict bool
-    if ts["final"] is not True and ts["final"] is not False:
-        raise Failure(f"{leg}: tee-status.json final is not a bool")
-    # F32: stdin_reader_done must be True when final is true
-    if ts["final"] is True and ts.get("stdin_reader_done") is not True:
-        raise Failure(f"{leg}: tee-status.json stdin_reader_done is not true when final")
+    if ts["updated_seq"] != ts["recorded_c2a"] + ts["recorded_a2c"]:
+        raise Failure(f"{leg}: tee-status.json updated_seq {ts['updated_seq']} != recorded_c2a + recorded_a2c "
+                      f"({ts['recorded_c2a']} + {ts['recorded_a2c']})")
+    # A21d exit-field rule: final requires the A21b exit pair; running requires both null.
     if ts["final"] is True:
+        # F32: stdin_reader_done must be True when final
+        if ts.get("stdin_reader_done") is not True:
+            raise Failure(f"{leg}: tee-status.json stdin_reader_done is not true when final")
         rc = ts["agent_returncode"]
         if not _is_strict_int(rc):
             raise Failure(f"{leg}: tee-status.json final but agent_returncode is not int")
@@ -1502,7 +1578,30 @@ def _load_timeline_raw(leg_dir, leg):
     return entries
 
 
-def check_bundle(root: Path) -> str:
+def _check_with_timeout(timeout_s, fn, *args):
+    """Run fn(*args) under a wall-clock SIGALRM cap (R8-CK-F2)."""
+    import signal as _signal
+    def _raise_timeout(signum, frame):
+        print(f"failure_reason: checker timed out after {timeout_s}s")
+        raise SystemExit(70)
+    old = _signal.signal(_signal.SIGALRM, _raise_timeout)
+    _signal.alarm(timeout_s)
+    try:
+        return fn(*args)
+    finally:
+        _signal.alarm(0)
+        _signal.signal(_signal.SIGALRM, old)
+
+
+def check_bundle(root: Path, timeout_s: int = 90) -> str:
+    # R8-CK-F2: the wall-clock cap lives HERE so in-process consumers get it too.
+    # Default 90 s < the runner's 120 s.
+    if timeout_s is not None:
+        return _check_with_timeout(timeout_s, _check_bundle_uncapped, root)
+    return _check_bundle_uncapped(root)
+
+
+def _check_bundle_uncapped(root: Path) -> str:
     golden = root / "golden"
     if not golden.is_dir():
         raise Deferred("v2 evidence not captured")
@@ -1526,20 +1625,24 @@ def check_bundle(root: Path) -> str:
             raise Failure(f"golden: unexpected directory golden/{item.name}")
         if item.is_file() and item.name not in expected_files:
             raise Failure(f"golden: unexpected file golden/{item.name}")
-    # 5-F18 / F19: any non-regular, non-directory entry (symlink, FIFO, socket, device) is a Failure
+    # 5-F18 / F19 / R8-CK-F2: walk EVERY tree the checker reads — golden/ AND fixtures dir.
     import stat as _stat
-    for dirpath, dirnames, filenames in os.walk(golden, followlinks=False):
-        dp = Path(dirpath)
-        for name in dirnames + filenames:
-            p = dp / name
-            try:
-                st = p.lstat()
-            except OSError as e:
-                raise Failure(f"golden: cannot stat {p.relative_to(root)}: {e}")
-            if p.is_symlink():
-                raise Failure(f"golden: symlink in evidence tree: {p.relative_to(root)}")
-            if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
-                raise Failure(f"golden: non-regular entry in evidence tree: {p.relative_to(root)}")
+    walk_roots = [(golden, "golden"), (_fixtures(), "fixtures")]
+    for walk_base, rel_base in walk_roots:
+        if not walk_base.exists():
+            continue
+        for dirpath, dirnames, filenames in os.walk(walk_base, followlinks=False):
+            dp = Path(dirpath)
+            for name in dirnames + filenames:
+                p = dp / name
+                try:
+                    st = p.lstat()
+                except OSError as e:
+                    raise Failure(f"{rel_base}: cannot stat {p.relative_to(walk_base)}: {e}")
+                if p.is_symlink():
+                    raise Failure(f"{rel_base}: symlink in evidence tree: {p.relative_to(walk_base)}")
+                if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
+                    raise Failure(f"{rel_base}: non-regular entry in evidence tree: {p.relative_to(walk_base)}")
     global _executed
     _executed = []
     all_mention_event_ids = []
@@ -1641,12 +1744,11 @@ def check_bundle(root: Path) -> str:
 
 
 def main(argv) -> int:
-    import signal as _signal
     global _FIXTURES_DIR
     # A15: optional --fixtures-dir <dir> (default: proofs/S0-01/fixtures).
     # spec.json does NOT pass it; tests use it to point at throwaway fixtures.
     args = list(argv[1:])
-    timeout_s = 120  # F19: default wall-clock cap
+    timeout_s = 90  # R8-CK-F2: default cap — 90 < the runner's 120 (spec.json)
     if "--fixtures-dir" in args:
         idx = args.index("--fixtures-dir")
         if idx + 1 >= len(args):
@@ -1668,14 +1770,8 @@ def main(argv) -> int:
     if len(args) != 1:
         print("usage: check_acp_conformance.py [--fixtures-dir <dir>] [--timeout-s N] <evidence-root>", file=sys.stderr)
         return 64
-    # F19: wall-clock cap — a FIFO in the evidence tree would hang read_text() forever
-    def _timeout_handler(signum, frame):
-        print(f"failure_reason: checker timed out after {timeout_s}s")
-        sys.exit(70)
-    _signal.signal(_signal.SIGALRM, _timeout_handler)
-    _signal.alarm(timeout_s)
     try:
-        print(check_bundle(Path(args[0])))
+        print(check_bundle(Path(args[0]), timeout_s=timeout_s))
         return 0
     except Deferred as d:
         print(f"deferred: {d}")
@@ -1683,11 +1779,11 @@ def main(argv) -> int:
     except Failure as f:
         print(f"failure_reason: {f}")
         return 1
+    except SystemExit as se:
+        return int(se.code or 0)
     except Exception as exc:
         print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
         return 1
-    finally:
-        _signal.alarm(0)
 
 
 if __name__ == "__main__":

@@ -1966,16 +1966,16 @@ class TestRunningStatusTracksC2a:
 
 
 # ---------------------------------------------------------------------------
-# R3: SIGTERM status through the real checker (xfail-strict)
+# R1/R3: SIGTERM status through the real checker — non-final arm
 # ---------------------------------------------------------------------------
 class TestSigtermStatusVsChecker:
-    @pytest.mark.xfail(strict=True,
-                       reason="checker A21d non-final arms pending (lane A5g)")
     def test_sigterm_status_satisfies_check_tee_status(self, tmp_path):
-        """R3: the SIGTERM status (non-final, exit 70, write_errors includes
-        'terminated: SIGTERM') must pass check_tee_status once the checker's
-        non-final arm is implemented.  Until then this is xfail-strict."""
-        from proofs.S0_01.check_acp_conformance import check_tee_status
+        """R1: the SIGTERM status (non-final, exit 70, write_errors includes
+        'terminated: SIGTERM') passes check_tee_status's RUNNING arm.
+        Loads the checker the way the conformance test suite does."""
+        P = Path(__file__).resolve().parents[1] / "proofs" / "S0-01"
+        sys.path.insert(0, str(P))
+        import check_acp_conformance as cc
         agent_code = textwrap.dedent("""\
             import sys, json
             for line in sys.stdin:
@@ -2022,8 +2022,10 @@ class TestSigtermStatusVsChecker:
         tee_proc.stdout.close()
         tee_proc.stderr.close()
         assert tee_proc.returncode == 70
-        # This should pass once the checker whitelists non-final SIGTERM legs
-        check_tee_status(str(framedir))
+        # Parse timeline entries the same way the checker does
+        entries = cc._load_timeline_raw(framedir, "run-1")
+        # The checker's RUNNING arm should accept this status
+        cc.check_tee_status(framedir, "run-1", entries)
 
 
 # ---------------------------------------------------------------------------
