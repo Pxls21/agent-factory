@@ -44,13 +44,22 @@ def screen(files, rows, label, limit=8):
     hits = {}
     for f in files:
         try:
-            lines = f.read_text(errors="replace").splitlines()
+            text = f.read_text(errors="replace")
         except OSError:
             continue
-        for i, line in enumerate(lines, 1):
-            for row in rows:
-                if row[1].search(line):
-                    hits.setdefault(row[0], []).append(f"{f}:{i}: {line.strip()[:100]}")
+        lines = text.splitlines()
+        # the whole text, not line by line: the hook screens multi-line HUNKS, and a signature that spans a line
+        # break (a subprocess argv list wrapped after the paren) must screen the same way here
+        for row in rows:
+            finditer = getattr(row[1], "finditer", None)
+            if finditer is None:  # a custom matcher object (the hook's AST-backed rows expose search() only)
+                for i, line in enumerate(lines, 1):
+                    if row[1].search(line):
+                        hits.setdefault(row[0], []).append(f"{f}:{i}: {line.strip()[:100]}")
+                continue
+            for m in finditer(text):
+                i = text.count("\n", 0, m.start()) + 1
+                hits.setdefault(row[0], []).append(f"{f}:{i}: {lines[i - 1].strip()[:100]}")
     total = sum(len(v) for v in hits.values())
     print(f"--- {label}: {total} hits over {len(files)} files ---")
     for ap in sorted(hits, key=lambda k: (-len(hits[k]), k)):

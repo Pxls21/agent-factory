@@ -189,6 +189,14 @@ TEST_SCREEN = [
     # assertion — the loop aborting on item 1 satisfies `call_count == 1` too.
     ("AP-70", re.compile(r"except\s*(?:\([^)\n]*\bException\b[^)\n]*\)|Exception)\s*:\s*\n\s*(?:pass|continue)\b"),
      "blanket except swallowing the run under test — a call-count/once assertion after it cannot tell hoisted from aborted; size the fixture and drop the swallow, or add an iteration counter (AP-70)"),
+    # AF-AP-60 (2026-09-07, VERIFY-D5k F3): a `grep -c` guard read an empty stdout as zero hits — a grep without -P,
+    # a renamed file or a bad PATH turns the guard green over the very defect it bans.
+    ("AF-AP-60", re.compile(r"""\[\s*["']grep["']\s*,"""),
+     "grep-based guard in a test — an empty stdout on ANY tool failure reads as zero hits; assert r.returncode in (0, 1) or walk the AST of the parsed files instead (AF-AP-60)"),
+    # AF-AP-61 (2026-09-07, VERIFY-D5k F4): a regex over source text bans one SPELLING of the class; the two-line
+    # rewrite `_b = …["body"]; assert _b != MARKER` restored the exact hollow green the ban exists to prevent.
+    ("AF-AP-61", re.compile(r"""re\.(?:compile|search|findall|finditer)\(\s*r?["'][^"'\n]*\bassert\b|r?["']\^\\s\*assert\\s"""),
+     "class ban as a source-text pattern — bans one spelling, not the class; ban it structurally (ast.Compare + ast.NotEq naming the marker) and make every 'served' test assert the positive recorded value (AF-AP-61)"),
 ]
 
 MAX_SYMBOLS = 2
