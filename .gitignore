@@ -39,3 +39,6 @@ vendor/
 # pc_suite.sh run dirs on the PC clone (patch, worktree, log, rc) — regenerable, never committed
 /.suite/
 /.lanes-live
+
+# the S0-01 pinned-upstream oracle (crates/buzz-acp/src/acp.rs at 1c8321cd, sha-pinned in its VENDORED-FROM.md) is committed on purpose
+!proofs/S0-01/vendor/
