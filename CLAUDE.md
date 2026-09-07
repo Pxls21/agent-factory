@@ -378,6 +378,11 @@ that abort, re-check `git status` before suspecting real leftover trailers. It a
 dirty tree — commit or stash first (bit 2026-09-03). **`--lanes-live` with an EMPTY declared list refuses SILENTLY (rc 1, no
 message; bit 2026-09-07 after the last lane landed) — once no lane is live, push the clean tree with
 `--no-delegates-live`; the untracked `.lanes-live` file itself is gitignored and does not count as dirt.**
+**MCP servers time out at session start on a FRESH container (graft CONNECT_TIMEOUT 2026-09-07 12:37Z):** the server
+answers `initialize` in 0.5 s on an idle box; the 30 s limit was hit while setup's reindex jobs saturated the cores. The
+background builds are now delayed 45 s and niced; the durable fix is the environment variable `MCP_TIMEOUT=120000` set in
+the CCR environment's env vars (owner step — Claude Code reads it for the server-startup limit). Same session after a
+failed connect = the CLI (`graft ask`, `scripts/gn_mcp.py`); a failed server never reconnects mid-session.
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
@@ -647,6 +652,11 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
   MEANING layers (map, key decisions with SHA anchors, live-state, do-not-trust list); git
   carries the chronology; why.sh joins them.
 - **Before editing any symbol:** GitNexus `impact` (who calls this, what breaks).
+- **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM... -o pack.md FILE...` —
+  the whole quartet + ripwire + the whole-file registry screen in ONE command; every build and verify brief attaches
+  its pack; the coordinator runs it before designing and on the lane's diff before the verifier. `scripts/report_lint.py`
+  and `scripts/ap_screen.py --s0-01` gate every checkpoint. An instrument that is not in a script on the path is not in
+  the loop.
 - **After EVERY edit-batch, not just before commit:** `detect_changes`; re-`analyze` (detached)
   on a stale index. Before commit stays mandatory.
 - **When grounding (Phase 1) or hunting dead wiring:** codebase-memory (`search_graph` /

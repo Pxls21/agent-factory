@@ -40,12 +40,12 @@ fi
 
 if command -v graft >/dev/null 2>&1; then
   ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && DO_NOT_TRACK=1 graft build >/tmp/graft-build.log 2>&1
+    cd "$REPO_ROOT" && DO_NOT_TRACK=1 nice -n 19 ionice -c 3 graft build >/tmp/graft-build.log 2>&1
   ) 9>/tmp/graft-build.lock >/dev/null 2>&1 &
 fi
 if command -v gitnexus >/dev/null 2>&1; then
   ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1
+    cd "$REPO_ROOT" && nice -n 19 ionice -c 3 gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1
   ) 9>/tmp/gitnexus-analyze.lock >/dev/null 2>&1 &
 fi
 exit 0

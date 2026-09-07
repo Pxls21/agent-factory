@@ -145,3 +145,19 @@ flat verbs (default `RIPWIRE_LIMIT=20`), `--top-k` to `map` only.
 Never a gate: a ripwire zero is "none found", never "none exists".
 Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.ripwire`; no telemetry found.
 `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §ripwire. Missing binary → `scripts/setup.sh`.
+
+## § lane_context — the ONE-COMMAND tool pass (owner escalation 2026-09-07)
+
+`scripts/lane_context.sh [-q "<question>"] [-s SYMBOL]... [-o pack.md] FILE...` runs the whole quartet + ripwire +
+the whole-file registry screen for a brief's files in one command: graft skeleton per file, graft ask for the
+brief's question, and per symbol GitNexus impact + code-review-graph callers_of/tests_for + ripwire callers (two
+independent instruments for every reachability claim), ripwire test-gate over the files (the tests to run + the
+UNTESTED blast radius), `ap_screen.py` over whole files. Symbols come from `-s` plus the `def` names in each
+file's working-tree diff, so a verifier's pack sees exactly what the lane touched. Every build AND verify brief
+attaches its pack; the coordinator runs it BEFORE writing the design (Phase 1 grounding) and again on the lane's
+diff before dispatching the verifier. Every instrument is optional and tolerant — an absent one prints
+`unmapped — <tool> unavailable`, never a silent blank. Why this exists: eleven S0-01 rounds passed without a
+single instrument run on a lane delta; graft's MCP had timed out at session start (the startup stampede, not the
+index — `MCP_TIMEOUT=120000` is the environment fix), the code-review-graph graph had never been built ("lazy,
+first use"), and the registry screen only ever saw edited hunks. An instrument that is not in a script on the
+path is not in the loop.

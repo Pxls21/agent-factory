@@ -204,11 +204,16 @@ else
   warn "npm not on PATH — skipping gitnexus install"
 fi
 
-# code-review-graph: own venv (keep it isolated from the project venv). Index
-# build is LAZY (first use) — never at session start.
+# code-review-graph: own venv (keep it isolated from the project venv). The graph is built in the
+# BACKGROUND (delayed 90 s, niced — after the MCP connects) when absent: "lazy, first use" meant no first use
+# ever came and the fourth quartet instrument sat unbuilt through eleven S0-01 rounds (2026-09-07). 78 s here.
 say "code-review-graph"
 if [ -x "/root/venv-crg/bin/code-review-graph" ]; then
   ok "code-review-graph venv present"
+  if [ ! -f "$REPO_ROOT/.code-review-graph/graph.db" ]; then
+    (cd "$REPO_ROOT" && nohup nice -n 19 ionice -c 3 sh -c 'sleep 90; /root/venv-crg/bin/code-review-graph build' >/tmp/crg-build.log 2>&1 &)
+    ok "code-review-graph build launched in background (log: /tmp/crg-build.log)"
+  fi
 elif command -v python3 >/dev/null 2>&1; then
   (python3 -m venv /root/venv-crg && /root/venv-crg/bin/pip install -q code-review-graph) >/dev/null 2>&1 \
     && ok "code-review-graph installed (/root/venv-crg)" \
@@ -280,7 +285,10 @@ if command -v graft &>/dev/null; then
       || warn "graft MCP registration failed"
   fi
   if [ ! -f "$REPO_ROOT/graft/INDEX.md" ]; then
-    (cd "$REPO_ROOT" && nohup graft build >/tmp/graft-build.log 2>&1 &)
+    # Delayed + niced: a fresh container's reindex jobs saturated the 4 cores while Claude Code connected its MCP
+    # servers (30 s limit) — graft answered `initialize` in 0.5 s on an idle box and timed out at 34 s at 12:37Z on
+    # 2026-09-07 (the startup stampede, not the index). The build waits 45 s and runs at the lowest priority.
+    (cd "$REPO_ROOT" && nohup nice -n 19 ionice -c 3 sh -c 'sleep 45; DO_NOT_TRACK=1 graft build' >/tmp/graft-build.log 2>&1 &)
     ok "graft build launched in background (log: /tmp/graft-build.log)"
   else
     ok "graft graph present (graft/INDEX.md); refresh with 'graft build' if stale"
