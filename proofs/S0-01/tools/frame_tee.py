@@ -16,8 +16,8 @@ write is non-final (final=false, exit fields null, write_errors includes
 After the agent exits, the tee drains BOTH pumps to EOF -- there is no
 stall timeout on either side.  A client that never closes (c2a) or a
 grandchild that holds the agent's stdout (a2c) keeps the tee alive;
-buzz-acp ends such a leg with ``killpg(SIGKILL)`` on the whole process
-group and a bounded 5 s wait (``crates/buzz-acp/src/acp.rs:421-444``,
+buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
+for the child to exit (``crates/buzz-acp/src/acp.rs:422-444``,
 ``:2323-2328``, pinned ``1c8321cd``); SIGKILL cannot be handled, so the
 leg's evidence is its last RUNNING status (A21d).  The SIGTERM path
 below covers an operator/systemd TERM, not buzz-acp.  The only uncovered
@@ -42,6 +42,15 @@ import subprocess
 import sys
 import threading
 import time
+
+# The canonical one-sentence summary of buzz-acp's shutdown behaviour, derived
+# from the vendored source (acp.rs at pinned commit 1c8321cd).  Every docstring
+# and comment that cites the shutdown sequence must contain this clause verbatim
+# so there is exactly ONE place that can be wrong.
+PINNED_SHUTDOWN_CLAUSE = (
+    "buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s"
+    " for the child to exit"
+)
 
 
 class _Terminated(BaseException):
@@ -419,16 +428,16 @@ def main():
         # Wait for the agent process to exit
         proc.wait()
         # R1: drain a2c until EOF -- no stall timeout.  A grandchild that
-        # holds the agent's stdout keeps the tee alive; buzz-acp SIGKILLs
-        # the group (killpg) and then waits up to 5 s for it to exit
-        # (acp.rs:421-444, pinned 1c8321cd).
+        # holds the agent's stdout keeps the tee alive;
+        # buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
+        # for the child to exit (acp.rs:422-444, pinned 1c8321cd).
         while to.is_alive():
             time.sleep(0.1)
             _write_status()
         # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
-        # A client that never closes keeps the tee alive; buzz-acp SIGKILLs
-        # the group (killpg) and then waits up to 5 s for it to exit
-        # (acp.rs:421-444, pinned 1c8321cd).
+        # A client that never closes keeps the tee alive;
+        # buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
+        # for the child to exit (acp.rs:422-444, pinned 1c8321cd).
         while ti.is_alive():
             time.sleep(0.1)
             _write_status()

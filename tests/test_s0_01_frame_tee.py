@@ -30,6 +30,29 @@ TEE = ROOT / "proofs" / "S0-01" / "tools" / "frame_tee.py"
 sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
 from pins import PINNED_TEE_STATUS_KEYS  # noqa: E402
 
+# Import the canonical shutdown clause from the tee (item 1: one place that can be wrong)
+sys.path.insert(0, str(ROOT / "proofs" / "S0-01" / "tools"))
+from frame_tee import PINNED_SHUTDOWN_CLAUSE  # noqa: E402
+
+# AF-AP-59: import the anti-pattern screen from the edit-snapshot hook (never edit it)
+import importlib.util as _ilu
+_es_spec = _ilu.spec_from_file_location("edit_snapshot", str(ROOT / ".claude" / "hooks" / "edit-snapshot.py"))
+_es_mod = _ilu.module_from_spec(_es_spec)
+_es_spec.loader.exec_module(_es_mod)
+AP_SCREEN = _es_mod.AP_SCREEN + _es_mod.TEST_SCREEN
+
+# The vendored oracle (READ-ONLY; sha256 checked by the oracle test)
+VENDORED_ACP_RS = ROOT / "proofs" / "S0-01" / "vendor" / "buzz-acp" / "acp.rs"
+VENDORED_ACP_RS_SHA256 = "44e82861763694d2b82d02b15ee100ffd6c78874a2b2282865e6656c539c38f1"
+
+# Allowed sites for os.kill / os.killpg calls in this file (AST pin, item 6)
+_KILL_SITES = frozenset({
+    "_kill_own_grandchild",
+    # The SIGTERM tests kill their own tee subprocess via tee_proc.send_signal / tee_proc.kill;
+    # those are Popen method calls, not os.kill, so the AST pin does not match them.
+    # Only these two functions in the file use bare os.kill:
+})
+
 FAKE_AGENT_CODE = textwrap.dedent("""\
     import json, sys
     for line in sys.stdin:
@@ -76,6 +99,61 @@ def _build_input():
         "this is not json\n",
     ]
     return "".join(lines).encode("utf-8")
+
+
+def _kill_own_grandchild(framedir):
+    """Kill THIS test's grandchild from its pid file, with identity verification.
+
+    Reads grandchild.pid, checks /proc/<pid>/cmdline.  Three outcomes:
+    - cmdline contains "time.sleep": our grandchild, still alive -> SIGKILL it.
+    - FileNotFoundError or zombie (stat state Z) with empty cmdline: already
+      gone (the census's success condition) -> skip the kill.
+    - A LIVE process with a foreign cmdline: hard failure -- refuse to kill.
+    Pid reuse is unreachable here (pid_max 32768, ~5 pids/s measured vs the
+    ~728/s needed for a full lap), and the zombie window (~0.97 s) is the
+    reachable direction.
+    """
+    gc_pid_path = framedir / "grandchild.pid"
+    assert gc_pid_path.exists(), "agent never wrote grandchild.pid"
+    gc_pid = int(gc_pid_path.read_text().strip())
+    gone_or_foreign = False
+    try:
+        cmdline = open("/proc/%d/cmdline" % gc_pid).read().replace("\0", " ")
+    except FileNotFoundError:
+        gone_or_foreign = True  # fully reaped
+    else:
+        if "time.sleep" not in cmdline:
+            # Empty cmdline on a zombie = our grandchild, already dead
+            try:
+                st = open("/proc/%d/stat" % gc_pid).read().split()[2]
+            except (OSError, IOError, IndexError):
+                st = "gone"
+            assert st in ("Z", "gone"), (
+                "refusing to kill a foreign pid %d (cmdline: %s, state: %s)"
+                % (gc_pid, cmdline, st))
+            gone_or_foreign = True
+    if gone_or_foreign:
+        gc_pid = None
+    else:
+        os.kill(gc_pid, sig.SIGKILL)
+    if gc_pid is not None:
+        deadline_gc = time.monotonic() + 2
+        while time.monotonic() < deadline_gc:
+            try:
+                st = open("/proc/%d/stat" % gc_pid).read().split()
+                if len(st) >= 3 and st[2] == "Z":
+                    break
+            except (OSError, IOError):
+                break
+            time.sleep(0.1)
+        gone = True
+        try:
+            st = open("/proc/%d/stat" % gc_pid).read().split()
+            if len(st) >= 3 and st[2] != "Z":
+                gone = False
+        except (OSError, IOError):
+            pass
+        assert gone, "grandchild pid %d still alive after kill" % gc_pid
 
 
 def _run_tee(tmpdir, agent_code, input_bytes, env_extra=None, timeout=30):
@@ -519,46 +597,15 @@ class TestGrandchildStdout:
             tee_proc.wait(timeout=10)
             drainer.join(timeout=5)
         finally:
-            if tee_proc.poll() is None:
-                tee_proc.kill()
-                tee_proc.wait(timeout=5)
-            # F-B5e-12: kill THIS test's grandchild; assert it is gone
-            gc_pid_path = framedir / "grandchild.pid"
-            assert gc_pid_path.exists(), "agent never wrote grandchild.pid"
-            gc_pid = None
             try:
-                gc_pid = int(gc_pid_path.read_text().strip())
-                # F13: identity before kill -- confirm the pid is still our grandchild
-                try:
-                    cmdline = open("/proc/%d/cmdline" % gc_pid).read().replace("\0", " ")
-                    assert "time.sleep" in cmdline, (
-                        "pid %d is not the grandchild (cmdline: %s)" % (gc_pid, cmdline))
-                except FileNotFoundError:
-                    gc_pid = None  # already gone
-                if gc_pid is not None:
-                    os.kill(gc_pid, sig.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if gc_pid is not None:
-                deadline_gc = time.monotonic() + 2
-                while time.monotonic() < deadline_gc:
-                    try:
-                        st = open("/proc/%d/stat" % gc_pid).read().split()
-                        if len(st) >= 3 and st[2] == "Z":
-                            break
-                    except (OSError, IOError):
-                        break
-                    time.sleep(0.1)
-                gone = True
-                try:
-                    st = open("/proc/%d/stat" % gc_pid).read().split()
-                    if len(st) >= 3 and st[2] != "Z":
-                        gone = False
-                except (OSError, IOError):
-                    pass
-                assert gone, "grandchild pid %d still alive after kill" % gc_pid
-            tee_proc.stdout.close()
-            tee_proc.stderr.close()
+                if tee_proc.poll() is None:
+                    tee_proc.kill()
+                    tee_proc.wait(timeout=5)
+                # F-B5e-12 / F-B5g-4: kill THIS test's grandchild with identity
+                _kill_own_grandchild(framedir)
+            finally:
+                tee_proc.stdout.close()
+                tee_proc.stderr.close()
         assert tee_proc.returncode == 70
 
 
@@ -859,11 +906,12 @@ class TestTeeStatus:
     def test_never_reading_client(self, tmp_path):
         """Client NEVER reads a2c -> the a2c pump blocks on the full pipe;
         after the agent dies the tee stays alive (symmetric drain-to-EOF on
-        a2c).  buzz-acp SIGKILLs the group (killpg) and then waits up to
-        5 s for it to exit (acp.rs:421-444, pinned 1c8321cd); SIGKILL
-        cannot be handled, so that leg's evidence is its last RUNNING status
-        (A21d).  The SIGTERM path covers an operator/systemd TERM.
-        Exit 70, non-final, write_errors includes 'terminated: SIGTERM'."""
+        a2c).  buzz-acp SIGKILLs the group (killpg) first and then waits
+        up to 5 s for the child to exit (acp.rs:422-444, pinned 1c8321cd);
+        SIGKILL cannot be handled, so that leg's evidence is its last
+        RUNNING status (A21d).  The SIGTERM path covers an operator/systemd
+        TERM.  Exit 70, non-final, write_errors includes 'terminated:
+        SIGTERM'."""
         agent_code = textwrap.dedent("""\
             import os, sys, threading
             def kill_self():
@@ -1026,8 +1074,8 @@ class TestTeeStatus:
     def test_grandchild_never_closes_sigterm_required(self, tmp_path):
         """F3/B5e: grandchild holds the agent's stdout forever (never closes).
         Symmetric drain-to-EOF: the tee stays alive.  buzz-acp SIGKILLs the
-        group (killpg) and then waits up to 5 s for it to exit
-        (acp.rs:421-444, pinned 1c8321cd); SIGKILL cannot be handled, so
+        group (killpg) first and then waits up to 5 s for the child to exit
+        (acp.rs:422-444, pinned 1c8321cd); SIGKILL cannot be handled, so
         that leg's evidence is its last RUNNING status (A21d).  The SIGTERM
         path covers an operator/systemd TERM.
         Assert the tee is still alive at 15 s (/proc state), then SIGTERM ->
@@ -1092,46 +1140,15 @@ class TestTeeStatus:
             tee_proc.wait(timeout=10)
             drainer.join(timeout=5)
         finally:
-            if tee_proc.poll() is None:
-                tee_proc.kill()
-                tee_proc.wait(timeout=5)
-            # F-B5e-12: kill THIS test's grandchild; assert it is gone
-            gc_pid_path = framedir / "grandchild.pid"
-            assert gc_pid_path.exists(), "agent never wrote grandchild.pid"
-            gc_pid = None
             try:
-                gc_pid = int(gc_pid_path.read_text().strip())
-                # F13: identity before kill
-                try:
-                    cmdline = open("/proc/%d/cmdline" % gc_pid).read().replace("\0", " ")
-                    assert "time.sleep" in cmdline, (
-                        "pid %d is not the grandchild (cmdline: %s)" % (gc_pid, cmdline))
-                except FileNotFoundError:
-                    gc_pid = None  # already gone
-                if gc_pid is not None:
-                    os.kill(gc_pid, sig.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if gc_pid is not None:
-                deadline_gc = time.monotonic() + 2
-                while time.monotonic() < deadline_gc:
-                    try:
-                        st = open("/proc/%d/stat" % gc_pid).read().split()
-                        if len(st) >= 3 and st[2] == "Z":
-                            break
-                    except (OSError, IOError):
-                        break
-                    time.sleep(0.1)
-                gone = True
-                try:
-                    st = open("/proc/%d/stat" % gc_pid).read().split()
-                    if len(st) >= 3 and st[2] != "Z":
-                        gone = False
-                except (OSError, IOError):
-                    pass
-                assert gone, "grandchild pid %d still alive after kill" % gc_pid
-            tee_proc.stdout.close()
-            tee_proc.stderr.close()
+                if tee_proc.poll() is None:
+                    tee_proc.kill()
+                    tee_proc.wait(timeout=5)
+                # F-B5e-12 / F-B5g-4: kill THIS test's grandchild with identity
+                _kill_own_grandchild(framedir)
+            finally:
+                tee_proc.stdout.close()
+                tee_proc.stderr.close()
         assert tee_proc.returncode == 70
         status = json.loads(status_path.read_text())
         assert status["final"] is False
@@ -1469,11 +1486,11 @@ class TestStdinReaderDoneValue:
         """R1/F8: stdin never closed -> tee stays alive (drain-to-EOF).
         Proves LIVENESS: gate on recorded_a2c >= 1 and stdin_reader_done is
         False, then sleep 15 s and assert tee is still alive (poll is None)
-        BEFORE the SIGTERM.  buzz-acp SIGKILLs the group (killpg) and then
-        waits up to 5 s for it to exit (acp.rs:421-444, pinned 1c8321cd);
-        SIGKILL cannot be handled, so that leg's evidence is its last
-        RUNNING status (A21d).  The SIGTERM path covers an operator/systemd
-        TERM.  Exit 70, stdin_reader_done False."""
+        BEFORE the SIGTERM.  buzz-acp SIGKILLs the group (killpg) first
+        and then waits up to 5 s for the child to exit (acp.rs:422-444,
+        pinned 1c8321cd); SIGKILL cannot be handled, so that leg's evidence
+        is its last RUNNING status (A21d).  The SIGTERM path covers an
+        operator/systemd TERM.  Exit 70, stdin_reader_done False."""
         agent_code = textwrap.dedent("""\
             import sys, json
             resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
@@ -1514,7 +1531,8 @@ class TestStdinReaderDoneValue:
             # F8: the tee MUST be alive at 15 s (client never closed stdin)
             time.sleep(15)
             assert tee_proc.poll() is None, "tee exited before 15 s liveness check"
-            # R1: SIGTERM it (buzz-acp's shutdown responsibility).
+            # R1: SIGTERM it (an operator/systemd TERM; buzz-acp
+            # SIGKILLs the group instead).
             tee_proc.send_signal(sig.SIGTERM)
             tee_proc.wait(timeout=10)
         finally:
@@ -2558,7 +2576,7 @@ class TestStructuralPins:
             # grandchild streams a2c frames for 30 s
             gc = subprocess.Popen([sys.executable, "-c",
                 "import sys, json, time\\n"
-                "for i in range(3000):\\n"
+                "for i in range(6000):\\n"
                 "    sys.stdout.write(json.dumps({'jsonrpc':'2.0','method':'gc','params':{'i':i}}) + chr(10))\\n"
                 "    sys.stdout.flush()\\n"
                 "    time.sleep(0.01)\\n"])
@@ -2623,50 +2641,86 @@ class TestStructuralPins:
             tee_proc.wait(timeout=30)
             drainer.join(timeout=5)
         finally:
-            if tee_proc.poll() is None:
-                tee_proc.kill()
-                tee_proc.wait(timeout=5)
-            # F-B5e-12: kill THIS test's grandchild; assert it is gone
-            gc_pid_path = framedir / "grandchild.pid"
-            assert gc_pid_path.exists(), "agent never wrote grandchild.pid"
-            gc_pid = None
             try:
-                gc_pid = int(gc_pid_path.read_text().strip())
-                # F13: identity before kill
-                try:
-                    cmdline = open("/proc/%d/cmdline" % gc_pid).read().replace("\0", " ")
-                    assert "time.sleep" in cmdline, (
-                        "pid %d is not the grandchild (cmdline: %s)" % (gc_pid, cmdline))
-                except FileNotFoundError:
-                    gc_pid = None  # already gone
-                if gc_pid is not None:
-                    os.kill(gc_pid, sig.SIGKILL)
-            except ProcessLookupError:
-                pass
-            if gc_pid is not None:
-                deadline_gc = time.monotonic() + 2
-                while time.monotonic() < deadline_gc:
-                    try:
-                        st = open("/proc/%d/stat" % gc_pid).read().split()
-                        if len(st) >= 3 and st[2] == "Z":
-                            break
-                    except (OSError, IOError):
-                        break
-                    time.sleep(0.1)
-                gone = True
-                try:
-                    st = open("/proc/%d/stat" % gc_pid).read().split()
-                    if len(st) >= 3 and st[2] != "Z":
-                        gone = False
-                except (OSError, IOError):
-                    pass
-                assert gone, "grandchild pid %d still alive after kill" % gc_pid
-            tee_proc.stdout.close()
-            tee_proc.stderr.close()
+                if tee_proc.poll() is None:
+                    tee_proc.kill()
+                    tee_proc.wait(timeout=5)
+                # F-B5e-12 / F-B5g-4: kill THIS test's grandchild with identity
+                _kill_own_grandchild(framedir)
+            finally:
+                tee_proc.stdout.close()
+                tee_proc.stderr.close()
         assert reads >= 10000, "only %d reads -- need >= 10000" % reads
         assert torn == 0, "%d torn reads out of %d" % (torn, reads + torn)
         assert seq_violations == 0, (
             "%d snapshots where updated_seq != recorded_c2a + recorded_a2c" % seq_violations)
+
+
+# ---------------------------------------------------------------------------
+# F-B5g-4: zombie grandchild is "already gone", not a test failure
+# ---------------------------------------------------------------------------
+class TestZombieGrandchild:
+    def test_zombie_grandchild_is_already_gone(self, tmp_path):
+        """F-B5g-4: a grandchild that exits ~0.3 s before the census is a
+        zombie (empty /proc/<pid>/cmdline, stat state Z).  The old F13 code
+        treated this as 'not the grandchild' and failed the test.  After
+        the fix, a zombie with a foreign cmdline = already gone, not a
+        hard failure.  A LIVE foreign process = hard failure 'refusing to
+        kill a foreign pid'.  Pid reuse is unreachable here (pid_max 32768,
+        ~5 pids/s measured vs the ~728/s needed) and the zombie window
+        (~0.97 s) is the reachable direction.
+        RED on the PIN today: 'pid N is not the grandchild (cmdline: )'.
+        GREEN after."""
+        agent_code = textwrap.dedent("""\
+            import subprocess, sys, json, os
+            line = sys.stdin.readline()
+            resp = {"jsonrpc": "2.0", "id": 1, "result": {}}
+            sys.stdout.write(json.dumps(resp) + "\\n")
+            sys.stdout.flush()
+            # Grandchild exits quickly (~0.3 s) so it is a zombie by census time
+            gc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.3)"])
+            fd = os.environ.get("S0_01_FRAMEDIR", "")
+            if fd:
+                open(os.path.join(fd, "grandchild.pid"), "w").write(str(gc.pid))
+            sys.exit(0)
+        """)
+        framedir = tmp_path / "frames"
+        framedir.mkdir()
+        agent_script = tmp_path / "agent.py"
+        agent_script.write_text("#!%s\n" % sys.executable + agent_code)
+        agent_script.chmod(0o755)
+        env = os.environ.copy()
+        env["S0_01_FRAMEDIR"] = str(framedir)
+        env["S0_01_AGENT"] = str(agent_script)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        # Send the initialize frame, then keep stdin alive so the tee
+        # stays in the c2a drain loop while the grandchild becomes a zombie
+        input_bytes = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                  "params": {}}).encode() + b"\n"
+        tee_proc = subprocess.Popen([sys.executable, str(TEE)],
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=env)
+        try:
+            tee_proc.stdin.write(input_bytes)
+            tee_proc.stdin.flush()
+            # Do NOT close stdin -- the tee stays alive in the c2a drain loop
+            # Wait for grandchild to exit + become a zombie (~1.5 s)
+            time.sleep(1.5)
+            tee_proc.send_signal(sig.SIGTERM)
+            tee_proc.wait(timeout=10)
+        finally:
+            try:
+                if tee_proc.poll() is None:
+                    tee_proc.kill()
+                    tee_proc.wait(timeout=5)
+                # The census must NOT fail on a zombie grandchild
+                _kill_own_grandchild(framedir)
+            finally:
+                tee_proc.stdin.close()
+                tee_proc.stdout.close()
+                tee_proc.stderr.close()
+        assert tee_proc.returncode == 70
 
 
 # ---------------------------------------------------------------------------
@@ -2806,14 +2860,50 @@ class TestEarlySigterm:
         ), "proc is rebound to a non-None value before the handler install"
 
     def test_grandchild_cleanup_is_own_pid_scoped(self, tmp_path):
-        """F12/AF-AP-59: no world-scoped process sweep (pgrep -f / pkill)
-        exists anywhere in the test file.  CENSUS-WORLD must die."""
+        """F12/AF-AP-59: no world-scoped process sweep exists in this test
+        file, checked against the registry's own AP_SCREEN signatures.
+        CENSUS-WORLD, CENSUS-PGREP-TIGHT, CENSUS-PGREP-A, CENSUS-PS-E
+        must all die.  CENSUS-PGREP-X and CENSUS-PROC-WALK die on the AST
+        pin below (an os.kill outside the allow-list).  Limit: a census
+        that only ENUMERATES the world without killing is out of the AST
+        pin's reach."""
         src = Path(__file__).read_text()
-        # Split the needle so this assertion does not match itself
-        needle_pgrep = 'subprocess.run(["pgre' + 'p", "-f"'
-        needle_pkill = '"pki' + 'll"'
-        assert needle_pgrep not in src and needle_pkill not in src, (
-            "a world-scoped process sweep is back in the test file (AF-AP-59)")
+        # The AP_SCREEN import carries the AF-AP-59 row; no hand-typed literals
+        for ap_id, rx, msg in AP_SCREEN:
+            if ap_id == "AF-AP-59":
+                hits = rx.findall(src)
+                assert not hits, (
+                    "AF-AP-59 match in test file: %s (%s)" % (hits, msg))
+
+    def test_kill_calls_only_at_allowed_sites(self, tmp_path):
+        """F-B5g-3 AST pin: every os.kill / os.killpg call in this file
+        sits inside _kill_own_grandchild or inside a function named in the
+        explicit _KILL_SITES allow-list.  An os.kill added outside these
+        sites (e.g. a world-scoped census with a kill) breaks this test.
+        Kills CENSUS-PGREP-X and CENSUS-PROC-WALK (which add os.kill
+        outside the helper)."""
+        tree = ast.parse(Path(__file__).read_text())
+        violations = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            fname = node.name
+            if fname == "_kill_own_grandchild" or fname in _KILL_SITES:
+                continue
+            for child in ast.walk(node):
+                if not isinstance(child, ast.Call):
+                    continue
+                func = child.func
+                # os.kill(pid, sig) or os.killpg(pid, sig)
+                if (isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "os"
+                        and func.attr in ("kill", "killpg")):
+                    violations.append(
+                        "%s at line %d in %s" % (func.attr, child.lineno, fname))
+        assert not violations, (
+            "os.kill/os.killpg outside _kill_own_grandchild or _KILL_SITES: %s"
+            % violations)
 
 
 # ---------------------------------------------------------------------------
@@ -2903,15 +2993,138 @@ class TestSigtermTerminatesAgent:
 
 
 # ---------------------------------------------------------------------------
-# F-B5e-1: doc-anchor guard for the honest shutdown bound
+# F-B5e-1 / F-B5g-1: doc-anchor guard via the PINNED SOURCE as the oracle
 # ---------------------------------------------------------------------------
 class TestDocstringAnchor:
+    def test_shutdown_prose_matches_the_pinned_source(self, tmp_path):
+        """F-B5g-1: the docstrings and comments rest on MECHANICAL facts
+        derived from the vendored acp.rs -- not on a word list.  The test's
+        own premise: the vendored file's sha256 matches the constant.
+        Then: SIGTERM count == 0; kill_process_group contains killpg with
+        SIGKILL; inside pub async fn shutdown the kill PRECEDES the bounded
+        wait (from_secs(5)); from_secs(5) is unique before #[cfg(test)]
+        mod tests at :2351.  Finally: every docstring/comment citation in
+        BOTH scope files uses the PINNED_SHUTDOWN_CLAUSE constant, and the
+        constant agrees with the derived facts.
+        DOCSTRING-ORDER and DOCSTRING-WRONGEVENT must die."""
+        # --- premise: the vendored oracle is the pinned file ---
+        oracle = VENDORED_ACP_RS.read_text()
+        oracle_sha = hashlib.sha256(VENDORED_ACP_RS.read_bytes()).hexdigest()
+        assert oracle_sha == VENDORED_ACP_RS_SHA256, (
+            "vendored acp.rs sha256 mismatch: %s != %s"
+            % (oracle_sha, VENDORED_ACP_RS_SHA256))
+
+        # --- mechanical facts, DERIVED from the source ---
+        assert oracle.count("SIGTERM") == 0, (
+            "acp.rs mentions SIGTERM %d times, expected 0" % oracle.count("SIGTERM"))
+
+        # kill_process_group contains killpg with SIGKILL
+        lines = oracle.splitlines()
+        kpg_start = None
+        for i, line in enumerate(lines, 1):
+            if "fn kill_process_group" in line and "pub" not in line.split("fn")[0].split("//")[-1]:
+                # The non-test fn (not inside a comment)
+                if line.strip().startswith("//"):
+                    continue
+                kpg_start = i
+                break
+        assert kpg_start is not None, "fn kill_process_group not found"
+        # Find killpg with SIGKILL within the next few lines
+        kpg_body = "\n".join(lines[kpg_start - 1:kpg_start + 10])
+        assert "killpg(" in kpg_body, "kill_process_group does not contain killpg("
+        assert "Signal::SIGKILL" in kpg_body, "kill_process_group does not use SIGKILL"
+
+        # shutdown: kill PRECEDES the bounded wait
+        sd_start = None
+        for i, line in enumerate(lines, 1):
+            if "pub async fn shutdown" in line:
+                sd_start = i
+                break
+        assert sd_start is not None, "pub async fn shutdown not found"
+        # Scan forward from shutdown for kill_process_group / start_kill, then from_secs(5)
+        kill_line = None
+        wait_line = None
+        for i in range(sd_start - 1, min(sd_start + 30, len(lines))):
+            text = lines[i]
+            if kill_line is None and ("kill_process_group" in text or "start_kill" in text):
+                kill_line = i + 1
+            if wait_line is None and "from_secs(5)" in text:
+                wait_line = i + 1
+        assert kill_line is not None, "no kill in shutdown()"
+        assert wait_line is not None, "no from_secs(5) in shutdown()"
+        assert kill_line < wait_line, (
+            "kill at :%d does NOT precede from_secs(5) at :%d" % (kill_line, wait_line))
+
+        # from_secs(5) is unique before the test module boundary
+        cfg_test_mod = None
+        for i, line in enumerate(lines, 1):
+            if line.strip() == "#[cfg(test)]" and i > 2000:
+                # Check the next non-empty line is "mod tests {"
+                for j in range(i, min(i + 3, len(lines))):
+                    if "mod tests" in lines[j]:
+                        cfg_test_mod = i
+                        break
+                if cfg_test_mod is not None:
+                    break
+        assert cfg_test_mod is not None, "#[cfg(test)] mod tests not found"
+        prod_lines = lines[:cfg_test_mod - 1]
+        prod_text = "\n".join(prod_lines)
+        assert prod_text.count("from_secs(5)") == 1, (
+            "from_secs(5) appears %d times before #[cfg(test)] mod tests, expected 1"
+            % prod_text.count("from_secs(5)"))
+
+        # --- assert every citation uses the derived line ranges ---
+        # The docstrings/comments cite acp.rs:422-444 and :2323-2328
+        assert sd_start == 422, "shutdown starts at :%d, expected :422" % sd_start
+        assert kpg_start == 2323, "kill_process_group starts at :%d, expected :2323" % kpg_start
+
+        # --- the constant agrees with the derived facts ---
+        assert "SIGKILL" in PINNED_SHUTDOWN_CLAUSE, (
+            "PINNED_SHUTDOWN_CLAUSE does not mention SIGKILL")
+        assert "killpg" in PINNED_SHUTDOWN_CLAUSE, (
+            "PINNED_SHUTDOWN_CLAUSE does not mention killpg")
+        assert "first" in PINNED_SHUTDOWN_CLAUSE and "then waits" in PINNED_SHUTDOWN_CLAUSE, (
+            "PINNED_SHUTDOWN_CLAUSE does not state 'first ... then waits'")
+        assert "5 s" in PINNED_SHUTDOWN_CLAUSE, (
+            "PINNED_SHUTDOWN_CLAUSE does not mention 5 s")
+        assert "for the child to exit" in PINNED_SHUTDOWN_CLAUSE, (
+            "PINNED_SHUTDOWN_CLAUSE says 'for it to exit' not 'for the child to exit'")
+
+        # --- every citation site in BOTH scope files contains the constant ---
+        # Normalize whitespace: docstrings and comments wrap the clause across
+        # lines, so a raw count misses them.  Collapse runs of whitespace
+        # (including # comment leaders) to a single space before counting.
+        def _ws_norm(text):
+            return re.sub(r"[\s#]+", " ", text)
+        clause_norm = _ws_norm(PINNED_SHUTDOWN_CLAUSE)
+        tee_src = Path(TEE).read_text()
+        test_src = Path(__file__).read_text()
+        tee_count = _ws_norm(tee_src).count(clause_norm)
+        test_count = _ws_norm(test_src).count(clause_norm)
+        assert tee_count >= 3, (
+            "PINNED_SHUTDOWN_CLAUSE appears %d times in frame_tee.py, expected >= 3"
+            % tee_count)
+        assert test_count >= 3, (
+            "PINNED_SHUTDOWN_CLAUSE appears %d times in test file, expected >= 3"
+            % test_count)
+
+        # --- the tee source must not say 'after 5 s' ---
+        assert not re.search(
+            r"SIGKILLs[\s#]+the[\s#]+group[\s#]+after[\s#]*5[\s#]*s", tee_src), (
+            "tee source says 'SIGKILLs the group" + " after 5 s'")
+
+        # --- no SIGTERM attribution to buzz-acp in EITHER file ---
+        # Split the needle so this assertion message does not match itself
+        _banned = r"buzz-acp'?s?\s+shut" + r"down\s+responsibility"
+        assert not re.search(_banned, tee_src + test_src), (
+            "a site still attributes SIGTERM to buzz-acp")
+
     def test_docstring_pins_the_meaning_not_the_tokens(self, tmp_path):
         """F-B5e-1/F4: the module docstring pins the MEANING of the shutdown
         bound -- killpg, SIGKILL cannot be handled, last RUNNING status --
-        and the whole source file (comments + test docstrings included)
-        never claims buzz-acp SIGKILLs 'after 5 s' (it kills FIRST, then
-        waits up to 5 s).  DOCSTRING-HYBRID and COMMENT-TERM must die."""
+        and BOTH scope files (tee source + this test file) never claim
+        buzz-acp SIGKILLs 'after 5 s' (it kills FIRST, then waits up to
+        5 s).  DOCSTRING-HYBRID and COMMENT-TERM must die."""
         src = Path(TEE).read_text()
         doc = ast.get_docstring(ast.parse(src))
         assert doc is not None, "module docstring missing"
@@ -2923,9 +3136,9 @@ class TestDocstringAnchor:
         assert not re.search(r"SIGTERM path[^.]*(covers it|bounds)", doc), (
             "docstring still claims the SIGTERM path bounds a wedged leg")
         # The wrap-tolerant regex catches line-wrapped instances in comments
-        # and test docstrings too (the literal string is broken across lines
-        # at four of its five sites on the PIN).
+        # and test docstrings too.
+        all_src = src + "\n" + Path(__file__).read_text()
         assert not re.search(
-            r"SIGKILLs[\s#]+the[\s#]+group[\s#]+after[\s#]*5[\s#]*s", src), (
-            "source says 'SIGKILLs the group after 5 s' -- buzz-acp kills "
+            r"SIGKILLs[\s#]+the[\s#]+group[\s#]+after[\s#]*5[\s#]*s", all_src), (
+            "source says 'SIGKILLs the group" + " after 5 s' -- buzz-acp kills "
             "first and then waits <=5 s; it does not wait 5 s before killing")
