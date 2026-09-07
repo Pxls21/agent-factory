@@ -323,3 +323,24 @@ class TestAFAP58:
 
     def test_no_fire_on_send_signal(self):
         assert not self.rx.search("    proc.send_signal(signal.SIGTERM)")
+
+
+# ---- AF-AP-59 (TEST_SCREEN): world-scoped process sweep in a test ----
+
+class TestAFAP59:
+    rx = _TEST_BY_ID["AF-AP-59"]
+
+    def test_fires_on_pgrep_f_pattern(self):
+        assert self.rx.search('out = subprocess.run(["pgrep", "-f", "import time; time.sleep"], capture_output=True)')
+
+    def test_fires_on_shell_pgrep_f(self):
+        assert self.rx.search('subprocess.run("pgrep -f time.sleep", shell=True)')
+
+    def test_fires_on_bare_ps_census(self):
+        assert self.rx.search('rows = subprocess.run(["ps", "-eo", "pid,ppid,stat,args"], capture_output=True)')
+
+    def test_no_fire_on_pgrep_own_child(self):
+        assert not self.rx.search('kids = subprocess.run(["pgrep", "-P", str(tee_proc.pid)], capture_output=True)')
+
+    def test_no_fire_on_own_proc_stat(self):
+        assert not self.rx.search('stat = Path(f"/proc/{gc_pid}/stat").read_text()')

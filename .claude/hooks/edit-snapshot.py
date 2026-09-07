@@ -173,6 +173,11 @@ TEST_SCREEN = [
     # failing first, passes unnoticed (VERIFY-N5c F5 on the coordinator's own producer-pin test).
     ("AF-AP-48", re.compile(r"""assert\s+[^\n=]+?\s+in\s*\{\s*["']"""),
      "set-shaped reason assertion — assert the ONE exact value; a set is admissible only for a genuinely nondeterministic outcome, each member with its own producing test (AF-AP-48)"),
+    # AF-AP-59 (2026-09-07): a world-scoped process sweep in a test (`pgrep -f <pattern>` over the whole box, a bare
+    # `ps -e` census) asserts an empty world that only a serial venue provides; a sibling xdist worker's process lands in
+    # it (the PC gate, run 20260907T161133Z). Own-pid checks (`pgrep -P <own pid>`, /proc/<own pid>/stat) do not match.
+    ("AF-AP-59", re.compile(r"""["']pgrep["']\s*,\s*["']-f["']|\bpgrep\s+-f\b|["']ps["']\s*,\s*["']-e[a-z]*["']"""),
+     "world-scoped process sweep in a test — the result includes every sibling worker's processes; assert your OWN pids (from a pid file / pgrep -P <own pid> / /proc/<own pid>/stat) exactly and the admissibility of the rest, never emptiness (AF-AP-59)"),
     # AF-AP-57 (2026-09-07): a fake that picks its behaviour by call ORDINAL ("call 1 fails, call 2 succeeds") encodes the
     # current loop shape — the first thing a mutant changes (DL-INLINE survived a call-count killer: the mutated loop's
     # 2nd attempt landed on the success ordinal with the identical error text). Gate fakes on PHASE/state instead.
