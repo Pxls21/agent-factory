@@ -8,7 +8,7 @@ last_compiled: 2026-09-03
 ## Clocks
 
 - **Origin tip:** 2026-09-07 18:16Z (`claude/soundbox-kit-migration-iz1jwf`) — the B5g brief + VERIFY-B5f verdict + the scrubbed transcripts; before it checkpoints 8n-8r (the four components' round-10/11/12 repairs). SHAs are rewritten at push, so this page names commits by subject.
-- **Local HEAD:** = origin + this sync (the A5i / D5j briefs, the CK10 / D5i verdicts, the scan-test exactness hunk, the re-stamped clocks); the tree carries the UNCOMMITTED live edits of lanes B5g (tee), A5i (checker) and D5j (backend) — declared in `.lanes-live`; pushes go through `push_clean.sh --lanes-live`. Earlier today: the probe MERGE-READY (c359d2a), checkpoints 8n-8r, three NOT-READY verdicts per component; an account quota stop on 2026-09-06 20:57Z killed two verifiers mid-run (both relaunched 2026-09-07 12:4xZ).
+- **Local HEAD:** = origin (the round-13 sync: A5i / D5j briefs + CK10 / D5i verdicts + the scan-test exactness hunk + the re-stamped clocks; then the realleg_sync tooling); the tree carries the UNCOMMITTED live edits of lanes B5g (tee), A5i (checker) and D5j (backend) — declared in `.lanes-live`; pushes go through `push_clean.sh --lanes-live`. Earlier today: the probe MERGE-READY (c359d2a), checkpoints 8n-8r, three NOT-READY verdicts per component; an account quota stop on 2026-09-06 20:57Z killed two verifiers mid-run (both relaunched 2026-09-07 12:4xZ).
   survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
 - **Today:** 2026-09-07
 
@@ -88,6 +88,8 @@ last_compiled: 2026-09-03
   interview, seed, breakdown) COMPLETE, all committed. `tests/` fully green (45).
 
 ## In-flight runs
+- **The real-leg corpus is a DECLARED input (2026-09-07 19:0xZ):** `scripts/realleg_sync.sh pc-build | pull | check` — the PC tree `/home/rocco/s0-01-pinned/realleg/golden` is byte-identical to the graded sandbox corpus (142 files, every sha256 equal; the manifest bodies materialised from the committed baseline gz), `pull` restores a fresh container to `/root/s0-01-realleg/golden` in ~20 s over the bridge, `check` verifies every sha; `scripts/pc_suite.sh` exports `S0_01_VENUE=pc S0_01_REAL_LEG_DIR=<PC tree>` on every PC run. Inert until lane A5i's checker tests consume the variables; `scripts/test_summary.sh`'s sandbox defaults + the CLAUDE.md line land with the A5i checkpoint (three lanes run test_summary live and A5i must run an UNSET configuration).
+
 - **PC lane bring-up** (2026-09-03): DONE and PROVEN — clone at `~/agent-factory`, pc-setup complete
   (quartet, venv, gitnexus 1.6.10), Hermes profile `agentfactory` with the merged snippet; spike
   `hermes-lane-trial` runs 8-9: shell in the pinned worktree (`TERMINAL_CWD`), push/PR blocked
