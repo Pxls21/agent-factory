@@ -46,13 +46,15 @@ def _canonical(status_cell):
 
 S0_01_MARKER = "PROOF-STATUS: S0-01 = REVIEW-PENDING"
 S0_01_ROW = "| s0-07-s0-01-acp-conformance | #7 S0-01 ACP conformance | REVIEW-PENDING 2026-09-05; details | s0-02 | gate |\n"
+S0_07_MARKER = "PROOF-STATUS: S0-07 = REVIEW-PENDING"
+S0_07_ROW = "| s0-09-s0-07-fubuki | #9 S0-07 Fubuki corrections | REVIEW-PENDING 2026-09-07; details | s0-02 | gate |\n"
 
 
-def _ledger(marker="PROOF-STATUS: S0-11 = REVIEW-PENDING", rows=None, s0_01_marker=S0_01_MARKER, s0_01_row=S0_01_ROW):
+def _ledger(marker="PROOF-STATUS: S0-11 = REVIEW-PENDING", rows=None, s0_01_marker=S0_01_MARKER, s0_01_row=S0_01_ROW, s0_07_marker=S0_07_MARKER, s0_07_row=S0_07_ROW):
     """Fixture ledger: the S0-11 case under test plus a consistent S0-01 binding (both proofs are tracked)."""
     if rows is None:
         rows = [_canonical("REVIEW-PENDING; details")]
-    return f"notes\n{marker}\n{s0_01_marker}\n\n{HEADER}{''.join(rows)}{s0_01_row}"
+    return f"notes\n{marker}\n{s0_01_marker}\n{s0_07_marker}\n\n{HEADER}{''.join(rows)}{s0_01_row}{s0_07_row}"
 
 
 def _make_root(tmp_path, tasklist_text):
@@ -131,7 +133,7 @@ def test_duplicate_canonical_row_fails(tmp_path):
 
 def test_missing_canonical_row_fails(tmp_path):
     # A marker with no canonical row: the status is not bound to anything visible.
-    text = f"notes\nPROOF-STATUS: S0-11 = REVIEW-PENDING\n{S0_01_MARKER}\n\n{HEADER}{S0_01_ROW}"
+    text = f"notes\nPROOF-STATUS: S0-11 = REVIEW-PENDING\n{S0_01_MARKER}\n{S0_07_MARKER}\n\n{HEADER}{S0_01_ROW}{S0_07_ROW}"
     result = _run(_make_root(tmp_path, text))
     assert result.returncode == 1
     assert "found 0 task rows" in result.stderr

@@ -128,6 +128,8 @@
 
 - **2026-09-07 23:3xZ — AF-AP-37 bit the coordinator: a commit message (ef54308) stated `36 passed, 0 failed` for a test the edit had just broken (an escaped `\&\&` left in the shell by a Python re.sub) — the real line was `35 passed, 1 failed`.** Rule confirmed: counts are PASTED from the run that precedes the commit, never typed from the intended outcome; the fix commit (2cddfa1) carries the pasted line. Mechanical follow-up: the commit-message count is captured into the message by the shell (`LINE=$(… | grep passed)`) rather than written by hand.
 
+- **2026-09-07 23:5xZ — a commit was pushed with a red test suite (22e283e: tracking S0-07 in check-proof-status.py broke five fixture-based tests in tests/test_proof_status.py; the chain gated on safe_commit's rc, not on pytest's).** Rule: a commit chain gates on the TEST run's exit status (`… && pytest … && safe_commit …`), and the pasted count in the message comes from that same run. Fix: the fixtures carry the S0-07 marker + row (the next commit).
+
 ## ANTI-PATTERN REGISTRY (owner mandate, inherited from trading-system 2026-08-21)
 
 > The behavioral anti-pattern classes that lead to wrong code in THIS repo. **Every /bug-echo
