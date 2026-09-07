@@ -243,3 +243,9 @@ the test count in the report was hand-typed rather than machine-pasted. Two rule
    from `date -u +%H:%MZ` or the commit clock (`git log -1 --date=format:%H:%MZ --format=%cd`), never
    typed from a running mental clock (2026-09-07: the day's stamps drifted up to 2.8 h ahead of the
    commits and the task DB copied the drift; every stamp was re-derived from the commit clock).
+   `file:line` references are the same rule with a TOOL: a report runs `scripts/report_lint.py REPORT --map
+   ALIAS=path ... --rev <PIN>` and pastes its summary line with MISS 0 (or each MISS explained) before it
+   returns; a verifier runs it first (2026-09-07: four consecutive verdicts spent a blocker each on typed
+   refs — 13, 11, 6, 17 wrong — a five-second mechanical check nobody ran). And the anti-pattern screen runs
+   over WHOLE FILES before every checkpoint (`scripts/ap_screen.py`), not only over edited hunks: a registered
+   AF-AP-40 sat untouched in the checker for eleven rounds because no hunk ever contained it.
