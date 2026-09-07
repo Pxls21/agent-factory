@@ -221,3 +221,23 @@ gate on THAT — if it is not available at the guard site, thread it there (the 
 stores the verdict's n_configs on the snapshot). A guard on a proxy is a mirror, and its
 tests will be mirrors too (every W6-G test built snapshots by hand and never ran a real
 verdict, so 7/7 mutants died yet the fail-open survived).
+
+## Tactic 10 — world-scoped enumerations: EXACT over a synthetic world, BOUNDED over the live one (2026-09-07, AF-AP-59)
+
+A test over a system-wide listing (ps/proc rows, listening ports, a directory walk, a pinned-path census)
+has two honest shapes and one flake.
+1. **The live world:** assert the OWNED subset exactly and CHARACTERISE the rest — every foreign row must
+   be admissible under the producer's only other rule (here: it names a pinned path); anything else fails
+   loud (`unexplained foreign row`), and the negative control of that helper is COMMITTED, never just run.
+   A header that counts the FULL table is then a LOWER bound from inside one test, never an exact number:
+   a sibling worker's helper (the PC gate runs 8 xdist workers) can sit in the table between two of one
+   test's reads.
+2. **The exact contract lives where the world is synthetic:** a `ps` shim on PATH that prints N rows and
+   nothing else makes "pinned_present == 2 over the full table", "the helper-shaped row is dropped from the
+   body but counted", "the unpinned foreign row is absent" EXACT and deterministic on every venue — and the
+   producer mutants (count over the body instead of the table; helper filter off) die on it.
+3. **The flake:** `if not foreign: assert pinned_present == "0"` — exact over the LIVE world, green only
+   while the test is alone on the box (VERIFY-CK10 F-R10-20 asked for it; rejected on this evidence).
+War story: the PC checker gate's first rerun of checkpoint 8p went red on a sibling xdist worker's
+`frame_tee.py` sleeper inside a world-scoped scan body (run 20260907T161133Z); the fix was shape 1 plus the
+two committed controls, and shape 2 for the count (`tests/test_s0_01_pc_post_scan.py`).
