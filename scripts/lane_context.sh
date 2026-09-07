@@ -30,6 +30,9 @@ done
 [ $# -gt 0 ] || { echo "usage: lane_context.sh [-q question] [-s SYMBOL]... [-o out.md] FILE..." >&2; exit 64; }
 FILES=("$@")
 T=90
+# venue-neutral instrument paths: the sandbox keeps venvs/binaries under /root, the PC under $HOME (harness-ports/bin/pc-setup.sh)
+CRG="${CRG_BIN:-}"; for c in "$HOME/venv-crg/bin/code-review-graph" /root/venv-crg/bin/code-review-graph; do [ -z "$CRG" ] && [ -x "$c" ] && CRG="$c"; done
+[ -z "$CRG" ] && CRG="$(command -v code-review-graph 2>/dev/null || true)"
 have() { command -v "$1" >/dev/null 2>&1; }
 run() { # run <label> <cmd...> — bounded, tolerant, never silent
   local label="$1"; shift
@@ -64,13 +67,13 @@ emit() {
     echo "### GitNexus impact (upstream)"
     if [ -f .gitnexus/run.cjs ]; then run "gitnexus impact" node .gitnexus/run.cjs impact "$s" --direction upstream --repo . | grep -E '"impactedCount"|"risk"|"epistemic"|"direct"|"processes_affected"|riskNote' | head -8; else echo "unmapped — GitNexus index absent"; fi
     echo "### code-review-graph callers_of / tests_for"
-    if [ -x /root/venv-crg/bin/code-review-graph ] && [ -f .code-review-graph/graph.db ]; then
+    if [ -n "$CRG" ] && [ -x "$CRG" ] && [ -f .code-review-graph/graph.db ]; then
       # a bare name that several files define answers "matches N node(s), re-run with a qualified_name" — qualify it
       # with the first FILE that defines it (crg's node id is <abs path>::<name>); the bare name stays the fallback
       q=""; for f in "${FILES[@]}"; do grep -qE "^[[:space:]]*(async[[:space:]]+)?(def|class)[[:space:]]+$s\b" "$f" 2>/dev/null && { q="$ROOT/$f::$s"; break; }; done
-      run "crg callers_of" /root/venv-crg/bin/code-review-graph query callers_of "${q:-$s}" | grep -E '"summary"|"name"' | head -12
-      run "crg tests_for" /root/venv-crg/bin/code-review-graph query tests_for "${q:-$s}" | grep -E '"summary"|"name"' | head -12
-    else echo "unmapped — code-review-graph graph absent (run: /root/venv-crg/bin/code-review-graph build)"; fi
+      run "crg callers_of" "$CRG" query callers_of "${q:-$s}" | grep -E '"summary"|"name"' | head -12
+      run "crg tests_for" "$CRG" query tests_for "${q:-$s}" | grep -E '"summary"|"name"' | head -12
+    else echo "unmapped — code-review-graph graph absent (run: ${CRG:-code-review-graph} build)"; fi
     echo "### ripwire callers"
     if [ -x scripts/ripwire_review.sh ]; then run "ripwire callers" bash scripts/ripwire_review.sh callers "$s" | grep -oE '<callers[^>]*>|<c [^>]*/>' | head -12; else echo "unmapped — ripwire wrapper absent"; fi
     echo

@@ -22,7 +22,8 @@ MODE=${1:-check}; STRICT=0; [ "${2:-}" = "--strict" ] && STRICT=1
 # Usage errors are venue-independent: validate the mode BEFORE the binary probe (CI has no binary and
 # reported "missing"/exit 0 for a bogus mode — the 2026-09-06 run on 79f8f5b).
 case "$MODE" in check|save|compare) ;; *) echo "usage: sentrux_review.sh check|save|compare [--strict]"; exit 64 ;; esac
-BIN=${SENTRUX_BIN:-/root/.local/bin/sentrux}
+BIN="${SENTRUX_BIN:-}"; for c in "$HOME/.local/bin/sentrux" /root/.local/bin/sentrux; do [ -z "$BIN" ] && [ -x "$c" ] && BIN="$c"; done
+[ -z "$BIN" ] && BIN="$(command -v sentrux 2>/dev/null || echo /root/.local/bin/sentrux)"  # sandbox: /root; PC: $HOME (pc-setup.sh)
 [ -x "$BIN" ] || { echo "sentrux_review: $BIN missing — run scripts/setup.sh (pinned install)"; exit 0; }
 RT="${SENTRUX_RUNTIME_DIR:-$ROOT/.sentrux-runtime}"; TREE="$RT/tree"; mkdir -p "$RT"
 rm -rf "$TREE"; mkdir -p "$TREE/.sentrux"

@@ -31,7 +31,8 @@ case "$MODE" in
   map|for|callers|impact|exercises|test-gate|edit-check|skipped) ;;
   *) echo "usage: ripwire_review.sh map|for|callers|impact|exercises|test-gate|edit-check|skipped [args]"; exit 64 ;;
 esac
-BIN=${RIPWIRE_BIN:-/root/.local/bin/ripwire}
+BIN="${RIPWIRE_BIN:-}"; for c in "$HOME/.local/bin/ripwire" /root/.local/bin/ripwire; do [ -z "$BIN" ] && [ -x "$c" ] && BIN="$c"; done
+[ -z "$BIN" ] && BIN="$(command -v ripwire 2>/dev/null || echo /root/.local/bin/ripwire)"  # sandbox: /root; PC: $HOME (pc-setup.sh)
 [ -x "$BIN" ] || { echo "ripwire_review: $BIN missing — run scripts/setup.sh (pinned install)"; exit 0; }
 EXCLUDES=(--exclude=sandbox-kit --exclude=/.claude --exclude=/graft --exclude=/.agents --exclude=harness-ports/ports)
 LIMIT=${RIPWIRE_LIMIT:-20}
