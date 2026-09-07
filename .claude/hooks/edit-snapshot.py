@@ -123,7 +123,9 @@ AP_SCREEN = [
      "last-wins parse of an echo line — require each pinned key EXACTLY ONCE, then compare == (AF-AP-41)"),
     # AF-AP-45 (2026-09-06): liveness from ps presence / /proc existence without the state column — a
     # zombie (<defunct>) reads as a running survivor until its parent reaps it.
-    ("AF-AP-45", re.compile(r"""ps\b[^\n]*-e?o\b[^\n]*?\b(?:pid|ppid)\b(?![^\n]*\bstat\b)|(?:exists|isdir|is_dir)\(\s*f?["'][^"'\n]*/proc/"""),
+    # 2026-09-07 (VERIFY-B5e F15): an existence probe on /proc/<pid>/stat is the STATE-AWARE form the row asks
+    # for (field 3 read next) — excluded, so the correct implementation stops tripping the screen.
+    ("AF-AP-45", re.compile(r"""ps\b[^\n]*-e?o\b[^\n]*?\b(?:pid|ppid)\b(?![^\n]*\bstat\b)|(?:exists|isdir|is_dir)\(\s*f?["'][^"'\n]*/proc/(?![^"'\n]*/stat\b)"""),
      "process liveness without the STATE column — a killed-but-unreaped child is a zombie, not a survivor; enumerate `stat`, exclude Z, count zombies separately (AF-AP-45)"),
     # AF-AP-43 (2026-09-05): a timestamp sampled before the lock that assigns the sequence number
     # yields inversions under honest concurrency.

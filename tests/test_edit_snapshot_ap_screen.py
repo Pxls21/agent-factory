@@ -254,6 +254,16 @@ class TestAFAP45:
     def test_no_fire_on_proc_stat_read(self):
         assert not self.rx.search('Path(f"/proc/{pid}/stat").read_text()')
 
+    def test_no_fire_on_proc_stat_existence_probe(self):
+        # VERIFY-B5e F15: the state-aware form (exists on /proc/<pid>/stat, field 3 read next) must not fire
+        assert not self.rx.search('if os.path.exists("/proc/%d/stat" % child_pid):')
+
+    def test_no_fire_on_proc_stat_existence_probe_fstring(self):
+        assert not self.rx.search('if not os.path.exists(f"/proc/{agent_pid}/stat"):')
+
+    def test_fires_on_bare_proc_pid_existence(self):
+        assert self.rx.search('if os.path.exists("/proc/%d" % child_pid):')
+
 
 # ---- AF-AP-55 (AP_SCREEN): identity sampled from /proc/<pid>/exe at spawn time ----
 
