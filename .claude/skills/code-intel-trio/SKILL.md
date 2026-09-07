@@ -140,6 +140,8 @@ Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.ripwire`; no te
 
 ## § lane_context — the ONE-COMMAND tool pass (owner escalation 2026-09-07)
 
+**Both venues (owner directive 2026-09-07 "make sure all the tools are running on the PC as well"):** `harness-ports/bin/pc-setup.sh` installs/builds every instrument on the PC (sentrux + ripwire digest-pinned into `~/.local/bin`, the crg graph, the codebase-memory fast index, a graft/gitnexus index older than HEAD refreshed) and the wrappers (`lane_context.sh`, `ripwire_review.sh`, `sentrux_review.sh`) resolve their binaries under `$HOME` first, `/root` second, PATH last — smoke-tested on the PC 2026-09-07 23:11Z (every instrument answered). The CLI is the path on every venue; MCP servers are never relied on (owner ruling 2026-09-07).
+
 `scripts/lane_context.sh [-q "<question>"] [-s SYMBOL]... [-o pack.md] FILE...` runs the whole quartet + ripwire +
 the whole-file registry screen for a brief's files in one command: graft skeleton per file, graft ask for the
 brief's question, and per symbol GitNexus impact + code-review-graph callers_of/tests_for + ripwire callers (two
