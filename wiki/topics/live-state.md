@@ -14,6 +14,7 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
+  **2026-09-07 13:5xZ:** the PROBE is MERGE-READY (VERIFY-N5g-b; sha `b9eb56dd…`); its F1 hardening landed as a PHASE-gated killer after the verifier's call-count killer let mutant DL-INLINE live (run, not reasoned — incident + tactic 3d). Lane B5e (tee) reported (`92 passed` ×3) but its F13 is a half fix (handler moved, `try:` not — TERM in the startup window = traceback rc 1, no status; reproduced twice) → follow-up brief sent, tee edits stay uncommitted in `.lanes-live`. VERIFY-D5g (backend r10) and VERIFY-CK9 (checker r9) running. Build venue: sandbox Opus 4.6 only until the codex quota resets (~2026-09-07 22:00Z; Hermes walks the codex fallback chain on a 429 regardless of `HERMES_MODEL`).
   Owner review 2026-09-05 DECLINED closure (five mutations passed the checker; result.json WITHDRAWN, S0-01 ABSENT).
   Checkpoint 7 (2026-09-06): round-7 lanes landed — D5c rebuilt the backend framing gate as an ALLOW-LIST over the input domain (192-cell
   table with forged tails; AF-AP-30 recurrence 10 / AF-AP-47 closed at the class) and N5c killed the verifier's 14 survivors (55/55);
@@ -45,6 +46,7 @@ last_compiled: 2026-09-03
   the staged pc files on the PC clone, ff-sync, `pc_backend_restart.sh`) → pin golden sha → mutation suite on the REAL
   bundle → canonical runner on `pc-bridge` → ledger → owner review. Pending owner: ADR 0002 transport (#35), firewall
   narrowing, #30 acceptance anchor.
+- **Code-intel: ripwire v0.4.0 EVALUATED 2026-09-07 (owner ask: "worth adding to the quartet") — spike done, adoption decision pending the write-up:** single offline C++ binary (`ripwire-0.4.0-linux-x64.tar.gz`, sha256 `fd0bd0fa…bfc8` matches the published `.sha256`; integrity only, no signature), tag `v0.4.0` = commit `e663ca8f…`; on this repo with the vendored trees excluded the cold ranked map takes 1.6 s (est_tokens 2766 at top-60), warm graph verbs ~0.1 s (`--callers=_write_status` → main/pump_fd/pump_pipe, correct; `--exercises=<tee test>` 7 symbols; `--test-gate`), the conceptual `--for` route 6.9 s / 4102 tokens with the right two hits first (checker `check_tee_status`, tee `main`). Flat verbs take `--limit=N`, never `--top-k`. Skipped: 98 files unsupported-ext (`.txt/.jsonl/.summary`, extension-less `scripts/proof-runner`). The tarball also ships `skills/` + `hooks/` — NOT installed (binary only, digest-pinned, advisory, never a gate — the sentrux template).
 - **Code-intel: sentrux adopted 2026-09-05 as the FIFTH, ADVISORY instrument** (owner decision; same standing as
   slopo): `scripts/sentrux_review.sh save|compare|check`, rules `.sentrux/rules.toml`, pinned by digest in
   `upstream.lock.yaml`; never a gate. Blind spot: Python import resolution is weak here (4/390 specs), so
@@ -154,7 +156,7 @@ build-status or count disagreement.
 
 ## Last updated
 
-S0-01 repair checkpoint 7 — 2026-09-06; next update at the final re-capture with the final tools (golden pin, real-bundle
+S0-01 repair, probe MERGE-READY (VERIFY-N5g-b) + B5e follow-up + ripwire spike — 2026-09-07 13:5xZ; next update at the final re-capture with the final tools (golden pin, real-bundle
 mutation suite, canonical runner on pc-bridge) or the owner's review. This
 page's pre-09-04 lane entries are being brought forward incrementally; the ledger
 (`todo/BUILD-TASKLIST.md`) wins on any status disagreement.

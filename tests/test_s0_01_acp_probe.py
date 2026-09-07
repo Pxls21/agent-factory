@@ -1179,7 +1179,11 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
     post-loop readlink — the SECOND readlink of the run — succeeds with the fake
     path but sha256 fails.  VERIFY-N5g F1: the gated readlink is path-aware — a
     read of /proc/self/exe returns a sentinel, so the post-loop site must read
-    the CHILD's exe (kills mutant LG2-POST); no wall clock anywhere."""
+    the CHILD's exe (kills mutant LG2-POST); no wall clock anywhere.
+    VERIFY-N5g-b F1: the gate is PHASE-aware (early loop = main thread alone;
+    post-loop = drain thread alive) and the wrapper prints its own mechanism
+    (RL_CALLS / DEADLINE_SEEN), which the test asserts — an inlined deadline
+    (mutant DL-INLINE) now dies on RL_CALLS; a call-count gate let it live."""
     agent = tmp_path / "agent_silent_stdin.py"
     agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
         import sys
@@ -1202,7 +1206,7 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
 
     wrapper = tmp_path / "f3_wrapper.py"
     wrapper.write_text(textwrap.dedent(f"""\
-        import sys, os, time, unittest.mock
+        import sys, os, threading, unittest.mock
         sys.path.insert(0, {str(P / "tools")!r})
         import acp_probe
 
@@ -1215,9 +1219,16 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
                 return "/SELF/should-never-be-sampled"   # the site must read the CHILD's exe (LG2-POST)
             if "/proc/" in str(path) and "/exe" in str(path):
                 _rl_calls[0] += 1
-                if _rl_calls[0] == 1:                    # the early loop's single attempt (deadline 0)
-                    raise OSError("No such process")
-                return _fake_path                        # call 2 = the post-loop site
+                # PHASE gate (VERIFY-N5g-b F1, mutant DL-INLINE): the early loop runs BEFORE the
+                # stderr drain thread starts, so while the main thread is alone EVERY attempt
+                # fails; only the post-loop site (drain thread alive, agent still running) gets
+                # the fake path.  A call-count gate ("call 1 fails, call 2 succeeds") let an
+                # inlined 0.2 s deadline survive: the loop's 2nd attempt succeeded 2 ms later
+                # with the identical error text.  Under this gate an inlined deadline retries
+                # ~100 times -> RL_CALLS != 2 -> red.
+                if threading.active_count() == 1:
+                    raise OSError("No such process")      # early-loop attempt(s)
+                return _fake_path                        # the post-loop site
             return _orig_readlink(path)
 
         _orig_sha256 = acp_probe._sha256_file
@@ -1232,7 +1243,14 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
             try:
                 acp_probe.main()
             except SystemExit as e:
-                sys.exit(e.code)
+                _rc = e.code
+            else:
+                _rc = 0
+            # VERIFY-N5g-b F1: the killer asserts its OWN mechanism — exactly two child readlinks
+            # (one failing early attempt, then the post-loop site) under the patched deadline. An
+            # inlined deadline constant or an extra readlink would otherwise make this test vacuous.
+            print(f"RL_CALLS={{_rl_calls[0]}} DEADLINE_SEEN={{acp_probe._EARLY_SAMPLE_DEADLINE_S}}", flush=True)
+            sys.exit(_rc)
     """))
 
     r = subprocess.run(
@@ -1240,6 +1258,7 @@ def test_probe_post_loop_sha256_failure_truthful_error(tmp_path):
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert r.returncode == 1, f"expected exit 1, got {r.returncode}: stderr={r.stderr}"
+    assert "RL_CALLS=2 DEADLINE_SEEN=0.0" in r.stdout.splitlines(), r.stdout
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     # N5f-F3: exact equality — the probe_error must carry the full prefix + path
     expected_f3_error = (
@@ -1978,7 +1997,7 @@ def test_probe_interpreter_deleted_after_start_is_a_loud_probe_error(tmp_path):
         _deleted = [False]
         def _deleting_readlink(path):
             if "/proc/" in str(path) and "/exe" in str(path) and not _deleted[0]:
-                # Delete the hardlink before the first readlink fires,
+                # Delete the copied interpreter before the first readlink fires,
                 # so /proc/<pid>/exe returns 'myshell (deleted)'
                 _deleted[0] = True
                 try:

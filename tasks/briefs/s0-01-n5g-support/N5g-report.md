@@ -1,3 +1,5 @@
+> STATUS 2026-09-07 (coordinator): graded by VERIFY-N5g (NOT-READY on two items) and, after the closure commit df58f95, by VERIFY-N5g-b (MERGE-READY). The LG2-POST row below ("SURVIVED — equivalent-by-test-design") was WRONG: the mutant was not equivalent; it is killed at df58f95 by the path-aware post-loop test. Two rows (PINS-12KEY, LG2-POST) were graded on the 53-test probe file, not the five-file suite. Kept as the lane's historical claim.
+
 # N5g — BUILD report (round 9 repair, VERIFY-N5f)
 
 ## Premise

@@ -80,6 +80,15 @@ expansion.
    `importlib.util.spec_from_file_location` (print `__file__` — same identity rule as 3b), and
    reproduce the exact failure the new test pins (2026-09-01 repair round: three verifier
    findings proved red this way in one probe — no stash, no checkout, shared tree untouched).
+   **3d. Gate a fake on PHASE, never on call ORDINAL (2026-09-07, mutant DL-INLINE).** A fixture
+   that selects behaviour by call count ("attempt 1 fails, attempt 2 succeeds") encodes the
+   CURRENT loop shape — the first thing a mutant changes. A verifier-proposed killer for an
+   inlined retry deadline printed its call count and still let the mutant live: the mutated
+   loop's second attempt succeeded 2 ms later with the identical error text, count still 2. Key
+   the fake on observable STATE only one phase can produce (a thread the code starts after the
+   loop, a file the later stage writes, a protocol byte) and assert the mechanism from the
+   wrapper. And RUN the named mutant before landing the killer: a proposed killer is a
+   hypothesis, not a kill.
 4. **Ban hardcoded expected outputs.** The oracle is spec-authored, independent, un-importable by
    the thing it grades. **4a. DROP an inapplicable assertion, NEVER REWRITE it** (rewriting lets
    the graded artifact choose its own oracle value). Drop ONLY when: (a) change provably scoped,
