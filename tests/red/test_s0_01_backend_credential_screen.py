@@ -94,6 +94,9 @@ _INVIS_CATEGORIES = frozenset({"Cf", "Cs", "Cc", "Mn", "Me", "Zs", "Zl", "Zp"})
 _INVISIBLE_EXTRA = frozenset({
     chr(0x115F), chr(0x1160), chr(0x3164), chr(0xFFA0),
     chr(0x2800), chr(0x180E),
+    chr(0x2065),
+    chr(0xFFF0), chr(0xFFF1), chr(0xFFF2), chr(0xFFF3), chr(0xFFF4),
+    chr(0xFFF5), chr(0xFFF6), chr(0xFFF7), chr(0xFFF8),
 })
 # Oracle's OWN copy of the committed range string (D5i-F3); the oracle unions
 # this with the LIVE categories so it is >= the impl on every interpreter.
@@ -118,13 +121,13 @@ _ORACLE_INVIS_RANGES = (
     "1A62 1A65-1A6C 1A73-1A7C 1A7F 1AB0-1ACE 1B00-1B03 1B34 1B36-1B3A 1B3C "
     "1B42 1B6B-1B73 1B80-1B81 1BA2-1BA5 1BA8-1BA9 1BAB-1BAD 1BE6 1BE8-1BE9 "
     "1BED 1BEF-1BF1 1C2C-1C33 1C36-1C37 1CD0-1CD2 1CD4-1CE0 1CE2-1CE8 1CED "
-    "1CF4 1CF8-1CF9 1DC0-1DFF 2000-200F 2028-202F 205F-2064 2066-206F "
+    "1CF4 1CF8-1CF9 1DC0-1DFF 2000-200F 2028-202F 205F-206F "
     "20D0-20F0 2800 2CEF-2CF1 2D7F 2DE0-2DFF 3000 302A-302D 3099-309A 3164 "
     "A66F-A672 A674-A67D A69E-A69F A6F0-A6F1 A802 A806 A80B A825-A826 A82C "
     "A8C4-A8C5 A8E0-A8F1 A8FF A926-A92D A947-A951 A980-A982 A9B3 A9B6-A9B9 "
     "A9BC-A9BD A9E5 AA29-AA2E AA31-AA32 AA35-AA36 AA43 AA4C AA7C AAB0 "
     "AAB2-AAB4 AAB7-AAB8 AABE-AABF AAC1 AAEC-AAED AAF6 ABE5 ABE8 ABED "
-    "D800-DFFF FB1E FE00-FE0F FE20-FE2F FEFF FFA0 FFF9-FFFB 101FD 102E0 "
+    "D800-DFFF FB1E FE00-FE0F FE20-FE2F FEFF FFA0 FFF0-FFFB 101FD 102E0 "
     "10376-1037A 10A01-10A03 10A05-10A06 10A0C-10A0F 10A38-10A3A 10A3F "
     "10AE5-10AE6 10D24-10D27 10EAB-10EAC 10EFD-10EFF 10F46-10F50 10F82-10F85 "
     "11001 11038-11046 11070 11073-11074 1107F-11081 110B3-110B6 110B9-110BA "
@@ -522,6 +525,11 @@ class TestOracleSelfTests:
         (TOKEN[:len(TOKEN)//2] + chr(0xD800) + TOKEN[len(TOKEN)//2:], False),
         # D5j: percent-encoded invalid UTF-8 separator (D5i-F2)
         (TOKEN[:len(TOKEN)//2] + "%80" + TOKEN[len(TOKEN)//2:], False),
+        # D5k item 2: UCD-15 addition (RED on 3.11 under O-TABLE-DROP)
+        (TOKEN[:len(TOKEN)//2] + chr(0x0ECE) + TOKEN[len(TOKEN)//2:], False),
+        # D5k item 3: permanently-reserved BMP slots
+        (TOKEN[:len(TOKEN)//2] + chr(0x2065) + TOKEN[len(TOKEN)//2:], False),
+        (TOKEN[:len(TOKEN)//2] + chr(0xFFF0) + TOKEN[len(TOKEN)//2:], False),
         # Known-good: oracle must NOT detect the token (return True)
         ('{"credential_in_unexpected_location": true}', True),
         ("Mozilla/5.0 (X11; Linux x86_64)", True),
@@ -537,6 +545,8 @@ class TestOracleSelfTests:
             "enclosing_circle_split", "cyrillic_enclosing_split",
             "lone_surrogate_split",
             "pct_lone_continuation_split",
+            "ucd15_addition_split",
+            "reserved_2065_split", "reserved_fff0_split",
             "marker_record", "user_agent", "junk_alone"])
     def test_oracle_known_vectors(self, text, expected):
         assert _absent_under_all_normalizations(text) is expected
@@ -1091,7 +1101,7 @@ def test_top_level_json_string_body_is_not_a_byte_view(backend, doc):
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = _records(backend)
     assert len(recs) == n0 + 1
-    assert json.loads(recs[-1].read_text())["body"] != MARKER
+    assert json.loads(recs[-1].read_text())["body"] == json.loads(doc)
 
 
 def test_top_level_json_string_hello_control(backend):
@@ -1103,7 +1113,7 @@ def test_top_level_json_string_hello_control(backend):
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
     recs = _records(backend)
     assert len(recs) == n0 + 1
-    assert json.loads(recs[-1].read_text())["body"] != MARKER
+    assert json.loads(recs[-1].read_text())["body"] == "hello"
 
 
 # ---- D5j item 2 (D5i-F2): percent-encoded invalid UTF-8 separator ----
@@ -1141,3 +1151,62 @@ def test_credential_lone_surrogate_separator_in_json_body_returns_400(backend):
     recs = _records(backend)
     assert len(recs) == n0 + 1
     assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5k item 3: permanently-reserved BMP slots in JSON body ----
+
+@pytest.mark.parametrize("cp,cp_id", [
+    (0x2065, "RESERVED_2065"), (0xFFF0, "RESERVED_FFF0"),
+], ids=["RESERVED_2065", "RESERVED_FFF0"])
+def test_credential_reserved_bmp_separator_in_json_body_returns_400(backend, cp, cp_id):
+    """D5k item 3: permanently-reserved BMP code points (U+2065, U+FFF0-FFF8)
+    splitting the token via JSON escape must be caught.  RED on the PIN
+    (served 200 before the reserved slots joined _INVISIBLE_EXTRA)."""
+    port = backend["port"]
+    mid = len(TOKEN) // 2
+    esc = "\\u%04x" % cp
+    body = (b'{"model":"s0-01-pong","messages":[],"note":"'
+            + TOKEN[:mid].encode() + esc.encode() + TOKEN[mid:].encode() + b'"}')
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, body))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 400 Bad Request"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == MARKER
+
+
+# ---- D5k item 1 (D5j-F1): no "!= MARKER" anywhere in the test files ----
+
+def test_no_not_equal_marker_assertions():
+    """D5j-F1 class: no test uses body != MARKER as an acceptance check."""
+    import pathlib, subprocess
+    red_file = pathlib.Path(__file__)
+    main_file = red_file.parents[1] / "test_s0_01_scripted_backend.py"
+    # The exact pattern: a Python assert whose expression contains != MARKER
+    # (not inside a string literal).  The grep matches lines where 'assert'
+    # precedes '!=' and 'MARKER' appears after '!=', all on the code level.
+    for p in (red_file, main_file):
+        r = subprocess.run(
+            ["grep", "-cP",
+             r'^\s*assert\s.*\["body"\]\s*!=\s*MARKER',
+             str(p)],
+            capture_output=True, text=True)
+        count = int(r.stdout.strip()) if r.stdout.strip() else 0
+        assert count == 0, f"{p.name} has {count} assert body != MARKER line(s)"
+
+
+# ---- D5k item 5 (D5j-F6): saturation-flip test ----
+
+def test_pct_dense_junk_that_now_saturates_is_served(backend):
+    """One of the 105 vectors that move from fail-closed to served under the
+    drop-variant: the depth-6 oracle confirms the token absent.  RED under
+    UQ-REPLACE-BOTH (the replace variant blanks this record)."""
+    port = backend["port"]
+    vec = "s0-01-upstream-tok%2B%C0%252520%209\t %C0en-0123456789abcdef"
+    n0 = len(_records(backend))
+    resp = _raw(port, _post(port, b'{"model":"s0-01-pong","messages":[]}',
+                            extra_headers=f"X-Trace: {vec}\r\n"))
+    assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert _absent_under_all_normalizations(recs[-1].read_text())

@@ -174,10 +174,11 @@ def test_unknown_model_and_bad_body_are_exact_errors(backend):
 
 def test_requests_are_recorded_with_fingerprint_and_token_absent_from_argv(backend):
     # F8/F18: self-contained -- issue own POST before reading records
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "POST", "/v1/chat/completions",
           {"model": "s0-01-pong", "messages": [{"role": "user", "content": "x"}]})
     recs = sorted(backend["rec"].glob("*.json"))
-    assert recs, "no request records written"
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     assert last["method"] == "POST" and last["path"] == "/v1/chat/completions"
     # Authorization header dropped entirely from stored headers
@@ -202,8 +203,10 @@ def test_requests_are_recorded_with_fingerprint_and_token_absent_from_argv(backe
 def test_received_at_microsecond_format_kills_truncation_mutant(backend):
     """V-c F14: the mutant that truncates received_at to '%Y-%m-%dT%H:%MZ' must fail."""
     # Make two requests; both must have full microsecond timestamps
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models")
     recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     assert _RECEIVED_AT_RE.match(last["received_at"]), \
         f"received_at {last['received_at']!r} does not match YYYY-MM-DDTHH:MM:SS.ffffffZ"
@@ -211,11 +214,14 @@ def test_received_at_microsecond_format_kills_truncation_mutant(backend):
 
 def test_t_mono_ns_strictly_increasing_across_requests(backend):
     """V-c F14: the mutant that hardcodes t_mono_ns to 1 must fail."""
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models")
     recs_a = sorted(backend["rec"].glob("*.json"))
+    assert len(recs_a) == n0 + 1
     mono_a = json.loads(recs_a[-1].read_text())["t_mono_ns"]
     _call(backend["port"], "GET", "/v1/models")
     recs_b = sorted(backend["rec"].glob("*.json"))
+    assert len(recs_b) == n0 + 2
     mono_b = json.loads(recs_b[-1].read_text())["t_mono_ns"]
     assert isinstance(mono_a, int) and isinstance(mono_b, int)
     assert mono_b > mono_a, f"t_mono_ns not strictly increasing: {mono_a} >= {mono_b}"
@@ -295,8 +301,10 @@ def test_healthz_unauthenticated_and_not_recorded(backend):
 
 def test_record_null_fingerprint_when_no_bearer(backend):
     """A request without Bearer gets authorization_fingerprint: null and no auth header stored."""
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models", token=None)
     recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     assert last["authorization_fingerprint"] is None
     assert not any(k.lower() == "authorization" for k in last["headers"])
@@ -446,9 +454,11 @@ def test_credential_in_credential_header_returns_400(backend, header_name):
 def test_credential_headers_dropped_from_records(backend):
     """V-c F10: proxy-authorization, x-api-key, api-key, x-auth-token, cookie all dropped."""
     # Send a request with an extra credential header (api-key) — since value != TOKEN, no leak
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models",
           extra_headers={"api-key": "some-other-value"})
     recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     for k in last["headers"]:
         assert k not in ("authorization", "proxy-authorization", "x-api-key",
@@ -459,8 +469,10 @@ def test_credential_headers_dropped_from_records(backend):
 def test_header_keys_lowercase_in_records(backend):
     """V-c F3: the backend stores all header keys lowercased."""
     # Send a GET with standard mixed-case headers (Host, Content-Type from http.client)
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models")
     recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     for k in last["headers"]:
         assert k == k.lower(), f"header key {k!r} not lowercase"
@@ -486,8 +498,10 @@ def test_leak_record_does_not_contain_token(backend):
 
 def test_remote_addr_exact_on_get_record(backend):
     """L13: remote_addr must be exact '127.0.0.1' on GET records too."""
+    n0 = len(list(backend["rec"].glob("*.json")))
     _call(backend["port"], "GET", "/v1/models")
     recs = sorted(backend["rec"].glob("*.json"))
+    assert len(recs) == n0 + 1
     last = json.loads(recs[-1].read_text())
     assert last["method"] == "GET"
     assert last["remote_addr"] == "127.0.0.1"
@@ -2046,10 +2060,12 @@ def test_invisible_table_is_the_ucd_15_1_class():
     sb = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sb)
     pinned = sb._INVIS_PINNED
-    assert len(pinned) == 4305, f"expected 4305, got {len(pinned)}"
+    assert len(pinned) == 4315, f"expected 4315, got {len(pinned)}"
     # Compute the live set under the running interpreter
     cats = frozenset({"Cf", "Cs", "Cc", "Mn", "Me", "Zs", "Zl", "Zp"})
-    extra = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E}
+    extra = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E,
+             0x2065, 0xFFF0, 0xFFF1, 0xFFF2, 0xFFF3, 0xFFF4,
+             0xFFF5, 0xFFF6, 0xFFF7, 0xFFF8}
     live = set()
     for cp in range(0x110000):
         if unicodedata.category(chr(cp)) in cats or cp in extra:
@@ -2100,3 +2116,29 @@ def test_invisible_class_does_not_depend_on_the_runtime_unicode_table():
     for cp in (0x10EFD, 0x1E08F, 0x11F36, 0x13439, 0x0ECE):
         assert st._carries_secret(TOKEN[:mid] + chr(cp) + TOKEN[mid:], byte_view=False), \
             f"U+{cp:04X} splits the token and is served on this interpreter"
+
+
+# -- D5k item 2 (D5j-F2): oracle table == impl table cross-check ----
+
+def test_oracle_table_equals_the_impl_table():
+    """The oracle's _ORACLE_INVIS_RANGES and the impl's _INVIS_RANGES are two
+    independent copies of the same 4 KB literal.  This test keeps them in sync:
+    a drift in either direction is loud at gate time.  The oracle's DATA is
+    independent of the impl (two copies + equality, not one copy imported);
+    the oracle's ALGORITHM (depth-6 BFS, live-category union) is already
+    independent.  D5j-F2 / D5k item 2."""
+    import importlib.util
+    spec_sb = importlib.util.spec_from_file_location("sb_cross", str(SERVER))
+    sb = importlib.util.module_from_spec(spec_sb)
+    spec_sb.loader.exec_module(sb)
+    # Import the red file's oracle parser and ranges
+    red_file = Path(__file__).parent / "red" / "test_s0_01_backend_credential_screen.py"
+    spec_red = importlib.util.spec_from_file_location("red_cross", str(red_file))
+    red = importlib.util.module_from_spec(spec_red)
+    spec_red.loader.exec_module(red)
+    oracle_pinned = red._parse_oracle_ranges(red._ORACLE_INVIS_RANGES)
+    assert oracle_pinned == sb._INVIS_PINNED, (
+        f"oracle and impl range strings differ: "
+        f"oracle-impl={sorted(oracle_pinned - sb._INVIS_PINNED)[:10]}, "
+        f"impl-oracle={sorted(sb._INVIS_PINNED - oracle_pinned)[:10]}"
+    )

@@ -94,10 +94,12 @@ def main():
 
     for kb in (1, 10, 100, 1000):
         size = kb * 1024
-        # 1. Ordinary: valid chat body padded to `size`
-        core = json.dumps({"model": "s0-01-pong", "messages": [
-            {"role": "user", "content": "hi"}]}).encode()
-        body_ord = core + b" " * max(0, size - len(core))
+        # 1. Ordinary: valid chat body with padding INSIDE a JSON string value
+        #    (U+0020 is Zs and in _INVIS_PINNED; trailing spaces get stripped
+        #    by strip_invis, so padding must be inside a string — D5j-F5).
+        pad = "x" * max(0, size - 80)
+        body_ord = json.dumps({"model": "s0-01-pong", "messages": [
+            {"role": "user", "content": pad}]}).encode()
         t1, s1 = _min_time(port, "POST", "/v1/chat/completions", body_ord)
 
         # 2. Invalid UTF-8 in header (fail closed, body = ordinary)
