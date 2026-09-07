@@ -173,11 +173,14 @@ check "the refused attempt is kept as report.attempt1.md and the retry is logged
 
 BRIEF9="$TMP/tests/brief-noretry.md"; { echo "PIN: $SHA"; echo; echo "do not retry me"; } > "$BRIEF9"
 export FLAKY_COUNT_FILE="$TMP/flaky-count-9"
-LANE_CAPACITY_RETRIES=0 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$FLAKY" bash "$LANE" "$BRIEF9" codex >"$TMP/out9" 2>"$TMP/err9"
+LANE_CAPACITY_RETRIES=0 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$FLAKY" bash "$LANE" "$BRIEF9" codex >"$TMP/out9" 2>"$TMP/err9"; rc9=$?
 LD9="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-noretry.md' | head -1)"
-check "NEGATIVE CONTROL: with LANE_CAPACITY_RETRIES=0 the refusal is the final report (one attempt)" \
-  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "HTTP 503" "$LD9/report.md" && ! grep -q "retrying" "$TMP/err9" && echo 0 || echo 1)" \
+check "NEGATIVE CONTROL: with LANE_CAPACITY_RETRIES=0 there is ONE attempt and no retry is logged" \
+  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && ! grep -q "retrying" "$TMP/err9" && echo 0 || echo 1)" \
   "a retry loop that fired on every report (not the signature) would pass the test above and mask real failures"
+check "an exhausted refusal is a FAILED lane: rc 70, the reason in FAILED, and NO report.md to grade (2026-09-07: B5i's 503 stood as a report)" \
+  "$([ $rc9 -eq 70 ] && grep -q "HTTP 503" "$LD9/FAILED" && [ ! -f "$LD9/report.md" ] && grep -q "pc-lane: FAILED" "$TMP/err9" && echo 0 || echo 1)" \
+  "the sandbox poller printed 'report -> …' and exited 0 for a lane the route never admitted"
 
 # --- the 429 COOLDOWN is the same transient class; the 429 QUOTA is not (2026-09-06) ----
 # TEST DOUBLE: refuses with the Ollama Cloud cooldown 429 on its first call, reports on the second.
@@ -217,8 +220,8 @@ BRIEF12="$TMP/tests/brief-quota429.md"; { echo "PIN: $SHA"; echo; echo "do not r
 export FLAKY_COUNT_FILE="$TMP/flaky-count-12"
 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$QUOTA" bash "$LANE" "$BRIEF12" codex >"$TMP/out12" 2>"$TMP/err12"
 LD12="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-quota429.md' | head -1)"
-check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt, the refusal is the final report)" \
-  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/report.md" && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
+check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt) and the lane is FAILED, not reported" \
+  "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/FAILED" \&\& [ ! -f "$LD12/report.md" ] && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
   "a quota reset is hours away; retrying it three times with backoff would only delay the fallback"
 
 # --- a lane that dies before its final report still leaves its draft ------------

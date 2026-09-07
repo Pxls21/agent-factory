@@ -110,8 +110,12 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
   # Liveness is THIS lane's pidfile (two lanes now run concurrently; a bare pgrep for any
   # pc-lane.sh would report a dead lane as RUNNING while its sibling is alive — 2026-09-03).
   # The pgrep stays as the fallback for the launch window before the pidfile exists.
-  probe="$(bridge "test -s $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE))")"
+  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE)))")"
   case "$probe" in
+    *FAILED*)  echo "pc_lane: LANE FAILED — the PC route refused every attempt (no report to grade). Reason:" >&2
+               bridge "cat $PC_AF_REPO/.lanes/$LANE_ID/FAILED" >&2 2>/dev/null
+               echo "pc_lane: re-dispatch later, or run the lane in the sandbox (code-implementer); the lane dir keeps the refusal" >&2
+               exit 70;;
     *READY*)   done_flag=1; break;;
     *RUNNING*) ;;
     *GONE*)    echo "pc_lane: no report and no live lane process — check .lanes/$LANE_ID/launch.log" >&2

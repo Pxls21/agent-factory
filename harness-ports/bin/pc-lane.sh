@@ -297,6 +297,16 @@ fi
 break
 done
 
+# 2026-09-07: with the retries exhausted (or disabled) the refusal line used to STAND as report.md — the sandbox
+# poller printed "report -> …" and exited 0 for a lane that never ran (B5i, HTTP 503 on every call while the owner's
+# own Hermes sessions held the route's admission slots). A refusal is a FAILED lane: the line goes to $LANE_DIR/FAILED,
+# report.md is removed so nothing downstream can grade it, and the script exits 70. The poller reads FAILED.
+if grep -Eq "$CAPACITY_RX|$QUOTA_RX" "$REPORT" 2>/dev/null; then
+  cp "$REPORT" "$LANE_DIR/FAILED"; rm -f "$REPORT"
+  echo "pc-lane: FAILED — the route refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
+  exit 70
+fi
+
 if [ ! -s "$REPORT" ] && [ -s "$LANE_REPORT_DRAFT" ]; then
   { echo "DRAFT REPORT — the lane ended (harness rc=$rc) before writing its final report; this is the incremental draft it kept. Grade it as PARTIAL evidence, never as a verdict."; echo; cat "$LANE_REPORT_DRAFT"; } > "$REPORT"
   echo "pc-lane: final report empty — promoted report-draft.md (PARTIAL)" >&2
