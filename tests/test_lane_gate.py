@@ -21,8 +21,12 @@ def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path
     assert "identical=yes rc=0" in result and "3 passed" in result, result
     ident = [l for l in r.stdout.splitlines() if l.endswith("lines") and "tests/test_ap_screen.py" in l]
     assert len(ident) == 1 and len(ident[0].split()[0]) == 64  # sha256 + path + line count
-    gate = next(p for p in tmp_path.iterdir() if p.name.startswith("gate-"))
+    gate = next(p for p in tmp_path.iterdir() if p.name.startswith("gate-") and p.is_dir())
     assert (gate / "scripts" / "test_summary.sh").is_file()  # a real archive, not the shared tree
+    # every run's full pytest output is kept beside the archive, green runs included
+    logs = sorted(tmp_path.glob(gate.name + ".run*.log"))
+    assert [l.name for l in logs] == [gate.name + ".run1.log", gate.name + ".run2.log"], logs
+    assert all("3 passed" in l.read_text() for l in logs)
 
 
 def test_gate_refuses_an_unresolvable_rev_and_a_missing_lane_file(tmp_path):
@@ -39,3 +43,8 @@ def test_gate_fails_when_a_run_is_red(tmp_path):
     assert r.returncode != 0
     result = [l for l in r.stdout.splitlines() if l.startswith("RESULT:")][-1]
     assert "rc=1" in result and "1 failed" in result, result
+    # a red run NAMES its failing test inline and keeps the full pytest output beside the archive (2026-09-08: a
+    # "1 failed, 113 passed" with no test name forced a blind re-run of a three-minute gate)
+    assert "test_red" in r.stdout and "full output:" in r.stdout, r.stdout
+    log = [l.split("full output: ", 1)[1].strip() for l in r.stdout.splitlines() if "full output:" in l][0]
+    assert Path(log).is_file() and "test_red" in Path(log).read_text(), log

@@ -7,6 +7,7 @@
 #   scripts/lane_gate.sh -r <rev> -f "<lane file> [<lane file>…]" -t "<pytest path> [<path>…]" [-n RUNS] [-o OUTDIR]
 #
 # Runs long (the checker set is ~17 min per run): launch it DETACHED (`nohup … > gate.log 2>&1 &`) and read gate.log / RESULT;
+# each run's full pytest output is kept at <OUTDIR>.run<N>.log (a red run prints its failure headers + E-lines inline);
 # never wait on it inside a Bash call. The corpus env comes from test_summary.sh's declared defaults (S0_01_VENUE=sandbox,
 # S0_01_REAL_LEG_DIR=/root/s0-01-realleg/golden) unless exported. The archive is never the shared tree: mutants and lanes
 # cannot touch it mid-run. Exit 0 only when every run's pytest rc is 0 AND the counts agree.
@@ -33,8 +34,12 @@ rc_all=0; prev=""; same=yes; summaries=()
 for i in $(seq 1 "$RUNS"); do
   echo "== run $i/$RUNS: bash scripts/test_summary.sh $TESTS  (load $(cut -d' ' -f1-3 /proc/loadavg)) =="
   out="$(bash scripts/test_summary.sh $TESTS 2>&1)"; rc=$?
+  # the FULL pytest output of every run is kept beside the archive (test_summary.sh prints only the counts; a red run
+  # with no failing-test name forced a blind re-run on 2026-09-08 — a gate that cannot say WHAT failed is half a gate)
+  printf '%s\n' "$out" > "$OUT.run$i.log"
   summary="$(printf '%s\n' "$out" | grep '^pytest-summary:' | tail -1 | sed 's/^pytest-summary: //')"
   echo "$summary   (pytest-exit: $rc)"
+  [ "$rc" -eq 0 ] || { echo "   full output: $OUT.run$i.log"; printf '%s\n' "$out" | grep -E '^_{3,} .* _{3,}$|^E  ' | head -12; }
   counts="$(printf '%s' "$summary" | sed -E 's/ in [0-9.]+s( \([0-9:]+\))?//')"
   [ "$rc" -eq 0 ] || rc_all=1
   [ -n "$prev" ] && [ "$counts" != "$prev" ] && same=no
