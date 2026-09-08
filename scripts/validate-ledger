@@ -304,6 +304,19 @@ def _artifact_states(root, registry, schemas, findings):
                             if reason and reason not in (run.get("failure_reason") or ""):
                                 findings.add(f"runs-spec-reason-mismatch: {proof_id} leg {index}")
                                 valid = False
+            # VERIFY-B1 F16 (2026-09-08): the registry's `required_negative_controls` was validated as a
+            # number and bound to NOTHING — S0-02's "four distinct denials" (registry 4) would have minted
+            # PRESENT with one negative leg. The floor binds the minted result's negative legs; the runs-spec
+            # binding above ties those legs to the attested spec's, so a spec short of the floor cannot mint.
+            floor = proof.get("required_negative_controls")
+            if isinstance(runs, list) and isinstance(floor, int) and not isinstance(floor, bool):
+                negatives = sum(1 for run in runs if isinstance(run, dict) and run.get("leg") == "negative")
+                if negatives < floor:
+                    findings.add(
+                        f"negative-controls-short: {proof_id} {negatives} negative leg(s) recorded, "
+                        f"registry requires {floor}"
+                    )
+                    valid = False
             states[proof_id] = "PRESENT" if valid else "INVALID"
         elif blocked_path.exists():
             try:

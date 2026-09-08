@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-12",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-06T18:21:41.728802Z",
+  "recorded_at": "2026-09-08T08:17:13.807049Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "."
       ],
-      "started_at": "2026-09-06T18:21:41.636672Z",
-      "finished_at": "2026-09-06T18:21:41.690214Z",
+      "started_at": "2026-09-08T08:17:13.717908Z",
+      "finished_at": "2026-09-08T08:17:13.769245Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "proofs/S0-12/fixtures/mutated-root"
       ],
-      "started_at": "2026-09-06T18:21:41.690519Z",
-      "finished_at": "2026-09-06T18:21:41.728247Z",
+      "started_at": "2026-09-08T08:17:13.769416Z",
+      "finished_at": "2026-09-08T08:17:13.806523Z",
       "exit_code": 1,
       "stdout_sha256": "be67901080b0bd7ecae40951af137988b1bf42d84cec9b7cd83d52d017302caa",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -39,7 +39,7 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
     "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
@@ -53,5 +53,5 @@
     "proofs/S0-12/fixtures/mutated-root/upstream.lock.yaml": "c5cb3825513e9371e3d083835f5842cad79c3d3cacbdaadad256f855f19ec4eb",
     "proofs/S0-12/spec.json": "2569589f8b33018de6199039108d8e4396c4c0905258a617a2b0206fb92ffd93"
   },
-  "digest": "419470328597f598b22ace13fae809d7cdaee54ed5948dc079d735c425734eb4"
+  "digest": "e210fd99aaa5b8d9f7d43dbb9e7bb4965eac6a2f113a2cbda0ba93f6d6cc859b"
 }

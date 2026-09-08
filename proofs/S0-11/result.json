@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-11",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-06T18:21:41.480312Z",
+  "recorded_at": "2026-09-08T08:17:13.564121Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-11/check_eval_hardening.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-06T18:21:41.059857Z",
-      "finished_at": "2026-09-06T18:21:41.276427Z",
+      "started_at": "2026-09-08T08:17:12.925739Z",
+      "finished_at": "2026-09-08T08:17:13.376819Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "proofs/S0-11/fixtures/neg_credential_read.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-06T18:21:41.277270Z",
-      "finished_at": "2026-09-06T18:21:41.342942Z",
+      "started_at": "2026-09-08T08:17:13.377024Z",
+      "finished_at": "2026-09-08T08:17:13.438380Z",
       "exit_code": 1,
       "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -42,8 +42,8 @@
         "proofs/S0-11/fixtures/rubric_probe.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-06T18:21:41.343150Z",
-      "finished_at": "2026-09-06T18:21:41.478844Z",
+      "started_at": "2026-09-08T08:17:13.438557Z",
+      "finished_at": "2026-09-08T08:17:13.563544Z",
       "exit_code": 1,
       "stdout_sha256": "11ee37f0bf754b5d55077553ea0973891e715037febd8b8011fb29d2c170d202",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -57,7 +57,7 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
     "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
@@ -70,5 +70,5 @@
     "proofs/S0-11/runner_design.md": "37236db7a6d3bb89b898dc89aa0b683475db36e1b1227665d7a7bca94c3fb2b0",
     "proofs/S0-11/spec.json": "57fc8a3b3ba4acc80a9d3aae6393c4749f986ee282c03ee061520d66faa194fe"
   },
-  "digest": "fa415d104fafa6e59b3dfad610af4b63424d866740ec03934d66338d6ab2ee63"
+  "digest": "30bc2392b59e666d4ef54c7b269f8905a39d8373d774d4a715dd689ec4b2155c"
 }

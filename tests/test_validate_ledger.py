@@ -490,6 +490,50 @@ def test_registry_mutation_breaks_attestation(tmp_path):
     assert "attestation-mismatch: S0-01 proofs/registry.yaml" in out
 
 
+def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_path):
+    """VERIFY-B1 F16 (2026-09-08): `required_negative_controls` was validated only as an integer >= 1 and bound to
+    NOTHING — a minted S0-02 artifact with one negative leg validated PRESENT against a registry floor of 4. The floor
+    now binds the minted result's negative legs (the runs-spec binding ties those to the spec's legs)."""
+    root = _copy_contract(tmp_path)
+    registry = _load_registry(root / "proofs" / "registry.yaml")
+    assert next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["required_negative_controls"] == 4
+    def with_negatives(count):
+        # ASYMMETRIC on purpose (one positive, `count` negatives): a check that counted the wrong leg type read
+        # the same "1" off the symmetric two-leg fixture and survived (mutant COUNT-POSITIVES, 2026-09-08)
+        result = _result("S0-02")
+        result["runs"] = [_run_leg("positive", "ok")] + [_run_leg("negative") for _ in range(count)]
+        result["digest"] = hashlib.sha256(
+            json.dumps(result["runs"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return _attested(root, "S0-02", result)
+    _write_json(root / "proofs" / "S0-02" / "result.json", with_negatives(3))
+    out = _run(root).stdout
+    assert "S0-02 PRESENT" not in out and "S0-02 INVALID" in out, out
+    assert "negative-controls-short: S0-02 3 negative leg(s) recorded, registry requires 4" in out, out
+    # the positive control: four negative legs meet the floor and the same artifact is PRESENT
+    _write_json(root / "proofs" / "S0-02" / "result.json", with_negatives(4))
+    out = _run(root).stdout
+    assert "S0-02 PRESENT" in out and "negative-controls-short" not in out, out
+    # and the floor of 1 (S0-01) is met by the ordinary two-leg result
+    _write_json(root / "proofs" / "S0-01" / "result.json", _attested(root, "S0-01", _result()))
+    assert "S0-01 PRESENT" in _run(root).stdout
+
+
+def test_spec_negative_leg_counts_meet_the_registry_floor_except_the_declared_shortfall():
+    """The floor binds at MINT time (above); this pins the SPEC side today so the seed's number stays visible: every
+    proof's spec.json carries at least `required_negative_controls` negative legs — except the ONE declared shortfall,
+    pinned exactly so it cannot grow, shrink or move silently. S0-02 (registry 4 = the seed's four distinct denials)
+    ships one negative spec leg, the blanket-rejection bundle; its per-class kill-switch bundles are S0-02 round 3's
+    work. When they land this table becomes empty by a deliberate edit — never by a skip."""
+    registry = _load_registry(ROOT / "proofs" / "registry.yaml")
+    short = {}
+    for entry in registry["proofs"]:
+        legs = json.loads((ROOT / "proofs" / entry["proof_id"] / "spec.json").read_text())["legs"]
+        negatives = sum(1 for leg in legs if leg["leg"] == "negative")
+        if negatives < entry["required_negative_controls"]:
+            short[entry["proof_id"]] = (negatives, entry["required_negative_controls"])
+    assert short == {"S0-02": (1, 4)}, short
+
+
 def test_registry_matches_seed_classes_and_counts():
     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
     by_class = {classification: set() for classification in CLASSES}

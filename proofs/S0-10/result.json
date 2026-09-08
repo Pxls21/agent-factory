@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-10",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-06T18:21:40.908091Z",
+  "recorded_at": "2026-09-08T08:17:12.771795Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-10/check_conformance.py",
         "docs/adr/0006-gbrain-seam.md"
       ],
-      "started_at": "2026-09-06T18:21:40.868889Z",
-      "finished_at": "2026-09-06T18:21:40.888761Z",
+      "started_at": "2026-09-08T08:17:12.731973Z",
+      "finished_at": "2026-09-08T08:17:12.751700Z",
       "exit_code": 0,
       "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-10/check_conformance.py",
         "proofs/S0-10/fixtures/neg-missing-credential-stmt.md"
       ],
-      "started_at": "2026-09-06T18:21:40.888954Z",
-      "finished_at": "2026-09-06T18:21:40.907527Z",
+      "started_at": "2026-09-08T08:17:12.751883Z",
+      "finished_at": "2026-09-08T08:17:12.771326Z",
       "exit_code": 1,
       "stdout_sha256": "752cbdff8506600b0eba7c4354b05148d2e4ed02e73638dba6ba117e5855c8a9",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -39,7 +39,7 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
     "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
@@ -50,5 +50,5 @@
     "proofs/S0-10/fixtures/neg-missing-credential-stmt.md": "5ae55aad31329422774b7a6e3ba686e17c34a78252cc9617a2c7085fd1e53946",
     "proofs/S0-10/spec.json": "57bdaa836c67f9b1ca59001594723527b34e0c0ae83a32c0c20554be11a25227"
   },
-  "digest": "535c3d32a7e3f52692f9b81d9705e0bb35cc3c4cb80794742266ad5ff04c760f"
+  "digest": "6d9a598304d75d8e3f158b9fe5c978db321e6025d42e95a5e25591c948f0b64c"
 }

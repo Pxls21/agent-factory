@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-09",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-06T18:21:32.908687Z",
+  "recorded_at": "2026-09-08T08:17:12.575895Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-09/check_conformance.py",
         "docs/adr/0005-foundry-host.md"
       ],
-      "started_at": "2026-09-06T18:21:32.862041Z",
-      "finished_at": "2026-09-06T18:21:32.884750Z",
+      "started_at": "2026-09-08T08:17:12.534247Z",
+      "finished_at": "2026-09-08T08:17:12.554735Z",
       "exit_code": 0,
       "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-09/check_conformance.py",
         "proofs/S0-09/fixtures/neg-missing-section.md"
       ],
-      "started_at": "2026-09-06T18:21:32.884983Z",
-      "finished_at": "2026-09-06T18:21:32.908160Z",
+      "started_at": "2026-09-08T08:17:12.554929Z",
+      "finished_at": "2026-09-08T08:17:12.575285Z",
       "exit_code": 1,
       "stdout_sha256": "43b055be9e864094e2cf2c5ac64ba07b2eb3bdc6e9af949f5826bda4d6652448",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -39,7 +39,7 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "ba218c9d05884b69c070e52f27b1311d2d124a64545f2f7321cbab534de228bb",
+    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
     "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
@@ -50,5 +50,5 @@
     "proofs/S0-09/fixtures/neg-missing-section.md": "9f2904e0a82c6297a008f646b5c58385462873173aa674e20458be0a1e8e2cfe",
     "proofs/S0-09/spec.json": "45b9f6e0951e173f1ed8dd87d5a5bc0c3561768468ad7291c960be11da7d552a"
   },
-  "digest": "3dc28c8ed0ecda335f27bd5fc0930631dd1d2ec9149039f3f2d73f0c12238166"
+  "digest": "cc3e980fc3b63b6b8a87faa36ffadc6d58c8bc1d0a80510b5da09a6093599670"
 }
