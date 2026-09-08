@@ -225,10 +225,12 @@ attempt=$((attempt + 1))
 # RESUME NOTE (2026-09-08): every attempt is a FRESH Hermes session — the route refusal that ended the previous one took its
 # context with it (a B5j attempt read for an hour, left a 1.3 KB draft, and its successor started from zero). The successor is
 # told what it inherits: the tree state and the incremental draft, to continue from — never to redo.
+# A RELAUNCHED loop starts at attempt 1 with a draft already on disk (the coordinator stopped the previous loop by
+# pid or it FAILED out of retries): the draft, not the counter, is the resume signal.
 PROMPT_RUN="$PROMPT_FILE"
-if [ "$attempt" -gt 1 ]; then
+if [ "$attempt" -gt 1 ] || [ -s "$LANE_REPORT_DRAFT" ]; then
   PROMPT_RUN="$LANE_DIR/prompt.attempt$attempt.md"
-  { printf 'RESUME (attempt %s of this lane): a previous attempt of THIS lane died on a route refusal, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at %s — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.\n\n---\n\n' "$attempt" "$LANE_REPORT_DRAFT"; cat "$PROMPT_FILE"; } > "$PROMPT_RUN"
+  { printf 'RESUME (attempt %s of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at %s — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.\n\n---\n\n' "$attempt" "$LANE_REPORT_DRAFT"; cat "$PROMPT_FILE"; } > "$PROMPT_RUN"
 fi
 
 if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
