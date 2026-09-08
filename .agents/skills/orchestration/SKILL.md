@@ -254,6 +254,14 @@ new killer test file, the harvest cherry-picked both, and the gate set stayed bl
 lane's `--check-anchors --tests` pre-flight said SCOPE_FAIL, which is the instrument working
 but one increment late. Harvest checklist line: `git diff` touching `scripts/mutants/*` ⇒ diff
 the mutant's killer list against the gate file before committing.
+**A lane's file inventory comes from GIT'S VIEW, never from a directory walk (2026-09-08, AF-AP-62):**
+compute the harvest/gate file list with `git ls-files --others --exclude-standard <lane dirs>` plus
+`git diff --name-only`; a count that disagrees with the lane's report is the tell. Lane B1's two
+evidence bundles carried 16 `buzzacp.log` files swallowed by the root `*.log` rule — the lane's
+byte-copy gate was green, the coordinator's git-view gate `39 failed`, and a fresh checkout or CI
+would have shown the red. `lane_gate.sh` now names every gitignored file under the lane's
+directories; `.gitignore` re-includes `proofs/*/fixtures/**/*.log` (a committed bundle's logs ARE
+the evidence).
 **Semantic-duplicate lens (slopo, IP-1): when a slopo index is live (`slopo.conf.yaml` +
 `.slopo-runtime/`), run `slopo review --base origin/claude/soundbox-kit-migration-iz1jwf` over
 a landed build lane's diff — ADVISORY only, never a gate; attach flagged clusters to verify
