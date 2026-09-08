@@ -303,7 +303,9 @@ the PC's 12 cores with 8 xdist workers, on the pushed head + the working tree as
 gate venue when the bridge is up; `spikes/` stays sandbox-only)** · `scripts/why.sh <file> [fn]`
 (on-demand chronology from primary sources) · `scripts/replay_transcript_edits.py` (recover a
 dead delegate's edits from its transcript) · `scripts/lint_delta.py` (the pre-commit pyflakes
-DELTA gate: new hits only) · `scripts/verify-planning-repo.sh` (the planning docs' own check).
+DELTA gate: new hits only) · `scripts/verify-planning-repo.sh` (the planning docs' own check) · **`scripts/anchor_edit.py` (ledger-plane
+edits: every anchor validated unique BEFORE any write, all-or-nothing, rc 2 with the file untouched on a miss; `--replace OLD NEW` /
+`--insert-after|--insert-before PREFIX TEXT`, `@file` values; it never commits — a mutation and a commit never share a call, bit twice 2026-09-08)**.
 
 > **Full details:** `sandbox-kit/OPERATING-GUIDE.md` (day-to-day rules, shell/tool gotchas,
 > GitNexus/Ouroboros fallbacks, task tracking, pipeline order).
