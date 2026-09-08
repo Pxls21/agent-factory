@@ -44,7 +44,7 @@ a distillation and the ledger wins on any disagreement).
 | S0-05 no direct egress over live units | execution (mechanism proven by the spike; containment unproven) | canaries, netns library, collector and checker LANDED (lane E1) with three real namespace bundles from the sandbox — mechanism proven, containment unproven (only two canaries are decided by the firewall; routing decides the rest); the live-unit legs after S0-01 and S0-03; nothing minted |
 | S0-06 four-scope memory adapter | execution (unblocked by the Rust spike) | adapter, bindings table, checker (substrate identity + two instruments per assertion), the seed-path negative fixture, two hostile bundles and the PC runner LANDED (lane M1); the live leg on a real ai-memory NOT run; two accepted ADR 0003 files conflict (owner decision); nothing minted |
 | S0-07 Fubuki corrections | execution | DONE 2026-09-04 |
-| S0-08 gVisor containment | execution (unblocked by the runsc spike; the old `deferred` marker reads `expired`) | lane G1 building (spec, canaries, checker, runner); the containment run on the PC after it lands |
+| S0-08 gVisor containment | execution (unblocked by the runsc spike; the old `deferred` marker reads `expired`) | spec, canaries, checker, marker gate and runner LANDED (lane G1); VERIFY-G1 NOT-READY — the canaries run as root and P6 skips its signature under the runtime user's capability set (a hollow green waiting to happen) → lane G2; the containment run on the PC after G2 lands; nothing minted |
 | S0-09 Foundry host decision | conformance-checked decision | DONE 2026-09-04 |
 | S0-10 GBrain seam decision | conformance-checked decision | DONE 2026-09-04 |
 | S0-11 evaluation hardening | execution + trust binding | ACCEPTED 2026-09-04 (owner process decision) |
