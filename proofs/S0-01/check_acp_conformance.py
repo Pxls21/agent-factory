@@ -1,6 +1,6 @@
 """S0-01 ACP conformance checker v2.2 — derives EVERYTHING from raw files, exact values.
-NOTE: ``--timeout-s`` must be a positive integer (R9-CK-F1): alarm(0) would cancel the
-cap and alarm(-N) is undefined, so a non-positive value is refused with exit 64.
+NOTE: ``--timeout-s`` must be a positive ``int`` in ``[1, 2**31-1]`` (R9-CK-F1/CK11-F10):
+bool, float, NaN, inf, str, and values outside that range are refused with exit 64.
 
 Exit codes: 0 PASS / 1 `failure_reason: <leg>: <reason>` / 2 `deferred: <reason>` / 64 usage error
 (fatal usage — missing/invalid arguments, including a non-integer ``--timeout-s``) /
@@ -954,7 +954,7 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
                  and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
     # R9-CK-F6: new_seqs >= 2 guaranteed by check_two_users' own req_methods check
-    # at C:894-895 and C:906-907; term_seqs >= 1 by the stopReason guard above.
+    # at C:893-893 and C:905-905; term_seqs >= 1 by the stopReason guard above.
     if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
         raise Failure(f"{leg}: second session/new precedes the first terminal")
 
@@ -1565,7 +1565,7 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/prompt":
             if prompt_idx is None:
                 prompt_idx = i
-    # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:747-749 (session/new
+    # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:742-743 (session/new
     # has sessionId response); prompt_idx by req_methods (exactly one session/prompt).
     if new_resp_idx >= prompt_idx:
         raise Failure(f"{leg}: session/new response does not precede session/prompt")
@@ -1594,7 +1594,7 @@ def check_golden(golden_dir, leg="golden"):
         return None
 
     sid1, sid2 = _raw_sid(run1_entries), _raw_sid(run2_entries)
-    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_prompt_turn C:747-749 validates
+    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_prompt_turn C:742-743 validates
     # the session/new response (which carries sessionId) for run-1 and run-2.
     if sid1 == sid2:
         raise Failure(f"{leg}: run-1 and run-2 raw sessionIds are identical")
@@ -1632,8 +1632,11 @@ def _check_with_timeout(timeout_s, fn, *args):
         _signal.alarm(timeout_s)
         return fn(*args)
     finally:
-        _signal.alarm(0)
+        # CK11-F9: restore the handler BEFORE alarm(0) — if alarm() raised,
+        # the restore still runs (alarm(0) cannot raise in CPython, but the
+        # restore order makes the claim unconditional).
         _signal.signal(_signal.SIGALRM, old)
+        _signal.alarm(0)
 
 
 def check_bundle(root: Path, timeout_s: int = 90) -> str:
@@ -1701,7 +1704,7 @@ def _check_bundle_uncapped(root: Path) -> str:
     all_mention_event_ids = []
     # 6-F19: load schema ONCE from fixtures dir
     schema_path = _fixtures() / "acp-schema-v1.json"
-    schema = ci.load_schema(schema_path) if schema_path.exists() else None
+    schema = ci.load_schema(_require_file(schema_path, "golden", "fixtures/acp-schema-v1.json"))
     # A1: pre-read post-summary timestamps for the mention window
     post_summary_ts_map = {}
     for leg in LEGS:

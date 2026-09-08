@@ -18,6 +18,7 @@ import datetime
 import hashlib
 import json
 import re
+import stat as _stat
 from pathlib import Path
 
 import pins
@@ -177,6 +178,8 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
     probe_file = HERE / "tools" / "acp_probe.py"
     if not probe_file.exists():
         raise NegativeFailure("tools/acp_probe.py absent")
+    if not _stat.S_ISREG(probe_file.lstat().st_mode):
+        raise NegativeFailure("tools/acp_probe.py is not a regular file")
     # probe_path is venue-specific (the PC clone path) so only its repo-relative tail is pinned; probe_sha256 is the pin.
     # R7-N5c-F3: before this check the key was required to exist and its value was never read.
     if not isinstance(rid.get("probe_path"), str) or not rid["probe_path"].endswith("proofs/S0-01/tools/acp_probe.py"):

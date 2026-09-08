@@ -32,6 +32,7 @@ GOLDEN = P / "evidence" / "golden"
 sys.path.insert(0, str(P))
 sys.path.insert(0, str(P / "tools"))
 import check_acp_conformance as cc  # noqa: E402
+import negative_contract as nc  # noqa: E402
 import nostr_verify as nv  # noqa: E402
 from pins import (  # noqa: E402
     ENV_ALLOWLIST_KEY,
@@ -427,10 +428,10 @@ def _session_bundle(tmp_path_factory):
     tmp_fixtures.mkdir(parents=True, exist_ok=True)
     (tmp_fixtures / "identities.json").write_text(json.dumps(identities, indent=2) + "\n")
     # Copy other required fixtures
+    # CK11 sweep 1.10: unguarded copy — a missing required fixture must raise.
     for fn in ("neg-malformed-initialize.json", "upstream-token.fingerprint", "acp-schema-v1.json"):
         src = FIXTURES / fn
-        if src.exists():
-            shutil.copy2(src, tmp_fixtures / fn)
+        shutil.copy2(src, tmp_fixtures / fn)
     for leg in LEGS:
         ld = g / leg
         c2a, a2c = _load_frames(GOLDEN / leg)
@@ -664,8 +665,7 @@ def test_m5_7200(bundle):
 ])
 def test_deletion(bundle, fn, leg):
     p = bundle / "golden" / leg / fn
-    if p.exists():
-        p.unlink()
+    p.unlink()
     rc, out = _check(bundle)
     assert rc == 1
     assert out == f"failure_reason: {leg}: {fn} absent"
@@ -718,8 +718,7 @@ def test_del_leg(bundle):
 def test_del_negative_file(bundle, fn):
     """A22: deletion of a negative-required file -> Failure via shared validator."""
     p = bundle / "golden" / "negative" / fn
-    if p.exists():
-        p.unlink()
+    p.unlink()
     rc, out = _check(bundle)
     assert rc == 1
     if fn == "timeline.jsonl":
@@ -731,8 +730,7 @@ def test_del_negative_file(bundle, fn):
 def test_del_neg_fixture(bundle):
     """A11/A22: neg-malformed-initialize.json absent -> Failure via shared validator."""
     fp = bundle.parent / "fixtures" / "neg-malformed-initialize.json"
-    if fp.exists():
-        fp.unlink()
+    fp.unlink()
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: negative: negative: fixtures/neg-malformed-initialize.json absent"
@@ -740,8 +738,7 @@ def test_del_neg_fixture(bundle):
 
 def test_del_identities(bundle):
     fp = bundle.parent / "fixtures" / "identities.json"
-    if fp.exists():
-        fp.unlink()
+    fp.unlink()
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: golden: fixtures/identities.json absent"
@@ -2038,7 +2035,8 @@ def test_bad_json_timeline(bundle):
     _rewrite(tl, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert out.startswith("failure_reason: malformed evidence:")
+    assert out.startswith("failure_reason: malformed evidence: JSONDecodeError:"), (
+        f"expected JSONDecodeError, got: {out}")
 
 
 def test_bad_pid(bundle):
@@ -2576,6 +2574,9 @@ def test_v23_teardown_survivor(tmp_path):
 # reads /proc/<pid>/exe after proc.wait()).
 # Skip when the directory is absent.
 
+# CK11-F16/F18: both env reads resolved ONCE at module scope — one resolution point.
+# CK11-F13: venue defaults to "sandbox" (declare-or-fail); CI declares "ci" explicitly.
+_VENUE = os.environ.get("S0_01_VENUE", "sandbox")
 _REAL_LEG_DIR = Path(os.environ["S0_01_REAL_LEG_DIR"]) if os.environ.get("S0_01_REAL_LEG_DIR") else None
 
 _POSITIVE_LEGS = ("run-1", "cancel", "shutdown", "two-users")
@@ -2594,32 +2595,124 @@ def _run_check_safe(fn, *args, **kwargs):
 _EXPECTED_REAL_LEGS = {"cancel", "negative", "run-1", "shutdown", "two-users"}
 
 
-def test_real_leg_corpus_declared():
-    """R10-F25: if S0_01_VENUE is sandbox or pc, S0_01_REAL_LEG_DIR MUST be set
-    (FAIL otherwise) — CI (S0_01_VENUE unset or 'ci') may skip by declaration."""
-    venue = os.environ.get("S0_01_VENUE", "")
-    if venue in ("sandbox", "pc"):
-        assert _REAL_LEG_DIR is not None, (
-            f"S0_01_VENUE={venue} but S0_01_REAL_LEG_DIR is unset "
-            f"(real-leg corpus not declared for this venue)")
-        assert _REAL_LEG_DIR.is_dir(), (
-            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} does not exist")
-        present = {d.name for d in _REAL_LEG_DIR.iterdir() if d.is_dir()}
-        missing = _EXPECTED_REAL_LEGS - present
-        assert not missing, (
-            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} incomplete: missing legs {sorted(missing)}")
-    elif _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset and S0_01_VENUE is not sandbox/pc")
-
-
-@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
-def test_real_leg_timeline(leg):
-    """Real-producer: timeline loads and passes check_timeline."""
+def _real_leg(leg: str) -> Path:
+    """CK11 item 10: ONE place to get wrong — implements the declaration semantics.
+    Returns the leg directory path or calls pytest.skip."""
     if _REAL_LEG_DIR is None:
         pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     leg_dir = _REAL_LEG_DIR / leg
     if not leg_dir.is_dir():
         pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    return leg_dir
+
+
+import stat as _stat_mod
+
+
+def _corpus_file(leg_dir, name):
+    """CK12 sweep 2.1: guard every test-side read of a corpus file."""
+    p = leg_dir / name
+    if not p.exists():
+        pytest.fail(f"{leg_dir.name}: {name} absent")
+    if not _stat_mod.S_ISREG(p.lstat().st_mode):
+        pytest.fail(f"{leg_dir.name}: {name} is not a regular file")
+    return p
+
+
+def _corpus_version():
+    """CK12 sweep 10.2: v2.3 iff every positive leg has v2.3 scan header + tee-status."""
+    if _REAL_LEG_DIR is None:
+        return "unknown"
+    for leg in ("run-1", "cancel", "shutdown", "two-users"):
+        ld = _REAL_LEG_DIR / leg
+        if not ld.is_dir():
+            return "v2.2"
+        scan = ld / "process-scan-after.txt"
+        if not scan.is_file():
+            return "v2.2"
+        first = scan.read_text().splitlines()
+        if not first or not first[0].startswith("# process-scan v2.3 "):
+            return "v2.2"
+        if not (ld / "tee-status.json").is_file():
+            return "v2.2"
+    return "v2.3"
+
+
+_CORPUS_VERSION = _corpus_version()
+
+
+def test_ck11_real_leg_dir_is_resolved_from_the_environment():
+    """CK11-F1: _REAL_LEG_DIR tracks the S0_01_REAL_LEG_DIR env var — no hardcoded path."""
+    want = os.environ.get("S0_01_REAL_LEG_DIR")
+    assert _REAL_LEG_DIR == (Path(want) if want else None), (
+        f"_REAL_LEG_DIR={_REAL_LEG_DIR} does not track S0_01_REAL_LEG_DIR={want!r}")
+
+
+def test_ck11_venue_is_resolved_from_the_environment():
+    """CK11-F18: _VENUE tracks the S0_01_VENUE env var at module scope."""
+    want = os.environ.get("S0_01_VENUE", "sandbox")
+    assert _VENUE == want, f"_VENUE={_VENUE!r} does not track S0_01_VENUE={want!r}"
+
+
+def test_ck11_venue_domain_is_known():
+    """CK11-F16: _VENUE is in the allowed domain {ci, sandbox, pc}.
+    Independent of corpus_declared so a mutant removing the domain check there is killed."""
+    assert _VENUE in ("ci", "sandbox", "pc"), (
+        f"S0_01_VENUE={_VENUE!r} is not a known venue")
+
+
+def test_real_leg_corpus_declared():
+    """CK11-F16/F13: venue domain is EXACTLY {ci, sandbox, pc}; any other value FAILS.
+    If venue is sandbox or pc, S0_01_REAL_LEG_DIR MUST be set and be a directory.
+    CI skips by declaration.  CK11-F19: when the sidecar exists, verify content shas."""
+    assert _VENUE in ("ci", "sandbox", "pc"), (
+        f"S0_01_VENUE={_VENUE!r} is not a known venue")
+    if _VENUE in ("sandbox", "pc"):
+        assert _REAL_LEG_DIR is not None, (
+            f"S0_01_VENUE={_VENUE} but S0_01_REAL_LEG_DIR is unset "
+            f"(real-leg corpus not declared for this venue)")
+        assert _REAL_LEG_DIR.is_dir(), (
+            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} is not a directory")
+        present = {d.name for d in _REAL_LEG_DIR.iterdir() if d.is_dir()}
+        missing = _EXPECTED_REAL_LEGS - present
+        assert not missing, (
+            f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} incomplete: missing legs {sorted(missing)}")
+        # CK11-F19: verify corpus CONTENT against the sidecar when present
+        manifest = _REAL_LEG_DIR.parent / "golden.pc.sha256"
+        assert manifest.is_file(), (
+            f"{manifest} absent — run scripts/realleg_sync.sh pull")
+        for line in manifest.read_text().splitlines():
+            if not line.strip():
+                continue
+            sha, rel = line.split(None, 1)
+            p = _REAL_LEG_DIR / rel.strip().lstrip("./")
+            assert _sha256_file(p) == sha, f"corpus drift at {rel.strip()}"
+        # CK12 sweep 10.2: assert declared artifacts per leg
+        _V22_POSITIVE = {"timeline.jsonl", "runtime-identity.json", "env.json",
+                         "frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl",
+                         "manifest-pre.txt.gz", "manifest-post.txt.gz",
+                         "manifest-pre.summary", "manifest-post.summary",
+                         "process-scan-after.txt", "process-scan-teardown.txt",
+                         "owned-pids.json", "buzzacp.log", "startup-line.txt",
+                         "hermes-model.txt", "argv.txt", "buzz-acp.pid", "buzz-acp.exit"}
+        for leg in ("run-1", "cancel", "shutdown", "two-users"):
+            ld = _REAL_LEG_DIR / leg
+            for fn in sorted(_V22_POSITIVE):
+                assert (ld / fn).is_file(), (
+                    f"corpus {leg}/{fn} absent -- declared artifact missing")
+        neg = _REAL_LEG_DIR / "negative"
+        for fn in ("timeline.jsonl", "runtime-identity.json", "env.json", "agent-stderr.txt"):
+            assert (neg / fn).is_file(), (
+                f"corpus negative/{fn} absent -- declared artifact missing")
+    elif _VENUE == "ci":
+        if _REAL_LEG_DIR is None:
+            pytest.skip("S0_01_VENUE=ci — real-leg corpus not required")
+
+
+@pytest.mark.parametrize("leg", _POSITIVE_LEGS)
+def test_real_leg_timeline(leg):
+    """Real-producer: timeline loads and passes check_timeline."""
+    leg_dir = _real_leg(leg)
     entries = cc._load_timeline_raw(leg_dir, leg)
     ok, result = _run_check_safe(cc.check_timeline, entries, leg, leg_dir)
     assert ok, f"unexpected failure: {result}"
@@ -2628,11 +2721,7 @@ def test_real_leg_timeline(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_initialize_frames(leg):
     """Real-producer: initialize frames pass."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     entries = cc._load_timeline_raw(leg_dir, leg)
     c2a, a2c = cc.check_timeline(entries, leg, leg_dir)
     ok, result = _run_check_safe(cc.check_initialize_frames, c2a, a2c, leg)
@@ -2642,26 +2731,18 @@ def test_real_leg_initialize_frames(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_runtime_identity(leg):
     """Real-producer: runtime identity fails ONLY on tee_sha256 mismatch."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     ok, result = _run_check_safe(cc.check_runtime_identity, leg_dir, leg)
     if ok:
         pass  # no failure at all — acceptable
     else:
-        assert "tee_sha256 mismatch" in result, f"unexpected failure: {result}"
+        assert result == f"{leg}: tee_sha256 mismatch", f"unexpected failure: {result}"
 
 
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_env(leg):
     """Real-producer: env passes."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     identities = json.loads((P / "fixtures" / "identities.json").read_text())
     ok, result = _run_check_safe(cc.check_env, leg_dir, leg, identities)
     assert ok, f"unexpected failure: {result}"
@@ -2670,11 +2751,7 @@ def test_real_leg_env(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_mentions(leg):
     """Real-producer: mentions pass."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     entries = cc._load_timeline_raw(leg_dir, leg)
     identities = json.loads((P / "fixtures" / "identities.json").read_text())
     ok, result = _run_check_safe(cc.check_mentions, leg_dir, leg, identities, entries)
@@ -2684,11 +2761,7 @@ def test_real_leg_mentions(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_route(leg):
     """Real-producer: route check passes."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     entries = cc._load_timeline_raw(leg_dir, leg)
     ok, result = _run_check_safe(cc.check_route, leg_dir, leg, entries)
     assert ok, f"unexpected failure: {result}"
@@ -2697,11 +2770,7 @@ def test_real_leg_route(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_config_echo(leg):
     """Real-producer: config echo passes."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     ok, result = _run_check_safe(cc.check_config_echo, leg_dir, leg)
     assert ok, f"unexpected failure: {result}"
 
@@ -2709,11 +2778,7 @@ def test_real_leg_config_echo(leg):
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_manifests(leg):
     """Real-producer: manifests fail ONLY on timestamps not pre < start < post."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     baseline = P / "evidence" / "golden" / "manifests" / "manifest-baseline.txt.gz"
     if not baseline.exists():
         pytest.skip("baseline manifest absent")
@@ -2722,50 +2787,38 @@ def test_real_leg_manifests(leg):
     if ok:
         pass  # no failure — acceptable
     else:
-        assert "manifest timestamps not pre < start < post" in result, \
+        assert result == f"{leg}: manifest timestamps not pre < start < post", \
             f"unexpected failure: {result}"
 
 
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
-def test_real_leg_process_evidence(leg):
-    """Real-producer: process evidence — skip if v2.3 header absent."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
-    if not (leg_dir / "owned-pids.json").exists():
-        pytest.skip("real v2.2 sample absent: bridge down 2026-09-06")
+def test_real_leg_process_evidence(request, leg):
+    """Real-producer: process evidence -- xfail on v2.2 corpus."""
+    leg_dir = _real_leg(leg)
     scan = leg_dir / "process-scan-after.txt"
-    if not scan.exists():
-        pytest.skip("real leg predates scan v2.3 (no enumeration header)")
-    first_line = scan.read_text().splitlines()
-    if not first_line or not first_line[0].startswith("# process-scan v2.3 "):
-        pytest.skip("real leg predates scan v2.3 (no enumeration header)")
+    if _CORPUS_VERSION == "v2.2":
+        request.node.add_marker(pytest.mark.xfail(
+            strict=True, reason=f"corpus v2.2 predates scan v2.3: {leg} process-scan-after.txt"))
+        if not scan.is_file():
+            pytest.fail(f"corpus v2.2: {leg} process-scan-after.txt absent")
+        first = _corpus_file(leg_dir, "process-scan-after.txt").read_text().splitlines()
+        if not first or not first[0].startswith("# process-scan v2.3 "):
+            pytest.fail(f"corpus v2.2: {leg} has no v2.3 scan header")
     ok, result = _run_check_safe(cc.check_process_evidence, leg_dir, leg)
     assert ok, f"unexpected failure: {result}"
-
 
 @pytest.mark.parametrize("leg", _POSITIVE_LEGS)
 def test_real_leg_buzzacp_log(leg):
     """Real-producer: buzzacp log passes."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg(leg)
     ok, result = _run_check_safe(cc.check_buzzacp_log, leg_dir, leg)
     assert ok, f"unexpected failure: {result}"
 
 
 def test_real_leg_prompt_turn():
     """Real-producer: prompt turn passes for run-1 and shutdown."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
     for leg in ("run-1", "shutdown"):
-        leg_dir = _REAL_LEG_DIR / leg
-        if not leg_dir.is_dir():
-            pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+        leg_dir = _real_leg(leg)
         entries = cc._load_timeline_raw(leg_dir, leg)
         c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
         a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
@@ -2775,11 +2828,7 @@ def test_real_leg_prompt_turn():
 
 def test_real_leg_cancel():
     """Real-producer: cancel leg passes check_cancel."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / "cancel"
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg("cancel")
     entries = cc._load_timeline_raw(leg_dir, "cancel")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
@@ -2789,11 +2838,7 @@ def test_real_leg_cancel():
 
 def test_real_leg_shutdown():
     """Real-producer: shutdown leg passes check_shutdown."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / "shutdown"
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg("shutdown")
     entries = cc._load_timeline_raw(leg_dir, "shutdown")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
@@ -2803,11 +2848,7 @@ def test_real_leg_shutdown():
 
 def test_real_leg_two_users():
     """Real-producer: two-users leg passes check_two_users."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / "two-users"
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg("two-users")
     entries = cc._load_timeline_raw(leg_dir, "two-users")
     c2a = [e["frame"] for e in entries if e["dir"] == "c2a"]
     a2c = [e["frame"] for e in entries if e["dir"] == "a2c"]
@@ -2816,43 +2857,38 @@ def test_real_leg_two_users():
     assert ok, f"unexpected failure: {result}"
 
 
+_KNOWN_XFAIL_REASONS = frozenset({
+    "negative: negative: probe_sha256 mismatch",
+    "negative: negative: agent_interpreter_realpath mismatch",
+    "negative: negative: spawned_at_utc is later than the first frame",
+})
+
+
+def _is_known_stale(result: str) -> bool:
+    """CK11-B1: EQUALITY on the WHOLE reason — no tail, no substring."""
+    return result in _KNOWN_XFAIL_REASONS
+
+
 def test_real_leg_negative(request):
-    """Real-producer: negative leg — 5-F04/R9-CK-F21: anchored strict xfail.
-    Match on the reason's LAST segment (result.rsplit(': ', 1)[-1]) so a substring
-    injection cannot widen the gate.  strict=True via request.node.add_marker so that
-    a repaired capture (the known reason disappears, check passes) turns the xfail
-    into a FAILURE by design — the _KNOWN_XFAIL_REASONS set must then be retired."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    neg_dir = _REAL_LEG_DIR / "negative"
-    if not neg_dir.is_dir():
-        pytest.skip(f"real negative directory absent: {_REAL_LEG_DIR}")
-    if not (neg_dir / "timeline.jsonl").exists():
-        pytest.skip("real v2.2 sample absent: bridge down 2026-09-06")
-    _KNOWN_XFAIL_REASONS = {
-        "probe_sha256 mismatch",
-        "agent_interpreter_realpath mismatch",
-        "spawned_at_utc is later than the first frame",
-    }
+    """Real-producer: negative leg — CK11-B1: the check MUST fail on the current corpus.
+    If check_negative PASSES, the known-stale reasons no longer reproduce and must be
+    retired.  A known-stale failure is xfailed; any other failure is a hard FAIL."""
+    neg_dir = _real_leg("negative")
     ok, result = _run_check_safe(cc.check_negative, neg_dir)
-    if not ok:
-        tail = result.rsplit(": ", 1)[-1] if result else ""
-        if tail in _KNOWN_XFAIL_REASONS:
-            request.node.add_marker(pytest.mark.xfail(
-                strict=True, raises=AssertionError,
-                reason=f"real v2.2 sample: {tail} (capture predates current probe)"))
-            assert False, f"real v2.2 sample: {tail} (capture predates current probe)"
-        else:
-            assert False, f"unexpected failure: negative: {result}"
+    assert not ok, (
+        "check_negative PASSES on the real negative leg — the known-stale reasons "
+        f"{sorted(_KNOWN_XFAIL_REASONS)} no longer reproduce; retire them (B1)")
+    if _is_known_stale(result):
+        request.node.add_marker(pytest.mark.xfail(
+            reason=f"real v2.2 sample: {result} (capture predates current probe)"))
+        assert False, f"real v2.2 sample: {result} (capture predates current probe)"
+    else:
+        assert False, f"unexpected failure: negative: {result}"
 
 
 def test_real_leg_normalize_timeline():
     """Real-producer: normalize_timeline produces a non-empty result for run-1."""
-    if _REAL_LEG_DIR is None:
-        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
-    leg_dir = _REAL_LEG_DIR / "run-1"
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg directory absent: {_REAL_LEG_DIR}")
+    leg_dir = _real_leg("run-1")
     entries = cc._load_timeline_raw(leg_dir, "run-1")
     n = cc.normalize_timeline(entries)
     assert len(n) > 0
@@ -3312,10 +3348,12 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
 # The real assertion and the self-test BOTH call _scan_direct_writes so the scan
 # cannot be disabled without the self-test also going red.
 
-_WRITE_ATTRS = {"write_text", "write_bytes", "touch", "rename"}
+_WRITE_ATTRS = {"write_text", "write_bytes", "touch", "rename",
+                "chmod", "hardlink_to"}
+# symlink_to omitted: creates a new dirent or raises FileExistsError; cannot reach a shared inode.
 _WRITE_MODES = set("wa+")
 _SHUTIL_WRITERS = {"copy", "copy2", "copyfile"}
-_OS_WRITERS = {"replace", "rename"}
+_OS_WRITERS = {"replace", "rename", "truncate", "chmod", "utime"}
 _EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
                "_write_runtime_identity", "_write_env", "_write_startup_and_log",
                "_write_model", "_write_manifests", "_write_mentions",
@@ -3323,8 +3361,7 @@ _EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
                "_sign_mention", "_session_bundle", "_patch_nostr_verify",
                "test_ck8_f34_frame_tee_subprocess_keys",
                "test_ck9_tools_not_hardlinked",
-               "test_golden_run_eq", "test_golden_distinctness_all",
-               "test_ck10_fifo_at_tools_frame_tee_is_named"}
+               "test_golden_run_eq", "test_golden_distinctness_all"}
 
 
 def _scan_direct_writes(src: str) -> list[str]:
@@ -3332,8 +3369,9 @@ def _scan_direct_writes(src: str) -> list[str]:
     of violation descriptions (empty = clean).  The self-test asserts the CATEGORIES
     detected so disabling any single pattern family makes it fail.
     Known limits (AF-AP-30 — static scanning is the losing game): os.open+os.write,
-    variable mode (m='w'; open(p,m)), shutil.copytree/move (would flag the bundle
-    fixture), subprocess cp, module-level writes (fn_name is None -> continue)."""
+    os.fdopen, tempfile.NamedTemporaryFile, variable mode (m='w'; open(p,m)),
+    shutil.copytree/move (would flag the bundle fixture), subprocess cp,
+    module-level writes (fn_name is None -> continue)."""
     import ast as _ast
     tree = _ast.parse(src)
     fn_ranges = []
@@ -3405,6 +3443,15 @@ def _scan_direct_writes(src: str) -> list[str]:
                         if _WRITE_MODES & set(mode_arg.value):
                             violations.append(f"line {lineno}: io.open(..., {mode_arg.value!r})")
                             continue
+        # CK11-F7: gzip.open writes through hardlinks
+        if isinstance(func, _ast.Attribute) and func.attr == "open":
+            if isinstance(func.value, _ast.Name) and func.value.id == "gzip":
+                if len(node.args) >= 2:
+                    mode_arg = node.args[1]
+                    if isinstance(mode_arg, _ast.Constant) and isinstance(mode_arg.value, str):
+                        if _WRITE_MODES & set(mode_arg.value):
+                            violations.append(f"line {lineno}: gzip.open(..., {mode_arg.value!r})")
+                            continue
     return violations
 
 
@@ -3413,8 +3460,9 @@ def test_f43_no_direct_writes_outside_rewrite():
     is at module scope so the self-test exercises the SAME code path."""
     import inspect
     src = Path(inspect.getfile(test_f43_no_direct_writes_outside_rewrite)).read_text()
-    violations = _scan_direct_writes(src)
-    assert violations == [], f"F43: direct writes outside _rewrite: {violations}"
+    # CK11-F6: inlined so F43-SCAN-OFF (violations=[]) dies — the scan cannot be
+    # bypassed by rebinding the local variable.
+    assert _scan_direct_writes(src) == [], f"F43: direct writes outside _rewrite: {_scan_direct_writes(src)}"
     # Self-test: a deliberately-violating source string must trigger the same scan.
     _SELF_TEST_SRC = '''
 def test_ck8_inplace_write_mutant():
@@ -3437,6 +3485,16 @@ def test_ck8_inplace_write_mutant_i():
     p.open(mode="w")
 def test_ck8_inplace_write_mutant_j():
     io.open(p, "w")
+def test_ck12_chmod_mutant():
+    p.chmod(0o400)
+def test_ck12_hardlink_mutant():
+    p.hardlink_to(dst)
+def test_ck12_os_truncate_mutant():
+    os.truncate(p, 0)
+def test_ck12_os_utime_mutant():
+    os.utime(p)
+def test_ck12_gzip_open_mutant():
+    gzip.open(p, "wb")
 '''
     self_violations = _scan_direct_writes(_SELF_TEST_SRC)
     # R10: assert the CATEGORIES detected, not just a count — prevents any single
@@ -3444,7 +3502,9 @@ def test_ck8_inplace_write_mutant_j():
     cats = {v.split(": ", 1)[1].split("(")[0].strip() for v in self_violations}
     assert cats == {".write_text", ".write_bytes", "open", "json.dump",
                     "shutil.copy", "os.replace", ".touch", ".rename",
-                    ".open", "io.open"}, f"F43 self-test categories: {self_violations}"
+                    ".open", "io.open", ".chmod", ".hardlink_to",
+                    "os.truncate", "os.utime",
+                    "gzip.open"}, f"F43 self-test categories: {cats}"
 
 
 # === F22-F26: records / receipts / startup exact-match tests ===
@@ -3938,15 +3998,15 @@ def test_ck8_f38_check_sequence_omission(bundle, monkeypatch):
 
 # === R6/F35: real-leg check_tee_status ===
 
-@pytest.mark.parametrize("leg", LEGS)
-def test_ck8_real_leg_tee_status(leg):
-    """R6/F35: real-leg check_tee_status over every corpus leg."""
-    leg_dir = GOLDEN / leg
-    if not leg_dir.is_dir():
-        pytest.skip(f"real leg {leg} absent")
+@pytest.mark.parametrize("leg", sorted(_EXPECTED_REAL_LEGS - {"negative"}))
+def test_ck8_real_leg_tee_status(request, leg):
+    """R6/F35: real-leg check_tee_status. CK12: xfail on v2.2 corpus."""
+    leg_dir = _real_leg(leg)
     ts_path = leg_dir / "tee-status.json"
-    if not ts_path.exists():
-        pytest.skip(f"tee-status.json absent in {leg} (corpus predates the tee status)")
+    if _CORPUS_VERSION == "v2.2" and not ts_path.is_file():
+        request.node.add_marker(pytest.mark.xfail(
+            strict=True, reason=f"corpus v2.2 predates tee status: {leg} tee-status.json"))
+        pytest.fail(f"corpus v2.2: {leg} tee-status.json absent")
     entries = cc._load_timeline_raw(leg_dir, leg)
     try:
         cc.check_tee_status(leg_dir, leg, entries)
@@ -4482,6 +4542,10 @@ def test_ck9_startup_wrong_value_parametrised(bundle):
         _rewrite(lp, lp.read_text().replace(f"{k}={wrong}", f"{k}={exp}"))
     # R10-F16: ensure every key was actually exercised (detect silent skips)
     assert len(ran) == len(checks), f"only {len(ran)}/{len(checks)} keys ran: skipped {sorted(set(checks) - set(ran))}"
+    # CK11-F20: the wrong-value dict covers cc._EXPECTED_STARTUP_KEYS (minus format-only keys)
+    _elsewhere = {"pubkey", "respond_to"}  # format-only / leg-dependent, tested separately
+    _uncovered = sorted(cc._EXPECTED_STARTUP_KEYS - set(checks) - _elsewhere)
+    assert not _uncovered, f"wrong-value dict does not cover the checker key set: {_uncovered}"
 
 
 # F23: _EXPECTED_STARTUP_KEYS is importable
@@ -4523,8 +4587,14 @@ def test_ck9_default_timeout_is_90():
 # VERIFY-CK10: round 11 tests (items 1-9)
 # ============================================================================
 
-# B1: xfail anchored match — verifier's three states are reproduced on scratch copies
-# of the corpus by the gate run (see the report's PROBE table).
+# B1 (CK11): known-stale xfail uses WHOLE-reason equality, not a tail segment.
+def test_ck11_known_stale_is_the_whole_reason_not_a_tail():
+    """CK11-B1: _is_known_stale matches the WHOLE reason, never a tail collision."""
+    assert _is_known_stale("negative: negative: probe_sha256 mismatch")
+    assert not _is_known_stale("probe_sha256 mismatch"), "tail alone must not match"
+    assert not _is_known_stale(
+        "negative: negative: probe reported an error: probe_sha256 mismatch"
+    ), "tail collision from corpus-controlled probe_error must not match"
 
 
 # B2: F43 self-test categories — tested inline by the rewritten assertion above.
@@ -4539,8 +4609,9 @@ def test_ck10_fifo_at_tools_frame_tee_is_named(bundle, tmp_path, monkeypatch):
     tools = tmp_path / "tools"
     tools.mkdir(exist_ok=True)
     tee = tools / "frame_tee.py"
-    tee.write_text("placeholder")  # _session_bundle wrote a copy; overwrite with FIFO
-    tee.unlink()
+    # CK11-F14: removed dead write_text("placeholder") — the bundle fixture already
+    # created the file via copytree; unlink before creating the FIFO.
+    tee.unlink(missing_ok=True)
     os.mkfifo(tee)
     t0 = time.monotonic()
     rc, out = _check(bundle, timeout_s=10)
@@ -4556,6 +4627,156 @@ def test_ck10_dir_named_manifest_post_summary(bundle):
     p.mkdir()
     rc, out = _check(bundle)
     assert (rc, out) == (1, "failure_reason: run-1: manifest-post.summary is not a regular file")
+
+
+# CK11-F8: tools/acp_probe.py through the read CLASS (negative_contract.py)
+def test_ck11_fifo_at_tools_acp_probe_is_named(bundle, tmp_path, monkeypatch):
+    """CK11-F8: a FIFO at tools/acp_probe.py is named as non-regular — the guard fires
+    before the FIFO blocks the read.  The checker processes all positive legs before
+    the negative check, so the elapsed time is the full checker run (not just the guard)."""
+    import time
+    monkeypatch.setattr(nc, "HERE", tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    probe = tools / "acp_probe.py"
+    probe.unlink(missing_ok=True)
+    os.mkfifo(probe)
+    t0 = time.monotonic()
+    rc, out = _check(bundle, timeout_s=30)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 30, f"FIFO blocked to the cap: {elapsed:.1f}s"
+    assert (rc, out) == (1, "failure_reason: negative: negative: tools/acp_probe.py is not a regular file")
+
+
+def test_ck11_dir_at_tools_acp_probe_is_named(bundle, tmp_path, monkeypatch):
+    """CK11-F8: a directory at tools/acp_probe.py is named as non-regular."""
+    import time
+    monkeypatch.setattr(nc, "HERE", tmp_path)
+    tools = tmp_path / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    probe = tools / "acp_probe.py"
+    if probe.exists():
+        probe.unlink()
+    probe.mkdir()
+    t0 = time.monotonic()
+    rc, out = _check(bundle, timeout_s=30)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 30, f"dir blocked to the cap: {elapsed:.1f}s"
+    assert (rc, out) == (1, "failure_reason: negative: negative: tools/acp_probe.py is not a regular file")
+
+
+# CK11-F15: absent ACP schema is a failure, not a silent skip (AF-AP-40)
+def test_ck11_absent_acp_schema_is_a_failure(bundle, tmp_path):
+    """CK11-F15: deleting acp-schema-v1.json must produce a failure, not a silent PASS."""
+    (tmp_path / "fixtures" / "acp-schema-v1.json").unlink()
+    assert _check(bundle) == (1, "failure_reason: golden: fixtures/acp-schema-v1.json absent")
+
+
+def test_ck11_no_presence_gated_check_in_the_proof():
+    """CK11-F15 CLASS: no AFFIRMATIVE `if p.exists()` whose false branch yields a
+    default instead of a raise (AF-AP-40).  NEGATED gates like `if not p.exists():
+    raise Failure(...)` are CORRECT (fail-closed)."""
+    import ast as _ast
+    checked_files = [
+        P / "check_acp_conformance.py",
+        P / "negative_contract.py",
+        P / "check_initialize.py",
+    ]
+    # Reviewed exceptions with reasons:
+    _REVIEWED_SAFE = {
+        ("check_initialize.py", 129),   # tl_path.exists() -> deferred: fail-closed
+        ("check_initialize.py", 194),   # path.is_dir() routing between directory/file mode
+        ("check_acp_conformance.py", 1713),  # post_sum_path optional per-leg; _require_file inside
+    }
+    violations = []
+    for fpath in checked_files:
+        src = fpath.read_text()
+        tree = _ast.parse(src)
+        fname = fpath.name
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.If):
+                continue
+            if (fname, node.lineno) in _REVIEWED_SAFE:
+                continue
+            test_code = _ast.unparse(node.test) if hasattr(_ast, "unparse") else ""
+            # Only flag AFFIRMATIVE presence gates (if p.exists(): use it)
+            # Skip negated gates (if not p.exists(): raise) — those are fail-closed.
+            if test_code.startswith("not "):
+                continue
+            if ".exists()" not in test_code and ".is_file()" not in test_code:
+                continue
+            # Affirmative gate with no else: the AP-40 pattern
+            # Check if the body uses the file (read/load) rather than just raising
+            body_code = "\n".join(_ast.unparse(n) for n in node.body)
+            if "raise " in body_code:
+                continue  # the true branch raises — not a skip gate
+            if not node.orelse:
+                violations.append(f"{fname}:{node.lineno} affirmative presence gate with no else (AF-AP-40)")
+    assert not violations, f"AP-40 hits: {violations}"
+
+
+def test_ck11_every_read_is_under_the_walk_or_require_file():
+    """CK11-F8 CLASS: every open()/read_text()/read_bytes()/json.load() in the checker
+    and its callees resolves under a walked root (golden/, _fixtures()) or is wrapped
+    in _require_file / preceded by an S_ISREG check on the same receiver."""
+    import ast as _ast
+    checked_files = [
+        P / "check_acp_conformance.py",
+        P / "negative_contract.py",
+        P / "check_initialize.py",
+    ]
+    READ_ATTRS = {"read_text", "read_bytes"}
+    for fpath in checked_files:
+        src = fpath.read_text()
+        lines = src.splitlines()
+        tree = _ast.parse(src)
+        # Build function ranges
+        fns = []
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                fns.append((node.name, node.lineno, node.end_lineno))
+        def owner(ln):
+            best = None
+            for n, s, e in fns:
+                if s <= ln <= e and (best is None or s > best[1]):
+                    best = (n, s, e)
+            return best[0] if best else "<module>"
+        # Find all read sites
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            f = node.func
+            is_read = False
+            recv = ""
+            if isinstance(f, _ast.Attribute) and f.attr in READ_ATTRS:
+                is_read = True
+                recv = _ast.unparse(f.value) if hasattr(_ast, "unparse") else "?"
+            elif isinstance(f, _ast.Name) and f.id == "open":
+                is_read = True
+                recv = _ast.unparse(node.args[0]) if node.args and hasattr(_ast, "unparse") else "?"
+            if not is_read:
+                continue
+            ln = node.lineno
+            fn = owner(ln)
+            # Check the 5 lines before for _require_file or S_ISREG on the receiver
+            context = "\n".join(lines[max(0, ln - 6):ln])
+            if "_require_file" in context or "S_ISREG" in context:
+                continue
+            # Check if the receiver resolves under a walked root
+            # Variables derived from walked roots (golden/, _fixtures(), leg_dir, etc.)
+            walked = ("golden", "_fixtures", "leg_dir", "dirpath", "d /",
+                      "neg_dir", "r1m", "r2m", "mentions_dir", "manifest",
+                      "post_sum", "c2a_path", "a2c_path", "stderr_path",
+                      "sp", "argv_path", "tl_path", "rp", "fp_path",
+                      "rec_dir", "item", "fpath", "path")
+            if any(root in recv for root in walked):
+                continue
+            # _sha256_file is called on paths that have been require_file'd
+            if fn == "_sha256_file":
+                continue
+            assert False, (
+                f"{fpath.name}:{ln} in {fn}: read site {recv} is not under "
+                f"a walked root and has no _require_file / S_ISREG guard")
 
 
 # B4: single default cap — main() omits timeout_s, check_bundle's default governs
@@ -4622,14 +4843,26 @@ def test_ck10_timeout_arg_out_of_range_is_a_usage_error():
     assert r.stderr.strip() == "usage: --timeout-s must be a positive integer"
 
 
-def test_ck10_sigalrm_handler_restored_after_a_bad_cap():
-    """R10-F15: SIGALRM disposition unchanged after a failing check_bundle (AF-AP-58 sibling)."""
+def test_ck10_rejected_cap_installs_no_handler():
+    """CK11-F2 rename: a rejected cap (out-of-range) installs no handler."""
     import signal
     before = signal.getsignal(signal.SIGALRM)
     with pytest.raises(Exception):
         cc.check_bundle(Path("/tmp"), timeout_s=2**31)
     after = signal.getsignal(signal.SIGALRM)
     assert after is before, f"LEAKED: before={before}, after={after}"
+
+
+def test_ck11_alarm_inside_try_cannot_leak_the_handler(monkeypatch, tmp_path):
+    """CK11-F2: a raising alarm() inside the try cannot leak the handler."""
+    import signal as _s
+    real = _s.alarm
+    monkeypatch.setattr(_s, "alarm", lambda n: (_ for _ in ()).throw(OverflowError()) if n else real(0))
+    before = _s.getsignal(_s.SIGALRM)
+    with pytest.raises(OverflowError):
+        cc.check_bundle(tmp_path, timeout_s=90)
+    assert _s.getsignal(_s.SIGALRM) is before, (
+        f"LEAKED: before={before}, after={_s.getsignal(_s.SIGALRM)}")
 
 
 # Item 7: owned_zombies full invariant
@@ -4657,21 +4890,33 @@ def test_ck10_teardown_zombies_plus_present_exceeds_owned(bundle):
 
 
 # Item 8: dead-branch comments cite the real guard
-def test_ck10_dead_branch_comments_cite_a_real_guard():
-    """R10-F10: each dead-branch deletion comment names the function that actually fires."""
+def test_ck11_dead_branch_comments_cite_a_real_guard():
+    """CK11-F11: each dead-branch deletion comment names the function that fires,
+    and any cited C:a-b range holds a 'raise Failure' inside the named function."""
     src = CHECKER.read_text().splitlines()
-    # Each (lineno-1, expected_fn) pair — line numbers are 0-based index into src
     checks = []
     for i, line in enumerate(src):
-        if "R9-CK-F6:" in line and "first_term is guaranteed" in line:
+        if "R9-CK-F6:" not in line:
+            continue
+        if "first_term is guaranteed" in line:
             checks.append((i, "check_two_users"))
-        elif "R9-CK-F6:" in line and "new_seqs >= 2 guaranteed" in line:
+        elif "new_seqs >= 2 guaranteed" in line:
             checks.append((i, "check_two_users"))
-        elif "R9-CK-F6:" in line and "new_resp_idx guaranteed" in line:
+        elif "init_resp_idx is guaranteed" in line:
+            checks.append((i, "check_initialize_frames"))
+        elif "new_resp_idx guaranteed" in line:
             checks.append((i, "check_prompt_turn"))
-        elif "R9-CK-F6:" in line and "sid1/sid2 guaranteed" in line:
+        elif "sid1/sid2 guaranteed" in line:
             checks.append((i, "check_prompt_turn"))
-    assert len(checks) == 4, f"expected 4 dead-branch comments, found {len(checks)}"
+        elif "r1m/r2m guaranteed" in line:
+            checks.append((i, "check_mentions"))
+    assert len(checks) == 6, f"expected 6 dead-branch comments, found {len(checks)}"
     for idx, fn in checks:
         block = "\n".join(src[max(0, idx - 1):idx + 3])
         assert fn in block, f"line {idx + 1} cites the wrong guard: {block}"
+        # CK11: parse cited C:a-b range(s) and assert they hold a raise Failure
+        m = re.search(r"C:(\d+)-(\d+)", block)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            assert any("raise Failure" in src[k - 1] for k in range(a, b + 1)), (
+                f"line {idx + 1} cites C:{a}-{b}, which contains no guard")
