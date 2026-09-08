@@ -396,6 +396,51 @@ def test_pending_declaration_for_a_proof_that_is_not_accepted_is_refused(tmp_pat
     assert "a PROOF-ANCHOR PENDING declaration for a proof whose PROOF-STATUS is 'REVIEW-PENDING'" in completed.stderr
 
 
+def _tag_file(root, name="accepted/S0-11"):
+    out = (root / "docs" / "governance" / "tags"); out.mkdir(parents=True, exist_ok=True)
+    (out / "accepted-S0-11.tag").write_bytes(subprocess.run(["git", "-C", str(root), "cat-file", "tag", name],
+                                                            capture_output=True, timeout=30, check=True).stdout)
+    return out / "accepted-S0-11.tag"
+
+
+def test_anchor_committed_tag_object_verifies_without_the_ref(tmp_path):
+    """The tag OBJECT travels inside the branch: a clone without tags (CI, a proxy that refuses tag pushes) imports the
+    committed file and verifies the very object the owner signed."""
+    env, fingerprint, armored = _gpg_home(tmp_path, "owner")
+    root = _anchored_repo(tmp_path, ACCEPTED_LEDGER, armored)
+    _sign_tag(root, env, fingerprint)
+    _tag_file(root)
+    assert _git(root, "add", "-A").returncode == 0 and _git(root, "commit", "-q", "-m", "tag object").returncode == 0
+    assert _git(root, "tag", "-d", "accepted/S0-11").returncode == 0
+    completed = _run(root)
+    assert completed.returncode == 0, completed.stderr
+    assert "WARNING" not in completed.stderr
+
+
+def test_anchor_committed_tag_object_tampered_is_refused(tmp_path):
+    env, fingerprint, armored = _gpg_home(tmp_path, "owner")
+    root = _anchored_repo(tmp_path, ACCEPTED_LEDGER, armored)
+    _sign_tag(root, env, fingerprint)
+    tag_file = _tag_file(root)
+    tag_file.write_bytes(tag_file.read_bytes().replace(b"ACCEPTED: S0-11", b"ACCEPTED: S0-99"))
+    assert _git(root, "add", "-A").returncode == 0 and _git(root, "commit", "-q", "-m", "tampered").returncode == 0
+    assert _git(root, "tag", "-d", "accepted/S0-11").returncode == 0
+    completed = _run(root)
+    assert completed.returncode == 1
+    assert "does not verify against the committed owner key" in completed.stderr
+
+
+def test_anchor_ref_and_committed_tag_object_must_be_one_object(tmp_path):
+    env, fingerprint, armored = _gpg_home(tmp_path, "owner")
+    root = _anchored_repo(tmp_path, ACCEPTED_LEDGER, armored)
+    _sign_tag(root, env, fingerprint)
+    tag_file = _tag_file(root)
+    tag_file.write_bytes(tag_file.read_bytes() + b"\n")
+    completed = _run(root)
+    assert completed.returncode == 1
+    assert "is not the object the ref accepted/S0-11 names" in completed.stderr
+
+
 def test_committed_tree_anchor_state_is_the_declared_pending_one():
     """Today S0-11 is ACCEPTED with the anchor PENDING the owner's tag: the checker passes with exactly
     that warning. When the owner signs, the declaration must go and this test flips to no warning."""

@@ -57,3 +57,9 @@ git bundle (`git bundle create … origin/<branch>..HEAD refs/tags/accepted/<id>
 fast-forwarded the branch, re-ran the anchor check in the sandbox's isolated keyring, and pushed the branch through `push_clean.sh`
 and the tag with `git push origin accepted/<id>`. The signature travels intact — a tag object is verified wherever it lands. Fixing the
 PC credential is the owner's; until then this bundle path is the procedure.
+
+The sandbox's git proxy refuses tag pushes (HTTP 403 — it permits the designated branch only), and CI clones without tags. So the
+signed tag OBJECT is also committed as a file, `docs/governance/tags/accepted-<id>.tag` (`git cat-file tag accepted/<id>` bytes).
+It is content-addressed: `git hash-object -w -t tag` on the file reproduces the exact object the owner signed, and the checker
+imports and verifies it whenever the ref is absent (a clone without tags, CI with `fetch-depth: 0`). When both exist they must be
+the same object. Anyone can restore the ref: `git update-ref refs/tags/accepted/<id> $(git hash-object -w -t tag docs/governance/tags/accepted-<id>.tag)`.

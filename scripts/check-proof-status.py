@@ -76,6 +76,11 @@ LEADING_STATUS = re.compile(r"^\**\s*([A-Za-z][A-Za-z-]*)")
 # WARNING, never counted as owner-verifiable. A tag AND a pending declaration together are a stale
 # ledger and an error. The coordinator can write the declaration; it cannot write the signature.
 OWNER_KEY_REL = Path("docs") / "governance" / "owner-signing-key.asc"
+# The signed tag OBJECT also travels inside the branch as a committed file (this sandbox's git proxy refuses
+# tag pushes with HTTP 403 and CI clones without tags): `git cat-file tag accepted/<id>` bytes, content-addressed —
+# importing the file with `git hash-object -w -t tag` reproduces the very object the owner signed, so the signature
+# verifies wherever the branch lands. When both the ref and the file exist they must be the same object.
+TAG_FILE_REL = "docs/governance/tags/accepted-{proof_id}.tag"
 ANCHOR_TAG = "accepted/{proof_id}"
 PENDING_ANCHOR = re.compile(r"^PROOF-ANCHOR:\s+(S0-[0-9]{2})\s*=\s*PENDING-OWNER-TAG\b.*$", re.MULTILINE)
 
@@ -94,7 +99,23 @@ def _anchor_findings(repo_root, proof_id, pending):
     if _git(repo_root, "rev-parse", "--git-dir").returncode != 0:
         return [f"{proof_id}: ACCEPTED but {repo_root} is not a git repository — the anchor tag {tag} "
                 f"cannot be verified (AF-AP-32)"], []
-    if _git(repo_root, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}").returncode != 0:
+    tag_file = Path(repo_root) / TAG_FILE_REL.format(proof_id=proof_id)
+    ref_exists = _git(repo_root, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}").returncode == 0
+    if ref_exists and tag_file.is_file():
+        ref_bytes = _git(repo_root, "cat-file", "tag", tag, binary=True).stdout
+        if ref_bytes != tag_file.read_bytes():
+            errors.append(f"{proof_id}: the committed tag object {TAG_FILE_REL.format(proof_id=proof_id)} is not the "
+                          f"object the ref {tag} names — the two must be one signed object")
+            return errors, warnings
+    if not ref_exists and tag_file.is_file():
+        imported = _git(repo_root, "hash-object", "-w", "-t", "tag", str(tag_file))
+        if imported.returncode != 0:
+            errors.append(f"{proof_id}: the committed tag object {TAG_FILE_REL.format(proof_id=proof_id)} is not a git "
+                          f"tag object: {' '.join(imported.stderr.split())[:160]}")
+            return errors, warnings
+        tag = imported.stdout.strip()  # verify the imported object itself; the ref name is not needed
+        ref_exists = True
+    if not ref_exists:
         if pending:
             warnings.append(f"{proof_id}: ACCEPTED with the anchor PENDING the owner's signed tag {tag} "
                             f"(declared in the ledger) — not owner-verifiable yet")
@@ -106,7 +127,7 @@ def _anchor_findings(repo_root, proof_id, pending):
     if pending:
         errors.append(f"{proof_id}: the tag {tag} exists but the ledger still declares PROOF-ANCHOR "
                       f"PENDING — a stale declaration (remove it)")
-    if _git(repo_root, "cat-file", "-t", f"refs/tags/{tag}").stdout.strip() != "tag":
+    if _git(repo_root, "cat-file", "-t", tag).stdout.strip() != "tag":
         errors.append(f"{proof_id}: {tag} is a lightweight tag — the anchor must be a SIGNED annotated tag "
                       f"(`git tag -s`)")
         return errors, warnings
