@@ -46,7 +46,7 @@ set -uo pipefail
 
 die() { echo "pc_lane: $*" >&2; exit 64; }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${PC_LANE_ORIG:-${BASH_SOURCE[0]}}")/.." && pwd)"
 [ -f "$ROOT/.pc-bridge.env" ] && . "$ROOT/.pc-bridge.env"
 # The env file holds plain KEY=value lines; the bridge() helper below is a python child and
 # only sees EXPORTED variables (bit 2026-09-03 on the first real lane: KeyError PC_BRIDGE_URL).

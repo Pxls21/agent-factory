@@ -22,7 +22,7 @@ if [ -z "${PC_SUITE_SELF_COPY:-}" ]; then
 fi
 trap 'rm -f "$PC_SUITE_SELF_COPY"' EXIT
 set -uo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${PC_SUITE_ORIG:-${BASH_SOURCE[0]}}")/.." && pwd)"
 PC="$ROOT/scripts/pc.sh"
 PC_AF_REPO="${PC_AF_REPO:-/home/rocco/agent-factory}"
 # The project venv on the PC (harness-ports/bin/pc-setup.sh installs the pinned deps there); /usr/bin/python3 lacks
