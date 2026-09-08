@@ -1,11 +1,32 @@
 """lane_gate.sh — the one-command static-copy gate: an archive of REV plus exactly the named working-tree files, the identity
-table of those files, N test_summary runs whose counts must agree, one RESULT line. Exercised on a two-test set so it runs
-in seconds; the archive is a real `git archive` of HEAD."""
+table of those files, N test_summary runs whose counts must agree, one RESULT line. The archive is a real `git archive` of
+HEAD; the lane file is a three-test PROBE each test writes under tests/.lane_gate_probe_<id>/ — a dot-directory that pytest's
+default norecursedirs keeps out of any concurrent `pytest tests/` in the shared tree, and a file HEAD's archive does not
+carry, so the run is green ONLY because the gate copied the working-tree bytes. (2026-09-08: these tests used to point at
+tests/test_ap_screen.py and went red whenever a live lane held that file in a state HEAD's tree could not pass — a tooling
+test must never depend on the shared tree's live-lane state.)"""
 import os
+import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+PROBE_BODY = "def test_one():\n    assert 1\n\n\ndef test_two():\n    assert 2\n\n\ndef test_three():\n    assert 3\n"
+
+
+@pytest.fixture
+def probe():
+    """ROOT-relative path of a three-test file in an untracked dot-directory under tests/; the directory is removed after."""
+    d = ROOT / "tests" / f".lane_gate_probe_{uuid.uuid4().hex[:8]}"
+    d.mkdir()
+    (d / "test_probe.py").write_text(PROBE_BODY)
+    try:
+        yield f"tests/{d.name}/test_probe.py"
+    finally:
+        shutil.rmtree(d)
 
 
 def _run(tmp_path, *args):
@@ -14,12 +35,14 @@ def _run(tmp_path, *args):
                           capture_output=True, text=True, timeout=600)
 
 
-def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path):
-    r = _run(tmp_path, "-r", "HEAD", "-f", "tests/test_ap_screen.py", "-t", "tests/test_ap_screen.py", "-n", "2")
+def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path, probe):
+    # the probe is absent from HEAD's archive: the green below exists only if the gate copied the working-tree bytes over it
+    assert subprocess.run(["git", "cat-file", "-e", f"HEAD:{probe}"], cwd=ROOT, capture_output=True).returncode != 0
+    r = _run(tmp_path, "-r", "HEAD", "-f", probe, "-t", probe, "-n", "2")
     assert r.returncode == 0, r.stdout + r.stderr
     result = [l for l in r.stdout.splitlines() if l.startswith("RESULT:")][-1]
     assert "identical=yes rc=0" in result and "3 passed" in result, result
-    ident = [l for l in r.stdout.splitlines() if l.endswith("lines") and "tests/test_ap_screen.py" in l]
+    ident = [l for l in r.stdout.splitlines() if l.endswith("lines") and probe in l]
     assert len(ident) == 1 and len(ident[0].split()[0]) == 64  # sha256 + path + line count
     # a green, agreeing gate removes its archive (the temp filesystem filled with them); the run logs remain
     assert not [p for p in tmp_path.iterdir() if p.name.startswith("gate-") and p.is_dir()], "archive kept after a green gate"
@@ -31,25 +54,25 @@ def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path
     assert "archive removed" in r.stdout
 
 
-def test_gate_keeps_the_archive_when_asked_or_red(tmp_path):
+def test_gate_keeps_the_archive_when_asked_or_red(tmp_path, probe):
     env_keep = dict(os.environ, LANE_GATE_DIR=str(tmp_path / "keep"), LANE_GATE_KEEP="1")
     (tmp_path / "keep").mkdir()
-    r = subprocess.run(["bash", str(ROOT / "scripts/lane_gate.sh"), "-r", "HEAD", "-f", "tests/test_ap_screen.py",
-                        "-t", "tests/test_ap_screen.py", "-n", "1"], cwd=ROOT, env=env_keep, capture_output=True, text=True, timeout=600)
+    r = subprocess.run(["bash", str(ROOT / "scripts/lane_gate.sh"), "-r", "HEAD", "-f", probe, "-t", probe, "-n", "1"],
+                       cwd=ROOT, env=env_keep, capture_output=True, text=True, timeout=600)
     assert r.returncode == 0 and [p for p in (tmp_path / "keep").iterdir() if p.is_dir()], r.stdout + r.stderr
 
 
-def test_gate_refuses_an_unresolvable_rev_and_a_missing_lane_file(tmp_path):
-    r = _run(tmp_path, "-r", "no-such-rev", "-f", "tests/test_ap_screen.py", "-t", "tests/test_ap_screen.py")
+def test_gate_refuses_an_unresolvable_rev_and_a_missing_lane_file(tmp_path, probe):
+    r = _run(tmp_path, "-r", "no-such-rev", "-f", probe, "-t", probe)
     assert r.returncode == 65 and "does not resolve" in r.stderr
-    r = _run(tmp_path, "-r", "HEAD", "-f", "tests/no_such_file.py", "-t", "tests/test_ap_screen.py")
+    r = _run(tmp_path, "-r", "HEAD", "-f", "tests/no_such_file.py", "-t", probe)
     assert r.returncode == 67 and "absent in the working tree" in r.stderr
 
 
-def test_gate_fails_when_a_run_is_red(tmp_path):
+def test_gate_fails_when_a_run_is_red(tmp_path, probe):
     bad = tmp_path / "test_red_probe.py"; bad.write_text("def test_red():\n    assert 0\n")
     # a lane file outside the repo cannot be copied by relative path; point -f at a real file and -t at the red test's abs path
-    r = _run(tmp_path, "-r", "HEAD", "-f", "tests/test_ap_screen.py", "-t", str(bad), "-n", "1")
+    r = _run(tmp_path, "-r", "HEAD", "-f", probe, "-t", str(bad), "-n", "1")
     assert r.returncode != 0
     result = [l for l in r.stdout.splitlines() if l.startswith("RESULT:")][-1]
     assert "rc=1" in result and "1 failed" in result, result
@@ -61,19 +84,28 @@ def test_gate_fails_when_a_run_is_red(tmp_path):
     assert Path(log).is_file() and "test_red" in Path(log).read_text(), log
 
 
-def test_gate_names_gitignored_files_under_the_lane_directories(tmp_path):
+def test_gate_names_gitignored_files_under_the_lane_directories(tmp_path, probe):
     """AF-AP-62 (2026-09-08): 16 gitignored buzzacp.log files under S0-02's committed bundles never reached the git-view
     copy — the lane's own byte-copy gate was green, the coordinator's `39 failed`. The gate now NAMES ignored files under
     the lane's directories (informational: the run itself still grades the git view, so the red stays red)."""
-    probe = ROOT / "tests" / "lane_gate_ignored_probe.log"  # *.log is ignored at the repo root
-    assert subprocess.run(["git", "check-ignore", "-q", str(probe)], cwd=ROOT).returncode == 0, "*.log must be ignored"
-    probe.write_text("ignored\n")
-    try:
-        r = _run(tmp_path, "-r", "HEAD", "-f", "tests/test_ap_screen.py", "-t", "tests/test_ap_screen.py", "-n", "1")
-    finally:
-        probe.unlink()
+    ignored = ROOT / Path(probe).parent / "ignored_probe.log"  # *.log is ignored at the repo root
+    ignored.write_text("ignored\n")
+    rel = ignored.relative_to(ROOT).as_posix()
+    assert subprocess.run(["git", "check-ignore", "-q", rel], cwd=ROOT).returncode == 0, "*.log must be ignored"
+    r = _run(tmp_path, "-r", "HEAD", "-f", probe, "-t", probe, "-n", "1")
     assert r.returncode == 0, r.stdout + r.stderr
     warn = [l for l in r.stdout.splitlines() if l.startswith("lane_gate: WARNING")]
     assert len(warn) == 1 and "gitignored file(s) under the lane's directories" in warn[0], r.stdout
-    assert "tests/lane_gate_ignored_probe.log" in r.stdout, r.stdout
+    assert rel in r.stdout, r.stdout
 
+
+def test_committed_evidence_and_fixture_logs_are_not_gitignored():
+    """AF-AP-62 (2026-09-08) and VERIFY-B1 F4: a proof's committed bundles AND its real evidence root carry the log
+    files its checker requires (S0-02: buzzacp.log in every leg); the root `*.log` rule must not swallow either.
+    The control proves the rule still ignores an ordinary log."""
+    def ignored(path):
+        return subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT).returncode == 0
+    assert not ignored("proofs/S0-02/fixtures/evidence-pass/legs/pos-allowed/buzzacp.log")
+    assert not ignored("proofs/S0-02/evidence/pos-allowed/buzzacp.log")
+    assert not ignored("proofs/S0-99/evidence/any-leg/anything.log")
+    assert ignored("tests/lane_gate_ignored_probe.log"), "the control: an ordinary log must still be ignored"
