@@ -142,8 +142,12 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
   # capacity-retry backoff, and the poller read it as READY and brought the refusal home as the lane's report — for six
   # lanes at once, A5k's five-hour tree included (2026-09-08 08:1xZ). The retry loop's next attempt truncates it; until
   # then the lane is RUNNING.
-  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed after [0-9]+ retries: HTTP' $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE)))")"
+  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed' $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE)))")"
   case "$probe" in
+    *FAILED-UNRETRIED*) echo "pc_lane: LANE FAILED — the harness died on an API failure the PC side did not retry (the line stands as report.md; not a report). Reason:" >&2
+               bridge "head -c 300 $REMOTE_REPORT" >&2 2>/dev/null
+               echo "pc_lane: remove .lanes/$LANE_ID/report.md on the PC and re-dispatch (the tree keeps the work)" >&2
+               exit 70;;
     *FAILED*)  echo "pc_lane: LANE FAILED — the PC route refused every attempt (no report to grade). Reason:" >&2
                bridge "cat $PC_AF_REPO/.lanes/$LANE_ID/FAILED" >&2 2>/dev/null
                echo "pc_lane: re-dispatch later, or run the lane in the sandbox (code-implementer); the lane dir keeps the refusal" >&2

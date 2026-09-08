@@ -208,7 +208,10 @@ rc=0
 # 2026-09-06: a 429 is the same transient class when it is a per-credential cooldown (Ollama Cloud rate limit under two
 # concurrent Kimi lanes) or the tail of a fallback chain whose members are all cooling; the codex quota 429 ("exhausted their
 # quota (reset after NNh") is NOT transient, so it is excluded — retrying it would burn the backoff for nothing.
-CAPACITY_RX='^API call failed after [0-9]+ retries: HTTP (503|429)'
+# 2026-09-08: the upstream's own overload text (`Our servers are currently overloaded`) carried no HTTP code and slipped past
+# this regex — O2 died un-retried eight minutes into an admitted session. Any `API call failed after N retries:` line is a
+# transient unless QUOTA_RX says otherwise.
+CAPACITY_RX='^API call failed after [0-9]+ retries: '
 QUOTA_RX='exhausted their quota'
 # INCREMENTAL REPORT (2026-09-03): a 167-call verify lane died mid-stream with report.md EMPTY —
 # the report was all-or-nothing, so 66 minutes of grading came home only via state.db forensics.
@@ -329,7 +332,7 @@ done
 # poller printed "report -> …" and exited 0 for a lane that never ran (B5i, HTTP 503 on every call while the owner's
 # own Hermes sessions held the route's admission slots). A refusal is a FAILED lane: the line goes to $LANE_DIR/FAILED,
 # report.md is removed so nothing downstream can grade it, and the script exits 70. The poller reads FAILED.
-if grep -Eq "$CAPACITY_RX|$QUOTA_RX" "$REPORT" 2>/dev/null; then
+if grep -Eq "$CAPACITY_RX|$QUOTA_RX|^API call failed" "$REPORT" 2>/dev/null; then
   cp "$REPORT" "$LANE_DIR/FAILED"; rm -f "$REPORT"
   echo "pc-lane: FAILED — the route refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
   exit 70
