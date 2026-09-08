@@ -54,4 +54,8 @@ for i in $(seq 1 "$RUNS"); do
   prev="$counts"; summaries+=("$summary")
 done
 echo "RESULT: rev=${SHA:0:12} files=$(echo $FILES | wc -w) runs=$RUNS identical=$same rc=$rc_all summary=\"${summaries[*]}\""
+# the archive is a whole-tree copy (hundreds of MB with the vendored trees); eight of them filled the temp filesystem on
+# 2026-09-08. The run logs beside it are the record; the archive itself is deleted unless LANE_GATE_KEEP=1 (a red run keeps
+# it too, so the failing bytes can be inspected).
+if [ "$rc_all" -eq 0 ] && [ "$same" = yes ] && [ -z "${LANE_GATE_KEEP:-}" ]; then cd / && rm -rf "$OUT"; echo "lane_gate: archive removed (LANE_GATE_KEEP=1 keeps it)"; fi
 [ "$rc_all" -eq 0 ] && [ "$same" = yes ]
