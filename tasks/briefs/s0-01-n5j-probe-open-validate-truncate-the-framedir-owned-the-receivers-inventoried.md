@@ -1,5 +1,7 @@
 # Lane N5j — S0-01 ACP probe round 13: open-validate-truncate with one link, the framedir symlink-free and dir-fd-relative, every writer receiver inventoried by identity, the ≥40 campaign in the report
 
+> **STATUS (2026-09-08 21:4xZ): LANDED as checkpoint 9d** (the commit "S0-01 checkpoint 9d: the probe round 13 …", fe2dc3b on origin; report `tasks/briefs/s0-01-n5j-support/N5j-report.md`) → VERIFY-N5j next (pinned to fe2dc3b).
+
 **PIN: `99b7b37`** (the current branch head; the probe and its test are 628da83's round-12 bytes, unchanged since). Role:
 code-implementer (the PC Hermes build lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo agent-factory, branch
 claude/soundbox-kit-migration-iz1jwf. Boundary (yours, disjoint from every other lane): `proofs/S0-01/tools/acp_probe.py`,
