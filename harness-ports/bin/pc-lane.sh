@@ -108,6 +108,21 @@ fi
 echo $$ > "$PIDFILE"
 cleanup() { rm -f "$PIDFILE" "${PC_LANE_SELF_COPY:-}"; }
 trap cleanup EXIT
+# A coordinator's TERM must take the lane's WHOLE session with it — the harness, its terminal-tool shells, their probes and
+# load loops — not one level of children. 2026-09-08 14:27Z: five lanes were stopped by pid (loop, then the Hermes child)
+# for the WAL migration; VERIFY-B5j's six `while :; do :; done` race-margin workers were grandchildren, lost their parent's
+# EXIT trap with it, and burned six cores for 90 minutes (AF-AP-68). scripts/pc_lane.sh starts this script under setsid, so
+# the lane IS a session: everything in it is ours, nothing outside it is. Not the session leader (a test, a manual run) →
+# never touch the session: it belongs to whoever started us.
+stop_session() {
+  local sid pids; sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d ' ')"
+  [ -n "$sid" ] && [ "$sid" = "$$" ] || return 0
+  pids="$(ps -o pid= --sid "$sid" 2>/dev/null | tr -d ' ' | grep -vx "$$" | tr '\n' ' ')"
+  [ -n "${pids// /}" ] || return 0
+  kill -TERM $pids 2>/dev/null; sleep 1; kill -KILL $pids 2>/dev/null
+  echo "pc-lane: stopped — $(echo $pids | wc -w) process(es) of the lane session terminated with it" >&2
+}
+trap 'stop_session; cleanup; trap - EXIT; exit 143' TERM INT
 
 # --- the no-push shim -------------------------------------------------------
 # Earlier on PATH than the real binaries. This is the enforcement point for
@@ -252,8 +267,11 @@ if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
     *) die "PC_LANE_FAKE_HARNESS set for a non-test brief ($BRIEF) — refusing.";;
   esac
   echo "pc-lane: USING FAKE HARNESS (test double) — this is NOT a real lane run." >&2
-  "$PC_LANE_FAKE_HARNESS" < "$PROMPT_RUN" > "$REPORT" 2> "$LOG"
-  rc=$?
+  # Background + wait at EVERY harness site: bash defers a trapped TERM until a FOREGROUND child exits, so a stop signal
+  # would sit unanswered for the whole harness run and stop_session would fire only after the harness finished on its
+  # own (the session-stop test read exactly that: grandchild alive, no stderr line). `wait` is interruptible.
+  "$PC_LANE_FAKE_HARNESS" < "$PROMPT_RUN" > "$REPORT" 2> "$LOG" &
+  HARNESS_PID=$!; wait "$HARNESS_PID"; rc=$?
 
 elif [ "$HARNESS" = "codex" ]; then
   # `codex exec` = non-interactive. Flags, and why each one:
@@ -279,8 +297,8 @@ elif [ "$HARNESS" = "codex" ]; then
       --skip-git-repo-check \
       --dangerously-bypass-hook-trust \
       --sandbox workspace-write \
-      - < "$PROMPT_RUN" > "$LOG" 2>&1
-  rc=$?
+      - < "$PROMPT_RUN" > "$LOG" 2>&1 &
+  HARNESS_PID=$!; wait "$HARNESS_PID"; rc=$?
 
 else
   # `hermes -z` = the purest one-shot: single prompt in, final response text out,
@@ -328,8 +346,8 @@ else
       -m "${HERMES_MODEL:-$DEF_MODEL}" \
       --reasoning "${HERMES_REASONING:-$DEF_EFFORT}" \
       --accept-hooks \
-      --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG"
-  rc=$?
+      --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG" &
+  HARNESS_PID=$!; wait "$HARNESS_PID"; rc=$?
 fi
 
 if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX|$PERSIST_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then

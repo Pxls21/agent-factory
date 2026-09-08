@@ -94,6 +94,10 @@ PC through OmniRoute; the coordinator keeps briefs, the contract gate and the fi
   Lane state lives PC-side under `~/agent-factory/.lanes/<lane-id>/` (brief, prompt, tree,
   lane.pid, lane.log, launch.log, report.md, usage.json). Re-running the same dispatch is
   replay-safe (a live pid or an existing report is never doubled).
+  **Stop a lane with ONE signal:** `kill -TERM $(cat ~/agent-factory/.lanes/<lane-id>/lane.pid)` on the PC — the runner is
+  its session's leader and its TERM trap takes the whole session with it (the harness, its terminal-tool shells, their probes
+  and load loops), then removes the pidfile. Never hand-build a kill list one level deep (AF-AP-68: six orphaned busy loops
+  burned six cores for 90 minutes after a pid-by-pid stop, 2026-09-08).
 - **Bring-up:** `harness-ports/bin/pc-setup.sh` (user-level, idempotent: venv, gitnexus 1.6.10,
   graft, codebase-memory, code-review-graph, ouroboros, detached indexes). PC clone:
   `~/agent-factory` on the designated branch, hooks active.

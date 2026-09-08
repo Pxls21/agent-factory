@@ -133,7 +133,7 @@ check "git push is REFUSED by the shim" "$([ $rcp -ne 0 ] && [ $g5 -eq 0 ] && ec
 "$SHIMGIT" remote add x y >/dev/null 2>"$TMP/err6"; rcr=$?
 check "git remote add is REFUSED" "$([ $rcr -ne 0 ] && echo 0 || echo 1)" \
   "adding a remote is push by another route"
-"$SHIMGIT" status >/dev/null 2>&1; rcs=$?
+( cd "$REPO" && "$SHIMGIT" status ) >/dev/null 2>&1; rcs=$?   # inside the test repo: the check must not depend on the caller's cwd (a scratch run outside any git repo read rc 128, 2026-09-08)
 check "ordinary git still works through the shim" "$([ $rcs -eq 0 ] && echo 0 || echo 1)" \
   "NEGATIVE CONTROL: a shim that blocked everything would pass the two tests above and be useless"
 
@@ -260,6 +260,60 @@ LD15="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-noreply-noretry.md' | head
 check "NEGATIVE CONTROL: with no retries the storage-failure line is a FAILED lane (rc 70, reason in FAILED) and never report.md" \
   "$([ $rc15 -eq 70 ] && grep -q "No reply" "$LD15/FAILED" && [ ! -f "$LD15/report.md" ] && [ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && echo 0 || echo 1)" \
   "the sandbox poller read the line as READY and brought it home (VERIFY-B5j, 2026-09-08 13:30Z)"
+
+# --- a coordinator's TERM takes the whole lane session with it (2026-09-08, AF-AP-68) --------------------
+# TEST DOUBLE: forks a GRANDCHILD (a subshell that sleeps 300 s), records its pid, then sleeps as the harness would.
+GRANDPA="$TMP/grandchild-harness.sh"
+cat > "$GRANDPA" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. A grandchild that outlives its parent unless the lane session is stopped as a whole.
+( sleep 300 ) & echo "$!" > "${GRANDCHILD_PID_FILE:?}"
+cat >/dev/null &   # swallow the prompt without blocking
+sleep 300
+EOF
+chmod +x "$GRANDPA"
+BRIEF16="$TMP/tests/brief-session-stop.md"; { echo "PIN: $SHA"; echo; echo "stop me whole"; } > "$BRIEF16"
+export GRANDCHILD_PID_FILE="$TMP/grandchild-16.pid"
+setsid env PC_LANE_FAKE_HARNESS="$GRANDPA" bash "$LANE" "$BRIEF16" codex >"$TMP/out16" 2>"$TMP/err16" &
+LANE16=$!
+for i in $(seq 1 50); do [ -s "$GRANDCHILD_PID_FILE" ] && break; sleep 0.2; done
+GC16="$(cat "$GRANDCHILD_PID_FILE" 2>/dev/null)"
+LD16="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-session-stop.md' | head -1)"
+# the loop under setsid is its own session leader: find the pc-lane.sh process by its pidfile (written by the lane)
+for i in $(seq 1 50); do [ -s "$LD16/lane.pid" ] && break; sleep 0.2; done
+LOOP16="$(cat "$LD16/lane.pid" 2>/dev/null)"
+kill -TERM "$LOOP16" 2>/dev/null; sleep 3
+check "a TERM to the lane loop kills its GRANDCHILD too (the whole session), and the pidfile is gone" \
+  "$([ -n "$GC16" ] && ! kill -0 "$GC16" 2>/dev/null && [ ! -f "$LD16/lane.pid" ] && grep -q "of the lane session terminated" "$TMP/err16" && echo 0 || echo 1)" \
+  "VERIFY-B5j's six race-margin busy loops outlived a pid-targeted stop by 90 minutes"
+kill -KILL "$GC16" "$LANE16" 2>/dev/null; wait "$LANE16" 2>/dev/null
+
+# NEGATIVE CONTROL: not a session leader → TERM must NOT touch the session it lives in. The whole scene (a bystander, the
+# lane, its harness, the grandchild) runs in ONE throwaway session whose leader is the scene shell, never the lane; at the
+# end the scene's process group is killed as a whole, so nothing of it outlives the test.
+BRIEF17="$TMP/tests/brief-session-noleader.md"; { echo "PIN: $SHA"; echo; echo "not a leader"; } > "$BRIEF17"
+SCENE17="$TMP/scene-17.sh"
+cat > "$SCENE17" <<'EOF'
+#!/usr/bin/env bash
+( sleep 300 ) & echo "$!" > "${SCENE_BYSTANDER_FILE:?}"
+PC_LANE_FAKE_HARNESS="$GRANDPA" bash "$LANE" "$BRIEF17" codex > "$SCENE_OUT" 2> "$SCENE_ERR" &
+wait
+EOF
+export GRANDCHILD_PID_FILE="$TMP/grandchild-17.pid"
+setsid env GRANDPA="$GRANDPA" LANE="$LANE" BRIEF17="$BRIEF17" SCENE_BYSTANDER_FILE="$TMP/bystander-17.pid" \
+  SCENE_OUT="$TMP/out17" SCENE_ERR="$TMP/err17" bash "$SCENE17" >/dev/null 2>&1 </dev/null &
+SCENE17_PID=$!
+for i in $(seq 1 50); do [ -s "$GRANDCHILD_PID_FILE" ] && [ -s "$TMP/bystander-17.pid" ] && break; sleep 0.2; done
+BYSTANDER="$(cat "$TMP/bystander-17.pid" 2>/dev/null)"
+LD17="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-session-noleader.md' | head -1)"
+for i in $(seq 1 50); do [ -s "$LD17/lane.pid" ] && break; sleep 0.2; done
+kill -TERM "$(cat "$LD17/lane.pid" 2>/dev/null)" 2>/dev/null; sleep 3
+check "NEGATIVE CONTROL: a lane that is NOT its session's leader leaves the session alone on TERM (the bystander survives)" \
+  "$([ -n "$BYSTANDER" ] && kill -0 "$BYSTANDER" 2>/dev/null && ! grep -q "of the lane session terminated" "$TMP/err17" && echo 0 || echo 1)" \
+  "a test runner or a manual shell must never lose its own processes to a lane's stop"
+PG17="$(ps -o pgid= -p "$BYSTANDER" 2>/dev/null | tr -d ' ')"
+[ -n "$PG17" ] && kill -KILL -- "-$PG17" 2>/dev/null; wait "$SCENE17_PID" 2>/dev/null
+unset GRANDCHILD_PID_FILE
 
 # --- a lane that dies before its final report still leaves its draft ------------
 # TEST DOUBLE: writes two sections to $LANE_REPORT_DRAFT, then exits with an EMPTY report.
