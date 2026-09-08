@@ -2817,175 +2817,454 @@ def test_probe_appends_a_drain_failure_to_an_earlier_error(tmp_path, agent_resul
 
 # ---- N5i-F13: the read AND write classes are held by a self-scan, not by a grep ----
 
-# Every file receiver in acp_probe.py that is NOT guarded, keyed by
-# (enclosing function, category, receiver expression) -> how many.  Line numbers are
-# deliberately NOT part of the key (VERIFY-CK12 F-CK12-05: line-keyed exemptions go
-# red on every unrelated edit and teach the next lane to re-number them).  Each entry
-# is here because the call cannot block, and says why:
-#   os.readlink  — reads a symlink's target; it never opens the file and cannot block
-#                  on a FIFO.  Three sites: the early retry loop, the a2c-triggered
-#                  sample, the EOF fallback.
-#   os.open in _open_regular — the guard's own implementation: O_NONBLOCK|O_NOFOLLOW
-#                  make the open itself non-blocking, and S_ISREG is checked on the
-#                  resulting descriptor one line later (asserted separately below).
-_GOLDEN_UNGUARDED_RECEIVERS = {
-    ("main", "os.readlink", "'/proc/%d/exe' % proc.pid"): 3,
-    ("_open_regular", "os.open", "path"): 1,
+# Every file receiver in acp_probe.py, keyed by (enclosing function, resolved
+# callee identity, ordinal among that function's receiver calls), maps to its kind.
+# It is deliberately an exact inventory: a deleted writer, an added writer, or a
+# re-routed writer is a diff, rather than a count-floor survivor.  The inventory
+# includes the primitive's two os.open branches and main's framedir directory open;
+# those are safe only because the test separately pins their flags/validation.
+_RECEIVER_INVENTORY = {
+    ("_sha256_file", "builtins.open", 1): "read",
+    ("_open_regular", "os.open", 1): "write-primitive",
+    ("_open_regular", "os.open", 2): "write-primitive",
+    ("_open_regular", "os.fdopen", 3): "write-handle",
+    ("_drain_stderr", "probe._open_regular", 1): "evidence-writer",
+    ("_leaf_handle", "probe._open_regular", 1): "evidence-writer",
+    ("_write_env", "probe._leaf_handle", 1): "evidence-writer",
+    ("_write_evidence", "probe._leaf_handle", 1): "evidence-writer",
+    ("_write_evidence", "probe._write_env", 2): "evidence-writer",
+    ("_write_evidence", "probe._leaf_handle", 3): "evidence-writer",
+    ("main", "builtins.open", 1): "read",
+    ("main", "json.load", 2): "read-handle",
+    ("main", "os.open", 3): "directory-open",
+    ("main", "probe._leaf_handle", 4): "evidence-writer",
+    ("main", "os.readlink", 5): "identity-read",
+    ("main", "os.readlink", 6): "identity-read",
+    ("main", "os.readlink", 7): "identity-read",
+    ("main._m3_write", "probe._leaf_handle", 1): "evidence-writer",
+    ("main", "probe._m3_write", 8): "evidence-writer",
+    ("main", "probe._write_env", 9): "evidence-writer",
+    ("main", "probe._m3_write", 10): "evidence-writer",
+    ("main", "probe._m3_write", 11): "evidence-writer",
 }
-
-_READ_ATTRS = {"read_text", "read_bytes"}
 
 
 def _scan_file_receivers(src):
-    """Enumerate every file receiver in `src` and split them into guarded and not.
+    """Resolve every probe file receiver by its bound callee identity.
 
-    Categories: open() in a read or write mode, io.open, os.open, <expr>.open(),
-    .read_text/.read_bytes, json.load, os.readlink.  A receiver counts as GUARDED
-    when it goes through _open_regular, when it is a handle already bound by a
-    `with <examined call> as <name>`, or when the enclosing function stats the SAME
-    receiver and tests it with S_ISREG before the call (both shapes: the inline
-    S_ISREG(os.stat(x)...) and the two-step st = os.stat(x) ... S_ISREG(st...)).
-    Returns (examined, unguarded_counter, unguarded_lines)."""
+    The visitor tracks lexical imports and simple name rebinding so spelling a receiver
+    as `o = open`, `from os import open as raw`, `io.open`, or `builtins.open` cannot
+    disappear from the inventory.  Attribute file methods are receivers regardless of
+    the expression type that owns them.  The ordinal is a source-order stream inside
+    an enclosing function, not a brittle source line.
+    """
     import ast as _ast
-    import re as _re
-    from collections import Counter
 
-    tree = _ast.parse(src)
-    fns = [(n.name, n.lineno, n.end_lineno) for n in _ast.walk(tree)
-           if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))]
-    lines = src.splitlines()
+    tracked = {
+        "builtins.open", "io.open", "os.open", "os.fdopen", "os.readlink",
+        "json.load", "probe._open_regular", "probe._leaf_handle",
+        "probe._write_env", "probe._m3_write", "attribute.open",
+        "attribute.write_text", "attribute.write_bytes", "attribute.read_text",
+        "attribute.read_bytes",
+    }
+    wrappers = {
+        "_open_regular": "probe._open_regular",
+        "_leaf_handle": "probe._leaf_handle",
+        "_write_env": "probe._write_env",
+        "_m3_write": "probe._m3_write",
+    }
 
-    def owner(ln):
-        best = None
-        for name, start, end in fns:
-            if start <= ln <= end and (best is None or start > best[1]):
-                best = (name, start, end)
-        return best if best else ("<module>", 1, len(lines))
-
-    def mode_of(node):
-        if len(node.args) > 1 and isinstance(node.args[1], _ast.Constant):
-            return str(node.args[1].value)
-        for kw in node.keywords:
-            if kw.arg == "mode" and isinstance(kw.value, _ast.Constant):
-                return str(kw.value.value)
-        return "r"
-
-    def classify(node):
-        """-> (category, receiver) or None."""
-        f = node.func
-        if isinstance(f, _ast.Name):
-            if f.id == "open":
-                m = mode_of(node)
-                cat = "open:w" if any(c in m for c in "wax+") else "open:r"
-                return cat, (_ast.unparse(node.args[0]) if node.args else "?")
-            if f.id == "_open_regular":
-                return "_open_regular", (_ast.unparse(node.args[0]) if node.args else "?")
-            return None
-        if isinstance(f, _ast.Attribute):
-            base = _ast.unparse(f.value)
-            if f.attr == "open":
-                if base in ("io", "os"):
-                    return f"{base}.open", (_ast.unparse(node.args[0]) if node.args else "?")
-                return "Path.open", base
-            if f.attr in _READ_ATTRS:
-                return f".{f.attr}", base
-            if f.attr == "load" and base == "json":
-                return "json.load", (_ast.unparse(node.args[0]) if node.args else "?")
-            if f.attr == "readlink" and base == "os":
-                return "os.readlink", (_ast.unparse(node.args[0]) if node.args else "?")
+    def canonical(full):
+        if full in {"builtins.open", "io.open", "os.open", "os.fdopen",
+                    "os.readlink", "json.load"}:
+            return full
+        if full in {"os", "io", "builtins", "json", "pathlib"}:
+            return f"module:{full}"
         return None
 
-    # handles bound by `with <an examined call> as <name>`
-    handles = set()
-    for node in _ast.walk(tree):
-        if not isinstance(node, (_ast.With, _ast.AsyncWith)):
-            continue
-        for item in node.items:
-            if (isinstance(item.context_expr, _ast.Call)
-                    and isinstance(item.optional_vars, _ast.Name)
-                    and classify(item.context_expr)):
-                handles.add(item.optional_vars.id)
+    def mode_kind(call, identity, function):
+        if identity in {"builtins.open", "io.open", "attribute.open"}:
+            mode = "r"
+            if len(call.args) > 1 and isinstance(call.args[1], _ast.Constant):
+                mode = str(call.args[1].value)
+            else:
+                for kw in call.keywords:
+                    if kw.arg == "mode" and isinstance(kw.value, _ast.Constant):
+                        mode = str(kw.value.value)
+                        break
+            return "write" if any(c in mode for c in "wax+") else "read"
+        if identity == "os.open":
+            if function == "main" and any(
+                    isinstance(n, _ast.Attribute) and n.attr == "O_DIRECTORY"
+                    for n in _ast.walk(call)):
+                return "directory-open"
+            return "write-primitive" if function == "_open_regular" else "os-open"
+        if identity == "os.fdopen":
+            return "write-handle"
+        if identity == "os.readlink":
+            return "identity-read"
+        if identity == "json.load":
+            return "read-handle"
+        if identity.startswith("attribute.write"):
+            return "write"
+        if identity.startswith("attribute.read"):
+            return "read"
+        if identity in wrappers.values():
+            return "evidence-writer"
+        return "receiver"
 
-    def guarded_by_isreg(prefix, recv):
-        r = _re.escape(recv)
-        if _re.search(r"S_ISREG\(\s*os\.f?stat\(\s*" + r + r"\s*\)", prefix):
-            return True
-        for m in _re.finditer(r"(\w+)\s*=\s*os\.f?stat\(\s*" + r + r"\s*\)", prefix):
-            if _re.search(r"S_ISREG\(\s*" + _re.escape(m.group(1)) + r"\b", prefix):
-                return True
-        return False
+    class _ReceiverVisitor(_ast.NodeVisitor):
+        def __init__(self):
+            self.scopes = [{
+                "open": "builtins.open", "os": "module:os", "io": "module:io",
+                "builtins": "module:builtins", "json": "module:json", **wrappers,
+            }]
+            self.functions = []
+            self.calls = []
 
-    examined, unguarded, where = [], Counter(), []
-    for node in _ast.walk(tree):
-        if not isinstance(node, _ast.Call):
-            continue
-        hit = classify(node)
-        if hit is None:
-            continue
-        cat, recv = hit
-        fname, start, _end = owner(node.lineno)
-        examined.append((node.lineno, cat, recv, fname))
-        if cat == "_open_regular" or recv in handles:
-            continue
-        prefix = "\n".join(lines[start - 1:node.lineno - 1])
-        if guarded_by_isreg(prefix, recv):
-            continue
-        unguarded[(fname, cat, recv)] += 1
-        where.append(f"{fname}:{node.lineno} {cat} {recv}")
-    return examined, unguarded, where
+        def _resolve(self, node):
+            if isinstance(node, _ast.Name):
+                for scope in reversed(self.scopes):
+                    if node.id in scope:
+                        return scope[node.id]
+                return None
+            if isinstance(node, _ast.Attribute):
+                base = self._resolve(node.value)
+                if base is not None and base.startswith("module:"):
+                    return canonical(base.removeprefix("module:") + "." + node.attr)
+                if node.attr in {"open", "write_text", "write_bytes", "read_text", "read_bytes"}:
+                    return "attribute." + node.attr
+            return None
+
+        def _bind(self, target, identity):
+            if isinstance(target, _ast.Name):
+                if identity is None:
+                    self.scopes[-1].pop(target.id, None)
+                else:
+                    self.scopes[-1][target.id] = identity
+            elif isinstance(target, (_ast.Tuple, _ast.List)):
+                for child in target.elts:
+                    self._bind(child, None)
+
+        def _function_key(self):
+            return ".".join(self.functions) if self.functions else "<module>"
+
+        def visit_Import(self, node):
+            for item in node.names:
+                bound = item.asname or item.name.split(".")[0]
+                self._bind(_ast.Name(id=bound), canonical(item.name))
+
+        def visit_ImportFrom(self, node):
+            base = node.module or ""
+            for item in node.names:
+                bound = item.asname or item.name
+                self._bind(_ast.Name(id=bound), canonical(f"{base}.{item.name}"))
+
+        def visit_Assign(self, node):
+            self.visit(node.value)
+            identity = self._resolve(node.value)
+            for target in node.targets:
+                self._bind(target, identity)
+
+        def visit_AnnAssign(self, node):
+            if node.value is not None:
+                self.visit(node.value)
+                self._bind(node.target, self._resolve(node.value))
+            else:
+                self._bind(node.target, None)
+
+        def visit_FunctionDef(self, node):
+            self._bind(_ast.Name(id=node.name), "probe." + node.name)
+            for dec in node.decorator_list:
+                self.visit(dec)
+            for default in node.args.defaults + node.args.kw_defaults:
+                if default is not None:
+                    self.visit(default)
+            self.functions.append(node.name)
+            self.scopes.append({})
+            for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+                self._bind(_ast.Name(id=arg.arg), None)
+            if node.args.vararg is not None:
+                self._bind(_ast.Name(id=node.args.vararg.arg), None)
+            if node.args.kwarg is not None:
+                self._bind(_ast.Name(id=node.args.kwarg.arg), None)
+            for stmt in node.body:
+                self.visit(stmt)
+            self.scopes.pop()
+            self.functions.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node):
+            identity = self._resolve(node.func)
+            function = self._function_key()
+            if identity in tracked:
+                self.calls.append((node.lineno, node.col_offset, function, identity,
+                                   mode_kind(node, identity, function)))
+            self.generic_visit(node)
+
+    visitor = _ReceiverVisitor()
+    visitor.visit(_ast.parse(src))
+    visitor.calls.sort()
+    ordinals = {}
+    inventory = {}
+    for _line, _column, function, callee, kind in visitor.calls:
+        ordinal = ordinals[function] = ordinals.get(function, 0) + 1
+        inventory[(function, callee, ordinal)] = kind
+    return inventory
+
+
+def _primitive_source(src):
+    return src.split("def _open_regular(", 1)[1].split("\ndef ", 1)[0]
 
 
 def test_probe_every_file_receiver_is_guarded_or_committed():
-    """N5i-F13 (VERIFY-N5h item 13): on the PIN the read class was closed by a grep
-    pasted into a report and the write class was not closed at all — three of the
-    four evidence writes hung on a FIFO, including one receiver the round's own fix
-    proposal did not list.  This scan walks acp_probe.py's AST, enumerates every
-    file receiver (reads AND writes) and asserts that the set which is neither
-    routed through _open_regular nor S_ISREG-guarded on the SAME receiver equals a
-    committed golden set.  A new receiver is a diff against that set, not a silent
-    pass.  Negative controls below: an unguarded write, an unguarded read and a raw
-    os.open each turn it red, and the coverage floor makes an empty scan red."""
+    """The exact receiver world is held by callee identity, not spelling or count."""
     src = PROBE.read_text()
-    examined, unguarded, where = _scan_file_receivers(src)
-
-    assert dict(unguarded) == _GOLDEN_UNGUARDED_RECEIVERS, (
-        f"unguarded file receivers changed: got {dict(unguarded)} at {where}, "
-        f"expected {_GOLDEN_UNGUARDED_RECEIVERS}"
+    inventory = _scan_file_receivers(src)
+    assert inventory == _RECEIVER_INVENTORY, (
+        f"file receiver inventory changed: got {inventory}, "
+        f"expected {_RECEIVER_INVENTORY}"
     )
-    assert len(examined) >= 12, (
-        f"the scan only examined {len(examined)} receivers — it is not looking at "
-        f"the file it claims to cover: {examined}"
+
+    kinds = _RECEIVER_INVENTORY
+    assert sum(kind == "evidence-writer" for kind in kinds.values()) == 12, kinds
+    prim = _primitive_source(src)
+    for token in (
+            "os.O_NOFOLLOW", "os.O_NONBLOCK", "os.ftruncate(fd, 0)",
+            "st.st_nlink != 1", "dir_fd=dir_fd", "os.O_DIRECTORY"):
+        assert token in prim or token in src, f"the guarded write boundary lost {token}"
+    assert "os.O_TRUNC" not in prim, "open must validate before it truncates"
+
+    # Negative controls run the same inventory against source mutations.  Each one
+    # changes an identity-keyed receiver, never merely a textual name.
+    alias_open = src.replace("    h = hashlib.sha256()\n",
+                             "    o = open\n    o(path + '.copy', 'w').close()\n"
+                             "    h = hashlib.sha256()\n", 1)
+    assert alias_open != src
+    assert _scan_file_receivers(alias_open) != _RECEIVER_INVENTORY
+
+    path_writer = src.replace("    h = hashlib.sha256()\n",
+                              "    pathlib.Path(path + '.copy').write_text('x')\n"
+                              "    h = hashlib.sha256()\n", 1)
+    assert path_writer != src
+    assert _scan_file_receivers(path_writer) != _RECEIVER_INVENTORY
+
+    deleted_writer = src.replace("    _write_env(framedir, framedir_fd)\n", "", 1)
+    assert deleted_writer != src
+    assert _scan_file_receivers(deleted_writer) != _RECEIVER_INVENTORY
+
+
+# ---- N5j: hostile path proof runs are standalone because FIFO/socket lifetime
+#      belongs to the rig, not pytest's worker process. ----
+
+def _run_hostile_probe_rig(tmp_path, case, *, mutation=None):
+    """Run one isolated probe hostile-path rig under timeout with a PID-scoped watchdog.
+
+    The driver owns only its child process group.  It writes one JSON object so the
+    test asserts actual foreign-file state rather than treating a non-zero rc as proof.
+    """
+    tree = _probe_tree_copy(tmp_path)
+    probe = tree / "tools" / "acp_probe.py"
+    if mutation:
+        src = probe.read_text()
+        assert src.count(mutation[0]) == 1, mutation[0]
+        probe.write_text(src.replace(*mutation))
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    agent = tmp_path / "agent_result.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import json, os, sys
+        case = %r
+        for line in sys.stdin:
+            msg = json.loads(line)
+            if case == "swap-framedir-after-open":
+                os.rename("frame", "frame-original")
+                os.symlink("foreign", "frame")
+            sys.stdout.write(json.dumps({
+                "jsonrpc": "2.0", "id": msg["id"], "result": {
+                    "protocolVersion": 1,
+                    "agentInfo": {"name": "hostile-rig", "version": "0"},
+                    "agentCapabilities": {},
+                }}) + "\\n")
+            sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """) % case)
+    agent.chmod(0o755)
+    driver = tmp_path / "driver.py"
+    driver.write_text(textwrap.dedent(f"""\
+        import json, os, socket, subprocess, sys, time
+        from pathlib import Path
+        probe = {str(probe)!r}
+        foreign = Path({str(foreign)!r})
+        os.chdir({str(tmp_path)!r})
+        frame = Path("frame")
+        agent = {str(agent)!r}
+        case = {case!r}
+        reader = None
+        listener = None
+        if case == "hardlink":
+            foreign_leaf = foreign / "foreign.txt"
+            foreign_leaf.write_text("foreign bytes survive")
+            frame.mkdir()
+            os.link(foreign_leaf, frame / "timeline.jsonl")
+        elif case == "symlink-parent":
+            parent = Path("frame-parent-link")
+            os.symlink(foreign, parent)
+            frame = parent / "child"
+        elif case == "final-symlink":
+            frame.mkdir()
+            os.symlink("/dev/null", frame / "timeline.jsonl")
+        elif case == "fifo-reader":
+            frame.mkdir()
+            fifo = frame / "timeline.jsonl"
+            os.mkfifo(fifo)
+            reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        elif case == "socket":
+            frame.mkdir()
+            sock = frame / "timeline.jsonl"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(sock))
+        elif case in ("fresh", "swap-framedir-after-open"):
+            pass
+        else:
+            raise AssertionError(case)
+        env = {{
+            "S0_01_AGENT": agent,
+            "S0_01_FRAMEDIR": str(frame),
+            "ACP_PROBE_TIMEOUT": "5",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PATH": os.environ.get("PATH", ""),
+        }}
+        child = subprocess.Popen([sys.executable, probe], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, env=env,
+                                 start_new_session=True)
+        deadline = time.monotonic() + 8
+        while child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if child.poll() is None:
+            os.killpg(child.pid, 15)
+            try:
+                child.wait(1)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, 9)
+                child.wait()
+            raise SystemExit("watchdog timeout")
+        out, err = child.communicate()
+        if reader is not None:
+            os.close(reader)
+        if listener is not None:
+            listener.close()
+        foreign_leaf = foreign / "foreign.txt"
+        original = Path("frame-original")
+        print(json.dumps({{
+            "rc": child.returncode,
+            "stderr": err.strip(),
+            "foreign_files": sorted(p.name for p in foreign.iterdir()),
+            "foreign_text": foreign_leaf.read_text() if foreign_leaf.exists() else None,
+            "frame_files": sorted(p.name for p in frame.iterdir()) if frame.is_dir() else [],
+            "original_files": sorted(p.name for p in original.iterdir()) if original.is_dir() else [],
+        }}, sort_keys=True))
+    """))
+    r = subprocess.run(
+        ["timeout", "12", sys.executable, str(driver)], capture_output=True,
+        text=True, timeout=15,
     )
-    # the write class actually goes through the primitive, not just "not flagged"
-    assert sum(1 for e in examined if e[1] == "_open_regular") >= 5, examined
-    # and the primitive itself is what the golden entry claims it is
-    prim = src.split("def _open_regular(", 1)[1].split("\ndef ", 1)[0]
-    for token in ("os.O_NOFOLLOW", "os.O_NONBLOCK", "S_ISREG(os.fstat(fd)"):
-        assert token in prim, f"_open_regular no longer contains {token}"
+    assert r.returncode == 0, f"rig failed rc={r.returncode}: {r.stderr} {r.stdout}"
+    return json.loads(r.stdout)
 
-    # NEGATIVE CONTROL 1: an unguarded write receiver
-    planted = src.replace("    h = hashlib.sha256()\n",
-                          "    open(path + '.copy', 'w').close()\n    h = hashlib.sha256()\n", 1)
-    assert planted != src
-    _e, u1, w1 = _scan_file_receivers(planted)
-    assert dict(u1) != _GOLDEN_UNGUARDED_RECEIVERS and any("open:w" in x for x in w1), w1
 
-    # NEGATIVE CONTROL 2: an unguarded read receiver
-    planted = src.replace("    request = {\"jsonrpc\": \"2.0\"",
-                          "    Path(fixture_path + '.bak').read_text()\n"
-                          "    request = {\"jsonrpc\": \"2.0\"", 1)
-    assert planted != src
-    _e, u2, w2 = _scan_file_receivers(planted)
-    assert dict(u2) != _GOLDEN_UNGUARDED_RECEIVERS and any(".read_text" in x for x in w2), w2
+def test_probe_hardlink_refusal_preserves_the_foreign_inode(tmp_path):
+    observed = _run_hostile_probe_rig(tmp_path, "hardlink")
+    assert observed["rc"] == 1, observed
+    assert "hardlinked evidence leaf (nlink=2)" in observed["stderr"], observed
+    assert observed["foreign_text"] == "foreign bytes survive", observed
 
-    # NEGATIVE CONTROL 3: a raw os.open that bypasses the primitive
-    anchor = "        agent_realpath = os.path.realpath(agent)\n"
-    assert src.count(anchor) == 1
-    planted = src.replace(anchor,
-                          "        os.open(framedir + '/x', os.O_WRONLY | os.O_CREAT)\n"
-                          + anchor, 1)
-    _e, u3, w3 = _scan_file_receivers(planted)
-    assert dict(u3) != _GOLDEN_UNGUARDED_RECEIVERS and any("os.open" in x for x in w3), w3
+
+def test_probe_hardlink_negative_control_restored_otrunc_clobbers_foreign_inode(tmp_path):
+    observed = _run_hostile_probe_rig(
+        tmp_path, "hardlink",
+        mutation=(
+            "flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK",
+            "flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK",
+        ),
+    )
+    assert observed["rc"] == 1, observed
+    assert observed["foreign_text"] == "", observed
+
+
+def test_probe_refuses_a_symlinked_framedir_before_any_foreign_write(tmp_path):
+    observed = _run_hostile_probe_rig(tmp_path, "symlink-parent")
+    assert observed["rc"] == 1, observed
+    assert "framedir path contains a symlink" in observed["stderr"], observed
+    assert observed["foreign_files"] == [], observed
+
+
+def test_probe_fresh_framedir_is_created_and_captures_evidence(tmp_path):
+    observed = _run_hostile_probe_rig(tmp_path, "fresh")
+    assert observed["rc"] == 0, observed
+    assert observed["frame_files"] == [
+        "agent-stderr.txt", "env.json", "runtime-identity.json", "timeline.jsonl",
+    ], observed
+
+
+def test_probe_truncates_existing_regular_evidence_after_validation(tmp_path, agent_result):
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    (framedir / "timeline.jsonl").write_text("STALE" * 20000)
+    r = subprocess.run(["timeout", "12", sys.executable, str(PROBE)],
+                       capture_output=True, text=True, timeout=15,
+                       env=_hostile_env(agent_result, framedir))
+    assert r.returncode == 0, f"probe failed: {r.returncode}: {r.stderr}"
+    timeline = (framedir / "timeline.jsonl").read_text()
+    assert "STALE" not in timeline, "existing evidence bytes survived validation"
+    assert len([line for line in timeline.splitlines() if line.strip()]) == 2
+
+
+def test_probe_writes_remain_on_the_original_dir_fd_after_path_swap(tmp_path):
+    observed = _run_hostile_probe_rig(tmp_path, "swap-framedir-after-open")
+    assert observed["rc"] == 0, observed
+    assert observed["foreign_files"] == [], observed
+    assert observed["frame_files"] == [], observed
+    assert observed["original_files"] == [
+        "agent-stderr.txt", "env.json", "runtime-identity.json", "timeline.jsonl",
+    ], observed
+
+
+def test_probe_refuses_reader_backed_fifo_and_unix_socket_without_hanging(tmp_path):
+    symlink = _run_hostile_probe_rig(tmp_path / "symlink", "final-symlink")
+    assert symlink["rc"] == 1, symlink
+    assert "Too many levels of symbolic links" in symlink["stderr"], symlink
+    fifo = _run_hostile_probe_rig(tmp_path / "fifo", "fifo-reader")
+    assert fifo["rc"] == 1, fifo
+    assert "not a regular file" in fifo["stderr"], fifo
+    socket = _run_hostile_probe_rig(tmp_path / "socket", "socket")
+    assert socket["rc"] == 1, socket
+    assert "No such device or address" in socket["stderr"], socket
+
+
+def test_probe_rejects_non_bare_leaf_names(tmp_path):
+    tree = _probe_tree_copy(tmp_path)
+    driver = tmp_path / "leaf_driver.py"
+    driver.write_text(textwrap.dedent(f"""\
+        import os, sys
+        sys.path.insert(0, {str(tree / 'tools')!r})
+        import acp_probe
+        fd = os.open({str(tmp_path)!r}, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            acp_probe._open_regular("../escape", "w", dir_fd=fd)
+        except OSError as exc:
+            print(str(exc))
+        else:
+            raise SystemExit("bare-name guard did not raise")
+        finally:
+            os.close(fd)
+    """))
+    r = subprocess.run(["timeout", "12", sys.executable, str(driver)],
+                       capture_output=True, text=True, timeout=15)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "evidence leaf name must be a bare basename: '../escape'"
 
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo_with_reader"])

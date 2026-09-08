@@ -59,23 +59,34 @@ def _sha256_file(path):
     return h.hexdigest()
 
 
-def _open_regular(path, mode):
-    """Open `path` for WRITING in a way that can never block, and name the refusal.
+def _open_regular(name, mode, *, dir_fd=None, display_path=None):
+    """Open one evidence leaf for bounded, verified writing.
 
-    N5i-F5 (the WRITE class): the read side was closed in round 11, the write side
-    was not — a FIFO planted at runtime-identity.json, env.json or timeline.jsonl
-    made open() block forever (measured on the PIN: rc 124 under `timeout 12`, all
-    three).  O_NONBLOCK turns a reader-less FIFO into ENXIO instead of a wait,
-    O_NOFOLLOW turns a symlink into ELOOP, a directory already fails with EISDIR,
-    and S_ISREG on the OPEN descriptor rejects every other type (character devices,
-    sockets) with no TOCTOU window.  O_NONBLOCK is cleared before the handle is
-    returned so the caller writes to an ordinary file object."""
-    fd = os.open(path,
-                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
-                 0o644)
+    The runner owns fresh framedir provenance; the probe refuses anything it cannot
+    prove.  When `dir_fd` is supplied, `name` must be a bare leaf and the open is
+    relative to that directory fd.  The open deliberately does NOT truncate: the fd
+    is first validated as a regular file with exactly one link, then truncated.
+    O_NONBLOCK makes reader-less FIFOs fail at open, O_NOFOLLOW rejects final
+    symlinks, S_ISREG rejects reader-backed FIFOs/devices/sockets, and the one-link
+    check prevents a hardlinked evidence leaf from clobbering another inode."""
+    shown = display_path if display_path is not None else name
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+    if dir_fd is not None:
+        if name in ("", ".", "..") or os.path.basename(name) != name:
+            raise OSError("evidence leaf name must be a bare basename: %r" % (name,))
+        try:
+            fd = os.open(name, flags, 0o644, dir_fd=dir_fd)
+        except OSError as exc:
+            raise exc.__class__(exc.errno, exc.strerror, shown) from None
+    else:
+        fd = os.open(name, flags, 0o644)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError("not a regular file: %s" % (path,))
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file: %s" % (shown,))
+        if st.st_nlink != 1:
+            raise OSError("hardlinked evidence leaf (nlink=%d): %s" % (st.st_nlink, shown))
+        os.ftruncate(fd, 0)
         fcntl.fcntl(fd, fcntl.F_SETFL,
                     fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
     except Exception:
@@ -106,14 +117,15 @@ def _utc_now():
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _drain_stderr(proc, stderr_path, error_slot):
+def _drain_stderr(proc, stderr_name, error_slot, *, framedir_fd, display_path):
     """Drain the agent's stderr to a file in a background thread.
 
     N5h-#10: a failure here is RECORDED in error_slot (a one-element list the main
     path folds into probe_error), never swallowed — a directory at stderr_path used
     to kill this thread silently while the probe still exited 0."""
     try:
-        with _open_regular(stderr_path, "wb") as f:
+        with _open_regular(stderr_name, "wb", dir_fd=framedir_fd,
+                           display_path=display_path) as f:
             while True:
                 chunk = proc.stderr.read(65536)
                 if not chunk:
@@ -138,15 +150,24 @@ def _redact_env(env):
     return result
 
 
-def _write_env(framedir):
+def _leaf_handle(framedir_fd, framedir, name, mode):
+    if framedir_fd is None:
+        raise OSError("framedir is not open for evidence writes: %s" % (framedir,))
+    return _open_regular(
+        name, mode, dir_fd=framedir_fd,
+        display_path=os.path.join(framedir, name),
+    )
+
+
+def _write_env(framedir, framedir_fd):
     """Write env.json (caller's environment with redaction)."""
     env_data = _redact_env(dict(os.environ))
-    with _open_regular(os.path.join(framedir, "env.json"), "w") as f:
+    with _leaf_handle(framedir_fd, framedir, "env.json", "w") as f:
         json.dump(env_data, indent=1, sort_keys=True, fp=f)
         f.write("\n")
 
 
-def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
+def _write_evidence(framedir, framedir_fd, timeline, agent, agent_realpath, child_pid,
                     interp_realpath, interp_sha256, spawned_at_utc,
                     agent_exit_code, probe_error):
     """Write runtime-identity.json, env.json and timeline.jsonl.  N5e-F8: called
@@ -182,15 +203,14 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
     }
     if probe_error is not None:
         identity["probe_error"] = probe_error
-    with _open_regular(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+    with _leaf_handle(framedir_fd, framedir, "runtime-identity.json", "w") as f:
         json.dump(identity, f, indent=2)
         f.write("\n")
 
-    _write_env(framedir)
+    _write_env(framedir, framedir_fd)
 
     # timeline.jsonl
-    tl_path = os.path.join(framedir, "timeline.jsonl")
-    with _open_regular(tl_path, "w") as f:
+    with _leaf_handle(framedir_fd, framedir, "timeline.jsonl", "w") as f:
         for entry in timeline:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
@@ -246,17 +266,30 @@ def main():
     spawned_at_utc = None
     agent_exit_code = None
     child_pid = None
+    framedir_fd = None
 
     # Wrap the main body so any exception lands in runtime-identity.json
     # under probe_error + exit 1 with a one-line stderr message (M3)
     try:
-        # 4-F11: validate/create framedir inside the wrapped body
+        # 4-F11: validate/create framedir inside the wrapped body.  The runner owns
+        # fresh framedirs; for arbitrary probe input this path must be provably
+        # symlink-free before any evidence write goes dir-fd-relative.  Check before
+        # mkdir too: a missing child beneath a symlinked parent would otherwise make
+        # os.makedirs() create that child outside the caller's nominated frame.
+        framedir_abs = os.path.abspath(framedir)
+        if os.path.realpath(framedir) != framedir_abs:
+            raise OSError("framedir path contains a symlink: %s" % (framedir,))
         if not os.path.isdir(framedir):
             try:
                 os.makedirs(framedir, exist_ok=True)
             except OSError as exc:
                 print(f"acp_probe: S0_01_FRAMEDIR error: {exc}", file=sys.stderr)
                 raise SystemExit(64)
+        # Recheck after mkdir before opening the one directory fd used by every leaf.
+        if os.path.realpath(framedir) != framedir_abs:
+            raise OSError("framedir path contains a symlink: %s" % (framedir,))
+        framedir_fd = os.open(
+            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 
         # A16: validate ACP_PROBE_TIMEOUT inside the wrapped body — must be
         # a finite float > 0, else probe_error + exit 64
@@ -292,7 +325,7 @@ def main():
             if not math.isfinite(timeout) or timeout <= 0:
                 msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
         if msg is not None:
-            with _open_regular(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+            with _leaf_handle(framedir_fd, framedir, "runtime-identity.json", "w") as f:
                 json.dump({"probe_error": msg}, f, indent=2)
                 f.write("\n")
             print(f"acp_probe: {msg}", file=sys.stderr)
@@ -339,7 +372,10 @@ def main():
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
         drain_error = [None]
         stderr_thread = threading.Thread(
-            target=_drain_stderr, args=(proc, stderr_path, drain_error), daemon=True
+            target=_drain_stderr,
+            args=(proc, "agent-stderr.txt", drain_error),
+            kwargs={"framedir_fd": framedir_fd, "display_path": stderr_path},
+            daemon=True,
         )
         stderr_thread.start()
 
@@ -536,7 +572,7 @@ def main():
         # agent degrades gracefully (agent_entrypoint_sha256=None, probe_error
         # set, all four files written); the M3 handler is the last resort.
         probe_error = _write_evidence(
-            framedir, timeline, agent, agent_realpath, child_pid,
+            framedir, framedir_fd, timeline, agent, agent_realpath, child_pid,
             interp_realpath, interp_sha256, spawned_at_utc,
             agent_exit_code, probe_error,
         )
@@ -571,27 +607,25 @@ def main():
         # independently so one planted path cannot cost the other three.
         m3_errors = []
 
-        def _m3_write(path, text):
+        def _m3_write(name, text):
             try:
-                with _open_regular(path, "w") as f:
+                with _leaf_handle(framedir_fd, framedir, name, "w") as f:
                     f.write(text)
             except Exception as exc2:
-                m3_errors.append(f"{os.path.basename(path)}: {type(exc2).__name__}: {exc2}")
+                m3_errors.append(f"{name}: {type(exc2).__name__}: {exc2}")
 
-        rid_path = os.path.join(framedir, "runtime-identity.json")
-        _m3_write(rid_path, json.dumps(identity, indent=2) + "\n")
+        _m3_write("runtime-identity.json", json.dumps(identity, indent=2) + "\n")
         try:
-            _write_env(framedir)
+            _write_env(framedir, framedir_fd)
         except Exception as exc2:
             m3_errors.append(f"env.json: {type(exc2).__name__}: {exc2}")
         # Write whatever timeline we have
-        tl_path = os.path.join(framedir, "timeline.jsonl")
-        _m3_write(tl_path, "".join(
+        _m3_write("timeline.jsonl", "".join(
             json.dumps(entry, separators=(",", ":")) + "\n" for entry in timeline))
         # agent-stderr.txt — create if missing (stderr drain may not have started)
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
         if not os.path.exists(stderr_path):
-            _m3_write(stderr_path, "")
+            _m3_write("agent-stderr.txt", "")
         if m3_errors:
             print("acp_probe: last-resort evidence write failed: " + "; ".join(m3_errors),
                   file=sys.stderr)
