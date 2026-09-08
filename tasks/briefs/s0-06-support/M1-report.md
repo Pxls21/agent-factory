@@ -12,7 +12,7 @@ and no claim is made that the four scopes were demonstrated on a live substrate.
 | gate (HEAD, final bytes) | `RESULT: rev=4b62a9d785aa files=56 runs=2 identical=yes rc=0 summary="95 passed in 14.94s 95 passed in 13.03s"` |
 | mutants | 28 mutants, **19/19 REASONS rows reached, unreached: NONE** |
 | defects found in my own work | **4** (2 production, 2 test-vacuity) + 1 provably-dead guard, all fixed this round, 2 with a red control |
-| NOT done | read contract 5 (Fubuki bounds + token budget); the live PC leg; artifact mint |
+| NOT done | read contract 5 (Fubuki bounds + token budget); the live PC leg; artifact mint; the whole tree EXECUTED (collection-only proven: `1688 tests collected`, no errors) |
 
 ---
 
@@ -436,12 +436,18 @@ probe), caught in my own work.
 4. **`memory_required` pre-dispatch health check** (read contract 6, second clause) is not
    implemented; the adapter returns `degraded` with the failing scopes named, which is the first
    clause only.
-5. **The full `tests/` suite was NOT completed in this report.** A run on the PIN static copy went
-   past the 600 s tool cap and was still executing when this report was written; it also carried
-   pre-final bytes. My lane's own module is green twice at two revisions (§2), and my files are
-   purely additive — the only shared surface is the new test module — but I have **not** measured
-   the whole tree with the final bytes. Recommend the coordinator's PC suite
-   (`scripts/pc_suite.sh`) over the committed head.
+5. **The full `tests/` suite was NOT executed.** My attempt on the PIN static copy was killed by
+   my own 25-minute cap (`timeout 1500` → SIGTERM, exit 143); `test_summary.sh` buffers its
+   output into a variable and echoes at the end, so the killed run produced **zero counts** —
+   there is nothing partial to report, and the 35 bytes it left are `Terminated` plus the exit
+   line. What I ran instead on the SAME static copy carrying the final bytes, in 1.85 s:
+   `python3 -m pytest tests/ --collect-only -q` → `1688 tests collected`, **no collection
+   errors**; with my module moved aside, `1593 tests collected`; my module alone,
+   `95 tests collected`; 1593 + 95 = 1688. That rules out the only realistic way purely-additive
+   files break a tree — an import error, a duplicate module basename, or a fixture/name collision
+   — and shows my files change no other module's collection. What remains **unmeasured** is the
+   whole tree EXECUTED with the final bytes. Recommend the coordinator's PC suite
+   (`scripts/pc_suite.sh`, 8 xdist workers) over the committed head.
 6. **The ADR 0003 conflict is reported, not resolved** (D-2), and the `_global` naming collision
    (D-3) has no ADR line yet.
 7. **Nothing was committed or pushed.** No outward-facing action was taken.
