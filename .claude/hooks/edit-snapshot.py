@@ -147,6 +147,23 @@ AP_SCREEN = [
     # install fires; confirm the catching scope starts on the very next statement.
     ("AF-AP-58", re.compile(r"""\bsignal\.signal\(\s*signal\.SIG[A-Z]+\s*,"""),
      "signal handler install — if the handler RAISES, the try that catches it must begin on the NEXT statement and wrap everything after (pre-init every local the except path reads); test the gap deterministically (long window, child-exists poll), never with a fixed delay (AF-AP-58)"),
+    # AF-AP-70 (2026-09-08): classify-then-open by pathname — a guard proves what the NAME is at t0 (S_ISREG, is_file,
+    # lstat, _refuse_non_regular) and the open at t1 trusts it; a FIFO planted in between hangs the opener forever
+    # (VERIFY-D5m F1/F2: the record slot and the pidfile, a 300 ms barrier). The write must be ONE atomic
+    # open that validates the fd it got (O_CREAT|O_EXCL|O_NOFOLLOW|O_NONBLOCK, then fstat), never a path check
+    # followed by write_text()/open().
+    ("AF-AP-70", re.compile(r"""(?:S_ISREG|_refuse_non_regular|\.is_(?:file|dir|symlink)\(\)|os\.l?stat\()[\s\S]{0,400}?(?:\.write_(?:text|bytes)\(|\bopen\((?![^)\n]*O_EXCL))"""),
+     "a path classified, then opened by NAME — the type can change between the check and the open (a FIFO hangs it); make the write ONE atomic open (O_CREAT|O_EXCL|O_NOFOLLOW|O_NONBLOCK) and validate the fd (fstat), with a barrier race test (AF-AP-70)"),
+    # AF-AP-71 (2026-09-08): a bounded query upstream of a completeness/uniqueness gate — `LIMIT n` before the filter
+    # that selects the window makes "exactly one row" true whenever the concurrent row is the (n+1)th
+    # (VERIFY-O2 V-O2-1: 49 + 1 + 1 rows, LIMIT 50, PASS).
+    ("AF-AP-71", re.compile(r"""\bLIMIT\s+(?:\?|\d+|\$\{?\w+|%s|:\w+)"""),
+     "a SQL LIMIT on a query whose rows feed a completeness or uniqueness gate — bound the query by the WINDOW (parameterised, parseable stamps) or fail when the cap is reached; a truncated set cannot prove 'exactly one' (AF-AP-71)"),
+    # AF-AP-72 (2026-09-08): a typed upstream field coerced by truthiness/constructor — bool("false") is True, int("1.0")
+    # raises, int(1.9) is 1; the malformed upstream shape vanishes at the ONE producer boundary (VERIFY-B2 F2 the relay
+    # receipt's `accepted`; VERIFY-G2 F5 the observer uid coerced by int()).
+    ("AF-AP-72", re.compile(r"""\b(?:bool|int|float)\(\s*\w+(?:\[[^\]\n]+\]|\.get\([^)\n]*\))\s*\)"""),
+     "an upstream field COERCED (bool()/int()/float() of a subscript or .get()) — the string \"false\" becomes True; accept only the declared type (`type(v) is bool`) and name the malformed shape in the receipt/error (AF-AP-72)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its

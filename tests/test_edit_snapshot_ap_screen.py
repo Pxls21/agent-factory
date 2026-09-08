@@ -359,3 +359,60 @@ class TestAFAP59:
 
     def test_no_fire_on_own_proc_stat(self):
         assert not self.rx.search('stat = Path(f"/proc/{gc_pid}/stat").read_text()')
+
+
+# ---- AF-AP-70 (AP_SCREEN): classify-then-open by pathname ----
+
+class TestAFAP70:
+    rx = _AP_BY_ID["AF-AP-70"]
+
+    def test_fires_on_refuse_then_write_text(self):
+        src = 'if _refuse_non_regular(slot):\n    raise _RecordSlotError(slot)\nslot.write_text(json.dumps(rec))'
+        assert self.rx.search(src)
+
+    def test_fires_on_isreg_then_open(self):
+        src = 'if not stat.S_ISREG(os.stat(p).st_mode):\n    return 2\nwith open(p, "w") as fh:\n    fh.write(x)'
+        assert self.rx.search(src)
+
+    def test_no_fire_on_atomic_open_after_classification(self):
+        src = 'st = os.lstat(p)\nfd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)'
+        assert not self.rx.search(src)
+
+    def test_no_fire_on_write_without_classification(self):
+        assert not self.rx.search('out.write_text(json.dumps(record) + "\\n")')
+
+
+# ---- AF-AP-71 (AP_SCREEN): a bounded query upstream of a completeness gate ----
+
+class TestAFAP71:
+    rx = _AP_BY_ID["AF-AP-71"]
+
+    def test_fires_on_parameterised_limit(self):
+        assert self.rx.search('"WHERE requested_model = ? ORDER BY timestamp ASC LIMIT ?"')
+
+    def test_fires_on_literal_limit(self):
+        assert self.rx.search("SELECT id FROM call_logs ORDER BY timestamp LIMIT 50")
+
+    def test_no_fire_on_a_constant_named_limit(self):
+        assert not self.rx.search("RATE_LIMIT = 5")
+
+    def test_no_fire_on_python_keyword_argument(self):
+        assert not self.rx.search("rows = fetch(route, limit=limit)")
+
+
+# ---- AF-AP-72 (AP_SCREEN): a typed upstream field coerced ----
+
+class TestAFAP72:
+    rx = _AP_BY_ID["AF-AP-72"]
+
+    def test_fires_on_bool_of_subscript(self):
+        assert self.rx.search('receipt["accepted"] = bool(blob["accepted"])')
+
+    def test_fires_on_int_of_get(self):
+        assert self.rx.search('uid = int(record.get("uid"))')
+
+    def test_no_fire_on_bool_of_a_local(self):
+        assert not self.rx.search("ready = bool(flag)")
+
+    def test_no_fire_on_isinstance(self):
+        assert not self.rx.search('if not isinstance(blob["accepted"], bool):')
