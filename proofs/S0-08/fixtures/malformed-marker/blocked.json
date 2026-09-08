@@ -1,0 +1,14 @@
+{
+  "proof_id": "S0-08",
+  "classification": "blocked_host",
+  "env_fingerprint": "fixture:malformed",
+  "marker": {
+    "probe_cmd": [
+      "sh",
+      "proofs/S0-08/probe_runsc.sh"
+    ],
+    "blocker_status": "expired",
+    "unblock_condition": "runsc executable and a trivial runsc container run succeeds",
+    "owner": "TBD-owner-gvisor-host"
+  }
+}
