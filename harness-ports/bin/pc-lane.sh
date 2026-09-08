@@ -222,6 +222,14 @@ LANE_REPORT_DRAFT="$LANE_DIR/report-draft.md"; export LANE_REPORT_DRAFT
 attempt=0
 while :; do
 attempt=$((attempt + 1))
+# RESUME NOTE (2026-09-08): every attempt is a FRESH Hermes session — the route refusal that ended the previous one took its
+# context with it (a B5j attempt read for an hour, left a 1.3 KB draft, and its successor started from zero). The successor is
+# told what it inherits: the tree state and the incremental draft, to continue from — never to redo.
+PROMPT_RUN="$PROMPT_FILE"
+if [ "$attempt" -gt 1 ]; then
+  PROMPT_RUN="$LANE_DIR/prompt.attempt$attempt.md"
+  { printf 'RESUME (attempt %s of this lane): a previous attempt of THIS lane died on a route refusal, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at %s — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.\n\n---\n\n' "$attempt" "$LANE_REPORT_DRAFT"; cat "$PROMPT_FILE"; } > "$PROMPT_RUN"
+fi
 
 if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
   # TEST DOUBLE — the one stand-in this port permits, and only for plumbing.
@@ -236,7 +244,7 @@ if [ -n "${PC_LANE_FAKE_HARNESS:-}" ]; then
     *) die "PC_LANE_FAKE_HARNESS set for a non-test brief ($BRIEF) — refusing.";;
   esac
   echo "pc-lane: USING FAKE HARNESS (test double) — this is NOT a real lane run." >&2
-  "$PC_LANE_FAKE_HARNESS" < "$PROMPT_FILE" > "$REPORT" 2> "$LOG"
+  "$PC_LANE_FAKE_HARNESS" < "$PROMPT_RUN" > "$REPORT" 2> "$LOG"
   rc=$?
 
 elif [ "$HARNESS" = "codex" ]; then
@@ -263,7 +271,7 @@ elif [ "$HARNESS" = "codex" ]; then
       --skip-git-repo-check \
       --dangerously-bypass-hook-trust \
       --sandbox workspace-write \
-      - < "$PROMPT_FILE" > "$LOG" 2>&1
+      - < "$PROMPT_RUN" > "$LOG" 2>&1
   rc=$?
 
 else
@@ -308,7 +316,7 @@ else
     *)                    DEF_MODEL="agentfactory-build";    DEF_EFFORT="ultra";;
   esac
   TERMINAL_CWD="$TREE" \
-  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_FILE")" \
+  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
       -m "${HERMES_MODEL:-$DEF_MODEL}" \
       --reasoning "${HERMES_REASONING:-$DEF_EFFORT}" \
       --accept-hooks \
