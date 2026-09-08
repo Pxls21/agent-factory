@@ -1,0 +1,9 @@
+providers:
+  s0-03-omniroute:
+    base_url: http://127.0.0.1:20128/v1
+    api_mode: codex_responses
+    key_env: OMNIROUTE_API_KEY
+    extra_headers:
+      x-omniroute-compression: "off"
+
+default: agentfactory-build

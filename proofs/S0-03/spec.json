@@ -1,0 +1,44 @@
+{
+  "proof_id": "S0-03",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/evidence"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-absent"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "blocked: credential_absent"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-stub-route"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "identity: request routed to the sanctioned stub route 's0-01-scripted', not an upstream model"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-provider-key-present"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "env: upstream provider key OPENAI_API_KEY present in the Hermes environ"
+      }
+    }
+  ]
+}

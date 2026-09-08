@@ -1,0 +1,13 @@
+{
+  "exe": "/usr/bin/python3.13",
+  "names": [
+    "HERMES_HOME",
+    "HOME",
+    "LANG",
+    "PATH",
+    "PWD",
+    "SHLVL",
+    "USER"
+  ],
+  "pid": 48211
+}

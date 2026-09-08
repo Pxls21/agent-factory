@@ -39,7 +39,7 @@ a distillation and the ledger wins on any disagreement).
 |---|---|---|
 | S0-01 ACP conformance (buzz-acp launches the pinned hermes-acp; every model call through OmniRoute) | execution | REVIEW-PENDING, repair round 9; result withdrawn, nothing minted |
 | S0-02 Buzz authorization and freshness (four distinct denials) | execution | lane B1 building (fixtures, checker, PC leg runner) — nothing landed |
-| S0-03 Hermes → OmniRoute live round trip | execution (was credential-gated; the blocked marker EXPIRED 2026-09-08 — the credential is present and accepted, the proof must run) | lane O1 building (checker, negative bundles, PC leg runner) — nothing landed |
+| S0-03 Hermes → OmniRoute live round trip | execution (was credential-gated; the blocked marker EXPIRED 2026-09-08 — the credential is present and accepted, the proof must run) | checker, fixtures, the proof-owned Hermes profile and the PC runner LANDED (lane O1); the live legs wait on an S0-01 launcher seam (the runner refuses with exit 5 until then); nothing minted |
 | S0-04 compression contract (sanctioned deterministic stub behind real OmniRoute) | execution | lane C1 building (checker over captured legs); PC legs after S0-03's route is proven |
 | S0-05 no direct egress over live units | execution (mechanism proven by the spike; containment unproven) | lane E1 building (canary suite, netns runner, checker); live-unit legs after S0-01 and S0-03 |
 | S0-06 four-scope memory adapter | execution (unblocked by the Rust spike) | lane M1 building (adapter, checker, PC runner) — nothing landed |

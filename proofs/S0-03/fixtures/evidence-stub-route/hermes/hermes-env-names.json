@@ -1,0 +1,14 @@
+{
+  "exe": "/usr/bin/python3.13",
+  "names": [
+    "HERMES_HOME",
+    "HOME",
+    "LANG",
+    "OMNIROUTE_API_KEY",
+    "PATH",
+    "PWD",
+    "SHLVL",
+    "USER"
+  ],
+  "pid": 48211
+}
