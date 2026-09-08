@@ -130,6 +130,8 @@
 
 - **2026-09-07 23:5xZ — a commit was pushed with a red test suite (22e283e: tracking S0-07 in check-proof-status.py broke five fixture-based tests in tests/test_proof_status.py; the chain gated on safe_commit's rc, not on pytest's).** Rule: a commit chain gates on the TEST run's exit status (`… && pytest … && safe_commit …`), and the pasted count in the message comes from that same run. Fix: the fixtures carry the S0-07 marker + row (the next commit).
 
+- **2026-09-08 00:5xZ — a gate that cannot say WHAT failed is half a gate: B5i's first static-copy run printed `1 failed, 113 passed in 174.02s` and nothing else** (test_summary.sh keeps only the counts; lane_gate.sh kept only those), so the failing test's name was lost and the three-minute gate had to be re-run blind on a box already at load 4.7 with nine lanes live — the count without its evidence, AF-AP-37's shape. Fix: lane_gate.sh writes every run's full pytest output to `<OUTDIR>.run<N>.log` and prints a red run's failure headers + `E ` lines inline (commit 6b6be1d; the test extension caught its own regression — the log files share the archive's `gate-` prefix and the green test's directory selector was order-dependent). Rule: a gate prints or keeps the failure identity in the same artifact as the count.
+
 ## ANTI-PATTERN REGISTRY (owner mandate, inherited from trading-system 2026-08-21)
 
 > The behavioral anti-pattern classes that lead to wrong code in THIS repo. **Every /bug-echo
