@@ -250,6 +250,21 @@ check "NEGATIVE CONTROL: a lane with a real final report keeps it (no draft prom
   "$(grep -q "^FAKE-HARNESS-REPORT" "$LD/report.md" && ! grep -q "^DRAFT REPORT" "$LD/report.md" && echo 0 || echo 1)" \
   "the fallback must key on an EMPTY report, never overwrite a delivered one"
 
+# --- an optional lane patch is applied on the PIN before the harness starts (2026-09-08) --------
+# scripts/pc_lane.sh ships LANE_PATCH to .lanes/<id>/lane.patch; pc-lane.sh applies it ONCE on the pinned tree so the PC
+# can continue a sandbox lane whose files never reached a commit (the quota stop of 2026-09-08 left five such lanes).
+mkdir -p "$REPO/.lanes/lanepatch-ok" "$REPO/.lanes/lanepatch-bad"
+printf 'diff --git a/patched.txt b/patched.txt\nnew file mode 100644\n--- /dev/null\n+++ b/patched.txt\n@@ -0,0 +1 @@\n+patched\n' > "$REPO/.lanes/lanepatch-ok/lane.patch"
+LANE_ID=lanepatch-ok PC_LANE_FAKE_HARNESS="$FAKE" bash "$LANE" "$BRIEF" codex code-implementer >"$TMP/out13" 2>"$TMP/err13"; rc13=$?
+check "a lane patch is applied in the lane worktree before the harness runs (file present, applied line logged, rc 0)" \
+  "$([ $rc13 -eq 0 ] && [ -f "$REPO/.lanes/lanepatch-ok/tree/patched.txt" ] && grep -q 'lane patch applied' "$TMP/err13" && echo 0 || echo 1)" \
+  "a PC lane continuing sandbox work must start from PIN + the shipped bytes (rc=$rc13; stderr: $(head -c 160 "$TMP/err13" | tr '\n' ' '))"
+printf 'diff --git a/nope.txt b/nope.txt\n--- a/nope.txt\n+++ b/nope.txt\n@@ -1 +1 @@\n-x\n+y\n' > "$REPO/.lanes/lanepatch-bad/lane.patch"
+LANE_ID=lanepatch-bad PC_LANE_FAKE_HARNESS="$FAKE" bash "$LANE" "$BRIEF" codex code-implementer >"$TMP/out14" 2>"$TMP/err14"; rc14=$?
+check "NEGATIVE CONTROL: a patch that does not apply is a FAILED lane — rc 70, the reason in FAILED, NO report.md" \
+  "$([ $rc14 -eq 70 ] && [ -s "$REPO/.lanes/lanepatch-bad/FAILED" ] && [ ! -e "$REPO/.lanes/lanepatch-bad/report.md" ] && echo 0 || echo 1)" \
+  "a lane on the wrong bytes would produce confident wrong work (rc=$rc14; FAILED: $(head -c 120 "$REPO/.lanes/lanepatch-bad/FAILED" 2>/dev/null | tr '\n' ' '))"
+
 # --- Hermes role defaults select the live OmniRoute combos -----------------
 # (ported 2026-09-03 from the owner's Codex edit of the PC checkout — same mapping, kept its test)
 FAKE_HERMES="$TMP/fake-hermes.sh"

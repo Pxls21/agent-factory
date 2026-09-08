@@ -147,6 +147,25 @@ case "$HAVE" in
   *) die "lane tree is at $HAVE but the brief pins $PIN — refusing to run on the wrong tree.";;
 esac
 
+# --- an optional lane patch on top of the PIN --------------------------------
+# .lanes/<id>/lane.patch (shipped by scripts/pc_lane.sh from LANE_PATCH): a sandbox lane's uncommitted files,
+# so the PC continues work that never reached a commit (2026-09-08). Applied ONCE — a clean tree means not yet
+# applied; a replayed launch on a dirty tree leaves it alone. A patch that does not apply is a FAILED lane
+# (the reason in FAILED, rc 70, no report.md to grade), never a lane on the wrong bytes.
+LANE_PATCH_FILE="$LANE_DIR/lane.patch"
+if [ -s "$LANE_PATCH_FILE" ]; then
+  if [ -z "$("$REAL_GIT" -C "$TREE" status --porcelain 2>/dev/null)" ]; then
+    if ! "$REAL_GIT" -C "$TREE" apply --index --binary --whitespace=nowarn "$LANE_PATCH_FILE" 2>"$LANE_DIR/patch.err"; then
+      { echo "lane patch $(sha256sum "$LANE_PATCH_FILE" | cut -c1-12) does not apply on $PIN:"; cat "$LANE_DIR/patch.err"; } > "$LANE_DIR/FAILED"
+      echo "pc-lane: lane patch failed to apply — FAILED lane (see $LANE_DIR/FAILED)" >&2
+      exit 70
+    fi
+    echo "pc-lane: lane patch applied on $PIN ($(grep -c '^diff --git' "$LANE_PATCH_FILE") file(s), sha $(sha256sum "$LANE_PATCH_FILE" | cut -c1-12))" >&2
+  else
+    echo "pc-lane: lane tree already dirty — lane patch assumed applied (replay)" >&2
+  fi
+fi
+
 # --- the prompt: role file, then brief --------------------------------------
 PROMPT_FILE="$LANE_DIR/prompt.md"
 : > "$PROMPT_FILE"

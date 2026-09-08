@@ -93,6 +93,27 @@ REMOTE_BRIEF="$PC_AF_REPO/.lanes/$LANE_ID/brief.md"
 bridge "mkdir -p $PC_AF_REPO/.lanes/$LANE_ID && printf %s '$B64' | base64 -d > $REMOTE_BRIEF && wc -c $REMOTE_BRIEF" \
   || die "failed to ship the brief"
 
+# --- 1b. ship an optional patch: a sandbox lane's uncommitted files on top of the PIN ---------------
+# LANE_PATCH=<git diff> (2026-09-08: the quota stop left five sandbox lanes' files uncommitted and the owner
+# routed the next rounds to the PC — the PC lane must start from PIN + those bytes). Shipped in 40 000-char
+# slices like pc_suite.sh (the bridge caps one reply/request), sha-verified on the PC, applied by pc-lane.sh
+# with `git apply --index` before the harness starts; a patch that does not apply is a FAILED lane.
+if [ -n "${LANE_PATCH:-}" ]; then
+  [ -s "$LANE_PATCH" ] && grep -q '^diff --git' "$LANE_PATCH" || die "LANE_PATCH=$LANE_PATCH is not a non-empty git diff"
+  PSHA="$(sha256sum "$LANE_PATCH" | cut -d' ' -f1)"; RD="$PC_AF_REPO/.lanes/$LANE_ID"
+  PB64="$(mktemp)"; base64 -w0 < "$LANE_PATCH" > "$PB64"; PTOTAL="$(wc -c < "$PB64")"; i=0; off=0
+  bridge "rm -f $RD/part.*" >/dev/null
+  while [ "$off" -lt "$PTOTAL" ]; do
+    CH="$(dd if="$PB64" bs=1 skip="$off" count=40000 2>/dev/null)"
+    bridge "printf %s '$CH' > $RD/part.$(printf %04d $i)" >/dev/null || die "lane patch part $i failed"
+    off=$((off+40000)); i=$((i+1))
+  done
+  rm -f "$PB64"
+  PGOT="$(bridge "cat $RD/part.* | base64 -d > $RD/lane.patch && rm -f $RD/part.* && sha256sum $RD/lane.patch | cut -d' ' -f1" | tail -1)"
+  [ "$PGOT" = "$PSHA" ] || die "lane patch sha mismatch on the PC (got ${PGOT:-nothing}, want $PSHA)"
+  echo "pc_lane: lane patch shipped — $(grep -c '^diff --git' "$LANE_PATCH") file(s), sha ${PSHA:0:12} (applied on the PIN by pc-lane.sh)" >&2
+fi
+
 # --- 2. launch DETACHED (replay-idempotent) ----------------------------------
 # setsid + </dev/null + redirected output: a bridge curl that times out must not
 # take the lane down with it. pc-lane.sh's own state guard makes a replayed
