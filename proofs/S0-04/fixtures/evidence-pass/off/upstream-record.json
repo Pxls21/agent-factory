@@ -1,0 +1,27 @@
+{
+  "authorization_fingerprint": "68b8af2afb80634c9c3a02effb1c7769f4f34c33e1190a5e96db0f59fd2ac838",
+  "body": {
+    "max_tokens": 16,
+    "messages": [
+      {
+        "content": "s0-04 compression probe; these bytes must arrive unaltered; nonce=s0-04-nonce-3f5c9a1b7d2e4068",
+        "role": "user"
+      }
+    ],
+    "model": "s0-01-pong",
+    "stream": false
+  },
+  "headers": {
+    "accept-encoding": "identity",
+    "content-length": "189",
+    "content-type": "application/json",
+    "host": "127.0.0.1:54219",
+    "x-omniroute-compression": "off"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "received_at": "2026-09-08T00:44:59.530383Z",
+  "remote_addr": "127.0.0.1",
+  "seq": 1,
+  "t_mono_ns": 43723857650520
+}

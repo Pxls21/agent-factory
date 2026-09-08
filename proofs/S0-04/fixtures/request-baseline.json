@@ -1,0 +1,11 @@
+{
+  "body_b64": "eyJtYXhfdG9rZW5zIjoxNiwibWVzc2FnZXMiOlt7ImNvbnRlbnQiOiJzMC0wNCBjb21wcmVzc2lvbiBwcm9iZTsgdGhlc2UgYnl0ZXMgbXVzdCBhcnJpdmUgdW5hbHRlcmVkOyBub25jZT1zMC0wNC1ub25jZS0zZjVjOWExYjdkMmU0MDY4Iiwicm9sZSI6InVzZXIifV0sIm1vZGVsIjoiczAtMDEtcG9uZyIsInN0cmVhbSI6ZmFsc2V9",
+  "headers": {
+    "content-type": "application/json",
+    "x-omniroute-compression": "off"
+  },
+  "method": "POST",
+  "name": "baseline",
+  "nonce": "s0-04-nonce-3f5c9a1b7d2e4068",
+  "path": "/v1/chat/completions"
+}

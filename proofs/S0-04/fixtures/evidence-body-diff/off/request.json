@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "python3",
+    "proofs/S0-04/tools/pc/capture_leg.py",
+    "--leg",
+    "off",
+    "--fixture",
+    "proofs/S0-04/fixtures/request-baseline.json",
+    "--out",
+    "evidence/off"
+  ],
+  "body_b64": "eyJtYXhfdG9rZW5zIjoxNiwibWVzc2FnZXMiOlt7ImNvbnRlbnQiOiJzMC0wNCBjb21wcmVzc2lvbiBwcm9iZTsgdGhlc2UgYnl0ZXMgbXVzdCBhcnJpdmUgdW5hbHRlcmVkOyBub25jZT1zMC0wNC1ub25jZS0zZjVjOWExYjdkMmU0MDY4Iiwicm9sZSI6InVzZXIifV0sIm1vZGVsIjoiczAtMDEtcG9uZyIsInN0cmVhbSI6ZmFsc2V9",
+  "fixture": "request-baseline.json",
+  "headers": {
+    "content-type": "application/json",
+    "x-omniroute-compression": "off"
+  },
+  "leg": "off",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "url": "http://127.0.0.1:20128/v1/chat/completions"
+}

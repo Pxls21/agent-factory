@@ -1,0 +1,19 @@
+{
+  "body_b64": "eyJpZCI6ImNoYXRjbXBsLXMwLTAxIiwibW9kZWwiOiJzMC0wMS1wb25nIiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uIn0=",
+  "headers": [
+    [
+      "content-type",
+      "application/json"
+    ],
+    [
+      "X-OmniRoute-Compression",
+      "off"
+    ],
+    [
+      "connection",
+      "close"
+    ]
+  ],
+  "leg": "off",
+  "status": 200
+}
