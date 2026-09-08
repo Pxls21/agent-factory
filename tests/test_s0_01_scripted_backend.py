@@ -327,6 +327,38 @@ def test_record_dir_as_file_refuses_startup(tmp_path):
     assert proc.stderr == expected_msg
 
 
+def test_token_file_fifo_refuses_startup_without_reading(tmp_path):
+    """SWEEP-prod #43: a FIFO token path must refuse at startup, not hang in load_token."""
+    token_file = tmp_path / "upstream.env"
+    import os
+    os.mkfifo(token_file, 0o600)
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(token_file), "--record-dir", str(tmp_path / "rec")],
+        capture_output=True, text=True, timeout=10)
+    assert time.monotonic() - t0 < 5
+    assert proc.returncode == 2
+    assert proc.stderr == f"scripted_backend: token file is not a regular file: {token_file}\n"
+
+
+def test_dangling_record_dir_symlink_refuses_startup(tmp_path):
+    """D5k-F11: a dangling --record-dir symlink must refuse at startup, not fail on first record."""
+    token_file = tmp_path / "upstream.env"
+    token_file.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    token_file.chmod(0o600)
+    record_dir = tmp_path / "rec"
+    record_dir.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(_free_port()),
+         "--token-file", str(token_file), "--record-dir", str(record_dir)],
+        capture_output=True, text=True, timeout=10)
+    assert time.monotonic() - t0 < 5
+    assert proc.returncode == 2
+    assert proc.stderr == f"scripted_backend: --record-dir {record_dir} is a dangling symlink\n"
+
+
 def test_missing_token_file_named_refusal(tmp_path):
     """V-d F21: missing --token-file yields exit 2 with named reason, not a traceback."""
     proc = subprocess.run(
@@ -2006,8 +2038,7 @@ def test_saturating_junk_is_served(backend):
     recs = sorted(backend["rec"].glob("*.json"))
     assert len(recs) == count_before + 1
     rec = json.loads(recs[-1].read_text())
-    assert rec["body"] is None or rec["body"] != {
-        "credential_in_unexpected_location": True}
+    assert rec["headers"]["x-trace"] == "%252B"
 
 
 # -- R9-D5g-F12 / D5h-F2: _json_safe copy-on-write (direct test) ---
@@ -2066,6 +2097,7 @@ def test_invisible_table_is_the_ucd_15_1_class():
     extra = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E,
              0x2065, 0xFFF0, 0xFFF1, 0xFFF2, 0xFFF3, 0xFFF4,
              0xFFF5, 0xFFF6, 0xFFF7, 0xFFF8}
+    assert sb._INVISIBLE_EXTRA == extra
     live = set()
     for cp in range(0x110000):
         if unicodedata.category(chr(cp)) in cats or cp in extra:
@@ -2137,6 +2169,7 @@ def test_oracle_table_equals_the_impl_table():
     red = importlib.util.module_from_spec(spec_red)
     spec_red.loader.exec_module(red)
     oracle_pinned = red._parse_oracle_ranges(red._ORACLE_INVIS_RANGES)
+    assert {ord(c) for c in red._INVISIBLE_EXTRA} == sb._INVISIBLE_EXTRA
     assert oracle_pinned == sb._INVIS_PINNED, (
         f"oracle and impl range strings differ: "
         f"oracle-impl={sorted(oracle_pinned - sb._INVIS_PINNED)[:10]}, "

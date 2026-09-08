@@ -77,10 +77,6 @@ def _records(backend):
     return sorted(backend["rec"].glob("*.json"))
 
 
-def _last_record_text(backend):
-    return _records(backend)[-1].read_text()
-
-
 TAIL = b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n{}"
 
 
@@ -294,7 +290,9 @@ def test_post_content_length_exactly_max_is_accepted(backend):
     assert len(body) == MAX_CONTENT_LENGTH
     resp = _raw(port, _post(port, body), timeout=20.0)
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
-    assert len(_records(backend)) == n0 + 1
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == json.loads(core)
 
 
 # ---- R7-D5c-F6: an obs-folded header hiding a framing header passes the allow-list ------------------------------
@@ -442,7 +440,9 @@ def test_json_depth_at_limit_is_served(backend):
     n0 = len(_records(backend))
     resp = _raw(port, _post(port, _nested_note_body(MAX_JSON_DEPTH)))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
-    assert len(_records(backend)) == n0 + 1
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == json.loads(_nested_note_body(MAX_JSON_DEPTH))
 
 
 def test_depth_1000_json_body_returns_400_no_record(backend):
@@ -663,7 +663,9 @@ def test_json_depth_ignores_brackets_inside_strings(backend):
             '"note": "' + '[' * 40 + '"}').encode()
     resp = _raw(port, _post(port, body))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
-    assert len(_records(backend)) == n0 + 1
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == json.loads(body)
 
 
 def test_json_depth_handles_escaped_quote(backend):
@@ -673,7 +675,9 @@ def test_json_depth_handles_escaped_quote(backend):
     body = b'{"model":"s0-01-pong","messages":[{"role":"user","content":"hi"}],"note":"q\\"' + b'[' * 40 + b'"}'
     resp = _raw(port, _post(port, body))
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
-    assert len(_records(backend)) == n0 + 1
+    recs = _records(backend)
+    assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["body"] == json.loads(body)
 
 
 # ---- F14: uppercased token (kills str.lower omission) ----------------------------
@@ -1060,9 +1064,9 @@ def test_invalid_utf8_without_the_token_is_refused_not_repaired(backend):
 
 # ---- D5h-F14: precheck ordering — _normal_forms not entered for invalid UTF-8 ----
 
-def test_precheck_before_closure_on_invalid_utf8(backend):
+def test_precheck_before_closure_on_invalid_utf8(backend, monkeypatch):
     """D5i item 5 / D5h-F14: the precheck fires BEFORE the closure, so
-    _normal_forms is never called for an invalid-UTF-8 byte-view input.
+    _normal_forms is never called for an invalid-UTF8 byte-view input.
     Timing-free: monkeypatches _normal_forms with a counter."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("sb_ordering", str(SERVER))
@@ -1075,7 +1079,7 @@ def test_precheck_before_closure_on_invalid_utf8(backend):
         call_count[0] += 1
         return original_nf(s)
 
-    sb._normal_forms = counting_nf
+    monkeypatch.setattr(sb, "_normal_forms", counting_nf)
     state = sb.State("tok", pathlib.Path("/dev/null"), 0.0)
     # invalid UTF-8 byte view: 0x80 0xC0 are not valid UTF-8
     s = "ua-" + bytes([0x80, 0xC0]).decode("latin-1") + "-probe"
@@ -1177,22 +1181,39 @@ def test_credential_reserved_bmp_separator_in_json_body_returns_400(backend, cp,
 
 # ---- D5k item 1 (D5j-F1): no "!= MARKER" anywhere in the test files ----
 
-def test_no_not_equal_marker_assertions():
-    """D5j-F1 class: no test uses body != MARKER as an acceptance check."""
-    import pathlib, subprocess
+def test_no_not_equal_marker_assertions(tmp_path):
+    """D5j-F1 class: no test uses MARKER != or != MARKER as an acceptance check."""
+    import ast
+
+    def marker_not_equal_asserts(path):
+        found = []
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Assert):
+                continue
+            for compare in ast.walk(node.test):
+                if not isinstance(compare, ast.Compare):
+                    continue
+                has_noteq = any(isinstance(op, ast.NotEq) for op in compare.ops)
+                names = {name.id for name in ast.walk(compare) if isinstance(name, ast.Name)}
+                if has_noteq and "MARKER" in names:
+                    found.append((path.name, node.lineno))
+                    break
+        return found
+
+    break_file = tmp_path / "break_form.py"
+    break_file.write_text('import json\nMARKER = {}\nassert json.loads(x)["body"] != MARKER\n')
+    evade_file = tmp_path / "evade_form.py"
+    evade_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b != MARKER\n')
+    ok_file = tmp_path / "positive_form.py"
+    ok_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b == expected\n')
+    assert marker_not_equal_asserts(break_file) == [("break_form.py", 3)]
+    assert marker_not_equal_asserts(evade_file) == [("evade_form.py", 4)]
+    assert marker_not_equal_asserts(ok_file) == []
+
     red_file = pathlib.Path(__file__)
     main_file = red_file.parents[1] / "test_s0_01_scripted_backend.py"
-    # The exact pattern: a Python assert whose expression contains != MARKER
-    # (not inside a string literal).  The grep matches lines where 'assert'
-    # precedes '!=' and 'MARKER' appears after '!=', all on the code level.
-    for p in (red_file, main_file):
-        r = subprocess.run(
-            ["grep", "-cP",
-             r'^\s*assert\s.*\["body"\]\s*!=\s*MARKER',
-             str(p)],
-            capture_output=True, text=True)
-        count = int(r.stdout.strip()) if r.stdout.strip() else 0
-        assert count == 0, f"{p.name} has {count} assert body != MARKER line(s)"
+    assert marker_not_equal_asserts(red_file) == []
+    assert marker_not_equal_asserts(main_file) == []
 
 
 # ---- D5k item 5 (D5j-F6): saturation-flip test ----
@@ -1209,4 +1230,5 @@ def test_pct_dense_junk_that_now_saturates_is_served(backend):
     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
     recs = _records(backend)
     assert len(recs) == n0 + 1
+    assert json.loads(recs[-1].read_text())["headers"]["x-trace"] == vec
     assert _absent_under_all_normalizations(recs[-1].read_text())

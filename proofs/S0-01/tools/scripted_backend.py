@@ -75,9 +75,11 @@ Credential screen (_normal_forms / _carries_secret): breadth-first closure of
   Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
   bound-exceeded path and blanks the record (false positive).
   Bounded worst case: MAX_CONTENT_LENGTH (1 MiB) body with a bound-exceeding
-  token costs ~2 s on a quiet 4-core box (depth-5 closure over a 1 MB string);
-  bounded by handler timeout (30 s) and ThreadingHTTPServer (one slow request
-  does not block others).  A DoS budget is the owner's call.
+  token costs ~0.4 s on the measured PC in both the http.client and raw-socket
+  harnesses (0.378 s each at 1000 KB in one window); earlier higher D5i
+  timings are load, not harness overhead.  It remains bounded by handler
+  timeout (30 s) and ThreadingHTTPServer (one slow request does not block
+  others).  A DoS budget is the owner's call.
   The screen is applied per item (path, header names, header values, serialized
   JSON body, every parsed JSON string — keys AND values — and raw body);
   cross-sink splits are out of contract by design.
@@ -104,6 +106,7 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import threading
 import time
@@ -772,7 +775,12 @@ def main(argv=None) -> int:
         print(f"scripted_backend: token file not found: {args.token_file}",
               file=sys.stderr)
         return 2
-    mode = args.token_file.stat().st_mode & 0o7777
+    st = args.token_file.stat()
+    if not stat.S_ISREG(st.st_mode):
+        print(f"scripted_backend: token file is not a regular file: {args.token_file}",
+              file=sys.stderr)
+        return 2
+    mode = st.st_mode & 0o7777
     # V-c F15: accept 0600 and 0400 (no group/other bits)
     if mode & 0o077:
         print(f"scripted_backend: token file mode is {oct(mode)}, "
@@ -780,6 +788,10 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
     token = load_token(args.token_file)
+    if args.record_dir.is_symlink() and not args.record_dir.exists():
+        print(f"scripted_backend: --record-dir {args.record_dir} is a dangling symlink",
+              file=sys.stderr)
+        return 2
     # V-c F13: refuse when record-dir exists but is not a directory
     if args.record_dir.exists() and not args.record_dir.is_dir():
         print(f"scripted_backend: --record-dir {args.record_dir} exists but is not a directory",

@@ -1,0 +1,261 @@
+diff --git a/proofs/S0-01/tools/scripted_backend.py b/proofs/S0-01/tools/scripted_backend.py
+index 4469be5..bff447b 100755
+--- a/proofs/S0-01/tools/scripted_backend.py
++++ b/proofs/S0-01/tools/scripted_backend.py
+@@ -75,9 +75,11 @@ Credential screen (_normal_forms / _carries_secret): breadth-first closure of
+   Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
+   bound-exceeded path and blanks the record (false positive).
+   Bounded worst case: MAX_CONTENT_LENGTH (1 MiB) body with a bound-exceeding
+-  token costs ~2 s on a quiet 4-core box (depth-5 closure over a 1 MB string);
+-  bounded by handler timeout (30 s) and ThreadingHTTPServer (one slow request
+-  does not block others).  A DoS budget is the owner's call.
++  token costs ~0.4 s on the measured PC in both the http.client and raw-socket
++  harnesses (0.378 s each at 1000 KB in one window); earlier higher D5i
++  timings are load, not harness overhead.  It remains bounded by handler
++  timeout (30 s) and ThreadingHTTPServer (one slow request does not block
++  others).  A DoS budget is the owner's call.
+   The screen is applied per item (path, header names, header values, serialized
+   JSON body, every parsed JSON string — keys AND values — and raw body);
+   cross-sink splits are out of contract by design.
+@@ -104,6 +106,7 @@ import json
+ import math
+ import os
+ import re
++import stat
+ import sys
+ import threading
+ import time
+@@ -772,7 +775,12 @@ def main(argv=None) -> int:
+         print(f"scripted_backend: token file not found: {args.token_file}",
+               file=sys.stderr)
+         return 2
+-    mode = args.token_file.stat().st_mode & 0o7777
++    st = args.token_file.stat()
++    if not stat.S_ISREG(st.st_mode):
++        print(f"scripted_backend: token file is not a regular file: {args.token_file}",
++              file=sys.stderr)
++        return 2
++    mode = st.st_mode & 0o7777
+     # V-c F15: accept 0600 and 0400 (no group/other bits)
+     if mode & 0o077:
+         print(f"scripted_backend: token file mode is {oct(mode)}, "
+@@ -780,6 +788,10 @@ def main(argv=None) -> int:
+               file=sys.stderr)
+         return 2
+     token = load_token(args.token_file)
++    if args.record_dir.is_symlink() and not args.record_dir.exists():
++        print(f"scripted_backend: --record-dir {args.record_dir} is a dangling symlink",
++              file=sys.stderr)
++        return 2
+     # V-c F13: refuse when record-dir exists but is not a directory
+     if args.record_dir.exists() and not args.record_dir.is_dir():
+         print(f"scripted_backend: --record-dir {args.record_dir} exists but is not a directory",
+diff --git a/tests/red/test_s0_01_backend_credential_screen.py b/tests/red/test_s0_01_backend_credential_screen.py
+index 1b85154..fa3ce18 100644
+--- a/tests/red/test_s0_01_backend_credential_screen.py
++++ b/tests/red/test_s0_01_backend_credential_screen.py
+@@ -77,10 +77,6 @@ def _records(backend):
+     return sorted(backend["rec"].glob("*.json"))
+ 
+ 
+-def _last_record_text(backend):
+-    return _records(backend)[-1].read_text()
+-
+-
+ TAIL = b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n{}"
+ 
+ 
+@@ -294,7 +290,9 @@ def test_post_content_length_exactly_max_is_accepted(backend):
+     assert len(body) == MAX_CONTENT_LENGTH
+     resp = _raw(port, _post(port, body), timeout=20.0)
+     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+-    assert len(_records(backend)) == n0 + 1
++    recs = _records(backend)
++    assert len(recs) == n0 + 1
++    assert json.loads(recs[-1].read_text())["body"] == json.loads(core)
+ 
+ 
+ # ---- R7-D5c-F6: an obs-folded header hiding a framing header passes the allow-list ------------------------------
+@@ -442,7 +440,9 @@ def test_json_depth_at_limit_is_served(backend):
+     n0 = len(_records(backend))
+     resp = _raw(port, _post(port, _nested_note_body(MAX_JSON_DEPTH)))
+     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+-    assert len(_records(backend)) == n0 + 1
++    recs = _records(backend)
++    assert len(recs) == n0 + 1
++    assert json.loads(recs[-1].read_text())["body"] == json.loads(_nested_note_body(MAX_JSON_DEPTH))
+ 
+ 
+ def test_depth_1000_json_body_returns_400_no_record(backend):
+@@ -663,7 +663,9 @@ def test_json_depth_ignores_brackets_inside_strings(backend):
+             '"note": "' + '[' * 40 + '"}').encode()
+     resp = _raw(port, _post(port, body))
+     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+-    assert len(_records(backend)) == n0 + 1
++    recs = _records(backend)
++    assert len(recs) == n0 + 1
++    assert json.loads(recs[-1].read_text())["body"] == json.loads(body)
+ 
+ 
+ def test_json_depth_handles_escaped_quote(backend):
+@@ -673,7 +675,9 @@ def test_json_depth_handles_escaped_quote(backend):
+     body = b'{"model":"s0-01-pong","messages":[{"role":"user","content":"hi"}],"note":"q\\"' + b'[' * 40 + b'"}'
+     resp = _raw(port, _post(port, body))
+     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+-    assert len(_records(backend)) == n0 + 1
++    recs = _records(backend)
++    assert len(recs) == n0 + 1
++    assert json.loads(recs[-1].read_text())["body"] == json.loads(body)
+ 
+ 
+ # ---- F14: uppercased token (kills str.lower omission) ----------------------------
+@@ -1060,9 +1064,9 @@ def test_invalid_utf8_without_the_token_is_refused_not_repaired(backend):
+ 
+ # ---- D5h-F14: precheck ordering — _normal_forms not entered for invalid UTF-8 ----
+ 
+-def test_precheck_before_closure_on_invalid_utf8(backend):
++def test_precheck_before_closure_on_invalid_utf8(backend, monkeypatch):
+     """D5i item 5 / D5h-F14: the precheck fires BEFORE the closure, so
+-    _normal_forms is never called for an invalid-UTF-8 byte-view input.
++    _normal_forms is never called for an invalid-UTF8 byte-view input.
+     Timing-free: monkeypatches _normal_forms with a counter."""
+     import importlib.util
+     spec = importlib.util.spec_from_file_location("sb_ordering", str(SERVER))
+@@ -1075,7 +1079,7 @@ def test_precheck_before_closure_on_invalid_utf8(backend):
+         call_count[0] += 1
+         return original_nf(s)
+ 
+-    sb._normal_forms = counting_nf
++    monkeypatch.setattr(sb, "_normal_forms", counting_nf)
+     state = sb.State("tok", pathlib.Path("/dev/null"), 0.0)
+     # invalid UTF-8 byte view: 0x80 0xC0 are not valid UTF-8
+     s = "ua-" + bytes([0x80, 0xC0]).decode("latin-1") + "-probe"
+@@ -1177,22 +1181,39 @@ def test_credential_reserved_bmp_separator_in_json_body_returns_400(backend, cp,
+ 
+ # ---- D5k item 1 (D5j-F1): no "!= MARKER" anywhere in the test files ----
+ 
+-def test_no_not_equal_marker_assertions():
+-    """D5j-F1 class: no test uses body != MARKER as an acceptance check."""
+-    import pathlib, subprocess
++def test_no_not_equal_marker_assertions(tmp_path):
++    """D5j-F1 class: no test uses MARKER != or != MARKER as an acceptance check."""
++    import ast
++
++    def marker_not_equal_asserts(path):
++        found = []
++        for node in ast.walk(ast.parse(path.read_text())):
++            if not isinstance(node, ast.Assert):
++                continue
++            for compare in ast.walk(node.test):
++                if not isinstance(compare, ast.Compare):
++                    continue
++                has_noteq = any(isinstance(op, ast.NotEq) for op in compare.ops)
++                names = {name.id for name in ast.walk(compare) if isinstance(name, ast.Name)}
++                if has_noteq and "MARKER" in names:
++                    found.append((path.name, node.lineno))
++                    break
++        return found
++
++    break_file = tmp_path / "break_form.py"
++    break_file.write_text('import json\nMARKER = {}\nassert json.loads(x)["body"] != MARKER\n')
++    evade_file = tmp_path / "evade_form.py"
++    evade_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b != MARKER\n')
++    ok_file = tmp_path / "positive_form.py"
++    ok_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b == expected\n')
++    assert marker_not_equal_asserts(break_file) == [("break_form.py", 3)]
++    assert marker_not_equal_asserts(evade_file) == [("evade_form.py", 4)]
++    assert marker_not_equal_asserts(ok_file) == []
++
+     red_file = pathlib.Path(__file__)
+     main_file = red_file.parents[1] / "test_s0_01_scripted_backend.py"
+-    # The exact pattern: a Python assert whose expression contains != MARKER
+-    # (not inside a string literal).  The grep matches lines where 'assert'
+-    # precedes '!=' and 'MARKER' appears after '!=', all on the code level.
+-    for p in (red_file, main_file):
+-        r = subprocess.run(
+-            ["grep", "-cP",
+-             r'^\s*assert\s.*\["body"\]\s*!=\s*MARKER',
+-             str(p)],
+-            capture_output=True, text=True)
+-        count = int(r.stdout.strip()) if r.stdout.strip() else 0
+-        assert count == 0, f"{p.name} has {count} assert body != MARKER line(s)"
++    assert marker_not_equal_asserts(red_file) == []
++    assert marker_not_equal_asserts(main_file) == []
+ 
+ 
+ # ---- D5k item 5 (D5j-F6): saturation-flip test ----
+@@ -1209,4 +1230,5 @@ def test_pct_dense_junk_that_now_saturates_is_served(backend):
+     assert resp.split(b"\r\n", 1)[0] == b"HTTP/1.1 200 OK"
+     recs = _records(backend)
+     assert len(recs) == n0 + 1
++    assert json.loads(recs[-1].read_text())["headers"]["x-trace"] == vec
+     assert _absent_under_all_normalizations(recs[-1].read_text())
+diff --git a/tests/test_s0_01_scripted_backend.py b/tests/test_s0_01_scripted_backend.py
+index b5b48e7..c861957 100644
+--- a/tests/test_s0_01_scripted_backend.py
++++ b/tests/test_s0_01_scripted_backend.py
+@@ -327,6 +327,38 @@ def test_record_dir_as_file_refuses_startup(tmp_path):
+     assert proc.stderr == expected_msg
+ 
+ 
++def test_token_file_fifo_refuses_startup_without_reading(tmp_path):
++    """SWEEP-prod #43: a FIFO token path must refuse at startup, not hang in load_token."""
++    token_file = tmp_path / "upstream.env"
++    import os
++    os.mkfifo(token_file, 0o600)
++    t0 = time.monotonic()
++    proc = subprocess.run(
++        [sys.executable, str(SERVER), "--port", str(_free_port()),
++         "--token-file", str(token_file), "--record-dir", str(tmp_path / "rec")],
++        capture_output=True, text=True, timeout=10)
++    assert time.monotonic() - t0 < 5
++    assert proc.returncode == 2
++    assert proc.stderr == f"scripted_backend: token file is not a regular file: {token_file}\n"
++
++
++def test_dangling_record_dir_symlink_refuses_startup(tmp_path):
++    """D5k-F11: a dangling --record-dir symlink must refuse at startup, not fail on first record."""
++    token_file = tmp_path / "upstream.env"
++    token_file.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
++    token_file.chmod(0o600)
++    record_dir = tmp_path / "rec"
++    record_dir.symlink_to(tmp_path / "missing-target", target_is_directory=True)
++    t0 = time.monotonic()
++    proc = subprocess.run(
++        [sys.executable, str(SERVER), "--port", str(_free_port()),
++         "--token-file", str(token_file), "--record-dir", str(record_dir)],
++        capture_output=True, text=True, timeout=10)
++    assert time.monotonic() - t0 < 5
++    assert proc.returncode == 2
++    assert proc.stderr == f"scripted_backend: --record-dir {record_dir} is a dangling symlink\n"
++
++
+ def test_missing_token_file_named_refusal(tmp_path):
+     """V-d F21: missing --token-file yields exit 2 with named reason, not a traceback."""
+     proc = subprocess.run(
+@@ -2006,8 +2038,7 @@ def test_saturating_junk_is_served(backend):
+     recs = sorted(backend["rec"].glob("*.json"))
+     assert len(recs) == count_before + 1
+     rec = json.loads(recs[-1].read_text())
+-    assert rec["body"] is None or rec["body"] != {
+-        "credential_in_unexpected_location": True}
++    assert rec["headers"]["x-trace"] == "%252B"
+ 
+ 
+ # -- R9-D5g-F12 / D5h-F2: _json_safe copy-on-write (direct test) ---
+@@ -2066,6 +2097,7 @@ def test_invisible_table_is_the_ucd_15_1_class():
+     extra = {0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E,
+              0x2065, 0xFFF0, 0xFFF1, 0xFFF2, 0xFFF3, 0xFFF4,
+              0xFFF5, 0xFFF6, 0xFFF7, 0xFFF8}
++    assert sb._INVISIBLE_EXTRA == extra
+     live = set()
+     for cp in range(0x110000):
+         if unicodedata.category(chr(cp)) in cats or cp in extra:
+@@ -2137,6 +2169,7 @@ def test_oracle_table_equals_the_impl_table():
+     red = importlib.util.module_from_spec(spec_red)
+     spec_red.loader.exec_module(red)
+     oracle_pinned = red._parse_oracle_ranges(red._ORACLE_INVIS_RANGES)
++    assert {ord(c) for c in red._INVISIBLE_EXTRA} == sb._INVISIBLE_EXTRA
+     assert oracle_pinned == sb._INVIS_PINNED, (
+         f"oracle and impl range strings differ: "
+         f"oracle-impl={sorted(oracle_pinned - sb._INVIS_PINNED)[:10]}, "
