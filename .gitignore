@@ -8,6 +8,9 @@
 *.sqlite3
 *.db
 *.log
+# committed evidence bundles are fixtures — their logs ARE the evidence (AF-AP-62, 2026-09-08: 16 buzzacp.log files under
+# proofs/S0-02/fixtures/evidence-*/ were swallowed by the rule above; the lane's copy was green, the git-view copy red)
+!proofs/*/fixtures/**/*.log
 *.pid
 .DS_Store
 .idea/

@@ -59,3 +59,21 @@ def test_gate_fails_when_a_run_is_red(tmp_path):
     assert "test_red" in r.stdout and "full output:" in r.stdout, r.stdout
     log = [l.split("full output: ", 1)[1].strip() for l in r.stdout.splitlines() if "full output:" in l][0]
     assert Path(log).is_file() and "test_red" in Path(log).read_text(), log
+
+
+def test_gate_names_gitignored_files_under_the_lane_directories(tmp_path):
+    """AF-AP-62 (2026-09-08): 16 gitignored buzzacp.log files under S0-02's committed bundles never reached the git-view
+    copy — the lane's own byte-copy gate was green, the coordinator's `39 failed`. The gate now NAMES ignored files under
+    the lane's directories (informational: the run itself still grades the git view, so the red stays red)."""
+    probe = ROOT / "tests" / "lane_gate_ignored_probe.log"  # *.log is ignored at the repo root
+    assert subprocess.run(["git", "check-ignore", "-q", str(probe)], cwd=ROOT).returncode == 0, "*.log must be ignored"
+    probe.write_text("ignored\n")
+    try:
+        r = _run(tmp_path, "-r", "HEAD", "-f", "tests/test_ap_screen.py", "-t", "tests/test_ap_screen.py", "-n", "1")
+    finally:
+        probe.unlink()
+    assert r.returncode == 0, r.stdout + r.stderr
+    warn = [l for l in r.stdout.splitlines() if l.startswith("lane_gate: WARNING")]
+    assert len(warn) == 1 and "gitignored file(s) under the lane's directories" in warn[0], r.stdout
+    assert "tests/lane_gate_ignored_probe.log" in r.stdout, r.stdout
+

@@ -37,6 +37,11 @@ for f in $FILES; do
   mkdir -p "$OUT/$(dirname "$f")" && cp "$f" "$OUT/$f"
   printf '%s  %s  %s lines\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f" "$(wc -l < "$f")"
 done
+# a file git IGNORES under the lane's directories never reaches `git archive`, a checkout or CI: the lane's own byte-copy gate
+# is green while the committed tree is red (AF-AP-62, 2026-09-08: 16 gitignored buzzacp.log files under S0-02's bundles —
+# `39 failed` on the git-view copy after the lane's `92 passed`). Informational: the gate below runs on the git view anyway.
+ign="$(git ls-files --others --ignored --exclude-standard -- $(for f in $FILES; do dirname "$f"; done | sort -u) 2>/dev/null | grep -v '__pycache__' || true)"
+[ -z "$ign" ] || { echo "lane_gate: WARNING $(printf '%s\n' "$ign" | wc -l) gitignored file(s) under the lane's directories (absent from git archive/CI):"; printf '%s\n' "$ign" | head -20 | sed 's/^/   /'; }
 cd "$OUT" || exit 66
 rc_all=0; prev=""; same=yes; summaries=()
 for i in $(seq 1 "$RUNS"); do

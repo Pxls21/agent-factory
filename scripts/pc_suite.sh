@@ -31,6 +31,10 @@ PC_PY="${PC_PY:-/home/rocco/venv-agent-factory/bin/python}"
 # The declared S0-01 real-leg corpus on the PC (scripts/realleg_sync.sh pc-build; byte-identical to the sandbox copy by
 # sha256) — exported to every PC run so the checker's real-leg tests FAIL loud when it is absent, never skip (VERIFY-CK10 F-R10-25).
 PC_REAL_LEG_DIR="${PC_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg/golden}"
+# The pinned buzz checkout on the PC — S0-02's DECLARED input (tests/test_s0_02_buzz_authz.py: with a venue set, an absent
+# checkout FAILS, never skips); the sandbox default is /home/user/nerdherderdani/buzz, the PC keeps its pinned clone under
+# ~/s0-01-pinned (probed 2026-09-08: /home/rocco/s0-01-pinned/buzz at 1c8321c, the upstream.lock.yaml pin).
+PC_BUZZ_SRC="${PC_BUZZ_SRC:-/home/rocco/s0-01-pinned/buzz}"
 die() { echo "pc_suite: $*" >&2; exit 2; }
 bridge() { "$PC" "$1"; }
 
@@ -71,7 +75,7 @@ launch)
   # guard keys on state the run creates (rule 1b), and a replayed launch call is a no-op.
   RUNSH="#!/bin/bash
 cd $WT || exit 97
-S0_01_VENUE=pc S0_01_REAL_LEG_DIR=$PC_REAL_LEG_DIR $PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
+S0_01_VENUE=pc S0_01_REAL_LEG_DIR=$PC_REAL_LEG_DIR S0_02_BUZZ_SRC=$PC_BUZZ_SRC $PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
 echo \$? > $RD/rc
 [ \"\$(cat $RD/rc)\" = 0 ] && rm -rf $RD/tmp
 "
