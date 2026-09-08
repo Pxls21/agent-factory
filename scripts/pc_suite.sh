@@ -14,6 +14,13 @@
 # PC-side run is setsid + </dev/null + redirected and REPLAY-IDEMPOTENT (a timed-out curl may still have run:
 # the launch refuses when the run dir already has a pid); uploads travel in numbered parts, each written with
 # `>` so a retried call overwrites and never appends; the assembled patch is sha256-verified on the PC.
+# bash reads a script LAZILY: an edit to this file while an instance runs corrupts that run at a byte offset (2026-09-08: the D5l
+# poller died with "syntax error near ')'" at line 123 after the FAILED-handling edit landed mid-poll, and exited 0 without
+# bringing the report home). Run from a private copy of these bytes; the file on disk may change underneath a live run.
+if [ -z "${PC_SUITE_SELF_COPY:-}" ]; then
+  _self="$(mktemp "${TMPDIR:-/tmp}/pc_suite.sh.XXXXXX")" && cp "$0" "$_self" && PC_SUITE_SELF_COPY="$_self" PC_SUITE_ORIG="$0" exec bash "$_self" "$@"
+fi
+trap 'rm -f "$PC_SUITE_SELF_COPY"' EXIT
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PC="$ROOT/scripts/pc.sh"
