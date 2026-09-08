@@ -34,6 +34,17 @@ providers:
     extra_headers:
       x-omniroute-compression: "off"
 
-# The route the legs exercise. Kept in ONE place: tools/pc/run_s0_03_legs.sh reads it from here
-# at run time so the spec's --route-id and the launched profile cannot drift apart.
-default: agentfactory-build
+# The route the legs exercise, DECLARED WHERE HERMES READS IT. The pinned hermes-agent
+# (527da608) resolves the default model from the `model:` section and nowhere else:
+# cli.py:5359-5361 does `_model_config = CLI_CONFIG.get("model", {})` then
+# `_model_config.get("default") or _model_config.get("model")`. A TOP-LEVEL `default:` is read by
+# nothing (VERIFY-O1 F-13) — with it, leg B would resolve whatever Hermes defaults to and the
+# route would not be bound to the declared provider at all.
+# Kept in ONE place: tools/pc/run_s0_03_legs.sh reads the route back out of `model.default` at
+# run time (splitting the `<provider>/` prefix), so the spec's --route-id and the launched
+# profile cannot drift apart.
+# The provider prefix is how Hermes binds the model to the entry above
+# (hermes_cli/model_switch.py:202-204 reads `api_mode` off the named providers entry).
+model:
+  default: "s0-03-omniroute/agentfactory-build"
+  provider: s0-03-omniroute

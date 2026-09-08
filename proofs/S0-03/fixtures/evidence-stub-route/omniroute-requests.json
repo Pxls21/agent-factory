@@ -4,31 +4,41 @@
     {
       "combo_name": "agentfactory-build",
       "connection_id": "conn_7",
+      "correlation_id": "req_direct",
+      "id": "log_direct",
       "leg": "direct",
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/responses",
       "provider": "s0-01-scripted",
       "requested_model": "agentfactory-build",
+      "response_id": "resp_chatcmpl-8fa21c",
+      "session_tag": null,
       "status": 200,
-      "timestamp": "2026-09-08T00:00:00.800000Z"
+      "timestamp": "2026-09-08T00:00:00.800Z"
     },
     {
       "combo_name": "agentfactory-build",
       "connection_id": "conn_7",
+      "correlation_id": "req_hermes",
+      "id": "log_hermes",
       "leg": "hermes",
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/responses",
       "provider": "s0-01-scripted",
       "requested_model": "agentfactory-build",
+      "response_id": "resp_chatcmpl-hermes",
+      "session_tag": "0f1e2d3c4b5a6978",
       "status": 200,
-      "timestamp": "2026-09-08T00:00:01.400000Z"
+      "timestamp": "2026-09-08T00:00:02.400Z"
     }
   ],
   "source": "sqlite:/home/rocco/.omniroute-migrated/storage.sqlite table call_logs (read-only, immutable=1)",
   "windows": {
-    "direct": "2026-09-08T00:00:00.000000Z",
-    "hermes": "2026-09-08T00:00:00.900000Z"
+    "hermes": {
+      "end": "2026-09-08T00:00:04.000000Z",
+      "start": "2026-09-08T00:00:01.000000Z"
+    }
   }
 }

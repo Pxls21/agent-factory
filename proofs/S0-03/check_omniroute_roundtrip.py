@@ -53,15 +53,27 @@ WHAT THIS CHECKER CANNOT SEE, STATED PLAINLY
   * Anything about a leg that was never captured — see the DEFERRAL RULE below.
 
 BUNDLE LAYOUT (a bundle root; the PC runner writes the positive bundle at `evidence/` and the
-negative bundle at `evidence/credential-absent/`, which has this same internal shape):
+negative bundle at `evidence/credential-absent/`):
 
     <evidence-root>/
-      direct/direct.json          leg A: the /v1/responses record (events verbatim)
+      direct/direct.json          leg A: the /v1/responses record (events verbatim), including
+                                  whether a credential was presented and the header NAMES sent
       hermes/timeline.jsonl       leg B: the ACP timeline written by the S0-01 tee
-      hermes/hermes-env-names.json   env NAMES only for the hermes-acp process (never values)
-      hermes/profile.yaml         the proof-owned provider profile as launched, key-free
-      hermes/leg.json             leg B's nonce2 + prompt
-      omniroute-requests.json     the correlation instrument: one call_logs row per request
+      hermes/hermes-env-names.json   env NAMES only for the hermes-acp process (never values),
+                                  plus the pid, its /proc exe and the tee's agent_realpath
+      hermes/profile.yaml         the profile the launcher LOADED (a per-leg copy of the
+                                  proof-owned template carrying this leg's session tag), key-free
+      hermes/leg.json             leg B's nonce2, prompt and the CLOSED window the runner
+                                  recorded at both ends of the turn
+      omniroute-requests.json     the correlation instrument: OmniRoute's own call_logs rows,
+                                  the direct leg's selected BY the response id the client saw and
+                                  every route row inside the hermes leg's window
+
+The negative bundle is DIRECT-LEG ONLY, and that is a producer fact, not an omission: the pinned
+S0-01 launcher reads OMNIROUTE_API_KEY from the owner's env file, so a key-free Hermes leg cannot
+be captured through it (the bundle's own NOT-CAPTURED.md names the seam that would be needed).
+The credential verdicts are therefore graded on the direct leg's own evidence, BEFORE the hermes
+half is required.
 
 DEFERRAL RULE: exit 2 iff the evidence root is absent or carries neither leg directory. Once
 either leg directory exists, EVERY absence of a required file is a Failure naming the file
@@ -74,6 +86,7 @@ Usage: check_omniroute_roundtrip.py --route-id ID --expected-model-id ID
 """
 from __future__ import annotations
 
+import datetime as _dt
 import importlib.util
 import json
 import re
@@ -120,12 +133,21 @@ def _load_s0_01_module():
 REASONS = {
     # The seed's kill switch (`seeds/seed-stage0-v1.yaml:400`) — EXACT, no placeholder.
     "credential_absent": "blocked: credential_absent",
+    # The seed's OTHER credential verdict (`:400-402`): "credential_rejected maps to proof-RED,
+    # never to blocked". A key that was PRESENTED and refused is a red proof, not a deferral.
+    "credential_rejected": "credential_rejected: OmniRoute refused the presented key (HTTP {})",
     "direct_stream": "direct: {}",
     "identity_model": "identity: response model {!r} != declared upstream model {!r}",
     "identity_route": "identity: request routed to the sanctioned stub route {!r}, not an upstream model",
+    "identity_response_id": "identity: direct leg row response_id {!r} != the id the client streamed {!r}",
+    "identity_session_tag": "identity: hermes leg row session_tag {!r} != the leg's nonce2 {!r}",
+    "identity_status": "identity: {} leg row status {!r}, expected 200",
+    "identity_unattributable": "identity: {} call_logs rows in the hermes leg's window — unattributable",
     "roundtrip": "roundtrip: {}",
     "transport": "transport: profile api_mode {!r} != 'codex_responses' (ADR 0002)",
+    "transport_path": "transport: {} leg row path {!r} does not end in /responses (ADR 0002)",
     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
+    "env_process": "env: the environ record's {} is {!r}, not the pinned Hermes agent {!r}",
 }
 
 # Deny-by-default (AF-AP-23): a CLOSED EXACT allow-list, never a prefix and never a blacklist.
@@ -138,12 +160,34 @@ ENV_CREDENTIAL_ALLOWLIST = frozenset({"OMNIROUTE_API_KEY"})
 # Splitting on `_` and testing each segment catches the `_2` suffix, `OPENAI_KEY_OLD`,
 # `ANTHROPIC_TOKEN_BACKUP` and every other decoration of the same names, while leaving ordinary
 # names alone (`KEYBOARD` is one segment and is not `KEY`; `HERMES_HOME` has no marker segment).
+# PAT / AUTH / PW / BEARER are real credential-name shapes with no KEY|TOKEN|SECRET segment —
+# `GITHUB_PAT`, `ANTHROPIC_AUTH` and `DB_PW` all rode straight through the earlier set
+# (VERIFY-O1 F-12, mutants V7a-c).
+# SESSION is deliberately NOT here, and that is a decision, not an omission: the launched agent's
+# environment key set is PINNED at `proofs/S0-01/pins.py` PINNED_ENV_KEYS and contains
+# `BUZZ_ACP_SESSION_POLICY`, so a SESSION segment would make conjunct (vi) impossible for any real
+# capture to satisfy — an assertion no live leg can pass is not a stronger gate, it is a broken
+# one. The residual the segment would have caught (`AWS_SESSION_TOKEN`) is already caught by TOKEN.
 CREDENTIAL_SEGMENTS = frozenset({"KEY", "KEYS", "TOKEN", "TOKENS", "SECRET", "SECRETS",
-                                 "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS", "APIKEY"})
+                                 "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS", "APIKEY",
+                                 "PAT", "AUTH", "PW", "BEARER"})
 
 
 def is_credential_name(name: str) -> bool:
-    return any(segment in CREDENTIAL_SEGMENTS for segment in name.upper().split("_"))
+    """True when at least one segment of the name marks it a credential.
+
+    Segments split on BOTH separators: environment names use `_` (`OPENAI_API_KEY`) and HTTP
+    header names use `-` (`X-Api-Key`), and the same screen grades both — the provider block's
+    `extra_headers` is exactly where Hermes documents custom auth.
+
+    This is a screen over the WHOLE name domain followed by an exact allow-list, not a blacklist
+    of known providers: `FOO_API_KEY`, `OMNIROUTE_API_KEY_2` and the provider nobody listed all
+    fail the same way. The residual class it does NOT catch is a credential whose name carries no
+    marker segment at all (`GH_ACCESS`, `NPM_RC`) — an environ has hundreds of benign names and
+    screening every one of them is not a decidable test, so the boundary is stated here rather
+    than implied by a docstring that claims more than the code does (F-12)."""
+    return any(segment in CREDENTIAL_SEGMENTS
+               for segment in re.split(r"[-_]", name.upper()))
 
 # Domain floors: a nonce that is not a fresh 16-hex token cannot make the text assertions
 # vacuous (an empty or one-character nonce is "in" every text).
@@ -181,10 +225,18 @@ def _require_file(path: Path, name: str) -> Path:
     return path
 
 
+def _reject_constant(token: str):
+    """`json.loads` accepts NaN/Infinity/-Infinity by default. A NaN in an evidence file is the
+    fail-open wormhole class the incident log records twice: every comparison against it is
+    False, so a guard written as `if value != expected: fail` passes. S0-01's timeline reader
+    already rejects them; this is the same discipline on the S0-03 reads (F-17)."""
+    raise ValueError(f"{token} is not permitted in evidence JSON")
+
+
 def _read_json(path: Path, name: str):
     _require_file(path, name)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
     except (ValueError, UnicodeDecodeError) as exc:
         raise Failure(f"bundle: {name} is not valid JSON ({exc.__class__.__name__})")
 
@@ -274,23 +326,54 @@ def _is_stub(name: str, stub_routes) -> bool:
     return False
 
 
-# --- the credential-absent kill switch (priority 0) -------------------------------------------
-def check_credential_absent(bundle: dict):
-    """The seed's kill switch: disable the credential -> RED `blocked: credential_absent`.
+# --- the credential verdicts (priority 0) ------------------------------------------------------
+REJECTING_STATUSES = (401, 403)
 
-    Runs BEFORE every conjunct on purpose. The credential-absent leg necessarily fails conjunct
-    (i) too (OmniRoute answers 401, so nothing streams); grading it as "no streamed answer" would
-    report a SYMPTOM and lose the seed's pinned reason. Two independent signals, either of which
-    is decisive:
-      * the Hermes environ carries no OMNIROUTE_API_KEY (there is no credential to send), or
-      * OmniRoute answered the direct leg 401 (the credential was refused at the gate:
-        `src/server/authz/policies/clientApi.ts:77` / `:96`, both AUTH_002).
+
+def _authorization_presented(direct: dict) -> bool:
+    """Did THIS request carry a credential? The probe records the header NAMES it sent, with the
+    Authorization VALUE redacted at the point of the write (`tools/pc/direct_responses_probe.py`
+    build_headers + the headers_sent map), so presence is decidable from the artifact without any
+    secret ever entering it. A missing or malformed record is a bundle failure, never a silent
+    "no" — that would grade a broken capture as the seed's blocked outcome."""
+    sent = direct.get("request_headers_sent")
+    if not isinstance(sent, dict):
+        raise Failure("bundle: direct/direct.json request_headers_sent absent")
+    return any(isinstance(k, str) and k.lower() == "authorization" for k in sent)
+
+
+def check_credential_at_the_gate(direct: dict):
+    """The seed's two credential verdicts, decided on the DIRECT leg's own evidence.
+
+    Runs BEFORE every conjunct on purpose. A refused or absent credential necessarily fails
+    conjunct (i) too (OmniRoute answers 401, so nothing streams); grading that as "no streamed
+    answer" would report a SYMPTOM and lose the seed's pinned reason.
+
+    The split is the seed's (`seeds/seed-stage0-v1.yaml:400-402`: "credential_rejected maps to
+    proof-RED, never to blocked") and it is decided from the request itself, not from a different
+    artifact about a different process:
+      * 401/403 with NO Authorization header sent -> the credential was never presented ->
+        `blocked: credential_absent`. This is what `direct_responses_probe.py --no-credential`
+        produces, and OmniRoute's no-bearer path answers it (AUTH_002 "Authentication required",
+        `src/server/authz/policies/clientApi.ts:77`).
+      * 401/403 WITH one -> the key was presented and refused -> RED `credential_rejected`
+        (`clientApi.ts:96`, AUTH_002 "Invalid API key"). The earlier version graded this
+        `blocked: credential_absent`, i.e. a rejected credential became a deferral (F-5).
     """
-    env = bundle.get("env_names")
-    if env is not None and "OMNIROUTE_API_KEY" not in env:
+    status = direct.get("status")
+    if status in REJECTING_STATUSES:
+        if _authorization_presented(direct):
+            _fail("credential_rejected", status)
         _fail("credential_absent")
-    direct = bundle.get("direct")
-    if direct is not None and direct.get("status") == 401:
+
+
+def check_credential_in_the_environ(env_names):
+    """The second, independent half of the kill switch: Hermes had nothing to send. Kept separate
+    from the gate check because it is graded on a different artifact and can only be read once the
+    hermes half of the bundle exists — the negative bundle a real `--no-credential` leg produces
+    has no hermes half at all (its NOT-CAPTURED.md says why), and it must still grade as the
+    seed's kill switch rather than as a short bundle."""
+    if env_names is not None and "OMNIROUTE_API_KEY" not in env_names:
         _fail("credential_absent")
 
 
@@ -299,6 +382,14 @@ def check_direct_stream(direct: dict):
     status = direct.get("status")
     if status != 200:
         _fail("direct_stream", f"status {status!r}, expected 200")
+
+    # The probe records a transport failure and STILL writes the record (a dropped artifact is
+    # invisible evidence). A bundle carrying both `status: 200` and a transport error is
+    # internally contradictory and was accepted (F-16, mutant V20): the recorded field was never
+    # read by any conjunct.
+    transport_error = direct.get("transport_error")
+    if transport_error is not None:
+        _fail("direct_stream", f"transport_error {transport_error!r} recorded beside status 200")
 
     nonce = _str(direct.get("nonce"), "direct.json nonce")
     if not NONCE_RE.match(nonce):
@@ -337,23 +428,99 @@ def check_identity_model(direct: dict, spec: dict):
 
 
 # --- conjunct (iii): the independent request record -------------------------------------------
-def check_identity_route(requests: dict, direct: dict, spec: dict):
-    rows = requests.get("requests")
-    if not isinstance(rows, list) or len(rows) < 2:
-        raise Failure("bundle: omniroute-requests.json carries fewer than two request rows")
+def _rows_by_leg(requests: dict) -> dict:
+    """Group the exported rows by leg label, rejecting a repeated `direct` label.
 
-    legs = {}
+    `legs[leg] = row` in a loop kept the LAST row with each label and discarded every earlier one
+    ungraded, so a stub row could be shadowed by a clean one appended after it (F-2, mutant V2).
+    The hermes leg legitimately exports MORE than one row — every route row inside its window —
+    and that plurality is graded below, not silently resolved here."""
+    rows = requests.get("requests")
+    if not isinstance(rows, list) or not rows:
+        raise Failure("bundle: omniroute-requests.json carries no request rows")
+    grouped: dict = {}
     for i, row in enumerate(rows):
         row = _obj(row, f"omniroute-requests.json requests[{i}]")
         leg = _str(row.get("leg"), f"omniroute-requests.json requests[{i}].leg")
-        legs[leg] = row
+        grouped.setdefault(leg, []).append(row)
     for leg in ("direct", "hermes"):
-        if leg not in legs:
+        if leg not in grouped:
             raise Failure(f"bundle: omniroute-requests.json has no row for the {leg} leg")
+    if len(grouped["direct"]) != 1:
+        raise Failure("bundle: omniroute-requests.json has "
+                      f"{len(grouped['direct'])} rows for the direct leg")
+    return grouped
+
+
+def _instant(value, name: str):
+    if not isinstance(value, str) or not value:
+        raise Failure(f"bundle: {name} is not an RFC3339 stamp ({value!r})")
+    try:
+        return _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise Failure(f"bundle: {name} is not an RFC3339 stamp ({value!r})")
+
+
+def _require_in_window(row: dict, window: dict):
+    start = _instant(window.get("start"), "hermes/leg.json window_start")
+    end = _instant(window.get("end"), "hermes/leg.json window_end")
+    stamp = _instant(row.get("timestamp"), "omniroute-requests.json hermes.timestamp")
+    if not (start <= stamp <= end):
+        raise Failure(
+            f"bundle: hermes row timestamp {row.get('timestamp')!r} is outside the leg's window "
+            f"{window.get('start')!r}..{window.get('end')!r}"
+        )
+
+
+def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: dict):
+    """The load-bearing identity assertion — and the binding that makes it one.
+
+    Every test here used to be satisfiable by a row that belonged to somebody else's request: the
+    conjunct read `requested_model`, `provider` and `model` and nothing else, so a row from 1999
+    with status 500 and a foreign response id passed (VERIFY-O1 F-1, mutant V1). On the PC the
+    route is the one the owner's OWN build lanes use, so "somebody else's request" is the normal
+    case, not a contrived one. Each leg's row is now bound to the leg by a value neither artifact
+    can invent:
+      direct  `call_logs.response_id` == the `resp_…` id the client streamed and recorded as
+              `direct.json` `id` (`src/lib/usage/callLogs.ts:521-524`, written from
+              `extractResponsesId` at `open-sse/handlers/chatCore/attemptLogging.ts:501`).
+      hermes  `call_logs.session_tag` == the leg's nonce2, which the runner puts on the wire as
+              `x-omniroute-session-id` through the launched profile's `extra_headers`
+              (`src/sse/handlers/chat.ts:822` ->
+              `open-sse/services/conversationTracker.ts:465-469`, "Client override wins outright"
+              -> `open-sse/handlers/chatCore.ts:1096` `sessionTag`), AND the row must be the ONLY
+              route row inside the leg's closed window. Two or more is UNATTRIBUTABLE and red —
+              never "take the earliest", which is what hid the ambiguity before.
+    Both rows must also carry `status == 200` and a `/responses` path: the wire, not the profile,
+    is what says which transport was used (F-3, mutant V14).
+    """
+    grouped = _rows_by_leg(requests)
+
+    # The export's window must be the window the leg recorded. Without this the exporter could
+    # widen the window until exactly one row fell in it and the uniqueness rule would be vacuous.
+    declared = {"start": leg_record.get("window_start"), "end": leg_record.get("window_end")}
+    exported = _obj(requests.get("windows"), "omniroute-requests.json windows").get("hermes")
+    if not isinstance(exported, dict) or exported != declared:
+        raise Failure(
+            f"bundle: omniroute-requests.json hermes window {exported!r} != the window "
+            f"hermes/leg.json records {declared!r}"
+        )
+
+    if len(grouped["hermes"]) != 1:
+        _fail("identity_unattributable", len(grouped["hermes"]))
+
+    # ...and the row the exporter labelled `hermes` must really be inside that window. Without
+    # this the checker TRUSTS the exporter's filter; with it the window is verified against the
+    # row's own recorded timestamp, here, from the bundle. Instants, never strings: the two
+    # producers write different fractional precision (`collect_leg.sh` says why, F-14).
+    _require_in_window(grouped["hermes"][0], declared)
+
+    nonce2 = _str(leg_record.get("nonce2"), "hermes/leg.json nonce2")
+    streamed_id = _str(direct.get("id"), "direct/direct.json id")
 
     models = set()
     for leg in ("direct", "hermes"):
-        row = legs[leg]
+        row = grouped[leg][0]
         # Correlation first: a call_logs row for somebody else's request proves nothing about
         # ours. `requested_model` is the column that records what the CLIENT asked for
         # (`src/lib/usage/callLogs.ts:564-566`), so it is the one that binds the row to our route.
@@ -364,6 +531,19 @@ def check_identity_route(requests: dict, direct: dict, spec: dict):
                 f"bundle: {leg} row requested_model {requested!r} != declared route "
                 f"{spec['route_id']!r}"
             )
+        if leg == "direct":
+            recorded_id = row.get("response_id")
+            if recorded_id != streamed_id:
+                _fail("identity_response_id", recorded_id, streamed_id)
+        else:
+            tag = row.get("session_tag")
+            if tag != nonce2:
+                _fail("identity_session_tag", tag, nonce2)
+        if row.get("status") != 200:
+            _fail("identity_status", leg, row.get("status"))
+        path = _str(row.get("path"), f"omniroute-requests.json {leg}.path")
+        if not path.endswith("/responses"):
+            _fail("transport_path", leg, path)
         provider = _str(row.get("provider"), f"omniroute-requests.json {leg}.provider")
         if _is_stub(provider, spec["stub_routes"]):
             _fail("identity_route", provider)
@@ -381,7 +561,7 @@ def check_identity_route(requests: dict, direct: dict, spec: dict):
         raise Failure(
             f"bundle: call_logs model {recorded!r} != response model {direct.get('model')!r}"
         )
-    return legs["direct"]["provider"]
+    return grouped["direct"][0]["provider"]
 
 
 # --- conjunct (iv): the Hermes tool-call round trip -------------------------------------------
@@ -436,15 +616,25 @@ def check_roundtrip(entries, nonce2: str):
         _fail("roundtrip", "no tool_call update in the timeline")
 
     started_ids = {u.get("toolCallId") for u in starts if isinstance(u.get("toolCallId"), str)}
-    completed = {
-        u.get("toolCallId")
-        for u in _updates(entries)
+    completed = [
+        u for u in _updates(entries)
         if u.get("sessionUpdate") in ("tool_call", "tool_call_update")
         and u.get("status") == "completed"
         and isinstance(u.get("toolCallId"), str)
-    }
-    if not (started_ids & completed):
-        _fail("roundtrip", "no tool_call reached status 'completed'")
+        and u.get("toolCallId") in started_ids
+    ]
+    if not completed:
+        _fail("roundtrip", "no tool_call that started reached status 'completed'")
+
+    # THE ROUND TRIP, not a coincidence of two facts. The conjunct used to need only "some tool
+    # call finished" AND "the nonce appears in some agent text", with nothing joining them: an
+    # unrelated `read_file` completion satisfied it (F-6, mutant V6). The prompt asked the agent
+    # to run `printf <nonce2>`, so the OUTPUT of the completed call is where the nonce must be —
+    # that is the evidence that this tool call is the one the prompt asked for and that it really
+    # ran. The committed fixture already carries it in the completed update's `content`.
+    if not any(nonce2 in json.dumps(u.get("content"), ensure_ascii=False) for u in completed):
+        _fail("roundtrip",
+              f"nonce2 {nonce2!r} absent from the completed tool call's output")
 
     text = _agent_text(entries)
     if nonce2 not in text:
@@ -482,8 +672,17 @@ def check_transport(profile):
         )
 
     # The launched profile must never carry a key VALUE. Only the env NAME may appear.
-    if "api_key" in block:
-        raise Failure("bundle: profile.yaml carries an inline api_key")
+    # The literal `api_key` was the whole screen; Hermes' own config example documents
+    # `extra_headers` as the place operators put custom auth ("Header values are treated as
+    # secrets", cli-config.yaml.example:141-154), so `Authorization: Bearer sk-…` under
+    # extra_headers walked straight through it (F-4, mutant V3). Screen the WHOLE provider block
+    # and its headers, by name AND by value shape.
+    for key, value in list(block.items()) + list(headers.items()):
+        name = str(key)
+        if is_credential_name(name) and name.upper() != "KEY_ENV":
+            raise Failure(f"bundle: profile.yaml carries an inline credential under {name!r}")
+        if isinstance(value, str) and value.strip().lower().startswith("bearer "):
+            raise Failure(f"bundle: profile.yaml carries an inline credential under {name!r}")
     if block.get("key_env") != "OMNIROUTE_API_KEY":
         raise Failure(
             f"bundle: profile.yaml key_env is {block.get('key_env')!r}, expected 'OMNIROUTE_API_KEY'"
@@ -492,10 +691,14 @@ def check_transport(profile):
 
 # --- conjunct (vi): the deny-by-default env allowlist ------------------------------------------
 def check_env(env_names):
-    """AF-AP-23: an allow-list over the WHOLE name domain, not a blacklist of known providers and
-    not a prefix. Every name whose SUFFIX marks it a credential must be an exact member of
-    ENV_CREDENTIAL_ALLOWLIST; `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and the one nobody listed all
-    fail the same way."""
+    """AF-AP-23, as far as it goes: every name whose SEGMENTS mark it a credential
+    (`is_credential_name`, which states its residual class) must be an EXACT member of
+    ENV_CREDENTIAL_ALLOWLIST — never a prefix, never a blacklist of known providers, so
+    `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OMNIROUTE_API_KEY_2` and the provider nobody listed
+    all fail the same way. It is a screen over the whole name domain followed by an exact
+    allow-list, not an allow-list over the whole domain: a name with no marker segment is not
+    screened at all, and the docstring says so rather than claiming a boundary the code does not
+    have (F-12)."""
     offenders = sorted(
         name for name in env_names
         if is_credential_name(name) and name not in ENV_CREDENTIAL_ALLOWLIST
@@ -504,15 +707,50 @@ def check_env(env_names):
         _fail("env_provider_key", offenders[0])
 
 
+# --- conjunct (vi.b): WHICH process the environ belongs to --------------------------------------
+def check_env_record(record: dict):
+    """"HERMES holds no upstream provider key" is the assertion; "some process holds none" is what
+    a name list alone proves. The record carries the pid it read, the `exe` symlink of that pid and
+    the tee's own record of the binary it spawned — all three were written and none was ever read
+    (F-11, mutant V15: `{"pid": 1, "exe": "/usr/bin/sleep"}` passed).
+
+    Both pins come from S0-01's `pins` module through the SAME import the timeline reader uses, so
+    a drift in the pinned runtime cannot leave this checker asserting a stale path:
+      * `exe` is the INTERPRETER, not the entry point. `/proc/<agent_child_pid>/exe` of a python
+        console-script resolves to the interpreter — the tee records exactly that value as
+        `agent_interpreter_realpath` (`proofs/S0-01/tools/frame_tee.py`'s `agent_interpreter_realpath`), and in the committed
+        real corpus it is `/usr/bin/python3.13`. Pinning `PINNED_AGENT_REALPATH` here would be an
+        assertion no real capture could satisfy.
+      * `agent_realpath` is the hermes-acp entry point the tee spawned
+        (the tee's `agent_realpath` key), which is what makes the record Hermes' rather than any python
+        process's. It is required: a record without it cannot support the assertion.
+    """
+    s0_01 = _load_s0_01_module()
+    exe = _str(record.get("exe"), "hermes/hermes-env-names.json exe")
+    if exe != s0_01.PINNED_AGENT_INTERPRETER_REALPATH:
+        _fail("env_process", "exe", exe, s0_01.PINNED_AGENT_INTERPRETER_REALPATH)
+    agent = _str(record.get("agent_realpath"), "hermes/hermes-env-names.json agent_realpath")
+    if agent != s0_01.PINNED_AGENT_REALPATH:
+        _fail("env_process", "agent_realpath", agent, s0_01.PINNED_AGENT_REALPATH)
+
+
 # --- bundle assembly + the graded sequence -----------------------------------------------------
-def load_bundle(root: Path) -> dict:
+def load_direct(root: Path) -> dict:
+    """The direct leg alone. Read FIRST and separately because the credential verdicts are graded
+    on it before the hermes half is required: the negative bundle a real `--no-credential` leg
+    produces has no hermes half (the pinned S0-01 launcher injects OMNIROUTE_API_KEY from the
+    owner's env file, so a key-free Hermes leg is not capturable — the bundle's NOT-CAPTURED.md
+    says so), and it must still grade as the seed's kill switch rather than as a short bundle."""
     direct_dir = root / "direct"
     hermes_dir = root / "hermes"
     if not root.is_dir() or not (direct_dir.is_dir() or hermes_dir.is_dir()):
         raise Deferred("S0-03 evidence not captured")
+    return _obj(_read_json(direct_dir / "direct.json", "direct/direct.json"),
+                "direct/direct.json")
 
-    direct = _obj(_read_json(direct_dir / "direct.json", "direct/direct.json"),
-                  "direct/direct.json")
+
+def load_bundle(root: Path, direct: dict) -> dict:
+    hermes_dir = root / "hermes"
     env_record = _obj(
         _read_json(hermes_dir / "hermes-env-names.json", "hermes/hermes-env-names.json"),
         "hermes/hermes-env-names.json",
@@ -534,6 +772,7 @@ def load_bundle(root: Path) -> dict:
                     "omniroute-requests.json")
     return {
         "direct": direct,
+        "env_record": env_record,
         "env_names": names,
         "leg": leg,
         "profile": profile,
@@ -543,15 +782,19 @@ def load_bundle(root: Path) -> dict:
 
 
 def check_bundle(root: Path, spec: dict) -> str:
-    bundle = load_bundle(root)
+    direct = load_direct(root)
 
-    # Priority 0, then conjuncts (i)..(vi) in the brief's order. First failure wins.
-    check_credential_absent(bundle)
+    # Priority 0 on the direct leg's own evidence, then the rest of the bundle, then the second
+    # half of the kill switch, then conjuncts (i)..(vi) in the brief's order. First failure wins.
+    check_credential_at_the_gate(direct)
+    bundle = load_bundle(root, direct)
+    check_credential_in_the_environ(bundle["env_names"])
     check_direct_stream(bundle["direct"])
     check_identity_model(bundle["direct"], spec)
-    provider = check_identity_route(bundle["requests"], bundle["direct"], spec)
+    provider = check_identity_route(bundle["requests"], bundle["direct"], bundle["leg"], spec)
     check_roundtrip(bundle["entries"], _str(bundle["leg"].get("nonce2"), "hermes/leg.json nonce2"))
     check_transport(bundle["profile"])
+    check_env_record(bundle["env_record"])
     check_env(bundle["env_names"])
 
     return (

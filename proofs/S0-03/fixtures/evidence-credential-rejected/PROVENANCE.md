@@ -1,4 +1,4 @@
-# PROVENANCE — evidence-credential-absent
+# PROVENANCE — evidence-credential-rejected
 
 A NEGATIVE control, minted BY ITS OWN WRITER. AF-AP-42 (fixture-shaped hollow green) demands that
 every file say where its shape came from and, where the shape is not yet proven against a live
@@ -10,7 +10,7 @@ points at the PC's OmniRoute rather than at the scratch port the mint used).
 
 | file | shape derived from | proven against a live capture? |
 |---|---|---|
-| `direct/direct.json` | **the real writer, run**: `proofs/S0-03/tools/pc/direct_responses_probe.py --no-credential` against a local 401 server, through the committed helper `tests/test_s0_03_omniroute.py::build_direct_401_record`. `test_credential_fixture_matches_the_writers_key_set` re-runs that producer every suite run and compares the key set and `credential_presented` (AF-AP-42). | request side **YES** (the writer built it); response side `NOT proven against a live capture` — see below |
+| `direct/direct.json` | **the real writer, run**: `proofs/S0-03/tools/pc/direct_responses_probe.py (with a scratch key file)` against a local 401 server, through the committed helper `tests/test_s0_03_omniroute.py::build_direct_401_record`. `test_credential_fixture_matches_the_writers_key_set` re-runs that producer every suite run and compares the key set and `credential_presented` (AF-AP-42). | request side **YES** (the writer built it); response side `NOT proven against a live capture` — see below |
 | `omniroute-requests.json` | the real writer, `proofs/S0-03/tools/pc/collect_leg.sh` on a negative root: no response id and no hermes turn means no rows, and an empty export is the honest result rather than an error. Exercised by `test_collect_leg_on_a_negative_root_writes_an_honest_empty_export`. | **NO** — the `call_logs` rows have not been read on the PC. |
 
 ## Which parts came from the local server, and which from OmniRoute's source
@@ -19,8 +19,8 @@ The 401 the writer recorded was served by a `http.server` handler on 127.0.0.1 w
 headers are TRANSCRIBED from the pinned OmniRoute `488f57e9`:
 
   * the body `{"error": {"code", "message", "correlation_id"}}` — `src/server/authz/pipeline.ts:79-95`
-    (`rejectionResponse`), rendering `src/server/authz/policies/clientApi.ts:77`
-    (`reject(401, "AUTH_002", 'Authentication required')`).
+    (`rejectionResponse`), rendering `src/server/authz/policies/clientApi.ts:96`
+    (`reject(401, "AUTH_002", 'Invalid API key')`).
   * the two response headers `x-request-id` and `x-omniroute-route-class` —
     `src/server/authz/headers.ts:15` and `:17`, set on the rejection at `pipeline.ts:93-94`.
 
@@ -36,15 +36,13 @@ deployment for the PC run to report, and the runner prints the observed status.
 
 ## What this bundle is for
 
-The seed's KILL SWITCH (`seeds/seed-stage0-v1.yaml:399-401`): disable the credential and the proof
-must go RED with the exact reason `blocked: credential_absent`.
+The seed's OTHER credential verdict (`seeds/seed-stage0-v1.yaml:400-402`):
+`reason_enum: [credential_absent, credential_rejected]` and "**credential_rejected maps to
+proof-RED, never to blocked**".
 
-The credential is absent from THIS REQUEST and the artifact says so structurally: no
-`Authorization` key in `request_headers_sent`, `credential_presented: false`, and OmniRoute's
-no-bearer 401 beside them. `direct_responses_probe.py --no-credential` is the only path that can
-produce this shape — the previous negative leg pointed `S0_03_KEY_FILE` at `/dev/null`, and the
-probe exits before writing anything, so the committed bundle had no producer at all
-(VERIFY-O1 F-9, anti-hollow-green tactic 7).
-
-Boundary: this is the CREDENTIAL half of "no direct fallback". The network-level proof that
-Hermes could not reach a provider even if it tried belongs to S0-05, not here.
+A key WAS presented (`credential_presented: true`, `Authorization: <redacted>` in the header
+names) and OmniRoute refused it. The checker must report
+`credential_rejected: OmniRoute refused the presented key (HTTP 401)` and exit 1 — never the
+blocked reason. Before this round the checker had no `credential_rejected` reason at all and its
+kill switch turned ANY 401 into `blocked: credential_absent`, i.e. a refused credential became a
+deferral (VERIFY-O1 F-5, mutant V4).

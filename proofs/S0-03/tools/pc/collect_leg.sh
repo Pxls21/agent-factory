@@ -7,8 +7,9 @@
 #   proofs/S0-03/tools/pc/collect_leg.sh <bundle-dir> <route-id>
 #
 # Writes <bundle-dir>/omniroute-requests.json:
-#   {"source": ..., "captured_at": ..., "requests": [{leg, timestamp, method, path, status,
-#    model, requested_model, provider, connection_id, combo_name}, ...]}
+#   {"source": ..., "captured_at": ..., "windows": {"hermes": {"start":..., "end":...}},
+#    "requests": [{leg, id, timestamp, method, path, status, model, requested_model, provider,
+#                  connection_id, combo_name, correlation_id, session_tag, response_id}, ...]}
 #
 # WHY THIS INSTRUMENT, AND NOT THE HTTP API
 # -----------------------------------------
@@ -29,6 +30,36 @@
 # `file:...?immutable=1` opens the database without taking a lock and without writing a WAL or
 # journal file — a live service keeps serving, undisturbed. Consequence, stated: rows still only
 # in the WAL are not visible, so the runner passes --settle first.
+#
+# HOW A ROW IS BOUND TO A LEG (VERIFY-O1 F-1 — the round's blocker)
+# -----------------------------------------------------------------
+# The previous version SELECTed the newest rows of the route and attributed "the earliest row
+# at/after a wall-clock stamp" to each leg. On the PC the route `agentfactory-build` is the route
+# the owner's OWN build lanes use, so any concurrent request inside the window became "our" row,
+# and a hand-written row with a foreign response id passed the identity assertion untouched.
+# Nothing bound a row to a leg. Two real bindings exist in the schema and are used here:
+#   direct  ->  call_logs.response_id, which is the `resp_…` id the CLIENT streamed
+#               (`open-sse/handlers/chatCore/attemptLogging.ts:501`
+#               `responseId: extractResponsesId(sourceFormat, clientResponse)`, stored at
+#               `src/lib/usage/callLogs.ts:521-524` and inserted as `response_id` at :564-584).
+#               `direct.json` already records the same value as `id`, so the two artefacts join
+#               on a value neither side can invent. Selected BY that id — not by time.
+#   hermes  ->  call_logs.session_tag, which OmniRoute fills from the CLIENT-SUPPLIED
+#               `x-omniroute-session-id` header: `src/sse/handlers/chat.ts:822` reads it,
+#               `open-sse/services/conversationTracker.ts:465-469` returns it verbatim ("Client
+#               override wins outright"), and `open-sse/handlers/chatCore.ts:1096` passes it as
+#               `sessionTag`. The runner puts the leg's nonce2 there through the launched
+#               profile's `extra_headers`. The header is NOT stripped by the authz pipeline
+#               (`src/server/authz/headers.ts:79-87` lists the seven trusted headers it deletes;
+#               x-omniroute-session-id is not one of them).
+#               Hermes' request is still window-bounded here: this script exports EVERY route row
+#               inside the leg's CLOSED window, and the checker fails the proof when there is
+#               more than one. Exporting them all is the point — the old code picked the earliest
+#               and hid the ambiguity.
+# The window comes from the leg's own `hermes/leg.json` (`window_start`/`window_end`, written by
+# the runner before and after the turn), so the export cannot widen it without the checker
+# seeing: `omniroute-requests.json` carries the window it used and the checker compares it with
+# the leg record.
 
 set -euo pipefail
 
@@ -39,74 +70,106 @@ DB="$DATA_DIR/storage.sqlite"
 LIMIT=${S0_03_LOG_LIMIT:-50}
 
 [ -r "$DB" ] || { echo "collect_leg: OmniRoute database unreadable: $DB" >&2; exit 3; }
-command -v sqlite3 >/dev/null || { echo "collect_leg: sqlite3 not found" >&2; exit 3; }
 mkdir -p "$BUNDLE"
 
-# The two rows we want are the most recent rows for THIS route: leg A hit /v1/responses directly,
-# leg B came through Hermes. Both carry requested_model = the route id. Ordering is newest-first;
-# the JSON assembly below picks the newest row per leg and labels it.
-ROWS=$(sqlite3 -readonly -json "file:$DB?immutable=1" \
-  "SELECT timestamp, method, path, status, model, requested_model, provider,
-          connection_id, combo_name
-     FROM call_logs
-    WHERE requested_model = '$ROUTE'
-    ORDER BY timestamp DESC
-    LIMIT $LIMIT;")
+# Every value below is BOUND as a query parameter inside python's sqlite3 (VERIFY-O1 F-15): the
+# old form interpolated $ROUTE into the SQL text, where one quote breaks or extends the query.
+BUNDLE="$BUNDLE" ROUTE="$ROUTE" DB="$DB" LIMIT="$LIMIT" python3 - <<'PY'
+import datetime, json, os, sqlite3, sys
 
-[ -n "$ROWS" ] && [ "$ROWS" != "[]" ] || {
-  echo "collect_leg: no call_logs row with requested_model='$ROUTE' — did the legs run?" >&2
-  exit 4
-}
+bundle, route, db, limit = (os.environ["BUNDLE"], os.environ["ROUTE"],
+                            os.environ["DB"], int(os.environ["LIMIT"]))
+COLUMNS = ("id, timestamp, method, path, status, model, requested_model, provider, "
+           "connection_id, combo_name, correlation_id, session_tag, response_id")
 
-# Label the newest row per leg. The direct leg's path is /v1/responses and so is Hermes'
-# (api_mode codex_responses), so path cannot discriminate: the runner records each leg's request
-# window and passes it in. S0_03_DIRECT_AFTER / S0_03_HERMES_AFTER are RFC3339 stamps written by
-# run_s0_03_legs.sh immediately before each leg starts.
-DIRECT_AFTER=${S0_03_DIRECT_AFTER:?collect_leg: S0_03_DIRECT_AFTER not set by the runner}
-HERMES_AFTER=${S0_03_HERMES_AFTER:?collect_leg: S0_03_HERMES_AFTER not set by the runner}
 
-ROWS="$ROWS" DIRECT_AFTER="$DIRECT_AFTER" HERMES_AFTER="$HERMES_AFTER" \
-python3 - "$BUNDLE/omniroute-requests.json" "$DB" <<'PY'
-import datetime, json, os, sys
+def parse_stamp(value, what):
+    """RFC3339 -> aware datetime. The two producers write different fractional precision —
+    the runner's `date -u +%…%6NZ` is 6 digits, OmniRoute's `new Date().toISOString()` is 3
+    (src/lib/usage/callLogs.ts:489) — and comparing those as STRINGS puts a row up to a
+    millisecond before the window start inside it ('Z' > '4'). Compare as instants (F-14)."""
+    if not isinstance(value, str) or not value:
+        sys.exit(f"collect_leg: {what} is not an RFC3339 stamp: {value!r}")
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        sys.exit(f"collect_leg: {what} is not an RFC3339 stamp: {value!r}")
 
-out_path, db = sys.argv[1], sys.argv[2]
-rows = json.loads(os.environ["ROWS"])
-windows = {"direct": os.environ["DIRECT_AFTER"], "hermes": os.environ["HERMES_AFTER"]}
 
-def ts(row):
-    return str(row.get("timestamp") or "")
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
 
-# The hermes leg starts after the direct leg, so the earliest row at/after HERMES_AFTER is the
-# hermes request and the earliest row in [DIRECT_AFTER, HERMES_AFTER) is the direct one.
-picked = {}
-ordered = sorted(rows, key=ts)
-for row in ordered:
-    t = ts(row)
-    if t >= windows["hermes"]:
-        picked.setdefault("hermes", row)
-    elif t >= windows["direct"]:
-        picked.setdefault("direct", row)
 
-missing = [leg for leg in ("direct", "hermes") if leg not in picked]
-if missing:
-    sys.exit(f"collect_leg: no call_logs row inside the {', '.join(missing)} leg window")
+direct = read_json(os.path.join(bundle, "direct", "direct.json"))
+leg = read_json(os.path.join(bundle, "hermes", "leg.json"))
+response_id = direct.get("id") if isinstance(direct, dict) else None
+if response_id is not None and not isinstance(response_id, str):
+    sys.exit(f"collect_leg: direct/direct.json id is not a string: {response_id!r}")
 
+window = None
+if isinstance(leg, dict) and leg.get("window_start") is not None:
+    start = parse_stamp(leg.get("window_start"), "hermes/leg.json window_start")
+    end = parse_stamp(leg.get("window_end"), "hermes/leg.json window_end")
+    if end < start:
+        sys.exit("collect_leg: hermes/leg.json window_end precedes window_start")
+    window = {"start": leg["window_start"], "end": leg["window_end"]}
+
+conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
+conn.row_factory = sqlite3.Row
 requests = []
-for leg in ("direct", "hermes"):
-    row = dict(picked[leg])
-    row["leg"] = leg
-    requests.append(row)
+try:
+    if response_id is not None:
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM call_logs "
+            "WHERE requested_model = ? AND response_id = ? "
+            "ORDER BY timestamp ASC LIMIT ?",
+            (route, response_id, limit)).fetchall()
+        for row in rows:
+            requests.append(dict(row, leg="direct"))
+    if window is not None:
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM call_logs "
+            "WHERE requested_model = ? ORDER BY timestamp ASC LIMIT ?",
+            (route, limit)).fetchall()
+        for row in rows:
+            stamp = parse_stamp(row["timestamp"], "call_logs.timestamp")
+            if start <= stamp <= end:
+                requests.append(dict(row, leg="hermes"))
+finally:
+    conn.close()
 
 record = {
     "source": f"sqlite:{db} table call_logs (read-only, immutable=1)",
-    "captured_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-    "windows": windows,
+    "captured_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"),
+    "windows": {} if window is None else {"hermes": window},
     "requests": requests,
 }
-with open(out_path, "w", encoding="utf-8") as fh:
+with open(os.path.join(bundle, "omniroute-requests.json"), "w", encoding="utf-8") as fh:
     json.dump(record, fh, indent=2, sort_keys=True)
     fh.write("\n")
-print("omniroute-requests: " + ", ".join(
-    f"{r['leg']}={r.get('provider')!r}/{r.get('model')!r} status={r.get('status')}"
-    for r in requests))
+
+counts = {"direct": 0, "hermes": 0}
+for row in requests:
+    counts[row["leg"]] += 1
+summary = ", ".join(
+    f"{r['leg']}={r.get('provider')!r}/{r.get('model')!r} status={r.get('status')} "
+    f"session_tag={r.get('session_tag')!r}" for r in requests)
+print("omniroute-requests: " + (summary if summary else "no rows"))
+print(f"omniroute-requests: direct={counts['direct']} hermes={counts['hermes']} "
+      f"(declared: direct={response_id is not None} hermes={window is not None})")
+
+# A DECLARED leg with no row is LOUD: the leg ran, so a missing row means the export looked in
+# the wrong place. A leg that was never declared (the negative root has no response id and no
+# hermes turn) legitimately contributes nothing.
+missing = [name for name, declared in (("direct", response_id is not None),
+                                       ("hermes", window is not None))
+           if declared and counts[name] == 0]
+if missing:
+    sys.exit("collect_leg: no call_logs row for the "
+             f"{', '.join(missing)} leg — did the legs run against {route!r}?")
 PY

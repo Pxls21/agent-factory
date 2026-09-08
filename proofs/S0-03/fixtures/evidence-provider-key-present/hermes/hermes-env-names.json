@@ -1,4 +1,5 @@
 {
+  "agent_realpath": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
   "exe": "/usr/bin/python3.13",
   "names": [
     "HERMES_HOME",

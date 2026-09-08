@@ -34,7 +34,23 @@ default upstream-id behaviour (`open-sse/translator/response/openai-responses.ts
 one under test. The checker does not rely on this holding — conjunct (iii) reads OmniRoute's own
 request record — but the leg is built not to poison its own instrument.
 
+THE NEGATIVE LEG (`--no-credential`)
+-----------------------------------
+With `--no-credential` the key file is never opened and NO `Authorization` header is built, so
+the request that goes out is the one OmniRoute answers 401 AUTH_002 "Authentication required" on
+its no-bearer path (`src/server/authz/policies/clientApi.ts:77` rendered by
+`src/server/authz/pipeline.ts:79-95`). This is the ONLY mode that can produce the seed's
+`credential_absent` bundle: the old negative leg pointed `S0_03_KEY_FILE` at /dev/null, which
+exits before writing anything, so the committed fixture depicted a request the writer could not
+make (VERIFY-O1 F-9/F-10, AF-AP-42). The record it writes is identical in every other respect —
+same keys, same redaction — so the bundle a real negative leg produces is gradeable.
+NOTE (read before believing a green negative leg): OmniRoute only 401s an unauthenticated request
+when REQUIRE_API_KEY is enabled; `clientApi.ts:73-75` returns `allow({kind:"anonymous"})` first
+when it is not. A 200 here is a FINDING about the deployment, not a pass — the runner prints the
+observed status and the checker grades it.
+
 Usage: direct_responses_probe.py --route-id ID --out-dir DIR [--base-url URL] [--timeout-s N]
+                                 [--no-credential]
 """
 from __future__ import annotations
 
@@ -134,9 +150,14 @@ def parse_args(argv) -> dict:
     route_id = out_dir = None
     base_url = os.environ.get("S0_03_BASE_URL", DEFAULT_BASE_URL)
     timeout_s = DEFAULT_TIMEOUT_S
+    no_credential = False
     i = 0
     while i < len(argv):
         arg = argv[i]
+        if arg == "--no-credential":
+            no_credential = True
+            i += 1
+            continue
         if arg in ("--route-id", "--out-dir", "--base-url", "--timeout-s"):
             if i + 1 >= len(argv):
                 raise SystemExit(f"direct_responses_probe: {arg} needs a value")
@@ -154,14 +175,32 @@ def parse_args(argv) -> dict:
         raise SystemExit(f"direct_responses_probe: unknown argument {arg}")
     if not route_id or not out_dir:
         raise SystemExit("usage: direct_responses_probe.py --route-id ID --out-dir DIR "
-                         "[--base-url URL] [--timeout-s N]")
+                         "[--base-url URL] [--timeout-s N] [--no-credential]")
     return {"route_id": route_id, "out_dir": Path(out_dir), "base_url": base_url.rstrip("/"),
-            "timeout_s": timeout_s}
+            "timeout_s": timeout_s, "no_credential": no_credential}
+
+
+def build_headers(key):
+    """The request headers. `key is None` (the --no-credential leg) omits Authorization
+    ENTIRELY — an empty or placeholder bearer would exercise OmniRoute's key-VALIDATION path
+    (`clientApi.ts:81` -> `:96`, a rejected key: "Invalid API key") instead of its no-bearer
+    path, which is a different outcome and a different reason."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "User-Agent": USER_AGENT,
+        "x-omniroute-compression": "off",
+    }
+    if key is not None:
+        # The value only ever lives in this dict and in the socket write.
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
 
 
 def main(argv) -> int:
     args = parse_args(argv[1:])
-    key = read_key(os.environ.get("S0_03_KEY_FILE") or DEFAULT_KEY_FILE)
+    key = None if args["no_credential"] else read_key(
+        os.environ.get("S0_03_KEY_FILE") or DEFAULT_KEY_FILE)
 
     nonce = secrets.token_hex(8)
     body = {
@@ -175,14 +214,7 @@ def main(argv) -> int:
             }],
         }],
     }
-    # The value only ever lives in this dict and in the socket write.
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream",
-        "User-Agent": USER_AGENT,
-        "x-omniroute-compression": "off",
-    }
+    headers = build_headers(key)
     # What the artifact records: the header NAMES sent, plus the compression value. Never the
     # Authorization value (AF-AP-7: redact structurally, at the point of the write).
     headers_sent = {name: ("<redacted>" if name.lower() == "authorization" else value)
@@ -220,6 +252,7 @@ def main(argv) -> int:
 
     record = {
         "leg": "direct",
+        "credential_presented": key is not None,
         "route_id": args["route_id"],
         "url": url,
         "nonce": nonce,
@@ -243,7 +276,7 @@ def main(argv) -> int:
         json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(f"direct: status={status} model={record['model']!r} events={len(events)} "
-          f"duration_ms={duration_ms}")
+          f"duration_ms={duration_ms} credential_presented={key is not None}")
     # A transport error is a FINDING, not a pass: exit non-zero so the runner stops.
     return 0 if status == 200 else 1
 

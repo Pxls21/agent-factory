@@ -2,5 +2,7 @@
   "leg": "hermes",
   "nonce2": "0f1e2d3c4b5a6978",
   "prompt": "Run the terminal command 'printf 0f1e2d3c4b5a6978' and reply with its output.",
-  "route_id": "agentfactory-build"
+  "route_id": "agentfactory-build",
+  "window_end": "2026-09-08T00:00:04.000000Z",
+  "window_start": "2026-09-08T00:00:01.000000Z"
 }

@@ -1,3 +1,31 @@
+# S0-03 proof-OWNED Hermes provider profile — a TEMPLATE, never the owner's live profile.
+#
+# The owner's own profile lives at ~/.hermes/profiles/agentfactory/ on the PC and is READ ONLY
+# for this proof (the runner reads OMNIROUTE_API_KEY out of its .env in place, and never copies,
+# prints, or passes it in argv — owner ruling 2026-09-05, AF-AP-39). This file is what leg B
+# launches with, and a key-free copy of it is captured into the bundle as hermes/profile.yaml.
+#
+# Every field below is pinned by a document, not by preference:
+#   base_url      docs/03_INTEGRATION_CONTRACTS.md:31-51 (the internal /v1 endpoint) — the PC's
+#                 authoritative OmniRoute is omniroute-migrated.service on :20128
+#                 (PC-BRIDGE.md:153-163).
+#   api_mode      ADR 0002 (docs/adr/0002-omniroute-sole-model-egress.md) and
+#                 docs/02_COMPONENT_AUDIT.md:26-28: `codex_responses`, never codex_app_server.
+#                 NOTE: the owner's two repaired live profiles currently use `chat_completions`
+#                 (docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md:17) — an OPEN owner decision
+#                 (task #35). This proof PINS the ADR's transport; a failure here is a RED
+#                 FINDING for the owner, never a silent switch to the deviation.
+#   key_env       the NAME only. Hermes resolves the value from the environment at launch; no
+#                 value ever appears in this file or in any captured artifact.
+#   extra_headers docs/02_COMPONENT_AUDIT.md:49-56 — send `x-omniroute-compression: off`.
+#                 OmniRoute reads it at open-sse/services/compression/planResolution.ts:41 and
+#                 echoes `X-OmniRoute-Compression: off; source=request-header` (:60-62).
+#                 S0-03 asserts only that it was SENT; S0-04 owns whether it was honoured.
+#
+# Hermes' custom-provider keys are base_url / api_mode / key_env / extra_headers
+# (docs/02_COMPONENT_AUDIT.md:26-28; website/docs/developer-guide/model-provider-plugin.md:94 in
+# the pinned hermes-agent 527da608).
+
 providers:
   s0-03-omniroute:
     base_url: http://127.0.0.1:20128/v1
@@ -6,4 +34,17 @@ providers:
     extra_headers:
       x-omniroute-compression: "off"
 
-default: agentfactory-build
+# The route the legs exercise, DECLARED WHERE HERMES READS IT. The pinned hermes-agent
+# (527da608) resolves the default model from the `model:` section and nowhere else:
+# cli.py:5359-5361 does `_model_config = CLI_CONFIG.get("model", {})` then
+# `_model_config.get("default") or _model_config.get("model")`. A TOP-LEVEL `default:` is read by
+# nothing (VERIFY-O1 F-13) — with it, leg B would resolve whatever Hermes defaults to and the
+# route would not be bound to the declared provider at all.
+# Kept in ONE place: tools/pc/run_s0_03_legs.sh reads the route back out of `model.default` at
+# run time (splitting the `<provider>/` prefix), so the spec's --route-id and the launched
+# profile cannot drift apart.
+# The provider prefix is how Hermes binds the model to the entry above
+# (hermes_cli/model_switch.py:202-204 reads `api_mode` off the named providers entry).
+model:
+  default: "s0-03-omniroute/agentfactory-build"
+  provider: s0-03-omniroute

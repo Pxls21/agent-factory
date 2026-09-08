@@ -22,6 +22,16 @@
     },
     {
       "leg": "negative",
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-rejected"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "credential_rejected: OmniRoute refused the presented key (HTTP 401)"
+      }
+    },
+    {
+      "leg": "negative",
       "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-stub-route"],
       "cwd": ".",
       "timeout_s": 60,
