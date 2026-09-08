@@ -34,7 +34,7 @@ Hermes' native Buzz plugin remains a later simplification experiment, not the se
 providers:
   factory-router:
     base_url: http://omniroute:20128/v1
-    api_mode: codex_responses
+    api_mode: chat_completions   # the live transport; codex_responses permitted per route (ADR 0002, amended 2026-09-08)
     key_env: OMNIROUTE_INTERNAL_API_KEY
     extra_headers:
       x-omniroute-compression: "off"
@@ -43,7 +43,8 @@ providers:
 Required assertions:
 
 - Hermes has no upstream provider key and cannot reach public model endpoints.
-- A `/v1/responses` request streams text and completes a real Hermes tool-call round trip.
+- A request over the configured transport (`/v1/chat/completions`; `/v1/responses` where a route runs `codex_responses`) streams text
+  and completes a real Hermes tool-call round trip, and the evidence records which transport it observed.
 - OmniRoute reports compression off, and a deterministic stub proves request preservation.
 - OmniRoute failure does not trigger direct fallback.
 - State is persistent; bootstrap secrets are non-default; provider setup is explicit and audited.

@@ -8,7 +8,7 @@ Current accepted records:
 
 - 0001: Hermes is the sole stock production runtime; ACP and the surrounding stack remain.
 - 0002: OmniRoute is the sole model/embedding API egress.
-- 0003: Four logical memory scopes are composed over ai-memory.
+- 0003: Four logical memory scopes are composed over ai-memory. (`0003-two-durable-memory-scopes.md` is SUPERSEDED — owner decision 2026-09-08.)
 - 0004: Dream and JIT Foundry planes are isolated proposal/candidate producers.
 - 0005: Foundry host is a first-party minimal translator for JIT outputs; OpenHarness is not a runtime dependency.
 - 0006: GBrain seam is wrap (pinned dream machinery in a first-party adapter); dream worker has no admin credentials.

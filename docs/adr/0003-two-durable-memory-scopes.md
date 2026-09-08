@@ -1,6 +1,8 @@
 # ADR 0003 — Two durable memory scopes in v1
 
-- Status: accepted
+- Status: SUPERSEDED by `0003-four-logical-memory-scopes.md` (owner decision 2026-09-08, the S0-06 rounds' D-2: the seed, the docs and
+  the built adapter bind the four-scope decision; this text is the same question answered more narrowly, not a layer beneath it — the
+  four-scope ADR already maps every logical scope onto a durable `(workspace, project)` pair; kept as the rejected alternative)
 - Date: 2026-09-02
 
 ## Context

@@ -8,7 +8,7 @@ Implementation is staged so the full plan survives while authority is added only
 |---|---|---|
 | S0-01 | `buzz-acp` launches pinned `hermes-acp` | ACP initialize/prompt/stream/cancel/shutdown fixture |
 | S0-02 | Buzz authorization/freshness | Allowed event succeeds; unauthorized/replayed/stale events fail |
-| S0-03 | Hermes→OmniRoute | Text and real tool-call round trip over `codex_responses` |
+| S0-03 | Hermes→OmniRoute | Text and real tool-call round trip over the live transport (`chat_completions`; `codex_responses` permitted per route — ADR 0002 amended 2026-09-08) |
 | S0-04 | Compression contract | Response header plus deterministic stub request preservation |
 | S0-05 | No direct model egress | Network canaries fail from every non-OmniRoute unit |
 | S0-06 | Four-scope adapter design | Auth tuple, precedence, write-target, and leak fixtures |
