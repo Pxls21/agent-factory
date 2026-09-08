@@ -1,0 +1,1313 @@
+diff --git a/proofs/S0-01/pins.py b/proofs/S0-01/pins.py
+index d08e13d..c8528d5 100644
+--- a/proofs/S0-01/pins.py
++++ b/proofs/S0-01/pins.py
+@@ -154,3 +154,82 @@ PINNED_TEE_STATUS_KEYS = (
+     "recorded_c2a", "recorded_a2c", "forwarded_c2a", "forwarded_a2c",
+     "write_errors", "exit_code", "updated_seq", "updated_utc",
+ )
++
++# --- the ONE producer/consumer file list for a captured leg (P5a; SWEEP-prod rows #1/#27/#28) ---
++# The checker's private `_LEG_REQUIRED_FILES` (20 names) and what the PC capture pipeline actually writes had
++# drifted apart: the real corpus leg run-1 carries 8 names that allowlist REJECTS (backend-healthz-before.json,
++# backend-healthz-after.json, hermes-config.sha256, launch.exited, launch.ready, manifest-pre.done,
++# manifest-post.done, teardown.txt) and lacks 2 it REQUIRES. This mapping is the ONE list both sides read; the
++# rejected alternative was extending the checker's private set, which is how the two drifted in the first place.
++#
++# Status vocabulary — what a COLLECTED leg (proofs/S0-01/evidence/golden/<leg>, built by tools/pc/collect_leg.sh
++# out of the PC framedir) may and must contain:
++#   "required"            present in every collected positive leg; a consumer REQUIRES it
++#   "optional"            may be present; a consumer ADMITS it, never requires it
++#   "excluded_on_collect" written into the PC framedir, dropped by collect_leg.sh's --exclude list; never collected
++#   "transient"           an intermediate the producer replaces in place before the leg closes; never collected
++# Names beginning with "." are NOT here: they are atomic-write scratch (frame_tee.py's `.tee-status.tmp`), never
++# a leg ENTRY — the writer renames them away, and one that survived a crash SHOULD be rejected by a consumer's
++# entry allowlist as an unexpected entry, which is the right outcome for an incomplete capture.
++# A consumer's entry allowlist is {required} | {optional} | PINNED_LEG_DIRS; {required} is what it demands.
++# Every name names its producer below; a producer that starts writing a new framedir name must add it here
++# (tests/test_s0_01_pc_tools.py parses the producers and fails on a name that is not in this mapping, and on a
++# mapping name no producer writes). Derived 2026-09-08 by reading the producers and cross-checked against the
++# real-leg corpus (S0_01_REAL_LEG_DIR, scripts/realleg_sync.sh).
++#
++# NOT here, deliberately: `agent-stderr.txt` — NO positive-leg producer writes it. It is written only by
++# tools/acp_probe.py into the NEGATIVE leg and is already pinned by NEGATIVE_REQUIRED_FILES above. The checker's
++# F20 "agent-stderr.txt is REQUIRED in every positive leg" is therefore unsatisfiable by the current pipeline;
++# either the tee drains the agent's stderr to that name or the checker drops the requirement (both out of P5a).
++PINNED_LEG_FILES = {
++    # --- tools/pc/pc_launch.py ---
++    "argv.txt": "required",
++    "backend-healthz-before.json": "required",
++    "buzz-acp.exit": "required",
++    "buzz-acp.pid": "required",
++    "buzzacp.raw.log": "excluded_on_collect",   # unmasked; the masked buzzacp.log is what travels
++    "env.json": "required",
++    "hermes-config.sha256": "required",
++    "hermes-model.txt": "required",
++    "launch.exited": "required",
++    "launch.ready": "required",
++    "manifest-pre.log": "excluded_on_collect",  # the detached pc_manifest.sh's stdout
++    "owned-pids.json": "required",              # rewritten by pc_post.sh's `scan after`
++    "runtime-identity.json": "required",        # created by frame_tee.py, merged by pc_launch.py
++    "startup-line.txt": "required",
++    # --- tools/pc/pc_post.sh ---
++    "backend-healthz-after.json": "required",
++    "buzzacp.log": "required",
++    "manifest-post.log": "excluded_on_collect",
++    "process-scan-after.txt": "required",
++    "process-scan-teardown.txt": "required",
++    "teardown.txt": "optional",                 # absent on the shutdown leg: buzz-acp exits on its own, so
++                                                # pc_post.sh's teardown block is skipped (corpus: 3 of 4 legs)
++    # --- tools/pc/pc_manifest.sh (PHASE=pre|post) ---
++    "manifest-pre.done": "required",
++    "manifest-pre.summary": "required",
++    "manifest-pre.txt": "transient",            # gzip -9 -n -f replaces it with the .gz
++    "manifest-pre.txt.gz": "required",
++    "manifest-pre.txt.gz.sha256": "optional",   # collected by collect_leg.sh, stripped from the real-leg corpus
++                                                # by scripts/realleg_sync.sh pc-build — admit, never require
++    "manifest-post.done": "required",
++    "manifest-post.summary": "required",
++    "manifest-post.txt": "transient",
++    "manifest-post.txt.gz": "required",
++    "manifest-post.txt.gz.sha256": "optional",
++    # --- tools/frame_tee.py ---
++    "frames-agent-to-client.jsonl": "required",
++    "frames-client-to-agent.jsonl": "required",
++    "tee-status.json": "required",              # v2.3+ captures only; a v2.2 corpus predates it
++    "timeline.jsonl": "required",
++    # --- tools/build_capture_record.py ---
++    "capture.json": "optional",                 # human-reading record; the checker never trusts its content
++}
++# Names whose presence depends on the capture's contract version, with the version that introduced them. A
++# consumer grading an OLDER corpus drops these from {required} instead of failing it (the checker's own
++# `_corpus_version` rule, mirrored in tests/test_s0_01_pc_tools.py).
++PINNED_LEG_FILES_SINCE = {"tee-status.json": "v2.3"}
++PINNED_LEG_DIRS = {
++    "mentions": "required",           # pc_launch.py creates it; pc_mention.sh writes <tag>.receipt.json/.err/.event.json
++    "upstream-records": "required",   # pc_launch.py creates it; pc_post.sh copies the backend's records into it
++}
+diff --git a/proofs/S0-01/tools/build_capture_record.py b/proofs/S0-01/tools/build_capture_record.py
+index dbb9ae1..ce69424 100755
+--- a/proofs/S0-01/tools/build_capture_record.py
++++ b/proofs/S0-01/tools/build_capture_record.py
+@@ -16,6 +16,9 @@ import sys
+ from collections import Counter
+ from pathlib import Path
+ 
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++import pins  # noqa: E402  (the ONE leg-file list; this tool never keeps a second copy of it)
++
+ 
+ def _sha256(data: bytes) -> str:
+     return hashlib.sha256(data).hexdigest()
+@@ -51,6 +54,20 @@ def main() -> int:
+     d = Path(args[0])
+     leg = args[1]
+ 
++    # SWEEP-prod #27: twelve default-on-absent gates below meant `build_capture_record.py <empty-dir> run-1`
++    # exited 0 and wrote `{"capture": ..., "files": {}, "version": 2}` — a record of nothing, green. The
++    # required-name list is NOT a local copy: it is derived from pins.PINNED_LEG_FILES, the one list the
++    # checker's entry allowlist reads too (#1/#28).
++    # Every presence gate below is DOMINATED by this one: each `.exists()` name is `required` here, so by the
++    # time they run the file is proven present (AF-AP-40 — a required artifact must FAIL when absent).
++    missing = sorted(n for n, status in pins.PINNED_LEG_FILES.items()
++                     if status == "required" and not (d / n).is_file())
++    missing += sorted(n for n, status in pins.PINNED_LEG_DIRS.items()
++                      if status == "required" and not (d / n).is_dir())
++    if missing:
++        print(f"{leg}: missing required leg files: {', '.join(sorted(missing))}", file=sys.stderr)
++        return 1
++
+     rec = {"capture": f"s0-01-golden-leg:{leg}", "version": 2}
+ 
+     # timeline summary
+diff --git a/proofs/S0-01/tools/pc/pc_launch.py b/proofs/S0-01/tools/pc/pc_launch.py
+index 643542f..59983e7 100755
+--- a/proofs/S0-01/tools/pc/pc_launch.py
++++ b/proofs/S0-01/tools/pc/pc_launch.py
+@@ -77,6 +77,113 @@ def masked_log_text(raw_path):
+     return HEX64.sub("<HEX>", data)
+ 
+ 
++def wait_for_manifest(fd, phase, tries=600):
++    """Wait for pc_manifest.sh's `.done` marker, FAILURE-AWARE (SWEEP-prod #32).
++
++    pc_manifest.sh is silent on success — every step writes to a file — and its own SystemExit reason lands in
++    manifest-<phase>.log through stderr=STDOUT while `.done` is never touched. A success-only exit condition
++    therefore spends the full 300 s on a manifest that died in its first second and then blames a timeout. A
++    non-empty log with no marker IS the failure signature; its tail is surfaced instead of hidden.
++    """
++    done = os.path.join(fd, f"manifest-{phase}.done")
++    log = os.path.join(fd, f"manifest-{phase}.log")
++    for _ in range(tries):
++        if os.path.exists(done):
++            return
++        if os.path.exists(log) and os.path.getsize(log) > 0:
++            tail = open(log, encoding="utf-8", errors="replace").read()[-800:].strip()
++            raise SystemExit(f"pc_launch: {phase} manifest failed before its .done marker; "
++                             f"manifest-{phase}.log tail: {tail}")
++        time.sleep(0.5)
++    raise SystemExit(f"pc_launch: {phase} manifest did not finish within {tries // 2} s")
++
++
++def summary_tail(path):
++    """Last line of a manifest summary, or a named placeholder (SWEEP-prod #48).
++
++    An empty or truncated summary used to raise IndexError from `[-1]` on a display-only read, killing the
++    launcher right after the 300 s manifest wait and before env.json/argv.txt were ever written.
++    """
++    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
++    return lines[-1] if lines else "<empty summary>"
++
++
++def wait_for_tee_identity(fd, tries=60):
++    """Wait for frame_tee.py to create runtime-identity.json (SWEEP-prod #31).
++
++    The old default — `{"_note": "tee identity absent at merge time"}` — let the launcher report success and
++    pushed the diagnosis downstream, where the checker's reason is a runtime-identity KEY SET mismatch that
++    never says "the tee never started".
++    """
++    ident_path = os.path.join(fd, "runtime-identity.json")
++    for _ in range(tries):
++        if os.path.exists(ident_path):
++            return ident_path
++        time.sleep(0.5)
++    raise SystemExit(f"pc_launch: the tee did not write runtime-identity.json within {tries // 2} s")
++
++
++def buzz_identity(pid, rc):
++    """Realpath + sha256 of a live buzz-acp's executable, or a NAMED exit (SWEEP-prod #12).
++
++    buzz-acp can exit between the settle poll and here; both expressions then raise FileNotFoundError and the
++    launcher dies with a bare traceback — no identity merge, no owned-pids.json, no launch.ready, so run_leg.sh
++    spins its whole READY poll before reporting "launch failed" with no reason.
++    """
++    try:
++        return os.readlink(f"/proc/{pid}/exe"), sha256_file(f"/proc/{pid}/exe")
++    except OSError as exc:
++        raise SystemExit(f"pc_launch: buzz-acp exited during identity capture (rc={rc}): {exc}")
++
++
++def session_closure(pid):
++    """The descendant closure of `pid`, scoped to ITS SESSION (SWEEP-prod #52).
++
++    buzz-acp is spawned with start_new_session=True, so it leads session <pid> and every descendant it did not
++    detach shares that session. Walking the FULL `ps -eo pid,ppid` table instead adopts any foreign row whose
++    ppid happens to land in the owned set — a pid-reuse race writing a stranger into owned-pids.json.
++    """
++    ps = subprocess.run(["ps", "-s", str(pid), "-o", "pid,ppid", "--no-headers"],
++                        capture_output=True, text=True)
++    rows = []
++    for line in ps.stdout.splitlines():
++        parts = line.split()
++        if len(parts) == 2:
++            rows.append((int(parts[0]), int(parts[1])))
++    if ps.returncode != 0 or not rows:
++        raise SystemExit(f"pc_launch: ps -s {pid} listed no process (rc={ps.returncode}); "
++                         "the buzz-acp session is gone")
++    owned = {pid}
++    changed = True
++    while changed:
++        changed = False
++        for cpid, cppid in rows:
++            if cppid in owned and cpid not in owned:
++                owned.add(cpid)
++                changed = True
++    return owned
++
++
++def redact_environ(raw, red):
++    """/proc/<pid>/environ bytes -> env.json mapping, fingerprints taken on the RAW bytes (SWEEP-prod #25).
++
++    len/sha256_12 computed after a lossy decode describe a MANGLED value, not the secret, and check_env only
++    asserts `redacted is True` — so nothing downstream would ever notice the fingerprint was wrong.
++    """
++    live_env = {}
++    for item in raw.split(b"\x00"):
++        if not item:
++            continue
++        kb, _, vb = item.partition(b"=")
++        k = kb.decode("utf-8", errors="replace")
++        if red.search(k):
++            live_env[k] = {"redacted": True, "len": len(vb),
++                           "sha256_12": hashlib.sha256(vb).hexdigest()[:12]}
++        else:
++            live_env[k] = vb.decode("utf-8", errors="replace")
++    return live_env
++
++
+ def main():
+     ap = argparse.ArgumentParser()
+     ap.add_argument("--leg", required=True, choices=list(pins.LEGS))
+@@ -137,14 +244,8 @@ def main():
+                          env=man_env, stdin=subprocess.DEVNULL, stdout=mlog, stderr=subprocess.STDOUT)
+ 
+     # the PRE manifest must COMPLETE before anything spawns (its timestamp is the "before" mark)
+-    pre_done = os.path.join(FD, "manifest-pre.done")
+-    for _ in range(600):
+-        if os.path.exists(pre_done):
+-            break
+-        time.sleep(0.5)
+-    else:
+-        raise SystemExit("pc_launch: pre manifest did not finish within 300 s")
+-    print(f"[{utc_now()}] pre manifest done: {open(os.path.join(FD, 'manifest-pre.summary')).read().splitlines()[-1]}")
++    wait_for_manifest(FD, "pre")
++    print(f"[{utc_now()}] pre manifest done: {summary_tail(os.path.join(FD, 'manifest-pre.summary'))}")
+ 
+     # --- env from files (never argv) ---
+     env = {
+@@ -200,29 +301,17 @@ def main():
+ 
+     # env.json from the live process environment, redacted by KEY NAME (pins.REDACTED_ENV_KEY_RE)
+     red = re.compile(pins.REDACTED_ENV_KEY_RE)
+-    live_env = {}
+-    for item in open(f"/proc/{pid}/environ", "rb").read().split(b"\x00"):
+-        if not item:
+-            continue
+-        k, _, v = item.decode("utf-8", errors="replace").partition("=")
+-        if red.search(k):
+-            live_env[k] = {"redacted": True, "len": len(v), "sha256_12": hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]}
+-        else:
+-            live_env[k] = v
++    live_env = redact_environ(open(f"/proc/{pid}/environ", "rb").read(), red)
+     open(os.path.join(FD, "env.json"), "w").write(json.dumps(live_env, indent=1, sort_keys=True) + "\n")
+ 
+     # merge the buzz-acp identity into the tee's runtime-identity.json (wait for the tee to spawn)
+-    ident_path = os.path.join(FD, "runtime-identity.json")
+-    for _ in range(60):
+-        if os.path.exists(ident_path):
+-            break
+-        time.sleep(0.5)
+-    ident = json.load(open(ident_path)) if os.path.exists(ident_path) else {"_note": "tee identity absent at merge time"}
+-    exe_real = os.readlink(f"/proc/{pid}/exe")
++    ident_path = wait_for_tee_identity(FD)
++    ident = json.load(open(ident_path))
++    exe_real, exe_sha = buzz_identity(pid, proc.poll())
+     ident.update({
+         "buzz_acp_pid": pid,
+         "buzz_acp_exe_realpath": exe_real,
+-        "buzz_acp_exe_sha256": sha256_file(f"/proc/{pid}/exe"),
++        "buzz_acp_exe_sha256": exe_sha,
+         "buzz_acp_version": "n/a: this buzz-acp build has no --version flag (identity = exe sha256 above)",
+         "launch_argv": argv,
+     })
+@@ -241,20 +330,9 @@ def main():
+         print("config echo:", " ".join(echo.values()))
+         if echo.get("max_turn") != f"max_turn={pins.PINNED_MAX_TURN}" or echo.get("idle_timeout") != f"idle_timeout={pins.PINNED_IDLE_TIMEOUT}":
+             print("CONFIG ECHO MISMATCH — the checker will fail this leg")
+-    # owned process set at READY: the closure of buzz-acp's descendants from the live process table
++    # owned process set at READY: the closure of buzz-acp's descendants inside ITS OWN session
+     # (recomputed in memory; only owned lines are persisted by pc_post.sh)
+-    rows = []
+-    for line in subprocess.run(["ps", "-eo", "pid,ppid", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
+-        parts = line.split()
+-        if len(parts) == 2:
+-            rows.append((int(parts[0]), int(parts[1])))
+-    owned = {pid}
+-    changed = True
+-    while changed:
+-        changed = False
+-        for cpid, cppid in rows:
+-            if cppid in owned and cpid not in owned:
+-                owned.add(cpid); changed = True
++    owned = session_closure(pid)
+     for key in ("tee_pid", "agent_child_pid"):
+         if isinstance(ident.get(key), int) and ident[key] not in owned:
+             print(f"OWNED-SET DRIFT: identity {key}={ident[key]} not in the descendant closure {sorted(owned)}")
+diff --git a/proofs/S0-01/tools/pc/pc_negative.py b/proofs/S0-01/tools/pc/pc_negative.py
+index d499af7..0541ee5 100755
+--- a/proofs/S0-01/tools/pc/pc_negative.py
++++ b/proofs/S0-01/tools/pc/pc_negative.py
+@@ -15,20 +15,32 @@ import pins  # noqa: E402
+ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ from pc_launch import read_kv, HERMES_ENV, BASE, REPO  # noqa: E402
+ 
+-FD = os.path.join(BASE, ".markers", "v2-negative")
+-shutil.rmtree(FD, ignore_errors=True)
+-os.makedirs(FD)
+-env = {
+-    "PATH": pins.PINNED_PATH, "HOME": pins.PINNED_HOME,
+-    "HERMES_HOME": pins.PINNED_HERMES_HOME, "PYTHONDONTWRITEBYTECODE": "1",
+-    "OMNIROUTE_API_KEY": read_kv(HERMES_ENV, "OMNIROUTE_API_KEY"),
+-    "S0_01_AGENT": pins.PINNED_AGENT_REALPATH, "S0_01_FRAMEDIR": FD,
+-}
+-rc = subprocess.run(["/usr/bin/python3", os.path.join(REPO, "proofs/S0-01/tools/acp_probe.py")], env=env).returncode
+-print("probe rc", rc)
+-for name in sorted(os.listdir(FD)):
+-    print(name, os.path.getsize(os.path.join(FD, name)))
+-tl = os.path.join(FD, "timeline.jsonl")
+-if os.path.exists(tl):
+-    for line in open(tl):
+-        print(line[:300].rstrip())
++
++def main():
++    """Run the probe and PROPAGATE ITS EXIT CODE (SWEEP-prod #33).
++
++    The wrapper used to end on a `print`, so it exited 0 whatever the probe returned: run_leg.sh runs it under
++    `set -euo pipefail` and walked straight on to collect_leg.sh with a failed negative leg in hand.
++    """
++    FD = os.path.join(BASE, ".markers", "v2-negative")
++    shutil.rmtree(FD, ignore_errors=True)
++    os.makedirs(FD)
++    env = {
++        "PATH": pins.PINNED_PATH, "HOME": pins.PINNED_HOME,
++        "HERMES_HOME": pins.PINNED_HERMES_HOME, "PYTHONDONTWRITEBYTECODE": "1",
++        "OMNIROUTE_API_KEY": read_kv(HERMES_ENV, "OMNIROUTE_API_KEY"),
++        "S0_01_AGENT": pins.PINNED_AGENT_REALPATH, "S0_01_FRAMEDIR": FD,
++    }
++    rc = subprocess.run(["/usr/bin/python3", os.path.join(REPO, "proofs/S0-01/tools/acp_probe.py")], env=env).returncode
++    print("probe rc", rc)
++    for name in sorted(os.listdir(FD)):
++        print(name, os.path.getsize(os.path.join(FD, name)))
++    tl = os.path.join(FD, "timeline.jsonl")
++    if os.path.exists(tl):
++        for line in open(tl):
++            print(line[:300].rstrip())
++    return rc
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/proofs/S0-01/tools/pc/pc_post.sh b/proofs/S0-01/tools/pc/pc_post.sh
+index 09996dd..2903be6 100755
+--- a/proofs/S0-01/tools/pc/pc_post.sh
++++ b/proofs/S0-01/tools/pc/pc_post.sh
+@@ -8,16 +8,20 @@ BASE=/home/rocco/s0-01-pinned; L=$BASE/.markers; SEC=$BASE/.secrets; REPO=${S0_0
+ # S0_01_REPO points at the checkout whose pins.py to read). Everything else needs the PC markers.
+ FD=$(cat $L/current-framedir 2>/dev/null || true); RECDIR=$(cat $L/backend-recdir 2>/dev/null || true)
+ BA=$BASE/buzz/target/release/buzz-acp; TEE=$REPO/proofs/S0-01/tools/frame_tee.py; HERMES=$BASE/.venv-hermes/bin/hermes-acp
+-# Process observation v2.3 (audit P1 "cleanup and identity"; checkpoint-5 audit "empty scan rejected /
++# Process observation v2.4 (audit P1 "cleanup and identity"; checkpoint-5 audit "empty scan rejected /
+ # owned survivor accepted"): the OWNED set is the full descendant closure of the buzz-acp pid (generic
+ # children included), computed from the complete process table IN MEMORY (never persisted — other users'
+-# argv stay private). Line 1 is the ENUMERATION HEADER `# process-scan v2.3 mode=<after|teardown>
+-# rows=<live full-table rows> buzz_acp_pid=<pid|none> buzz_present=<0|1> owned=<closure size>
+-# owned_present=<owned pids still LIVE> pinned_present=<live rows naming a pinned path>
+-# owned_zombies=<owned pids exited but not yet reaped — never survivors> utc=<ts>` —
+-# it lets the checker tell "enumeration ran and found nothing owned" (a successful shutdown) from "no
+-# scan ran"; then one `<pid> <ppid> <etimes> <cmd>` line per owned process plus every line naming a pinned
+-# path; owned-pids.json lists the closure.
++# argv stay private). Line 1 is the ENUMERATION HEADER `# process-scan v2.4 mode=<after|teardown>
++# rows=<rows this file carries> buzz_acp_pid=<pid|none> buzz_present=<0|1> owned=<closure size>
++# owned_present=<owned pids still LIVE> pinned_present=<body rows pinned by entry point>
++# owned_zombies=<owned pids exited but not yet reaped — never survivors> table_rows=<live full-table rows>
++# utc=<ts>` — it lets the checker tell "enumeration ran and found nothing owned" (a successful shutdown)
++# from "no scan ran"; then one `<pid> <ppid> <etimes> <cmd>` line per owned process plus every row pinned
++# by entry point; owned-pids.json lists the closure.
++# v2.4 closes SWEEP-prod #5/#6 (two counters over different populations, and a substring anchor): `rows` and
++# `pinned_present` are BOTH counted over the body this file is written from, so the header cannot describe a
++# population the body does not carry; `table_rows` is the separate name for the full table, never asserted
++# equal to `rows`. `is_pinned` matches the entry point exactly instead of any substring of the command line.
+ scan() { python3 - "$1" "$2" "$REPO" <<'PY'
+ import datetime, json, subprocess, sys
+ mode, fd, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+@@ -25,7 +29,23 @@ if mode not in ("after", "teardown"):
+     sys.exit(f"scan: mode must be after|teardown, got {mode!r}")
+ sys.path.insert(0, f"{repo}/proofs/S0-01")
+ import pins  # the ONLY pin source — the pinned paths are never repeated as literals here
+-PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
++PINNED_BINARY = pins.PINNED_BUZZ_ACP_EXE_REALPATH                     # a native binary: argv[0] IS its path
++PINNED_SCRIPTS = (pins.PINNED_TEE_PATH, pins.PINNED_AGENT_REALPATH)   # interpreter + pinned script: argv[1]
++
++
++def is_pinned(cmd):
++    """v2.4 (SWEEP-prod #6): a row is pinned by its ENTRY POINT, never by a substring of its command line.
++    A `sleep` whose argv merely MENTIONED the tee path used to be counted as a pinned process. The three
++    shapes below are the ones a captured leg's process-scan-after.txt actually carries:
++        <buzz-acp> --relay-url ...       -> argv[0] == the pinned binary
++        python3 <frame_tee.py>           -> argv[1] == the pinned tee
++        <venv>/python3 <hermes-acp>      -> argv[1] == the pinned agent
++    The tee and the agent are SCRIPTS: /proc/<pid>/exe names their interpreter, never a pinned path, so the
++    exe read that does identify buzz-acp cannot identify them (the teardown block below uses that read where
++    it works — on the one pid we are about to signal). Exact token equality; no substring, no /proc read."""
++    argv = cmd.split()
++    return argv[:1] == [PINNED_BINARY] or (len(argv) > 1 and argv[1] in PINNED_SCRIPTS)
++
+ rows = []
+ zombies = set()
+ # -ww: unlimited width. Without it procps clips every row at 80 columns when stdout is not a tty, so a long
+@@ -64,14 +84,16 @@ if mode == "after":
+     json.dump({"buzz_acp_pid": buzz, "owned": sorted(owned), "taken_at": "ready+after"}, open(f"{fd}/owned-pids.json", "w"), indent=1)
+ else:
+     owned = set(json.load(open(f"{fd}/owned-pids.json"))["owned"])
+-keep = [r for r in rows if r[0] in owned or any(p in r[3] for p in PINNED)]
++keep = [r for r in rows if r[0] in owned or is_pinned(r[3])]
+ # The scan's own helper rows are dropped ONLY when they are not owned: an owned row is evidence and is never filtered,
+ # so owned_present (counted over the full table) equals the owned rows in the body by construction (VERIFY-CK7).
+ keep = [r for r in keep if r[0] in owned or ("pc_post.sh" not in r[3] and " ps -e" not in r[3])]
+ table_pids = {r[0] for r in rows}
+-header = (f"# process-scan v2.3 mode={mode} rows={len(rows)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
++# `keep` is now final: every counter the header carries about the BODY is computed over this same list (#5).
++header = (f"# process-scan v2.4 mode={mode} rows={len(keep)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
+           f"buzz_present={int(buzz in table_pids)} owned={len(owned)} owned_present={len(owned & table_pids)} "
+-          f"pinned_present={sum(1 for r in rows if any(p in r[3] for p in PINNED))} owned_zombies={len(owned & zombies)} "
++          f"pinned_present={sum(1 for r in keep if is_pinned(r[3]))} owned_zombies={len(owned & zombies)} "
++          f"table_rows={len(rows)} "
+           f"utc={datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+ with open(f"{fd}/process-scan-{mode}.txt", "w") as out:
+     out.write(header + "\n")
+diff --git a/tests/test_s0_01_pc_post_scan.py b/tests/test_s0_01_pc_post_scan.py
+index d560583..e7a8cb5 100644
+--- a/tests/test_s0_01_pc_post_scan.py
++++ b/tests/test_s0_01_pc_post_scan.py
+@@ -1,4 +1,4 @@
+-"""Real-producer contract for the S0-01 process observation (pc_post.sh `scan`, v2.3).
++"""Real-producer contract for the S0-01 process observation (pc_post.sh `scan`, v2.4).
+ 
+ The checkpoint-5 audit ran the actual producer against controlled process tables and showed the checker
+ rejecting a successful cleanup (empty scan) while accepting an owned `sleep 60` survivor. These tests run
+@@ -34,9 +34,15 @@ print(os.getpid(), child.pid, gpid, flush=True)
+ time.sleep(120)
+ """
+ 
++# v2.4 (P5a, SWEEP-prod #5 + SWEEP-tests 4.2/15.2): `rows` counts the rows THIS FILE carries and `table_rows`
++# the full process table — two populations, two names, never asserted equal. In v2.3 one name carried both
++# meanings, so `pinned_present` (full table) could exceed the body it headed, and a producer-side `rows=4`
++# literal left all 11 tests in this file green while the header lied about the table it headed.
+ _HEADER_RE = re.compile(
+-    r"^# process-scan v2\.3 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+-    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
++    r"^# process-scan v2\.4 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
++    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) table_rows=(\d+) "
++    r"utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
++_ROWS, _TABLE_ROWS = 2, 9   # header group numbers: the body counter and the full-table counter
+ 
+ 
+ @pytest.fixture
+@@ -66,29 +72,44 @@ def _seed(fd: Path, buzz: int, owned: list[int]) -> None:
+ def _parse(path: Path):
+     lines = path.read_text().splitlines()
+     m = _HEADER_RE.match(lines[0])
+-    assert m, f"header does not match the v2.3 shape: {lines[0]!r}"
++    assert m, f"header does not match the v2.4 shape: {lines[0]!r}"
+     rows = []
+     for line in lines[1:]:
+         pid, ppid, etimes, cmd = line.split(None, 3)
+         rows.append((int(pid), int(ppid), int(etimes), cmd))
++    # SWEEP-tests 15.2: the header's own counter against its own body, on EVERY caller. `> 3` / `> 0` could not
++    # express "the enumeration header describes this file": a hard-coded `rows=4` in the producer passed both.
++    assert int(m.group(_ROWS)) == len(rows), (
++        f"header rows={m.group(_ROWS)} but the body carries {len(rows)} rows")
+     return m, rows
+ 
+ 
+ sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
+ import pins  # noqa: E402 — the producer's only pin source; the pinned paths are never repeated as literals here
+-_PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
++
++
++def _is_pinned(cmd: str) -> bool:
++    """MIRROR of the producer's v2.4 `is_pinned` (pc_post.sh) — pinned by ENTRY POINT, never by a substring.
++
++    The producer's copy lives inside a `python3 - <<PY` heredoc and cannot be imported, so this is a hand copy
++    (AF-AP-42): what keeps the two equal is that the EXACT contract is driven through the real producer over a
++    synthetic `ps` table in test_pinned_present_is_exact_over_a_synthetic_table, which carries all three real
++    shapes plus the decoy this rule exists to reject."""
++    argv = cmd.split()
++    return (argv[:1] == [pins.PINNED_BUZZ_ACP_EXE_REALPATH]
++            or (len(argv) > 1 and argv[1] in (pins.PINNED_TEE_PATH, pins.PINNED_AGENT_REALPATH)))
+ 
+ 
+ def _split_world(rows, owned):
+-    """The scan is WORLD-scoped by design: its body carries every owned row AND every live row naming a pinned
+-    path, whoever spawned it. Under a parallel venue (the PC gate runs 8 xdist workers) a sibling worker's real
+-    tee or pinned-path sleeper lands in THIS test's body — PC run 20260907T161133Z, AF-AP-59. So a test asserts
+-    the OWNED subset exactly and characterises the rest: every foreign row must be admissible under the
+-    producer's only other rule (it names a pinned path); anything else is an unexplained row and fails."""
++    """The scan is WORLD-scoped by design: its body carries every owned row AND every live row that IS a pinned
++    process, whoever spawned it. Under a parallel venue (the PC gate runs 8 xdist workers) a sibling worker's
++    real tee lands in THIS test's body — PC run 20260907T161133Z, AF-AP-59. So a test asserts the OWNED subset
++    exactly and characterises the rest: every foreign row must be admissible under the producer's only other
++    rule (it is pinned by entry point); anything else is an unexplained row and fails."""
+     own = [r for r in rows if r[0] in owned]
+     foreign = [r for r in rows if r[0] not in owned]
+     for r in foreign:
+-        assert any(p in r[3] for p in _PINNED), f"unexplained foreign row in the scan body: {r!r}"
++        assert _is_pinned(r[3]), f"unexplained foreign row in the scan body: {r!r}"
+     return own, foreign
+ 
+ 
+@@ -117,15 +138,16 @@ def test_after_scan_persists_the_owned_closure_and_the_header(tree, tmp_path):
+     assert r.returncode == 0, r.stderr
+     m, rows = _parse(tmp_path / "process-scan-after.txt")
+     assert m.group(1) == "after"
+-    assert int(m.group(2)) > 3                       # the full table was enumerated (ps, this test, the tree ...)
++    assert int(m.group(_TABLE_ROWS)) > 3             # the full table was enumerated (ps, this test, the tree ...)
++    assert int(m.group(_TABLE_ROWS)) >= int(m.group(_ROWS))   # two populations; the body is a subset, never larger
+     assert m.group(3) == str(buzz) and m.group(4) == "1"
+     assert m.group(5) == "3" and m.group(6) == "3"   # closure = buzz, tee, agent; all present
+     own, foreign = _split_world(rows, {buzz, tee, agent})
+-    # pinned_present is counted over the FULL table (a helper-shaped foreign row is dropped from the body but still
+-    # counted — VERIFY-CK8 F14), so from inside one test it is a LOWER bound, never an exact number: under a parallel
+-    # venue a sibling worker's helper naming a pinned path can sit in the table between two of THIS test's reads
+-    # (AF-AP-59). The EXACT contract is pinned by test_pinned_present_is_exact_over_a_synthetic_table (shim, no world).
+-    assert int(m.group(7)) >= len(foreign)
++    # v2.4: pinned_present is counted over the BODY, so it is EXACT from inside one test even under a parallel
++    # venue (AF-AP-59) — a sibling worker's real tee is foreign, pinned, and lands in body and header alike; a
++    # sibling's helper-shaped row is dropped from both. None of this tree's rows is a pinned entry point, so the
++    # count is exactly the foreign rows. (In v2.3 the header counted the full table and could only be bounded.)
++    assert int(m.group(7)) == len(foreign)
+     assert {row[0] for row in own} == {buzz, tee, agent}
+     by_pid = {row[0]: row for row in rows}
+     assert by_pid[tee][1] == buzz and by_pid[agent][1] == tee
+@@ -143,7 +165,8 @@ def test_teardown_scan_after_a_clean_exit_is_empty_with_owned_present_zero(tree,
+     r = _scan("teardown", tmp_path)
+     assert r.returncode == 0, r.stderr
+     m, rows = _parse(tmp_path / "process-scan-teardown.txt")
+-    assert m.group(1) == "teardown" and int(m.group(2)) > 0
++    assert m.group(1) == "teardown" and int(m.group(_TABLE_ROWS)) > 0   # the table was enumerated ...
++    assert int(m.group(_ROWS)) == len(rows)                             # ... and the body counter is its own
+     assert m.group(4) == "0"                          # buzz gone
+     assert m.group(5) == "3" and m.group(6) == "0"    # closure remembered, nothing of it LIVE
+     own, _foreign = _split_world(rows, {buzz, tee, agent})
+@@ -245,14 +268,16 @@ def test_scan_fails_loud_on_an_unparsable_ps_row(tmp_path):
+     assert not (fd / "process-scan-after.txt").exists()
+ 
+ 
+-def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_counted_in_the_header(tmp_path):
+-    """VERIFY-CK8 F14: the helper filter drops an UNOWNED row whose command contains `pc_post.sh` or ` ps -e` even when
+-    it names a pinned path — deliberately, and never silently: pinned_present is counted over the FULL table while the
+-    checker counts the body, so the drop surfaces as `pinned_present … inconsistent with body`, a loud fail-closed
+-    Failure (a legitimate concurrent capture whose helper names a pinned path reds the leg — a false positive, not a
+-    hole). A foreign pinned-naming row WITHOUT the helper strings stays in the body (A20e then rejects it)."""
+-    sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
+-    import pins  # noqa: E402 — the pinned tee path, never repeated as a literal
++def test_a_process_that_only_mentions_a_pinned_path_is_not_counted_as_pinned(tmp_path):
++    """SWEEP-prod #6, through REAL processes: `any(p in r[3] for p in PINNED)` counted a `sleep` whose argv merely
++    MENTIONED the pinned tee path as a pinned process (the sweep's decoy moved pinned_present 1 -> 2 and put the
++    sleeper in the body). v2.4 matches the ENTRY POINT: argv[0] for the buzz-acp binary, argv[1] for the two pinned
++    scripts. Neither decoy below is a pinned entry point, so both are absent from the body and from the counter.
++
++    This test replaces VERIFY-CK8 F14, whose property — a helper-shaped pinned row dropped from the body while
++    still counted in the header, surfacing as a loud `pinned_present … inconsistent with body` — is deliberately
++    RETIRED by the #5 fix: both counters now come off the same list, so the drop shows only as table_rows > rows.
++    The helper filter itself is still pinned, over a synthetic table, by the test below."""
+     tee = pins.PINNED_TEE_PATH
+     buzz = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+     helper = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep(120) # {tee} pc_post.sh"])
+@@ -263,11 +288,12 @@ def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_co
+         assert r.returncode == 0, r.stderr
+         m, rows = _parse(tmp_path / "process-scan-after.txt")
+         body_pids = {row[0] for row in rows}
+-        assert buzz.pid in body_pids                       # owned root kept
+-        assert plain.pid in body_pids                      # foreign row naming a pinned path: evidence, kept
+-        assert helper.pid not in body_pids                 # foreign helper-shaped row: dropped from the body
+-        assert int(m.group(7)) >= 2                        # …but counted in pinned_present (full-table count)
+-        assert int(m.group(7)) > sum(1 for row in rows if tee in row[3])   # header > body: the loud mismatch
++        assert buzz.pid in body_pids                       # owned root kept, whatever its command
++        assert plain.pid not in body_pids                  # mentions the tee path in a comment: NOT an entry point
++        assert helper.pid not in body_pids                 # same, and helper-shaped as well
++        assert not any(_is_pinned(row[3]) for row in rows if row[0] in (plain.pid, helper.pid))
++        # the decoys are invisible to BOTH counters (in v2.3 they moved pinned_present)
++        assert int(m.group(7)) == sum(1 for row in rows if _is_pinned(row[3]))
+     finally:
+         for proc in (helper, plain, buzz):
+             proc.kill()
+@@ -281,23 +307,57 @@ def test_split_world_rejects_an_unexplained_foreign_row():
+         _split_world([(1, 0, 5, "/usr/bin/sleep 60")], owned={2})
+ 
+ 
+-def test_split_world_admits_a_foreign_row_naming_a_pinned_path():
+-    """The positive twin: a foreign row naming a pinned path is admissible evidence (the producer's only other rule)
+-    and comes back in `foreign`, never in `own`; the owned row comes back in `own` whatever its command."""
+-    rows = [(2, 0, 5, "/usr/bin/sleep 60"), (1, 0, 5, f"python3 -c 'time.sleep(1) # {pins.PINNED_TEE_PATH}'")]
++def test_split_world_admits_a_foreign_row_that_is_a_pinned_entry_point():
++    """The positive twin: a foreign row that IS a pinned entry point (here the real tee shape, `python3 <tee>`) is
++    admissible evidence — the producer's only other rule — and comes back in `foreign`, never in `own`; the owned
++    row comes back in `own` whatever its command."""
++    rows = [(2, 0, 5, "/usr/bin/sleep 60"), (1, 0, 5, f"python3 {pins.PINNED_TEE_PATH}")]
+     own, foreign = _split_world(rows, owned={2})
+     assert [r[0] for r in own] == [2]
+     assert [r[0] for r in foreign] == [1]
+ 
+ 
++def test_split_world_rejects_a_row_that_only_mentions_a_pinned_path():
++    """The negative control of the MIRROR itself (SWEEP-prod #6): the helper must not admit a row whose command
++    merely contains a pinned path — that was the producer's old substring rule, and a test helper that kept it
++    would characterise away exactly the rows the producer no longer emits."""
++    decoy = f"python3 -c 'time.sleep(1) # {pins.PINNED_TEE_PATH}'"
++    assert not _is_pinned(decoy)
++    with pytest.raises(AssertionError, match="unexplained foreign row"):
++        _split_world([(1, 0, 5, decoy)], owned={2})
++
++
++def test_parse_rejects_a_header_whose_rows_counter_lies(tmp_path):
++    """SWEEP-tests 4.2/15.2, the negative control of the one-line fix: with `rows=4` hard-coded in the producer the
++    whole file was green (`11 passed in 1.28s`). `_parse` now compares the header's own counter with the body it
++    heads, so a lying header fails wherever it is read."""
++    scan = tmp_path / "process-scan-after.txt"
++    scan.write_text(
++        "# process-scan v2.4 mode=after rows=4 buzz_acp_pid=1 buzz_present=1 owned=1 owned_present=1 "
++        "pinned_present=0 owned_zombies=0 table_rows=9 utc=2026-09-08T00:00:00Z\n"
++        "1 0 5 /usr/bin/sleep 60\n"
++        "2 1 5 /usr/bin/sleep 60\n")
++    with pytest.raises(AssertionError, match=r"header rows=4 but the body carries 2 rows"):
++        _parse(scan)
++
++
+ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
+-    """VERIFY-CK10 F-R10-20 asked for `pinned_present == 0` whenever `foreign` is empty; from inside a test that number
+-    is WORLD-scoped (a sibling worker's helper can name a pinned path between two of one test's reads — AF-AP-59), so
+-    the EXACT contract is pinned here through a `ps` shim that prints a synthetic table and nothing else: the header
+-    counts EVERY row naming a pinned path over the full table (2 — a plain foreign row and a helper-shaped one), the
+-    body keeps the owned row and the plain pinned row, drops the helper-shaped row, omits the unpinned foreign row;
+-    owned_present is exactly the owned rows present (1)."""
+-    tee = pins.PINNED_TEE_PATH
++    """The EXACT v2.4 contract, driven through the REAL producer over a `ps` shim that prints a synthetic table and
++    nothing else — no world, no sibling worker, no AF-AP-59 flakiness (VERIFY-CK10 F-R10-20 asked for an exact
++    number; from inside a live-table test that number used to be world-scoped).
++
++    Its shape is unchanged from v2.3; its EXPECTATIONS changed twice. (a) `rows` is now the body counter and
++    `table_rows` the full table, so the "whole table enumerated" assertion moved to table_rows (#5 / tests 15.2).
++    (b) The rows themselves are now the three shapes a captured leg really carries plus the two the rule must
++    reject, because pinned-ness is the ENTRY POINT and not a substring (#6): under v2.3 the decoy at 5001 — a
++    `python3 -c` sleeper whose comment names the tee — WAS counted as a pinned process and kept in the body.
++
++    Table: 4242 owned, unpinned · 5001 decoy naming the tee in a `-c` string · 5002 helper-shaped AND a genuine
++    tee entry point · 5003 foreign and unrelated · 5004 the real buzz-acp · 5005 the real tee · 5006 the real
++    agent. Body = owned + the three real pinned rows (the helper-shaped one is filtered out); pinned_present
++    counts the body's pinned rows (3), never the filtered 5002 and never the decoy."""
++    tee, agent = pins.PINNED_TEE_PATH, pins.PINNED_AGENT_REALPATH
++    buzz_exe = pins.PINNED_BUZZ_ACP_EXE_REALPATH
+     shim_dir = tmp_path / "bin"
+     shim_dir.mkdir()
+     shim = shim_dir / "ps"
+@@ -305,8 +365,11 @@ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
+         "#!/bin/sh\n"
+         "echo '4242 1 7 S /usr/bin/sleep 120'\n"
+         f"echo '5001 1 7 S python3 -c \"time.sleep(120) # {tee}\"'\n"
+-        f"echo '5002 1 7 S bash pc_post.sh scan after {tee}'\n"
++        f"echo '5002 1 7 S python3 {tee} pc_post.sh'\n"
+         "echo '5003 1 7 S /usr/bin/sleep 60'\n"
++        f"echo '5004 1 7 S {buzz_exe} --relay-url ws://127.0.0.1:3999 --agent-command {tee} --agent-args'\n"
++        f"echo '5005 5004 7 S python3 {tee}'\n"
++        f"echo '5006 5005 7 S /home/rocco/s0-01-pinned/.venv-hermes/bin/python3 {agent}'\n"
+     )
+     shim.chmod(0o755)
+     fd = tmp_path / "fd"
+@@ -315,7 +378,10 @@ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
+     r = subprocess.run(["bash", str(PC_POST), "scan", "after", str(fd)], capture_output=True, text=True,
+                        env={**os.environ, "S0_01_REPO": str(ROOT), "PATH": f"{shim_dir}:{os.environ['PATH']}"}, timeout=60)
+     assert r.returncode == 0, (r.returncode, r.stderr)
+-    m, rows = _parse(fd / "process-scan-after.txt")
+-    assert m.group(2) == "4"                                    # the whole synthetic table was enumerated
+-    assert (m.group(6), m.group(7)) == ("1", "2"), m.group(0)   # owned_present exact; pinned_present exact over the FULL table
+-    assert {row[0] for row in rows} == {4242, 5001}             # body: the owned row + the plain pinned row, nothing else
++    m, rows = _parse(fd / "process-scan-after.txt")           # _parse pins rows == len(body)
++    assert m.group(_TABLE_ROWS) == "7"                        # the whole synthetic table was enumerated
++    assert m.group(_ROWS) == "4"                              # ... and the body is the four rows below
++    assert (m.group(6), m.group(7)) == ("1", "3"), m.group(0)  # owned_present exact; pinned_present over the BODY
++    assert {row[0] for row in rows} == {4242, 5004, 5005, 5006}
++    assert 5001 not in {row[0] for row in rows}               # #6: mentioning a pinned path is not being one
++    assert 5002 not in {row[0] for row in rows}               # helper-shaped, dropped from body AND header alike
+diff --git a/tests/test_s0_01_pc_tools.py b/tests/test_s0_01_pc_tools.py
+new file mode 100644
+index 0000000..4b07642
+--- /dev/null
++++ b/tests/test_s0_01_pc_tools.py
+@@ -0,0 +1,606 @@
++"""The S0-01 PC capture tools as a COMPONENT: one leg-file list, and every tool fail-loud.
++
++Why this file exists (SWEEP-prod row #1, the largest open S0-01 defect): the checker's private
++`_LEG_REQUIRED_FILES` and what the PC capture pipeline actually writes had drifted apart — the real corpus
++leg run-1 carries 8 names the F21 allowlist REJECTS and lacks 2 it REQUIRES — and no test had ever run a
++checker rule over a real collected leg. The PC tools were never verified as a component at all.
++
++What is pinned here:
++  * `pins.PINNED_LEG_FILES` / `PINNED_LEG_DIRS` is the ONE list. Three directions are checked, so drift on
++    either side is loud: the real corpus is a SUBSET of the mapping (a), every "required" name is really
++    present in every corpus positive leg (b), and the producers' own write set is a subset of the mapping
++    with no orphan entries (c). The rejected alternative was extending the checker's private set — which is
++    how the two lists drifted in the first place.
++  * `build_capture_record.py` takes that required list instead of its twelve default-on-absent gates (#27/#28).
++  * `pc_launch.py`'s six fail-loud fixes (#12, #25, #31, #32, #48, #52), each through the extracted helper
++    with the primitive monkeypatched — the full paths are PC-only and are NOT run here.
++  * `pc_negative.py` propagates the probe's exit code (#33), through a real subprocess and a stub probe.
++  * `collect_leg.sh`'s `--exclude` list and the mapping agree, in both directions.
++
++The real-leg corpus is a DECLARED input (VERIFY-CK10 F-R10-25): with `S0_01_REAL_LEG_DIR` set the corpus
++tests FAIL when it is absent or incomplete, never skip; CI leaves it unset and skips by declaration.
++"""
++import gzip
++import json
++import os
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
++sys.path.insert(0, str(ROOT / "proofs" / "S0-01" / "tools" / "pc"))
++import pins  # noqa: E402 — the ONE list under test; never re-typed as literals here
++import pc_launch  # noqa: E402 — module import has no side effects (pins is read, nothing is opened)
++import pc_negative  # noqa: E402 — main() is guarded by __main__, so importing runs nothing
++
++_REAL_LEG_DIR = Path(os.environ["S0_01_REAL_LEG_DIR"]) if os.environ.get("S0_01_REAL_LEG_DIR") else None
++_POSITIVE_LEGS = ("run-1", "cancel", "shutdown", "two-users")
++_STATUSES = {"required", "optional", "excluded_on_collect", "transient"}
++_COLLECTED = {"required", "optional"}   # what a collected leg may carry: the consumer's entry allowlist
++BUILD_CAPTURE = ROOT / "proofs" / "S0-01" / "tools" / "build_capture_record.py"
++COLLECT_LEG = ROOT / "proofs" / "S0-01" / "tools" / "pc" / "collect_leg.sh"
++RUN_LEG = ROOT / "proofs" / "S0-01" / "tools" / "pc" / "run_leg.sh"
++
++
++def _corpus():
++    """The declared corpus, or a skip. Absent-when-declared is a FAILURE, raised by the caller."""
++    if _REAL_LEG_DIR is None:
++        pytest.skip("S0_01_REAL_LEG_DIR unset (real-leg corpus not declared for this venue)")
++    if not _REAL_LEG_DIR.is_dir():
++        pytest.fail(f"declared corpus absent: {_REAL_LEG_DIR} (restore: bash scripts/realleg_sync.sh pull)")
++    return _REAL_LEG_DIR
++
++
++def _corpus_version():
++    """MIRRORS the checker suite's `_corpus_version` (tests/test_s0_01_check_acp_conformance.py): a corpus is
++    modern iff EVERY positive leg carries a versioned scan header and tee-status.json, else it predates them.
++
++    Extended for the header this lane introduces: v2.3 and v2.4 are both modern. Mirrored, not imported —
++    importing the checker's test module would run its collection and couple two lanes' files."""
++    if _REAL_LEG_DIR is None:
++        return "unknown"
++    for leg in _POSITIVE_LEGS:
++        ld = _REAL_LEG_DIR / leg
++        if not ld.is_dir():
++            return "v2.2"
++        scan = ld / "process-scan-after.txt"
++        if not scan.is_file():
++            return "v2.2"
++        first = scan.read_text().splitlines()
++        if not first or not first[0].startswith(("# process-scan v2.3 ", "# process-scan v2.4 ")):
++            return "v2.2"
++        if not (ld / "tee-status.json").is_file():
++            return "v2.2"
++    return "v2.3+"
++
++
++def _required_for(version):
++    """The required names a corpus of this contract version can carry: names introduced later are dropped,
++    never failed (`pins.PINNED_LEG_FILES_SINCE`)."""
++    names = {n for n, s in pins.PINNED_LEG_FILES.items() if s == "required"}
++    if version == "v2.2":
++        names -= set(pins.PINNED_LEG_FILES_SINCE)
++    return names
++
++
++# --------------------------------------------------------------------------------------------------
++# (c) the producers' write set
++# --------------------------------------------------------------------------------------------------
++# Every producer that writes into a leg framedir, and which leg shape it writes. The parse below reads the
++# scripts themselves: a producer that starts writing a new name fails the subset test until the ONE list
++# learns it, and a mapping entry no producer writes fails the orphan test.
++_PRODUCERS = {
++    "proofs/S0-01/tools/pc/pc_launch.py": "positive",
++    "proofs/S0-01/tools/pc/pc_post.sh": "positive",
++    "proofs/S0-01/tools/pc/pc_manifest.sh": "positive",
++    "proofs/S0-01/tools/pc/pc_mention.sh": "positive",
++    "proofs/S0-01/tools/frame_tee.py": "positive",
++    "proofs/S0-01/tools/build_capture_record.py": "positive",
++    "proofs/S0-01/tools/acp_probe.py": "negative",
++}
++_PY_JOIN = re.compile(r"""os\.path\.join\(\s*(?:FD|framedir)\s*,\s*['"]([^'"\n]+)['"]""")
++_PY_DIV = re.compile(r"""\bd\s*/\s*['"]([^'"\n]+)['"]""")
++_PY_FSTR = re.compile(r"""\{fd\}/([A-Za-z0-9._${}-]+)""")
++_SH_FD = re.compile(r"""\$\{?FD\}?/([A-Za-z0-9._${}-]+)""")
++_SH_OUT_ASSIGN = re.compile(r"""^OUT=\$\{?FD\}?/(\S+)$""", re.M)
++_SH_OUT_USE = re.compile(r"""\$\{?OUT\}?((?:\.[A-Za-z0-9]+)*)""")
++_PLACEHOLDERS = (("$PHASE", ("pre", "post")), ("{mode}", ("after", "teardown")))
++
++
++def _expand(name):
++    out = [name]
++    for placeholder, values in _PLACEHOLDERS:
++        out = [n.replace(placeholder, v) if placeholder in n else n for n in out for v in values]
++    return sorted(set(out))
++
++
++def _framedir_names(rel, root=None):
++    """Root entries a producer writes into (or reads from) a leg framedir, from the script's own text.
++
++    Anchored on the framedir variable in every form the producers use — `os.path.join(FD|framedir, "x")`,
++    `d / "x"`, `f"{fd}/x"`, `"$FD/x"`, and pc_manifest.sh's `OUT=$FD/...` plus its `$OUT.gz` suffixes. Only
++    the ROOT entry is taken (`$FD/mentions/$TAG.receipt.json` is the directory `mentions`), and any token
++    that still carries an unresolved placeholder fails LOUD rather than being dropped: a name this parser
++    cannot resolve is a blind spot in the gate, not a name to skip.
++
++    Dot-prefixed names are skipped: they are atomic-write scratch, not leg entries (see pins.PINNED_LEG_FILES)."""
++    text = ((root or ROOT) / rel).read_text()
++    raw = set()
++    for rx in (_PY_JOIN, _PY_DIV, _PY_FSTR, _SH_FD):
++        raw |= set(rx.findall(text))
++    assign = _SH_OUT_ASSIGN.search(text)
++    if assign:
++        raw |= {assign.group(1) + suffix for suffix in set(_SH_OUT_USE.findall(text))}
++    names = set()
++    for token in raw:
++        entry = token.split("/", 1)[0]
++        if entry.startswith("."):
++            continue
++        for expanded in _expand(entry):
++            assert "$" not in expanded and "{" not in expanded, \
++                f"{rel}: unresolved placeholder in a framedir name: {expanded!r}"
++            names.add(expanded)
++    return names
++
++
++def test_the_status_vocabulary_is_closed_and_the_dirs_are_named():
++    assert set(pins.PINNED_LEG_FILES.values()) <= _STATUSES, sorted(set(pins.PINNED_LEG_FILES.values()))
++    assert set(pins.PINNED_LEG_DIRS.values()) <= _STATUSES
++    assert set(pins.PINNED_LEG_DIRS) == {"mentions", "upstream-records"}
++    assert set(pins.PINNED_LEG_FILES_SINCE) <= set(pins.PINNED_LEG_FILES)
++    # a name is a file OR a directory, never both
++    assert not (set(pins.PINNED_LEG_FILES) & set(pins.PINNED_LEG_DIRS))
++
++
++def test_every_corpus_leg_entry_is_in_the_pinned_mapping():
++    """(a) SWEEP-prod #1, the defect this list exists to close: run the mapping over what the pipeline really
++    produced. Against the checker's private allowlist this assertion fails on 8 names per leg."""
++    corpus = _corpus()
++    allowed = {n for n, s in pins.PINNED_LEG_FILES.items() if s in _COLLECTED} | set(pins.PINNED_LEG_DIRS)
++    unexpected = {}
++    for leg in _POSITIVE_LEGS:
++        entries = {p.name for p in (corpus / leg).iterdir()}
++        if entries - allowed:
++            unexpected[leg] = sorted(entries - allowed)
++    assert unexpected == {}, f"corpus entries no consumer would admit: {unexpected}"
++
++
++def test_no_collected_leg_may_carry_an_excluded_or_transient_name():
++    """The other half of (a): `excluded_on_collect` and `transient` are claims that a collected leg NEVER
++    carries these names. A corpus that carried one would mean the status is a fiction."""
++    corpus = _corpus()
++    never = {n for n, s in pins.PINNED_LEG_FILES.items() if s not in _COLLECTED}
++    assert never, "the mapping claims nothing is dropped on collect — the statuses have gone missing"
++    for leg in _POSITIVE_LEGS:
++        entries = {p.name for p in (corpus / leg).iterdir()}
++        assert not (entries & never), f"{leg}: carries a name the mapping says is never collected: {sorted(entries & never)}"
++
++
++def test_every_required_name_is_present_in_every_corpus_positive_leg():
++    """(b) with the corpus-version rule mirrored from the checker suite: `tee-status.json` is required only
++    from v2.3 on, so a v2.2 corpus is graded without it instead of being failed by it."""
++    corpus = _corpus()
++    version = _corpus_version()
++    required = _required_for(version)
++    missing = {}
++    for leg in _POSITIVE_LEGS:
++        absent = sorted(n for n in required if not (corpus / leg / n).is_file())
++        if absent:
++            missing[leg] = absent
++    assert missing == {}, f"corpus version {version}: required names absent: {missing}"
++
++
++def test_the_corpus_version_rule_actually_discriminates():
++    """The negative control of the mirrored rule: it must return v2.2 for a corpus with no versioned header,
++    and the gated name must really be gated (dropping it is the whole difference between the two answers)."""
++    assert _corpus_version() in ("v2.2", "v2.3+", "unknown")
++    assert _required_for("v2.3+") - _required_for("v2.2") == set(pins.PINNED_LEG_FILES_SINCE)
++    assert "tee-status.json" in _required_for("v2.3+")
++
++
++def test_every_pinned_dir_is_present_in_every_corpus_positive_leg():
++    corpus = _corpus()
++    for leg in _POSITIVE_LEGS:
++        for name, status in pins.PINNED_LEG_DIRS.items():
++            if status == "required":
++                assert (corpus / leg / name).is_dir(), f"{leg}: {name}/ absent"
++
++
++def test_the_negative_corpus_leg_is_exactly_the_pinned_negative_set():
++    """The negative leg has its own pin (`NEGATIVE_REQUIRED_FILES`) and its own producer (acp_probe.py); it is
++    deliberately NOT in PINNED_LEG_FILES. This pins that the two describe the same directory."""
++    corpus = _corpus()
++    entries = {p.name for p in (corpus / "negative").iterdir()}
++    assert entries == set(pins.NEGATIVE_REQUIRED_FILES), sorted(entries ^ set(pins.NEGATIVE_REQUIRED_FILES))
++
++
++@pytest.mark.parametrize("rel", sorted(_PRODUCERS))
++def test_every_producer_write_lands_in_the_pinned_mapping(rel):
++    """(c) parse the producers themselves. A producer that starts writing a name outside the ONE list — the
++    way `capture.json` and the eight launch/post markers got outside the checker's allowlist — fails here."""
++    known = set(pins.PINNED_LEG_FILES) | set(pins.PINNED_LEG_DIRS)
++    if _PRODUCERS[rel] == "negative":
++        known |= set(pins.NEGATIVE_REQUIRED_FILES)
++    names = _framedir_names(rel)
++    assert names, f"{rel}: the parser found no framedir-anchored name — the parse is blind, not the file empty"
++    assert names <= known, f"{rel}: writes names outside pins.PINNED_LEG_FILES: {sorted(names - known)}"
++
++
++def test_every_pinned_name_has_a_producer():
++    """The orphan direction: a mapping entry no producer writes is a list that has stopped describing the
++    pipeline. (`agent-stderr.txt` is the live specimen and is deliberately NOT in this mapping — no positive-leg
++    producer writes it; it belongs to the negative leg's own pin.)"""
++    produced = set()
++    for rel in _PRODUCERS:
++        produced |= _framedir_names(rel)
++    orphans = sorted((set(pins.PINNED_LEG_FILES) | set(pins.PINNED_LEG_DIRS)) - produced)
++    assert orphans == [], f"pinned names no producer writes: {orphans}"
++
++
++def test_no_positive_leg_producer_writes_agent_stderr_txt():
++    """The finding that keeps `agent-stderr.txt` out of the mapping, pinned so a fix flips this test: it is
++    written ONLY by acp_probe.py, into the NEGATIVE leg. The checker's F20 (`agent-stderr.txt` REQUIRED in
++    every positive leg) is therefore unsatisfiable by the current pipeline — see this lane's report."""
++    positive = set()
++    for rel, shape in _PRODUCERS.items():
++        if shape == "positive":
++            positive |= _framedir_names(rel)
++    assert "agent-stderr.txt" not in positive
++    assert "agent-stderr.txt" in _framedir_names("proofs/S0-01/tools/acp_probe.py")
++    assert "agent-stderr.txt" in pins.NEGATIVE_REQUIRED_FILES
++
++
++def test_the_framedir_parser_fails_loud_on_an_unresolved_placeholder(tmp_path):
++    """Negative control of the parse itself: an unexpanded `$VAR` in a framedir name must fail, never be
++    silently dropped — a name the parser cannot resolve is a hole in the subset gate."""
++    (tmp_path / "fake_producer.sh").write_text('echo x > "$FD/mystery-$UNKNOWN.json"\n')
++    with pytest.raises(AssertionError, match="unresolved placeholder"):
++        _framedir_names("fake_producer.sh", root=tmp_path)
++    # the positive twin: a placeholder the parser DOES know is expanded, not rejected
++    (tmp_path / "known.sh").write_text('echo x > "$FD/manifest-$PHASE.done"\n')
++    assert _framedir_names("known.sh", root=tmp_path) == {"manifest-pre.done", "manifest-post.done"}
++
++
++# --------------------------------------------------------------------------------------------------
++# build_capture_record.py — #27/#28
++# --------------------------------------------------------------------------------------------------
++def _capture(*args):
++    return subprocess.run([sys.executable, str(BUILD_CAPTURE), *args], capture_output=True, text=True, timeout=120)
++
++
++def test_build_capture_record_fails_on_a_leg_with_no_timeline(tmp_path):
++    """SWEEP-prod #27, the sweep's exact run: `build_capture_record.py <empty-dir> run-1` exited 0 and wrote
++    `{"capture": ..., "files": {}, "version": 2}` — a record of nothing, green."""
++    r = _capture(str(tmp_path), "run-1")
++    assert r.returncode == 1, (r.returncode, r.stdout, r.stderr)
++    assert r.stderr.startswith("run-1: missing required leg files: ")
++    assert "timeline.jsonl" in r.stderr
++    assert not (tmp_path / "capture.json").exists()
++
++
++def _synthetic_leg(dst: Path):
++    """A leg carrying every required name with content the tool can really parse."""
++    dst.mkdir(parents=True, exist_ok=True)
++    (dst / "timeline.jsonl").write_text(
++        json.dumps({"seq": 1, "dir": "c2a", "frame": {"id": 0, "method": "initialize"}}) + "\n")
++    (dst / "runtime-identity.json").write_text(json.dumps({"tee_pid": 1}) + "\n")
++    (dst / "env.json").write_text(json.dumps({"PATH": "/usr/bin"}) + "\n")
++    (dst / "startup-line.txt").write_text("buzz-acp starting: idle_timeout=900s max_turn=3600s\n")
++    (dst / "hermes-model.txt").write_text("  default: s0-01-scripted/s0-01-pong\n")
++    body = b"## hermes-agent\n" + b"0" * 64 + b" f 0644  ./x\n"
++    for phase in ("pre", "post"):
++        (dst / f"manifest-{phase}.txt.gz").write_bytes(gzip.compress(body))
++    for name in {n for n, s in pins.PINNED_LEG_FILES.items() if s == "required"}:
++        if not (dst / name).exists():
++            (dst / name).write_text("0\n")
++    for name in pins.PINNED_LEG_DIRS:
++        (dst / name).mkdir(exist_ok=True)
++    return dst
++
++
++def test_build_capture_record_writes_the_record_for_a_complete_leg(tmp_path):
++    """The positive control of the gate above: a leg carrying every required name passes and the record is
++    written — so the red result is the missing files, not a tool that can no longer run."""
++    leg = _synthetic_leg(tmp_path / "run-1")
++    r = _capture(str(leg), "run-1")
++    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
++    rec = json.loads((leg / "capture.json").read_text())
++    assert rec["capture"] == "s0-01-golden-leg:run-1" and rec["timeline"]["entries"] == 1
++
++
++@pytest.mark.parametrize("dropped", ["timeline.jsonl", "owned-pids.json", "process-scan-teardown.txt", "mentions"])
++def test_build_capture_record_takes_its_required_list_from_pins(tmp_path, dropped):
++    """#28: the required list is the ONE list, not a local copy — dropping any `required` name from a leg the
++    tool otherwise accepts fails it, naming that name. `owned-pids.json` and `process-scan-teardown.txt` are
++    names the tool never reads: only a list-driven gate can notice them. `mentions` is the DIRECTORY arm: the
++    tool's own `mentions_dir.is_dir()` gate would otherwise write a record with no mentions key and exit 0."""
++    leg = _synthetic_leg(tmp_path / "run-1")
++    if (leg / dropped).is_dir():
++        (leg / dropped).rmdir()
++    else:
++        (leg / dropped).unlink()
++    r = _capture(str(leg), "run-1")
++    assert r.returncode == 1, (r.returncode, r.stdout, r.stderr)
++    assert r.stderr.strip() == f"run-1: missing required leg files: {dropped}"
++    assert not (leg / "capture.json").exists()
++
++
++def test_capture_json_is_admitted_by_the_pinned_mapping():
++    """#28's other half: the tool's own output name must be a name a consumer admits. The checker rejected
++    `capture.json` as an `unexpected entry` in every leg the tool had ever been run on."""
++    assert pins.PINNED_LEG_FILES["capture.json"] in _COLLECTED
++
++
++# --------------------------------------------------------------------------------------------------
++# pc_launch.py — #12, #25, #31, #32, #48, #52 (the full paths are PC-only; the primitives are driven here)
++# --------------------------------------------------------------------------------------------------
++class _NoSleep:
++    """Stand-in for the `time` module: the waits under test are 30 s and 300 s of real sleeping."""
++    slept = 0.0
++
++    def sleep(self, seconds):
++        _NoSleep.slept += seconds
++
++
++@pytest.fixture
++def nosleep(monkeypatch):
++    monkeypatch.setattr(pc_launch, "time", _NoSleep())
++
++
++def test_pre_manifest_wait_breaks_on_a_manifest_error(tmp_path, nosleep):
++    """#32: pc_manifest.sh dies with its own reason in manifest-pre.log and never touches `.done`; the
++    success-only wait spent the full 300 s and then reported a TIMEOUT for a manifest that died at once."""
++    (tmp_path / "manifest-pre.log").write_text("pc_manifest: tree venv-hermes missing at /home/rocco/x\n")
++    with pytest.raises(SystemExit) as exc:
++        pc_launch.wait_for_manifest(str(tmp_path), "pre", tries=600)
++    assert "pre manifest failed before its .done marker" in str(exc.value)
++    assert "tree venv-hermes missing" in str(exc.value)          # the tail is surfaced, not swallowed
++    assert _NoSleep.slept < 1.0                                   # and it did not wait out the 300 s
++
++
++def test_pre_manifest_wait_returns_when_the_marker_lands(tmp_path, nosleep):
++    """Positive control: the marker wins over a non-empty log, so a late log line cannot fail a good run."""
++    (tmp_path / "manifest-pre.done").write_text("")
++    (tmp_path / "manifest-pre.log").write_text("noise\n")
++    pc_launch.wait_for_manifest(str(tmp_path), "pre", tries=600)   # returns, no exit
++
++
++def test_pre_manifest_wait_still_times_out_when_nothing_happens(tmp_path, nosleep):
++    """The third arm: silence is still a timeout, and it names the budget it waited."""
++    with pytest.raises(SystemExit, match="pre manifest did not finish within 3 s"):
++        pc_launch.wait_for_manifest(str(tmp_path), "pre", tries=6)
++
++
++def test_pc_launch_survives_an_empty_pre_manifest_summary(tmp_path):
++    """#48: an empty or truncated summary raised IndexError from a display-only `[-1]`, killing the launcher
++    right after the 300 s manifest wait and before env.json / argv.txt were ever written."""
++    empty = tmp_path / "manifest-pre.summary"
++    empty.write_text("")
++    assert pc_launch.summary_tail(str(empty)) == "<empty summary>"
++    full = tmp_path / "manifest-post.summary"
++    full.write_text("hermes-agent abc\nbuzz def\n2026-09-06T05:09:59Z\n")
++    assert pc_launch.summary_tail(str(full)) == "2026-09-06T05:09:59Z"
++
++
++def test_pc_launch_fails_when_the_tee_identity_never_appears(tmp_path, nosleep):
++    """#31: the `_note` default let the launcher report success; the failure then surfaced downstream as a
++    runtime-identity KEY SET mismatch that never says "the tee never started"."""
++    with pytest.raises(SystemExit, match=r"the tee did not write runtime-identity\.json within 15 s"):
++        pc_launch.wait_for_tee_identity(str(tmp_path), tries=30)
++    (tmp_path / "runtime-identity.json").write_text("{}")
++    assert pc_launch.wait_for_tee_identity(str(tmp_path), tries=30) == str(tmp_path / "runtime-identity.json")
++
++
++def test_pc_launch_names_a_buzz_exit_during_identity_capture(monkeypatch):
++    """#12: `os.readlink("/proc/<pid>/exe")` and `sha256_file` on the same path raise FileNotFoundError once
++    buzz-acp has exited — an uncaught traceback that left no identity merge, no owned-pids.json and no
++    launch.ready, so run_leg.sh's READY poll spun 60 s before reporting "launch failed" with no reason."""
++    def boom(path):
++        raise FileNotFoundError(2, "No such file or directory", path)
++    monkeypatch.setattr(pc_launch.os, "readlink", boom)
++    with pytest.raises(SystemExit) as exc:
++        pc_launch.buzz_identity(4242, 137)
++    assert str(exc.value).startswith("pc_launch: buzz-acp exited during identity capture (rc=137)")
++
++
++def test_pc_launch_captures_the_identity_of_a_live_process():
++    """Positive control of the same helper on a LIVE pid (this test's own): the guard did not turn the
++    capture into a silent no-op."""
++    exe, sha = pc_launch.buzz_identity(os.getpid(), None)
++    assert exe == os.readlink(f"/proc/{os.getpid()}/exe")
++    assert re.fullmatch(r"[0-9a-f]{64}", sha)
++
++
++def test_pc_launch_owned_closure_is_scoped_to_the_buzz_session():
++    """#52: the closure used to be walked over the FULL `ps -eo pid,ppid` table, so any row whose ppid landed in
++    the owned set was adopted into owned-pids.json — a stranger written into the evidence after one pid reuse.
++    buzz-acp is spawned with start_new_session=True, so scoping `ps` to its session is the exact fix.
++
++    The discriminator is the DETACHED grandchild: its ppid is inside the closure, so the full-table walk adopts
++    it, while the session walk does not. That is a deliberate narrowing and it costs something — a descendant
++    that calls setsid() for itself stops being tracked. The pinned tree does not: frame_tee.py spawns the agent
++    with a plain Popen (no start_new_session), so the real buzz-acp -> tee -> agent chain stays in one session,
++    which is what the real corpus's process-scan-after.txt shows."""
++    parent = subprocess.Popen(
++        [sys.executable, "-c", "import subprocess, sys, time;"
++         " g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']);"
++         " d = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'], start_new_session=True);"
++         " print(g.pid, d.pid, flush=True); time.sleep(120)"],
++        stdout=subprocess.PIPE, text=True, start_new_session=True)
++    outsider = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
++    child = detached = None
++    try:
++        child, detached = (int(x) for x in parent.stdout.readline().split())
++        owned = pc_launch.session_closure(parent.pid)
++        assert owned == {parent.pid, child}, sorted(owned)
++        assert detached not in owned              # ppid IS in the closure; the full-table walk would adopt it
++        assert outsider.pid not in owned          # a live process outside the session is never adopted
++        assert os.getpid() not in owned           # nor is the test runner, whatever the ppid chain says
++    finally:
++        for pid in (p for p in (child, detached) if p):
++            try:
++                os.kill(pid, 9)
++            except ProcessLookupError:
++                pass
++        for proc in (parent, outsider):
++            proc.kill()
++            proc.wait(timeout=10)
++
++
++def test_pc_launch_owned_closure_fails_loud_on_a_dead_session():
++    """The negative control: no session, no closure — never a silent `{pid}` that would be written to
++    owned-pids.json as a complete answer."""
++    dead = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
++    dead.wait(timeout=10)
++    with pytest.raises(SystemExit, match=r"listed no process .*session is gone"):
++        pc_launch.session_closure(dead.pid)
++
++
++def test_env_redaction_fingerprints_the_raw_bytes():
++    """#25: `len` and `sha256_12` were computed on the string AFTER `decode(errors="replace")`, so for a value
++    carrying any non-UTF-8 byte the recorded fingerprint described a mangled value, not the secret — and
++    `check_env` only asserts `redacted is True`, so nothing downstream would ever notice."""
++    import hashlib
++    red = re.compile(pins.REDACTED_ENV_KEY_RE)
++    secret = "sécret".encode() + b"\xff"   # 8 raw bytes; decode(replace) yields 7 characters
++    out = pc_launch.redact_environ(b"PATH=/usr/bin\x00OMNIROUTE_API_KEY=" + secret + b"\x00", red)
++    assert out["PATH"] == "/usr/bin"                       # non-secret values still decode for reading
++    assert out["OMNIROUTE_API_KEY"]["redacted"] is True
++    assert out["OMNIROUTE_API_KEY"]["len"] == len(secret)
++    assert out["OMNIROUTE_API_KEY"]["sha256_12"] == hashlib.sha256(secret).hexdigest()[:12]
++    # the negative control: this is NOT what the lossy path recorded
++    lossy = secret.decode("utf-8", errors="replace")
++    assert out["OMNIROUTE_API_KEY"]["sha256_12"] != hashlib.sha256(lossy.encode()).hexdigest()[:12]
++    assert out["OMNIROUTE_API_KEY"]["len"] != len(lossy)
++
++
++def test_env_redaction_covers_every_pinned_secret_key_name():
++    """The redaction pattern is applied to KEY NAMES; this pins that the two env keys the launcher reads from
++    files are actually caught by it (a pattern edit that stopped matching them would leak them into env.json)."""
++    red = re.compile(pins.REDACTED_ENV_KEY_RE)
++    raw = b"\x00".join(k.encode() + b"=v" for k in sorted(pins.PINNED_ENV_KEYS)) + b"\x00"
++    out = pc_launch.redact_environ(raw, red)
++    for key in ("BUZZ_PRIVATE_KEY", "OMNIROUTE_API_KEY"):
++        assert out[key] == {"redacted": True, "len": 1, "sha256_12": out[key]["sha256_12"]}
++    assert out["PATH"] == "v" and out["HERMES_HOME"] == "v"
++
++
++# --------------------------------------------------------------------------------------------------
++# pc_negative.py — #33
++# --------------------------------------------------------------------------------------------------
++def _stub_probe(tmp_path, exit_code):
++    repo = tmp_path / "repo" / "proofs" / "S0-01" / "tools"
++    repo.mkdir(parents=True)
++    (repo / "acp_probe.py").write_text(
++        "import os, sys\n"
++        "fd = os.environ['S0_01_FRAMEDIR']\n"
++        "open(os.path.join(fd, 'timeline.jsonl'), 'w').write('{\"seq\": 1}\\n')\n"
++        f"sys.exit({exit_code})\n")
++    return tmp_path / "repo"
++
++
++@pytest.mark.parametrize("rc", [3, 1, 0])
++def test_pc_negative_propagates_the_probe_exit_code(tmp_path, monkeypatch, capsys, rc):
++    """#33: the wrapper ended on a `print` and exited 0 whatever the probe returned — run_leg.sh runs it under
++    `set -euo pipefail` and walked on to collect_leg.sh with a failed negative leg in hand. Driven through the
++    REAL wrapper and a REAL subprocess (a stub probe standing in for the PC's pinned agent, which is not here)."""
++    monkeypatch.setattr(pc_negative, "BASE", str(tmp_path / "base"))
++    monkeypatch.setattr(pc_negative, "REPO", str(_stub_probe(tmp_path, rc)))
++    monkeypatch.setattr(pc_negative, "read_kv", lambda *_a: "not-a-real-token")
++    assert pc_negative.main() == rc
++    out = capsys.readouterr().out
++    assert f"probe rc {rc}" in out
++    assert "timeline.jsonl" in out                     # the wrapper really ran and listed the leg
++
++
++# --------------------------------------------------------------------------------------------------
++# collect_leg.sh / run_leg.sh — item 6
++# --------------------------------------------------------------------------------------------------
++# Every `--exclude=` pattern collect_leg.sh passes to tar, and what it is for. Each disposition is CHECKED
++# against the mapping below, so a new or removed exclusion fails here rather than silently changing which
++# names reach a collected leg.
++_EXCLUDE_DISPOSITION = {
++    "buzzacp.raw.log": "dropped",            # every mapping name it matches must be excluded_on_collect
++    "manifest-*.log": "dropped",
++    "manifest-*.txt.gz": "restored_by_name",  # matched names are re-supplied by collect_leg.sh itself
++    "*.launch.log": "not_a_leg_file",         # the launch log lives in the markers dir, never in a framedir
++}
++
++
++def _exclude_patterns():
++    return sorted(set(re.findall(r"--exclude=(?:'([^']+)'|([^\s'\"]+))", COLLECT_LEG.read_text())))
++
++
++def test_collect_leg_exclusions_and_the_pinned_mapping_agree():
++    patterns = {a or b for a, b in _exclude_patterns()}
++    assert patterns == set(_EXCLUDE_DISPOSITION), sorted(patterns ^ set(_EXCLUDE_DISPOSITION))
++    text = COLLECT_LEG.read_text()
++    tar_line = next(ln for ln in text.splitlines() if "--exclude=" in ln)
++    for pattern, disposition in _EXCLUDE_DISPOSITION.items():
++        matched = {n for n in pins.PINNED_LEG_FILES if _glob_match(pattern, n)}
++        if disposition == "dropped":
++            assert matched, f"{pattern}: matches no pinned name — a stale exclusion"
++            for name in matched:
++                assert pins.PINNED_LEG_FILES[name] == "excluded_on_collect", \
++                    f"{pattern} drops {name}, which the mapping calls {pins.PINNED_LEG_FILES[name]}"
++        elif disposition == "restored_by_name":
++            assert matched, f"{pattern}: matches no pinned name — a stale exclusion"
++            for name in matched:
++                assert pins.PINNED_LEG_FILES[name] in _COLLECTED, name
++                stem = name.replace("pre", "$p").replace("post", "$p")
++                assert any(stem in ln for ln in text.splitlines() if ln != tar_line), \
++                    f"{pattern} drops {name} from the tar and nothing restores it"
++        else:
++            assert not matched, f"{pattern}: matches pinned names {sorted(matched)} but is declared {disposition}"
++
++
++def test_every_excluded_on_collect_name_is_really_excluded():
++    """The reverse direction: the mapping's `excluded_on_collect` claim must be backed by a pattern that
++    actually drops the name — otherwise the status is a comment, not a fact."""
++    patterns = {a or b for a, b in _exclude_patterns()}
++    for name, status in pins.PINNED_LEG_FILES.items():
++        if status == "excluded_on_collect":
++            assert any(_glob_match(p, name) for p in patterns), f"{name}: no collect_leg.sh --exclude drops it"
++
++
++def _glob_match(pattern, name):
++    import fnmatch
++    return fnmatch.fnmatchcase(name, pattern)
++
++
++def test_the_leg_drivers_stop_on_the_first_failure():
++    """`set -euo pipefail` in both drivers: a failed PC step must stop the leg, never fall through to collect
++    (SWEEP-prod #33's blast radius — pc_negative.py's dropped exit code was harmless only because nothing
++    else in run_leg.sh ignored a failure)."""
++    for script in (RUN_LEG, COLLECT_LEG):
++        assert "set -euo pipefail" in script.read_text(), script.name
++
++
++def test_the_collected_shape_is_the_mapping_minus_what_collect_drops(tmp_path):
++    """End to end over the CLAIM, with a real tar: a framedir carrying every mapping name, packed with
++    collect_leg.sh's own exclusion list, must unpack to exactly the names the mapping calls collectable
++    (plus the manifest bodies the script restores by name). This is what proves the four statuses describe
++    one pipeline rather than four opinions."""
++    fd = tmp_path / "fd"
++    fd.mkdir()
++    for name in pins.PINNED_LEG_FILES:
++        (fd / name).write_text("x")
++    for name in pins.PINNED_LEG_DIRS:
++        (fd / name).mkdir()
++    patterns = sorted({a or b for a, b in _exclude_patterns()})
++    out = tmp_path / "leg.tgz"
++    r = subprocess.run(["tar", "czf", str(out), *[f"--exclude={p}" for p in patterns], "."],
++                       cwd=fd, capture_output=True, text=True, timeout=60)
++    assert r.returncode == 0, r.stderr
++    dst = tmp_path / "dst"
++    dst.mkdir()
++    subprocess.run(["tar", "xzf", str(out), "-C", str(dst)], check=True, timeout=60)
++    got = {p.name for p in dst.iterdir()}
++    restored = {n for n in pins.PINNED_LEG_FILES if _glob_match("manifest-*.txt.gz", n)}
++    expected = {n for n, s in pins.PINNED_LEG_FILES.items() if s in _COLLECTED} | set(pins.PINNED_LEG_DIRS)
++    assert got | restored == expected | {n for n, s in pins.PINNED_LEG_FILES.items() if s == "transient"}, \
++        f"unpacked {sorted(got)}"
