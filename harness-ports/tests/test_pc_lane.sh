@@ -224,6 +224,43 @@ check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt) and th
   "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/FAILED" && [ ! -f "$LD12/report.md" ] && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
   "a quota reset is hours away; retrying it three times with backoff would only delay the fallback"
 
+# --- a Hermes session-storage failure is the HARNESS failing, not a report (2026-09-08 13:3xZ) ----
+# TEST DOUBLE: prints the verbatim `⚠️ No reply:` line Hermes emits on session_persistence_failed on its first call
+# (after leaving a draft section), reports on the second — the retry must be a RESUME (the note in attempt 2's prompt).
+NOREPLY="$TMP/noreply-harness.sh"
+cat > "$NOREPLY" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. First call: a draft section + the verbatim Hermes persistence-failure line; later calls: a report.
+COUNT="${FLAKY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+if [ "$n" -eq 1 ]; then
+  printf 'item 5 PASS\n' >> "${LANE_REPORT_DRAFT:?}"
+  echo "⚠️ No reply: the turn was stopped because session storage could not be written (the transcript would have been lost on restart). This is often a full disk — free some space (or fix state.db permissions), then send your message again."
+  cat >/dev/null
+else
+  echo "NOREPLY-HARNESS-REPORT after $n attempts"; cat >/dev/null
+fi
+EOF
+chmod +x "$NOREPLY"
+BRIEF14="$TMP/tests/brief-noreply.md"; { echo "PIN: $SHA"; echo; echo "retry me after a storage failure"; } > "$BRIEF14"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-14"
+LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$NOREPLY" bash "$LANE" "$BRIEF14" codex >"$TMP/out14" 2>"$TMP/err14"; rc14=$?
+LD14="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-noreply.md' | head -1)"
+check "a Hermes 'No reply: … session storage' line is retried like a refusal and the SECOND attempt's report stands" \
+  "$([ $rc14 -eq 0 ] && grep -q "after 2 attempts" "$LD14/report.md" && grep -q "No reply" "$LD14/report.attempt1.md" && grep -q "session-storage failure" "$TMP/err14" && echo 0 || echo 1)" \
+  "VERIFY-B5j died at item 5 on the shared state.db and the line came home as its report"
+check "the retry after a storage failure is a RESUME: attempt 2's prompt carries the note and the draft survived" \
+  "$([ -s "$LD14/prompt.attempt2.md" ] && grep -q "^RESUME (attempt 2" "$LD14/prompt.attempt2.md" && grep -q "item 5 PASS" "$LD14/report-draft.md" && echo 0 || echo 1)" \
+  "a fresh session that does not know about the draft redoes finished items"
+
+BRIEF15="$TMP/tests/brief-noreply-noretry.md"; { echo "PIN: $SHA"; echo; echo "storage failure, no retries"; } > "$BRIEF15"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-15"
+LANE_CAPACITY_RETRIES=0 LANE_CAPACITY_BACKOFF=0 PC_LANE_FAKE_HARNESS="$NOREPLY" bash "$LANE" "$BRIEF15" codex >"$TMP/out15" 2>"$TMP/err15"; rc15=$?
+LD15="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-noreply-noretry.md' | head -1)"
+check "NEGATIVE CONTROL: with no retries the storage-failure line is a FAILED lane (rc 70, reason in FAILED) and never report.md" \
+  "$([ $rc15 -eq 70 ] && grep -q "No reply" "$LD15/FAILED" && [ ! -f "$LD15/report.md" ] && [ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && echo 0 || echo 1)" \
+  "the sandbox poller read the line as READY and brought it home (VERIFY-B5j, 2026-09-08 13:30Z)"
+
 # --- a lane that dies before its final report still leaves its draft ------------
 # TEST DOUBLE: writes two sections to $LANE_REPORT_DRAFT, then exits with an EMPTY report.
 DRAFTY="$TMP/drafty-harness.sh"

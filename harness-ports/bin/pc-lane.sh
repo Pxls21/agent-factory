@@ -214,6 +214,12 @@ rc=0
 # transient unless QUOTA_RX says otherwise.
 CAPACITY_RX='^API call failed after [0-9]+ retries: '
 QUOTA_RX='exhausted their quota'
+# 2026-09-08 13:3xZ: Hermes ends a turn on `session_persistence_failed` with a `⚠️ No reply: the turn was stopped because
+# session storage …` line as its ONLY output (the six lanes share the agentfactory profile's one state.db, kept in
+# journal_mode=DELETE because the linked SQLite 3.49.1 has the WAL-reset bug — a contended write is classified `disk`);
+# VERIFY-B5j died at item 5 that way and the line stood as report.md. Every `No reply:` line is the HARNESS failing, never
+# a report: retry the attempt like a capacity refusal (the draft resumes it), and never let it stand as report.md.
+PERSIST_RX='^(⚠️ )?No reply: '
 # INCREMENTAL REPORT (2026-09-03): a 167-call verify lane died mid-stream with report.md EMPTY —
 # the report was all-or-nothing, so 66 minutes of grading came home only via state.db forensics.
 # Every lane now gets LANE_REPORT_DRAFT in its environment and a standing prompt line telling it
@@ -326,13 +332,17 @@ else
   rc=$?
 fi
 
-if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
+if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX|$PERSIST_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
   [ "$wait_s" -le "$LANE_CAPACITY_MAX_WAIT" ] || wait_s="$LANE_CAPACITY_MAX_WAIT"
   cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
   : > "$REPORT"   # the refusal line must not STAND as report.md during the backoff: the sandbox poller read a non-empty
                   # report.md as READY and brought the refusal home as six lanes' final reports (2026-09-08 08:1xZ)
-  echo "pc-lane: attempt $attempt refused by route capacity / rate limit (HTTP 503 or 429) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  if grep -Eq "$PERSIST_RX" "$LANE_DIR/report.attempt$attempt.md" 2>/dev/null; then
+    echo "pc-lane: attempt $attempt ended on a Hermes session-storage failure (state.db write refused) — resuming from the draft in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  else
+    echo "pc-lane: attempt $attempt refused by route capacity / rate limit (HTTP 503 or 429) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  fi
   sleep "$wait_s"
   continue
 fi
@@ -344,9 +354,9 @@ done
 # poller printed "report -> …" and exited 0 for a lane that never ran (B5i, HTTP 503 on every call while the owner's
 # own Hermes sessions held the route's admission slots). A refusal is a FAILED lane: the line goes to $LANE_DIR/FAILED,
 # report.md is removed so nothing downstream can grade it, and the script exits 70. The poller reads FAILED.
-if grep -Eq "$CAPACITY_RX|$QUOTA_RX|^API call failed" "$REPORT" 2>/dev/null; then
+if grep -Eq "$CAPACITY_RX|$QUOTA_RX|$PERSIST_RX|^API call failed" "$REPORT" 2>/dev/null; then
   cp "$REPORT" "$LANE_DIR/FAILED"; rm -f "$REPORT"
-  echo "pc-lane: FAILED — the route refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
+  echo "pc-lane: FAILED — the route or the harness refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
   exit 70
 fi
 
