@@ -11,12 +11,20 @@
 # never wait on it inside a Bash call. The corpus env comes from test_summary.sh's declared defaults (S0_01_VENUE=sandbox,
 # S0_01_REAL_LEG_DIR=/root/s0-01-realleg/golden) unless exported. The archive is never the shared tree: mutants and lanes
 # cannot touch it mid-run. Exit 0 only when every run's pytest rc is 0 AND the counts agree.
+# bash reads a script LAZILY, so an edit to this file while a gate is running corrupts that run at a byte offset
+# (2026-09-08: B5i's run 2 finished `114 passed` and the RESULT line never printed — "syntax error near ')'"). Run from a
+# private copy of these bytes so the file on disk can change underneath a live gate; ROOT is resolved from the ORIGINAL path.
+if [ -z "${LANE_GATE_SELF_COPY:-}" ]; then
+  _self="$(mktemp "${TMPDIR:-/tmp}/lane_gate.XXXXXX")" && cp "$0" "$_self" \
+    && LANE_GATE_SELF_COPY="$_self" LANE_GATE_ORIG="$0" exec bash "$_self" "$@"
+fi
+trap 'rm -f "$LANE_GATE_SELF_COPY"' EXIT
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+ROOT="$(cd "$(dirname "$LANE_GATE_ORIG")/.." && pwd)"; cd "$ROOT"
 REV=HEAD; FILES=""; TESTS=""; RUNS=2; OUT=""
 while getopts "r:f:t:n:o:h" o; do case "$o" in
   r) REV="$OPTARG";; f) FILES="$OPTARG";; t) TESTS="$OPTARG";; n) RUNS="$OPTARG";; o) OUT="$OPTARG";;
-  h|*) sed -n '2,13p' "$0"; exit 64;; esac; done
+  h|*) sed -n '2,13p' "$LANE_GATE_ORIG"; exit 64;; esac; done
 [ -n "$FILES" ] && [ -n "$TESTS" ] || { echo "usage: lane_gate.sh -r <rev> -f \"<files>\" -t \"<tests>\" [-n RUNS] [-o OUTDIR]" >&2; exit 64; }
 SHA="$(git rev-parse --verify "$REV^{commit}" 2>/dev/null)" || { echo "lane_gate: rev $REV does not resolve" >&2; exit 65; }
 SP="${LANE_GATE_DIR:-/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad}"
