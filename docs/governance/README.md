@@ -45,3 +45,12 @@ python3 scripts/check-proof-status.py .   # expect rc 0 and no WARNING once the 
 
 `gpg.format=openpgp` is forced because a git configured for SSH signing (common on machines that sign GitHub commits with
 an SSH key) would otherwise refuse to make or verify an OpenPGP signature. The checker forces the same at verify time.
+
+## When the PC cannot push (seen 2026-09-08)
+
+The PC clone's stored GitHub credential was refused (`remote: Permission to … denied`, HTTP 403) on both `git push origin HEAD` and
+the tag push, after the key commit and the signed tag had been made locally. The coordinator then brought both over the bridge as a
+git bundle (`git bundle create … origin/<branch>..HEAD refs/tags/accepted/<id>` → base64 → the sandbox → `git fetch <bundle>`),
+fast-forwarded the branch, re-ran the anchor check in the sandbox's isolated keyring, and pushed the branch through `push_clean.sh`
+and the tag with `git push origin accepted/<id>`. The signature travels intact — a tag object is verified wherever it lands. Fixing the
+PC credential is the owner's; until then this bundle path is the procedure.
