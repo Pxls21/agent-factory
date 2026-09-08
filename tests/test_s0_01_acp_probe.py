@@ -1402,7 +1402,13 @@ def test_probe_broken_pipe_post_loop_placement(tmp_path, agent_result):
 def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, agent_result):
     """N5e-F1/AP-F1a: readlink patched to fail the first 3 calls, then succeed.
     The retry loop recovers; a single-shot AP-F1a sample does not.  Assert the
-    interpreter IS sampled and no probe_error from the interpreter path."""
+    interpreter IS sampled and no probe_error from the interpreter path.
+    N5h (AF-AP-57 class): "transient" IS defined by a count, so the count stays —
+    but the fake now gates on the ARGUMENT (a read of /proc/self/exe returns a
+    sentinel instead of consuming a failure) and PRINTS its mechanism, which the
+    test asserts: without RL_CALLS a shape change that adds an earlier
+    /proc/<pid>/exe read would eat the three failures and leave the retry loop
+    completely untested while the test stayed green."""
     framedir = tmp_path / "capture"
     framedir.mkdir()
     env = {
@@ -1421,11 +1427,13 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
         import acp_probe
 
         _orig_readlink = os.readlink
-        _call_count = [0]
+        _rl_calls = [0]
         def _transient_fail_readlink(path):
+            if "/proc/self/exe" in str(path):
+                return "/SELF/should-never-be-sampled"
             if "/proc/" in str(path) and "/exe" in str(path):
-                _call_count[0] += 1
-                if _call_count[0] <= 3:
+                _rl_calls[0] += 1
+                if _rl_calls[0] <= 3:
                     raise OSError("transient failure")
             return _orig_readlink(path)
 
@@ -1433,7 +1441,13 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
             try:
                 acp_probe.main()
             except SystemExit as e:
-                sys.exit(e.code)
+                _rc = e.code
+            else:
+                _rc = 0
+            # the mechanism, asserted by the test: 3 failing attempts + the 4th
+            # (successful) early attempt + the one a2c-triggered late sample.
+            print(f"RL_CALLS={{_rl_calls[0]}}", flush=True)
+            sys.exit(_rc)
     """))
 
     r = subprocess.run(
@@ -1441,6 +1455,10 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert r.returncode == 0, f"expected exit 0 (retry recovered), got {r.returncode}: {r.stderr}"
+    assert "RL_CALLS=5" in r.stdout.splitlines(), (
+        f"expected 5 child /proc/<pid>/exe reads (3 transient failures, the recovering "
+        f"attempt, the late sample); got {r.stdout!r}"
+    )
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_interpreter_realpath"] is not None, (
         "retry loop failed to recover from transient readlink failures"
@@ -1654,10 +1672,16 @@ def test_probe_late_sample_clears_early_interpreter_error(tmp_path, agent_result
     'interpreter sample failed: ...'), but sha256 succeeds at the late
     a2c-triggered sample.  The late success must CLEAR the early error:
     'probe_error' not in rid, rc 0.
-    The gate is _sha_call[0] == 1 alone — the early loop's sha is provably
-    the first _sha256_file call (line 237 precedes 299, 372, 99, 106)."""
+    N5h-#4.1/9.3 (AF-AP-57): the fake no longer gates on the call ORDINAL
+    (`_sha_call[0] == 1`) — under that gate the sweep's R10a mutant (the gate moved
+    to `== 99`, so the early sha NEVER fails) left the test green: `assert
+    "probe_error" not in rid` is trivially true when nothing failed.  The fake now
+    gates on the ARGUMENT (the child interpreter's path) plus a fired-flag, writes a
+    SENTINEL naming the path it failed on, and the test asserts that sentinel BEFORE
+    the negation — a fake that never fires is now a red test, not a green one."""
     framedir = tmp_path / "capture"
     framedir.mkdir()
+    sentinel = tmp_path / "early_sha_failed_on.txt"
     env = {
         "S0_01_AGENT": agent_result,
         "S0_01_FRAMEDIR": str(framedir),
@@ -1673,12 +1697,17 @@ def test_probe_late_sample_clears_early_interpreter_error(tmp_path, agent_result
         sys.path.insert(0, {str(P / "tools")!r})
         import acp_probe
 
+        # The agent's shebang is this same interpreter, so /proc/<child>/exe resolves
+        # here: the ARGUMENT that identifies an interpreter sample (never the probe's
+        # own file, never the agent entrypoint — the other two _sha256_file receivers).
+        _interp_path = os.path.realpath(sys.executable)
         _orig_sha256 = acp_probe._sha256_file
-        _sha_call = [0]
+        _fired = [False]
         def _early_fail_sha256(path):
-            _sha_call[0] += 1
-            # Fail on the first sha256 call (the early loop's sha)
-            if _sha_call[0] == 1:
+            if path == _interp_path and not _fired[0]:
+                _fired[0] = True
+                with open({str(sentinel)!r}, "w") as _s:
+                    _s.write(path)
                 raise OSError("early sha failure")
             return _orig_sha256(path)
 
@@ -1692,6 +1721,14 @@ def test_probe_late_sample_clears_early_interpreter_error(tmp_path, agent_result
     r = subprocess.run(
         [sys.executable, str(wrapper)],
         capture_output=True, text=True, timeout=30, env=env,
+    )
+    # POSITIVE CONTROL FIRST: the early error was really set, on the interpreter path.
+    assert sentinel.exists(), (
+        "the early sha256 failure never fired — the test would assert the absence of "
+        "a probe_error that was never set (AF-AP-57 vacuity)"
+    )
+    assert sentinel.read_text() == os.path.realpath(sys.executable), (
+        f"the fake failed on {sentinel.read_text()!r}, not the child interpreter"
     )
     assert r.returncode == 0, f"expected exit 0, got {r.returncode}: {r.stderr}"
     rid = json.loads((framedir / "runtime-identity.json").read_text())
@@ -1762,12 +1799,16 @@ def test_probe_m3_handler_writes_complete_evidence(tmp_path, agent_result):
 
 
 def test_probe_late_readlink_failure_keeps_the_early_reading(tmp_path, agent_result):
-    """N5g-F1 LATE-NULL killer: os.readlink patched with a call counter —
-    /proc/*/exe succeeds on call 1 (the early loop) and raises OSError from
-    call 2 on (the late sample).  Agent = the answering fixture.
+    """N5g-F1 LATE-NULL killer: /proc/<child>/exe succeeds in the early loop and
+    raises OSError at every later sample.  Agent = the answering fixture.
     The early reading must survive: interp non-null, sha non-null, no
     probe_error, rc 0.  Red on LATE-NULL (rc 1, interp None, probe_error
-    'interpreter sample failed: No such process')."""
+    'interpreter sample failed: No such process').
+    N5h (AF-AP-57 class): the selector is the PHASE, not the ordinal it used to be
+    (`_call_count[0] >= 2`) — the early loop runs with the main thread alone, every
+    later sample runs with the stderr drain thread alive (the same gate the
+    DL-INLINE killer uses).  An extra readlink anywhere no longer shifts which
+    call fails, and RL_CALLS pins the mechanism."""
     framedir = tmp_path / "capture"
     framedir.mkdir()
     env = {
@@ -1781,29 +1822,41 @@ def test_probe_late_readlink_failure_keeps_the_early_reading(tmp_path, agent_res
 
     wrapper = tmp_path / "f1_late_null_wrapper.py"
     wrapper.write_text(textwrap.dedent(f"""\
-        import sys, os, unittest.mock
+        import sys, os, threading, unittest.mock
         sys.path.insert(0, {str(P / "tools")!r})
         import acp_probe
 
         _orig_readlink = os.readlink
-        _call_count = [0]
-        def _counted_readlink(path):
+        _rl_calls = [0]
+        def _phase_gated_readlink(path):
+            if "/proc/self/exe" in str(path):
+                return "/SELF/should-never-be-sampled"
             if "/proc/" in str(path) and "/exe" in str(path):
-                _call_count[0] += 1
-                if _call_count[0] >= 2:
+                _rl_calls[0] += 1
+                # PHASE gate: the early loop runs before the stderr drain thread
+                # starts; every later sample runs with that thread alive.
+                if threading.active_count() > 1:
                     raise OSError("No such process")
             return _orig_readlink(path)
 
-        with unittest.mock.patch.object(os, 'readlink', _counted_readlink):
+        with unittest.mock.patch.object(os, 'readlink', _phase_gated_readlink):
             try:
                 acp_probe.main()
             except SystemExit as e:
-                sys.exit(e.code)
+                _rc = e.code
+            else:
+                _rc = 0
+            print(f"RL_CALLS={{_rl_calls[0]}}", flush=True)
+            sys.exit(_rc)
     """))
 
     r = subprocess.run(
         [sys.executable, str(wrapper)],
         capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert "RL_CALLS=2" in r.stdout.splitlines(), (
+        f"expected 2 child /proc/<pid>/exe reads (early success, late failure); "
+        f"got {r.stdout!r}"
     )
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     # keeps the early reading — a wrong early reading fails the pinned
@@ -1898,37 +1951,42 @@ def test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte(tmp_path):
 
     wrapper = tmp_path / "f6_once_wrapper.py"
     wrapper.write_text(textwrap.dedent(f"""\
-        import sys, os, unittest.mock
+        import sys, os, threading, unittest.mock
         sys.path.insert(0, {str(P / "tools")!r})
         import acp_probe
 
+        # N5h (AF-AP-57 class): PHASE + a fired-flag, not the call ordinals this fake
+        # used (`== 1` early / `== 2` first-late / else sentinel).  An extra early
+        # retry used to shift every ordinal and hand the sentinel to the FIRST late
+        # sample; the state gate is immune to that.
         _orig_readlink = os.readlink
-        _call_count = [0]
-        _call2_value = [None]
+        _rl_calls = [0]
+        _late1_value = [None]
         _sentinel = "/SENTINEL/should-never-be-recorded"
-        def _counting_readlink(path):
+        def _phase_gated_readlink(path):
+            if "/proc/self/exe" in str(path):
+                return "/SELF/should-never-be-sampled"
             if "/proc/" in str(path) and "/exe" in str(path):
-                _call_count[0] += 1
-                if _call_count[0] == 1:
-                    # Early loop — let it succeed normally
+                _rl_calls[0] += 1
+                if threading.active_count() == 1:
+                    # Early loop (drain thread not started) — succeed normally
                     return _orig_readlink(path)
-                elif _call_count[0] == 2:
-                    # First late sample — record what we return
-                    v = _orig_readlink(path)
-                    _call2_value[0] = v
-                    return v
-                else:
-                    # Later calls — return a distinguishable sentinel
-                    return _sentinel
+                if _late1_value[0] is None:
+                    # FIRST late sample — record what we return
+                    _late1_value[0] = _orig_readlink(path)
+                    return _late1_value[0]
+                # any FURTHER late sample (LATE-EVERY) — a distinguishable sentinel
+                return _sentinel
             return _orig_readlink(path)
 
-        with unittest.mock.patch.object(os, 'readlink', _counting_readlink):
+        with unittest.mock.patch.object(os, 'readlink', _phase_gated_readlink):
             try:
                 acp_probe.main()
             except SystemExit as e:
                 pass
-        # Print the call-2 value for the outer test
-        print(f"CALL2={{_call2_value[0]}}")
+        # Print the first-late-sample value and the mechanism for the outer test
+        print(f"CALL2={{_late1_value[0]}}")
+        print(f"RL_CALLS={{_rl_calls[0]}}")
     """))
 
     r = subprocess.run(
@@ -1942,6 +2000,10 @@ def test_probe_interpreter_is_sampled_once_at_the_first_a2c_byte(tmp_path):
     call2_line = [l for l in r.stdout.splitlines() if l.startswith("CALL2=")]
     assert call2_line, f"no CALL2 in stdout: {r.stdout!r}"
     call2_val = call2_line[0].split("=", 1)[1]
+    assert "RL_CALLS=2" in r.stdout.splitlines(), (
+        f"expected exactly 2 child /proc/<pid>/exe reads (early loop + ONE late "
+        f"sample); a third read is the LATE-EVERY shape: {r.stdout!r}"
+    )
     assert rid["agent_interpreter_realpath"] == call2_val, (
         f"recorded {rid['agent_interpreter_realpath']!r} != call-2 value {call2_val!r}"
     )
@@ -2029,4 +2091,282 @@ def test_probe_interpreter_deleted_after_start_is_a_loud_probe_error(tmp_path):
     )
     assert rid["probe_error"] == expected_error, (
         f"probe_error {rid['probe_error']!r} != {expected_error!r}"
+    )
+
+
+# ================= N5h: the sweep's six production rows, closed as classes =================
+#
+# Every test below carries the run that proved the defect on the PIN (2823f05) in its
+# docstring, and a positive control so the assertion cannot pass vacuously.
+
+
+def _probe_tree_copy(tmp_path):
+    """A private copy of proofs/S0-01/{tools/acp_probe.py, fixtures/} under tmp_path.
+
+    The probe derives its fixture path from its OWN location, so a test that needs a
+    non-regular file at that path must run a copy — the repo tree is never touched."""
+    import shutil
+    root = tmp_path / "S0-01"
+    (root / "tools").mkdir(parents=True)
+    (root / "fixtures").mkdir()
+    shutil.copy2(str(PROBE), str(root / "tools" / "acp_probe.py"))
+    shutil.copy2(str(P / "fixtures" / "neg-malformed-initialize.json"),
+                 str(root / "fixtures" / "neg-malformed-initialize.json"))
+    return root
+
+
+# ---- N5h-#7: the fixture read cannot hang (AF-AP-30 class, probe side) ----
+
+def test_probe_refuses_a_non_regular_fixture(tmp_path, agent_result):
+    """N5h-#7 (SWEEP-prod row 7).  os.path.exists() is True for a FIFO and open()
+    then blocks forever: on the PIN this run was rc 124 under `timeout 20` (20.01 s,
+    the sweep's measurement, reproduced this round).  os.stat + S_ISREG exits 64
+    immediately.  Positive control: the SAME copied tree with the real fixture exits
+    0, so the 64 is the guard firing and not a broken rig.  The subprocess timeout of
+    5 s is the bound — a regression hangs and fails here, it cannot pass."""
+    tree = _probe_tree_copy(tmp_path)
+    probe = tree / "tools" / "acp_probe.py"
+    fixture = tree / "fixtures" / "neg-malformed-initialize.json"
+
+    base_env = {
+        "S0_01_AGENT": agent_result,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": "5",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+    # POSITIVE CONTROL: the copied tree with a REGULAR fixture runs to completion
+    ok_dir = tmp_path / "ok"
+    ok_dir.mkdir()
+    r_ok = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=30,
+        env=dict(base_env, S0_01_FRAMEDIR=str(ok_dir)),
+    )
+    assert r_ok.returncode == 0, f"rig broken: {r_ok.returncode}: {r_ok.stderr}"
+
+    fixture.unlink()
+    os.mkfifo(str(fixture))
+    fifo_dir = tmp_path / "fifo"
+    fifo_dir.mkdir()
+    r = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=5,
+        env=dict(base_env, S0_01_FRAMEDIR=str(fifo_dir)),
+    )
+    assert r.returncode == 64, f"expected exit 64, got {r.returncode}: {r.stderr}"
+    assert r.stderr.strip() == f"acp_probe: fixture is not a regular file: {fixture}"
+
+
+def test_sha256_file_refuses_a_non_regular_file(tmp_path):
+    """N5h-#7 (the CLASS): _sha256_file is the shared read receiver for all three
+    remaining reads — the probe's own file, the agent entrypoint, the child's
+    interpreter.  open() on a FIFO blocks forever and /dev/zero never reaches EOF,
+    so the guard lives in the receiver.  Driven in a CHILD under a hard timeout: a
+    regression hangs the child and fails the test instead of wedging the suite.
+    Positive control: the same call over a REGULAR file returns the real digest."""
+    import hashlib
+    fifo = tmp_path / "a_fifo"
+    os.mkfifo(str(fifo))
+    regular = tmp_path / "a_regular"
+    regular.write_bytes(b"n5h")
+
+    driver = tmp_path / "sha_driver.py"
+    driver.write_text(textwrap.dedent(f"""\
+        import sys
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+        print("REGULAR=" + acp_probe._sha256_file({str(regular)!r}))
+        try:
+            acp_probe._sha256_file({str(fifo)!r})
+        except OSError as exc:
+            print("FIFO=" + str(exc))
+        else:
+            print("FIFO=<NO ERROR: the FIFO was read>")
+    """))
+    r = subprocess.run(
+        [sys.executable, str(driver)], capture_output=True, text=True, timeout=5,
+    )
+    assert r.returncode == 0, f"driver failed: {r.stderr}"
+    assert f"REGULAR={hashlib.sha256(b'n5h').hexdigest()}" in r.stdout.splitlines()
+    assert f"FIFO=not a regular file: {fifo}" in r.stdout.splitlines(), r.stdout
+
+
+# ---- N5h-#10: the stderr drain failure is recorded, not swallowed ----
+
+def test_probe_reports_a_stderr_drain_failure(tmp_path, agent_result):
+    """N5h-#10 (SWEEP-prod row 10).  A directory at agent-stderr.txt makes the drain
+    thread's open() raise; `except Exception: pass` killed the thread silently and
+    the probe still exited 0 with NO probe_error (the PIN run, reproduced this
+    round).  Now: rc 1 and probe_error naming the exception class and the path.
+    NEGATIVE CONTROL: the same agent with a writable stderr path exits 0 with no
+    probe_error — the drain error is not being invented on every run."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    (framedir / "agent-stderr.txt").mkdir()
+    r, _ = _run_probe(tmp_path, agent_result, timeout_override=5)
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    expected = (
+        f"stderr drain failed: IsADirectoryError: [Errno 21] Is a directory: "
+        f"'{framedir / 'agent-stderr.txt'}'"
+    )
+    assert rid["probe_error"] == expected, f"got {rid.get('probe_error')!r}"
+
+    control = tmp_path / "control"
+    control.mkdir()
+    r_ok, _ = _run_probe(tmp_path, agent_result, timeout_override=5,
+                         extra_env={"S0_01_FRAMEDIR": str(control)})
+    assert r_ok.returncode == 0, f"control run failed: {r_ok.stderr}"
+    assert "probe_error" not in json.loads((control / "runtime-identity.json").read_text())
+
+
+# ---- N5h-#23: a lossy decode keeps the lossless copy ----
+
+_LOSSY_A2C_LINE = (
+    b'{"jsonrpc":"2.0","id":0,"error":{"code":-32602,'
+    b'"message":"Invalid par\xffams"}}\n'
+)
+
+
+def test_probe_keeps_raw_b64_when_a_byte_was_replaced(tmp_path):
+    """N5h-#23 (SWEEP-prod row 23).  decode(errors="replace") rewrites the agent's
+    bytes: on the PIN the negative leg's only record of the pinned agent's rejection
+    was "Invalid par�ams" with raw_b64 ABSENT — the exact bytes were gone.  The
+    entry now also carries raw_b64, which must decode to the bytes the agent wrote.
+    The parsed frame is kept so response detection still fires (id 0 → no timeout)."""
+    agent = tmp_path / "agent_lossy_byte.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+        import sys
+        sys.stdin.readline()
+        sys.stdout.buffer.write(%r)
+        sys.stdout.buffer.flush()
+        sys.stdin.read()
+    """) % _LOSSY_A2C_LINE)
+    agent.chmod(0o755)
+
+    r, framedir = _run_probe(tmp_path, str(agent), timeout_override=5)
+    assert r.returncode == 0, f"probe failed: {r.stderr}"
+    entries = [json.loads(line) for line in
+               (framedir / "timeline.jsonl").read_text().splitlines() if line.strip()]
+    a2c = [e for e in entries if e["dir"] == "a2c"]
+    assert len(a2c) == 1, f"expected one a2c entry, got {len(a2c)}"
+    entry = a2c[0]
+    assert "raw_b64" in entry, (
+        f"the lossless copy of a replaced-byte line is missing: {sorted(entry)}"
+    )
+    assert base64.b64decode(entry["raw_b64"]) == _LOSSY_A2C_LINE
+    assert entry["frame"]["id"] == 0
+    assert "�" in entry["frame"]["error"]["message"], (
+        "the frame should still carry the replaced text — raw_b64 is the copy, not a swap"
+    )
+
+
+def test_probe_clean_utf8_line_carries_no_raw_b64(tmp_path, agent_result):
+    """N5h-#23 NEGATIVE CONTROL: a line that decodes losslessly carries no raw_b64,
+    so the key is evidence of a replaced byte and not decoration on every entry."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override=5)
+    assert r.returncode == 0, f"probe failed: {r.stderr}"
+    entries = [json.loads(line) for line in
+               (framedir / "timeline.jsonl").read_text().splitlines() if line.strip()]
+    assert entries, "no timeline entries"
+    for e in entries:
+        assert "raw_b64" not in e, f"raw_b64 on a clean line: {e}"
+
+
+# ---- N5h-#34: the mirror constant is pinned to pins.py ----
+
+def test_probe_redaction_pattern_equals_the_pin():
+    """N5h-#34 (SWEEP-prod row 34).  acp_probe._REDACTED_ENV_KEY_RE is a hand copy of
+    pins.REDACTED_ENV_KEY_RE (the probe must stay import-free of pins on the PC), and
+    on the PIN NO test pinned them equal — `grep -rn _REDACTED_ENV_KEY_RE tests/`
+    returned nothing.  The TEST does the equality.  The second assertion is the
+    negative control on the WRONG fix: making the probe import pins would satisfy the
+    equality while breaking the PC constraint the comment claims."""
+    import re as _re
+    sys.path.insert(0, str(P))
+    from pins import REDACTED_ENV_KEY_RE  # noqa: E402
+    sys.path.insert(0, str(P / "tools"))
+    import acp_probe  # noqa: E402
+
+    assert acp_probe._REDACTED_ENV_KEY_RE.pattern == REDACTED_ENV_KEY_RE, (
+        f"probe copy {acp_probe._REDACTED_ENV_KEY_RE.pattern!r} has drifted from "
+        f"pins.REDACTED_ENV_KEY_RE {REDACTED_ENV_KEY_RE!r}"
+    )
+    assert not _re.search(r"^\s*(import|from)\s+pins\b", PROBE.read_text(), _re.M), (
+        "the probe must not import pins — it runs from a bare tools/ directory on the PC"
+    )
+
+
+# ---- N5h-#39: the ACP_PROBE_TIMEOUT domain is closed ----
+
+@pytest.mark.parametrize("raw,expected", [
+    ("3_0", "is not a valid number: '3_0'"),
+    (" 30 ", "is not a valid number: ' 30 '"),
+    ("30s", "is not a valid number: '30s'"),
+    ("0x10", "is not a valid number: '0x10'"),
+    ("+30", "is not a valid number: '+30'"),
+    ("1e3", "is not a valid number: '1e3'"),
+    ("nan", "must be a finite float > 0, got 'nan'"),
+    ("inf", "must be a finite float > 0, got 'inf'"),
+    ("-5", "must be a finite float > 0, got '-5'"),
+    ("0", "must be a finite float > 0, got '0'"),
+    pytest.param("9" * 400, "must be a finite float > 0, got '%s'" % ("9" * 400),
+                 id="digits400_overflows_to_inf"),
+])
+def test_probe_timeout_rejects_forms_outside_the_domain(tmp_path, agent_result, raw, expected):
+    """N5h-#39 (SWEEP-prod row 39).  float() accepts far more than a timeout may be:
+    on the PIN "3_0" and " 30 " were ACCEPTED as 30.0 (measured, rc 0).  The domain
+    is now re.fullmatch(r"[0-9]+(\\.[0-9]+)?") BEFORE the conversion, so float()'s
+    leniency is unreachable; isfinite still guards the FINAL value because a 400-digit
+    string passes the regex and float()s to inf (found this round, not in the sweep).
+    Both message classes are preserved exactly."""
+    r, _ = _run_probe(tmp_path, agent_result, timeout_override=raw)
+    assert r.returncode == 64, f"expected exit 64 for {raw!r}, got {r.returncode}"
+    assert r.stderr.strip() == f"acp_probe: ACP_PROBE_TIMEOUT {expected}"
+
+
+@pytest.mark.parametrize("raw", ["30", "5", "0.5", "5.25"])
+def test_probe_timeout_accepts_the_domain(tmp_path, agent_result, raw):
+    """N5h-#39 POSITIVE CONTROL: the gate rejects the class, not everything — a
+    plain decimal is still accepted and the probe runs to a clean exit."""
+    r, framedir = _run_probe(tmp_path, agent_result, timeout_override=raw)
+    assert r.returncode == 0, f"{raw!r} rejected: {r.stderr}"
+    assert "probe_error" not in json.loads((framedir / "runtime-identity.json").read_text())
+
+
+# ---- N5h-#40: the bytecode flag is the runtime state, not a string mirror ----
+
+@pytest.mark.parametrize("value", ["1", "2", "true", "0", "", None])
+def test_identity_records_the_runtime_bytecode_state_not_the_string(tmp_path, agent_result, value):
+    """N5h-#40 (SWEEP-prod row 40).  `os.environ.get(...) == "1"` was a mirror of the
+    string, not the state: CPython also disables bytecode writing for "2" and "true",
+    so the PIN recorded python_dont_write_bytecode=false while writing WAS disabled
+    (measured both ways this round).  The oracle here is CPython itself — a child
+    interpreter started with the SAME environment reports its own
+    sys.dont_write_bytecode — never a hardcoded expectation."""
+    env = os.environ.copy()
+    env["S0_01_AGENT"] = agent_result
+    env["S0_01_FRAMEDIR"] = str(tmp_path / "capture")
+    env["ACP_PROBE_TIMEOUT"] = "5"
+    if value is None:
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+    else:
+        env["PYTHONDONTWRITEBYTECODE"] = value
+    (tmp_path / "capture").mkdir()
+
+    oracle = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.dont_write_bytecode)"],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert oracle.returncode == 0, oracle.stderr
+    expected = {"True": True, "False": False}[oracle.stdout.strip()]
+
+    r = subprocess.run(
+        [sys.executable, str(PROBE)], capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"probe failed: {r.stderr}"
+    rid = json.loads((tmp_path / "capture" / "runtime-identity.json").read_text())
+    assert rid["python_dont_write_bytecode"] is expected, (
+        f"PYTHONDONTWRITEBYTECODE={value!r}: recorded "
+        f"{rid['python_dont_write_bytecode']!r}, CPython reports {expected!r}"
     )

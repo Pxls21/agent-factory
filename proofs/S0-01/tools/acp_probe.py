@@ -24,6 +24,7 @@ import json
 import os
 import re
 import select as _select
+import stat
 import subprocess
 import sys
 import threading
@@ -37,8 +38,19 @@ _REDACTED_ENV_KEY_RE = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)")
 _EARLY_SAMPLE_DEADLINE_S = 0.2
 _EARLY_SAMPLE_STEP_S = 0.002
 
+# N5h-#39: the ONLY accepted ACP_PROBE_TIMEOUT syntax — plain decimal digits with an
+# optional fractional part.  float() also accepts "3_0", " 30 ", "nan", "inf", "-5";
+# the domain is closed HERE, before the conversion runs.
+_TIMEOUT_DOMAIN_RE = re.compile(r"[0-9]+(\.[0-9]+)?")
+
 
 def _sha256_file(path):
+    # N5h-#7 (class): every file the probe reads must be a REGULAR file — open() on a
+    # FIFO blocks forever and a character device (/dev/zero) never reaches EOF.  os.stat
+    # does not open the file, so it cannot block.  One guard covers all three receivers
+    # of this function: the probe's own file, the agent entrypoint, the child interpreter.
+    if not stat.S_ISREG(os.stat(path).st_mode):
+        raise OSError("not a regular file: %s" % (path,))
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -51,8 +63,12 @@ def _utc_now():
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def _drain_stderr(proc, stderr_path):
-    """Drain the agent's stderr to a file in a background thread."""
+def _drain_stderr(proc, stderr_path, error_slot):
+    """Drain the agent's stderr to a file in a background thread.
+
+    N5h-#10: a failure here is RECORDED in error_slot (a one-element list the main
+    path folds into probe_error), never swallowed — a directory at stderr_path used
+    to kill this thread silently while the probe still exited 0."""
     try:
         with open(stderr_path, "wb") as f:
             while True:
@@ -60,8 +76,8 @@ def _drain_stderr(proc, stderr_path):
                 if not chunk:
                     break
                 f.write(chunk)
-    except Exception:
-        pass
+    except Exception as exc:
+        error_slot[0] = f"{type(exc).__name__}: {exc}"
 
 
 def _redact_env(env):
@@ -110,7 +126,9 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
         "agent_child_pid": child_pid,
         "agent_interpreter_realpath": interp_realpath,
         "agent_interpreter_sha256": interp_sha256,
-        "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
+        # N5h-#40: the RUNTIME state, not a string mirror.  CPython enables the flag
+        # for "2"/"true" too, so `== "1"` recorded False while writing was disabled.
+        "python_dont_write_bytecode": sys.dont_write_bytecode,
         "spawned_at_utc": spawned_at_utc,
         "agent_exit_code": agent_exit_code,
     }
@@ -153,10 +171,18 @@ def main():
     # Load the malformed initialize fixture
     here = os.path.dirname(os.path.abspath(__file__))
     fixture_path = os.path.join(os.path.dirname(here), "fixtures", "neg-malformed-initialize.json")
-    if not os.path.exists(fixture_path):
+    # N5h-#7: os.stat, not os.path.exists — a FIFO at the fixture path passes exists()
+    # and then blocks open() forever (measured on the PIN: rc 124 under `timeout 20`).
+    try:
+        fixture_st = os.stat(fixture_path)
+    except OSError:
         print(f"acp_probe: fixture not found: {fixture_path}", file=sys.stderr)
         raise SystemExit(64)
-    params = json.loads(open(fixture_path).read())
+    if not stat.S_ISREG(fixture_st.st_mode):
+        print(f"acp_probe: fixture is not a regular file: {fixture_path}", file=sys.stderr)
+        raise SystemExit(64)
+    with open(fixture_path) as f:
+        params = json.load(f)
     request = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": params}
 
     # Timeline entries
@@ -186,19 +212,30 @@ def main():
 
         # A16: validate ACP_PROBE_TIMEOUT inside the wrapped body — must be
         # a finite float > 0, else probe_error + exit 64
-        timeout_raw = os.environ.get("ACP_PROBE_TIMEOUT", "30")
-        try:
-            timeout = float(timeout_raw)
-        except (ValueError, OverflowError):
-            msg = f"ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}"
-            with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
-                json.dump({"probe_error": msg}, f, indent=2)
-                f.write("\n")
-            print(f"acp_probe: {msg}", file=sys.stderr)
-            raise SystemExit(64)
+        # N5h-#39: the DOMAIN gate runs BEFORE the conversion, so float()'s own
+        # leniency ("3_0", " 30 ", "nan", "inf", "-5", "0x10") is structurally
+        # unreachable; isfinite still guards the FINAL value because "9"*400 passes
+        # the regex and float()s to inf.  Both message classes are preserved: a
+        # rejected value that float() parses to a non-finite/non-positive number
+        # keeps the "finite float > 0" wording, everything else is "not a number".
         import math
-        if not math.isfinite(timeout) or timeout <= 0:
-            msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
+        timeout_raw = os.environ.get("ACP_PROBE_TIMEOUT", "30")
+        timeout = None
+        msg = None
+        if _TIMEOUT_DOMAIN_RE.fullmatch(timeout_raw) is None:
+            try:
+                rejected = float(timeout_raw)
+            except (ValueError, OverflowError):
+                rejected = None
+            if rejected is not None and (not math.isfinite(rejected) or rejected <= 0):
+                msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
+            else:
+                msg = f"ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}"
+        else:
+            timeout = float(timeout_raw)
+            if not math.isfinite(timeout) or timeout <= 0:
+                msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
+        if msg is not None:
             with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
                 json.dump({"probe_error": msg}, f, indent=2)
                 f.write("\n")
@@ -244,8 +281,9 @@ def main():
 
         # Start draining stderr in a background thread
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
+        drain_error = [None]
         stderr_thread = threading.Thread(
-            target=_drain_stderr, args=(proc, stderr_path), daemon=True
+            target=_drain_stderr, args=(proc, stderr_path, drain_error), daemon=True
         )
         stderr_thread.start()
 
@@ -328,7 +366,15 @@ def main():
                         line_bytes_with_nl = line_bytes + b"\n"
                         t_utc = _utc_now()
                         t_mono = time.monotonic_ns()
-                        text = line_bytes.decode("utf-8", errors="replace")
+                        # N5h-#23: strict first.  errors="replace" silently rewrites
+                        # the agent's bytes, so a line that did not decode losslessly
+                        # keeps its exact bytes in raw_b64 below.
+                        try:
+                            text = line_bytes.decode("utf-8")
+                            lossy = False
+                        except UnicodeDecodeError:
+                            text = line_bytes.decode("utf-8", errors="replace")
+                            lossy = True
                         stripped = text.rstrip("\r")
                         try:
                             response_frame = json.loads(stripped)
@@ -340,6 +386,11 @@ def main():
                                 "seq": seq, "dir": "a2c", "t_utc": t_utc,
                                 "t_mono_ns": t_mono, "frame": response_frame,
                             }
+                            if lossy:
+                                # N5h-#23: the parsed frame carries the REPLACED text,
+                                # not what the agent sent — keep the lossless copy.
+                                entry["raw_b64"] = base64.b64encode(
+                                    line_bytes_with_nl).decode("ascii")
                         else:
                             entry = {
                                 "seq": seq, "dir": "a2c", "t_utc": t_utc,
@@ -405,6 +456,11 @@ def main():
         # Wait for stderr drain to finish
         stderr_thread.join(timeout=3)
 
+        # N5h-#10: a drain failure IS a probe failure — fold it into probe_error
+        # (first error wins, matching the entrypoint-hash guard in _write_evidence).
+        if drain_error[0] is not None and probe_error is None:
+            probe_error = f"stderr drain failed: {drain_error[0]}"
+
         agent_exit_code = proc.returncode
 
         # N5e-F8: evidence writes INSIDE the wrapped body.  A self-deleting
@@ -431,7 +487,8 @@ def main():
             "agent_child_pid": child_pid,
             "agent_interpreter_realpath": interp_realpath,
             "agent_interpreter_sha256": interp_sha256,
-            "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
+            # N5h-#40: the runtime state (see _write_evidence)
+            "python_dont_write_bytecode": sys.dont_write_bytecode,
             "spawned_at_utc": spawned_at_utc,
             "agent_exit_code": agent_exit_code,
             "probe_error": probe_error,
