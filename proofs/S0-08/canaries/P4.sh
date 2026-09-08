@@ -21,7 +21,8 @@ docker_sock="absent"
 
 # --- Secret-bearing env keys in the RUNTIME env (this process's own) ---
 # Names only. Values are NEVER printed or hashed (`env` output is cut at the first '=' before anything
-# else sees it). The canary is exec'd inside the container as the runtime user (podman exec), so its own
+# else sees it). The canary is exec'd inside the container as the runtime user — `podman exec --user 10000`
+# (tools/pc/run_containment.sh), NOT the image's default `USER root` (Dockerfile:298) — so its own
 # environment IS the env the main program inherits. Why `env` and not procfs: /proc/1/environ is
 # root-owned 0400 (unreadable to uid 10000 in the container and to the owner's user on the PC — the
 # 2026-09-08 PC gate hit that: rc 1, "did not complete its observation"), and under gVisor a shell

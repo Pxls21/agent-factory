@@ -2,17 +2,12 @@
   "proof_id": "S0-08",
   "legs": [
     {
-      "leg": "positive",
-      "cmd": ["python3", "proofs/S0-08/check_containment.py", "proofs/S0-08/evidence/pc-runsc"],
-      "cwd": ".",
-      "timeout_s": 120,
-      "expect": {
-        "exit_code": 0
-      }
-    },
-    {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-08/check_containment.py", "proofs/S0-08/fixtures/evidence-crun"],
+      "cmd": [
+        "python3",
+        "proofs/S0-08/check_containment.py",
+        "proofs/S0-08/fixtures/evidence-crun"
+      ],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
@@ -22,12 +17,30 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-08/marker_gate.py", "--proof-dir", "proofs/S0-08/fixtures/malformed-marker"],
+      "cmd": [
+        "python3",
+        "proofs/S0-08/marker_gate.py",
+        "--proof-dir",
+        "proofs/S0-08/fixtures/malformed-marker"
+      ],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
         "exit_code": 1,
         "failure_reason": "marker: malformed: probe_run"
+      }
+    },
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-08/check_containment.py",
+        "proofs/S0-08/evidence/pc-runsc"
+      ],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 0
       }
     }
   ]

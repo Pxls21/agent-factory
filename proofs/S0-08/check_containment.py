@@ -39,6 +39,52 @@ GVISOR_DMESG_MARK = "Starting gVisor"
 # `useradd -u 10000 -m -d /opt/data hermes`).
 HERMES_UID = "10000"
 
+# The uid every canary must be exec'd as. Observations are evidence about the
+# runtime user only if they were TAKEN as that user. The image's own default is
+# `USER root` (hermes-agent Dockerfile:298), so a `podman exec` without
+# `--user` observes a DIFFERENT subject than the one the security profile is
+# about (VERIFY-G1 F3). The runner records the uid it used; this pins it.
+CANARY_EXEC_UID = "10000"
+
+# The hermes-agent commit the image must have been built from
+# (upstream.lock.yaml:10-15; run_containment.sh refuses any other checkout).
+# Without this the checker accepts a bundle captured from any image at all.
+PINNED_IMAGE_SOURCE_COMMIT = "527da60844d4dced37879ea50259675371abe10e"
+
+# The `podman run` argv the evidence must have been produced by, screened as
+# EXACT tokens over the recorded LIST — never as a substring over a joined
+# string, because `--network host` is two tokens and a substring screen also
+# matches `--network hostile`. The three required pairs are the flags
+# PC-BRIDGE.md:135-148 verified plus the containment run's own `--network none`.
+REQUIRED_RUN_ARGV_PAIRS = (
+    ("--runtime-flag", "ignore-cgroups"),
+    ("--security-opt", "label=disable"),
+    ("--network", "none"),
+)
+BANNED_RUN_ARGV_TOKENS = (
+    "--privileged", "-v", "--volume", "--mount", "--pid=host", "--cap-add",
+    "--network=host", "--net=host",
+)
+
+# The container's PID 1 comm, DERIVED from the image rather than assumed:
+# `docker/entrypoint-dispatch.sh:18` execs `/init`, and s6-overlay 3.2.3.0's
+# own `/init` execs away in its first act (`exec s6-overlay-suexec …
+# libexec/stage0`, and `stage0` execs the s6-linux-init stage 1 — read from
+# the release tarball the Dockerfile pins by sha256 at `Dockerfile:109`), so
+# PID 1 settles on s6-svscan. `Dockerfile:68` states exactly that: "replaces
+# tini with s6-overlay's /init (PID 1 = s6-svscan)".
+CONTAINER_INIT_COMM = "s6-svscan"
+
+# Upper bound on the container's OWN process table. Derived, not typed:
+# s6-svscan (1) + s6-linux-init's supervised shutdownd (2) + one s6-supervise
+# per declared user service plus its child — `docker/s6-rc.d/user/contents.d/`
+# declares exactly two, `main-hermes` and `dashboard` (4) + the container's
+# main program (1) + the canary's own shell and its command substitutions
+# (~4) = ~12 at steady state. The bound is 32, ~2.5x headroom. What it must
+# exclude is a HOST process table: the sandbox host measured 115 while this
+# was derived, and a real gVisor cell measured 5.
+CONTAINER_MAX_PIDS = 32
+
 # The secret-key pattern S0-01 already pins (proofs/S0-01/pins.py:50).
 # The pinned image sets NO env key matching it, so the allowlist is EMPTY.
 REDACTED_ENV_KEY_RE = r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)"
@@ -125,9 +171,20 @@ def _canary(canaries: dict, cid: str) -> dict:
 
 
 def _field(observed: dict, cid: str, key: str) -> str:
+    """Every observation the canaries emit is a JSON STRING. Coercing with
+    `str()` would silently accept an int (or a list) where a string is
+    expected, so the type is named rather than converted."""
     if key not in observed:
         raise Failure(f"containment: {cid} observation {key!r} absent")
-    return str(observed[key])
+    value = observed[key]
+    if not isinstance(value, str):
+        raise Failure(f"containment: {cid} {key} is not a string")
+    return value
+
+
+def _csv(observed: dict, cid: str, key: str) -> list[str]:
+    """A comma-joined observation as a list, empty entries dropped."""
+    return [item for item in _field(observed, cid, key).split(",") if item]
 
 
 # --- Identity --------------------------------------------------------------
@@ -144,6 +201,36 @@ def check_identity(identity: dict) -> None:
         raise Failure(
             f"containment: runtime identity runsc sha256 {digest or '(absent)'}, "
             f"expected {PINNED_RUNSC_SHA256}"
+        )
+    # WHICH IMAGE produced this evidence. Pinning runsc alone accepts a bundle
+    # captured from any image at all (VERIFY-G1 F4, bundle A7).
+    commit = str(identity.get("image_source_commit", ""))
+    if commit != PINNED_IMAGE_SOURCE_COMMIT:
+        raise Failure(
+            f"containment: image_source_commit {commit or '(absent)'}, "
+            f"expected {PINNED_IMAGE_SOURCE_COMMIT}"
+        )
+    # WHICH ARGV produced it. P7's whole claim — the containment run must not
+    # inherit the compose file's host networking — is otherwise enforced only
+    # by a static test on the runner's source, never on the evidence (A8).
+    argv = identity.get("run_argv")
+    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+        raise Failure("containment: runtime-identity.json run_argv is not a list of strings")
+    for flag, value in REQUIRED_RUN_ARGV_PAIRS:
+        if not any(a == flag and b == value for a, b in zip(argv, argv[1:])):
+            raise Failure(f"containment: run_argv is missing {flag} {value}")
+    for banned in BANNED_RUN_ARGV_TOKENS:
+        if banned in argv:
+            raise Failure(f"containment: run_argv carries {banned}")
+    for a, b in zip(argv, argv[1:]):
+        if a == "--network" and b != "none":
+            raise Failure(f"containment: run_argv sets --network {b}, expected none")
+    # WHO the observations were taken as. See CANARY_EXEC_UID.
+    exec_user = str(identity.get("canary_exec_user", ""))
+    if exec_user != CANARY_EXEC_UID:
+        raise Failure(
+            f"containment: canaries were exec'd as uid {exec_user or '(absent)'}, "
+            f"expected {CANARY_EXEC_UID}"
         )
 
 
@@ -164,10 +251,31 @@ def check_p2(canaries: dict) -> None:
     pid1_uid = _field(obs, "P2", "pid1_uid")
     if pid1_uid != "0":
         raise Failure(f"containment: P2 pid 1 uid {pid1_uid or '(absent)'}, expected 0")
-    main_uid = _field(obs, "P2", "main_uid")
-    if main_uid != HERMES_UID:
+    # EVERY process carrying the pinned main cmdline, not the first one the
+    # canary's /proc glob happened to reach. The image ships a root no-op
+    # `exec sleep infinity` (docker/s6-rc.d/main-hermes/run:27) that is up by
+    # default, so a main cmdline of `sleep infinity` had TWO holders and P2's
+    # subject was decided by glob order (VERIFY-G1 F2). Ambiguity is now a
+    # named refusal, never a coin flip.
+    main_pids = _csv(obs, "P2", "main_pids")
+    main_uids = _csv(obs, "P2", "main_uids")
+    if len(main_pids) > 1:
         raise Failure(
-            f"containment: P2 main program uid {main_uid or '(not found)'}, "
+            f"containment: P2 main program cmdline is ambiguous "
+            f"({len(main_pids)} processes)"
+        )
+    if len(main_pids) != len(main_uids):
+        raise Failure(
+            f"containment: P2 main program pid/uid lists disagree "
+            f"({len(main_pids)} pid(s), {len(main_uids)} uid(s))"
+        )
+    if not main_pids:
+        raise Failure(
+            f"containment: P2 main program uid (not found), expected {HERMES_UID}"
+        )
+    if main_uids[0] != HERMES_UID:
+        raise Failure(
+            f"containment: P2 main program uid {main_uids[0]}, "
             f"expected {HERMES_UID}"
         )
 
@@ -236,26 +344,70 @@ def check_p6(canaries: dict) -> None:
     dangerous = _field(obs, "P6", "dangerous_devices")
     if dangerous:
         raise Failure(f"containment: P6 raw host devices present: {dangerous}")
-    # `mount -t proc` SUCCEEDS under gVisor (measured). The containment
-    # signature is WHOSE process table it reveals: the container's own.
+    # --- the capability-INDEPENDENT signature, asserted either way ---------
+    # `mount -t proc` needs CAP_SYS_ADMIN. The runtime user (uid 10000) has no
+    # capabilities at all, so in the venue this proof actually runs in the
+    # mount FAILS (measured inside real gVisor as uid 65534: rc 32,
+    # "must be superuser to use mount."). The shipped checker asserted nothing
+    # at all in that case and passed a bundle whose own procfs named the
+    # HOST's init (VERIFY-G1 F1, bundle A5c). These three assertions need no
+    # capability and fire in both branches.
+    own = _field(obs, "P6", "own_pid1_comm")
+    if own != CONTAINER_INIT_COMM:
+        raise Failure(
+            f"containment: P6 container PID 1 is {own or '(absent)'}, "
+            f"not the image's own {CONTAINER_INIT_COMM}"
+        )
+    # A second, independently exec'd observation of the same PID 1: P2 read
+    # /proc/1/comm in its own process. Forging one line is not enough.
+    p2_comm = _field(_canary(canaries, "P2"), "P2", "pid1_comm")
+    if p2_comm != own:
+        raise Failure(
+            f"containment: P6 PID 1 comm {own} disagrees with P2's "
+            f"{p2_comm or '(absent)'}"
+        )
+    own_count = _field(obs, "P6", "own_pid_count")
+    if not own_count.isdigit():
+        raise Failure(
+            f"containment: P6 own_pid_count {own_count or '(absent)'} is not a count"
+        )
+    if int(own_count) > CONTAINER_MAX_PIDS:
+        raise Failure(
+            f"containment: P6 own process table has {own_count} processes, "
+            f"over the image's bound of {CONTAINER_MAX_PIDS}"
+        )
+    # --- the mount signature, when the mount could run --------------------
+    # `mount -t proc` SUCCEEDS under gVisor for a caller that HAS
+    # CAP_SYS_ADMIN (measured). The containment signature is then WHOSE
+    # process table it reveals: the container's own.
     mount_rc = _field(obs, "P6", "mount_proc_rc")
     if mount_rc == "0":
         mounted = _field(obs, "P6", "mounted_pid1_comm")
-        own = _field(obs, "P6", "own_pid1_comm")
-        if not mounted or not own:
+        if not mounted:
             raise Failure("containment: P6 mounted procfs did not yield a PID 1 comm")
         if mounted != own:
             raise Failure(
                 f"containment: P6 mounted procfs PID 1 is {mounted}, "
                 f"not the container's own {own}"
             )
+    elif not _field(obs, "P6", "mount_proc_error"):
+        raise Failure(
+            f"containment: P6 mount -t proc failed with rc {mount_rc} and no reason"
+        )
 
 
 def check_recorded(canaries: dict) -> None:
     """P7 and P8 are required to be PRESENT so the run records its egress and
-    cgroup posture. Nothing about their content is asserted."""
+    cgroup posture. Nothing about their content is asserted — but a canary
+    that never took its observation records nothing, so "recorded" would be
+    satisfied by an empty record (VERIFY-G1 F15, bundle A12)."""
     for cid in RECORDED:
         _canary(canaries, cid)
+        if canaries[cid]["rc"] != 0:
+            raise Failure(
+                f"containment: {cid} recorded canary did not observe "
+                f"(rc {canaries[cid]['rc']})"
+            )
 
 
 # --- Entry point -----------------------------------------------------------

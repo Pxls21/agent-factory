@@ -70,6 +70,8 @@ Verified by reading the pinned source at `/home/user/nerdherderdani/hermes-agent
 | why root: the stage2 hook must usermod/chown the data volume | `Dockerfile:309`-311 |
 | the entrypoint is a dispatcher, not `/init` | `Dockerfile:464` |
 | when PID 1, the dispatcher execs `/init` with the main wrapper | `docker/entrypoint-dispatch.sh:18` |
+| **PID 1 settles as `s6-svscan`, not `/init`** | `Dockerfile:68` |
+| the `podman exec` path short-circuits for a non-root caller | `docker/hermes-exec-shim.sh:54` |
 | **the main program's privilege drop** | `docker/main-wrapper.sh:31` |
 | the `docker exec` path's privilege drop | `docker/hermes-exec-shim.sh:87` |
 | that path refuses to silently run as root when s6 is missing | `docker/hermes-exec-shim.sh:76` |
@@ -79,6 +81,29 @@ Verified by reading the pinned source at `/home/user/nerdherderdani/hermes-agent
 | `dashboard` is DOWN unless `HERMES_DASHBOARD` is truthy | `docker/s6-rc.d/dashboard/run:9`-20 |
 | production compose uses host networking | `docker-compose.yml:35` and `:67` |
 | the installed python package is `hermes_cli` — there is no `hermes` package | `pyproject.toml:587` |
+
+### What PID 1 actually is
+
+`/init` is not the answer, and this matters because P6's capability-independent signature reads
+`/proc/1/comm`. s6-overlay 3.2.3.0's own `/init` **execs away in its first act**:
+
+```
+/init                    exec s6-overlay-suexec … /package/admin/s6-overlay-3.2.3.0/libexec/stage0
+libexec/stage0           exec "$basedir/bin/init"      (the s6-linux-init stage 1)
+s6-linux-init stage 1    exec s6-svscan                (PID 1 for the container's life)
+```
+
+Read from the release tarball the Dockerfile pins by sha256 (`Dockerfile:109`,
+`b720f9d9…c53cf`; the same digest was fetched and verified before this line was written), and the
+image states the destination itself at `Dockerfile:68`: *"replaces tini with s6-overlay's /init
+(PID 1 = s6-svscan)"*. So `own_pid1_comm` is `s6-svscan`, and PID 1's **cmdline** is s6-svscan's,
+not `/init /opt/hermes/docker/main-wrapper.sh …` — the cmdline is therefore recorded, never
+asserted.
+
+The last hop is the only one not read from a pinned artifact (the stage-1 script is generated at
+boot by `s6-linux-init-maker`), so it rests on `Dockerfile:68` plus s6's documented architecture.
+**If the first PC run reds with a different s6-overlay process name, that is a pin finding to
+correct here — a HOST init name (`systemd`, `init`) in the same field is a containment failure.**
 
 ### Two corrections this spec makes to its own brief
 
@@ -117,13 +142,32 @@ first and its failure is the bundle's headline reason.
 - **Source:** `PC-BRIDGE.md:137`, `spikes/runsc/result.json:35`.
 - **Uncontained observation (measured on the sandbox host):** `uname_r` is the host kernel and dmesg
   line 1 reads `Linux version …` → `containment: P1 host kernel 6.18.44-fc-v24, not gVisor`.
+- **`rc` is the canary's own status, and for P1 it depends on the RUNNING USER.** `dmesg` is refused
+  to an unprivileged caller when `kernel.dmesg_restrict=1`, and the canary captures that status with
+  no pipeline between the tool and `$?`, so it reports `rc 1` rather than an empty first line beside a
+  green status. **Inside gVisor this never fires:** there is no `/proc/sys/kernel/dmesg_restrict` and
+  `syslog(2)` is not gated on `CAP_SYSLOG` — measured, `dmesg` works for uid 65534 and for root with
+  `-syslog` dropped. The split bites only on the UNCONTAINED negative leg and on the suite's own
+  fixture re-capture, where the tests derive the expectation from the venue and assert both arms
+  (`fixtures/evidence-crun/PROVENANCE.md`).
 
 ### P2 — root start, s6 setup, privilege drop · **ASSERTED**
 
-- **Canary:** `canaries/P2.sh` — uid/comm/cmdline of PID 1; the uid of the process whose cmdline is
-  exactly `sleep infinity` (the container's main program, pinned by the runner's CMD); a process count.
-- **Expected observations:** `pid1_uid` `"0"`, `main_uid` `"10000"`.
-- **Checker asserts:** `pid1_uid == "0"` **and** `main_uid == "10000"`.
+- **Canary:** `canaries/P2.sh` — uid/comm/cmdline of PID 1; **every** process whose cmdline is
+  exactly the main cmdline, with its uid; a process count.
+- **The main cmdline is `sleep 2147483647`, and the runner is its ONE source.** It reaches the
+  canary as `S0_08_MAIN_CMDLINE` in the `podman exec` environment; `P2.sh` has no default, so an
+  unsupplied value is `rc 1` rather than an invented subject. The readiness gate and the identity
+  scan read the same shell variable, so runner and canary cannot drift.
+- **Why not `sleep infinity`:** the image's supervised `main-hermes` service runs exactly
+  `exec sleep infinity` as root (`docker/s6-rc.d/main-hermes/run:27`) and is up by default
+  (`docker/s6-rc.d/user/contents.d/`). With that CMD the container holds **two** processes with a
+  byte-identical cmdline — the root sleeper and the dropped main program — and a first-match scan
+  picks whichever `/proc` glob order reaches first. That is a coin-flip red on a correctly
+  contained container, not a proof.
+- **Expected observations:** `pid1_uid` `"0"`, `main_pids` one pid, `main_uids` `"10000"`.
+- **Checker asserts:** `pid1_uid == "0"`; **exactly one** process carries the main cmdline
+  (more is `P2 main program cmdline is ambiguous (<n> processes)`); and that one uid is `10000`.
 - **Rests on:** `Dockerfile:298`, `Dockerfile:309`-311, `docker/entrypoint-dispatch.sh:18`,
   `docker/main-wrapper.sh:31`, `Dockerfile:150`.
 - **Recorded, not asserted:** `main_hermes_service` and the `ps` tree in `runtime-identity.json` record
@@ -149,7 +193,7 @@ Derived from the image's own installs, not from a wish-list.
 ### P4 — narrow mounts, no Docker socket, no provider secrets · **ASSERTED**
 
 - **Canary:** `canaries/P4.sh` — `/var/run/docker.sock` and `/run/docker.sock`; the **names** (never the
-  values) of the canary's OWN environment (`env`, names cut before `=`) matching the redaction pattern — the canary is exec'd inside the container as the runtime user, so its environment is the one the main program inherits; PID 1's environ is root-owned 0400 and unreadable to that user (the PC gate 2026-09-08), and a shell redirect of `/proc/self/environ` read empty under the sandbox's gVisor, so the libc environment is the surface; the mount count and every bind root.
+  values) of the canary's OWN environment (`env`, names cut before `=`) matching the redaction pattern — the canary is exec'd inside the container as the runtime user, `podman exec --user 10000` (`tools/pc/run_containment.sh`), NOT the image's default `USER root` (`Dockerfile:298`), so its environment is the one the main program inherits; PID 1's environ is root-owned 0400 and unreadable to that user (the PC gate 2026-09-08), and a shell redirect of `/proc/self/environ` read empty under the sandbox's gVisor, so the libc environment is the surface; the mount count and every bind root.
 - **Pattern:** `REDACTED_ENV_KEY_RE = r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)"`, the one S0-01
   already pins at `proofs/S0-01/pins.py:50`.
 - **Allowlist: EMPTY.** `grep -n "^ENV" Dockerfile | grep -Ei 'KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV'`
@@ -189,24 +233,64 @@ PID 1 `sh`, while the host at that moment had **99**. A canary asserting "mount 
 a correctly-contained container, and "fixing" that by flipping the expectation to "allowed" would assert
 nothing at all.
 
-So P6 asserts the **containment signature** instead:
+So P6 asserts the **containment signature** instead — and asserts it under the capability set the
+runtime user actually has.
+
+#### Which signature fires under which capability set
+
+`mount -t proc` needs `CAP_SYS_ADMIN`. The canaries run as uid 10000, which has no capabilities at
+all, so **in the venue this proof runs in the mount FAILS** and the mounted-procfs signature never
+fires. Measured, three ways:
+
+| caller | `mount_proc_rc` | `mount_proc_error` |
+|---|---|---|
+| gVisor, root, full bounding set | `0` | — (the mounted-procfs signature fires) |
+| gVisor, uid 65534 | `32` | `must be superuser to use mount.` |
+| gVisor, root, `CAP_SYS_ADMIN` dropped | `32` | `permission denied.` |
+
+The shipped checker asserted nothing at all in the failing case: a bundle whose own procfs named
+the HOST's init passed with "6 properties asserted". So three assertions that need **no
+capability** are made in **both** branches, and the mounted-procfs comparison is made only when
+the mount could actually run:
+
+| assertion | needs a capability? |
+|---|---|
+| `dangerous_devices` is empty | no |
+| `own_pid1_comm` is the image's `s6-svscan` | no |
+| P2's independently-read `pid1_comm` agrees with it | no |
+| `own_pid_count` ≤ 32 | no |
+| mount succeeded → mounted PID 1 `comm` equals the container's own | **yes** |
+| mount failed → the failure carries a reason | no |
+
+**Where the 32 comes from** (a typed number would be a finding): `s6-svscan` (1) + s6-linux-init's
+supervised `shutdownd` and its supervisor (2) + one `s6-supervise` per declared user service plus
+its child — `docker/s6-rc.d/user/contents.d/` declares exactly two, `main-hermes` and `dashboard`
+(4) + the container's main program (1) + the canary's own shell and its command substitutions
+(~4) ≈ **12 at steady state**; the bound is 32, about 2.5× headroom. What it excludes is a HOST
+process table, which is two orders of magnitude larger: the sandbox host measured **115** while
+this was derived and a real gVisor cell measured **5**. A first PC run that reds here prints the
+count, so an image that grew services is a one-line correction, not a mystery.
 
 - **Canary:** `canaries/P6.sh` — a named dangerous-device census (`/dev/kvm`, `/dev/mem`, `/dev/kmsg`,
   `/dev/sda`, `/dev/nvme0n1`, `/dev/loop0`, `/dev/dm-0`) plus the full `/dev` listing; `mount -t proc`
   into a per-invocation mount point, then the mounted procfs's PID 1 `comm` and process count beside the
   container's own; `unshare -n` verbatim.
-- **Checker asserts:** `dangerous_devices` is empty; and when the mount succeeded, the mounted procfs's
-  PID 1 `comm` is non-empty and **equals the container's own** — i.e. the mount revealed the container,
-  not the host.
+- **Checker asserts:** `dangerous_devices` is empty; the capability-independent signature above;
+  and when the mount succeeded, the mounted procfs's PID 1 `comm` is non-empty and **equals the
+  container's own** — i.e. the mount revealed the container, not the host. When it failed, the
+  failure must carry a reason: an unexplained `rc 32` is not an observation.
 - **Recorded, not asserted:** the verbatim `unshare -n` status and message, the `mount` status and any
   message, and the full `/dev` listing. gVisor's exact wording is not pinned, because this lane could not
   run the property in its target venue (podman + runsc on the PC) and will not mint an expected errno
   string it has not seen there.
 - **Uncontained observation (measured on the sandbox host):** `dangerous_devices` = `/dev/kmsg,/dev/loop0`
   → `containment: P6 raw host devices present: /dev/kmsg,/dev/loop0`.
-- **Not asserted: ptrace of PID 1.** Inside the container PID 1 is the container's *own* `/init`;
-  ptracing it is not an escape, and a host process cannot even be named from another PID namespace.
-  Asserting it would be theatre.
+- **Not asserted: ptrace of PID 1.** Inside the container PID 1 is the container's *own*
+  supervision root (`s6-svscan` — see §1); ptracing it is not an escape, and a host process cannot
+  even be named from another PID namespace. Asserting it would be theatre.
+- **Not asserted: PID 1's cmdline.** It is s6-svscan's, generated at boot by
+  `s6-linux-init-maker`, so no literal for it can be derived from the pinned source. Recorded by
+  P2, never asserted.
 
 ### P7 — egress · **RECORDED, NOT ASSERTED**
 
@@ -249,18 +333,33 @@ reason** and the reason is stable for a given bundle.
 |---|---|
 | identity | `containment: runtime identity runsc <v>, expected release-20260817.0` |
 | identity | `containment: runtime identity runsc sha256 <d>, expected 048b89aa…074c` |
+| identity | `containment: image_source_commit <c>, expected 527da608…be10e` |
+| identity | `containment: runtime-identity.json run_argv is not a list of strings` |
+| identity | `containment: run_argv is missing <flag> <value>` |
+| identity | `containment: run_argv carries <banned token>` |
+| identity | `containment: run_argv sets --network <v>, expected none` |
+| identity | `containment: canaries were exec'd as uid <u>, expected 10000` |
 | P1 | `containment: P1 host kernel <k>, not gVisor` |
 | P1 | `containment: P1 dmesg line 1 does not announce gVisor: <line>` |
 | P2 | `containment: P2 pid 1 uid <u>, expected 0` |
+| P2 | `containment: P2 main program cmdline is ambiguous (<n> processes)` |
+| P2 | `containment: P2 main program pid/uid lists disagree (<n> pid(s), <m> uid(s))` |
 | P2 | `containment: P2 main program uid <u>, expected 10000` |
 | P3 | `containment: P3 <tool> exited <rc>: <first line>` |
 | P4 | `containment: P4 docker socket present` |
 | P4 | `containment: P4 <n> secret-bearing env key(s) in the runtime env: <names>` |
 | P5 | `containment: P5 host sentinel readable inside the container` |
 | P6 | `containment: P6 raw host devices present: <list>` |
+| P6 | `containment: P6 container PID 1 is <x>, not the image's own s6-svscan` |
+| P6 | `containment: P6 PID 1 comm <x> disagrees with P2's <y>` |
+| P6 | `containment: P6 own_pid_count <v> is not a count` |
+| P6 | `containment: P6 own process table has <n> processes, over the image's bound of 32` |
 | P6 | `containment: P6 mounted procfs PID 1 is <x>, not the container's own <y>` |
+| P6 | `containment: P6 mount -t proc failed with rc <n> and no reason` |
 | any | `containment: <Pn> canary line absent` |
 | any | `containment: <Pn> canary did not complete its observation (rc <n>)` |
+| P7/P8 | `containment: <Pn> recorded canary did not observe (rc <n>)` |
+| any | `containment: <Pn> <key> is not a string` |
 
 PASS line: `PASS: S0-08 gvisor-containment - 6 properties asserted over <run>`
 
@@ -269,8 +368,24 @@ exists, every missing file inside it is a Failure — a half-written bundle must
 
 ## 4. The runtime identity is pinned
 
-`runtime-identity.json` must record `runsc_version == release-20260817.0` and
-`runsc_sha256 == 048b89aada69dc3333422e139d6e9d02f8ab06bda52398060e0fbdacca00074c`.
+`runtime-identity.json` must record **all five** of:
+
+| field | pinned to | why |
+|---|---|---|
+| `runsc_version` | `release-20260817.0` | the gVisor release the property was measured under |
+| `runsc_sha256` | `048b89aa…074c` | that release's binary, not merely its version string |
+| `image_source_commit` | `527da608…be10e` | **which image** produced the evidence |
+| `run_argv` | the three verified pairs present, no `--privileged` / bind-mount / host-namespace / `--cap-add` token, and every `--network` naming `none` | **which invocation** produced it |
+| `canary_exec_user` | `10000` | **who** the observations were taken as |
+
+Pinning runsc alone accepted a bundle captured from a stock alpine image at commit `deadbeef`, and
+one whose recorded argv was `--network host --privileged`. P7's whole claim — a containment run
+must not inherit the compose file's host networking — was otherwise enforced only by a static test
+on the runner's own source, never on the evidence a run produced.
+
+The `run_argv` screen compares **exact tokens over the recorded list**, never substrings over a
+joined string: `--network host` is two tokens, and a substring screen would also match
+`--network hostile`.
 
 `PC-BRIDGE.md:128` records only the truncated prefix `048b89aa…`. The full digest above was measured
 from the identical release binary in the sandbox (`sha256sum /tmp/runsc`, 2026-09-08), and its first
@@ -300,7 +415,23 @@ On the tree today the live marker is `expired` with no result, so the gate is **
 is the deferral refusing to outlive its blocker. It turns green when the PC run lands `result.json` and
 the coordinator removes `blocked.json`.
 
-## 6. What this lane did NOT run
+## 6. Two first-run risks, named in advance
+
+**`--network none` with runsc has never been run on the PC.** The invocation `PC-BRIDGE.md:135-136`
+verified carries `--runtime-flag ignore-cgroups --security-opt label=disable` and **no `--network`
+flag at all** (its note records working HTTPS from inside). The runner adds `--network none` (§P7),
+so rootless podman + runsc + `none` is the first thing that can fail. **A red there is an
+environment finding, not a containment failure**; the same note stands at the top of
+`tools/pc/run_containment.sh`.
+
+**The leg order in `spec.json` is load-bearing.** `scripts/proof-runner:181` raises `Deferred` on
+the FIRST leg that exits 2 and the legs execute in list order, so with the positive leg first
+neither negative control ran while the proof was deferred — the crun bundle and the marker gate
+were invisible to the ledger for the whole deferral. The two negative legs are therefore listed
+FIRST, and `test_proof_runner_executes_both_negative_legs_before_deferring` drives the real runner
+on a scratch copy to hold that order.
+
+## 7. What this lane did NOT run
 
 - **The PC containment run.** No bridge access from this lane. `evidence/pc-runsc/` does not exist and
   the positive leg correctly reports `deferred: containment evidence not captured` (exit 2).
@@ -309,4 +440,8 @@ the coordinator removes `blocked.json`.
   a host file and `/home` are both readable from inside), so it can validate P1 and P6's kernel-level
   answers but is structurally incapable of testing mounts, the sentinel or the image's tools. Treating a
   `do`-mode result as containment evidence would be a venue misclassification (the AF-AP-4 class).
-  P1, P6, P7 and P8 **were** smoke-run under real gVisor here; the rest await the PC.
+  P1, P6, P7 and P8 **were** smoke-run under real gVisor here, root **and** uid 65534 (the
+  `setpriv --reuid=65534 --regid=65534 --clear-groups` cell inside the sandbox — `runsc do` has no
+  `--uid`); the rest await the PC.
+- **`podman exec --user 10000`.** The exec identity is read from the runner's bytes and asserted
+  from the evidence, never yet executed against a live container.

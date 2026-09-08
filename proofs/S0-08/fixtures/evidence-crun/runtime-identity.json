@@ -1,22 +1,43 @@
 {
-  "captured_at": "2026-09-08T00:40:00Z",
+  "canary_exec_user": "10000",
+  "captured_at": "2026-09-08T04:20:00Z",
+  "capture_argv": [
+    "env",
+    "-i",
+    "PATH=/usr/bin:/bin",
+    "sh",
+    "proofs/S0-08/canaries/<Pn>.sh"
+  ],
   "host_kernel": "6.18.44-fc-v24",
   "image": "(none)",
   "image_digest": "(none)",
+  "image_source_commit": "527da60844d4dced37879ea50259675371abe10e",
   "podman_version": "(not used: this bundle was captured without a container runtime)",
   "ps_tree": "(not captured: no container)",
   "run_argv": [
-    "sh",
-    "proofs/S0-08/canaries/<Pn>.sh"
+    "podman",
+    "run",
+    "-d",
+    "--runtime",
+    "/usr/local/bin/runsc",
+    "--runtime-flag",
+    "ignore-cgroups",
+    "--security-opt",
+    "label=disable",
+    "--network",
+    "none",
+    "localhost/hermes-s0-08:527da608",
+    "sleep",
+    "2147483647"
   ],
   "runsc_path": "/tmp/runsc",
   "runsc_sha256": "048b89aada69dc3333422e139d6e9d02f8ab06bda52398060e0fbdacca00074c",
   "runsc_version": "release-20260817.0",
   "runtime": "sh (uncontained host stand-in for crun)",
-  "runtime_argv_note": "the PC's negative control is the same runner invoked with --runtime crun; this committed fixture is the sandbox host stand-in named in the brief",
+  "runtime_argv_note": "DELIBERATELY TYPED, and the point of the fixture: every field the checker pins about the RUNTIME (runsc version+sha256, image_source_commit, run_argv, canary_exec_user) is the value a correct containment run would record, even though no container ran. `capture_argv` records how the observations were really taken. A bundle whose identity metadata is perfect must still FAIL on the observations.",
   "sentinel_host_read": {
     "note": "written and read on the host; deliberately visible to the uncontained run",
-    "path": "/tmp/g1-crun-sentinel-fixture.txt",
+    "path": "/tmp/s0-08-crun-fixture-sentinel.txt",
     "readable": true
   },
   "venue": "ccr-sandbox"

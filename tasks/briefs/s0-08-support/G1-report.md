@@ -18,6 +18,15 @@ canaries that fail against a correctly-contained container.
 
 ## FILE IDENTITY (all 18 files NEW; nothing tracked was modified)
 
+> **Amended at `517c65e` by the coordinator (VERIFY-G1 F16):** four rows below describe this
+> lane's own PIN `2ff0c31`, not the bytes that shipped — `CONTAINMENT-SPEC.md`
+> (`4ba53788f9a385dd`/312), `check_containment.py` (`73ab20c3e88a5f0a`/299), `canaries/P4.sh`
+> (`6967eb755a60be25`/57) and `tests/test_s0_08_containment.py` (`aec5799b95e3d48f`/757).
+> **Every `file:line` in this report resolves against `517c65e`.** Lane G2 later rewrote
+> `check_containment.py`, `P1.sh`, `P2.sh`, `P4.sh`, `run_containment.sh`, `spec.json`,
+> `CONTAINMENT-SPEC.md`, the crun fixture and the test file, so these citations do **not** resolve
+> against a later HEAD.
+
 | sha256 (16) | lines | file |
 |---|---|---|
 | `bb84ed9301ba4b15` | 312 | `proofs/S0-08/CONTAINMENT-SPEC.md` |
@@ -75,7 +84,7 @@ On the live tree the gate is **RED by design**: exit 1, with that live state pin
 **`spec.json`** — three legs, schema-valid. The brief asked for a `marker` leg, but
 `proofs/schemas/spec.schema.json` restricts `leg` to `positive|negative`, so the marker leg is a
 **second negative** — the shape `proofs/S0-11/spec.json` already uses. Both negative legs are executed
-by the test suite exactly as the runner would run them: `did not print its pinned reason` at `test_s0_08_containment.py:685`.
+by the test suite exactly as the runner would run them: `did not print its pinned reason` at `test_s0_08_containment.py:691`.
 A drifted reason string fails here, not on the PC.
 
 **Measured on real gVisor in the sandbox** (`/tmp/runsc --rootless do`, `release-20260817.0`), not
@@ -191,7 +200,7 @@ files. The rows the census *did* show are admissible foreign rows — lane B1's 
 | 2 reads outside walk / no S_ISREG | 5 checker/gate reads | SAFE | all behind `S_ISREG` checks (`check_containment.py:66`, `marker_gate.py:42`, `marker_gate.py:56`); mutant 7 proves the guard load-bearing |
 | 2b canary `/proc` + `/sys` reads | 12 | DOCUMENTED-LIMIT | these are pseudo-files — `S_ISREG` would reject them by design. The rule binds evidence paths (the checker), not in-container `/proc` reads |
 | 3 stale `[-1]` / `tail -n 1` | 1 (`run_containment.sh:267`) | SAFE | the canary emits exactly one line, pinned by `test_read_only_canaries_emit_one_parseable_line_when_run`; a stray trailing line makes the checker fail "not JSON" — closed, not open |
-| 4 negative acceptance | 8 | SAFE | 7 are the pkill/host-network bans with their own negative control, `test_runner_code_filter_actually_removes_comments` (`test_s0_08_containment.py:745`); the 8th is a premise guard that fails **loudly** with instructions when the PC run lands |
+| 4 negative acceptance | 8 | SAFE | 7 are the pkill/host-network bans with their own negative control, `test_runner_code_filter_actually_removes_comments` (`test_s0_08_containment.py:751`); the 8th is a premise guard that fails **loudly** with instructions when the PC run lands |
 | 5 substring / tail anchors | 20 | SAFE | every outcome is classified by an EXACT `returncode`; the substring only names the reason. One loose anchor (`assert "P1" in stdout`) was tightened to `startswith("failure_reason: containment: P1 host kernel ")` |
 | 6 env-domain fail-opens | 1 (`S0_08_SENTINEL_PATH`) | SAFE | **RUN:** unset → canary rc 1, then `S0_08_SENTINEL_PATH not supplied` (`test_s0_08_containment.py:345`), and the checker refuses the bundle |
 | 7 lossy decodes | 3 (`errors="replace"`) | SAFE | only in the runner's identity recorder; a corrupted digest makes the checker's exact equality FAIL — closed, not open |

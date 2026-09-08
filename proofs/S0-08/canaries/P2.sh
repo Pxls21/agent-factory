@@ -19,32 +19,44 @@ esc() {
 uid_of() { awk '/^Uid:/{print $2; exit}' "/proc/$1/status" 2>/dev/null; }
 cmdline_of() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | sed -e 's/ *$//'; }
 
-# The container's main program, pinned by the runner's CMD.
-MAIN_CMDLINE='sleep infinity'
+# The container's main program. The runner is the SINGLE source of this
+# string: it passes the same value it gave `podman run` as S0_08_MAIN_CMDLINE
+# in the exec env (tools/pc/run_containment.sh). There is deliberately NO
+# default — a canary that invented one could silently observe a different
+# process than the container's main program.
+MAIN_CMDLINE="${S0_08_MAIN_CMDLINE:-}"
 
 pid1_uid=$(uid_of 1)
 pid1_comm=$(cat /proc/1/comm 2>/dev/null) || pid1_comm=""
 pid1_cmdline=$(cmdline_of 1)
 
-# Owned-subset scan: find the main program by its EXACT cmdline. Every other
-# row is counted, never asserted equal to a spawn set (AF-AP-59).
-main_uid=""
-main_pid=""
+# Owned-subset scan: report EVERY process whose cmdline is exactly the main
+# cmdline, never just the first one the glob reached. Selecting by an exact
+# cmdline is only safe when the cmdline is unique, and the image ships a root
+# `exec sleep infinity` no-op that is up by default
+# (docker/s6-rc.d/main-hermes/run:27) — with the old `sleep infinity` CMD two
+# processes matched and glob order decided which uid P2 reported. The checker
+# refuses an ambiguous set by name. Every other row is counted, never asserted
+# equal to a spawn set (AF-AP-59).
+main_uids=""
+main_pids=""
 proc_count=0
 for d in /proc/[0-9]*; do
     p=${d#/proc/}
     proc_count=$((proc_count + 1))
-    [ -n "$main_pid" ] && continue
+    [ -n "$MAIN_CMDLINE" ] || continue
     if [ "$(cmdline_of "$p")" = "$MAIN_CMDLINE" ]; then
-        main_pid=$p
-        main_uid=$(uid_of "$p")
+        main_pids="${main_pids}${main_pids:+,}${p}"
+        main_uids="${main_uids}${main_uids:+,}$(uid_of "$p")"
     fi
 done
 
 rc=0
 [ -n "$pid1_uid" ] || rc=1
+[ -n "$MAIN_CMDLINE" ] || rc=1
 
-printf '{"canary":"P2","expect":"pid 1 uid 0 running s6 init; the main program (%s) runs as uid 10000","observed":{"pid1_uid":"%s","pid1_comm":"%s","pid1_cmdline":"%s","main_pid":"%s","main_uid":"%s","proc_count":"%s"},"rc":%d}\n' \
+printf '{"canary":"P2","expect":"pid 1 uid 0 running s6 init; exactly one process has the main cmdline (%s) and it runs as uid 10000","observed":{"pid1_uid":"%s","pid1_comm":"%s","pid1_cmdline":"%s","main_cmdline":"%s","main_pids":"%s","main_uids":"%s","proc_count":"%s"},"rc":%d}\n' \
     "$(esc "$MAIN_CMDLINE")" "$(esc "$pid1_uid")" "$(esc "$pid1_comm")" \
-    "$(esc "$pid1_cmdline")" "$(esc "$main_pid")" "$(esc "$main_uid")" \
+    "$(esc "$pid1_cmdline")" "$(esc "$MAIN_CMDLINE")" \
+    "$(esc "$main_pids")" "$(esc "$main_uids")" \
     "$(esc "$proc_count")" "$rc"

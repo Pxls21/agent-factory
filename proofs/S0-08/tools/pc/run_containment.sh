@@ -27,6 +27,13 @@
 #
 # Teardown removes the container BY ID. It never matches by name and never
 # calls pkill: this is the owner's shared host (PC-BRIDGE.md:164-169, AF-AP-34).
+#
+# UNVERIFIED ON THE PC — read a red here as an ENVIRONMENT finding, not a
+# containment failure: the invocation PC-BRIDGE.md:135-136 actually verified
+# carries `--runtime-flag ignore-cgroups --security-opt label=disable` and NO
+# `--network` flag at all (its note records working HTTPS from inside). This
+# runner adds `--network none` (CONTAINMENT-SPEC.md P7), so rootless podman +
+# runsc + `none` is the first thing that can fail on the first run.
 set -euo pipefail
 
 PINNED_COMMIT="527da60844d4dced37879ea50259675371abe10e"
@@ -37,9 +44,24 @@ OUT_DIR=""
 KEEP=0
 BUILD=1
 
-# The container's main program. The canaries and the checker pin this exact
-# string; if it changes here it must change in canaries/P2.sh too.
-MAIN_CMD="sleep infinity"
+# The container's main program, and the ONE source of that string: the
+# readiness gate, the identity scan and canaries/P2.sh all read it from here
+# (P2 through S0_08_MAIN_CMDLINE in the exec env), so it cannot drift.
+#
+# NOT `sleep infinity`: the image's supervised `main-hermes` service is a root
+# no-op that runs exactly `exec sleep infinity`
+# (hermes-agent docker/s6-rc.d/main-hermes/run:27) and is up by default
+# (docker/s6-rc.d/user/contents.d/), so that cmdline had TWO holders — the
+# root sleeper and the dropped CMD — and P2's subject was decided by /proc
+# glob order.
+MAIN_CMD="sleep 2147483647"
+
+# Every canary is exec'd as the image's runtime user. Without `--user`,
+# `podman exec` uses the image's configured user, which is `USER root`
+# (Dockerfile:298) — P4 would then observe a root exec's environment and P5
+# would attempt the host read as a different subject than the security
+# profile is about.
+CANARY_EXEC_UID="10000"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANARY_DIR="$(cd "${HERE}/../../canaries" && pwd)"
@@ -73,17 +95,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# --- 0. The pinned-source preflight -----------------------------------------
+# Evidence from a different checkout is evidence about a different system, so
+# the build refuses one. It lives in a function taking BOTH the directory and
+# the expected commit so a test can drive it against a scratch repository
+# without having to forge a sha.
+s0_08_require_pinned_source() {
+    local dir="$1"
+    local expected="$2"
+    local actual
+    if [ ! -f "${dir}/Dockerfile" ]; then
+        echo "s0-08: no Dockerfile at ${dir} — cannot build the pinned image" >&2
+        exit 2
+    fi
+    actual="$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo unknown)"
+    if [ "$actual" != "$expected" ]; then
+        echo "s0-08: ${dir} is at ${actual}, expected the pinned ${expected}" >&2
+        exit 2
+    fi
+}
+
 # --- 1. The image -----------------------------------------------------------
 if [ "$BUILD" -eq 1 ]; then
-    if [ ! -f "${SOURCE_DIR}/Dockerfile" ]; then
-        echo "s0-08: no Dockerfile at ${SOURCE_DIR} — cannot build the pinned image" >&2
-        exit 2
-    fi
-    actual_commit="$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
-    if [ "$actual_commit" != "$PINNED_COMMIT" ]; then
-        echo "s0-08: ${SOURCE_DIR} is at ${actual_commit}, expected the pinned ${PINNED_COMMIT}" >&2
-        exit 2
-    fi
+    s0_08_require_pinned_source "$SOURCE_DIR" "$PINNED_COMMIT"
     echo "s0-08: building ${IMAGE_TAG} from ${SOURCE_DIR} (Dockerfile as-is)" >&2
     if ! podman build -t "$IMAGE_TAG" "$SOURCE_DIR" >&2; then
         echo "s0-08: podman build failed for ${IMAGE_TAG}" >&2
@@ -208,6 +242,8 @@ printf '%s' "$ps_tree"         > "$META/ps_tree"
 printf '%s' "$main_id"         > "$META/main_program_user"
 printf '%s' "$mainhermes_id"   > "$META/main_hermes_service"
 printf '%s' "$SENTINEL"        > "$META/sentinel_path"
+printf '%s' "$SENTINEL_READABLE" > "$META/sentinel_readable"
+printf '%s' "$CANARY_EXEC_UID" > "$META/canary_exec_user"
 printf '%s' "$CID"             > "$META/container_id"
 printf '%s' "$IMAGE_TAG"       > "$META/image"
 printf '%s' "$RUNTIME"         > "$META/runtime"
@@ -247,7 +283,12 @@ identity = {
     "main_program_user": val("main_program_user"),
     "main_hermes_service": val("main_hermes_service"),
     "ps_tree": meta.joinpath("ps_tree").read_text(encoding="utf-8", errors="replace"),
-    "sentinel_host_read": {"path": val("sentinel_path"), "readable": True},
+    "canary_exec_user": val("canary_exec_user"),
+    # The MEASURED host read (run_containment.sh SENTINEL_READABLE), never a
+    # typed literal: a positive control the producer asserts about itself is
+    # not a control.
+    "sentinel_host_read": {"path": val("sentinel_path"),
+                           "readable": val("sentinel_readable") == "true"},
 }
 out.write_text(json.dumps(identity, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PYIDENT
@@ -263,9 +304,22 @@ for canary in P1 P2 P3 P4 P5 P6 P7 P8; do
         echo "s0-08: canary ${canary} is missing at ${script}" >&2
         exit 4
     fi
+    # No pipeline between `podman exec` and `$?`: a piped status is `tail`'s,
+    # which is always 0, so a canary that died after printing would be
+    # indistinguishable from one that succeeded.
     set +e
-    line="$(podman exec -i -e S0_08_SENTINEL_PATH="$SENTINEL" "$CID" sh -s < "$script" 2>/dev/null | tail -n 1)"
+    raw="$(podman exec -i --user "$CANARY_EXEC_UID" \
+              -e S0_08_SENTINEL_PATH="$SENTINEL" \
+              -e S0_08_MAIN_CMDLINE="$MAIN_CMD" \
+              "$CID" sh -s < "$script" 2>/tmp/s0-08-canary.err)"
+    exec_rc=$?
     set -e
+    if [ "$exec_rc" -ne 0 ]; then
+        echo "s0-08: canary ${canary} exec failed (rc ${exec_rc}):" >&2
+        sed -e 's/^/s0-08:   /' /tmp/s0-08-canary.err >&2 || true
+        exit 4
+    fi
+    line="$(printf '%s\n' "$raw" | tail -n 1)"
     if [ -z "$line" ]; then
         echo "s0-08: canary ${canary} produced no output" >&2
         exit 4
