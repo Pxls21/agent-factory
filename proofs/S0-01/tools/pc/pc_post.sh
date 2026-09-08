@@ -8,24 +8,42 @@ BASE=/home/rocco/s0-01-pinned; L=$BASE/.markers; SEC=$BASE/.secrets; REPO=${S0_0
 # S0_01_REPO points at the checkout whose pins.py to read). Everything else needs the PC markers.
 FD=$(cat $L/current-framedir 2>/dev/null || true); RECDIR=$(cat $L/backend-recdir 2>/dev/null || true)
 BA=$BASE/buzz/target/release/buzz-acp; TEE=$REPO/proofs/S0-01/tools/frame_tee.py; HERMES=$BASE/.venv-hermes/bin/hermes-acp
-# Process observation v2.3 (audit P1 "cleanup and identity"; checkpoint-5 audit "empty scan rejected /
+# Process observation v2.4 (audit P1 "cleanup and identity"; checkpoint-5 audit "empty scan rejected /
 # owned survivor accepted"): the OWNED set is the full descendant closure of the buzz-acp pid (generic
 # children included), computed from the complete process table IN MEMORY (never persisted — other users'
-# argv stay private). Line 1 is the ENUMERATION HEADER `# process-scan v2.3 mode=<after|teardown>
-# rows=<live full-table rows> buzz_acp_pid=<pid|none> buzz_present=<0|1> owned=<closure size>
-# owned_present=<owned pids still LIVE> pinned_present=<live rows naming a pinned path>
-# owned_zombies=<owned pids exited but not yet reaped — never survivors> utc=<ts>` —
-# it lets the checker tell "enumeration ran and found nothing owned" (a successful shutdown) from "no
-# scan ran"; then one `<pid> <ppid> <etimes> <cmd>` line per owned process plus every line naming a pinned
-# path; owned-pids.json lists the closure.
+# argv stay private). Line 1 is the ENUMERATION HEADER `# process-scan v2.4 mode=<after|teardown>
+# rows=<rows this file carries> buzz_acp_pid=<pid|none> buzz_present=<0|1> owned=<closure size>
+# owned_present=<owned pids still LIVE> pinned_present=<body rows pinned by entry point>
+# owned_zombies=<owned pids exited but not yet reaped — never survivors> table_rows=<live full-table rows>
+# utc=<ts>` — it lets the checker tell "enumeration ran and found nothing owned" (a successful shutdown)
+# from "no scan ran"; then one `<pid> <ppid> <etimes> <cmd>` line per owned process plus every row pinned
+# by entry point; owned-pids.json lists the closure.
+# v2.4 closes SWEEP-prod #5/#6 (two counters over different populations, and a substring anchor): `rows` and
+# `pinned_present` are BOTH counted over the body this file is written from, so the header cannot describe a
+# population the body does not carry; `table_rows` is the separate name for the full table, never asserted
+# equal to `rows`. Pinned-ness is the ENTRY POINT — argv[0] for the pinned binary, an interpreter argv[0] plus
+# argv[1] for the two pinned scripts — and the rule is pins.is_pinned_argv, the one both this producer and the
+# checker call over the same body (VERIFY-P5a F4).
 scan() { python3 - "$1" "$2" "$REPO" <<'PY'
 import datetime, json, subprocess, sys
 mode, fd, repo = sys.argv[1], sys.argv[2], sys.argv[3]
 if mode not in ("after", "teardown"):
     sys.exit(f"scan: mode must be after|teardown, got {mode!r}")
 sys.path.insert(0, f"{repo}/proofs/S0-01")
-import pins  # the ONLY pin source — the pinned paths are never repeated as literals here
-PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
+import pins  # the ONLY pin source — the pinned paths and the pinned-ness RULE are never repeated as literals here
+
+
+def is_pinned(cmd):
+    """One `ps` row's command line -> is it one of the proof's own pinned processes?
+
+    The rule itself lives in pins.is_pinned_argv, which this heredoc can import because it already imports
+    pins by path. It used to be written out here, and hand-copied again in the checker and again in the test
+    (AF-AP-42) — three copies of one predicate over one body. VERIFY-P5a F4 is what that cost: this copy
+    counted ANY command whose first operand is a pinned script, so a real `/usr/bin/cat <tee>` (an editor, a
+    checksum, a `less`) landed in the leg's evidence AND in pinned_present, and failed the leg at the checker
+    for a bystander."""
+    return pins.is_pinned_argv(cmd.split())
+
 rows = []
 zombies = set()
 # -ww: unlimited width. Without it procps clips every row at 80 columns when stdout is not a tty, so a long
@@ -64,14 +82,16 @@ if mode == "after":
     json.dump({"buzz_acp_pid": buzz, "owned": sorted(owned), "taken_at": "ready+after"}, open(f"{fd}/owned-pids.json", "w"), indent=1)
 else:
     owned = set(json.load(open(f"{fd}/owned-pids.json"))["owned"])
-keep = [r for r in rows if r[0] in owned or any(p in r[3] for p in PINNED)]
+keep = [r for r in rows if r[0] in owned or is_pinned(r[3])]
 # The scan's own helper rows are dropped ONLY when they are not owned: an owned row is evidence and is never filtered,
 # so owned_present (counted over the full table) equals the owned rows in the body by construction (VERIFY-CK7).
 keep = [r for r in keep if r[0] in owned or ("pc_post.sh" not in r[3] and " ps -e" not in r[3])]
 table_pids = {r[0] for r in rows}
-header = (f"# process-scan v2.3 mode={mode} rows={len(rows)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
+# `keep` is now final: every counter the header carries about the BODY is computed over this same list (#5).
+header = (f"# process-scan v2.4 mode={mode} rows={len(keep)} buzz_acp_pid={buzz if buzz is not None else 'none'} "
           f"buzz_present={int(buzz in table_pids)} owned={len(owned)} owned_present={len(owned & table_pids)} "
-          f"pinned_present={sum(1 for r in rows if any(p in r[3] for p in PINNED))} owned_zombies={len(owned & zombies)} "
+          f"pinned_present={sum(1 for r in keep if is_pinned(r[3]))} owned_zombies={len(owned & zombies)} "
+          f"table_rows={len(rows)} "
           f"utc={datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
 with open(f"{fd}/process-scan-{mode}.txt", "w") as out:
     out.write(header + "\n")

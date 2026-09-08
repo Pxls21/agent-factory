@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +124,17 @@ def _make_capture_dir(tmp_path, *, params=None, a2c_frame="DEFAULT", rid_overrid
 
 
 # ---- File mode (unchanged) ----
+
+
+def test_file_mode_fifo_is_named_without_blocking(tmp_path):
+    target = tmp_path / "payload.json"
+    os.mkfifo(target)
+    started = time.monotonic()
+    r = _run("request", target)
+    assert time.monotonic() - started < 5
+    assert r.returncode == 64
+    assert r.stderr.strip() == "input error: payload is not a regular file: payload.json"
+
 
 def test_file_mode_request_fixture_exits_1_with_seed_reason():
     """request <fixture> produces the exact seed reason."""

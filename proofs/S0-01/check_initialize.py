@@ -33,6 +33,11 @@ MISSING_REQUIRED = "protocol-violation: missing required initialize field"
 # S0-01 is not a valid Python package name, so use sys.path.
 sys.path.insert(0, str(HERE))
 import negative_contract as nc  # noqa: E402
+import pins  # noqa: E402
+
+
+def _require_input(path: Path, what: str) -> Path:
+    return pins.require_regular_file(path, what, ValueError)
 
 
 def _nan_raising(x):
@@ -41,7 +46,7 @@ def _nan_raising(x):
 
 
 def load_schema(path: Path = SCHEMA) -> dict:
-    return json.loads(Path(path).read_text())
+    return json.loads(_require_input(Path(path), "schema").read_text())
 
 
 def validator_for(schema: dict, definition: str) -> Draft202012Validator:
@@ -75,8 +80,8 @@ def classify_response(result: object, schema: dict | None = None) -> str:
 
 def load_payload(path: Path, kind: str) -> object:
     """Accept a raw JSON-RPC frame file (first line) or a bare params/result JSON document."""
-    text = Path(path).read_text()
-    first = text.splitlines()[0] if path.suffix == ".jsonl" else text
+    text = _require_input(Path(path), "payload").read_text()
+    first = text.splitlines()[0] if Path(path).suffix == ".jsonl" else text
     obj = json.loads(first)
     if isinstance(obj, dict) and obj.get("jsonrpc") == "2.0":
         if kind == "request":
@@ -106,7 +111,9 @@ def _check_request_directory(dirpath: Path, fixtures_dir: Path = None) -> int:
         print(f"failure_reason: negative: {exc}")
         return 1
     # The validator passed — classify the request params.
-    first_line = (dirpath / "timeline.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    first_line = _require_input(
+        dirpath / "timeline.jsonl", "timeline.jsonl"
+    ).read_text(encoding="utf-8").splitlines()[0]
     params = json.loads(first_line)["frame"]["params"]
     schema = load_schema(fixtures_dir / "acp-schema-v1.json")
     verdict = classify_request(params, schema)
@@ -131,7 +138,7 @@ def _check_response_directory(dirpath: Path, fixtures_dir: Path = None) -> int:
         return 2
 
     entries = []
-    for line in tl_path.read_text().splitlines():
+    for line in _require_input(tl_path, "timeline.jsonl").read_text().splitlines():
         if line.strip():
             entries.append(json.loads(line, parse_constant=_nan_raising))
 

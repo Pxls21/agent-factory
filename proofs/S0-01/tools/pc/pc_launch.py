@@ -29,7 +29,12 @@ import urllib.request
 # The launcher lives in the PC clone of this repo; the pin module sits three directories up.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 import pins  # noqa: E402  (the single pin module; the launch argv comes from it verbatim)
-BASE = os.path.dirname(pins.PINNED_HERMES_HOME)          # /home/rocco/s0-01-pinned
+# Resolved ONCE, here, and threaded explicitly from main() (never re-read from os.environ deeper down): the
+# S0-01 default, or the tree another proof declares through $S0_01_HERMES_HOME. pins.hermes_home() validates
+# the override and exits 64 if it does not name a directory; it deliberately does NOT move
+# pins.PINNED_HERMES_HOME, which is what the checker compares a captured leg's env.json against.
+HERMES_HOME = pins.hermes_home()
+BASE = os.path.dirname(HERMES_HOME)                      # /home/rocco/s0-01-pinned
 REPO = os.path.abspath(os.path.join(os.path.dirname(pins.PINNED_TEE_PATH), "..", "..", ".."))  # /home/rocco/agent-factory
 HERMES_ENV = os.path.join(pins.PINNED_HOME, ".hermes", "profiles", "agentfactory", ".env")
 
@@ -77,20 +82,199 @@ def masked_log_text(raw_path):
     return HEX64.sub("<HEX>", data)
 
 
+def wait_for_manifest(fd, phase, tries=600):
+    """Wait for pc_manifest.sh's `.done` marker, FAILURE-AWARE (SWEEP-prod #32).
+
+    pc_manifest.sh is silent on success — every step writes to a file — and its own SystemExit reason lands in
+    manifest-<phase>.log through stderr=STDOUT while `.done` is never touched. A success-only exit condition
+    therefore spends the full 300 s on a manifest that died in its first second and then blames a timeout. A
+    non-empty log with no marker IS the failure signature; its tail is surfaced instead of hidden.
+
+    An EMPTY log with no marker is deliberately NOT that signature (VERIFY-P5a F14): pc_manifest.sh reports
+    through stderr=STDOUT, so no bytes means it has not spoken yet — this wait then spends its whole budget
+    and says so (`pc_launch: pre manifest did not finish within 300 s`), which is honest but does not
+    distinguish "still running" from "died before writing a word".
+    """
+    done = os.path.join(fd, f"manifest-{phase}.done")
+    log = os.path.join(fd, f"manifest-{phase}.log")
+    for _ in range(tries):
+        if os.path.exists(done):
+            return
+        if os.path.exists(log) and os.path.getsize(log) > 0:
+            tail = open(log, encoding="utf-8", errors="replace").read()[-800:].strip()
+            raise SystemExit(f"pc_launch: {phase} manifest failed before its .done marker; "
+                             f"manifest-{phase}.log tail: {tail}")
+        time.sleep(0.5)
+    raise SystemExit(f"pc_launch: {phase} manifest did not finish within {tries // 2} s")
+
+
+def summary_tail(path):
+    """Last line of a manifest summary, or a named placeholder (SWEEP-prod #48).
+
+    An empty or truncated summary used to raise IndexError from `[-1]` on a display-only read, killing the
+    launcher right after the 300 s manifest wait and before env.json/argv.txt were ever written.
+    """
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    return lines[-1] if lines else "<empty summary>"
+
+
+def wait_for_tee_identity(fd, tries=60):
+    """Wait for frame_tee.py to create runtime-identity.json (SWEEP-prod #31).
+
+    The old default — `{"_note": "tee identity absent at merge time"}` — let the launcher report success and
+    pushed the diagnosis downstream, where the checker's reason is a runtime-identity KEY SET mismatch that
+    never says "the tee never started".
+    """
+    ident_path = os.path.join(fd, "runtime-identity.json")
+    for _ in range(tries):
+        if os.path.exists(ident_path):
+            return ident_path
+        time.sleep(0.5)
+    raise SystemExit(f"pc_launch: the tee did not write runtime-identity.json within {tries // 2} s")
+
+
+def buzz_identity(pid, rc):
+    """Realpath + sha256 of a live buzz-acp's executable, or a NAMED exit (SWEEP-prod #12).
+
+    buzz-acp can exit between the settle poll and here; both expressions then raise FileNotFoundError and the
+    launcher dies with a bare traceback — no identity merge, no owned-pids.json, no launch.ready, so run_leg.sh
+    spins its whole READY poll before reporting "launch failed" with no reason.
+    """
+    try:
+        return os.readlink(f"/proc/{pid}/exe"), sha256_file(f"/proc/{pid}/exe")
+    except OSError as exc:
+        raise SystemExit(f"pc_launch: buzz-acp exited during identity capture (rc={rc}): {exc}")
+
+
+def session_closure(pid):
+    """The descendant closure of `pid`, scoped to ITS SESSION (SWEEP-prod #52).
+
+    buzz-acp is spawned with start_new_session=True, so it leads session <pid> and every descendant it did not
+    detach shares that session. Walking the FULL `ps -eo pid,ppid` table instead adopts any foreign row whose
+    ppid happens to land in the owned set — a pid-reuse race writing a stranger into owned-pids.json.
+    """
+    ps = subprocess.run(["ps", "-s", str(pid), "-o", "pid,ppid", "--no-headers"],
+                        capture_output=True, text=True)
+    rows = []
+    for line in ps.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            rows.append((int(parts[0]), int(parts[1])))
+    if ps.returncode != 0 or not rows:
+        raise SystemExit(f"pc_launch: ps -s {pid} listed no process (rc={ps.returncode}); "
+                         "the buzz-acp session is gone")
+    owned = {pid}
+    changed = True
+    while changed:
+        changed = False
+        for cpid, cppid in rows:
+            if cppid in owned and cpid not in owned:
+                owned.add(cpid)
+                changed = True
+    return owned
+
+
+def redact_environ(raw, red):
+    """/proc/<pid>/environ bytes -> env.json mapping, fingerprints taken on the RAW bytes (SWEEP-prod #25).
+
+    len/sha256_12 computed after a lossy decode describe a MANGLED value, not the secret, and check_env only
+    asserts `redacted is True` — so nothing downstream would ever notice the fingerprint was wrong.
+    """
+    live_env = {}
+    for item in raw.split(b"\x00"):
+        if not item:
+            continue
+        kb, _, vb = item.partition(b"=")
+        k = kb.decode("utf-8", errors="replace")
+        if red.search(k):
+            live_env[k] = {"redacted": True, "len": len(vb),
+                           "sha256_12": hashlib.sha256(vb).hexdigest()[:12]}
+        else:
+            live_env[k] = vb.decode("utf-8", errors="replace")
+    return live_env
+
+
+def leg_framedir(markers, leg):
+    """The one place a leg name becomes a framedir path (`<markers>/v2-<leg>`)."""
+    return os.path.join(markers, f"v2-{leg}")
+
+
+def resolve_launch_profile(leg, model, profile, hermes_home):
+    """Which Hermes config.yaml and which HERMES_HOME this launch runs against — and whether the leg name is
+    admitted at all. Returns (hermes_home, config_path).
+
+    S0-01's own legs keep their CLOSED sets (pins.LEGS, pins.EXPECTED_MODEL): a leg name or a model the proof
+    does not pin must never start a capture the checker will then grade under that name. Those sets used to be
+    argparse `choices`, which also made them unopenable — S0-03's leg B is pinned to this capture path by
+    invocation and could not use it at all (tasks/briefs/s0-03-support/O1-report.md section 6, which refused to
+    run rather than fork the launcher).
+
+    `--profile <config.yaml>` is the seam: it admits a FOREIGN leg name and model, and points the launch at
+    that proof's own Hermes config, whose directory becomes HERMES_HOME for the launch — so no other proof
+    ever writes into S0-01's pinned tree. The constraint is symmetric and stays fail-closed in both
+    directions: without --profile only S0-01's legs launch, and WITH it an S0-01 leg is refused, so an S0-01
+    capture can never silently be taken against a foreign config.
+    """
+    if profile is None:
+        if leg not in pins.LEGS:
+            raise SystemExit(f"pc_launch: --leg {leg!r} is not an S0-01 leg ({', '.join(pins.LEGS)}); "
+                             "a leg from another proof needs --profile <hermes config.yaml>")
+        if pins.EXPECTED_MODEL[leg] != model:
+            raise SystemExit(f"pc_launch: leg {leg} pins model {pins.EXPECTED_MODEL[leg]}, got {model}")
+        return hermes_home, os.path.join(hermes_home, "config.yaml")
+    if leg in pins.LEGS:
+        raise SystemExit(f"pc_launch: --leg {leg} is an S0-01 leg and always launches against the pinned "
+                         "Hermes home; --profile is for another proof's leg")
+    if not os.path.isfile(profile):
+        raise SystemExit(f"pc_launch: --profile {profile!r} is not an existing file")
+    return os.path.dirname(os.path.abspath(profile)), os.path.abspath(profile)
+
+
+def launch_env(leg, framedir, hermes_home, respond_to, allowlist, sec_dir, hermes_env):
+    """The environment buzz-acp is launched with — every secret READ FROM A FILE into this dict and never put
+    into an argv (AF-AP-35). The key SET is pinned, so a key added or dropped here fails loudly instead of
+    changing what the capture proves.
+    """
+    env = {
+        "PATH": pins.PINNED_PATH,
+        "HOME": pins.PINNED_HOME,
+        "BUZZ_PRIVATE_KEY": read_kv(os.path.join(sec_dir, "agent.env"), "BUZZ_PRIVATE_KEY"),
+        "BUZZ_RELAY_URL": pins.PINNED_RELAY_URL,
+        "BUZZ_ACP_AGENT_OWNER": open(os.path.join(sec_dir, "owner.pub")).read().strip(),
+        "BUZZ_ACP_RESPOND_TO": respond_to,
+        "BUZZ_ACP_SESSION_POLICY": pins.PINNED_SESSION_POLICY,
+        "HERMES_HOME": hermes_home,
+        "OMNIROUTE_API_KEY": read_kv(hermes_env, "OMNIROUTE_API_KEY"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "S0_01_FRAMEDIR": framedir,
+        "S0_01_AGENT": pins.PINNED_AGENT_REALPATH,
+    }
+    if respond_to == "allowlist":
+        env[pins.ENV_ALLOWLIST_KEY] = allowlist
+    expected_keys = set(pins.PINNED_ENV_KEYS) | ({pins.ENV_ALLOWLIST_KEY} if leg == "two-users" else set())
+    if set(env) != expected_keys:
+        raise SystemExit(f"pc_launch: env key set drifted from pins: {sorted(set(env) ^ expected_keys)}")
+    for k in ("BUZZ_PRIVATE_KEY", "OMNIROUTE_API_KEY"):
+        if not env[k]:
+            raise SystemExit(f"pc_launch: {k} is empty")
+    return env
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--leg", required=True, choices=list(pins.LEGS))
-    ap.add_argument("--model", required=True, choices=sorted(set(pins.EXPECTED_MODEL.values())))
+    ap.add_argument("--leg", required=True)
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--profile", default=None,
+                    help="another proof's Hermes config.yaml; required for a --leg outside S0-01's set")
     ap.add_argument("--respond-to", default="owner-only", choices=["owner-only", "allowlist"])
     ap.add_argument("--allowlist", default="")
     ap.add_argument("--settle-seconds", type=float, default=12.0)
     args = ap.parse_args()
 
+    hermes_home, cfg = resolve_launch_profile(args.leg, args.model, args.profile, HERMES_HOME)
     L = os.path.join(BASE, ".markers")
     SEC = os.path.join(BASE, ".secrets")
-    FD = os.path.join(L, f"v2-{args.leg}")
-    if pins.EXPECTED_MODEL[args.leg] != args.model:
-        raise SystemExit(f"pc_launch: leg {args.leg} pins model {pins.EXPECTED_MODEL[args.leg]}, got {args.model}")
+    FD = leg_framedir(L, args.leg)
     if (args.respond_to == "allowlist") != (args.leg == "two-users"):
         raise SystemExit("pc_launch: allowlist mode is exactly the two-users leg")
     if args.respond_to == "allowlist" and not re.fullmatch(r"[0-9a-f]{64}", args.allowlist):
@@ -106,7 +290,6 @@ def main():
     print(f"[{utc_now()}] leg={args.leg} framedir={FD}")
 
     # --- Hermes model route for this leg (config.yaml default model) ---
-    cfg = os.path.join(pins.PINNED_HERMES_HOME, "config.yaml")
     s = open(cfg, encoding="utf-8").read()
     s2 = re.sub(r"(?m)^(\s*default:\s*)s0-01-scripted/s0-01-\w+\s*$", rf"\g<1>{pins.PINNED_ROUTE_PREFIX}/{args.model}", s, count=1)
     s2 = re.sub(r"(?m)^(\s*default_model:\s*)s0-01-scripted/s0-01-\w+\s*$", rf"\g<1>{pins.PINNED_ROUTE_PREFIX}/{args.model}", s2)
@@ -137,38 +320,11 @@ def main():
                          env=man_env, stdin=subprocess.DEVNULL, stdout=mlog, stderr=subprocess.STDOUT)
 
     # the PRE manifest must COMPLETE before anything spawns (its timestamp is the "before" mark)
-    pre_done = os.path.join(FD, "manifest-pre.done")
-    for _ in range(600):
-        if os.path.exists(pre_done):
-            break
-        time.sleep(0.5)
-    else:
-        raise SystemExit("pc_launch: pre manifest did not finish within 300 s")
-    print(f"[{utc_now()}] pre manifest done: {open(os.path.join(FD, 'manifest-pre.summary')).read().splitlines()[-1]}")
+    wait_for_manifest(FD, "pre")
+    print(f"[{utc_now()}] pre manifest done: {summary_tail(os.path.join(FD, 'manifest-pre.summary'))}")
 
     # --- env from files (never argv) ---
-    env = {
-        "PATH": pins.PINNED_PATH,
-        "HOME": pins.PINNED_HOME,
-        "BUZZ_PRIVATE_KEY": read_kv(os.path.join(SEC, "agent.env"), "BUZZ_PRIVATE_KEY"),
-        "BUZZ_RELAY_URL": pins.PINNED_RELAY_URL,
-        "BUZZ_ACP_AGENT_OWNER": open(os.path.join(SEC, "owner.pub")).read().strip(),
-        "BUZZ_ACP_RESPOND_TO": args.respond_to,
-        "BUZZ_ACP_SESSION_POLICY": pins.PINNED_SESSION_POLICY,
-        "HERMES_HOME": pins.PINNED_HERMES_HOME,
-        "OMNIROUTE_API_KEY": read_kv(HERMES_ENV, "OMNIROUTE_API_KEY"),
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "S0_01_FRAMEDIR": FD,
-        "S0_01_AGENT": pins.PINNED_AGENT_REALPATH,
-    }
-    if args.respond_to == "allowlist":
-        env[pins.ENV_ALLOWLIST_KEY] = args.allowlist
-    expected_keys = set(pins.PINNED_ENV_KEYS) | ({pins.ENV_ALLOWLIST_KEY} if args.leg == "two-users" else set())
-    if set(env) != expected_keys:
-        raise SystemExit(f"pc_launch: env key set drifted from pins: {sorted(set(env) ^ expected_keys)}")
-    for k in ("BUZZ_PRIVATE_KEY", "OMNIROUTE_API_KEY"):
-        if not env[k]:
-            raise SystemExit(f"pc_launch: {k} is empty")
+    env = launch_env(args.leg, FD, hermes_home, args.respond_to, args.allowlist, SEC, HERMES_ENV)
     print("env keys:", sorted(env))
 
     # --- launch the pinned buzz-acp with the PINNED argv ---
@@ -200,29 +356,17 @@ def main():
 
     # env.json from the live process environment, redacted by KEY NAME (pins.REDACTED_ENV_KEY_RE)
     red = re.compile(pins.REDACTED_ENV_KEY_RE)
-    live_env = {}
-    for item in open(f"/proc/{pid}/environ", "rb").read().split(b"\x00"):
-        if not item:
-            continue
-        k, _, v = item.decode("utf-8", errors="replace").partition("=")
-        if red.search(k):
-            live_env[k] = {"redacted": True, "len": len(v), "sha256_12": hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]}
-        else:
-            live_env[k] = v
+    live_env = redact_environ(open(f"/proc/{pid}/environ", "rb").read(), red)
     open(os.path.join(FD, "env.json"), "w").write(json.dumps(live_env, indent=1, sort_keys=True) + "\n")
 
     # merge the buzz-acp identity into the tee's runtime-identity.json (wait for the tee to spawn)
-    ident_path = os.path.join(FD, "runtime-identity.json")
-    for _ in range(60):
-        if os.path.exists(ident_path):
-            break
-        time.sleep(0.5)
-    ident = json.load(open(ident_path)) if os.path.exists(ident_path) else {"_note": "tee identity absent at merge time"}
-    exe_real = os.readlink(f"/proc/{pid}/exe")
+    ident_path = wait_for_tee_identity(FD)
+    ident = json.load(open(ident_path))
+    exe_real, exe_sha = buzz_identity(pid, proc.poll())
     ident.update({
         "buzz_acp_pid": pid,
         "buzz_acp_exe_realpath": exe_real,
-        "buzz_acp_exe_sha256": sha256_file(f"/proc/{pid}/exe"),
+        "buzz_acp_exe_sha256": exe_sha,
         "buzz_acp_version": "n/a: this buzz-acp build has no --version flag (identity = exe sha256 above)",
         "launch_argv": argv,
     })
@@ -241,20 +385,9 @@ def main():
         print("config echo:", " ".join(echo.values()))
         if echo.get("max_turn") != f"max_turn={pins.PINNED_MAX_TURN}" or echo.get("idle_timeout") != f"idle_timeout={pins.PINNED_IDLE_TIMEOUT}":
             print("CONFIG ECHO MISMATCH — the checker will fail this leg")
-    # owned process set at READY: the closure of buzz-acp's descendants from the live process table
+    # owned process set at READY: the closure of buzz-acp's descendants inside ITS OWN session
     # (recomputed in memory; only owned lines are persisted by pc_post.sh)
-    rows = []
-    for line in subprocess.run(["ps", "-eo", "pid,ppid", "--no-headers"], capture_output=True, text=True).stdout.splitlines():
-        parts = line.split()
-        if len(parts) == 2:
-            rows.append((int(parts[0]), int(parts[1])))
-    owned = {pid}
-    changed = True
-    while changed:
-        changed = False
-        for cpid, cppid in rows:
-            if cppid in owned and cpid not in owned:
-                owned.add(cpid); changed = True
+    owned = session_closure(pid)
     for key in ("tee_pid", "agent_child_pid"):
         if isinstance(ident.get(key), int) and ident[key] not in owned:
             print(f"OWNED-SET DRIFT: identity {key}={ident[key]} not in the descendant closure {sorted(owned)}")

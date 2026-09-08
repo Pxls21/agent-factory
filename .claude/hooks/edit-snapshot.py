@@ -115,7 +115,13 @@ AP_SCREEN = [
      "secret interpolated into a command line — argv is world-readable for the process lifetime; build the env from files and Popen(argv, env=...) (AF-AP-39)"),
     # AF-AP-40 (2026-09-05): a presence-gated check makes a required artifact optional — deleting
     # the file switches the check off. The `if not x.exists(): raise` form is the correct one.
-    ("AF-AP-40", re.compile(r"""if\s+(?:\([^()\n]*\)|\w[\w.]*(?:\([^()\n]*\))?)\.(?:exists|is_file|is_dir)\(\)\s*(?::|and\b)"""),
+    # `else\b` added 2026-09-08 (VERIFY-P5a F7): the TERNARY form `v = read(p) if p.exists() else {}`
+    # is the same defect with no colon and no `and` — the screen walked past
+    # build_capture_record.py's `receipt = json.loads(rp.read_text()) if rp.exists() else {}`, which
+    # recorded an absent relay receipt as `"accepted": null`. Extended in place rather than added as a
+    # second row: the row id IS the registry class, and tests/test_edit_snapshot_ap_screen.py keys its
+    # rows by id, so two rows sharing "AF-AP-40" would leave one of them untested.
+    ("AF-AP-40", re.compile(r"""if\s+(?:\([^()\n]*\)|\w[\w.]*(?:\([^()\n]*\))?)\.(?:exists|is_file|is_dir)\(\)\s*(?::|and\b|else\b)"""),
      "presence-gated check — a required artifact must FAIL when absent, never skip its check (AF-AP-40)"),
     # AF-AP-41 (2026-09-05): dict(re.findall(...)) is last-wins — a duplicated key token overrides
     # the real value.
@@ -183,7 +189,11 @@ TEST_SCREEN = [
     # AF-AP-57 (2026-09-07): a fake that picks its behaviour by call ORDINAL ("call 1 fails, call 2 succeeds") encodes the
     # current loop shape — the first thing a mutant changes (DL-INLINE survived a call-count killer: the mutated loop's
     # 2nd attempt landed on the success ordinal with the identical error text). Gate fakes on PHASE/state instead.
-    ("AF-AP-57", re.compile(r"""\bif\s+(?:not\s+)?\w*(?:calls?\[0\]|call_count|n_calls|attempts?\[0\])\s*(?:==|!=|<=|>=|<|>)\s*\d"""),
+    # VERIFY-N5h F11 (2026-09-08): the alternation offered `[0]` to `calls`/`attempts` but not to `call_count`,
+    # so `if _call_count[0] == 1:` — the commonest spelling — never matched: the screen reported ONE ordinal
+    # gate on the probe test's parent where a broad grep found FIVE across four fakes. The subscript is now
+    # optional for every name, so the row screens the class rather than three of its spellings.
+    ("AF-AP-57", re.compile(r"""\bif\s+(?:not\s+)?\w*(?:calls?|call_count|n_calls|attempts?|count)\s*(?:\[0\])?\s*(?:==|!=|<=|>=|<|>)\s*\d"""),
      "ordinal gate in a fake — behaviour selected by call count encodes the loop shape a mutant changes; gate on observable PHASE/state (a thread the code starts later, a file the later stage writes) and assert the mechanism from the wrapper (AF-AP-57)"),
     ("AP-66", re.compile(r"^\s*(?:(?!self\.|cls\.)[A-Za-z_][\w.]*\.\w+\s*=\s*(?!=)|setattr\(\s*(?!self\b|cls\b)\w+\s*,)", re.MULTILINE),
      "direct attribute reassignment in a test — leaks into every later test unless restored; use monkeypatch.setattr or a finally-restoring context manager (AP-66)"),

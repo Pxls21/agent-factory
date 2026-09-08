@@ -29,6 +29,7 @@ import copy
 import hashlib
 import http.client
 import json
+import os
 import re
 import socket
 import subprocess
@@ -54,6 +55,64 @@ def _free_port():
         return s.getsockname()[1]
 
 
+def _drain(proc):
+    """Everything the (already exited) process wrote, or a marker saying why not.
+
+    Reading a live child's PIPE blocks until EOF, so this reads only after exit —
+    which is exactly when the output is the diagnosis.
+    """
+    if proc.poll() is None:
+        return "<process still running; output not drained>"
+    out = []
+    for stream in (proc.stdout, proc.stderr):
+        if stream is None:
+            continue
+        try:
+            out.append(stream.read() or "")
+        except (ValueError, OSError):        # already closed by communicate()
+            pass
+    return "".join(out).strip()
+
+
+def _wait_ready(proc, port, deadline_s=10.0):
+    """Failure-aware readiness wait for a backend subprocess (D5m-F4, SWEEP-tests row 9.1).
+
+    The ONE helper behind every backend fixture in this file and in
+    tests/red/test_s0_01_backend_credential_screen.py.  The loop's exit condition carries
+    the FAILURE signature as well as the success one: a backend that exits before it binds
+    ends the wait at once and the assertion carries its rc and its own stderr, instead of
+    burning the whole deadline and failing later as ConnectionRefusedError with the reason
+    lost (VERIFY-D5l F4 reproduced exactly that: 1 failed in 10.41s).
+
+    Returns None on success; raises AssertionError naming rc and the captured output
+    otherwise.  A process that is alive but never answered is killed here rather than left
+    for a fixture teardown that a pre-yield raise never reaches.
+    """
+    ready = False
+    deadline = time.time() + deadline_s
+    while time.time() < deadline and proc.poll() is None:
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+            if resp.status == 200:
+                ready = True
+                break
+        except OSError:
+            time.sleep(0.05)
+    if ready and proc.poll() is None:
+        return
+    if proc.poll() is None:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    raise AssertionError(f"backend failed to start (rc={proc.poll()}): {_drain(proc)}")
+
+
 @pytest.fixture(scope="module")
 def backend(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("backend")
@@ -64,18 +123,7 @@ def backend(tmp_path_factory):
     argv = [sys.executable, str(SERVER), "--port", str(port), "--token-file", str(token_file),
             "--record-dir", str(tmp / "rec"), "--slow-delay", "0.05", "--pidfile", str(tmp / "pid")]
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/healthz")
-            resp = conn.getresponse()
-            resp.read()
-            conn.close()
-            if resp.status == 200:
-                break
-        except OSError:
-            time.sleep(0.05)
+    _wait_ready(proc, port)
     yield {"port": port, "proc": proc, "argv": argv, "rec": tmp / "rec", "pidfile": tmp / "pid"}
     proc.terminate()
     proc.wait(timeout=10)
@@ -261,23 +309,9 @@ def test_allow_existing_records_flag_overrides(tmp_path):
          "--token-file", str(tf), "--record-dir", str(rec),
          "--allow-existing-records", "--slow-delay", "0.05"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    started = False
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/healthz")
-            resp = conn.getresponse()
-            resp.read()
-            conn.close()
-            if resp.status == 200:
-                started = True
-                break
-        except OSError:
-            time.sleep(0.05)
+    _wait_ready(proc, port)   # the assertion: raises with the backend's rc + output if it never serves
     proc.terminate()
     proc.wait(timeout=10)
-    assert started, "server should start with --allow-existing-records"
 
 
 def test_healthz_unauthenticated_and_not_recorded(backend):
@@ -357,6 +391,177 @@ def test_dangling_record_dir_symlink_refuses_startup(tmp_path):
     assert time.monotonic() - t0 < 5
     assert proc.returncode == 2
     assert proc.stderr == f"scripted_backend: --record-dir {record_dir} is a dangling symlink\n"
+
+
+# ---- D5m-F2: --pidfile, the THIRD startup path (VERIFY-D5l F2) ----
+
+@pytest.mark.parametrize("kind", ["fifo", "directory", "dangling_symlink"])
+def test_pidfile_non_regular_refuses_startup_before_binding(tmp_path, kind):
+    """VERIFY-D5l F2: --pidfile is the third path the backend opens at startup.
+
+    On the PIN (218dc2f) a FIFO here hung the process FOREVER *after* the socket was bound —
+    the probe measured `listening=False http=TimeoutError alive=True` at 5.6 s, i.e. a
+    supervisor waits on a port that never serves — and a directory produced an uncaught
+    IsADirectoryError traceback with rc 1 and no named reason.  Both must now be the same
+    named rc-2 refusal the token file and the record dir already give, taken BEFORE the bind.
+    """
+    tf = tmp_path / "upstream.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    pidfile = tmp_path / "pid"
+    if kind == "fifo":
+        os.mkfifo(pidfile, 0o600)
+    elif kind == "directory":
+        pidfile.mkdir()
+    else:
+        pidfile.symlink_to(tmp_path / "missing-target")
+    port = _free_port()
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, str(SERVER), "--port", str(port),
+         "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
+         "--pidfile", str(pidfile)],
+        capture_output=True, text=True, timeout=10)
+    assert time.monotonic() - t0 < 5      # a FIFO refusal must not open the path
+    assert proc.returncode == 2
+    assert proc.stderr == f"scripted_backend: --pidfile is not a regular file: {pidfile}\n"
+    # the refusal is BEFORE the bind: nothing was ever listening on the port
+    with pytest.raises(ConnectionRefusedError):
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+
+
+def test_pidfile_refusal_precedes_the_bind(tmp_path):
+    """The ORDER is load-bearing, and a post-exit connect cannot prove it: a backend that binds
+    first and refuses second also leaves nothing listening once it has exited.  So hold the port
+    instead — a guard that ran after the bind would die on EADDRINUSE (uncaught OSError, rc 1)
+    before ever reaching the refusal.  A named rc-2 refusal on an occupied port is only
+    reachable if the guard precedes the bind.
+    """
+    tf = tmp_path / "upstream.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    pidfile = tmp_path / "pid"
+    os.mkfifo(pidfile, 0o600)
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(SERVER), "--port", str(port),
+             "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
+             "--pidfile", str(pidfile)],
+            capture_output=True, text=True, timeout=10)
+    finally:
+        holder.close()
+    assert proc.returncode == 2
+    assert proc.stderr == f"scripted_backend: --pidfile is not a regular file: {pidfile}\n"
+
+
+def test_pidfile_symlink_to_regular_file_still_starts(tmp_path):
+    """The guard's false-positive control: a symlink whose TARGET is a regular file is fine.
+
+    stat() follows, so this starts, serves, and really does write the pid through the link.
+    """
+    tf = tmp_path / "upstream.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    real = tmp_path / "real.pid"
+    real.write_text("")
+    pidfile = tmp_path / "pid"
+    pidfile.symlink_to(real)
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SERVER), "--port", str(port), "--token-file", str(tf),
+         "--record-dir", str(tmp_path / "rec"), "--pidfile", str(pidfile), "--slow-delay", "0.05"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        _wait_ready(proc, port)
+        assert int(real.read_text()) == proc.pid
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+# ---- D5m-F7: the per-request record slot is the same class ----
+
+def test_record_slot_fifo_returns_500_and_the_next_request_is_served(tmp_path):
+    """VERIFY-D5l F7: the next record slot name is fully predictable, so what sits there is
+    attacker-chosen.  On the PIN a FIFO at 000001.json blocked the handler thread forever —
+    the client got TimeoutError after 6.01 s, no record was written and the seq gapped.
+    Now: 500 naming the reason, promptly, and the NEXT request is served into the next slot.
+    """
+    tf = tmp_path / "upstream.env"
+    tf.write_text(f"UPSTREAM_TOKEN={TOKEN}\n")
+    tf.chmod(0o600)
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    os.mkfifo(rec / "000001.json", 0o600)
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(SERVER), "--port", str(port), "--token-file", str(tf),
+         "--record-dir", str(rec), "--allow-existing-records", "--slow-delay", "0.05"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        _wait_ready(proc, port)
+        t0 = time.monotonic()
+        status, data = _call(port, "POST", "/v1/chat/completions",
+                             {"model": "s0-01-pong", "messages": []})
+        assert time.monotonic() - t0 < 5     # RED on the PIN: TimeoutError at 6.01 s
+        assert status == 500
+        obj = json.loads(data)
+        assert obj["error"]["message"] == "record slot is not a regular file"
+        assert obj["error"]["code"] == "record_slot_unusable"
+        # not a wedged server: the next request is served and its record IS written
+        status2, _ = _call(port, "POST", "/v1/chat/completions",
+                           {"model": "s0-01-pong", "messages": []})
+        assert status2 == 200
+        assert (rec / "000002.json").is_file()
+        assert json.loads((rec / "000002.json").read_text())["seq"] == 2
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+# ---- D5m-F4: the readiness wait carries the failure signature (SWEEP-tests row 9.1) ----
+
+def test_wait_ready_surfaces_the_backends_own_reason(tmp_path):
+    """R9A on the PIN: a backend that exits 2 before the bind burned the whole 10 s deadline
+    and the test failed as ConnectionRefusedError (`1 failed in 10.39s`), its own message
+    never surfacing.  The helper must end the wait at the exit and quote rc + output.
+    """
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys; sys.stderr.write('scripted_backend: R9A refuses to bind\\n'); sys.exit(2)"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    t0 = time.monotonic()
+    with pytest.raises(AssertionError) as exc:
+        _wait_ready(proc, port, deadline_s=10.0)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, f"failure-aware wait took {elapsed:.2f}s of its 10 s deadline"
+    message = str(exc.value)
+    assert "rc=2" in message
+    assert "scripted_backend: R9A refuses to bind" in message
+    assert "ConnectionRefused" not in message
+
+
+def test_wait_ready_kills_a_process_that_never_serves(tmp_path):
+    """The other failure branch: alive but never answering.  The helper must not leak the
+    child (a raise before a fixture's `yield` never reaches its teardown)."""
+    port = _free_port()
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    t0 = time.monotonic()
+    with pytest.raises(AssertionError, match="backend failed to start"):
+        _wait_ready(proc, port, deadline_s=1.0)
+    assert time.monotonic() - t0 < 5
+    assert proc.poll() is not None, "the helper must reap the process it gave up on"
+
+
+def test_wait_ready_positive_control(backend):
+    """Two-sided: the same helper returns None against a backend that IS serving."""
+    assert _wait_ready(backend["proc"], backend["port"], deadline_s=5.0) is None
 
 
 def test_missing_token_file_named_refusal(tmp_path):
@@ -558,23 +763,9 @@ def test_token_file_mode_guard(tmp_path, mode, accept):
              "--token-file", str(tf), "--record-dir", str(tmp_path / "rec"),
              "--slow-delay", "0.05"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        started = False
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            try:
-                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-                conn.request("GET", "/healthz")
-                resp = conn.getresponse()
-                resp.read()
-                conn.close()
-                if resp.status == 200:
-                    started = True
-                    break
-            except OSError:
-                time.sleep(0.05)
+        _wait_ready(proc, port)   # the assertion: mode 0o600/0o400 must reach a serving backend
         proc.terminate()
         proc.wait(timeout=10)
-        assert started, f"server should start with mode {oct(mode)}"
     else:
         proc = subprocess.run(
             [sys.executable, str(SERVER), "--port", str(port),
@@ -884,6 +1075,7 @@ def test_p1_boundary_credential_check_in_record(tmp_path):
     assert leaked2 is False
     data2 = json.loads((rec / f"{n2:06d}.json").read_bytes())
     assert data2["path"] == "/v1/chat/completions"
+    assert data2["body"] == {"model": "test"}
 
 
 # -- build_capture_record.py tests (V-d F12) ---------------------------------
@@ -891,11 +1083,17 @@ def test_p1_boundary_credential_check_in_record(tmp_path):
 BUILD_CAPTURE = ROOT / "proofs" / "S0-01" / "tools" / "build_capture_record.py"
 
 
-def test_build_capture_record_roundtrip_check(tmp_path):
-    """V-d F12: build a capture.json from a synthetic leg, then --check round-trips."""
-    leg = tmp_path / "testleg"
-    leg.mkdir()
-    # timeline.jsonl — two entries
+def test_build_capture_record_roundtrip_check(tmp_path, synthetic_leg):
+    """V-d F12: build a capture.json from a synthetic leg, then --check round-trips.
+
+    The leg comes from the SHARED `synthetic_leg` fixture (tests/conftest.py), which reads
+    pins.PINNED_LEG_FILES. VERIFY-P5a F1: this test used to write its own seven files — exactly the inputs
+    this function reads — and went red the day the tool's entry point grew a completeness precondition, for a
+    reason the test could not state. Pasting the 21 missing names in here would have made a second copy of the
+    leg list; importing the one fixture means a change to that list moves this leg too.
+    """
+    leg = synthetic_leg(tmp_path / "testleg")
+    # this test's own timeline: two entries, one of them an a2c RESULT frame (the branch under test)
     tl = [
         {"seq": 1, "dir": "c2a", "t_utc": "2026-09-05T12:00:00.000000Z",
          "t_mono_ns": 1000, "frame": {"jsonrpc": "2.0", "id": 1, "method": "initialize"}},
@@ -904,20 +1102,6 @@ def test_build_capture_record_roundtrip_check(tmp_path):
     ]
     (leg / "timeline.jsonl").write_text(
         "\n".join(json.dumps(e, separators=(",", ":")) for e in tl) + "\n"
-    )
-    # runtime-identity.json
-    (leg / "runtime-identity.json").write_text(json.dumps({"tee_pid": 1234}) + "\n")
-    # env.json
-    (leg / "env.json").write_text(json.dumps({"PATH": "/usr/bin"}) + "\n")
-    # buzz-acp.exit
-    (leg / "buzz-acp.exit").write_text("0\n")
-    # buzz-acp.pid
-    (leg / "buzz-acp.pid").write_text("9999\n")
-    # hermes-model.txt
-    (leg / "hermes-model.txt").write_text("default: s0-01-scripted/s0-01-pong\n")
-    # startup-line.txt
-    (leg / "startup-line.txt").write_text(
-        "2026-09-05T12:00:00Z  INFO buzz_acp: buzz-acp starting: idle_timeout=900s max_turn=3600s session_policy=thread\n"
     )
 
     # Build capture.json

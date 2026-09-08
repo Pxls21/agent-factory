@@ -74,12 +74,14 @@ Credential screen (_normal_forms / _carries_secret): breadth-first closure of
   bytes are then not in the record.
   Accepted risk (D5d-F12, restored): junk like %25252541 triggers the
   bound-exceeded path and blanks the record (false positive).
-  Bounded worst case: MAX_CONTENT_LENGTH (1 MiB) body with a bound-exceeding
-  token costs ~0.4 s on the measured PC in both the http.client and raw-socket
-  harnesses (0.378 s each at 1000 KB in one window); earlier higher D5i
-  timings are load, not harness overhead.  It remains bounded by handler
-  timeout (30 s) and ThreadingHTTPServer (one slow request does not block
-  others).  A DoS budget is the owner's call.
+  Bounded worst case, per vector and per venue (cost_probe.py, min of 5 at
+  1000 KB): the named vector is a MAX_CONTENT_LENGTH (1 MiB) body carrying a
+  bound-exceeding token (column `bound-body`) — 1.86 s on the PC, 1.03 s in the
+  sandbox.  An ordinary 1 MiB body (column `ordinary`) costs 0.72 s / 0.39 s.
+  Harness style is not the factor: a raw socket and http.client agree within
+  0.99-1.06x over three runs of both vectors in one sandbox window (D5m).
+  It remains bounded by handler timeout (30 s) and ThreadingHTTPServer (one
+  slow request does not block others).  A DoS budget is the owner's call.
   The screen is applied per item (path, header names, header values, serialized
   JSON body, every parsed JSON string — keys AND values — and raw body);
   cross-sink splits are out of contract by design.
@@ -127,6 +129,9 @@ MAX_JSON_DEPTH = 32
 # Sentinel object for _read_body control flow (L3: never a bare string — a client
 # POSTing the JSON document "BAD_CL" must not collide with the sentinel).
 _BAD_CL = object()
+# D5m-F7: the ONE spelling of the unusable-record-slot reason — the 500 body, the JSON
+# log line and the test all read this constant, so the message cannot drift between them.
+_RECORD_SLOT_REASON = "record slot is not a regular file"
 # Credential-bearing header names (lowercased) to drop from records (V-c F10).
 _CREDENTIAL_HEADERS = frozenset({
     "authorization", "proxy-authorization", "x-api-key", "api-key",
@@ -386,6 +391,33 @@ def _iter_json_strings(obj):
             stack.extend(item)
 
 
+def _refuse_non_regular(path: Path) -> bool:
+    """True when *path* names something that exists but is not a regular file.
+
+    D5m-F2/F7, the AF-AP-30 read class: the backend must never open a path it has
+    not classified first — an open() on a FIFO blocks forever, and write_text()
+    through a dangling symlink creates a file somewhere the caller did not name.
+    lstat answers "does this NAME exist" (a dangling symlink does); stat follows,
+    so a symlink to a regular file is accepted and a dangling one is refused.
+    Neither call opens the path, so a FIFO cannot block here.
+    """
+    try:
+        os.lstat(path)
+    except OSError:
+        return False                       # nothing there: the caller creates it
+    try:
+        return not stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return True                        # dangling symlink, ELOOP, unreadable target
+
+
+class _RecordSlotError(Exception):
+    """Raised by State.record when the next record slot is not a regular file."""
+    def __init__(self, path: Path):
+        super().__init__(str(path))
+        self.path = path
+
+
 def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
@@ -533,7 +565,14 @@ class State:
             rec_body = body
             auth_fp = hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None
         self.record_dir.mkdir(parents=True, exist_ok=True)
-        (self.record_dir / f"{n:06d}.json").write_text(json.dumps(
+        # D5m-F7: the next slot name is fully predictable, so anything already at it is
+        # attacker-chosen. write_text() on a FIFO blocks the handler thread forever
+        # (VERIFY-D5l F7: client TimeoutError, no response, no record, a gap in seq).
+        # Classify without opening; the handler turns this into a 500 + one JSON log line.
+        slot = self.record_dir / f"{n:06d}.json"
+        if _refuse_non_regular(slot):
+            raise _RecordSlotError(slot)
+        slot.write_text(json.dumps(
             {"seq": n, "method": method, "path": rec_path, "headers": clean,
              "body": _json_safe(rec_body), "received_at": received_at, "t_mono_ns": mono_ns,
              "remote_addr": remote_addr, "authorization_fingerprint": auth_fp},
@@ -633,6 +672,23 @@ def make_handler(state: State):
             auth = self.headers.get("Authorization", "")
             return auth[7:] if auth.startswith("Bearer ") else None
 
+        def _record(self, *args, **kwargs):
+            """state.record() at the single boundary, with the unusable-slot path named.
+
+            D5m-F7: returns (seq, leaked), or None when the next record slot is not a
+            regular file — in that case a 500 naming the reason has already been sent and
+            one JSON line has been logged.  Never blocks, never skips silently.
+            """
+            try:
+                return state.record(*args, **kwargs)
+            except _RecordSlotError as e:
+                print(json.dumps({"event": "record_slot_refused",
+                                  "reason": _RECORD_SLOT_REASON,
+                                  "path": str(e.path)}, sort_keys=True),
+                      file=sys.stderr, flush=True)
+                self._error(500, _RECORD_SLOT_REASON, "server_error", "record_slot_unusable")
+                return None
+
         def _read_body(self):
             self._last_raw_body = None
             cl_raw = self.headers.get("Content-Length")
@@ -671,9 +727,11 @@ def make_handler(state: State):
             bearer = self._bearer_token()
             body = None
             # Record at the single boundary; credential leak handled inside record()
-            _seq, leaked = state.record("GET", self.path, self.headers, body,
-                                        self.client_address[0], bearer,
-                                        raw_body=None)
+            rec = self._record("GET", self.path, self.headers, body,
+                               self.client_address[0], bearer, raw_body=None)
+            if rec is None:
+                return
+            _seq, leaked = rec
             if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
@@ -691,9 +749,12 @@ def make_handler(state: State):
             try:
                 body = self._read_body()
             except _ParseError as e:
-                _seq, leaked = state.record(
+                rec = self._record(
                     "POST", self.path, self.headers, "<invalid json>",
                     self.client_address[0], bearer, raw_body=e.raw)
+                if rec is None:
+                    return
+                _seq, leaked = rec
                 if leaked:
                     return self._error(400, "credential in unexpected location",
                                        "invalid_request_error", "bad_request")
@@ -703,9 +764,12 @@ def make_handler(state: State):
                 self._reject(400)
                 return
             # Record at the single boundary; credential leak handled inside record()
-            _seq, leaked = state.record("POST", self.path, self.headers, body,
-                                        self.client_address[0], bearer,
-                                        raw_body=self._last_raw_body)
+            rec = self._record("POST", self.path, self.headers, body,
+                               self.client_address[0], bearer,
+                               raw_body=self._last_raw_body)
+            if rec is None:
+                return
+            _seq, leaked = rec
             if leaked:
                 return self._error(400, "credential in unexpected location",
                                    "invalid_request_error", "bad_request")
@@ -802,10 +866,21 @@ def main(argv=None) -> int:
             print(f"scripted_backend: --record-dir {args.record_dir} is non-empty; "
                   f"pass --allow-existing-records to override", file=sys.stderr)
             return 2
+    # D5m-F2: --pidfile is the THIRD path this opens at startup, and the whole block now runs
+    # BEFORE the bind, so a refusal leaves the port unbound (VERIFY-D5l F2: a FIFO here hung
+    # the process forever with the socket already listening — a supervisor waits on a port
+    # that never serves; a directory gave an uncaught traceback and rc 1, not a named
+    # refusal).  Writing the pid before the bind also makes a bind failure visible to a
+    # launcher's failure-aware wait (run_s0_04_legs.sh reads /proc/<pid> from this file)
+    # instead of burning its whole readiness deadline.
+    if args.pidfile:
+        if _refuse_non_regular(args.pidfile):
+            print(f"scripted_backend: --pidfile is not a regular file: {args.pidfile}",
+                  file=sys.stderr)
+            return 2
+        args.pidfile.write_text(f"{os.getpid()}\n")
     state = State(token, args.record_dir, args.slow_delay)
     server = ThreadingHTTPServer((args.bind, args.port), make_handler(state))
-    if args.pidfile:
-        args.pidfile.write_text(f"{os.getpid()}\n")
     print(f"scripted_backend: listening on http://{args.bind}:{server.server_address[1]}/v1 "
           f"models={','.join(MODELS)} record_dir={args.record_dir} token_fp={_fingerprint(token)}", flush=True)
     try:

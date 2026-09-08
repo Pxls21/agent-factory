@@ -4,14 +4,13 @@ Findings R7-D5c-F1/F2/F6/F7 are now fixed (lane D5d). The xfail markers have bee
 F3/F4/F5 are the verifier's missing controls (mutants M48/M41/M20 survived without them):
 they pass today and must keep passing. Self-contained: own backend fixture, own raw-socket helper, tmp_path only.
 """
-import http.client
+import importlib.util
 import json
 import pathlib
 import re
 import socket
 import subprocess
 import sys
-import time
 import unicodedata
 from urllib.parse import unquote, unquote_plus
 
@@ -22,6 +21,19 @@ SERVER = ROOT / "proofs" / "S0-01" / "tools" / "scripted_backend.py"
 TOKEN = "s0-01-upstream-token-0123456789abcdef"
 MARKER = {"credential_in_unexpected_location": True}
 MAX_CONTENT_LENGTH = int(re.search(r"^MAX_CONTENT_LENGTH\s*=\s*([0-9_]+)", SERVER.read_text(), re.M).group(1))
+
+
+# D5m-F4: the failure-aware readiness wait is ONE helper, defined beside the other backend
+# fixtures in tests/test_s0_01_scripted_backend.py.  It is loaded BY PATH rather than by
+# `import test_s0_01_scripted_backend`, because this file is also run on its own (every mutant
+# campaign runs it standalone) and pytest only puts `tests/` on sys.path when a module from
+# `tests/` is collected in the same session.  The module name below is deliberately not the
+# test module's own name, so pytest still collects that file exactly once.
+_MAIN_TESTS = ROOT / "tests" / "test_s0_01_scripted_backend.py"
+_spec = importlib.util.spec_from_file_location("s0_01_backend_testlib", _MAIN_TESTS)
+_testlib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_testlib)
+_wait_ready = _testlib._wait_ready
 
 
 def _free_port():
@@ -40,18 +52,7 @@ def backend(tmp_path_factory):
     argv = [sys.executable, str(SERVER), "--port", str(port), "--token-file", str(token_file),
             "--record-dir", str(tmp / "rec"), "--slow-delay", "0.05", "--pidfile", str(tmp / "pid")]
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
-            conn.request("GET", "/healthz")
-            resp = conn.getresponse()
-            resp.read()
-            conn.close()
-            if resp.status == 200:
-                break
-        except OSError:
-            time.sleep(0.05)
+    _wait_ready(proc, port)
     yield {"port": port, "rec": tmp / "rec"}
     proc.terminate()
     proc.wait(timeout=10)
@@ -1066,7 +1067,7 @@ def test_invalid_utf8_without_the_token_is_refused_not_repaired(backend):
 
 def test_precheck_before_closure_on_invalid_utf8(backend, monkeypatch):
     """D5i item 5 / D5h-F14: the precheck fires BEFORE the closure, so
-    _normal_forms is never called for an invalid-UTF8 byte-view input.
+    _normal_forms is never called for an invalid-UTF-8 byte-view input.
     Timing-free: monkeypatches _normal_forms with a counter."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("sb_ordering", str(SERVER))
@@ -1182,38 +1183,81 @@ def test_credential_reserved_bmp_separator_in_json_body_returns_400(backend, cp,
 # ---- D5k item 1 (D5j-F1): no "!= MARKER" anywhere in the test files ----
 
 def test_no_not_equal_marker_assertions(tmp_path):
-    """D5j-F1 class: no test uses MARKER != or != MARKER as an acceptance check."""
+    """D5j-F1 class: no S0-01 test uses MARKER as a NEGATIVE acceptance check.
+
+    Scope is the GLOB, not a file list.  VERIFY-D5l F1: the two-file version was green over a
+    live violation planted in a third S0-01 test file (`2 passed` while the banned form sat in
+    tests/test_s0_01_negative_contract.py) — SWEEP-tests rows 4.4/18.1 register "a lint whose
+    scope is a hard-coded file list" as the class.  The glob costs nothing: it returns 0 hits
+    over all of tests/test_s0_01_*.py + tests/red/test_s0_01_*.py today.
+
+    CAUGHT by the walk (measured, controls below): `x != MARKER` / `MARKER != x` in either
+    operand order and at any nesting inside the assert's test (tuple, lambda, walrus),
+    `x not in (MARKER,)`, `x is not MARKER`, and `not (x == MARKER)`.
+
+    OUT OF SCOPE, stated rather than silently missed (VERIFY-D5l's 16-form table measured each
+    one escaping): an alias (`M = MARKER; assert x != M`), a helper function
+    (`def _served(r): return r != MARKER`), `operator.ne(x, MARKER)`, the dunder
+    `x.__ne__(MARKER)`, an attribute spelling (`x != m.MARKER`) and a differently-named
+    constant.  Each needs data-flow or import resolution, which an AST walk of one file does
+    not have.  This is a documented limit, not a claim of closure.
+    """
     import ast
+
+    def _mentions_marker(node):
+        return any(isinstance(n, ast.Name) and n.id == "MARKER" for n in ast.walk(node))
 
     def marker_not_equal_asserts(path):
         found = []
         for node in ast.walk(ast.parse(path.read_text())):
             if not isinstance(node, ast.Assert):
                 continue
-            for compare in ast.walk(node.test):
-                if not isinstance(compare, ast.Compare):
-                    continue
-                has_noteq = any(isinstance(op, ast.NotEq) for op in compare.ops)
-                names = {name.id for name in ast.walk(compare) if isinstance(name, ast.Name)}
-                if has_noteq and "MARKER" in names:
+            for sub in ast.walk(node.test):
+                # x != MARKER / x not in (MARKER,) / x is not MARKER, either operand order
+                if (isinstance(sub, ast.Compare)
+                        and any(isinstance(op, (ast.NotEq, ast.NotIn, ast.IsNot)) for op in sub.ops)
+                        and _mentions_marker(sub)):
+                    found.append((path.name, node.lineno))
+                    break
+                # not (x == MARKER) / not (x in (MARKER,)) / not (x is MARKER)
+                if (isinstance(sub, ast.UnaryOp) and isinstance(sub.op, ast.Not)
+                        and isinstance(sub.operand, ast.Compare)
+                        and any(isinstance(op, (ast.Eq, ast.In, ast.Is)) for op in sub.operand.ops)
+                        and _mentions_marker(sub.operand)):
                     found.append((path.name, node.lineno))
                     break
         return found
 
-    break_file = tmp_path / "break_form.py"
-    break_file.write_text('import json\nMARKER = {}\nassert json.loads(x)["body"] != MARKER\n')
-    evade_file = tmp_path / "evade_form.py"
-    evade_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b != MARKER\n')
+    # two-sided controls: a walker that always returns [] fails these, one that returns
+    # everything fails the positive control, and each pins the LINE so a reporting off-by-one dies
+    controls = {
+        "break_form.py": ('import json\nMARKER = {}\nassert json.loads(x)["body"] != MARKER\n', 3),
+        "evade_form.py": ('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b != MARKER\n', 4),
+        "not_eq_form.py": ('MARKER = {}\nassert not (x == MARKER)\n', 2),
+        "not_in_form.py": ('MARKER = {}\nassert x not in (MARKER,)\n', 2),
+        "is_not_form.py": ('MARKER = {}\nassert x is not MARKER\n', 2),
+    }
+    for name, (src, lineno) in controls.items():
+        f = tmp_path / name
+        f.write_text(src)
+        assert marker_not_equal_asserts(f) == [(name, lineno)], name
     ok_file = tmp_path / "positive_form.py"
     ok_file.write_text('import json\nMARKER = {}\n_b = json.loads(x)["body"]\nassert _b == expected\n')
-    assert marker_not_equal_asserts(break_file) == [("break_form.py", 3)]
-    assert marker_not_equal_asserts(evade_file) == [("evade_form.py", 4)]
     assert marker_not_equal_asserts(ok_file) == []
+    # a POSITIVE acceptance use of MARKER (this file's own idiom) must not be flagged
+    keep_file = tmp_path / "keep_form.py"
+    keep_file.write_text('import json\nMARKER = {}\nassert json.loads(r)["body"] == MARKER\n')
+    assert marker_not_equal_asserts(keep_file) == []
 
-    red_file = pathlib.Path(__file__)
-    main_file = red_file.parents[1] / "test_s0_01_scripted_backend.py"
-    assert marker_not_equal_asserts(red_file) == []
-    assert marker_not_equal_asserts(main_file) == []
+    root = pathlib.Path(__file__).parents[1]
+    targets = sorted(root.glob("test_s0_01_*.py")) + sorted((root / "red").glob("test_s0_01_*.py"))
+    # the scope is itself asserted, so a future hard-coded list cannot come back unnoticed
+    names = {p.name for p in targets}
+    assert names >= {p.name for p in root.glob("test_s0_01_*.py")}
+    assert names >= {p.name for p in (root / "red").glob("test_s0_01_*.py")}
+    assert pathlib.Path(__file__).name in names
+    for target in targets:
+        assert marker_not_equal_asserts(target) == [], target
 
 
 # ---- D5k item 5 (D5j-F6): saturation-flip test ----

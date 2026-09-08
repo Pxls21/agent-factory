@@ -4,12 +4,12 @@ The owner's external auditor (2026-09-06, review of 541648c) ran the real produc
 process tables and fed its output to `check_process_evidence`: a successful cleanup (empty scan) was
 REJECTED and an owned `/usr/bin/sleep 60` survivor was ACCEPTED, because the shutdown branch demanded a
 non-empty scan and screened only the pinned command names. These controls encode the contract the
-checker must meet, built from the REAL producer (`pc_post.sh scan`, v2.3 with the enumeration header)
+checker must meet, built from the REAL producer (`pc_post.sh scan`, v2.4 with the enumeration header)
 run on a process tree this test owns. They were committed RED (AF-AP-36 pre-mint gate) and made green by lane A5c —
 no lane may edit this file.
 
-Contract under test (A20 v2.3):
-  * a scan file's first line is the enumeration header; `rows > 0` proves enumeration ran;
+Contract under test (A20 v2.4):
+  * a scan file's first line is the enumeration header; `table_rows > 0` proves enumeration ran while `rows` counts the body;
   * a SHUTDOWN leg's after-scan with `owned_present=0` and an empty body is a PASS (cleanup succeeded);
   * any owned pid that is still LIVE in the shutdown after-scan or in any teardown scan is a survivor →
     Failure `"<leg>: process <pid> (<cmd[:40]>) survived shutdown|teardown"`, whatever its command line;
@@ -107,7 +107,7 @@ def test_clean_shutdown_empty_after_scan_passes(tree, tmp_path):
     _scan("teardown", tmp_path)
     _shutdown_leg(tmp_path, tee, agent)
     body = (tmp_path / "process-scan-after.txt").read_text().splitlines()
-    assert body[0].startswith("# process-scan v2.3 mode=after ") and " owned_present=0 " in body[0]
+    assert body[0].startswith("# process-scan v2.4 mode=after ") and " owned_present=0 " in body[0]
     assert body[1:] == []
     cc.check_process_evidence(tmp_path, "shutdown")   # must not raise
 
@@ -130,7 +130,7 @@ def test_shutdown_owned_survivor_is_named_whatever_its_command(tree, tmp_path):
 
 
 def test_scan_without_the_enumeration_header_is_rejected(tree, tmp_path):
-    """A scan file that lacks the v2.3 header cannot prove enumeration ran — Failure naming the file."""
+    """A scan file that lacks the v2.4 header cannot prove enumeration ran — Failure naming the file."""
     proc, (buzz, tee, agent) = tree
     _spawned(tmp_path, buzz)
     _scan("after", tmp_path)

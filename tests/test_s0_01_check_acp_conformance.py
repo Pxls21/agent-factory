@@ -20,6 +20,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable, cast
 
 import pytest
 
@@ -34,6 +35,7 @@ sys.path.insert(0, str(P / "tools"))
 import check_acp_conformance as cc  # noqa: E402
 import negative_contract as nc  # noqa: E402
 import nostr_verify as nv  # noqa: E402
+import pins  # noqa: E402
 from pins import (  # noqa: E402
     ENV_ALLOWLIST_KEY,
     EXPECTED_MENTIONS, EXPECTED_MODEL, LEGS, MANIFEST_TREES, MENTION_TEXT,
@@ -214,8 +216,6 @@ def _write_startup_and_log(leg_dir, leg):
         for log_line in PINNED_LOG_LINES_TWO_USERS:
             lines.append(f"2026-09-05T05:00:01Z  INFO buzz_acp: {log_line}")
     (leg_dir / "buzzacp.log").write_text("\n".join(lines) + "\n")
-    # Write agent-stderr.txt for every leg (5-F19)
-    (leg_dir / "agent-stderr.txt").write_text("2026-09-05 INFO hermes: started\n")
 
 
 def _write_model(leg_dir, leg):
@@ -314,20 +314,17 @@ def _write_upstream_records(leg_dir, leg, entries, fingerprint):
     (rec_dir / f"{idx:06d}.json").write_text(json.dumps(get_rec, indent=2) + "\n")
 
 
-def _scan_header(mode, *, rows=50, buzz_pid=12300, buzz_present=1, owned=3,
+def _scan_header(mode, *, rows=0, table_rows=50, buzz_pid=12300, buzz_present=1, owned=3,
                  owned_present=3, pinned_present=0, owned_zombies=0):
-    """Build a v2.3 scan enumeration header line.
-    pinned_present defaults to 0; callers set it to match their body rows."""
-    return (f"# process-scan v2.3 mode={mode} rows={rows} buzz_acp_pid={buzz_pid} "
+    """Build a v2.4 scan header; rows is body count and table_rows proves enumeration."""
+    return (f"# process-scan v2.4 mode={mode} rows={rows} buzz_acp_pid={buzz_pid} "
             f"buzz_present={buzz_present} owned={owned} owned_present={owned_present} "
-            f"pinned_present={pinned_present} owned_zombies={owned_zombies} "
+            f"pinned_present={pinned_present} owned_zombies={owned_zombies} table_rows={table_rows} "
             f"utc=2026-09-05T12:00:00Z")
 
 
 def _write_process_scan(leg_dir, leg):
-    """A20 v2.3: scan header + body rows; owned-pids.json.
-    Fixture derived from pc_post.sh's keep rule: only owned rows and rows naming
-    a pinned path are persisted. (D): no /sbin/init — the real producer never emits it."""
+    """A20 v2.4: scan header + body rows; owned-pids.json."""
     buzz_pid = 12300
     tee_pid = 12340  # matches runtime-identity.json tee_pid
     agent_pid = 12345  # matches runtime-identity.json agent_child_pid
@@ -338,17 +335,28 @@ def _write_process_scan(leg_dir, leg):
         {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}) + "\n")
     (leg_dir / "buzz-acp.exit").write_text("0\n")
     if leg == "shutdown":
-        # After a clean shutdown, all owned pids have exited — empty body with v2.3 header.
+        # After a clean shutdown, all owned pids have exited: v2.4 header and empty body.
         (leg_dir / "process-scan-after.txt").write_text(
-            _scan_header("after", buzz_present=0, owned_present=0, pinned_present=0) + "\n")
+            _scan_header("after", rows=0, buzz_present=0, owned_present=0, pinned_present=0) + "\n")
     else:
-        lines = [_scan_header("after", pinned_present=3),
+        lines = [_scan_header("after", rows=3, pinned_present=3),
                  f"{buzz_pid} {launcher_pid} 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999",
                  f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}",
                  f"{agent_pid} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}"]
         (leg_dir / "process-scan-after.txt").write_text("\n".join(lines) + "\n")
     (leg_dir / "process-scan-teardown.txt").write_text(
-        _scan_header("teardown", buzz_present=0, owned_present=0, pinned_present=0) + "\n")
+        _scan_header("teardown", rows=0, buzz_present=0, owned_present=0, pinned_present=0) + "\n")
+
+
+def _write_capture_contract_files(leg_dir, leg):
+    """Write files the v2.4 producer contract added after the legacy fixture."""
+    (leg_dir / "backend-healthz-before.json").write_text('{"ok":true,"records":0}\n')
+    (leg_dir / "backend-healthz-after.json").write_text('{"ok":true,"records":3}\n')
+    (leg_dir / "hermes-config.sha256").write_text("0" * 64 + "\n")
+    (leg_dir / "manifest-pre.done").write_text("\n")
+    (leg_dir / "manifest-post.done").write_text("\n")
+    (leg_dir / "launch.ready").write_text("2026-09-05T05:00:00Z\n")
+    (leg_dir / "launch.exited").write_text("2026-09-05T05:01:00Z\n")
 
 
 def _write_tee_status(leg_dir, entries):
@@ -445,6 +453,7 @@ def _session_bundle(tmp_path_factory):
         _write_mentions(ld, leg, identities, entries)
         _write_upstream_records(ld, leg, entries, fingerprint)
         _write_process_scan(ld, leg)
+        _write_capture_contract_files(ld, leg)
         _write_tee_status(ld, entries)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(g / "run-1", "run-1"))
     golden_text = "\n".join(n1) + "\n"
@@ -724,7 +733,7 @@ def test_del_negative_file(bundle, fn):
     if fn == "timeline.jsonl":
         assert out == "failure_reason: negative: negative probe not captured"
     else:
-        assert out == f"failure_reason: negative: negative: {fn} absent"
+        assert out == f"failure_reason: negative: {fn} absent"
 
 
 def test_del_neg_fixture(bundle):
@@ -733,7 +742,7 @@ def test_del_neg_fixture(bundle):
     fp.unlink()
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: negative: negative: fixtures/neg-malformed-initialize.json absent"
+    assert out == "failure_reason: negative: fixtures/neg-malformed-initialize.json absent"
 
 
 def test_del_identities(bundle):
@@ -1526,7 +1535,7 @@ def test_proc_buzz_found(bundle):
     """m55: no buzz-acp line with matching pid — buzz cmd does not match the pin.
     F14: owned set includes all three rid pids; all three in scan for closure match."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=2) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, owned=3, owned_present=3, pinned_present=2) + "\n"
                   + "12300 1 100 NOT-BUZZ-ACP --flag\n"
                   + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
                   + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -1542,7 +1551,7 @@ def test_proc_tee_parent(bundle):
     F14: owned set includes all three rid pids, closure includes only buzz_pid
     (12340 has ppid=9999 not in closure, breaking the ppid chain)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, owned=3, owned_present=3, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1556,7 +1565,7 @@ def test_proc_agent_parent(bundle):
     F14: owned set includes all three rid pids, closure includes buzz+tee
     (12345 has ppid=9999 not in closure)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", owned=3, owned_present=3, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, owned=3, owned_present=3, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 9999 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
     _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1568,7 +1577,7 @@ def test_proc_agent_parent(bundle):
 def test_proc_closure(bundle):
     """m58: process outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", pinned_present=4) + "\n"
+    _rewrite(sp, _scan_header("after", rows=4, pinned_present=4) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n")
     _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1581,7 +1590,7 @@ def test_proc_closure(bundle):
 def test_proc_closure_seed(bundle):
     """m59: mutual-parent attack (V-b F19).  F14: owned=[12300] excludes rid pids → caught first."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", owned=1, owned_present=1, pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, owned=1, owned_present=1, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300], "taken_at": "ready+after"}))
@@ -1602,7 +1611,7 @@ def test_proc_unparsable_line(bundle):
 def test_teardown_has_tee(bundle):
     """m60: A20c survivor check — owned pid in teardown body."""
     p = bundle / "golden" / "run-1" / "process-scan-teardown.txt"
-    _rewrite(p, _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+    _rewrite(p, _scan_header("teardown", rows=1, buzz_present=0, owned_present=1) + "\n"
                  + f"12340 12300 95 python3 {PINNED_TEE_PATH}\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -1613,7 +1622,7 @@ def test_teardown_has_tee(bundle):
 def test_orphan_pair(bundle):
     """6-F2: orphan process pair outside buzz-acp descendant tree."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
-    _rewrite(sp, _scan_header("after", pinned_present=5) + "\n"
+    _rewrite(sp, _scan_header("after", rows=5, pinned_present=5) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n8888 9999 70 python3 {PINNED_TEE_PATH}\n9999 8888 60 python3 {PINNED_AGENT_REALPATH}\n")
     _rewrite(bundle / "golden" / "run-1" / "owned-pids.json", json.dumps(
         {"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
@@ -1627,7 +1636,7 @@ def test_pc_launch_exemption(bundle):
     """7-F8 / A2: pc_launch.py exemption only for the launcher (pid == buzz ppid)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     foreign_cmd = f"python3 /somewhere/pc_launch.py --agent {PINNED_AGENT_REALPATH}"
-    _rewrite(sp, _scan_header("after", pinned_present=4) + "\n"
+    _rewrite(sp, _scan_header("after", rows=4, pinned_present=3) + "\n"
                   + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
                   + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
                   + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
@@ -1642,6 +1651,7 @@ def test_buzz_exe_superstring(bundle):
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     txt = sp.read_text().replace(f" {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url",
                                  f" {PINNED_BUZZ_ACP_EXE_REALPATH}-EVIL --relay-url")
+    txt = txt.replace("pinned_present=3", "pinned_present=2", 1)
     _rewrite(sp, txt)
     rc, out = _check(bundle)
     assert rc == 1
@@ -1959,7 +1969,7 @@ def test_neg_c2a_not_seq1(bundle):
     _rewrite(p, "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: negative: negative: seq 1 is not a c2a frame"
+    assert out == "failure_reason: negative: seq 1 is not a c2a frame"
 
 
 def test_neg_classify_wrong(bundle):
@@ -1970,7 +1980,7 @@ def test_neg_classify_wrong(bundle):
     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: negative: negative: initialize params != fixture"
+    assert out == "failure_reason: negative: initialize params != fixture"
 
 
 def test_neg_extra_a2c_junk_first(bundle):
@@ -2119,11 +2129,11 @@ def test_audit_p1_generic_child_survives_teardown(bundle):
     owned_data["owned"].append(54321)
     owned_data["owned"].sort()
     _rewrite(owned_path, json.dumps(owned_data) + "\n")
-    _rewrite(scan, _scan_header("after", owned=4, owned_present=4, pinned_present=3) + "\n"
+    _rewrite(scan, _scan_header("after", rows=4, owned=4, owned_present=4, pinned_present=3) + "\n"
                     + "\n".join(body_lines) + "\n")
     # Same child in teardown — owned pid = survivor
     td = ld / "process-scan-teardown.txt"
-    _rewrite(td, _scan_header("teardown", buzz_present=0, owned=4, owned_present=1) + "\n"
+    _rewrite(td, _scan_header("teardown", rows=1, buzz_present=0, owned=4, owned_present=1) + "\n"
                   + "54321 1 90 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1, f"audit P1 teardown survivor mutation should fail, got rc={rc}: {out}"
@@ -2183,26 +2193,35 @@ def test_symlink_manifest_gz(bundle):
     assert out == "failure_reason: golden: symlink in evidence tree: run-1/manifest-evil.txt.gz"
 
 
-# === 5-F19: agent-stderr.txt screening tests (round-5b item 3) ===
+def test_symlinked_golden_root_is_named(bundle, tmp_path):
+    """The walk root itself is checked with lstat; os.walk cannot hide a symlink root."""
+    real = bundle / "golden"
+    moved = tmp_path / "real-golden"
+    real.rename(moved)
+    real.symlink_to(moved, target_is_directory=True)
+    rc, out = _check(bundle)
+    assert rc == 1
+    assert out == "failure_reason: golden: root is not a regular directory: golden"
+
+
+# === 5-F19: negative-leg agent-stderr.txt screening tests ===
 
 def test_stderr_64hex_token(bundle):
-    """5-F19: a 64-hex token in agent-stderr.txt fails naming the file."""
-    ld = bundle / "golden" / "run-1"
-    stderr = ld / "agent-stderr.txt"
+    """5-F19: a 64-hex token in negative/agent-stderr.txt is named."""
+    stderr = bundle / "golden" / "negative" / "agent-stderr.txt"
     _rewrite(stderr, "leaked: " + "ab" * 32 + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: agent-stderr.txt contains a secret-shaped string"
+    assert out == "failure_reason: negative: agent-stderr.txt contains a secret-shaped string"
 
 
 def test_stderr_bearer_token(bundle):
-    """5-F19: a Bearer token in agent-stderr.txt fails naming the file."""
-    ld = bundle / "golden" / "run-1"
-    stderr = ld / "agent-stderr.txt"
-    _rewrite(stderr, "Authorization: Bearer eyJhbGciOiJI\n")
+    """5-F19: a Bearer token in negative/agent-stderr.txt is named."""
+    stderr = bundle / "golden" / "negative" / "agent-stderr.txt"
+    _rewrite(stderr, "Authorization: Bearer ***")
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: agent-stderr.txt contains a secret-shaped string"
+    assert out == "failure_reason: negative: agent-stderr.txt contains a secret-shaped string"
 
 
 # === 5-F16: id-matching test (round-5b item 4) ===
@@ -2227,7 +2246,7 @@ def test_neg_foreign_id_response_before_real(bundle):
     _rewrite(nd / "timeline.jsonl", "".join(json.dumps(e, separators=(",", ":")) + "\n" for e in es))
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: negative: negative: agent response id 99999 does not match the request id at seq 2"
+    assert out == "failure_reason: negative: agent response id 99999 does not match the request id at seq 2"
 
 
 # === 5-F20: empty-timeline and one-initialize guard tests (round-5b item 4) ===
@@ -2272,9 +2291,7 @@ def test_twousers_mentions_dir_absent(bundle):
 
 
 def test_twousers_mentions_dir_absent_direct(bundle):
-    """R5: check_two_users no longer has its own mentions/ gate (deleted as dead per R5).
-    The live-path check is in check_mentions via _require_dir, which runs first.
-    Calling check_two_users directly with missing mentions/ raises FileNotFoundError."""
+    """R5: direct callers receive the same named failure as the live path."""
     ld = bundle / "golden" / "two-users"
     es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
     c2a = [e["frame"] for e in es if e["dir"] == "c2a"]
@@ -2282,9 +2299,7 @@ def test_twousers_mentions_dir_absent_direct(bundle):
     identities = json.loads((bundle.parent / "fixtures" / "identities.json").read_text())
     import shutil as _s
     _s.rmtree(ld / "mentions")
-    # R9-CK-F10: check_two_users no longer validates mentions/ (the dead gate was
-    # deleted per R5/F40) — it raises FileNotFoundError, not Failure.
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(cc.Failure, match=r"two-users: mentions/owner\.event\.json absent"):
         cc.check_two_users(c2a, a2c, es, identities, leg_dir=ld)
 
 
@@ -2419,7 +2434,7 @@ def test_shutdown_owned_pid_survives(bundle):
     """Addendum B: an owned pid in the shutdown after-scan must fail as a survivor."""
     ld = bundle / "golden" / "shutdown"
     # Add an owned pid to the after-scan (12300 is in owned-pids.json)
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", buzz_present=1, owned_present=1) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=1, buzz_present=1, owned_present=1) + "\n"
         + "12300 1 200 /usr/bin/sleep 60\n")
     rc, out = _check(bundle)
     assert rc == 1
@@ -2449,7 +2464,7 @@ def test_v23_no_header_teardown(tmp_path):
     _rewrite(ld / "buzz-acp.exit", "0\n")
     _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=3, pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -2459,18 +2474,43 @@ def test_v23_no_header_teardown(tmp_path):
     assert str(ei.value) == "run-1: process-scan-teardown.txt has no enumeration header"
 
 
-def test_v23_rows_zero(tmp_path):
-    """A20 v2.3 rule 2: rows=0 means enumeration did not run."""
+def test_v24_entry_point_rule_matches_tokens_not_substrings():
+    """The checker and producer agree on exact argv entry points for the same table."""
+    table = [
+        f"{PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999",
+        f"/usr/bin/python3 {PINNED_TEE_PATH}",
+        f"/usr/bin/python3 {PINNED_AGENT_REALPATH}",
+        f"/usr/bin/sleep 60 --note={PINNED_TEE_PATH}",
+        f"{PINNED_BUZZ_ACP_EXE_REALPATH}.old --relay-url ws://127.0.0.1:3999",
+    ]
+    expected = [True, True, True, False, False]
+    assert [cc._is_pinned_process(cmd) for cmd in table] == expected
+
+    source = (P / "tools" / "pc" / "pc_post.sh").read_text()
+    body = source.split("scan() { python3 - \"$1\" \"$2\" \"$REPO\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    prefix = body.split("rows = []", 1)[0]
+    prefix = "import sys\n" + prefix[prefix.index("sys.path.insert"):]
+    namespace = {"__name__": "pc_post_contract_test", "repo": str(ROOT)}
+    exec(prefix, namespace)
+    producer_is_pinned = cast(Callable[[str], bool], namespace["is_pinned"])
+    assert [producer_is_pinned(cmd) for cmd in table] == expected
+
+
+def test_v24_table_rows_zero(tmp_path):
+    """A20 v2.4: table_rows=0 means enumeration did not run, even with an empty body."""
     ld = tmp_path
     _rewrite(ld / "buzz-acp.pid", "12300\n")
     _rewrite(ld / "buzz-acp.exit", "0\n")
     _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
     _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=0, owned=3, owned_present=0) + "\n")
-    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=3, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-after.txt", _scan_header(
+        "after", rows=0, table_rows=0, buzz_present=0, owned=3, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header(
+        "teardown", rows=0, buzz_present=0, owned=3, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "shutdown")
-    assert str(ei.value) == "shutdown: process-scan-after.txt header rows=0 (enumeration did not run)"
+    assert str(ei.value) == (
+        "shutdown: process-scan-after.txt header table_rows=0 (enumeration did not run)")
 
 
 def test_v23_owned_present_mismatch(tmp_path):
@@ -2481,7 +2521,7 @@ def test_v23_owned_present_mismatch(tmp_path):
     _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
     _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     # Header says owned_present=2 but body has 3 owned pids
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned_present=2, pinned_present=3) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=3, owned_present=2, pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -2554,11 +2594,11 @@ def test_v23_teardown_survivor(tmp_path):
     _rewrite(ld / "buzz-acp.exit", "0\n")
     _rewrite(ld / "owned-pids.json", json.dumps({"buzz_acp_pid": 12300, "owned": [12300, 12340, 12345], "taken_at": "ready+after"}))
     _rewrite(ld / "runtime-identity.json", json.dumps({"tee_pid": 12340, "agent_child_pid": 12345}))
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=3, pinned_present=3) + "\n"
         + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned_present=1) + "\n"
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", rows=1, buzz_present=0, owned_present=1) + "\n"
         + "12340 1 95 python3 /some/tee\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
@@ -2610,32 +2650,82 @@ import stat as _stat_mod
 
 
 def _corpus_file(leg_dir, name):
-    """CK12 sweep 2.1: guard every test-side read of a corpus file."""
+    """Guard every test-side corpus read against blocking special files."""
     p = leg_dir / name
-    if not p.exists():
-        pytest.fail(f"{leg_dir.name}: {name} absent")
-    if not _stat_mod.S_ISREG(p.lstat().st_mode):
+    try:
+        mode = os.stat(p, follow_symlinks=False).st_mode
+    except OSError:
+        pytest.fail(f"{leg_dir.name}: {name} is not a regular file")
+    if not _stat_mod.S_ISREG(mode):
         pytest.fail(f"{leg_dir.name}: {name} is not a regular file")
     return p
 
 
 def _corpus_version():
-    """CK12 sweep 10.2: v2.3 iff every positive leg has v2.3 scan header + tee-status."""
+    """Classify a declared corpus; malformed evidence is never silently called v2.2."""
     if _REAL_LEG_DIR is None:
         return "unknown"
-    for leg in ("run-1", "cancel", "shutdown", "two-users"):
+    # A declared but inaccessible corpus belongs to test_real_leg_corpus_declared;
+    # never touch it at collection time under CI's non-root identity.
+    try:
+        root_mode = os.stat(_REAL_LEG_DIR, follow_symlinks=False).st_mode
+    except OSError:
+        return "unknown"
+    if not _stat_mod.S_ISDIR(root_mode):
+        return "unknown"
+    # Keep the true v2.2 compatibility signal (no tee-status) without letting malformed
+    # scan headers silently downgrade a declared newer corpus.
+    versions = set()
+    for leg in _POSITIVE_LEGS:
         ld = _REAL_LEG_DIR / leg
         if not ld.is_dir():
-            return "v2.2"
-        scan = ld / "process-scan-after.txt"
-        if not scan.is_file():
-            return "v2.2"
+            pytest.fail(f"corpus {leg} directory absent")
+        scan = _corpus_file(ld, "process-scan-after.txt")
         first = scan.read_text().splitlines()
-        if not first or not first[0].startswith("# process-scan v2.3 "):
-            return "v2.2"
-        if not (ld / "tee-status.json").is_file():
-            return "v2.2"
-    return "v2.3"
+        header = first[0] if first else ""
+        tee_status = ld / "tee-status.json"
+        if header.startswith("# process-scan v2.4 "):
+            version = "v2.4"
+        elif header.startswith("# process-scan v2.3 "):
+            version = "v2.3"
+        elif not tee_status.exists():
+            # Genuine legacy v2.2 has no versioned scan header and predates tee-status.json;
+            # shutdown's clean after-scan may be empty, so absence of a header alone is not newer evidence.
+            version = "v2.2"
+        else:
+            pytest.fail(f"corpus {leg} process-scan-after.txt missing scan header")
+        if version in {"v2.3", "v2.4"}:
+            _corpus_file(ld, "tee-status.json")
+        versions.add(version)
+    if len(versions) != 1:
+        pytest.fail(f"corpus scan versions disagree: {sorted(versions)}")
+    return versions.pop()
+
+
+def test_ck12_corpus_version_rejects_malformed_newer_corpus(tmp_path, monkeypatch):
+    for leg in _POSITIVE_LEGS:
+        ld = tmp_path / leg
+        ld.mkdir()
+        (ld / "process-scan-after.txt").write_text("malformed header\n")
+        (ld / "tee-status.json").write_text("{}\n")
+    monkeypatch.setattr(sys.modules[__name__], "_REAL_LEG_DIR", tmp_path)
+    with pytest.raises(pytest.fail.Exception, match="run-1 process-scan-after.txt missing scan header"):
+        _corpus_version()
+
+
+@pytest.mark.parametrize("missing", ["process-scan-after.txt", "tee-status.json"])
+def test_ck12_corpus_version_rejects_missing_newer_artifact(tmp_path, monkeypatch, missing):
+    for leg in _POSITIVE_LEGS:
+        ld = tmp_path / leg
+        ld.mkdir()
+        if missing != "process-scan-after.txt" or leg != "run-1":
+            (ld / "process-scan-after.txt").write_text(
+                "# process-scan v2.3 rows=1 buzz_present=1 owned_present=1 pinned_present=1 utc=2026-09-08T00:00:00.000000Z\n")
+        if missing != "tee-status.json" or leg != "run-1":
+            (ld / "tee-status.json").write_text("{}\n")
+    monkeypatch.setattr(sys.modules[__name__], "_REAL_LEG_DIR", tmp_path)
+    with pytest.raises(pytest.fail.Exception, match="run-1: .* is not a regular file"):
+        _corpus_version()
 
 
 _CORPUS_VERSION = _corpus_version()
@@ -2661,6 +2751,87 @@ def test_ck11_venue_domain_is_known():
         f"S0_01_VENUE={_VENUE!r} is not a known venue")
 
 
+def _real_leg_sidecar_paths(root: Path):
+    manifest = root.parent / "golden.pc.sha256"
+    if not manifest.is_file():
+        pytest.fail(f"{manifest.name} absent -- run scripts/realleg_sync.sh pull")
+    declared = {}
+    for line in manifest.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            sha, rel_text = line.split(None, 1)
+        except ValueError:
+            pytest.fail("golden.pc.sha256 has a malformed line")
+        rel = rel_text.strip().lstrip("./")
+        if rel in declared:
+            pytest.fail(f"golden.pc.sha256 declares {rel} more than once")
+        declared[rel] = sha
+    actual = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    declared_paths = set(declared)
+    unlisted = actual - declared_paths
+    if unlisted:
+        pytest.fail(f"corpus file absent from sidecar: {sorted(unlisted)[0]}")
+    missing = declared_paths - actual
+    if missing:
+        pytest.fail(f"sidecar declared artifact absent: {sorted(missing)[0]}")
+    return declared
+
+
+def test_ck12_sidecar_path_set_is_bidirectional(tmp_path):
+    root = tmp_path / "golden"
+    leg = root / "run-1"
+    leg.mkdir(parents=True)
+    item = leg / "timeline.jsonl"
+    item.write_text("{}\n")
+    sidecar = tmp_path / "golden.pc.sha256"
+    sidecar.write_text(f"{_sha256_file(item)}  run-1/timeline.jsonl\n")
+    assert set(_real_leg_sidecar_paths(root)) == {"run-1/timeline.jsonl"}
+
+    extra = leg / "unlisted.txt"
+    extra.write_text("extra\n")
+    with pytest.raises(pytest.fail.Exception, match="corpus file absent from sidecar: run-1/unlisted.txt"):
+        _real_leg_sidecar_paths(root)
+
+    extra.unlink()
+    item.unlink()
+    with pytest.raises(pytest.fail.Exception, match="sidecar declared artifact absent: run-1/timeline.jsonl"):
+        _real_leg_sidecar_paths(root)
+
+
+def test_lossy_a2c_timeline_line_names_raw_b64(bundle):
+    ld = bundle / "golden" / "run-1"
+    entries = cc._load_timeline_raw(ld, "run-1")
+    entry = next(e for e in entries if e["dir"] == "a2c")
+    entry["raw_b64"] = "AA=="
+    with pytest.raises(cc.Failure, match=r"^run-1: timeline: lossy a2c line at seq \d+ \(raw_b64 kept\)$"):
+        cc.check_timeline(entries, "run-1", ld)
+
+
+def test_lossy_a2c_without_raw_b64_stays_unexpected_keys(bundle):
+    ld = bundle / "golden" / "run-1"
+    entries = cc._load_timeline_raw(ld, "run-1")
+    entry = next(e for e in entries if e["dir"] == "a2c")
+    entry["lossy"] = True
+    with pytest.raises(
+        cc.Failure,
+        match=r"unexpected keys \['dir', 'frame', 'lossy', 'seq', 't_mono_ns', 't_utc'\]$",
+    ):
+        cc.check_timeline(entries, "run-1", ld)
+
+
+def test_main_maps_bare_system_exit_to_70(monkeypatch, tmp_path):
+    def exits(_root, **_kwargs):
+        raise SystemExit()
+
+    monkeypatch.setattr(cc, "check_bundle", exits)
+    assert cc.main(["check_acp_conformance.py", str(tmp_path)]) == 70
+
+
 def test_real_leg_corpus_declared():
     """CK11-F16/F13: venue domain is EXACTLY {ci, sandbox, pc}; any other value FAILS.
     If venue is sandbox or pc, S0_01_REAL_LEG_DIR MUST be set and be a directory.
@@ -2677,16 +2848,11 @@ def test_real_leg_corpus_declared():
         missing = _EXPECTED_REAL_LEGS - present
         assert not missing, (
             f"S0_01_REAL_LEG_DIR={_REAL_LEG_DIR} incomplete: missing legs {sorted(missing)}")
-        # CK11-F19: verify corpus CONTENT against the sidecar when present
-        manifest = _REAL_LEG_DIR.parent / "golden.pc.sha256"
-        assert manifest.is_file(), (
-            f"{manifest} absent — run scripts/realleg_sync.sh pull")
-        for line in manifest.read_text().splitlines():
-            if not line.strip():
-                continue
-            sha, rel = line.split(None, 1)
-            p = _REAL_LEG_DIR / rel.strip().lstrip("./")
-            assert _sha256_file(p) == sha, f"corpus drift at {rel.strip()}"
+        # CK12 F-09: sidecar and corpus path sets must match in both directions.
+        declared = _real_leg_sidecar_paths(_REAL_LEG_DIR)
+        for rel, sha in sorted(declared.items()):
+            p = _REAL_LEG_DIR / rel
+            assert _sha256_file(p) == sha, f"corpus drift at {rel}"
         # CK12 sweep 10.2: assert declared artifacts per leg
         _V22_POSITIVE = {"timeline.jsonl", "runtime-identity.json", "env.json",
                          "frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl",
@@ -2781,7 +2947,7 @@ def test_real_leg_manifests(leg):
     leg_dir = _real_leg(leg)
     baseline = P / "evidence" / "golden" / "manifests" / "manifest-baseline.txt.gz"
     if not baseline.exists():
-        pytest.skip("baseline manifest absent")
+        pytest.fail("baseline manifest absent")
     ok, result = _run_check_safe(cc.check_manifests, leg_dir, leg, baseline,
                                   PINNED_BASELINE_GZ_SHA256)
     if ok:
@@ -2797,12 +2963,14 @@ def test_real_leg_process_evidence(request, leg):
     leg_dir = _real_leg(leg)
     scan = leg_dir / "process-scan-after.txt"
     if _CORPUS_VERSION == "v2.2":
-        request.node.add_marker(pytest.mark.xfail(
-            strict=True, reason=f"corpus v2.2 predates scan v2.3: {leg} process-scan-after.txt"))
         if not scan.is_file():
             pytest.fail(f"corpus v2.2: {leg} process-scan-after.txt absent")
         first = _corpus_file(leg_dir, "process-scan-after.txt").read_text().splitlines()
         if not first or not first[0].startswith("# process-scan v2.3 "):
+            request.node.add_marker(pytest.mark.xfail(
+                strict=True,
+                reason=f"corpus v2.2 predates scan v2.3: {leg} process-scan-after.txt",
+            ))
             pytest.fail(f"corpus v2.2: {leg} has no v2.3 scan header")
     ok, result = _run_check_safe(cc.check_process_evidence, leg_dir, leg)
     assert ok, f"unexpected failure: {result}"
@@ -2858,9 +3026,9 @@ def test_real_leg_two_users():
 
 
 _KNOWN_XFAIL_REASONS = frozenset({
-    "negative: negative: probe_sha256 mismatch",
-    "negative: negative: agent_interpreter_realpath mismatch",
-    "negative: negative: spawned_at_utc is later than the first frame",
+    "negative: probe_sha256 mismatch",
+    "negative: agent_interpreter_realpath mismatch",
+    "negative: spawned_at_utc is later than the first frame",
 })
 
 
@@ -2869,21 +3037,36 @@ def _is_known_stale(result: str) -> bool:
     return result in _KNOWN_XFAIL_REASONS
 
 
+def _grade_negative(ok, result) -> str:
+    if ok:
+        return "pass-is-hard-failure"
+    if _is_known_stale(result):
+        return "known-stale-xfail"
+    return "real-failure"
+
+
+def test_grade_negative_covers_all_three_outcomes():
+    assert _grade_negative(True, "observed") == "pass-is-hard-failure"
+    assert _grade_negative(False, next(iter(_KNOWN_XFAIL_REASONS))) == "known-stale-xfail"
+    assert _grade_negative(False, "negative: new failure") == "real-failure"
+
+
 def test_real_leg_negative(request):
     """Real-producer: negative leg — CK11-B1: the check MUST fail on the current corpus.
     If check_negative PASSES, the known-stale reasons no longer reproduce and must be
     retired.  A known-stale failure is xfailed; any other failure is a hard FAIL."""
     neg_dir = _real_leg("negative")
     ok, result = _run_check_safe(cc.check_negative, neg_dir)
-    assert not ok, (
-        "check_negative PASSES on the real negative leg — the known-stale reasons "
-        f"{sorted(_KNOWN_XFAIL_REASONS)} no longer reproduce; retire them (B1)")
-    if _is_known_stale(result):
+    grade = _grade_negative(ok, result)
+    if grade == "pass-is-hard-failure":
+        pytest.fail(
+            "check_negative PASSES on the real negative leg — the known-stale reasons "
+            f"{sorted(_KNOWN_XFAIL_REASONS)} no longer reproduce; retire them (B1)")
+    if grade == "known-stale-xfail":
         request.node.add_marker(pytest.mark.xfail(
             reason=f"real v2.2 sample: {result} (capture predates current probe)"))
-        assert False, f"real v2.2 sample: {result} (capture predates current probe)"
-    else:
-        assert False, f"unexpected failure: negative: {result}"
+        pytest.fail(f"real v2.2 sample: {result} (capture predates current probe)")
+    pytest.fail(f"unexpected failure: {result}")
 
 
 def test_real_leg_normalize_timeline():
@@ -3077,12 +3260,12 @@ def test_ck7_f6a_tee_pid_wrong_ppid(tmp_path):
         {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
     _rewrite(ld / "runtime-identity.json", json.dumps(
         {"tee_pid": rid_tee, "agent_child_pid": agent_pid}))
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=4, owned=4, owned_present=4, pinned_present=4) + "\n"
         + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"{structural_tee} {buzz_pid} 95 /usr/bin/python3 {PINNED_TEE_PATH} --wrapper\n"
         + f"{rid_tee} {structural_tee} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"{agent_pid} {structural_tee} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", rows=0, buzz_present=0, owned=4, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: tee_pid 12340 ppid is not buzz_acp_pid"
@@ -3105,12 +3288,12 @@ def test_ck7_f6b_agent_pid_wrong_ppid(tmp_path):
         {"buzz_acp_pid": buzz_pid, "owned": owned, "taken_at": "ready+after"}))
     _rewrite(ld / "runtime-identity.json", json.dumps(
         {"tee_pid": tee_pid, "agent_child_pid": rid_agent}))
-    _rewrite(ld / "process-scan-after.txt", _scan_header("after", owned=4, owned_present=4, pinned_present=4) + "\n"
+    _rewrite(ld / "process-scan-after.txt", _scan_header("after", rows=4, owned=4, owned_present=4, pinned_present=4) + "\n"
         + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --relay-url ws://127.0.0.1:3999\n"
         + f"{tee_pid} {buzz_pid} 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
         + f"{structural_agent} {tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n"
         + f"{rid_agent} {buzz_pid} 75 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
-    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", buzz_present=0, owned=4, owned_present=0) + "\n")
+    _rewrite(ld / "process-scan-teardown.txt", _scan_header("teardown", rows=0, buzz_present=0, owned=4, owned_present=0) + "\n")
     with pytest.raises(cc.Failure) as ei:
         cc.check_process_evidence(ld, "run-1")
     assert str(ei.value) == "run-1: agent_child_pid 12345 ppid is not tee_pid"
@@ -3128,14 +3311,17 @@ def test_ck7_f7a_teardown_mode_mismatch(bundle):
 
 
 # -- F7b: teardown header rows=0 (C:1217-1218) --
-def test_ck7_f7b_teardown_rows_zero(bundle):
-    """F7b: teardown scan with rows=0 must fail."""
+def test_ck7_f7b_teardown_table_rows_zero(bundle):
+    """F7b: teardown enumeration with table_rows=0 must fail."""
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
-    _rewrite(td, _scan_header("teardown", rows=0, buzz_present=0, owned_present=0) + "\n")
+    _rewrite(td, _scan_header(
+        "teardown", rows=0, table_rows=0, buzz_present=0, owned_present=0) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
-    assert out == "failure_reason: run-1: process-scan-teardown.txt header rows=0 (enumeration did not run)"
+    assert out == (
+        "failure_reason: run-1: process-scan-teardown.txt header table_rows=0 "
+        "(enumeration did not run)")
 
 
 # -- F7c: teardown header owned count mismatch (C:1219-1220) --
@@ -3143,7 +3329,7 @@ def test_ck7_f7c_teardown_owned_mismatch(bundle):
     """F7c: teardown header owned != len(owned-pids.json owned) must fail."""
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
-    _rewrite(td, _scan_header("teardown", buzz_present=0, owned=1, owned_present=0) + "\n")
+    _rewrite(td, _scan_header("teardown", rows=0, buzz_present=0, owned=1, owned_present=0) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header owned=1 != owned-pids.json (3)"
@@ -3155,7 +3341,7 @@ def test_ck7_f7d_teardown_owned_present_mismatch(bundle):
     ld = bundle / "golden" / "run-1"
     td = ld / "process-scan-teardown.txt"
     # Empty body but header says owned_present=1
-    _rewrite(td, _scan_header("teardown", buzz_present=0, owned_present=1) + "\n")
+    _rewrite(td, _scan_header("teardown", rows=0, buzz_present=0, owned_present=1) + "\n")
     rc, out = _check(bundle)
     assert rc == 1
     assert out == "failure_reason: run-1: process-scan-teardown.txt header owned_present=1 inconsistent with body (0)"
@@ -3349,8 +3535,7 @@ def test_ck7_f9c_golden_same_first_tutc(bundle, monkeypatch):
 # cannot be disabled without the self-test also going red.
 
 _WRITE_ATTRS = {"write_text", "write_bytes", "touch", "rename",
-                "chmod", "hardlink_to"}
-# symlink_to omitted: creates a new dirent or raises FileExistsError; cannot reach a shared inode.
+                "chmod", "hardlink_to", "symlink_to"}
 _WRITE_MODES = set("wa+")
 _SHUTIL_WRITERS = {"copy", "copy2", "copyfile"}
 _OS_WRITERS = {"replace", "rename", "truncate", "chmod", "utime"}
@@ -3358,9 +3543,15 @@ _EXEMPT_FNS = {"_rewrite", "_write_timeline", "_write_tee_status",
                "_write_runtime_identity", "_write_env", "_write_startup_and_log",
                "_write_model", "_write_manifests", "_write_mentions",
                "_write_upstream_records", "_write_process_scan", "_write_negative",
+               "_write_capture_contract_files",
                "_sign_mention", "_session_bundle", "_patch_nostr_verify",
                "test_ck8_f34_frame_tee_subprocess_keys",
                "test_ck9_tools_not_hardlinked",
+               "test_ck12_corpus_version_rejects_malformed_newer_corpus",
+               "test_ck12_corpus_version_rejects_missing_newer_artifact",
+               "test_ck12_sidecar_path_set_is_bidirectional",
+               "test_symlink_upstream_record", "test_symlink_manifest_gz",
+               "test_symlinked_golden_root_is_named",
                "test_golden_run_eq", "test_golden_distinctness_all"}
 
 
@@ -3489,6 +3680,8 @@ def test_ck12_chmod_mutant():
     p.chmod(0o400)
 def test_ck12_hardlink_mutant():
     p.hardlink_to(dst)
+def test_ck12_symlink_mutant():
+    p.symlink_to(dst)
 def test_ck12_os_truncate_mutant():
     os.truncate(p, 0)
 def test_ck12_os_utime_mutant():
@@ -3502,7 +3695,7 @@ def test_ck12_gzip_open_mutant():
     cats = {v.split(": ", 1)[1].split("(")[0].strip() for v in self_violations}
     assert cats == {".write_text", ".write_bytes", "open", "json.dump",
                     "shutil.copy", "os.replace", ".touch", ".rename",
-                    ".open", "io.open", ".chmod", ".hardlink_to",
+                    ".open", "io.open", ".chmod", ".hardlink_to", ".symlink_to",
                     "os.truncate", "os.utime",
                     "gzip.open"}, f"F43 self-test categories: {cats}"
 
@@ -3609,8 +3802,9 @@ def test_ck7_f30_after_scan_duplicate_pid(bundle):
     """F30: duplicate scan rows for one pid in after-scan are rejected."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     lines = sp.read_text().splitlines()
-    # Duplicate the second body row (tee_pid=12340)
+    # Duplicate the second body row (tee_pid=12340) and keep the v2.4 body count honest.
     assert len(lines) > 2, "expected at least 3 lines in after-scan"
+    lines[0] = lines[0].replace("rows=3", "rows=4", 1)
     lines.append(lines[2])
     _rewrite(sp, "\n".join(lines) + "\n")
     rc, out = _check(bundle)
@@ -3804,7 +3998,7 @@ def test_ck8_f4_no_tee_parented_by_buzz(bundle):
     """R8-CK-F4: no tee process parented by buzz-acp → exact Failure (FULL owned set)."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     # All owned pids present, but tee_pid has wrong ppid (not buzz_pid)
-    _rewrite(sp, _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, pinned_present=3) + "\n"
                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n"
                  + f"12340 9999 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
                  + f"12345 12340 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -3820,7 +4014,7 @@ def test_ck8_f4_no_agent_parented_by_tee(bundle):
     the identity-binding ppid check fails."""
     sp = bundle / "golden" / "run-1" / "process-scan-after.txt"
     # Agent parented directly by buzz, not tee. All three are in the owned closure.
-    _rewrite(sp, _scan_header("after", pinned_present=3) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, pinned_present=3) + "\n"
                  + f"12300 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n"
                  + f"12340 12300 90 /usr/bin/python3 {PINNED_TEE_PATH}\n"
                  + f"12345 12300 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -3907,7 +4101,7 @@ def test_ck8_nonstream_roles_wrong(bundle):
 def test_ck8_teardown_scan_duplicate_pid(bundle):
     """R8-CK-F9: duplicate rows for one pid in teardown-scan → exact Failure."""
     tp = bundle / "golden" / "run-1" / "process-scan-teardown.txt"
-    _rewrite(tp, _scan_header("teardown", buzz_present=0, owned_present=0, rows=2) + "\n"
+    _rewrite(tp, _scan_header("teardown", rows=2, buzz_present=0, owned_present=0) + "\n"
                  + "99001 1 5 /usr/bin/sleep 900\n"
                  + "99001 1 5 /usr/bin/sleep 900\n")
     rc, out = _check(bundle)
@@ -4196,7 +4390,7 @@ def test_ck9_no_tee_parented_by_buzz(bundle):
     # is NOT in the tree, but the owned set matches for the closure check.
     not_tee_pid = 12340  # same slot as tee_pid in owned-pids
     agent_pid = 12345
-    _rewrite(sp, _scan_header("after", pinned_present=2) + "\n"
+    _rewrite(sp, _scan_header("after", rows=3, pinned_present=2) + "\n"
              + f"{buzz_pid} 1 100 {PINNED_BUZZ_ACP_EXE_REALPATH} --r\n"
              + f"{not_tee_pid} {buzz_pid} 90 /usr/bin/python3 /tmp/not-the-tee.py\n"
              + f"{agent_pid} {not_tee_pid} 80 /usr/bin/python3 {PINNED_AGENT_REALPATH}\n")
@@ -4590,10 +4784,10 @@ def test_ck9_default_timeout_is_90():
 # B1 (CK11): known-stale xfail uses WHOLE-reason equality, not a tail segment.
 def test_ck11_known_stale_is_the_whole_reason_not_a_tail():
     """CK11-B1: _is_known_stale matches the WHOLE reason, never a tail collision."""
-    assert _is_known_stale("negative: negative: probe_sha256 mismatch")
+    assert _is_known_stale("negative: probe_sha256 mismatch")
     assert not _is_known_stale("probe_sha256 mismatch"), "tail alone must not match"
     assert not _is_known_stale(
-        "negative: negative: probe reported an error: probe_sha256 mismatch"
+        "negative: probe reported an error: probe_sha256 mismatch"
     ), "tail collision from corpus-controlled probe_error must not match"
 
 
@@ -4617,7 +4811,7 @@ def test_ck10_fifo_at_tools_frame_tee_is_named(bundle, tmp_path, monkeypatch):
     rc, out = _check(bundle, timeout_s=10)
     elapsed = time.monotonic() - t0
     assert elapsed < 5, f"FIFO blocked for {elapsed:.1f}s"
-    assert (rc, out) == (1, "failure_reason: run-1: tools/frame_tee.py is not a regular file")
+    assert (rc, out) == (1, "failure_reason: run-1: tools/frame_tee.py is not a regular file: frame_tee.py")
 
 
 def test_ck10_dir_named_manifest_post_summary(bundle):
@@ -4626,7 +4820,7 @@ def test_ck10_dir_named_manifest_post_summary(bundle):
     p.unlink()
     p.mkdir()
     rc, out = _check(bundle)
-    assert (rc, out) == (1, "failure_reason: run-1: manifest-post.summary is not a regular file")
+    assert (rc, out) == (1, "failure_reason: run-1: manifest-post.summary is not a regular file: manifest-post.summary")
 
 
 # CK11-F8: tools/acp_probe.py through the read CLASS (negative_contract.py)
@@ -4645,7 +4839,7 @@ def test_ck11_fifo_at_tools_acp_probe_is_named(bundle, tmp_path, monkeypatch):
     rc, out = _check(bundle, timeout_s=30)
     elapsed = time.monotonic() - t0
     assert elapsed < 30, f"FIFO blocked to the cap: {elapsed:.1f}s"
-    assert (rc, out) == (1, "failure_reason: negative: negative: tools/acp_probe.py is not a regular file")
+    assert (rc, out) == (1, "failure_reason: negative: tools/acp_probe.py is not a regular file: acp_probe.py")
 
 
 def test_ck11_dir_at_tools_acp_probe_is_named(bundle, tmp_path, monkeypatch):
@@ -4662,7 +4856,7 @@ def test_ck11_dir_at_tools_acp_probe_is_named(bundle, tmp_path, monkeypatch):
     rc, out = _check(bundle, timeout_s=30)
     elapsed = time.monotonic() - t0
     assert elapsed < 30, f"dir blocked to the cap: {elapsed:.1f}s"
-    assert (rc, out) == (1, "failure_reason: negative: negative: tools/acp_probe.py is not a regular file")
+    assert (rc, out) == (1, "failure_reason: negative: tools/acp_probe.py is not a regular file: acp_probe.py")
 
 
 # CK11-F15: absent ACP schema is a failure, not a silent skip (AF-AP-40)
@@ -4672,111 +4866,262 @@ def test_ck11_absent_acp_schema_is_a_failure(bundle, tmp_path):
     assert _check(bundle) == (1, "failure_reason: golden: fixtures/acp-schema-v1.json absent")
 
 
-def test_ck11_no_presence_gated_check_in_the_proof():
-    """CK11-F15 CLASS: no AFFIRMATIVE `if p.exists()` whose false branch yields a
-    default instead of a raise (AF-AP-40).  NEGATED gates like `if not p.exists():
-    raise Failure(...)` are CORRECT (fail-closed)."""
+def _presence_gate_test(node):
+    """Return the normalized presence predicate used by an expression, if any."""
     import ast as _ast
-    checked_files = [
-        P / "check_acp_conformance.py",
-        P / "negative_contract.py",
-        P / "check_initialize.py",
-    ]
-    # Reviewed exceptions with reasons:
-    _REVIEWED_SAFE = {
-        ("check_initialize.py", 129),   # tl_path.exists() -> deferred: fail-closed
-        ("check_initialize.py", 194),   # path.is_dir() routing between directory/file mode
-        ("check_acp_conformance.py", 1713),  # post_sum_path optional per-leg; _require_file inside
-    }
-    violations = []
-    for fpath in checked_files:
-        src = fpath.read_text()
-        tree = _ast.parse(src)
-        fname = fpath.name
-        for node in _ast.walk(tree):
-            if not isinstance(node, _ast.If):
-                continue
-            if (fname, node.lineno) in _REVIEWED_SAFE:
-                continue
-            test_code = _ast.unparse(node.test) if hasattr(_ast, "unparse") else ""
-            # Only flag AFFIRMATIVE presence gates (if p.exists(): use it)
-            # Skip negated gates (if not p.exists(): raise) — those are fail-closed.
-            if test_code.startswith("not "):
-                continue
-            if ".exists()" not in test_code and ".is_file()" not in test_code:
-                continue
-            # Affirmative gate with no else: the AP-40 pattern
-            # Check if the body uses the file (read/load) rather than just raising
-            body_code = "\n".join(_ast.unparse(n) for n in node.body)
-            if "raise " in body_code:
-                continue  # the true branch raises — not a skip gate
-            if not node.orelse:
-                violations.append(f"{fname}:{node.lineno} affirmative presence gate with no else (AF-AP-40)")
-    assert not violations, f"AP-40 hits: {violations}"
+
+    for child in _ast.walk(node):
+        if not isinstance(child, _ast.Call):
+            continue
+        func = child.func
+        if (isinstance(func, _ast.Attribute)
+                and func.attr in {"exists", "is_file", "is_dir", "glob"}):
+            return _ast.unparse(node)
+        if (isinstance(func, _ast.Attribute) and isinstance(func.value, _ast.Name)
+                and func.value.id == "os" and func.attr == "access"):
+            return _ast.unparse(node)
+        if (isinstance(func, _ast.Attribute) and isinstance(func.value, _ast.Attribute)
+                and isinstance(func.value.value, _ast.Name)
+                and func.value.value.id == "os" and func.value.attr == "path"
+                and func.attr == "exists"):
+            return _ast.unparse(node)
+    return None
 
 
-def test_ck11_every_read_is_under_the_walk_or_require_file():
-    """CK11-F8 CLASS: every open()/read_text()/read_bytes()/json.load() in the checker
-    and its callees resolves under a walked root (golden/, _fixtures()) or is wrapped
-    in _require_file / preceded by an S_ISREG check on the same receiver."""
+def _presence_gate_hits(source: str, filename: str):
+    """Find every presence-controlled path that can yield without raising."""
     import ast as _ast
-    checked_files = [
-        P / "check_acp_conformance.py",
-        P / "negative_contract.py",
-        P / "check_initialize.py",
-    ]
-    READ_ATTRS = {"read_text", "read_bytes"}
-    for fpath in checked_files:
-        src = fpath.read_text()
-        lines = src.splitlines()
-        tree = _ast.parse(src)
-        # Build function ranges
-        fns = []
-        for node in _ast.walk(tree):
+
+    tree = _ast.parse(source)
+    parents = {child: node for node in _ast.walk(tree)
+               for child in _ast.iter_child_nodes(node)}
+
+    def owner(node):
+        while node in parents:
+            node = parents[node]
             if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
-                fns.append((node.name, node.lineno, node.end_lineno))
-        def owner(ln):
-            best = None
-            for n, s, e in fns:
-                if s <= ln <= e and (best is None or s > best[1]):
-                    best = (n, s, e)
-            return best[0] if best else "<module>"
-        # Find all read sites
-        for node in _ast.walk(tree):
-            if not isinstance(node, _ast.Call):
+                return node.name
+        return "<module>"
+
+    def always_raises(statements):
+        def is_terminal(stmt):
+            if isinstance(stmt, _ast.Raise):
+                return True
+            if not isinstance(stmt, _ast.Expr) or not isinstance(stmt.value, _ast.Call):
+                return False
+            return _ast.unparse(stmt.value.func) == "pytest.fail"
+
+        return bool(statements) and all(is_terminal(stmt) for stmt in statements)
+
+    hits = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.If):
+            predicate = _presence_gate_test(node.test)
+            if predicate is None:
                 continue
-            f = node.func
-            is_read = False
-            recv = ""
-            if isinstance(f, _ast.Attribute) and f.attr in READ_ATTRS:
-                is_read = True
-                recv = _ast.unparse(f.value) if hasattr(_ast, "unparse") else "?"
-            elif isinstance(f, _ast.Name) and f.id == "open":
-                is_read = True
-                recv = _ast.unparse(node.args[0]) if node.args and hasattr(_ast, "unparse") else "?"
-            if not is_read:
-                continue
-            ln = node.lineno
-            fn = owner(ln)
-            # Check the 5 lines before for _require_file or S_ISREG on the receiver
-            context = "\n".join(lines[max(0, ln - 6):ln])
-            if "_require_file" in context or "S_ISREG" in context:
-                continue
-            # Check if the receiver resolves under a walked root
-            # Variables derived from walked roots (golden/, _fixtures(), leg_dir, etc.)
-            walked = ("golden", "_fixtures", "leg_dir", "dirpath", "d /",
-                      "neg_dir", "r1m", "r2m", "mentions_dir", "manifest",
-                      "post_sum", "c2a_path", "a2c_path", "stderr_path",
-                      "sp", "argv_path", "tl_path", "rp", "fp_path",
-                      "rec_dir", "item", "fpath", "path")
-            if any(root in recv for root in walked):
-                continue
-            # _sha256_file is called on paths that have been require_file'd
-            if fn == "_sha256_file":
-                continue
-            assert False, (
-                f"{fpath.name}:{ln} in {fn}: read site {recv} is not under "
-                f"a walked root and has no _require_file / S_ISREG guard")
+            negated = isinstance(node.test, _ast.UnaryOp) and isinstance(node.test.op, _ast.Not)
+            false_yields = not node.orelse or not always_raises(node.orelse)
+            true_yields = not always_raises(node.body)
+            if (not negated and false_yields) or (negated and true_yields):
+                hits.add((filename, owner(node), predicate))
+        elif isinstance(node, _ast.IfExp):
+            predicate = _presence_gate_test(node.test)
+            if predicate is not None:
+                hits.add((filename, owner(node), predicate))
+        elif isinstance(node, _ast.Try):
+            for handler in node.handlers:
+                exc = _ast.unparse(handler.type) if handler.type else ""
+                if "FileNotFoundError" in exc and not always_raises(handler.body):
+                    hits.add((filename, owner(node), "except FileNotFoundError"))
+    return hits
+
+
+def test_ck12_no_presence_gated_check_in_the_proof():
+    """AP-40 covers false paths, negation, ternaries, glob and missing-file catches."""
+    checked_files = [
+        P / "check_acp_conformance.py",
+        P / "negative_contract.py",
+        P / "check_initialize.py",
+        Path(__file__),
+    ]
+    # Keyed by stable AST identity, never source line. Each exception routes or declares
+    # optional/absent semantics; no checker assertion is skipped by its false path.
+    exemptions = {
+        ('check_acp_conformance.py', '_captured_leg_version', 'not scan.is_file()'),
+        ('check_acp_conformance.py', '_check_bundle_uncapped', 'item.is_dir() and item.name not in expected_dirs'),
+        ('check_acp_conformance.py', '_check_bundle_uncapped', 'item.is_file() and item.name not in expected_files'),
+        ('check_acp_conformance.py', '_check_bundle_uncapped', 'not walk_base.exists()'),
+        ('check_acp_conformance.py', '_check_bundle_uncapped', 'post_sum_path.exists()'),
+        ('check_acp_conformance.py', 'check_negative', 'neg_dir.is_dir()'),
+        ('check_acp_conformance.py', 'check_negative', 'stderr_path.exists()'),
+        ('check_initialize.py', '_check_response_directory', 'not dirpath.is_dir()'),
+        ('check_initialize.py', '_check_response_directory', 'not tl_path.exists()'),
+        ('check_initialize.py', 'main', "path.is_dir() or (not path.exists() and path.suffix not in ('.json', '.jsonl'))"),
+        ('negative_contract.py', 'validate_negative_dir', "not neg_dir.is_dir() or not (neg_dir / 'timeline.jsonl').exists()"),
+        ('test_s0_01_check_acp_conformance.py', '_corpus_version', 'not tee_status.exists()'),
+        ('test_s0_01_check_acp_conformance.py', '_real_leg', 'not leg_dir.is_dir()'),
+        ('test_s0_01_check_acp_conformance.py', 'test_ck11_dir_at_tools_acp_probe_is_named', 'probe.exists()'),
+        ('test_s0_01_check_acp_conformance.py', 'test_ck8_f34_frame_tee_subprocess_keys', 'status_path.exists()'),
+        ('test_s0_01_check_acp_conformance.py', 'test_ck8_real_leg_tee_status', "_CORPUS_VERSION == 'v2.2' and (not ts_path.is_file())"),
+        ('test_s0_01_check_acp_conformance.py', 'test_real_bundle_cli', "(P / 'evidence' / 'golden' / 'run-1' / 'timeline.jsonl').exists()"),
+    }
+    hits = set()
+    for path in checked_files:
+        hits |= _presence_gate_hits(path.read_text(), path.name)
+    assert hits == exemptions, (
+        f"AP-40 presence gates: added={sorted(hits - exemptions)!r}; "
+        f"removed={sorted(exemptions - hits)!r}")
+
+
+def test_ck12_presence_gate_detector_catches_all_ten_shapes():
+    cases = {
+        "affirmative_fallthrough": "def f(p):\n    if p.exists():\n        return p.read_text()\n    return 'default'\n",
+        "affirmative_else": "def f(p):\n    if p.is_file():\n        return 1\n    else:\n        return 0\n",
+        "negative_true_yields": "def f(p):\n    if not p.exists():\n        return None\n    raise RuntimeError\n",
+        "ternary": "def f(p):\n    return p.read_text() if p.exists() else None\n",
+        "os_path": "import os\ndef f(p):\n    if os.path.exists(p):\n        return 1\n",
+        "os_access": "import os\ndef f(p):\n    if os.access(p, os.R_OK):\n        return 1\n",
+        "glob": "def f(p):\n    if p.glob('*.json'):\n        return 1\n",
+        "is_dir": "def f(p):\n    if p.is_dir():\n        return 1\n",
+        "caught_missing": "def f(p):\n    try:\n        return p.read_text()\n    except FileNotFoundError:\n        return None\n",
+        "caught_missing_pass": "def f(p):\n    try:\n        return p.read_text()\n    except FileNotFoundError:\n        pass\n",
+    }
+    for name, source in cases.items():
+        hits = _presence_gate_hits(source, f"{name}.py")
+        assert hits, f"AP-40 shape escaped: {name}"
+
+
+def test_ck12_presence_exemption_is_comment_stable():
+    source = "def f(p):\n    if p.exists():\n        return 1\n"
+    assert _presence_gate_hits(source, "x.py") == _presence_gate_hits(
+        "# prepended comment\n" + source, "x.py")
+
+
+def _classify_read_guard(receiver: str) -> str:
+    """Classify an AST read by the guard on that exact receiver."""
+    if receiver in {"sys.stdin", "sys.stdin.buffer"}:
+        return "stdin"
+    if receiver.startswith(("_require_file(", "pins.require_regular_file(",
+                            "_require_negative_file(", "_require_input(")):
+        return "require_regular_file"
+    return "unguarded"
+
+
+def _enumerate_read_sites(source: str, filename: str):
+    """Return every filesystem-read call, including module/class/lambda bodies."""
+    import ast as _ast
+
+    tree = _ast.parse(source)
+    parents = {child: node for node in _ast.walk(tree)
+               for child in _ast.iter_child_nodes(node)}
+
+    def owner(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                return node.name
+            if isinstance(node, _ast.Lambda):
+                return "<lambda>"
+        return "<module>"
+
+    sites = set()
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        func = node.func
+        receiver = None
+        if isinstance(func, _ast.Name) and func.id == "open":
+            receiver = _ast.unparse(node.args[0]) if node.args else "<missing>"
+        elif isinstance(func, _ast.Attribute):
+            if func.attr in {"read_text", "read_bytes", "open"}:
+                receiver = _ast.unparse(func.value)
+            elif (func.attr == "load" and isinstance(func.value, _ast.Name)
+                  and func.value.id == "json"):
+                receiver = _ast.unparse(node.args[0]) if node.args else "<missing>"
+        if receiver is not None:
+            sites.add((filename, owner(node), receiver, _classify_read_guard(receiver)))
+    return sites
+
+
+def test_ck12_every_read_matches_the_guarded_golden_list():
+    """Every read site is named exactly; additions and guard drift both fail."""
+    expected = {
+        ('check_acp_conformance.py', '_captured_leg_version', "_require_file(scan, leg, 'process-scan-after.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', '_check_bundle_uncapped', "_require_file(identities_path, 'golden', 'fixtures/identities.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', '_load_dir', '_require_file(fpath, leg, name)', 'require_regular_file'),
+        ('check_acp_conformance.py', '_load_timeline_raw', "_require_file(tl_path, leg, 'timeline.jsonl')", 'require_regular_file'),
+        ('check_acp_conformance.py', '_parse_scan_v24', '_require_file(path, leg, name)', 'require_regular_file'),
+        ('check_acp_conformance.py', '_parse_summary', '_require_file(summary_path, leg, name)', 'require_regular_file'),
+        ('check_acp_conformance.py', '_sha256_file', 'pins.require_regular_file(path, path.name, Failure)', 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_buzzacp_log', "_require_file(log_path, leg, 'buzzacp.log')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_config_echo', "_require_file(argv_path, leg, 'argv.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_config_echo', "_require_file(log_path, leg, 'buzzacp.log')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_config_echo', "_require_file(startup_path, leg, 'startup-line.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_env', "_require_file(leg_dir / 'env.json', leg, 'env.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_golden', "_require_file(frozen_path, leg, 'golden.jsonl')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_golden', "_require_file(r1m, leg, 'mentions/owner.event.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_golden', "_require_file(r2m, leg, 'mentions/owner.event.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_manifests', "_require_file(baseline_path, leg, 'manifests/manifest-baseline.txt.gz')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_manifests', "_require_file(post_gz, leg, 'manifest-post.txt.gz')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_manifests', "_require_file(pre_gz, leg, 'manifest-pre.txt.gz')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_manifests', "_require_file(rid_path, leg, 'runtime-identity.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_manifests', "_require_file(timeline_path, leg, 'timeline.jsonl')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_mentions', "_require_file(err_path, leg, f'mentions/{tag}.receipt.err')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_mentions', "_require_file(event_path, leg, f'mentions/{tag}.event.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_mentions', "_require_file(receipt_path, leg, f'mentions/{tag}.receipt.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_mentions', "_require_file(ref_path, leg, f'mentions/{replies_to}.event.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_negative', "_require_file(stderr_path, leg, 'agent-stderr.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_process_evidence', "_require_file(exit_path, leg, 'buzz-acp.exit')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_process_evidence', "_require_file(owned_path, leg, 'owned-pids.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_process_evidence', "_require_file(pid_path, leg, 'buzz-acp.pid')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_process_evidence', "_require_file(rid_path, leg, 'runtime-identity.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_process_evidence', "_require_file(rid_path, leg, 'runtime-identity.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_route', "_require_file(fp_path, leg, 'fixtures/upstream-token.fingerprint')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_route', "_require_file(model_path, leg, 'hermes-model.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_route', "_require_file(rp, leg, f'upstream-records/{rp.name}')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_runtime_identity', "_require_file(argv_path, leg, 'argv.txt')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_runtime_identity', "_require_file(leg_dir / 'runtime-identity.json', leg, 'runtime-identity.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_runtime_identity', "_require_file(pid_path, leg, 'buzz-acp.pid')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_shutdown', "_require_file(exit_path, leg, 'buzz-acp.exit')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_tee_status', "_require_file(ts_path, leg, 'tee-status.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_two_users', "_require_file(owner_path, leg, 'mentions/owner.event.json')", 'require_regular_file'),
+        ('check_acp_conformance.py', 'check_two_users', "_require_file(user2_path, leg, 'mentions/user2.event.json')", 'require_regular_file'),
+        ('check_initialize.py', '_check_request_directory', "_require_input(dirpath / 'timeline.jsonl', 'timeline.jsonl')", 'require_regular_file'),
+        ('check_initialize.py', '_check_response_directory', "_require_input(tl_path, 'timeline.jsonl')", 'require_regular_file'),
+        ('check_initialize.py', 'load_payload', "_require_input(Path(path), 'payload')", 'require_regular_file'),
+        ('check_initialize.py', 'load_schema', "_require_input(Path(path), 'schema')", 'require_regular_file'),
+        ('negative_contract.py', '_load_timeline', "_require_negative_file(path, 'timeline.jsonl')", 'require_regular_file'),
+        ('negative_contract.py', '_sha256_file', '_require_negative_file(path, path.name)', 'require_regular_file'),
+        ('negative_contract.py', 'validate_negative_dir', "_require_negative_file(fixtures_dir / 'neg-malformed-initialize.json', 'fixtures/neg-malformed-initialize.json')", 'require_regular_file'),
+        ('negative_contract.py', 'validate_negative_dir', "_require_negative_file(neg_dir / 'env.json', 'env.json')", 'require_regular_file'),
+        ('negative_contract.py', 'validate_negative_dir', "_require_negative_file(neg_dir / 'runtime-identity.json', 'runtime-identity.json')", 'require_regular_file'),
+    }
+    actual = set()
+    for name in ("check_acp_conformance.py", "negative_contract.py", "check_initialize.py"):
+        path = P / name
+        actual |= _enumerate_read_sites(path.read_text(), name)
+    assert actual == expected, (
+        f"read inventory drift: added={sorted(actual - expected)!r}; "
+        f"removed={sorted(expected - actual)!r}")
+    assert all(site[3] in {"walk", "require_regular_file", "stdin"}
+               for site in actual), f"unguarded read site: {sorted(actual)!r}"
+
+
+def test_ck12_read_inventory_detects_new_site_and_guard_drift():
+    source = "def planted(p):\n    return p.read_text()\n"
+    assert _enumerate_read_sites(source, "planted.py") == {
+        ("planted.py", "planted", "p", "unguarded"),
+    }
+    guarded = "def planted(p):\n    return _require_file(p, 'leg', 'x').read_text()\n"
+    assert _enumerate_read_sites(guarded, "planted.py") == {
+        ("planted.py", "planted", "_require_file(p, 'leg', 'x')",
+         "require_regular_file"),
+    }
+
+
+def test_ck12_pinned_required_file_cannot_be_dropped():
+    """The central producer list must retain a representative checker-required artifact."""
+    assert pins.PINNED_LEG_FILES["timeline.jsonl"] == "required"
 
 
 # B4: single default cap — main() omits timeout_s, check_bundle's default governs
@@ -4854,15 +5199,21 @@ def test_ck10_rejected_cap_installs_no_handler():
 
 
 def test_ck11_alarm_inside_try_cannot_leak_the_handler(monkeypatch, tmp_path):
-    """CK11-F2: a raising alarm() inside the try cannot leak the handler."""
+    """CK12-F13: even a raising alarm(0) observes the handler already restored."""
     import signal as _s
-    real = _s.alarm
-    monkeypatch.setattr(_s, "alarm", lambda n: (_ for _ in ()).throw(OverflowError()) if n else real(0))
     before = _s.getsignal(_s.SIGALRM)
-    with pytest.raises(OverflowError):
-        cc.check_bundle(tmp_path, timeout_s=90)
-    assert _s.getsignal(_s.SIGALRM) is before, (
-        f"LEAKED: before={before}, after={_s.getsignal(_s.SIGALRM)}")
+    calls = []
+
+    def alarm(n):
+        if n:
+            return 0
+        calls.append(_s.getsignal(_s.SIGALRM))
+        raise OverflowError("cancel failed")
+
+    monkeypatch.setattr(_s, "alarm", alarm)
+    with pytest.raises(OverflowError, match="cancel failed"):
+        cc._check_with_timeout(90, lambda: "ok")
+    assert calls == [before], f"alarm(0) observed handler {calls}, expected {before}"
 
 
 # Item 7: owned_zombies full invariant
@@ -4914,9 +5265,11 @@ def test_ck11_dead_branch_comments_cite_a_real_guard():
     for idx, fn in checks:
         block = "\n".join(src[max(0, idx - 1):idx + 3])
         assert fn in block, f"line {idx + 1} cites the wrong guard: {block}"
-        # CK11: parse cited C:a-b range(s) and assert they hold a raise Failure
-        m = re.search(r"C:(\d+)-(\d+)", block)
-        if m:
-            a, b = int(m.group(1)), int(m.group(2))
+        # CK12: parse every cited C:a-b range; each comment must cite at least one
+        # concrete range containing a Failure guard.
+        matches = re.findall(r"C:(\d+)-(\d+)", block)
+        assert matches, f"line {idx + 1} cites no C:a-b guard range: {block}"
+        for a_text, b_text in matches:
+            a, b = int(a_text), int(b_text)
             assert any("raise Failure" in src[k - 1] for k in range(a, b + 1)), (
                 f"line {idx + 1} cites C:{a}-{b}, which contains no guard")

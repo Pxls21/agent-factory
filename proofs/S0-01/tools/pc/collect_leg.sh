@@ -4,7 +4,11 @@
 # Small files travel as one tar.gz through scripts/pc_fetch.sh (size-verified chunks). The manifest
 # bodies (1 MB each) are compared BY SHA256 ON THE PC against the committed baseline gz; an identical
 # body is materialised from the committed baseline (same bytes), a differing body is fetched.
-# Excluded on purpose: buzzacp.raw.log (unmasked), manifest logs, launch log.
+# Excluded on purpose: buzzacp.raw.log (unmasked), manifest logs, launch log, and the uncompressed
+# manifest bodies (manifest-*.txt): pc_manifest.sh gzips them in place, but it can die between writing
+# $OUT and gzipping it, and for the POST phase pc_post.sh waits 120 s and exits 0 anyway — so without
+# this exclusion a collected leg could carry manifest-post.txt, which a consumer's entry allowlist
+# rejects as an unexpected entry (VERIFY-P5a F10; pins.py calls the two names excluded_on_collect).
 set -euo pipefail
 LEG=${1:?leg}
 ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"; cd "$ROOT"
@@ -12,7 +16,7 @@ DST=proofs/S0-01/evidence/golden/$LEG; FD=/home/rocco/s0-01-pinned/.markers/v2-$
 BASE_GZ=proofs/S0-01/evidence/golden/manifests/manifest-baseline.txt.gz
 BASE_SHA=$(sha256sum "$BASE_GZ" | cut -d" " -f1)
 S=/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/collect; mkdir -p "$S"
-bash scripts/pc.sh "cd $FD && tar czf /tmp/s0-01-$LEG.tgz --exclude=buzzacp.raw.log --exclude='manifest-*.txt.gz' --exclude='manifest-*.log' --exclude='*.launch.log' . && ls -la /tmp/s0-01-$LEG.tgz && for p in pre post; do [ -f manifest-\$p.txt.gz.sha256 ] && echo \"MANIFEST \$p \$(cat manifest-\$p.txt.gz.sha256)\"; done" | tee "$S/$LEG.pack.log"
+bash scripts/pc.sh "cd $FD && tar czf /tmp/s0-01-$LEG.tgz --exclude=buzzacp.raw.log --exclude='manifest-*.txt' --exclude='manifest-*.txt.gz' --exclude='manifest-*.log' --exclude='*.launch.log' . && ls -la /tmp/s0-01-$LEG.tgz && for p in pre post; do [ -f manifest-\$p.txt.gz.sha256 ] && echo \"MANIFEST \$p \$(cat manifest-\$p.txt.gz.sha256)\"; done" | tee "$S/$LEG.pack.log"
 bash scripts/pc_fetch.sh "/tmp/s0-01-$LEG.tgz" "$S/$LEG.tgz"
 rm -rf "$DST"; mkdir -p "$DST"; tar xzf "$S/$LEG.tgz" -C "$DST"
 for p in pre post; do

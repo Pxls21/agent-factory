@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -33,6 +34,7 @@ _FIXTURES_DIR = None
 def _fixtures() -> Path:
     return Path(_FIXTURES_DIR) if _FIXTURES_DIR is not None else HERE / "fixtures"
 sys.path.insert(0, str(HERE))
+import pins  # noqa: E402
 from pins import (  # noqa: E402
     ALLOWED_UPSTREAM_GET,
     ENV_ALLOWLIST_KEY,
@@ -63,6 +65,9 @@ from pins import (  # noqa: E402
     PINNED_IDLE_TIMEOUT,
     PINNED_IDLE_TIMEOUT_ARG,
     PINNED_LAUNCH_ARGV,
+    PINNED_LEG_DIRS,
+    PINNED_LEG_FILES,
+    PINNED_LEG_FILES_SINCE,
     PINNED_LOG_LINES_TWO_USERS,
     PINNED_MAX_TURN,
     PINNED_MAX_TURN_DURATION_ARG,
@@ -149,10 +154,11 @@ _SENSITIVE_HEADER_VALUE_RE = re.compile(r"(?i)bearer\s|sk-|[0-9a-fA-F]{64}")
 # 5-F19: agent-stderr screening patterns.
 _STDERR_LEAK_RE = re.compile(r"(?i)[0-9a-fA-F]{64}|bearer\s|token[=:]\S")
 
-# A20 v2.3: scan file enumeration header shape.
+# A20 v2.4: body counters and full-table enumeration have distinct names.
 _SCAN_HEADER_RE = re.compile(
-    r"^# process-scan v2\.3 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
-    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
+    r"^# process-scan v2\.4 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) table_rows=(\d+) "
+    r"utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
 
 
 class Deferred(Exception):
@@ -165,7 +171,7 @@ class Failure(Exception):
 
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with pins.require_regular_file(path, path.name, Failure).open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -190,14 +196,15 @@ def _reject_nan(line: str, leg: str, seq_hint: int):
 
 
 def _require_file(path: Path, leg: str, name: str):
-    """R9-CK-F2/F27: reject non-regular files (FIFOs, directories, sockets, devices)
-    with a named reason BEFORE any read; existence alone is not enough."""
-    import stat as _stat
-    if not path.exists():
-        raise Failure(f"{leg}: {name} absent")
-    if not _stat.S_ISREG(path.lstat().st_mode):
-        raise Failure(f"{leg}: {name} is not a regular file")
-    return path
+    """Reject every non-regular read target before an operation can block on it."""
+    try:
+        return pins.require_regular_file(path, f"{leg}: {name}", Failure)
+    except Failure as exc:
+        # Preserve the checker's established absent-artifact contract while the shared
+        # classifier names every present non-regular node precisely.
+        if str(exc).endswith(" absent"):
+            raise Failure(f"{leg}: {name} absent") from None
+        raise
 
 
 def _require_dir(path: Path, leg: str, name: str):
@@ -268,6 +275,8 @@ def check_timeline(entries, leg, leg_dir):
         ks = set(e.keys())
         if e.get("frame") is None:
             raise Failure(f"{leg}: non-JSON frame at seq {i + 1}")
+        if ks == valid_keys | {"raw_b64"} and e.get("dir") == "a2c":
+            raise Failure(f"{leg}: timeline: lossy a2c line at seq {i + 1} (raw_b64 kept)")
         if ks != valid_keys:
             raise Failure(f"{leg}: timeline entry at seq {i + 1} has unexpected keys {sorted(ks)}")
         seq_val = e["seq"]
@@ -297,7 +306,7 @@ def check_timeline(entries, leg, leg_dir):
     a2c_path = _require_file(leg_dir / "frames-agent-to-client.jsonl", leg, "frames-agent-to-client.jsonl")
 
     def _load_dir(fpath, name, expected_split):
-        raw = fpath.read_bytes()
+        raw = _require_file(fpath, leg, name).read_bytes()
         lines_raw = raw.split(b"\n")
         frames = []
         empty_count = 0
@@ -419,14 +428,14 @@ def check_runtime_identity(leg_dir, leg):
         raise Failure(f"{leg}: python_dont_write_bytecode is not true")
     pid_path = _require_file(leg_dir / "buzz-acp.pid", leg, "buzz-acp.pid")
     try:
-        expected_pid = int(pid_path.read_text().strip())
+        expected_pid = int(_require_file(pid_path, leg, "buzz-acp.pid").read_text().strip())
     except ValueError:
         raise Failure(f"{leg}: buzz-acp.pid is not a valid integer")
     pid_val = rid.get("buzz_acp_pid")
     if not _is_strict_int(pid_val) or pid_val != expected_pid:
         raise Failure(f"{leg}: buzz_acp_pid mismatch")
     argv_path = _require_file(leg_dir / "argv.txt", leg, "argv.txt")
-    argv_lines = argv_path.read_text().splitlines()
+    argv_lines = _require_file(argv_path, leg, "argv.txt").read_text().splitlines()
     if argv_lines != PINNED_LAUNCH_ARGV:
         raise Failure(f"{leg}: argv.txt lines != PINNED_LAUNCH_ARGV")
     if rid.get("launch_argv") != PINNED_LAUNCH_ARGV:
@@ -531,10 +540,10 @@ def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None):
         event_path = _require_file(mentions_dir / f"{tag}.event.json", leg, f"mentions/{tag}.event.json")
         receipt_path = _require_file(mentions_dir / f"{tag}.receipt.json", leg, f"mentions/{tag}.receipt.json")
         err_path = _require_file(mentions_dir / f"{tag}.receipt.err", leg, f"mentions/{tag}.receipt.err")
-        if err_path.read_text() != "":
+        if _require_file(err_path, leg, f"mentions/{tag}.receipt.err").read_text() != "":
             raise Failure(f"{leg}: mentions/{tag}.receipt.err is not empty")
-        event = json.loads(event_path.read_text())
-        receipt = json.loads(receipt_path.read_text())
+        event = json.loads(_require_file(event_path, leg, f"mentions/{tag}.event.json").read_text())
+        receipt = json.loads(_require_file(receipt_path, leg, f"mentions/{tag}.receipt.json").read_text())
         # A4: receipt exact key set
         if set(receipt.keys()) != EXPECTED_RECEIPT_KEYS:
             raise Failure(f"{leg}: mention {tag} receipt key set mismatch")
@@ -576,7 +585,13 @@ def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None):
         if event.get("content") != content:
             raise Failure(f"{leg}: mention {tag} content mismatch")
         if replies_to is not None:
-            ref_event = json.loads((mentions_dir / f"{replies_to}.event.json").read_text())
+            ref_path = _require_file(
+                mentions_dir / f"{replies_to}.event.json", leg,
+                f"mentions/{replies_to}.event.json",
+            )
+            ref_event = json.loads(_require_file(
+                ref_path, leg, f"mentions/{replies_to}.event.json"
+            ).read_text())
             e_tags = [t for t in tags if len(t) >= 2 and t[0] == "e"]
             if not any(t[1] == ref_event["id"] for t in e_tags):
                 raise Failure(f"{leg}: mention {tag} e-tag does not reference {replies_to}")
@@ -591,7 +606,7 @@ def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None):
 
 def check_route(leg_dir, leg, entries):
     model_path = _require_file(leg_dir / "hermes-model.txt", leg, "hermes-model.txt")
-    model_text = model_path.read_text().strip()
+    model_text = _require_file(model_path, leg, "hermes-model.txt").read_text().strip()
     expected_model = EXPECTED_MODEL[leg]
     expected_model_text = f"default: {PINNED_ROUTE_PREFIX}/{expected_model}"
     if model_text != expected_model_text:
@@ -603,12 +618,14 @@ def check_route(leg_dir, leg, entries):
     for item in rec_dir.iterdir():
         if not _RECORD_FILENAME_RE.match(item.name):
             raise Failure(f"{leg}: upstream-records/ contains invalid filename {item.name!r}")
-    records = [json.loads(rp.read_text()) for rp in sorted(rec_dir.glob("*.json"))]
+    records = [json.loads(_require_file(
+        rp, leg, f"upstream-records/{rp.name}"
+    ).read_text()) for rp in sorted(rec_dir.glob("*.json"))]
     if not records:
         raise Failure(f"{leg}: zero upstream records / upstream-records/ absent")
     # A3: validate upstream-token.fingerprint is exactly 64 lowercase hex
     fp_path = _require_file(_fixtures() / "upstream-token.fingerprint", leg, "fixtures/upstream-token.fingerprint")
-    expected_fp = fp_path.read_text().strip()
+    expected_fp = _require_file(fp_path, leg, "fixtures/upstream-token.fingerprint").read_text().strip()
     if not re.fullmatch(r"[0-9a-f]{64}", expected_fp):
         raise Failure("golden: upstream-token.fingerprint is not a 64-hex digest")
     allowed_pairs = ALLOWED_UPSTREAM_GET | {("POST", UPSTREAM_POST_PATH)}
@@ -876,7 +893,7 @@ def check_cancel(entries, c2a, a2c, leg_dir, leg="cancel"):
 def check_shutdown(entries, c2a, a2c, leg_dir, leg="shutdown"):
     check_prompt_turn(c2a, a2c, leg, entries, expect_stop="end_turn")
     exit_path = _require_file(leg_dir / "buzz-acp.exit", leg, "buzz-acp.exit")
-    exit_val = exit_path.read_text().strip()
+    exit_val = _require_file(exit_path, leg, "buzz-acp.exit").read_text().strip()
     if exit_val != "0":
         raise Failure(f"{leg}: buzz-acp.exit is {exit_val!r}, expected '0'")
 
@@ -933,8 +950,10 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     # Both mentions' created_at precede the FIRST session's terminal t_utc
     # R5: check_mentions already validates mentions/ via _require_dir before this point.
     mentions_dir = leg_dir / "mentions"
-    owner_ev = json.loads((mentions_dir / "owner.event.json").read_text())
-    user2_ev = json.loads((mentions_dir / "user2.event.json").read_text())
+    owner_path = _require_file(mentions_dir / "owner.event.json", leg, "mentions/owner.event.json")
+    user2_path = _require_file(mentions_dir / "user2.event.json", leg, "mentions/user2.event.json")
+    owner_ev = json.loads(_require_file(owner_path, leg, "mentions/owner.event.json").read_text())
+    user2_ev = json.loads(_require_file(user2_path, leg, "mentions/user2.event.json").read_text())
     # Find the first session's terminal t_utc
     first_term = None
     for e in entries:
@@ -944,7 +963,7 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
                 first_term = _parse_utc(e["t_utc"])
                 break
     # R9-CK-F6: first_term is guaranteed non-None — check_two_users' own guard at
-    # C:922-925 requires stopReason=="end_turn" for every prompt response,
+    # C:930-933 requires stopReason=="end_turn" for every prompt response,
     # so the loop above always finds at least one end_turn.
     first_term_epoch = int(first_term.timestamp())
     if not (owner_ev["created_at"] < first_term_epoch and user2_ev["created_at"] < first_term_epoch):
@@ -953,8 +972,8 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     new_seqs = [e for e in entries if e["dir"] == "c2a" and e["frame"].get("method") == "session/new"]
     term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
                  and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
-    # R9-CK-F6: new_seqs >= 2 guaranteed by check_two_users' own req_methods check
-    # at C:893-893 and C:905-905; term_seqs >= 1 by the stopReason guard above.
+    # R9-CK-F6: new_seqs >= 2 guaranteed by check_two_users' own cardinality
+    # guard at C:914-915; term_seqs >= 1 by the stopReason guard C:930-933.
     if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
         raise Failure(f"{leg}: second session/new precedes the first terminal")
 
@@ -962,10 +981,11 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
 def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
     pre_gz = _require_file(leg_dir / "manifest-pre.txt.gz", leg, "manifest-pre.txt.gz")
     post_gz = _require_file(leg_dir / "manifest-post.txt.gz", leg, "manifest-post.txt.gz")
-    pre_body = gzip.decompress(pre_gz.read_bytes())
-    post_body = gzip.decompress(post_gz.read_bytes())
-    _require_file(baseline_path, leg, "manifests/manifest-baseline.txt.gz")
-    baseline_body = gzip.decompress(baseline_path.read_bytes())
+    pre_body = gzip.decompress(_require_file(pre_gz, leg, "manifest-pre.txt.gz").read_bytes())
+    post_body = gzip.decompress(_require_file(post_gz, leg, "manifest-post.txt.gz").read_bytes())
+    baseline_body = gzip.decompress(_require_file(
+        baseline_path, leg, "manifests/manifest-baseline.txt.gz"
+    ).read_bytes())
     if _sha256_file(baseline_path) != baseline_gz_sha:
         raise Failure(f"{leg}: baseline gz sha256 mismatch")
     if pre_body != post_body:
@@ -983,11 +1003,13 @@ def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha):
         raise Failure(f"{leg}: manifest-pre.summary digests != body digests")
     if post_sum_d != pre_digests:
         raise Failure(f"{leg}: manifest-post.summary digests != body digests")
-    rid = json.loads((leg_dir / "runtime-identity.json").read_text())
+    rid_path = _require_file(leg_dir / "runtime-identity.json", leg, "runtime-identity.json")
+    rid = json.loads(_require_file(rid_path, leg, "runtime-identity.json").read_text())
     start_dt = _parse_utc(rid["spawned_at_utc"])
     if not (pre_ts < start_dt < post_ts):
         raise Failure(f"{leg}: manifest timestamps not pre < start < post")
-    tl_lines = [l for l in (leg_dir / "timeline.jsonl").read_text().splitlines() if l.strip()]
+    timeline_path = _require_file(leg_dir / "timeline.jsonl", leg, "timeline.jsonl")
+    tl_lines = [l for l in _require_file(timeline_path, leg, "timeline.jsonl").read_text().splitlines() if l.strip()]
     last_entry = json.loads(tl_lines[-1])
     if not (post_ts > _parse_utc(last_entry["t_utc"])):
         raise Failure(f"{leg}: manifest-post timestamp not after last timeline t_utc")
@@ -1034,7 +1056,7 @@ def _parse_manifest_body(body: bytes, leg: str) -> dict:
 
 
 def _parse_summary(summary_path, leg, name):
-    lines = summary_path.read_text().splitlines()
+    lines = _require_file(summary_path, leg, name).read_text().splitlines()
     expected = len(MANIFEST_TREES) + 1  # one digest line per pinned tree + the UTC timestamp
     if len(lines) != expected:
         raise Failure(f"{leg}: {name} has {len(lines)} lines, expected {expected}")
@@ -1049,10 +1071,10 @@ def _parse_summary(summary_path, leg, name):
 
 def check_config_echo(leg_dir, leg):
     startup_path = _require_file(leg_dir / "startup-line.txt", leg, "startup-line.txt")
-    startup = startup_path.read_text().strip()
+    startup = _require_file(startup_path, leg, "startup-line.txt").read_text().strip()
     # A7: startup-line.txt must equal the FIRST line of buzzacp.log containing "buzz-acp starting:"
     log_path = _require_file(leg_dir / "buzzacp.log", leg, "buzzacp.log")
-    log_text = log_path.read_text()
+    log_text = _require_file(log_path, leg, "buzzacp.log").read_text()
     log_startup = None
     for log_line in log_text.splitlines():
         if "buzz-acp starting:" in log_line:
@@ -1137,7 +1159,7 @@ def check_config_echo(leg_dir, leg):
     if kvs["respond_to"] != expected_rt:
         raise Failure(f"{leg}: startup respond_to is {kvs['respond_to']!r}, expected {expected_rt!r}")
     argv_path = _require_file(leg_dir / "argv.txt", leg, "argv.txt")
-    argv = argv_path.read_text().splitlines()
+    argv = _require_file(argv_path, leg, "argv.txt").read_text().splitlines()
     if "--idle-timeout" not in argv:
         raise Failure(f"{leg}: argv.txt missing --idle-timeout")
     idx = argv.index("--idle-timeout")
@@ -1150,11 +1172,9 @@ def check_config_echo(leg_dir, leg):
         raise Failure(f"{leg}: argv --max-turn-duration is not {PINNED_MAX_TURN_DURATION_ARG}")
 
 
-def _parse_scan_v23(path, leg, name):
-    """Parse v2.3 scan file: enumeration header (required) + body rows.
-    Returns (header_match, [(pid, ppid, etimes, cmd), ...]).
-    Raises Failure if the header is absent or does not match the v2.3 shape."""
-    lines = path.read_text().splitlines()
+def _parse_scan_v24(path, leg, name):
+    """Parse a v2.4 enumeration header and its persisted process rows."""
+    lines = _require_file(path, leg, name).read_text().splitlines()
     if not lines:
         raise Failure(f"{leg}: {name} has no enumeration header")
     m = _SCAN_HEADER_RE.match(lines[0])
@@ -1175,15 +1195,22 @@ def _parse_scan_v23(path, leg, name):
     return m, procs
 
 
+def _is_pinned_process(cmd: str) -> bool:
+    """Match the producer's v2.4 entry-point rule, never a path substring."""
+    argv = cmd.split()
+    return (argv[:1] == [PINNED_BUZZ_ACP_EXE_REALPATH]
+            or (len(argv) > 1 and argv[1] in (PINNED_TEE_PATH, PINNED_AGENT_REALPATH)))
+
+
 def check_process_evidence(leg_dir, leg):
     pid_path = _require_file(leg_dir / "buzz-acp.pid", leg, "buzz-acp.pid")
     try:
-        buzz_pid = int(pid_path.read_text().strip())
+        buzz_pid = int(_require_file(pid_path, leg, "buzz-acp.pid").read_text().strip())
     except ValueError:
         raise Failure(f"{leg}: buzz-acp.pid is not a valid integer")
     # A2 / F28: buzz-acp.exit REQUIRED in every leg, must be "0"
     exit_path = _require_file(leg_dir / "buzz-acp.exit", leg, "buzz-acp.exit")
-    exit_text = exit_path.read_text().strip()
+    exit_text = _require_file(exit_path, leg, "buzz-acp.exit").read_text().strip()
     try:
         int(exit_text)
     except ValueError:
@@ -1192,7 +1219,7 @@ def check_process_evidence(leg_dir, leg):
         raise Failure(f"{leg}: buzz-acp.exit is {exit_text!r}, expected '0'")
     # A20 / F15: load and validate owned-pids.json shape
     owned_path = _require_file(leg_dir / "owned-pids.json", leg, "owned-pids.json")
-    owned_data = json.loads(owned_path.read_text())
+    owned_data = json.loads(_require_file(owned_path, leg, "owned-pids.json").read_text())
     if not isinstance(owned_data, dict):
         raise Failure(f"{leg}: owned-pids.json is not an object")
     _OWNED_REQUIRED_KEYS = {"buzz_acp_pid", "owned", "taken_at"}
@@ -1218,20 +1245,23 @@ def check_process_evidence(leg_dir, leg):
     if owned_data["buzz_acp_pid"] != buzz_pid:
         raise Failure(f"{leg}: owned-pids.json buzz_acp_pid {owned_data['buzz_acp_pid']} != buzz-acp.pid {buzz_pid}")
     # F13/F14: owned set must contain buzz_pid, tee_pid, and agent_child_pid on EVERY leg
-    rid = json.loads((leg_dir / "runtime-identity.json").read_text())
+    rid_path = _require_file(leg_dir / "runtime-identity.json", leg, "runtime-identity.json")
+    rid = json.loads(_require_file(rid_path, leg, "runtime-identity.json").read_text())
     rid_tee = rid.get("tee_pid")
     rid_agent = rid.get("agent_child_pid")
     if rid_tee not in owned_set:
         raise Failure(f"{leg}: owned-pids.json does not contain rid tee_pid {rid_tee}")
     if rid_agent not in owned_set:
         raise Failure(f"{leg}: owned-pids.json does not contain rid agent_child_pid {rid_agent}")
-    # A20 v2.3: parse and validate after-scan header
+    # A20 v2.4: parse and validate after-scan header
     scan_path = _require_file(leg_dir / "process-scan-after.txt", leg, "process-scan-after.txt")
-    hdr, all_procs = _parse_scan_v23(scan_path, leg, "process-scan-after.txt")
+    hdr, all_procs = _parse_scan_v24(scan_path, leg, "process-scan-after.txt")
     if hdr.group(1) != "after":
         raise Failure(f"{leg}: process-scan-after.txt header mode is '{hdr.group(1)}', expected 'after'")
-    if int(hdr.group(2)) == 0:
-        raise Failure(f"{leg}: process-scan-after.txt header rows=0 (enumeration did not run)")
+    if int(hdr.group(9)) == 0:
+        raise Failure(f"{leg}: process-scan-after.txt header table_rows=0 (enumeration did not run)")
+    if int(hdr.group(2)) != len(all_procs):
+        raise Failure(f"{leg}: process-scan-after.txt header rows={hdr.group(2)} inconsistent with body ({len(all_procs)})")
     # F30: duplicate scan rows for one pid in after-scan (before consistency checks)
     after_pids = [pid for pid, _, _, _ in all_procs]
     if len(after_pids) != len(set(after_pids)):
@@ -1246,9 +1276,8 @@ def check_process_evidence(leg_dir, leg):
     # F16: header buzz_acp_pid must equal buzz-acp.pid file
     if int(hdr.group(3)) != buzz_pid:
         raise Failure(f"{leg}: process-scan-after.txt header buzz_acp_pid={hdr.group(3)} != buzz-acp.pid {buzz_pid}")
-    # F17: pinned_present must equal count of body rows whose cmd names a pinned path
-    body_pinned = sum(1 for _, _, _, cmd in all_procs
-                      if PINNED_BUZZ_ACP_EXE_REALPATH in cmd or PINNED_TEE_PATH in cmd or PINNED_AGENT_REALPATH in cmd)
+    # F17: pinned_present must equal rows pinned by the v2.4 entry-point rule.
+    body_pinned = sum(1 for _, _, _, cmd in all_procs if _is_pinned_process(cmd))
     if int(hdr.group(7)) != body_pinned:
         raise Failure(f"{leg}: process-scan-after.txt header pinned_present={hdr.group(7)} inconsistent with body ({body_pinned})")
     # R9-CK-F11: owned_zombies is validated as a non-negative int by the header regex
@@ -1260,10 +1289,10 @@ def check_process_evidence(leg_dir, leg):
     if _owned_zombies + int(hdr.group(6)) > int(hdr.group(5)):
         raise Failure(f"{leg}: process-scan-after.txt owned_present={hdr.group(6)}+owned_zombies={_owned_zombies} exceeds owned={hdr.group(5)}")
     if leg == "shutdown":
-        # A20 v2.3 rule 4 / F10: shutdown after-scan body must be EMPTY — any row is a survivor
+        # A20 v2.4 rule 4 / F10: shutdown after-scan body must be EMPTY — any row is a survivor
         for pid, ppid, etimes, cmd in all_procs:
             raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived shutdown")
-        # A20 v2.3 rule 4: shutdown after-scan must have buzz_present=0
+        # A20 v2.4 rule 4: shutdown after-scan must have buzz_present=0
         if int(hdr.group(4)) != 0:
             raise Failure(f"{leg}: process-scan-after.txt buzz_present={hdr.group(4)} in shutdown (expected 0)")
     else:
@@ -1297,7 +1326,7 @@ def check_process_evidence(leg_dir, leg):
         if not any(PINNED_AGENT_REALPATH in cmd and ppid in tee_pids for _, ppid, _, cmd in all_procs):
             raise Failure(f"{leg}: no agent process parented by a tee process")
         # A20b: identity binding from runtime-identity.json
-        rid = json.loads((leg_dir / "runtime-identity.json").read_text())
+        rid = json.loads(_require_file(rid_path, leg, "runtime-identity.json").read_text())
         tee_pid = rid.get("tee_pid")
         agent_child_pid = rid.get("agent_child_pid")
         # tee_pid has ppid == buzz_pid and cmd containing PINNED_TEE_PATH
@@ -1329,13 +1358,15 @@ def check_process_evidence(leg_dir, leg):
                     continue
                 if pid not in recomputed:
                     raise Failure(f"{leg}: process {pid} ({cmd[:40]}) not in buzz-acp descendant tree")
-    # A20c v2.3: teardown scan — header + survivor check (ALL legs)
+    # A20c v2.4: teardown scan — header + survivor check (ALL legs)
     teardown_path = _require_file(leg_dir / "process-scan-teardown.txt", leg, "process-scan-teardown.txt")
-    td_hdr, teardown_procs = _parse_scan_v23(teardown_path, leg, "process-scan-teardown.txt")
+    td_hdr, teardown_procs = _parse_scan_v24(teardown_path, leg, "process-scan-teardown.txt")
     if td_hdr.group(1) != "teardown":
         raise Failure(f"{leg}: process-scan-teardown.txt header mode is '{td_hdr.group(1)}', expected 'teardown'")
-    if int(td_hdr.group(2)) == 0:
-        raise Failure(f"{leg}: process-scan-teardown.txt header rows=0 (enumeration did not run)")
+    if int(td_hdr.group(9)) == 0:
+        raise Failure(f"{leg}: process-scan-teardown.txt header table_rows=0 (enumeration did not run)")
+    if int(td_hdr.group(2)) != len(teardown_procs):
+        raise Failure(f"{leg}: process-scan-teardown.txt header rows={td_hdr.group(2)} inconsistent with body ({len(teardown_procs)})")
     if int(td_hdr.group(5)) != len(owned_set):
         raise Failure(f"{leg}: process-scan-teardown.txt header owned={td_hdr.group(5)} != owned-pids.json ({len(owned_set)})")
     td_body_owned = sum(1 for pid, _, _, _ in teardown_procs if pid in owned_set)
@@ -1354,14 +1385,14 @@ def check_process_evidence(leg_dir, leg):
         from collections import Counter
         dups = [p for p, c in Counter(td_pids).items() if c > 1]
         raise Failure(f"{leg}: process-scan-teardown.txt duplicate rows for pid(s) {dups}")
-    # A20 v2.3 rule 5 / F11: teardown body must be EMPTY — any row is a survivor
+    # A20 v2.4 rule 5 / F11: teardown body must be EMPTY — any row is a survivor
     for pid, ppid, etimes, cmd in teardown_procs:
         raise Failure(f"{leg}: process {pid} ({cmd[:40]}) survived teardown")
 
 
 def check_buzzacp_log(leg_dir, leg):
     log_path = _require_file(leg_dir / "buzzacp.log", leg, "buzzacp.log")
-    log_text = log_path.read_text()
+    log_text = _require_file(log_path, leg, "buzzacp.log").read_text()
     # 5-F14: case-insensitive 64-hex guard
     if _HEX64_ANYWHERE_RE.search(log_text):
         raise Failure(f"{leg}: buzzacp.log contains unmasked 64-hex string")
@@ -1393,7 +1424,7 @@ def check_tee_status(leg_dir, leg, entries):
     The FINAL (final is True) clean-exit write is exact in every field (B5d R3/A21b).
     """
     ts_path = _require_file(leg_dir / "tee-status.json", leg, "tee-status.json")
-    ts = json.loads(ts_path.read_text())
+    ts = json.loads(_require_file(ts_path, leg, "tee-status.json").read_text())
     if not isinstance(ts, dict):
         raise Failure(f"{leg}: tee-status.json is not an object")
     if set(ts.keys()) != _TEE_STATUS_KEYS:
@@ -1495,11 +1526,11 @@ def check_negative(neg_dir, leg="negative"):
     except nc.NegativeDeferred as d:
         raise Failure(f"{leg}: {d}")
     except nc.NegativeFailure as f:
-        raise Failure(f"{leg}: negative: {f}")
+        raise Failure(f"{leg}: {f}")
     # 5-F19: screen agent-stderr.txt for secret shapes
     stderr_path = neg_dir / "agent-stderr.txt"
     if stderr_path.exists():
-        stderr_text = stderr_path.read_text()
+        stderr_text = _require_file(stderr_path, leg, "agent-stderr.txt").read_text()
         if _STDERR_LEAK_RE.search(stderr_text):
             raise Failure(f"{leg}: agent-stderr.txt contains a secret-shaped string")
     return f"observed: {observed}"
@@ -1512,7 +1543,7 @@ def check_golden(golden_dir, leg="golden"):
         first = next((i for i, (a, b) in enumerate(zip(n1, n2)) if a != b), min(len(n1), len(n2)))
         raise Failure(f"{leg}: golden mismatch between run-1 and run-2 at normalized line {first}")
     frozen_path = _require_file(golden_dir / "golden.jsonl", leg, "golden.jsonl")
-    frozen_bytes = frozen_path.read_bytes()
+    frozen_bytes = _require_file(frozen_path, leg, "golden.jsonl").read_bytes()
     frozen_sha = _sha256_bytes(frozen_bytes)
     if PINNED_GOLDEN_SHA256 is None:
         raise Failure(f"{leg}: golden not pinned")
@@ -1551,7 +1582,7 @@ def check_golden(golden_dir, leg="golden"):
                 session_new_idx = i
     # R9-CK-F6: init_resp_idx is guaranteed non-None — check_initialize_frames
     # validates the a2c initialize response (protocolVersion); session_new_idx is
-    # guaranteed by the req_methods check at C:1533-1535 (exactly one session/new).
+    # guaranteed by the req_methods guard at C:1561-1564 (exactly one session/new).
     if init_resp_idx >= session_new_idx:
         raise Failure(f"{leg}: a2c initialize response does not precede c2a session/new")
     # §8: session/new response precedes session/prompt
@@ -1565,8 +1596,8 @@ def check_golden(golden_dir, leg="golden"):
         if r.get("dir") == "c2a" and r.get("method") == "session/prompt":
             if prompt_idx is None:
                 prompt_idx = i
-    # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:742-743 (session/new
-    # has sessionId response); prompt_idx by req_methods (exactly one session/prompt).
+    # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:751-753 (session/new
+    # has sessionId response); prompt_idx by req_methods guard C:1561-1564.
     if new_resp_idx >= prompt_idx:
         raise Failure(f"{leg}: session/new response does not precede session/prompt")
     # §8: every a2c notification carries <SID1>
@@ -1594,17 +1625,17 @@ def check_golden(golden_dir, leg="golden"):
         return None
 
     sid1, sid2 = _raw_sid(run1_entries), _raw_sid(run2_entries)
-    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_prompt_turn C:742-743 validates
+    # R9-CK-F6: sid1/sid2 guaranteed non-None — check_prompt_turn C:751-753 validates
     # the session/new response (which carries sessionId) for run-1 and run-2.
     if sid1 == sid2:
         raise Failure(f"{leg}: run-1 and run-2 raw sessionIds are identical")
     if run1_entries[0]["t_utc"] == run2_entries[0]["t_utc"]:
         raise Failure(f"{leg}: run-1 and run-2 first t_utc are identical")
-    r1m = golden_dir / "run-1" / "mentions" / "owner.event.json"
-    r2m = golden_dir / "run-2" / "mentions" / "owner.event.json"
-    # R9-CK-F6: r1m/r2m guaranteed to exist — check_mentions (runs for run-1/run-2 in
-    # EXPECTED_CHECK_SEQUENCE before check_golden) requires owner.event.json via EXPECTED_MENTIONS.
-    if json.loads(r1m.read_text()).get("id") == json.loads(r2m.read_text()).get("id"):
+    r1m = _require_file(golden_dir / "run-1" / "mentions" / "owner.event.json", leg, "mentions/owner.event.json")
+    r2m = _require_file(golden_dir / "run-2" / "mentions" / "owner.event.json", leg, "mentions/owner.event.json")
+    # R9-CK-F6: r1m/r2m guaranteed regular files — check_mentions C:540-546
+    # requires each leg's owner mention event before check_golden runs.
+    if json.loads(_require_file(r1m, leg, "mentions/owner.event.json").read_text()).get("id") == json.loads(_require_file(r2m, leg, "mentions/owner.event.json").read_text()).get("id"):
         raise Failure(f"{leg}: run-1 and run-2 owner mention event ids are identical")
     return n1
 
@@ -1612,7 +1643,9 @@ def check_golden(golden_dir, leg="golden"):
 def _load_timeline_raw(leg_dir, leg):
     tl_path = _require_file(leg_dir / "timeline.jsonl", leg, "timeline.jsonl")
     entries = []
-    for lineno, line in enumerate(tl_path.read_text().splitlines(), 1):
+    for lineno, line in enumerate(_require_file(
+        tl_path, leg, "timeline.jsonl"
+    ).read_text().splitlines(), 1):
         if not line or not line.strip():
             raise Failure(f"{leg}: timeline.jsonl blank line at line {lineno}")
         entries.append(_reject_nan(line, leg, lineno))
@@ -1632,9 +1665,8 @@ def _check_with_timeout(timeout_s, fn, *args):
         _signal.alarm(timeout_s)
         return fn(*args)
     finally:
-        # CK11-F9: restore the handler BEFORE alarm(0) — if alarm() raised,
-        # the restore still runs (alarm(0) cannot raise in CPython, but the
-        # restore order makes the claim unconditional).
+        # CK11-F9: restore the handler BEFORE alarm(0).  The committed test makes
+        # alarm(0) raise, so the ordering is observable rather than inspection-only.
         _signal.signal(_signal.SIGALRM, old)
         _signal.alarm(0)
 
@@ -1653,10 +1685,35 @@ def check_bundle(root: Path, timeout_s: int = 90) -> str:
     return _check_bundle_uncapped(root)
 
 
+def _captured_leg_version(golden: Path) -> str:
+    """Infer the capture contract from every positive leg's scan header."""
+    versions = set()
+    for leg in LEGS:
+        scan = golden / leg / "process-scan-after.txt"
+        if not scan.is_file():
+            continue
+        first = _require_file(scan, leg, "process-scan-after.txt").read_text().splitlines()
+        if first and first[0].startswith("# process-scan v2.4 "):
+            versions.add("v2.4")
+        elif first and first[0].startswith("# process-scan v2.3 "):
+            versions.add("v2.3")
+        else:
+            versions.add("v2.2")
+    return min(versions or {"v2.2"}, key=lambda value: tuple(map(int, value[1:].split("."))))
+
+
+def _version_before(actual: str, since: str) -> bool:
+    return tuple(map(int, actual[1:].split("."))) < tuple(map(int, since[1:].split(".")))
+
+
 def _check_bundle_uncapped(root: Path) -> str:
     golden = root / "golden"
-    if not golden.is_dir():
+    try:
+        golden_mode = os.lstat(golden).st_mode
+    except OSError:
         raise Deferred("v2 evidence not captured")
+    if not stat.S_ISDIR(golden_mode):
+        raise Failure("golden: root is not a regular directory: golden")
     has_any_timeline = any((golden / leg / "timeline.jsonl").exists() for leg in LEGS)
     if not has_any_timeline:
         raise Deferred("v2 evidence not captured")
@@ -1665,7 +1722,6 @@ def _check_bundle_uncapped(root: Path) -> str:
     # 5-F18 / F19 / R8-CK-F2: walk golden/ AND fixtures/ for non-regular entries.
     # tools/frame_tee.py and the A1 manifest-post.summary pre-read go through
     # _require_file (S_ISREG gate) instead of the walk.
-    import stat as _stat
     walk_roots = [(golden, "golden"), (_fixtures(), "fixtures")]
     for walk_base, rel_base in walk_roots:
         if not walk_base.exists():
@@ -1680,11 +1736,12 @@ def _check_bundle_uncapped(root: Path) -> str:
                     raise Failure(f"{rel_base}: cannot stat {p.relative_to(walk_base)}: {e}")
                 if p.is_symlink():
                     raise Failure(f"{rel_base}: symlink in evidence tree: {p.relative_to(walk_base)}")
-                if not (_stat.S_ISREG(st.st_mode) or _stat.S_ISDIR(st.st_mode)):
+                if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
                     raise Failure(f"{rel_base}: non-regular entry in evidence tree: {p.relative_to(walk_base)}")
-    identities_path = _fixtures() / "identities.json"
-    _require_file(identities_path, "golden", "fixtures/identities.json")
-    identities = json.loads(identities_path.read_text())
+    identities_path = _require_file(
+        _fixtures() / "identities.json", "golden", "fixtures/identities.json"
+    )
+    identities = json.loads(_require_file(identities_path, "golden", "fixtures/identities.json").read_text())
     baseline_path = golden / "manifests" / "manifest-baseline.txt.gz"
     # A13: golden/manifests/ contains exactly manifest-baseline.txt.gz
     _require_dir(golden / "manifests", "golden", "manifests/")
@@ -1714,27 +1771,27 @@ def _check_bundle_uncapped(root: Path) -> str:
             _require_file(post_sum_path, leg, "manifest-post.summary")
             _, post_ts = _parse_summary(post_sum_path, leg, "manifest-post.summary")
             post_summary_ts_map[leg] = post_ts
-    # F20/F21: per-leg entry allowlist — required + optional files
-    _LEG_REQUIRED_FILES = {
-        "timeline.jsonl", "frames-client-to-agent.jsonl", "frames-agent-to-client.jsonl",
-        "runtime-identity.json", "env.json", "hermes-model.txt", "startup-line.txt",
-        "argv.txt", "buzz-acp.pid", "buzz-acp.exit", "buzzacp.log",
-        "manifest-pre.txt.gz", "manifest-post.txt.gz", "manifest-pre.summary",
-        "manifest-post.summary", "process-scan-after.txt", "process-scan-teardown.txt",
-        "owned-pids.json", "tee-status.json", "agent-stderr.txt",
-    }
-    _LEG_OPTIONAL_DIRS = {"mentions", "upstream-records"}
+    # F20/F21: consume the producer's ONE pinned leg-file contract. Positive legs
+    # allow exactly the names produced there; agent-stderr.txt belongs only to the
+    # negative probe and is pinned by NEGATIVE_REQUIRED_FILES.
+    allowed = ({name for name, status in PINNED_LEG_FILES.items()
+                if status in {"required", "optional"}}
+               | set(PINNED_LEG_DIRS))
+    required = {name for name, status in PINNED_LEG_FILES.items() if status == "required"}
+    captured_version = _captured_leg_version(golden)
+    for name, since in PINNED_LEG_FILES_SINCE.items():
+        if _version_before(captured_version, since):
+            required.discard(name)
     for leg in LEGS:
         d = golden / leg
         if not d.is_dir():
             raise Failure(f"golden: golden/{leg} absent")
-        # F21: entry allowlist
-        allowed = _LEG_REQUIRED_FILES | _LEG_OPTIONAL_DIRS
         for item in d.iterdir():
             if item.name not in allowed:
                 raise Failure(f"{leg}: unexpected entry {item.name}")
-        # F20: agent-stderr.txt is REQUIRED in every positive leg
-        _require_file(d / "agent-stderr.txt", leg, "agent-stderr.txt")
+        for name in sorted(required):
+            _require_file(d / name, leg, name)
+        # agent-stderr.txt belongs only to the negative probe producer; no positive producer writes it.
         entries = _load_timeline_raw(d, leg)
         c2a_split, a2c_split = _run_check(check_timeline, leg, entries, leg, d)
         _run_check(check_initialize_frames, leg, c2a_split, a2c_split, leg, schema=schema)
@@ -1744,10 +1801,7 @@ def _check_bundle_uncapped(root: Path) -> str:
         leg_event_ids = _run_check(check_mentions, leg, d, leg, identities, entries, post_summary_ts)
         all_mention_event_ids.extend(leg_event_ids)
         _run_check(check_route, leg, d, leg, entries)
-        # F20: screen agent-stderr.txt for secret shapes (unconditional — file is required)
-        stderr_text = (d / "agent-stderr.txt").read_text()
-        if _STDERR_LEAK_RE.search(stderr_text):
-            raise Failure(f"{leg}: agent-stderr.txt contains a secret-shaped string")
+        # F20: positive legs have no agent-stderr producer. The negative leg validates its required copy.
     for leg in ("run-1", "run-2", "shutdown"):
         d = golden / leg
         entries = _load_timeline_raw(d, leg)
@@ -1847,7 +1901,7 @@ def main(argv) -> int:
         print(f"failure_reason: {f}")
         return 1
     except SystemExit as se:
-        return int(se.code or 0)
+        return 70 if se.code is None else int(se.code)
     except Exception as exc:
         print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
         return 1

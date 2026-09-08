@@ -177,6 +177,16 @@ class TestAFAP40:
     def test_fires_on_exists_and_conjunct(self):
         assert self.rx.search("if scan.exists() and scan.stat().st_size:")
 
+    def test_fires_on_the_ternary_form(self):
+        # VERIFY-P5a F7: the same defect with no colon and no `and` — build_capture_record.py recorded an
+        # absent relay receipt as `"accepted": null` through exactly this shape
+        assert self.rx.search('receipt = json.loads(rp.read_text()) if rp.exists() else {}')
+
+    def test_no_fire_on_an_unrelated_ternary(self):
+        # the `else` alternative must not widen the row to every conditional expression — only to one whose
+        # condition is a presence probe
+        assert not self.rx.search('mode = "after" if phase == "post" else "teardown"')
+
     def test_no_fire_on_negated_guard(self):
         # `if not x.exists(): raise Failure` is the REQUIRED-artifact form
         assert not self.rx.search('if not env_path.exists():\n    raise Failure(f"{leg}: env.json missing")')
@@ -296,6 +306,11 @@ class TestAFAP57:
 
     def test_fires_on_attempts_ge(self):
         assert self.rx.search("        if attempts[0] >= 3: return path")
+
+    def test_fires_on_a_bracketed_call_count(self):
+        # VERIFY-N5h F11: `[0]` was offered to `calls`/`attempts` but not to `call_count`, so the commonest
+        # spelling of the ordinal gate was invisible to the screen
+        assert self.rx.search("                if _call_count[0] == 1:")
 
     def test_no_fire_on_call_count_assertion(self):
         assert not self.rx.search("    assert spy.call_count == 1")

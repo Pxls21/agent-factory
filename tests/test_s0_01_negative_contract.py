@@ -8,7 +8,9 @@ pydantic's `missing protocolVersion` detail). Nothing here writes outside tmp_pa
 import base64
 import hashlib
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -92,6 +94,36 @@ def neg(tmp_path):
 
 def test_valid_capture_returns_observed_line(neg):
     assert nc.validate_negative_dir(neg, P / "fixtures") == "observed: error code=-32602 message=Invalid params"
+
+
+@pytest.mark.parametrize("name", [
+    "timeline.jsonl",
+    "runtime-identity.json",
+    "env.json",
+])
+def test_fifo_read_targets_are_named_without_blocking(neg, name):
+    """All negative-leg evidence reads reject a FIFO before opening it."""
+    target = neg / name
+    target.unlink()
+    os.mkfifo(target)
+    started = time.monotonic()
+    _expect(neg, f"{name} is not a regular file: {name}")
+    assert time.monotonic() - started < 5
+
+
+def test_fifo_fixture_is_named_without_blocking(neg, tmp_path):
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    target = fixtures / "neg-malformed-initialize.json"
+    os.mkfifo(target)
+    started = time.monotonic()
+    with pytest.raises(nc.NegativeFailure) as exc:
+        nc.validate_negative_dir(neg, fixtures)
+    assert str(exc.value) == (
+        "fixtures/neg-malformed-initialize.json is not a regular file: "
+        "neg-malformed-initialize.json"
+    )
+    assert time.monotonic() - started < 5
 
 
 def test_absent_dir_defers(tmp_path):

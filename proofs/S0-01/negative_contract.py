@@ -18,7 +18,6 @@ import datetime
 import hashlib
 import json
 import re
-import stat as _stat
 from pathlib import Path
 
 import pins
@@ -35,9 +34,13 @@ class NegativeDeferred(Exception):
     """No negative capture at all (the directory or its timeline is absent)."""
 
 
+def _require_negative_file(path: Path, what: str) -> Path:
+    return pins.require_regular_file(path, what, NegativeFailure)
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with _require_negative_file(path, path.name).open("rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -56,7 +59,9 @@ def _parse_float_strict(s):
 
 def _load_timeline(path: Path):
     entries = []
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for lineno, line in enumerate(_require_negative_file(
+        path, "timeline.jsonl"
+    ).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             raise NegativeFailure(f"timeline.jsonl line {lineno} is blank")
         try:
@@ -91,10 +96,10 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
         if missing:
             raise NegativeFailure(f"{missing[0]} absent")
         raise NegativeFailure(f"unexpected entry {extra[0]}")
-    fixture_path = fixtures_dir / "neg-malformed-initialize.json"
-    if not fixture_path.exists():
-        raise NegativeFailure("fixtures/neg-malformed-initialize.json absent")
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture = json.loads(_require_negative_file(
+        fixtures_dir / "neg-malformed-initialize.json",
+        "fixtures/neg-malformed-initialize.json",
+    ).read_text(encoding="utf-8"))
 
     entries = _load_timeline(neg_dir / "timeline.jsonl")
     if not entries:
@@ -157,7 +162,9 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
             f"agent error is code={err['code']} message={err.get('message')!r}, expected "
             f"code={pins.PINNED_NEGATIVE_ERROR_CODE} message={pins.PINNED_NEGATIVE_ERROR_MESSAGE!r}")
 
-    rid = json.loads((neg_dir / "runtime-identity.json").read_text(encoding="utf-8"))
+    rid = json.loads(_require_negative_file(
+        neg_dir / "runtime-identity.json", "runtime-identity.json"
+    ).read_text(encoding="utf-8"))
     if not isinstance(rid, dict):
         raise NegativeFailure("runtime-identity.json is not an object")
     # R8-N5d-F9: only an ABSENT/null probe_error is clean; an empty string is a reported error with no reason.
@@ -175,11 +182,7 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
     missing = sorted(set(pins.NEGATIVE_IDENTITY_KEYS) - set(rid))
     if missing:
         raise NegativeFailure(f"runtime identity key {missing[0]} absent")
-    probe_file = HERE / "tools" / "acp_probe.py"
-    if not probe_file.exists():
-        raise NegativeFailure("tools/acp_probe.py absent")
-    if not _stat.S_ISREG(probe_file.lstat().st_mode):
-        raise NegativeFailure("tools/acp_probe.py is not a regular file")
+    probe_file = _require_negative_file(HERE / "tools" / "acp_probe.py", "tools/acp_probe.py")
     # probe_path is venue-specific (the PC clone path) so only its repo-relative tail is pinned; probe_sha256 is the pin.
     # R7-N5c-F3: before this check the key was required to exist and its value was never read.
     if not isinstance(rid.get("probe_path"), str) or not rid["probe_path"].endswith("proofs/S0-01/tools/acp_probe.py"):
@@ -204,7 +207,9 @@ def validate_negative_dir(neg_dir: Path, fixtures_dir: Path | None = None) -> st
     if spawned > _parse_utc(first["t_utc"]):
         raise NegativeFailure("spawned_at_utc is later than the first frame")
 
-    env = json.loads((neg_dir / "env.json").read_text(encoding="utf-8"))
+    env = json.loads(_require_negative_file(
+        neg_dir / "env.json", "env.json"
+    ).read_text(encoding="utf-8"))
     if not isinstance(env, dict):
         raise NegativeFailure("env.json is not an object")
     for key, pin in (("HERMES_HOME", pins.PINNED_HERMES_HOME), ("PYTHONDONTWRITEBYTECODE", "1"),

@@ -16,6 +16,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pins  # noqa: E402  (the ONE leg-file list; this tool never keeps a second copy of it)
+
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -50,6 +53,37 @@ def main() -> int:
         return 2
     d = Path(args[0])
     leg = args[1]
+
+    # SWEEP-prod #27: twelve default-on-absent gates below meant `build_capture_record.py <empty-dir> run-1`
+    # exited 0 and wrote `{"capture": ..., "files": {}, "version": 2}` — a record of nothing, green. The
+    # required-name list is NOT a local copy: it comes from pins.required_files(), the ONE list's own accessor,
+    # resolved at the LEG's own contract version (pins.corpus_version). VERIFY-P5a F2: reading the raw mapping
+    # here re-implemented the version rule badly and hard-failed every leg the pipeline has ever produced —
+    # `run-1: missing required leg files: tee-status.json` on all four corpus legs, which are v2.2.
+    # Every presence gate below is DOMINATED by this one: each `.exists()` name is `required` here, so by the
+    # time they run the file is proven present (AF-AP-40 — a required artifact must FAIL when absent).
+    # BUILD PATH ONLY (VERIFY-P5a F1/F16): `--check` asks one question — does the committed record still
+    # re-derive, byte for byte — and completeness is not it. Gating both modes cost that mode its diagnosis:
+    # over the committed golden `cancel` leg the answer became "missing required leg files" where the reader
+    # needs "differs from re-derived content", and it turned a round-trip unit test of this function red.
+    if not check_mode:
+        try:
+            version = pins.corpus_version(d)
+        except ValueError as exc:
+            print(f"{leg}: {exc}", file=sys.stderr)
+            return 1
+        missing = sorted(n for n in pins.required_files(version) if not (d / n).is_file())
+        missing += sorted(n for n, status in pins.PINNED_LEG_DIRS.items()
+                          if status == "required" and not (d / n).is_dir())
+        if missing:
+            print(f"{leg}: missing required leg files: {', '.join(sorted(missing))}", file=sys.stderr)
+            return 1
+        # VERIFY-P5a F6: presence is not content. `timeline.jsonl` truncated to 0 bytes — a tee that died
+        # before its first frame, or a truncated collect — passed the gate above and produced
+        # `"timeline": {"entries": 0, "c2a": 0, ...}` at rc 0: the #27 defect in a narrower form.
+        if (d / "timeline.jsonl").stat().st_size == 0:
+            print(f"{leg}: timeline.jsonl is empty (0 bytes) — the leg records no frames", file=sys.stderr)
+            return 1
 
     rec = {"capture": f"s0-01-golden-leg:{leg}", "version": 2}
 
@@ -101,19 +135,33 @@ def main() -> int:
         rec["model"] = model_path.read_text().strip()
 
     # mentions
+    # VERIFY-P5a F7: `receipt = json.loads(rp.read_text()) if rp.exists() else {}` was an UNDOMINATED presence
+    # gate — <tag>.receipt.json is not in PINNED_LEG_FILES (only the mentions DIR is), so nothing above proves
+    # it present, and an absent receipt was recorded as `"accepted": null`: a silent unknown entering the
+    # evidence as if it were an observation. A relay receipt the leg never got is a failed capture, so it is a
+    # NAMED failure on the build path (and, like the completeness gate, not on --check's byte-identity path).
     mentions_dir = d / "mentions"
+    no_receipt = []
     if mentions_dir.is_dir():
         mentions = {}
         for ep in sorted(mentions_dir.glob("*.event.json")):
             tag = ep.name.replace(".event.json", "")
             event = json.loads(ep.read_text())
             rp = mentions_dir / f"{tag}.receipt.json"
-            receipt = json.loads(rp.read_text()) if rp.exists() else {}
+            if rp.is_file():
+                receipt = json.loads(rp.read_text())
+            else:
+                receipt = {}
+                no_receipt.append(tag)
             mentions[tag] = {
                 "event_id": event.get("id"), "pubkey": event.get("pubkey"),
                 "content": event.get("content"), "accepted": receipt.get("accepted"),
             }
         rec["mentions"] = mentions
+    if no_receipt and not check_mode:
+        print(f"{leg}: mention receipt absent: {', '.join(f'mentions/{t}.receipt.json' for t in no_receipt)}",
+              file=sys.stderr)
+        return 1
 
     # upstream records
     urec_dir = d / "upstream-records"

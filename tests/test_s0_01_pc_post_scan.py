@@ -1,4 +1,4 @@
-"""Real-producer contract for the S0-01 process observation (pc_post.sh `scan`, v2.3).
+"""Real-producer contract for the S0-01 process observation (pc_post.sh `scan`, v2.4).
 
 The checkpoint-5 audit ran the actual producer against controlled process tables and showed the checker
 rejecting a successful cleanup (empty scan) while accepting an owned `sleep 60` survivor. These tests run
@@ -34,9 +34,15 @@ print(os.getpid(), child.pid, gpid, flush=True)
 time.sleep(120)
 """
 
+# v2.4 (P5a, SWEEP-prod #5 + SWEEP-tests 4.2/15.2): `rows` counts the rows THIS FILE carries and `table_rows`
+# the full process table — two populations, two names, never asserted equal. In v2.3 one name carried both
+# meanings, so `pinned_present` (full table) could exceed the body it headed, and a producer-side `rows=4`
+# literal left all 11 tests in this file green while the header lied about the table it headed.
 _HEADER_RE = re.compile(
-    r"^# process-scan v2\.3 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
-    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
+    r"^# process-scan v2\.4 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+    r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) table_rows=(\d+) "
+    r"utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$")
+_ROWS, _TABLE_ROWS = 2, 9   # header group numbers: the body counter and the full-table counter
 
 
 @pytest.fixture
@@ -66,29 +72,44 @@ def _seed(fd: Path, buzz: int, owned: list[int]) -> None:
 def _parse(path: Path):
     lines = path.read_text().splitlines()
     m = _HEADER_RE.match(lines[0])
-    assert m, f"header does not match the v2.3 shape: {lines[0]!r}"
+    assert m, f"header does not match the v2.4 shape: {lines[0]!r}"
     rows = []
     for line in lines[1:]:
         pid, ppid, etimes, cmd = line.split(None, 3)
         rows.append((int(pid), int(ppid), int(etimes), cmd))
+    # SWEEP-tests 15.2: the header's own counter against its own body, on EVERY caller. `> 3` / `> 0` could not
+    # express "the enumeration header describes this file": a hard-coded `rows=4` in the producer passed both.
+    assert int(m.group(_ROWS)) == len(rows), (
+        f"header rows={m.group(_ROWS)} but the body carries {len(rows)} rows")
     return m, rows
 
 
 sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
 import pins  # noqa: E402 — the producer's only pin source; the pinned paths are never repeated as literals here
-_PINNED = (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_AGENT_REALPATH, pins.PINNED_TEE_PATH)
+
+
+def _is_pinned(cmd: str) -> bool:
+    """The producer's OWN rule, not a mirror of it: `pins.is_pinned_argv` (VERIFY-P5a F4, A5k list item 5).
+
+    This used to be a hand copy (AF-AP-42) justified by the producer's rule living inside a `python3 - <<PY`
+    heredoc — but that heredoc already imports pins by path, so the copy bought nothing and cost the usual
+    price: when the producer's version admitted `/usr/bin/cat <tee>`, so did this one, and every assertion
+    written against it agreed with the defect. Producer, checker and test now compute one predicate; the
+    contract is still driven end to end through the real producer in
+    test_pinned_present_is_exact_over_a_synthetic_table."""
+    return pins.is_pinned_argv(cmd.split())
 
 
 def _split_world(rows, owned):
-    """The scan is WORLD-scoped by design: its body carries every owned row AND every live row naming a pinned
-    path, whoever spawned it. Under a parallel venue (the PC gate runs 8 xdist workers) a sibling worker's real
-    tee or pinned-path sleeper lands in THIS test's body — PC run 20260907T161133Z, AF-AP-59. So a test asserts
-    the OWNED subset exactly and characterises the rest: every foreign row must be admissible under the
-    producer's only other rule (it names a pinned path); anything else is an unexplained row and fails."""
+    """The scan is WORLD-scoped by design: its body carries every owned row AND every live row that IS a pinned
+    process, whoever spawned it. Under a parallel venue (the PC gate runs 8 xdist workers) a sibling worker's
+    real tee lands in THIS test's body — PC run 20260907T161133Z, AF-AP-59. So a test asserts the OWNED subset
+    exactly and characterises the rest: every foreign row must be admissible under the producer's only other
+    rule (it is pinned by entry point); anything else is an unexplained row and fails."""
     own = [r for r in rows if r[0] in owned]
     foreign = [r for r in rows if r[0] not in owned]
     for r in foreign:
-        assert any(p in r[3] for p in _PINNED), f"unexplained foreign row in the scan body: {r!r}"
+        assert _is_pinned(r[3]), f"unexplained foreign row in the scan body: {r!r}"
     return own, foreign
 
 
@@ -117,15 +138,16 @@ def test_after_scan_persists_the_owned_closure_and_the_header(tree, tmp_path):
     assert r.returncode == 0, r.stderr
     m, rows = _parse(tmp_path / "process-scan-after.txt")
     assert m.group(1) == "after"
-    assert int(m.group(2)) > 3                       # the full table was enumerated (ps, this test, the tree ...)
+    assert int(m.group(_TABLE_ROWS)) > 3             # the full table was enumerated (ps, this test, the tree ...)
+    assert int(m.group(_TABLE_ROWS)) >= int(m.group(_ROWS))   # two populations; the body is a subset, never larger
     assert m.group(3) == str(buzz) and m.group(4) == "1"
     assert m.group(5) == "3" and m.group(6) == "3"   # closure = buzz, tee, agent; all present
     own, foreign = _split_world(rows, {buzz, tee, agent})
-    # pinned_present is counted over the FULL table (a helper-shaped foreign row is dropped from the body but still
-    # counted — VERIFY-CK8 F14), so from inside one test it is a LOWER bound, never an exact number: under a parallel
-    # venue a sibling worker's helper naming a pinned path can sit in the table between two of THIS test's reads
-    # (AF-AP-59). The EXACT contract is pinned by test_pinned_present_is_exact_over_a_synthetic_table (shim, no world).
-    assert int(m.group(7)) >= len(foreign)
+    # v2.4: pinned_present is counted over the BODY, so it is EXACT from inside one test even under a parallel
+    # venue (AF-AP-59) — a sibling worker's real tee is foreign, pinned, and lands in body and header alike; a
+    # sibling's helper-shaped row is dropped from both. None of this tree's rows is a pinned entry point, so the
+    # count is exactly the foreign rows. (In v2.3 the header counted the full table and could only be bounded.)
+    assert int(m.group(7)) == len(foreign)
     assert {row[0] for row in own} == {buzz, tee, agent}
     by_pid = {row[0]: row for row in rows}
     assert by_pid[tee][1] == buzz and by_pid[agent][1] == tee
@@ -143,7 +165,8 @@ def test_teardown_scan_after_a_clean_exit_is_empty_with_owned_present_zero(tree,
     r = _scan("teardown", tmp_path)
     assert r.returncode == 0, r.stderr
     m, rows = _parse(tmp_path / "process-scan-teardown.txt")
-    assert m.group(1) == "teardown" and int(m.group(2)) > 0
+    assert m.group(1) == "teardown" and int(m.group(_TABLE_ROWS)) > 0   # the table was enumerated ...
+    assert int(m.group(_ROWS)) == len(rows)                             # ... and the body counter is its own
     assert m.group(4) == "0"                          # buzz gone
     assert m.group(5) == "3" and m.group(6) == "0"    # closure remembered, nothing of it LIVE
     own, _foreign = _split_world(rows, {buzz, tee, agent})
@@ -245,14 +268,16 @@ def test_scan_fails_loud_on_an_unparsable_ps_row(tmp_path):
     assert not (fd / "process-scan-after.txt").exists()
 
 
-def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_counted_in_the_header(tmp_path):
-    """VERIFY-CK8 F14: the helper filter drops an UNOWNED row whose command contains `pc_post.sh` or ` ps -e` even when
-    it names a pinned path — deliberately, and never silently: pinned_present is counted over the FULL table while the
-    checker counts the body, so the drop surfaces as `pinned_present … inconsistent with body`, a loud fail-closed
-    Failure (a legitimate concurrent capture whose helper names a pinned path reds the leg — a false positive, not a
-    hole). A foreign pinned-naming row WITHOUT the helper strings stays in the body (A20e then rejects it)."""
-    sys.path.insert(0, str(ROOT / "proofs" / "S0-01"))
-    import pins  # noqa: E402 — the pinned tee path, never repeated as a literal
+def test_a_process_that_only_mentions_a_pinned_path_is_not_counted_as_pinned(tmp_path):
+    """SWEEP-prod #6, through REAL processes: `any(p in r[3] for p in PINNED)` counted a `sleep` whose argv merely
+    MENTIONED the pinned tee path as a pinned process (the sweep's decoy moved pinned_present 1 -> 2 and put the
+    sleeper in the body). v2.4 matches the ENTRY POINT: argv[0] for the buzz-acp binary, argv[1] for the two pinned
+    scripts. Neither decoy below is a pinned entry point, so both are absent from the body and from the counter.
+
+    This test replaces VERIFY-CK8 F14, whose property — a helper-shaped pinned row dropped from the body while
+    still counted in the header, surfacing as a loud `pinned_present … inconsistent with body` — is deliberately
+    RETIRED by the #5 fix: both counters now come off the same list, so the drop shows only as table_rows > rows.
+    The helper filter itself is still pinned, over a synthetic table, by the test below."""
     tee = pins.PINNED_TEE_PATH
     buzz = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
     helper = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep(120) # {tee} pc_post.sh"])
@@ -263,11 +288,12 @@ def test_foreign_helper_row_naming_a_pinned_path_is_dropped_from_the_body_but_co
         assert r.returncode == 0, r.stderr
         m, rows = _parse(tmp_path / "process-scan-after.txt")
         body_pids = {row[0] for row in rows}
-        assert buzz.pid in body_pids                       # owned root kept
-        assert plain.pid in body_pids                      # foreign row naming a pinned path: evidence, kept
-        assert helper.pid not in body_pids                 # foreign helper-shaped row: dropped from the body
-        assert int(m.group(7)) >= 2                        # …but counted in pinned_present (full-table count)
-        assert int(m.group(7)) > sum(1 for row in rows if tee in row[3])   # header > body: the loud mismatch
+        assert buzz.pid in body_pids                       # owned root kept, whatever its command
+        assert plain.pid not in body_pids                  # mentions the tee path in a comment: NOT an entry point
+        assert helper.pid not in body_pids                 # same, and helper-shaped as well
+        assert not any(_is_pinned(row[3]) for row in rows if row[0] in (plain.pid, helper.pid))
+        # the decoys are invisible to BOTH counters (in v2.3 they moved pinned_present)
+        assert int(m.group(7)) == sum(1 for row in rows if _is_pinned(row[3]))
     finally:
         for proc in (helper, plain, buzz):
             proc.kill()
@@ -281,23 +307,63 @@ def test_split_world_rejects_an_unexplained_foreign_row():
         _split_world([(1, 0, 5, "/usr/bin/sleep 60")], owned={2})
 
 
-def test_split_world_admits_a_foreign_row_naming_a_pinned_path():
-    """The positive twin: a foreign row naming a pinned path is admissible evidence (the producer's only other rule)
-    and comes back in `foreign`, never in `own`; the owned row comes back in `own` whatever its command."""
-    rows = [(2, 0, 5, "/usr/bin/sleep 60"), (1, 0, 5, f"python3 -c 'time.sleep(1) # {pins.PINNED_TEE_PATH}'")]
+def test_split_world_admits_a_foreign_row_that_is_a_pinned_entry_point():
+    """The positive twin: a foreign row that IS a pinned entry point (here the real tee shape, `python3 <tee>`) is
+    admissible evidence — the producer's only other rule — and comes back in `foreign`, never in `own`; the owned
+    row comes back in `own` whatever its command."""
+    rows = [(2, 0, 5, "/usr/bin/sleep 60"), (1, 0, 5, f"python3 {pins.PINNED_TEE_PATH}")]
     own, foreign = _split_world(rows, owned={2})
     assert [r[0] for r in own] == [2]
     assert [r[0] for r in foreign] == [1]
 
 
+def test_split_world_rejects_a_row_that_only_mentions_a_pinned_path():
+    """The negative control of the MIRROR itself (SWEEP-prod #6): the helper must not admit a row whose command
+    merely contains a pinned path — that was the producer's old substring rule, and a test helper that kept it
+    would characterise away exactly the rows the producer no longer emits."""
+    decoy = f"python3 -c 'time.sleep(1) # {pins.PINNED_TEE_PATH}'"
+    assert not _is_pinned(decoy)
+    with pytest.raises(AssertionError, match="unexplained foreign row"):
+        _split_world([(1, 0, 5, decoy)], owned={2})
+
+
+def test_parse_rejects_a_header_whose_rows_counter_lies(tmp_path):
+    """SWEEP-tests 4.2/15.2, the negative control of the one-line fix: with `rows=4` hard-coded in the producer the
+    whole file was green (`11 passed in 1.28s`). `_parse` now compares the header's own counter with the body it
+    heads, so a lying header fails wherever it is read."""
+    scan = tmp_path / "process-scan-after.txt"
+    scan.write_text(
+        "# process-scan v2.4 mode=after rows=4 buzz_acp_pid=1 buzz_present=1 owned=1 owned_present=1 "
+        "pinned_present=0 owned_zombies=0 table_rows=9 utc=2026-09-08T00:00:00Z\n"
+        "1 0 5 /usr/bin/sleep 60\n"
+        "2 1 5 /usr/bin/sleep 60\n")
+    with pytest.raises(AssertionError, match=r"header rows=4 but the body carries 2 rows"):
+        _parse(scan)
+
+
 def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
-    """VERIFY-CK10 F-R10-20 asked for `pinned_present == 0` whenever `foreign` is empty; from inside a test that number
-    is WORLD-scoped (a sibling worker's helper can name a pinned path between two of one test's reads — AF-AP-59), so
-    the EXACT contract is pinned here through a `ps` shim that prints a synthetic table and nothing else: the header
-    counts EVERY row naming a pinned path over the full table (2 — a plain foreign row and a helper-shaped one), the
-    body keeps the owned row and the plain pinned row, drops the helper-shaped row, omits the unpinned foreign row;
-    owned_present is exactly the owned rows present (1)."""
-    tee = pins.PINNED_TEE_PATH
+    """The EXACT v2.4 contract, driven through the REAL producer over a `ps` shim that prints a synthetic table and
+    nothing else — no world, no sibling worker, no AF-AP-59 flakiness (VERIFY-CK10 F-R10-20 asked for an exact
+    number; from inside a live-table test that number used to be world-scoped).
+
+    Its shape is unchanged from v2.3; its EXPECTATIONS changed twice. (a) `rows` is now the body counter and
+    `table_rows` the full table, so the "whole table enumerated" assertion moved to table_rows (#5 / tests 15.2).
+    (b) The rows themselves are now the three shapes a captured leg really carries plus the two the rule must
+    reject, because pinned-ness is the ENTRY POINT and not a substring (#6): under v2.3 the decoy at 5001 — a
+    `python3 -c` sleeper whose comment names the tee — WAS counted as a pinned process and kept in the body.
+
+    Table: 4242 owned, unpinned · 5001 decoy naming the tee in a `-c` string · 5002 helper-shaped AND a genuine
+    tee entry point · 5003 foreign and unrelated · 5004 the real buzz-acp · 5005 the real tee · 5006 the real
+    agent · 5007 a real `/usr/bin/cat <tee>`. Body = owned + the three real pinned rows (the helper-shaped one
+    is filtered out); pinned_present counts the body's pinned rows (3), never the filtered 5002, never the
+    decoy, never the bystander.
+
+    Row 5007 is VERIFY-P5a F4, reproduced there with a REAL process: under the first v2.4 rule any command
+    whose FIRST OPERAND is a pinned script counted as pinned, so `cat`, `vim`, `less` or `sha256sum` on
+    frame_tee.py — an owner reading the file during a capture — moved pinned_present and entered the leg's
+    evidence body, where the checker then failed the leg for a bystander."""
+    tee, agent = pins.PINNED_TEE_PATH, pins.PINNED_AGENT_REALPATH
+    buzz_exe = pins.PINNED_BUZZ_ACP_EXE_REALPATH
     shim_dir = tmp_path / "bin"
     shim_dir.mkdir()
     shim = shim_dir / "ps"
@@ -305,8 +371,12 @@ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
         "#!/bin/sh\n"
         "echo '4242 1 7 S /usr/bin/sleep 120'\n"
         f"echo '5001 1 7 S python3 -c \"time.sleep(120) # {tee}\"'\n"
-        f"echo '5002 1 7 S bash pc_post.sh scan after {tee}'\n"
+        f"echo '5002 1 7 S python3 {tee} pc_post.sh'\n"
         "echo '5003 1 7 S /usr/bin/sleep 60'\n"
+        f"echo '5004 1 7 S {buzz_exe} --relay-url ws://127.0.0.1:3999 --agent-command {tee} --agent-args'\n"
+        f"echo '5005 5004 7 S python3 {tee}'\n"
+        f"echo '5006 5005 7 S /home/rocco/s0-01-pinned/.venv-hermes/bin/python3 {agent}'\n"
+        f"echo '5007 1 7 S /usr/bin/cat {tee}'\n"
     )
     shim.chmod(0o755)
     fd = tmp_path / "fd"
@@ -315,7 +385,11 @@ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
     r = subprocess.run(["bash", str(PC_POST), "scan", "after", str(fd)], capture_output=True, text=True,
                        env={**os.environ, "S0_01_REPO": str(ROOT), "PATH": f"{shim_dir}:{os.environ['PATH']}"}, timeout=60)
     assert r.returncode == 0, (r.returncode, r.stderr)
-    m, rows = _parse(fd / "process-scan-after.txt")
-    assert m.group(2) == "4"                                    # the whole synthetic table was enumerated
-    assert (m.group(6), m.group(7)) == ("1", "2"), m.group(0)   # owned_present exact; pinned_present exact over the FULL table
-    assert {row[0] for row in rows} == {4242, 5001}             # body: the owned row + the plain pinned row, nothing else
+    m, rows = _parse(fd / "process-scan-after.txt")           # _parse pins rows == len(body)
+    assert m.group(_TABLE_ROWS) == "8"                        # the whole synthetic table was enumerated
+    assert m.group(_ROWS) == "4"                              # ... and the body is the four rows below
+    assert (m.group(6), m.group(7)) == ("1", "3"), m.group(0)  # owned_present exact; pinned_present over the BODY
+    assert {row[0] for row in rows} == {4242, 5004, 5005, 5006}
+    assert 5001 not in {row[0] for row in rows}               # #6: mentioning a pinned path is not being one
+    assert 5002 not in {row[0] for row in rows}               # helper-shaped, dropped from body AND header alike
+    assert 5007 not in {row[0] for row in rows}               # F4: `cat <tee>` is a bystander, not an entry point
