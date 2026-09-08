@@ -44,6 +44,11 @@ done
 for f in $DELS; do
   [ -e "$OUT/$f" ] || { echo "lane_gate: -d $f is not present at $REV (nothing to delete — a typo?)" >&2; exit 67; }
   rm -f "$OUT/$f"; printf 'DELETED  %s  (present at the rev, removed from the archive copy)\n' "$f"
+  # git tracks no empty directory: a checkout of the lane's commit has no `hermes/` once its four files are gone, and a test
+  # that asserts the directory's absence (S0-03's provenance test) is right to. Prune the emptied parents up to the archive
+  # root (2026-09-08: the first -d gate read `1 failed, 215 passed` on exactly that directory while the PC's git-applied patch
+  # read `216 passed`).
+  d="$OUT/$(dirname "$f")"; while [ "$d" != "$OUT" ] && rmdir "$d" 2>/dev/null; do d="$(dirname "$d")"; done
 done
 # a file git IGNORES under the lane's directories never reaches `git archive`, a checkout or CI: the lane's own byte-copy gate
 # is green while the committed tree is red (AF-AP-62, 2026-09-08: 16 gitignored buzzacp.log files under S0-02's bundles —

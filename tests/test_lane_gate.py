@@ -136,3 +136,28 @@ def test_a_deletion_absent_at_the_rev_is_refused(tmp_path, probe):
     assert "not present at HEAD" in r.stderr
     assert not [l for l in r.stdout.splitlines() if l.startswith("RESULT:")]
 
+
+def test_a_deletion_prunes_the_directory_it_empties(tmp_path, probe):
+    """A checkout carries no empty directory, so a deleted file's emptied parent must go too (2026-09-08: S0-03's provenance
+    test asserts `hermes/` is ABSENT after O2 deleted its four files — the first -d gate left the empty directory and read
+    `1 failed, 215 passed` where the PC's git-applied patch read `216 passed`). The rev is a dangling commit built from
+    HEAD's tree plus one synthetic file in its own directory — no ref, no working-tree change."""
+    victim_dir = f"tests/.lane_gate_probe_gone_{uuid.uuid4().hex[:8]}"
+    victim = f"{victim_dir}/only.txt"
+    env = dict(os.environ, GIT_INDEX_FILE=str(tmp_path / "index"))
+    subprocess.run(["git", "read-tree", "HEAD"], cwd=ROOT, env=env, check=True)
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=ROOT, input="gone\n", capture_output=True,
+                          text=True, check=True).stdout.strip()
+    subprocess.run(["git", "update-index", "--add", "--cacheinfo", f"100644,{blob},{victim}"], cwd=ROOT, env=env, check=True)
+    tree = subprocess.run(["git", "write-tree"], cwd=ROOT, env=env, capture_output=True, text=True, check=True).stdout.strip()
+    rev = subprocess.run(["git", "commit-tree", tree, "-p", "HEAD", "-m", "lane_gate probe: a file to delete"], cwd=ROOT,
+                         capture_output=True, text=True, check=True).stdout.strip()
+    env_keep = dict(os.environ, LANE_GATE_DIR=str(tmp_path), LANE_GATE_KEEP="1")
+    r = subprocess.run(["bash", str(ROOT / "scripts/lane_gate.sh"), "-r", rev, "-f", probe, "-t", probe, "-n", "1",
+                        "-d", victim], cwd=ROOT, env=env_keep, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    gate = [p for p in tmp_path.iterdir() if p.name.startswith("gate-") and p.is_dir()][0]
+    assert not (gate / victim).exists()
+    assert not (gate / victim_dir).exists(), "the emptied directory survived the deletion"
+    assert (gate / "tests").is_dir(), "pruning must stop at a non-empty parent"
+
