@@ -262,6 +262,12 @@ byte-copy gate was green, the coordinator's git-view gate `39 failed`, and a fre
 would have shown the red. `lane_gate.sh` now names every gitignored file under the lane's
 directories; `.gitignore` re-includes `proofs/*/fixtures/**/*.log` (a committed bundle's logs ARE
 the evidence).
+**A coordinator amendment inside a lane's checkpoint invalidates the lane's report_lint and FILE IDENTITY
+(2026-09-08, VERIFY-B5i VB-F7/F8 · VERIFY-O1 F-18):** the six-line docstring the coordinator inserted into the
+tee test at checkpoint 8y shifted 22 of the lane's `file:line` refs by +6 and left its identity row stale;
+the O1 checkpoint pasted the LANE's gate line at its own PIN, not on the branch. When the coordinator edits a
+lane's file before the checkpoint: re-run `report_lint --rev <checkpoint>` on the lane's report, re-stamp its
+identity table, and paste the coordinator's own gate RESULT at the landed rev — all in the same commit.
 **Semantic-duplicate lens (slopo, IP-1): when a slopo index is live (`slopo.conf.yaml` +
 `.slopo-runtime/`), run `slopo review --base origin/claude/soundbox-kit-migration-iz1jwf` over
 a landed build lane's diff — ADVISORY only, never a gate; attach flagged clusters to verify
