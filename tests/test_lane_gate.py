@@ -109,3 +109,30 @@ def test_committed_evidence_and_fixture_logs_are_not_gitignored():
     assert not ignored("proofs/S0-02/evidence/pos-allowed/buzzacp.log")
     assert not ignored("proofs/S0-99/evidence/any-leg/anything.log")
     assert ignored("tests/lane_gate_ignored_probe.log"), "the control: an ordinary log must still be ignored"
+
+
+def test_a_declared_deletion_is_removed_from_the_archive_copy(tmp_path, probe):
+    """-d: a file the lane DELETED (present at the rev, absent from its working tree) is removed from the archive copy, so
+    the gate runs on the tree the lane means. 2026-09-08, lane O2: four stale fixture files it removed could not be
+    represented — `-f` refused them (rc 67) and omitting them kept the stale bytes (`33 failed`)."""
+    victim = "tests/test_lane_gate.py"  # tracked at HEAD, not in the -t set; deleted from the ARCHIVE COPY only
+    assert (ROOT / victim).is_file()
+    env = dict(os.environ, LANE_GATE_DIR=str(tmp_path), LANE_GATE_KEEP="1")
+    r = subprocess.run(["bash", str(ROOT / "scripts/lane_gate.sh"), "-r", "HEAD", "-f", probe, "-t", probe, "-n", "1",
+                        "-d", victim], cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert any(l.startswith("DELETED  " + victim) for l in r.stdout.splitlines()), r.stdout
+    gate = [p for p in tmp_path.iterdir() if p.name.startswith("gate-") and p.is_dir()][0]
+    assert not (gate / victim).exists(), "the deleted file is still in the archive copy"
+    assert (ROOT / victim).is_file(), "the gate touched the working tree"
+    result = [l for l in r.stdout.splitlines() if l.startswith("RESULT:")][-1]
+    assert "deleted=1" in result and "3 passed" in result, result
+
+
+def test_a_deletion_absent_at_the_rev_is_refused(tmp_path, probe):
+    """NEGATIVE CONTROL: -d of a path the rev does not carry is a typo, not a no-op — rc 67, nothing gated."""
+    r = _run(tmp_path, "-r", "HEAD", "-f", probe, "-t", probe, "-n", "1", "-d", "tests/no_such_file_ever.py")
+    assert r.returncode == 67, r.stdout + r.stderr
+    assert "not present at HEAD" in r.stderr
+    assert not [l for l in r.stdout.splitlines() if l.startswith("RESULT:")]
+

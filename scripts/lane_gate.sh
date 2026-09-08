@@ -4,7 +4,7 @@
 #   (sha256 + lines) of those files, then `scripts/test_summary.sh <tests>` N times (default 2) — the counts must agree run to run
 #   (the wall time is stripped before the comparison). Prints a final RESULT line the checkpoint commit can paste verbatim.
 #
-#   scripts/lane_gate.sh -r <rev> -f "<lane file> [<lane file>…]" -t "<pytest path> [<path>…]" [-n RUNS] [-o OUTDIR]
+#   scripts/lane_gate.sh -r <rev> -f "<lane file> [<lane file>…]" -t "<pytest path> [<path>…]" [-n RUNS] [-o OUTDIR] [-d "<deleted file>…"]
 #
 # Runs long (the checker set is ~17 min per run): launch it DETACHED (`nohup … > gate.log 2>&1 &`) and read gate.log / RESULT;
 # each run's full pytest output is kept at <OUTDIR>.run<N>.log (a red run prints its failure headers + E-lines inline);
@@ -21,11 +21,11 @@ fi
 trap 'rm -f "$LANE_GATE_SELF_COPY"' EXIT
 set -u
 ROOT="$(cd "$(dirname "$LANE_GATE_ORIG")/.." && pwd)"; cd "$ROOT"
-REV=HEAD; FILES=""; TESTS=""; RUNS=2; OUT=""
-while getopts "r:f:t:n:o:h" o; do case "$o" in
-  r) REV="$OPTARG";; f) FILES="$OPTARG";; t) TESTS="$OPTARG";; n) RUNS="$OPTARG";; o) OUT="$OPTARG";;
+REV=HEAD; FILES=""; TESTS=""; RUNS=2; OUT=""; DELS=""
+while getopts "r:f:t:n:o:d:h" o; do case "$o" in
+  r) REV="$OPTARG";; f) FILES="$OPTARG";; t) TESTS="$OPTARG";; n) RUNS="$OPTARG";; o) OUT="$OPTARG";; d) DELS="$OPTARG";;
   h|*) sed -n '2,13p' "$LANE_GATE_ORIG"; exit 64;; esac; done
-[ -n "$FILES" ] && [ -n "$TESTS" ] || { echo "usage: lane_gate.sh -r <rev> -f \"<files>\" -t \"<tests>\" [-n RUNS] [-o OUTDIR]" >&2; exit 64; }
+[ -n "$FILES" ] && [ -n "$TESTS" ] || { echo "usage: lane_gate.sh -r <rev> -f \"<files>\" -t \"<tests>\" [-n RUNS] [-o OUTDIR] [-d \"<files the lane DELETED>\"]" >&2; exit 64; }
 SHA="$(git rev-parse --verify "$REV^{commit}" 2>/dev/null)" || { echo "lane_gate: rev $REV does not resolve" >&2; exit 65; }
 SP="${LANE_GATE_DIR:-/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad}"
 [ -n "$OUT" ] || OUT="$SP/gate-${SHA:0:7}-$(date -u +%H%M%S)"
@@ -36,6 +36,14 @@ for f in $FILES; do
   [ -f "$f" ] || { echo "lane_gate: lane file $f absent in the working tree" >&2; exit 67; }
   mkdir -p "$OUT/$(dirname "$f")" && cp "$f" "$OUT/$f"
   printf '%s  %s  %s lines\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f" "$(wc -l < "$f")"
+done
+# -d: a file the lane DELETED. `-f` refuses an absent path (a typo must never pass as "nothing to copy"), so a deletion is
+# declared explicitly and removed from the archive copy; it must exist at the rev (2026-09-08, lane O2: four stale S0-03
+# fixture files it removed could not be represented — naming them under -f was rc 67, omitting them left the stale bytes
+# in the archive and `33 failed`).
+for f in $DELS; do
+  [ -e "$OUT/$f" ] || { echo "lane_gate: -d $f is not present at $REV (nothing to delete — a typo?)" >&2; exit 67; }
+  rm -f "$OUT/$f"; printf 'DELETED  %s  (present at the rev, removed from the archive copy)\n' "$f"
 done
 # a file git IGNORES under the lane's directories never reaches `git archive`, a checkout or CI: the lane's own byte-copy gate
 # is green while the committed tree is red (AF-AP-62, 2026-09-08: 16 gitignored buzzacp.log files under S0-02's bundles —
@@ -58,7 +66,7 @@ for i in $(seq 1 "$RUNS"); do
   [ -n "$prev" ] && [ "$counts" != "$prev" ] && same=no
   prev="$counts"; summaries+=("$summary")
 done
-echo "RESULT: rev=${SHA:0:12} files=$(echo $FILES | wc -w) runs=$RUNS identical=$same rc=$rc_all summary=\"${summaries[*]}\""
+echo "RESULT: rev=${SHA:0:12} files=$(echo $FILES | wc -w) deleted=$(echo $DELS | wc -w) runs=$RUNS identical=$same rc=$rc_all summary=\"${summaries[*]}\""
 # the archive is a whole-tree copy (hundreds of MB with the vendored trees); eight of them filled the temp filesystem on
 # 2026-09-08. The run logs beside it are the record; the archive itself is deleted unless LANE_GATE_KEEP=1 (a red run keeps
 # it too, so the failing bytes can be inspected).
