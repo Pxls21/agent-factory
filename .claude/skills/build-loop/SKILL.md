@@ -132,7 +132,10 @@ build-loop section is the condensed index of it. On any doubt, THIS text governs
    file mutation (python heredoc replace, sed) with `git commit` in one call: a partial mutation
    failure does not stop the commit, which then ships the half-state (bit 3x on 2026-08-24 —
    quote-mismatch asserts fired, commits landed anyway). Mutate, VERIFY the mutation's own
-   output, then commit as a separate call — or use exact-match Edit, which fails loud.**
+   output, then commit as a separate call — or use exact-match Edit, which fails loud — or `scripts/anchor_edit.py`
+   (every anchor validated unique BEFORE any write, all-or-nothing, rc 2 with the file untouched on a miss; built 2026-09-08 after
+   the rule bit twice in one hour: a chained heredoc script whose first anchor was typed from memory, then a redo that died half-way
+   on a fixed line index).**
 3. **An unexpected test failure indicts YOUR assumption first — debugging ladder: telemetry →
    isolation → code.** Read the trace FIRST (a 10-line stage_event spy) — a well-instrumented
    failure NAMES the branch (`abstain_divergent_top` pointed straight at the P5.1 guard). Then
