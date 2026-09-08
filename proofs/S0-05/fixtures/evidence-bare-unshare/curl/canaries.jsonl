@@ -1,0 +1,13 @@
+{"canary": "C0", "detail": "curl: (7) Failed to connect to 10.201.136.1 port 12800 after 0 ms: Couldn't connect to server", "http_status": 0, "kind": "http-get", "rc": 7, "status": "run", "target": "10.201.136.1:12800", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (6) Could not resolve host: api.openai.com", "kind": "dns-resolve", "rc": 6, "resolved": "-", "status": "run", "target": "api.openai.com", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (7) Failed to connect to api.anthropic.com port 443 after 0 ms: Couldn't connect to server", "kind": "dns-resolve", "rc": 7, "resolved": "160.79.104.10", "status": "run", "target": "api.anthropic.com", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (6) Could not resolve host: generativelanguage.googleapis.com", "kind": "dns-resolve", "rc": 6, "resolved": "-", "status": "run", "target": "generativelanguage.googleapis.com", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.66.0.243", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "api.openai.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.66.0.243", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "api.openai.com:443", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "160.79.104.10", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "api.anthropic.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "160.79.104.10", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "api.anthropic.com:443", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.217.119.4", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "generativelanguage.googleapis.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.217.119.4", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "generativelanguage.googleapis.com:443", "unit": "curl"}
+{"canary": "C4", "detail": "OSError [Errno 101] Network is unreachable", "ip": "104.20.23.154", "kind": "tcp-connect-internet", "rc": 7, "status": "run", "target": "example.com:443", "unit": "curl"}
+{"canary": "C5", "detail": "OSError [Errno 101] Network is unreachable", "kind": "udp-dns", "rc": 7, "status": "run", "target": "10.201.148.53:53", "unit": "curl"}
+{"canary": "C6", "detail": "curl: (7) Failed to connect to 10.201.136.1 port 12801 after 0 ms: Couldn't connect to server", "http_status": 0, "kind": "tcp-connect-local", "rc": 7, "status": "run", "target": "10.201.136.1:12801", "unit": "curl"}

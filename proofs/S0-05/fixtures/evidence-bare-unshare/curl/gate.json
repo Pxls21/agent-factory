@@ -1,0 +1,10 @@
+{
+  "allowed": [
+    "10.201.136.1:12800"
+  ],
+  "gate": "enabled",
+  "mechanism": "netns-no-veth",
+  "netns": "s0-05-e1-be3e3ad7b",
+  "rules_sha256": "008cd30075eae21d4e4ca2d2481c6027467b3b7586e6249f0c0d80fb0966d2d4",
+  "unit": "curl"
+}

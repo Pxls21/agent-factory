@@ -1,0 +1,34 @@
+{
+  "units": [
+    {
+      "note": "the mechanism unit",
+      "status": "run",
+      "unit": "curl"
+    },
+    {
+      "note": "the S0-01 launch path, contained",
+      "status": "run",
+      "unit": "hermes-acp"
+    },
+    {
+      "reason": "unit not launched in this collection",
+      "status": "not-run",
+      "unit": "buzz-acp"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "memory-adapter"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "ai-memory"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "dream-foundry"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "proof_id": "S0-05",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/fixtures/evidence-mechanism-sandbox"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/evidence"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/fixtures/evidence-gate-off"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "egress-permitted: gate-disabled"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/fixtures/evidence-bare-unshare"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "positive-control-failed: curl"
+      }
+    }
+  ]
+}

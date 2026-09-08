@@ -1,0 +1,34 @@
+{
+  "units": [
+    {
+      "note": "sandbox mechanism unit: curl inside the selective-egress namespace",
+      "status": "run",
+      "unit": "curl"
+    },
+    {
+      "reason": "live unit runs on the PC (proofs/S0-05/tools/pc/run_s0_05_units.sh); NOT run in the sandbox",
+      "status": "not-run",
+      "unit": "buzz-acp"
+    },
+    {
+      "reason": "live unit runs on the PC (proofs/S0-05/tools/pc/run_s0_05_units.sh); NOT run in the sandbox",
+      "status": "not-run",
+      "unit": "hermes-acp"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "memory-adapter"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "ai-memory"
+    },
+    {
+      "reason": "unit does not exist",
+      "status": "not-run",
+      "unit": "dream-foundry"
+    }
+  ]
+}

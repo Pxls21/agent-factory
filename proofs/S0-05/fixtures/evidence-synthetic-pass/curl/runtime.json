@@ -1,0 +1,27 @@
+{
+  "drop_counter_after": 9,
+  "drop_counter_before": 0,
+  "iptables_version": "iptables v1.8.10 (nf_tables)",
+  "kernel": "6.18.44-fc-v24",
+  "proxy_env_scrubbed": [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy"
+  ],
+  "rules": [
+    "-A INPUT -i lo -j ACCEPT",
+    "-A INPUT -s 10.201.7.1/32 -p tcp -m tcp --sport 20128 -j ACCEPT",
+    "-A OUTPUT -d 10.201.7.1/32 -p tcp -m tcp --dport 20128 -j ACCEPT",
+    "-A OUTPUT -o lo -j ACCEPT",
+    "-P FORWARD DROP",
+    "-P INPUT DROP",
+    "-P OUTPUT DROP"
+  ],
+  "unit": "curl",
+  "venue": "synthetic"
+}

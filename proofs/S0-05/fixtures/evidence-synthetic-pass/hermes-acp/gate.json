@@ -1,0 +1,10 @@
+{
+  "allowed": [
+    "10.201.7.1:20128"
+  ],
+  "gate": "enabled",
+  "mechanism": "veth-iptables",
+  "netns": "s0-05-hermes-acp",
+  "rules_sha256": "ade8f20078d63018fc22a4487dfb92cb084686f4e97c16de7d1f2020ac718010",
+  "unit": "hermes-acp"
+}

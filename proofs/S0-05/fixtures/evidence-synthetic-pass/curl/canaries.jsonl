@@ -1,0 +1,13 @@
+{"canary": "C0", "detail": "curl exit 0, HTTP 200", "http_status": 200, "kind": "http-get", "rc": 0, "status": "run", "target": "10.201.7.1:20128", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (6) Could not resolve host: api.openai.com", "kind": "dns-resolve", "rc": 6, "resolved": "-", "status": "run", "target": "api.openai.com", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (6) Could not resolve host: api.anthropic.com", "kind": "dns-resolve", "rc": 6, "resolved": "-", "status": "run", "target": "api.anthropic.com", "unit": "curl"}
+{"canary": "C1", "detail": "curl: (6) Could not resolve host: generativelanguage.googleapis.com", "kind": "dns-resolve", "rc": 6, "resolved": "-", "status": "run", "target": "generativelanguage.googleapis.com", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "162.159.140.245", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "api.openai.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "162.159.140.245", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "api.openai.com:443", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "160.79.104.10", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "api.anthropic.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "160.79.104.10", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "api.anthropic.com:443", "unit": "curl"}
+{"canary": "C2", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.217.119.4", "kind": "tcp-connect", "rc": 7, "status": "run", "target": "generativelanguage.googleapis.com:443", "unit": "curl"}
+{"canary": "C3", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.217.119.4", "kind": "tls-handshake", "rc": 7, "status": "run", "target": "generativelanguage.googleapis.com:443", "unit": "curl"}
+{"canary": "C4", "detail": "OSError [Errno 101] Network is unreachable", "ip": "172.66.147.243", "kind": "tcp-connect-internet", "rc": 7, "status": "run", "target": "example.com:443", "unit": "curl"}
+{"canary": "C5", "detail": "PermissionError [Errno 1] Operation not permitted", "kind": "udp-dns", "rc": 7, "status": "run", "target": "10.201.7.53:53", "unit": "curl"}
+{"canary": "C6", "detail": "curl: (28) Failed to connect to 10.201.7.1 port 20129 after 5001 ms: Timeout was reached", "http_status": 0, "kind": "tcp-connect-local", "rc": 28, "status": "run", "target": "10.201.7.1:20129", "unit": "curl"}

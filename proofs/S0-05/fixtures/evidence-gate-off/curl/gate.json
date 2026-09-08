@@ -1,0 +1,10 @@
+{
+  "allowed": [
+    "10.201.136.1:12800"
+  ],
+  "gate": "disabled",
+  "mechanism": "veth-iptables",
+  "netns": "s0-05-e1-e3e3ad7b",
+  "rules_sha256": "efc6cc6b4912d5b35ff5ea0757785401c9486478afad155249ce42d92e09103b",
+  "unit": "curl"
+}
