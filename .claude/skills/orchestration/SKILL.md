@@ -35,6 +35,15 @@ subordinate to, the Anthropic docs.
    timestamps differ). Write which INPUT SNAPSHOT the claim is deterministic over (render from the
    committed artifacts) and which verb is allowed to change the inputs (generate, re-probe). A
    brief carrying both halves unreconciled halted a lane for a round — the halt was the kit working.
+0d. **A brief's QUANTIFIER is written AFTER the enumeration, with the enumeration pasted (2026-09-08, AF-AP-73).**
+   "Every required file emptied must fail", "refuse any symlink escaping the root", "23 non-marker files emptied" —
+   each was written from memory of what the producers "do"; each stopped a lane (correctly) on a member the writer never
+   looked at: two zero-byte completion markers, six committed intra-repo symlinks, the v2.2 scan files empty by contract.
+   The second stop was on the coordinator's own AMENDMENT, which repeated the class it was fixing. The measurement that
+   settles a quantifier costs seconds (`stat -c %s` over the corpus legs, `git ls-files -s | grep ^120000`, a producer
+   grep): run it, paste the table into the brief, and derive the rule per member (`(version, file)` → the invalid
+   mutation). A "every / all N / no X" line with no pasted enumeration is unverified and does not ship.
+
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
    adopts a metric/threshold formula from findings prose, check its grain and units against a
    KNOWN MEASURED instance of the same quantity; where prose and prior measured values imply
