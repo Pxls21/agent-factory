@@ -11,8 +11,9 @@
 # this run wrote and confirms /proc/<pid>/exe before signalling (AF-AP-34: `pkill`/`killall` on
 # the PC also match the owner's production containers).
 #
-# External commands used: bash, git, cargo, curl, python3, ss, sha256sum, install, mkdir, mktemp,
-# kill, readlink, cp, sed, awk, cat, chmod, seq, sleep, date, tr, cut.
+# External commands used (bash builtins excluded; this list is the PC portability contract and is
+# enforced by tests/test_s0_06_four_scope.py): bash, cat, dirname, mkdir, mktemp, python3, readlink,
+# shred.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -43,21 +44,49 @@ stop_instance() {
     *) echo "run_s0_06_legs: pid $pid is '$exe', not our ai-memory - NOT signalling" >&2 ;;
   esac
 }
-trap stop_instance EXIT
+
+# The run-scoped credential dies with the run (F-18). serve.log and substrate.json stay: the
+# operator needs both, and neither carries the token. This is NOT gated on the pidfile - a run
+# that fails before the instance starts must still leave no credential behind.
+shred_credentials() {
+  local secret
+  for secret in "$RUNDIR/token" "$RUNDIR/curl.cfg"; do
+    [ -f "$secret" ] && shred -u "$secret"
+  done
+  return 0
+}
+
+cleanup() {
+  stop_instance
+  shred_credentials
+}
+trap cleanup EXIT
 
 bash "$HERE/start_ai_memory.sh" "$RUNDIR" "$PORT"
 
 python3 "$HERE/seed_scopes.py" --base-url "$S0_06_BASE_URL" --token-file "$RUNDIR/token" \
   --agent "$S0_06_AGENT" --team "$S0_06_TEAM" --project "$S0_06_PROJECT"
+# The leak leg recalls as $S0_06_LEAK_AGENT, so `agent--<leak-agent>` has to exist and has to hold
+# its own honeytoken: without this the raw read 404s (`lookup_project` ->
+# `ScopeResolutionError::ProjectNotFoundInWorkspace` -> 404,
+# crates/ai-memory-web/src/routes/api.rs:993-1007), the adapter degrades, the CLI exits 3 and
+# `set -e` aborts the leg before anything is graded (F-1). Re-seeding the three SHARED projects is
+# a no-op, not a double-stage: `upsert_page_in_tx` keys on (workspace, project, path) and returns
+# the existing page id unchanged when body, frontmatter, title, tier and pinned all match
+# (crates/ai-memory-store/src/ops.rs:711-762, asserted by `upsert_page_is_noop_when_body_unchanged`
+# at `:6204-6237`, "no duplicate row for unchanged content").
+python3 "$HERE/seed_scopes.py" --base-url "$S0_06_BASE_URL" --token-file "$RUNDIR/token" \
+  --agent "$S0_06_LEAK_AGENT" --team "$S0_06_TEAM" --project "$S0_06_PROJECT"
 
 mkdir -p "$BUNDLE"
 for leg in denied precedence write-scope leak; do
   bash "$HERE/collect_leg.sh" "$leg" "$BUNDLE"
 done
 
-stop_instance
+cleanup
 trap - EXIT
 
 python3 "$PROOF_DIR/check_four_scope.py" "$BUNDLE"
-echo "run_s0_06_legs: bundle at $BUNDLE (run dir $RUNDIR kept for the token/serve log; delete it when done)"
+echo "run_s0_06_legs: bundle at $BUNDLE (run dir $RUNDIR kept for serve.log and substrate.json;"
+echo "run_s0_06_legs:  token and curl.cfg were shredded - delete the run dir when done)"
 echo "run_s0_06_legs: mint with  python3 $REPO_ROOT/scripts/proof-runner run --proof S0-06 --venue pc-bridge --root $REPO_ROOT"

@@ -1,0 +1,6 @@
+{
+  "actor": "svc-agent-runner",
+  "agent": "a-alpha",
+  "project": "p-atlas",
+  "team": "t-core"
+}

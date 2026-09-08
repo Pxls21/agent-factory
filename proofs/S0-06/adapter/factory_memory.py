@@ -37,7 +37,8 @@ CLI:
     factory_memory.py write  --tuple-file F --scope S --record-file R [--base-url U]
                              [--token-file T] [--out FILE] [--events FILE]
 
-Exit: 0 ok · 1 denied · 3 degraded. The final stdout line is the bare status reason, so a proof
+Exit: 0 ok · 1 denied · 3 degraded · 70 unexpected (a crash never shares an exit code with a
+decision, F-11). The final stdout line is the bare status reason, so a proof
 spec can pin the COMPLETE reason string (AF-AP-29). `--out` receives the result JSON; `--events`
 receives the decision event stream (one JSON object per line, also mirrored to stderr).
 
@@ -50,6 +51,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import stat
 import sys
 import urllib.error
@@ -112,12 +114,29 @@ def scopes_for(binding: Binding) -> dict:
 
 
 def load_bindings(path: Path = BINDINGS_PATH) -> list:
-    """Read the committed authorization table. A non-regular file is a hard failure."""
+    """Read the committed authorization table.
+
+    Every failure is a NAMED ValueError, never a bare OSError traceback: an absent table is the
+    same class of event as a directory or a FIFO in its place, and the caller's exit contract has
+    to be able to report it (F-10). A row naming a scope this adapter does not know is a hard load
+    failure too — intersecting it away would turn a typo in the committed table into a quietly
+    NARROWER binding with no refusal anywhere (F-14).
+    """
     path = Path(path)
-    if not stat.S_ISREG(path.lstat().st_mode):
+    try:
+        mode = path.lstat().st_mode
+    except OSError as exc:
+        raise ValueError(f"bindings table is unreadable: {path} ({type(exc).__name__})")
+    if not stat.S_ISREG(mode):
         raise ValueError(f"bindings table is not a regular file: {path}")
     table = json.loads(path.read_text(encoding="utf-8"))
-    return list(table["bindings"])
+    rows = list(table["bindings"])
+    for row in rows:
+        unknown = sorted(set(row.get("scopes", [])) - set(SCOPE_ORDER))
+        if unknown:
+            raise ValueError(
+                f"bindings row {row.get('agent')} names unknown scopes: {', '.join(unknown)}")
+    return rows
 
 
 def authorize(tuple_obj: dict, table: list) -> dict | None:
@@ -149,13 +168,19 @@ def normalize_hit(hit: dict, scope: str, updated_at: str | None) -> dict:
     `stable_id` is the page path: ai-memory identifies a page by (workspace, project, path)
     (`ApiSearchHit` `crates/ai-memory-web/src/routes/api.rs:1255-1263`), so the path is the part
     that is stable ACROSS the four scopes and is therefore the de-duplication key.
-    `confidence` is the substrate's own FTS5 `rank`, carried verbatim.
+    `confidence` is the substrate's own FTS5 `rank`, carried verbatim — but only when it is a
+    FINITE number. `serde_json` serialises a non-finite f64 as `null`, and Python would carry NaN
+    or Infinity straight into the result file as non-RFC-8259 JSON that `jq`/`serde_json` refuse
+    to read; the whole unusable class is rejected here (F-15).
     """
+    rank = hit["rank"]
+    if not isinstance(rank, (int, float)) or isinstance(rank, bool) or not math.isfinite(rank):
+        raise ValueError(f"search hit {hit.get('path')!r} carries a non-finite rank: {rank!r}")
     return {
         "scope": scope,
         "stable_id": hit["path"],
         "timestamp": updated_at,
-        "confidence": hit["rank"],
+        "confidence": rank,
         "provenance": {
             "workspace": hit["workspace"],
             "project": hit["project"],
@@ -175,14 +200,14 @@ def merge(records_by_scope: dict) -> list:
     and names every scope it shadowed; the output is sorted by (precedence rank, stable id).
     """
     winners: dict = {}
-    shadowed: dict = {}
+    shadowed: dict = {}   # stable_id -> the SET of scopes that carried a lower-precedence copy
     for rank, scope in enumerate(SCOPE_ORDER):
         for record in sorted(records_by_scope.get(scope, []), key=lambda r: r["stable_id"]):
             sid = record["stable_id"]
             if sid in winners:
-                shadowed.setdefault(sid, []).append(scope)
+                shadowed.setdefault(sid, set()).add(scope)
                 continue
-            winner = json.loads(json.dumps(record, sort_keys=True))
+            winner = json.loads(json.dumps(record, sort_keys=True, allow_nan=False))
             winner["scope"] = scope
             winner["_rank"] = rank
             winners[sid] = winner
@@ -190,8 +215,10 @@ def merge(records_by_scope: dict) -> list:
     for sid, winner in sorted(winners.items(), key=lambda kv: (kv[1]["_rank"], kv[0])):
         rank = winner.pop("_rank")
         winner["provenance"] = dict(winner["provenance"])
+        # The winner's OWN scope is subtracted: two records with one stable id inside a single
+        # scope would otherwise make that scope shadow itself, with duplicates (F-13).
         winner["provenance"]["shadowed_scopes"] = sorted(
-            shadowed.get(sid, []), key=SCOPE_ORDER.index
+            shadowed.get(sid, set()) - {winner["scope"]}, key=SCOPE_ORDER.index
         )
         winner["provenance"]["precedence_rank"] = rank
         out.append(winner)
@@ -272,6 +299,10 @@ class FactoryMemory:
             return json.loads(resp.read().decode("utf-8"))
 
     def _search(self, workspace, project, query, limit):
+        # DOCUMENTED LIMIT (F-25): `_request` emits this whole path, query string included, so the
+        # caller's recall text is written into the decision log. In this proof the queries are
+        # fixed literals; a production deployment whose recall text is model- or user-derived must
+        # scrub the query before this event reaches a shared sink.
         qs = urllib.parse.urlencode(
             {"q": query, "workspace": workspace, "project": project, "limit": limit}
         )
@@ -301,14 +332,17 @@ class FactoryMemory:
             try:
                 hits = self._search(workspace, project, query, limit)
                 times = self._page_times(workspace, project)
-            except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+                # The normalisation is INSIDE the try: a malformed 200 (a hit without `rank`,
+                # an object where the route returns an array, a `null` body) is a read outage for
+                # this scope, not a crash that exits with the same code as a denial (F-11).
+                by_scope[scope] = [normalize_hit(h, scope, times.get(h["path"])) for h in hits]
+            except (urllib.error.URLError, OSError, ValueError, TypeError, KeyError) as exc:
                 # Any scope authorization ambiguity or read outage fails closed FOR THAT SCOPE and
                 # is named in the status (docs/04 §4); never a silent partial.
                 degraded.append(scope)
                 self._emit("scope_degraded", "recall: scope unavailable",
                            scope=scope, error_type=type(exc).__name__)
                 continue
-            by_scope[scope] = [normalize_hit(h, scope, times.get(h["path"])) for h in hits]
         status = "degraded" if degraded else "ok"
         reason = REASONS["recall_degraded"] if degraded else REASONS["recall_ok"]
         if degraded:
@@ -360,7 +394,7 @@ class FactoryMemory:
                    scope=active_scope, project=project, page_path=page_path, key=key)
         try:
             existing = self._page_times(workspace, project)
-        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        except (urllib.error.URLError, OSError, ValueError, TypeError, KeyError) as exc:
             self._emit("write_degraded", REASONS["write_degraded"],
                        scope=active_scope, error_type=type(exc).__name__)
             return dict(base, status="degraded", reason=REASONS["write_degraded"], page_id=None)
@@ -379,7 +413,7 @@ class FactoryMemory:
         }
         try:
             resp = self._request("POST", "/admin/write-page", body)
-        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+        except (urllib.error.URLError, OSError, ValueError, TypeError, KeyError) as exc:
             self._emit("write_degraded", REASONS["write_degraded"],
                        scope=active_scope, error_type=type(exc).__name__)
             return dict(base, status="degraded", reason=REASONS["write_degraded"], page_id=None)
@@ -425,8 +459,12 @@ def _build_parser():
     return parser
 
 
-def main(argv=None):
+def _main(argv=None):
     args = _build_parser().parse_args(argv)
+    # DOCUMENTED LIMIT (F-21): every READ path in this module is lstat+S_ISREG guarded, but these
+    # two writes follow symlinks and hardlinks. `--events`/`--out` are chosen by the runner, never
+    # by a model or a request, so the asymmetry is a limit of this CLI, not a reachable hole; a
+    # caller that lets an untrusted party pick either path needs O_NOFOLLOW|O_CREAT|O_EXCL here.
     events = open(args.events, "w", encoding="utf-8") if args.events else None
     try:
         tuple_obj = _read_json_file(args.tuple_file)
@@ -440,11 +478,28 @@ def main(argv=None):
         if events is not None:
             events.close()
     if args.out:
-        Path(args.out).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n",
-                                  encoding="utf-8")
+        Path(args.out).write_text(
+            json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8")
     # The bare reason is the ONLY stdout line, so a spec can pin the complete string (AF-AP-29).
     print(result["reason"])
     return {"ok": 0, "denied": 1, "degraded": 3}[result["status"]]
+
+
+def main(argv=None):
+    """Exit 0 ok · 1 denied · 3 degraded · 70 unexpected.
+
+    A crash must never share an exit code with a decision: a spec leg pinning
+    `denied: scope-tuple-unauthorized` on exit 1 could not otherwise tell a refusal from a bug
+    (F-11). `SystemExit` is re-raised so argparse keeps its own usage exit.
+    """
+    try:
+        return _main(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # noqa: BLE001 - the top-level net
+        print(f"factory_memory: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 70
 
 
 if __name__ == "__main__":

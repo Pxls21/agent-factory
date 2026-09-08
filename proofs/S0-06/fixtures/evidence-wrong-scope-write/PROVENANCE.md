@@ -16,11 +16,24 @@ below are invented. A real leg is captured by `proofs/S0-06/tools/pc/collect_leg
 | `denied/events.jsonl` | one adapter decision event per line, as emitted by `FactoryMemory._emit` | `factory_memory.py` `_emit` |
 | `leak/honeytokens.json` | the staged tokens, one per scope | `proofs/S0-06/fixtures/honeytokens.json` |
 | `substrate.json` `commit` / `version` | `73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e` / `1.39.0` | `upstream.lock.yaml:33-38`; the version is `version = "1.39.0"` in the pinned `Cargo.toml:20` |
+| `<leg>/tuple.json` | the caller-supplied identity tuple the runner writes into each leg — `{actor, agent, team, project}`, no `scopes` field | written by `collect_leg.sh`'s `tuple_file()`; the ids come from `proofs/S0-06/adapter/bindings.json` |
+| `<leg>/raw-<scope>.url` | the URL that raw read was actually fetched from, recorded by curl itself (`-w '%{url_effective}'`) | `collect_leg.sh` `raw_search`/`raw_pages`/`raw_leak_search` |
+| `<leg>/substrate-observed.json` | that leg's own re-hash of the serving binary — `{bin_path, binary_sha256_observed, leg}` | `collect_leg.sh`; the checker requires all five reads of the digest to agree (provenance, not a pin) |
+| `denied/socket-witness.json`, `precedence/socket-witness.json` | the instance port's socket 4-tuples before and after the leg — `{after, before, instrument, port}` | `collect_leg.sh` `socket_snapshot()`/`write_witness()`; the substrate-side instrument for assertion 1, with the precedence leg as its paired positive control |
+| `substrate.json` `posture_observed` | the four posture variables READ BACK from the serving child's `/proc/<pid>/environ` | `start_ai_memory.sh`; only those four keys are read — a prefix match would also copy `AI_MEMORY_AUTH_TOKEN` into the bundle |
 | `substrate.json` `posture` | the four safe-posture variables and their required values | `docs/04_MEMORY_AND_GOVERNANCE.md` §6 and `.env.example:37-43`; the `__` nesting is real — `figment.merge(Env::prefixed("AI_MEMORY_").split("__"))`, `crates/ai-memory-cli/src/config.rs:937` |
 
 ## SYNTHETIC values (invented for this fixture, not read off any instance)
 
-- `substrate.json`: `binary_sha256`, `port`, `data_dir`.
+- `substrate.json`: `binary_sha256_observed`, `bin_path`, `cargo_version`, `rustc_version`,
+  `version_stdout`, `port`, `data_dir` (`version_stdout` is the shape clap prints for
+  `#[command(name = "ai-memory", version)]`, `crates/ai-memory-cli/src/cli.rs:11`).
+- `denied/socket-witness.json` and `precedence/socket-witness.json`: every 4-tuple. The denied
+  leg's `after` equals its `before` (no connection was opened); the precedence leg's `after` adds
+  20 client sockets and drops two that expired from TIME-WAIT, which is why the checker grades the
+  SET difference rather than a count delta.
+- `<leg>/raw-<scope>.url`: the URLs a run against `127.0.0.1:8765` would have produced.
+- `<leg>/substrate-observed.json`: `bin_path` and the digest, matching `substrate.json`.
 - Every `rank` (a plausible negative FTS5 score), every `updated_at` / `timestamp`, every
   `page_id`, every page title and body text, and the honeytoken hex suffixes.
 - The scope ids behind the project names (`a-alpha`, `a-beta`, `t-core`, `p-atlas`) come from the

@@ -10,8 +10,9 @@
 # /proc/<pid>/exe. Never `pkill`/`killall` — on the owner's box those match the production
 # containers too (AF-AP-34). The port preflight refuses rather than squatting a bound port.
 #
-# External commands used: git, cargo, ss (or, absent that, python3), sha256sum, install, mkdir,
-# mktemp, kill, readlink, date, sed, awk, cat, chmod.
+# External commands used (bash builtins excluded; this list is the PC portability contract and is
+# enforced by tests/test_s0_06_four_scope.py): awk, cargo, cat, curl, cut, dirname, git, grep, head,
+# install, mkdir, nohup, python3, rustc, sed, seq, sha256sum, sleep, ss, tr.
 #
 #   start_ai_memory.sh <run-dir> [port]
 #
@@ -22,7 +23,10 @@ RUNDIR="${1:?usage: start_ai_memory.sh <run-dir> [port]}"
 PORT="${2:-48606}"
 PINNED_COMMIT="73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e"   # upstream.lock.yaml:33-38
 PINNED_VERSION="1.39.0"
-SRC="${S0_06_SRC:-$HOME/s0-06-pinned/ai-memory}"
+# The default clone lives INSIDE this run's own dir: `git checkout --detach` on a path the
+# operator already uses would move THEIR working tree to the pin (F-19). Set S0_06_SRC to reuse a
+# checkout (and its `target/`) deliberately - the default run pays a full clone and release build.
+SRC="${S0_06_SRC:-$RUNDIR/src/ai-memory}"
 REPO_URL="https://github.com/akitaonrails/ai-memory.git"
 
 mkdir -p "$RUNDIR"
@@ -72,7 +76,13 @@ install -m 0600 /dev/null "$RUNDIR/token"
 # curl reads the header from this config file so the token never appears in a command line or in
 # /proc/<pid>/cmdline (AF-AP-39).
 install -m 0600 /dev/null "$RUNDIR/curl.cfg"
-{ printf 'header = "Authorization: Bearer '; sed -e '$!d' -e 's/[[:space:]]*$//' "$RUNDIR/token" | tr -d '\n'; printf '"\n'; } > "$RUNDIR/curl.cfg"
+# ONE derivation, two consumers (F-18): curl's config file and the child's environment must carry
+# the SAME bytes. `generate-auth-token` prints exactly one line today
+# (crates/ai-memory-cli/src/commands/generate_auth_token.rs:26), but a future banner line would
+# otherwise split `sed '$!d'` from `cat` and the server would expect a different token than curl
+# sends. `printf` is a bash builtin, so the value never reaches any process argv (AF-AP-39).
+TOKEN_VALUE="$(sed -e '$!d' -e 's/[[:space:]]*$//' "$RUNDIR/token" | tr -d '\n')"
+printf 'header = "Authorization: Bearer %s"\n' "$TOKEN_VALUE" > "$RUNDIR/curl.cfg"
 
 # --- fresh data dir + safe posture (docs/04 §6; the `__` nesting is real -
 # figment.merge(Env::prefixed("AI_MEMORY_").split("__")), crates/ai-memory-cli/src/config.rs:937)
@@ -84,7 +94,7 @@ export AI_MEMORY_AUTO_IMPROVE__SCHEDULER__ENABLED=false
 export AI_MEMORY_MAINTENANCE__ENABLED=false
 export AI_MEMORY_SLOTS__PER_USER=false
 # The token reaches the child through the ENVIRONMENT built here, never through argv.
-AI_MEMORY_AUTH_TOKEN="$(cat "$RUNDIR/token")"
+AI_MEMORY_AUTH_TOKEN="$TOKEN_VALUE"
 export AI_MEMORY_AUTH_TOKEN
 
 "$BIN" init >> "$RUNDIR/serve.log" 2>&1 || true   # one-time; already-initialised is not an error
@@ -110,14 +120,35 @@ done
 [ "$ready" = yes ] || { echo "start_ai_memory: /api/v1 not ready after 60s" >&2; exit 69; }
 
 VERSION_OUT="$("$BIN" --version 2>&1 | head -n 1)"
+CARGO_VERSION="$(cargo "+${S0_06_TOOLCHAIN:-1.95.0}" --version 2>&1 | head -n 1)"
+RUSTC_VERSION="$(rustc "+${S0_06_TOOLCHAIN:-1.95.0}" --version 2>&1 | head -n 1)"
+# The posture is READ BACK from the serving child's own environment, never echoed from the
+# exports above: config-presence is not delivery (F-4). ONLY the four posture keys are read - a
+# `grep "^AI_MEMORY_"` would also match AI_MEMORY_AUTH_TOKEN and write this run's bearer into the
+# evidence bundle.
+POSTURE_OBSERVED="$(python3 - "$SERVE_PID" <<'POSTURE'
+import json, sys
+KEYS = ("AI_MEMORY_AUTO_IMPROVE__REQUIRE_APPROVAL", "AI_MEMORY_AUTO_IMPROVE__SCHEDULER__ENABLED",
+        "AI_MEMORY_MAINTENANCE__ENABLED", "AI_MEMORY_SLOTS__PER_USER")
+raw = open("/proc/%s/environ" % sys.argv[1], "rb").read().decode("utf-8", "replace")
+env = dict(pair.split("=", 1) for pair in raw.split("\0") if "=" in pair)
+print(json.dumps({key: env.get(key, "<absent>") for key in KEYS}, sort_keys=True))
+POSTURE
+)"
 case "$VERSION_OUT" in
   *"$PINNED_VERSION"*) : ;;
   *) echo "start_ai_memory: binary reports '$VERSION_OUT', expected $PINNED_VERSION" >&2; exit 70 ;;
 esac
 
+# `binary_sha256_observed` is PROVENANCE, not a pin: a release build is not bit-reproducible
+# across toolchains and hosts, so no constant in this repo can name the expected digest. Every leg
+# re-hashes the same path and the checker requires all five reads to agree - what this field can
+# honestly claim is that ONE binary served the whole run (F-2).
 cat > "$RUNDIR/substrate.json" <<EOF
 {
-  "binary_sha256": "$BIN_SHA",
+  "bin_path": "$BIN",
+  "binary_sha256_observed": "$BIN_SHA",
+  "cargo_version": "$CARGO_VERSION",
   "commit": "$PINNED_COMMIT",
   "component": "ai-memory",
   "data_dir": "$DATA_DIR",
@@ -128,6 +159,8 @@ cat > "$RUNDIR/substrate.json" <<EOF
     "AI_MEMORY_MAINTENANCE__ENABLED": "false",
     "AI_MEMORY_SLOTS__PER_USER": "false"
   },
+  "posture_observed": $POSTURE_OBSERVED,
+  "rustc_version": "$RUSTC_VERSION",
   "version": "$PINNED_VERSION",
   "version_command": "ai-memory --version",
   "version_stdout": "$VERSION_OUT"

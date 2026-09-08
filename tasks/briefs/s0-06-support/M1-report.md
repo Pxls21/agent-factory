@@ -157,8 +157,11 @@ Two revisions because **the brief's PIN is not on the branch** — see DISCREPAN
 pasted from `scripts/test_summary.sh`, never typed (AF-AP-37).
 
 Other gates: `python3 -m pyflakes` rc 0 on all four Python files; `bash -n` rc 0 on all three
-shell scripts; `report_lint: 56 refs — OK 56, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0` on this
-report; `jsonschema.validate(spec, proofs/schemas/spec.schema.json)` passes
+shell scripts; `report_lint: 87 refs — OK 64, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 23 (at 380877b)` on this
+report (re-run on these final bytes at `380877b`, F-17 — the previously pasted
+`56 refs — OK 56 … UNRESOLVED 0` line was produced against an earlier draft and did not reproduce;
+the UNRESOLVED refs are `crates/…` paths from the pinned ai-memory checkout, which exists at no
+revision of this repo); `jsonschema.validate(spec, proofs/schemas/spec.schema.json)` passes
 (`test_spec_validates_against_the_committed_schema`, `tests/test_s0_06_four_scope.py:913`).
 
 ---
@@ -271,7 +274,7 @@ scripts, `test_s0_06_four_scope.py`.
 | 3 stale `[-1]` / `tail -n 1` | 4, all reading checker/adapter stdout in tests | **DEFECT — FIXED** | closed by `test_the_checker_prints_exactly_one_stdout_line`; the adapter's single-line stdout was already pinned by `test_the_cli_denial_line_is_exactly_the_seed_reason`, `tests/test_s0_06_four_scope.py:590` |
 | 4 negative acceptance | 22 | SAFE | every family now has a positive control on the SAME fixture: `server.calls == []` ↔ a recorded POST; `"team--t-core" not in …` ↔ a non-empty project set; token-absence ↔ `"agent--a-alpha" in text`; banned-name list ↔ the matcher firing on `delete_page`; unreached-rows ↔ a planted row. **4 of these controls were added this round** |
 | 5 substring / tail anchors | 20 | SAFE | every outcome is classified by an EXACT `returncode` **and** an exact full-line equality; substrings only name reasons (`"unrecognized arguments"` rides on an asserted exit 2) |
-| 6 env-domain fail-opens | 3, all PC-only (`run_s0_06_legs.sh:24-27` scope ids, `:30` `TMPDIR`, `start_ai_memory.sh` `S0_06_SRC`/`S0_06_TOOLCHAIN`) | DOCUMENTED-LIMIT | defaults are the committed table's own identities; **NOT executed here** — PC-only |
+| 6 env-domain fail-opens | 6, all PC-only — the four scope ids (`S0_06_AGENT` … `S0_06_TEAM` …) `run_s0_06_legs.sh:25-28` (they feed two consumers: the seeder and the tuple builder), `TMPDIR` at `run_s0_06_legs.sh:30`, and `S0_06_SRC`/`S0_06_TOOLCHAIN`/`HOME` in `start_ai_memory.sh:25` (corrected by VERIFY-M1 F-17/F-19/F-26; the row previously said 3 and cited one wrong range) | DOCUMENTED-LIMIT | defaults are the committed table's own identities, and a typo cannot green anything: `collect_leg.sh:59-68` builds the tuple from the same variables and the adapter matches it verbatim against the committed table, so a typo yields `denied: scope-tuple-unauthorized`, exit 1, and `set -e` aborts the leg; **NOT executed here** — PC-only |
 | 7 lossy decodes | 0 | — | **empty class**: every decode is strict `decode("utf-8")`; no `errors=` anywhere |
 | 8 broad catches | 12 | SAFE | none is `except Exception`; each converts a named failure into a NAMED status/`Fail`. `except OSError` on a read becomes `leg: … missing or not a regular file` (M02/M03) |
 | 9 waits / polls | 1 — `for _ in $(seq 1 120)` (`start_ai_memory.sh:98`) | DOCUMENTED-LIMIT | failure-aware: exits 68 the moment the child dies, 69 on timeout. **NOT executed here** — PC-only |
