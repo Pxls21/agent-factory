@@ -11,13 +11,15 @@ Writes into S0_01_FRAMEDIR:
 
 After the agent exits, the tee drains BOTH pumps to EOF -- there is no
 stall timeout on either side.  A client that never closes (c2a) or a
-grandchild that holds the agent's stdout (a2c) keeps the tee alive;
+grandchild that holds the agent's stdout (a2c) keeps the tee alive.
 buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
-for the child to exit (``crates/buzz-acp/src/acp.rs:422-444``,
-``:2323-2329``, pinned ``1c8321cd``); SIGKILL cannot be handled, so the
-leg's evidence is its last RUNNING status (A21d).
+for the child to exit.
+The cited source ranges are ``acp.rs:422-444`` and ``:2323-2329``,
+pinned ``1c8321cd``.  SIGKILL cannot be handled, so the leg's evidence
+is its last RUNNING status (A21d).
 
-The SIGTERM path below covers an operator/systemd TERM, not buzz-acp.
+The SIGTERM path below covers an operator/systemd TERM, not the
+shutdown pinned in PINNED_SHUTDOWN_CLAUSE above.
 The only uncovered SIGTERM window is Python interpreter startup before
 the handler install (default disposition: rc -15, no status file).  The
 ``final`` field is true only on the clean-exit write; the SIGTERM write
@@ -45,9 +47,9 @@ import threading
 import time
 
 # The canonical one-sentence summary of buzz-acp's shutdown behaviour, derived
-# from the vendored source (acp.rs at pinned commit 1c8321cd).  Every docstring
-# and comment that cites the shutdown sequence must contain this clause verbatim
-# so there is exactly ONE place that can be wrong.
+# from the vendored source (acp.rs at pinned commit 1c8321cd).  The module
+# docstring carries this clause verbatim; other comments and docstrings refer to
+# this constant without restating it, so there is one prose sentence to audit.
 PINNED_SHUTDOWN_CLAUSE = (
     "buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s"
     " for the child to exit"
@@ -74,6 +76,37 @@ def _sha256_file(path):
 def _utc_now():
     dt = datetime.datetime.now(datetime.timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _reread_interpreter(pid, known=None):
+    """AF-AP-55: re-read pid's interpreter, or say why it could not be read.
+
+    Returns ``(realpath, sha256)`` for a new interpreter, ``(realpath, None)``
+    when the realpath is already ``known`` (the spawn-time reading names it, and
+    re-hashing it cost +100 ms on every leg), or ``None`` when the process
+    exited before either read -- the caller then keeps the earlier reading and
+    the reason goes to stderr, because the record's key set is fixed by
+    check_acp_conformance.py.
+
+    Module level, not a closure, so the exited-before-identity branch has a
+    deterministic test: a pid above /proc/sys/kernel/pid_max, which no process
+    can hold (VERIFY-B5i VB-F6 -- the closure's only coverage was a race that
+    is silent on an idle box).
+    """
+    try:
+        rp = os.readlink("/proc/%d/exe" % pid)
+    except (OSError, IOError) as exc:
+        print("frame_tee: agent interpreter re-sample: exited before"
+              " identity (%s)" % exc, file=sys.stderr)
+        return None
+    if rp == known:
+        return rp, None
+    try:
+        return rp, _sha256_file(rp)
+    except (OSError, IOError) as exc:
+        print("frame_tee: agent interpreter re-sample: exited before"
+              " identity (%s)" % exc, file=sys.stderr)
+        return None
 
 
 def _read_lines_from_fd(fd):
@@ -279,26 +312,18 @@ def main():
             The child can exit between its first byte and the readlink: that is
             an OSError, and it keeps the early reading (the record's key set is
             fixed by check_acp_conformance.py, so the reason goes to stderr).
+            Both reads and that reason live in the module-level
+            _reread_interpreter so the OSError branch is deterministically
+            testable; a (realpath, None) return is the single-stage agent whose
+            spawn-time reading already names the interpreter that spoke
+            (re-hashing it cost +100 ms per leg: 0.053 s -> 0.156 s per run).
             """
-            try:
-                rp = os.readlink("/proc/%d/exe" % proc.pid)
-            except (OSError, IOError) as exc:
-                print("frame_tee: agent interpreter re-sample: exited before"
-                      " identity (%s)" % exc, file=sys.stderr)
+            got = _reread_interpreter(proc.pid,
+                                      identity["agent_interpreter_realpath"])
+            if got is None or got[1] is None:
                 return
-            if rp == identity["agent_interpreter_realpath"]:
-                # Single-stage agent: the spawn-time reading already names the
-                # interpreter that spoke.  Measured: re-hashing it here cost
-                # +100 ms on every leg (0.053 s -> 0.156 s per run).
-                return
-            try:
-                sh = _sha256_file(rp)
-            except (OSError, IOError) as exc:
-                print("frame_tee: agent interpreter re-sample: exited before"
-                      " identity (%s)" % exc, file=sys.stderr)
-                return
-            identity["agent_interpreter_realpath"] = rp
-            identity["agent_interpreter_sha256"] = sh
+            identity["agent_interpreter_realpath"] = got[0]
+            identity["agent_interpreter_sha256"] = got[1]
             try:
                 with open(_identity_tmp, "w") as f:
                     json.dump(identity, f, indent=2)

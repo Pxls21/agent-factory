@@ -33,7 +33,7 @@ from pins import PINNED_TEE_STATUS_KEYS  # noqa: E402
 
 # Import the canonical shutdown clause from the tee (item 1: one place that can be wrong)
 sys.path.insert(0, str(ROOT / "proofs" / "S0-01" / "tools"))
-from frame_tee import PINNED_SHUTDOWN_CLAUSE  # noqa: E402
+from frame_tee import PINNED_SHUTDOWN_CLAUSE, _reread_interpreter  # noqa: E402
 
 # AF-AP-59: import the anti-pattern screen from the edit-snapshot hook (never edit it)
 import importlib.util as _ilu
@@ -849,8 +849,8 @@ class TestMissingEnvVars:
         assert proc.returncode == 64
         assert proc.stderr.decode().strip() == "frame_tee: S0_01_AGENT is not set"
 
-    def _run_with_agent(self, tmp_path, agent_value):
-        framedir = tmp_path / "frames"
+    def _run_with_agent(self, tmp_path, agent_value, framedir_name="frames"):
+        framedir = tmp_path / framedir_name
         framedir.mkdir()
         env = {k: v for k, v in os.environ.items()
                if k not in ("S0_01_FRAMEDIR", "S0_01_AGENT")}
@@ -873,13 +873,32 @@ class TestMissingEnvVars:
 
     def test_non_executable_agent(self, tmp_path):
         """A regular file without an execute bit is not an agent: rc 64,
-        named, no traceback (the PIN raised PermissionError, rc 1)."""
+        named, no traceback (the PIN raised PermissionError, rc 1).
+
+        The FIFO shape is here too (VERIFY-B5i VB-F11: the rc-64 domain was
+        reported for it with no committed test).  A FIFO can carry an execute
+        bit, so it is os.access(X_OK)-true and only the isfile() half of the
+        guard rejects it -- the shape that would survive if the guard were
+        weakened to a permission check."""
         plain = tmp_path / "plain.txt"
         plain.write_text("not executable\n")
         proc, framedir = self._run_with_agent(tmp_path, plain)
         assert proc.returncode == 64
         assert proc.stderr.decode().strip() == (
             "frame_tee: S0_01_AGENT is not an executable file: %s" % plain)
+        assert b"Traceback" not in proc.stderr
+        assert list(framedir.iterdir()) == []
+
+        fifo = tmp_path / "agent.fifo"
+        os.mkfifo(str(fifo), 0o755)
+        assert os.access(str(fifo), os.X_OK), (
+            "the FIFO has no execute bit, so this case would not exercise the "
+            "isfile() half of the guard")
+        proc, framedir = self._run_with_agent(tmp_path, fifo,
+                                              framedir_name="frames_fifo")
+        assert proc.returncode == 64
+        assert proc.stderr.decode().strip() == (
+            "frame_tee: S0_01_AGENT is not an executable file: %s" % fifo)
         assert b"Traceback" not in proc.stderr
         assert list(framedir.iterdir()) == []
 
@@ -2853,8 +2872,11 @@ class TestZombieGrandchild:
                 if tee_proc.poll() is None:
                     tee_proc.kill()
                     tee_proc.wait(timeout=5)
-                # The census must NOT fail on a zombie grandchild
-                _kill_own_grandchild(framedir)
+                # The census must NOT fail on a zombie grandchild -- and it
+                # must report the ZOMBIE branch.  Discarding the return let a
+                # LIVE grandchild (which the helper kills) pass a test named
+                # ..._is_already_gone (VERIFY-B5i VB-F5, ZOMBIE-BRANCH-LIVE).
+                assert _kill_own_grandchild(framedir) == "gone"
             finally:
                 tee_proc.stdin.close()
                 tee_proc.stdout.close()
@@ -2976,6 +2998,13 @@ class TestEarlySigterm:
                     signal_idx = i
                     break
         assert signal_idx is not None, "signal.signal call not found in main()"
+        # VERIFY-B5i VB-F9 / SWEEP-tests 12.1: WHICH signal.  The pin matched
+        # any signal.signal call and never read its first argument, so a
+        # handler installed for another signal was invisible to it.
+        sig_args = main_fn.body[signal_idx].value.args
+        assert sig_args and getattr(sig_args[0], "attr", "") == "SIGTERM", (
+            "the handler is installed for %r, not SIGTERM"
+            % (getattr(sig_args[0], "attr", None) if sig_args else None))
         # The very next statement must be a Try
         next_stmt = main_fn.body[signal_idx + 1]
         assert isinstance(next_stmt, ast.Try), (
@@ -3060,18 +3089,35 @@ class TestEarlySigterm:
             "os.kill/os.killpg outside _kill_own_grandchild: %s" % violations)
 
     def test_no_unbounded_tee_pipe_reads(self, tmp_path):
-        """VERIFY-B5h F9 structural pin: every read of a tee Popen's pipes is
-        bounded.  A .read/.readline/.communicate on tee_proc (or on its stdout /
-        stderr) must sit inside a bounded helper -- _read_with_deadline, or a
-        _drain thread the test joins with a timeout -- or carry a timeout= of
-        its own.  RED on the PIN: six unbounded readline sites, one of which
-        (test_concurrent_main_thread_status_vs_pump) held the tee's stdin open
-        across the read, which is the deadlock reproduced with the wchan/fd
-        table.  LIMIT: the pin keys on the receiver NAME ``tee_proc``; a pipe
-        bound to another local is out of its reach."""
+        """VERIFY-B5h F9 / VERIFY-B5i VB-F4 structural pin: every MENTION of a
+        tee pipe is accounted for, not three call spellings.  Keying on
+        ``.read``/``.readline``/``.communicate`` left four working evasions --
+        ``next(iter(tee_proc.stdout), None)``, ``.readlines()``,
+        ``os.read(tee_proc.stdout.fileno(), n)`` and a local alias -- and the
+        first of those reproduces the identical deadlock on the tee (main
+        thread in hrtimer_nanosleep, c2a reader in anon_pipe_read, this
+        process's write end == the tee's fd 0).
+
+        So: collect every ``tee_proc.stdout`` / ``tee_proc.stderr``, plus any
+        local a pipe was assigned to in the same function, and allow exactly
+        four things to be done with one -- hand it to a bounded helper, close
+        it, hand it to another Popen as a keyword argument, or read it with a
+        ``timeout=`` of its own.  Mentions INSIDE a bounded helper are the
+        helper's own business and are skipped.  Anything else is a violation,
+        whatever it is spelled.
+
+        RED on the parent of checkpoint 8y: six unbounded readline sites, one
+        of which (test_concurrent_main_thread_status_vs_pump) held the tee's
+        stdin open across the read.
+        LIMIT: the pin keys on the receiver NAME ``tee_proc`` for the pipe and
+        tracks aliases of the PIPE (``x = tee_proc.stdout``).  An alias of the
+        PROCESS (``p = tee_proc`` then ``p.stdout.readline()``, or a ``p=tee_proc``
+        parameter default) is out of its reach -- as is a bounded helper that is
+        trusted by NAME whether or not its thread is ever joined."""
         tree = ast.parse(Path(__file__).read_text())
         BOUNDED = {"_drain", "_read_with_deadline"}
         enclosing = {}
+        parent = {}
 
         def _map(node, fname):
             for child in ast.iter_child_nodes(node):
@@ -3079,33 +3125,69 @@ class TestEarlySigterm:
                       if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
                       else fname)
                 enclosing[id(child)] = nf
+                parent[id(child)] = node
                 _map(child, nf)
 
         _map(tree, None)
-        bad = []
+
+        def _is_pipe(node):
+            return (isinstance(node, ast.Attribute)
+                    and node.attr in ("stdout", "stderr")
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "tee_proc")
+
+        # locals a pipe was assigned to, scoped to the function that did it
+        aliases = set()
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr not in ("read", "readline", "communicate"):
-                continue
-            recv = node.func.value
-            if isinstance(recv, ast.Attribute) and recv.attr in ("stdout", "stderr"):
-                base = getattr(recv.value, "id", "")
-            elif isinstance(recv, ast.Name) and node.func.attr == "communicate":
-                base = recv.id
-            else:
-                base = ""
-            if base != "tee_proc":
-                continue
-            if any(kw.arg == "timeout" for kw in node.keywords):
-                continue
+            if isinstance(node, ast.Assign) and _is_pipe(node.value):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        aliases.add((enclosing.get(id(node)), tgt.id))
+
+        mentions = []
+        for node in ast.walk(tree):
+            if _is_pipe(node):
+                mentions.append(("tee_proc.%s" % node.attr, node))
+            elif (isinstance(node, ast.Name)
+                  and (enclosing.get(id(node)), node.id) in aliases
+                  and not isinstance(node.ctx, ast.Store)):
+                mentions.append(("alias %s" % node.id, node))
+
+        bad = []
+        for what, node in mentions:
             if enclosing.get(id(node)) in BOUNDED:
                 continue
-            bad.append("%s at line %d in %s"
-                       % (node.func.attr, node.lineno,
-                          enclosing.get(id(node)) or "<module scope>"))
+            up = parent.get(id(node))
+            # 1. an argument to a bounded helper
+            if (isinstance(up, ast.Call) and isinstance(up.func, ast.Name)
+                    and up.func.id in BOUNDED and any(a is node for a in up.args)):
+                continue
+            # 2. closed
+            if isinstance(up, ast.Attribute) and up.attr == "close":
+                continue
+            # 3. handed to another Popen as a keyword argument
+            if isinstance(up, ast.keyword):
+                call = parent.get(id(up))
+                if (isinstance(call, ast.Call)
+                        and getattr(call.func, "attr", None) == "Popen"):
+                    continue
+            # 4. read with a timeout= of its own
+            if isinstance(up, ast.Attribute):
+                call = parent.get(id(up))
+                if (isinstance(call, ast.Call)
+                        and any(kw.arg == "timeout" for kw in call.keywords)):
+                    continue
+            bad.append("%s at line %d in %s (%s)"
+                       % (what, node.lineno,
+                          enclosing.get(id(node)) or "<module scope>",
+                          type(up).__name__))
         assert not bad, (
-            "unbounded read of a tee pipe outside a bounded helper: %s" % bad)
+            "a tee pipe is used in a way that is not bounded, closed, handed "
+            "to a Popen or given a timeout: %s" % bad)
+        # de-vacuous: the walk must actually be finding the pipes it allows
+        assert len(mentions) >= 50, (
+            "the mention walk found only %d tee-pipe references -- it is not "
+            "seeing the file" % len(mentions))
 
     def test_a_silent_agent_cannot_wedge_a_bounded_read(self, tmp_path):
         """VERIFY-B5h F9, the hang itself, as a test.  The agent consumes the
@@ -3469,6 +3551,7 @@ class TestInterpreterIdentityStage:
         bash_real = os.path.realpath("/bin/bash")
         wrapper = self._wrapper(tmp_path, "sys.exit(0)")
         marker = b"agent interpreter re-sample: exited before identity"
+        outcomes = []
         for trial in range(20):
             framedir = tmp_path / ("frames_%d" % trial)
             framedir.mkdir()
@@ -3483,6 +3566,7 @@ class TestInterpreterIdentityStage:
             identity = json.loads((framedir / "runtime-identity.json").read_text())
             seen = identity["agent_interpreter_realpath"]
             lost = marker in proc.stderr
+            outcomes.append(lost)
             if lost:
                 assert seen in (bash_real, python_real), (
                     "trial %d: the resample said it lost the race but the record "
@@ -3493,6 +3577,40 @@ class TestInterpreterIdentityStage:
                     "record the interpreter that spoke, not %r" % (trial, seen))
             assert identity["agent_interpreter_sha256"] == _sha256_file(seen), (
                 "trial %d: interpreter sha does not hash the recorded path" % trial)
+        # VERIFY-B5i VB-F10: with a bash->python agent the lost branch admits
+        # either stage, so it is near-vacuous on its own -- a tee whose
+        # re-sample ALWAYS fails rode this test and died only on its sibling.
+        # At least one of the 20 must have WON.  Measured on this box: 0/20
+        # lost idle, 6/50 lost under load 2.7, so 20/20 lost is a broken
+        # re-sample, not a slow box.  Aggregate, therefore after the loop.
+        assert any(not lost for lost in outcomes), (
+            "all 20 trials lost the re-sample race (stderr marker every time) "
+            "-- the re-sample never completes")
+
+    def test_reread_interpreter_reports_a_pid_that_cannot_exist(self, capsys):
+        """VERIFY-B5i VB-F6: the AF-AP-55 OSError guard, deterministically.
+        Its only coverage was the race above, which is SILENT on an idle box
+        (mutant RESAMPLE-NO-OSERROR-GUARD: 2 passed idle, dies only under
+        load).  A pid above /proc/sys/kernel/pid_max can never be held by a
+        process, so the readlink always raises -- the helper must return None
+        and say why on stderr, never propagate.  Deleting the try/except makes
+        this raise FileNotFoundError on any box."""
+        pid_max = int(Path("/proc/sys/kernel/pid_max").read_text().strip())
+        assert _reread_interpreter(pid_max + 1) is None
+        err = capsys.readouterr().err
+        assert "agent interpreter re-sample: exited before identity" in err, (
+            "the guard swallowed the reason instead of naming it: %r" % err)
+
+    def test_reread_interpreter_skips_the_hash_for_a_known_interpreter(self):
+        """The single-stage short circuit the closure depends on: when the
+        realpath is the one already recorded, the helper returns it with NO
+        sha (re-hashing cost +100 ms per leg) and the caller keeps the record
+        as it stands.  Without this the lift would have re-introduced that
+        cost on every leg."""
+        me = os.readlink("/proc/%d/exe" % os.getpid())
+        assert _reread_interpreter(os.getpid(), me) == (me, None)
+        rp, sha = _reread_interpreter(os.getpid(), "/nonexistent/interpreter")
+        assert rp == me and sha == _sha256_file(me)
 
 
 # ---------------------------------------------------------------------------
@@ -3519,16 +3637,23 @@ class TestDocstringAnchor:
             ranges, so the numbers are asserted rather than typed;
         (f) the negatives -- the module docstring restates the bound nowhere
             outside the clause, and the five reference sites carry only the
-            reference.
-        FALSECONST-ORDER, SITECOUNT-DUP, SEVENTH-SITE, CITE-421,
-        CITE-421-TEST, CITE-KPG-2324, DOCSTRING-ORDER, DOCSTRING-WRONGEVENT,
-        DOCSTRING-HYBRID, CONST-ORDER, CONST-WRONGEVENT, COMMENT-TERM and
-        TESTDOC-TERM must all die.
-        LIMIT: (f) enumerates its sites BY NAME.  A false sentence added to a
-        test docstring outside that list, and outside the tee's module
-        docstring, is out of this test's reach; the wrap-tolerant regex in
-        test_docstring_pins_the_meaning_not_the_tokens is the only guard that
-        runs over both files whole.
+            reference;
+        (g) STRUCTURE, not a named list (VERIFY-B5i VB-F2/VB-F3): (g1) every
+            sentence of the module docstring after the introduction that names
+            the client must be the clause itself, so a PARAPHRASE beside it
+            cannot survive by carrying neither banned token; (g2) over BOTH
+            scope files whole, with the clause's own sites blanked out, no
+            two-line window may carry both a kill token and the derived bound
+            -- so a false sentence is inadmissible ANYWHERE in either file,
+            not merely at the six places (f) can name.
+        FALSECONST-ORDER, SITECOUNT-DUP, SEVENTH-SITE, SEVENTH-SITE-PARAPHRASE,
+        SIXTH-SITE-TESTDOC, SIXTH-SITE-TEECOMMENT, MIRROR-3SITE,
+        MIRROR-3SITE-ORDER, CITE-421, CITE-421-TEST, CITE-KPG-2324,
+        DOCSTRING-ORDER, DOCSTRING-WRONGEVENT, DOCSTRING-HYBRID, CONST-ORDER,
+        CONST-WRONGEVENT, COMMENT-TERM and TESTDOC-TERM must all die.
+        LIMIT: (g1) keys on the name the clause itself uses.  A false sentence
+        that speaks of the client without naming it, and without pairing a
+        kill token with the bound, is outside both (g1) and (g2).
         LIMIT: while the sha256 holds, the derived facts in (b) cannot go red
         -- they are a pure function of bytes the premise pins.  Their value
         arrives on an upstream bump, when the constant is updated and they
@@ -3617,8 +3742,37 @@ class TestDocstringAnchor:
             "kill_process_group starts at :%d, expected :2323" % kpg_start)
 
         # --- (c) EQUALITY: the sentence is BUILT from the derived facts ---
+        # The two halves are text, so bind each one to the facts its OWN
+        # derived range carries: the signal and the helper the group kill
+        # names, and the subject/method/seconds the bounded wait names.
+        # Without this the halves are a third hand-typed copy and swapping
+        # them (with the constant and the docstring) states the reverse order
+        # and still passes the equality below -- VERIFY-B5i VB-F1, mutants
+        # MIRROR-3SITE-ORDER and MIRROR-3SITE.
+        kill_sig_m = re.search(r"Signal::(SIG[A-Z0-9]+)", kpg_body)
+        kill_helper_m = re.search(r"(\w+)\(Pid::", kpg_body)
+        assert kill_sig_m and kill_helper_m, (
+            "the derived kill range names no Signal::SIG* and <helper>(Pid::: %r"
+            % kpg_body)
+        kill_sig, kill_helper = kill_sig_m.group(1), kill_helper_m.group(1)
+        wait_call_m = re.search(r"self\.(\w+)\.(\w+)\(\)", lines[wait_line - 1])
+        assert wait_call_m, (
+            "the bounded wait line names no self.<subject>.<method>(): %r"
+            % lines[wait_line - 1])
+        wait_subject, wait_method = wait_call_m.group(1), wait_call_m.group(2)
+        secs_token = "%d s" % wait_secs
+
         kill_half = "SIGKILLs the group (killpg)"
         wait_half = "waits up to %d s for the child to exit" % wait_secs
+        assert kill_sig in kill_half and kill_helper in kill_half, (
+            "the kill half %r does not name the signal (%s) and the helper (%s) "
+            "the derived kill range uses" % (kill_half, kill_sig, kill_helper))
+        assert secs_token in wait_half and "waits" in wait_half, (
+            "the wait half %r does not name the derived bound (%s)"
+            % (wait_half, secs_token))
+        assert wait_method in wait_half and wait_subject in wait_half, (
+            "the wait half %r does not name what the source waits on "
+            "(self.%s.%s())" % (wait_half, wait_subject, wait_method))
         first_half, second_half = ((kill_half, wait_half) if kill_line < wait_line
                                    else (wait_half, kill_half))
         expected_clause = "buzz-acp %s first and then %s" % (first_half, second_half)
@@ -3663,7 +3817,7 @@ class TestDocstringAnchor:
         # --- (f) the negative direction ---
         # Nothing in the module docstring may restate the bound outside the clause.
         residue = doc_norm.replace(clause_norm, " ")
-        for token in ("killpg", "5 s"):
+        for token in (kill_helper, secs_token):
             assert token not in residue, (
                 "frame_tee.py's module docstring states the shutdown bound outside "
                 "PINNED_SHUTDOWN_CLAUSE (%r); the clause is the only place it may "
@@ -3702,15 +3856,72 @@ class TestDocstringAnchor:
         for name, text in sites:
             assert ref_norm in _ws_norm(text), (
                 "%s does not carry the reference %r" % (name, CLAUSE_REF))
-            for token in ("SIGTERM", "SIGKILL", "killpg", "5 s"):
+            for token in ("SIGTERM", kill_sig, kill_helper, secs_token):
                 assert token not in text, (
                     "%s states the shutdown bound itself (%r); it may carry only "
                     "the reference to PINNED_SHUTDOWN_CLAUSE" % (name, token))
 
-        # --- the tee source must not say 'after 5 s' ---
-        assert not re.search(
-            r"SIGKILLs[\s#]+the[\s#]+group[\s#]+after[\s#]*5[\s#]*s", tee_src), (
-            "tee source says 'SIGKILLs the group" + " after 5 s'")
+        # --- (g) ONE sentence in the repo, structurally (VB-F2 / VB-F3) ---
+        # (g1) the module docstring speaks for buzz-acp exactly twice: the
+        # introduction and the clause.  A PARAPHRASE beside the clause carries
+        # neither banned token and evaded the residue blacklist above
+        # (mutant SEVENTH-SITE-PARAPHRASE).
+        doc_sentences = re.split(r"(?<=\.)\s+", doc_norm.strip())
+        buzz_sentences = [sent for sent in doc_sentences if "buzz-acp" in sent]
+        assert len(buzz_sentences) == 2, (
+            "frame_tee.py's module docstring has %d buzz-acp sentences, "
+            "expected only the client introduction and PINNED_SHUTDOWN_CLAUSE: %r"
+            % (len(buzz_sentences), buzz_sentences))
+        assert "(client)" in buzz_sentences[0], (
+            "the module docstring's first buzz-acp sentence is not the client "
+            "introduction: %r" % buzz_sentences[0])
+        clause_sentence = clause_norm + "."
+        assert buzz_sentences[1] == clause_sentence, (
+            "the module docstring's shutdown sentence is not exactly "
+            "PINNED_SHUTDOWN_CLAUSE: %r" % buzz_sentences[1])
+
+        # (g2) over BOTH files WHOLE, not a named list: outside the clause's
+        # own sites, no two-line window may carry both a kill token and the
+        # derived bound.  Replaces two literal regexes that matched one exact
+        # phrase, which a reworded false sentence walked straight past
+        # (mutants SIXTH-SITE-TESTDOC, SIXTH-SITE-TEECOMMENT).  The bound is
+        # word-bounded: the bare form also matches text like "F5 seq".
+        def _q_norm(text):
+            return re.sub(r"[\s#\"']+", " ", text)
+
+        # Mask only the clause's exact words, preserving any text added beside
+        # it on the same source line.  Blanking an entire line would let a
+        # second false sentence ride inside that exemption.
+        clause_rx = re.compile(
+            re.escape(PINNED_SHUTDOWN_CLAUSE).replace(
+                r"\ ", r"[\s#\"']+"))
+
+        def _mask_clause(match):
+            return re.sub(r"[^\n]", " ", match.group(0))
+
+        secs_re = re.compile(r"(?<!\w)%d\s+s(?!\w)" % wait_secs)
+        kill_tokens = (kill_sig, kill_helper)
+        proximity = []
+        blanked = {}
+        for name, text in (("frame_tee.py", tee_src), ("test file", test_src)):
+            masked, blanked[name] = clause_rx.subn(_mask_clause, text)
+            src_lines = masked.splitlines()
+            for i in range(len(src_lines)):
+                window = _q_norm("\n".join(src_lines[i:i + 2]))
+                if any(t in window for t in kill_tokens) and secs_re.search(window):
+                    proximity.append("%s:%d" % (name, i + 1))
+        # de-vacuous: the exemption must have found precisely the constant and
+        # the module-docstring sentence.  The test file builds the clause from
+        # derived halves and must not spell it as a third copy.
+        assert blanked["frame_tee.py"] == 2, (
+            "the ban masked %d clause copies in frame_tee.py, expected its "
+            "constant and module-docstring sites only" % blanked["frame_tee.py"])
+        assert blanked["test file"] == 0, (
+            "the test file spells the clause out at %d site(s); it must build "
+            "it from the derived halves instead" % blanked["test file"])
+        assert not proximity, (
+            "a kill token and the derived bound sit within two lines of each "
+            "other outside PINNED_SHUTDOWN_CLAUSE's own sites: %s" % proximity)
 
         # --- no SIGTERM attribution to buzz-acp in EITHER file ---
         # Split the needle so this assertion message does not match itself
@@ -3721,9 +3932,11 @@ class TestDocstringAnchor:
     def test_docstring_pins_the_meaning_not_the_tokens(self, tmp_path):
         """F-B5e-1/F4: the module docstring pins the MEANING of the shutdown
         bound -- the group kill, that the un-catchable signal cannot be
-        handled, the last RUNNING status -- and BOTH scope files (tee source +
-        this test file) never claim the group kill happens AFTER the wait.
-        The source's real order is pinned by equality in the oracle test above.
+        handled, the last RUNNING status.  The source's real ORDER is pinned by
+        equality in the oracle test above, and the two literal 'after' regexes
+        that used to live here and there are replaced by that test's (g2)
+        derived proximity ban over both files whole (VERIFY-B5i VB-F3): a
+        literal regex only ever matched one phrasing.
         DOCSTRING-HYBRID and COMMENT-TERM must die."""
         src = Path(TEE).read_text()
         doc = ast.get_docstring(ast.parse(src))
@@ -3735,10 +3948,3 @@ class TestDocstringAnchor:
             "module docstring does not mention last RUNNING status")
         assert not re.search(r"SIGTERM path[^.]*(covers it|bounds)", doc), (
             "docstring still claims the SIGTERM path bounds a wedged leg")
-        # The wrap-tolerant regex catches line-wrapped instances in comments
-        # and test docstrings too.
-        all_src = src + "\n" + Path(__file__).read_text()
-        assert not re.search(
-            r"SIGKILLs[\s#]+the[\s#]+group[\s#]+after[\s#]*5[\s#]*s", all_src), (
-            "source says 'SIGKILLs the group" + " after 5 s' -- buzz-acp kills "
-            "first and then waits <=5 s; it does not wait 5 s before killing")
