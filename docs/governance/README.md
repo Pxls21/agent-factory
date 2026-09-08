@@ -34,7 +34,10 @@ git push origin HEAD
 ```
 
 Per accepted proof — sign the tag on the commit that holds the result you accept (normally the branch head after the
-coordinator's ledger push), push the tag, then tell the coordinator so the PENDING declaration is removed:
+coordinator's ledger push), push the tag, then tell the coordinator so the PENDING declaration is removed. Sign a commit that is
+ALREADY on origin whenever you can (`git merge --ff-only origin/<branch>` first, then tag `HEAD`); if you tag a local commit of your
+own, the coordinator's push preserves its object id (push_clean rewrites only commits that carry a model-identifier trailer —
+AF-AP-69), so the tag stays valid:
 
 ```bash
 git fetch origin && git merge --ff-only origin/claude/soundbox-kit-migration-iz1jwf

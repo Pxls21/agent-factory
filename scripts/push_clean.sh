@@ -65,10 +65,14 @@ N=$(git rev-list --count "$RANGE")
 echo "== boundary ($N commits) =="
 git log "$RANGE" --format='%h %s'
 
+# Only commits that CARRY a model-identifier trailer are rewritten (message + identity); every other commit in the
+# range keeps its object id — a foreign commit (the owner's, a signed one, a tag target) must survive the push byte for
+# byte (2026-09-08: the unconditional identity filter rewrote the owner's signed-key commit 80422cb into e719da8 and
+# orphaned the tag `accepted/S0-11`, AF-AP-69).
 TREE_BEFORE=$(git rev-parse 'HEAD^{tree}')
 git filter-branch -f \
   --msg-filter 'grep -v "Co-Authored-By: Claude\|Claude-Session:"' \
-  --env-filter 'export GIT_COMMITTER_EMAIL=noreply@anthropic.com GIT_COMMITTER_NAME=Claude GIT_AUTHOR_EMAIL=noreply@anthropic.com GIT_AUTHOR_NAME=Claude' \
+  --env-filter 'if git log -1 --format=%B "$GIT_COMMIT" | grep -q "Co-Authored-By: Claude\|Claude-Session:"; then export GIT_COMMITTER_EMAIL=noreply@anthropic.com GIT_COMMITTER_NAME=Claude GIT_AUTHOR_EMAIL=noreply@anthropic.com GIT_AUTHOR_NAME=Claude; fi' \
   "$RANGE" >/dev/null 2>&1 || true  # exit 1 when nothing needed rewriting is fine
 TREE_AFTER=$(git rev-parse 'HEAD^{tree}')
 [ "$TREE_BEFORE" = "$TREE_AFTER" ] || { echo "TREE MISMATCH after rewrite — ABORT, do not push." >&2; exit 2; }

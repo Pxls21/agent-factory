@@ -21,11 +21,15 @@ fi
 ZERO=0000000000000000000000000000000000000000
 while read -r _lref lsha _rref rsha; do
   [ "$lsha" = "$ZERO" ] && continue  # branch deletion
-  if [ "$rsha" = "$ZERO" ]; then RANGE="$lsha"; else RANGE="$rsha..$lsha"; fi
+  # A NEW ref (a tag, a new branch: rsha is ZERO) sends only what origin does not already have — never the whole
+  # history behind it (2026-09-08: the first signed `accepted/S0-11` tag push was blocked by 22 trailer lines in
+  # commits that were already on origin for days, AF-AP-69).
+  if [ "$rsha" = "$ZERO" ]; then set -- "$lsha" --not --remotes=origin; else set -- "$rsha..$lsha"; fi
+  RANGE="$*"
   # F-F: capture git log's exit code separately so an unresolvable range
   # BLOCKS (the old pipe swallowed the error via 2>/dev/null and grep -c
   # returned 0, letting the push through).
-  LOG_OUTPUT=$(git log "$RANGE" --format='%B' 2>&1)
+  LOG_OUTPUT=$(git log "$@" --format='%B' 2>&1)
   LOG_RC=$?
   if [ "$LOG_RC" != "0" ]; then
     echo "PUSH BLOCKED: git log failed on range $RANGE (rc=$LOG_RC) — cannot verify trailers. Resolve the range before pushing." >&2
