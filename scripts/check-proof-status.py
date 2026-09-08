@@ -34,8 +34,12 @@ other.
 Exit 0 when the visible status is internally consistent; exit 1 (with reasons on
 stderr) otherwise.
 """
+import hashlib
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # proof id -> its ONE canonical task-row slug. EXACT, never a substring match
@@ -62,6 +66,91 @@ STATUS_COLUMN = 2
 # "**ACCEPTED** (owner...)" -> ACCEPTED, "DONE 2026-09-04 — ..." -> DONE.
 LEADING_STATUS = re.compile(r"^\**\s*([A-Za-z][A-Za-z-]*)")
 
+# The owner-verifiable ACCEPTED anchor (owner decision 2026-09-08, task #30 option a). A proof whose
+# PROOF-STATUS is ACCEPTED must carry a SIGNED annotated tag `accepted/<proof-id>` whose signature
+# verifies against the owner's public key committed at OWNER_KEY_REL (an isolated keyring built from
+# that one file at check time — never the host keyring), whose commit is in this branch's history and
+# holds a `proofs/<id>/result.json` byte-identical to the current one: an attested-input regeneration
+# makes a NEW artifact, and a new artifact must be re-accepted (AF-AP-56). Until the owner signs, the
+# ledger carries a VISIBLE `PROOF-ANCHOR: <id> = PENDING-OWNER-TAG …` declaration: reported as a
+# WARNING, never counted as owner-verifiable. A tag AND a pending declaration together are a stale
+# ledger and an error. The coordinator can write the declaration; it cannot write the signature.
+OWNER_KEY_REL = Path("docs") / "governance" / "owner-signing-key.asc"
+ANCHOR_TAG = "accepted/{proof_id}"
+PENDING_ANCHOR = re.compile(r"^PROOF-ANCHOR:\s+(S0-[0-9]{2})\s*=\s*PENDING-OWNER-TAG\b.*$", re.MULTILINE)
+
+
+def _git(repo_root, *args, env=None, binary=False):
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True, text=not binary, timeout=30, env=env, check=False,
+    )
+
+
+def _anchor_findings(repo_root, proof_id, pending):
+    """(errors, warnings) for one ACCEPTED proof's anchor tag."""
+    errors, warnings = [], []
+    tag = ANCHOR_TAG.format(proof_id=proof_id)
+    if _git(repo_root, "rev-parse", "--git-dir").returncode != 0:
+        return [f"{proof_id}: ACCEPTED but {repo_root} is not a git repository — the anchor tag {tag} "
+                f"cannot be verified (AF-AP-32)"], []
+    if _git(repo_root, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}").returncode != 0:
+        if pending:
+            warnings.append(f"{proof_id}: ACCEPTED with the anchor PENDING the owner's signed tag {tag} "
+                            f"(declared in the ledger) — not owner-verifiable yet")
+            return errors, warnings
+        errors.append(f"{proof_id}: ACCEPTED but no signed tag {tag} and no visible "
+                      f"`PROOF-ANCHOR: {proof_id} = PENDING-OWNER-TAG` declaration — an acceptance the owner "
+                      f"cannot verify (AF-AP-32)")
+        return errors, warnings
+    if pending:
+        errors.append(f"{proof_id}: the tag {tag} exists but the ledger still declares PROOF-ANCHOR "
+                      f"PENDING — a stale declaration (remove it)")
+    if _git(repo_root, "cat-file", "-t", f"refs/tags/{tag}").stdout.strip() != "tag":
+        errors.append(f"{proof_id}: {tag} is a lightweight tag — the anchor must be a SIGNED annotated tag "
+                      f"(`git tag -s`)")
+        return errors, warnings
+    key = Path(repo_root) / OWNER_KEY_REL
+    if not key.is_file():
+        errors.append(f"{proof_id}: the owner's public key is not committed at {OWNER_KEY_REL} — {tag} "
+                      f"cannot be verified")
+        return errors, warnings
+    with tempfile.TemporaryDirectory() as home:
+        os.chmod(home, 0o700)
+        env = dict(os.environ, GNUPGHOME=home)
+        imported = subprocess.run(["gpg", "--batch", "--quiet", "--import", str(key)],
+                                  capture_output=True, text=True, timeout=30, env=env, check=False)
+        if imported.returncode != 0:
+            errors.append(f"{proof_id}: the committed owner key {OWNER_KEY_REL} does not import: "
+                          f"{imported.stderr.strip()[:200]}")
+            return errors, warnings
+        # gpg.format is forced: a host configured for SSH signing (this sandbox is) would otherwise look for
+        # an allowed-signers file instead of the OpenPGP keyring built above.
+        verified = _git(repo_root, "-c", "gpg.format=openpgp", "-c", "gpg.program=gpg", "verify-tag", tag, env=env)
+    if verified.returncode != 0:
+        reason = " ".join(verified.stderr.split())[:200]
+        errors.append(f"{proof_id}: the signature on {tag} does not verify against the committed owner key "
+                      f"{OWNER_KEY_REL} (AF-AP-32): {reason}")
+        return errors, warnings
+    commit = _git(repo_root, "rev-parse", f"{tag}^{{commit}}").stdout.strip()
+    if _git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD").returncode != 0:
+        errors.append(f"{proof_id}: {tag} points at {commit[:12]}, which is not in this branch's history")
+        return errors, warnings
+    rel = f"proofs/{proof_id}/result.json"
+    tagged = _git(repo_root, "cat-file", "-p", f"{commit}:{rel}", binary=True)
+    if tagged.returncode != 0:
+        errors.append(f"{proof_id}: {tag}'s commit {commit[:12]} holds no {rel} — the acceptance must point "
+                      f"at the minted result")
+        return errors, warnings
+    current = Path(repo_root) / rel
+    if not current.is_file():
+        errors.append(f"{proof_id}: {rel} is absent from the working tree while {tag} accepts one")
+        return errors, warnings
+    if hashlib.sha256(tagged.stdout).hexdigest() != hashlib.sha256(current.read_bytes()).hexdigest():
+        errors.append(f"{proof_id}: the minted {rel} changed since {tag} (regenerated after acceptance) — "
+                      f"re-accept with a new signed tag (AF-AP-56)")
+    return errors, warnings
+
 
 def _row_cells(line):
     r"""Cells of a Markdown table row, split on UNESCAPED pipes (`\|` is literal).
@@ -80,8 +169,10 @@ def _row_cells(line):
     return cells or None
 
 
-def check(repo_root):
+def check(repo_root, anchors=True, warnings=None):
     repo_root = Path(repo_root)
+    if warnings is None:
+        warnings = []
     tasklist = repo_root / "todo" / "BUILD-TASKLIST.md"
     try:
         text = tasklist.read_text()
@@ -162,12 +253,40 @@ def check(repo_root):
                 f"authoritative PROOF-STATUS is {want!r} — the visible row must not contradict "
                 f"the status line (AF-AP-32)"
             )
+
+    # The owner-verifiable anchor of every ACCEPTED proof (see OWNER_KEY_REL above).
+    pending_of = set(PENDING_ANCHOR.findall(text))
+    for proof_id in sorted(pending_of):
+        if status_of.get(proof_id) != "ACCEPTED":
+            errors.append(
+                f"{proof_id}: a PROOF-ANCHOR PENDING declaration for a proof whose PROOF-STATUS is "
+                f"{status_of.get(proof_id)!r}, not ACCEPTED — remove it"
+            )
+    if anchors:
+        for proof_id, status in sorted(status_of.items()):
+            if status != "ACCEPTED":
+                continue
+            found, warned = _anchor_findings(repo_root, proof_id, proof_id in pending_of)
+            errors.extend(found)
+            warnings.extend(warned)
     return errors
 
 
 def main(argv):
-    repo_root = argv[1] if len(argv) > 1 else "."
-    errors = check(repo_root)
+    flags = {argument for argument in argv[1:] if argument.startswith("--")}
+    positional = [argument for argument in argv[1:] if not argument.startswith("--")]
+    unknown = sorted(flags - {"--no-anchors"})
+    if unknown:
+        print(f"proof-status: unknown option(s) {unknown}; the one option is --no-anchors", file=sys.stderr)
+        return 2
+    repo_root = positional[0] if positional else "."
+    warnings = []
+    errors = check(repo_root, anchors="--no-anchors" not in flags, warnings=warnings)
+    if "--no-anchors" in flags:
+        print("proof-status: ACCEPTED anchor verification SKIPPED (--no-anchors) — the status logic "
+              "alone is checked; this is never the CI or coordinator invocation", file=sys.stderr)
+    for warning in warnings:
+        print(f"proof-status: WARNING {warning}", file=sys.stderr)
     for error in errors:
         print(f"proof-status: {error}", file=sys.stderr)
     return 1 if errors else 0
