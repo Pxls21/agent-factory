@@ -51,6 +51,13 @@ set -uo pipefail
 
 die() { echo "pc-lane: $*" >&2; exit 64; }
 
+# bash reads a script LAZILY: an edit to this file while a lane loop runs (a `git merge` of the main clone on the PC)
+# corrupts the running loop at a byte offset — the sandbox-side twin (scripts/pc_lane.sh) learned it on 2026-09-08 and
+# this side had eight loops alive when the fix was needed. Run from a private copy; the copy is removed by cleanup().
+if [ -z "${PC_LANE_SELF_COPY:-}" ]; then
+  _self="$(mktemp "${TMPDIR:-/tmp}/pc-lane.XXXXXX")" && cp "$0" "$_self" \
+    && PC_LANE_SELF_COPY="$_self" exec bash "$_self" "$@"
+fi
 BRIEF="${1:-}"; HARNESS="${2:-codex}"; ROLE="${3:-}"
 [ -n "$BRIEF" ] || die "usage: pc-lane.sh <brief-file> [codex|hermes] [role]"
 [ -f "$BRIEF" ] || die "brief not found: $BRIEF"
@@ -99,7 +106,7 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; the
   exit 0
 fi
 echo $$ > "$PIDFILE"
-cleanup() { rm -f "$PIDFILE"; }
+cleanup() { rm -f "$PIDFILE" "${PC_LANE_SELF_COPY:-}"; }
 trap cleanup EXIT
 
 # --- the no-push shim -------------------------------------------------------
@@ -308,6 +315,8 @@ fi
 if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
   cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
+  : > "$REPORT"   # the refusal line must not STAND as report.md during the backoff: the sandbox poller read a non-empty
+                  # report.md as READY and brought the refusal home as six lanes' final reports (2026-09-08 08:1xZ)
   echo "pc-lane: attempt $attempt refused by route capacity / rate limit (HTTP 503 or 429) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
   sleep "$wait_s"
   continue
