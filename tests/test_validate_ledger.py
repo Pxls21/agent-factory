@@ -548,6 +548,32 @@ def test_registry_matches_seed_classes_and_counts():
     assert next(entry for entry in registry["proofs"] if entry["proof_id"] == "S0-02")["required_negative_controls"] == 4
 
 
+def test_registry_rows_carry_no_key_the_validator_does_not_read():
+    """AF-AP-66, second instance (2026-09-08): `assertion_count` sat in every row, validated for type and
+    read by nothing — documentation wearing a gate's clothes. The row's key set is CLOSED to what the
+    validator consumes; the real registry must satisfy it and the validator must pass on it."""
+    registry = _load_registry(ROOT / "proofs" / "registry.yaml")
+    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked"}
+    for entry in registry["proofs"]:
+        assert set(entry) <= allowed, (entry["proof_id"], sorted(set(entry) - allowed))
+    assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()
+    completed = _run(ROOT)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_registry_unread_key_is_refused_for_the_exact_reason(tmp_path):
+    """NEGATIVE CONTROL: re-adding the deleted key to one row is refused by name (the mutant that
+    would silently reintroduce the class)."""
+    root = _copy_contract(tmp_path)
+    registry = _load_registry(root / "proofs" / "registry.yaml")
+    registry["proofs"][0]["assertion_count"] = 1
+    _write_registry(root, registry)
+    completed = _run(root)
+    assert completed.returncode != 0
+    proof_id = registry["proofs"][0]["proof_id"]
+    assert f"registry-schema: {proof_id} unknown key(s) assertion_count" in completed.stdout + completed.stderr
+
+
 def test_committed_pc_bridge_spike_validates_and_declares_all_effects():
     completed = _run(ROOT)
 

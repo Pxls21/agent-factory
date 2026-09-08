@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-12",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-08T08:17:13.807049Z",
+  "recorded_at": "2026-09-08T16:53:21.909463Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "."
       ],
-      "started_at": "2026-09-08T08:17:13.717908Z",
-      "finished_at": "2026-09-08T08:17:13.769245Z",
+      "started_at": "2026-09-08T16:53:21.819579Z",
+      "finished_at": "2026-09-08T16:53:21.870760Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "proofs/S0-12/fixtures/mutated-root"
       ],
-      "started_at": "2026-09-08T08:17:13.769416Z",
-      "finished_at": "2026-09-08T08:17:13.806523Z",
+      "started_at": "2026-09-08T16:53:21.870956Z",
+      "finished_at": "2026-09-08T16:53:21.908929Z",
       "exit_code": 1,
       "stdout_sha256": "be67901080b0bd7ecae40951af137988b1bf42d84cec9b7cd83d52d017302caa",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -39,8 +39,8 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
-    "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
+    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
+    "proofs/registry.yaml": "a867d1c14206c171c22c8b37a7d307f0de2d8db85b04ab848849e3f0185485cc",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
     "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
@@ -53,5 +53,5 @@
     "proofs/S0-12/fixtures/mutated-root/upstream.lock.yaml": "c5cb3825513e9371e3d083835f5842cad79c3d3cacbdaadad256f855f19ec4eb",
     "proofs/S0-12/spec.json": "2569589f8b33018de6199039108d8e4396c4c0905258a617a2b0206fb92ffd93"
   },
-  "digest": "e210fd99aaa5b8d9f7d43dbb9e7bb4965eac6a2f113a2cbda0ba93f6d6cc859b"
+  "digest": "a76717531fd9ca3c1e6ced4d8d187c0b62376a030e2bf5a7f417625072b85299"
 }

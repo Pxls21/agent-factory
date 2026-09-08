@@ -129,7 +129,6 @@ def test_runner_records_negative_leg_met_s0_99(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -231,7 +230,6 @@ def test_runner_records_unmet_when_reason_absent(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -317,7 +315,6 @@ def test_runner_matches_reason_on_non_first_line(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -390,7 +387,6 @@ def test_runner_records_the_observed_line_not_the_expected_reason(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -468,7 +464,6 @@ def test_runner_per_line_rule_holds_for_a_multiline_expected_reason(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -538,7 +533,6 @@ def test_runner_unmet_when_reason_split_across_streams(tmp_path):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 
@@ -604,7 +598,6 @@ def _register_runner_proof(root, proof_id, title, reason, checker_src):
         "wave": 0,
         "spike_dependencies": [],
         "required_negative_controls": 1,
-        "assertion_count": 1,
     })
     reg_path.write_text(json.dumps(reg, indent=2))
 

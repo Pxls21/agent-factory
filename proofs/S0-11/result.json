@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-11",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-08T08:17:13.564121Z",
+  "recorded_at": "2026-09-08T16:53:21.661930Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-11/check_eval_hardening.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-08T08:17:12.925739Z",
-      "finished_at": "2026-09-08T08:17:13.376819Z",
+      "started_at": "2026-09-08T16:53:21.282552Z",
+      "finished_at": "2026-09-08T16:53:21.472706Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "proofs/S0-11/fixtures/neg_credential_read.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-08T08:17:13.377024Z",
-      "finished_at": "2026-09-08T08:17:13.438380Z",
+      "started_at": "2026-09-08T16:53:21.472903Z",
+      "finished_at": "2026-09-08T16:53:21.538041Z",
       "exit_code": 1,
       "stdout_sha256": "55e2e28921930b202d658f532f8e215e8544e35c98b8690f5211d8e8dbf6b7c6",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -42,8 +42,8 @@
         "proofs/S0-11/fixtures/rubric_probe.py",
         "proofs/S0-11"
       ],
-      "started_at": "2026-09-08T08:17:13.438557Z",
-      "finished_at": "2026-09-08T08:17:13.563544Z",
+      "started_at": "2026-09-08T16:53:21.538260Z",
+      "finished_at": "2026-09-08T16:53:21.661381Z",
       "exit_code": 1,
       "stdout_sha256": "11ee37f0bf754b5d55077553ea0973891e715037febd8b8011fb29d2c170d202",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -57,8 +57,8 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f2b12446f1af6aa3a5b34384568fe260e9b8236b392183a69cb2a27514d618ff",
-    "proofs/registry.yaml": "f480161e2b0b6018327e48347c11b905a40663a094d29909919216410440f779",
+    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
+    "proofs/registry.yaml": "a867d1c14206c171c22c8b37a7d307f0de2d8db85b04ab848849e3f0185485cc",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
     "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
@@ -70,5 +70,5 @@
     "proofs/S0-11/runner_design.md": "37236db7a6d3bb89b898dc89aa0b683475db36e1b1227665d7a7bca94c3fb2b0",
     "proofs/S0-11/spec.json": "57fc8a3b3ba4acc80a9d3aae6393c4749f986ee282c03ee061520d66faa194fe"
   },
-  "digest": "30bc2392b59e666d4ef54c7b269f8905a39d8373d774d4a715dd689ec4b2155c"
+  "digest": "2a49daf8a3a4af2fd06a8d24bbfdeec5929e06325f89f048b6aec4f8682d02c3"
 }

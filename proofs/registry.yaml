@@ -9,18 +9,18 @@
 "class_aliases": {"blocked_capability": "blocked_host"},
 "waves": [0, 1, 2, 3],
 "proofs": [
-  {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 6},
-  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4, "assertion_count": 3},
-  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "blocked_credential", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "assertion_count": 3, "blocked": {"owner": "TBD-owner-credential", "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted", "marker_path": "proofs/S0-03/blocked.json"}},
-  {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
-  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1, "assertion_count": 2},
-  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1, "assertion_count": 4},
-  {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
-  {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "blocked_host", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1, "assertion_count": 1, "blocked": {"owner": "TBD-owner-gvisor-host", "unblock_condition": "runsc executable and a trivial runsc container run succeeds", "marker_path": "proofs/S0-08/blocked.json"}},
-  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 2},
-  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 2},
-  {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3},
-  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "assertion_count": 3}
+  {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4},
+  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "blocked_credential", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "blocked": {"owner": "TBD-owner-credential", "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted", "marker_path": "proofs/S0-03/blocked.json"}},
+  {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1},
+  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1},
+  {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "blocked_host", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1, "blocked": {"owner": "TBD-owner-gvisor-host", "unblock_condition": "runsc executable and a trivial runsc container run succeeds", "marker_path": "proofs/S0-08/blocked.json"}},
+  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1}
 ],
 
 # COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.
