@@ -205,6 +205,7 @@ rc=0
 # ATTEMPT on that exact signature only, with a doubling backoff, keeping every refused report.
 : "${LANE_CAPACITY_RETRIES:=3}"     # extra attempts after a capacity refusal; 0 disables
 : "${LANE_CAPACITY_BACKOFF:=60}"    # seconds before the first retry, doubling; tests pass 0
+: "${LANE_CAPACITY_MAX_WAIT:=600}"  # cap on one backoff wait (2026-09-08: ten patient retries, never a 30-minute sleep)
 # 2026-09-06: a 429 is the same transient class when it is a per-credential cooldown (Ollama Cloud rate limit under two
 # concurrent Kimi lanes) or the tail of a fallback chain whose members are all cooling; the codex quota 429 ("exhausted their
 # quota (reset after NNh") is NOT transient, so it is excluded — retrying it would burn the backoff for nothing.
@@ -317,6 +318,7 @@ fi
 
 if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
+  [ "$wait_s" -le "$LANE_CAPACITY_MAX_WAIT" ] || wait_s="$LANE_CAPACITY_MAX_WAIT"
   cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
   : > "$REPORT"   # the refusal line must not STAND as report.md during the backoff: the sandbox poller read a non-empty
                   # report.md as READY and brought the refusal home as six lanes' final reports (2026-09-08 08:1xZ)

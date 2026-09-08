@@ -121,7 +121,9 @@ fi
 # Forward the per-lane overrides the PC runner honours (model/effort/profile/toolsets) —
 # without this the first route probe silently ran the role default (2026-09-03).
 FWD=""
-for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH; do
+# 2026-09-08: the capacity-retry knobs travel too — under route contention the PC default (3 retries, 60 s doubling)
+# gave up in ~7 min while the admitted sibling lanes were still refusing to yield a slot.
+for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
 done
 LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID$FWD \
