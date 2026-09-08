@@ -9,20 +9,20 @@ Writes into S0_01_FRAMEDIR:
   tee-status.json              - RUNNING status, rewritten after every recorded
                                  frame under the timeline lock (A21d)
 
-The ``final`` field is true only on the clean-exit write; the SIGTERM
-write is non-final (final=false, exit fields null, write_errors includes
-"terminated: SIGTERM", exit 70).
-
 After the agent exits, the tee drains BOTH pumps to EOF -- there is no
 stall timeout on either side.  A client that never closes (c2a) or a
 grandchild that holds the agent's stdout (a2c) keeps the tee alive;
 buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
 for the child to exit (``crates/buzz-acp/src/acp.rs:422-444``,
-``:2323-2328``, pinned ``1c8321cd``); SIGKILL cannot be handled, so the
-leg's evidence is its last RUNNING status (A21d).  The SIGTERM path
-below covers an operator/systemd TERM, not buzz-acp.  The only uncovered
-SIGTERM window is Python interpreter startup before the handler install
-(default disposition: rc -15, no status file).
+``:2323-2329``, pinned ``1c8321cd``); SIGKILL cannot be handled, so the
+leg's evidence is its last RUNNING status (A21d).
+
+The SIGTERM path below covers an operator/systemd TERM, not buzz-acp.
+The only uncovered SIGTERM window is Python interpreter startup before
+the handler install (default disposition: rc -15, no status file).  The
+``final`` field is true only on the clean-exit write; the SIGTERM write
+is non-final (final=false, exit fields null, write_errors includes
+"terminated: SIGTERM", exit 70).
 
 A frame the client wrote before the tee exits MUST be recorded in
 frames-client-to-agent.jsonl, or the tee exits 70 (EX_SOFTWARE).  An agent
@@ -31,6 +31,7 @@ recorded c2a frame was not forwarded into the agent's stdin pipe (note:
 "forwarded" means written into the pipe, not received or processed by
 the agent).
 """
+# imported by tests/test_s0_01_frame_tee.py -- keep this module import-side-effect free
 import base64
 import datetime
 import hashlib
@@ -126,6 +127,13 @@ def main():
     if agent is None:
         print("frame_tee: S0_01_AGENT is not set", file=sys.stderr)
         raise SystemExit(64)
+    if not agent:
+        print("frame_tee: S0_01_AGENT is empty", file=sys.stderr)
+        raise SystemExit(64)
+    if not (os.path.isfile(agent) and os.access(agent, os.X_OK)):
+        print("frame_tee: S0_01_AGENT is not an executable file: %s" % agent,
+              file=sys.stderr)
+        raise SystemExit(64)
     os.makedirs(framedir, exist_ok=True)
 
     # --- All state that _write_status and the _Terminated handler need,
@@ -220,7 +228,12 @@ def main():
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
     try:
-        proc = subprocess.Popen([agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            proc = subprocess.Popen([agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        except OSError as exc:
+            print("frame_tee: cannot spawn S0_01_AGENT %s: %s" % (agent, exc),
+                  file=sys.stderr)
+            raise SystemExit(64)
 
         # --- runtime-identity.json (written at spawn) ---
         tee_path = os.path.realpath(__file__)
@@ -246,9 +259,54 @@ def main():
             "python_dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE") == "1",
             "spawned_at_utc": _utc_now(),
         }
-        with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+        _identity_path = os.path.join(framedir, "runtime-identity.json")
+        _identity_tmp = os.path.join(framedir, ".runtime-identity.tmp")
+        with open(_identity_path, "w") as f:
             json.dump(identity, f, indent=2)
             f.write("\n")
+
+        _late_sampled = [False]
+
+        def _resample_interpreter():
+            """AF-AP-55: re-read the agent's interpreter at the FIRST a2c byte.
+
+            A two-stage agent (a wrapper that ``exec``s its real interpreter) is
+            still the wrapper at Popen time, so the spawn-time reading names the
+            wrapper.  The reading that matters is the one taken when the agent
+            first speaks.  Ported from ``tools/acp_probe.py:296-320`` -- same
+            field names, same "later reading wins" rule.
+
+            The child can exit between its first byte and the readlink: that is
+            an OSError, and it keeps the early reading (the record's key set is
+            fixed by check_acp_conformance.py, so the reason goes to stderr).
+            """
+            try:
+                rp = os.readlink("/proc/%d/exe" % proc.pid)
+            except (OSError, IOError) as exc:
+                print("frame_tee: agent interpreter re-sample: exited before"
+                      " identity (%s)" % exc, file=sys.stderr)
+                return
+            if rp == identity["agent_interpreter_realpath"]:
+                # Single-stage agent: the spawn-time reading already names the
+                # interpreter that spoke.  Measured: re-hashing it here cost
+                # +100 ms on every leg (0.053 s -> 0.156 s per run).
+                return
+            try:
+                sh = _sha256_file(rp)
+            except (OSError, IOError) as exc:
+                print("frame_tee: agent interpreter re-sample: exited before"
+                      " identity (%s)" % exc, file=sys.stderr)
+                return
+            identity["agent_interpreter_realpath"] = rp
+            identity["agent_interpreter_sha256"] = sh
+            try:
+                with open(_identity_tmp, "w") as f:
+                    json.dump(identity, f, indent=2)
+                    f.write("\n")
+                os.replace(_identity_tmp, _identity_path)
+            except OSError as exc:
+                print("frame_tee: runtime-identity.json re-write failed: %s" % exc,
+                      file=sys.stderr)
 
         # --- shared timeline file ---
         tl = open(os.path.join(framedir, "timeline.jsonl"), "ab")
@@ -346,6 +404,10 @@ def main():
                     line = src.readline()
                     if not line:
                         break
+                    if not _late_sampled[0]:
+                        # AF-AP-55: the first a2c byte is the identity sample point
+                        _late_sampled[0] = True
+                        _resample_interpreter()
                     text = line.decode("utf-8", errors="replace")
                     if text.endswith("\r\n"):
                         stripped = text[:-2]
@@ -429,15 +491,13 @@ def main():
         proc.wait()
         # R1: drain a2c until EOF -- no stall timeout.  A grandchild that
         # holds the agent's stdout keeps the tee alive;
-        # buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
-        # for the child to exit (acp.rs:422-444, pinned 1c8321cd).
+        # buzz-acp's shutdown bound: see PINNED_SHUTDOWN_CLAUSE in frame_tee.py
         while to.is_alive():
             time.sleep(0.1)
             _write_status()
         # R1: drain c2a until client EOF -- no stall timeout on the c2a side.
         # A client that never closes keeps the tee alive;
-        # buzz-acp SIGKILLs the group (killpg) first and then waits up to 5 s
-        # for the child to exit (acp.rs:422-444, pinned 1c8321cd).
+        # buzz-acp's shutdown bound: see PINNED_SHUTDOWN_CLAUSE in frame_tee.py
         while ti.is_alive():
             time.sleep(0.1)
             _write_status()
