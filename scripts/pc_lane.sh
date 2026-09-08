@@ -144,7 +144,10 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
   # capacity-retry backoff, and the poller read it as READY and brought the refusal home as the lane's report — for six
   # lanes at once, A5k's five-hour tree included (2026-09-08 08:1xZ). The retry loop's next attempt truncates it; until
   # then the lane is RUNNING.
-  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed' $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && pgrep -f '[p]c-lane.sh' >/dev/null && echo RUNNING || echo GONE)))")"
+  # The no-pidfile fallback is bounded to the LAUNCH WINDOW (launch.log younger than 5 min): the old `pgrep -f pc-lane.sh`
+  # matched any SIBLING lane's launcher shell, so a poller whose own lane had been stopped by pid polled RUNNING for hours
+  # (two stale pollers on 2026-09-08 — the owner saw seven background tasks for four lanes).
+  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed' $REMOTE_REPORT && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && [ -n \"\$(find $PC_AF_REPO/.lanes/$LANE_ID/launch.log -mmin -5 2>/dev/null)\" ] && echo RUNNING || echo GONE)))")"
   case "$probe" in
     *FAILED-UNRETRIED*) echo "pc_lane: LANE FAILED — the harness died on an API failure the PC side did not retry (the line stands as report.md; not a report). Reason:" >&2
                bridge "head -c 300 $REMOTE_REPORT" >&2 2>/dev/null
