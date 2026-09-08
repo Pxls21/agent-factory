@@ -1,0 +1,7 @@
+{
+  "degraded_scopes": [],
+  "reason": "denied: scope-tuple-unauthorized",
+  "records": [],
+  "scopes_queried": [],
+  "status": "denied"
+}

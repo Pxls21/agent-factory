@@ -1,0 +1,20 @@
+[
+  {
+    "kind": "decision",
+    "path": "notes/deploy-window.md",
+    "project": "project--p-atlas",
+    "rank": -1.1600000000000001,
+    "snippet": "The project deploy window is Tuesday 09:00-11:00 UTC.",
+    "title": "Deploy window (project variant)",
+    "workspace": "factory"
+  },
+  {
+    "kind": "decision",
+    "path": "notes/project-only.md",
+    "project": "project--p-atlas",
+    "rank": -0.77,
+    "snippet": "A page that exists in the project scope alone.",
+    "title": "Project only",
+    "workspace": "factory"
+  }
+]

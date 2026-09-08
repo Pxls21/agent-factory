@@ -1,0 +1,44 @@
+{
+  "proof_id": "S0-06",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-06/check_four_scope.py", "proofs/S0-06/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-06/adapter/factory_memory.py", "recall", "--tuple-file", "fixtures/s0-06/neg-unauthorized-tuple.json", "--query", "x"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "denied: scope-tuple-unauthorized"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-06/check_four_scope.py", "proofs/S0-06/fixtures/evidence-leak"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "leak: honeytoken HT-team-c52e6f04 surfaced from team"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-06/check_four_scope.py", "proofs/S0-06/fixtures/evidence-wrong-scope-write"],
+      "cwd": ".",
+      "timeout_s": 60,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "write: record found in project"
+      }
+    }
+  ]
+}

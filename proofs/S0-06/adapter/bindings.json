@@ -1,0 +1,27 @@
+{
+  "note": "AUTHORIZED tuple table for the factory_memory composite adapter. This committed file is the ONLY authorization source: the caller supplies a tuple, the adapter matches it verbatim here, and the request body is never consulted. docs/03 §4 read contract 1 ('Authenticate the actor/agent/team/project binding outside model control'); D-007 (the adapter is the authorization boundary because same-workspace ai-memory tokens are not per-project RBAC).",
+  "workspace": "factory",
+  "bindings": [
+    {
+      "actor": "svc-agent-runner",
+      "agent": "a-alpha",
+      "team": "t-core",
+      "project": "p-atlas",
+      "scopes": ["agent", "project", "team", "company"]
+    },
+    {
+      "actor": "svc-agent-runner",
+      "agent": "a-beta",
+      "team": "t-core",
+      "project": "p-atlas",
+      "scopes": ["agent", "project"]
+    },
+    {
+      "actor": "svc-agent-runner",
+      "agent": "a-gamma",
+      "team": "t-platform",
+      "project": "p-borealis",
+      "scopes": ["agent", "project", "team", "company"]
+    }
+  ]
+}

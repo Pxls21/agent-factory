@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "decision",
+    "path": "canaries/team.md",
+    "project": "team--t-core",
+    "rank": -1.54,
+    "snippet": "honeytoken HT-team-c52e6f04 staged in the team scope.",
+    "title": "Canary (team)",
+    "workspace": "factory"
+  }
+]

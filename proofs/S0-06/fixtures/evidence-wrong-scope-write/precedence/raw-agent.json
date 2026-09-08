@@ -1,0 +1,20 @@
+[
+  {
+    "kind": "decision",
+    "path": "notes/deploy-window.md",
+    "project": "agent--a-alpha",
+    "rank": -1.05,
+    "snippet": "The agent deploy window is Tuesday 09:00-11:00 UTC.",
+    "title": "Deploy window (agent variant)",
+    "workspace": "factory"
+  },
+  {
+    "kind": "decision",
+    "path": "notes/agent-only.md",
+    "project": "agent--a-alpha",
+    "rank": -0.72,
+    "snippet": "A page that exists in the agent scope alone.",
+    "title": "Agent only",
+    "workspace": "factory"
+  }
+]

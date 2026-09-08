@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "decision",
+    "path": "canaries/project.md",
+    "project": "project--p-atlas",
+    "rank": -1.47,
+    "snippet": "honeytoken HT-project-8b40d17c staged in the project scope.",
+    "title": "Canary (project)",
+    "workspace": "factory"
+  }
+]

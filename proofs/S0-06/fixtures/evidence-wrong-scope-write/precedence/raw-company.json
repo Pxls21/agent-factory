@@ -1,0 +1,20 @@
+[
+  {
+    "kind": "decision",
+    "path": "notes/deploy-window.md",
+    "project": "_global",
+    "rank": -1.3800000000000001,
+    "snippet": "The company deploy window is Tuesday 09:00-11:00 UTC.",
+    "title": "Deploy window (company variant)",
+    "workspace": "factory"
+  },
+  {
+    "kind": "decision",
+    "path": "notes/company-only.md",
+    "project": "_global",
+    "rank": -0.87,
+    "snippet": "A page that exists in the company scope alone.",
+    "title": "Company only",
+    "workspace": "factory"
+  }
+]

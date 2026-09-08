@@ -1,0 +1,114 @@
+{
+  "binding": {
+    "actor": "svc-agent-runner",
+    "agent": "a-alpha",
+    "project": "p-atlas",
+    "team": "t-core"
+  },
+  "degraded_scopes": [],
+  "reason": "recall: complete",
+  "records": [
+    {
+      "confidence": -0.72,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 0,
+        "project": "agent--a-alpha",
+        "shadowed_scopes": [],
+        "snippet": "A page that exists in the agent scope alone.",
+        "title": "Agent only",
+        "workspace": "factory"
+      },
+      "scope": "agent",
+      "stable_id": "notes/agent-only.md",
+      "timestamp": "2026-09-05T09:14:02Z"
+    },
+    {
+      "confidence": -1.05,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 0,
+        "project": "agent--a-alpha",
+        "shadowed_scopes": [
+          "project",
+          "team",
+          "company"
+        ],
+        "snippet": "The agent deploy window is Tuesday 09:00-11:00 UTC.",
+        "title": "Deploy window (agent variant)",
+        "workspace": "factory"
+      },
+      "scope": "agent",
+      "stable_id": "notes/deploy-window.md",
+      "timestamp": "2026-09-05T09:14:02Z"
+    },
+    {
+      "confidence": -0.77,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 1,
+        "project": "project--p-atlas",
+        "shadowed_scopes": [],
+        "snippet": "A page that exists in the project scope alone.",
+        "title": "Project only",
+        "workspace": "factory"
+      },
+      "scope": "project",
+      "stable_id": "notes/project-only.md",
+      "timestamp": "2026-09-04T17:41:55Z"
+    },
+    {
+      "confidence": -0.82,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 2,
+        "project": "team--t-core",
+        "shadowed_scopes": [],
+        "snippet": "A page that exists in the team scope alone.",
+        "title": "Team only",
+        "workspace": "factory"
+      },
+      "scope": "team",
+      "stable_id": "notes/team-only.md",
+      "timestamp": "2026-09-03T11:07:30Z"
+    },
+    {
+      "confidence": -0.87,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 3,
+        "project": "_global",
+        "shadowed_scopes": [],
+        "snippet": "A page that exists in the company scope alone.",
+        "title": "Company only",
+        "workspace": "factory"
+      },
+      "scope": "company",
+      "stable_id": "notes/company-only.md",
+      "timestamp": "2026-09-01T08:22:11Z"
+    }
+  ],
+  "scopes_queried": [
+    {
+      "project": "agent--a-alpha",
+      "scope": "agent",
+      "workspace": "factory"
+    },
+    {
+      "project": "project--p-atlas",
+      "scope": "project",
+      "workspace": "factory"
+    },
+    {
+      "project": "team--t-core",
+      "scope": "team",
+      "workspace": "factory"
+    },
+    {
+      "project": "_global",
+      "scope": "company",
+      "workspace": "factory"
+    }
+  ],
+  "status": "ok"
+}

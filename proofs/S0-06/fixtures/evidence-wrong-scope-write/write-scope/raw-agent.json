@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "fact",
+    "path": "observations/2c1c1acbd4e41f93.md",
+    "tier": "semantic",
+    "title": "Retention decision",
+    "updated_at": "2026-09-05T09:20:44Z"
+  },
+  {
+    "kind": "fact",
+    "path": "notes/agent-only.md",
+    "tier": "semantic",
+    "title": "Agent only",
+    "updated_at": "2026-09-05T09:01:10Z"
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "binary_sha256": "5c1d0b7a4e93f26810ab3d5c47e9f0128d6b4a35c9e70f21db83a6c4517e9b0d",
+  "commit": "73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e",
+  "component": "ai-memory",
+  "data_dir": "/tmp/s0-06-run/data",
+  "port": 8765,
+  "posture": {
+    "AI_MEMORY_AUTO_IMPROVE__REQUIRE_APPROVAL": "true",
+    "AI_MEMORY_AUTO_IMPROVE__SCHEDULER__ENABLED": "false",
+    "AI_MEMORY_MAINTENANCE__ENABLED": "false",
+    "AI_MEMORY_SLOTS__PER_USER": "false"
+  },
+  "version": "1.39.0",
+  "version_command": "ai-memory --version"
+}

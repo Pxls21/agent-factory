@@ -21,3 +21,7 @@ The adapter authenticates the actor/agent/team/project binding, reads with Agent
 ## Consequences
 
 The four-level goal survives, but the adapter becomes a security-critical authorization boundary with extensive leak tests. Same-workspace tokens are not treated as per-project RBAC; sensitive tenants may require separate instances/workspaces.
+
+## Note (2026-09-08, lane M1 — read from the pinned ai-memory source 73715b6f)
+
+`(factory, _global)` is NOT ai-memory's reserved global scope. The reserved scope is resolved only inside the default workspace (`lookup_global_scope` → `DEFAULT_WORKSPACE_NAME` + `GLOBAL_SCOPE_PROJECT`, `crates/ai-memory-store/src/scope.rs:254-292`; `DEFAULT_WORKSPACE_NAME = "default"`, `crates/ai-memory-core/src/lib.rs:28`). In the `factory` workspace, `_global` is an ordinary project: the MCP `scope: "global"` argument cannot address it, the default `memory_query` union does not include it, and nothing refuses to create it. The S0-06 adapter therefore addresses Company explicitly as `workspace=factory&project=_global` on both the read and the write surface. A second accepted ADR with this number (`0003-two-durable-memory-scopes.md`) conflicts with this one; which is live is an open owner decision (task `adr-0003-conflict`).

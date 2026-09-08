@@ -1,0 +1,31 @@
+{
+  "_note": "Seeding input for proofs/S0-06/tools/pc/seed_scopes.py. `stable_id` is written into ALL FOUR scopes with a different body per scope, so a merged recall that returns the agent variant proves precedence rather than luck; `scope_only` gives each scope one page nobody else has, so the four raw reads are not identical sets. Never read by check_four_scope.py.",
+  "stable_id": "notes/deploy-window.md",
+  "variants": {
+    "agent": {
+      "title": "Deploy window (agent variant)",
+      "body": "# Deploy window (agent variant)\n\nThe agent deploy window is Tuesday 09:00-11:00 UTC.\n"
+    },
+    "project": {
+      "title": "Deploy window (project variant)",
+      "body": "# Deploy window (project variant)\n\nThe project deploy window is Tuesday 09:00-11:00 UTC.\n"
+    },
+    "team": {
+      "title": "Deploy window (team variant)",
+      "body": "# Deploy window (team variant)\n\nThe team deploy window is Tuesday 09:00-11:00 UTC.\n"
+    },
+    "company": {
+      "title": "Deploy window (company variant)",
+      "body": "# Deploy window (company variant)\n\nThe company deploy window is Tuesday 09:00-11:00 UTC.\n"
+    }
+  },
+  "scope_only": {
+    "agent": {"path": "notes/agent-only.md", "title": "Agent only", "body": "# Agent only\n\nA page that exists in the agent scope alone.\n"},
+    "project": {"path": "notes/project-only.md", "title": "Project only", "body": "# Project only\n\nA page that exists in the project scope alone.\n"},
+    "team": {"path": "notes/team-only.md", "title": "Team only", "body": "# Team only\n\nA page that exists in the team scope alone.\n"},
+    "company": {"path": "notes/company-only.md", "title": "Company only", "body": "# Company only\n\nA page that exists in the company scope alone.\n"}
+  },
+  "query": "deploy window",
+  "honeytoken_path_template": "canaries/{scope}.md",
+  "honeytoken_body_template": "# Canary ({scope})\n\nhoneytoken {token} staged in the {scope} scope.\n"
+}

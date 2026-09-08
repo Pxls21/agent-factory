@@ -1,0 +1,1 @@
+{"event": "scope_tuple_denied", "presented_fields": ["actor", "agent", "project", "team"], "reason": "denied: scope-tuple-unauthorized", "seq": 1}

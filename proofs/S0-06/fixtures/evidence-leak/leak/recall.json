@@ -1,0 +1,70 @@
+{
+  "binding": {
+    "actor": "svc-agent-runner",
+    "agent": "a-beta",
+    "project": "p-atlas",
+    "team": "t-core"
+  },
+  "degraded_scopes": [],
+  "reason": "recall: complete",
+  "records": [
+    {
+      "confidence": -1.4,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 0,
+        "project": "agent--a-beta",
+        "shadowed_scopes": [],
+        "snippet": "honeytoken HT-agent-3f1c9a2e staged in the agent scope.",
+        "title": "Canary (agent)",
+        "workspace": "factory"
+      },
+      "scope": "agent",
+      "stable_id": "canaries/agent.md",
+      "timestamp": "2026-09-05T09:14:02Z"
+    },
+    {
+      "confidence": -1.47,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 1,
+        "project": "project--p-atlas",
+        "shadowed_scopes": [],
+        "snippet": "honeytoken HT-project-8b40d17c staged in the project scope.",
+        "title": "Canary (project)",
+        "workspace": "factory"
+      },
+      "scope": "project",
+      "stable_id": "canaries/project.md",
+      "timestamp": "2026-09-04T17:41:55Z"
+    },
+    {
+      "confidence": -1.47,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 1,
+        "project": "project--p-atlas",
+        "shadowed_scopes": [],
+        "snippet": "honeytoken HT-team-c52e6f04 staged in the team scope.",
+        "title": "Canary (team)",
+        "workspace": "factory"
+      },
+      "scope": "project",
+      "stable_id": "canaries/team.md",
+      "timestamp": "2026-09-03T11:07:30Z"
+    }
+  ],
+  "scopes_queried": [
+    {
+      "project": "agent--a-beta",
+      "scope": "agent",
+      "workspace": "factory"
+    },
+    {
+      "project": "project--p-atlas",
+      "scope": "project",
+      "workspace": "factory"
+    }
+  ],
+  "status": "ok"
+}

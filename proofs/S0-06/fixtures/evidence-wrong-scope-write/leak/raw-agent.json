@@ -1,0 +1,11 @@
+[
+  {
+    "kind": "decision",
+    "path": "canaries/agent.md",
+    "project": "agent--a-beta",
+    "rank": -1.4,
+    "snippet": "honeytoken HT-agent-3f1c9a2e staged in the agent scope.",
+    "title": "Canary (agent)",
+    "workspace": "factory"
+  }
+]
