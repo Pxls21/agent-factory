@@ -1,0 +1,24 @@
+{
+  "proof_id": "S0-02",
+  "legs": [
+    {
+      "leg": "positive",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "proofs/S0-02/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 0
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--synthetic-root", "proofs/S0-02/fixtures/evidence-blanket", "proofs/S0-02/fixtures/evidence-blanket/legs"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "blanket-rejection: reasons ['delivery::restricted: not a channel member'] not distinct — 5 negative legs collapsed to 1 observable(s)"
+      }
+    }
+  ]
+}

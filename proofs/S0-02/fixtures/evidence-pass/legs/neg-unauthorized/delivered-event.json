@@ -1,0 +1,18 @@
+{
+ "content": "S0-02 neg-unauthorized: reply with exactly the single word: pong",
+ "created_at": 1788800000,
+ "id": "94d6ebac2d48ace9ad52ad8512a1a5d17bf9ae83b8f48a4f9dcfd977cf815116",
+ "kind": 9,
+ "pubkey": "8c2a8d440c7ed1094a49ccb804bbeab481414495aa57f37d97d594e15362f085",
+ "sig": "201d88814c55a89fe530a5602cfd54cec4a5f36d5a7821c524837aa69b1e97eecfc34d3ddc9201dd2892650c205cdb8846e8197155d4f266f5f7d4ed835518a7",
+ "tags": [
+  [
+   "h",
+   "73701f66-6e12-42ff-b561-7d36db1ad91b"
+  ],
+  [
+   "p",
+   "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+  ]
+ ]
+}

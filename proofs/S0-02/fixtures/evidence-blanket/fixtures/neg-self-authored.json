@@ -1,0 +1,52 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 neg-self-authored: reply with exactly the single word: pong",
+  "created_at": 1788700000,
+  "id": "5b9dec78ebf00a1e7ed6aae2f87f1990e1585083bdb664f88af44988ca4fce33",
+  "kind": 9,
+  "pubkey": "8f43049a7ef56146cd6e45bc41f999fd43d337dda30f80db0907c6a5000aed9e",
+  "sig": "9857a4ce0867947058cea659edf5a3988283c84f173e22b3d2f0e118fc9a9c8e1f605a92d210111a70b2adb89daed2eab149789d3d2cf6af03ab4b4c3d83e3eb",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-acp",
+  "evidence": "buzzacp_log",
+  "failure_reason": "denied: self-authored",
+  "mechanism": "crates/buzz-acp/src/lib.rs:3258",
+  "observable": "dropping self-authored event",
+  "turns": 0
+ },
+ "fixture": "neg-self-authored",
+ "signer": {
+  "expected_pubkey": "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9",
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "agent",
+  "specimen_pubkey": "8f43049a7ef56146cd6e45bc41f999fd43d337dda30f80db0907c6a5000aed9e"
+ },
+ "template": {
+  "content": "S0-02 neg-self-authored: reply with exactly the single word: pong",
+  "created_at_offset_s": 0,
+  "kind": 9,
+  "specimen_created_at": 1788700000,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ }
+}

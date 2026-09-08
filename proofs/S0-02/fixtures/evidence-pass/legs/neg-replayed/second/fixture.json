@@ -1,0 +1,54 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 pos-allowed: reply with exactly the single word: pong",
+  "created_at": 1788700000,
+  "id": "8fbb4f8416fa2cff071d5d92622422a5a43de7214fdc4ac86138e1c506ad535b",
+  "kind": 9,
+  "pubkey": "e5062e5f56fca1ce460479d5b33e1b3839d7e0b1910b71089593105b5a76f5bd",
+  "sig": "8a791ad56190fc8d4c2eed3cc36f07b48ec76d75cef6e3fe2c84eafde02c1a889228de1d74185633dbad6632aa281fffb7325cbce8f353025d87fecedc4b16cb",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-acp",
+  "evidence": "buzzacp_log",
+  "failure_reason": "denied: event-replayed",
+  "mechanism": "crates/buzz-acp/src/relay.rs:2387",
+  "observable": "dropping duplicate event for channel",
+  "replay_of_event_id": "8fbb4f8416fa2cff071d5d92622422a5a43de7214fdc4ac86138e1c506ad535b",
+  "turns": 0
+ },
+ "fixture": "neg-replayed",
+ "replay_of": "pos-allowed",
+ "signer": {
+  "expected_pubkey": "f5111767ace19225e79d8588510b12a55b5c56fe7b6bd181e680384246bb1ed0",
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "owner",
+  "specimen_pubkey": "e5062e5f56fca1ce460479d5b33e1b3839d7e0b1910b71089593105b5a76f5bd"
+ },
+ "template": {
+  "content": "S0-02 pos-allowed: reply with exactly the single word: pong",
+  "created_at_offset_s": 0,
+  "kind": 9,
+  "specimen_created_at": 1788700000,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ }
+}

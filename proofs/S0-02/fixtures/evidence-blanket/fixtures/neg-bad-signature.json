@@ -1,0 +1,53 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 pos-allowed: reply with exactly the single word: pong",
+  "created_at": 1788700000,
+  "id": "6cf9ec5f46a398d21c3dd1e2a6fb1196af48b6976f9a867a2350c846ed01f252",
+  "kind": 9,
+  "pubkey": "e5062e5f56fca1ce460479d5b33e1b3839d7e0b1910b71089593105b5a76f5bd",
+  "sig": "9599f260cbe3362bfb521dc621ff8a2424e8677336be04c9e0d6efbf4a6d60e0c29bb3730f9cd569d6be29ecff58e58947a6a85bff8e3011de11624ce6754b04",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-relay",
+  "discrepancy": "NOT FOUND in buzz-acp 1c8321cd08feb597f8bcff5195c21148fb3e98ed - DISCREPANCY. buzz-acp deserialises a relay EVENT frame with serde_json::from_value (crates/buzz-acp/src/relay.rs:3775) and never calls verify_event on it. Every verify_event call in the crate is on a different path: observer control frames (lib.rs:1574), NIP-OA workflow attribution (lib.rs:256), engram fetch (engram_fetch.rs:122), pool (pool.rs:3385, pool.rs:3495). The signature decision for a channel event is buzz-relay's alone.",
+  "evidence": "delivery",
+  "failure_reason": "denied: signature-invalid",
+  "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:2213",
+  "observable": "invalid: invalid schnorr signature",
+  "turns": 0
+ },
+ "fixture": "neg-bad-signature",
+ "signer": {
+  "expected_pubkey": "5379a3a955d699d87f8ab654fedd35db1b73c6ce267bc3c8bb73df52efb5ed29",
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "owner",
+  "specimen_pubkey": "e5062e5f56fca1ce460479d5b33e1b3839d7e0b1910b71089593105b5a76f5bd"
+ },
+ "template": {
+  "content": "S0-02 pos-allowed: reply with exactly the single word: pong",
+  "created_at_offset_s": 0,
+  "kind": 9,
+  "specimen_created_at": 1788700000,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ }
+}

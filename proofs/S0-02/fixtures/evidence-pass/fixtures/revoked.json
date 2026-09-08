@@ -1,0 +1,54 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 revoked: reply with exactly the single word: pong",
+  "created_at": 1788700000,
+  "id": "19d43c373cb15f8c4a1c0d966246897f463f79846f98b7d9f6efb8dd26a6efac",
+  "kind": 9,
+  "pubkey": "5b26c858af43265df83a494da496df92317c192af795e27a2e73d914d54996bc",
+  "sig": "5546f894fa95e82aa385f847238376e4698f3dc3101f17872351840feec297c1221d27bc5472eda9ea2fd72f53faddeccbfbb879005853eaf983c6ef152e6168",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-relay",
+  "discrepancy": "Shares its rejection TEXT with neg-unauthorized (both are 'restricted: not a channel member'), so it cannot join the five-distinct-reasons set on text alone. It is separated STRUCTURALLY instead: the revoked leg must carry membership.json (the removal receipt for THIS sender) and a created_at INSIDE the freshness window, which is exactly what makes it prove 'revocation is independent of NIP-OA created_at'. neg-unauthorized has no membership.json and its sender was never a member.",
+  "evidence": "delivery",
+  "failure_reason": "denied: membership-revoked",
+  "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:1201",
+  "observable": "restricted: not a channel member",
+  "turns": 0
+ },
+ "fixture": "revoked",
+ "requires_membership_removal": true,
+ "signer": {
+  "expected_pubkey": "f5111767ace19225e79d8588510b12a55b5c56fe7b6bd181e680384246bb1ed0",
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "owner",
+  "specimen_pubkey": "5b26c858af43265df83a494da496df92317c192af795e27a2e73d914d54996bc"
+ },
+ "template": {
+  "content": "S0-02 revoked: reply with exactly the single word: pong",
+  "created_at_offset_s": 0,
+  "kind": 9,
+  "specimen_created_at": 1788700000,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ }
+}

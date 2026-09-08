@@ -1,0 +1,18 @@
+{
+ "content": "S0-02 pos-allowed: reply with exactly the single word: pong",
+ "created_at": 1788800000,
+ "id": "d56402a86b11bb442974bc6f846ec1a16a49a4d44f74255f6f5e87f95352b57c",
+ "kind": 9,
+ "pubkey": "5379a3a955d699d87f8ab654fedd35db1b73c6ce267bc3c8bb73df52efb5ed29",
+ "sig": "183af89fba3455cf40af5f35701541151c8f7cb047265e4ea3df47fdb8f9f1648b98124c74c4ba275e66ed41f0d811729c18e7038864661b488beb8cecb071e4",
+ "tags": [
+  [
+   "h",
+   "73701f66-6e12-42ff-b561-7d36db1ad91b"
+  ],
+  [
+   "p",
+   "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+  ]
+ ]
+}

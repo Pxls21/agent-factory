@@ -1,0 +1,4 @@
+2026-09-08T00:00:00.100000Z  INFO buzz_acp: buzz-acp starting: relay=ws://127.0.0.1:3999 pubkey=<HEX> idle_timeout=900s max_turn=3600s agents=1 session_policy=thread ignore_self=true respond_to=owner-only
+2026-09-08T00:00:00.200000Z DEBUG buzz_acp::relay: startup watermark set to 1788800000
+2026-09-08T00:00:00.300000Z  INFO buzz_acp: agent_pool_ready agents=1
+2026-09-08T00:00:05.000000Z DEBUG buzz_acp: dropping self-authored event channel_id=73701f66-6e12-42ff-b561-7d36db1ad91b

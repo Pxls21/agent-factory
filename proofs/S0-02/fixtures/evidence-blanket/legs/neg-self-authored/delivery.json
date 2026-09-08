@@ -1,0 +1,8 @@
+{
+ "accepted": false,
+ "event_id": "67a93b30ee592c1aae231df3fd5c7adf25be1a5917892a15d6ac6997ead3c840",
+ "mention_pubkeys": [
+  "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+ ],
+ "message": "restricted: not a channel member"
+}

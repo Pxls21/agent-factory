@@ -1,0 +1,53 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 neg-stale: reply with exactly the single word: pong",
+  "created_at": 1788613600,
+  "id": "bdfbe396b345289d14d5764677674845b52971a68986521256a7f23ae22e9d09",
+  "kind": 9,
+  "pubkey": "78f6b860388b7c16ed0a40369699bea6d68f11a3a94e4731ea44e7b7fe8075f6",
+  "sig": "afc3c9c0ab9a1d8ea1e573af89202678a8acd9d47cf9248f84f12b977edb398fc5770f1f2f1be15c0357819d8abbdf5597bd637cf96557caa54ec8d8cdbb413e",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-relay",
+  "discrepancy": "NO per-event freshness rule for a kind-9 channel event exists in buzz-acp 1c8321cd08feb597f8bcff5195c21148fb3e98ed - DISCREPANCY. The crate's only freshness constant, OBSERVER_CONTROL_FRESHNESS_SECS = 300 (crates/buzz-acp/src/lib.rs:1563), is applied at lib.rs:1592 to observer CONTROL frames only. buzz-acp's freshness for ordinary events is a SUBSCRIPTION floor, not a rejection: startup_watermark (captured at lib.rs:2487, applied at relay.rs:1475/1711) feeds BgState::channel_since (relay.rs:1282) which sets `since` on the REQ, so a stale event is never sent to buzz-acp and buzz-acp emits nothing. That floor is a SILENT-DROP mechanism; the named, observable stale rule is buzz-relay's +/-900s ingest drift check (MAX_TIMESTAMP_DRIFT_SECS, ingest.rs:2224).",
+  "evidence": "delivery",
+  "failure_reason": "denied: event-stale",
+  "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:2229",
+  "observable": "invalid: event timestamp too far from server time",
+  "turns": 0
+ },
+ "fixture": "neg-stale",
+ "signer": {
+  "expected_pubkey": "5379a3a955d699d87f8ab654fedd35db1b73c6ce267bc3c8bb73df52efb5ed29",
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "owner",
+  "specimen_pubkey": "78f6b860388b7c16ed0a40369699bea6d68f11a3a94e4731ea44e7b7fe8075f6"
+ },
+ "template": {
+  "content": "S0-02 neg-stale: reply with exactly the single word: pong",
+  "created_at_offset_s": -86400,
+  "kind": 9,
+  "specimen_created_at": 1788613600,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "9ef54fbeb71a40df9f4b359a442f4335df098fc1bd5bdb7ed4a147de970a95c9"
+   ]
+  ]
+ }
+}

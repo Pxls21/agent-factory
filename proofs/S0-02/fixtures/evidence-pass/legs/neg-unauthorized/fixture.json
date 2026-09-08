@@ -1,0 +1,53 @@
+{
+ "buzz_commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
+ "event": {
+  "content": "S0-02 neg-unauthorized: reply with exactly the single word: pong",
+  "created_at": 1788700000,
+  "id": "1fe6ce261e0a14cc6ca166d931447ef103af9e93c1264dd0f9c2eccc45164cf5",
+  "kind": 9,
+  "pubkey": "413716fb0b38a911fa6f868f90f285ee0fc478f88f85bf8e3d8302f838bfa192",
+  "sig": "864c18456b2393a5b03576d208e20a3621405bd707779c96c841c5430b2e19f868bbbf09452ceacb84107e2f70931a5f09be26efc8d60f9699bfce24a0455ec5",
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ },
+ "expected": {
+  "decided_by": "buzz-relay",
+  "discrepancy": "buzz-acp HAS an author gate that logs 'inbound author gate - dropping event' (crates/buzz-acp/src/lib.rs:550), but it can only fire for a sender the RELAY already accepted. A non-member key cannot publish to the channel at all, so for this fixture the deciding component is buzz-relay and the buzz-acp line is unreachable. A member-but-not-allowlisted sender (e.g. user2 under respond_to=owner-only) would exercise the buzz-acp line instead; that fixture is NOT built here.",
+  "evidence": "delivery",
+  "failure_reason": "denied: sender-not-in-allowlist",
+  "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:770",
+  "observable": "restricted: not a channel member",
+  "turns": 0
+ },
+ "fixture": "neg-unauthorized",
+ "signer": {
+  "expected_pubkey": null,
+  "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
+  "role": "nonmember",
+  "specimen_pubkey": "413716fb0b38a911fa6f868f90f285ee0fc478f88f85bf8e3d8302f838bfa192"
+ },
+ "template": {
+  "content": "S0-02 neg-unauthorized: reply with exactly the single word: pong",
+  "created_at_offset_s": 0,
+  "kind": 9,
+  "specimen_created_at": 1788700000,
+  "tags": [
+   [
+    "h",
+    "73701f66-6e12-42ff-b561-7d36db1ad91b"
+   ],
+   [
+    "p",
+    "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
+   ]
+  ]
+ }
+}
