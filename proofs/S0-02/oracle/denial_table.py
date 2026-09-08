@@ -8,12 +8,12 @@ Every row is pinned to a `file:line` in a checked-out upstream source tree and
 is re-verified against that tree by ``tests/test_s0_02_buzz_authz.py`` (env
 ``S0_02_BUZZ_SRC``, sandbox default ``/home/user/nerdherderdani/buzz``).
 
-TWO upstream components decide S0-02's five negative classes, and that split is
+TWO upstream components decide S0-02's negative classes, and that split is
 the proof's central finding, not an implementation detail:
 
-  * ``buzz-acp`` (the component S0-02 names) decides only REPLAY and
-    SELF-AUTHORED for an ordinary kind-9 channel event.  Both emit a
-    ``tracing::debug!`` line, so both are visible only at ``RUST_LOG=debug``.
+  * ``buzz-acp`` (the component S0-02 names) decides REPLAY, SELF-AUTHORED and
+    NOT-ALLOWLISTED for an ordinary kind-9 channel event.  All three emit a
+    ``tracing::debug!`` line, so all are visible only at ``RUST_LOG=debug``.
   * ``buzz-relay`` decides SIGNATURE, MEMBERSHIP and FRESHNESS at publish
     (ingest) time.  Those events never reach ``buzz-acp`` at all, so no
     buzz-acp log line can exist for them; the observable is the relay's
@@ -31,8 +31,9 @@ EV_TIMELINE = "timeline"      # the tee's timeline.jsonl (ACP frames)
 EV_BUZZACP_LOG = "buzzacp_log"  # buzz-acp's own tracing output, RUST_LOG=debug
 EV_DELIVERY = "delivery"      # the relay's response to the publish (delivery.json)
 
-# The five negative classes S0-02 must keep DISTINCT (seed:375-380 names four;
-# docs/03_INTEGRATION_CONTRACTS.md:22 and FINDINGS-STAGE0-v1.md:43 add the fifth).
+# The six negative classes S0-02 must keep DISTINCT (seed:375-380 names four;
+# docs/03_INTEGRATION_CONTRACTS.md:22 and FINDINGS-STAGE0-v1.md:43 add the fifth;
+# neg-not-allowlisted adds the sixth — the buzz-acp-decided allowlist reason).
 SEED_REASONS = (
     "denied: sender-not-in-allowlist",
     "denied: signature-invalid",
@@ -40,6 +41,7 @@ SEED_REASONS = (
     "denied: event-stale",
 )
 FIFTH_REASON = "denied: self-authored"
+SIXTH_REASON = "denied: not-allowlisted"
 
 ROWS = (
     {
@@ -78,12 +80,12 @@ ROWS = (
             "but it can only fire for a sender the RELAY already accepted. A "
             "non-member key cannot publish to the channel at all, so for this "
             "fixture the deciding component is buzz-relay and the buzz-acp line "
-            "is unreachable. A member-but-not-allowlisted sender (e.g. user2 "
-            "under respond_to=owner-only) would exercise the buzz-acp line "
-            "instead; that fixture is NOT built here."
+            "is unreachable. The neg-not-allowlisted leg (user2, a channel "
+            "member the relay accepts and buzz-acp's author gate drops) "
+            "exercises the buzz-acp line instead."
         ),
         "note": (
-            "Also unreachable earlier: ingest.rs:2242 rejects an event whose "
+            "Also unreachable earlier: ingest.rs:2243 rejects an event whose "
             "pubkey does not match the authenticated identity, so a non-member "
             "event cannot be smuggled in under another identity's auth."
         ),
@@ -152,8 +154,8 @@ ROWS = (
         "observable": "invalid: event timestamp too far from server time",
         "buzz_acp_observable": None,
         "discrepancy": (
-            "NO per-event freshness rule for a kind-9 channel event exists in "
-            "buzz-acp " + BUZZ_COMMIT + " - DISCREPANCY. The crate's only "
+            "NO per-event freshness constant for a kind-9 channel event exists "
+            "in buzz-acp " + BUZZ_COMMIT + " - DISCREPANCY. The crate's only "
             "freshness constant, OBSERVER_CONTROL_FRESHNESS_SECS = 300 "
             "(crates/buzz-acp/src/lib.rs:1563), is applied at lib.rs:1592 to "
             "observer CONTROL frames only. buzz-acp's freshness for ordinary "
@@ -163,7 +165,13 @@ ROWS = (
             "REQ, so a stale event is never sent to buzz-acp and buzz-acp "
             "emits nothing. That floor is a SILENT-DROP mechanism; the named, "
             "observable stale rule is buzz-relay's +/-900s ingest drift check "
-            "(MAX_TIMESTAMP_DRIFT_SECS, ingest.rs:2224)."
+            "(MAX_TIMESTAMP_DRIFT_SECS, ingest.rs:2224). "
+            "ADDITIONALLY: filter.rs:48 exposes created_at as "
+            "FilterContext.timestamp and filter.rs:330 binds it into the "
+            "evalexpr context (called from lib.rs:594-606 on the inbound "
+            "path), so a configured subscription rule CAN gate on the sender's "
+            "created_at; no default rule does — the capability is "
+            "config-reachable."
         ),
         "note": (
             "The relay's window is the OUTER one and fires first, so it is the "
@@ -199,7 +207,7 @@ ROWS = (
         ),
     },
     {
-        # Assertion 2 (seed:372). NOT one of the five distinct classes: its
+        # Assertion 2 (seed:372). NOT one of the six distinct classes: its
         # relay text is identical to neg-unauthorized's by construction, and it
         # is separated by its own structural evidence instead.
         "fixture": "revoked",
@@ -215,27 +223,54 @@ ROWS = (
         "discrepancy": (
             "Shares its rejection TEXT with neg-unauthorized (both are "
             "'restricted: not a channel member'), so it cannot join the "
-            "five-distinct-reasons set on text alone. It is separated "
+            "distinct-reasons set on text alone. It is separated "
             "STRUCTURALLY instead: the revoked leg must carry membership.json "
-            "(the removal receipt for THIS sender) and a created_at INSIDE the "
-            "freshness window, which is exactly what makes it prove 'revocation "
-            "is independent of NIP-OA created_at'. neg-unauthorized has no "
-            "membership.json and its sender was never a member."
+            "(the removal receipt for THIS sender, with at_epoch_s before t0, "
+            "the correct channel and a 2xx http_status) and a created_at "
+            "INSIDE the freshness window, which is exactly what makes it prove "
+            "'revocation is independent of NIP-OA created_at'. "
+            "neg-unauthorized has no membership.json and its sender was never "
+            "a member."
         ),
         "note": (
-            "buzz-acp's own membership handling (lib.rs:3209, "
+            "buzz-acp's own membership handling (lib.rs:3210, "
             "'membership notification: unsubscribing from channel') fires only "
             "when the AGENT is removed, not when a SENDER is; relay.rs's "
-            "membership_dropped_since (relay.rs:1176) tracks BACKPRESSURE drops "
+            "membership_dropped_since (relay.rs:1150) tracks BACKPRESSURE drops "
             "of membership notifications, not revocation. Neither is an "
             "observable for a revoked SENDER."
+        ),
+    },
+    {
+        # The sixth distinct observable: a channel MEMBER the relay accepts
+        # and buzz-acp's author gate drops (lib.rs:389/550). user2 from
+        # identities.json is a channel member under respond_to=owner-only.
+        "fixture": "neg-not-allowlisted",
+        "reason": SIXTH_REASON,
+        "leg": "negative",
+        "decided_by": "buzz-acp",
+        "src": "crates/buzz-acp/src/lib.rs",
+        "line": 550,
+        "src_pattern": '"inbound author gate',
+        "evidence": EV_BUZZACP_LOG,
+        "observable": "inbound author gate",
+        "buzz_acp_observable": "inbound author gate",
+        "discrepancy": None,
+        "note": (
+            "user2 is a channel member so the relay accepts the publish "
+            "(ingest succeeds, 200); buzz-acp's author_allowed (lib.rs:389) "
+            "returns false under RespondTo::OwnerOnly for non-owner members, "
+            "so authorize_listener_event drops the event at lib.rs:550 and "
+            "emits the DEBUG line. This is the buzz-acp-decided allowlist "
+            "reason: a genuine buzz-acp decision for the allowlist class "
+            "and a sixth distinct observable."
         ),
     },
 )
 
 BY_FIXTURE = {row["fixture"]: row for row in ROWS}
 NEGATIVE_FIXTURES = tuple(r["fixture"] for r in ROWS if r["leg"] == "negative")
-# The five that must stay distinct (excludes the structurally-separated revoked leg).
+# The six that must stay distinct (excludes the structurally-separated revoked leg).
 DISTINCT_FIXTURES = tuple(f for f in NEGATIVE_FIXTURES if f != "revoked")
 
 

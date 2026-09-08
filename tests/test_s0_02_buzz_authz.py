@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -80,6 +81,18 @@ def _leg(bundle_root: Path, name: str) -> Path:
     return bundle_root / "legs" / name
 
 
+def _set_delivery_outcome(blob: dict, *, accepted: bool, status: int, echoed: bool) -> None:
+    blob["accepted"] = accepted
+    blob["http_status"] = status
+    blob["event_id_echoed"] = echoed
+
+
+def _set_delivery_event_id(blob: dict, event_id: str) -> None:
+    blob["event_id"] = event_id
+    if blob.get("accepted"):
+        blob["event_id_echoed"] = True
+
+
 def _rewrite(path: Path, mutate):
     blob = json.loads(path.read_text())
     mutate(blob)
@@ -117,6 +130,22 @@ def test_fixture_build_is_byte_identical_across_two_runs():
     a = {k: builder._serialise(v) for k, v in builder.build_all().items()}
     b = {k: builder._serialise(v) for k, v in builder.build_all().items()}
     assert a == b, "the builder is not deterministic across two runs in one process"
+
+
+def test_every_bundle_delivery_uses_the_real_producer_normalizer():
+    for bundle in (PASS_BUNDLE, BLANKET_BUNDLE):
+        for path in sorted((bundle / "legs").rglob("delivery.json")):
+            receipt = json.loads(path.read_text())
+            expected = builder.deliver_event._normalise(
+                receipt["http_status"],
+                builder._raw_delivery_response(
+                    accepted=receipt["accepted"],
+                    event_id=receipt["event_id"],
+                    message=receipt["message"],
+                ),
+                receipt["event_id"],
+            )
+            assert receipt == expected, f"{path} drifted from deliver_event._normalise"
 
 
 def test_every_named_fixture_exists_and_names_itself():
@@ -218,6 +247,16 @@ def test_the_four_seed_reasons_are_all_present():
     for seed_reason in oracle.SEED_REASONS:
         assert seed_reason in reasons, f"seed reason {seed_reason!r} missing"
     assert oracle.FIFTH_REASON in reasons
+    assert oracle.SIXTH_REASON in reasons
+
+
+def test_not_allowlisted_specimen_is_relay_accepted_user2():
+    ids = json.loads((ROOT / "proofs" / "S0-01" / "fixtures" / "identities.json").read_text())
+    blob = json.loads((FIXTURES / "neg-not-allowlisted.json").read_text())
+    assert blob["signer"]["expected_pubkey"] == ids["user2"]
+    assert blob["signer"]["role"] == "user2"
+    assert blob["signer"]["specimen_pubkey"] != ids["user2"]
+    assert oracle.row("neg-not-allowlisted")["evidence"] == oracle.EV_BUZZACP_LOG
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +264,24 @@ def test_the_four_seed_reasons_are_all_present():
 # ---------------------------------------------------------------------------
 def test_pinned_tree_is_the_locked_commit():
     src = _buzz_src()
-    head = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
-                          capture_output=True, text=True, check=True).stdout.strip()
+    proc = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f"{BUZZ_SRC_ENV}={src} is not a git checkout: "
+        f"{(proc.stderr or proc.stdout).strip()}"
+    )
+    head = proc.stdout.strip()
     assert head == BUZZ_PIN, f"buzz checkout is {head}, upstream.lock.yaml pins {BUZZ_PIN}"
+
+
+def test_pinned_tree_non_git_path_is_a_named_failure(tmp_path, monkeypatch):
+    fake = tmp_path / "buzz"
+    fake.mkdir()
+    monkeypatch.setenv(BUZZ_SRC_ENV, str(fake))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(AssertionError, match="is not a git checkout"):
+        test_pinned_tree_is_the_locked_commit()
 
 
 @pytest.mark.parametrize("row", oracle.ROWS, ids=[r["fixture"] for r in oracle.ROWS])
@@ -252,44 +306,214 @@ def test_oracle_secondary_silent_drop_row_is_pinned_too():
     assert row["src_pattern"] in line
 
 
-def _production_verify_sites() -> list:
-    """Every verify_event/.verify() call site in buzz-acp's PRODUCTION region.
+def test_oracle_prose_file_line_references_exist():
+    src = _buzz_src()
+    fields = ("discrepancy", "note")
+    refs = []
+    for row in oracle.ROWS:
+        for field in fields:
+            text = row.get(field) or ""
+            refs.extend((row["fixture"], field, name, int(line))
+                        for name, line in re.findall(r"([\w-]+\.rs):(\d+)", text))
+    assert refs, "control: oracle prose contains no source references"
+    rust_files = {}
+    for path in src.rglob("*.rs"):
+        rust_files.setdefault(path.name, []).append(path)
+    for fixture, field, name, line in refs:
+        assert name in rust_files, f"{fixture}.{field}: {name} absent from pinned source"
+        candidates = rust_files[name]
+        assert any(line <= len(path.read_text().splitlines()) for path in candidates), (
+            f"{fixture}.{field}: {name}:{line} outside every pinned {name}"
+        )
 
-    Heuristic, and named as one: the production region is the lines before the
-    file's first `#[cfg(test)]` (Rust's trailing `mod tests` convention), with
-    `//` comment lines dropped. It exists so the claim "buzz-acp does not verify
-    a channel event" is re-derived from the source rather than remembered.
+
+def _rust_code_lines(text: str) -> list[tuple[int, str]]:
+    """Return production Rust lines with comments and cfg(test) items removed.
+
+    This small structural scanner tracks comments, strings and brace depth. It
+    is deliberately not a Rust parser; the negative controls below pin the only
+    syntax classes this proof relies on.
     """
+    lines = text.splitlines()
+    clean = []
+    in_block_comment = False
+    in_string = False
+    in_char = False
+    escaped = False
+    for raw in lines:
+        out = []
+        i = 0
+        while i < len(raw):
+            pair = raw[i:i + 2]
+            ch = raw[i]
+            if in_block_comment:
+                if pair == "*/":
+                    in_block_comment = False
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if in_string or in_char:
+                out.append(" " if ch in "{}" else ch)
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_string and ch == '"':
+                    in_string = False
+                elif in_char and ch == "'":
+                    in_char = False
+                i += 1
+                continue
+            if pair == "/*":
+                in_block_comment = True
+                i += 2
+                continue
+            if pair == "//":
+                break
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+            elif ch == "'":
+                in_char = True
+            i += 1
+        clean.append("".join(out))
+
+    excluded = set()
+    pending_test_attr = False
+    item_start = None
+    item_depth = 0
+    for idx, line in enumerate(clean):
+        stripped = line.strip()
+        if pending_test_attr:
+            excluded.add(idx)
+            if "{" in line:
+                item_start = idx
+                item_depth = line.count("{") - line.count("}")
+                pending_test_attr = False
+                if item_depth <= 0:
+                    item_start = None
+            continue
+        if stripped == "#[cfg(test)]":
+            excluded.add(idx)
+            pending_test_attr = True
+            continue
+        if item_start is not None:
+            excluded.add(idx)
+            item_depth += line.count("{") - line.count("}")
+            if item_depth <= 0:
+                item_start = None
+
+    return [(i + 1, line) for i, line in enumerate(clean) if i not in excluded]
+
+
+def _production_verify_sites() -> list[str]:
+    """Every verify_event/.verify()/aliased verify call in production Rust."""
     src = _buzz_src() / "crates" / "buzz-acp" / "src"
     sites = []
     for rs in sorted(src.glob("*.rs")):
-        lines = rs.read_text().splitlines()
-        cut = next((i for i, ln in enumerate(lines) if ln.strip() == "#[cfg(test)]"), len(lines))
-        for i, line in enumerate(lines[:cut], 1):
-            if line.strip().startswith("//"):
-                continue
-            if "verify_event(" in line or ".verify()" in line:
-                sites.append(f"{rs.name}:{i}")
+        code = _rust_code_lines(rs.read_text())
+        aliases = set()
+        for _line_no, line in code:
+            match = re.search(r"\bverify_event\s+as\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+            if match:
+                aliases.add(match.group(1))
+        for line_no, line in code:
+            direct = "verify_event(" in line or ".verify()" in line
+            aliased = any(re.search(rf"\b{re.escape(alias)}\s*\(", line) for alias in aliases)
+            if direct or aliased:
+                sites.append(f"{rs.name}:{line_no}")
     return sites
 
 
-def test_buzz_acp_performs_no_signature_check_on_a_channel_event():
-    """The DISCREPANCY behind neg-bad-signature, asserted against the source.
+def _channel_event_region(relay_text: str) -> tuple[int, int]:
+    """Derive the RelayMessage EVENT match-arm range by brace depth."""
+    lines = relay_text.splitlines()
+    start = next(i for i, line in enumerate(lines, 1)
+                 if '"EVENT" => {' in line)
+    region = _rust_code_lines("\n".join(lines[start - 1:]))
+    depth = 0
+    for relative, line in region:
+        line_no = start + relative - 1
+        depth += line.count("{") - line.count("}")
+        if line_no > start and depth == 0:
+            return start, line_no
+    raise AssertionError("relay EVENT match arm did not close")
 
-    If a future buzz-acp gains a verify on the channel-event path this test goes
-    red, which is the point: the discrepancy is pinned, not remembered.
-    """
+
+def _copy_buzz_acp_src(tmp_path: Path) -> Path:
+    src = _buzz_src()
+    dst = tmp_path / "buzz"
+    shutil.copytree(src / "crates" / "buzz-acp" / "src",
+                    dst / "crates" / "buzz-acp" / "src")
+    return dst
+
+
+def test_verify_site_scan_rejects_a_channel_path_plant(tmp_path, monkeypatch):
+    src = _copy_buzz_acp_src(tmp_path)
+    relay_path = src / "crates" / "buzz-acp" / "src" / "relay.rs"
+    text = relay_path.read_text()
+    marker = '"EVENT" => {'
+    assert marker in text
+    relay_path.write_text(text.replace(marker, marker + "\nverify_event(&event);", 1))
+    monkeypatch.setenv(BUZZ_SRC_ENV, str(src))
+    sites = _production_verify_sites()
+    assert any(site.startswith("relay.rs:") for site in sites), sites
+    start, end = _channel_event_region(relay_path.read_text())
+    planted = [site for site in sites if site.startswith("relay.rs:")
+               and start <= int(site.split(":")[1]) <= end]
+    assert planted, "control: the channel-path mutant was not observed"
+
+
+def test_verify_site_scan_finds_an_aliased_call(tmp_path, monkeypatch):
+    src = _copy_buzz_acp_src(tmp_path)
+    relay_path = src / "crates" / "buzz-acp" / "src" / "relay.rs"
+    relay_path.write_text(
+        "use buzz_core::verify_event as v;\nfn probe(event: &Event) { v(event); }\n"
+        + relay_path.read_text()
+    )
+    monkeypatch.setenv(BUZZ_SRC_ENV, str(src))
+    sites = _production_verify_sites()
+    assert "relay.rs:2" in sites, sites
+
+
+def test_verify_site_scan_ignores_cfg_test_items_and_comments(tmp_path, monkeypatch):
+    src = _copy_buzz_acp_src(tmp_path)
+    relay_path = src / "crates" / "buzz-acp" / "src" / "relay.rs"
+    relay_path.write_text(
+        "#[cfg(test)]\nmod early_tests {\n"
+        "  fn fake(event: &Event) { verify_event(event); event.verify(); }\n}\n"
+        "/* verify_event(event); event.verify(); */\n"
+        + relay_path.read_text()
+    )
+    monkeypatch.setenv(BUZZ_SRC_ENV, str(src))
+    sites = set(_production_verify_sites())
+    assert not {"relay.rs:3", "relay.rs:5"} & sites, sites
+    assert len(sites) == 6, sites
+
+
+def test_buzz_acp_performs_no_signature_check_on_a_channel_event():
+    """The exact whole-file site set and the channel EVENT path are pinned."""
     known = {
-        "lib.rs:256",           # NIP-OA workflow attribution
-        "lib.rs:1574",          # observer CONTROL frame
-        "engram_fetch.rs:122",  # engram fetch
-        "pool.rs:3385",         # pool: canvas section from a query response
-        "pool.rs:3495",         # pool: REST-boundary re-verify
+        "engram_fetch.rs:122",
+        "lib.rs:256",
+        "lib.rs:1574",
+        "lib.rs:6082",
+        "pool.rs:3385",
+        "pool.rs:3495",
     }
-    unexpected = sorted(set(_production_verify_sites()) - known)
-    assert not unexpected, (
-        "buzz-acp gained a signature check the oracle does not know about: "
-        f"{unexpected} — re-derive neg-bad-signature's mechanism"
+    actual = set(_production_verify_sites())
+    assert actual == known, (
+        f"buzz-acp signature-check sites changed: added={sorted(actual - known)}, "
+        f"gone={sorted(known - actual)}"
+    )
+    relay = (_buzz_src() / "crates" / "buzz-acp" / "src" / "relay.rs").read_text()
+    start, end = _channel_event_region(relay)
+    channel_sites = [site for site in actual
+                     if site.startswith("relay.rs:")
+                     and start <= int(site.split(":")[1]) <= end]
+    assert not channel_sites, (
+        f"buzz-acp verifies a channel event inside relay.rs:{start}-{end}: {channel_sites}"
     )
 
 
@@ -308,10 +532,79 @@ def test_buzz_acp_has_no_per_event_freshness_constant_for_channel_events():
     assert "OBSERVER_CONTROL_FRESHNESS_SECS" in consts[0]
 
 
+def _is_wall_clock_freshness_rule(line: str) -> bool:
+    """A same-expression created_at/wall-clock comparison, not mere co-occurrence."""
+    created_at = r"(?:\bcreated_at\b|\.created_at\b)"
+    wall_clock = (
+        r"(?:\bnow\b|\bSystemTime\b|\bInstant\b|\belapsed\s*\(|"
+        r"\bsaturating_(?:add|sub)\s*\()"
+    )
+    relation = r"(?:[<>]=?|checked_(?:add|sub)|duration_since|saturating_(?:add|sub))"
+    return bool(re.search(
+        rf"(?:{created_at}[^;\n]*{relation}[^;\n]*{wall_clock}|"
+        rf"{wall_clock}[^;\n]*{relation}[^;\n]*{created_at})",
+        line,
+    ))
+
+
+def test_buzz_acp_has_no_wall_clock_freshness_rule_on_the_channel_event_path():
+    """created_at can reach config, but the default channel path has no clock comparison."""
+    src = _buzz_src() / "crates" / "buzz-acp" / "src"
+    relay = (src / "relay.rs").read_text()
+    start, end = _channel_event_region(relay)
+    region = "\n".join(line for _n, line in _rust_code_lines(
+        "\n".join(relay.splitlines()[start - 1:end])
+    ))
+    offenders = [line.strip() for line in region.splitlines()
+                 if _is_wall_clock_freshness_rule(line)]
+    assert not offenders, (
+        f"relay channel EVENT region relay.rs:{start}-{end} gained a wall-clock "
+        f"created_at comparison: {offenders}"
+    )
+
+
+def test_wall_clock_freshness_scan_rejects_an_inline_rule():
+    assert _is_wall_clock_freshness_rule(
+        "if event.created_at < SystemTime::now() - MAX_AGE { return; }"
+    )
+    assert _is_wall_clock_freshness_rule(
+        "if Instant::now().duration_since(event.created_at) > freshness { return; }"
+    )
+    # VERIFY-B1's exact M-B plant: a local `now` value and saturating arithmetic
+    # must not evade the rule scanner merely because no `now()` call is inline.
+    assert _is_wall_clock_freshness_rule(
+        "if now.saturating_sub(event.created_at.as_u64()) > 600 { return Err(RelayError::Stale); }"
+    )
+
+
+def test_shipped_respond_to_and_subscription_rule_defaults_do_not_reference_timestamp():
+    """D8 exactly: timestamp gating is config-reachable, but no shipped default uses it."""
+    src = _buzz_src() / "crates" / "buzz-acp" / "src"
+    filter_text = (src / "filter.rs").read_text()
+    assert "timestamp: event.created_at.as_secs()" in filter_text
+    assert '.set_value("timestamp"' in filter_text
+
+    config_text = (src / "config.rs").read_text()
+    code = "\n".join(line for _n, line in _rust_code_lines(config_text))
+    default_filter_exprs = re.findall(
+        r"filter\s*:\s*(?:Some\s*\(\s*)?[\"r#]*([^\"\n]*)", code
+    )
+    assert all("timestamp" not in expression for expression in default_filter_exprs), (
+        default_filter_exprs
+    )
+    for config in sorted(_buzz_src().rglob("*.toml")):
+        if "/.git/" in str(config):
+            continue
+        blob = config.read_text(errors="replace")
+        assert not re.search(r"(?m)^\s*(?:filter|respond_to)\s*=.*timestamp", blob), config
+
+
 def test_relay_drift_window_matches_the_checker_constant():
     src = _buzz_src() / "crates" / "buzz-relay" / "src" / "handlers" / "ingest.rs"
-    line = src.read_text().splitlines()[2223]
-    assert f"MAX_TIMESTAMP_DRIFT_SECS: i64 = {checker.RELAY_DRIFT_WINDOW_S}" in line, line
+    text = src.read_text()
+    match = re.search(r"const\s+MAX_TIMESTAMP_DRIFT_SECS:\s*i64\s*=\s*(\d+)\s*;", text)
+    assert match, "MAX_TIMESTAMP_DRIFT_SECS integer declaration absent"
+    assert int(match.group(1)) == checker.RELAY_DRIFT_WINDOW_S, match.group(0)
 
 
 def test_debug_canary_line_exists_in_the_pinned_source():
@@ -324,7 +617,7 @@ def test_debug_canary_line_exists_in_the_pinned_source():
 
 def test_every_negative_row_has_a_distinct_observable_key():
     keys = [oracle.observable_key(f) for f in oracle.DISTINCT_FIXTURES]
-    assert len(set(keys)) == len(keys) == 5, keys
+    assert len(set(keys)) == len(keys) == 6, keys
 
 
 def test_revoked_row_declares_its_shared_text_as_a_discrepancy():
@@ -348,7 +641,7 @@ def test_rows_without_a_buzz_acp_observable_say_so(fixture):
 def test_pass_bundle_passes():
     line = _run_checker(PASS_BUNDLE)
     assert line == (
-        "PASS: S0-02 buzz-authz - 1 positive, 5 negative legs, 5 distinct reasons; "
+        "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
         "+1 revocation leg (assertion 2)"
     ), line
 
@@ -425,7 +718,7 @@ def test_deferral_stops_once_any_leg_carries_a_timeline(tmp_path):
     """Half a bundle is a FAILURE, not a deferral."""
     bundle = _bundle(tmp_path)
     for name in ("neg-unauthorized", "neg-bad-signature", "neg-stale",
-                 "neg-self-authored", "revoked"):
+                 "neg-self-authored", "neg-not-allowlisted", "revoked"):
         shutil.rmtree(_leg(bundle, name))
     _expect_failure(bundle, "neg-unauthorized")
 
@@ -459,8 +752,7 @@ def test_swapping_a_legs_observable_for_another_legs_fails(tmp_path, name):
                  and r["evidence"] == oracle.EV_DELIVERY)
     leg_dir = _leg(bundle, name) / "second" if name == "neg-replayed" else _leg(bundle, name)
     _rewrite(leg_dir / "delivery.json",
-             lambda b: (b.__setitem__("message", other["observable"]),
-                        b.__setitem__("accepted", False)))
+             lambda b: b.__setitem__("message", other["observable"]))
     if row["evidence"] == oracle.EV_BUZZACP_LOG:
         text = (leg_dir / "buzzacp.log").read_text().replace(row["observable"], "redacted")
         (leg_dir / "buzzacp.log").write_text(text)
@@ -485,7 +777,7 @@ def test_bad_signature_leg_delivering_a_VALID_event_fails(tmp_path):
     ok, _reason = nv.verify_event(good)
     assert ok, "control: the substituted event must be a VALID one"
     (leg_dir / "delivered-event.json").write_text(json.dumps(good, indent=1, sort_keys=True) + "\n")
-    _rewrite(leg_dir / "delivery.json", lambda b: b.__setitem__("event_id", good["id"]))
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, good["id"]))
     _expect_failure(bundle, "this leg must carry an invalid signature")
 
 
@@ -526,6 +818,35 @@ def test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check(tmp_pa
     assert "blanket-rejection" not in msg
 
 
+def test_wrong_channel_observables_are_rejected(tmp_path):
+    for i, (leg, source, target, text) in enumerate((
+        ("neg-self-authored", "buzzacp.log", "delivery.json", "dropping self-authored event"),
+        ("neg-unauthorized", "delivery.json", "buzzacp.log", "restricted: not a channel member"),
+    )):
+        bundle = _bundle(tmp_path / f"channel-{i}")
+        leg_dir = _leg(bundle, leg)
+        if source == "buzzacp.log":
+            log = leg_dir / source
+            log.write_text(log.read_text().replace(text, "redacted"))
+            _rewrite(leg_dir / target, lambda b, value=text: b.__setitem__("message", value))
+        else:
+            _rewrite(leg_dir / source, lambda b: b.__setitem__("message", "quietly nothing"))
+            log = leg_dir / target
+            log.write_text(log.read_text() + f"2026-09-08T00:00:01Z DEBUG {text}\n")
+        _expect_failure(bundle, "does not carry the oracle observable")
+
+
+def test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason(tmp_path):
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "neg-self-authored")
+    log = leg_dir / "buzzacp.log"
+    log.write_text(
+        log.read_text()
+        + "2026-09-08T00:00:06Z DEBUG inbound author gate — dropping event\n"
+    )
+    _expect_failure(bundle, "carries 2 denial observables, expected exactly")
+
+
 def test_a_negative_leg_that_produced_a_turn_fails(tmp_path):
     """TWO-TURNS-ACCEPTED, negative side: any turn on a denied event is a failure."""
     bundle = _bundle(tmp_path)
@@ -560,13 +881,39 @@ def test_a_positive_turn_without_the_fixture_nonce_fails(tmp_path):
     _expect_failure(bundle, "does not carry the fixture's nonce")
 
 
-def test_a_missing_debug_canary_fails_the_leg(tmp_path):
-    """A leg captured at INFO cannot prove an absence."""
+def test_positive_nonce_must_be_a_complete_json_token():
+    nonce = "S0-02 pos-allowed"
+    frame = {"params": {"prompt": nonce + "-suffix"}}
+    blob = checker._prompt_text(frame)
+    assert nonce in blob
+    assert f'"{nonce}"' not in blob
+    assert not re.search(rf'(?<![\w-]){re.escape(nonce)}(?![\w-])', blob)
+
+
+def test_a_missing_debug_canary_fails_a_buzz_acp_leg(tmp_path):
+    """A buzz-acp-decided leg captured at INFO cannot prove an absence."""
     bundle = _bundle(tmp_path)
     leg_dir = _leg(bundle, "neg-self-authored")
     text = leg_dir / "buzzacp.log"
     text.write_text(text.read_text().replace(checker.DEBUG_LEVEL_CANARY, "watermark noted"))
     _expect_failure(bundle, "lacks the debug-level canary")
+
+
+def test_an_info_level_canary_does_not_prove_debug_capture(tmp_path):
+    bundle = _bundle(tmp_path)
+    log = _leg(bundle, "neg-self-authored") / "buzzacp.log"
+    log.write_text(log.read_text().replace(" DEBUG ", " INFO "))
+    _expect_failure(bundle, "on a DEBUG line")
+
+
+def test_relay_decided_leg_needs_no_debug_canary(tmp_path):
+    """A real INFO-only corpus log is valid where the relay supplied the evidence."""
+    bundle = _bundle(tmp_path)
+    real_log = Path(os.environ["S0_01_REAL_LEG_DIR"]) / "run-1" / "buzzacp.log"
+    assert checker.DEBUG_LEVEL_CANARY not in real_log.read_text()
+    target = _leg(bundle, "neg-unauthorized") / "buzzacp.log"
+    shutil.copy2(real_log, target)
+    _run_checker(bundle)
 
 
 def test_self_authored_leg_requires_ignore_self_true(tmp_path):
@@ -609,7 +956,7 @@ def test_replay_with_two_different_event_ids_fails(tmp_path):
     second = _leg(bundle, "neg-replayed") / "second"
     other = json.loads((_leg(bundle, "neg-stale") / "delivered-event.json").read_text())
     (second / "delivered-event.json").write_text(json.dumps(other, indent=1, sort_keys=True) + "\n")
-    _rewrite(second / "delivery.json", lambda b: b.__setitem__("event_id", other["id"]))
+    _rewrite(second / "delivery.json", lambda b: _set_delivery_event_id(b, other["id"]))
     with pytest.raises(checker.Failure) as exc:
         _run_checker(bundle)
     assert ("this is not a replay" in str(exc.value)
@@ -619,6 +966,22 @@ def test_replay_with_two_different_event_ids_fails(tmp_path):
 # ---------------------------------------------------------------------------
 # 6. identity, freshness and delivery binding
 # ---------------------------------------------------------------------------
+def test_replay_second_subleg_uses_only_the_wider_replay_tolerance(tmp_path):
+    bundle = _bundle(tmp_path)
+    second = _leg(bundle, "neg-replayed") / "second"
+    _rewrite(second / "t0.json", lambda b: b.__setitem__(
+        "t0_epoch_s", b["t0_epoch_s"] + checker.LEG_CLOCK_TOLERANCE_S + 1
+    ))
+    _run_checker(bundle)
+
+    too_far = _bundle(tmp_path / "too-far")
+    second = _leg(too_far, "neg-replayed") / "second"
+    _rewrite(second / "t0.json", lambda b: b.__setitem__(
+        "t0_epoch_s", b["t0_epoch_s"] + checker.REPLAY_CLOCK_TOLERANCE_S + 1
+    ))
+    _expect_failure(too_far, "outside the")
+
+
 def test_delivery_receipt_for_a_different_event_id_fails(tmp_path):
     """WRONG-EVENT-ID-ACCEPTED: the receipt must name the delivered event."""
     bundle = _bundle(tmp_path)
@@ -656,7 +1019,7 @@ def test_a_delivered_event_from_the_wrong_identity_fails(tmp_path):
         assert forged[key] == ev[key], "control: only the signer may differ"
     (leg_dir / "delivered-event.json").write_text(
         json.dumps(forged, indent=1, sort_keys=True) + "\n")
-    _rewrite(leg_dir / "delivery.json", lambda b: b.__setitem__("event_id", forged["id"]))
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, forged["id"]))
     _expect_failure(bundle, "delivered sender is not the owner identity")
 
 
@@ -671,7 +1034,7 @@ def test_a_nonmember_leg_signed_by_a_known_identity_fails(tmp_path):
                                        "tags": ev["tags"], "content": ev["content"]})
     (leg_dir / "delivered-event.json").write_text(
         json.dumps(forged, indent=1, sort_keys=True) + "\n")
-    _rewrite(leg_dir / "delivery.json", lambda b: b.__setitem__("event_id", forged["id"]))
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, forged["id"]))
     _expect_failure(bundle, "must not be one of the known S0-01 identities")
 
 
@@ -698,7 +1061,7 @@ def _resign_at(bundle: Path, leg: str, role: str, created_at: int) -> dict:
                                  "tags": ev["tags"], "content": ev["content"]})
     (leg_dir / "delivered-event.json").write_text(
         json.dumps(fresh, indent=1, sort_keys=True) + "\n")
-    _rewrite(leg_dir / "delivery.json", lambda b: b.__setitem__("event_id", fresh["id"]))
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, fresh["id"]))
     return fresh
 
 
@@ -708,7 +1071,23 @@ def test_a_stale_event_inside_the_relay_window_is_not_stale(tmp_path):
     bundle = _bundle(tmp_path)
     t0 = json.loads((_leg(bundle, "neg-stale") / "t0.json").read_text())["t0_epoch_s"]
     _resign_at(bundle, "neg-stale", "owner", t0 - 10)
-    _expect_failure(bundle, "it is not stale")
+    _expect_failure(bundle, "inside the relay's")
+
+
+def test_stale_event_exactly_at_relay_boundary_is_not_stale(tmp_path):
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "neg-stale")
+    t0 = json.loads((leg_dir / "t0.json").read_text())["t0_epoch_s"]
+    _resign_at(bundle, "neg-stale", "owner", t0 - checker.RELAY_DRIFT_WINDOW_S)
+    _expect_failure(bundle, "inside the relay's")
+
+
+def test_a_far_future_t0_cannot_make_a_fresh_event_look_stale(tmp_path):
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "neg-stale")
+    _rewrite(leg_dir / "t0.json",
+             lambda b: b.__setitem__("t0_epoch_s", b["t0_epoch_s"] + 5000))
+    _expect_failure(bundle, "outside the")
 
 
 def test_a_fresh_leg_delivered_outside_the_window_fails(tmp_path):
@@ -729,22 +1108,54 @@ def test_a_retimestamped_event_that_is_not_resigned_fails_on_the_signature(tmp_p
     ev["created_at"] = t0 - 10
     ev["id"] = nv.event_id(ev)
     (leg_dir / "delivered-event.json").write_text(json.dumps(ev, indent=1, sort_keys=True) + "\n")
-    _rewrite(leg_dir / "delivery.json", lambda b: b.__setitem__("event_id", ev["id"]))
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, ev["id"]))
     _expect_failure(bundle, "failed signature verification")
 
 
 def test_a_relay_decided_leg_must_show_accepted_false(tmp_path):
     bundle = _bundle(tmp_path)
     _rewrite(_leg(bundle, "neg-stale") / "delivery.json",
-             lambda b: b.__setitem__("accepted", True))
+             lambda b: _set_delivery_outcome(b, accepted=True, status=200, echoed=True))
     _expect_failure(bundle, "accepted must be false")
 
 
 def test_a_buzz_acp_decided_leg_must_show_accepted_true(tmp_path):
     bundle = _bundle(tmp_path)
     _rewrite(_leg(bundle, "neg-self-authored") / "delivery.json",
-             lambda b: b.__setitem__("accepted", False))
+             lambda b: _set_delivery_outcome(b, accepted=False, status=400, echoed=False))
     _expect_failure(bundle, "the relay must have ACCEPTED the event")
+
+
+def test_delivery_receipt_requires_the_exact_producer_shape(tmp_path):
+    bundle = _bundle(tmp_path)
+    path = _leg(bundle, "pos-allowed") / "delivery.json"
+    for i, mutation in enumerate((
+        lambda b: b.pop("http_status"),
+        lambda b: b.__setitem__("mention_pubkeys", []),
+    )):
+        case = _bundle(tmp_path / f"shape-{i}")
+        _rewrite(_leg(case, "pos-allowed") / "delivery.json", mutation)
+        _expect_failure(case, "wrong producer shape")
+    delivery = json.loads(path.read_text())
+    assert set(delivery) == {
+        "accepted", "event_id", "event_id_echoed", "http_status", "message"
+    }
+
+
+def test_delivery_receipt_grades_http_status_and_echo_semantics(tmp_path):
+    cases = (
+        ("pos-allowed", lambda b: b.__setitem__("http_status", 201), "http_status must be 200"),
+        ("neg-stale", lambda b: b.__setitem__("http_status", 401), "http_status must be 400"),
+        ("pos-allowed", lambda b: b.__setitem__("http_status", True), "http_status is not an int"),
+        ("pos-allowed", lambda b: b.__setitem__("event_id_echoed", False),
+         "event_id_echoed must be true"),
+        ("neg-stale", lambda b: b.__setitem__("event_id_echoed", True),
+         "event_id_echoed must be false"),
+    )
+    for i, (leg, mutation, needle) in enumerate(cases):
+        bundle = _bundle(tmp_path / f"delivery-{i}")
+        _rewrite(_leg(bundle, leg) / "delivery.json", mutation)
+        _expect_failure(bundle, needle)
 
 
 def test_a_leg_fixture_that_drifts_from_the_committed_one_fails(tmp_path):
@@ -783,6 +1194,29 @@ def test_revoked_leg_receipt_must_record_a_COMPLETED_removal(tmp_path):
         _expect_failure(bundle, "does not record a completed removal")
 
 
+def test_revoked_leg_receipt_must_precede_delivery(tmp_path):
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "revoked")
+    t0 = json.loads((leg_dir / "t0.json").read_text())["t0_epoch_s"]
+    _rewrite(leg_dir / "membership.json", lambda b: b.__setitem__("at_epoch_s", t0))
+    _expect_failure(bundle, "at or after the delivery t0")
+
+
+def test_revoked_leg_receipt_must_name_the_delivered_channel(tmp_path):
+    bundle = _bundle(tmp_path)
+    _rewrite(_leg(bundle, "revoked") / "membership.json",
+             lambda b: b.__setitem__("channel", "wrong-channel"))
+    _expect_failure(bundle, "is not the delivered event's channel")
+
+
+def test_revoked_leg_receipt_must_record_a_successful_relay_response(tmp_path):
+    for i, bad in enumerate((None, True, 0, 199, 300, "200")):
+        bundle = _bundle(tmp_path / f"status-{i}")
+        receipt = _leg(bundle, "revoked") / "membership.json"
+        _rewrite(receipt, lambda b, value=bad: b.__setitem__("http_status", value))
+        _expect_failure(bundle, "records no successful relay removal response")
+
+
 def test_revoked_leg_event_must_be_fresh(tmp_path):
     """Assertion 2: revocation is independent of created_at, so the revoked
     leg's event must be INSIDE the freshness window — otherwise the leg could
@@ -795,17 +1229,44 @@ def test_revoked_leg_event_must_be_fresh(tmp_path):
 # 7. structural: FIFO reads, reuse-not-copy, no LLM in the gate
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("name", ["timeline.jsonl", "delivery.json", "buzzacp.log",
-                                  "fixture.json", "delivered-event.json", "t0.json"])
+                                  "fixture.json", "delivered-event.json", "t0.json",
+                                  "membership.json"])
 def test_a_fifo_in_place_of_a_leg_file_is_named_not_read(tmp_path, name):
     """FIFO-HANG: every read goes through the S_ISREG guard, so a FIFO is a
     named failure instead of a blocking open."""
     bundle = _bundle(tmp_path)
-    target = _leg(bundle, "neg-stale") / name
+    leg = "revoked" if name == "membership.json" else "neg-stale"
+    target = _leg(bundle, leg) / name
     target.unlink()
     os.mkfifo(target)
     with pytest.raises(checker.Failure) as exc:
         _run_checker(bundle)
     assert "is not a regular file" in str(exc.value), str(exc.value)
+
+
+def test_unknown_root_entries_are_rejected(tmp_path):
+    for i, kind in enumerate(("directory", "file")):
+        bundle = _bundle(tmp_path / f"extra-{i}")
+        extra = bundle / "legs" / "garbage-leg"
+        if kind == "directory":
+            extra.mkdir()
+        else:
+            extra.write_text("garbage\n")
+        _expect_failure(bundle, "unexpected leg directories or files")
+
+
+def test_checker_wall_clock_timeout_names_a_blocking_fifo(tmp_path):
+    bundle = _bundle(tmp_path)
+    fifo = _leg(bundle, "neg-stale") / "timeline.jsonl"
+    fifo.unlink()
+    os.mkfifo(fifo)
+    proc = subprocess.run(
+        [sys.executable, str(CHECKER), "--synthetic-root", str(bundle),
+         str(bundle / "legs")],
+        capture_output=True, text=True, timeout=5,
+    )
+    assert proc.returncode == 1
+    assert "is not a regular file" in proc.stdout
 
 
 def test_checker_reuses_the_s0_01_timeline_reader_and_does_not_duplicate_it():
@@ -876,14 +1337,48 @@ def test_pc_runner_parses_and_never_kills_by_name():
     assert 'readlink "/proc/$pid/exe"' in code
 
 
+def test_pc_runner_preserves_membership_receipt_across_the_leg_wipe():
+    text = RUNNER.read_text()
+    assert 'MEMBERSHIP=${S0_02_MEMBERSHIP:-$DEST/revoked-membership.json}' in text
+    wipe = text.index('rm -rf "$out"')
+    copy = text.index('cp "$MEMBERSHIP" "$out/membership.json"')
+    assert wipe < copy
+    assert 'if [ ! -f "$MEMBERSHIP" ]' in text
+    assert '"http_status":NNN' in text
+
+
+def test_pc_runner_replay_window_and_nip98_guard_are_pinned():
+    text = RUNNER.read_text()
+    replay = text[text.index("neg-replayed)"):text.index("neg-bad-signature)")]
+    assert "sleep 1" in replay
+    assert "NIP-98 same-second" in replay
+    assert '"$out/first/t0.json"' in replay
+    assert '--t0 "$local_first_t0"' in replay
+    assert checker.REPLAY_CLOCK_TOLERANCE_S > 100 + 30
+    assert checker.LEG_CLOCK_TOLERANCE_S < checker.REPLAY_CLOCK_TOLERANCE_S
+
+
+def test_pc_runner_names_user2_for_the_not_allowlisted_leg():
+    text = RUNNER.read_text()
+    assert "neg-not-allowlisted" in text
+    fixture = json.loads((FIXTURES / "neg-not-allowlisted.json").read_text())
+    assert fixture["signer"]["role"] == "user2"
+    assert 'role_for "$leg"' in text
+
+
 def test_pc_runner_fails_loud_when_rust_log_debug_is_unavailable():
     """The blocker is surfaced by the runner, not routed around."""
     text = RUNNER.read_text()
     assert "exit 3" in text and "RUST_LOG" in text
+    preflight = text[text.index("if ! sed -n"):text.index("mkdir -p \"$DEST\"")]
+    assert "PINNED_ENV_KEYS" in preflight
+    assert "sed -n '/PINNED_ENV_KEYS/,/}/p'" in preflight
     pins = (ROOT / "proofs" / "S0-01" / "pins.py").read_text()
-    assert '"RUST_LOG"' not in pins, (
+    block = pins[pins.index("PINNED_ENV_KEYS"):]
+    block = block[:block.index("}") + 1]
+    assert '"RUST_LOG"' not in block, (
         "pins.PINNED_ENV_KEYS now carries RUST_LOG — re-check the runner's preflight "
-        "and capture the two buzz-acp-decided legs"
+        "and capture the three buzz-acp-decided legs"
     )
 
 
@@ -892,6 +1387,26 @@ def test_deliver_event_never_puts_a_secret_in_argv():
     text = DELIVER.read_text()
     assert 'os.environ.get("BUZZ_PRIVATE_KEY"' in text
     assert "--secret" in text
-    assert "args.secret" not in text.split("def main")[1].split("_privkey()")[0] or True
+    before_key_read = text.split("def main", 1)[1].split("privkey = _privkey()", 1)[0]
+    assert "args.secret" not in before_key_read
     # The secret file is only ever NAMED, never read or printed by this tool.
-    assert "read_text()" not in text.split("--secret")[1].split("--relay-http")[0]
+    assert "read_text()" not in text.split("--secret", 1)[1].split("--relay-http", 1)[0]
+
+
+def test_deliver_normalizer_exposes_echo_provenance():
+    normalise = builder.deliver_event._normalise
+    event_id = "a" * 64
+    accepted = normalise(
+        200,
+        json.dumps({"event_id": event_id, "accepted": True, "message": ""}),
+        event_id,
+    )
+    rejected = normalise(400, json.dumps({"error": "invalid"}), event_id)
+    assert accepted == {
+        "accepted": True, "event_id": event_id, "event_id_echoed": True,
+        "http_status": 200, "message": "",
+    }
+    assert rejected == {
+        "accepted": False, "event_id": event_id, "event_id_echoed": False,
+        "http_status": 400, "message": "invalid",
+    }

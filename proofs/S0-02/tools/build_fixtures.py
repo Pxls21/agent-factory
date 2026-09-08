@@ -46,19 +46,25 @@ ROOT = PROOF_DIR.parent.parent
 FIXTURE_DIR = PROOF_DIR / "fixtures"
 IDENTITIES = ROOT / "proofs" / "S0-01" / "fixtures" / "identities.json"
 NOSTR_VERIFY = ROOT / "proofs" / "S0-01" / "tools" / "nostr_verify.py"
+DELIVER_EVENT = PROOF_DIR / "tools" / "pc" / "deliver_event.py"
 
 
-def _load_nostr_verify():
-    """Import the S0-01 signer/verifier BY PATH. Never copied, never vendored."""
-    spec = importlib.util.spec_from_file_location("s0_01_nostr_verify", NOSTR_VERIFY)
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"cannot load {NOSTR_VERIFY}")
+        raise SystemExit(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
+def _load_nostr_verify():
+    """Import the S0-01 signer/verifier BY PATH. Never copied, never vendored."""
+    return _load_module("s0_01_nostr_verify", NOSTR_VERIFY)
+
+
 nv = _load_nostr_verify()
+deliver_event = _load_module("s0_02_deliver_event", DELIVER_EVENT)
 
 # --- deterministic constants (change one and --check goes red) ---------------
 # A fixed epoch so the committed specimens never drift. It is deliberately in
@@ -83,7 +89,7 @@ def _identities() -> dict:
     return json.loads(IDENTITIES.read_text())
 
 
-# --- the six legs -----------------------------------------------------------
+# --- the seven legs ----------------------------------------------------------
 # created_at_offset_s is applied by the PC runner to the leg's t0. The stale
 # offset must clear buzz-relay's +/-900s ingest window (ingest.rs:2224) by a
 # wide margin so a slow leg cannot drift the class.
@@ -143,6 +149,17 @@ SPECS = (
         "content": "S0-02 neg-self-authored: reply with exactly the single word: pong",
         "turns": 0,
         "failure_reason": "denied: self-authored",
+    },
+    {
+        # The sixth distinct observable: a channel MEMBER the relay accepts
+        # and buzz-acp's author gate drops (lib.rs:389/550). user2 from
+        # identities.json is a channel member under respond_to=owner-only.
+        "name": "neg-not-allowlisted",
+        "role": "user2",
+        "created_at_offset_s": 0,
+        "content": "S0-02 neg-not-allowlisted: reply with exactly the single word: pong",
+        "turns": 0,
+        "failure_reason": "denied: not-allowlisted",
     },
     {
         "name": "revoked",
@@ -335,6 +352,12 @@ def _log(extra_lines) -> str:
     return "\n".join(head + list(extra_lines)) + "\n"
 
 
+def _raw_delivery_response(*, accepted: bool, event_id: str, message: str) -> str:
+    if accepted:
+        return json.dumps({"event_id": event_id, "accepted": True, "message": message})
+    return json.dumps({"error": message})
+
+
 def _write_leg(leg_dir: Path, fixture: dict, ids: dict, bundle: str, *,
                accepted: bool, message: str, with_turn: bool, log_extra,
                membership: dict | None = None):
@@ -354,10 +377,18 @@ def _write_leg(leg_dir: Path, fixture: dict, ids: dict, bundle: str, *,
     (leg_dir / "t0.json").write_text(
         json.dumps({"t0_epoch_s": BUNDLE_T0, "leg": fixture["fixture"]},
                    indent=1, sort_keys=True) + "\n")
-    (leg_dir / "delivery.json").write_text(json.dumps({
-        "accepted": accepted, "event_id": delivered["id"],
-        "mention_pubkeys": [ids["agent"]], "message": message,
-    }, indent=1, sort_keys=True) + "\n")
+    # F14: build the synthetic receipt through the real producer normaliser so
+    # its exact key set and 200/400 response semantics cannot drift.
+    http_status = 200 if accepted else 400
+    raw = _raw_delivery_response(
+        accepted=accepted,
+        event_id=delivered["id"],
+        message=message,
+    )
+    receipt = deliver_event._normalise(http_status, raw, delivered["id"])
+    (leg_dir / "delivery.json").write_text(
+        json.dumps(receipt, indent=1, sort_keys=True) + "\n"
+    )
     (leg_dir / "timeline.jsonl").write_text(
         _timeline(with_turn, fixture["template"]["content"]))
     (leg_dir / "buzzacp.log").write_text(_log(log_extra))
@@ -387,7 +418,7 @@ def _tamper(leg_dir: Path, pos_delivered: dict) -> None:
 
 
 def build_bundle(bundle: str, root: Path) -> None:
-    """bundle == 'pass'    -> five distinct observables, checker exits 0.
+    """bundle == 'pass'    -> six distinct observables, checker exits 0.
        bundle == 'blanket' -> one shared observable, checker exits 1."""
     ids = _bundle_identities(bundle)
     fixtures = build_all(ids)
@@ -429,7 +460,7 @@ def build_bundle(bundle: str, root: Path) -> None:
     _write_leg(leg("neg-replayed") / "first", fixtures["pos-allowed"], ids, bundle,
                accepted=True, message="", with_turn=True, log_extra=[])
     _write_leg(leg("neg-replayed") / "second", fixtures["neg-replayed"], ids, bundle,
-               accepted=False if blanket else True,
+               accepted=True,
                message=BLANKET_MESSAGE if blanket else "",
                with_turn=False, log_extra=[] if blanket else [dup_line])
     _write_leg(leg("neg-stale"), fixtures["neg-stale"], ids, bundle,
@@ -438,15 +469,27 @@ def build_bundle(bundle: str, root: Path) -> None:
                else "invalid: event timestamp too far from server time",
                with_turn=False, log_extra=[])
     _write_leg(leg("neg-self-authored"), fixtures["neg-self-authored"], ids, bundle,
-               accepted=False if blanket else True,
+               accepted=True,
                message=BLANKET_MESSAGE if blanket else "",
                with_turn=False, log_extra=[] if blanket else [self_line])
+    # The neg-not-allowlisted leg: user2 is a channel member the relay accepts;
+    # buzz-acp's author gate drops (lib.rs:550). The observable is the DEBUG
+    # "inbound author gate" line.
+    gate_line = (
+        "2026-09-08T00:00:05.000000Z DEBUG buzz_acp::relay: "
+        "inbound author gate \xe2\x80\x94 dropping event"
+    )
+    _write_leg(leg("neg-not-allowlisted"), fixtures["neg-not-allowlisted"], ids, bundle,
+               accepted=True,
+               message=BLANKET_MESSAGE if blanket else "",
+               with_turn=False, log_extra=[] if blanket else [gate_line])
     revoked = _write_leg(leg("revoked"), fixtures["revoked"], ids, bundle,
                          accepted=False, message=BLANKET_MESSAGE, with_turn=False,
                          log_extra=[], membership={"removed": True, "removed_pubkey": None})
     (leg("revoked") / "membership.json").write_text(json.dumps({
         "removed": True, "removed_pubkey": revoked["pubkey"],
         "channel": ids[CHANNEL_UUID_KEY], "at_epoch_s": BUNDLE_T0 - 60,
+        "http_status": 200,
     }, indent=1, sort_keys=True) + "\n")
     # The replayed leg is one event delivered twice: rewrite the second delivery
     # so both sub-legs carry the SAME id, which is what makes it a replay.

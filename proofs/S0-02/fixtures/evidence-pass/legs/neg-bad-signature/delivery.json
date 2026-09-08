@@ -1,8 +1,7 @@
 {
  "accepted": false,
  "event_id": "226e96aeff614ff34bbe6e271686831ec6448ce55d4583135c61bb55bb130dfc",
- "mention_pubkeys": [
-  "45602631fcaa9d995400f7825733421ba0a8033156697712b6c70752360e54a8"
- ],
+ "event_id_echoed": false,
+ "http_status": 400,
  "message": "invalid: invalid schnorr signature"
 }

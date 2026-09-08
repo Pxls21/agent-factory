@@ -20,7 +20,7 @@
  },
  "expected": {
   "decided_by": "buzz-relay",
-  "discrepancy": "Shares its rejection TEXT with neg-unauthorized (both are 'restricted: not a channel member'), so it cannot join the five-distinct-reasons set on text alone. It is separated STRUCTURALLY instead: the revoked leg must carry membership.json (the removal receipt for THIS sender) and a created_at INSIDE the freshness window, which is exactly what makes it prove 'revocation is independent of NIP-OA created_at'. neg-unauthorized has no membership.json and its sender was never a member.",
+  "discrepancy": "Shares its rejection TEXT with neg-unauthorized (both are 'restricted: not a channel member'), so it cannot join the distinct-reasons set on text alone. It is separated STRUCTURALLY instead: the revoked leg must carry membership.json (the removal receipt for THIS sender, with at_epoch_s before t0, the correct channel and a 2xx http_status) and a created_at INSIDE the freshness window, which is exactly what makes it prove 'revocation is independent of NIP-OA created_at'. neg-unauthorized has no membership.json and its sender was never a member.",
   "evidence": "delivery",
   "failure_reason": "denied: membership-revoked",
   "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:1201",

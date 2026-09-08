@@ -20,7 +20,7 @@
  },
  "expected": {
   "decided_by": "buzz-relay",
-  "discrepancy": "buzz-acp HAS an author gate that logs 'inbound author gate - dropping event' (crates/buzz-acp/src/lib.rs:550), but it can only fire for a sender the RELAY already accepted. A non-member key cannot publish to the channel at all, so for this fixture the deciding component is buzz-relay and the buzz-acp line is unreachable. A member-but-not-allowlisted sender (e.g. user2 under respond_to=owner-only) would exercise the buzz-acp line instead; that fixture is NOT built here.",
+  "discrepancy": "buzz-acp HAS an author gate that logs 'inbound author gate - dropping event' (crates/buzz-acp/src/lib.rs:550), but it can only fire for a sender the RELAY already accepted. A non-member key cannot publish to the channel at all, so for this fixture the deciding component is buzz-relay and the buzz-acp line is unreachable. The neg-not-allowlisted leg (user2, a channel member the relay accepts and buzz-acp's author gate drops) exercises the buzz-acp line instead.",
   "evidence": "delivery",
   "failure_reason": "denied: sender-not-in-allowlist",
   "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:770",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_s0_02_legs.sh — PC SIDE: capture the seven S0-02 legs against the isolated
+# run_s0_02_legs.sh — PC SIDE: capture the eight S0-02 legs against the isolated
 # S0-01 relay stack, one fresh buzz-acp launch per leg.
 #
 #   bash proofs/S0-02/tools/pc/run_s0_02_legs.sh <evidence-root> [leg ...]
@@ -34,29 +34,33 @@ FD=$MARKERS/v2-$HOST_LEG
 TURN_WAIT_S=${S0_02_TURN_WAIT_S:-100}
 POLL_S=5
 
-ALL_LEGS="pos-allowed neg-unauthorized neg-bad-signature neg-replayed neg-stale neg-self-authored revoked"
+ALL_LEGS="pos-allowed neg-unauthorized neg-bad-signature neg-replayed neg-stale neg-self-authored neg-not-allowlisted revoked"
 LEGS=${*:-$ALL_LEGS}
+
+# F2: the membership receipt lives OUTSIDE $out so rm -rf "$out" does not wipe it.
+MEMBERSHIP=${S0_02_MEMBERSHIP:-$DEST/revoked-membership.json}
 
 say() { echo; echo "===== [S0-02] $* ====="; }
 
-# --- PREFLIGHT: the two buzz-acp-decided legs need RUST_LOG=debug ------------
-# neg-replayed and neg-self-authored are decided INSIDE buzz-acp and their only
-# observables are tracing::debug! lines (relay.rs:2387, lib.rs:3258). pc_launch.py
-# builds a CLOSED env key set and refuses any drift from pins.PINNED_ENV_KEYS
-# (proofs/S0-01/pins.py:44-48, enforced at pc_launch.py:268), and RUST_LOG is
-# not in it. Until that set carries RUST_LOG the two legs CANNOT be captured.
-# Fail loud and name it: a leg captured at INFO would produce a log with no
-# observable, and the checker would (correctly) call that a missing observable
-# rather than a missing capability.
-if ! grep -q '"RUST_LOG"' "$PINS"; then
+# --- PREFLIGHT: the buzz-acp-decided legs need RUST_LOG=debug ----------------
+# neg-replayed, neg-self-authored and neg-not-allowlisted are decided INSIDE
+# buzz-acp and their only observables are tracing::debug! lines (relay.rs:2387,
+# lib.rs:3258, lib.rs:550). pc_launch.py builds a CLOSED env key set and refuses
+# any drift from pins.PINNED_ENV_KEYS (proofs/S0-01/pins.py, enforced at
+# pc_launch.py:167), and RUST_LOG is not in it. Until that set carries RUST_LOG
+# the three legs CANNOT be captured. Fail loud and name it.
+# F9b (tightened): grep the PINNED_ENV_KEYS block, not the whole file text.
+if ! sed -n '/PINNED_ENV_KEYS/,/}/p' "$PINS" | grep -q '"RUST_LOG"'; then
   cat >&2 <<'MSG'
-BLOCKER: pins.PINNED_ENV_KEYS (proofs/S0-01/pins.py:44-48) does not carry RUST_LOG,
-and pc_launch.py:267-269 refuses any env key set that differs from it. buzz-acp
-would run at INFO, where neither of its two S0-02 observables is emitted:
+BLOCKER: pins.PINNED_ENV_KEYS (proofs/S0-01/pins.py) does not carry RUST_LOG,
+and pc_launch.py refuses any env key set that differs from it. buzz-acp
+would run at INFO, where none of its three S0-02 observables is emitted:
   relay.rs:2387  debug!("dropping duplicate event for channel {channel_id}")
   lib.rs:3258    tracing::debug!(..., "dropping self-authored event")
-NOT run: neg-replayed and neg-self-authored need RUST_LOG=debug in the launcher.
-This is the coordinator's call (it touches proofs/S0-01/, outside this lane).
+  lib.rs:550     debug!("inbound author gate — dropping event")
+NOT run: neg-replayed, neg-self-authored and neg-not-allowlisted need
+RUST_LOG=debug in the launcher. This is the coordinator's call (it touches
+proofs/S0-01/, outside this lane).
 MSG
   exit 3
 fi
@@ -141,13 +145,17 @@ for leg in $LEGS; do
       deliver pos-allowed "$out/first" "$(role_for pos-allowed)"
       wait_turn_window 1
       collect_leg "$out/first"
+      # F5: sleep 1 before the second deliver to avoid the NIP-98 same-second
+      # replay guard (crates/buzz-auth/src/nip98_replay.rs). The second sub-leg's
+      # t0 is the FIRST sub-leg's t0 (the clock the reused event was signed
+      # against), so the checker measures freshness against the right baseline.
+      sleep 1
+      local_first_t0=$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["t0_epoch_s"])' "$out/first/t0.json")
       deliver neg-replayed "$out/second" "$(role_for neg-replayed)" \
-        --reuse "$out/first/delivered-event.json"
+        --reuse "$out/first/delivered-event.json" \
+        --t0 "$local_first_t0"
       wait_turn_window 0
       collect_leg "$out/second"
-      # The second sub-leg's fixture.json must be the neg-replayed fixture, and
-      # its t0/delivered-event come from the reuse — both already written by
-      # deliver_event.py.
       ;;
     neg-bad-signature)
       # The positive event with one signature byte flipped: the ONLY difference
@@ -160,14 +168,21 @@ for leg in $LEGS; do
       collect_leg "$out"
       ;;
     revoked)
-      cat >&2 <<'MSG'
+      # F2: the receipt lives OUTSIDE $out at $MEMBERSHIP so rm -rf "$out" does
+      # not delete it. It is copied INTO $out after the wipe, and the documented
+      # shape gains http_status (F3).
+      if [ ! -f "$MEMBERSHIP" ]; then
+        cat >&2 <<MSG
 NOT run by this script: the revoked leg needs the sender removed from the NIP-29
 group before delivery, and a relay membership WRITE is an owner/coordinator
 operation, not a lane operation. Run the removal, write
-<leg>/membership.json as {"removed":true,"removed_pubkey":"<hex>","channel":"<uuid>","at_epoch_s":N},
-then re-run this script with `revoked` as the only leg argument.
+$MEMBERSHIP as {"removed":true,"removed_pubkey":"<hex>","channel":"<uuid>","at_epoch_s":N,"http_status":NNN},
+then re-run this script with \`revoked\` as the only leg argument.
 MSG
-      [ -f "$out/membership.json" ] || { stop_leg; continue; }
+        stop_leg; continue
+      fi
+      mkdir -p "$out"
+      cp "$MEMBERSHIP" "$out/membership.json"
       deliver revoked "$out" "$(role_for revoked)"
       wait_turn_window 0
       collect_leg "$out"

@@ -113,8 +113,12 @@ def _normalise(status: int, raw: str, event_id: str) -> dict:
     (crates/buzz-relay/src/api/bridge.rs:965-967). A refusal before ingest is an
     api_error blob with a different shape, so it is normalised here — never
     dropped, because a leg with no receipt cannot be graded.
+
+    F14: records event_id_echoed so the checker knows whether the relay
+    confirmed the id (true on 200) or it was locally computed (false on 400).
     """
-    receipt = {"http_status": status, "event_id": event_id, "accepted": False, "message": ""}
+    receipt = {"http_status": status, "event_id": event_id, "accepted": False,
+               "message": "", "event_id_echoed": False}
     try:
         blob = json.loads(raw)
     except json.JSONDecodeError:
@@ -125,10 +129,15 @@ def _normalise(status: int, raw: str, event_id: str) -> dict:
             receipt["accepted"] = bool(blob["accepted"])
         if blob.get("event_id"):
             receipt["event_id"] = blob["event_id"]
+            receipt["event_id_echoed"] = True
+        saw_message_field = False
         for key in ("message", "error", "reason"):
-            if isinstance(blob.get(key), str) and blob[key]:
+            if key in blob and isinstance(blob[key], str):
                 receipt["message"] = blob[key]
+                saw_message_field = True
                 break
+        if saw_message_field:
+            return receipt
     if not receipt["message"]:
         receipt["message"] = raw.strip()
     return receipt

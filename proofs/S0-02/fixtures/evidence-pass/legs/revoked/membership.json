@@ -1,6 +1,7 @@
 {
  "at_epoch_s": 1788799940,
  "channel": "73701f66-6e12-42ff-b561-7d36db1ad91b",
+ "http_status": 200,
  "removed": true,
  "removed_pubkey": "f5111767ace19225e79d8588510b12a55b5c56fe7b6bd181e680384246bb1ed0"
 }

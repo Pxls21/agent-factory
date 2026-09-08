@@ -1,6 +1,6 @@
 {
  "accepted": true,
- "event_id": "d56402a86b11bb442974bc6f846ec1a16a49a4d44f74255f6f5e87f95352b57c",
+ "event_id": "3b4af0eb36aa6706ddaaf304d661f1fe98754b9234cc316a89e6452f717743e5",
  "event_id_echoed": true,
  "http_status": 200,
  "message": "restricted: not a channel member"

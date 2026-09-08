@@ -17,7 +17,7 @@
       "timeout_s": 120,
       "expect": {
         "exit_code": 1,
-        "failure_reason": "blanket-rejection: reasons ['delivery::restricted: not a channel member'] not distinct — 5 negative legs collapsed to 1 observable(s)"
+        "failure_reason": "blanket-rejection: reasons ['delivery::restricted: not a channel member'] not distinct — 6 negative legs collapsed to 1 observable(s)"
       }
     }
   ]
