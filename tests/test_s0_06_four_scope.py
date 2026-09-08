@@ -10,6 +10,7 @@ can never mint an artifact.
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -1197,6 +1198,10 @@ def _write(path: Path, doc):
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
 
 
+def _write_events(path: Path, rows: list[dict]) -> None:
+    path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+
+
 HOSTILE_SHAPES = {
     "honeytokens_missing_team":
         lambda r: _edit(r / "leak" / "honeytokens.json", lambda d: d.pop("team")),
@@ -1230,6 +1235,74 @@ def test_unexpected_evidence_files_are_refused(good):
     extra = good / "denied" / "recall-real.json"
     extra.write_text("{}\n")
     assert _verdict(good) == (1, "leg: unexpected evidence file denied/recall-real.json")
+
+
+# ------------------------------------------------------------------ round 3: closed manifest + graded leaves
+
+
+def test_an_unexpected_root_file_is_refused(good):
+    (good / "opaque.bin").write_bytes(b"opaque")
+    assert _verdict(good) == (1, "leg: unexpected evidence file opaque.bin")
+
+
+PREVIOUSLY_UNREAD = (
+    "precedence/events-1.jsonl", "precedence/events-2.jsonl",
+    "write-scope/events-write.jsonl", "write-scope/events-retry.jsonl",
+    "leak/events.jsonl", "write-scope/record.json",
+)
+
+
+@pytest.mark.parametrize("rel", PREVIOUSLY_UNREAD)
+def test_every_declared_evidence_leaf_is_required(good, rel):
+    (good / rel).unlink()
+    assert _verdict(good) == (1, "leg: %s missing or not a regular file" % rel)
+
+
+@pytest.mark.parametrize("rel", PREVIOUSLY_UNREAD)
+def test_every_previously_unread_leaf_must_be_a_regular_file(good, rel):
+    path = good / rel
+    path.unlink()
+    path.mkdir()
+    assert _verdict(good) == (1, "leg: %s missing or not a regular file" % rel)
+
+
+@pytest.mark.parametrize("rel", PREVIOUSLY_UNREAD)
+def test_every_previously_unread_leaf_refuses_a_symlink(good, rel):
+    path = good / rel
+    target = good / "PROVENANCE.md"
+    path.unlink()
+    path.symlink_to(target)
+    assert _verdict(good) == (1, "leg: %s missing or not a regular file" % rel)
+
+
+@pytest.mark.parametrize("rel", PREVIOUSLY_UNREAD)
+def test_malformed_content_in_every_previously_unread_leaf_is_refused(good, rel):
+    path = good / rel
+    path.write_text("not json\n")
+    rc, line = _verdict(good)
+    assert rc == 1
+    if rel.endswith("record.json"):
+        assert line == "leg: write-scope/record.json missing or not a regular file"
+    else:
+        leg, name = rel.split("/", 1)
+        assert line == "%s: %s event stream invalid (JSONDecodeError)" % (leg, name)
+
+
+@pytest.mark.parametrize("bundle", ["evidence-leak", "evidence-wrong-scope-write"])
+def test_committed_fixtures_are_a_deterministic_generator_build(bundle, tmp_path):
+    generator = PROOF / "fixtures" / "build_synthetic_bundles.py"
+    out = tmp_path / "built"
+    proc = subprocess.run([sys.executable, str(generator), "--out", str(out)],
+                          capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    expected = PROOF / "fixtures" / bundle
+    built = out / bundle
+    expected_files = {p.relative_to(expected).as_posix() for p in expected.rglob("*") if p.is_file()}
+    built_files = {p.relative_to(built).as_posix() for p in built.rglob("*") if p.is_file()}
+    assert expected_files == built_files
+    assert len(expected_files) == 49
+    assert all((expected / rel).read_bytes() == (built / rel).read_bytes()
+               for rel in expected_files)
 
 
 @pytest.mark.parametrize("name", sorted(HOSTILE_SHAPES))
@@ -1524,6 +1597,209 @@ def test_a_written_page_that_is_not_the_records_kind_and_tier_is_refused(good):
         1, "write: written page is kind=note tier=episodic, expected kind=fact tier=semantic")
 
 
+# ------------------------------------------------------------------ round 3: C6 truth + origin + telemetry
+
+
+def test_c6_is_equivalent_but_the_compound_c6_prime_is_killed(tmp_path):
+    """C6 `row[f] -> row.get(f)` is equivalent behind the row-validity guard. C6-prime deletes
+    that guard too; this malformed-row test must kill the reachable null-tuple authorization."""
+    source = ADAPTER_PATH.read_text()
+    c6 = source.replace("tuple_obj[f] == row[f]", "tuple_obj[f] == row.get(f)", 1)
+    assert c6 != source
+    assert "if any(not isinstance(row.get(f), str)" in c6
+    c6_prime = c6.replace(
+        "        if any(not isinstance(row.get(f), str) or not row[f] for f in TUPLE_FIELDS):\n"
+        "            continue\n", "", 1)
+    assert c6_prime != c6
+    mutant = tmp_path / "factory_memory.py"
+    mutant.write_text(c6_prime)
+    shutil.copy2(PROOF / "adapter" / "bindings.json", tmp_path / "bindings.json")
+    probe = subprocess.run(
+        [sys.executable, "-c",
+         "import importlib.util,sys; p=sys.argv[1]; s=importlib.util.spec_from_file_location('m',p); "
+         "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+         "broken=[{'actor':'svc-agent-runner','agent':'a-alpha','team':'t-core'}]; "
+         "null={'actor':'svc-agent-runner','agent':'a-alpha','team':'t-core','project':None}; "
+         "assert m.authorize(null,broken) is None",
+         str(mutant)], capture_output=True, text=True, timeout=60, cwd=str(tmp_path))
+    assert probe.returncode == 1
+    assert "AssertionError" in probe.stderr
+
+
+def test_a_foreign_raw_host_is_refused(good):
+    url = good / "precedence" / "raw-agent.url"
+    parsed = urlparse(url.read_text().strip())
+    url.write_text("http://foreign.invalid:8765" + parsed.path + "?" + parsed.query + "\n")
+    assert _verdict(good) == (
+        1, "precedence: raw agent origin http://foreign.invalid:8765, "
+           "expected http://127.0.0.1:8765")
+
+
+def test_a_foreign_raw_port_is_refused(good):
+    url = good / "precedence" / "raw-agent.url"
+    parsed = urlparse(url.read_text().strip())
+    url.write_text("http://127.0.0.1:9999" + parsed.path + "?" + parsed.query + "\n")
+    assert _verdict(good) == (
+        1, "precedence: raw agent origin http://127.0.0.1:9999, "
+           "expected http://127.0.0.1:8765")
+
+
+def test_a_right_named_foreign_route_is_refused(good):
+    url = good / "precedence" / "raw-agent.url"
+    url.write_text("http://127.0.0.1:8765/foreign/api/v1/search?q=x&workspace=factory"
+                   "&project=agent--a-alpha&limit=20\n")
+    assert _verdict(good) == (
+        1, "precedence: raw agent was fetched from "
+           "http://127.0.0.1:8765/foreign/api/v1/search?q=x&workspace=factory"
+           "&project=agent--a-alpha&limit=20, expected factory/agent--a-alpha")
+
+
+def test_precedence_event_names_are_an_exact_allowlist(good):
+    path = good / "precedence" / "events-1.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["event"] = "http-request"
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "precedence: events-1.jsonl events "
+           "['scope_tuple_authorized', 'http-request', 'http_request', 'http_request', "
+           "'http_request', 'http_request', 'http_request', 'http_request', 'http_request', "
+           "'recall_complete'], expected ['scope_tuple_authorized', 'http_request', "
+           "'http_request', 'http_request', 'http_request', 'http_request', 'http_request', "
+           "'http_request', 'http_request', 'recall_complete']")
+
+
+def test_precedence_event_paths_must_be_the_scrubbed_search_and_page_routes(good):
+    path = good / "precedence" / "events-1.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["path"] = "/api/v1/search?q=secret-query"
+    rows[1].pop("query_sha256_16")
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "precedence: events-1.jsonl recorded "
+           "['GET /api/v1/search?q=secret-query', 'GET /api/v1/workspaces/factory/projects/agent--a-alpha/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/project--p-atlas/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/team--t-core/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/_global/pages'], "
+           "expected ['GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/agent--a-alpha/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/project--p-atlas/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/team--t-core/pages', "
+           "'GET /api/v1/search query_sha256_16=53e6753e6d930aa7', "
+           "'GET /api/v1/workspaces/factory/projects/_global/pages']")
+
+
+def test_recall_events_must_name_the_leg_scope_allowlist(good):
+    path = good / "leak" / "events.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["authorized_scopes"] = ["agent", "project", "team"]
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "leak: events.jsonl authorized scopes ['agent', 'project', 'team'], "
+           "expected ['agent', 'project']")
+
+
+def test_recall_events_cannot_hide_a_degraded_scope(good):
+    path = good / "leak" / "events.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[-1]["degraded_scopes"] = ["project"]
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "leak: events.jsonl degraded scopes ['project'], expected []")
+
+
+def test_write_events_are_bound_to_the_record_key_path_scope_and_project(good):
+    path = good / "write-scope" / "events-write.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["page_path"] = "observations/forged.md"
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "write-scope: events-write.jsonl write identity "
+           "['agent', 'agent--a-alpha', 'observations/forged.md', "
+           "{'event_id': 'evt-0003', 'session': 'sess-7f2a', 'turn': '12'}], expected "
+           "['agent', 'agent--a-alpha', 'observations/2c1c1acbd4e41f93.md', "
+           "{'event_id': 'evt-0003', 'session': 'sess-7f2a', 'turn': '12'}]")
+
+
+@pytest.mark.parametrize("field,value", [("scope", "project"), ("project", "project--p-atlas")])
+def test_write_events_cannot_claim_another_scope_or_project(good, field, value):
+    path = good / "write-scope" / "events-write.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1][field] = value
+    _write_events(path, rows)
+    assert _verdict(good)[0] == 1
+    assert _verdict(good)[1].startswith(
+        "write-scope: events-write.jsonl write identity ")
+
+
+def test_retry_events_are_bound_to_the_same_scope_and_project(good):
+    path = good / "write-scope" / "events-retry.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[-1]["scope"] = "project"
+    _write_events(path, rows)
+    assert _verdict(good)[0] == 1
+    assert _verdict(good)[1].startswith(
+        "write-scope: events-retry.jsonl write identity ")
+
+
+def test_write_events_must_name_the_leg_scope_allowlist(good):
+    path = good / "write-scope" / "events-write.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["authorized_scopes"] = ["agent"]
+    _write_events(path, rows)
+    assert _verdict(good) == (
+        1, "write-scope: events-write.jsonl authorized scopes ['agent'], expected "
+           "['agent', 'project', 'team', 'company']")
+
+
+def test_record_json_must_equal_the_write_idempotency_key(good):
+    _edit(good / "write-scope" / "record.json", lambda d: d.__setitem__("event_id", "forged"))
+    assert _verdict(good) == (
+        1, "write: record.json idempotency key "
+           "{'session': 'sess-7f2a', 'turn': '12', 'event_id': 'forged'}, expected "
+           "{'event_id': 'evt-0003', 'session': 'sess-7f2a', 'turn': '12'}")
+
+
+def test_record_json_type_defaults_are_graded(good):
+    _edit(good / "write-scope" / "record.json", lambda d: d.__setitem__("kind", "note"))
+    rc, line = _verdict(good)
+    assert rc == 1
+    assert line.startswith("write: record.json content/type ")
+    assert "'kind': 'note'" in line
+    assert "expected {'body': 'non-empty string', 'kind': 'fact', 'tier': 'semantic'}" in line
+
+
+def test_record_json_body_is_graded(good):
+    _edit(good / "write-scope" / "record.json", lambda d: d.__setitem__("body", ""))
+    rc, line = _verdict(good)
+    assert rc == 1
+    assert line.startswith("write: record.json content/type ")
+    assert "'body': ''" in line
+
+
+def test_query_text_never_enters_any_emitted_event(tmp_path, server):
+    canary = "QUERY-CANARY-4e9f1c2a"
+    events = tmp_path / "events.jsonl"
+    with open(events, "w", encoding="utf-8") as handle:
+        result = fm.FactoryMemory(base_url=server.base_url, events=handle).recall(
+            AUTHORIZED_TUPLE, canary)
+    assert result["status"] == "ok"
+    text = events.read_text()
+    assert '"http_request"' in text
+    assert canary not in text
+    requests = [json.loads(line) for line in text.splitlines()
+                if json.loads(line)["event"] == "http_request"]
+    searches = [event for event in requests if event["path"] == "/api/v1/search"]
+    assert len(searches) == 4
+    assert {event["query_sha256_16"] for event in searches} == {
+        hashlib.sha256(canary.encode()).hexdigest()[:16]}
+    assert all("?" not in event["path"] for event in requests)
+
+
 # --------------------------------------------------- F-11/F-15: a malformed 200 degrades visibly
 
 MALFORMED_BODIES = {
@@ -1788,11 +2064,13 @@ def test_the_pinned_checkout_never_defaults_into_a_path_the_operator_uses():
     assert "$HOME" not in text
 
 
-def test_the_documented_limits_are_recorded_where_they_bite():
-    """F-21 (the two write sinks follow symlinks) and F-25 (the recall query text lands in the
-    event stream's `path`) are limits, not fixes: they must be written down at the site."""
+def test_the_documented_limits_and_scrubber_are_recorded_where_they_bite():
+    """F-21 remains a documented write-sink limit; F-25 is now a tested query scrubber."""
     source = ADAPTER_PATH.read_text()
     assert "DOCUMENTED LIMIT (F-21)" in source.split("def _main", 1)[1].split("events = open", 1)[0]
-    assert "DOCUMENTED LIMIT (F-25)" in source.split("def _search", 1)[1].split("qs =", 1)[0]
+    search = source.split("def _search", 1)[1].split("def _page_times", 1)[0]
+    assert 'event_path="/api/v1/search"' in search
+    assert "query_sha256_16" in search
+    assert "query text (F-25)" in search
     # F-24: the one non-adapter cause of a `nondet` red is named where a reader will hit it
     assert "truncate(limit)" in CHECKER_PATH.read_text().split("def check_precedence", 1)[1]

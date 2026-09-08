@@ -53,7 +53,7 @@ import json
 import stat
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import yaml
 
@@ -96,6 +96,14 @@ REASONS = {
     "shadow": "precedence: {sid} provenance missing shadowed scope {scope}",
     "raw_provenance": "{leg}: raw {scope} read carries {workspace}/{project}, expected {want}",
     "raw_url": "{leg}: raw {scope} was fetched from {url}, expected {want}",
+    "raw_origin": "{leg}: raw {scope} origin {got}, expected {want}",
+    "event_stream": "{leg}: {name} event stream invalid ({detail})",
+    "event_set": "{leg}: {name} events {got}, expected {want}",
+    "event_path": "{leg}: {name} recorded {got}, expected {want}",
+    "event_binding": "{leg}: {name} authorized scopes {got}, expected {want}",
+    "event_complete": "{leg}: {name} degraded scopes {got}, expected {want}",
+    "event_write": "{leg}: {name} write identity {got}, expected {want}",
+    "write_record": "write: record.json {field} {got}, expected {want}",
     "write_found": "write: record found in {scope}",
     "write_absent": "write: record absent from agent",
     "write_retry": "write: idempotent retry produced {n} records",
@@ -256,14 +264,27 @@ def _leg_projects(root: Path, leg: str) -> dict:
     }
 
 
-def _require_raw_url(root: Path, leg: str, scope: str, workspace: str, project: str) -> None:
+def _require_raw_url(root: Path, leg: str, scope: str, workspace: str, project: str,
+                     origin: str) -> None:
     url = _read_text(root, "%s/raw-%s.url" % (leg, scope)).strip()
-    if not _url_names(url, workspace, project):
+    parsed = urlparse(url)
+    got_origin = "%s://%s" % (parsed.scheme, parsed.netloc)
+    if got_origin != origin:
+        raise Fail("raw_origin", leg=leg, scope=scope, got=got_origin, want=origin)
+    search_route = "/api/v1/search"
+    pages_route = "/api/v1/workspaces/%s/projects/%s/pages" % (
+        quote(workspace, safe=""), quote(project, safe=""))
+    route_ok = (
+        parsed.path == search_route
+        and parse_qs(parsed.query).get("workspace") == [workspace]
+        and parse_qs(parsed.query).get("project") == [project]
+    ) or (parsed.path == pages_route and not parsed.query)
+    if not route_ok:
         raise Fail("raw_url", leg=leg, scope=scope, url=url,
                    want="%s/%s" % (workspace, project))
 
 
-def _require_raw_provenance(root: Path, leg: str, raw: dict) -> None:
+def _require_raw_provenance(root: Path, leg: str, raw: dict, origin: str) -> None:
     """The independent instrument's OWN provenance (F-5).
 
     `ApiSearchHit` carries `workspace` and `project`
@@ -274,7 +295,7 @@ def _require_raw_provenance(root: Path, leg: str, raw: dict) -> None:
     want = _leg_projects(root, leg)
     for scope in SCOPE_ORDER:
         workspace, project = want[scope]
-        _require_raw_url(root, leg, scope, workspace, project)
+        _require_raw_url(root, leg, scope, workspace, project, origin)
         for entry in raw[scope]:
             if entry["workspace"] != workspace or entry["project"] != project:
                 raise Fail("raw_provenance", leg=leg, scope=scope,
@@ -336,10 +357,115 @@ def check_substrate(root: Path) -> dict:
         if declared.get(key, "<absent>") != value:
             raise Fail("posture_drift", key=key,
                        declared=declared.get(key, "<absent>"), observed=value)
+    origin = doc.get("origin")
+    parsed_origin = urlparse(origin) if isinstance(origin, str) else None
+    if (parsed_origin is None or parsed_origin.scheme not in {"http", "https"}
+            or not parsed_origin.netloc or parsed_origin.path or parsed_origin.params
+            or parsed_origin.query or parsed_origin.fragment):
+        raise Fail("substrate_pin", got="origin=%s" % origin)
+    doc["origin"] = "%s://%s" % (parsed_origin.scheme, parsed_origin.netloc)
     return doc
 
 
-def check_precedence(root: Path) -> None:
+def _read_events(root: Path, leg: str, name: str) -> list[dict]:
+    rows = []
+    for line in _read_text(root, "%s/%s" % (leg, name)).splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line, parse_constant=_reject_constant)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise Fail("event_stream", leg=leg, name=name, detail=type(exc).__name__)
+        if not isinstance(event, dict) or not isinstance(event.get("event"), str):
+            raise Fail("event_stream", leg=leg, name=name, detail="event must be a named object")
+        rows.append(event)
+    if not rows:
+        raise Fail("event_stream", leg=leg, name=name, detail="empty")
+    if [row.get("seq") for row in rows] != list(range(1, len(rows) + 1)):
+        raise Fail("event_stream", leg=leg, name=name, detail="sequence is not contiguous")
+    return rows
+
+
+def _require_events(leg: str, name: str, events: list[dict], expected: list[str]) -> None:
+    got = [event["event"] for event in events]
+    if got != expected:
+        raise Fail("event_set", leg=leg, name=name, got=got, want=expected)
+
+
+def _request_marker(event: dict) -> str:
+    marker = "%s %s" % (event.get("method"), event.get("path"))
+    if event.get("path") == "/api/v1/search":
+        marker += " query_sha256_16=%s" % event.get("query_sha256_16")
+    return marker
+
+
+def _expected_page_route(workspace: str, project: str) -> str:
+    return "/api/v1/workspaces/%s/projects/%s/pages" % (
+        quote(workspace, safe=""), quote(project, safe=""))
+
+
+def _require_request_paths(root: Path, leg: str, name: str, events: list[dict],
+                           scopes: tuple[str, ...], query: str) -> None:
+    requests = [event for event in events if event["event"] == "http_request"]
+    digest = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+    projects = _leg_projects(root, leg)
+    want = []
+    for scope in scopes:
+        workspace, project = projects[scope]
+        want.append("GET /api/v1/search query_sha256_16=%s" % digest)
+        want.append("GET %s" % _expected_page_route(workspace, project))
+    got = [_request_marker(event) for event in requests]
+    if got != want:
+        raise Fail("event_path", leg=leg, name=name, got=got, want=want)
+
+
+def _grade_recall_events(root: Path, leg: str, name: str,
+                         scopes: tuple[str, ...], query: str) -> None:
+    events = _read_events(root, leg, name)
+    expected = ["scope_tuple_authorized"]
+    for _scope in scopes:
+        expected += ["http_request", "http_request"]
+    expected.append("recall_complete")
+    _require_events(leg, name, events, expected)
+    _require_request_paths(root, leg, name, events, scopes, query)
+    authorized = events[0]
+    if authorized.get("authorized_scopes") != list(scopes):
+        raise Fail("event_binding", leg=leg, name=name,
+                   got=authorized.get("authorized_scopes"), want=list(scopes))
+    complete = events[-1]
+    if complete.get("degraded_scopes") != []:
+        raise Fail("event_complete", leg=leg, name=name,
+                   got=complete.get("degraded_scopes"), want=[])
+
+
+def _grade_write_events(root: Path, name: str, page_path: str, key: dict, retry: bool) -> None:
+    events = _read_events(root, "write-scope", name)
+    expected = ["scope_tuple_authorized", "write_intent", "http_request"]
+    expected += ["write_noop"] if retry else ["http_request", "write_committed"]
+    _require_events("write-scope", name, events, expected)
+    authorized = events[0]
+    if authorized.get("authorized_scopes") != list(SCOPE_ORDER):
+        raise Fail("event_binding", leg="write-scope", name=name,
+                   got=authorized.get("authorized_scopes"), want=list(SCOPE_ORDER))
+    workspace, project = _leg_projects(root, "write-scope")["agent"]
+    requests = [event for event in events if event["event"] == "http_request"]
+    want_requests = [("GET", _expected_page_route(workspace, project))]
+    if not retry:
+        want_requests.append(("POST", "/admin/write-page"))
+    got_requests = [(event.get("method"), event.get("path")) for event in requests]
+    if got_requests != want_requests:
+        raise Fail("event_path", leg="write-scope", name=name,
+                   got=got_requests, want=want_requests)
+    for event in events:
+        if event["event"] in {"write_intent", "write_noop", "write_committed"}:
+            got = [event.get("scope"), event.get("project"),
+                   event.get("page_path"), event.get("key")]
+            want = ["agent", project, page_path, key]
+            if got != want:
+                raise Fail("event_write", leg="write-scope", name=name, got=got, want=want)
+
+
+def check_precedence(root: Path, origin: str) -> None:
     """Assertion 2 — deterministic Agent-first merge over a real four-way collision."""
     first = _read_text(root, "precedence/recall-1.json")
     second = _read_text(root, "precedence/recall-2.json")
@@ -353,9 +479,11 @@ def check_precedence(root: Path) -> None:
         raise Fail("nondet")
     recall = _loads(first, "precedence/recall-1.json")
     _require_status(recall, "precedence/recall-1.json")
+    _grade_recall_events(root, "precedence", "events-1.jsonl", SCOPE_ORDER, "deploy window")
+    _grade_recall_events(root, "precedence", "events-2.jsonl", SCOPE_ORDER, "deploy window")
     # Second instrument: the raw per-project reads, bypassing the adapter entirely.
     raw = {s: _read_json(root, "precedence/raw-%s.json" % s) for s in SCOPE_ORDER}
-    _require_raw_provenance(root, "precedence", raw)
+    _require_raw_provenance(root, "precedence", raw, origin)
     # SCOPE_ORDER is a non-empty constant, so the intersection always has four operands: an
     # `if ids else []` fallback here would be provably dead (class-16 sweep).
     ids = [{e["path"] for e in raw[s]} for s in SCOPE_ORDER]
@@ -382,7 +510,7 @@ def check_precedence(root: Path) -> None:
             raise Fail("shadow", sid=sid, scope=scope)
 
 
-def check_write_scope(root: Path) -> None:
+def check_write_scope(root: Path, origin: str) -> None:
     """Assertion 3 — the write landed in agent--A only, and the retry was a no-op."""
     write = _read_json(root, "write-scope/write.json")
     _require_status(write, "write-scope/write.json")
@@ -399,13 +527,28 @@ def check_write_scope(root: Path) -> None:
     ).hexdigest()[:16] + ".md"
     if page_path != want:
         raise Fail("write_path_derived", got=page_path, want=want)
+    record = _read_json(root, "write-scope/record.json")
+    record_key = {field: record.get(field) for field in ("session", "turn", "event_id")}
+    if record_key != key:
+        raise Fail("write_record", field="idempotency key", got=record_key, want=key)
+    expected_type = {
+        "body": record.get("body"),
+        "kind": record.get("kind", "fact"),
+        "tier": record.get("tier", "semantic"),
+    }
+    if (not isinstance(expected_type["body"], str) or not expected_type["body"]
+            or expected_type["kind"] != "fact" or expected_type["tier"] != "semantic"):
+        raise Fail("write_record", field="content/type", got=expected_type,
+                   want={"body": "non-empty string", "kind": "fact", "tier": "semantic"})
+    _grade_write_events(root, "events-write.jsonl", page_path, key, retry=False)
+    _grade_write_events(root, "events-retry.jsonl", page_path, key, retry=True)
     raw = {s: _read_json(root, "write-scope/raw-%s.json" % s) for s in SCOPE_ORDER}
     # `PageSummary` (`crates/ai-memory-store/src/reader.rs:1174-1185`) carries no project field, so
     # this leg's raw reads CANNOT be provenance-checked from their payload the way the search legs
     # are. The URL each read was fetched from is recorded beside it instead (F-5).
     want_projects = _leg_projects(root, "write-scope")
     for scope in SCOPE_ORDER:
-        _require_raw_url(root, "write-scope", scope, *want_projects[scope])
+        _require_raw_url(root, "write-scope", scope, *want_projects[scope], origin)
     for scope in SCOPE_ORDER[1:]:
         if any(e["path"] == page_path for e in raw[scope]):
             raise Fail("write_found", scope=scope)
@@ -419,7 +562,7 @@ def check_write_scope(root: Path) -> None:
                    got="kind=%s tier=%s" % (found[0].get("kind"), found[0].get("tier")))
 
 
-def check_leak(root: Path) -> None:
+def check_leak(root: Path, origin: str) -> None:
     """Assertion 4 — staged honeytokens never cross a scope boundary they are not authorized for.
 
     The oracle self-tests in both directions (AF-AP-52): the forbidden tokens must be PRESENT in
@@ -432,9 +575,10 @@ def check_leak(root: Path) -> None:
     recall_text = _read_text(root, "leak/recall.json")
     recall = _loads(recall_text, "leak/recall.json")
     _require_status(recall, "leak/recall.json")
+    _grade_recall_events(root, "leak", "events.jsonl", LEAK_AUTHORIZED, "honeytoken")
     raw_text = {s: _read_text(root, "leak/raw-%s.json" % s) for s in SCOPE_ORDER}
     _require_raw_provenance(root, "leak",
-                            {s: _loads(raw_text[s], "leak/raw-%s.json" % s) for s in SCOPE_ORDER})
+                            {s: _loads(raw_text[s], "leak/raw-%s.json" % s) for s in SCOPE_ORDER}, origin)
     for scope in LEAK_FORBIDDEN:
         token = tokens[scope]
         if token not in raw_text[scope]:
@@ -488,26 +632,67 @@ def check_denied(root: Path) -> None:
 
 
 def _check_expected_files(root: Path) -> None:
-    """Reject files the runner does not produce; otherwise a sibling can hide ungraded evidence."""
+    """Require exactly the runner's regular-file evidence leaves, including every graded event."""
+    expected_root = {"substrate.json", "PROVENANCE.md"}
+    actual_root = set()
+    leg_entries = set()
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        raise Fail("file", name="evidence")
+    for entry in entries:
+        if entry.name in LEGS:
+            try:
+                if not stat.S_ISDIR(entry.lstat().st_mode):
+                    raise Fail("file", name=entry.name)
+            except OSError:
+                raise Fail("file", name=entry.name)
+            leg_entries.add(entry.name)
+            continue
+        actual_root.add(entry.name)
+    for name in sorted(expected_root - actual_root):
+        raise Fail("file", name=name)
+    for name in sorted(actual_root - expected_root):
+        raise Fail("unexpected_file", name=name)
+    for leg in sorted(set(EXPECTED_FILES) - leg_entries):
+        raise Fail("file", name=leg)
+    for name in sorted(expected_root):
+        _read_text(root, name)
     for leg, expected in EXPECTED_FILES.items():
         directory = root / leg
         try:
-            names = {entry.name for entry in directory.iterdir()}
+            entries = list(directory.rglob("*"))
         except OSError:
             raise Fail("file", name=leg)
-        unexpected = sorted(names - expected)
-        if unexpected:
-            raise Fail("unexpected_file", name="%s/%s" % (leg, unexpected[0]))
+        for entry in entries:
+            rel = entry.relative_to(directory).as_posix()
+            try:
+                mode = entry.lstat().st_mode
+            except OSError:
+                raise Fail("file", name="%s/%s" % (leg, rel))
+            if stat.S_ISDIR(mode):
+                continue
+            if rel not in expected:
+                raise Fail("unexpected_file", name="%s/%s" % (leg, rel))
+            if not stat.S_ISREG(mode):
+                raise Fail("file", name="%s/%s" % (leg, rel))
+        for name in sorted(expected):
+            path = directory / name
+            try:
+                if not stat.S_ISREG(path.lstat().st_mode):
+                    raise Fail("file", name="%s/%s" % (leg, name))
+            except OSError:
+                raise Fail("file", name="%s/%s" % (leg, name))
 
 
-def _graded(leg: str, check, root: Path):
+def _graded(leg: str, check, root: Path, *args):
     """Run one check; a hostile bundle SHAPE becomes a named reason, never a traceback (F-10).
 
     The module's contract is one reason line per failure — a traceback gives the operator nothing
     to paste and breaks every consumer that reads the last stdout line.
     """
     try:
-        return check(root)
+        return check(root, *args)
     except (KeyError, TypeError, AttributeError, IndexError, ValueError) as exc:
         raise Fail("shape", leg=leg, detail="%s: %s" % (type(exc).__name__, exc))
 
@@ -520,9 +705,11 @@ def run(root: Path) -> str:
         raise Deferred()
     _check_expected_files(root)
     substrate = _graded("substrate", check_substrate, root)
-    for name, check in (("denied", check_denied), ("precedence", check_precedence),
-                        ("write-scope", check_write_scope), ("leak", check_leak)):
-        _graded(name, check, root)
+    origin = substrate["origin"]
+    _graded("denied", check_denied, root)
+    _graded("precedence", check_precedence, root, origin)
+    _graded("write-scope", check_write_scope, root, origin)
+    _graded("leak", check_leak, root, origin)
     return "PASS: S0-06 four-scope - 4/4 assertions, substrate ai-memory %s@%s" % (
         substrate["version"],
         substrate["commit"][:8],

@@ -3,7 +3,7 @@
     "kind": "decision",
     "path": "notes/deploy-window.md",
     "project": "_global",
-    "rank": -1.3800000000000001,
+    "rank": -1.2,
     "snippet": "The company deploy window is Tuesday 09:00-11:00 UTC.",
     "title": "Deploy window (company variant)",
     "workspace": "factory"

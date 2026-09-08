@@ -284,7 +284,7 @@ class FactoryMemory:
         return binding, authorized
 
     # ---- HTTP ---------------------------------------------------------------
-    def _request(self, method, path, body=None):
+    def _request(self, method, path, body=None, event_path=None, event_fields=None):
         url = self._base_url + path
         data = None
         headers = {"Accept": "application/json"}
@@ -293,20 +293,22 @@ class FactoryMemory:
             headers["Content-Type"] = "application/json"
         if self._token:
             headers["Authorization"] = "Bearer " + self._token
-        self._emit("http_request", "substrate: request issued", method=method, path=path)
+        self._emit("http_request", "substrate: request issued", method=method,
+                   path=path if event_path is None else event_path, **(event_fields or {}))
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def _search(self, workspace, project, query, limit):
-        # DOCUMENTED LIMIT (F-25): `_request` emits this whole path, query string included, so the
-        # caller's recall text is written into the decision log. In this proof the queries are
-        # fixed literals; a production deployment whose recall text is model- or user-derived must
-        # scrub the query before this event reaches a shared sink.
         qs = urllib.parse.urlencode(
             {"q": query, "workspace": workspace, "project": project, "limit": limit}
         )
-        return self._request("GET", "/api/v1/search?" + qs)
+        # The request carries the caller's query; telemetry carries only the route and a stable
+        # digest, so event sinks can correlate equal searches without receiving query text (F-25).
+        query_sha256_16 = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+        return self._request("GET", "/api/v1/search?" + qs,
+                             event_path="/api/v1/search",
+                             event_fields={"query_sha256_16": query_sha256_16})
 
     def _page_times(self, workspace, project):
         listing = self._request(
@@ -399,7 +401,8 @@ class FactoryMemory:
                        scope=active_scope, error_type=type(exc).__name__)
             return dict(base, status="degraded", reason=REASONS["write_degraded"], page_id=None)
         if page_path in existing:
-            self._emit("write_noop", REASONS["write_noop"], page_path=page_path, key=key)
+            self._emit("write_noop", REASONS["write_noop"], scope=active_scope,
+                       project=project, page_path=page_path, key=key)
             return dict(base, reason=REASONS["write_noop"], page_id=None)
         body = {
             "workspace": workspace,
@@ -417,7 +420,7 @@ class FactoryMemory:
             self._emit("write_degraded", REASONS["write_degraded"],
                        scope=active_scope, error_type=type(exc).__name__)
             return dict(base, status="degraded", reason=REASONS["write_degraded"], page_id=None)
-        self._emit("write_committed", REASONS["write_ok"],
+        self._emit("write_committed", REASONS["write_ok"], scope=active_scope,
                    page_path=page_path, project=project, key=key)
         return dict(base, reason=REASONS["write_ok"], page_id=resp.get("page_id"))
 

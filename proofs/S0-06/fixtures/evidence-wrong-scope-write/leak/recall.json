@@ -9,7 +9,7 @@
   "reason": "recall: complete",
   "records": [
     {
-      "confidence": -1.4,
+      "confidence": -0.92,
       "provenance": {
         "kind": "decision",
         "precedence_rank": 0,
@@ -24,7 +24,7 @@
       "timestamp": "2026-09-05T09:14:02Z"
     },
     {
-      "confidence": -1.47,
+      "confidence": -0.97,
       "provenance": {
         "kind": "decision",
         "precedence_rank": 1,

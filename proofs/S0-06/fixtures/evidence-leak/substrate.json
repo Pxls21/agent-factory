@@ -5,6 +5,7 @@
   "commit": "73715b6f1b2f0abb0a8b0ed47c1f69b1bd1b806e",
   "component": "ai-memory",
   "data_dir": "/tmp/s0-06-run/data",
+  "origin": "http://127.0.0.1:8765",
   "port": 8765,
   "posture": {
     "AI_MEMORY_AUTO_IMPROVE__REQUIRE_APPROVAL": "true",

@@ -9,7 +9,7 @@
   "reason": "recall: complete",
   "records": [
     {
-      "confidence": -1.4,
+      "confidence": -0.92,
       "provenance": {
         "kind": "decision",
         "precedence_rank": 0,
@@ -24,7 +24,7 @@
       "timestamp": "2026-09-05T09:14:02Z"
     },
     {
-      "confidence": -1.47,
+      "confidence": -0.97,
       "provenance": {
         "kind": "decision",
         "precedence_rank": 1,
@@ -39,17 +39,16 @@
       "timestamp": "2026-09-04T17:41:55Z"
     },
     {
-      "confidence": -1.47,
+      "confidence": -1.02,
       "provenance": {
         "kind": "decision",
-        "precedence_rank": 1,
-        "project": "project--p-atlas",
+        "project": "team--t-core",
         "shadowed_scopes": [],
         "snippet": "honeytoken HT-team-c52e6f04 staged in the team scope.",
         "title": "Canary (team)",
         "workspace": "factory"
       },
-      "scope": "project",
+      "scope": "team",
       "stable_id": "canaries/team.md",
       "timestamp": "2026-09-03T11:07:30Z"
     }

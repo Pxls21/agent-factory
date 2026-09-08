@@ -3,7 +3,7 @@
     "kind": "decision",
     "path": "notes/deploy-window.md",
     "project": "team--t-core",
-    "rank": -1.27,
+    "rank": -1.15,
     "snippet": "The team deploy window is Tuesday 09:00-11:00 UTC.",
     "title": "Deploy window (team variant)",
     "workspace": "factory"

@@ -1,0 +1,10 @@
+{"agent": "a-alpha", "authorized_scopes": ["agent", "project", "team", "company"], "event": "scope_tuple_authorized", "reason": "authz: tuple matched the committed table", "seq": 1}
+{"event": "http_request", "method": "GET", "path": "/api/v1/search", "query_sha256_16": "53e6753e6d930aa7", "reason": "substrate: request issued", "seq": 2}
+{"event": "http_request", "method": "GET", "path": "/api/v1/workspaces/factory/projects/agent--a-alpha/pages", "reason": "substrate: request issued", "seq": 3}
+{"event": "http_request", "method": "GET", "path": "/api/v1/search", "query_sha256_16": "53e6753e6d930aa7", "reason": "substrate: request issued", "seq": 4}
+{"event": "http_request", "method": "GET", "path": "/api/v1/workspaces/factory/projects/project--p-atlas/pages", "reason": "substrate: request issued", "seq": 5}
+{"event": "http_request", "method": "GET", "path": "/api/v1/search", "query_sha256_16": "53e6753e6d930aa7", "reason": "substrate: request issued", "seq": 6}
+{"event": "http_request", "method": "GET", "path": "/api/v1/workspaces/factory/projects/team--t-core/pages", "reason": "substrate: request issued", "seq": 7}
+{"event": "http_request", "method": "GET", "path": "/api/v1/search", "query_sha256_16": "53e6753e6d930aa7", "reason": "substrate: request issued", "seq": 8}
+{"event": "http_request", "method": "GET", "path": "/api/v1/workspaces/factory/projects/_global/pages", "reason": "substrate: request issued", "seq": 9}
+{"degraded_scopes": [], "event": "recall_complete", "reason": "recall: complete", "record_count": 5, "seq": 10}

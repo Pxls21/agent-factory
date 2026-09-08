@@ -3,7 +3,7 @@
     "kind": "decision",
     "path": "canaries/project.md",
     "project": "project--p-atlas",
-    "rank": -1.47,
+    "rank": -0.97,
     "snippet": "honeytoken HT-project-8b40d17c staged in the project scope.",
     "title": "Canary (project)",
     "workspace": "factory"

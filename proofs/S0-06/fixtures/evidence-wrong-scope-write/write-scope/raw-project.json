@@ -1,9 +1,23 @@
 [
   {
-    "kind": "fact",
+    "kind": "decision",
+    "path": "notes/deploy-window.md",
+    "tier": "semantic",
+    "title": "Deploy window (project variant)",
+    "updated_at": "2026-09-04T17:41:55Z"
+  },
+  {
+    "kind": "decision",
     "path": "notes/project-only.md",
     "tier": "semantic",
     "title": "Project only",
+    "updated_at": "2026-09-04T17:41:55Z"
+  },
+  {
+    "kind": "decision",
+    "path": "canaries/project.md",
+    "tier": "semantic",
+    "title": "Canary (project)",
     "updated_at": "2026-09-04T17:41:55Z"
   },
   {
@@ -11,6 +25,6 @@
     "path": "observations/2c1c1acbd4e41f93.md",
     "tier": "semantic",
     "title": "Retention decision",
-    "updated_at": "2026-09-05T09:20:45Z"
+    "updated_at": "2026-09-05T09:30:00Z"
   }
 ]

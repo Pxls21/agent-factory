@@ -152,6 +152,7 @@ cat > "$RUNDIR/substrate.json" <<EOF
   "commit": "$PINNED_COMMIT",
   "component": "ai-memory",
   "data_dir": "$DATA_DIR",
+  "origin": "http://127.0.0.1:$PORT",
   "port": $PORT,
   "posture": {
     "AI_MEMORY_AUTO_IMPROVE__REQUIRE_APPROVAL": "true",

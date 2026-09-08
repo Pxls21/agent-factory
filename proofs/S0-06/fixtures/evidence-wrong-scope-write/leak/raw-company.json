@@ -3,7 +3,7 @@
     "kind": "decision",
     "path": "canaries/company.md",
     "project": "_global",
-    "rank": -1.6099999999999999,
+    "rank": -1.07,
     "snippet": "honeytoken HT-company-19ad7b3e staged in the company scope.",
     "title": "Canary (company)",
     "workspace": "factory"
