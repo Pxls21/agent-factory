@@ -16,6 +16,7 @@ never surfaces", "non-JSON raw/raw_b64 dropped", "agent_exit_code hardcoded",
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import os
 import signal
@@ -1428,13 +1429,21 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
 
         _orig_readlink = os.readlink
         _rl_calls = [0]
+        _first_ok = [None]
+        _sites = []
         def _transient_fail_readlink(path):
             if "/proc/self/exe" in str(path):
                 return "/SELF/should-never-be-sampled"
             if "/proc/" in str(path) and "/exe" in str(path):
                 _rl_calls[0] += 1
+                # N5i-F10: the CALLER's line, so the test can assert the
+                # DISTRIBUTION of the reads over the probe's call sites, not just
+                # their total.  No literal line number is ever asserted.
+                _sites.append(sys._getframe(1).f_lineno)
                 if _rl_calls[0] <= 3:
                     raise OSError("transient failure")
+                if _first_ok[0] is None:
+                    _first_ok[0] = _rl_calls[0]
             return _orig_readlink(path)
 
         with unittest.mock.patch.object(os, 'readlink', _transient_fail_readlink):
@@ -1447,6 +1456,8 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
             # the mechanism, asserted by the test: 3 failing attempts + the 4th
             # (successful) early attempt + the one a2c-triggered late sample.
             print(f"RL_CALLS={{_rl_calls[0]}}", flush=True)
+            print(f"FIRST_OK={{_first_ok[0]}}", flush=True)
+            print(f"SITES={{_sites}}", flush=True)
             sys.exit(_rc)
     """))
 
@@ -1455,9 +1466,30 @@ def test_probe_early_retry_recovers_from_transient_readlink_failure(tmp_path, ag
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert r.returncode == 0, f"expected exit 0 (retry recovered), got {r.returncode}: {r.stderr}"
-    assert "RL_CALLS=5" in r.stdout.splitlines(), (
+    lines = r.stdout.splitlines()
+    assert "RL_CALLS=5" in lines, (
         f"expected 5 child /proc/<pid>/exe reads (3 transient failures, the recovering "
         f"attempt, the late sample); got {r.stdout!r}"
+    )
+    # N5i-F10 (VERIFY-N5h DEVIATION 1): RL_CALLS pins a TOTAL, and a shape change
+    # that REDISTRIBUTES the reads keeps the total.  Mutant M23-EXTRA-EARLY-READ
+    # (one more child /proc/<pid>/exe read before the retry loop) eats one of the
+    # three transient failures, leaves the loop retrying twice instead of three
+    # times, and walked past `RL_CALLS=5` — this test passed alone under it.  The
+    # two assertions below are the distribution: the first four reads must all come
+    # from the SAME call site (the retry loop) and the fifth from a different one.
+    assert "FIRST_OK=4" in lines, (
+        f"the retry loop did not absorb all three failures itself; got {r.stdout!r}"
+    )
+    sites = json.loads(next(ln[len("SITES="):] for ln in lines if ln.startswith("SITES=")))
+    assert len(sites) == 5, sites
+    assert len(set(sites[:4])) == 1, (
+        f"the four early reads came from {len(set(sites[:4]))} different call sites "
+        f"in acp_probe.py (lines {sites[:4]}) — a read was added before or inside "
+        f"the retry loop, so the loop is no longer what absorbs the failures"
+    )
+    assert sites[4] != sites[0], (
+        f"the late sample fired from the early loop's own line {sites[4]}"
     )
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     assert rid["agent_interpreter_realpath"] is not None, (
@@ -2193,22 +2225,39 @@ def test_sha256_file_refuses_a_non_regular_file(tmp_path):
 
 # ---- N5h-#10: the stderr drain failure is recorded, not swallowed ----
 
-def test_probe_reports_a_stderr_drain_failure(tmp_path, agent_result):
-    """N5h-#10 (SWEEP-prod row 10).  A directory at agent-stderr.txt makes the drain
-    thread's open() raise; `except Exception: pass` killed the thread silently and
-    the probe still exited 0 with NO probe_error (the PIN run, reproduced this
-    round).  Now: rc 1 and probe_error naming the exception class and the path.
+@pytest.mark.parametrize("kind,exc_name,err", [
+    ("dir", "IsADirectoryError", errno.EISDIR),
+    ("fifo", "OSError", errno.ENXIO),
+])
+def test_probe_reports_a_stderr_drain_failure(tmp_path, agent_result, kind, exc_name, err):
+    """N5h-#10 (SWEEP-prod row 10) + N5i-F1/F5.  A directory at agent-stderr.txt
+    makes the drain thread's open() RAISE; `except Exception: pass` killed the
+    thread silently and the probe exited 0 with NO probe_error.  A FIFO there does
+    not raise at all — open() BLOCKS, so on the PIN the fifo case was rc 0 with
+    probe_error ABSENT and a 0-byte FIFO (measured this round: rc=0 elapsed=3.1s),
+    byte-for-byte the signature row 10 named as the defect.  _open_regular closes
+    both: O_NONBLOCK makes a reader-less FIFO ENXIO, a directory is still EISDIR.
+    The errno TEXT comes from libc (os.strerror), never from a copy of the probe's
+    own message.  The elapsed bound is the second half of the claim — the drain
+    thread is a daemon and the probe must still EXIT.
     NEGATIVE CONTROL: the same agent with a writable stderr path exits 0 with no
-    probe_error — the drain error is not being invented on every run."""
+    probe_error — the drain error is not invented on every run."""
     framedir = tmp_path / "capture"
     framedir.mkdir()
-    (framedir / "agent-stderr.txt").mkdir()
+    hostile = framedir / "agent-stderr.txt"
+    if kind == "dir":
+        hostile.mkdir()
+    else:
+        os.mkfifo(str(hostile))
+    t0 = time.monotonic()
     r, _ = _run_probe(tmp_path, agent_result, timeout_override=5)
+    elapsed = time.monotonic() - t0
     assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert elapsed < 10, f"the probe did not exit promptly: {elapsed:.1f}s"
     rid = json.loads((framedir / "runtime-identity.json").read_text())
     expected = (
-        f"stderr drain failed: IsADirectoryError: [Errno 21] Is a directory: "
-        f"'{framedir / 'agent-stderr.txt'}'"
+        f"stderr drain failed: {exc_name}: [Errno {err}] {os.strerror(err)}: "
+        f"'{hostile}'"
     )
     assert rid["probe_error"] == expected, f"got {rid.get('probe_error')!r}"
 
@@ -2299,13 +2348,24 @@ def test_probe_redaction_pattern_equals_the_pin():
 
 # ---- N5h-#39: the ACP_PROBE_TIMEOUT domain is closed ----
 
+_DIGITS = "must be plain decimal digits (e.g. '30' or '0.5'), got %s"
+
+
 @pytest.mark.parametrize("raw,expected", [
-    ("3_0", "is not a valid number: '3_0'"),
-    (" 30 ", "is not a valid number: ' 30 '"),
+    # float() PARSES these to a finite positive number — the reason they are
+    # rejected is the pinned syntax, not "not a number" (N5i-F6).
+    ("3_0", _DIGITS % "'3_0'"),
+    (" 30 ", _DIGITS % "' 30 '"),
+    ("+30", _DIGITS % "'+30'"),
+    ("1e3", _DIGITS % "'1e3'"),
+    (".5", _DIGITS % "'.5'"),
+    ("5.", _DIGITS % "'5.'"),
+    ("1_000", _DIGITS % "'1_000'"),
+    pytest.param("30\n", _DIGITS % "'30\\n'", id="trailing_newline"),
+    # float() RAISES on these — the pre-existing wording owns them.
     ("30s", "is not a valid number: '30s'"),
     ("0x10", "is not a valid number: '0x10'"),
-    ("+30", "is not a valid number: '+30'"),
-    ("1e3", "is not a valid number: '1e3'"),
+    # float() parses them to a non-finite / non-positive number.
     ("nan", "must be a finite float > 0, got 'nan'"),
     ("inf", "must be a finite float > 0, got 'inf'"),
     ("-5", "must be a finite float > 0, got '-5'"),
@@ -2319,7 +2379,12 @@ def test_probe_timeout_rejects_forms_outside_the_domain(tmp_path, agent_result, 
     is now re.fullmatch(r"[0-9]+(\\.[0-9]+)?") BEFORE the conversion, so float()'s
     leniency is unreachable; isfinite still guards the FINAL value because a 400-digit
     string passes the regex and float()s to inf (found this round, not in the sweep).
-    Both message classes are preserved exactly."""
+    N5i-F6: THREE message classes now, because two of them were one lie: "1e3 is
+    not a valid number" is false (it is 1000.0) and the feature contradicted itself
+    — 1e400, also scientific notation, got the other wording purely because float()
+    overflows.  The two pre-existing wordings still own exactly the cases they
+    owned; everything float() parses to a finite positive number is now told the
+    real reason.  Measured on the PIN: 9 forms carried the false wording."""
     r, _ = _run_probe(tmp_path, agent_result, timeout_override=raw)
     assert r.returncode == 64, f"expected exit 64 for {raw!r}, got {r.returncode}"
     assert r.stderr.strip() == f"acp_probe: ACP_PROBE_TIMEOUT {expected}"
@@ -2336,37 +2401,623 @@ def test_probe_timeout_accepts_the_domain(tmp_path, agent_result, raw):
 
 # ---- N5h-#40: the bytecode flag is the runtime state, not a string mirror ----
 
-@pytest.mark.parametrize("value", ["1", "2", "true", "0", "", None])
-def test_identity_records_the_runtime_bytecode_state_not_the_string(tmp_path, agent_result, value):
+@pytest.mark.parametrize("value,dash_b,force_m3", [
+    ("1", False, False),
+    ("2", False, False),
+    ("true", False, False),
+    ("0", False, False),
+    ("", False, False),
+    (None, False, False),
+    # N5i-F7: the -B FLAG, with the variable unset — the case VERIFY-N5h proved by
+    # hand and no committed test covered.
+    pytest.param(None, True, False, id="dash_B_env_unset"),
+    # N5i-F7: the SECOND site, in the M3 last-resort handler.  Mutant
+    # BYTECODE-M3-ONLY (revert only that line to the string mirror) survived the
+    # whole PIN suite; under -B with the variable unset the mirror reads False
+    # while CPython reports True, so this case kills it.
+    pytest.param(None, True, True, id="dash_B_at_the_m3_site"),
+])
+def test_identity_records_the_runtime_bytecode_state_not_the_string(
+        tmp_path, agent_result, value, dash_b, force_m3):
     """N5h-#40 (SWEEP-prod row 40).  `os.environ.get(...) == "1"` was a mirror of the
     string, not the state: CPython also disables bytecode writing for "2" and "true",
     so the PIN recorded python_dont_write_bytecode=false while writing WAS disabled
     (measured both ways this round).  The oracle here is CPython itself — a child
-    interpreter started with the SAME environment reports its own
-    sys.dont_write_bytecode — never a hardcoded expectation."""
+    interpreter started with the SAME flags and environment reports its own
+    sys.dont_write_bytecode — never a hardcoded expectation.  The M3 case forces the
+    last-resort handler by planting a directory at env.json, so the value read back
+    is written by the handler's own line, not by _write_evidence."""
+    capture = tmp_path / "capture"
+    capture.mkdir()
     env = os.environ.copy()
     env["S0_01_AGENT"] = agent_result
-    env["S0_01_FRAMEDIR"] = str(tmp_path / "capture")
+    env["S0_01_FRAMEDIR"] = str(capture)
     env["ACP_PROBE_TIMEOUT"] = "5"
     if value is None:
         env.pop("PYTHONDONTWRITEBYTECODE", None)
     else:
         env["PYTHONDONTWRITEBYTECODE"] = value
-    (tmp_path / "capture").mkdir()
+    flags = ["-B"] if dash_b else []
+    if force_m3:
+        (capture / "env.json").mkdir()
 
     oracle = subprocess.run(
-        [sys.executable, "-c", "import sys; print(sys.dont_write_bytecode)"],
+        [sys.executable] + flags + ["-c", "import sys; print(sys.dont_write_bytecode)"],
         capture_output=True, text=True, timeout=30, env=env,
     )
     assert oracle.returncode == 0, oracle.stderr
     expected = {"True": True, "False": False}[oracle.stdout.strip()]
 
     r = subprocess.run(
-        [sys.executable, str(PROBE)], capture_output=True, text=True, timeout=30, env=env,
+        [sys.executable] + flags + [str(PROBE)],
+        capture_output=True, text=True, timeout=30, env=env,
     )
-    assert r.returncode == 0, f"probe failed: {r.stderr}"
-    rid = json.loads((tmp_path / "capture" / "runtime-identity.json").read_text())
+    assert r.returncode == (1 if force_m3 else 0), f"probe rc={r.returncode}: {r.stderr}"
+    rid = json.loads((capture / "runtime-identity.json").read_text())
+    if force_m3:
+        assert rid["probe_error"].startswith("IsADirectoryError: "), (
+            f"the M3 path did not fire: {rid.get('probe_error')!r}"
+        )
     assert rid["python_dont_write_bytecode"] is expected, (
-        f"PYTHONDONTWRITEBYTECODE={value!r}: recorded "
+        f"PYTHONDONTWRITEBYTECODE={value!r} flags={flags}: recorded "
         f"{rid['python_dont_write_bytecode']!r}, CPython reports {expected!r}"
     )
+
+
+# ---- N5i-F5: the WRITE class — no evidence write can block ----
+
+def _hostile_env(agent, framedir, timeout="5"):
+    return {
+        "S0_01_AGENT": agent,
+        "S0_01_FRAMEDIR": str(framedir),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "ACP_PROBE_TIMEOUT": timeout,
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+
+
+@pytest.mark.parametrize("target", ["runtime-identity.json", "env.json", "timeline.jsonl"])
+def test_probe_evidence_writes_refuse_a_non_regular_path(tmp_path, agent_result, target):
+    """N5i-F5 (VERIFY-N5h): the read side was closed in round 11 and the WRITE side
+    was not.  A FIFO planted at any of the three JSON outputs made open() block
+    forever — measured on the PIN, one process per target, all three rc=124 at the
+    12 s watchdog with the probe still alive.  Every write now goes through
+    _open_regular, so the refusal is ENXIO and the probe exits 1 with the reason on
+    stderr.  The planted FIFO is NEVER read back (that would hang the test); the
+    assertions are the exit code, the bound, the named stderr line, and the other
+    two files still landing — a single planted path must not cost the rest.
+    The subprocess timeout of 5 s IS the regression detector: a hang fails here."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    os.mkfifo(str(framedir / target))
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                       timeout=5, env=_hostile_env(agent_result, framedir))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+    assert f"[Errno {errno.ENXIO}] {os.strerror(errno.ENXIO)}: '{framedir / target}'" in r.stderr, (
+        f"the refusal does not name the path and reason: {r.stderr!r}"
+    )
+    for other in ("runtime-identity.json", "env.json", "timeline.jsonl"):
+        if other != target:
+            assert (framedir / other).is_file(), (
+                f"{other} was lost because {target} was hostile: {sorted(os.listdir(framedir))}"
+            )
+
+
+def test_probe_timeout_reject_write_refuses_a_non_regular_path(tmp_path, agent_result):
+    """N5i-F5, the receiver the round-11 proposal would have missed: the
+    ACP_PROBE_TIMEOUT reject branch writes runtime-identity.json of its own before
+    exiting 64.  On the PIN, a FIFO there plus a rejected timeout hung the probe
+    (rc=124 at 12 s, measured) — the agent had not even been spawned.  Now the
+    refusal is named and the probe exits 1 through the last-resort handler.
+    CONTROL: the same rejected timeout with a clean framedir still exits 64 with
+    the pinned message, so this test cannot pass by breaking the reject path."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    os.mkfifo(str(framedir / "runtime-identity.json"))
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                       timeout=5, env=_hostile_env(agent_result, framedir, timeout="30s"))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+    assert f"[Errno {errno.ENXIO}]" in r.stderr, r.stderr
+
+    control = tmp_path / "control"
+    control.mkdir()
+    r_ok = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                          timeout=5, env=_hostile_env(agent_result, control, timeout="30s"))
+    assert r_ok.returncode == 64, f"control: {r_ok.returncode}: {r_ok.stderr}"
+    assert r_ok.stderr.strip() == (
+        "acp_probe: ACP_PROBE_TIMEOUT is not a valid number: '30s'")
+
+
+# ---- N5i-F4: the probe's own file is read ONCE, under a guard ----
+
+@pytest.mark.parametrize("also_break_env", [False, True], ids=["clean_exit", "through_the_m3_handler"])
+def test_probe_survives_its_own_file_being_replaced_mid_run(tmp_path, agent_result, also_break_env):
+    """N5i-F4 (VERIFY-N5h, reproduced): an agent that replaces the probe's own
+    script with a FIFO hung the PIN — _write_evidence re-read realpath(__file__),
+    the OSError escaped into the M3 handler, the handler re-ran the SAME read, and
+    the traceback printer's linecache blocked on the FIFO: rc=124 at 12 s with
+    ZERO evidence files (measured).  The hash is now taken once at import, before
+    the agent exists, so the run completes AND the recorded digest is the digest of
+    the bytes that actually ran — asserted here against a hash the test took itself
+    before the swap.  A private tree copy is used: the repo's probe is never touched.
+
+    The second case is the PIN's mechanism in its purest form: a directory at
+    env.json ALSO drives the last-resort handler, so the handler's own identity
+    write is what reads probe_sha256.  On the PIN that read is the second OSError,
+    raised inside the `except`, whose traceback printer blocks in linecache on the
+    FIFO — and a mutant that puts the live re-read back in the handler survives the
+    whole suite without this case (measured: N8_PROBE_HASH_REREAD, 99 passed)."""
+    import hashlib
+    tree = _probe_tree_copy(tmp_path)
+    probe = tree / "tools" / "acp_probe.py"
+    real_sha = hashlib.sha256(probe.read_bytes()).hexdigest()
+
+    agent = tmp_path / "agent_swaps_the_probe.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f"""\
+        import json, os, sys
+        p = {str(probe)!r}
+        os.unlink(p)
+        os.mkfifo(p)
+        for line in sys.stdin:
+            msg = json.loads(line.strip())
+            sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": msg["id"], "result": {{
+                "protocolVersion": 1,
+                "agentInfo": {{"name": "swap", "version": "0.0.1"}},
+                "agentCapabilities": {{}}}}}}) + "\\n")
+            sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """))
+    agent.chmod(0o755)
+
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    expected_files = ["runtime-identity.json", "timeline.jsonl", "agent-stderr.txt"]
+    if also_break_env:
+        (framedir / "env.json").mkdir()
+    else:
+        expected_files.append("env.json")
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True,
+                       timeout=5, env=_hostile_env(str(agent), framedir))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == (1 if also_break_env else 0), (
+        f"expected exit {1 if also_break_env else 0}, got {r.returncode}: {r.stderr}"
+    )
+    assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+    assert "Traceback" not in r.stderr, r.stderr
+    for name in expected_files:
+        assert (framedir / name).is_file(), f"{name} absent after the swap"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_sha256"] == real_sha, (
+        "the recorded digest is not the digest of the bytes that ran"
+    )
+    if also_break_env:
+        assert rid["probe_error"].startswith("IsADirectoryError: "), rid.get("probe_error")
+    import stat as _stat
+    assert _stat.S_ISFIFO(os.stat(str(probe)).st_mode), (
+        "the rig did not actually replace the probe — the attack never happened"
+    )
+
+
+def test_probe_unreadable_own_file_is_named_not_a_traceback(tmp_path, agent_result):
+    """N5i-F4, the other half: the probe's own file is ALREADY non-regular when the
+    module body runs (CPython holds the source; the path was swapped underneath it).
+    _PROBE_SHA256 is then None and probe_error must NAME it.  Driven by exec()ing
+    the real module source with __file__ pointing at a real FIFO — the same code
+    path a production launch takes, with the swap moved one step earlier.  On the
+    PIN this rig is rc=124 at 12 s with a traceback and zero evidence (measured);
+    after, rc 1 in 0.1 s with all four files.  NEGATIVE CONTROL: the same driver
+    without the swap exits 0 and records a real digest."""
+    tree = _probe_tree_copy(tmp_path)
+    probe = tree / "tools" / "acp_probe.py"
+
+    def _driver(swap):
+        d = tmp_path / f"driver_{int(swap)}.py"
+        d.write_text(textwrap.dedent(f"""\
+            import os, sys
+            p = {str(probe)!r}
+            src = open(p).read()
+            if {swap!r}:
+                os.unlink(p)
+                os.mkfifo(p)
+            g = {{"__file__": p, "__name__": "acp_probe_swapped"}}
+            exec(compile(src, p, "exec"), g)
+            try:
+                g["main"]()
+            except SystemExit as e:
+                sys.exit(e.code)
+        """))
+        return d
+
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    r_ok = subprocess.run([sys.executable, str(_driver(False))], capture_output=True,
+                          text=True, timeout=10,
+                          env=_hostile_env(agent_result, control_dir))
+    assert r_ok.returncode == 0, f"rig broken: {r_ok.returncode}: {r_ok.stderr}"
+    assert json.loads((control_dir / "runtime-identity.json").read_text())["probe_sha256"]
+
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(_driver(True))], capture_output=True,
+                       text=True, timeout=5, env=_hostile_env(agent_result, framedir))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+    assert "Traceback" not in r.stderr, r.stderr
+    for name in ("runtime-identity.json", "env.json", "timeline.jsonl", "agent-stderr.txt"):
+        assert (framedir / name).is_file(), f"{name} absent"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_sha256"] is None
+    assert rid["probe_error"] == (
+        f"probe file unreadable: OSError: not a regular file: {probe}"
+    ), f"got {rid.get('probe_error')!r}"
+
+
+# ---- N5i-F1/F9: a drain that BLOCKS, and the 3-second bound that lets a late one finish ----
+
+def _agent_with_grandchild(tmp_path, name, grandchild_body):
+    """An answering agent whose GRANDCHILD inherits the agent's stderr and outlives
+    it — the production shape behind both drain-bound tests: proc.wait() returns
+    while the stderr pipe is still open, so only the join's timeout bounds the wait."""
+    gc = tmp_path / f"{name}_gc.py"
+    gc.write_text(f"#!{sys.executable}\n" + textwrap.dedent(grandchild_body))
+    gc.chmod(0o755)
+    agent = tmp_path / f"{name}.py"
+    agent.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f"""\
+        import json, subprocess, sys
+        subprocess.Popen([{sys.executable!r}, {str(gc)!r}])
+        for line in sys.stdin:
+            msg = json.loads(line.strip())
+            sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": msg["id"], "result": {{
+                "protocolVersion": 1,
+                "agentInfo": {{"name": {name!r}, "version": "0.0.1"}},
+                "agentCapabilities": {{}}}}}}) + "\\n")
+            sys.stdout.flush()
+            break
+        sys.stdin.read()
+    """))
+    agent.chmod(0o755)
+    return str(agent)
+
+
+def test_probe_reports_a_drain_that_never_finishes(tmp_path):
+    """N5i-F1: `except Exception` only sees drain failures that RAISE.  A drain
+    still running when join(3) expires was invisible: on the PIN this exact rig
+    produced rc=0, agent-stderr.txt 0 bytes, probe_error ABSENT (measured) — a
+    silently truncated capture reported as success.  is_alive() after the join
+    names it.  The grandchild holds the agent's stderr open for 5 s (longer than
+    the 3 s join) and writes nothing, so the ONLY signal is the unfinished drain.
+    NEGATIVE CONTROL: the same agent without a surviving grandchild exits 0."""
+    agent = _agent_with_grandchild(tmp_path, "holds_stderr", """\
+        import time
+        time.sleep(5)
+    """)
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                       timeout=15, env=_hostile_env(agent, framedir))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert 2.5 < elapsed < 10, (
+        f"the probe did not wait the pinned 3 s for the drain, or did not exit: {elapsed:.1f}s"
+    )
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert rid["probe_error"] == (
+        "stderr drain failed: did not finish in 3s (the agent's stderr may still "
+        "be held open by a surviving child)"
+    ), f"got {rid.get('probe_error')!r}"
+
+    control = tmp_path / "control"
+    control.mkdir()
+    plain = _agent_with_grandchild(tmp_path, "no_survivor", """\
+        pass
+    """)
+    r_ok = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                          timeout=15, env=_hostile_env(plain, control))
+    assert r_ok.returncode == 0, f"control run failed: {r_ok.stderr}"
+    assert "probe_error" not in json.loads((control / "runtime-identity.json").read_text())
+
+
+def test_probe_drain_join_waits_for_a_late_writer(tmp_path):
+    """N5i-F9: nothing pinned the join's 3-second bound — mutant JOIN-ZERO
+    (join(timeout=0)) survived the whole PIN suite, because the 200 KB agent writes
+    its stderr BEFORE answering, so the drain has always finished by the time join
+    runs.  Here 128 KB arrives AFTER the response, from a grandchild that outlives
+    the agent by ~0.4 s: proc.wait() returns immediately and only the join keeps the
+    drain alive.  With the bound, every byte lands and the probe exits 0; with
+    join(timeout=0) the run is a truncated file plus a drain-failure probe_error.
+    The byte count is exact — a partial copy is not a pass."""
+    agent = _agent_with_grandchild(tmp_path, "late_writer", """\
+        import sys, time
+        sys.stderr.write("Y" * 65536)
+        sys.stderr.flush()
+        time.sleep(0.4)
+        sys.stderr.write("Z" * 65536)
+        sys.stderr.flush()
+    """)
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    t0 = time.monotonic()
+    r = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                       timeout=15, env=_hostile_env(agent, framedir))
+    elapsed = time.monotonic() - t0
+    assert r.returncode == 0, f"probe failed: {r.returncode}: {r.stderr}"
+    assert elapsed < 10, f"not bounded: {elapsed:.1f}s"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    assert "probe_error" not in rid, f"unexpected probe_error: {rid.get('probe_error')!r}"
+    body = (framedir / "agent-stderr.txt").read_bytes()
+    assert len(body) == 131072, f"stderr truncated: {len(body)} of 131072 bytes"
+    assert body == b"Y" * 65536 + b"Z" * 65536
+
+
+# ---- N5i-F2/F8: a second failure is appended, never dropped ----
+
+def test_probe_appends_a_drain_failure_to_an_earlier_error(tmp_path, agent_result):
+    """N5i-F2/F8 (VERIFY-N5h, reproduced): the fold was `if drain_error and
+    probe_error is None`, so any earlier error swallowed the drain failure with NO
+    residual.  Measured on the PIN with this exact pairing — a BrokenPipe on the c2a
+    write plus a directory at agent-stderr.txt — probe_error was the BrokenPipe text
+    alone and the IsADirectoryError appeared in none of the 12 identity keys.  Both
+    must now be visible, in first-error-first order.  The identity KEY SET is
+    unchanged (pins.NEGATIVE_IDENTITY_KEYS is not touched by this round)."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    (framedir / "agent-stderr.txt").mkdir()
+
+    wrapper = tmp_path / "broken_pipe_plus_drain.py"
+    wrapper.write_text(textwrap.dedent(f"""\
+        import sys, unittest.mock
+        sys.path.insert(0, {str(P / "tools")!r})
+        import acp_probe
+        import subprocess as _sub
+
+        _OrigPopen = _sub.Popen
+
+        class _PatchedPopen(_OrigPopen):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                def _raise_broken(*args, **kwargs):
+                    raise BrokenPipeError("simulated broken pipe")
+                self.stdin.write = _raise_broken
+
+        with unittest.mock.patch.object(_sub, 'Popen', _PatchedPopen):
+            try:
+                acp_probe.main()
+            except SystemExit as e:
+                sys.exit(e.code)
+    """))
+    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True,
+                       timeout=15, env=_hostile_env(agent_result, framedir))
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    rid = json.loads((framedir / "runtime-identity.json").read_text())
+    expected = (
+        "BrokenPipeError: agent process exited before c2a write landed; "
+        f"stderr drain failed: IsADirectoryError: [Errno {errno.EISDIR}] "
+        f"{os.strerror(errno.EISDIR)}: '{framedir / 'agent-stderr.txt'}'"
+    )
+    assert rid["probe_error"] == expected, f"got {rid.get('probe_error')!r}"
+
+    sys.path.insert(0, str(P))
+    import pins  # noqa: E402
+    assert set(rid) - {"probe_error"} == set(pins.NEGATIVE_IDENTITY_KEYS), (
+        f"identity keys drifted: {sorted(set(rid) - {'probe_error'})}"
+    )
+
+
+# ---- N5i-F13: the read AND write classes are held by a self-scan, not by a grep ----
+
+# Every file receiver in acp_probe.py that is NOT guarded, keyed by
+# (enclosing function, category, receiver expression) -> how many.  Line numbers are
+# deliberately NOT part of the key (VERIFY-CK12 F-CK12-05: line-keyed exemptions go
+# red on every unrelated edit and teach the next lane to re-number them).  Each entry
+# is here because the call cannot block, and says why:
+#   os.readlink  — reads a symlink's target; it never opens the file and cannot block
+#                  on a FIFO.  Three sites: the early retry loop, the a2c-triggered
+#                  sample, the EOF fallback.
+#   os.open in _open_regular — the guard's own implementation: O_NONBLOCK|O_NOFOLLOW
+#                  make the open itself non-blocking, and S_ISREG is checked on the
+#                  resulting descriptor one line later (asserted separately below).
+_GOLDEN_UNGUARDED_RECEIVERS = {
+    ("main", "os.readlink", "'/proc/%d/exe' % proc.pid"): 3,
+    ("_open_regular", "os.open", "path"): 1,
+}
+
+_READ_ATTRS = {"read_text", "read_bytes"}
+
+
+def _scan_file_receivers(src):
+    """Enumerate every file receiver in `src` and split them into guarded and not.
+
+    Categories: open() in a read or write mode, io.open, os.open, <expr>.open(),
+    .read_text/.read_bytes, json.load, os.readlink.  A receiver counts as GUARDED
+    when it goes through _open_regular, when it is a handle already bound by a
+    `with <examined call> as <name>`, or when the enclosing function stats the SAME
+    receiver and tests it with S_ISREG before the call (both shapes: the inline
+    S_ISREG(os.stat(x)...) and the two-step st = os.stat(x) ... S_ISREG(st...)).
+    Returns (examined, unguarded_counter, unguarded_lines)."""
+    import ast as _ast
+    import re as _re
+    from collections import Counter
+
+    tree = _ast.parse(src)
+    fns = [(n.name, n.lineno, n.end_lineno) for n in _ast.walk(tree)
+           if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))]
+    lines = src.splitlines()
+
+    def owner(ln):
+        best = None
+        for name, start, end in fns:
+            if start <= ln <= end and (best is None or start > best[1]):
+                best = (name, start, end)
+        return best if best else ("<module>", 1, len(lines))
+
+    def mode_of(node):
+        if len(node.args) > 1 and isinstance(node.args[1], _ast.Constant):
+            return str(node.args[1].value)
+        for kw in node.keywords:
+            if kw.arg == "mode" and isinstance(kw.value, _ast.Constant):
+                return str(kw.value.value)
+        return "r"
+
+    def classify(node):
+        """-> (category, receiver) or None."""
+        f = node.func
+        if isinstance(f, _ast.Name):
+            if f.id == "open":
+                m = mode_of(node)
+                cat = "open:w" if any(c in m for c in "wax+") else "open:r"
+                return cat, (_ast.unparse(node.args[0]) if node.args else "?")
+            if f.id == "_open_regular":
+                return "_open_regular", (_ast.unparse(node.args[0]) if node.args else "?")
+            return None
+        if isinstance(f, _ast.Attribute):
+            base = _ast.unparse(f.value)
+            if f.attr == "open":
+                if base in ("io", "os"):
+                    return f"{base}.open", (_ast.unparse(node.args[0]) if node.args else "?")
+                return "Path.open", base
+            if f.attr in _READ_ATTRS:
+                return f".{f.attr}", base
+            if f.attr == "load" and base == "json":
+                return "json.load", (_ast.unparse(node.args[0]) if node.args else "?")
+            if f.attr == "readlink" and base == "os":
+                return "os.readlink", (_ast.unparse(node.args[0]) if node.args else "?")
+        return None
+
+    # handles bound by `with <an examined call> as <name>`
+    handles = set()
+    for node in _ast.walk(tree):
+        if not isinstance(node, (_ast.With, _ast.AsyncWith)):
+            continue
+        for item in node.items:
+            if (isinstance(item.context_expr, _ast.Call)
+                    and isinstance(item.optional_vars, _ast.Name)
+                    and classify(item.context_expr)):
+                handles.add(item.optional_vars.id)
+
+    def guarded_by_isreg(prefix, recv):
+        r = _re.escape(recv)
+        if _re.search(r"S_ISREG\(\s*os\.f?stat\(\s*" + r + r"\s*\)", prefix):
+            return True
+        for m in _re.finditer(r"(\w+)\s*=\s*os\.f?stat\(\s*" + r + r"\s*\)", prefix):
+            if _re.search(r"S_ISREG\(\s*" + _re.escape(m.group(1)) + r"\b", prefix):
+                return True
+        return False
+
+    examined, unguarded, where = [], Counter(), []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        hit = classify(node)
+        if hit is None:
+            continue
+        cat, recv = hit
+        fname, start, _end = owner(node.lineno)
+        examined.append((node.lineno, cat, recv, fname))
+        if cat == "_open_regular" or recv in handles:
+            continue
+        prefix = "\n".join(lines[start - 1:node.lineno - 1])
+        if guarded_by_isreg(prefix, recv):
+            continue
+        unguarded[(fname, cat, recv)] += 1
+        where.append(f"{fname}:{node.lineno} {cat} {recv}")
+    return examined, unguarded, where
+
+
+def test_probe_every_file_receiver_is_guarded_or_committed():
+    """N5i-F13 (VERIFY-N5h item 13): on the PIN the read class was closed by a grep
+    pasted into a report and the write class was not closed at all — three of the
+    four evidence writes hung on a FIFO, including one receiver the round's own fix
+    proposal did not list.  This scan walks acp_probe.py's AST, enumerates every
+    file receiver (reads AND writes) and asserts that the set which is neither
+    routed through _open_regular nor S_ISREG-guarded on the SAME receiver equals a
+    committed golden set.  A new receiver is a diff against that set, not a silent
+    pass.  Negative controls below: an unguarded write, an unguarded read and a raw
+    os.open each turn it red, and the coverage floor makes an empty scan red."""
+    src = PROBE.read_text()
+    examined, unguarded, where = _scan_file_receivers(src)
+
+    assert dict(unguarded) == _GOLDEN_UNGUARDED_RECEIVERS, (
+        f"unguarded file receivers changed: got {dict(unguarded)} at {where}, "
+        f"expected {_GOLDEN_UNGUARDED_RECEIVERS}"
+    )
+    assert len(examined) >= 12, (
+        f"the scan only examined {len(examined)} receivers — it is not looking at "
+        f"the file it claims to cover: {examined}"
+    )
+    # the write class actually goes through the primitive, not just "not flagged"
+    assert sum(1 for e in examined if e[1] == "_open_regular") >= 5, examined
+    # and the primitive itself is what the golden entry claims it is
+    prim = src.split("def _open_regular(", 1)[1].split("\ndef ", 1)[0]
+    for token in ("os.O_NOFOLLOW", "os.O_NONBLOCK", "S_ISREG(os.fstat(fd)"):
+        assert token in prim, f"_open_regular no longer contains {token}"
+
+    # NEGATIVE CONTROL 1: an unguarded write receiver
+    planted = src.replace("    h = hashlib.sha256()\n",
+                          "    open(path + '.copy', 'w').close()\n    h = hashlib.sha256()\n", 1)
+    assert planted != src
+    _e, u1, w1 = _scan_file_receivers(planted)
+    assert dict(u1) != _GOLDEN_UNGUARDED_RECEIVERS and any("open:w" in x for x in w1), w1
+
+    # NEGATIVE CONTROL 2: an unguarded read receiver
+    planted = src.replace("    request = {\"jsonrpc\": \"2.0\"",
+                          "    Path(fixture_path + '.bak').read_text()\n"
+                          "    request = {\"jsonrpc\": \"2.0\"", 1)
+    assert planted != src
+    _e, u2, w2 = _scan_file_receivers(planted)
+    assert dict(u2) != _GOLDEN_UNGUARDED_RECEIVERS and any(".read_text" in x for x in w2), w2
+
+    # NEGATIVE CONTROL 3: a raw os.open that bypasses the primitive
+    anchor = "        agent_realpath = os.path.realpath(agent)\n"
+    assert src.count(anchor) == 1
+    planted = src.replace(anchor,
+                          "        os.open(framedir + '/x', os.O_WRONLY | os.O_CREAT)\n"
+                          + anchor, 1)
+    _e, u3, w3 = _scan_file_receivers(planted)
+    assert dict(u3) != _GOLDEN_UNGUARDED_RECEIVERS and any("os.open" in x for x in w3), w3
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo_with_reader"])
+def test_probe_evidence_writes_refuse_a_symlink_and_a_readable_fifo(tmp_path, agent_result, kind):
+    """N5i-F5, the two shapes O_NONBLOCK alone does not stop.  A SYMLINK at an
+    evidence path redirects the write silently (to /dev/null here, so the capture
+    would be empty and nothing would say so) — O_NOFOLLOW makes it ELOOP.  A FIFO
+    that already HAS a reader opens successfully even with O_NONBLOCK, so the
+    evidence would go into someone else's pipe instead of the file — the S_ISREG
+    check on the open descriptor is what refuses it, and this is the only shape
+    that reaches that check without root (a device node needs mknod).
+    The reader fd is opened by the test and closed in a finally; nothing is killed."""
+    framedir = tmp_path / "capture"
+    framedir.mkdir()
+    target = framedir / "timeline.jsonl"
+    reader = None
+    try:
+        if kind == "symlink":
+            os.symlink("/dev/null", str(target))
+            expected = f"[Errno {errno.ELOOP}] {os.strerror(errno.ELOOP)}: '{target}'"
+        else:
+            os.mkfifo(str(target))
+            reader = os.open(str(target), os.O_RDONLY | os.O_NONBLOCK)
+            expected = f"not a regular file: {target}"
+        t0 = time.monotonic()
+        r = subprocess.run([sys.executable, str(PROBE)], capture_output=True, text=True,
+                           timeout=5, env=_hostile_env(agent_result, framedir))
+        elapsed = time.monotonic() - t0
+    finally:
+        if reader is not None:
+            os.close(reader)
+    assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stderr}"
+    assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+    assert expected in r.stderr, f"the refusal does not name it: {r.stderr!r}"
+    assert (framedir / "runtime-identity.json").is_file()

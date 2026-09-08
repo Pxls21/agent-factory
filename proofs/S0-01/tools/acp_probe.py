@@ -19,6 +19,7 @@ the probe exits 64 with a named stderr message but does NOT write runtime-identi
 """
 import base64
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -58,6 +59,48 @@ def _sha256_file(path):
     return h.hexdigest()
 
 
+def _open_regular(path, mode):
+    """Open `path` for WRITING in a way that can never block, and name the refusal.
+
+    N5i-F5 (the WRITE class): the read side was closed in round 11, the write side
+    was not — a FIFO planted at runtime-identity.json, env.json or timeline.jsonl
+    made open() block forever (measured on the PIN: rc 124 under `timeout 12`, all
+    three).  O_NONBLOCK turns a reader-less FIFO into ENXIO instead of a wait,
+    O_NOFOLLOW turns a symlink into ELOOP, a directory already fails with EISDIR,
+    and S_ISREG on the OPEN descriptor rejects every other type (character devices,
+    sockets) with no TOCTOU window.  O_NONBLOCK is cleared before the handle is
+    returned so the caller writes to an ordinary file object."""
+    fd = os.open(path,
+                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                 0o644)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file: %s" % (path,))
+        fcntl.fcntl(fd, fcntl.F_SETFL,
+                    fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+    except Exception:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, mode)
+
+
+# N5i-F4: the probe's own file is hashed ONCE, here, inside a try.  On the PIN
+# _write_evidence and the M3 handler each called _sha256_file(realpath(__file__))
+# unguarded: an agent that replaced the probe's script with a FIFO made the first
+# call raise, the handler re-raise the same read inside its own `except`, and
+# CPython's traceback printer block in linecache.getline() on the FIFO —
+# rc 124 with ZERO evidence files (measured on the PIN this round).  Reading the
+# file once, before the agent exists, also records the digest of the bytes that
+# actually ran rather than whatever is at that path when the run ends.
+_PROBE_PATH = os.path.realpath(__file__)
+try:
+    _PROBE_SHA256 = _sha256_file(_PROBE_PATH)
+    _PROBE_SHA256_ERROR = None
+except Exception as _exc:   # OSError today; an import must never fail here
+    _PROBE_SHA256 = None
+    _PROBE_SHA256_ERROR = f"{type(_exc).__name__}: {_exc}"
+
+
 def _utc_now():
     dt = datetime.datetime.now(datetime.timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -70,7 +113,7 @@ def _drain_stderr(proc, stderr_path, error_slot):
     path folds into probe_error), never swallowed — a directory at stderr_path used
     to kill this thread silently while the probe still exited 0."""
     try:
-        with open(stderr_path, "wb") as f:
+        with _open_regular(stderr_path, "wb") as f:
             while True:
                 chunk = proc.stderr.read(65536)
                 if not chunk:
@@ -98,7 +141,7 @@ def _redact_env(env):
 def _write_env(framedir):
     """Write env.json (caller's environment with redaction)."""
     env_data = _redact_env(dict(os.environ))
-    with open(os.path.join(framedir, "env.json"), "w") as f:
+    with _open_regular(os.path.join(framedir, "env.json"), "w") as f:
         json.dump(env_data, indent=1, sort_keys=True, fp=f)
         f.write("\n")
 
@@ -110,6 +153,11 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
     INSIDE the wrapped body so a crash here degrades gracefully — a self-deleting
     agent produces probe_error + all four files with agent_entrypoint_sha256=None,
     and the M3 handler is the last resort."""
+    # N5i-F4: an unreadable probe file is NAMED (never a traceback, never a
+    # second read).  It is checked first because the import-time hash is the
+    # chronologically earliest failure; "first error wins" is unchanged.
+    if _PROBE_SHA256 is None and probe_error is None:
+        probe_error = f"probe file unreadable: {_PROBE_SHA256_ERROR}"
     # N5f-F6: guard the entrypoint hash — a self-deleting agent raises here
     try:
         agent_entrypoint_sha256 = _sha256_file(agent_realpath)
@@ -118,8 +166,8 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
         if probe_error is None:
             probe_error = f"{type(exc).__name__}: {exc}"
     identity = {
-        "probe_path": os.path.realpath(__file__),
-        "probe_sha256": _sha256_file(os.path.realpath(__file__)),
+        "probe_path": _PROBE_PATH,
+        "probe_sha256": _PROBE_SHA256,
         "agent_argv": [agent],
         "agent_realpath": agent_realpath,
         "agent_entrypoint_sha256": agent_entrypoint_sha256,
@@ -134,7 +182,7 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
     }
     if probe_error is not None:
         identity["probe_error"] = probe_error
-    with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+    with _open_regular(os.path.join(framedir, "runtime-identity.json"), "w") as f:
         json.dump(identity, f, indent=2)
         f.write("\n")
 
@@ -142,7 +190,7 @@ def _write_evidence(framedir, timeline, agent, agent_realpath, child_pid,
 
     # timeline.jsonl
     tl_path = os.path.join(framedir, "timeline.jsonl")
-    with open(tl_path, "w") as f:
+    with _open_regular(tl_path, "w") as f:
         for entry in timeline:
             f.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
@@ -227,16 +275,24 @@ def main():
                 rejected = float(timeout_raw)
             except (ValueError, OverflowError):
                 rejected = None
-            if rejected is not None and (not math.isfinite(rejected) or rejected <= 0):
+            if rejected is None:
+                msg = f"ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}"
+            elif not math.isfinite(rejected) or rejected <= 0:
                 msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
             else:
-                msg = f"ACP_PROBE_TIMEOUT is not a valid number: {timeout_raw!r}"
+                # N5i-F6: "1e3" IS a valid number (1000.0) — telling an operator it
+                # is not was false for 9 measured forms (1e3 +30 .5 5. 1_000 3_0
+                # ' 30 ' '30\n' ٣٠).  The real reason is the pinned syntax, and the
+                # feature contradicted itself: 1e400, also scientific notation, got
+                # the other wording only because float() overflows.
+                msg = (f"ACP_PROBE_TIMEOUT must be plain decimal digits "
+                       f"(e.g. '30' or '0.5'), got {timeout_raw!r}")
         else:
             timeout = float(timeout_raw)
             if not math.isfinite(timeout) or timeout <= 0:
                 msg = f"ACP_PROBE_TIMEOUT must be a finite float > 0, got {timeout_raw!r}"
         if msg is not None:
-            with open(os.path.join(framedir, "runtime-identity.json"), "w") as f:
+            with _open_regular(os.path.join(framedir, "runtime-identity.json"), "w") as f:
                 json.dump({"probe_error": msg}, f, indent=2)
                 f.write("\n")
             print(f"acp_probe: {msg}", file=sys.stderr)
@@ -455,11 +511,24 @@ def main():
 
         # Wait for stderr drain to finish
         stderr_thread.join(timeout=3)
+        # N5i-F1: a drain that BLOCKS is a drain failure too.  `except Exception`
+        # only sees failures that RAISE; on the PIN a drain still reading when the
+        # join expired left agent-stderr.txt truncated and the probe exited 0 with
+        # no probe_error (measured: a grandchild holding the agent's stderr open —
+        # 0 bytes captured, rc 0).  The thread is a daemon, so the probe still exits.
+        if stderr_thread.is_alive() and drain_error[0] is None:
+            drain_error[0] = ("did not finish in 3s (the agent's stderr may still "
+                              "be held open by a surviving child)")
 
-        # N5h-#10: a drain failure IS a probe failure — fold it into probe_error
-        # (first error wins, matching the entrypoint-hash guard in _write_evidence).
-        if drain_error[0] is not None and probe_error is None:
-            probe_error = f"stderr drain failed: {drain_error[0]}"
+        # N5h-#10: a drain failure IS a probe failure — fold it into probe_error.
+        # N5i-F2/F8: when an earlier error is already live the drain error is
+        # APPENDED, never dropped: on the PIN a BrokenPipe plus a directory at
+        # agent-stderr.txt lost the IsADirectoryError with no residual at all.
+        if drain_error[0] is not None:
+            if probe_error is None:
+                probe_error = f"stderr drain failed: {drain_error[0]}"
+            else:
+                probe_error = f"{probe_error}; stderr drain failed: {drain_error[0]}"
 
         agent_exit_code = proc.returncode
 
@@ -479,8 +548,10 @@ def main():
         # (pre-initialised to None, filled with whatever was reached).
         probe_error = f"{type(exc).__name__}: {exc}"
         identity = {
-            "probe_path": os.path.realpath(__file__),
-            "probe_sha256": _sha256_file(os.path.realpath(__file__)),
+            # N5i-F4: the cached import-time hash — re-reading the probe's own
+            # file HERE is what turned a named failure into a hang.
+            "probe_path": _PROBE_PATH,
+            "probe_sha256": _PROBE_SHA256,
             "agent_argv": [agent],
             "agent_realpath": agent_realpath,
             "agent_entrypoint_sha256": None,
@@ -493,20 +564,37 @@ def main():
             "agent_exit_code": agent_exit_code,
             "probe_error": probe_error,
         }
+        # N5i-F5: the last resort writes through _open_regular too, and a REFUSED
+        # write is recorded per file instead of raising: an exception raised inside
+        # this handler prints a traceback, and the traceback printer reads the
+        # probe's own source — the read that hung the PIN.  Each file is attempted
+        # independently so one planted path cannot cost the other three.
+        m3_errors = []
+
+        def _m3_write(path, text):
+            try:
+                with _open_regular(path, "w") as f:
+                    f.write(text)
+            except Exception as exc2:
+                m3_errors.append(f"{os.path.basename(path)}: {type(exc2).__name__}: {exc2}")
+
         rid_path = os.path.join(framedir, "runtime-identity.json")
-        with open(rid_path, "w") as f:
-            json.dump(identity, f, indent=2)
-            f.write("\n")
-        _write_env(framedir)
+        _m3_write(rid_path, json.dumps(identity, indent=2) + "\n")
+        try:
+            _write_env(framedir)
+        except Exception as exc2:
+            m3_errors.append(f"env.json: {type(exc2).__name__}: {exc2}")
         # Write whatever timeline we have
         tl_path = os.path.join(framedir, "timeline.jsonl")
-        with open(tl_path, "w") as f:
-            for entry in timeline:
-                f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        _m3_write(tl_path, "".join(
+            json.dumps(entry, separators=(",", ":")) + "\n" for entry in timeline))
         # agent-stderr.txt — create if missing (stderr drain may not have started)
         stderr_path = os.path.join(framedir, "agent-stderr.txt")
         if not os.path.exists(stderr_path):
-            open(stderr_path, "wb").close()
+            _m3_write(stderr_path, "")
+        if m3_errors:
+            print("acp_probe: last-resort evidence write failed: " + "; ".join(m3_errors),
+                  file=sys.stderr)
         print(f"acp_probe: {probe_error}", file=sys.stderr)
         raise SystemExit(1)
 
