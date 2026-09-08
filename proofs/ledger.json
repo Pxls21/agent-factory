@@ -12,9 +12,9 @@
     },
     {
       "classification": "blocked_credential",
-      "normalized_digest": "b095ef6b9fafcc9634b85cfdba56cabce0a0e43608e2a7b3eacb861d7451f3d8",
+      "normalized_digest": "8e6126aee93ea8ce572a1aba5a625f2daeaa5252bbd2973b8851e176f599b262",
       "proof_id": "S0-03",
-      "state": "BLOCKED"
+      "state": "EXPIRED"
     },
     {
       "classification": "execution_proof",
