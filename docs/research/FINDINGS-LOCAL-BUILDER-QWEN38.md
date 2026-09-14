@@ -105,6 +105,40 @@ knobs the measurements decide.
    killed, discrepancies stated, wall clock, tokens. That is the only medium-vs-xhigh evidence for our workload.
 6. Effective DDR4 bandwidth (a STREAM run) — only if any offload is ever considered.
 
+### §6 measured — 2026-09-14 12:52-12:58Z, the June CUDA build `00139b6`, the 3090, one coding prompt at temperature 0
+
+Step 1, the load test: PASSED. The download completed (blob 14,252,845,984 bytes, sha256 `40fac405…`, snapshot `4ca72078`); the June
+build loaded the UD-IQ4_XS fully resident and answered `/health` in ~6 s from page cache; the first prompt (`reasoning_effort: medium`
+through `chat_template_kwargs`) returned a correct iterative `fib` with a doctest, the thinking split by the template (596 reasoning
+chars / 184 content chars), 36 prompt tokens at 102.9 t/s, 300 generated at 44.2 t/s, `finish_reason: stop`, GPU 98 % during decode.
+The served model id is the GGUF path (`--alias` names it for OmniRoute).
+
+Steps 2-4, the matrix (`~/qwen38-probe/matrix.sh` on the PC; rows in `docs/research/evidence/qwen38-matrix-2026-09-14.jsonl`; every
+case the same 36-token fib prompt at temperature 0 with `max_tokens 400`; every case produced the SAME 305 tokens — content sha `6b7c01ad`
+— so MTP is lossless here and the rows are comparable):
+
+| case | server args beyond `-ngl 99 -fa on --jinja` | VRAM MiB | prompt t/s | decode t/s | MTP draft / accepted |
+|---|---|---|---|---|---|
+| base | `-c 32768 -ctk q4_0 -ctv q4_0 -np 1` | 14,586 | 119.4 | 44.28 | — |
+| kv-f16 | `-c 32768 -np 1` (f16 KV) | 15,972 | 119.5 | 44.67 | — |
+| ngl54 (the brief's offload) | `-ngl 54 -c 32768 -ctk q4_0 -ctv q4_0` | 12,436 | 33.9 | **6.32** | — |
+| mtp-n2 | base + `--spec-type draft-mtp --spec-draft-n-max 2` | 15,154 | 98.0 | **79.92** | 212 / 200 (94.3 %) |
+| mtp-n3 | base + `--spec-type draft-mtp --spec-draft-n-max 3` | 15,304 | 97.8 | **86.93** | 246 / 222 (90.2 %) |
+| ctx262k | `-c 262144 -ctk q4_0 -ctv q4_0 -np 1` | 19,738 | 119.4 | 44.11 | — |
+| ctx262k-np2 | the same, `-np 2` → 131,072 per slot | 19,760 | 119.4 | 43.95 | — |
+| ctx262k-np4 | the same, `-np 4` → 65,536 per slot | 19,996 | 119.9 | 44.06 | — |
+
+What the table settles: (1) the brief's `--ngl 54` offload is **7.0× slower** than resident (6.3 vs 44.3 t/s) — worse than §1's
+estimate, and it saves only 2.1 GiB that nothing needs; (2) MTP is the real lever on this card: **~1.8× at n=2, ~2.0× at n=3** with
+90-94 % acceptance on code, lossless at temperature 0 — the builder decodes at ~87 t/s; (3) the full 262k q4_0 KV FITS resident at
+19.7 GiB used (4.6 GiB spare, not §1's ~6), and `-np 4` costs 0.26 GiB more with 65k of context per slot — four concurrent build lanes
+at 65k each, or two at 131k, are the shapes; (4) f16 KV buys nothing at 32k (+1.4 GiB, +0.4 t/s) and cannot fit at 262k; (5) the 32k
+and 262k servers decode identically on a short prompt — the per-token cost of the hybrid attention at a FILLED long context is the one
+number still pending: the first long-prompt cases failed before reaching the server (a ~400 KB request body passed on curl's command
+line — the argv limit, the harness's bug, not the model's) and are re-running from a file (`matrix2.sh`).
+Not measured: the effort A/B on real briefs (§6 step 5 — it needs the OmniRoute provider, §8), the DDR4 bandwidth (moot: no offload).
+
+
 ## 7. Integration shape (behind OmniRoute, nothing else changes)
 
 - llama-server stays on localhost with an API key; OmniRoute gains an OpenAI-compatible provider pointing at `http://127.0.0.1:8080/v1`
@@ -119,8 +153,9 @@ knobs the measurements decide.
 
 ## 8. Decisions that are the owner's
 
-1. The CUDA build path: install the CUDA toolkit and rebuild llama.cpp from current master (best), or run the official `server-cuda`
-   container (needs the CDI spec), or start with the June build (works if the load test passes; older kernels).
+1. The CUDA build path — ANSWERED by the measurement: the June build loads and serves the model with MTP and the full 262k KV, so it
+   is the builder host for now; a newer CUDA build (the toolkit, or the `server-cuda` container + CDI) is an optimisation to schedule,
+   not a prerequisite.
 2. The OmniRoute provider + combo (owner-run, as before).
 3. Whether the local model builds at `medium` by default — after step 5 of §6, not before.
 
