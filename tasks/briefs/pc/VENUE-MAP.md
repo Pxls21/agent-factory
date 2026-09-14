@@ -32,5 +32,5 @@ design, gates and report discipline.
   where the original brief's design requires them (build lanes: never). `kernel.dmesg_restrict=1` here and you are unprivileged.
 - Report: the standing incremental rule applies (append each finished section to `$LANE_REPORT_DRAFT`). Your FINAL message is the
   whole report, in the shape the original brief demands — FILE IDENTITY of the final bytes, red-before/green-after, the mutant table
-  with a killer line per mutant, the class sweep, `report_lint` MISS 0 run LAST, the gate RESULT lines pasted verbatim, DISCREPANCIES,
+  with a killer line per mutant, the class sweep, `report_lint` run LAST under the BOUNDED rule (its `fix:` hints for at most three rounds, then the summary pasted — a `MISS 0` demand is a target, never a stop condition; AF-AP-76), the gate RESULT lines pasted verbatim, DISCREPANCIES,
   NOT-done first-class, the process census, hygiene. Also write it to the report path the original brief names, inside your tree.

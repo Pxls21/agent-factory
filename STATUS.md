@@ -30,7 +30,11 @@ a distillation and the ledger wins on any disagreement).
   (loopback, keyed; `harness-ports/bin/qwen-server.sh`), behind OmniRoute as node `qwen-local` + combo `agentfactory-build-local`
   (`harness-ports/bin/omniroute_local_builder.py`; rule 3 holds — OmniRoute the sole egress), the BUILD lane's default route at
   `medium`; proven live the same afternoon (install, probes, Hermes end-to-end with a tool call), no owner step. NOT proven: lane
-  QUALITY at `medium` — the first lane on it (N5k) is graded by its verify round; the verify lanes still run on the cloud route.
+  QUALITY at `medium` — the first lane on it (N5k, arm A of the effort A/B) LANDED 2026-09-14 (`113 passed` ×3, 12 mutants
+  killed; substantive completion at 4 h 53 m of lane time, then a 47-minute lint loop the BRIEF built — AF-AP-76, fixed the
+  same day at the tool/dispatcher/skill layer); arm B (`xhigh`, the amended brief) runs under the bounded gate; the verify
+  lanes route to `agentfactory-verify-local` at `xhigh` (D-028); the comparative verify after arm B; the default effort is
+  NOT decided.
 
 - Wave 0 spikes, all POSITIVE (2026-09-04): rust ai-memory builds on the PC; Docker starts in the sandbox; runsc runs rootless in
   the sandbox and on the PC; selective egress works with a veth pair and iptables. S0-06 and S0-08 therefore moved from deferred to

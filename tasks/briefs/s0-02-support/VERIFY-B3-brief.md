@@ -1,5 +1,7 @@
 # VERIFY-B3 — adversarial grade of lane B3 (S0-02 round 3: closure is containment, the receipt typed at the producer, the key normalised first, D3 pinned as a limit, the tolerance bound, the removal receipt labelled — and the three brief items the lane's report never mentions)
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo
 agent-factory, branch claude/soundbox-kit-migration-iz1jwf. **PIN: `c6c384a`** — the S0-02 round-3 LANDING: the coordinator's harvest
 of lane B3's PC tree (PIN 887f341), a straight copy plus ONE coordinator touch (two unused imports removed from the test — the sandbox

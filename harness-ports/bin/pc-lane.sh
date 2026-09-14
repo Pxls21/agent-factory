@@ -206,6 +206,12 @@ cat "$BRIEF" >> "$PROMPT_FILE"
 printf '\n\n---\nCONTEXT BUDGET (standing lane rule): do NOT call skill_view or tool_describe unless this brief names a skill by name — your role text and this brief carry every rule you need, and after a compaction do NOT reload skills. Read files by line range (`sed -n`, `grep -n`), never whole large files; every large tool output is context you cannot get back.\n' >> "$PROMPT_FILE"
 # Standing lane rule (2026-09-03): the report must survive a mid-run death.
 printf '\n\n---\nINCREMENTAL REPORT (standing lane rule): append each FINISHED section of your report to the file %s as you go (shell: `cat >> "$LANE_REPORT_DRAFT"`); the final message is still your full report. Never commit that file.\n' "$LANE_DIR/report-draft.md" >> "$PROMPT_FILE"
+# Standing lane rule (2026-09-14): a mechanical gate is BOUNDED. N5k (the first local-model lane) spent 47 minutes and
+# 20 turns re-deriving report_lint's token rule and relocating references that were already right, because its brief
+# demanded "MISS 0" on a heuristic lint with no fix procedure, no round cap and no escape hatch (AF-AP-76). The lint now
+# prints a fix hint per MISS row; the round cap lives HERE so no brief carries it by hand and an old brief's bar is read
+# through it.
+printf '\n\n---\nMECHANICAL GATES ARE BOUNDED (standing lane rule): `scripts/report_lint.py` is a HEURISTIC check of the `alias:NN` references in your report — run it LAST with the `--map` aliases your brief names, read the `fix:` hint printed on every MISS row and do exactly that (add one backticked identifier copied from the cited line when the line is right; correct the number when it is wrong; write a line that existed only at the PIN as `alias@<PIN>:NN` or in words), for at most THREE rounds; then paste the final summary line into your DISCREPANCIES section and FINISH. Wherever the brief says "MISS 0", read it as this bounded rule: MISS 0 is the target, never a stop condition, and a MISS that survives three rounds is REPORTED, not chased. Never read the source of the lint to re-derive its rule — the hint IS the rule. The harvest grades the floor (`--min-refs`) plus your paste.\n' >> "$PROMPT_FILE"
 
 echo "pc-lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
 echo "pc-lane: tree=$TREE" >&2

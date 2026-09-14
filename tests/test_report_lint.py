@@ -76,3 +76,36 @@ def test_report_lint_resolves_a_bare_basename_and_a_repo_path(tmp_path):
     r = _run(rep, ["T=pkg/thing.py"], tmp_path)
     # three refs on one line share the line's claim tokens: VALUE_TWO matches at :2 for all three, so all OK
     assert "OK 3, NEAR 0, MISS 0" in r.stdout, r.stdout
+
+
+def test_report_lint_case_insensitive_tokens_and_fix_hint(tmp_path):
+    """N5k (2026-09-14) looped for 47 minutes on refs that were RIGHT: the report line said `FIFO` / `TOCTOU` in prose and the
+    cited def spelled them lowercase — a MISS by case alone. Matching is case-insensitive now, and every MISS carries the fix hint."""
+    src = tmp_path / "mod.py"
+    src.write_text("def test_probe_refuses_reader_backed_fifo_without_hang():\n    pass\n\n\ndef other():\n    return 0\n")
+    rep = tmp_path / "report.md"
+    rep.write_text("| 4 | FIFO leaf type | C:1 |\n| 5 | TOCTOU window | C:5 |\n")
+    r = _run(rep, ["C=mod.py"], tmp_path)
+    assert "OK 1, NEAR 0, MISS 1" in r.stdout, r.stdout          # C:1 OK by case-insensitive match; C:5 a real MISS
+    assert "fix: if the cited line is RIGHT, add one backticked identifier" in r.stdout, r.stdout
+
+
+def test_report_lint_per_ref_revision_pin(tmp_path):
+    """`alias@<sha>:NN` reads that ONE ref at the named revision — a PIN-era line cited after the file moved on."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True)
+    src = tmp_path / "mod.py"
+    src.write_text("import os\n\ndef old_shape():\n    return os.stat('x')\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "mod.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "v1"], check=True)
+    v1 = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    src.write_text("import os\n\n\n\n\ndef new_shape():\n    return os.open('x', os.O_RDONLY)\n")   # old_shape is gone; line 3 now blank
+    rep = tmp_path / "report.md"
+    rep.write_text(f"the old `def old_shape` at C@{v1[:12]}:3 is gone; `def new_shape` lives at C:6\n")
+    r = _run(rep, ["C=mod.py"], tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OK 2, NEAR 0, MISS 0" in r.stdout, r.stdout
+    rep.write_text("the old `def old_shape` at C:3 is gone\n")    # the same claim as a bare ref: a MISS (the control)
+    r = _run(rep, ["C=mod.py"], tmp_path)
+    assert r.returncode == 1 and "MISS 1" in r.stdout, r.stdout

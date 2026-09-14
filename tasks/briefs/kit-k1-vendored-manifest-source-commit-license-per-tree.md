@@ -1,5 +1,7 @@
 # Lane K1 — the vendored-kit manifest: source, commit, license and tree digest per vendored tree, generated and drift-tested
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 **PIN: `be5cf35`** (the current branch head). Role: code-implementer (the PC Hermes lane; the venue map `tasks/briefs/pc/VENUE-MAP.md`
 applies). Repo agent-factory, branch claude/soundbox-kit-migration-iz1jwf. Boundary (yours, disjoint from every other lane): NEW
 `scripts/vendored_manifest.py`, NEW `sandbox-kit/VENDORED-MANIFEST.md`, NEW `tests/test_vendored_manifest.py`, your report

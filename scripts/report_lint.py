@@ -21,6 +21,10 @@ are read at --rev (default: the working tree). The report line's own CLAIM TOKEN
 Exit 1 when any MISS exists. NEAR and UNCHECKABLE never pass silently: they are counted in the summary line.
 `--min-refs N` exits 1 when fewer than N refs resolve OK: a report with no machine-checkable ref lints clean by
 construction (MISS 0 over nothing), so a checkpoint gates on a floor, never on the MISS count alone.
+`alias@<sha>:NN` pins ONE reference to a git revision (a PIN-era line cited after the file moved on); token matching is
+case-insensitive (a prose FIFO / TOCTOU matches the code's fifo / toctou); every MISS row ends with the fix hint. A lane
+fixes MISSes for at most THREE rounds, then pastes the summary and stops — the bar is the floor plus the paste, never a
+"MISS 0" chased forever (N5k, 2026-09-14: 47 minutes and 20 turns relocating references that were already right).
 Heuristic by design — it proves nothing about a report; it removes the class of reference a reader cannot trust.
 """
 from __future__ import annotations
@@ -31,7 +35,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?):(\d+)(?:-(\d+))?(?![\w-])")
+REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?)(?:@([0-9a-f]{7,40}))?:(\d+)(?:-(\d+))?(?![\w-])")
+FIX_HINT = ("fix: if the cited line is RIGHT, add one backticked identifier copied from it to this report line; "
+            "if the number is wrong, correct it; a line that existed only at an older revision is written as "
+            "alias@<sha>:NN (checked at that revision) or in words, never as a bare alias:NN")
 TOKEN_RES = [
     re.compile(r"`([^`]{4,})`"),
     re.compile(r"\b(def\s+\w{3,}|class\s+\w{3,})"),
@@ -65,36 +72,38 @@ def _claim_tokens(line: str, ref_text: str) -> list[str]:
 
 def lint(report: Path, maps: dict[str, str], rev: str | None, tolerance: int, root: Path):
     basenames = {Path(v).name: v for v in maps.values()}
-    cache: dict[str, list[str] | None] = {}
+    cache: dict[tuple, list[str] | None] = {}
     rows = []
     for lineno, line in enumerate(report.read_text(errors="replace").splitlines(), 1):
         for m in REF_RE.finditer(line):
-            key, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
-            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or rev else None)
-            if path is None or (not rev and not (root / path).is_file()):
+            key, ref_rev, a, b = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
+            at = ref_rev or rev   # `alias@<sha>:NN` pins ONE ref to a revision (a PIN-era line cited after the file moved on)
+            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or at else None)
+            if path is None or (not at and not (root / path).is_file()):
                 continue  # not a file reference we can resolve (a time, a ratio, a URL port ...)
-            if path not in cache:
-                cache[path] = _read_file(path, rev, root)
-            src = cache[path]
+            if (path, at) not in cache:
+                cache[(path, at)] = _read_file(path, at, root)
+            src = cache[(path, at)]
             if src is None:
-                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {rev or 'worktree'}"))
+                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {at or 'worktree'}"))
                 continue
             toks = _claim_tokens(line, m.group(0))
             if not toks:
                 rows.append((lineno, m.group(0), "UNCHECKABLE", "no claim token on the report line"))
                 continue
             lo, hi = max(1, min(a, b)), min(len(src), max(a, b))
-            cited = "\n".join(src[lo - 1:hi])
-            if any(t in cited for t in toks):
+            cited = "\n".join(src[lo - 1:hi]).lower()   # case-insensitive: a prose FIFO / TOCTOU / READ matches the code's spelling
+            ltoks = [t.lower() for t in toks]
+            if any(t in cited for t in ltoks):
                 rows.append((lineno, m.group(0), "OK", ""))
                 continue
             near_lo, near_hi = max(1, lo - tolerance), min(len(src), hi + tolerance)
-            near = "\n".join(src[near_lo - 1:near_hi])
-            if any(t in near for t in toks):
+            near = "\n".join(src[near_lo - 1:near_hi]).lower()
+            if any(t in near for t in ltoks):
                 rows.append((lineno, m.group(0), "NEAR", f"a claim token sits within {tolerance} line(s) of the range"))
             else:
                 snippet = src[lo - 1].strip()[:70] if lo <= len(src) else "<beyond EOF>"
-                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}"))
+                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}; " + FIX_HINT))
     return rows
 
 

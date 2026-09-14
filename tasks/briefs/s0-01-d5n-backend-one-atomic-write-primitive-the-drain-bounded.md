@@ -1,5 +1,7 @@
 # Lane D5n — S0-01 scripted backend round 17: ONE atomic open-validate-write primitive for every path the backend creates or reads (the record slot, the pidfile, the token file), the readiness drain bounded, the ban's evasions documented, one cost table (build lane: PC Hermes `code-implementer`; sandbox Opus 4.6 `code-implementer` only if the bridge is down)
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 PIN: (HEAD at dispatch — the commit carrying this brief; the report header says "PIN: `<sha>`".) The backend's last checkpoint is
 9c = `77f46a2` and its three files are unchanged since: `proofs/S0-01/tools/scripted_backend.py` 894 lines sha `1968c156…`,
 `tests/test_s0_01_scripted_backend.py` 2361 lines sha `02b4cd9a…`, `tests/red/test_s0_01_backend_credential_screen.py` 1278 lines

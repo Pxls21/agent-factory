@@ -332,7 +332,11 @@ own git worktree, and leaves the final message in `report.md`.
 2. **Worktree.** `git worktree add` under `$AF_REPO/.lanes/<lane-id>` (disjoint per lane,
    same pattern as the sandbox's agent worktrees).
 3. **Role prepend.** If a role is named, `harness-ports/roles/<role>.md` is prepended to the
-   brief before the harness sees it.
+   brief before the harness sees it. Three STANDING LANE RULES are appended after the brief on every
+   run, so no brief carries them by hand: CONTEXT BUDGET (no skill reloads, files by line range),
+   INCREMENTAL REPORT (each finished section appended to `report-draft.md`) and MECHANICAL GATES ARE
+   BOUNDED (the `report_lint` fix hints applied for at most three rounds, then paste and finish — a
+   brief's `MISS 0` is a target, never a stop condition; AF-AP-76, 2026-09-14).
 4. **Non-interactive run.**
    - **Codex:** `codex exec --cd <tree> --output-last-message report.md --skip-git-repo-check --dangerously-bypass-hook-trust --sandbox workspace-write - < prompt.md`
      Approval defaults to `never` in headless mode (`exec/src/lib.rs:413`).

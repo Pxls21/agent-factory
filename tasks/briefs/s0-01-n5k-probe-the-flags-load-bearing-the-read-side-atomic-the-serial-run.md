@@ -1,5 +1,7 @@
 # Lane N5k — S0-01 ACP probe round 14: the two surviving flags made load-bearing by tests, the READ side made open-then-fstat, the serial four-file run (build lane: PC Hermes `code-implementer`; sandbox fallback `code-implementer`)
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 **PIN: `c6c384a`** (the branch head carrying the four 2026-09-14 landings; the probe and its test are checkpoint 9d's bytes, unchanged since —
 `proofs/S0-01/tools/acp_probe.py` 642 lines sha `7874a4e3…`, `tests/test_s0_01_acp_probe.py` 3302 lines sha `9ff359dc…`). Role: code-implementer (the PC
 Hermes build lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo agent-factory, branch claude/soundbox-kit-migration-iz1jwf. Boundary:

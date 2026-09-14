@@ -1,5 +1,7 @@
 # VERIFY-P5c — adversarial grade of lane P5c-c (S0-01 PC capture tools round 3: every required artifact content-validated by a version-aware constraint, the header grammar strict, the idiom table pinned as data, the S0-02-only environment extension) plus the coordinator's landing amendment
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo agent-factory,
 branch claude/soundbox-kit-migration-iz1jwf. **PIN: `a91f256`** — the round-3 LANDING: the coordinator's harvest of lane P5c-c's PC
 tree (PIN 3614dc9, built under AMENDMENT 1 + AMENDMENT 2), a straight copy plus ONE coordinator amendment at landing: the parser idiom

@@ -1,5 +1,7 @@
 # Lane O3 — S0-03 round 3: the collector complete over the window (never a capped prefix), the credential screen recursive with the path named, the completed tool call bound to the exact terminal request and ordered after its start, `pid` validated and bound to the tee's record, aware timestamps required, POST on both rows (build lane: PC Hermes `code-implementer`; sandbox Opus 4.6 `code-implementer` only if the bridge is down)
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 PIN: (HEAD at dispatch — the commit carrying this brief; the report header says "PIN: `<sha>`".) Lane O2's landing is `d12fc13`
 and every S0-03 file is unchanged since (VERIFY-O2's identity table: `check_omniroute_roundtrip.py` 824 lines blob `143bc57c…`,
 `tools/pc/collect_leg.sh` 175 `dd441844…`, `tools/pc/hermes_env_names.py` 148 `80c70511…`, `tools/pc/run_s0_03_legs.sh` 313

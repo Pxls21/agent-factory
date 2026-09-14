@@ -1,5 +1,7 @@
 # VERIFY-G3 — adversarial grade of lane G3 (S0-08 gVisor containment round 3: the argv grammar closed, the observer uid read back, the image built from the pin's archive and measured, the P6 domain made explicit, the floors, the fixture split)
 
+**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
+
 You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo agent-factory,
 branch claude/soundbox-kit-migration-iz1jwf. **PIN: `7f60d83`** — the S0-08 round-3 LANDING: the coordinator's harvest of lane G3's PC
 tree (PIN 488b238), a straight copy plus ONE coordinator touch (an f-string without placeholders at `T:1248` — the sandbox pyflakes).
