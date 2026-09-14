@@ -121,8 +121,8 @@ with contextlib.redirect_stdout(out):
 check("ensure #1 rc 0", rc == 0, out.getvalue())
 check("ensure #1 created one node, one connection, one combo", (len(fake.nodes), len(fake.conns), len(fake.combos)) == (1, 1, 2),
       f"{len(fake.nodes)} {len(fake.conns)} {len(fake.combos)}")
-check("ensure #1 POSTed node → connection → sync → combo in that order",
-      [p for p, _ in fake.posts] == ["/api/provider-nodes", "/api/providers", "/api/providers/conn-1/sync-models", "/api/combos"],
+check("ensure #1 POSTed node → connection → combo in that order (no sync: the connection's own import listed the model)",
+      [p for p, _ in fake.posts] == ["/api/provider-nodes", "/api/providers", "/api/combos"],
       str([p for p, _ in fake.posts]))
 check("ensure #1 the connection carries the server key and the node id",
       fake.posts[1][1] == {"provider": "openai-compatible-chat-0001", "name": "qwen-local", "apiKey": "sekrit", "priority": 1})
@@ -136,7 +136,7 @@ with contextlib.redirect_stdout(out2):
     rc2 = olb.ensure(fake, "sekrit", "inf-key", wait_s=5)
 check("ensure #2 rc 0 and creates NOTHING (idempotent)",
       rc2 == 0 and (len(fake.nodes), len(fake.conns), len(fake.combos)) == (1, 1, 2)
-      and [p for p, _ in fake.posts[posts_before:]] == ["/api/providers/conn-1/sync-models"],
+      and fake.posts[posts_before:] == [],
       out2.getvalue() + str(fake.posts[posts_before:]))
 check("ensure #2 reports the three as present", all(s in out2.getvalue() for s in ("node qwen-local present", "connection qwen-local present", "combo agentfactory-build-local head is")), out2.getvalue())
 
@@ -151,8 +151,8 @@ olb.time.time = (lambda t0=[olb.time.time()]: (lambda: (t0.__setitem__(0, t0[0] 
 f2 = FakeOmni()
 with contextlib.redirect_stdout(io.StringIO()):
     rc = olb.ensure(f2, "sekrit", "inf-key", wait_s=5)
-check("ensure rc 5 when the model never appears in /v1/models (node + connection made, no combo)",
-      rc == 5 and len(f2.combos) == 1, f"rc={rc} combos={len(f2.combos)}")
+check("ensure rc 5 when the model never appears in /v1/models (node + connection made, ONE sync tried, no combo)",
+      rc == 5 and len(f2.combos) == 1 and f2.synced == 1, f"rc={rc} combos={len(f2.combos)} synced={f2.synced}")
 olb.exposed_model_ids = lambda key: ["qwen-local/qwen3.8-27b-local"]
 f3 = FakeOmni()
 f3.combos.append({"id": "x", "name": "agentfactory-build-local", "strategy": "priority",

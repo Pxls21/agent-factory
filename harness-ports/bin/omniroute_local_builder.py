@@ -215,14 +215,20 @@ def ensure(t, server_key: str, inference_key: str | None, wait_s: int = 90) -> i
         say(f"connection {NODE_NAME} created: {conn.get('id')}")
     else:
         say(f"connection {NODE_NAME} present: {conn.get('id')} (testStatus {conn.get('testStatus')})")
-    st, data = t.call("POST", f"/api/providers/{conn['id']}/sync-models")
-    say(f"sync-models: HTTP {st} {json.dumps(data)[:160] if st not in (200, 201) else 'ok'}")
+    # Creating the connection already imports its models (providers/route.ts: a self-fetch of
+    # sync-models?mode=import). The explicit sync is called only while the model is still missing — and on the
+    # live 3.8.50 it answers 401 to the machine token (2026-09-14), so its status is information, never a gate.
     deadline = time.time() + wait_s
+    synced = False
     while True:
         ids = exposed_model_ids(inference_key)
         if MODEL_ID in ids:
             say(f"/v1/models lists {MODEL_ID}")
             break
+        if not synced:
+            st, data = t.call("POST", f"/api/providers/{conn['id']}/sync-models")
+            say(f"sync-models: HTTP {st} {'ok' if st in (200, 201) else json.dumps(data)[:160]}")
+            synced = True
         if time.time() > deadline:
             say(f"{MODEL_ID} not in /v1/models after {wait_s}s (saw {len(ids)} ids; the inference key "
                 f"{'was' if inference_key else 'was NOT'} available)")
@@ -267,7 +273,10 @@ def status(t, server_key: str | None, inference_key: str | None) -> int:
 
 
 def probe(inference_key: str | None, model: str = COMBO_NAME) -> int:
-    body = {"model": model, "messages": [{"role": "user", "content": "Reply with the single word pong."}],
+    # A nonce per probe: OmniRoute answered an identical repeat in 0.0 s from its response cache (2026-09-14) —
+    # a cached pong proves nothing about the server behind the route.
+    nonce = os.urandom(4).hex()
+    body = {"model": model, "messages": [{"role": "user", "content": f"Reply with the single word pong. (probe {nonce})"}],
             "max_tokens": 256, "temperature": 0}
     t0 = time.time()
     st, data = http_json(f"{OMNI_URL}/v1/chat/completions", bearer=inference_key, body=body, timeout=180)
