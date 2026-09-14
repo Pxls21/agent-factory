@@ -45,15 +45,48 @@ _EARLY_SAMPLE_STEP_S = 0.002
 _TIMEOUT_DOMAIN_RE = re.compile(r"[0-9]+(\.[0-9]+)?")
 
 
+def _read_regular(path, mode="rb"):
+    """Open one file for bounded, verified reading.
+
+    N5k round 14 (AF-AP-70 closed for reads): the stat-then-read shape is
+    TOCTOU — a FIFO swapped in between the name-classification and the read
+    blocks the read forever (measured rc 124 under `timeout 10` in
+    VERIFY-N5j).  This primitive is fd-first, exactly mirroring the write
+    side's shape in _open_regular: open with O_RDONLY | O_NOFOLLOW |
+    O_NONBLOCK | O_CLOEXEC, then classify the FD (a regular-file check on the
+    descriptor), then use it.  O_NONBLOCK makes reader-less FIFOs fail at the
+    open; the regular-file check on the fd refuses reader-backed FIFOs,
+    /dev/zero (no EOF), devices and sockets; O_NOFOLLOW rejects final
+    symlinks (ELOOP).  Every refusal closes the fd before it raises; the
+    returned file object owns the fd on success."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file: %s" % (path,))
+        fcntl.fcntl(fd, fcntl.F_SETFL,
+                    fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+    except Exception:
+        os.close(fd)
+        raise
+    try:
+        handle = os.fdopen(fd, mode)
+    except Exception:
+        os.close(fd)
+        raise
+    return handle
+
+
 def _sha256_file(path):
     # N5h-#7 (class): every file the probe reads must be a REGULAR file — open() on a
-    # FIFO blocks forever and a character device (/dev/zero) never reaches EOF.  os.stat
-    # does not open the file, so it cannot block.  One guard covers all three receivers
-    # of this function: the probe's own file, the agent entrypoint, the child interpreter.
-    if not stat.S_ISREG(os.stat(path).st_mode):
-        raise OSError("not a regular file: %s" % (path,))
+    # FIFO blocks forever and a character device (/dev/zero) never reaches EOF.
+    # N5k round 14: the classification now happens on the FD after one open
+    # (_read_regular), never on the pathname before it — one guard covers all
+    # three receivers of this function: the probe's own file, the agent
+    # entrypoint, the child interpreter.
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with _read_regular(path) as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -239,18 +272,20 @@ def main():
     # Load the malformed initialize fixture
     here = os.path.dirname(os.path.abspath(__file__))
     fixture_path = os.path.join(os.path.dirname(here), "fixtures", "neg-malformed-initialize.json")
-    # N5h-#7: os.stat, not os.path.exists — a FIFO at the fixture path passes exists()
-    # and then blocks open() forever (measured on the PIN: rc 124 under `timeout 20`).
+    # N5h-#7: a FIFO at the fixture path blocks open() forever (measured on the
+    # PIN: rc 124 under `timeout 20`), so the read goes through _read_regular —
+    # N5k round 14 closes the residual classify-then-open shape here: os.stat
+    # then open() is AF-AP-70 (a FIFO swapped between stat and open hangs the
+    # open; VERIFY-N5j measured rc 124 under `timeout 10`), so the open and the
+    # regular-file check are the same fd.
     try:
-        fixture_st = os.stat(fixture_path)
+        with _read_regular(fixture_path) as f:
+            params = json.load(f)
     except OSError:
-        print(f"acp_probe: fixture not found: {fixture_path}", file=sys.stderr)
-        raise SystemExit(64)
-    if not stat.S_ISREG(fixture_st.st_mode):
+        # Exact named refusal (contract, AF-AP-64/65): the message is the pinned string,
+        # not a formatted exception — the guard's job is rc 64 + no hang + the name.
         print(f"acp_probe: fixture is not a regular file: {fixture_path}", file=sys.stderr)
         raise SystemExit(64)
-    with open(fixture_path) as f:
-        params = json.load(f)
     request = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": params}
 
     # Timeline entries

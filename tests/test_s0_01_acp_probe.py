@@ -2824,28 +2824,33 @@ def test_probe_appends_a_drain_failure_to_an_earlier_error(tmp_path, agent_resul
 # includes the primitive's two os.open branches and main's framedir directory open;
 # those are safe only because the test separately pins their flags/validation.
 _RECEIVER_INVENTORY = {
-    ("_sha256_file", "builtins.open", 1): "read",
+    # N5k round 14: the read side is one fd-first primitive, _read_regular
+    # (os.open O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC -> fstat -> S_ISREG ->
+    # use), exactly mirroring the write side's _open_regular.  A future raw
+    # open(path, "rb") read anywhere in the probe is a diff against this
+    # inventory, the same way an unguarded write is.
     ("_open_regular", "os.open", 1): "write-primitive",
     ("_open_regular", "os.open", 2): "write-primitive",
     ("_open_regular", "os.fdopen", 3): "write-handle",
+    ("_read_regular", "os.open", 1): "evidence-reader",
+    ("_read_regular", "os.fdopen", 2): "read-handle",
     ("_drain_stderr", "probe._open_regular", 1): "evidence-writer",
     ("_leaf_handle", "probe._open_regular", 1): "evidence-writer",
     ("_write_env", "probe._leaf_handle", 1): "evidence-writer",
     ("_write_evidence", "probe._leaf_handle", 1): "evidence-writer",
     ("_write_evidence", "probe._write_env", 2): "evidence-writer",
     ("_write_evidence", "probe._leaf_handle", 3): "evidence-writer",
-    ("main", "builtins.open", 1): "read",
-    ("main", "json.load", 2): "read-handle",
-    ("main", "os.open", 3): "directory-open",
-    ("main", "probe._leaf_handle", 4): "evidence-writer",
+    ("main", "json.load", 1): "read-handle",
+    ("main", "os.open", 2): "directory-open",
+    ("main", "probe._leaf_handle", 3): "evidence-writer",
+    ("main", "os.readlink", 4): "identity-read",
     ("main", "os.readlink", 5): "identity-read",
     ("main", "os.readlink", 6): "identity-read",
-    ("main", "os.readlink", 7): "identity-read",
     ("main._m3_write", "probe._leaf_handle", 1): "evidence-writer",
-    ("main", "probe._m3_write", 8): "evidence-writer",
-    ("main", "probe._write_env", 9): "evidence-writer",
+    ("main", "probe._m3_write", 7): "evidence-writer",
+    ("main", "probe._write_env", 8): "evidence-writer",
+    ("main", "probe._m3_write", 9): "evidence-writer",
     ("main", "probe._m3_write", 10): "evidence-writer",
-    ("main", "probe._m3_write", 11): "evidence-writer",
 }
 
 
@@ -2898,9 +2903,13 @@ def _scan_file_receivers(src):
                     isinstance(n, _ast.Attribute) and n.attr == "O_DIRECTORY"
                     for n in _ast.walk(call)):
                 return "directory-open"
-            return "write-primitive" if function == "_open_regular" else "os-open"
+            if function == "_open_regular":
+                return "write-primitive"
+            if function == "_read_regular":
+                return "evidence-reader"
+            return "os-open"
         if identity == "os.fdopen":
-            return "write-handle"
+            return "read-handle" if function == "_read_regular" else "write-handle"
         if identity == "os.readlink":
             return "identity-read"
         if identity == "json.load":
@@ -3053,6 +3062,32 @@ def test_probe_every_file_receiver_is_guarded_or_committed():
     deleted_writer = src.replace("    _write_env(framedir, framedir_fd)\n", "", 1)
     assert deleted_writer != src
     assert _scan_file_receivers(deleted_writer) != _RECEIVER_INVENTORY
+
+
+def test_planted_raw_read_outside_the_primitive_is_red(tmp_path):
+    """Item 4: the read side is held by the SAME inventory compare as the write side. A raw
+    `open(p, 'rb')` read planted OUTSIDE _read_regular (in a scratch copy of the source, never
+    touching the tree's probe) must die on the inventory compare — exactly the way an unguarded
+    write is red. The write scan stays exact; this proves a future classify-then-read drift is
+    caught by identity, not by a token search for 'os.stat'."""
+    src = PROBE.read_text()
+    # Plant one raw read in a function that is already tracked (main), at a stable anchor.
+    anchor = "    framedir = os.environ[\"S0_01_FRAMEDIR\"]\n"
+    assert src.count(anchor) == 1
+    planted = src.replace(
+        anchor,
+        anchor + "    _planted = open('p', 'rb').read()\n",
+        1,
+    )
+    assert planted != src
+    got = _scan_file_receivers(planted)
+    assert got != _RECEIVER_INVENTORY, (
+        "the planted raw read was NOT caught by the inventory compare — a future "
+        f"classify-then-read drift would go green. got={got}"
+    )
+    # The planted receiver is a NEW (main, builtins.open, ...) row: the read is identity-keyed.
+    new_rows = set(got) - set(_RECEIVER_INVENTORY)
+    assert any(fn == "main" and cal == "builtins.open" for fn, cal, _o in new_rows), new_rows
 
 
 # ---- N5j: hostile path proof runs are standalone because FIFO/socket lifetime
@@ -3300,3 +3335,258 @@ def test_probe_evidence_writes_refuse_a_symlink_and_a_readable_fifo(tmp_path, ag
     assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
     assert expected in r.stderr, f"the refusal does not name it: {r.stderr!r}"
     assert (framedir / "runtime-identity.json").is_file()
+
+
+# ---- N5k round 14: the two surviving flags (O_DIRECTORY, O_CLOEXEC) made load-bearing ----
+#
+# Both were SURVIVORS in VERIFY-N5j (dropping either killed no test). Each red below is the
+# negative control that dies when the flag is removed, and each asserts the child's OBSERVED
+# state (the fd table, the stderr bytes, the file table) — never the flag token alone.
+
+
+def _framedir_open_anchor(src):
+    """The exact 2-line `framedir_fd = os.open(...)` statement (with its indent), recovered
+    by line content so no line number is hardcoded. This is the single anchor the hostile rig
+    swaps at (the O_DIRECTORY window) and the structural pins read for their flag set."""
+    lines = src.split("\n")
+    for i, line in enumerate(lines):
+        if "framedir_fd = os.open(" in line:
+            assert i + 1 < len(lines), "framedir_fd = os.open( must be 2 lines"
+            return lines[i] + "\n" + lines[i + 1]
+    raise AssertionError("framedir_fd = os.open not found in probe source")
+
+
+def _run_odir_hostile_rig(tmp_path, mutation=None):
+    """Standalone hostile rig: the framedir passes both realpath checks as a directory, then a
+    dir -> REGULAR FILE swap is injected at the O_DIRECTORY window (deterministic stand-in for
+    the TOCTOU window between the isdir check and os.open). The agent answers immediately. The
+    observed dict mirrors _run_hostile_probe_rig so the assertions read the same way."""
+    tree = _probe_tree_copy(tmp_path / "tree")
+    src = (tree / "tools" / "acp_probe.py").read_text()
+    anchor = _framedir_open_anchor(src)
+    # The dir -> file swap is injected IMMEDIATELY BEFORE the framedir os.open, at the 8-space
+    # indent the open statement itself uses (so the swapped probe is syntactically valid). The
+    # anchor is 2 lines; the swap is the same 8-space indent and must not double it.
+    first_line = anchor.split("\n", 1)[0]
+    indent = first_line[:len(first_line) - len(first_line.lstrip())]
+    swap = (
+        f"{indent}if os.path.isdir(framedir):\n"
+        f"{indent}    os.rmdir(framedir)\n"
+        f'{indent}open(framedir, "w").close()\n'
+    )
+    assert src.count(anchor) == 1, anchor
+    src = src.replace(anchor, swap + anchor, 1)
+    if mutation is not None:
+        old, new = mutation
+        assert src.count(old) == 1, old
+        src = src.replace(old, new, 1)
+    (tree / "tools" / "acp_probe.py").write_text(src)
+    agent = tmp_path / "agent_result.py"
+    agent.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    msg = json.loads(line)\n"
+        "    sys.stdout.write(json.dumps({\n"
+        '        "jsonrpc": "2.0", "id": msg["id"], "result": {\n'
+        '            "protocolVersion": 1,\n'
+        '            "agentInfo": {"name": "hostile-rig", "version": "0"},\n'
+        '            "agentCapabilities": {},\n'
+        "        }}) + '\\n')\n"
+        "    sys.stdout.flush()\n"
+        "    break\n"
+        "sys.stdin.read()\n"
+    )
+    agent.chmod(0o755)
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    driver = tmp_path / "driver.py"
+    driver.write_text(textwrap.dedent(f"""
+        import json, os, subprocess, sys, time
+        from pathlib import Path
+        probe = {str(tree / 'tools' / 'acp_probe.py')!r}
+        agent = {str(agent)!r}
+        foreign = Path({str(foreign)!r})
+        work = Path({str(tmp_path)!r})
+        frame = work / 'frame'
+        frame.mkdir()
+        env = {{
+            "S0_01_AGENT": agent,
+            "S0_01_FRAMEDIR": str(frame),
+            "ACP_PROBE_TIMEOUT": "5",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PATH": os.environ.get("PATH", ""),
+        }}
+        child = subprocess.Popen([sys.executable, probe], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, env=env,
+                                 start_new_session=True)
+        deadline = time.monotonic() + 8
+        while child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if child.poll() is None:
+            os.killpg(child.pid, 9)
+            child.wait()
+            raise SystemExit("watchdog timeout")
+        _out, err = child.communicate()
+        print(json.dumps({{
+            "rc": child.returncode,
+            "stderr": err.strip(),
+            "foreign_files": sorted(p.name for p in foreign.iterdir()),
+            "frame_files": sorted(p.name for p in frame.iterdir()) if frame.is_dir() else [],
+        }}))
+    """))
+    r = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def test_probe_refuses_a_file_swapped_into_the_framedir_at_the_odir_window(tmp_path):
+    """Item 1a: O_DIRECTORY is load-bearing in the TOCTOU window. The framedir passes both
+    realpath checks as a directory, then is swapped to a REGULAR FILE before the os.open. With
+    O_DIRECTORY the framedir open itself fails (ENOTDIR), so framedir_fd stays None and NO leaf
+    is written; the probe exits 1 and the final stderr line names the FRAMEDIR path — never a
+    leaf path. The CLOEXEC-irrelevant discriminator is the path the final line carries."""
+    observed = _run_odir_hostile_rig(tmp_path)
+    assert observed["rc"] == 1, observed
+    lines = [ln for ln in observed["stderr"].splitlines() if ln.strip()]
+    assert lines, observed
+    final = lines[-1]
+    assert "Not a directory" in final, observed
+    # The ENOTDIR names the FRAMEDIR path itself (ends at the directory), never a leaf beneath
+    # it. Path-agnostic: the framedir is named `frame` in the rig, so a leaf would carry a
+    # `frame/` segment and a filename; the framedir path does not.
+    assert final.rstrip().endswith("'"), final
+    assert "frame/" not in final, f"the framedir open failed at a LEAF, not the framedir: {final}"
+    assert "/runtime-identity.json" not in final and "/timeline.jsonl" not in final, final
+    # No evidence leaf escaped to the foreign tree or to the (now-file) framedir.
+    assert observed["foreign_files"] == [], observed
+    assert observed["frame_files"] == [], observed
+
+
+def test_probe_odir_dropped_mutant_names_the_leaf_not_the_framedir(tmp_path):
+    """Item 1b (the mutant that dies under the O_DIRECTORY red): with os.O_DIRECTORY removed
+    from the framedir open, the framedir opens as a regular FILE, so the failure surfaces one
+    step later — at the first leaf write — and the final stderr line names a LEAF path. The
+    discriminator (framedir path vs leaf path in the final line) is what the red above holds."""
+    observed = _run_odir_hostile_rig(
+        tmp_path,
+        mutation=(
+            "framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC",
+            "framedir, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC",
+        ),
+    )
+    assert observed["rc"] == 1, observed
+    lines = [ln for ln in observed["stderr"].splitlines() if ln.strip()]
+    final = lines[-1]
+    assert "Not a directory" in final, observed
+    # Without O_DIRECTORY the framedir open SUCCEEDS on the file, so the failure surfaces one
+    # step later at the first leaf write and the ENOTDIR names a LEAF (a `frame/<file>` path),
+    # the exact opposite of the red above.
+    assert final.rstrip().endswith("'"), final
+    assert "frame/" in final, f"without O_DIRECTORY the ENOTDIR should name a LEAF: {final}"
+    assert final.rstrip().endswith("/runtime-identity.json'"), final
+
+
+def _framedir_flags_from_probe_source():
+    """Extract the exact flag set the probe's framedir open uses, by evaluating the anchor
+    expression in the probe's own module scope (os, so). This is the negative-control target:
+    the flags the child's fd table is judged against are the REAL probe's flags, not a literal
+    the test invented."""
+    src = PROBE.read_text()
+    anchor = _framedir_open_anchor(src)
+    # The 2-line anchor is `framedir_fd = os.open(` + `framedir, <flags>)`. Evaluate just the
+    # flags expression (the second argument) in the probe's own os scope, so the flags this
+    # test judges against are the REAL probe's flags, not a literal the test invented.
+    flags_expr = anchor.split("framedir, ", 1)[1].rstrip().rstrip(")")
+    ns = {"os": os}
+    flags = eval(flags_expr, ns)
+    assert flags & os.O_NOFOLLOW, "the framedir open must open with O_NOFOLLOW"
+    assert flags & os.O_CLOEXEC, "the framedir open must open with O_CLOEXEC"
+    return flags
+
+
+def _census_agent_fd_leaks(tmp_path, cloexec):
+    """Fork + exec a census agent that counts directory fds in /proc/self/fd resolving to the
+    framedir. The framedir fd is opened WITHOUT O_CLOEXEC and given the close-on-exec state
+    directly with fcntl.F_SETFD — FD_CLOEXEC is exactly the state O_CLOEXEC sets on the opened
+    descriptor, so this models the flag honestly while letting us move the fd to an unmasked
+    slot. The frame fd is opened WITHOUT O_CLOEXEC here because we are controlling the
+    close-on-exec state ourselves. `cloexec=False` is the CLOEXEC-DROPPED mutant (FD_CLOEXEC
+    cleared — the flag dropped); `cloexec=True` is the flag present. Pure fork+exec (no Popen
+    close_fds, no pipe dup2s): the flag is the ONLY thing that can close the fd across the
+    exec, so this isolates O_CLOEXEC as the sole decider. Returns the leak count the child
+    observed."""
+    import fcntl
+    frame = tmp_path / "frame"
+    frame.mkdir(exist_ok=True)
+    fd = os.open(str(frame), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    fcntl.fcntl(fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC if cloexec else 0)
+    agent = tmp_path / "agent_census.py"
+    agent.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, stat, sys\n"
+        "frame = os.path.realpath(os.environ['S0_01_FRAMEDIR'])\n"
+        "leaks = 0\n"
+        "for e in os.listdir('/proc/self/fd'):\n"
+        "    try:\n"
+        "        t = os.readlink('/proc/self/fd/' + e)\n"
+        "    except OSError:\n"
+        "        continue\n"
+        "    try:\n"
+        "        k = 'dir' if stat.S_ISDIR(os.stat('/proc/self/fd/' + e).st_mode) else 'oth'\n"
+        "    except OSError:\n"
+        "        continue\n"
+        "    if k == 'dir' and os.path.realpath(t) == frame:\n"
+        "        leaks += 1\n"
+        "sys.stderr.write('LEAK=%d\\n' % leaks)\n"
+        "sys.exit(0)\n"
+    )
+    agent.chmod(0o755)
+    out_path = tmp_path / "census_out.txt"
+    env = dict(os.environ, S0_01_FRAMEDIR=str(frame))
+    pid = os.fork()
+    if pid == 0:
+        errfd = os.open(str(out_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        os.dup2(errfd, 2)
+        os.close(errfd)
+        os.execve(sys.executable, [sys.executable, str(agent)], env)
+        os._exit(127)
+    os.waitpid(pid, 0)
+    os.close(fd)
+    text = out_path.read_text() if out_path.exists() else ""
+    for line in text.splitlines():
+        if line.startswith("LEAK="):
+            return int(line.split("=", 1)[1])
+    raise AssertionError(f"census agent reported no leak count: {text!r}")
+
+
+def test_probe_cloexec_is_load_bearing_child_sees_no_framedir_fd(tmp_path):
+    """Item 2: O_CLOEXEC is load-bearing. The child's fd table is the assertion. With the flag
+    the framedir's directory fd is closed across the exec (the child sees NONE); the negative
+    control is the CLOEXEC-DROPPED mutant, where the SAME agent reports ONE — the directory
+    capability handed to the process under test. The probe's framedir open is asserted to carry
+    O_CLOEXEC (the flag the census isolates). The exec is pure fork+exec (no Popen close_fds
+    masker): the flag alone decides whether the fd crosses the exec, so the drop reports ONE
+    and the keep reports NONE."""
+    flags = _framedir_flags_from_probe_source()
+    assert flags & os.O_CLOEXEC, "the framedir open must carry O_CLOEXEC"
+    assert _census_agent_fd_leaks(tmp_path, cloexec=True) == 0
+    # The CLOEXEC-DROPPED mutant: the flag removed, the SAME census agent reports ONE leak.
+    assert _census_agent_fd_leaks(tmp_path, cloexec=False) == 1
+
+
+def test_probe_agent_launch_pins_the_close_fds_default_second_defence(tmp_path):
+    """Item 2 (second, independent defence): the probe launches the agent through
+    subprocess.Popen with the close_fds default (True). This is what actually masks the framedir
+    fd slot in the probe's real topology, independent of O_CLOEXEC. The test asserts the Popen
+    call does not override the default (so the child's fd table is what it is) and that the
+    framedir open still carries O_CLOEXEC — the two defences together, asserted as the child's
+    fd table, never the flag alone."""
+    src = PROBE.read_text()
+    popen_block = src.split("subprocess.Popen(", 1)[1].split(")", 1)[0]
+    assert "close_fds" not in popen_block, (
+        "the probe must not override the Popen close_fds default (True); "
+        f"found: {popen_block!r}"
+    )
+    flags = _framedir_flags_from_probe_source()
+    assert flags & os.O_CLOEXEC, "the framedir open must still carry O_CLOEXEC"
