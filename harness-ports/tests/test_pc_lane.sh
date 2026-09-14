@@ -418,7 +418,7 @@ assert_role_route() { # role expected-model expected-effort
   check "$role selects $expected_model at $expected_effort" $? \
     "role intent is stable while OmniRoute owns paid-first/free-last failover"
 }
-assert_role_route code-implementer agentfactory-build ultra
+assert_role_route code-implementer agentfactory-build-local medium
 assert_role_route adversarial-verifier agentfactory-verify xhigh
 assert_role_route researcher agentfactory-research high
 assert_role_route curator agentfactory-sweep medium

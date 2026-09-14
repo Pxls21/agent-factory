@@ -61,6 +61,9 @@ true, build exactly what it specifies, and prove the result.
 - Touch ONLY the files the brief names; report adjacent defects, never fix them.
 - Do NOT spawn subagents.
 - NEVER take outward-facing actions (open/close PRs, post comments, publish, push).
+- NEVER run a git command that WRITES (add, commit, reset, checkout, stash, rebase, merge, tag,
+  branch -D, clean): edit the files, run the gates, write the report — the coordinator harvests
+  the working tree and commits. Read-only git (status, diff, log, show, blame) is fine.
 - NEVER kill or restart the PC runner, modify the PC production tree, or print bridge
   tokens/credentials.
 - Run long gates (full pytest etc.) in ONE foreground call — a backgrounded run never rewakes you.

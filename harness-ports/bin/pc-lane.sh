@@ -358,8 +358,15 @@ else
   #   agentfactory-sweep    kimi-k3 -> gemini-3-flash-preview -> agy flash-agent -> antigravity flash-agent -> free-fast
   # A combo answers even when its first route refuses (the 503 capacity class, a 429 quota);
   # the served model is whatever the chain reached — the lane report's usage.json names it.
+  # 2026-09-14 (owner: "let's get Qwen to do the heavy lifting" after 23 days lost to cloud quota):
+  # the BUILD lane's default route is the LOCAL combo `agentfactory-build-local` = the Qwen3.8-27B
+  # server on the PC's 3090 (harness-ports/bin/qwen-server.sh, behind OmniRoute as node `qwen-local`
+  # via harness-ports/bin/omniroute_local_builder.py) FIRST, then the agentfactory-build chain as
+  # fallback when the local server is down. Effort `medium` (measured: ~95 % of xhigh substance at
+  # 1/2-1/7 of the thinking; FINDINGS-LOCAL-BUILDER-QWEN38 §6). The cloud route stays one env away:
+  # HERMES_MODEL=agentfactory-build HERMES_REASONING=ultra.
   case "${ROLE:-}" in
-    code-implementer)     DEF_MODEL="agentfactory-build";    DEF_EFFORT="ultra";;
+    code-implementer)     DEF_MODEL="agentfactory-build-local"; DEF_EFFORT="medium";;
     adversarial-verifier) DEF_MODEL="agentfactory-verify";   DEF_EFFORT="xhigh";;
     evidence-gatherer|researcher) DEF_MODEL="agentfactory-research"; DEF_EFFORT="high";;
     curator|echo-sweeper|contract-runner) DEF_MODEL="agentfactory-sweep"; DEF_EFFORT="medium";;
