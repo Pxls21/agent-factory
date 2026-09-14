@@ -100,9 +100,17 @@ knobs the measurements decide.
    collapse on q4_0/q4_0 is the CPU-fallback signature.
 3. MTP acceptance rate and speedup on THIS card for THIS model (every published 3090 MTP number is Qwen3.6 or vLLM).
 4. Slot division under `-np 2` and `-np 4` (the startup log's per-slot context), then two and four concurrent lane-shaped requests.
-5. The effort A/B that matters: re-run TWO already-landed build briefs whose verifier verdicts we hold (a small one and a medium one) at
-   `medium` and at `xhigh`, through the normal `pc_lane.sh` path, and grade each report against the known verdict — items closed, mutants
-   killed, discrepancies stated, wall clock, tokens. That is the only medium-vs-xhigh evidence for our workload.
+5. The effort A/B that matters — AS RUN (2026-09-14 16:5xZ, owner: "one test … compared to max … if the output quality is better or medium's is not
+   good enough, switch"): ONE brief, TWO arms, ONE grader. Arm A = lane N5k on `agentfactory-build-local` at `medium` (the live lane,
+   dispatched 15:5xZ); arm B = the same brief on the same PIN in a fresh tree at `xhigh` (`tasks/briefs/pc/pc-n5k-xhigh.md`), dispatched
+   when arm A lands; then ONE comparative verify lane on `agentfactory-verify-local` grades both reports against the brief's own gates
+   (items closed, the red tests that went green, mutants killed, discrepancies stated, false claims) plus wall clock and tokens. "Max" for
+   this model IS `xhigh`: the Qwen3.8 chat template accepts only `xhigh` (default), `medium`, `low` (`high` → `xhigh`; anything
+   else raises). Decision rule: `xhigh` becomes the build default if arm B closes more of the brief, or arm A's report is NOT-READY on
+   blockers arm B avoided; otherwise `medium` stays and `xhigh` remains the per-brief override. Mechanism note: Hermes sends
+   `extra_body.reasoning={"effort": …}` on this wire; whether that reaches the template through OmniRoute is measured by the probe
+   `~/qwen-builder/probes/` on the PC (results recorded here when they land) — if it does not, arm B's effort is set at the server
+   (`QWEN_EFFORT=xhigh`, a unit restart between arms, never under a live lane), and the dispatch note names the mechanism used.
 6. Effective DDR4 bandwidth (a STREAM run) — only if any offload is ever considered.
 
 ### §6 measured — 2026-09-14 12:52-12:58Z, the June CUDA build `00139b6`, the 3090, one coding prompt at temperature 0

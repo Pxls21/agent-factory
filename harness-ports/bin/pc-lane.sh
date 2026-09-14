@@ -18,10 +18,12 @@
 #   CODEX_BIN      codex binary          default: codex (from PATH)
 #   HERMES_BIN     hermes binary         default: hermes (from PATH)
 #   HERMES_PROFILE lane profile          default: agentfactory (dedicated; never the owner default)
-#   HERMES_MODEL   OmniRoute route id    default: by ROLE (see role_model below); owner ruling
-#                  2026-09-03: BUILD = codex/gpt-5.6-sol-ultra; cheaper routes for consistent
-#                  low-judgment roles; Gemini for search/research. PROVISIONAL until probed.
-#   HERMES_REASONING  Hermes effort      default: by ROLE (ultra for build/verify, high otherwise)
+#   HERMES_MODEL   OmniRoute route id    default: by ROLE (see role_model below). Since 2026-09-14 (owner):
+#                  BUILD = agentfactory-build-local and VERIFY = agentfactory-verify-local — the local
+#                  Qwen3.8-27B on the PC's 3090 first, the cloud chain as fallback; they alternate on
+#                  the one 262k slot. Cloud routes stay one env away (agentfactory-build / -verify).
+#   HERMES_REASONING  Hermes effort      default: by ROLE (medium for build, xhigh for verify, high otherwise);
+#                  on a local route ultra/max/high are CLAMPED to xhigh (the Qwen3.8 template's ceiling)
 #   LANE_BRANCH    branch to fetch       default: claude/soundbox-kit-migration-iz1jwf
 #   LANE_ID        override the lane id  default: derived from the brief
 #   PC_LANE_FAKE_HARNESS
@@ -365,17 +367,27 @@ else
   # fallback when the local server is down. Effort `medium` (measured: ~95 % of xhigh substance at
   # 1/2-1/7 of the thinking; FINDINGS-LOCAL-BUILDER-QWEN38 §6). The cloud route stays one env away:
   # HERMES_MODEL=agentfactory-build HERMES_REASONING=ultra.
+  # 2026-09-14 (owner): the VERIFY lane runs on the local model too — build and verify alternate on the one
+  # 262k slot. The Qwen3.8 chat template accepts ONLY xhigh (its default), medium and low (`high` maps to xhigh;
+  # any other value raises "Unexpected reasoning effort" → the request fails and OmniRoute falls through to the
+  # CLOUD chain silently), so on a local combo the effort is CLAMPED below: ultra/max/high → xhigh. The A/B of
+  # 2026-09-14 (FINDINGS-LOCAL-BUILDER-QWEN38 §6 step 5) decides whether the build default moves to xhigh.
   case "${ROLE:-}" in
     code-implementer)     DEF_MODEL="agentfactory-build-local"; DEF_EFFORT="medium";;
-    adversarial-verifier) DEF_MODEL="agentfactory-verify";   DEF_EFFORT="xhigh";;
+    adversarial-verifier) DEF_MODEL="agentfactory-verify-local"; DEF_EFFORT="xhigh";;
     evidence-gatherer|researcher) DEF_MODEL="agentfactory-research"; DEF_EFFORT="high";;
     curator|echo-sweeper|contract-runner) DEF_MODEL="agentfactory-sweep"; DEF_EFFORT="medium";;
     *)                    DEF_MODEL="agentfactory-build";    DEF_EFFORT="ultra";;
   esac
+  RUN_MODEL="${HERMES_MODEL:-$DEF_MODEL}"; RUN_EFFORT="${HERMES_REASONING:-$DEF_EFFORT}"
+  case "$RUN_MODEL" in
+    agentfactory-*-local|qwen-local/*)
+      case "$RUN_EFFORT" in ultra|max|high) echo "pc-lane: effort '$RUN_EFFORT' clamped to xhigh on the local route ($RUN_MODEL)" >&2; RUN_EFFORT=xhigh;; esac;;
+  esac
   TERMINAL_CWD="$TREE" \
   "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
-      -m "${HERMES_MODEL:-$DEF_MODEL}" \
-      --reasoning "${HERMES_REASONING:-$DEF_EFFORT}" \
+      -m "$RUN_MODEL" \
+      --reasoning "$RUN_EFFORT" \
       --accept-hooks \
       --usage-file "$LANE_DIR/usage.json" > "$REPORT" 2> "$LOG" &
   HARNESS_PID=$!; wait "$HARNESS_PID"; rc=$?

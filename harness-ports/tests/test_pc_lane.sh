@@ -419,7 +419,19 @@ assert_role_route() { # role expected-model expected-effort
     "role intent is stable while OmniRoute owns paid-first/free-last failover"
 }
 assert_role_route code-implementer agentfactory-build-local medium
-assert_role_route adversarial-verifier agentfactory-verify xhigh
+assert_role_route adversarial-verifier agentfactory-verify-local xhigh
+# the local combos clamp ultra/max/high to xhigh (the Qwen3.8 template raises on any other value and OmniRoute would
+# fall through to the cloud chain silently); an explicit cloud route keeps its effort verbatim
+export HERMES_ARGS_FILE="$TMP/hermes-args-clamp"
+LANE_ID="route-clamp" HERMES_MODEL="agentfactory-build-local" HERMES_REASONING="ultra" HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/route-clamp.err"
+awk 'prev=="--reasoning" && $0=="xhigh" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE"
+check "ultra on a local combo is clamped to xhigh" $? "$(grep -o 'clamped to xhigh[^\n]*' "$TMP/route-clamp.err" | head -1)"
+export HERMES_ARGS_FILE="$TMP/hermes-args-noclamp"
+LANE_ID="route-noclamp" HERMES_MODEL="agentfactory-build" HERMES_REASONING="ultra" HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/route-noclamp.err"
+awk 'prev=="--reasoning" && $0=="ultra" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE"
+check "ultra on the cloud combo passes through unchanged" $? "the clamp is scoped to the local combos"
 assert_role_route researcher agentfactory-research high
 assert_role_route curator agentfactory-sweep medium
 assert_role_route contract-runner agentfactory-sweep medium

@@ -393,6 +393,18 @@ lanes still run on the cloud route (`agentfactory-verify`). Restarting the unit 
 lanes first, and never while the owner's own sessions use the route.
 
 
+**The VERIFY lane on the local model too (owner 2026-09-14: "it does both the build and verify lane and goes back and forth").**
+`adversarial-verifier` now defaults to the combo `agentfactory-verify-local` (the same local model first, then the
+`agentfactory-verify` cloud chain), created by `QWEN_OMNI_COMBO=agentfactory-verify-local QWEN_OMNI_BASE_COMBO=agentfactory-verify
+python3 harness-ports/bin/omniroute_local_builder.py ensure`. Build and verify alternate on the one 262k slot. Effort: the Qwen3.8
+chat template accepts ONLY `xhigh` (its default), `medium` and `low` (`high` maps to `xhigh`; any other value makes the template
+raise "Unexpected reasoning effort", the request fails, and OmniRoute falls through to the CLOUD chain silently) — so `pc-lane.sh`
+clamps `ultra`/`max`/`high` to `xhigh` on every local route and prints the clamp; an explicit cloud route keeps its effort verbatim
+(both cases in `test_pc_lane.sh`). Whether a per-request effort reaches the model through OmniRoute is measured by the probe
+recorded in FINDINGS-LOCAL-BUILDER-QWEN38 §6 step 5; if it does not, the effort is the server's own default (`QWEN_EFFORT`, a
+unit restart between arms — never under a live lane).
+
+
 ### Sandbox-side: `scripts/pc_lane.sh`
 
     scripts/pc_lane.sh <brief-file> [codex|hermes] [role]
