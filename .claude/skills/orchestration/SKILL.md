@@ -284,7 +284,7 @@ whatever the prose says. Every verify brief runs the SAME script first and grade
 artifacts (`reds_new.txt`, `mutants.txt`, `lint_delta.txt`) before any reading. Verifier
 findings that need a repair ship as RED TESTS (committed failing tests or manifest mutants),
 never file:line prose — the repair brief is "make these N tests green, do not edit them".
-A finding with no test is INFO and does not open a round. "Pre-existing" is a word only
+A finding with no test is INFO and does not open a round. **A lane report's lint gates on a FLOOR (`report_lint.py --min-refs N`): `MISS 0` over a report that cites nothing is a hollow lint (B3, 2026-09-14 — round 2's verify had named the gap and round 3 repeated it); the harvest pastes the floor it demanded.** "Pre-existing" is a word only
 `lane_gate.sh` may say (its `reds pre-existing=` line, computed against the PUSH BASE
 archive) — the I3g report called a range regression pre-existing off a mid-stack SHA, and
 the mis-label cost a full round. Round cap: `contract-gate` §4 — round-3 NOT-READY stops the

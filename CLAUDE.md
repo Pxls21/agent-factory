@@ -379,7 +379,7 @@ the NEXT session start.
 immediately append a one-line fix to this file. Don't defer.
 **A `pgrep -f <pattern>` liveness/wait loop MUST exclude its own command line** — bracket the
 first char (`pgrep -f '[p]ytest ...'`) or match the binary with `-x` (two self-matching waiters
-spun for a whole lane in the source repo).
+spun for a whole lane in the source repo). **The bracket protects only the PATTERN: any other literal occurrence of the name in the same command line (a later `sed`/`nohup` argument naming the script) self-matches — a `pkill -f "[r]un_packs.sh"` killed the coordinator's own shell 2026-09-14 (rc 144); kill by pid, never by `pkill -f` inside a compound command that also names the target.**
 **`git rev-parse --short REV1 REV2` fails ("Needed a single revision") in this container's
 shell inside a compound command** — one rev-parse per call.
 **push_clean can LOSE A RACE with the GitNexus banner rewriter:** AGENTS.md/CLAUDE.md index-stat
@@ -401,7 +401,7 @@ with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
 **`tests/test_proof_status.py` needs a SHORT `--basetemp` (e.g. `/tmp/ps/bt`)** — the session scratchpad path exceeds gpg-agent's Unix-socket
 length limit and the eleven throwaway-key anchor tests fail with `gpg … --quick-generate-key … exit status 2` (nine false reds on 2026-09-14);
-the same tests are green with a short path. A regenerated minted result (AF-AP-56) after an `accepted/<id>` tag exists fails three of its
+the same tests are green with a short path. pytest creates only the LAST component of `--basetemp` — `mkdir -p` its parent first, or every test errors at setup with `FileNotFoundError` (bit 2026-09-14). A regenerated minted result (AF-AP-56) after an `accepted/<id>` tag exists fails three of its
 committed-state tests BY DESIGN until the owner re-signs — read the assertion, never the count.
 **ATTESTED INPUTS (AF-AP-56, CI runs 106-110 red 2026-09-06):** every minted `proofs/<id>/result.json` hashes its tooling — `proofs/schemas/*`, `scripts/proof-runner`, `scripts/validate-ledger`, `proofs/registry.yaml` and the proof's own files. Any change to one of those is a tooling change: regenerate the dependent artifacts in the SAME increment (`python3 scripts/proof-runner run --proof <id> --venue sandbox --root .` for each minted id), then gate on `python3 scripts/validate-ledger integrity --root .` (PRESENT, never INVALID) + `python3 scripts/ledger-gen --root .` + `git diff --exit-code proofs/ledger.json`. A lane brief whose boundary contains an attested path names this gate. Regenerate ONLY from a world-traversable tree (the repo, never a root-only scratch
 copy: S0-11 drops to `nobody` and cannot read `0700` paths) — a real proof failure DELETES the minted artifact by design (VERIFY-N5g F8).
@@ -674,7 +674,7 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
 - **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM... -o pack.md FILE...` —
   the whole quartet + ripwire + the whole-file registry screen in ONE command; every build and verify brief attaches
   its pack; the coordinator runs it before designing and on the lane's diff before the verifier. `scripts/report_lint.py`
-  and `scripts/ap_screen.py --s0-01` gate every checkpoint. An instrument that is not in a script on the path is not in
+  and `scripts/ap_screen.py --s0-01` gate every checkpoint (`report_lint.py --min-refs N`: a report that cites nothing lints clean by construction — B3's `0 refs — MISS 0`, 2026-09-14 — so a checkpoint gates on a FLOOR, never on the MISS count alone). An instrument that is not in a script on the path is not in
   the loop.
 - **After EVERY edit-batch, not just before commit:** `detect_changes`; re-`analyze` (detached)
   on a stale index. Before commit stays mandatory.
