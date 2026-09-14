@@ -17,6 +17,8 @@ esc() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'
 }
 
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
+
 # --- Raw host devices must be absent ---
 # gVisor exposes a minimal synthetic /dev. Any of these names would mean the
 # container was handed a real host device.
@@ -51,8 +53,8 @@ unshare_rc=$?
 
 rc=0
 
-printf '{"canary":"P6","expect":"no raw host devices; a mounted procfs shows the container PID 1, not the host","observed":{"dangerous_devices":"%s","dev_entries":"%s","mount_proc_rc":"%d","mount_proc_error":"%s","mounted_pid1_comm":"%s","mounted_pid_count":"%s","own_pid1_comm":"%s","own_pid_count":"%s","unshare_net_rc":"%d","unshare_net_error":"%s"},"rc":%d}\n' \
-    "$(esc "$dangerous")" "$(esc "$dev_entries")" \
+printf '{"canary":"P6","expect":"no raw host devices; a mounted procfs shows the container PID 1, not the host","observed":{"observed_exec_uid":"%s","dangerous_devices":"%s","dev_entries":"%s","mount_proc_rc":"%d","mount_proc_error":"%s","mounted_pid1_comm":"%s","mounted_pid_count":"%s","own_pid1_comm":"%s","own_pid_count":"%s","unshare_net_rc":"%d","unshare_net_error":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$(esc "$dangerous")" "$(esc "$dev_entries")" \
     "$mount_rc" "$(esc "$mount_err")" \
     "$(esc "$mounted_pid1_comm")" "$(esc "$mounted_pid_count")" \
     "$(esc "$own_pid1_comm")" "$(esc "$own_pid_count")" \

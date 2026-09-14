@@ -18,6 +18,7 @@ esc() {
 }
 
 sentinel="${S0_08_SENTINEL_PATH:-}"
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
 
 sentinel_readable="no"
 sentinel_error=""
@@ -40,6 +41,6 @@ container_hostname=$(cat /etc/hostname 2>/dev/null) || container_hostname=""
 rc=0
 [ -n "$sentinel" ] || rc=1
 
-printf '{"canary":"P5","expect":"the host sentinel is UNREADABLE inside the container","observed":{"sentinel_path":"%s","sentinel_readable":"%s","sentinel_error":"%s","home_entries":"%s","container_hostname":"%s"},"rc":%d}\n' \
-    "$(esc "$sentinel")" "$(esc "$sentinel_readable")" "$(esc "$sentinel_error")" \
+printf '{"canary":"P5","expect":"the host sentinel is UNREADABLE inside the container","observed":{"observed_exec_uid":"%s","sentinel_path":"%s","sentinel_readable":"%s","sentinel_error":"%s","home_entries":"%s","container_hostname":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$(esc "$sentinel")" "$(esc "$sentinel_readable")" "$(esc "$sentinel_error")" \
     "$(esc "$home_entries")" "$(esc "$container_hostname")" "$rc"

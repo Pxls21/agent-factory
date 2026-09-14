@@ -16,6 +16,8 @@ esc() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'
 }
 
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
+
 interfaces=$(ls -1 /sys/class/net 2>/dev/null | sort | tr '\n' ',' | sed -e 's/,$//')
 [ -n "$interfaces" ] || interfaces=""
 
@@ -23,5 +25,5 @@ netns=$(readlink /proc/self/ns/net 2>/dev/null) || netns=""
 
 rc=0
 
-printf '{"canary":"P7","expect":"recorded only: S0-08 asserts no egress property (S0-05 owns egress)","observed":{"interfaces":"%s","net_namespace":"%s"},"rc":%d}\n' \
-    "$(esc "$interfaces")" "$(esc "$netns")" "$rc"
+printf '{"canary":"P7","expect":"recorded only: S0-08 asserts no egress property (S0-05 owns egress)","observed":{"observed_exec_uid":"%s","interfaces":"%s","net_namespace":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$(esc "$interfaces")" "$(esc "$netns")" "$rc"

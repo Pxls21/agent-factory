@@ -86,12 +86,19 @@ fi
 
 CID=""
 SENTINEL=""
+DATA_VOLUME=""
+BUILD_CONTEXT=""
 cleanup() {
-    # Remove the container BY ID only. Never by name, never pkill.
+    # Remove only resources this run generated, named by their exact id/name.
+    # Never by pattern, never pkill.
     if [ -n "$CID" ] && [ "$KEEP" -eq 0 ]; then
         podman rm -f "$CID" >/dev/null 2>&1 || true
     fi
+    if [ -n "$DATA_VOLUME" ] && [ "$KEEP" -eq 0 ]; then
+        podman volume rm -f "$DATA_VOLUME" >/dev/null 2>&1 || true
+    fi
     [ -n "$SENTINEL" ] && rm -f "$SENTINEL" 2>/dev/null || true
+    [ -n "$BUILD_CONTEXT" ] && rm -rf "$BUILD_CONTEXT" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -104,6 +111,7 @@ s0_08_require_pinned_source() {
     local dir="$1"
     local expected="$2"
     local actual
+    local status
     if [ ! -f "${dir}/Dockerfile" ]; then
         echo "s0-08: no Dockerfile at ${dir} — cannot build the pinned image" >&2
         exit 2
@@ -113,13 +121,29 @@ s0_08_require_pinned_source() {
         echo "s0-08: ${dir} is at ${actual}, expected the pinned ${expected}" >&2
         exit 2
     fi
+    status="$(git -C "$dir" status --porcelain=v1 --untracked-files=all 2>/dev/null || echo unknown)"
+    if [ -n "$status" ]; then
+        echo "s0-08: ${dir} is dirty; refusing a non-canonical image source" >&2
+        exit 2
+    fi
 }
 
 # --- 1. The image -----------------------------------------------------------
 if [ "$BUILD" -eq 1 ]; then
     s0_08_require_pinned_source "$SOURCE_DIR" "$PINNED_COMMIT"
-    echo "s0-08: building ${IMAGE_TAG} from ${SOURCE_DIR} (Dockerfile as-is)" >&2
-    if ! podman build -t "$IMAGE_TAG" "$SOURCE_DIR" >&2; then
+    BUILD_CONTEXT="$(mktemp -d)"
+    if ! git -C "$SOURCE_DIR" archive "$PINNED_COMMIT" > "$BUILD_CONTEXT/source.tar"; then
+        echo "s0-08: could not archive pinned source ${PINNED_COMMIT}" >&2
+        exit 2
+    fi
+    if ! tar -xf "$BUILD_CONTEXT/source.tar" -C "$BUILD_CONTEXT"; then
+        echo "s0-08: could not extract pinned source archive ${PINNED_COMMIT}" >&2
+        exit 2
+    fi
+    rm -f "$BUILD_CONTEXT/source.tar"
+    echo "s0-08: building ${IMAGE_TAG} from git archive ${PINNED_COMMIT}" >&2
+    if ! podman build --build-arg "HERMES_GIT_SHA=${PINNED_COMMIT}" \
+            -t "$IMAGE_TAG" "$BUILD_CONTEXT" >&2; then
         echo "s0-08: podman build failed for ${IMAGE_TAG}" >&2
         exit 2
     fi
@@ -127,6 +151,16 @@ fi
 
 if ! podman image exists "$IMAGE_TAG"; then
     echo "s0-08: image ${IMAGE_TAG} is not present and was not built" >&2
+    exit 2
+fi
+image_id="$(podman image inspect --format '{{.Id}}' "$IMAGE_TAG" 2>/dev/null || echo unknown)"
+image_digest="$(podman image inspect --format '{{.Digest}}' "$IMAGE_TAG" 2>/dev/null || echo unknown)"
+if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "s0-08: image ${IMAGE_TAG} has no immutable image ID (${image_id})" >&2
+    exit 2
+fi
+if [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "s0-08: image ${IMAGE_TAG} has no immutable digest (${image_digest})" >&2
     exit 2
 fi
 
@@ -146,6 +180,15 @@ if [ "$SENTINEL_READABLE" != true ]; then
 fi
 
 # --- 3. Start the container -------------------------------------------------
+# The proof owns a fresh empty /opt/data volume. Image startup may otherwise
+# restore persistent profiles and their gateway services, invalidating P6's
+# source-derived process bound.
+DATA_VOLUME="s0-08-data-${NONCE}"
+if ! podman volume create "$DATA_VOLUME" >/dev/null; then
+    echo "s0-08: could not create empty data volume ${DATA_VOLUME}" >&2
+    exit 3
+fi
+
 # The flags are EXACTLY the two PC-BRIDGE.md:141-148 verified as required:
 #   --runtime-flag ignore-cgroups   rootless runsc cannot set up cgroups here
 #   --security-opt label=disable    runsc refuses an OCI spec with an SELinux label
@@ -156,6 +199,7 @@ RUN_ARGV=(podman run -d
           --runtime "$RUNTIME"
           --security-opt label=disable
           --network none
+          -v "${DATA_VOLUME}:/opt/data"
           "$IMAGE_TAG" $MAIN_CMD)
 if [ "${RUNTIME##*/}" = "runsc" ]; then
     RUN_ARGV=(podman run -d
@@ -163,6 +207,7 @@ if [ "${RUNTIME##*/}" = "runsc" ]; then
               --runtime-flag ignore-cgroups
               --security-opt label=disable
               --network none
+              -v "${DATA_VOLUME}:/opt/data"
               "$IMAGE_TAG" $MAIN_CMD)
 fi
 
@@ -223,9 +268,37 @@ elif [ -x /usr/local/bin/runsc ]; then
 fi
 
 podman_version="$(podman --version 2>/dev/null | head -n 1)"
-image_digest="$(podman image inspect --format '{{.Digest}}' "$IMAGE_TAG" 2>/dev/null || echo unknown)"
+container_image_id="$(podman inspect --format '{{.Image}}' "$CID" 2>/dev/null || echo unknown)"
+image_build_sha="$(podman exec "$CID" cat /opt/hermes/.hermes_build_sha 2>/dev/null || echo unknown)"
+image_provenance="$(podman exec "$CID" cat /etc/hermes/image-provenance.json 2>/dev/null || echo unknown)"
+if [ "$container_image_id" != "$image_id" ]; then
+    echo "s0-08: running container image ${container_image_id} does not match inspected ${image_id}" >&2
+    exit 4
+fi
+if [ "$image_build_sha" != "$PINNED_COMMIT" ]; then
+    echo "s0-08: image baked provenance ${image_build_sha}, expected ${PINNED_COMMIT}" >&2
+    exit 4
+fi
+if ! printf '%s' "$image_provenance" | python3 -c '
+import json, sys
+expected = sys.argv[1]
+try:
+    value = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if isinstance(value, dict) and value.get("revision") == expected else 1)
+' "$PINNED_COMMIT"; then
+    echo "s0-08: image provenance file is absent, malformed or not pinned to ${PINNED_COMMIT}" >&2
+    exit 4
+fi
 host_kernel="$(uname -r)"
-ps_tree="$(podman exec "$CID" sh -c 'ps -eo pid,user,comm,args 2>/dev/null || ps aux' 2>/dev/null || echo unavailable)"
+set +e
+ps_tree="$(podman exec "$CID" ps -eo pid,stat,user,comm,args 2>/dev/null)"
+ps_tree_rc=$?
+set -e
+if [ "$ps_tree_rc" -ne 0 ]; then
+    ps_tree="unavailable"
+fi
 main_id="$(podman exec "$CID" sh -c 'for d in /proc/[0-9]*; do p=${d#/proc/}; c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null | sed -e "s/ *$//"); [ "$c" = "'"$MAIN_CMD"'" ] && id -u -n $(awk "/^Uid:/{print \$2; exit}" /proc/$p/status) 2>/dev/null && exit 0; done' 2>/dev/null || echo unknown)"
 mainhermes_id="$(podman exec "$CID" sh -c 'command -v s6-svstat >/dev/null 2>&1 && s6-svstat /run/service/main-hermes 2>/dev/null || echo "s6-svstat unavailable"' 2>/dev/null || echo unknown)"
 
@@ -236,7 +309,11 @@ META="$(mktemp -d)"
 printf '%s' "$runsc_version"   > "$META/runsc_version"
 printf '%s' "$runsc_sha256"    > "$META/runsc_sha256"
 printf '%s' "$podman_version"  > "$META/podman_version"
+printf '%s' "$image_id"        > "$META/image_id"
 printf '%s' "$image_digest"    > "$META/image_digest"
+printf '%s' "$container_image_id" > "$META/container_image_id"
+printf '%s' "$image_build_sha" > "$META/image_build_sha"
+printf '%s' "$image_provenance" > "$META/image_provenance"
 printf '%s' "$host_kernel"     > "$META/host_kernel"
 printf '%s' "$ps_tree"         > "$META/ps_tree"
 printf '%s' "$main_id"         > "$META/main_program_user"
@@ -244,6 +321,7 @@ printf '%s' "$mainhermes_id"   > "$META/main_hermes_service"
 printf '%s' "$SENTINEL"        > "$META/sentinel_path"
 printf '%s' "$SENTINEL_READABLE" > "$META/sentinel_readable"
 printf '%s' "$CANARY_EXEC_UID" > "$META/canary_exec_user"
+printf '%s' "$DATA_VOLUME"     > "$META/data_volume"
 printf '%s' "$CID"             > "$META/container_id"
 printf '%s' "$IMAGE_TAG"       > "$META/image"
 printf '%s' "$RUNTIME"         > "$META/runtime"
@@ -275,8 +353,13 @@ identity = {
     "runsc_path": val("runtime"),
     "podman_version": val("podman_version"),
     "image": val("image"),
+    "image_id": val("image_id"),
     "image_digest": val("image_digest"),
+    "container_image_id": val("container_image_id"),
+    "image_build_sha": val("image_build_sha"),
+    "image_provenance": json.loads(val("image_provenance")),
     "image_source_commit": val("image_source_commit"),
+    "data_volume": val("data_volume"),
     "run_argv": run_argv,
     "host_kernel": val("host_kernel"),
     "container_id": val("container_id"),

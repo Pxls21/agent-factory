@@ -16,6 +16,8 @@ esc() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'
 }
 
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
+
 cgroup_lines=$(cat /proc/self/cgroup 2>/dev/null | tr '\n' ';' | sed -e 's/;$//')
 [ -n "$cgroup_lines" ] || cgroup_lines=""
 
@@ -25,5 +27,5 @@ pids_max=$(cat /sys/fs/cgroup/pids.max 2>/dev/null) || pids_max=""
 
 rc=0
 
-printf '{"canary":"P8","expect":"recorded only: no resource limits under rootless runsc (ignore-cgroups)","observed":{"cgroup":"%s","memory_max":"%s","cpu_max":"%s","pids_max":"%s"},"rc":%d}\n' \
-    "$(esc "$cgroup_lines")" "$(esc "$mem_max")" "$(esc "$cpu_max")" "$(esc "$pids_max")" "$rc"
+printf '{"canary":"P8","expect":"recorded only: no resource limits under rootless runsc (ignore-cgroups)","observed":{"observed_exec_uid":"%s","cgroup":"%s","memory_max":"%s","cpu_max":"%s","pids_max":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$(esc "$cgroup_lines")" "$(esc "$mem_max")" "$(esc "$cpu_max")" "$(esc "$pids_max")" "$rc"

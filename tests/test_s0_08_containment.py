@@ -84,7 +84,7 @@ def run_marker_gate(proof_dir) -> subprocess.CompletedProcess:
 # values (P1, P6) are the ones measured under runsc release-20260817.0.
 
 def passing_canaries() -> list[dict]:
-    return [
+    canaries = [
         {"canary": "P1",
          "expect": "uname -r is 4.19.0-gvisor and dmesg line 1 contains Starting gVisor",
          "observed": {"uname_r": "4.19.0-gvisor",
@@ -136,6 +136,9 @@ def passing_canaries() -> list[dict]:
          "observed": {"cgroup": "0::/", "memory_max": "", "cpu_max": "", "pids_max": ""},
          "rc": 0},
     ]
+    for rec in canaries:
+        rec["observed"]["observed_exec_uid"] = CANARY_EXEC_UID
+    return canaries
 
 
 def passing_identity() -> dict:
@@ -148,11 +151,17 @@ def passing_identity() -> dict:
         "runsc_path": "/usr/local/bin/runsc",
         "podman_version": "podman version 5.7.0",
         "image": "localhost/hermes-s0-08:527da608",
-        "image_digest": "sha256:0badc0de",
+        "image_id": "sha256:" + "1" * 64,
+        "image_digest": "sha256:" + "2" * 64,
+        "container_image_id": "sha256:" + "1" * 64,
+        "image_build_sha": PINNED_IMAGE_SOURCE_COMMIT,
+        "image_provenance": {"revision": PINNED_IMAGE_SOURCE_COMMIT},
         "image_source_commit": PINNED_IMAGE_SOURCE_COMMIT,
+        "data_volume": "s0-08-data-0123456789abcdef",
         "run_argv": ["podman", "run", "-d", "--runtime", "/usr/local/bin/runsc",
                      "--runtime-flag", "ignore-cgroups", "--security-opt",
-                     "label=disable", "--network", "none",
+                     "label=disable", "--network", "none", "-v",
+                     "s0-08-data-0123456789abcdef:/opt/data",
                      "localhost/hermes-s0-08:527da608"] + MAIN_CMD.split(),
         "host_kernel": "6.17.11-200.fc42",
         "container_id": "0123456789ab",
@@ -725,9 +734,11 @@ def test_live_canary_output_binds_to_the_fields_the_checker_reads(
         # whichever P4 assertion fires FIRST — on a host with a docker socket
         # that is the socket, so P4.sh reverting to reading /proc/1/environ (a
         # DIFFERENT environment) went unnoticed (VERIFY-G1 F7, mutant 40).
-        # check_p4 asserts the socket before the env, so clear that one field
-        # and require the checker to name the key it read from the LIVE line.
-        unsocketed = dict(live, observed=dict(live["observed"], docker_sock="absent"))
+        # Preserve the live env fields but normalize the observer uid and
+        # socket so this focused control reaches the secret-key assertion.
+        observed = dict(live["observed"], observed_exec_uid=CANARY_EXEC_UID,
+                        docker_sock="absent")
+        unsocketed = dict(live, observed=observed)
         lines = [unsocketed if rec["canary"] == "P4" else rec
                  for rec in passing_canaries()]
         env_check = run_checker(write_bundle(tmp_path / "pc-runsc-env", canaries=lines))
@@ -930,6 +941,17 @@ def test_p6_own_pid_count_must_be_a_count(tmp_path):
     assert "containment: P6 own_pid_count (absent) is not a count" in proc.stdout
 
 
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_p6_own_pid_count_has_a_positive_floor(tmp_path, value):
+    lines = _mount_failed_p6(passing_canaries(), own_pid_count=value)
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines))
+    assert proc.returncode == 1
+    expected = (f"containment: P6 own_pid_count {value} is outside 1..32"
+                if value == "0" else
+                f"containment: P6 own_pid_count {value} is not a count")
+    assert expected in proc.stdout
+
+
 # --- F2 / F12 · one unambiguous main program, one source for its cmdline ----
 
 def test_p2_ambiguous_main_cmdline_is_refused(tmp_path):
@@ -1006,7 +1028,10 @@ def test_p2_reports_every_holder_of_the_main_cmdline(tmp_path):
             child.wait(timeout=30)
     pids = [p for p in live["observed"]["main_pids"].split(",") if p]
     assert sorted(pids) == sorted(str(c.pid) for c in started), live
-    lines = [live if rec["canary"] == "P2" else rec for rec in passing_canaries()]
+    lines = [dict(rec, observed=dict(rec["observed"], observed_exec_uid=CANARY_EXEC_UID))
+             if rec["canary"] == "P2" else rec for rec in passing_canaries()]
+    lines = [dict(live, observed=dict(live["observed"], observed_exec_uid=CANARY_EXEC_UID))
+             if rec["canary"] == "P2" else rec for rec in lines]
     check = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines))
     assert check.returncode == 1, check.stdout
     assert "containment: P2 main program cmdline is ambiguous (2 processes)" in check.stdout
@@ -1076,6 +1101,30 @@ def test_canary_exec_user_absent_is_refused(tmp_path):
     assert "containment: canaries were exec'd as uid (absent), expected 10000" in proc.stdout
 
 
+def test_canary_exec_user_must_be_a_json_string(tmp_path):
+    identity = passing_identity()
+    identity["canary_exec_user"] = 10000
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
+    assert proc.returncode == 1
+    assert "containment: canary_exec_user is not a string" in proc.stdout
+
+
+@pytest.mark.parametrize("canary", ALL_CANARIES)
+def test_each_canary_must_read_back_the_requested_exec_uid(tmp_path, canary):
+    lines = passing_canaries()
+    next(rec for rec in lines if rec["canary"] == canary)["observed"]["observed_exec_uid"] = "0"
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines))
+    assert proc.returncode == 1, proc.stdout
+    assert f"containment: {canary} observed_exec_uid 0, expected 10000" in proc.stdout
+
+
+def test_every_shipped_canary_measures_its_exec_uid():
+    for canary in ALL_CANARIES:
+        code = canary_code(canary)
+        assert "observer_uid=$(id -u" in code, canary
+        assert '"observed_exec_uid"' in code, canary
+
+
 # --- F4 · the evidence is bound to its image and its argv ------------------
 
 def test_evidence_from_another_image_is_refused(tmp_path):
@@ -1091,57 +1140,120 @@ def test_evidence_from_another_image_is_refused(tmp_path):
         in proc.stdout
 
 
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("image", "docker.io/library/alpine:3.20", "containment: image docker.io/library/alpine:3.20"),
+        ("image_id", "sha256:deadbeef", "image_id sha256:deadbeef is not a sha256 digest"),
+        ("image_digest", "sha256:deadbeef", "image_digest sha256:deadbeef is not a sha256 digest"),
+        ("container_image_id", "sha256:" + "3" * 64, "container image id"),
+        ("image_build_sha", "deadbeef", "image_build_sha deadbeef"),
+        ("image_provenance", {"revision": "deadbeef"}, "image_provenance revision deadbeef"),
+    ],
+)
+def test_image_identity_is_measured_and_bound(tmp_path, field, value, expected):
+    identity = passing_identity()
+    identity[field] = value
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
+    assert proc.returncode == 1, proc.stdout
+    assert expected in proc.stdout
+
+
+def test_image_identity_rejects_missing_baked_provenance(tmp_path):
+    identity = passing_identity()
+    del identity["image_provenance"]
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
+    assert proc.returncode == 1
+    assert "containment: image_provenance is not an object" in proc.stdout
+
+
+def test_runner_builds_from_the_pin_archive_and_sets_image_provenance():
+    code = runner_code()
+    assert 'git -C "$SOURCE_DIR" archive "$PINNED_COMMIT"' in code
+    assert '--build-arg "HERMES_GIT_SHA=${PINNED_COMMIT}"' in code
+    assert 'podman build' in code and '"$BUILD_CONTEXT"' in code
+    assert 'podman build -t "$IMAGE_TAG" "$SOURCE_DIR"' not in code
+
+
+def test_runner_measures_prebuilt_and_running_image_identity():
+    code = runner_code()
+    assert "podman image inspect --format '{{.Id}}'" in code
+    assert "podman image inspect --format '{{.Digest}}'" in code
+    assert "podman inspect --format '{{.Image}}'" in code
+    assert "cat /opt/hermes/.hermes_build_sha" in code
+    assert "cat /etc/hermes/image-provenance.json" in code
+    assert 'if [ "$container_image_id" != "$image_id" ]; then' in code
+    assert 'if [ "$image_build_sha" != "$PINNED_COMMIT" ]; then' in code
+
+
+def test_runner_uses_and_removes_a_fresh_named_data_volume():
+    code = runner_code()
+    assert 'DATA_VOLUME="s0-08-data-${NONCE}"' in code
+    assert 'podman volume create "$DATA_VOLUME"' in code
+    assert '-v "${DATA_VOLUME}:/opt/data"' in code
+    assert 'podman volume rm -f "$DATA_VOLUME"' in code
+
+
 def test_host_networked_privileged_run_argv_is_refused(tmp_path):
     """VERIFY-G1 bundle A8: `--network host --privileged` in the recorded argv.
     PASSED on 517c65e — P7's whole claim was enforced by a static test on the
     runner's source, never on the evidence."""
     identity = passing_identity()
-    identity["run_argv"] = ["podman", "run", "-d", "--runtime", "/usr/local/bin/runsc",
-                            "--runtime-flag", "ignore-cgroups", "--security-opt",
-                            "label=disable", "--network", "host", "--privileged",
-                            "localhost/hermes-s0-08:527da608"] + MAIN_CMD.split()
+    identity["run_argv"][10] = "host"
+    identity["run_argv"].insert(-2, "--privileged")
     bundle = write_bundle(tmp_path / "pc-runsc", identity=identity)
     proc = run_checker(bundle)
     assert proc.returncode == 1, proc.stdout
-    assert "containment: run_argv is missing --network none" in proc.stdout
+    assert "run_argv token 'host' at position 10, expected 'none'" in proc.stdout
 
 
-@pytest.mark.parametrize("banned", ["--privileged", "-v", "--volume", "--mount",
-                                    "--pid=host", "--cap-add", "--network=host",
-                                    "--net=host"])
-def test_each_banned_run_argv_token_is_refused(tmp_path, banned):
+@pytest.mark.parametrize(
+    "tokens,expected",
+    [
+        (["--privileged=true"], "--privileged=true"),
+        (["--cap-add=SYS_ADMIN"], "--cap-add=SYS_ADMIN"),
+        (["--volume=/host:/host"], "--volume=/host:/host"),
+        (["--mount=type=bind,src=/,dst=/host"], "--mount=type=bind,src=/,dst=/host"),
+        (["--pid", "host"], "--pid"),
+        (["--network=none"], "--network=none"),
+        (["--network", "none"], "--network"),
+    ],
+)
+def test_closed_run_argv_grammar_refuses_extra_tokens(tmp_path, tokens, expected):
     identity = passing_identity()
-    identity["run_argv"] = identity["run_argv"][:-2] + [banned] + identity["run_argv"][-2:]
-    bundle = write_bundle(tmp_path / "pc-runsc", identity=identity)
-    proc = run_checker(bundle)
+    identity["run_argv"][-2:-2] = tokens
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
     assert proc.returncode == 1, proc.stdout
-    assert f"containment: run_argv carries {banned}" in proc.stdout
+    assert f"run_argv token {expected!r} at position " in proc.stdout
 
 
-@pytest.mark.parametrize("flag,value", [("--runtime-flag", "ignore-cgroups"),
-                                        ("--security-opt", "label=disable"),
-                                        ("--network", "none")])
-def test_each_required_run_argv_pair_is_required(tmp_path, flag, value):
+def test_closed_run_argv_grammar_refuses_reordered_required_pair(tmp_path):
     identity = passing_identity()
-    argv = list(identity["run_argv"])
-    index = argv.index(flag)
-    del argv[index:index + 2]
-    identity["run_argv"] = argv
-    bundle = write_bundle(tmp_path / "pc-runsc", identity=identity)
-    proc = run_checker(bundle)
+    argv = identity["run_argv"]
+    argv[7:11] = argv[9:11] + argv[7:9]
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
     assert proc.returncode == 1, proc.stdout
-    assert f"containment: run_argv is missing {flag} {value}" in proc.stdout
+    assert "run_argv token '--network' at position 7, expected '--security-opt'" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "index,expected",
+    [(5, "--runtime-flag"), (7, "--security-opt"), (9, "--network"), (11, "-v")],
+)
+def test_each_required_run_argv_pair_is_required(tmp_path, index, expected):
+    identity = passing_identity()
+    del identity["run_argv"][index:index + 2]
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
+    assert proc.returncode == 1, proc.stdout
+    assert "run_argv token" in proc.stdout and f"expected {expected!r}" in proc.stdout
 
 
 def test_a_second_network_flag_with_another_value_is_refused(tmp_path):
-    """`--network none` being PRESENT is not the same as `--network` never
-    naming anything else."""
     identity = passing_identity()
-    identity["run_argv"] = identity["run_argv"] + ["--network", "slirp4netns"]
-    bundle = write_bundle(tmp_path / "pc-runsc", identity=identity)
-    proc = run_checker(bundle)
+    identity["run_argv"] += ["--network", "slirp4netns"]
+    proc = run_checker(write_bundle(tmp_path / "pc-runsc", identity=identity))
     assert proc.returncode == 1, proc.stdout
-    assert "containment: run_argv sets --network slirp4netns, expected none" in proc.stdout
+    assert "unexpected token '--network'" in proc.stdout
 
 
 def test_run_argv_of_the_wrong_type_is_named(tmp_path):
@@ -1264,7 +1376,9 @@ def test_p3_records_a_failing_tools_own_status(tmp_path):
     # the live measurement above and they are what produces the reason.
     passing_tools = {"hermes_rc": "0", "hermes_out": "hermes 0.21.0",
                      "python_import_rc": "0", "python_import_out": "import-ok"}
-    spliced = dict(rec, observed=dict(rec["observed"], **passing_tools))
+    spliced = dict(rec, observed=dict(rec["observed"],
+                                     observed_exec_uid=CANARY_EXEC_UID,
+                                     **passing_tools))
     lines = [spliced if r["canary"] == "P3" else r for r in passing_canaries()]
     check = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines))
     assert check.returncode == 1, check.stdout
@@ -1283,7 +1397,9 @@ def test_p6_device_census_names_the_hosts_raw_devices(tmp_path):
     assert "/dev/kmsg" in devices, rec["observed"]["dangerous_devices"]
     assert "kmsg" in rec["observed"]["dev_entries"].split(",")
 
-    lines = [rec if r["canary"] == "P6" else r for r in passing_canaries()]
+    observed = dict(rec["observed"], observed_exec_uid=CANARY_EXEC_UID)
+    spliced = dict(rec, observed=observed)
+    lines = [spliced if r["canary"] == "P6" else r for r in passing_canaries()]
     check = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines))
     assert check.returncode == 1, check.stdout
     assert "containment: P6 raw host devices present: " in check.stdout
@@ -1310,7 +1426,9 @@ def test_p5_detects_a_readable_sentinel_and_the_checker_refuses_it(tmp_path):
 
     identity = passing_identity()
     identity["sentinel_host_read"] = {"path": str(sentinel), "readable": True}
-    lines = [rec if r["canary"] == "P5" else r for r in passing_canaries()]
+    observed = dict(rec["observed"], observed_exec_uid=CANARY_EXEC_UID)
+    spliced = dict(rec, observed=observed)
+    lines = [spliced if r["canary"] == "P5" else r for r in passing_canaries()]
     check = run_checker(write_bundle(tmp_path / "pc-runsc", canaries=lines,
                                      identity=identity))
     assert check.returncode == 1, check.stdout
@@ -1334,7 +1452,13 @@ def _run_identity_program(tmp_path, **fields):
     meta.mkdir(exist_ok=True)
     defaults = {
         "runsc_version": "release-20260817.0", "runsc_sha256": "0" * 64,
-        "podman_version": "podman version 5.7.0", "image_digest": "sha256:0",
+        "podman_version": "podman version 5.7.0",
+        "image_id": "sha256:" + "1" * 64,
+        "image_digest": "sha256:" + "2" * 64,
+        "container_image_id": "sha256:" + "1" * 64,
+        "image_build_sha": PINNED_IMAGE_SOURCE_COMMIT,
+        "image_provenance": json.dumps({"revision": PINNED_IMAGE_SOURCE_COMMIT}),
+        "data_volume": "s0-08-data-0123456789abcdef",
         "host_kernel": "6.17.11-200.fc42", "ps_tree": "1 root /init",
         "main_program_user": "hermes", "main_hermes_service": "up",
         "sentinel_path": SENTINEL_PATH, "sentinel_readable": "true",
@@ -1433,6 +1557,19 @@ def test_runner_refuses_a_source_checkout_at_the_wrong_commit(tmp_path):
     assert accepted.returncode == 0, accepted.stdout + accepted.stderr
     assert accepted.stdout.strip() == "ACCEPTED"
 
+    # NEGATIVE CONTROL: the right HEAD with any tracked or untracked change is
+    # not the canonical source tree. The build itself uses git archive, but the
+    # preflight still refuses a checkout whose state could mislead its operator.
+    (repo / "Dockerfile").write_text("FROM scratch\n# dirty\n", encoding="utf-8")
+    dirty = _drive_preflight(tmp_path, repo, head)
+    assert dirty.returncode == 2, dirty.stdout + dirty.stderr
+    assert "is dirty; refusing a non-canonical image source" in dirty.stderr
+    (repo / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (repo / "untracked").write_text("not canonical\n", encoding="utf-8")
+    untracked = _drive_preflight(tmp_path, repo, head)
+    assert untracked.returncode == 2, untracked.stdout + untracked.stderr
+    assert "is dirty; refusing a non-canonical image source" in untracked.stderr
+
     # a directory with no Dockerfile is the other refusal
     empty = tmp_path / "not-a-checkout"
     empty.mkdir()
@@ -1481,6 +1618,7 @@ def test_crun_fixture_is_producible_by_the_shipped_canaries(tmp_path):
     #    field in any canary breaks this, on any host.
     for canary in ALL_CANARIES:
         assert set(committed[canary]["observed"]) == set(live[canary]["observed"]), canary
+        assert live[canary]["observed"]["observed_exec_uid"] == str(os.getuid())
         assert committed[canary]["rc"] == 0, (
             f"the committed {canary} line was captured by a canary that observed")
         if canary != "P1":

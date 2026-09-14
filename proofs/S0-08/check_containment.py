@@ -15,6 +15,7 @@ Failure, never a deferral — a half-written bundle must not read as "not run".
 from __future__ import annotations
 
 import json
+import re
 import stat as _stat
 import sys
 from pathlib import Path
@@ -51,20 +52,22 @@ CANARY_EXEC_UID = "10000"
 # Without this the checker accepts a bundle captured from any image at all.
 PINNED_IMAGE_SOURCE_COMMIT = "527da60844d4dced37879ea50259675371abe10e"
 
-# The `podman run` argv the evidence must have been produced by, screened as
-# EXACT tokens over the recorded LIST — never as a substring over a joined
-# string, because `--network host` is two tokens and a substring screen also
-# matches `--network hostile`. The three required pairs are the flags
-# PC-BRIDGE.md:135-148 verified plus the containment run's own `--network none`.
-REQUIRED_RUN_ARGV_PAIRS = (
+# The exact `podman run` argv shape the runner emits. This is a CLOSED GRAMMAR,
+# not a bad-token screen: a blocklist missed Podman's equivalent spellings such
+# as `--privileged=true`, `--cap-add=SYS_ADMIN`, `--volume=/host:/host`, and
+# two-token `--pid host` (VERIFY-G2 F3). The checker owns the grammar and the
+# runner-source test pins the shell array to this same shape.
+RUN_ARGV_PREFIX_BEFORE_RUNTIME = ("podman", "run", "-d", "--runtime")
+RUNSC_RUN_ARGV_PAIRS = (
     ("--runtime-flag", "ignore-cgroups"),
     ("--security-opt", "label=disable"),
     ("--network", "none"),
 )
-BANNED_RUN_ARGV_TOKENS = (
-    "--privileged", "-v", "--volume", "--mount", "--pid=host", "--cap-add",
-    "--network=host", "--net=host",
+NON_RUNSC_RUN_ARGV_PAIRS = (
+    ("--security-opt", "label=disable"),
+    ("--network", "none"),
 )
+RUN_ARGV_COMMAND = ("sleep", "2147483647")
 
 # The container's PID 1 comm, DERIVED from the image rather than assumed:
 # `docker/entrypoint-dispatch.sh:18` execs `/init`, and s6-overlay 3.2.3.0's
@@ -189,7 +192,116 @@ def _csv(observed: dict, cid: str, key: str) -> list[str]:
 
 # --- Identity --------------------------------------------------------------
 
-def check_identity(identity: dict) -> None:
+IMAGE_TAG = "localhost/hermes-s0-08:527da608"
+DATA_VOLUME_RE = re.compile(r"^s0-08-data-[0-9a-f]{16}$")
+SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def expected_run_argv(runtime: str, image: str, data_volume: str) -> list[str]:
+    """The only `podman run` grammar this proof accepts.
+
+    The one `-v` slot is not a user mount: it is the runner-owned empty
+    `/opt/data` volume that makes the P6 process bound's domain explicit.
+    """
+    pairs = (RUNSC_RUN_ARGV_PAIRS if Path(runtime).name == "runsc"
+             else NON_RUNSC_RUN_ARGV_PAIRS)
+    argv = [*RUN_ARGV_PREFIX_BEFORE_RUNTIME, runtime]
+    for flag, value in pairs:
+        argv.extend((flag, value))
+    argv.extend(("-v", f"{data_volume}:/opt/data", image, *RUN_ARGV_COMMAND))
+    return argv
+
+
+def _identity_string(identity: dict, key: str) -> str:
+    if key not in identity:
+        raise Failure(f"containment: runtime-identity.json {key} absent")
+    value = identity[key]
+    if not isinstance(value, str):
+        raise Failure(f"containment: runtime-identity.json {key} is not a string")
+    return value
+
+
+def _check_image_identity(identity: dict, commit: str) -> None:
+    image = _identity_string(identity, "image")
+    if image != IMAGE_TAG:
+        raise Failure(f"containment: image {image or '(absent)'}, expected {IMAGE_TAG}")
+    image_id = _identity_string(identity, "image_id").lower()
+    if not SHA256_RE.fullmatch(image_id):
+        raise Failure(f"containment: image_id {image_id or '(absent)'} is not a sha256 digest")
+    image_digest = _identity_string(identity, "image_digest").lower()
+    if not SHA256_RE.fullmatch(image_digest):
+        raise Failure(
+            f"containment: image_digest {image_digest or '(absent)'} is not a sha256 digest"
+        )
+    container_image_id = _identity_string(identity, "container_image_id").lower()
+    if container_image_id != image_id:
+        raise Failure(
+            f"containment: container image id {container_image_id or '(absent)'} "
+            f"does not match inspected image_id {image_id}"
+        )
+    build_sha = _identity_string(identity, "image_build_sha")
+    if build_sha != commit:
+        raise Failure(
+            f"containment: image_build_sha {build_sha or '(absent)'}, expected {commit}"
+        )
+    provenance = identity.get("image_provenance")
+    if not isinstance(provenance, dict):
+        raise Failure("containment: image_provenance is not an object")
+    revision = provenance.get("revision")
+    if revision != commit:
+        raise Failure(
+            f"containment: image_provenance revision {revision or '(absent)'}, "
+            f"expected {commit}"
+        )
+
+
+def _check_run_argv(identity: dict) -> None:
+    argv = identity.get("run_argv")
+    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+        raise Failure("containment: runtime-identity.json run_argv is not a list of strings")
+    data_volume = _identity_string(identity, "data_volume")
+    if not DATA_VOLUME_RE.fullmatch(data_volume):
+        raise Failure(
+            f"containment: data_volume {data_volume or '(absent)'} is not a runner-owned s0-08 volume"
+        )
+    expected = expected_run_argv(
+        _identity_string(identity, "runtime"),
+        _identity_string(identity, "image"),
+        data_volume,
+    )
+    for index in range(max(len(argv), len(expected))):
+        actual = argv[index] if index < len(argv) else None
+        want = expected[index] if index < len(expected) else None
+        if actual == want:
+            continue
+        if actual is None:
+            raise Failure(f"containment: run_argv ended at position {index}, expected {want!r}")
+        if want is None:
+            raise Failure(
+                f"containment: run_argv carries unexpected token {actual!r} at position {index}"
+            )
+        raise Failure(
+            f"containment: run_argv token {actual!r} at position {index}, expected {want!r}"
+        )
+
+
+def _check_canary_exec_user(identity: dict) -> str:
+    if "canary_exec_user" not in identity:
+        raise Failure(
+            f"containment: canaries were exec'd as uid (absent), expected {CANARY_EXEC_UID}"
+        )
+    exec_user = identity["canary_exec_user"]
+    if not isinstance(exec_user, str):
+        raise Failure("containment: canary_exec_user is not a string")
+    if exec_user != CANARY_EXEC_UID:
+        raise Failure(
+            f"containment: canaries were exec'd as uid {exec_user or '(absent)'}, "
+            f"expected {CANARY_EXEC_UID}"
+        )
+    return exec_user
+
+
+def check_identity(identity: dict) -> str:
     version = str(identity.get("runsc_version", ""))
     if version != PINNED_RUNSC_VERSION:
         raise Failure(
@@ -203,35 +315,31 @@ def check_identity(identity: dict) -> None:
             f"expected {PINNED_RUNSC_SHA256}"
         )
     # WHICH IMAGE produced this evidence. Pinning runsc alone accepts a bundle
-    # captured from any image at all (VERIFY-G1 F4, bundle A7).
+    # captured from any image at all (VERIFY-G1 F4, bundle A7), and a typed
+    # source commit alone accepts a dirty checkout or a foreign image.
     commit = str(identity.get("image_source_commit", ""))
     if commit != PINNED_IMAGE_SOURCE_COMMIT:
         raise Failure(
             f"containment: image_source_commit {commit or '(absent)'}, "
             f"expected {PINNED_IMAGE_SOURCE_COMMIT}"
         )
-    # WHICH ARGV produced it. P7's whole claim — the containment run must not
-    # inherit the compose file's host networking — is otherwise enforced only
-    # by a static test on the runner's source, never on the evidence (A8).
-    argv = identity.get("run_argv")
-    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
-        raise Failure("containment: runtime-identity.json run_argv is not a list of strings")
-    for flag, value in REQUIRED_RUN_ARGV_PAIRS:
-        if not any(a == flag and b == value for a, b in zip(argv, argv[1:])):
-            raise Failure(f"containment: run_argv is missing {flag} {value}")
-    for banned in BANNED_RUN_ARGV_TOKENS:
-        if banned in argv:
-            raise Failure(f"containment: run_argv carries {banned}")
-    for a, b in zip(argv, argv[1:]):
-        if a == "--network" and b != "none":
-            raise Failure(f"containment: run_argv sets --network {b}, expected none")
-    # WHO the observations were taken as. See CANARY_EXEC_UID.
-    exec_user = str(identity.get("canary_exec_user", ""))
-    if exec_user != CANARY_EXEC_UID:
-        raise Failure(
-            f"containment: canaries were exec'd as uid {exec_user or '(absent)'}, "
-            f"expected {CANARY_EXEC_UID}"
-        )
+    _check_image_identity(identity, commit)
+    # WHICH ARGV produced it. This is an exact grammar over the recorded LIST,
+    # not a dangerous-token blocklist; option-equivalent spellings are simply
+    # tokens outside the runner's grammar and fail at their first position.
+    _check_run_argv(identity)
+    return _check_canary_exec_user(identity)
+
+
+def check_observer_identity(canaries: dict, expected_uid: str) -> None:
+    for cid in ALL_CANARIES:
+        obs = _canary(canaries, cid)
+        uid = _field(obs, cid, "observed_exec_uid")
+        if uid != expected_uid:
+            raise Failure(
+                f"containment: {cid} observed_exec_uid {uid or '(absent)'}, "
+                f"expected {expected_uid}"
+            )
 
 
 # --- The asserted properties ----------------------------------------------
@@ -371,7 +479,12 @@ def check_p6(canaries: dict) -> None:
         raise Failure(
             f"containment: P6 own_pid_count {own_count or '(absent)'} is not a count"
         )
-    if int(own_count) > CONTAINER_MAX_PIDS:
+    count = int(own_count)
+    if count < 1:
+        raise Failure(
+            f"containment: P6 own_pid_count {own_count} is outside 1..{CONTAINER_MAX_PIDS}"
+        )
+    if count > CONTAINER_MAX_PIDS:
         raise Failure(
             f"containment: P6 own process table has {own_count} processes, "
             f"over the image's bound of {CONTAINER_MAX_PIDS}"
@@ -417,8 +530,9 @@ def check_bundle(evidence_dir: Path) -> str:
         raise Deferred("containment evidence not captured")
     identity = _load_json(evidence_dir / "runtime-identity.json", "runtime-identity.json")
     canaries = _load_canaries(evidence_dir / "canaries.jsonl")
-    check_identity(identity)
+    canary_exec_uid = check_identity(identity)
     check_p1(canaries)
+    check_observer_identity(canaries, canary_exec_uid)
     check_p2(canaries)
     check_p3(canaries)
     check_p4(canaries)

@@ -6,7 +6,7 @@ different provenance and the split is the point:
 | half | provenance |
 |---|---|
 | `canaries.jsonl` | **measured** — the shipped canaries, run uncontained on the sandbox host |
-| `runtime-identity.json` | **deliberately typed** — the identity a correct containment run would record |
+| `runtime-identity.json` | **deliberately typed** — valid checker identity controls; no image/container ran |
 
 ## How `canaries.jsonl` was captured (2026-09-08, from the repo root)
 
@@ -35,6 +35,11 @@ re-runs the same command and holds the binding.
 The two canaries that need an input get it explicitly, because neither has a default:
 `P2.sh` reads `S0_08_MAIN_CMDLINE` (the runner is the single source of that string) and `P5.sh`
 reads `S0_08_SENTINEL_PATH`.
+
+The first capture of this fixture predates the per-canary observer read-back. The committed lines
+retain their measured host observations and add `observed_exec_uid: "1000"`, the uid under which
+the same recapture command runs here; the recapture test checks that value against `id -u`. This is
+not the typed request (`canary_exec_user: "10000"`) and is intentionally a second rejection signal.
 
 ### Venue, and which values depend on it
 
@@ -79,13 +84,13 @@ stand-in, which is this fixture.
 
 ## Why `runtime-identity.json` is typed
 
-It carries the **valid pinned identity on every field the checker pins about the runtime** —
-`runsc_version`, `runsc_sha256`, `image_source_commit`, `run_argv` and `canary_exec_user` — even
-though no container ran. That is the point of the fixture: a bundle whose identity metadata is
-perfect must still FAIL, and must fail on P1, proving the checker reads the OBSERVATIONS rather
-than trusting the identity file's claim about the runtime. `capture_argv` records how the
-observations were really taken, so the artifact does not have to be read alongside this file to
-know that.
+`runtime-identity.json` — including its image tag/IDs/digest, source commit, baked provenance,
+exact argv, requested observer UID, and fresh `/opt/data` volume name — is deliberately typed in
+this fixture. The sha256 values are deterministic fixture values, not claims that an image ran.
+Every canary's `observed_exec_uid` is measured by the shipped canary on the uncontained host; it is
+`1000` in this capture, so observer read-back would reject the fixture after P1 if P1 were repaired.
+This keeps the split explicit: perfect typed identity metadata beside genuinely uncontained
+observations.
 
 Expected checker verdict (exit 1):
 

@@ -25,6 +25,7 @@ cmdline_of() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | sed -e 's/ *$//'; 
 # default — a canary that invented one could silently observe a different
 # process than the container's main program.
 MAIN_CMDLINE="${S0_08_MAIN_CMDLINE:-}"
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
 
 pid1_uid=$(uid_of 1)
 pid1_comm=$(cat /proc/1/comm 2>/dev/null) || pid1_comm=""
@@ -55,8 +56,8 @@ rc=0
 [ -n "$pid1_uid" ] || rc=1
 [ -n "$MAIN_CMDLINE" ] || rc=1
 
-printf '{"canary":"P2","expect":"pid 1 uid 0 running s6 init; exactly one process has the main cmdline (%s) and it runs as uid 10000","observed":{"pid1_uid":"%s","pid1_comm":"%s","pid1_cmdline":"%s","main_cmdline":"%s","main_pids":"%s","main_uids":"%s","proc_count":"%s"},"rc":%d}\n' \
-    "$(esc "$MAIN_CMDLINE")" "$(esc "$pid1_uid")" "$(esc "$pid1_comm")" \
+printf '{"canary":"P2","expect":"pid 1 uid 0 running s6 init; exactly one process has the main cmdline (%s) and it runs as uid 10000","observed":{"observed_exec_uid":"%s","pid1_uid":"%s","pid1_comm":"%s","pid1_cmdline":"%s","main_cmdline":"%s","main_pids":"%s","main_uids":"%s","proc_count":"%s"},"rc":%d}\n' \
+    "$(esc "$MAIN_CMDLINE")" "$(esc "$observer_uid")" "$(esc "$pid1_uid")" "$(esc "$pid1_comm")" \
     "$(esc "$pid1_cmdline")" "$(esc "$MAIN_CMDLINE")" \
     "$(esc "$main_pids")" "$(esc "$main_uids")" \
     "$(esc "$proc_count")" "$rc"

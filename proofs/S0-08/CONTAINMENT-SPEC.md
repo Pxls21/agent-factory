@@ -41,8 +41,10 @@ holds that line.
 ```
 proofs/S0-08/evidence/<venue-run>/
   canaries.jsonl        one JSON line per canary, P1..P8, no duplicates
-  runtime-identity.json runsc version + sha256, podman version, image digest,
-                        the exact `podman run` argv, host kernel, the ps tree,
+  runtime-identity.json runsc version + sha256, podman version, image tag +
+                        inspected ID + digest + launched-container ID + baked
+                        provenance, the exact `podman run` argv and fresh data
+                        volume, requested observer UID, host kernel, ps tree,
                         and the P5 host-side sentinel control
 ```
 
@@ -193,7 +195,14 @@ Derived from the image's own installs, not from a wish-list.
 ### P4 — narrow mounts, no Docker socket, no provider secrets · **ASSERTED**
 
 - **Canary:** `canaries/P4.sh` — `/var/run/docker.sock` and `/run/docker.sock`; the **names** (never the
-  values) of the canary's OWN environment (`env`, names cut before `=`) matching the redaction pattern — the canary is exec'd inside the container as the runtime user, `podman exec --user 10000` (`tools/pc/run_containment.sh`), NOT the image's default `USER root` (`Dockerfile:298`), so its environment is the one the main program inherits; PID 1's environ is root-owned 0400 and unreadable to that user (the PC gate 2026-09-08), and a shell redirect of `/proc/self/environ` read empty under the sandbox's gVisor, so the libc environment is the surface; the mount count and every bind root.
+  values) of the canary's OWN environment (`env`, names cut before `=`) matching the redaction pattern;
+  the mount count and every bind root. This is specifically the **exec environment exposed to the
+  runtime uid**; it does not claim to observe the already-running main program's environment. The
+  canary is exec'd inside the container as the runtime user, `podman exec --user 10000`
+  (`tools/pc/run_containment.sh`), NOT the image's default `USER root` (`Dockerfile:298`). PID 1's
+  environ is root-owned 0400 and unreadable to that user (the PC gate 2026-09-08). Every canary also
+  emits `observed_exec_uid=$(id -u)` from inside its own `podman exec`; the checker requires all eight
+  observations to equal the recorded requested UID, so `--user 10000` is read back rather than trusted.
 - **Pattern:** `REDACTED_ENV_KEY_RE = r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)"`, the one S0-01
   already pins at `proofs/S0-01/pins.py:50`.
 - **Allowlist: EMPTY.** `grep -n "^ENV" Dockerfile | grep -Ei 'KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV'`
@@ -326,7 +335,7 @@ proof, not a satisfied requirement.**
 
 ## 3. Failure reasons
 
-The checker asserts in order P1 → P2 → P3 → P4 → P5 → P6, so **the first failing property is the
+The checker first validates provenance and the exact invocation, then asserts in order P1 → P2 → P3 → P4 → P5 → P6, so **the first failing property is the
 reason** and the reason is stable for a given bundle.
 
 | property | reason |
@@ -334,11 +343,16 @@ reason** and the reason is stable for a given bundle.
 | identity | `containment: runtime identity runsc <v>, expected release-20260817.0` |
 | identity | `containment: runtime identity runsc sha256 <d>, expected 048b89aa…074c` |
 | identity | `containment: image_source_commit <c>, expected 527da608…be10e` |
+| identity | `containment: image <tag>, expected localhost/hermes-s0-08:527da608` |
+| identity | `containment: image_id <id> is not a sha256 digest` |
+| identity | `containment: container image id <id> does not match inspected image_id <id>` |
+| identity | `containment: image_build_sha <sha>, expected 527da608…be10e` |
+| identity | `containment: image_provenance revision <sha>, expected 527da608…be10e` |
 | identity | `containment: runtime-identity.json run_argv is not a list of strings` |
-| identity | `containment: run_argv is missing <flag> <value>` |
-| identity | `containment: run_argv carries <banned token>` |
-| identity | `containment: run_argv sets --network <v>, expected none` |
+| identity | `containment: data_volume <name> is not a runner-owned s0-08 volume` |
+| identity | `containment: run_argv token <actual> at position <n>, expected <required>` |
 | identity | `containment: canaries were exec'd as uid <u>, expected 10000` |
+| observer | `containment: <Pn> observed_exec_uid <u>, expected 10000` |
 | P1 | `containment: P1 host kernel <k>, not gVisor` |
 | P1 | `containment: P1 dmesg line 1 does not announce gVisor: <line>` |
 | P2 | `containment: P2 pid 1 uid <u>, expected 0` |
@@ -368,24 +382,32 @@ exists, every missing file inside it is a Failure — a half-written bundle must
 
 ## 4. The runtime identity is pinned
 
-`runtime-identity.json` must record **all five** of:
+`runtime-identity.json` must record and bind all of:
 
 | field | pinned to | why |
 |---|---|---|
 | `runsc_version` | `release-20260817.0` | the gVisor release the property was measured under |
 | `runsc_sha256` | `048b89aa…074c` | that release's binary, not merely its version string |
-| `image_source_commit` | `527da608…be10e` | **which image** produced the evidence |
-| `run_argv` | the three verified pairs present, no `--privileged` / bind-mount / host-namespace / `--cap-add` token, and every `--network` naming `none` | **which invocation** produced it |
-| `canary_exec_user` | `10000` | **who** the observations were taken as |
+| `image_source_commit` | `527da608…be10e` | the requested source commit |
+| `image` | `localhost/hermes-s0-08:527da608` | the one accepted local tag |
+| `image_id` + `container_image_id` | equal immutable `sha256:<64 hex>` values | the inspected image is the image the launched container actually uses |
+| `image_digest` | immutable `sha256:<64 hex>` | the built image has a measured content digest |
+| `image_build_sha` + `image_provenance.revision` | `527da608…be10e` | two baked files independently bind the image contents to the archive commit |
+| `run_argv` | one exact ordered grammar, including one proof-owned `s0-08-data-<nonce>:/opt/data` volume | no additional or equivalent-spelling option is admitted |
+| `canary_exec_user` | `10000` | the requested observer UID |
+| every canary's `observed_exec_uid` | `10000` | the observer reads its actual UID back from inside the exec process |
 
 Pinning runsc alone accepted a bundle captured from a stock alpine image at commit `deadbeef`, and
 one whose recorded argv was `--network host --privileged`. P7's whole claim — a containment run
 must not inherit the compose file's host networking — was otherwise enforced only by a static test
 on the runner's own source, never on the evidence a run produced.
 
-The `run_argv` screen compares **exact tokens over the recorded list**, never substrings over a
-joined string: `--network host` is two tokens, and a substring screen would also match
-`--network hostile`.
+The `run_argv` check is a closed grammar: every token and position must equal the runner's sole
+accepted form. The only volume is the runner-created, nonce-named `/opt/data` volume. This makes
+option-equivalent spellings such as `--privileged=true`, `--cap-add=SYS_ADMIN`, `--volume=...`,
+`--mount=...`, `--pid host`, duplicate `--network`, reordered pairs, and arbitrary extras fail at
+the first differing token. The runner creates that volume empty and removes it on exit; persistent
+profiles and gateway processes cannot inflate P6's source-derived process-count domain.
 
 `PC-BRIDGE.md:128` records only the truncated prefix `048b89aa…`. The full digest above was measured
 from the identical release binary in the sandbox (`sha256sum /tmp/runsc`, 2026-09-08), and its first
@@ -436,12 +458,14 @@ on a scratch copy to hold that order.
 - **The PC containment run.** No bridge access from this lane. `evidence/pc-runsc/` does not exist and
   the positive leg correctly reports `deferred: containment evidence not captured` (exit 2).
 - **The image build.** `podman build` of `localhost/hermes-s0-08:527da608` is PC-side.
-- **P2, P3, P4, P5 under real gVisor.** `runsc --rootless do` **shares the host filesystem** (measured:
-  a host file and `/home` are both readable from inside), so it can validate P1 and P6's kernel-level
-  answers but is structurally incapable of testing mounts, the sentinel or the image's tools. Treating a
-  `do`-mode result as containment evidence would be a venue misclassification (the AF-AP-4 class).
-  P1, P6, P7 and P8 **were** smoke-run under real gVisor here, root **and** uid 65534 (the
-  `setpriv --reuid=65534 --regid=65534 --clear-groups` cell inside the sandbox — `runsc do` has no
-  `--uid`); the rest await the PC.
+- **P2, P3, P4, P5 under real gVisor, and F7's live single-holder cell.** G3 must show one real
+  image process carrying the exact main cmdline and uid 10000; starting or exec'ing that container
+  does not happen here. `runsc --rootless do` **shares the host filesystem** (measured:
+  a host file and `/home` are both readable from inside), so it can validate P1 and P6's
+  kernel-level answers but is structurally incapable of testing mounts, the sentinel or the
+  image's tools. Treating a `do`-mode result as containment evidence would be a venue
+  misclassification (the AF-AP-4 class). P1, P6, P7 and P8 **were** smoke-run under real gVisor
+  here, root **and** uid 65534 (the `setpriv --reuid=65534 --regid=65534 --clear-groups` cell
+  inside the sandbox — `runsc do` has no `--uid`); the rest await the PC.
 - **`podman exec --user 10000`.** The exec identity is read from the runner's bytes and asserted
   from the evidence, never yet executed against a live container.

@@ -27,6 +27,8 @@ run_tool() {
     TOOL_OUT=$(printf '%s\n' "$TOOL_OUT" | head -n 1)
 }
 
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
+
 run_tool /opt/hermes/bin/hermes --version
 hermes_rc=$TOOL_RC; hermes_out=$TOOL_OUT
 
@@ -41,8 +43,8 @@ uv_rc=$TOOL_RC; uv_out=$TOOL_OUT
 
 rc=0
 
-printf '{"canary":"P3","expect":"hermes, python3 -c import hermes_cli, node and uv each exit 0","observed":{"hermes_rc":"%d","hermes_out":"%s","python_import_rc":"%d","python_import_out":"%s","node_rc":"%d","node_out":"%s","uv_rc":"%d","uv_out":"%s"},"rc":%d}\n' \
-    "$hermes_rc" "$(esc "$hermes_out")" \
+printf '{"canary":"P3","expect":"hermes, python3 -c import hermes_cli, node and uv each exit 0","observed":{"observed_exec_uid":"%s","hermes_rc":"%d","hermes_out":"%s","python_import_rc":"%d","python_import_out":"%s","node_rc":"%d","node_out":"%s","uv_rc":"%d","uv_out":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$hermes_rc" "$(esc "$hermes_out")" \
     "$py_rc" "$(esc "$py_out")" \
     "$node_rc" "$(esc "$node_out")" \
     "$uv_rc" "$(esc "$uv_out")" "$rc"

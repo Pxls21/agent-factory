@@ -1,5 +1,6 @@
 {
   "canary_exec_user": "10000",
+  "data_volume": "s0-08-data-1234567890abcdef",
   "captured_at": "2026-09-08T04:20:00Z",
   "capture_argv": [
     "env",
@@ -9,8 +10,20 @@
     "proofs/S0-08/canaries/<Pn>.sh"
   ],
   "host_kernel": "6.18.44-fc-v24",
-  "image": "(none)",
-  "image_digest": "(none)",
+  "image": "localhost/hermes-s0-08:527da608",
+  "image_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "image_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "container_image_id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "image_build_sha": "527da60844d4dced37879ea50259675371abe10e",
+  "image_provenance_revision": "527da60844d4dced37879ea50259675371abe10e",
+  "image_provenance": {
+    "schema": 1,
+    "deployment_kind": "image",
+    "manager": "docker",
+    "image": "nousresearch/hermes-agent",
+    "version": "fixture-not-live",
+    "revision": "527da60844d4dced37879ea50259675371abe10e"
+  },
   "image_source_commit": "527da60844d4dced37879ea50259675371abe10e",
   "podman_version": "(not used: this bundle was captured without a container runtime)",
   "ps_tree": "(not captured: no container)",
@@ -26,6 +39,8 @@
     "label=disable",
     "--network",
     "none",
+    "-v",
+    "s0-08-data-1234567890abcdef:/opt/data",
     "localhost/hermes-s0-08:527da608",
     "sleep",
     "2147483647"
@@ -33,8 +48,9 @@
   "runsc_path": "/tmp/runsc",
   "runsc_sha256": "048b89aada69dc3333422e139d6e9d02f8ab06bda52398060e0fbdacca00074c",
   "runsc_version": "release-20260817.0",
-  "runtime": "sh (uncontained host stand-in for crun)",
-  "runtime_argv_note": "DELIBERATELY TYPED, and the point of the fixture: every field the checker pins about the RUNTIME (runsc version+sha256, image_source_commit, run_argv, canary_exec_user) is the value a correct containment run would record, even though no container ran. `capture_argv` records how the observations were really taken. A bundle whose identity metadata is perfect must still FAIL on the observations.",
+  "runtime": "/usr/local/bin/runsc",
+  "runtime_observation_note": "No container ran; the runtime and run_argv fields are deliberately typed controls. capture_argv records the real host execution substrate.",
+  "runtime_argv_note": "DELIBERATELY TYPED, and the point of the fixture: every field the checker pins about the RUNTIME (runsc version+sha256, executed image identity, image_source_commit, run_argv, canary_exec_user) is the value a correct containment run would record, even though no container ran. `capture_argv` records how the observations were really taken. The sha256 image values are deterministic non-live fixture values, not claims about an image that ran. A bundle whose identity metadata is perfect must still FAIL on the observations.",
   "sentinel_host_read": {
     "note": "written and read on the host; deliberately visible to the uncontained run",
     "path": "/tmp/s0-08-crun-fixture-sentinel.txt",

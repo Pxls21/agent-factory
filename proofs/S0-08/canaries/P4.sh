@@ -19,16 +19,15 @@ docker_sock="absent"
 [ -e /var/run/docker.sock ] && docker_sock="present"
 [ -e /run/docker.sock ] && docker_sock="present"
 
-# --- Secret-bearing env keys in the RUNTIME env (this process's own) ---
+# --- Secret-bearing env keys in the RUNTIME exec env (this process's own) ---
 # Names only. Values are NEVER printed or hashed (`env` output is cut at the first '=' before anything
 # else sees it). The canary is exec'd inside the container as the runtime user — `podman exec --user 10000`
-# (tools/pc/run_containment.sh), NOT the image's default `USER root` (Dockerfile:298) — so its own
-# environment IS the env the main program inherits. Why `env` and not procfs: /proc/1/environ is
-# root-owned 0400 (unreadable to uid 10000 in the container and to the owner's user on the PC — the
-# 2026-09-08 PC gate hit that: rc 1, "did not complete its observation"), and under gVisor a shell
-# redirect of /proc/self/environ read EMPTY in the sandbox (measured 2026-09-08: `tr < /proc/self/environ`
-# 0 lines, `cat /proc/self/environ | tr` 2 lines, `env` 2 lines) — the libc environment is the surface
-# that is the same everywhere.
+# (tools/pc/run_containment.sh), NOT the image's default `USER root` (Dockerfile:298). This observes
+# the exec environment exposed to that uid; it is deliberately not claimed as byte-identical to the
+# already-running main program's environment. Why `env` and not procfs: /proc/1/environ is root-owned
+# 0400, and under gVisor a shell redirect of /proc/self/environ read EMPTY in the sandbox; the libc
+# environment is the stable surface.
+observer_uid=$(id -u 2>/dev/null) || observer_uid=""
 secret_keys=$(env 2>/dev/null \
     | cut -d= -f1 \
     | grep -Ei 'KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV' \
@@ -53,6 +52,6 @@ host_binds=$(awk '{print $4}' /proc/self/mountinfo 2>/dev/null \
 rc=0
 command -v env >/dev/null 2>&1 || rc=1
 
-printf '{"canary":"P4","expect":"no docker socket; 0 env keys matching the redaction pattern (allowlist empty)","observed":{"docker_sock":"%s","secret_env_count":"%s","secret_env_keys":"%s","mount_count":"%s","host_bind_roots":"%s"},"rc":%d}\n' \
-    "$(esc "$docker_sock")" "$(esc "$secret_count")" "$(esc "$secret_keys")" \
+printf '{"canary":"P4","expect":"no docker socket; 0 env keys matching the redaction pattern (allowlist empty)","observed":{"observed_exec_uid":"%s","docker_sock":"%s","secret_env_count":"%s","secret_env_keys":"%s","mount_count":"%s","host_bind_roots":"%s"},"rc":%d}\n' \
+    "$(esc "$observer_uid")" "$(esc "$docker_sock")" "$(esc "$secret_count")" "$(esc "$secret_keys")" \
     "$(esc "$mount_count")" "$(esc "$host_binds")" "$rc"
