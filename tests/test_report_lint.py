@@ -43,6 +43,30 @@ def test_report_lint_exit_zero_when_no_miss(tmp_path):
     assert "OK 1, NEAR 0, MISS 0" in r.stdout
 
 
+def test_report_lint_min_refs_floor_fails_a_report_that_cites_nothing(tmp_path):
+    """The hollow lint (2026-09-14): B3's report lints `0 refs — OK 0, MISS 0` at its PIN because it cites NOTHING
+    machine-checkable, and `MISS 0` alone reads as clean. `--min-refs N` makes the floor a gate: rc 1 with the FLOOR
+    line when fewer than N refs resolve OK; without the flag the old contract holds (the negative control)."""
+    src = tmp_path / "mod.py"
+    src.write_text("def alpha_beta():\n    return 1\n\n\ndef gamma_delta():\n    return 2\n")
+    empty = tmp_path / "empty.md"
+    empty.write_text("The closure is containment (line ~120); the receipt is typed (line 651-vicinity).\n")
+    r = _run(empty, ["C=mod.py"], tmp_path)
+    assert r.returncode == 0 and "0 refs — OK 0, NEAR 0, MISS 0" in r.stdout, r.stdout      # the old contract: clean over nothing
+    r = subprocess.run([sys.executable, str(LINT), str(empty), "--root", str(tmp_path), "--map", "C=mod.py",
+                        "--min-refs", "1"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "report_lint: FLOOR — OK 0 < --min-refs 1" in r.stdout, r.stdout
+    two = tmp_path / "two.md"
+    two.write_text("`def alpha_beta` at C:1; `def gamma_delta` at C:5\n")
+    for floor, rc in (("2", 0), ("3", 1)):
+        r = subprocess.run([sys.executable, str(LINT), str(two), "--root", str(tmp_path), "--map", "C=mod.py",
+                            "--min-refs", floor], capture_output=True, text=True, timeout=60)
+        assert r.returncode == rc, (floor, r.stdout + r.stderr)
+        assert "OK 2, NEAR 0, MISS 0" in r.stdout, r.stdout
+        assert ("FLOOR — OK 2 < --min-refs 3" in r.stdout) == (rc == 1), r.stdout
+
+
 def test_report_lint_resolves_a_bare_basename_and_a_repo_path(tmp_path):
     (tmp_path / "pkg").mkdir()
     src = tmp_path / "pkg" / "thing.py"

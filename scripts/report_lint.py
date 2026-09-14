@@ -19,6 +19,8 @@ are read at --rev (default: the working tree). The report line's own CLAIM TOKEN
   MISS         the cited lines contain none of the claim tokens (points at a comment, a blank line, another function)
   UNCHECKABLE  the report line carries no claim token to test against (the ref is not proven, only stated)
 Exit 1 when any MISS exists. NEAR and UNCHECKABLE never pass silently: they are counted in the summary line.
+`--min-refs N` exits 1 when fewer than N refs resolve OK: a report with no machine-checkable ref lints clean by
+construction (MISS 0 over nothing), so a checkpoint gates on a floor, never on the MISS count alone.
 Heuristic by design — it proves nothing about a report; it removes the class of reference a reader cannot trust.
 """
 from __future__ import annotations
@@ -103,6 +105,9 @@ def main(argv=None) -> int:
     ap.add_argument("--rev", default=None, help="git revision to read the cited files at (default: the working tree)")
     ap.add_argument("--tolerance", type=int, default=1)
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
+    ap.add_argument("--min-refs", type=int, default=0,
+                    help="fail (rc 1) when fewer than N refs resolve OK — a report that cites nothing lints clean "
+                         "by construction (B3's `0 refs — OK 0, MISS 0`, 2026-09-14); a checkpoint passes a floor")
     ns = ap.parse_args(argv)
     maps = {}
     for item in ns.map:
@@ -120,6 +125,9 @@ def main(argv=None) -> int:
     print(f"report_lint: {total} refs — OK {counts['OK']}, NEAR {counts['NEAR']}, MISS {counts['MISS']}, "
           f"UNCHECKABLE {counts['UNCHECKABLE']}, UNRESOLVED {counts['UNRESOLVED']}"
           + (f" (at {ns.rev})" if ns.rev else " (worktree)"))
+    if counts["OK"] < ns.min_refs:
+        print(f"report_lint: FLOOR — OK {counts['OK']} < --min-refs {ns.min_refs}: the report cites too little to be graded")
+        return 1
     return 1 if counts["MISS"] else 0
 
 
