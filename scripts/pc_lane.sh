@@ -114,6 +114,32 @@ if [ -n "${LANE_PATCH:-}" ]; then
   echo "pc_lane: lane patch shipped — $(grep -c '^diff --git' "$LANE_PATCH") file(s), sha ${PSHA:0:12} (applied on the PIN by pc-lane.sh)" >&2
 fi
 
+# --- 1c. the LOCAL model's effort is set at the SERVER per lane role (2026-09-14) ----------------------
+# Measured that day: this llama-server build ignores a top-level `reasoning_effort` (a `max` answered normally where the
+# Qwen3.8 template would raise) and Hermes sends no per-request template kwargs, so the effort a lane runs at is the
+# server's own `--chat-template-kwargs` default. Build lanes run at medium, verify lanes at xhigh (owner 2026-09-14:
+# build and verify alternate on the one slot), so the dispatcher sets the server default BEFORE the launch:
+# qwen-server.sh install rewrites the unit and restarts ONLY when its text changed and NO lane pidfile is alive (rc 7
+# otherwise — then this dispatch stops: a restart would kill the live lane mid-turn). The per-request path
+# (`chat_template_kwargs.reasoning_effort`, forwarded by OmniRoute — proven by the same raise) is the refinement for
+# concurrent mixed efforts; it needs a Hermes profile `extra_body` and is not wired.
+server_effort_for_role() { # role [HERMES_MODEL] [HERMES_REASONING] -> the server effort, or "" for a cloud route
+  local role="$1" model="${2:-}" eff="${3:-}"
+  case "$role" in code-implementer) : "${model:=agentfactory-build-local}"; : "${eff:=medium}";;
+                  adversarial-verifier) : "${model:=agentfactory-verify-local}"; : "${eff:=xhigh}";;
+                  *) [ -n "$model" ] || { echo ""; return; };; esac
+  case "$model" in agentfactory-*-local|qwen-local/*) ;; *) echo ""; return;; esac
+  case "$eff" in low|medium|xhigh) echo "$eff";; high|ultra|max) echo xhigh;; "") echo medium;; *) echo xhigh;; esac
+}
+SERVER_EFFORT="${LANE_SERVER_EFFORT:-$(server_effort_for_role "${ROLE:-}" "${HERMES_MODEL:-}" "${HERMES_REASONING:-}")}"
+if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-<cloud route>}"; exit 0; fi
+if [ -n "$SERVER_EFFORT" ] && [ "${LANE_SET_SERVER_EFFORT:-1}" = 1 ]; then
+  echo "pc_lane: local route — setting the server effort to $SERVER_EFFORT (a restart only if it changed; refused under a live lane)" >&2
+  EFF_OUT="$(bridge "cd $PC_AF_REPO && QWEN_EFFORT=$SERVER_EFFORT bash harness-ports/bin/qwen-server.sh install 2>&1")" || die "server effort not set: ${EFF_OUT##*$'\n'}"
+  printf '%s\n' "$EFF_OUT" | grep -q "healthy" || die "server effort not set — qwen-server.sh install did not end healthy: ${EFF_OUT##*$'\n'}"
+  printf '%s\n' "$EFF_OUT" | grep -E "restarting|healthy" | sed 's/^/pc_lane: /' >&2
+fi
+
 # --- 2. launch DETACHED (replay-idempotent) ----------------------------------
 # setsid + </dev/null + redirected output: a bridge curl that times out must not
 # take the lane down with it. pc-lane.sh's own state guard makes a replayed

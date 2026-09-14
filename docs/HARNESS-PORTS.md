@@ -400,9 +400,13 @@ python3 harness-ports/bin/omniroute_local_builder.py ensure`. Build and verify a
 chat template accepts ONLY `xhigh` (its default), `medium` and `low` (`high` maps to `xhigh`; any other value makes the template
 raise "Unexpected reasoning effort", the request fails, and OmniRoute falls through to the CLOUD chain silently) — so `pc-lane.sh`
 clamps `ultra`/`max`/`high` to `xhigh` on every local route and prints the clamp; an explicit cloud route keeps its effort verbatim
-(both cases in `test_pc_lane.sh`). Whether a per-request effort reaches the model through OmniRoute is measured by the probe
-recorded in FINDINGS-LOCAL-BUILDER-QWEN38 §6 step 5; if it does not, the effort is the server's own default (`QWEN_EFFORT`, a
-unit restart between arms — never under a live lane).
+(both cases in `test_pc_lane.sh`). Measured 2026-09-14 17:1xZ: this llama-server build ignores a top-level per-request `reasoning_effort`, so Hermes's `--reasoning` is INERT
+on the local model; the effort a lane runs at is the server's `--chat-template-kwargs` default. The sandbox dispatcher therefore
+sets it per role before every launch on a local route (`scripts/pc_lane.sh` step 1c → `QWEN_EFFORT=<effort> qwen-server.sh
+install`: a restart only when the unit text changed, refused under a live lane pidfile — the dispatch stops rather than kill a
+lane; `LANE_SERVER_EFFORT` overrides, `LANE_SET_SERVER_EFFORT=0` skips; `harness-ports/tests/test_pc_lane_dispatcher.sh`).
+The per-request `chat_template_kwargs` path is forwarded by OmniRoute and honoured by the server (proven by an invalid value's
+HTTP 400 both ways) but Hermes does not send it — the refinement for concurrent mixed efforts, not wired.
 
 
 ### Sandbox-side: `scripts/pc_lane.sh`

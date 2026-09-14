@@ -107,10 +107,14 @@ knobs the measurements decide.
    (items closed, the red tests that went green, mutants killed, discrepancies stated, false claims) plus wall clock and tokens. "Max" for
    this model IS `xhigh`: the Qwen3.8 chat template accepts only `xhigh` (default), `medium`, `low` (`high` → `xhigh`; anything
    else raises). Decision rule: `xhigh` becomes the build default if arm B closes more of the brief, or arm A's report is NOT-READY on
-   blockers arm B avoided; otherwise `medium` stays and `xhigh` remains the per-brief override. Mechanism note: Hermes sends
-   `extra_body.reasoning={"effort": …}` on this wire; whether that reaches the template through OmniRoute is measured by the probe
-   `~/qwen-builder/probes/` on the PC (results recorded here when they land) — if it does not, arm B's effort is set at the server
-   (`QWEN_EFFORT=xhigh`, a unit restart between arms, never under a live lane), and the dispatch note names the mechanism used.
+   blockers arm B avoided; otherwise `medium` stays and `xhigh` remains the per-brief override. Mechanism, MEASURED 2026-09-14 17:1xZ (`~/qwen-builder/probes/*.jsonl` on the PC): a top-level per-request `reasoning_effort` is IGNORED by
+   this llama-server build (a `max` answered normally where the template raises), so Hermes's `--reasoning` has NO effect on the
+   local model; the llama.cpp-native per-request `chat_template_kwargs.reasoning_effort` DOES reach the template, directly AND through
+   OmniRoute (an invalid value → HTTP 400 in 0.1 s both ways), but Hermes does not send it (a profile `extra_body` could — the
+   refinement for concurrent mixed efforts, not wired: it would also ride the cloud fallback members). CHOSEN: the effort is the
+   SERVER default, set per lane role by the sandbox dispatcher before the launch (`scripts/pc_lane.sh` step 1c: build → medium,
+   verify → xhigh, `HERMES_REASONING` clamped to low/medium/xhigh; `qwen-server.sh install` restarts only on a changed unit and
+   refuses under a live lane). Arm B therefore runs with the server at xhigh.
 6. Effective DDR4 bandwidth (a STREAM run) — only if any offload is ever considered.
 
 ### §6 measured — 2026-09-14 12:52-12:58Z, the June CUDA build `00139b6`, the 3090, one coding prompt at temperature 0

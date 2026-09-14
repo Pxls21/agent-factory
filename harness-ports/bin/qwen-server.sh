@@ -164,6 +164,7 @@ status() {
   systemctl --user is-enabled "$QWEN_UNIT" 2>/dev/null | sed 's/^/qwen-server: unit enabled=/'
   systemctl --user is-active "$QWEN_UNIT" 2>/dev/null | sed 's/^/qwen-server: unit active=/'
   loginctl show-user "$(id -un)" -p Linger 2>/dev/null | sed 's/^/qwen-server: user /'   # Linger=yes keeps the unit alive with no login session
+  grep -o 'reasoning_effort[^}]*' "$HOME/.config/systemd/user/$QWEN_UNIT.service" 2>/dev/null | head -1 | sed 's/^/qwen-server: unit effort /'
   health || true
   command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader | sed 's/^/qwen-server: gpu /'
 }
