@@ -229,6 +229,30 @@ rc=0
 # transient unless QUOTA_RX says otherwise.
 CAPACITY_RX='^API call failed after [0-9]+ retries: '
 QUOTA_RX='exhausted their quota'
+# 2026-09-08 22:2xZ: the codex quota 429 came back as `(reset after 5m)` — a ROLLING WINDOW, not the hours-long exhaustion
+# the 2026-09-06 rule assumed — and three lanes (O3, D5n, B5k) died un-retried on their first refusal, drafts intact. A
+# quota refusal whose stated reset carries NO hours field is transient: wait the stated reset plus a slack, then resume
+# from the draft like any other refusal. A reset with an hours field, an unparsable one, or one beyond LANE_QUOTA_MAX_WAIT
+# stays the FAILED class (retrying it would burn the backoff for nothing).
+: "${LANE_QUOTA_SLACK:=30}"        # seconds added to a sub-hour quota reset before the retry; tests pass 0
+: "${LANE_QUOTA_MAX_WAIT:=1800}"   # a sub-hour reset longer than this is treated like the hours class
+quota_wait_s() {  # $1 = the refusal text; prints the wait for a sub-hour reset, returns 1 for the hours class / no parse
+  local spec tok total=0 any=0
+  spec=$(grep -Eo 'reset after [0-9hms ]+' "$1" 2>/dev/null | head -1 | sed 's/^reset after //; s/ *$//')
+  [ -n "$spec" ] || return 1
+  for tok in $spec; do
+    case "$tok" in
+      *h) return 1;;
+      *m) total=$((total + ${tok%m} * 60)); any=1;;
+      *s) total=$((total + ${tok%s})); any=1;;
+      *) return 1;;
+    esac
+  done
+  [ "$any" = 1 ] || return 1
+  total=$((total + LANE_QUOTA_SLACK))
+  [ "$total" -le "$LANE_QUOTA_MAX_WAIT" ] || return 1
+  echo "$total"
+}
 # 2026-09-08 13:3xZ: Hermes ends a turn on `session_persistence_failed` with a `⚠️ No reply: the turn was stopped because
 # session storage …` line as its ONLY output (the six lanes share the agentfactory profile's one state.db, kept in
 # journal_mode=DELETE because the linked SQLite 3.49.1 has the WAL-reset bug — a contended write is classified `disk`);
@@ -350,14 +374,21 @@ else
   HARNESS_PID=$!; wait "$HARNESS_PID"; rc=$?
 fi
 
-if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX|$PERSIST_RX" "$REPORT" 2>/dev/null && ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then
+quota_wait=""
+if grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then quota_wait=$(quota_wait_s "$REPORT") || quota_wait=""; fi
+if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX|$PERSIST_RX" "$REPORT" 2>/dev/null \
+   && { ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null || [ -n "$quota_wait" ]; }; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))
   [ "$wait_s" -le "$LANE_CAPACITY_MAX_WAIT" ] || wait_s="$LANE_CAPACITY_MAX_WAIT"
+  # a sub-hour quota window: the wait is the window itself (plus the slack), never shorter — a retry inside it is wasted
+  if [ -n "$quota_wait" ] && [ "$quota_wait" -gt "$wait_s" ]; then wait_s="$quota_wait"; fi
   cp "$REPORT" "$LANE_DIR/report.attempt$attempt.md"
   : > "$REPORT"   # the refusal line must not STAND as report.md during the backoff: the sandbox poller read a non-empty
                   # report.md as READY and brought the refusal home as six lanes' final reports (2026-09-08 08:1xZ)
   if grep -Eq "$PERSIST_RX" "$LANE_DIR/report.attempt$attempt.md" 2>/dev/null; then
     echo "pc-lane: attempt $attempt ended on a Hermes session-storage failure (state.db write refused) — resuming from the draft in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
+  elif [ -n "$quota_wait" ]; then
+    echo "pc-lane: attempt $attempt refused by a sub-hour codex quota window ($(grep -Eo 'reset after [0-9hms ]+' "$LANE_DIR/report.attempt$attempt.md" | head -1)) — resuming from the draft in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
   else
     echo "pc-lane: attempt $attempt refused by route capacity / rate limit (HTTP 503 or 429) — retrying in ${wait_s}s ($LANE_CAPACITY_RETRIES retries max)" >&2
   fi

@@ -224,6 +224,42 @@ check "NEGATIVE CONTROL: the codex QUOTA 429 is NOT retried (one attempt) and th
   "$([ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12/FAILED" && [ ! -f "$LD12/report.md" ] && ! grep -q "retrying" "$TMP/err12" && echo 0 || echo 1)" \
   "a quota reset is hours away; retrying it three times with backoff would only delay the fallback"
 
+# --- a SUB-HOUR quota window is transient: wait the window, then resume from the draft (2026-09-08 22:2xZ) ----
+# TEST DOUBLE: the verbatim codex quota line with a SECONDS-only reset on the first call, a report on the second. The real
+# incident said `(reset after 5m)`; the seconds form (`32h 19m 41s` carries one) keeps the test's wait at one second.
+QUOTA5="$TMP/quota-subhour-harness.sh"
+cat > "$QUOTA5" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. First call: a sub-hour quota refusal; later calls: a report.
+COUNT="${FLAKY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+if [ "$n" -eq 1 ]; then
+  echo "API call failed after 3 retries: HTTP 429: [codex/gpt-5.5-xhigh] All codex accounts have exhausted their quota (reset after 1s)"
+else
+  echo "QUOTA5-HARNESS-REPORT after $n attempts"; cat >/dev/null
+fi
+EOF
+chmod +x "$QUOTA5"
+BRIEF12b="$TMP/tests/brief-quota-subhour.md"; { echo "PIN: $SHA"; echo; echo "retry me after the window"; } > "$BRIEF12b"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-12b"
+LANE_CAPACITY_BACKOFF=0 LANE_QUOTA_SLACK=0 PC_LANE_FAKE_HARNESS="$QUOTA5" bash "$LANE" "$BRIEF12b" codex >"$TMP/out12b" 2>"$TMP/err12b"; rc12b=$?
+LD12b="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-quota-subhour.md' | head -1)"
+check "a codex quota 429 whose reset is SUB-HOUR is retried after the window and the second attempt's report stands" \
+  "$([ $rc12b -eq 0 ] && grep -q "after 2 attempts" "$LD12b/report.md" && grep -q "exhausted their quota" "$LD12b/report.attempt1.md" && grep -q "sub-hour codex quota window" "$TMP/err12b" && [ ! -f "$LD12b/FAILED" ] && echo 0 || echo 1)" \
+  "2026-09-08 22:2xZ: O3, D5n and B5k died un-retried on `reset after 5m` — a rolling window is a transient, the hours class is not"
+
+# NEGATIVE CONTROL: a sub-hour reset LONGER than LANE_QUOTA_MAX_WAIT is the hours class — FAILED, not retried.
+QUOTA45="$TMP/quota-45m-harness.sh"
+sed 's/reset after 1s/reset after 45m/; s/QUOTA5-HARNESS/QUOTA45-HARNESS/' "$QUOTA5" > "$QUOTA45"; chmod +x "$QUOTA45"
+BRIEF12c="$TMP/tests/brief-quota-45m.md"; { echo "PIN: $SHA"; echo; echo "do not wait 45 minutes"; } > "$BRIEF12c"
+export FLAKY_COUNT_FILE="$TMP/flaky-count-12c"
+# under `timeout`: the failure shape of a lost cap is a 45-minute sleep, so the control is bounded (rc 124 = red, fast)
+LANE_CAPACITY_BACKOFF=0 LANE_QUOTA_SLACK=0 LANE_QUOTA_MAX_WAIT=600 PC_LANE_FAKE_HARNESS="$QUOTA45" timeout 30 bash "$LANE" "$BRIEF12c" codex >"$TMP/out12c" 2>"$TMP/err12c"; rc12c=$?
+LD12c="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-quota-45m.md' | head -1)"
+check "NEGATIVE CONTROL: a sub-hour quota reset beyond LANE_QUOTA_MAX_WAIT is NOT retried — FAILED like the hours class" \
+  "$([ $rc12c -eq 70 ] && [ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && grep -q "exhausted their quota" "$LD12c/FAILED" && [ ! -f "$LD12c/report.md" ] && ! grep -q "resuming" "$TMP/err12c" && echo 0 || echo 1)" \
+  "the window cap is the policy line between a transient and an exhaustion; a 45-minute sleep is the owner's call, not the lane's"
+
 # --- a Hermes session-storage failure is the HARNESS failing, not a report (2026-09-08 13:3xZ) ----
 # TEST DOUBLE: prints the verbatim `⚠️ No reply:` line Hermes emits on session_persistence_failed on its first call
 # (after leaving a draft section), reports on the second — the retry must be a RESUME (the note in attempt 2's prompt).
