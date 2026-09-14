@@ -172,6 +172,8 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
+- **RESOLVED 2026-09-14 16:3xZ: `accepted/S0-11` RE-SIGNED by the owner** on a9c0c55 after B3's attested schema change; the PC push refused (403) → the tag over the bridge as a bundle, its object committed (`docs/governance/tags/accepted-S0-11.tag`); anchor check rc 0 on both venues, `test_proof_status.py` 32 passed. NO owner item is open. Standing note for the owner: every schema/runner/validator/registry change re-mints every result and asks for this again (AF-AP-56 by design); the alternative — sign only the substance, not the tooling hashes and timestamps — is a design change for the owner to call.
+
 - **RESOLVED 2026-09-14 15:4xZ (owner: "just build it"): the local Qwen builder** — FINDINGS §8 decisions 1-2 answered by the build (the June CUDA build hosts it; the OmniRoute node + combo exist), decision 3 provisionally (`medium` is the measured default; the A/B is N5k's verify verdict). Nothing needed from the owner; the cloud route stays one env away.
 
 - **RESOLVED 2026-09-05 (owner via Codex): OmniRoute auth** — `hermes` key rotated everywhere, `REQUIRE_API_KEY=true`,

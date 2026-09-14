@@ -45,6 +45,15 @@ git -c gpg.format=openpgp tag -s accepted/S0-11 -m "ACCEPTED: S0-11 evaluation h
 git push origin accepted/S0-11
 python3 scripts/check-proof-status.py .   # expect rc 0 and no WARNING once the declaration is removed
 ```
+RE-signing an already-tagged proof (a re-minted result after an attested-input change, AF-AP-56 — first needed 2026-09-14):
+the tag name exists, so drop it first and force the push; everything else is the block above.
+
+```bash
+git tag -d accepted/S0-11
+git -c gpg.format=openpgp tag -s accepted/S0-11 -m "ACCEPTED: S0-11 evaluation hardening — owner process decision 2026-09-04, on the current minted result" HEAD
+git push --force origin accepted/S0-11
+```
+```
 
 `gpg.format=openpgp` is forced because a git configured for SSH signing (common on machines that sign GitHub commits with
 an SSH key) would otherwise refuse to make or verify an OpenPGP signature. The checker forces the same at verify time.
