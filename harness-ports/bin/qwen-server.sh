@@ -155,14 +155,18 @@ status() {
 }
 
 probe() {
+  # One real completion. Qwen3.8 THINKS first (reasoning_content) — a 24-token budget returns finish=length with an
+  # EMPTY content (seen at the first install 2026-09-14: predicted_n=24, content=''), so the budget is 256 and the
+  # gate is the CONTENT, never the token count (tactic 7: green without the claimed part is not a capability).
   health >/dev/null || die "not healthy" 6
-  local body; body='{"model":"'"$QWEN_ALIAS"'","messages":[{"role":"user","content":"Reply with the single word pong."}],"max_tokens":24,"temperature":0}'
-  curl_key 120 -H 'Content-Type: application/json' -d "$body" "http://$QWEN_HOST:$QWEN_PORT/v1/chat/completions" | python3 -c '
+  local body; body='{"model":"'"$QWEN_ALIAS"'","messages":[{"role":"user","content":"Reply with the single word pong."}],"max_tokens":256,"temperature":0}'
+  curl_key 180 -H 'Content-Type: application/json' -d "$body" "http://$QWEN_HOST:$QWEN_PORT/v1/chat/completions" | python3 -c '
 import json,sys
-d=json.load(sys.stdin); t=d.get("timings") or {}
-print("qwen-server: probe served model=%s finish=%s prompt_n=%s predicted_n=%s decode_tps=%.1f content=%r" % (
+d=json.load(sys.stdin); t=d.get("timings") or {}; m=d["choices"][0]["message"]; c=(m.get("content") or "").strip()
+print("qwen-server: probe served model=%s finish=%s prompt_n=%s predicted_n=%s decode_tps=%.1f reasoning_chars=%d content=%r" % (
   d.get("model"), d["choices"][0].get("finish_reason"), t.get("prompt_n"), t.get("predicted_n"), t.get("predicted_per_second",0),
-  (d["choices"][0]["message"].get("content") or "")[:40]))'
+  len(m.get("reasoning_content") or ""), c[:40]))
+sys.exit(0 if "pong" in c.lower() else 7)' || die "probe returned no pong in content" 7
 }
 
 case "${1:-}" in
