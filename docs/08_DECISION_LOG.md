@@ -30,6 +30,8 @@
 | D-024 | ACCEPTED anchor (owner 2026-09-08): a signed git tag per accepted proof, `accepted/<proof-id>`, verified by the ledger validator | machine-verifiable and owner-only; a ledger line is not |
 | D-025 | `assertion_count` deleted from the registry (coordinator 2026-09-08, owner-delegated) | documentation wearing a gate's clothes — AF-AP-66's second instance; no checker reports a count to bind against |
 | D-026 | PC lane concurrency widened to NINE lanes at once (owner 2026-09-08 16:4xZ: "widen the bins, fit more lanes") | six ran stably for hours on the repaired runtime; launches stay staggered 60-120 s and the health probe records admission, memory and swap |
+| D-027 | The BUILD lane's default route is the LOCAL Qwen3.8-27B (UD-IQ4_XS, June CUDA llama.cpp 00139b6, the 3090) behind OmniRoute — user unit `qwen-builder` on loopback :8080 behind an API-key file, OmniRoute node `qwen-local` + combo `agentfactory-build-local` (local first, the `agentfactory-build` chain as fallback), effort `medium`; the cloud route stays one env away (`HERMES_MODEL=agentfactory-build HERMES_REASONING=ultra`) (owner 2026-09-14: "if it can be done just build it … let's get Qwen to do the heavy lifting"; built + live 2026-09-14 15:4xZ with no owner step) | 23 days of build time lost to cloud quota; the measurement (FINDINGS-LOCAL-BUILDER-QWEN38 §6) showed the whole model + a 262k q4_0 KV resident on the card at 60-87 t/s; rule 3 holds (OmniRoute the sole egress — Hermes never talks to :8080); `medium` measured at ~95 % of xhigh substance for 1/2-1/7 of the thinking, the A/B on real briefs pending (N5k's verdict) |
+
 
 ## Open implementation choices
 

@@ -84,7 +84,7 @@ IF the owner has set a transcript sync up (NOT set up in this repo — say so ra
   Development + verification lanes stay in the sandbox.
 - **OmniRoute on `127.0.0.1:20128` is the SOLE model egress** (standing rule 3); it is already running.
   vLLM/Ollama on the PC are merely upstreams behind it — never call them directly, never add them as a dependency.
-- **Never stop, restart or reconfigure the owner's running services** — Buzz relay stack, OmniRoute, Ollama,
+- **Never stop, restart or reconfigure the owner's running services** — Buzz relay stack, OmniRoute, Ollama, the `qwen-builder` model unit (a restart kills every lane mid-turn),
   Phoenix, OpenObserve, neo4j — without the owner's explicit say-so. `sudo` needs the owner's password:
   surface the need, never work around it.
 - Bridge links and tokens are per-session and live only in the untracked `.pc-bridge.env` — never in a

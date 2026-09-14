@@ -364,6 +364,35 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
 | `LANE_BRANCH` | `claude/soundbox-kit-migration-iz1jwf` | branch to fetch |
 | `LANE_ID` | derived from the brief | lane directory name |
 
+### The local build-lane model on the PC — `qwen-builder` (2026-09-14)
+
+Since 2026-09-14 the `code-implementer` role's default route is the OmniRoute combo `agentfactory-build-local`:
+the local Qwen3.8-27B (unsloth UD-IQ4_XS, sha256 `40fac405…6199`) served by the June CUDA llama.cpp build on the
+owner's 3090, FIRST, then the `agentfactory-build` cloud chain as fallback. Two scripts own it, both idempotent and
+both proven live on the PC that day (no owner step was needed):
+
+- `harness-ports/bin/qwen-server.sh install|status|health|probe|uninstall` — the systemd `--user` unit
+  `qwen-builder` (loopback `127.0.0.1:8080`, `--api-key-file ~/.config/qwen-builder/api-key` 0600, the measured shape
+  `-ngl 99 -c 262144 -np 4 -fa on -ctk/-ctv q4_0 --spec-type draft-mtp --spec-draft-n-max 3 --jinja
+  reasoning_effort=medium`; every knob an env override). `verify` fails closed on the binary, the HF blob name ==
+  sha256 and the GGUF magic; `probe` gates on the CONTENT of a completion (Qwen thinks first — a 24-token budget
+  returns an empty answer). Suite: `harness-ports/tests/test_qwen_server.sh` (43 checks; the unit is quoted by
+  systemd.syntax(7), never bash `%q`).
+- `harness-ports/bin/omniroute_local_builder.py ensure|status|probe|remove` — node `qwen-local` → connection
+  (the key from the key file) → the model in `/v1/models` → combo `agentfactory-build-local`, through
+  `harness-ports/bin/omni_api.mjs` = the installed OmniRoute CLI's own machine-bound loopback-token `apiFetch`
+  (no password, no inference key; `OMNIROUTE_API_KEY` scrubbed from its environment). Suite:
+  `harness-ports/tests/test_omniroute_local_builder.py` (24 checks against a labelled fake of the four endpoints).
+
+What the PC lane sees: `pc-lane.sh` passes `-m agentfactory-build-local --reasoning medium` unless `HERMES_MODEL`
+/ `HERMES_REASONING` say otherwise; the lane's `usage.json` names the served model. Measured facts (FINDINGS-LOCAL-
+BUILDER-QWEN38 §6): decode 60-87 t/s with MTP, prefill ~1,000 t/s, 262k context over four 65k slots; the server
+holds 22.7 GiB of the 24 GiB card, so nothing else fits on the GPU while it runs (Ollama models included). NOT
+proven: lane QUALITY at `medium` — the first lane (N5k, 2026-09-14) is graded by its verify round; the verify
+lanes still run on the cloud route (`agentfactory-verify`). Restarting the unit kills every lane mid-turn: stop
+lanes first, and never while the owner's own sessions use the route.
+
+
 ### Sandbox-side: `scripts/pc_lane.sh`
 
     scripts/pc_lane.sh <brief-file> [codex|hermes] [role]

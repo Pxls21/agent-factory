@@ -161,7 +161,7 @@ Not measured: the effort A/B on real briefs (§6 step 5 — it needs the OmniRou
 1. The CUDA build path — ANSWERED by the measurement: the June build loads and serves the model with MTP and the full 262k KV, so it
    is the builder host for now; a newer CUDA build (the toolkit, or the `server-cuda` container + CDI) is an optimisation to schedule,
    not a prerequisite.
-2. The OmniRoute provider + combo (owner-run, as before).
-3. Whether the local model builds at `medium` by default — after step 5 of §6, not before.
+2. The OmniRoute provider + combo — ANSWERED by the build (2026-09-14 15:4xZ; owner: "if it can be done just build it"): node `qwen-local` + connection + combo `agentfactory-build-local` created by `harness-ports/bin/omniroute_local_builder.py ensure` with the installed CLI's machine-bound loopback token — no owner step; the server itself is user unit `qwen-builder` (`harness-ports/bin/qwen-server.sh`); §7's shape, live.
+3. Whether the local model builds at `medium` by default — PROVISIONALLY `medium` (the measured default in `pc-lane.sh` since 2026-09-14 15:4xZ; §6 step 5's A/B is the FIRST lane's verify verdict — N5k, dispatched on the local route the same afternoon; `HERMES_REASONING=xhigh` per lane until then if a brief needs it).
 
 Nothing in this document is a claim that the local builder works for our lanes. That claim is minted by §6, or not at all.
