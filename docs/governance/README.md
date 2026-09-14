@@ -53,7 +53,6 @@ git tag -d accepted/S0-11
 git -c gpg.format=openpgp tag -s accepted/S0-11 -m "ACCEPTED: S0-11 evaluation hardening — owner process decision 2026-09-04, on the current minted result" HEAD
 git push --force origin accepted/S0-11
 ```
-```
 
 `gpg.format=openpgp` is forced because a git configured for SSH signing (common on machines that sign GitHub commits with
 an SSH key) would otherwise refuse to make or verify an OpenPGP signature. The checker forces the same at verify time.
