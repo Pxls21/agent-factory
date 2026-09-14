@@ -3,5 +3,5 @@
  "event_id": "d56402a86b11bb442974bc6f846ec1a16a49a4d44f74255f6f5e87f95352b57c",
  "event_id_echoed": false,
  "http_status": 400,
- "message": "restricted: not a channel member"
+ "message": "{\"error\": \"restricted: not a channel member\"}"
 }

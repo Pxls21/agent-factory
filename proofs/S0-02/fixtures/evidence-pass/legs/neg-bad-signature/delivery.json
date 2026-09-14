@@ -3,5 +3,5 @@
  "event_id": "226e96aeff614ff34bbe6e271686831ec6448ce55d4583135c61bb55bb130dfc",
  "event_id_echoed": false,
  "http_status": 400,
- "message": "invalid: invalid schnorr signature"
+ "message": "{\"error\": \"invalid: invalid schnorr signature\"}"
 }

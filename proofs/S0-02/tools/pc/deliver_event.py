@@ -70,14 +70,23 @@ nv = _load("s0_01_nostr_verify", NOSTR_VERIFY)
 
 def _privkey() -> str:
     """Resolve the role key ONCE (AP-1: the environment is not a config channel
-    to be re-read on a decision path). The caller threads the value explicitly."""
-    key = os.environ.get("BUZZ_PRIVATE_KEY", "")
+    to be re-read on a decision path). The caller threads the value explicitly.
+    F3 (B3): normalise FIRST (strip + lowercase), THEN refuse — a whitespace-only
+    value must not reach signing as an empty key; and the shape contract comes
+    from the consumer, nv.sign_event (proofs/S0-01/tools/nostr_verify.py:230):
+    exactly 64 lowercase hex characters."""
+    key = os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()
     if not key:
         raise SystemExit(
             "BUZZ_PRIVATE_KEY is not in the environment — source the role secret "
             "file before calling (set -a; . <role>.env; set +a)"
         )
-    return key.strip().lower()
+    if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+        raise SystemExit(
+            "BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex "
+            "characters, as nv.sign_event requires)"
+        )
+    return key
 
 
 def _nip98_header(privkey: str, url: str, method: str, body: bytes) -> str:
@@ -116,6 +125,11 @@ def _normalise(status: int, raw: str, event_id: str) -> dict:
 
     F14: records event_id_echoed so the checker knows whether the relay
     confirmed the id (true on 200) or it was locally computed (false on 400).
+    F2 (B3): ``accepted`` is only ever taken when the upstream type is bool; a
+    relay response like {"accepted":"false"} is a MALFORMED receipt, stored as
+    accepted=false with the reason in the message so the stored-bundle checker
+    (which rightly rejects non-bool receipts) can still see the malformed
+    upstream instead of a truthy lie (AF-AP-72).
     """
     receipt = {"http_status": status, "event_id": event_id, "accepted": False,
                "message": "", "event_id_echoed": False}
@@ -126,16 +140,21 @@ def _normalise(status: int, raw: str, event_id: str) -> dict:
         return receipt
     if isinstance(blob, dict):
         if "accepted" in blob:
-            receipt["accepted"] = bool(blob["accepted"])
+            if type(blob["accepted"]) is bool:
+                receipt["accepted"] = blob["accepted"]
+            else:
+                receipt["accepted"] = False
+                receipt["message"] = (
+                    f"malformed relay response: accepted is "
+                    f"{type(blob['accepted']).__name__} {blob['accepted']!r}"
+                )
         if blob.get("event_id"):
             receipt["event_id"] = blob["event_id"]
             receipt["event_id_echoed"] = True
         saw_message_field = False
-        for key in ("message", "error", "reason"):
-            if key in blob and isinstance(blob[key], str):
-                receipt["message"] = blob[key]
-                saw_message_field = True
-                break
+        if "message" in blob and isinstance(blob["message"], str):
+            receipt["message"] = blob["message"]
+            saw_message_field = True
         if saw_message_field:
             return receipt
     if not receipt["message"]:

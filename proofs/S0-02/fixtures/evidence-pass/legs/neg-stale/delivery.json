@@ -3,5 +3,5 @@
  "event_id": "e2c7fbfa3e19cf9972cfdf2f7167f28030645b792558596aa735e11cc4b7f2e3",
  "event_id_echoed": false,
  "http_status": 400,
- "message": "invalid: event timestamp too far from server time"
+ "message": "{\"error\": \"invalid: event timestamp too far from server time\"}"
 }

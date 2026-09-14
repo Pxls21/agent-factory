@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -92,10 +94,27 @@ nv = _load_by_path("s0_01_nostr_verify", NOSTR_VERIFY)
 Failure = s0_01.Failure
 Deferred = s0_01.Deferred
 _require_file = s0_01._require_file
-_require_dir = s0_01._require_dir
 _load_timeline_raw = s0_01._load_timeline_raw
 _HEX64 = s0_01._HEX64_ANYWHERE_RE
 _check_with_timeout = s0_01._check_with_timeout
+
+
+def _require_real_dir(path: Path, leg: str, name: str) -> Path:
+    """S0-02's own real-directory requirement (B3): the node must BE a
+    directory, not merely resolve to one. A symlinked leg (or sub-leg) is an
+    evidence-outside-the-bundle channel: the bytes the checker reads then do
+    not live under the evidence root at all. ``_require_dir`` (S0-01's) follows
+    symlinks via ``Path.is_dir`` and is deliberately NOT reused here — the
+    containment claim is this checker's to make."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise Failure(f"{leg}: {name} absent") from None
+    if stat.S_ISLNK(st.st_mode):
+        raise Failure(f"{leg}: {name} is a symlink, not a real directory")
+    if not stat.S_ISDIR(st.st_mode):
+        raise Failure(f"{leg}: {name} is not a directory")
+    return path
 
 # buzz-relay refuses any event whose created_at is more than this far from
 # server time (MAX_TIMESTAMP_DRIFT_SECS, crates/buzz-relay/src/handlers/ingest.rs:2224).
@@ -115,6 +134,37 @@ DEBUG_LEVEL_CANARY = "startup watermark set to"
 
 LEG_NAMES = ("pos-allowed",) + oracle.NEGATIVE_FIXTURES
 REPLAY_SUBLEGS = ("first", "second")
+
+# Per-leg closure: the EXACT file set the runner writes per leg kind, derived
+# from run_s0_02_legs.sh (delivered-event.json/job.json/garbage.txt are NOT
+# written by this runner; only the files below are). A closure guard is the
+# only way to catch a removed file AND a smuggled one with one rule — an extra
+# entry is just as unaccounted-for as a missing one.
+_LEG_FILES_PLAIN = frozenset({
+    "fixture.json",
+    "delivered-event.json",
+    "delivery.json",
+    "t0.json",
+    "timeline.jsonl",
+    "buzzacp.log",
+})
+# The revoked leg additionally writes the membership removal receipt.
+_LEG_FILES_REVOKED = _LEG_FILES_PLAIN | {"membership.json"}
+
+
+def _leg_closure(leg_dir: Path, leg: str, expected: frozenset):
+    """Closure INSIDE a leg: exactly the names the runner writes (a garbage file
+    is just as unaccounted-for as a missing one; a missing required name is
+    named separately so the failure says WHY). Both checks are on the lstat
+    name set; the real-dir guard (B3) already refused symlinked legs, so an
+    entry here is a regular node under the evidence root."""
+    names = {p.name for p in leg_dir.iterdir()}
+    extra = names - expected
+    if extra:
+        raise Failure(f"{leg}: unexpected entries {sorted(extra)}")
+    missing = expected - names
+    if missing:
+        raise Failure(f"{leg}: missing {sorted(missing)}")
 
 
 def _read_json(path: Path, leg: str, name: str):
@@ -405,8 +455,13 @@ def _turns(leg_dir: Path, leg: str):
 
 
 def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anchors: "Anchors"):
-    """One captured leg. Returns the observed distinctness key (None for the positive)."""
-    _require_dir(leg_dir, leg, f"{fixture_name} leg directory")
+    """One captured leg. Returns (found, delivery, removal_note) — the note is
+    None for every leg but the revoked one."""
+    _require_real_dir(leg_dir, leg, f"{fixture_name} leg directory")
+    _leg_closure(
+        leg_dir, leg,
+        _LEG_FILES_REVOKED if fixture_name == "revoked" else _LEG_FILES_PLAIN,
+    )
     fixture = _read_json(leg_dir / "fixture.json", leg, "fixture.json")
     if fixture.get("fixture") != fixture_name:
         raise Failure(
@@ -443,7 +498,7 @@ def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anc
             raise Failure(f"{leg}: the ACP turn does not carry the fixture's nonce")
         log_path = _require_file(leg_dir / "buzzacp.log", leg, "buzzacp.log")
         _check_masking(log_path.read_text(), leg)
-        return None
+        return None, None, None
 
     found = _observe_all(leg_dir, leg, delivery, fixture_name)
     if fixture_name == "neg-self-authored":
@@ -489,7 +544,18 @@ def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anc
                 f"{leg}: membership.json records no successful relay removal response "
                 f"(http_status={http_st!r})"
             )
-    return found, delivery
+    # F5 (B3 item 5): the removal evidence is a coordinator-supplied receipt —
+    # there is no membership READ route on the pinned relay (api/mod.rs
+    # check_relay_membership/enforce_relay_membership are INTERNAL enforcement
+    # only), so no independent post-removal observation can be captured. The
+    # checker says so in the summary line, and neither pretends a signature.
+    removal_note = None
+    if fixture_name == "revoked":
+        removal_note = (
+            "removal evidence: coordinator-supplied receipt "
+            "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
+        )
+    return found, delivery, removal_note
 
 
 def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
@@ -499,14 +565,21 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
     produced none. A leg where neither produced a turn proves nothing.
     """
     leg_dir = root / "neg-replayed"
-    _require_dir(leg_dir, "neg-replayed", "neg-replayed leg directory")
+    _require_real_dir(leg_dir, "neg-replayed", "neg-replayed leg directory")
+    if {p.name for p in leg_dir.iterdir()} != set(REPLAY_SUBLEGS):
+        raise Failure(
+            f"neg-replayed: expected exactly the sub-leg directories "
+            f"{sorted(REPLAY_SUBLEGS)}, got "
+            f"{sorted(p.name for p in leg_dir.iterdir())}"
+        )
     ids = []
     turns = []
     key = None
     for sub in REPLAY_SUBLEGS:
         sub_dir = leg_dir / sub
         leg = f"neg-replayed/{sub}"
-        _require_dir(sub_dir, leg, f"{sub} sub-leg directory")
+        _require_real_dir(sub_dir, leg, f"{sub} sub-leg directory")
+        _leg_closure(sub_dir, leg, _LEG_FILES_PLAIN)
         fixture_name = "pos-allowed" if sub == "first" else "neg-replayed"
         fixture = _read_json(sub_dir / "fixture.json", leg, "fixture.json")
         if fixture.get("fixture") != fixture_name:
@@ -554,19 +627,37 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
 
 
 def _has_any_timeline(root: Path) -> bool:
+    """Deferral gate, AFTER the root guard: lstat-based, never .exists() through
+    a symlink, never descending a symlinked leg or sub-leg."""
     for leg in LEG_NAMES:
         d = root / leg
-        if (d / "timeline.jsonl").exists():
-            return True
-        for sub in REPLAY_SUBLEGS:
-            if (d / sub / "timeline.jsonl").exists():
+        try:
+            if not stat.S_ISDIR(os.lstat(d).st_mode):
+                continue
+        except OSError:
+            continue
+        for p in (d / "timeline.jsonl",) + tuple(
+            d / sub / "timeline.jsonl" for sub in REPLAY_SUBLEGS
+        ):
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if not stat.S_ISLNK(st.st_mode):
                 return True
     return False
 
 
 def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
-    if not root.is_dir():
-        raise Deferred("S0-02 evidence not captured")
+    # The root itself must be a real directory, not a symlink: resolve() would
+    # happily re-anchor every later containment check under the symlink target.
+    try:
+        root_mode = os.lstat(root).st_mode
+    except OSError:
+        raise Deferred("S0-02 evidence not captured") from None
+    if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+        raise Failure("bundle: the evidence root is a symlink or not a regular directory")
+    root = root.resolve()
     if not _has_any_timeline(root):
         raise Deferred("S0-02 evidence not captured")
 
@@ -582,13 +673,16 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
         raise Failure(f"bundle: unexpected leg directories or files {sorted(extra)}")
 
     observed: dict = {}
+    removal_note = None
     for leg in LEG_NAMES:
         if leg == "neg-replayed":
             observed[leg] = _check_replay(root, identities, anchors)
             continue
         result = _check_leg(root / leg, leg, leg, identities, anchors)
-        if result is not None:
-            observed[leg] = result
+        found, delivery, note = result
+        if note is not None:
+            removal_note = note
+        observed[leg] = (found, delivery)
 
     # DISTINCTNESS FIRST (seed:380 "one blanket rejection fails the proof"): a
     # stack that denies everything for one reason must fail as a blanket
@@ -607,6 +701,11 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
             f"{len(distinct_legs)} negative legs collapsed to {len(set(keys))} observable(s)"
         )
     for fixture_name in oracle.NEGATIVE_FIXTURES:
+        if fixture_name == "revoked":
+            # The revoked leg is the SEVENTH, structurally-separate leg; its
+            # observable (membership.json) is asserted inside _check_leg, and
+            # its removal receipt is coordinator-supplied (F5).
+            continue
         found, delivery = observed[fixture_name]
         leg = "neg-replayed/second" if fixture_name == "neg-replayed" else fixture_name
         _check_named_observable(leg, fixture_name, found, delivery)
@@ -615,9 +714,14 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
     # distinct observable, so it is counted separately instead of being folded
     # into "6 negative legs" — the count stays true to what the gate measured.
     n_extra = len(oracle.NEGATIVE_FIXTURES) - len(distinct_legs)
+    removal_line = removal_note or (
+        "removal evidence: coordinator-supplied receipt "
+        "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
+    )
     return (
         f"PASS: S0-02 buzz-authz - 1 positive, {len(distinct_legs)} negative legs, "
-        f"{len(set(keys))} distinct reasons; +{n_extra} revocation leg (assertion 2)"
+        f"{len(set(keys))} distinct reasons; +{n_extra} revocation leg (assertion 2); "
+        f"{removal_line}"
     )
 
 

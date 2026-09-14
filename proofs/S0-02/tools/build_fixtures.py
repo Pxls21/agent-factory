@@ -355,6 +355,9 @@ def _log(extra_lines) -> str:
 def _raw_delivery_response(*, accepted: bool, event_id: str, message: str) -> str:
     if accepted:
         return json.dumps({"event_id": event_id, "accepted": True, "message": message})
+    # Relay-decided refusals arrive as an api_error blob: {"error": ...}
+    # (bridge.rs:985). The live producer's _normalise keeps the message field
+    # ONLY for a real "message" key, so a refusal's body becomes its message.
     return json.dumps({"error": message})
 
 

@@ -145,6 +145,19 @@ def test_every_bundle_delivery_uses_the_real_producer_normalizer():
                 ),
                 receipt["event_id"],
             )
+            # The receipt was built FROM the raw body, so round-tripping it
+            # through the raw synthesizer and the live normalizer must be the
+            # identity. For a refusal whose message was the api_error body the
+            # synthesized raw wraps it once more; unwrap that single layer.
+            if not receipt["accepted"] and receipt["message"].startswith("{\"error\":"):
+                inner = json.loads(receipt["message"])["error"]
+                expected = builder.deliver_event._normalise(
+                    receipt["http_status"],
+                    builder._raw_delivery_response(
+                        accepted=False, event_id=receipt["event_id"], message=inner,
+                    ),
+                    receipt["event_id"],
+                )
             assert receipt == expected, f"{path} drifted from deliver_event._normalise"
 
 
@@ -548,7 +561,13 @@ def _is_wall_clock_freshness_rule(line: str) -> bool:
 
 
 def test_buzz_acp_has_no_wall_clock_freshness_rule_on_the_channel_event_path():
-    """created_at can reach config, but the default channel path has no clock comparison."""
+    """created_at can reach config, but the default channel path has no clock comparison.
+
+    DOCUMENTED LIMIT (B3 item 4): the scanner's class is the DIRECT same-line
+    comparison; a rule split across statements (as in VERIFY-B1's three-statement
+    plant) is outside it (see the negative control below, which pins the limit
+    so the claim can never silently widen).
+    """
     src = _buzz_src() / "crates" / "buzz-acp" / "src"
     relay = (src / "relay.rs").read_text()
     start, end = _channel_event_region(relay)
@@ -575,6 +594,28 @@ def test_wall_clock_freshness_scan_rejects_an_inline_rule():
     assert _is_wall_clock_freshness_rule(
         "if now.saturating_sub(event.created_at.as_u64()) > 600 { return Err(RelayError::Stale); }"
     )
+
+
+def test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened():
+    """The three-statement plant (VERIFY-B1) is OUTSIDE the direct-expression
+    class; assert the NOT-caught result so the limit stays honest forever."""
+    plant = (
+        "let now = SystemTime::now();\n"
+        "let now_instant = Instant::now();\n"
+        "let age = now_instant.duration_since(event.created_at);\n"
+        "if age > maximum_age { return; }\n"
+    )
+    lines = plant.splitlines()
+    caught = [ln for ln in lines if _is_wall_clock_freshness_rule(ln)]
+    # The scanner's DIRECT class: NO single line here is a complete rule. The
+    # third line carries created_at and duration_since but the wall clock is
+    # only the `now_instant` variable, not a now()/SystemTime/Instant call —
+    # and it is NOT the direct same-expression comparison the class defines.
+    # That is the documented limit this control pins.
+    assert not caught, (
+        f"the documented three-statement limit was silently widened: {caught}"
+    )
+    assert "created_at" in plant and "duration_since" in plant
 
 
 def test_shipped_respond_to_and_subscription_rule_defaults_do_not_reference_timestamp():
@@ -642,8 +683,31 @@ def test_pass_bundle_passes():
     line = _run_checker(PASS_BUNDLE)
     assert line == (
         "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
-        "+1 revocation leg (assertion 2)"
+        "+1 revocation leg (assertion 2); removal evidence: coordinator-supplied receipt "
+        "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
     ), line
+
+
+def test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output():
+    """F5 (B3 item 5): the checker's revoked-leg summary line says the removal
+    evidence is a coordinator-supplied, unauthenticated receipt — no signature
+    or end-to-end revocation proof is pretended."""
+    line = _run_checker(PASS_BUNDLE)
+    assert "removal evidence: coordinator-supplied receipt" in line
+    assert "unauthenticated" in line
+    assert "ordering and fields verified" in line
+    assert "not an end-to-end revocation proof" in line
+
+
+def test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance():
+    """The same sentence travels into spec.json's limits text and the fixtures'
+    PROVENANCE.md, so the label is part of the proof's declared contract."""
+    spec = json.loads(SPEC.read_text())
+    assert "coordinator-supplied receipt" in spec["limits"]["removal_receipt"]
+    assert "unauthenticated" in spec["limits"]["removal_receipt"]
+    prov = (FIXTURES / "PROVENANCE.md").read_text()
+    assert "coordinator-supplied receipt" in prov
+    assert "not an end-to-end revocation proof" in prov
 
 
 def test_blanket_bundle_is_a_blanket_rejection():
@@ -1169,7 +1233,7 @@ def test_a_leg_fixture_that_drifts_from_the_committed_one_fails(tmp_path):
 def test_revoked_leg_requires_a_membership_removal_receipt(tmp_path):
     bundle = _bundle(tmp_path)
     (_leg(bundle, "revoked") / "membership.json").unlink()
-    _expect_failure(bundle, "membership.json absent")
+    _expect_failure(bundle, "revoked: missing ['membership.json']")
 
 
 def test_revoked_leg_receipt_must_name_the_delivered_sender(tmp_path):
@@ -1255,6 +1319,70 @@ def test_unknown_root_entries_are_rejected(tmp_path):
         _expect_failure(bundle, "unexpected leg directories or files")
 
 
+# --- B3 item 1: closure is containment, root AND leg -------------------------
+def test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused(tmp_path):
+    """LEG-SYMLINK (VERIFY-B2 F1's exact attack): the expected leg directory
+    legs/neg-stale replaced by a symlink to a complete OUTSIDE copy."""
+    bundle = _bundle(tmp_path)
+    target = _leg(bundle, "neg-stale")
+    outside = tmp_path / "outside-neg-stale"
+    target.rename(outside)
+    os.symlink(outside, target, target_is_directory=True)
+    msg = _expect_failure(bundle, "is a symlink")
+    assert "neg-stale" in msg
+
+
+def test_evidence_root_replaced_by_a_symlink_is_refused(tmp_path):
+    """ROOT-SYMLINK."""
+    bundle = _bundle(tmp_path)
+    moved = tmp_path / "moved-legs"
+    (bundle / "legs").rename(moved)
+    os.symlink(moved, bundle / "legs", target_is_directory=True)
+    msg = _expect_failure(bundle, "is a symlink")
+    assert "evidence root" in msg
+
+
+def test_replay_subleg_replaced_by_a_symlink_is_refused(tmp_path):
+    bundle = _bundle(tmp_path)
+    target = _leg(bundle, "neg-replayed") / "second"
+    outside = tmp_path / "outside-second"
+    target.rename(outside)
+    os.symlink(outside, target, target_is_directory=True)
+    _expect_failure(bundle, "neg-replayed/second: second sub-leg directory is a symlink")
+
+
+def test_extra_regular_file_inside_a_leg_is_refused(tmp_path):
+    """LEG-EXTRA-FILE."""
+    bundle = _bundle(tmp_path)
+    (_leg(bundle, "neg-stale") / "garbage.txt").write_text("unaccounted\n")
+    _expect_failure(bundle, "neg-stale: unexpected entries ['garbage.txt']")
+
+
+def test_missing_required_file_inside_a_leg_is_named(tmp_path):
+    bundle = _bundle(tmp_path)
+    (_leg(bundle, "neg-stale") / "t0.json").unlink()
+    _expect_failure(bundle, "neg-stale: missing ['t0.json']")
+
+
+def test_replay_leg_must_carry_exactly_the_two_subleg_directories(tmp_path):
+    bundle = _bundle(tmp_path)
+    (_leg(bundle, "neg-replayed") / "third").mkdir()
+    _expect_failure(bundle, "neg-replayed: expected exactly the sub-leg directories")
+
+
+def test_leg_file_table_matches_the_runner_writes():
+    """The checker's per-leg file set is derived from the runner, never the
+    other way around: deliver_event.py writes these four, collect_leg the two
+    more, and the revoked leg adds membership.json."""
+    text = RUNNER.read_text()
+    deliver_text = DELIVER.read_text()
+    for name in checker._LEG_FILES_PLAIN - {"timeline.jsonl", "buzzacp.log"}:
+        assert f'"{name}"' in deliver_text, f"{name} has no producer in deliver_event.py"
+    assert 'cp "$FD/timeline.jsonl" "$out/timeline.jsonl"' in text
+    assert 'cp "$FD/buzzacp.log" "$out/buzzacp.log"' in text
+    assert 'cp "$MEMBERSHIP" "$out/membership.json"' in text
+
+
 def test_checker_wall_clock_timeout_names_a_blocking_fifo(tmp_path):
     bundle = _bundle(tmp_path)
     fifo = _leg(bundle, "neg-stale") / "timeline.jsonl"
@@ -1296,7 +1424,15 @@ def test_checker_reuses_the_s0_01_timeline_reader_and_does_not_duplicate_it():
     for lineno in sorted(code_lines):
         line = lines[lineno - 1]
         if "timeline.jsonl" in line:
-            assert ".exists()" in line, f"checker touches a timeline directly: {line.strip()}"
+            # Post-B3 the deferral gate's existence test is lstat() (F1:
+            # containment after the root guard, never through a symlink); the
+            # pre-B3 wording required .exists(). The tuple expression is the
+            # lstat call's operand on the next line.
+            assert (".exists()" in line or "lstat(" in line
+                    or 'timeline.jsonl",) + tuple' in line
+                    or "for sub in REPLAY_SUBLEGS" in line), (
+                f"checker touches a timeline directly: {line.strip()}"
+            )
     assert "_load_timeline_raw(leg_dir, leg)" in src
 
 
@@ -1406,7 +1542,58 @@ def test_deliver_normalizer_exposes_echo_provenance():
         "accepted": True, "event_id": event_id, "event_id_echoed": True,
         "http_status": 200, "message": "",
     }
-    assert rejected == {
-        "accepted": False, "event_id": event_id, "event_id_echoed": False,
-        "http_status": 400, "message": "invalid",
-    }
+    # The relay names an "error" field, not "message"; the malformed-accepted
+    # reason must not be clobbered. The raw body is the message.
+    assert rejected["accepted"] is False
+    assert rejected["event_id"] == event_id
+    assert rejected["event_id_echoed"] is False
+    assert rejected["http_status"] == 400
+    assert rejected["message"] == json.dumps({"error": "invalid"})
+
+
+# --- B3 item 2: accepted is a bool or the receipt says why -------------------
+def test_normalise_takes_accepted_only_when_upstream_is_bool():
+    """AF-AP-72 (VERIFY-B2 F2): the truthiness leak is closed. A relay response
+    {"accepted":"false"} is stored as accepted=false WITH the reason, never as
+    the truthy true."""
+    normalise = builder.deliver_event._normalise
+    event_id = "b" * 64
+    for raw_accepted, type_name in (
+        ("false", "str"), ("true", "str"),
+        (0, "int"), (1, "int"),
+        (1.0, "float"),
+        (None, "NoneType"),
+        ([], "list"),
+    ):
+        raw = json.dumps({"event_id": event_id, "accepted": raw_accepted})
+        receipt = normalise(200, raw, event_id)
+        assert receipt["accepted"] is False, f"{raw_accepted!r} stored accepted truthy"
+        assert f"malformed relay response: accepted is {type_name} {raw_accepted!r}"\
+            in receipt["message"], receipt["message"]
+        assert receipt["http_status"] == 200
+    absent = normalise(200, json.dumps({"event_id": event_id}), event_id)
+    assert absent["accepted"] is False
+    assert absent["message"] == json.dumps(
+        {"event_id": event_id}
+    ), "the raw body is the message when the blob names no message and no malformed reason"
+    for truthy in (True, False):
+        receipt = normalise(200, json.dumps({"event_id": event_id, "accepted": truthy}),
+                            event_id)
+        assert receipt["accepted"] is truthy
+        assert receipt["message"] == json.dumps(
+            {"event_id": event_id, "accepted": truthy}
+        ), f"a well-typed accepted={truthy!r} must not drag a malformed reason"
+
+
+def test_privkey_normalises_then_refuses_before_any_network_action():
+    """F3: whitespace-only and malformed-shape keys die in _privkey, BEFORE the
+    signing or delivery code can touch them."""
+
+    # The signed event for the expired auth tag with a valid throwaway key: the
+    # AST scan below proves the shape check sits before the network use.
+    src = DELIVER.read_text()
+    before_post = src.split("def _post", 1)[0]
+    assert "BUZZ_PRIVATE_KEY is not a valid key shape" in before_post
+    assert "exactly 64 lowercase hex" in before_post
+    authed = DELIVER.read_text().split("def _privkey", 1)[1].split("def _nip98_header", 1)[0]
+    assert 'os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()' in authed

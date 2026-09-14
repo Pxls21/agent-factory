@@ -1,5 +1,8 @@
 {
   "proof_id": "S0-02",
+  "limits": {
+    "removal_receipt": "revoked-leg removal evidence is a coordinator-supplied receipt (unauthenticated; ordering and fields verified; not an end-to-end revocation proof); the pinned relay exposes no membership READ route (api/mod.rs check_relay_membership/enforce_relay_membership are internal enforcement only)"
+  },
   "legs": [
     {
       "leg": "positive",
