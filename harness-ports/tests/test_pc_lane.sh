@@ -375,6 +375,8 @@ grep -q "CONTEXT BUDGET" "$LD10/prompt.md"; check "the standing context-budget r
   "2026-09-03: a lane reloaded 75 KB of skills after each of eight compactions and lost its brief"
 grep -q "MECHANICAL GATES ARE BOUNDED" "$LD10/prompt.md" && grep -q "at most THREE rounds" "$LD10/prompt.md" && grep -q "alias@<PIN>:NN" "$LD10/prompt.md"; check "the standing bounded-gate rule (three lint rounds by the fix hints, then paste and finish; the PIN-era ref form) is in every lane prompt" $? \
   "2026-09-14: N5k looped 47 minutes and 20 turns on an unbounded MISS-0 bar (AF-AP-76) — a cap the lane never sees cannot bound it"
+grep -q "PREMISE CONFLICTS ARE BOUNDED" "$LD10/prompt.md" && grep -q "at most THREE experiments" "$LD10/prompt.md"; check "the standing bounded-premise rule (three experiments, then a DISCREPANCIES line and build-or-stop) is in every lane prompt" $? \
+  "2026-09-14 23:0xZ: the xhigh arm spent 60+ minutes re-deriving CPython's close-on-exec default on an unmeasured brief premise (AF-AP-73 at the brief level)"
 check "NEGATIVE CONTROL: a lane with a real final report keeps it (no draft promotion)" \
   "$(grep -q "^FAKE-HARNESS-REPORT" "$LD/report.md" && ! grep -q "^DRAFT REPORT" "$LD/report.md" && echo 0 || echo 1)" \
   "the fallback must key on an EMPTY report, never overwrite a delivered one"
