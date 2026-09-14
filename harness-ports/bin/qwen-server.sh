@@ -29,7 +29,10 @@ QWEN_ALIAS="${QWEN_ALIAS:-qwen3.8-27b-local}"
 QWEN_HOST="${QWEN_HOST:-127.0.0.1}"
 QWEN_PORT="${QWEN_PORT:-8080}"
 QWEN_CTX="${QWEN_CTX:-262144}"
-QWEN_SLOTS="${QWEN_SLOTS:-4}"
+QWEN_SLOTS="${QWEN_SLOTS:-1}"            # ONE slot = the whole 262k context per lane. The first lane (N5k, 2026-09-14) grew
+                                         # to 97-104k tokens in 8 min and overflowed a 65k slot (-np 4) four times; Hermes
+                                         # compacts at 75 % of the 200k OmniRoute reports for the combo, so a slot must hold
+                                         # >= 200k. Parallel lanes need a Hermes-side context cap first (a follow-up).
 QWEN_NGL="${QWEN_NGL:-99}"               # everything resident: the brief's -ngl 54 offload measured 7.0x slower
 QWEN_KV_TYPE="${QWEN_KV_TYPE:-q4_0}"
 QWEN_MTP_N="${QWEN_MTP_N:-3}"            # draft-mtp n=3: 86.9 t/s at 90 % acceptance on code (n=2: 79.9)
@@ -39,6 +42,7 @@ QWEN_KEY_FILE="${QWEN_KEY_FILE:-$HOME/.config/qwen-builder/api-key}"
 QWEN_UNIT="${QWEN_UNIT:-qwen-builder}"
 QWEN_HOME="${QWEN_HOME:-$HOME/qwen-builder}"
 QWEN_HEALTH_WAIT_S="${QWEN_HEALTH_WAIT_S:-180}"
+QWEN_LANES_DIR="${QWEN_LANES_DIR:-$HOME/agent-factory/.lanes}"   # live lane pidfiles: install never restarts under one
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 die() { echo "qwen-server: $*" >&2; exit "${2:-1}"; }
@@ -138,10 +142,20 @@ install() {
   verify_inputs
   mkdir -p "$QWEN_HOME/logs" "$HOME/.config/systemd/user"
   keygen
-  unit > "$HOME/.config/systemd/user/$QWEN_UNIT.service"
-  systemd-analyze --user verify "$HOME/.config/systemd/user/$QWEN_UNIT.service" || die "unit does not verify (systemd-analyze)" 5
+  local unit_path="$HOME/.config/systemd/user/$QWEN_UNIT.service" changed=0
+  if [ -f "$unit_path" ] && ! unit | cmp -s - "$unit_path"; then changed=1; fi
+  unit > "$unit_path"
+  systemd-analyze --user verify "$unit_path" || die "unit does not verify (systemd-analyze)" 5
   systemctl --user daemon-reload || die "daemon-reload failed" 5
   systemctl --user enable --now "$QWEN_UNIT" >/dev/null 2>&1 || die "enable --now $QWEN_UNIT failed" 5
+  if [ "$changed" = 1 ] && systemctl --user is-active --quiet "$QWEN_UNIT"; then
+    # enable --now is a no-op on a running unit: a changed argv only takes effect through a restart. A restart
+    # kills every lane mid-turn — install refuses while a lane pidfile is alive (check .lanes/*/lane.pid first).
+    local live; live=$(for f in "$QWEN_LANES_DIR"/*/lane.pid; do [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null && echo "$f"; done)
+    [ -z "$live" ] || die "unit text changed but a lane is alive ($live) — stop it by pid first, then re-run install" 7
+    echo "qwen-server: unit text changed and the unit is running — restarting it"
+    systemctl --user restart "$QWEN_UNIT" || die "restart $QWEN_UNIT failed" 5
+  fi
   echo "qwen-server: unit $QWEN_UNIT enabled; llama-server $("$QWEN_LLAMA_SERVER" --version 2>&1 | head -1); model blob $QWEN_MODEL_SHA256"
   wait_health
 }
