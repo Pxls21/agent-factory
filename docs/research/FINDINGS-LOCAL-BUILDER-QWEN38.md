@@ -1,0 +1,127 @@
+# FINDINGS — a local Qwen3.8-27B as the BUILD-lane model (validation of the owner's brief, 2026-09-14)
+
+**Verdict first.** The idea holds; the brief's numbers mostly do not. Qwen3.8-27B is real (released 2026-08-14, Apache-2.0, 27B dense,
+hybrid attention, an MTP head, 262k native context). On the owner's RTX 3090 the WHOLE model plus a FULL 262,144-token q4_0 KV cache fits
+on the GPU with about 6 GiB to spare, so the brief's central move (offload ten layers to RAM to make room) is unnecessary and would cost
+roughly 3.7× decode speed on this DDR4 box. Two of the brief's flags do not exist as written, the default port is wrong, and the
+"medium = 98% of xhigh at 1/20th the time" claim is refuted by every measured source found (the measured ratios are ~95% of the quality at
+1/2 to 1/7 of the thinking). "Better than Opus for surgical edits" has no measured basis anywhere; the vendor's own table is mixed against
+Opus 4.6 and behind Opus 5 on the two comparable rows. What the model does buy is real: free, unlimited, on-site build lanes at ~40 t/s,
+a second model family in the loop, and a plausible bug-finder. Whether it builds OUR lanes well is not on the internet — it is measured
+here, on the PC, against briefs whose verifier verdicts we already hold. The evidence pack with every source is beside this file:
+`docs/research/evidence/qwen38-local-builder-evidence-2026-09-14.md` (56 rows, every number sourced; Reddit was unreachable, so three of
+the brief's Reddit threads could not be verified at all and are marked as such).
+
+## 1. The one fact that changes the math
+
+From the official `config.json`: 64 layers, of which only **16 are full attention** (4 KV heads × head_dim 256); the other 48 are
+Gated-DeltaNet linear-attention layers with a fixed recurrent state (~150 MB per slot) that does not grow with context.
+
+| KV cache (16 layers) | bytes/token | at 262,144 tokens |
+|---|---|---|
+| f16 | 65,536 | 16.0 GiB |
+| q8_0 | 34,816 | 8.5 GiB |
+| q4_0 (the brief's choice) | 18,432 | **4.5 GiB** |
+
+Weights UD-IQ4_XS 14.3 GB (13.3 GiB) + q4_0 KV at 262k 4.5 GiB + state 0.15 GiB = **18.0 GiB of 24.0** — fully resident, ~6 GiB free.
+An independent RTX 4090 (also 24 GB) measurement confirms the ordering (f16 KV tops out ~100k, q8 ~170k, q4_0 the full 262k). The brief's
+`--ngl 54` is therefore not motivated by memory. Its cost: ten layers read from DDR4 (51.2 GB/s theoretical, AM4 is DDR4-only) each token →
+a ceiling of ~15-18 t/s instead of ~50-65 t/s (measured baselines for this class on a 3090: ~40 t/s).
+
+## 2. What the brief gets wrong (each row is sourced in the evidence pack)
+
+1. `--spec-draft-max 2` does not exist; the flag is `--spec-draft-n-max 2` (C6.15). `--spec-type draft-MTP` is spelled `draft-mtp` (C6.14).
+2. `--flash-attn` now takes a value: `-fa on` (default `auto`); whether the bare form parses is unverified (C6.10-11).
+3. llama-server binds `127.0.0.1:8080` by default; "port 8000" is vLLM's (C11.1-2). No tunnel is needed or wanted: OmniRoute is the sole
+   model egress (project rule 3) and it runs on the same host.
+4. "medium ≈ 98% of xhigh at 1/20th the thinking": the only measured quality table gives medium 8.18 vs xhigh 8.61 = **95%** (one run,
+   noise 0.18); thinking tokens medium ≈ **1/6.7** of xhigh (3 seeds), wall clock 1/5.6, median latency 1/1.9. The 7-11× figure that exists is
+   LOW vs xhigh (C4.4-C4.10). xhigh wins on coding substance; the vendor warns lower effort can COST time in multi-turn agent work because it
+   spends more rounds, and one source measured low as slower than medium for that reason (C4.11-13). Levels are low/medium/xhigh only — the
+   model's template rejects `high` (C1.14).
+5. "performs better than Opus for surgical edits": no Aider-polyglot entry, no edit-format measurement of any kind exists for this model
+   (C3.15). Vendor table vs Opus 4.6 Max: Terminal-Bench 2.1 73.0 vs 78.2 (Opus ahead), SWE-bench Pro 61.7 vs 53.4 (Qwen ahead), NL2Repo
+   42.3 vs 47.6 (Opus ahead), LiveCodeBench 90.3 vs 88.8; the Opus column is the official score while every other column was re-run in a
+   Claude Code harness (C3.2-C3.9). Against Opus 5 (secondary numbers only) Opus leads both comparable rows (C3.14).
+6. "identity crisis (claims to be Claude)": the cited thread could not be fetched and nothing corroborates it (C5b.1).
+7. "keen to execute git commands": real, but the source says it of Qwen3.6 AND 3.8 alike (C5a.2-3). Our lanes already run in a private
+   worktree and cannot push; the harvest is the lane's diff, so a stray local commit is harmless. One line goes into the role prompt anyway.
+8. "Flash-Next faster but dumber": the vendor table has Flash-Next ahead on all eleven shared benchmarks; one community report supports the
+   brief's direction on long sessions. Moot here: Flash-Next is ~180B and needs four 3090s (C5c.4-6).
+9. "2-5 t/s with a 200k host-side KV": unsourced; the arithmetic bracket is 3.3-13.9 t/s depending on which bus binds (C8.11).
+10. `--threads 12`: no primary guidance exists; the box has 6 physical cores. A measurement item, and moot once nothing is offloaded.
+
+## 3. What the brief gets right
+
+The model, the quant (UD-IQ4_XS 14.3 GB, MTP head included — Unsloth strips MTP only below UD-Q2_K_XL), q4_0/q4_0 KV (in the default
+CUDA flash-attention kernel set — other quant pairs silently fall back to CPU attention with a ~7× collapse, C6.7-9), `--chat-template-kwargs
+'{"reasoning_effort":"medium"}'` (Unsloth's own syntax; `--reasoning-effort medium` also exists on master), draft depth 2 for MTP (Unsloth's
+instruction; a vLLM sweep found k=2 the best ratio at 71% acceptance), 128 GB RAM as headroom (irrelevant to VRAM, useful for nothing here
+unless we offload, which we should not).
+
+## 4. What is on the PC today
+
+- `/usr/local/bin/llama-server` is the prebuilt **b8184 (March 2026), CPU-only** — it lists no CUDA device. The newer b8631 tarball is
+  also CPU-only: the Linux release assets carry no CUDA build at all (C13.1-4). Both predate the model (2026-08-14) and the MTP merge
+  (2026-05-16).
+- A **CUDA build of upstream master 00139b6 (2026-06-24)** sits at `~/Desktop/projects/llama-cpp/llama.cpp-mtp/build/bin/` — it sees
+  `CUDA0: NVIDIA GeForce RTX 3090 (24122 MiB)` and has `--spec-type draft-mtp`, `--chat-template-kwargs`, `--reasoning-budget`, `-np`,
+  `--cache-reuse`, `--api-key`. It postdates the MTP merge and the `qwen3_5` architecture, so it should load the 3.8 GGUF; that is the
+  first measurement, not an assumption. `nvcc` is absent, so a newer CUDA build needs the CUDA toolkit installed (owner, sudo) or the
+  official container `ghcr.io/ggml-org/llama.cpp:server-cuda` under podman with a CDI spec (`/etc/cdi` is empty today; `nvidia-ctk cdi
+  generate` needs sudo).
+- Ryzen 5 5600X (6c/12t, DDR4 only), 125 GB RAM, the 3090 idle (246 MiB used), 675 GB free on /home, the HF cache already holds four
+  Qwen3.6-27B INT4 quants. The Qwen3.8-27B UD-IQ4_XS download (14.3 GB) was started 2026-09-14 12:1xZ into that cache.
+- Ollama 0.19 is installed but is the wrong host for this: it replaces the model's chat template and cannot set `reasoning_effort`
+  (C10.14-15).
+
+## 5. The corrected command (a draft to be measured, not a recommendation yet)
+
+```
+~/Desktop/projects/llama-cpp/llama.cpp-mtp/build/bin/llama-server \
+  -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/<rev>/Qwen3.8-27B-UD-IQ4_XS.gguf \
+  --host 127.0.0.1 --port 8080 --api-key-file <a file only OmniRoute reads> \
+  -ngl all -c 262144 -fa on -ctk q4_0 -ctv q4_0 \
+  -np 2 --cache-reuse 256 \
+  --spec-type draft-mtp --spec-draft-n-max 2 \
+  --jinja --chat-template-kwargs '{"reasoning_effort":"medium"}' \
+  --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0
+```
+
+Why each line: everything on the GPU (§1); the context the model natively supports; the KV pair that has a CUDA kernel; two server slots
+(the KV budget at 262k holds two full sessions or five 100k ones — `-np` DIVIDES the context between slots, so the per-slot figure must be
+read from `/slots` at startup, C10.1-3); MTP as Unsloth instructs; Unsloth's thinking-mode sampling. `-np` and the effort level are the two
+knobs the measurements decide.
+
+## 6. What only a measurement settles (the plan)
+
+1. Load test: the June CUDA build loads the GGUF and answers one prompt (rc 0, the served model name, tokens in/out).
+2. `llama-bench`-style decode at 4k / 64k / 262k context, fully resident vs `-ngl 54`, q4_0 vs f16 KV — the ceilings in §1 vs reality; a
+   collapse on q4_0/q4_0 is the CPU-fallback signature.
+3. MTP acceptance rate and speedup on THIS card for THIS model (every published 3090 MTP number is Qwen3.6 or vLLM).
+4. Slot division under `-np 2` and `-np 4` (the startup log's per-slot context), then two and four concurrent lane-shaped requests.
+5. The effort A/B that matters: re-run TWO already-landed build briefs whose verifier verdicts we hold (a small one and a medium one) at
+   `medium` and at `xhigh`, through the normal `pc_lane.sh` path, and grade each report against the known verdict — items closed, mutants
+   killed, discrepancies stated, wall clock, tokens. That is the only medium-vs-xhigh evidence for our workload.
+6. Effective DDR4 bandwidth (a STREAM run) — only if any offload is ever considered.
+
+## 7. Integration shape (behind OmniRoute, nothing else changes)
+
+- llama-server stays on localhost with an API key; OmniRoute gains an OpenAI-compatible provider pointing at `http://127.0.0.1:8080/v1`
+  (the owner adds it exactly as `s0-01-scripted` was added on 2026-09-04); the model id it exposes becomes the FIRST member of a new combo
+  `agentfactory-build-local` (local first, the present cloud chain as the fallback), or is promoted inside `agentfactory-build` once the
+  measurements pass.
+- `harness-ports/bin/pc-lane.sh`'s role→route table gets the combo name for `code-implementer`; the verify lanes stay on
+  `agentfactory-verify` (Opus/terra-class reasoning is what a grade needs); the coordinator's final verification stays here.
+- The role prompt gains one line: no git write commands — edit the worktree, run the tests, write the report; the coordinator commits.
+- Concurrency: two to four local build lanes (the KV budget), not seven; the cloud chain keeps serving the rest when quota allows.
+- The usage record every lane already writes (`usage.json`) names the served model, so a lane report can never hide which route built it.
+
+## 8. Decisions that are the owner's
+
+1. The CUDA build path: install the CUDA toolkit and rebuild llama.cpp from current master (best), or run the official `server-cuda`
+   container (needs the CDI spec), or start with the June build (works if the load test passes; older kernels).
+2. The OmniRoute provider + combo (owner-run, as before).
+3. Whether the local model builds at `medium` by default — after step 5 of §6, not before.
+
+Nothing in this document is a claim that the local builder works for our lanes. That claim is minted by §6, or not at all.
