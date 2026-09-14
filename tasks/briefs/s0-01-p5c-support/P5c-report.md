@@ -1,4 +1,6 @@
 # P5c-c — S0-01 PC capture tools, round 3 (PC Hermes build lane, code-implementer — PROPOSAL, not a verdict)
+> STATUS 2026-09-14 (the coordinator's landing amendment, a91f256): the parser idiom `_PY_DIRFD` was inserted at `tests/test_s0_01_pc_tools.py:105-109` with its `_IDIOMS` row at `:128-130` (checkpoint 9d's probe creates three leaves through `_leaf_handle(framedir_fd, framedir, "x", mode)`; the coverage floor fired on HEAD), so this report's refs into that file at or after `:173` moved by +8/+9: `:173→:181`, `:378→:386`, `:1030→:1039`, `:1055→:1064`, `:1069→:1078`; the identity row is now 1124 lines / sha256 `e8bcee7d…`. Lint at the landing with the six maps (P, B, L, T, S, C=proofs/S0-01/check_acp_conformance.py): `16 refs — OK 15, NEAR 0, MISS 1, UNCHECKABLE 0, UNRESOLVED 0 (at a91f256)` — the one MISS is the shifted `:173`. VERIFY-P5c grades the landing.
+
 
 > Landing note (coordinator, 2026-09-14): the two blocker reports of lanes P5c and P5c-b (item 1 stopped twice, resolved by AMENDMENT 1 and AMENDMENT 2) were the previous content of this path; the lane did not embed them, so they are preserved verbatim as `P5c-BLOCKERS.md` beside this report — the red-befores for items 1-3 live there.
 
