@@ -1,21 +1,23 @@
 # Lane A5l — S0-01 checker round 14: the ONE list CONSUMED (no private pinned-process predicate, no private version fold), the SystemExit domain closed, the three scanner domains declared and enforced per family, the complete per-version sets pinned, the thirteen survivors killed by name, VB-F12's strict xfail, the mutant driver and the red-befores committed (build lane: PC Hermes `code-implementer`; sandbox Opus 4.6 `code-implementer` only if the bridge is down)
 
-PIN: (HEAD at dispatch — the commit carrying this brief; the report header says "PIN: `<sha>`".) The checker's last checkpoint is
+PIN: `a91f256` (RE-PINNED 2026-09-14 from 467a88e: P5c-c's landing — between the two only `pins.py`, `tools/build_capture_record.py`, `tools/pc/pc_launch.py` and `tools/acp_probe.py` changed; the checker and the test are byte-identical, so every `C:`/`T:` line below still holds and every `pins.py:` line was re-read on a91f256). The checker's last checkpoint is
 9c = `77f46a2` and its files are unchanged since (VERIFY-CK13's identity table): `proofs/S0-01/check_acp_conformance.py` 1911
-lines sha `25b89431…`, `proofs/S0-01/pins.py` 381 lines sha `84a1e5c8…` (the coordinator's merged file), `tests/test_s0_01_check_acp_conformance.py`
+lines sha `25b89431…`, `proofs/S0-01/pins.py` 629 lines sha `41fa933d…` (P5c-c's merged file at a91f256), `tests/test_s0_01_check_acp_conformance.py`
 5275 lines sha `ce62bc62…`, `tests/test_s0_01_audit_cp5_controls.py` 144 lines sha `457430b1…`, `negative_contract.py` 222 lines
-`b397f6b7…`, `check_initialize.py` 222 lines `304d44d6…`. Line numbers below are those bytes'. **Lane P5c-b is editing `pins.py`
-RIGHT NOW in its own tree (the per-file constraint table) — you READ `pins.py` and never edit it; the coordinator merges.**
+`b397f6b7…`, `check_initialize.py` 222 lines `304d44d6…`. Line numbers below are those bytes'. **P5c-c's `pins.py` (the per-file
+constraint table `_CONTENT_CONSTRAINTS` :339, `content_constraint` :450, `validate_artifact` :464, `corpus_version` strict :395,
+`is_pinned_argv` :579) is LANDED in your PIN — you CONSUME it and never edit it; a shared function you need and cannot find is a
+STOP-and-report, never a private copy.**
 
 **Why:** VERIFY-CK13 (`tasks/briefs/s0-01-a5k-support/VERIFY-CK13-report.md` — READ IT WHOLE FIRST; it is the contract for this
 round) graded round 13 NOT-READY with nine blockers, every one reproduced on the PC from `git archive 77f46a2` copies:
-**CK13-02** the checker's private `_is_pinned_process` (`C:1198-1202`) never calls `pins.is_pinned_argv` (`pins.py:331-359`) —
+**CK13-02** the checker's private `_is_pinned_process` (`C:1198-1202`) never calls `pins.is_pinned_argv` (`pins.py:579-609`) —
 on the same rows `/usr/bin/cat <tee>` and `/tmp/runner <tee>` are pinned for the checker and rejected by the producer
 (`pc_post.sh:36-45` calls the shared function); **CK13-03** three corpus-version policies: the test's `_corpus_version` fold
-(`T:2664-2702`) downgrades an unknown `# process-scan v9.9` header to v2.2 where `pins.corpus_version` (`pins.py:305-328`)
+(`T:2664-2702`) downgrades an unknown `# process-scan v9.9` header to v2.2 where `pins.corpus_version` (`pins.py:395-449`)
 refuses it, and the checker derives `allowed`/`required` from `PINNED_LEG_FILES` locally at `C:1774-1793` with its own
 `_captured_leg_version` (`C:1688-1702`, prefix sniffing, `min()` over legs) instead of `pins.required_files` /
-`pins.entry_allowlist` (`pins.py:279-302`); **CK13-04/05/07** the read inventory (`T:5010-5043`) misses `os.fdopen`,
+`pins.entry_allowlist` (`pins.py:369-394`); **CK13-04/05/07** the read inventory (`T:5010-5043`) misses `os.fdopen`,
 `shutil.copyfile`, a subprocess path consumer; the AP-40 detector (`T:4931-4991`) misses `p.stat()` under a caught `OSError`,
 `os.path.getsize`, `next(p.glob(…), None)`; F43 (`T:3537-3700`) misses `os.link`, `shutil.move`, `tar.extractall` — every plant
 `1 passed, 382 deselected`; **CK13-06** `SystemExit("text")` escapes the CLI catch (`C:1893-1907`, `int(se.code)`) as an uncaught
@@ -32,7 +34,7 @@ readers (`negative_contract.py:60-74`, `check_initialize.py:39-49`), the alarm r
 dead-comment controls, the 27 killed assertions, the headline `374 passed, 9 xfailed` and the four-file `490 passed, 9 xfailed`.
 
 **Inputs (read in this order):** VERIFY-CK13 whole · the A5k brief and `tasks/briefs/s0-01-a5k-support/A5k-report.md` ·
-VERIFY-P5b F5 (the same predicate gap seen from the producer's side) · `proofs/S0-01/pins.py:255-359` (the ONE list's functions:
+VERIFY-P5b F5 (the same predicate gap seen from the producer's side) · `proofs/S0-01/pins.py:265-609` (the ONE list's functions:
 `PINNED_LEG_FILES_SINCE`, `PINNED_SCAN_VERSIONS`, `required_files`, `entry_allowlist`, `corpus_version`, `is_pinned_argv` — their
 docstrings are the contract) · `proofs/S0-01/tools/pc/pc_post.sh:36-45` (the producer's call) · `docs/INCIDENT-LOG.md`
 (AF-AP-40, AF-AP-42 — the hand-copied predicate row, AF-AP-63, AF-AP-64, AF-AP-65, AF-AP-72) · the pack
@@ -63,7 +65,7 @@ S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`. Authorization: the 
 2. **CK13-03 — ONE version policy.** `_captured_leg_version` (`C:1688-1702`) calls `pins.corpus_version(golden / leg)` per leg;
    a `ValueError` becomes `Failure(f"{leg}: {exc}")` (never a downgrade); the legs must agree or the failure names the disagreeing
    set; `allowed` / `required` at `C:1774-1793` come from `pins.entry_allowlist()` / `pins.required_files(version)` — the local
-   `PINNED_LEG_FILES_SINCE` fold and `_version_before` go (read `pins.py:279-294` first: `required_files` already applies the
+   `PINNED_LEG_FILES_SINCE` fold and `_version_before` go (read `pins.py:369-384` first: `required_files` already applies the
    `SINCE` rule; if it does not, STOP and report). The test's `_corpus_version` (`T:2664-2702`) calls `pins.corpus_version` per
    leg with the same agreement rule; an unknown header → `pytest.fail` naming it. Red tests (RED on the PIN — paste): a scratch
    corpus whose `process-scan-after.txt` header reads `# process-scan v9.9 …` → the checker's failure names
@@ -96,7 +98,9 @@ S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`. Authorization: the 
    and any other failure hard-fails; on a v2.3+ corpus the check must pass outright. After the coordinator's re-capture the xfail
    arm is dead code and the test passes.
 8. **CK13-01 — the A5k report's stale range** is corrected by the coordinator in this brief's commit (`pins.py:196-199` →
-   `pins.py:203-206`); re-run `report_lint.py` on it at your PIN and paste `52 refs — OK 52`.
+   `pins.py:213-216` at a91f256; the report's `pins.py:16-25` → `:18-27` and `:190-251` → `:200-261` shifted with it); re-run
+   `report_lint.py` on it at your PIN with `--map C=proofs/S0-01/check_acp_conformance.py --map T=tests/test_s0_01_check_acp_conformance.py
+   --map P=proofs/S0-01/pins.py --map I=proofs/S0-01/check_initialize.py --map N=proofs/S0-01/negative_contract.py` and paste `52 refs — OK 52`.
 9. **CK13-11 — NOT this lane's**, but STATE it: the report names the two roots (the checker's root `<realleg>` with `golden/` as
    its child; the corpus root `<realleg>/golden` the tests use) with the line that constructs `root/golden` (`C:1709-1719`) and
    says which files the checker root lacks today (`manifests/`). No workaround, no fixture that pretends a parent root exists.

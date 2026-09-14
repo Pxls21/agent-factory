@@ -1,6 +1,6 @@
 # PC lane — A5l (S0-01 checker round 14: the ONE list consumed, the scanner domains closed, the sets pinned, the survivors killed by name, VB-F12 strict, the driver and red-befores committed)
 
-PIN: 467a88e
+PIN: a91f256
 
 Role: code-implementer. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
 
@@ -15,7 +15,7 @@ Venue notes specific to this build:
   copy a leg under your scratch dir per probe. `/home/rocco/venv-agent-factory/bin` FIRST on PATH (pyflakes from that venv);
   an absolute `--basetemp` under your lane's scratch dir; the four-file gate is about 3 minutes with `-n 8` — ONE foreground
   `lane_gate.sh` call, pasted; the headline and four-file xdist counts likewise ONE foreground call each.
-- `pins.py` is being edited by lane P5c-b in ITS tree right now: you read it, you never edit it (the brief says what to do if a
-  shared function is missing — stop and report). Lanes N5j (probe), B5k (tee), D5n (backend) work in their own trees; never
-  touch their files.
+- `pins.py` at your PIN is P5c-c's LANDED file (the per-file constraint table): you read it, you never edit it (the brief says
+  what to do if a shared function is missing — stop and report). Lane N5k (probe) may run in its own tree on this host; never
+  touch its files.
 - No live buzz-acp / hermes-acp / Hermes / tee / relay / model execution; the owner's services on this host are never touched.
