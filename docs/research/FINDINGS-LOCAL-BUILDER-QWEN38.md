@@ -82,8 +82,8 @@ unless we offload, which we should not).
   -m ~/.cache/huggingface/hub/models--unsloth--Qwen3.8-27B-GGUF/snapshots/<rev>/Qwen3.8-27B-UD-IQ4_XS.gguf \
   --host 127.0.0.1 --port 8080 --api-key-file <a file only OmniRoute reads> \
   -ngl all -c 262144 -fa on -ctk q4_0 -ctv q4_0 \
-  -np 2 --cache-reuse 256 \
-  --spec-type draft-mtp --spec-draft-n-max 2 \
+  --alias qwen3.8-27b-local -np 4 --cache-reuse 256 \
+  --spec-type draft-mtp --spec-draft-n-max 3 \
   --jinja --chat-template-kwargs '{"reasoning_effort":"medium"}' \
   --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0
 ```
@@ -135,7 +135,12 @@ estimate, and it saves only 2.1 GiB that nothing needs; (2) MTP is the real leve
 at 65k each, or two at 131k, are the shapes; (4) f16 KV buys nothing at 32k (+1.4 GiB, +0.4 t/s) and cannot fit at 262k; (5) the 32k
 and 262k servers decode identically on a short prompt — the per-token cost of the hybrid attention at a FILLED long context is the one
 number still pending: the first long-prompt cases failed before reaching the server (a ~400 KB request body passed on curl's command
-line — the argv limit, the harness's bug, not the model's) and are re-running from a file (`matrix2.sh`).
+line — the argv limit, the harness's bug, not the model's) re-run from a file (`matrix2.sh`): a **67,250-token** prompt prefills at **1,007.5 t/s** (66.7 s) and then decodes at
+**28.87 t/s** with the context filled (row `long60k`; `finish: length` at 200 tokens, the model still thinking) — the hybrid
+attention's long-context cost is −35 % against the short-prompt 44.3 t/s, far from the collapse a dense-attention 27B would show at
+67k on this card; with MTP n=3 the same 67k case decodes at **59.51 t/s** (170 drafted / 142 accepted, 83.5 %; VRAM 21,546 MiB; row `long60k-mtp`) —
+2.06× over the non-MTP long case, so a build lane at a filled 67k context still gets ~60 t/s. (The evidence file carries twelve rows:
+the first matrix's ten, including the two argv-limit failures as the record of that failure, then the two re-runs.)
 Not measured: the effort A/B on real briefs (§6 step 5 — it needs the OmniRoute provider, §8), the DDR4 bandwidth (moot: no offload).
 
 
