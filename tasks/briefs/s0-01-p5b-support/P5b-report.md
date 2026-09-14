@@ -1,3 +1,4 @@
+STATUS 2026-09-08: line references are 77f46a2-era and drifted in the 9c three-way merge of pins.py (VERIFY-P5b F1); the round-3 report supersedes them.
 # P5b — S0-01 PC capture tools, round 2 (sandbox Opus 4.6 `code-implementer`)
 
 PIN: `d3a39d18d3f29f315f1a26381574ec904ed410a9` (the commit carrying the brief; branch HEAD while the lane ran

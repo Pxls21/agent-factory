@@ -102,8 +102,33 @@ _PY_PATH = re.compile(r"""\bPath\(\s*(?:FD|fd|framedir)\s*,\s*['"]([^'"\n]+)['"]
 _PY_DIV = re.compile(r"""\bd\s*/\s*['"]([^'"\n]+)['"]""")
 _PY_FSTR = re.compile(r"""\{fd\}/([A-Za-z0-9._${}-]+)""")
 _SH_FD = re.compile(r"""["']?\$\{?FD\}?["']?/([A-Za-z0-9._${}-]+)""")
+# 2026-09-14 (the 9d probe landing): acp_probe.py now creates every evidence leaf RELATIVE to an open directory fd —
+# `_leaf_handle(framedir_fd, framedir, "x", mode)` — instead of `os.path.join(framedir, "x")`; the parse went blind to
+# three of its four leaves and the coverage floor fired (the gate on the gate doing its job). The idiom is anchored on the
+# primitive's exact signature, never on a bare string literal, so an unrelated "x.json" cannot count as a write.
+_PY_DIRFD = re.compile(r"""_leaf_handle\(\s*framedir_fd\s*,\s*framedir\s*,\s*['"]([^'"\n]+)['"]""")
 _SH_OUT_ASSIGN = re.compile(r"""^OUT=\$\{?FD\}?/(\S+)$""", re.M)
 _SH_OUT_USE = re.compile(r"""\$\{?OUT\}?((?:\.[A-Za-z0-9]+)*)""")
+# Item 3, the parser-idiom table as DATA. The parse above is anchored on exactly these idioms; a producer that
+# starts naming a framedir entry by ANY other mechanism is invisible to it. The table is the single record:
+#   `_IDIOMS[rel] = count` — the number of resolved framedir names that only THIS idiom can see.
+# The negative control (test_the_producer_parse_does_not_lose_coverage) pins a per-producer FLOOR so shrinkage
+# of the whole parse is loud; this table pins each IDIOM's own contribution so a single idiom silently losing
+# one site cannot hide behind the others' total.
+_IDIOMS = {
+    # GLOBAL contribution of each idiom = number of distinct resolved framedir names whose ONLY route into the
+    # parse is this idiom. Measured 2026-09-08 over the tree's seven producers (see P5c-c report, item 3):
+    #   _PY_JOIN 22   _PY_DIV 9   _PY_FSTR 4   _SH_FD 22   _SH_OUT_ASSIGN 6
+    "_PY_JOIN": 22,        # os.path.join(FD|fd|framedir, "x") — the launch/post helpers
+    "_PY_PATH": 0,         # Path(FD|fd|framedir, "x") — declared DEAD: no live site (unit-tested only)
+    "_PY_DIV": 9,          # d / "x" — the manifest/mention writers
+    "_PY_FSTR": 4,         # f"{fd}/x" — the ansi tee / launcher
+    "_SH_FD": 22,          # "$FD/x" quoted or bare, and ${FD} — the shell producers
+    "_SH_OUT_ASSIGN": 6,   # OUT=$FD/<name> + $OUT<.ext> — pc_manifest.sh's aggregate
+    "_PY_DIRFD": 3,        # _leaf_handle(framedir_fd, framedir, "x", mode) — the probe's dir-fd leaves (9d): env.json,
+                           # runtime-identity.json, timeline.jsonl (measured 2026-09-14 on the 9d bytes; agent-stderr.txt
+                           # still reaches the parse through _PY_JOIN)
+}
 _PLACEHOLDERS = (("$PHASE", ("pre", "post")), ("{mode}", ("after", "teardown")))
 
 
@@ -118,7 +143,7 @@ def _framedir_names(rel, root=None):
     """Root entries a producer writes into (or reads from) a leg framedir, from the script's own text.
 
     Anchored on the framedir variable in every form the producers use — `os.path.join(FD|fd|framedir, "x")`,
-    `Path(FD|fd|framedir, "x")`, `d / "x"`, `f"{fd}/x"`, `$FD/x` quoted or bare (`"$FD"/x`, `"${FD}"/x`), and
+    `Path(FD|fd|framedir, "x")`, `d / "x"`, `f"{fd}/x"`, `_leaf_handle(framedir_fd, framedir, "x", mode)` (the probe's dir-fd leaves), `$FD/x` quoted or bare (`"$FD"/x`, `"${FD}"/x`), and
     pc_manifest.sh's `OUT=$FD/...` plus its `$OUT.gz` suffixes. Only
     the ROOT entry is taken (`$FD/mentions/$TAG.receipt.json` is the directory `mentions`), and any token
     that still carries an unresolved placeholder fails LOUD rather than being dropped: a name this parser
@@ -127,7 +152,7 @@ def _framedir_names(rel, root=None):
     Dot-prefixed names are skipped: they are atomic-write scratch, not leg entries (see pins.PINNED_LEG_FILES)."""
     text = ((root or ROOT) / rel).read_text()
     raw = set()
-    for rx in (_PY_JOIN, _PY_PATH, _PY_DIV, _PY_FSTR, _SH_FD):
+    for rx in (_PY_JOIN, _PY_PATH, _PY_DIV, _PY_FSTR, _PY_DIRFD, _SH_FD):
         raw |= set(rx.findall(text))
     assign = _SH_OUT_ASSIGN.search(text)
     if assign:
@@ -151,6 +176,36 @@ def test_the_status_vocabulary_is_closed_and_the_dirs_are_named():
     assert set(pins.PINNED_LEG_FILES_SINCE) <= set(pins.PINNED_LEG_FILES)
     # a name is a file OR a directory, never both
     assert not (set(pins.PINNED_LEG_FILES) & set(pins.PINNED_LEG_DIRS))
+
+
+def test_the_content_constraint_table_is_complete_and_pinned():
+    """Item 1, the per-(version, name) content constraint table as DATA. AMENDMENT-2's table is pinned here
+    exactly — every required name for every known version has exactly one row, and the row's kind is the
+    pinned kind. A new required file without a row is red (completeness), and a row that is removed, loosened,
+    or re-typed is red (the per-file mutant kill the amendment's sweep demanded)."""
+    kinds = set(pins.CONTENT_CONSTRAINT_KINDS)
+    # completeness: every required name of every known version has a row, and every row's kind is closed
+    for version in ("v2.2", "v2.3", "v2.4"):
+        for name in pins.required_files(version):
+            kind = pins.content_constraint(version, name)
+            assert kind in kinds, f"{version}:{name}: unknown kind {kind!r}"
+            assert kind != "utf8-text-maybe-empty" or name in (
+                "process-scan-after.txt", "process-scan-teardown.txt"), f"{version}:{name}"
+    # the pinned rows the round measured on the real corpus (AMENDMENT-2 table, verified 2026-09-08)
+    pinned = {
+        ("v2.2", "argv.txt"): "text-nonempty",
+        ("v2.2", "manifest-pre.done"): "empty-marker",
+        ("v2.2", "manifest-post.done"): "empty-marker",
+        ("v2.2", "buzz-acp.exit"): "int-exit-code",
+        ("v2.2", "process-scan-after.txt"): "utf8-text-maybe-empty",
+        ("v2.2", "process-scan-teardown.txt"): "utf8-text-maybe-empty",
+        ("v2.4", "process-scan-after.txt"): "scan-headed",
+        ("v2.4", "process-scan-teardown.txt"): "scan-headed",
+        ("v2.2", "launch.ready"): "text-nonempty",      # 28-byte UTC timestamp in the corpus
+        ("v2.2", "launch.exited"): "text-nonempty",     # 28-byte UTC timestamp in the corpus
+    }
+    for (version, name), kind in pinned.items():
+        assert pins.content_constraint(version, name) == kind, f"{version}:{name}: table drifted {kind!r}"
 
 
 def test_every_corpus_leg_entry_is_in_the_pinned_mapping():
@@ -206,8 +261,10 @@ def test_the_corpus_version_rule_actually_discriminates():
 @pytest.mark.parametrize("line, expected", [
     ("", "v2.2"),                                                     # the corpus's shutdown leg: 0 bytes
     ("2726031 2725866 25 /usr/bin/sleep 60\n", "v2.2"),               # the pre-header shape: line 1 is a row
-    ("# process-scan v2.3 mode=after rows=0 utc=x\n", "v2.3"),
-    ("# process-scan v2.4 mode=after rows=0 utc=x\n", "v2.4"),
+    ("# process-scan v2.3 mode=after rows=0 buzz_acp_pid=none buzz_present=0 owned=0 owned_present=0 "
+     "pinned_present=0 owned_zombies=0 utc=2026-09-08T00:00:00Z\n", "v2.3"),
+    ("# process-scan v2.4 mode=after rows=0 buzz_acp_pid=none buzz_present=0 owned=0 owned_present=0 "
+     "pinned_present=0 owned_zombies=0 table_rows=0 utc=2026-09-08T00:00:00Z\n", "v2.4"),
 ])
 def test_the_one_corpus_version_detector_reads_the_header(tmp_path, line, expected):
     (tmp_path / "process-scan-after.txt").write_text(line)
@@ -219,9 +276,11 @@ def test_the_one_corpus_version_detector_reads_the_header(tmp_path, line, expect
 def test_the_one_corpus_version_detector_refuses_to_default(tmp_path, line):
     """A line that CLAIMS to be an enumeration header and names a version this pin does not know must raise.
     Defaulting it to v2.2 would grade a NEWER capture by an OLDER required set — silently admitting a leg that
-    is missing artefacts its own contract requires, which is the drift PINNED_LEG_FILES_SINCE exists to stop."""
+    is missing artefacts its own contract requires, which is the drift PINNED_LEG_FILES_SINCE exists to stop.
+    P5c item 2 made this a STRICT parse: `# process-scan` with no version full-matches no grammar, so the
+    refusal is `process-scan header malformed`, never a guessed version."""
     (tmp_path / "process-scan-after.txt").write_text(line)
-    with pytest.raises(ValueError, match="unrecognised process-scan header version"):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
         pins.corpus_version(tmp_path)
 
 
@@ -302,6 +361,44 @@ def test_the_producer_parse_does_not_lose_coverage(rel):
         f"hidden from the subset gate, or an idiom is missing from the parser: {sorted(names)}")
 
 
+def _idiom_contribution(rel, name, root=None):
+    """The framedir names a single producer resolves THROUGH ONE idiom (exact `_framedir_names` semantics)."""
+    text = ((root or ROOT) / rel).read_text()
+    raw = set()
+    if name == "_SH_OUT_ASSIGN":
+        m = _SH_OUT_ASSIGN.search(text)
+        if m:
+            raw |= {m.group(1) + s for s in set(_SH_OUT_USE.findall(text))}
+    else:
+        rx = globals()[name]
+        raw |= set(rx.findall(text))
+    names = set()
+    for token in raw:
+        entry = token.split("/", 1)[0]
+        if entry.startswith("."):
+            continue
+        for expanded in _expand(entry):
+            if "$" not in expanded and "{" not in expanded:
+                names.add(expanded)
+    return names
+
+
+def test_each_declared_parser_idiom_resolves_exactly_its_pinned_count():
+    """Item 3, the parser-idiom table as DATA, negative control of the parse itself. `_IDIOMS` pins, per idiom,
+    the number of distinct framedir names that ONLY that idiom resolves. A refactor that renames a helper's
+    `os.path.join(FD, x)` to `Path(FD) / x` moves a name out of `_PY_JOIN` and into `_PY_DIV` — this assertion
+    catches BOTH: the source idiom loses one, the sink idiom gains one, and each is pinned to its exact table
+    row. `_PY_PATH` is declared dead (0) so a future producer adopting it fails loudly here instead of silently
+    adding a parse route no one is watching."""
+    for name, pinned in _IDIOMS.items():
+        seen = set()
+        for rel in _PRODUCERS:
+            seen |= _idiom_contribution(rel, name)
+        assert len(seen) == pinned, (
+            f"{name}: {len(seen)} resolved framedir names, pinned table says {pinned} — an idiom's sites moved "
+            f"or a new one appeared: {sorted(seen)}")
+
+
 def test_every_pinned_name_has_a_producer():
     """The orphan direction: a mapping entry no producer writes is a list that has stopped describing the
     pipeline. (`agent-stderr.txt` is the live specimen and is deliberately NOT in this mapping — no positive-leg
@@ -349,6 +446,7 @@ def test_the_framedir_parser_fails_loud_on_an_unresolved_placeholder(tmp_path):
     ('echo x > "$FD"/i.json', {"i.json"}),
     ('echo x > "${FD}"/j.json', {"j.json"}),
     ('cp "$FD"/upstream-records/000001.json /tmp/x', {"upstream-records"}),   # only the ROOT entry
+    ('with _leaf_handle(framedir_fd, framedir, "k.json", "w") as f:', {"k.json"}),    # the 9d dir-fd leaf
 ])
 def test_the_producer_parser_recognises_every_declared_idiom(tmp_path, source, expected):
     """One row per idiom the parser claims to know — the committed control for its own vocabulary.
@@ -451,12 +549,15 @@ def test_build_capture_record_accepts_a_v2_2_corpus_leg(tmp_path):
 def test_build_capture_record_fails_on_an_empty_timeline(tmp_path, synthetic_leg):
     """VERIFY-P5a F6: presence is not content. #27's defect survived in a narrower form — a complete leg whose
     `timeline.jsonl` is 0 bytes (a tee that died before its first frame, or a truncated collect) passed the
-    completeness gate and produced `"timeline": {"entries": 0, ...}` at rc 0: a record of nothing, green."""
+    completeness gate and produced `"timeline": {"entries": 0, ...}` at rc 0: a record of nothing, green.
+    P5c F4 folded this into the per-(version, name) content table: `timeline.jsonl` is `jsonl-nonempty`, so
+    the refusal is the named `<name> is empty` form (AMENDMENT-2) — the old "(0 bytes) — the leg records no
+    frames" special case is gone."""
     leg = synthetic_leg(tmp_path / "run-1")
     (leg / "timeline.jsonl").write_text("")
     r = _capture(str(leg), "run-1")
     assert r.returncode == 1, (r.returncode, r.stdout, r.stderr)
-    assert r.stderr.strip() == "run-1: timeline.jsonl is empty (0 bytes) — the leg records no frames"
+    assert r.stderr.strip() == "run-1: timeline.jsonl is empty"
     assert not (leg / "capture.json").exists()
 
 
@@ -923,6 +1024,68 @@ def test_the_launch_env_carries_the_profile_home_and_the_leg_name(tmp_path):
                                  "owner-only", "", str(sec), str(henv))
     assert s0_01["HERMES_HOME"] == pins.PINNED_HERMES_HOME
     assert s0_01["S0_01_FRAMEDIR"].endswith("/v2-run-1")
+
+
+def _launch_env_fixture(tmp_path):
+    """The .secrets/hermes.env/home fixture shared by the env-set tests."""
+    sec = tmp_path / ".secrets"; sec.mkdir()
+    (sec / "agent.env").write_text("BUZZ_PRIVATE_KEY=fixture-value-not-a-key\n")
+    (sec / "owner.pub").write_text("f" * 64 + "\n")
+    henv = tmp_path / "hermes.env"
+    henv.write_text("OMNIROUTE_API_KEY=fixture-value-not-a-key\n")
+    return str(sec), str(henv)
+
+
+def test_the_s0_02_env_set_adds_exactly_the_pinned_rust_log(tmp_path):
+    """Item 4, the S0-02-only pinned environment extension (D-022 / task #47 option a). The launch env under
+    `--env-set s0-02` is the S0-01 set PLUS exactly `{"RUST_LOG": "debug"}` (PINNED_ENV_VALUES_S0_02) — the
+    three buzz-acp-decided S0-02 legs are observable only through tracing::debug! lines. The default `s0-01`
+    (called below with the SAME fixture) is byte-identical to the pre-extension launcher: no RUST_LOG, no
+    env_set, exact set equality with PINNED_ENV_KEYS."""
+    sec = tmp_path / ".secrets"
+    sec.mkdir()
+    (sec / "agent.env").write_text("BUZZ_PRIVATE_KEY=fixture-value-not-a-key\n")
+    (sec / "owner.pub").write_text("f" * 64 + "\n")
+    henv = tmp_path / "hermes.env"
+    henv.write_text("OMNIROUTE_API_KEY=fixture-value-not-a-key\n")
+    home = str(tmp_path / "home"); (tmp_path / "home").mkdir()
+    base_args = ("run-1", pc_launch.leg_framedir(str(tmp_path / ".markers"), "run-1"), home,
+                 "owner-only", "", str(sec), str(henv))
+    s0_01 = pc_launch.launch_env(*base_args, env_set="s0-01")
+    s0_02 = pc_launch.launch_env(*base_args, env_set="s0-02")
+    assert set(s0_01) == set(pins.PINNED_ENV_KEYS)            # default byte-identical to today
+    assert "RUST_LOG" not in s0_01                            # ... and s0-01 never carries the extension
+    assert set(s0_02) == set(pins.PINNED_ENV_KEYS_S0_02)       # s0-02 = the pinned extension set
+    assert {k: s0_02[k] for k in s0_02 if k not in s0_01} == {"RUST_LOG": "debug"}  # exactly one more key
+    assert all(s0_02[k] == s0_01[k] for k in s0_01)            # ... and every S0-01 value is unchanged
+    assert "env_set" not in s0_01 and "env_set" not in s0_02  # the marker lives in env.json, not the env
+
+
+def test_an_unknown_env_set_name_is_refused_by_name(tmp_path):
+    """Item 4 negative control: an unknown set name can never silently fall back to the default set — it is
+    refused BY NAME, the exact line (AF-AP-63)."""
+    sec = tmp_path / ".secrets"; sec.mkdir()
+    (sec / "agent.env").write_text("BUZZ_PRIVATE_KEY=fixture-value-not-a-key\n")
+    (sec / "owner.pub").write_text("f" * 64 + "\n")
+    henv = tmp_path / "hermes.env"
+    henv.write_text("OMNIROUTE_API_KEY=fixture-value-not-a-key\n")
+    with pytest.raises(SystemExit, match=r"unknown env set 's0-03'"):
+        pc_launch.launch_env("run-1", pc_launch.leg_framedir(str(tmp_path / ".markers"), "run-1"),
+                             pins.PINNED_HERMES_HOME, "owner-only", "", str(sec), str(henv),
+                             env_set="s0-03")
+
+
+def test_env_json_names_the_set_that_launched_the_capture():
+    """Item 4: the recorded env.json names the launch set (env_set: "s0-02") so a capture never hides which
+    set launched it. The default s0-01 writes NO marker — its env.json is byte-identical to the pre-extension
+    bytes; s0-02 carries exactly the one extra key."""
+    live = {"PATH": "/usr/bin:/bin", "RUST_LOG": "debug"}
+    assert pc_launch.env_json_with_set_marker(live, "s0-01") == live
+    marked = pc_launch.env_json_with_set_marker(live, "s0-02")
+    assert marked == {"PATH": "/usr/bin:/bin", "RUST_LOG": "debug", "env_set": "s0-02"}
+    assert list(marked) == sorted(marked)          # json.dumps(sort_keys=True) writes it sorted
+    # the input is never mutated
+    assert live == {"PATH": "/usr/bin:/bin", "RUST_LOG": "debug"}
 
 
 def _pins_in_subprocess(env_extra, expr="print(pins.hermes_home())"):

@@ -7,6 +7,8 @@ summary); the baseline body itself is committed at
 proofs/S0-01/evidence/golden/manifests/manifest-baseline.txt.gz and the digests below are
 re-derived from it by the checker (a pin is integrity, the re-derivation is correctness).
 """
+import gzip
+import json
 import os
 import re
 import stat
@@ -65,6 +67,14 @@ PINNED_ENV_KEYS = frozenset({
 })
 ENV_ALLOWLIST_KEY = "BUZZ_ACP_RESPOND_TO_ALLOWLIST"  # present ONLY in the two-users leg
 REDACTED_ENV_KEY_RE = r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)"
+
+# --- the S0-02-only pinned extension (owner decision 2026-09-08, D-022; task #47 option a, task #52) ---
+# The three buzz-acp-decided S0-02 legs are observable only through tracing::debug! lines, so buzz-acp must
+# run with RUST_LOG=debug. S0-01's closed set is UNCHANGED: the extension is a second, separately pinned set
+# the launcher selects only when asked for by name (`--env-set s0-02`), never implicitly — S0-01's golden
+# corpus stays graded against PINNED_ENV_KEYS exactly as today.
+PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})
+PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}
 
 # --- the pinned ACP handshake ---
 PINNED_CLIENT_PROTOCOL_VERSION = 2
@@ -271,6 +281,86 @@ PINNED_SCAN_VERSIONS = ("v2.3", "v2.4")   # the capture-contract versions whose 
                                           # empty (a clean v2.2 shutdown scan wrote no rows at all)
 _SCAN_HEADER_VERSION_RE = re.compile(r"^# process-scan (v\d+\.\d+) ")
 
+# The FULL strict header grammars (the checker's own `_SCAN_HEADER_RE`, check_acp_conformance.py:158-161,
+# mirrored here so the table's `scan-headed` kind and the strict detector can reject trailing fields / CRLF /
+# wrong counters / second headers): every later line must be a `<pid> <ppid> <etimes> <cmd...>` body row.
+# v2.4 adds `table_rows` (A20: the full-table counter, distinct from the body counter); v2.3 does not carry
+# it. P5c pinned the strict decision over a sniffer.
+_SCAN_HEADER_FULL_RE = {
+    "v2.4": re.compile(
+        r"^# process-scan v2\.4 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+        r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) table_rows=(\d+) "
+        r"utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$"),
+    "v2.3": re.compile(
+        r"^# process-scan v2\.3 mode=(after|teardown) rows=(\d+) buzz_acp_pid=(\d+|none) buzz_present=([01]) "
+        r"owned=(\d+) owned_present=(\d+) pinned_present=(\d+) owned_zombies=(\d+) "
+        r"utc=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)$"),
+}
+
+# --- F4: the per-(version, name) content constraint for every REQUIRED artifact (P5c, AMENDMENT-2) ---
+# presence is not content (VERIFY-P5b F4). `build_capture_record.py` validates each present required file
+# against `content_constraint(corpus_version(leg), name)` BEFORE constructing capture.json. The table is
+# written row by rule below and completed programmatically, so a new required name without a rule is NOT
+# possible silently: `content_constraint(version, name)` raises for an unnamed file, and a test asserts the
+# key set equals `required_files(version)` for every known version.
+#
+# The kinds, closed:
+#   json-object / json-array     json.loads and the top-level shape IS dict / list (a `[]` where an object is
+#                                required is NAMED as wrong shape, not accepted)
+#   jsonl-nonempty               >= 1 line, every line valid JSON
+#   gzip-text-nonempty           valid gzip whose decompressed body is non-empty UTF-8 text
+#   text-nonempty                valid UTF-8, non-empty
+#   utf8-text-maybe-empty        valid UTF-8, empty allowed  (v2.2 scan artifacts: a clean v2.2 shutdown scan
+#                                wrote no rows at all — corpus shutdown leg has a 0-byte process-scan-after.txt)
+#   int-exit-code                one integer (buzz-acp.exit)
+#   empty-marker                 exactly 0 bytes (manifest-pre/post.done: `.done` markers touched after the
+#                                gzip and digest are complete — any content is foreign or corrupt)
+#   scan-headed                  non-empty, line 1 full-matches the version's strict header grammar
+#                                (_SCAN_HEADER_FULL_RE[version]), every later line a
+#                                `<pid> <ppid> <etimes> <cmd>` body row with no second header
+CONTENT_CONSTRAINT_KINDS = (
+    "json-object", "json-array", "jsonl-nonempty", "gzip-text-nonempty", "text-nonempty",
+    "int-exit-code", "empty-marker", "utf8-text-maybe-empty", "scan-headed",
+)
+
+_CONTENT_BY_EXT = (                                       # (predicate, kind) — first match wins
+    (lambda n: n.endswith(".json"), "json-object"),
+    (lambda n: n.endswith(".jsonl"), "jsonl-nonempty"),
+    (lambda n: n.endswith(".txt.gz"), "gzip-text-nonempty"),
+    (lambda n: n.endswith(".sha256"), "text-nonempty"),
+    (lambda n: n.endswith(".log"), "text-nonempty"),
+    (lambda n: n.endswith(".summary"), "text-nonempty"),
+    (lambda n: n.endswith(".txt"), "text-nonempty"),
+    # no-extension required names: an exit code (one int), a pid (one int), or a UTC timestamp
+    (lambda n: n == "buzz-acp.exit", "int-exit-code"),
+    (lambda n: n == "buzz-acp.pid", "int-exit-code"),
+    (lambda n: n in ("launch.ready", "launch.exited"), "text-nonempty"),
+)
+_CONTENT_CONSTRAINTS = {
+    # v2.2: no header; line 1 (if any) is a body row, and the file may be EMPTY (a clean shutdown scan
+    # wrote no rows at all — the corpus shutdown leg carries a 0-byte process-scan-after.txt)
+    ("v2.2", "process-scan-after.txt"): "utf8-text-maybe-empty",
+    ("v2.2", "process-scan-teardown.txt"): "utf8-text-maybe-empty",
+    # v2.3/v2.4 scan artifacts carry the enumeration header
+    ("v2.3", "process-scan-after.txt"): "scan-headed",
+    ("v2.3", "process-scan-teardown.txt"): "scan-headed",
+    ("v2.4", "process-scan-after.txt"): "scan-headed",
+    ("v2.4", "process-scan-teardown.txt"): "scan-headed",
+}
+_KNOWN_CORPUS_VERSIONS = ("v2.2",) + PINNED_SCAN_VERSIONS     # the versions the table is written for
+for _v in _KNOWN_CORPUS_VERSIONS:
+    for _n in (n for n, s in PINNED_LEG_FILES.items() if s == "required"):
+        if (_v, _n) in _CONTENT_CONSTRAINTS:
+            continue
+        if _n in ("manifest-pre.done", "manifest-post.done"):
+            _CONTENT_CONSTRAINTS[(_v, _n)] = "empty-marker"
+        elif _n == "buzz-acp.exit":
+            _CONTENT_CONSTRAINTS[(_v, _n)] = "int-exit-code"
+        elif _n == "tee-status.json" and _v == "v2.2":
+            continue                               # required only from v2.3 (PINNED_LEG_FILES_SINCE)
+        else:
+            _CONTENT_CONSTRAINTS[(_v, _n)] = next(k for pred, k in _CONTENT_BY_EXT if pred(_n))
+
 
 def _version_key(version):
     return tuple(int(part) for part in version[1:].split("."))
@@ -306,26 +396,184 @@ def corpus_version(leg_dir):
     """The capture-contract version ONE collected leg was produced by — the ONE detector, from the leg's own
     process-scan-after.txt, which is the only versioned artefact a leg carries.
 
-      * line 1 beginning `#` CLAIMS to be an enumeration header: it must name a version this pin knows, else
-        ValueError. A leg from a NEWER contract graded by an OLDER required set would pass while missing
-        artefacts the newer contract requires, so this case is never defaulted.
-      * anything else is the pre-header shape -> "v2.2". That includes an EMPTY scan file: the corpus's
-        shutdown leg carries a 0-byte process-scan-after.txt (measured 2026-09-08), because the v2.2 scan on a
-        clean shutdown wrote neither header nor rows.
-      * no scan file at all -> "v2.2" as well: process-scan-after.txt is itself `required`, so the caller's own
-        completeness gate names it, which is a better diagnosis than a version error.
+    STRICT (the pinned decision from P5c): a header-shaped line is the ONLY version evidence, and it is
+    parsed, not sniffed — `_SCAN_HEADER_VERSION_RE` must full-match line 1 against ONE of the pinned
+    grammars. A second header line, a header deeper in the body, trailing fields, CRLF →
+    `process-scan header malformed: <reason>` from here, never a guessed version.
+    A line with no `#` at all is the v2.2 pre-header shape (line 1 is a body row) or an empty file, both
+    of which the pipeline really produces — but only when NO later-only required name is present (a
+    headerless leg carrying tee-status.json is a dropped v2.4 header, refused by name).
     """
     scan = os.path.join(leg_dir, "process-scan-after.txt")
     if not os.path.isfile(scan):
         return "v2.2"
-    with open(scan, encoding="utf-8", errors="replace") as fh:
-        first = fh.readline().rstrip("\n")
-    if not first.startswith("#"):
+    with open(scan, "rb") as fh:
+        raw = fh.read()
+    if b"\r" in raw:
+        raise ValueError(f"{scan}: process-scan header malformed: CRLF line ending")
+    text = raw.decode("utf-8", errors="replace")
+    if not text.splitlines():
         return "v2.2"
-    m = _SCAN_HEADER_VERSION_RE.match(first)
-    if m is None or m.group(1) not in PINNED_SCAN_VERSIONS:
-        raise ValueError(f"{scan}: unrecognised process-scan header version: {first[:90]!r}")
-    return m.group(1)
+    lines = text.splitlines()
+    first = lines[0]
+    if first.startswith("#"):
+        # a `#` line is a CLAIMED enumeration header: parse it STRICTLY — one pinned version grammar, full
+        # match, no trailing fields, no second header line anywhere, no CRLF (checked above). A full grammar
+        # line is only ever a header, so a `#` anywhere in the body is a smeared scan, never v2.2.
+        if len(lines) > 1 and any(l.startswith("#") for l in lines[1:]):
+            raise ValueError(f"{scan}: process-scan header malformed: a header line in the body")
+        m = _SCAN_HEADER_VERSION_RE.match(first)
+        if m is None:
+            raise ValueError(f"{scan}: process-scan header malformed: {first[:90]!r}")
+        version = m.group(1)
+        strict = _SCAN_HEADER_FULL_RE.get(version)
+        if strict is None or not strict.match(first):
+            if version not in PINNED_SCAN_VERSIONS:
+                raise ValueError(f"{scan}: process-scan header malformed: unknown version {version!r}")
+            raise ValueError(f"{scan}: process-scan header malformed: {first[:90]!r}")
+        return version
+    # no `#` on line 1: the v2.2 pre-header shape (a body row or empty) — but ONLY when no header-shaped
+    # line hides in the body and no later-only required name is present (a dropped v2.4 header must not
+    # smear the leg into v2.2: refuse it by name, never mint).
+    if any(l.startswith("#") for l in lines[1:]):
+        raise ValueError(f"{scan}: process-scan header malformed: a header line in the body")
+    later_only = {n for n, since in PINNED_LEG_FILES_SINCE.items()
+                  if _version_key("v2.2") < _version_key(since)}
+    present = {n for n in os.listdir(leg_dir) if os.path.isfile(os.path.join(leg_dir, n))}
+    stray = sorted(later_only & present)
+    if stray:
+        scan_name = os.path.basename(scan)
+        raise ValueError(f"{scan_name}: process-scan header missing but {stray[0]} present: not a v2.2 leg")
+    return "v2.2"
+
+
+def content_constraint(version, name):
+    """The content kind for `(version, name)` — the ONE table beside `required_files()`.
+
+    Raises `ValueError` for an unknown version or a name `required_files(version)` does not carry — the
+    closed-table guarantee: a NEW required name lands in `required_files` and is missing here, and the
+    matching test (the key-set equality) is red until it is added.
+    """
+    if version not in _KNOWN_CORPUS_VERSIONS:
+        raise ValueError(f"content_constraint: unknown capture-contract version {version!r}")
+    if name not in required_files(version):
+        raise ValueError(f"content_constraint: {name} is not a required file of {version}")
+    return _CONTENT_CONSTRAINTS[(version, name)]
+
+
+def validate_artifact(leg_dir, name, version):
+    """Validate ONE required artifact's content against its constraint. Returns None or raises a
+    `ConstraintFailure` carrying the exact `<name>: <reason>` line (the named-refusal contract).
+
+    `leg_dir` is used only to read the file's bytes; the CALLER prefixes the leg name (the tools print
+    `{leg}: {exc}`), so this raises `<name> is empty`, `<name> is a completion marker ...`, or
+    `<name> is not valid <kind>: <reason>` — never a raw traceback.
+    """
+    kind = content_constraint(version, name)
+    path = os.path.join(leg_dir, name)
+    size = os.path.getsize(path)
+
+    if kind == "empty-marker":
+        if size != 0:
+            raise ConstraintFailure(
+                f"{name} is a completion marker and must be empty ({size} bytes)")
+        return
+    if kind == "utf8-text-maybe-empty":
+        # empty is VALID for this kind (v2.2 scan artifacts may carry no rows); only non-empty bytes
+        # must be valid UTF-8
+        if size == 0:
+            return
+        with open(path, "rb") as fh:
+            data = fh.read()
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: invalid UTF-8: {exc}")
+        return
+    if size == 0:
+        raise ConstraintFailure(f"{name} is empty")
+
+    with open(path, "rb") as fh:
+        data = fh.read()
+
+    def _utf8(b):
+        try:
+            return b.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: invalid UTF-8: {exc}")
+
+    if kind == "text-nonempty":
+        _utf8(data)
+        return
+    if kind == "int-exit-code":
+        try:
+            int(_utf8(data).strip())
+        except ValueError:
+            raise ConstraintFailure(f"{name} is not valid {kind}: not an integer")
+        return
+    if kind == "json-object":
+        try:
+            obj = json.loads(_utf8(data))
+        except ValueError as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: {exc}")
+        if not isinstance(obj, dict):
+            raise ConstraintFailure(f"{name} is not valid {kind}: not a JSON object ({type(obj).__name__})")
+        return
+    if kind == "json-array":
+        try:
+            obj = json.loads(_utf8(data))
+        except ValueError as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: {exc}")
+        if not isinstance(obj, list):
+            raise ConstraintFailure(f"{name} is not valid {kind}: not a JSON array ({type(obj).__name__})")
+        return
+    if kind == "jsonl-nonempty":
+        for lineno, line in enumerate(_utf8(data).splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                json.loads(line)
+            except ValueError as exc:
+                raise ConstraintFailure(f"{name} is not valid {kind}: line {lineno}: {exc}")
+        return
+    if kind == "gzip-text-nonempty":
+        try:
+            body = gzip.decompress(data)
+        except (OSError, EOFError) as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: bad gzip: {exc}")
+        if not body:
+            raise ConstraintFailure(f"{name} is not valid {kind}: empty decompressed body")
+        try:
+            body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ConstraintFailure(f"{name} is not valid {kind}: invalid UTF-8: {exc}")
+        return
+    if kind == "scan-headed":
+        lines = _utf8(data).splitlines()
+        if not lines:
+            raise ConstraintFailure(f"{name} has no enumeration header")
+        strict = _SCAN_HEADER_FULL_RE.get(version)
+        if strict is None or not strict.match(lines[0]):
+            raise ConstraintFailure(f"{name} has unrecognised header: {lines[0][:90]!r}")
+        for lineno, line in enumerate(lines[1:], 2):
+            if line.startswith("#"):
+                raise ConstraintFailure(
+                    f"{name} process-scan header malformed: a header line in the body")
+            parts = line.split(None, 3)
+            if len(parts) < 4:
+                raise ConstraintFailure(
+                    f"{name} is not valid {kind}: body line {lineno} unparsable: {line!r}")
+            try:
+                int(parts[0]); int(parts[1]); int(parts[2])
+            except ValueError:
+                raise ConstraintFailure(
+                    f"{name} is not valid {kind}: body line {lineno} unparsable: {line!r}")
+        return
+    raise ConstraintFailure(f"{name} is not valid: unknown constraint kind {kind!r}")
+
+
+class ConstraintFailure(ValueError):
+    """A named content refusal from validate_artifact; subclasses ValueError so callers see both."""
 
 
 def is_pinned_argv(argv):

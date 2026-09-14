@@ -176,9 +176,8 @@ def session_closure(pid):
 
 def redact_environ(raw, red):
     """/proc/<pid>/environ bytes -> env.json mapping, fingerprints taken on the RAW bytes (SWEEP-prod #25).
-
     len/sha256_12 computed after a lossy decode describe a MANGLED value, not the secret, and check_env only
-    asserts `redacted is True` — so nothing downstream would ever notice the fingerprint was wrong.
+    asserts `redacted is True` - so nothing downstream would ever notice the fingerprint was wrong.
     """
     live_env = {}
     for item in raw.split(b"\x00"):
@@ -192,6 +191,16 @@ def redact_environ(raw, red):
         else:
             live_env[k] = vb.decode("utf-8", errors="replace")
     return live_env
+
+
+def env_json_with_set_marker(live_env, env_set):
+    """The env.json dict: the redacted live env PLUS the launch-set marker when s0-02 (item 4). The marker
+    names the set that launched the capture - a s0-02 run can never masquerade as s0-01. The default set
+    s0-01 writes NO marker, so its env.json stays byte-identical to the pre-extension bytes."""
+    out = dict(live_env)
+    if env_set == "s0-02":
+        out["env_set"] = "s0-02"
+    return out
 
 
 def leg_framedir(markers, leg):
@@ -230,11 +239,16 @@ def resolve_launch_profile(leg, model, profile, hermes_home):
     return os.path.dirname(os.path.abspath(profile)), os.path.abspath(profile)
 
 
-def launch_env(leg, framedir, hermes_home, respond_to, allowlist, sec_dir, hermes_env):
+def launch_env(leg, framedir, hermes_home, respond_to, allowlist, sec_dir, hermes_env, env_set="s0-01"):
     """The environment buzz-acp is launched with — every secret READ FROM A FILE into this dict and never put
     into an argv (AF-AP-35). The key SET is pinned, so a key added or dropped here fails loudly instead of
-    changing what the capture proves.
+    changing what the capture proves. `env_set` selects the pinned extension: S0-01's closed set unchanged
+    (byte-identical to the pre-extension launcher), S0-02 adds exactly the one pinned key/value
+    (PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02). An unknown set name is refused BY NAME — it can never
+    silently fall back to the default set.
     """
+    if env_set not in ("s0-01", "s0-02"):
+        raise SystemExit(f"pc_launch: unknown env set {env_set!r} (expected s0-01 or s0-02)")
     env = {
         "PATH": pins.PINNED_PATH,
         "HOME": pins.PINNED_HOME,
@@ -249,9 +263,13 @@ def launch_env(leg, framedir, hermes_home, respond_to, allowlist, sec_dir, herme
         "S0_01_FRAMEDIR": framedir,
         "S0_01_AGENT": pins.PINNED_AGENT_REALPATH,
     }
+    if env_set == "s0-02":
+        for k, v in pins.PINNED_ENV_VALUES_S0_02.items():
+            env[k] = v
     if respond_to == "allowlist":
         env[pins.ENV_ALLOWLIST_KEY] = allowlist
-    expected_keys = set(pins.PINNED_ENV_KEYS) | ({pins.ENV_ALLOWLIST_KEY} if leg == "two-users" else set())
+    expected_keys = (pins.PINNED_ENV_KEYS_S0_02 if env_set == "s0-02" else pins.PINNED_ENV_KEYS) | \
+                    ({pins.ENV_ALLOWLIST_KEY} if leg == "two-users" else set())
     if set(env) != expected_keys:
         raise SystemExit(f"pc_launch: env key set drifted from pins: {sorted(set(env) ^ expected_keys)}")
     for k in ("BUZZ_PRIVATE_KEY", "OMNIROUTE_API_KEY"):
@@ -268,6 +286,9 @@ def main():
                     help="another proof's Hermes config.yaml; required for a --leg outside S0-01's set")
     ap.add_argument("--respond-to", default="owner-only", choices=["owner-only", "allowlist"])
     ap.add_argument("--allowlist", default="")
+    ap.add_argument("--env-set", default="s0-01", choices=["s0-01", "s0-02"],
+                    help="pinned launch env set: s0-01 (default, byte-identical to the pre-extension launcher) "
+                         "or s0-02 (adds exactly the pinned RUST_LOG=debug; recorded env.json names the set)")
     ap.add_argument("--settle-seconds", type=float, default=12.0)
     args = ap.parse_args()
 
@@ -324,7 +345,8 @@ def main():
     print(f"[{utc_now()}] pre manifest done: {summary_tail(os.path.join(FD, 'manifest-pre.summary'))}")
 
     # --- env from files (never argv) ---
-    env = launch_env(args.leg, FD, hermes_home, args.respond_to, args.allowlist, SEC, HERMES_ENV)
+    env = launch_env(args.leg, FD, hermes_home, args.respond_to, args.allowlist, SEC, HERMES_ENV,
+                     env_set=args.env_set)
     print("env keys:", sorted(env))
 
     # --- launch the pinned buzz-acp with the PINNED argv ---
@@ -357,6 +379,7 @@ def main():
     # env.json from the live process environment, redacted by KEY NAME (pins.REDACTED_ENV_KEY_RE)
     red = re.compile(pins.REDACTED_ENV_KEY_RE)
     live_env = redact_environ(open(f"/proc/{pid}/environ", "rb").read(), red)
+    live_env = env_json_with_set_marker(live_env, args.env_set)   # names the set that launched this capture
     open(os.path.join(FD, "env.json"), "w").write(json.dumps(live_env, indent=1, sort_keys=True) + "\n")
 
     # merge the buzz-acp identity into the tee's runtime-identity.json (wait for the tee to spawn)

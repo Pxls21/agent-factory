@@ -393,3 +393,59 @@ def test_pinned_present_is_exact_over_a_synthetic_table(tmp_path):
     assert 5001 not in {row[0] for row in rows}               # #6: mentioning a pinned path is not being one
     assert 5002 not in {row[0] for row in rows}               # helper-shaped, dropped from body AND header alike
     assert 5007 not in {row[0] for row in rows}               # F4: `cat <tee>` is a bystander, not an entry point
+
+
+# --------------------------------------------------------------------------------------------------
+# P5c item 2 — `pins.corpus_version()` is a STRICT header parser (pinned, not a sniffer)
+# --------------------------------------------------------------------------------------------------
+_V24_GOOD = ("# process-scan v2.4 mode=after rows=0 buzz_acp_pid=1 buzz_present=0 owned=1 owned_present=0 "
+             "pinned_present=0 owned_zombies=0 table_rows=1 utc=2026-09-08T00:00:00Z\n")
+
+
+def _leg_with_scan(tmp_path, first, rest=""):
+    (tmp_path / "process-scan-after.txt").write_text(first + rest)
+    return tmp_path
+
+
+def test_corpus_version_accepts_the_good_v24_header(tmp_path):
+    assert pins.corpus_version(_leg_with_scan(tmp_path, _V24_GOOD)) == "v2.4"
+
+
+def test_corpus_version_refuses_a_second_header_line_in_the_body(tmp_path):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
+        pins.corpus_version(_leg_with_scan(tmp_path, _V24_GOOD, "# process-scan v2.4 mode=after rows=0 ...\n"))
+
+
+def test_corpus_version_refuses_a_header_in_the_body_after_rows(tmp_path):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
+        pins.corpus_version(_leg_with_scan(
+            tmp_path, "1 0 5 /usr/bin/sleep 60\n", "# process-scan v2.4 mode=after rows=0 ...\n"))
+
+
+def test_corpus_version_refuses_a_header_with_trailing_fields(tmp_path):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
+        pins.corpus_version(_leg_with_scan(
+            tmp_path, "# process-scan v2.4 mode=after rows=0 buzz_acp_pid=1 buzz_present=0 owned=1 "
+                      "owned_present=0 pinned_present=0 owned_zombies=0 table_rows=1 utc=2026-09-08T00:00:00Z extra\n"))
+
+
+def test_corpus_version_refuses_crlf_line_endings(tmp_path):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
+        pins.corpus_version(_leg_with_scan(tmp_path, _V24_GOOD.replace("\n", "\r\n")))
+
+
+def test_corpus_version_refuses_an_unknown_header_version(tmp_path):
+    with pytest.raises(ValueError, match="process-scan header malformed"):
+        pins.corpus_version(_leg_with_scan(
+            tmp_path, "# process-scan v9.9 mode=after rows=0 buzz_acp_pid=1 buzz_present=0 owned=1 "
+                      "owned_present=0 pinned_present=0 owned_zombies=0 table_rows=1 utc=2026-09-08T00:00:00Z\n"))
+
+
+def test_corpus_version_refuses_a_headerless_leg_that_claims_a_v24_name(tmp_path):
+    """AMENDMENT-2: a v2.4 after-scan whose header was removed drops `corpus_version` to v2.2, but a leg
+    carrying `tee-status.json` (a name required ONLY from v2.3) cannot be v2.2 — the header was dropped or
+    never written, and this must be a NAMED refusal, never a minted version."""
+    leg = _leg_with_scan(tmp_path, "1 0 5 /usr/bin/sleep 60\n")
+    (leg / "tee-status.json").write_text("{\"ok\": true}\n")
+    with pytest.raises(ValueError, match="process-scan header missing but tee-status.json present"):
+        pins.corpus_version(leg)

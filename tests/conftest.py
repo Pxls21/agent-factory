@@ -48,11 +48,22 @@ def synthetic_leg():
         (dst / "process-scan-after.txt").write_text(
             "# process-scan v2.4 mode=after rows=0 buzz_acp_pid=1 buzz_present=0 owned=1 owned_present=0 "
             "pinned_present=0 owned_zombies=0 table_rows=1 utc=2026-09-08T00:00:00Z\n")
+        (dst / "process-scan-teardown.txt").write_text(
+            "# process-scan v2.4 mode=teardown rows=0 buzz_acp_pid=1 buzz_present=0 owned=1 owned_present=0 "
+            "pinned_present=0 owned_zombies=0 table_rows=1 utc=2026-09-08T00:00:00Z\n")
+        # P5c F4: content validation is a (version, name) constraint now, so every JSON-object kind must
+        # carry a real object, not the one-byte int placeholder (which fails json-object).
+        for _obj_name in ("runtime-identity.json", "env.json", "owned-pids.json",
+                          "backend-healthz-before.json", "backend-healthz-after.json", "tee-status.json"):
+            (dst / _obj_name).write_text(json.dumps({"ok": True}) + "\n")
         body = b"## hermes-agent\n" + b"0" * 64 + b" f 0644  ./x\n"
         for phase in ("pre", "post"):
             (dst / f"manifest-{phase}.txt.gz").write_bytes(gzip.compress(body))
+            (dst / f"manifest-{phase}.summary").write_text("summary\n")
         for name in pins.required_files(pins.PINNED_SCAN_VERSIONS[-1]):
-            if not (dst / name).exists():
+            if name in ("manifest-pre.done", "manifest-post.done"):
+                (dst / name).write_text("")                       # completion markers are EMPTY
+            elif not (dst / name).exists() and name != "process-scan-teardown.txt":
                 (dst / name).write_text("0\n")
         for name in pins.PINNED_LEG_DIRS:
             (dst / name).mkdir(exist_ok=True)

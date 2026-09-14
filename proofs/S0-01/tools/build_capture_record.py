@@ -66,12 +66,12 @@ def main() -> int:
     # re-derive, byte for byte — and completeness is not it. Gating both modes cost that mode its diagnosis:
     # over the committed golden `cancel` leg the answer became "missing required leg files" where the reader
     # needs "differs from re-derived content", and it turned a round-trip unit test of this function red.
+    try:
+        version = pins.corpus_version(d)
+    except ValueError as exc:
+        print(f"{leg}: {exc}", file=sys.stderr)
+        return 1
     if not check_mode:
-        try:
-            version = pins.corpus_version(d)
-        except ValueError as exc:
-            print(f"{leg}: {exc}", file=sys.stderr)
-            return 1
         missing = sorted(n for n in pins.required_files(version) if not (d / n).is_file())
         missing += sorted(n for n, status in pins.PINNED_LEG_DIRS.items()
                           if status == "required" and not (d / n).is_dir())
@@ -81,8 +81,18 @@ def main() -> int:
         # VERIFY-P5a F6: presence is not content. `timeline.jsonl` truncated to 0 bytes — a tee that died
         # before its first frame, or a truncated collect — passed the gate above and produced
         # `"timeline": {"entries": 0, "c2a": 0, ...}` at rc 0: the #27 defect in a narrower form.
-        if (d / "timeline.jsonl").stat().st_size == 0:
-            print(f"{leg}: timeline.jsonl is empty (0 bytes) — the leg records no frames", file=sys.stderr)
+        # P5c AMENDMENT-2 F4: EVERY required file is validated against its per-(version, name) content
+        # constraint BEFORE capture.json is constructed — presence is not content (VERIFY-P5b F4). On
+        # `--check` the same constraints are validated over the files that exist (byte identity over VALID
+        # artifacts; completeness stays a build-path diagnosis, VERIFY-P5a F1/F16).
+        # The timeline.jsonl empty case is a content row now (`jsonl-nonempty`), so the old size check is gone.
+    for _n in sorted(pins.required_files(version)):
+        if check_mode and not (d / _n).is_file():
+            continue
+        try:
+            pins.validate_artifact(d, _n, version)
+        except pins.ConstraintFailure as exc:
+            print(f"{leg}: {exc}", file=sys.stderr)
             return 1
 
     rec = {"capture": f"s0-01-golden-leg:{leg}", "version": 2}
