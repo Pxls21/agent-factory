@@ -7,6 +7,7 @@ tests/test_ap_screen.py and went red whenever a live lane held that file in a st
 test must never depend on the shared tree's live-lane state.)"""
 import os
 import shutil
+import hashlib
 import subprocess
 import uuid
 from pathlib import Path
@@ -42,6 +43,9 @@ def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path
     assert r.returncode == 0, r.stdout + r.stderr
     result = [l for l in r.stdout.splitlines() if l.startswith("RESULT:")][-1]
     assert "identical=yes rc=0" in result and "3 passed" in result, result
+    # the RESULT line names the TEST SET it counted (2026-09-15: a pasted floor without its set read as a 215-test drop)
+    want = hashlib.sha256((str(probe) + "\n").encode()).hexdigest()[:12]
+    assert f" tests={want} identical=" in result, result
     ident = [l for l in r.stdout.splitlines() if l.endswith("lines") and probe in l]
     assert len(ident) == 1 and len(ident[0].split()[0]) == 64  # sha256 + path + line count
     # a green, agreeing gate removes its archive (the temp filesystem filled with them); the run logs remain

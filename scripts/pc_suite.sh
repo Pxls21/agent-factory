@@ -37,6 +37,12 @@ PC_REAL_LEG_DIR="${PC_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg/golden}"
 PC_BUZZ_SRC="${PC_BUZZ_SRC:-/home/rocco/s0-01-pinned/buzz}"
 die() { echo "pc_suite: $*" >&2; exit 2; }
 bridge() { "$PC" "$1"; }
+# set_id: the SET a summary line belongs to — "<N> files set=<sha12>" over the SORTED file list (order-blind). A pasted
+# count without its set is AF-AP-73 at the floor (2026-09-15: the ledger's `1556 passed, 9 xfailed` came from an 18-file
+# run and was read as the 13-file tests/test_s0_01_*.py glob — a 215-test "drop" that was no drop). `launch` records the
+# set on the PC (set.txt) and prints its id; `wait` prints `pytest-set:` beside `pytest-summary:`; `set-id -- <files>`
+# prints it standalone so a brief or a ledger line can carry the id it quotes a count against.
+set_id() { echo "$# files set=$(printf '%s\n' "$@" | sort | sha256sum | cut -c1-12)"; }
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -60,6 +66,7 @@ launch)
   bridge "cd $PC_AF_REPO && { git cat-file -e $BASE^{commit} 2>/dev/null && echo HAVE; } || { git fetch -q origin && git cat-file -e $BASE^{commit} && echo FETCHED; }" | grep -q "HAVE\|FETCHED" \
     || die "the PC clone does not have $BASE — push the head first (the PC runs pushed commits + your patch)"
   bridge "test -e $RD/pid && echo EXISTS || { mkdir -p $RD && echo NEW; }" | grep -q NEW || die "run dir $RD already launched"
+  bridge "printf %s '$(printf %s "$SET" | base64 -w0)' | base64 -d > $RD/set.txt && echo SETOK" | grep -q SETOK || die "set.txt ship failed"
   B64=$(mktemp); base64 -w0 < "$PATCH" > "$B64"; TOTAL=$(wc -c < "$B64"); i=0; off=0
   while [ "$off" -lt "$TOTAL" ]; do
     CH=$(dd if="$B64" bs=1 skip="$off" count=40000 2>/dev/null)
@@ -87,7 +94,7 @@ echo \$? > $RD/rc
   OUT=$(bridge "$LAUNCH" 2>&1 | tail -1)
   case "$OUT" in [0-9]*) ;; *) echo "pc_suite: launch call did not confirm (${OUT:-no reply}) — wait will tell" >&2;; esac
   rm -f "$PATCH" "$B64"
-  echo "pc_suite: launched $RUN_ID on the PC — base $BASE + patch ${PBYTES}B (sha ${PSHA:0:12}), set '$SET', -n $WORKERS" >&2
+  echo "pc_suite: launched $RUN_ID on the PC — base $BASE + patch ${PBYTES}B (sha ${PSHA:0:12}), set '$SET' ($(set_id $SET)), -n $WORKERS" >&2
   echo "$RUN_ID" ;;
 wait)
   RUN_ID="${1:?RUN_ID}"; MAXMIN="${2:-40}"; RD="$PC_AF_REPO/.suite/$RUN_ID"; n=0
@@ -106,9 +113,13 @@ wait)
   bridge "grep '^FAILED\|^ERROR' $RD/log | head -40"
   SUM=$(bridge "grep -v '^\$' $RD/log | tail -n 1" | tail -1)
   echo "pytest-exit: $RC"; echo "pytest-summary: $SUM"
+  SETTXT=$(bridge "cat $RD/set.txt 2>/dev/null" | tail -1)
+  if [ -n "$SETTXT" ]; then echo "pytest-set: $(set_id $SETTXT) — $SETTXT"; else echo "pytest-set: unrecorded (a run launched before set.txt existed, 2026-09-15)"; fi
   case "$SUM" in *" passed"*) ;; *) echo "pc_suite: RED — the summary line carries no passed count (pytest rc $RC is not trusted)" >&2; exit 3;; esac
   exit "$RC" ;;
+set-id)
+  [ "${1:-}" = -- ] && shift; [ $# -gt 0 ] || die "set-id needs files: pc_suite.sh set-id -- <files>"; set_id "$@" ;;
 log)
   RUN_ID="${1:?RUN_ID}"; RD="$PC_AF_REPO/.suite/$RUN_ID"; bridge "tail -c ${2:-4000} $RD/log" ;;
-*) die "usage: pc_suite.sh launch [-n N] [-- <pytest args>] | wait <RUN_ID> [max-min] | log <RUN_ID> [bytes]" ;;
+*) die "usage: pc_suite.sh launch [-n N] [-- <pytest args>] | wait <RUN_ID> [max-min] | log <RUN_ID> [bytes] | set-id -- <files>" ;;
 esac
