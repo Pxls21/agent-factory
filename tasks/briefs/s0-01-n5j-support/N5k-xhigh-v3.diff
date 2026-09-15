@@ -1,0 +1,601 @@
+diff --git a/proofs/S0-01/tools/acp_probe.py b/proofs/S0-01/tools/acp_probe.py
+index f1dabaa..15a2506 100755
+--- a/proofs/S0-01/tools/acp_probe.py
++++ b/proofs/S0-01/tools/acp_probe.py
+@@ -19,6 +19,7 @@ the probe exits 64 with a named stderr message but does NOT write runtime-identi
+ """
+ import base64
+ import datetime
++import errno
+ import fcntl
+ import hashlib
+ import json
+@@ -45,15 +46,45 @@ _EARLY_SAMPLE_STEP_S = 0.002
+ _TIMEOUT_DOMAIN_RE = re.compile(r"[0-9]+(\.[0-9]+)?")
+ 
+ 
++def _open_regular_read(path):
++    """Open one file for a bounded, verified read (AF-AP-70 closed for reads).
++
++    The mirror of `_open_regular` on the read side: open -> fstat -> validate ->
++    use, NEVER stat-then-open.  The old shape proved what the NAME was at t0 and
++    trusted the name at t1; a FIFO swapped in between the two blocks the BLOCKING
++    open() forever (the AF-AP-70 read race; the write side was already closed in
++    round 11, this closes the read side).  O_NOFOLLOW makes a final-component
++    symlink raise ELOOP at the open, and O_NONBLOCK makes the open return
++    immediately on a FIFO instead of blocking (a read-open of a FIFO does NOT
++    raise ENXIO — measured: it returns a live descriptor — so the refusal is not
++    the open).  The worker is S_ISREG on the OPEN DESCRIPTOR: it refuses whatever
++    was actually opened, a FIFO, a character device (/dev/zero never reaches
++    EOF), a socket, or a directory.  The fd is closed on every refusal — a
++    refused read must leave no descriptor behind.  Every read the probe performs
++    goes through this one primitive: the probe's own file, the agent entrypoint,
++    the child interpreter, and the fixture."""
++    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
++    try:
++        st = os.fstat(fd)
++        if not stat.S_ISREG(st.st_mode):
++            raise OSError("not a regular file: %s" % (path,))
++        fcntl.fcntl(fd, fcntl.F_SETFL,
++                    fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
++    except Exception:
++        os.close(fd)
++        raise
++    return os.fdopen(fd, "rb")
++
++
+ def _sha256_file(path):
+-    # N5h-#7 (class): every file the probe reads must be a REGULAR file — open() on a
+-    # FIFO blocks forever and a character device (/dev/zero) never reaches EOF.  os.stat
+-    # does not open the file, so it cannot block.  One guard covers all three receivers
+-    # of this function: the probe's own file, the agent entrypoint, the child interpreter.
+-    if not stat.S_ISREG(os.stat(path).st_mode):
+-        raise OSError("not a regular file: %s" % (path,))
++    # N5h-#7 (class) + round 14 item 3: every file the probe reads must be a
++    # REGULAR file — a blocking read of a FIFO never returns and a character
++    # device (/dev/zero) never reaches EOF.  The check runs on the OPEN DESCRIPTOR
++    # (AF-AP-70: a stat-then-open guard is a race); one guard covers all four
++    # receivers of this function: the probe's own file, the agent entrypoint,
++    # the child interpreter, the fixture.
+     h = hashlib.sha256()
+-    with open(path, "rb") as f:
++    with _open_regular_read(path) as f:
+         for chunk in iter(lambda: f.read(65536), b""):
+             h.update(chunk)
+     return h.hexdigest()
+@@ -236,21 +267,22 @@ def main():
+     framedir = os.environ["S0_01_FRAMEDIR"]
+     agent = os.environ["S0_01_AGENT"]
+ 
+-    # Load the malformed initialize fixture
++    # Load the malformed initialize fixture through the ONE read primitive
++    # (round 14 item 3, AF-AP-70 closed for reads): the old shape was os.stat
++    # then open by NAME — a FIFO at the fixture path passed exists() and then
++    # blocked open() forever (measured on the PIN: rc 124 under `timeout 20`);
++    # the open-then-fstat shape refuses it at the open, by name, no byte read.
+     here = os.path.dirname(os.path.abspath(__file__))
+     fixture_path = os.path.join(os.path.dirname(here), "fixtures", "neg-malformed-initialize.json")
+-    # N5h-#7: os.stat, not os.path.exists — a FIFO at the fixture path passes exists()
+-    # and then blocks open() forever (measured on the PIN: rc 124 under `timeout 20`).
+     try:
+-        fixture_st = os.stat(fixture_path)
+-    except OSError:
+-        print(f"acp_probe: fixture not found: {fixture_path}", file=sys.stderr)
+-        raise SystemExit(64)
+-    if not stat.S_ISREG(fixture_st.st_mode):
+-        print(f"acp_probe: fixture is not a regular file: {fixture_path}", file=sys.stderr)
++        with _open_regular_read(fixture_path) as f:
++            params = json.load(f)
++    except OSError as exc:
++        if exc.errno == errno.ENOENT:
++            print(f"acp_probe: fixture not found: {fixture_path}", file=sys.stderr)
++        else:
++            print(f"acp_probe: fixture is not a regular file: {fixture_path}", file=sys.stderr)
+         raise SystemExit(64)
+-    with open(fixture_path) as f:
+-        params = json.load(f)
+     request = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": params}
+ 
+     # Timeline entries
+@@ -288,8 +320,22 @@ def main():
+         # Recheck after mkdir before opening the one directory fd used by every leaf.
+         if os.path.realpath(framedir) != framedir_abs:
+             raise OSError("framedir path contains a symlink: %s" % (framedir,))
+-        framedir_fd = os.open(
+-            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
++        # O_DIRECTORY is load-bearing (round 14 item 1): it makes the open RAISE
++        # instead of handing the probe a non-directory fd.  The two realpath
++        # checks classify the NAME at t0; a regular file swapped in at t1 passes
++        # both and would open fine without the flag — with it, os.open raises
++        # ENOTDIR and the probe refuses by name, before any leaf write.  The
++        # exact refusal is named below: rc 1, one stderr line, no leaf written.
++        try:
++            framedir_fd = os.open(
++                framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
++        except OSError as exc:
++            if exc.errno == errno.ENOTDIR:
++                print("acp_probe: framedir is not a directory: %s" % (framedir,),
++                      file=sys.stderr)
++            else:
++                print(f"acp_probe: framedir open failed: {exc}", file=sys.stderr)
++            raise SystemExit(1)
+ 
+         # A16: validate ACP_PROBE_TIMEOUT inside the wrapped body — must be
+         # a finite float > 0, else probe_error + exit 64
+@@ -333,8 +379,15 @@ def main():
+ 
+         agent_realpath = os.path.realpath(agent)
+ 
++        # close_fds=True is the SECOND, independent defence against the
++        # inherited-fd attack (round 14 item 2): it closes every fd > 2 in the
++        # child at exec regardless of any fd's close-on-exec bit.  It is pinned
++        # explicitly — the default is True, but the pin makes an override by
++        # edit visible to the test (which asserts the child's fd table, never
++        # the flag alone).
+         proc = subprocess.Popen(
+-            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
++            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE, close_fds=True
+         )
+         child_pid = proc.pid
+ 
+diff --git a/tests/test_s0_01_acp_probe.py b/tests/test_s0_01_acp_probe.py
+index c6beb13..7e2be71 100644
+--- a/tests/test_s0_01_acp_probe.py
++++ b/tests/test_s0_01_acp_probe.py
+@@ -20,6 +20,7 @@ import errno
+ import json
+ import os
+ import signal
++import stat
+ import subprocess
+ import sys
+ import textwrap
+@@ -33,6 +34,12 @@ P = ROOT / "proofs" / "S0-01"
+ PROBE = P / "tools" / "acp_probe.py"
+ CHECK_INIT = P / "check_initialize.py"
+ 
++# Round 14 item 3: the read primitive is imported as a function (not executed —
++# the probe has no module-level side effects), so its refusal shapes can be
++# unit-tested in-process without a probe run.
++sys.path.insert(0, str(P / "tools"))
++import acp_probe as _probe_mod
++
+ 
+ @pytest.fixture
+ def agent_result(tmp_path):
+@@ -2824,7 +2831,12 @@ def test_probe_appends_a_drain_failure_to_an_earlier_error(tmp_path, agent_resul
+ # includes the primitive's two os.open branches and main's framedir directory open;
+ # those are safe only because the test separately pins their flags/validation.
+ _RECEIVER_INVENTORY = {
+-    ("_sha256_file", "builtins.open", 1): "read",
++    # Read side (round 14 item 3): every read the probe performs goes through the
++    # ONE read primitive `_open_regular_read`.  `_sha256_file` and `main` reach it;
++    # the primitive owns its own os.open / os.fdopen.
++    ("_open_regular_read", "os.open", 1): "read-primitive",
++    ("_open_regular_read", "os.fdopen", 2): "read-handle",
++    ("_sha256_file", "probe._open_regular_read", 1): "evidence-reader",
+     ("_open_regular", "os.open", 1): "write-primitive",
+     ("_open_regular", "os.open", 2): "write-primitive",
+     ("_open_regular", "os.fdopen", 3): "write-handle",
+@@ -2834,7 +2846,7 @@ _RECEIVER_INVENTORY = {
+     ("_write_evidence", "probe._leaf_handle", 1): "evidence-writer",
+     ("_write_evidence", "probe._write_env", 2): "evidence-writer",
+     ("_write_evidence", "probe._leaf_handle", 3): "evidence-writer",
+-    ("main", "builtins.open", 1): "read",
++    ("main", "probe._open_regular_read", 1): "evidence-reader",
+     ("main", "json.load", 2): "read-handle",
+     ("main", "os.open", 3): "directory-open",
+     ("main", "probe._leaf_handle", 4): "evidence-writer",
+@@ -2863,7 +2875,8 @@ def _scan_file_receivers(src):
+     tracked = {
+         "builtins.open", "io.open", "os.open", "os.fdopen", "os.readlink",
+         "json.load", "probe._open_regular", "probe._leaf_handle",
+-        "probe._write_env", "probe._m3_write", "attribute.open",
++        "probe._write_env", "probe._m3_write", "probe._open_regular_read",
++        "attribute.open",
+         "attribute.write_text", "attribute.write_bytes", "attribute.read_text",
+         "attribute.read_bytes",
+     }
+@@ -2872,6 +2885,7 @@ def _scan_file_receivers(src):
+         "_leaf_handle": "probe._leaf_handle",
+         "_write_env": "probe._write_env",
+         "_m3_write": "probe._m3_write",
++        "_open_regular_read": "probe._open_regular_read",
+     }
+ 
+     def canonical(full):
+@@ -2898,9 +2912,11 @@ def _scan_file_receivers(src):
+                     isinstance(n, _ast.Attribute) and n.attr == "O_DIRECTORY"
+                     for n in _ast.walk(call)):
+                 return "directory-open"
++            if function == "_open_regular_read":
++                return "read-primitive"
+             return "write-primitive" if function == "_open_regular" else "os-open"
+         if identity == "os.fdopen":
+-            return "write-handle"
++            return "read-handle" if function == "_open_regular_read" else "write-handle"
+         if identity == "os.readlink":
+             return "identity-read"
+         if identity == "json.load":
+@@ -2909,6 +2925,8 @@ def _scan_file_receivers(src):
+             return "write"
+         if identity.startswith("attribute.read"):
+             return "read"
++        if identity == "probe._open_regular_read":
++            return "evidence-reader"
+         if identity in wrappers.values():
+             return "evidence-writer"
+         return "receiver"
+@@ -3054,6 +3072,17 @@ def test_probe_every_file_receiver_is_guarded_or_committed():
+     assert deleted_writer != src
+     assert _scan_file_receivers(deleted_writer) != _RECEIVER_INVENTORY
+ 
++    # Round 14 item 4: the read side is in the inventory too (the three read
++    # entries above: the primitive's own os.open/os.fdopen, _sha256_file and
++    # main reaching _open_regular_read).  The write controls plant writers; this
++    # one plants a READER in a brand-new function — a read that does not go
++    # through the one primitive is a diff, not a survivor.
++    planted_reader = src.replace(
++        "def _sha256_file(path):",
++        "def _planted_reader(path):\n    with open(path, 'rb') as f:\n        f.read()\n\n\ndef _sha256_file(path):")
++    assert planted_reader != src
++    assert _scan_file_receivers(planted_reader) != _RECEIVER_INVENTORY
++
+ 
+ # ---- N5j: hostile path proof runs are standalone because FIFO/socket lifetime
+ #      belongs to the rig, not pytest's worker process. ----
+@@ -3300,3 +3329,353 @@ def test_probe_evidence_writes_refuse_a_symlink_and_a_readable_fifo(tmp_path, ag
+     assert elapsed < 5, f"not bounded: {elapsed:.1f}s"
+     assert expected in r.stderr, f"the refusal does not name it: {r.stderr!r}"
+     assert (framedir / "runtime-identity.json").is_file()
++
++
++# ---- Round 14 (N5k-xhigh): the two surviving flags made load-bearing, the READ
++#      side open-then-fstat, the receiver inventory extended for reads. ----
++#
++# House rule: every FIFO / hang shape is measured standalone under `timeout` with a
++# PID-scoped watchdog (the drivers in scratch/rd/), never through pytest's worker.
++# What runs HERE is the bounded, non-hanging half of each item: the open-level
++# flag proofs, the structural pins, the in-process primitive refusals (no FIFO is
++# opened by the worker), and the inventory negative controls.
++
++
++def _probe_framedir_flags():
++    """The framedir open's flag set, extracted from the probe source.
++
++    The flag-mirror tests OPEN with these flags rather than re-typing them, so a
++    mutation of the probe's flag set (dropping O_DIRECTORY / O_CLOEXEC) is caught
++    here, not merely in a source-substring assertion.
++    """
++    import ast as _ast
++    import re as _re
++    src = PROBE.read_text()
++    m = _re.search(r"framedir_fd = os\.open\((.*?)\)\s*\n", src, _re.S)
++    assert m, "could not locate the framedir os.open"
++    stmt = _ast.parse(m.group(1).strip()).body[0]
++    assert isinstance(stmt, _ast.Expr), "the framedir flag set is not a plain expression"
++    flags_node = stmt.value
++    tokens = []
++    for n in _ast.walk(flags_node):
++        if isinstance(n, _ast.Attribute) and n.attr.startswith("O_"):
++            tokens.append("os." + n.attr)
++    return tokens
++
++
++def test_probe_framedir_oder_directory_makes_the_open_raise_not_return(tmp_path):
++    """Round 14 item 1, kill (a), at the open call.
++
++    A regular file at the framedir path with the probe's EXACT framedir flag set
++    (which includes O_DIRECTORY) makes os.open raise ENOTDIR instead of handing
++    the probe a non-directory fd.  Dropping O_DIRECTORY from the same open lets it
++    succeed — proving the flag, not the two realpath checks, is what refuses.
++    The black-box dir->file swap the brief names is NOT landable on this host
++    (the isdir->os.open window is microseconds; see the DISCREPANCIES line).
++    """
++    file = tmp_path / "framedir"
++    file.write_text("i am a file, not a directory")
++    tokens = _probe_framedir_flags()
++    assert "os.O_DIRECTORY" in tokens, tokens
++    assert "os.O_NOFOLLOW" in tokens, tokens
++    assert "os.O_CLOEXEC" in tokens, tokens
++
++    flags = 0
++    for tok in tokens:
++        flags |= getattr(os, tok.removeprefix("os."))
++
++    with pytest.raises(OSError) as ei:
++        fd = os.open(str(file), flags)
++    assert ei.value.errno == errno.ENOTDIR, (
++        f"expected ENOTDIR ({errno.ENOTDIR}), got {ei.value.errno}")
++
++    no_dir = 0
++    for tok in tokens:
++        if tok != "os.O_DIRECTORY":
++            no_dir |= getattr(os, tok.removeprefix("os."))
++    fd = os.open(str(file), no_dir)
++    try:
++        assert stat.S_ISREG(os.fstat(fd).st_mode), "without O_DIRECTORY the same open succeeds"
++    finally:
++        os.close(fd)
++
++
++def test_probe_framedir_open_pins_oder_directory_and_ocloexec_and_popen_pins_close_fds():
++    """Round 14 item 1 + item 2, structural pins on the probe source.
++
++    The two surviving flags are named at the framedir open (probe:330-331) and the
++    Popen launch pins close_fds=True (probe:390).  These are the structural half of
++    load-bearing; the behavioural proof is the open-level ENOTDIR (item 1) and the
++    F_SETFD census driver (item 2).
++    """
++    src = PROBE.read_text()
++    # The framedir open is a two-line call: `framedir_fd = os.open(` then the
++    # argument line carrying the flag set.  Pin the flag line, not the opener.
++    flag_line = next(
++        line for line in src.splitlines()
++        if "framedir, os.O_RDONLY" in line)
++    assert "os.O_DIRECTORY" in flag_line, flag_line
++    assert "os.O_CLOEXEC" in flag_line, flag_line
++    assert "os.O_NOFOLLOW" in flag_line, flag_line
++    assert any("close_fds=True" in line for line in src.splitlines()), \
++        "the Popen launch no longer pins close_fds=True"
++
++
++def test_probe_read_primitive_reads_a_regular_file(tmp_path):
++    """Round 14 item 3, green: a regular file opens, reads, and returns a file object."""
++    f = tmp_path / "reg"
++    f.write_bytes(b"abc123")
++    handle = _probe_mod._open_regular_read(str(f))
++    try:
++        assert handle.read() == b"abc123"
++    finally:
++        handle.close()
++
++
++@pytest.mark.parametrize("shape", ["fifo", "symlink_loop", "directory", "missing"])
++def test_probe_read_primitive_refuses_non_regular_shapes_by_name(tmp_path, shape):
++    """Round 14 item 3, red: every non-regular shape is refused by its exact reason.
++
++    The worker never opens a FIFO for reading (that is the hang), so these shapes
++    are safe in-process: the primitive's os.open + fstat refuses before any read.
++    A symlink final component is refused at the open by O_NOFOLLOW (ELOOP); a FIFO,
++    a directory, and a missing path are refused by their own reason.  All four are
++    the READ-side mirror of the write-side refusals already pinned for _open_regular.
++    """
++    if shape == "fifo":
++        target = tmp_path / "pipe"
++        os.mkfifo(str(target))
++        msg = f"not a regular file: {target}"
++    elif shape == "symlink_loop":
++        target = tmp_path / "link"
++        os.symlink(str(target), str(target))
++        msg = f"[Errno {errno.ELOOP}]"
++    elif shape == "directory":
++        target = tmp_path / "d"
++        target.mkdir()
++        msg = f"not a regular file: {target}"
++    else:
++        target = tmp_path / "absent"
++        msg = f"[Errno {errno.ENOENT}]"
++
++    with pytest.raises(OSError) as ei:
++        _probe_mod._open_regular_read(str(target))
++    assert msg in str(ei.value), (str(ei.value), msg)
++
++
++def test_probe_read_primitive_leaves_no_fd_behind_on_refusal(tmp_path):
++    """Round 14 item 3: a refused read must leave no descriptor behind.
++
++    The READ-FD-LEAK-ON-REFUSE mutant removes the os.close in the primitive's
++    except branch; this asserts the descriptor set is unchanged across a refusal.
++    """
++    target = tmp_path / "pipe"
++    os.mkfifo(str(target))
++    before = {fd for fd in os.listdir("/proc/self/fd") if fd.isdigit()}
++    with pytest.raises(OSError):
++        _probe_mod._open_regular_read(str(target))
++    after = {fd for fd in os.listdir("/proc/self/fd") if fd.isdigit()}
++    assert before == after, f"fd leak on refusal: opened {sorted(after - before)}"
++
++
++def test_probe_read_primitive_mutants_die_at_the_open_level(tmp_path):
++    """Round 14 item 6, the read-side mutants, each killed by a source mutation.
++
++    Every mutation re-scans the probe source; the inventory test already holds the
++    shape of the read side, so here each mutation is asserted to change the scan.
++    READ-NONBLOCK-DROPPED, READ-NOFOLLOW-DROPPED, READ-ISREG-DROPPED,
++    READ-OUTSIDE-PRIMITIVE and INVENTORY-READER-MISSING are the rows.  The FIFO
++    hang (READ-NONBLOCK) and the char-device accept (READ-ISREG) are the behavioural
++    halves and are measured by the scratch driver, not here.
++    """
++    src = PROBE.read_text()
++    base = _scan_file_receivers(src)
++    assert base == _RECEIVER_INVENTORY
++
++    # The read primitive's open line: the one `fd = os.open(path, ...)` inside
++    # _open_regular_read.  Flag-drop mutants are asserted against THIS line,
++    # not the whole function body (which also references os.O_NONBLOCK in the
++    # F_SETFL line and os.O_NOFOLLOW in a comment) — and the inventory does not
++    # track flags, so a flag-drop must be checked here, not by the scan.
++    def read_open_line(s):
++        body = s.split("def _open_regular_read", 1)[1].split("\ndef ", 1)[0]
++        return next(line for line in body.splitlines() if "fd = os.open(path" in line)
++
++    # READ-OUTSIDE-PRIMITIVE: a planted path open that bypasses the primitive.
++    outside = src.replace(
++        "        with _open_regular_read(fixture_path) as f:\n            params = json.load(f)",
++        "        params = json.load(open(fixture_path))")
++    assert outside != src
++    assert _scan_file_receivers(outside) != _RECEIVER_INVENTORY
++
++    # READ-STAT-ON-PATH: the old stat-then-open shape restored in _sha256_file.
++    old_shape = src.replace(
++        "    h = hashlib.sha256()\n    with _open_regular_read(path) as f:\n        for chunk in iter(lambda: f.read(65536), b\"\"):\n            h.update(chunk)\n    return h.hexdigest()",
++        "    if not stat.S_ISREG(os.stat(path).st_mode):\n        raise OSError(\"not a regular file: %s\" % (path,))\n    h = hashlib.sha256()\n    with open(path, \"rb\") as f:\n        for chunk in iter(lambda: f.read(65536), b\"\"):\n            h.update(chunk)\n    return h.hexdigest()")
++    assert old_shape != src
++    assert _scan_file_receivers(old_shape) != _RECEIVER_INVENTORY
++
++    # READ-NONBLOCK-DROPPED: the primitive's open line loses O_NONBLOCK, so a
++    # FIFO opens blocking (the AF-AP-70 hang; measured by the scratch driver).
++    nnb = src.replace(
++        "    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)",
++        "    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)")
++    assert nnb != src
++    assert "os.O_NONBLOCK" not in read_open_line(nnb)
++
++    # READ-NOFOLLOW-DROPPED: the open line loses O_NOFOLLOW, a final symlink is
++    # followed instead of refused with ELOOP.
++    nnf = src.replace(
++        "    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)",
++        "    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)")
++    assert nnf != src
++    assert "os.O_NOFOLLOW" not in read_open_line(nnf)
++
++    # READ-ISREG-DROPPED: the S_ISREG refusal removed; a char device (/dev/zero,
++    # which never reaches EOF) would be read.  Asserted on the open line's
++    # sibling — the fstat/S_ISREG guard is the worker, not the open.
++    nisreg = src.replace(
++        "    try:\n        st = os.fstat(fd)\n        if not stat.S_ISREG(st.st_mode):\n            raise OSError(\"not a regular file: %s\" % (path,))\n        fcntl.fcntl(fd, fcntl.F_SETFL,\n                    fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)\n    except Exception:\n        os.close(fd)\n        raise",
++        "    try:\n        st = os.fstat(fd)\n        fcntl.fcntl(fd, fcntl.F_SETFL,\n                    fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)\n    except Exception:\n        os.close(fd)\n        raise")
++    assert nisreg != src
++    body_nisreg = nisreg.split("def _open_regular_read", 1)[1].split("\ndef ", 1)[0]
++    # The guard is the code form `stat.S_ISREG(st.st_mode)`; the docstring's bare
++    # "S_ISREG" is prose and stays.  Assert the guard itself is gone.
++    assert "stat.S_ISREG" not in body_nisreg
++
++    # INVENTORY-READER-MISSING: a planted read in a brand-new function.
++    planted = src.replace(
++        "def _sha256_file(path):",
++        "def _planted_reader(path):\n    with open(path, 'rb') as f:\n        f.read()\n\n\ndef _sha256_file(path):")
++    assert planted != src
++    assert _scan_file_receivers(planted) != _RECEIVER_INVENTORY
++
++
++# ---- Round 14 item 2: the inherited-fd attack (O_CLOEXEC) ----
++#
++# The census agent walks /proc/self/fd and counts directory fds whose realpath is
++# the framedir, writing "CENSUS=N" to $S0_01_CENSUS_OUT.  It is ONE agent, used two
++# ways: in ACP mode (S0_01_ACP=1) it also answers initialize so the probe completes
++# cleanly through the real emitter; in plain mode it just writes the census and
++# exits, so the isolated F_SETFD driver can exec it directly.
++_CENSUS_AGENT = """#!%s
++import json, os, sys
++frame = os.environ.get("S0_01_FRAMEDIR")
++out = os.environ.get("S0_01_CENSUS_OUT")
++n = 0
++if frame:
++    fr = os.path.realpath(frame)
++    for e in os.listdir("/proc/self/fd"):
++        try:
++            t = os.readlink("/proc/self/fd/" + e)
++        except OSError:
++            continue
++        try:
++            if os.path.isdir(t) and os.path.realpath(t) == fr:
++                n += 1
++        except OSError:
++            pass
++if out:
++    with open(out, "w") as f:
++        f.write("CENSUS=%%d\\n" %% n)
++if os.environ.get("S0_01_ACP") == "1":
++    for line in sys.stdin:
++        line = line.strip()
++        if not line:
++            continue
++        msg = json.loads(line)
++        if msg.get("method") == "initialize":
++            sys.stdout.write(json.dumps({
++                "jsonrpc": "2.0", "id": msg["id"],
++                "result": {"protocolVersion": 1,
++                           "agentInfo": {"name": "census", "version": "0"},
++                           "agentCapabilities": {}}}) + "\\n")
++            sys.stdout.flush()
++        break
++    sys.stdin.read()
++"""
++
++
++def _census_count(out_file):
++    return int(out_file.read_text().strip().split("=")[1])
++
++
++def test_probe_census_agent_sees_no_framedir_fd_on_final_bytes(tmp_path, agent_result):
++    """Round 14 item 2, red/green on the final bytes: the census agent, launched
++    through the probe like every other fixture agent, sees NO directory fd pointing
++    at the framedir.  The probe opens the framedir with O_CLOEXEC (probe:331) AND
++    pins close_fds=True (probe:390); the agent's own fd table is the assertion,
++    never the flag alone.
++    """
++    agent = tmp_path / "census_agent.py"
++    agent.write_text(_CENSUS_AGENT % sys.executable)
++    agent.chmod(0o755)
++    out_file = tmp_path / "census.txt"
++    r, framedir = _run_probe(
++        tmp_path, str(agent),
++        extra_env={"S0_01_CENSUS_OUT": str(out_file), "S0_01_ACP": "1"})
++    assert r.returncode == 0, f"probe failed: {r.returncode}: {r.stderr}"
++    assert out_file.exists(), f"census not written: {r.stderr}"
++    assert _census_count(out_file) == 0, (
++        f"inherited framedir fd seen by the agent: {out_file.read_text()!r}")
++
++
++def test_probe_census_isolated_fsetfd_negative_control(tmp_path):
++    """Round 14 item 2, the negative control (Amendment 2).  The brief's original
++    control — the same agent reporting ONE on the CLOEXEC-DROPPED mutant through the
++    REAL emitter — does not reproduce: the Popen pins close_fds=True (probe:390), the
++    second independent defence, so the fd is closed at exec regardless of the bit and
++    the real-emitter census reads 0 (measured; see DISCREPANCIES).  The flag's own
++    teeth are therefore proven in isolation, where the CLOEXEC bit is the SOLE
++    decider (the exec does not use close_fds): bit set -> the child sees 0, bit
++    cleared -> the child sees 1.  That is the load-bearing proof.
++    """
++    framedir = tmp_path / "frame"
++    framedir.mkdir()
++    agent = tmp_path / "census_agent.py"
++    agent.write_text(_CENSUS_AGENT % sys.executable)
++    agent.chmod(0o755)
++    driver = tmp_path / "census_driver.py"
++    driver.write_text(textwrap.dedent("""
++        import fcntl, os, sys
++        framedir, bit, agent, out = sys.argv[1:5]
++        r, w = os.pipe()
++        pid = os.fork()
++        if pid == 0:
++            os.close(r)
++            fd = os.open(framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
++            if bit == "set":
++                fcntl.fcntl(fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
++            else:
++                fcntl.fcntl(fd, fcntl.F_SETFD, 0)
++            os.dup2(w, 1)
++            os.close(w)
++            env = dict(os.environ)
++            env["S0_01_FRAMEDIR"] = framedir
++            env["S0_01_CENSUS_OUT"] = out
++            os.execvpe(sys.executable, [sys.executable, agent], env)
++            os._exit(127)
++        os.close(w)
++        while True:
++            b = os.read(r, 4096)
++            if not b:
++                break
++        os.close(r)
++        _, status = os.waitpid(pid, 0)
++        sys.exit(os.waitstatus_to_exitcode(status))
++    """))
++    results = {}
++    for bit in ("set", "cleared"):
++        out_file = tmp_path / f"census_{bit}.txt"
++        if out_file.exists():
++            out_file.unlink()
++        r = subprocess.run(
++            ["timeout", "15", sys.executable, str(driver), str(framedir), bit,
++             str(agent), str(out_file)],
++            capture_output=True, text=True, timeout=20)
++        assert r.returncode == 0, f"driver {bit}: rc={r.returncode} {r.stderr}"
++        assert out_file.exists(), f"no census for {bit}: {r.stderr}"
++        results[bit] = _census_count(out_file)
++    # The bit is the sole decider: set closes the fd (0), cleared keeps it (1).
++    assert results["set"] == 0, f"bit set should close the fd, saw {results}"
++    assert results["cleared"] == 1, f"bit cleared should leak the fd, saw {results}"

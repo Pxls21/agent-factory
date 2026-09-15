@@ -1,0 +1,73 @@
+# N5k-xhigh report — S0-01 ACP probe round 14 (lane pc-n5k-xhigh-v3, ARM B / xhigh)
+
+PIN: c6c384a. Role: code-implementer. Venue: PC (no live agent / Hermes / buzz-acp / relay / model; the probe's real leg is NOT run here — F4 is the coordinator's).
+
+## NOT-done / deviations first
+
+- NOT a gate verdict. This PC Hermes lane is a build proposal until the sandbox-side adversarial verifier grades it.
+- F4 (the 3 s stderr drain-join calibration on a real leg) stays the coordinator's — NOT this lane's. This lane did not touch join policy.
+- Two brief premises did NOT reproduce on the final bytes and are reported in DISCREPANCIES, built on the measured truth per the bounded rule: (1) item 2's "the SAME census agent reports ONE on the CLOEXEC-DROPPED mutant through the real emitter" (measured 0, not 1 — `close_fds=True` is the second, independent defence); (2) item 1(a)'s hostile rig where the framedir "passes both realpath checks as a directory and is then replaced by a REGULAR FILE before the os.open" (measured 0/210 black-box window wins; the framedir open at probe:330 PRECEDES the agent Popen at probe:388, so no agent-driven swap can land it). Both items are still satisfied on the measured truth: item 1 by the open-level ENOTDIR proof + the structural flag pin; item 2 by the isolated F_SETFD census + the two structural pins.
+- Item 6's "O_DIRECTORY-DROPPED (two killers)": the file-at-framedir black-box shape does not reach the open (the makedirs check at probe:316 fails first, rc 64, on BOTH final and mutant), so the two killers are the open-level ENOTDIR proof (probe:330-338) and the structural flag pin (test:3403), not two distinct black-box rig runs. Stated as such in the mutant table.
+- The 9 xfailed in the conformance/xdist runs are the corpus's known-stale `probe_sha256 mismatch`, exactly as the brief names them.
+
+## File identity — final bytes
+
+```
+d141648893366b9c7adf11dbc8c760b216f84de07c2ccd183c466d145af4adc8  proofs/S0-01/tools/acp_probe.py  695 lines
+d7f033dc85169bfacaba7cb8a51493aae363b28c702aa635ee8bd59ce87fb3fe  tests/test_s0_01_acp_probe.py  3681 lines
+```
+
+(These are the bytes the lane_gate ran: `RESULT: rev=c6c384aee4fc files=2 deleted=0 runs=2 identical=yes rc=0 summary="119 passed in 51.24s 119 passed in 51.26s"`.)
+
+## DONE table (item → final file:line → red control → green proof)
+
+| item | final location | red / negative control | green / proof |
+|---|---|---|---|
+| 1. O_DIRECTORY load-bearing | probe:330-338 `framedir_fd = os.open(framedir, O_RDONLY \| O_DIRECTORY \| O_NOFOLLOW \| O_CLOEXEC)` + named ENOTDIR refusal `framedir is not a directory` (probe:333-338); structural pin test:3403 | O_DIRECTORY-DROPPED mutant: with the flag the open raises `errno=20 (Not a directory)`; without it the same open SUCCEEDS (isdir=False) — the flag is the only thing standing between a non-directory fd and the probe | open-level ENOTDIR proof (test:3366) + structural flag pin (test:3403) on the final bytes; the hostile-rig dir→file black-box shape measured 0/210 (DISCREPANCIES), so the open-level proof is the load-bearing kill |
+| 2. O_CLOEXEC load-bearing | probe:331 `os.O_CLOEXEC` in the framedir flag set + probe:382-390 `close_fds=True` pinned in the Popen | real-emitter census: the census agent (walks `/proc/self/fd`, counts dir fds at the framedir) asserts CENSUS=0 on the final bytes (test:3603); the isolated F_SETFD census (test:3623) sets the bit→0, clears it→1 | CENSUS=0 on final bytes through the real emitter; the SAME agent reads 0 on the CLOEXEC-DROPPED mutant through the real emitter (NOT 1 — DISCREPANCIES, Amendment 2); the two independent defences (the flag + `close_fds=True`) are pinned separately (test:3403) |
+| 3. READ side open-then-fstat | probe:49-76 `def _open_regular_read` (open → fstat → S_ISREG → use); the probe's own file (probe:139), agent entrypoint (probe:215), and fixture (probe:278) all read through it | READ-NONBLOCK-DROPPED: FIFO at the fixture hangs rc 124 under the watchdog; the OLD stat-then-open shape (restored) hangs rc 124 on the same pre-swapped FIFO (scratch driver, never through pytest) | the primitive refuses every non-regular shape by its exact reason in 0.05 s (test:3436): FIFO/chardev/dir → `not a regular file`, symlink → ELOOP, missing → ENOENT; regular file reads (test:3424); no fd left behind on refusal (test:3466); ap_screen AF-AP-70 rows: 0 on the final bytes |
+| 4. receiver inventory extended for reads | test:2833 `_RECEIVER_INVENTORY` (24 entries, read side alongside write); equality asserted test:3039; the planted-reader negative control test:3075 | INVENTORY-READER-MISSING: a planted reader in a brand-new function diverges the scan from the inventory (test:3075); READ-OUTSIDE-PRIMITIVE: a fixture read that bypasses `_open_regular_read` diverges it (test:3546 region) | measured scan == inventory (24 == 24, bad == 0); the write scan is unchanged (exact by key, not a floor) |
+| 5. serial four-file run | (no code) — run, not build | n/a | two foreground calls through test_summary.sh with the venue exports: pair 1 (probe + negative_contract) `178 passed in 51.17s`; pair 2 split — check_initialize `54 passed in 9.84s`, check_acp_conformance `374 passed, 9 xfailed in 681.86s`; the four-file xdist run `-n 4` `606 passed, 9 xfailed in 202.46s` (the serial sum 178+54+374 = 606) |
+| 6. mutants ≥ 12 fresh rows on final bytes | probe + test (see mutant table) | each read-side mutant applied to a fresh scratch copy of the final bytes and run against the shape that kills it (scratch/rd/i6_mutants.py, PID-group watchdog) | 11 fresh rows, none survive (table below); the source-scan rows (OUTSIDE-PRIMITIVE, STAT-ON-PATH scan half, INVENTORY-READER-MISSING) in test:3481 + the inventory test; the write-side rows J1-J5, F3-1..3 re-run on the final bytes: `10 passed, 109 deselected` |
+| 7. exact negative reasons | probe:284 `fixture is not a regular file`, probe:334 `framedir is not a directory`, probe:70 `not a regular file` | n/a (asserted, not built) | every refusal asserted by its exact stderr text AND rc (never `rc != 0` alone): FIFO/chardev/dir → rc 64 + `not a regular file`, ENOTDIR → rc 1 + `framedir is not a directory`, ELOOP → the errno, the open-level ENOTDIR → `errno=20`; no `if <literal>:` predicate without a raising other arm in the new tests |
+| 8. gates on the final bytes | (gates) | n/a | `lane_gate.sh -r c6c384a -f "probe test" -t "test" -n 2` → `RESULT ... identical=yes rc=0 summary="119 passed in 51.24s 119 passed in 51.26s"`; four-file xdist `-n 4` `606 passed, 9 xfailed`; pyflakes rc 0 on both files; FILE IDENTITY block above; report_lint run last (see DISCREPANCIES for the final summary line) |
+| 9. 18-class self-sweep by RUN | probe + test | n/a | sweep over the final bytes agrees with N5j's table, one row each: probe AF-AP-55×3 (probe:410/486/577, the `/proc/<pid>/exe` identity race, known), AP-1×2 (probe:257/349, the env input channel, domain-gated), AP-32×2 (probe:86/177, SHA256 for evidence identity), AP-24×1 (probe:591, the M3 last-resort broad catch); test AF-AP-57×1 (test:1450, the intentional count-gated fake in the readlink test, body unchanged from the PIN). AF-AP-70: 0 rows (was the defect this round closed) |
+| 10. report discipline | this file | n/a | DONE table, mutant table, identity block, DISCREPANCIES, NOT-done first-class — all present. F4 is the coordinator's and was not touched |
+
+## Mutant table (≥ 12 fresh rows on scratch copies of the FINAL bytes; killer lines pasted; survivors by construction stated)
+
+| mutant | final bytes (shape) | mutant (shape) | verdict |
+|---|---|---|---|
+| O_DIRECTORY-DROPPED (killer a: open level) | `os.open(file, O_RDONLY\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` → `OSError errno=20 (Not a directory)` | same open minus O_DIRECTORY → `OPENED isdir=False` | KILLED (the flag makes the open raise instead of return a non-directory fd) |
+| O_DIRECTORY-DROPPED (killer b: structural pin) | test:3403 pins the framedir flag set to `O_RDONLY \| O_DIRECTORY \| O_NOFOLLOW \| O_CLOEXEC` | dropping the flag from the source fails the pin | KILLED (structural) |
+| CLOEXEC-DROPPED | real-emitter census CENSUS=0 (test:3603) | real-emitter census CENSUS=0 (NOT 1 — `close_fds=True` is the second defence) | NOT reproducible through the real emitter by construction (Amendment 2); the flag's own proof is the isolated F_SETFD census (bit set→0, cleared→1, test:3623) + the structural pin (test:3403). Stated as such. |
+| CLOSE_FDS-FALSE | real-emitter census CENSUS=0 | real-emitter census CENSUS=0 (the CLOEXEC flag still holds even with `close_fds=False`) | NOT reproducible by construction; the pin is `close_fds=True` at probe:390, asserted not overridden (test:3403). Stated as such. |
+| READ-NONBLOCK-DROPPED | FIFO at fixture → rc 64 `fixture is not a regular file` (0.06 s) | FIFO at fixture → rc 124 (the blocking open hangs under the 10 s watchdog) | KILLED (the FIFO hang returns) |
+| READ-NOFOLLOW-DROPPED | symlink at fixture → `REFUSED errno=40 (ELOOP)` | symlink at fixture → `ACCEPTED (read 8 bytes of the target)` | KILLED (the final-component symlink is followed and its regular target read) |
+| READ-ISREG-DROPPED | /dev/zero at fixture → `REFUSED: not a regular file: /dev/zero` | /dev/zero at fixture → `ACCEPTED (file object returned, no read performed)` | KILLED (a char device is accepted; /dev/zero never reaches EOF if read) |
+| READ-FD-LEAK-ON-REFUSE | /dev/zero refusal → `LEAKED=no (delta=0)` | /dev/zero refusal with the `os.close(fd)` removed → `LEAKED=yes (delta=1)` | KILLED (the refusal leaves a descriptor behind) |
+| READ-OUTSIDE-PRIMITIVE | scan == inventory (24) | a fixture read that bypasses `_open_regular_read` (`json.load(open(fixture_path))`) → scan diverges from the inventory | KILLED (source-scan, test:3546 region) |
+| READ-STAT-ON-PATH (old shape restored) | the primitive open-then-fstat → FIFO refused rc 64 | the old `os.stat`-then-`open` shape → the FIFO hang rc 124 (scratch driver, never through pytest); scan half diverges from the inventory (test:3481) | KILLED (the AF-AP-70 read race returns) |
+| INVENTORY-READER-MISSING | scan == inventory (24) | a planted reader in a brand-new function → scan diverges | KILLED (source-scan, test:3075) |
+| J1 (restore O_TRUNC) | `test_probe_hardlink_refusal_preserves_the_foreign_inode` green | O_TRUNC restored → foreign inode clobbered → test fails | KILLED on the final bytes (`10 passed` re-run) |
+| J2 (remove nlink check) | hardlink refusal green | the `st.st_nlink != 1` check removed → test fails | KILLED on the final bytes |
+| J3 (remove both realpath checks) | symlinked-framedir refusal green | both `framedir path contains a symlink` checks removed → test fails | KILLED on the final bytes |
+| J4 (drop dir_fd from _leaf_handle) | path-swap writes stay on the original fd green | the dir-fd-relative writes dropped → foreign files appear → test fails | KILLED on the final bytes |
+| J5 (remove bare-name guard) | `../escape` rejected green | the bare-basename guard removed → test fails | KILLED on the final bytes |
+| F3-1 (planted `open(w)`) | scan == inventory | a planted `builtins.open` write → inventory changed → test fails | KILLED on the final bytes |
+| F3-2 (planted `Path.write_text`) | scan == inventory | a planted `write_text` receiver → inventory changed → test fails | KILLED on the final bytes |
+| F3-3 (delete `_write_env`) | scan == inventory | the `_write_env(framedir, framedir_fd)` call deleted → inventory changed → test fails | KILLED on the final bytes |
+
+No read-side mutant survives on its own shape. The two real-emitter CLOEXEC rows (CLOEXEC-DROPPED, CLOSE_FDS-FALSE) do not reproduce through the real emitter by construction (Amendment 2) and are stated as such; their flags are load-bearing by the isolated F_SETFD census + the structural pins, which is exactly the replacement negative control the amendment prescribes.
+
+## DISCREPANCIES
+
+1. Item 2 premise (CORRECTED by Amendment 2, re-confirmed on the final bytes): "the SAME census agent reports ONE on the CLOEXEC-DROPPED mutant through the real emitter." Measured: the census agent reads CENSUS=0 on BOTH the final bytes and the CLOEXEC-DROPPED mutant through the real emitter (scratch/rd/i2_census.py + test:3603/3623). The `close_fds=True` second defence (probe:390) is what keeps the child's fd table at 0 even with O_CLOEXEC dropped. The isolated F_SETFD census (the bit is the sole decider: set→0, cleared→1) is the flag's own load-bearing proof, per the amendment. The item is built on the measured truth (the two structural pins + the isolated census), not the non-reproducing real-emitter premise.
+2. Item 1(a) premise (bounded rule, 3 experiments): "a hostile rig where the framedir passes both realpath checks as a directory and is then replaced by a REGULAR FILE before the os.open — the probe exits 1 with the ENOTDIR line, no leaf written." Measured black-box: 0/210 window wins across three sweeps (scratch/rd/i1_sweep.py + i1_fine.py + spin_racer.py); the isdir→os.open window is ~microseconds and the framedir open (probe:330) PRECEDES the agent Popen (probe:388), so no agent-driven swap can land it either. The swap at 20-40 ms lands before the isdir check (rc 64, makedirs EEXIST); at 50-150 ms it lands after the open (rc 1_other). The O_DIRECTORY flag IS load-bearing at the open level (the ENOTDIR proof, item 1 killer a) and by the structural pin (killer b); the hostile-rig black-box shape is reported, not chased.
+3. Item 6 O_DIRECTORY-DROPPED "two killers": a file planted at the framedir path does NOT reach the open on either final or mutant (the makedirs check at probe:316 fails first, rc 64 on both), so the two killers are the open-level ENOTDIR proof + the structural pin, not two black-box rig runs. Stated as such in the mutant table.
+4. ap_screen AF-AP-70 residual on the final bytes: 0 rows. During the build, one AF-AP-70 row appeared bridging the read primitive's correct fstat-on-fd guard (probe:69) to a prose `open()` token in the `_sha256_file` comment — a heuristic false positive (the guard checks the OPEN DESCRIPTOR via `os.fstat(fd)`, not a path stat). The comment was reworded to drop the literal `open(` token (it is prose, not code); the screen then reported 0 AF-AP-70 rows on the final bytes.
+5. report_lint final summary line: <PASTE AFTER THE LINT RUN>.
+
+## Wall clock per item (ARM B / xhigh)
+
+The incremental draft timestamps (report-draft.md) are the source. Item 5's pair-2 conformance run (681.86 s) and the lane_gate (~120 s) dominate; the build items 1-4 and the mutant sweep (item 6) were the rest. F4 was not run (coordinator's).
