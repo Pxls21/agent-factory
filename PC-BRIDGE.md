@@ -171,7 +171,11 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
   `/v1/models` + GPU line); `… probe` for one content-gated completion. Run `… guard` before any matrix or
   model-server restart: it reports local/cloud route per live lane from `/proc/<pid>/environ`, refuses local and
   absent-route lanes with rc 7, and lets cloud-route lanes continue. `install` returns with no service operation for an
-  unchanged rendered unit; otherwise it runs that guard before it writes the unit or invokes systemd.
+  unchanged rendered unit; otherwise it runs that guard before it writes the unit or invokes systemd. Use
+  `restart-when-idle` for a changed target: it atomically replaces `~/qwen-builder/pending/env`, keeps one watcher, and applies
+  only after two consecutive zero `llamacpp:requests_processing` samples, no local lane, and no
+  `~/qwen-builder/matrix/.cell.lock`. `status` shows pending hash/time/watcher/blocker; terminal env-keyed records are in
+  `~/qwen-builder/logs/deferred-restart.log` (`applied`, `expired` rc 75, or `failed` rc n).
   `start|stop|restart|uninstall` guard before their first effect (AF-AP-79). Never
   restart while the owner's own sessions use the route. The bridge shell has no `XDG_RUNTIME_DIR`; the script exports
   `/run/user/$(id -u)` itself — do the same for any bare `systemctl --user` / `systemd-analyze --user` call over the bridge.

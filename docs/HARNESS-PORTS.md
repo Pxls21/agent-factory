@@ -394,7 +394,7 @@ the local Qwen3.8-27B (unsloth UD-IQ4_XS, sha256 `40fac405…6199`) served by th
 owner's 3090, FIRST, then the `agentfactory-build` cloud chain as fallback. Two scripts own it, both idempotent and
 both proven live on the PC that day (no owner step was needed):
 
-- `harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|start|stop|restart|status|health|probe|uninstall` — the
+- `harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|restart-when-idle|start|stop|restart|status|health|probe|uninstall` — the
   systemd `--user` unit `qwen-builder` (loopback `127.0.0.1:8080`, `--api-key-file
   ~/.config/qwen-builder/api-key` 0600). The default measured shape is `-ngl 99 -c 262144 -np 1 -fa on
   -ctk/-ctv q4_0 --cache-reuse 256 --cache-ram 8192 --spec-type draft-mtp --spec-draft-n-max 3 --jinja
@@ -403,7 +403,11 @@ both proven live on the PC that day (no owner step was needed):
   though the binary supports more speculation types. Invalid domains fail closed with rc 3. `guard` reports each live
   lane's route from `/proc/<pid>/environ`; local and absent/empty routes refuse with rc 7, cloud routes do not block,
   and stale pidfiles are reported and ignored. `install` returns without a service operation when the
-  rendered unit is unchanged; otherwise it guards before keygen, directory/unit writes, or systemd calls. `start|stop|restart|uninstall`
+  rendered unit is unchanged; otherwise it guards before keygen, directory/unit writes, or systemd calls. `restart-when-idle`
+  atomically records the target environment under `~/qwen-builder/pending/` and starts one detached watcher. The watcher applies
+  only after two consecutive `llamacpp:requests_processing 0` samples while `guard` is clear and
+  `~/qwen-builder/matrix/.cell.lock` is absent. It logs env-keyed `applied`, `expired` (rc 75), or `failed` records; `status`
+  reports the pending env hash, age, watcher state, and last blocker. `start|stop|restart|uninstall`
   guard before their first effect (AF-AP-79). `verify` fails
   closed on the binary, HF blob name == sha256, and GGUF magic; `probe` gates on completion CONTENT. Suite:
   `harness-ports/tests/test_qwen_server.sh` (the unit is quoted by systemd.syntax(7), never bash `%q`).
@@ -431,9 +435,10 @@ raise "Unexpected reasoning effort", the request fails, and OmniRoute falls thro
 clamps `ultra`/`max`/`high` to `xhigh` on every local route and prints the clamp; an explicit cloud route keeps its effort verbatim
 (both cases in `test_pc_lane.sh`). Measured 2026-09-14 17:1xZ: this llama-server build ignores a top-level per-request `reasoning_effort`, so Hermes's `--reasoning` is INERT
 on the local model; the effort a lane runs at is the server's `--chat-template-kwargs` default. The sandbox dispatcher therefore
-sets it per role before every launch on a local route (`scripts/pc_lane.sh` step 1c → `QWEN_EFFORT=<effort> qwen-server.sh
-install`: a restart only when the unit text changed, refused under a live lane pidfile — the dispatch stops rather than kill a
-lane; `LANE_SERVER_EFFORT` overrides, `LANE_SET_SERVER_EFFORT=0` skips; `harness-ports/tests/test_pc_lane_dispatcher.sh`).
+checks the running process argv before every local launch. A mismatch queues `QWEN_EFFORT=<effort> qwen-server.sh
+restart-when-idle --max-wait 1800`, then polls the deferred log for the exact pending env hash. It launches only after `applied`;
+`expired` reports the final blocker and `failed` propagates its rc. Cloud routes skip this step. `LANE_SERVER_EFFORT` overrides and
+`LANE_SET_SERVER_EFFORT=0` skips (`scripts/pc_lane.sh` step 1c; `harness-ports/tests/test_pc_lane_dispatcher.sh`).
 The per-request `chat_template_kwargs` path is forwarded by OmniRoute and honoured by the server (proven by an invalid value's
 HTTP 400 both ways) but Hermes does not send it — the refinement for concurrent mixed efforts, not wired.
 

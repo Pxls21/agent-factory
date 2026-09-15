@@ -6,16 +6,17 @@
 # key that ONLY OmniRoute reads (project rule 3: OmniRoute is the sole model egress — Hermes never talks to
 # this port directly; harness-ports/bin/omniroute_local_builder.py wires the provider node + combo).
 #
-#   harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|start|stop|restart|status|health|probe|uninstall
+#   harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|restart-when-idle|start|stop|restart|status|health|probe|uninstall
 #
 #   argv      print the llama-server argv (one token per line) — the testable surface
 #   unit      print the systemd --user unit text
 #   keygen    create the API key file (0600, 64 hex) if absent; the value is never printed
 #   guard     report live lane routes; rc 7 when a local-route lane makes a service change unsafe
 #   install   guard before writes, verify binary + model, write/enable the unit, wait for /health
-#   status    unit state + the served model list (no key ever printed)
+#   restart-when-idle [--max-wait S] [--poll S] — queue a unit change until every server consumer is idle
+#   status    unit state + served model + pending restart state (no key ever printed)
 #   health    rc 0 iff /health is ok AND /v1/models lists the alias
-#   probe     one 24-token completion through the server; prints the served model id + timings
+#   probe     one content-gated completion through the server; prints model id + timings
 #
 # Every knob is an env override with the measured default (never edit the defaults in place — re-measure).
 set -uo pipefail
@@ -52,6 +53,14 @@ QWEN_HOME="${QWEN_HOME:-$HOME/qwen-builder}"
 QWEN_HEALTH_WAIT_S="${QWEN_HEALTH_WAIT_S:-180}"
 QWEN_LANES_DIR="${QWEN_LANES_DIR:-$HOME/agent-factory/.lanes}"
 QWEN_PROC_ROOT="${QWEN_PROC_ROOT:-/proc}"       # tests point this at a fixture only for unreadable-environ failure
+QWEN_PENDING_MAX_WAIT="${QWEN_PENDING_MAX_WAIT:-28800}" # 8 h
+QWEN_PENDING_POLL="${QWEN_PENDING_POLL:-30}"
+QWEN_PENDING_DIR="$QWEN_HOME/pending"
+QWEN_PENDING_ENV="$QWEN_PENDING_DIR/env"
+QWEN_PENDING_PID="$QWEN_PENDING_DIR/watcher.pid"
+QWEN_PENDING_STATE="$QWEN_PENDING_DIR/state"
+QWEN_DEFERRED_LOG="$QWEN_HOME/logs/deferred-restart.log"
+QWEN_MATRIX_LOCK="$QWEN_HOME/matrix/.cell.lock"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 die() { echo "qwen-server: $*" >&2; exit "${2:-1}"; }
@@ -201,7 +210,7 @@ verify_inputs() {
   [ "$magic" = "GGUF" ] || die "model file is not a GGUF (magic ${magic@Q})" 3
 }
 
-curl_key() { curl -s -m "${1:-5}" -H "Authorization: Bearer $(cat "$QWEN_KEY_FILE")" "${@:2}"; }
+curl_key() { curl -s -m "${1:-5}" -H "Authorization: Bearer $(<"$QWEN_KEY_FILE")" "${@:2}"; }
 
 health() {
   local h; h=$(curl -s -m 3 "http://$QWEN_HOST:$QWEN_PORT/health" 2>/dev/null)
@@ -226,7 +235,7 @@ install() {
   validate_knobs
   candidate=$(unit) || exit $?
   if [ -f "$unit_path" ] && printf '%s\n' "$candidate" | cmp -s - "$unit_path"; then changed=0; fi
-  if [ "$changed" -eq 0 ]; then
+  if [ "$changed" -eq 0 ] && [ "${QWEN_PENDING_FORCE_RESTART:-0}" != 1 ]; then
     verify_inputs
     echo "qwen-server: unit $QWEN_UNIT unchanged; no service change needed"
     return 0
@@ -249,13 +258,176 @@ install() {
   wait_health
 }
 
+status_pending() {
+  local env_sha since pid alive=dead last=none terminal
+  if [ ! -f "$QWEN_PENDING_ENV" ]; then
+    echo "qwen-server: pending restart: none"
+    return
+  fi
+  env_sha=$(sha256sum "$QWEN_PENDING_ENV" | awk '{print substr($1,1,12)}')
+  since=$(awk -F= '$1 == "since" {sub(/^[^=]*=/, ""); print; exit}' "$QWEN_PENDING_STATE" 2>/dev/null)
+  last=$(awk -F= '$1 == "last" {sub(/^[^=]*=/, ""); print; exit}' "$QWEN_PENDING_STATE" 2>/dev/null)
+  pid=$(cat "$QWEN_PENDING_PID" 2>/dev/null || true)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ ! -f "$QWEN_PENDING_DIR/watcher.rc" ]; then alive=alive; else pid=none; fi
+  if [ "$alive" = dead ]; then
+    terminal=$(awk -v sha="$env_sha" '$1 ~ /^(expired|failed)$/ && $0 ~ "env-sha=" sha {line=$0} END {print line}' "$QWEN_DEFERRED_LOG" 2>/dev/null)
+    case "$terminal" in *blocked-by=*) last=${terminal##*blocked-by=};; failed\ *) last=failed;; esac
+  fi
+  echo "qwen-server: pending restart: env-sha=$env_sha since=${since:-unknown} watcher=$pid alive=$alive last=${last:-none}"
+}
+
 status() {
   systemctl --user is-enabled "$QWEN_UNIT" 2>/dev/null | sed 's/^/qwen-server: unit enabled=/'
   systemctl --user is-active "$QWEN_UNIT" 2>/dev/null | sed 's/^/qwen-server: unit active=/'
   loginctl show-user "$(id -un)" -p Linger 2>/dev/null | sed 's/^/qwen-server: user /'   # Linger=yes keeps the unit alive with no login session
   grep -o 'reasoning_effort[^}]*' "$HOME/.config/systemd/user/$QWEN_UNIT.service" 2>/dev/null | head -1 | sed 's/^/qwen-server: unit effort /'
+  status_pending
   health || true
   command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader | sed 's/^/qwen-server: gpu /'
+}
+
+pending_env_snapshot() {
+  local name
+  for name in QWEN_LLAMA_SERVER QWEN_MODEL_GGUF QWEN_MODEL_REPO_DIR QWEN_MODEL_FILE QWEN_MODEL_SHA256 QWEN_ALIAS \
+              QWEN_HOST QWEN_PORT QWEN_CTX QWEN_SLOTS QWEN_NGL QWEN_KV_TYPE QWEN_MTP_N QWEN_EFFORT \
+              QWEN_CACHE_REUSE QWEN_CACHE_RAM QWEN_CTXCP QWEN_CMS QWEN_UBATCH QWEN_SPEC_P_MIN QWEN_SPEC_TYPE \
+              QWEN_KEY_FILE QWEN_UNIT QWEN_HOME QWEN_HEALTH_WAIT_S QWEN_LANES_DIR QWEN_PROC_ROOT \
+      QWEN_TEST_METRIC_FILE QWEN_TEST_CALLS QWEN_TEST_ACTIVE_RC QWEN_TEST_ANALYZE_RC; do
+    [ -v "$name" ] && printf '%s=%q\n' "$name" "${!name}"
+  done
+  printf 'QWEN_PENDING_FORCE_RESTART=%q\n' "${QWEN_PENDING_FORCE_RESTART:-0}"
+}
+
+pending_state() { # pending_state LAST_REASON
+  local tmp="$QWEN_PENDING_STATE.tmp.$$"
+  printf 'since=%s\nlast=%s\n' "${QWEN_PENDING_SINCE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" "$1" > "$tmp"
+  mv -f "$tmp" "$QWEN_PENDING_STATE"
+}
+
+pending_log() { # pending_log TERMINAL [DETAIL]
+  mkdir -p "$QWEN_HOME/logs"
+  printf '%s %s%s\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:+ $2}" >> "$QWEN_DEFERRED_LOG"
+}
+
+pending_log_for_env() { # pending_log_for_env TERMINAL ENV_SHA [DETAIL]
+  local terminal=$1 env_sha=$2 detail=${3:-}
+  pending_log "$terminal" "env-sha=$env_sha${detail:+ $detail}"
+}
+
+pending_guard_reason() {
+  local out rc
+  out=$(guard); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'local lane %s\n' "$(printf '%s\n' "$out" | awk '$3 == "LOCAL" {print $1; exit}')"
+    return
+  fi
+  [ ! -e "$QWEN_MATRIX_LOCK" ] || { echo "matrix cell"; return; }
+  local metrics value
+  metrics=$(curl_key 5 "http://$QWEN_HOST:$QWEN_PORT/metrics" 2>/dev/null) || { echo "busy"; return; }
+  value=$(printf '%s\n' "$metrics" | awk '$1 == "llamacpp:requests_processing" {print $2; found=1} END {if (!found) exit 1}') || { echo "busy"; return; }
+  [ "$value" = 0 ] || { echo "busy"; return; }
+  echo "idle"
+}
+
+pending_watcher() { # internal: pending_watcher MAX_WAIT POLL START_EPOCH
+  local max_wait=$1 poll=$2 started=$3 reason last_reason=none idle_count=0 rc env_sha current_sha argv_sha
+  local watcher_pid=$$
+  trap 'rc=$?; printf "%s\\n" "$rc" > "$QWEN_PENDING_DIR/watcher.rc"; [ "$(cat "$QWEN_PENDING_PID" 2>/dev/null || true)" != "$watcher_pid" ] || rm -f "$QWEN_PENDING_PID"' EXIT
+  while :; do
+    env_sha=$(sha256sum "$QWEN_PENDING_ENV" | awk '{print substr($1,1,12)}')
+    if [ "$(( $(date +%s) - started ))" -ge "$max_wait" ]; then
+      pending_log_for_env expired "$env_sha" "blocked-by=$last_reason"
+      exit 75
+    fi
+    reason=$(pending_guard_reason)
+    if [ "$reason" = idle ]; then
+      current_sha=$(sha256sum "$QWEN_PENDING_ENV" | awk '{print substr($1,1,12)}')
+      if [ "$current_sha" != "$env_sha" ]; then
+        idle_count=0; env_sha=$current_sha
+      fi
+      idle_count=$((idle_count + 1))
+    else
+      idle_count=0
+    fi
+    if [ "$idle_count" -ge 2 ]; then
+      # The latest atomically-replaced snapshot wins. Require its identity to survive a final gate pass before any effect.
+      current_sha=$(sha256sum "$QWEN_PENDING_ENV" | awk '{print substr($1,1,12)}')
+      if [ "$current_sha" != "$env_sha" ]; then idle_count=0; env_sha=$current_sha; continue; fi
+      set -a; . "$QWEN_PENDING_ENV"; set +a
+      reason=$(pending_guard_reason)
+      if [ "$reason" != idle ]; then
+        idle_count=0
+        if [ "$reason" != "$last_reason" ]; then pending_state "$reason"; echo "waiting: $reason" >> "$QWEN_PENDING_DIR/watcher.log"; last_reason=$reason; fi
+        sleep "$poll"
+        continue
+      fi
+      set +e
+      ( install )
+      rc=$?
+      set -e
+      if [ "$rc" -ne 0 ]; then
+        pending_log_for_env failed "$env_sha" "rc=$rc"
+        exit "$rc"
+      fi
+      health >/dev/null 2>&1 || { rc=$?; pending_log_for_env failed "$env_sha" "rc=$rc"; exit "$rc"; }
+      argv_sha=$(argv | sha256sum | awk '{print substr($1,1,12)}')
+      pending_log_for_env applied "$env_sha" "argv-sha=$argv_sha"
+      rm -f "$QWEN_PENDING_ENV" "$QWEN_PENDING_STATE"
+      return 0
+    fi
+    if [ "$reason" != "$last_reason" ]; then
+      pending_state "$reason"
+      echo "waiting: $reason" >> "$QWEN_PENDING_DIR/watcher.log"
+      last_reason=$reason
+    fi
+    sleep "$poll"
+  done
+}
+
+restart_when_idle() {
+  local max_wait=$QWEN_PENDING_MAX_WAIT poll=$QWEN_PENDING_POLL arg candidate unit_path pid tmp started
+  shift
+  while [ "$#" -gt 0 ]; do
+    arg=$1; shift
+    case "$arg" in
+      --max-wait) [ "$#" -gt 0 ] || die "--max-wait needs seconds" 64; max_wait=$1; shift;;
+      --poll) [ "$#" -gt 0 ] || die "--poll needs seconds" 64; poll=$1; shift;;
+      *) die "restart-when-idle: unknown argument $arg" 64;;
+    esac
+  done
+  [[ "$max_wait" =~ ^[1-9][0-9]*$ ]] || die "--max-wait must be a positive integer" 64
+  [[ "$poll" =~ ^[1-9][0-9]*$ ]] || die "--poll must be a positive integer" 64
+  validate_knobs
+  candidate=$(unit) || exit $?
+  unit_path="$HOME/.config/systemd/user/$QWEN_UNIT.service"
+  if [ "${QWEN_PENDING_FORCE_RESTART:-0}" != 1 ] && [ -f "$unit_path" ] && printf '%s\n' "$candidate" | cmp -s - "$unit_path" && health >/dev/null 2>&1; then
+    echo "qwen-server: already applied"
+    return 0
+  fi
+  mkdir -p "$QWEN_PENDING_DIR" "$QWEN_HOME/logs"
+  exec 9> "$QWEN_PENDING_DIR/launch.lock"
+  flock 9
+  tmp="$QWEN_PENDING_ENV.tmp.$$"; pending_env_snapshot > "$tmp"; mv -f "$tmp" "$QWEN_PENDING_ENV"
+  QWEN_PENDING_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ); export QWEN_PENDING_SINCE
+  pending_state none
+  # Hold the launch lock until the pending env and watcher pid are both published.
+  pid=$(cat "$QWEN_PENDING_PID" 2>/dev/null || true)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ ! -f "$QWEN_PENDING_DIR/watcher.rc" ]; then
+    echo "qwen-server: pending: watcher $pid"
+    return 0
+  fi
+  rm -f "$QWEN_PENDING_PID" "$QWEN_PENDING_DIR/watcher.rc"
+  started=$(date +%s)
+  # setsid detaches from the caller. Tests may set QWEN_TEST_WATCH_RC to keep the child waitable.
+  if [ -n "${QWEN_TEST_WATCH_RC:-}" ]; then
+    pending_watcher "$max_wait" "$poll" "$started" > "$QWEN_PENDING_DIR/watcher.out" 2>&1 &
+  else
+    setsid env QWEN_PENDING_SINCE="$QWEN_PENDING_SINCE" bash "$0" _pending-watcher "$max_wait" "$poll" "$started" \
+      > "$QWEN_PENDING_DIR/watcher.out" 2>&1 < /dev/null &
+  fi
+  pid=$!; printf '%s\n' "$pid" > "$QWEN_PENDING_PID"
+  flock -u 9
+  echo "qwen-server: pending: watcher $pid"
 }
 
 probe() {
@@ -293,10 +465,12 @@ case "${1:-}" in
   guard) guard; exit $?;;
   verify) verify_inputs && echo "qwen-server: inputs verified (binary, model, sha256 $QWEN_MODEL_SHA256, GGUF magic)";;
   install) install;;
+  restart-when-idle) restart_when_idle "$@";;
+  _pending-watcher) pending_watcher "$2" "$3" "$4";;
   start|stop|restart) change_service "$1";;
   status) status;;
   health) health;;
   probe) probe;;
   uninstall) uninstall;;
-  *) sed -n '2,21p' "$0"; exit 64;;
+  *) sed -n '2,22p' "$0"; exit 64;;
 esac

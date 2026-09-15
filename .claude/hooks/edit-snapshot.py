@@ -232,6 +232,10 @@ TEST_SCREEN = [
     # and scope it to the AST node it guards.
     ("AF-AP-80", re.compile(r"""\bassert\b[^\n]*\bin\s+(?:[^\n]*?\.read_text\(\)|(?:[A-Za-z_][\w.]*\.)?(?:source|src|SOURCE|SRC|module_text|file_text)\b|ast\.unparse\()"""),
      "a source-text pin (`in …read_text()` / `in source` / `in ast.unparse(...)`) standing in for a behavioral property — a comment or a second call satisfies it; pair it with a negative control that fails when the PROPERTY fails and scope the pin to the AST node (AF-AP-80)"),
+     # AF-AP-87 (2026-09-15, QM0-b): a `! kill -0` liveness gate reads a zombie (Z/defunct, unreaped) PID as alive.
+     # Shell-test pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
+     ("AF-AP-87", re.compile(r"""!\s*kill -0\b"""),
+      "a `! kill -0 <pid>` liveness gate reads a zombie (Z/defunct, unreaped) PID as ALIVE — treat dead as absent OR /proc/<pid>/stat=Z (an is_dead helper), or pair the pid with a persisted terminal rc, never kill -0 alone (AF-AP-87)"),
 ]
 
 MAX_SYMBOLS = 2

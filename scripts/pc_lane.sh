@@ -76,14 +76,30 @@ LANE_ID="$(basename "$BRIEF" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-40)-${PIN:0:8}
 # The token reaches curl through `--config -` on STDIN, never as an argv element
 # and never in a file. Stdin is the one channel that is neither the process table
 # nor the filesystem.
-bridge() { # bridge <shell-command>  -> remote stdout on stdout, remote stderr on stderr, remote rc
-  # The envelope unwrapping lives in scripts/pc_bridge_exec.py (tested by
-  # harness-ports/tests/test_pc_bridge_exec.py). Bit 2026-09-03: the inline version printed the
-  # JSON envelope, so the poll "worked" by substring luck and the report fetch base64-decoded JSON.
-  python3 "$ROOT/scripts/pc_bridge_exec.py" "$1"
-}
+[ -z "${PC_LANE_BRIDGE_FN:-}" ] || . "$PC_LANE_BRIDGE_FN"
+if ! declare -F bridge >/dev/null; then
+  bridge() { # bridge <shell-command>  -> remote stdout on stdout, remote stderr on stderr, remote rc
+    # The envelope unwrapping lives in scripts/pc_bridge_exec.py (tested by
+    # harness-ports/tests/test_pc_bridge_exec.py). Bit 2026-09-03: the inline version printed the
+    # JSON envelope, so the poll "worked" by substring luck and the report fetch base64-decoded JSON.
+    python3 "$ROOT/scripts/pc_bridge_exec.py" "$1"
+  }
+fi
 
 echo "pc_lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
+
+# --- 1. ship the brief -------------------------------------------------------
+# The effort-only seam exits before bridge I/O so its role table is testable without the PC.
+server_effort_for_role() { # role [HERMES_MODEL] [HERMES_REASONING] -> the server effort, or "" for a cloud route
+  local role="$1" model="${2:-}" eff="${3:-}"
+  case "$role" in code-implementer) : "${model:=agentfactory-build-local}"; : "${eff:=medium}";;
+                  adversarial-verifier) : "${model:=agentfactory-verify-local}"; : "${eff:=xhigh}";;
+                  *) [ -n "$model" ] || { echo ""; return; };; esac
+  case "$model" in agentfactory-*-local|qwen-local/*) ;; *) echo ""; return;; esac
+  case "$eff" in low|medium|xhigh) echo "$eff";; high|ultra|max) echo xhigh;; "") echo medium;; *) echo xhigh;; esac
+}
+SERVER_EFFORT="${LANE_SERVER_EFFORT:-$(server_effort_for_role "${ROLE:-}" "${HERMES_MODEL:-}" "${HERMES_REASONING:-}")}"
+if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-<cloud route>}"; exit 0; fi
 
 # --- 1. ship the brief -------------------------------------------------------
 # base64 so arbitrary brief content (quotes, $(), backticks) survives the trip
@@ -118,26 +134,48 @@ fi
 # Measured that day: this llama-server build ignores a top-level `reasoning_effort` (a `max` answered normally where the
 # Qwen3.8 template would raise) and Hermes sends no per-request template kwargs, so the effort a lane runs at is the
 # server's own `--chat-template-kwargs` default. Build lanes run at medium, verify lanes at xhigh (owner 2026-09-14:
-# build and verify alternate on the one slot), so the dispatcher sets the server default BEFORE the launch:
-# qwen-server.sh install rewrites the unit and restarts ONLY when its text changed and NO lane pidfile is alive (rc 7
-# otherwise — then this dispatch stops: a restart would kill the live lane mid-turn). The per-request path
+# build and verify alternate on the one slot), so the dispatcher queues a deferred restart BEFORE launch when the running
+# process's `reasoning_effort` differs. It waits for qwen-server.sh's terminal record for the exact pending env sha; a lane
+# never starts against the wrong server effort. The per-request path
 # (`chat_template_kwargs.reasoning_effort`, forwarded by OmniRoute — proven by the same raise) is the refinement for
 # concurrent mixed efforts; it needs a Hermes profile `extra_body` and is not wired.
-server_effort_for_role() { # role [HERMES_MODEL] [HERMES_REASONING] -> the server effort, or "" for a cloud route
-  local role="$1" model="${2:-}" eff="${3:-}"
-  case "$role" in code-implementer) : "${model:=agentfactory-build-local}"; : "${eff:=medium}";;
-                  adversarial-verifier) : "${model:=agentfactory-verify-local}"; : "${eff:=xhigh}";;
-                  *) [ -n "$model" ] || { echo ""; return; };; esac
-  case "$model" in agentfactory-*-local|qwen-local/*) ;; *) echo ""; return;; esac
-  case "$eff" in low|medium|xhigh) echo "$eff";; high|ultra|max) echo xhigh;; "") echo medium;; *) echo xhigh;; esac
-}
-SERVER_EFFORT="${LANE_SERVER_EFFORT:-$(server_effort_for_role "${ROLE:-}" "${HERMES_MODEL:-}" "${HERMES_REASONING:-}")}"
-if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-<cloud route>}"; exit 0; fi
 if [ -n "$SERVER_EFFORT" ] && [ "${LANE_SET_SERVER_EFFORT:-1}" = 1 ]; then
-  echo "pc_lane: local route — setting the server effort to $SERVER_EFFORT (a restart only if it changed; refused under a live lane)" >&2
-  EFF_OUT="$(bridge "cd $PC_AF_REPO && QWEN_EFFORT=$SERVER_EFFORT bash harness-ports/bin/qwen-server.sh install 2>&1")" || die "server effort not set: ${EFF_OUT##*$'\n'}"
-  printf '%s\n' "$EFF_OUT" | grep -q "healthy" || die "server effort not set — qwen-server.sh install did not end healthy: ${EFF_OUT##*$'\n'}"
-  printf '%s\n' "$EFF_OUT" | grep -E "restarting|healthy" | sed 's/^/pc_lane: /' >&2
+  QWEN_PENDING_LOG="${QWEN_PENDING_LOG:-$PC_AF_REPO/qwen-builder/logs/deferred-restart.log}"
+  EFF_STATE="$(bridge "python3 - <<'PY'
+import os
+wanted = '$SERVER_EFFORT'
+seen = ''
+for raw in open('/proc/$(systemctl --user show -p MainPID --value qwen-builder)/cmdline', 'rb').read().split(b'\\0'):
+    text = raw.decode('utf-8', 'replace')
+    if 'reasoning_effort' in text:
+        seen = text.split('reasoning_effort', 1)[1].lstrip('\\\" :=').split('\\\"', 1)[0].split('}', 1)[0]
+        break
+print('match' if seen == wanted else 'mismatch:' + (seen or 'unknown'))
+PY")" || die "server effort not read from the running argv"
+  if [ "$EFF_STATE" != match ]; then
+    echo "pc_lane: local route — queueing server effort $SERVER_EFFORT and waiting before launch" >&2
+    EFF_OUT="$(bridge "cd $PC_AF_REPO && QWEN_EFFORT=$SERVER_EFFORT bash harness-ports/bin/qwen-server.sh restart-when-idle --max-wait 1800")" || die "server effort restart not queued: ${EFF_OUT##*$'\n'}"
+    case "$EFF_OUT" in
+      *already\ applied*) echo "pc_lane: server effort already applied" >&2;;
+      *pending:\ watcher*)
+        EFF_SHA="$(bridge "sha256sum $PC_AF_REPO/qwen-builder/pending/env | cut -d' ' -f1 | cut -c1-12")" || die "server effort pending env sha unavailable"
+        [ -n "$EFF_SHA" ] || die "server effort pending env sha empty"
+        EFF_WAIT_POLLS="${LANE_EFFORT_WAIT_POLLS:-360}"; EFF_WAIT_SECONDS="${LANE_EFFORT_WAIT_SECONDS:-5}"; EFF_I=0; EFF_DONE=0
+        while [ "$EFF_I" -lt "$EFF_WAIT_POLLS" ]; do
+          EFF_I=$((EFF_I+1))
+          EFF_TERM="$(bridge "grep -E '^(applied|expired|failed) .* env-sha=$EFF_SHA( |$)' $QWEN_PENDING_LOG | tail -1" 2>/dev/null || true)"
+          case "$EFF_TERM" in
+            applied\ *) echo "pc_lane: server effort applied ($EFF_SHA)" >&2; EFF_DONE=1; break;;
+            expired\ *) die "server effort expired: ${EFF_TERM##*blocked-by=}";;
+            failed\ *) EFF_RC="${EFF_TERM##* rc=}"; echo "pc_lane: server effort failed rc=$EFF_RC" >&2; exit "${EFF_RC:-64}";;
+          esac
+          sleep "$EFF_WAIT_SECONDS"
+        done
+        [ "$EFF_DONE" -eq 1 ] || die "server effort wait ended without a terminal record for env-sha=$EFF_SHA"
+        ;;
+      *) die "server effort restart returned no pending or already-applied state: ${EFF_OUT##*$'\n'}";;
+    esac
+  fi
 fi
 
 # --- 2. launch DETACHED (replay-idempotent) ----------------------------------

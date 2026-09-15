@@ -17,14 +17,18 @@ set -uo pipefail
 unset QWEN_LLAMA_SERVER QWEN_MODEL_GGUF QWEN_MODEL_REPO_DIR QWEN_MODEL_FILE QWEN_MODEL_SHA256 QWEN_ALIAS QWEN_HOST \
       QWEN_PORT QWEN_CTX QWEN_SLOTS QWEN_NGL QWEN_KV_TYPE QWEN_MTP_N QWEN_EFFORT QWEN_CACHE_REUSE QWEN_CACHE_RAM \
       QWEN_CTXCP QWEN_CMS QWEN_UBATCH QWEN_SPEC_P_MIN QWEN_SPEC_TYPE QWEN_KEY_FILE QWEN_UNIT QWEN_HOME \
-      QWEN_HEALTH_WAIT_S QWEN_LANES_DIR QWEN_PROC_ROOT 2>/dev/null || true
+      QWEN_HEALTH_WAIT_S QWEN_LANES_DIR QWEN_PROC_ROOT QWEN_PENDING_MAX_WAIT QWEN_PENDING_POLL \
+      QWEN_PENDING_SINCE QWEN_PENDING_FORCE_RESTART QWEN_TEST_METRIC_FILE QWEN_TEST_WATCH_RC \
+      QWEN_TEST_ANALYZE_RC QWEN_TEST_ACTIVE_RC 2>/dev/null || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QS="$HERE/../bin/qwen-server.sh"
 TMP="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; exit 1; }
 CHILD_PIDS=""
+WATCHER_PIDS=""
 cleanup() {
   local pid
+  for pid in $WATCHER_PIDS; do kill "$pid" 2>/dev/null || true; done
   for pid in $CHILD_PIDS; do kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
   rm -rf "$TMP"
 }
@@ -344,6 +348,144 @@ for action in start stop restart uninstall; do
   check "$action refuses before disk or systemd change under a live local lane" $? "rc=$rc before=$BEFORE after=$AFTER calls=$(wc -l < "$CALLS")"
   kill_children; rm -rf "$LANES"; mkdir -p "$LANES"; : > "$CALLS"
 done
+
+# --- restart-when-idle: deferred state, three-way idle gate, single watcher, terminal records ----------------
+PENDING_HOME="$TMP/pending-home"; PENDING_LANES="$TMP/pending-lanes"; PENDING_SHIM="$TMP/pending-shim"
+mkdir -p "$PENDING_HOME/.config/systemd/user" "$PENDING_HOME/qwen-builder/logs" "$PENDING_LANES" "$PENDING_SHIM"
+PENDING_QWEN_HOME="$PENDING_HOME/qwen-builder"; PENDING_KEY="$PENDING_HOME/.config/qwen-builder/api-key"
+PENDING_UNIT="$PENDING_HOME/.config/systemd/user/qwen-builder.service"
+PENDING_CALLS="$TMP/pending-system-calls.log"; : > "$PENDING_CALLS"
+cat > "$PENDING_SHIM/systemctl" <<'SH'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "$QWEN_TEST_CALLS"
+case "$*" in *'is-active --quiet'*) exit "${QWEN_TEST_ACTIVE_RC:-0}";; esac
+exit 0
+SH
+cat > "$PENDING_SHIM/systemd-analyze" <<'SH'
+#!/usr/bin/env bash
+printf 'systemd-analyze %s\n' "$*" >> "$QWEN_TEST_CALLS"
+exit "${QWEN_TEST_ANALYZE_RC:-0}"
+SH
+cat > "$PENDING_SHIM/curl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'/metrics'*)
+    if [ -n "${QWEN_TEST_METRIC_FILE:-}" ]; then
+      IFS= read -r value < "$QWEN_TEST_METRIC_FILE" || exit 1
+      sed '1d' "$QWEN_TEST_METRIC_FILE" > "$QWEN_TEST_METRIC_FILE.next"
+      mv "$QWEN_TEST_METRIC_FILE.next" "$QWEN_TEST_METRIC_FILE"
+    else value=${QWEN_TEST_BUSY:-0}; fi
+    printf '# HELP llamacpp:requests_processing Number of requests processing.\n# TYPE llamacpp:requests_processing gauge\nllamacpp:requests_processing %s\n' "$value";;
+  *'/health'*) printf '{"status":"ok"}\n';;
+  *'/v1/models'*) printf '{"data":[{"id":"qwen3.8-27b-local"}]}\n';;
+  *) exit 1;;
+esac
+SH
+chmod +x "$PENDING_SHIM/systemctl" "$PENDING_SHIM/systemd-analyze" "$PENDING_SHIM/curl"
+export QWEN_TEST_CALLS="$PENDING_CALLS"
+pending_cmd() {
+  HOME="$PENDING_HOME" PATH="$PENDING_SHIM:$PATH" QWEN_HOME="$PENDING_QWEN_HOME" QWEN_KEY_FILE="$PENDING_KEY" \
+    QWEN_LANES_DIR="$PENDING_LANES" QWEN_HEALTH_WAIT_S=3 QWEN_TEST_WATCH_RC=1 bash "$QS" "$@"
+}
+wait_for_file() { local f=$1 i; for i in $(seq 1 100); do [ -e "$f" ] && return 0; sleep 0.05; done; return 1; }
+# A detached watcher can linger as a Z (zombie/defunct) PID after it exits until its parent
+# reaps it; kill -0 returns 0 for a zombie. For liveness "dead" therefore means absent OR
+# zombie (the PID-only-liveness class this lane fixed in the production status command).
+is_dead() { kill -0 "$1" 2>/dev/null || return 0; [ "$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null)" = Z ]; }
+wait_watcher() {
+  local p rc
+  p=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null || true); [ -n "$p" ] || return 1
+  wait "$p" 2>/dev/null; rc=$?
+  [ "$rc" -ne 127 ] || { wait_for_file "$PENDING_QWEN_HOME/pending/watcher.rc" || return 127; rc=$(cat "$PENDING_QWEN_HOME/pending/watcher.rc"); }
+  return "$rc"
+}
+reset_pending() {
+  local p
+  p=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null || true)
+  [ -z "$p" ] || { kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; }
+  rm -rf "$PENDING_QWEN_HOME/pending" "$PENDING_QWEN_HOME/matrix"
+  rm -f "$PENDING_QWEN_HOME/logs/deferred-restart.log" "$PENDING_UNIT"
+  : > "$PENDING_CALLS"
+}
+
+# Keep it blocked, then assert a second request replaces the snapshot without replacing the watcher.
+printf '1\n1\n1\n1\n' > "$TMP/metrics-expire"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-expire"
+QWEN_EFFORT=low pending_cmd restart-when-idle --poll 1 --max-wait 3 >/dev/null 2>&1; rc=$?
+check "restart-when-idle queues a detached watcher" "$rc" "rc=$rc"
+P1=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null || true); WATCHER_PIDS="$WATCHER_PIDS $P1"
+[ -n "$P1" ] && kill -0 "$P1" 2>/dev/null && grep -qx 'QWEN_EFFORT=low' "$PENDING_QWEN_HOME/pending/env"
+check "pending env is persisted and watcher pid is alive" $? "pid=${P1:-missing}"
+OUT=$(QWEN_EFFORT=xhigh QWEN_TEST_METRIC_FILE="$TMP/metrics-expire" pending_cmd restart-when-idle --poll 1 --max-wait 3 2>&1); rc=$?
+P2=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null || true)
+[ "$rc" -eq 0 ] && [ "$P1" = "$P2" ] && grep -qx 'QWEN_EFFORT=xhigh' "$PENDING_QWEN_HOME/pending/env"
+check "new request replaces env without starting a second watcher" $? "first=$P1 second=$P2: $OUT"
+
+# Keep it blocked, then assert status and expiration leave the env available for a later retry.
+printf '1\n1\n1\n1\n' > "$TMP/metrics-expire"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-expire"
+wait_watcher; EXPIRE_RC=$?; WATCHER_PIDS=""
+LOG="$PENDING_QWEN_HOME/logs/deferred-restart.log"
+[ "$EXPIRE_RC" -eq 75 ] && grep -Eq '^expired .* env-sha=[0-9a-f]{12} blocked-by=busy$' "$LOG" && [ -f "$PENDING_QWEN_HOME/pending/env" ] && is_dead "$P1"
+check "max-wait expires rc 75, logs the reason, and preserves pending env" $? "watcher-rc=$EXPIRE_RC log=$(tr '\n' ';' < "$LOG" 2>/dev/null)"
+OUT=$(pending_cmd status 2>&1)
+case "$OUT" in *"pending restart: env-sha="*"watcher=none alive=dead last=busy"*) true;; *) false;; esac
+check "status reports dead pending watcher and last blocking reason" $? "pattern=env-sha/*/watcher=none alive=dead last=busy; out=$(printf '%q' "$OUT")"
+reset_pending; unset QWEN_TEST_METRIC_FILE
+OUT=$(pending_cmd status 2>&1); case "$OUT" in *"pending restart: none"*) true;; *) false;; esac
+check "status reports no pending restart" $? "$OUT"
+
+# All eight boolean combinations: only no-local/no-busy/no-cell may apply.
+for mask in 0 1 2 3 4 5 6 7; do
+  reset_pending; mkdir -p "$PENDING_LANES"
+  if (( mask & 4 )); then start_lane local agentfactory-build-local; cp "$LANES/local/lane.pid" "$PENDING_LANES/local.pid.tmp"; mkdir -p "$PENDING_LANES/local"; mv "$PENDING_LANES/local.pid.tmp" "$PENDING_LANES/local/lane.pid"; fi
+  if (( mask & 2 )); then BUSY=1; else BUSY=0; fi
+  if (( mask & 1 )); then mkdir -p "$PENDING_QWEN_HOME/matrix"; : > "$PENDING_QWEN_HOME/matrix/.cell.lock"; fi
+  printf '%s\n%s\n%s\n%s\n' "$BUSY" "$BUSY" "$BUSY" "$BUSY" > "$TMP/metrics-$mask"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-$mask"
+  QWEN_TEST_ACTIVE_RC=1 QWEN_PENDING_FORCE_RESTART=1 QWEN_EFFORT=low pending_cmd restart-when-idle --poll 1 --max-wait 3 >/dev/null 2>&1
+  WP=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null || true); WATCHER_PIDS="$WATCHER_PIDS $WP"; wait_watcher; WRC=$?; WATCHER_PIDS=""
+  if [ "$mask" -eq 0 ]; then [ "$WRC" -eq 0 ] && grep -Eq '^applied .* env-sha=[0-9a-f]{12} argv-sha=[0-9a-f]{12}$' "$LOG" && grep -q 'systemctl --user enable --now qwen-builder' "$PENDING_CALLS"
+  else [ "$WRC" -eq 75 ] && grep -Eq '^expired .* env-sha=[0-9a-f]{12} blocked-by=' "$LOG" && ! grep -q 'systemctl --user enable --now qwen-builder' "$PENDING_CALLS"; fi
+  check "idle gate mask=$mask applies iff local=0 busy=0 cell=0" $? "watcher-rc=$WRC calls=$(tr '\n' ';' < "$PENDING_CALLS")"
+  kill_children; rm -rf "$PENDING_LANES"; mkdir -p "$PENDING_LANES"
+done
+
+# Replacing the snapshot while idle resets the two-observation barrier for the new request.
+reset_pending; printf '1\n0\n0\n0\n0\n' > "$TMP/metrics-replace"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-replace"
+QWEN_EFFORT=low QWEN_PENDING_FORCE_RESTART=1 pending_cmd restart-when-idle --poll 1 --max-wait 5 >/dev/null; P1=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid"); WATCHER_PIDS="$P1"; sleep 1.2
+QWEN_EFFORT=xhigh QWEN_PENDING_FORCE_RESTART=1 pending_cmd restart-when-idle --poll 1 --max-wait 5 >/dev/null
+sleep 0.4
+[ "$(cat "$PENDING_QWEN_HOME/pending/watcher.pid")" = "$P1" ] && [ -f "$PENDING_QWEN_HOME/pending/env" ] && [ ! -s "$PENDING_CALLS" ]
+check "snapshot replacement resets idle barrier without replacing watcher" $? "pid=$P1 current=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid" 2>/dev/null) calls=$(tr '\n' ';' < "$PENDING_CALLS")"
+wait_watcher; WRC=$?; WATCHER_PIDS=""
+[ "$WRC" -eq 0 ] && grep -Eq '^applied .* env-sha=[0-9a-f]{12} argv-sha=[0-9a-f]{12}$' "$LOG"
+check "latest replaced snapshot applies after its own barrier" $? "watcher-rc=$WRC log=$(tr '\n' ';' < "$LOG")"
+
+# A lone idle sample before expiry cannot apply: two consecutive idle observations are required.
+reset_pending; printf '0\n1\n1\n1\n' > "$TMP/metrics-two-idle"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-two-idle"
+QWEN_PENDING_FORCE_RESTART=1 pending_cmd restart-when-idle --poll 1 --max-wait 3 >/dev/null; WP=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid"); WATCHER_PIDS="$WP"; wait_watcher; WRC=$?; WATCHER_PIDS=""
+[ "$WRC" -eq 75 ] && ! grep -q '^applied ' "$LOG"
+check "one idle poll then busy expires without apply" $? "watcher-rc=$WRC log=$(tr '\n' ';' < "$LOG")"
+
+# AF-AP-79: while blocked, the installed unit remains byte-identical and systemd is untouched.
+reset_pending; printf 'sentinel installed unit\n' > "$PENDING_UNIT"; BEFORE=$(sha256sum "$PENDING_UNIT" | awk '{print $1}')
+printf '1\n1\n1\n1\n' > "$TMP/metrics-bytes"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-bytes"
+QWEN_EFFORT=low pending_cmd restart-when-idle --poll 1 --max-wait 3 >/dev/null; WP=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid"); WATCHER_PIDS="$WP"; sleep 1
+MID=$(sha256sum "$PENDING_UNIT" | awk '{print $1}'); [ "$BEFORE" = "$MID" ] && [ ! -s "$PENDING_CALLS" ]
+check "AF-AP-79: waiting preserves installed-unit bytes and makes zero systemd calls" $? "before=$BEFORE mid=$MID calls=$(wc -l < "$PENDING_CALLS")"
+wait_watcher >/dev/null 2>&1; WATCHER_PIDS=""
+
+# Install errors propagate through the watcher and become terminal failed records.
+reset_pending; printf '0\n0\n0\n' > "$TMP/metrics-fail"; export QWEN_TEST_METRIC_FILE="$TMP/metrics-fail"
+QWEN_TEST_ANALYZE_RC=9 QWEN_TEST_ACTIVE_RC=1 QWEN_EFFORT=low pending_cmd restart-when-idle --poll 1 --max-wait 4 >/dev/null; WP=$(cat "$PENDING_QWEN_HOME/pending/watcher.pid"); WATCHER_PIDS="$WP"; wait_watcher; WRC=$?; WATCHER_PIDS=""
+[ "$WRC" -eq 5 ] && grep -Eq '^failed .* env-sha=[0-9a-f]{12} rc=5$' "$LOG" && [ -f "$PENDING_QWEN_HOME/pending/env" ]
+FAIL_ASSERT_RC=$?
+check "failed install rc propagates and is logged" "$FAIL_ASSERT_RC" "watcher-rc=$WRC log=$(tr '\n' ';' < "$LOG" 2>/dev/null)"
+
+# Byte-identical + healthy is a synchronous no-op: no pending state or watcher is created.
+reset_pending; unset QWEN_TEST_METRIC_FILE QWEN_TEST_ANALYZE_RC
+HOME="$PENDING_HOME" QWEN_HOME="$PENDING_QWEN_HOME" QWEN_KEY_FILE="$PENDING_KEY" bash "$QS" unit > "$PENDING_UNIT"
+OUT=$(pending_cmd restart-when-idle --poll 1 --max-wait 3 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$PENDING_QWEN_HOME/pending/env" ] && case "$OUT" in *"already applied"*) true;; *) false;; esac
+check "unchanged healthy unit reports already applied without a watcher" $? "rc=$rc: $OUT"
 
 # --- health/probe against a closed port; the usage line ------------------------------------------------------
 OUT=$(bash "$QS" health 2>&1); rc=$?
