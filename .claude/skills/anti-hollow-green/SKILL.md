@@ -66,7 +66,12 @@ expansion.
    `sys.path[0]` (the cwd) SHADOWS a PYTHONPATH prepend, so a mutant run from the repo root
    silently tests the REAL module and any "killed/survived" reading is vacuous (bit 2026-08-31:
    an F1-gate mutant "passed" 0.13s green — the real engine had loaded; caught only by the
-   module-identity check, then re-run from inside a full mutant tree copy).
+   module-identity check, then re-run from inside a full mutant tree copy). **3c. A mutant must COMPILE and
+   COLLECT before its verdict counts (AF-AP-78, 2026-09-15):** a driver that maps every non-zero rc to KILLED mints
+   a hollow score on a `SyntaxError` / `ImportError` / "no tests ran" — VERIFY-CK14 found a TABLE_ROWS row whose
+   `sed` produced `keyword argument repeated` and a `KILLED … rc=2`. The driver `py_compile`s (or `ast.parse`s) every
+   mutated file and runs a collect-only pass first; a failure there prints `INVALID <row>` and the summary gates on
+   `INVALID=0`; a kill is a pasted assertion line (`FAILED … Failure`/`AssertionError`), never a bare rc.
    **3c. Red-proof new regression tests against the PRE-FIX version from git history, no tree
    mutation:** `git show <old-sha>:path > scratchpad/old.py`, load via
    `importlib.util.spec_from_file_location` (print `__file__` — same identity rule as 3b), and
