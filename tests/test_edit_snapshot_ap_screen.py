@@ -416,3 +416,17 @@ class TestAFAP72:
 
     def test_no_fire_on_isinstance(self):
         assert not self.rx.search('if not isinstance(blob["accepted"], bool):')
+
+
+# ---- AF-AP-80 (TEST_SCREEN): a source-text pin as the only guard of a behavioral property ----
+def test_af_ap_80_flags_source_text_pins_and_spares_behavioral_asserts():
+    rx = _TEST_BY_ID["AF-AP-80"]
+    # the three shapes seen on 2026-09-15: a read_text() substring, an ast.unparse() presence check, an `in source` inventory
+    assert rx.search('    assert "close_fds=True" in Path("acp_probe.py").read_text()')
+    assert rx.search('    assert "pins.is_pinned_argv" in ast.unparse(classifier)')
+    assert rx.search('    assert "os.O_NOFOLLOW" in source')
+    # behavioral asserts are not pins: an exception's text, an observed stderr, an fd delta, a received line
+    assert not rx.search('    assert "ELOOP" in str(exc.value)')
+    assert not rx.search('    assert observed["stderr"] in expected')
+    assert not rx.search('    assert fd_delta == 0')
+    assert not rx.search('    assert "x" in received_lines')

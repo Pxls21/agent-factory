@@ -226,6 +226,12 @@ TEST_SCREEN = [
     # rewrite `_b = …["body"]; assert _b != MARKER` restored the exact hollow green the ban exists to prevent.
     ("AF-AP-61", re.compile(r"""re\.(?:compile|search|findall|finditer)\(\s*r?["'][^"'\n]*\bassert\b|r?["']\^\\s\*assert\\s"""),
      "class ban as a source-text pattern — bans one spelling, not the class; ban it structurally (ast.Compare + ast.NotEq naming the marker) and make every 'served' test assert the positive recorded value (AF-AP-61)"),
+    # AF-AP-80 (2026-09-15): a source-text pin as the ONLY guard of a behavioral property — three instances in one day
+    # (a presence check where exclusivity was claimed; a flag listed in a source inventory dropped from the call it guards;
+    # a file-wide `close_fds=True` substring satisfied by a comment). Pair every such pin with a behavioral negative control
+    # and scope it to the AST node it guards.
+    ("AF-AP-80", re.compile(r"""\bassert\b[^\n]*\bin\s+(?:[^\n]*?\.read_text\(\)|(?:[A-Za-z_][\w.]*\.)?(?:source|src|SOURCE|SRC|module_text|file_text)\b|ast\.unparse\()"""),
+     "a source-text pin (`in …read_text()` / `in source` / `in ast.unparse(...)`) standing in for a behavioral property — a comment or a second call satisfies it; pair it with a negative control that fails when the PROPERTY fails and scope the pin to the AST node (AF-AP-80)"),
 ]
 
 MAX_SYMBOLS = 2
