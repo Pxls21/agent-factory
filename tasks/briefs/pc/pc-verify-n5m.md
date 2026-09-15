@@ -1,6 +1,6 @@
 # PC lane — VERIFY-N5m (adversarial verification of S0-01 probe round 16 as LANDED)
 
-PIN: __PIN__
+PIN: e065d15
 
 Role: adversarial-verifier. Route: the CLOUD verify route (`HERMES_MODEL=agentfactory-verify`, `HERMES_REASONING=ultra`) — the local slot runs
 VERIFY-GOV1; the SINGLE-MODEL RULE applies (findings, no verdict). Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.

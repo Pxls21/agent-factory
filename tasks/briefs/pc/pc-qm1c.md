@@ -1,6 +1,6 @@
 # PC lane — QM1-c (the L1 matrix runner: the six VERIFY-QM1 findings fixed)
 
-PIN: __PIN__
+PIN: e065d15
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) — the local slot runs
 VERIFY-GOV1. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.
