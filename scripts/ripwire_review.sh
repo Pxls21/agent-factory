@@ -66,7 +66,9 @@ case "$MODE" in
     ;;
   edit-check)
     [ $# -ge 1 ] || { echo "usage: ripwire_review.sh edit-check SYMBOL"; exit 64; }
-    exec "$BIN" "$ROOT" "${EXCLUDES[@]}" --edit-check="$1" --limit="$LIMIT"
+    # no --limit: ripwire 0.4.0 honours --limit only on the listed modes and REFUSES it on --edit-check (rc 1) —
+    # the subcommand was dead from its adoption until lane A5l hit it (2026-09-15)
+    exec "$BIN" "$ROOT" "${EXCLUDES[@]}" --edit-check="$1"
     ;;
   skipped)
     exec "$BIN" "$ROOT" "${EXCLUDES[@]}" --skipped --limit="$LIMIT"

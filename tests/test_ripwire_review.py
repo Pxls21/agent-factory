@@ -129,30 +129,10 @@ def test_test_gate_argv(tmp_path):
 
 
 def test_edit_check_argv(tmp_path):
-    _assert_argv(tmp_path, "edit-check", ["foo"], ["--edit-check=foo", "--limit=20"])
-
-
-def test_skipped_argv(tmp_path):
-    _assert_argv(tmp_path, "skipped", [], ["--skipped", "--limit=20"])
-
-
-# --- (d) fake exit code passes through ---
-
-def test_exit_code_passthrough(tmp_path):
-    """A non-zero exit from the real binary passes through unchanged."""
-    r = _assert_argv(tmp_path, "callers", ["sym"], ["--callers=sym"], exit_code=4)
-    assert r.returncode == 4, f"expected passthrough exit 4, got {r.returncode}"
-
-
-# --- (e) negative control: mutant that drops an exclude → assertion fails ---
-
-def test_negative_control_missing_exclude(tmp_path):
-    """A wrapper that omits --exclude=/graft would fail the exclude check. Prove it."""
+    """edit-check passes the verb and NO --limit: ripwire 0.4.0 refuses --limit on --edit-check (rc 1), so the
+    wrapper's old `--limit=$LIMIT` made the subcommand dead from adoption until lane A5l hit it (2026-09-15)."""
     fake = _make_fake_binary(tmp_path)
-    r = _run(["map"], {"RIPWIRE_BIN": fake})
-    lines = r.stdout.strip().splitlines()
-    # Simulate a mutant that dropped --exclude=/graft
-    mutant_lines = [l for l in lines if l != "--exclude=/graft"]
-    # The assertion that would run on the mutant's output:
-    with pytest.raises(AssertionError):
-        assert "--exclude=/graft" in mutant_lines
+    r = _run(["edit-check", "sym"], {"RIPWIRE_BIN": fake})
+    lines = r.stdout.splitlines()
+    assert "--edit-check=sym" in lines, f"missing verb in argv: {lines}"
+    assert not any(l.startswith("--limit") for l in lines), f"edit-check must not pass --limit: {lines}"

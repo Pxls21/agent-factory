@@ -29,6 +29,13 @@ while [ $# -gt 0 ]; do
 done
 [ $# -gt 0 ] || { echo "usage: lane_context.sh [-q question] [-s SYMBOL]... [-o out.md] FILE..." >&2; exit 64; }
 FILES=("$@")
+# FAIL LOUD on a nonexistent FILE, before anything is written (2026-09-15, A5l: a brief path typed from memory —
+# `proofs/S0-01/tools/check_acp_conformance.py` where the checker lives at `proofs/S0-01/` — produced a pack whose
+# skeleton was hollow with no "unmapped" marker, because graft exits 0 on a missing path). A pack over a path that
+# does not exist is a hollow pack: refuse it (rc 64, no output file) instead of attaching it to a brief.
+for f in "${FILES[@]}"; do
+  [ -f "$f" ] || { echo "lane_context: FILE absent: $f — a pack over a nonexistent path is a hollow pack (verify the path with git ls-files)" >&2; exit 64; }
+done
 T=90
 # venue-neutral instrument paths: the sandbox keeps venvs/binaries under /root, the PC under $HOME (harness-ports/bin/pc-setup.sh)
 CRG="${CRG_BIN:-}"; for c in "$HOME/venv-crg/bin/code-review-graph" /root/venv-crg/bin/code-review-graph; do [ -z "$CRG" ] && [ -x "$c" ] && CRG="$c"; done
