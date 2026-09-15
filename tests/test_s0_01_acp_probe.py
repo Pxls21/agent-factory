@@ -15,6 +15,7 @@ never surfaces", "non-JSON raw/raw_b64 dropped", "agent_exit_code hardcoded",
 """
 from __future__ import annotations
 
+import ast
 import base64
 import errno
 import json
@@ -3588,35 +3589,60 @@ def test_probe_cloexec_is_load_bearing_child_sees_no_framedir_fd(tmp_path):
     assert _census_agent_fd_leaks(tmp_path, cloexec=False) == 1
 
 
-def _agent_popen_close_fds_value(src):
-    """Return literal close_fds for the one agent launch in main, excluding nested defs."""
-    import ast
+_POPEN_LOOP_NODES = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
 
+
+def _is_subprocess_popen(node):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "Popen"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "subprocess"
+    )
+
+
+def _module_subprocess_popen_lines(src):
+    module = ast.parse(src)
+    return [
+        node.lineno for node in ast.walk(module)
+        if _is_subprocess_popen(node) and isinstance(node, ast.Call)
+    ]
+
+
+def _agent_popen_close_fds_value(src):
+    """Return literal close_fds for the one non-repeating Popen in main."""
     module = ast.parse(src)
     mains = [node for node in module.body
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
              and node.name == "main"]
     assert len(mains) == 1, f"expected one top-level main, got {len(mains)}"
     calls = []
-    pending = list(ast.iter_child_nodes(mains[0]))
+    looped_calls = []
+    pending = [(node, []) for node in ast.iter_child_nodes(mains[0])]
     while pending:
-        node = pending.pop()
+        node, ancestors = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
-        if isinstance(node, ast.Assign):
-            if any(isinstance(target, ast.Name) and target.id == "proc"
-                   for target in node.targets):
-                call = node.value
-                if isinstance(call, ast.Call):
-                    func = call.func
-                    if (isinstance(func, ast.Attribute) and func.attr == "Popen"
-                            and isinstance(func.value, ast.Name)
-                            and func.value.id == "subprocess"):
-                        calls.append(call)
-        pending.extend(ast.iter_child_nodes(node))
-    assert len(calls) == 1, (
-        f"expected one agent Popen assigned to proc in main, got {len(calls)}"
+        if _is_subprocess_popen(node):
+            calls.append(node)
+            if any(isinstance(ancestor, _POPEN_LOOP_NODES) for ancestor in ancestors):
+                looped_calls.append(node)
+        pending.extend(
+            (child, ancestors + [node]) for child in ast.iter_child_nodes(node)
+        )
+    assert not looped_calls, (
+        f"agent Popen must not be inside a loop or comprehension, got {len(looped_calls)}"
     )
+    assert len(calls) == 1, f"expected one agent Popen in main, got {len(calls)}"
     assert all(keyword.arg is not None for keyword in calls[0].keywords), (
         "the agent Popen must not hide close_fds in **kwargs"
     )
@@ -3638,6 +3664,7 @@ def test_probe_agent_launch_pins_the_close_fds_default_second_defence(tmp_path):
     satisfy this assertion.
     """
     src = PROBE.read_text()
+    _assert_one_module_subprocess_popen(src)
     actual = _agent_popen_close_fds_value(src)
     assert actual is True, (
         f"the agent Popen must use literal close_fds=True, got {actual!r}"
@@ -3676,6 +3703,94 @@ def test_probe_agent_launch_pin_ignores_a_nested_helper_but_rejects_two_main_lau
     )
     with pytest.raises(AssertionError, match=r"in main, got 2"):
         _agent_popen_close_fds_value(second_top_level)
+
+
+def test_probe_agent_launch_walker_rejects_extra_targets_and_repeating_launches():
+    """N5n item 1: every direct Popen in main is unique and non-repeating."""
+    base = textwrap.dedent("""\
+        import subprocess
+        def main():
+            proc = subprocess.Popen(["agent"], close_fds=True)
+            return proc
+    """)
+    assert _agent_popen_close_fds_value(base) is True
+
+    agent_anchor = "    proc = subprocess.Popen([\"agent\"], close_fds=True)"
+    alternate_target = base.replace(
+        agent_anchor,
+        "    sidecar = subprocess.Popen([\"sidecar\"], close_fds=False)\n"
+        + agent_anchor,
+        1,
+    )
+    with pytest.raises(AssertionError, match=r"in main, got 2"):
+        _agent_popen_close_fds_value(alternate_target)
+
+    unassigned = base.replace(
+        agent_anchor,
+        "    subprocess.Popen([\"sidecar\"], close_fds=False)\n" + agent_anchor,
+        1,
+    )
+    with pytest.raises(AssertionError, match=r"in main, got 2"):
+        _agent_popen_close_fds_value(unassigned)
+
+    tuple_target = base.replace(
+        agent_anchor,
+        "    proc, sidecar = (subprocess.Popen([\"agent\"], close_fds=True),\n"
+        "                     subprocess.Popen([\"sidecar\"], close_fds=False))",
+        1,
+    )
+    with pytest.raises(AssertionError, match=r"in main, got 2"):
+        _agent_popen_close_fds_value(tuple_target)
+
+    looped = base.replace(
+        agent_anchor,
+        "    for _ in range(2):\n        proc = subprocess.Popen([\"agent\"], close_fds=True)",
+        1,
+    )
+    with pytest.raises(AssertionError, match=r"inside a loop or comprehension, got 1"):
+        _agent_popen_close_fds_value(looped)
+
+
+def test_probe_agent_launch_walker_rejects_comprehensions():
+    loop_exprs = [
+        "[subprocess."
+        "Popen([str(i)], close_fds=True) for i in range(2)]",
+        "{subprocess."
+        "Popen([str(i)], close_fds=True) for i in range(2)}",
+        "{i: subprocess."
+        "Popen([str(i)], close_fds=True) for i in range(2)}",
+        "(subprocess."
+        "Popen([str(i)], close_fds=True) for i in range(2))",
+    ]
+    for loop_expr in loop_exprs:
+        src = "import subprocess\ndef main():\n    proc = " + loop_expr + "\n    return proc\n"
+        with pytest.raises(AssertionError, match=r"inside a loop or comprehension, got 1"):
+            _agent_popen_close_fds_value(src)
+
+
+def _assert_one_module_subprocess_popen(src):
+    popen_lines = _module_subprocess_popen_lines(src)
+    assert len(popen_lines) == 1, (
+        f"expected exactly one module-wide subprocess.Popen, got {popen_lines}"
+    )
+
+
+def test_probe_module_wide_popen_count_rejects_a_helper_launch():
+    """N5n item 2: moving a launch into a helper cannot evade the module census."""
+    src = PROBE.read_text()
+    _assert_one_module_subprocess_popen(src)
+    helper_anchor = "\ndef main():\n"
+    assert src.count(helper_anchor) == 1
+    helper_mutant = src.replace(
+        helper_anchor,
+        "\ndef n5n_sidecar(agent):\n"
+        "    return subprocess.Popen([agent], close_fds=False)\n"
+        + helper_anchor,
+        1,
+    )
+    assert len(_module_subprocess_popen_lines(helper_mutant)) == 2
+    with pytest.raises(AssertionError, match=r"module-wide subprocess.Popen"):
+        _assert_one_module_subprocess_popen(helper_mutant)
 
 
 # ---- N5l round 15: final-symlink red, v3 read ports, real-emitter census ----

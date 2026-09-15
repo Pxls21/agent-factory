@@ -4,7 +4,7 @@ set -euo pipefail
 # N5m mutation driver. Every row runs in a fresh archive copy with the lane's
 # probe and test bytes overlaid. Mutants must compile and collect before a test
 # result can grade them. The one comment-only control must remain green.
-EXPECTED=11
+EXPECTED=13
 ROOT=$(git rev-parse --show-toplevel)
 PIN=${PIN:-97bb0c0}
 OUT=${N5L_MUTANT_DIR:-"$ROOT/../scratch/n5l/mutants"}
@@ -27,7 +27,7 @@ import sys
 
 path = Path(sys.argv[1])
 lines = path.read_text().splitlines(keepends=True)
-marker = "  'FD_LEAK_PIPE;"
+marker = "  'CLOSE_FDS_ALT_TARGET;"
 hits = [index for index, line in enumerate(lines) if line.startswith(marker)]
 assert len(hits) == 1, (marker, hits)
 del lines[hits[0]]
@@ -48,7 +48,7 @@ PY
   )
   printf 'SELF_TEST rc=%s %s\n' "$rc" "$summary"
   [[ $rc -ne 0 && "$summary" == \
-      "EXPECTED=11 KILLED=10 SURVIVED=0 INVALID=0 CONTROL=1" ]]
+      "EXPECTED=13 KILLED=12 SURVIVED=0 INVALID=0 CONTROL=1" ]]
   exit
 fi
 
@@ -62,6 +62,8 @@ cases=(
   'FD_LEAK_PIPE;probe;test_probe_census_agent_sees_only_stdio_and_its_output_fd;        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE, close_fds=True\n        );        n5m_leak_read_fd, n5m_leak_write_fd = os.pipe()\n        os.set_inheritable(n5m_leak_read_fd, True)\n        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE, close_fds=False\n        )'
   'CLOSE_FDS_FALSE;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;            stderr=subprocess.PIPE, close_fds=True;            stderr=subprocess.PIPE, close_fds=False'
   'CLOSE_FDS_COMMENT_ONLY;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;            stderr=subprocess.PIPE, close_fds=True;            stderr=subprocess.PIPE, close_fds=False  # close_fds=True'
+  'CLOSE_FDS_ALT_TARGET;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,;        sidecar = subprocess.Popen([agent], close_fds=False)\n        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,'
+  'CLOSE_FDS_LOOP;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE, close_fds=True\n        )\n        child_pid = proc.pid;        for _n5n_index in range(2):\n            proc = subprocess.Popen(\n                [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n                stderr=subprocess.PIPE, close_fds=True\n            )\n        child_pid = proc.pid'
   'NONREG_ERROR_TEXT;probe;test_probe_read_primitive_refuses_named_non_regular_shapes;            raise OSError("not a regular file: %s" % (path,));            raise OSError("not regular: %s" % (path,))'
   'FD_CLOSE_REDIRECT;probe;test_probe_read_primitive_leaves_no_fd_on_refusal;        os.close(fd)\n        raise\n    try:\n        handle = os.fdopen(fd, mode);        os.close(os.open(os.devnull, os.O_RDONLY))\n        raise\n    try:\n        handle = os.fdopen(fd, mode)'
   'CONTROL_COMMENT;probe;test_probe_read_primitive_reads_a_regular_file;    N5k round 14 (AF-AP-70 closed for reads):;    N5k round 14 (AF-AP-70 closed for file reads):'
