@@ -88,4 +88,12 @@ emit() {
   echo "## ripwire test-gate — tests to run + the UNTESTED blast radius (a zero is 'none found', never 'none exists')"
   if [ -x scripts/ripwire_review.sh ]; then run "ripwire test-gate" bash scripts/ripwire_review.sh test-gate "${FILES[@]}" | grep -oE '<test-gate [^>]*>|<t [^>]*/>|<u [^>]*/>' | sed -E 's/ graph_[a-z]+="[^"]*"//g' | head -40; else echo "unmapped — ripwire wrapper absent"; fi
 }
-if [ -n "$OUT" ]; then emit > "$OUT" 2>&1; echo "lane_context: pack written to $OUT ($(wc -l < "$OUT") lines)"; else emit; fi
+if [ -n "$OUT" ]; then
+  # An output whose parent is absent used to fail OPEN: the redirection failed, emit never ran, and the wrapper still
+  # printed "pack written" with rc 0 (QM1-b 2026-09-15, AF-AP-86). Refuse before emitting, and refuse an empty pack after.
+  OUT_DIR="$(dirname "$OUT")"
+  [ -d "$OUT_DIR" ] || { echo "lane_context: output parent absent: $OUT_DIR — refusing (rc 64), nothing written" >&2; exit 64; }
+  emit > "$OUT" 2>&1
+  [ -s "$OUT" ] || { echo "lane_context: pack at $OUT is EMPTY — refusing (rc 64); the empty file is removed" >&2; rm -f "$OUT"; exit 64; }
+  echo "lane_context: pack written to $OUT ($(wc -l < "$OUT") lines)"
+else emit; fi

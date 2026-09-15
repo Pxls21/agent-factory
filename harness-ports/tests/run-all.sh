@@ -33,6 +33,16 @@ out="$(bash "$HERE/test_qwen_server.sh" 2>&1)"; rc=$?
 printf '%s\n' "$(printf '%s' "$out" | tail -1)"
 [ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
 
+printf '%-34s ' "test_qwen_matrix.py"
+out="$(python3 "$HERE/test_qwen_matrix.py" 2>&1)"; rc=$?
+printf '%s\n' "$(printf '%s' "$out" | tail -1)"
+[ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
+
+printf '%-34s ' "test_qwen_matrix_sh.sh"
+out="$(bash "$HERE/test_qwen_matrix_sh.sh" 2>&1)"; rc=$?
+printf '%s\n' "$(printf '%s' "$out" | tail -1)"
+[ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
+
 printf '%-34s ' "test_lane_context.sh"
 out="$(bash "$HERE/test_lane_context.sh" 2>&1)"; rc=$?
 printf '%s\n' "$(printf '%s' "$out" | tail -1)"
