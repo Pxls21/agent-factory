@@ -18,12 +18,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCK="$ROOT/upstream.lock.yaml"
 DEST="${1:-${FUBUKI_PIN_DIR:-$HOME/fubuki-pin}}"
-read_lock() { python3 - "$LOCK" "$1" <<'PY'
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-print(data["selected_core"]["fubuki-os"][sys.argv[2]])
-PY
-}
+# The lock is read with awk (no PyYAML on a venue's bare python3): the `fubuki-os:` block's `commit:` / `repository:`.
+read_lock() { awk -v key="$1" '
+  /^[[:space:]]*fubuki-os:[[:space:]]*$/ { inblock = 1; next }
+  inblock && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ { inblock = 0 }
+  inblock && $1 == key ":" { sub(/^[[:space:]]*[A-Za-z_-]+:[[:space:]]*/, ""); gsub(/["'"'"']/, ""); print; exit }
+' "$LOCK"; }
 die() { echo "fubuki_pin_sync: $2" >&2; exit "$1"; }
 COMMIT="$(read_lock commit)"
 SOURCE="${2:-$(read_lock repository)}"
