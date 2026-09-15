@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -223,6 +224,20 @@ def test_export_and_live_fixture():
         assert payload["messages"][0]["content"] == "SYSTEM-A system text"
         assert "USER-B" not in json.dumps(payload)
 
+        secret_export = root / "secret-session.md"
+        secret_export.write_text(EXPORT.replace(
+            "SYSTEM-A system text",
+            "Authorization: Bearer bearer-token-12345 api-key=apikey-secret-12345 sk-abcdefghijklmnop",
+        ))
+        secret_out = root / "secret-prompts"
+        secret_manifest = QM.build_corpus(secret_export, 4, secret_out, base, secret)[0]
+        secret_payload = secret_manifest.read_text()
+        for literal in ("bearer-token-12345", "apikey-secret-12345", "sk-abcdefghijklmnop"):
+            assert literal not in secret_payload
+        assert "Bearer <redacted>" in secret_payload
+        assert "api-key=<redacted>" in secret_payload
+        assert "sk-<redacted>" in secret_payload
+
         # A larger but reachable target emits the first target-sized cumulative prompt and preserves tool markers.
         manifests = QM.build_corpus(export, 15, out, base, secret)
         assert [p.name for p in manifests] == ["prompt-001.json"]
@@ -243,6 +258,19 @@ def test_export_and_live_fixture():
             assert not list(out.glob("prompt-*.json")), "failed corpus left target-mislabeled prompts"
         else:
             raise AssertionError("undersized export was mislabeled as target-sized")
+
+        rotation_log = root / "rotation.log"
+        rotation_log.write_text("old line padded beyond the replacement offset\n")
+        old_position = QM._log_position(rotation_log)
+        replacement = root / "rotation.new"
+        replacement.write_text("forcing full prompt re-processing\n" + "x" * old_position[0])
+        replacement.replace(rotation_log)
+        try:
+            QM._count_reprefills(rotation_log, old_position)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"server log rotated during round: {rotation_log}"
+        else:
+            raise AssertionError("same-size-or-larger rotated log was read from a stale offset")
 
         prompt2 = root / "run-prompts"
         prompt2.mkdir()
@@ -265,17 +293,26 @@ def test_export_and_live_fixture():
         assert json.loads((root / "result.json").read_text()) == result
 
 
+def cell_record(name, **summary_overrides):
+    argv_text = f"fake-server --cell {name}\n"
+    summary = {"requests": 1, "decode_tps": 10, "prompt_tps": 20,
+               "re_prefill_count": 4, "busy_slots_per_decode": 1}
+    summary.update(summary_overrides)
+    return {
+        "cell": {"name": name, "argv_text": argv_text,
+                 "argv_sha256": hashlib.sha256(argv_text.encode()).hexdigest(),
+                 "unit_sha256": "a" * 64},
+        "summary": summary,
+        "vram_peak_mib": 100,
+    }
+
+
 def test_table():
     cells = [
-        {"cell": {"name": "A"}, "summary": {"decode_tps": 10, "prompt_tps": 20,
-                                             "re_prefill_count": 4, "busy_slots_per_decode": 1},
-         "vram_peak_mib": 100},
-        {"cell": {"name": "D"}, "summary": {"decode_tps": 16, "prompt_tps": 19,
-                                             "re_prefill_count": 3, "busy_slots_per_decode": 2},
-         "vram_peak_mib": 110},
-        {"cell": {"name": "B"}, "summary": {"decode_tps": 9, "prompt_tps": 21,
-                                             "re_prefill_count": 2, "busy_slots_per_decode": 1},
-         "vram_peak_mib": 105},
+        cell_record("A"),
+        cell_record("D", decode_tps=16, prompt_tps=19, re_prefill_count=3,
+                    busy_slots_per_decode=2, requests=2),
+        cell_record("B", decode_tps=9, prompt_tps=21, re_prefill_count=2),
     ]
     text = QM.render_table(cells)
     assert "| A | 10.000 | 20.000 | 1.000 | 4 | 100 |" in text
@@ -288,6 +325,36 @@ def test_table():
         assert str(exc) == "A decode_tps must be finite and non-negative: nan"
     else:
         raise AssertionError("NaN table value did not fail closed")
+
+    for bad_requests in (0, -1, 1.5, True, "1"):
+        try:
+            QM.render_table([cell_record("A", requests=bad_requests)])
+        except QM.MatrixError as exc:
+            assert str(exc) == f"A requests must be a positive integer: {bad_requests!r}"
+        else:
+            raise AssertionError(f"invalid request count was accepted: {bad_requests!r}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        result = pathlib.Path(tmp) / "result.json"
+        mismatch = cell_record("A")
+        mismatch["cell"]["argv_sha256"] = "0" * 64
+        result.write_text(json.dumps(mismatch))
+        try:
+            QM._load_cell(result)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell result argv_sha256 does not match argv_text: {result}"
+        else:
+            raise AssertionError("mismatched argv identity was accepted")
+
+        malformed_unit = cell_record("A")
+        malformed_unit["cell"]["unit_sha256"] = "NOT-A-SHA"
+        result.write_text(json.dumps(malformed_unit))
+        try:
+            QM._load_cell(result)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell result unit_sha256 is not lowercase sha256: {result}"
+        else:
+            raise AssertionError("malformed unit identity was accepted")
 
 
 def main():

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -121,6 +123,20 @@ def parse_export(text: str) -> list[dict[str, str]]:
     return messages
 
 
+def _scrub_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    exporter = Path(__file__).resolve().parents[2] / "scripts" / "transcript_export.py"
+    try:
+        spec = importlib.util.spec_from_file_location("qwen_matrix_transcript_export", exporter)
+        if spec is None or spec.loader is None:
+            raise ImportError("no module loader")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        scrub = module.scrub
+    except (ImportError, OSError, AttributeError) as exc:
+        raise MatrixError(f"transcript scrubber unavailable: {exporter}: {exc}") from exc
+    return [{**message, "content": scrub(message["content"])} for message in messages]
+
+
 def _write_prompt(path: Path, messages: list[dict[str, str]], token_count: int) -> None:
     path.write_text(json.dumps({"messages": messages, "token_count": token_count},
                                indent=2, sort_keys=True) + "\n")
@@ -131,7 +147,7 @@ def build_corpus(source: Path, target_tokens: int, out_dir: Path, base_url: str,
     if target_tokens <= 0:
         raise MatrixError("target-tokens must be a positive integer")
     try:
-        messages = parse_export(source.read_text())
+        messages = _scrub_messages(parse_export(source.read_text()))
     except OSError as exc:
         raise MatrixError(f"session export unreadable: {source}: {exc.strerror}") from exc
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -254,25 +270,31 @@ def _read_prompt(path: Path) -> dict[str, Any]:
     return prompt
 
 
-def _log_offset(path: Path) -> int:
+def _log_position(path: Path) -> tuple[int, int | None, int | None]:
     try:
-        return path.stat().st_size
+        stat = path.stat()
+        return stat.st_size, stat.st_dev, stat.st_ino
     except FileNotFoundError:
-        return 0
+        return 0, None, None
     except OSError as exc:
         raise MatrixError(f"server log unreadable: {path}: {exc.strerror}") from exc
 
 
-def _count_reprefills(path: Path, offset: int) -> int:
+def _count_reprefills(path: Path, position: tuple[int, int | None, int | None]) -> int:
+    offset, device, inode = position
     try:
         with path.open("rb") as stream:
-            size = stream.seek(0, os.SEEK_END)
-            if size < offset:
+            stat = os.fstat(stream.fileno())
+            if device is None or inode is None or (stat.st_dev, stat.st_ino) != (device, inode):
+                raise MatrixError(f"server log rotated during round: {path}")
+            if stat.st_size < offset:
                 raise MatrixError(f"server log truncated during round: {path}")
             stream.seek(offset)
             return stream.read().count(b"forcing full prompt re-processing")
     except FileNotFoundError:
-        return 0
+        if device is None and inode is None:
+            return 0
+        raise MatrixError(f"server log disappeared during round: {path}") from None
     except OSError as exc:
         raise MatrixError(f"server log unreadable: {path}: {exc.strerror}") from exc
 
@@ -354,7 +376,7 @@ def run_load(prompts_dir: Path, concurrency: int, max_tokens: int, rounds: int, 
     for round_index in range(rounds):
         indices = [(round_index + slot) % len(prompts) for slot in range(concurrency)]
         before = parse_metrics(request(base_url, "/metrics", key, timeout=30))
-        offset = _log_offset(log_path)
+        log_position = _log_position(log_path)
         started = time.monotonic()
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = [pool.submit(_completion, base_url, key, prompts[index], max_tokens)
@@ -362,7 +384,7 @@ def run_load(prompts_dir: Path, concurrency: int, max_tokens: int, rounds: int, 
             request_rows = [future.result() for future in futures]
         wall_s = time.monotonic() - started
         after = parse_metrics(request(base_url, "/metrics", key, timeout=30))
-        re_prefills = _count_reprefills(log_path, offset)
+        re_prefills = _count_reprefills(log_path, log_position)
         result_rounds.append({
             "round": round_index + 1,
             "prompt_indices": indices,
@@ -391,6 +413,18 @@ def _load_cell(path: Path) -> dict[str, Any]:
         raise MatrixError(f"cell result is unreadable JSON: {candidate}") from exc
     if not isinstance(data, dict) or not isinstance(data.get("cell"), dict) or not isinstance(data.get("summary"), dict):
         raise MatrixError(f"cell result missing cell/summary blocks: {candidate}")
+    identity = data["cell"]
+    argv_text = identity.get("argv_text")
+    argv_sha = identity.get("argv_sha256")
+    unit_sha = identity.get("unit_sha256")
+    if not isinstance(argv_text, str) or not argv_text:
+        raise MatrixError(f"cell result missing non-empty argv_text: {candidate}")
+    if not isinstance(argv_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", argv_sha):
+        raise MatrixError(f"cell result argv_sha256 is not lowercase sha256: {candidate}")
+    if hashlib.sha256(argv_text.encode()).hexdigest() != argv_sha:
+        raise MatrixError(f"cell result argv_sha256 does not match argv_text: {candidate}")
+    if not isinstance(unit_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", unit_sha):
+        raise MatrixError(f"cell result unit_sha256 is not lowercase sha256: {candidate}")
     return data
 
 
@@ -419,6 +453,9 @@ def render_table(cells: list[dict[str, Any]]) -> str:
     verdicts: list[str] = []
     for name, cell in by_name.items():
         summary = cell["summary"]
+        requests = summary.get("requests")
+        if type(requests) is not int or requests <= 0:
+            raise MatrixError(f"{name} requests must be a positive integer: {requests!r}")
         decode = _finite_nonnegative(summary.get("decode_tps"), f"{name} decode_tps")
         prompt = _finite_nonnegative(summary.get("prompt_tps"), f"{name} prompt_tps")
         busy = _finite_nonnegative(summary.get("busy_slots_per_decode"), f"{name} busy_slots_per_decode")
@@ -461,7 +498,6 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _sha256(path: Path) -> str:
-    import hashlib
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:

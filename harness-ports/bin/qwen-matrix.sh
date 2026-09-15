@@ -53,6 +53,7 @@ GUARD_OUT=$(env "${OVERRIDES[@]}" bash "$QWEN_SERVER" guard); GUARD_RC=$?
 [ "$GUARD_RC" -eq 0 ] || fail "qwen-server guard refused cell $CELL" "$GUARD_RC"
 
 CELL_DIR="$QWEN_MATRIX_ROOT/$CELL"
+[ ! -e "$CELL_DIR" ] || fail "cell directory already exists; choose a new cell name: $CELL_DIR" 3
 mkdir -p "$CELL_DIR" || fail "cannot create cell directory: $CELL_DIR" 3
 ENV_FILE="$CELL_DIR/env"
 ARGV_FILE="$CELL_DIR/argv.txt"
@@ -94,6 +95,16 @@ cleanup() {
     wait "$GPU_PID" 2>/dev/null || true
   fi
   if [ "$RESTORE_NEEDED" -eq 1 ]; then
+    if [ "$BASELINE_SHA" = absent ]; then
+      # Restore absence through the launcher's lifecycle seam; direct rm/systemctl here would
+      # duplicate that ownership boundary. The launcher repeats its guard immediately pre-write.
+      env "${OVERRIDES[@]}" bash "$QWEN_SERVER" uninstall || rc=8
+      if [ -e "$QWEN_MATRIX_UNIT_PATH" ]; then
+        echo "qwen-matrix: initially absent unit remains after restore" >&2
+        rc=8
+      fi
+      exit "$rc"
+    fi
     restore_args=()
     if [ -s "$QWEN_MATRIX_BASELINE_ENV" ]; then
       while IFS= read -r line || [ -n "$line" ]; do
@@ -102,7 +113,7 @@ cleanup() {
     fi
     if [ "$rc" -ne 8 ]; then
       env "${restore_args[@]}" bash "$QWEN_SERVER" install || rc=8
-      if [ "$BASELINE_SHA" = absent ] || [ ! -f "$QWEN_MATRIX_UNIT_PATH" ]; then
+      if [ ! -f "$QWEN_MATRIX_UNIT_PATH" ]; then
         echo "qwen-matrix: baseline unit restore missing" >&2
         rc=8
       elif [ "$(sha256sum "$QWEN_MATRIX_UNIT_PATH" | cut -d' ' -f1)" != "$BASELINE_SHA" ]; then

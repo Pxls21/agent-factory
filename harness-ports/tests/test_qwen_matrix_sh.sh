@@ -41,6 +41,8 @@ case "$1" in
   install)
     if [ "${QWEN_CACHE_RAM:-8192}" = 8192 ]; then printf 'baseline unit\n' > "$QWEN_MATRIX_UNIT_PATH"
     else printf 'cell unit %s\n' "$QWEN_CACHE_RAM" > "$QWEN_MATRIX_UNIT_PATH"; fi;;
+  uninstall)
+    [ "${QM_UNINSTALL_LEAVES_UNIT:-0}" -eq 1 ] || rm -f "$QWEN_MATRIX_UNIT_PATH";;
   health) exit 0;;
   *) exit 64;;
 esac
@@ -99,6 +101,13 @@ d=json.load(open(sys.argv[1])); assert d["cell"]["name"]=="T" and d["vram_peak_m
 PY
 check "result JSON carries cell identity and measured VRAM peak" $? "result.json decoded"
 
+# Negative control: a completed cell name is immutable, so a rerun cannot leave stale evidence current.
+: > "$CALLS"
+OUT=$(env "${COMMON[@]}" bash "$RUNNER" T -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 3 ] && [ -s "$TMP/matrix/T/result.json" ] && ! grep -q '^install' "$CALLS" && \
+  case "$OUT" in *"cell directory already exists; choose a new cell name"*) true;; *) false;; esac
+check "existing cell directory is refused before lifecycle effects" $? "rc=$rc calls=$(tr '\n' ';' < "$CALLS"): $OUT"
+
 # Negative control: a real live pid plus the launcher's rc 7 must create no cell dir and make no install call.
 : > "$CALLS"; rm -rf "$TMP/matrix/BLOCKED"
 env HERMES_MODEL=agentfactory-build-local bash -c 'exec -a qm1-live-lane sleep 60' &
@@ -121,6 +130,25 @@ OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/fail-matrix.py" bash "$RUNNER"
 [ "$rc" -eq 7 ] && [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ] && \
   grep -qx 'install QWEN_CACHE_RAM=8192' "$CALLS"
 check "load failure returns rc 7 and restores baseline" $? "rc=$rc after=$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1): $OUT"
+
+# Initially absent is a distinct baseline state: success and failure must both remove the created unit.
+rm -f "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"
+OUT=$(env "${COMMON[@]}" bash "$RUNNER" ABSENT_OK -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$TMP/home/.config/systemd/user/qwen-builder.service" ] && grep -qx 'uninstall QWEN_CACHE_RAM=32768' "$CALLS"
+check "successful cell restores an initially absent unit to absent" $? "rc=$rc calls=$(tr '\n' ';' < "$CALLS"): $OUT"
+
+rm -f "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"
+OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/fail-matrix.py" bash "$RUNNER" ABSENT_FAIL -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 7 ] && [ ! -e "$TMP/home/.config/systemd/user/qwen-builder.service" ] && grep -qx 'uninstall QWEN_CACHE_RAM=32768' "$CALLS"
+check "failed cell restores an initially absent unit to absent" $? "rc=$rc calls=$(tr '\n' ';' < "$CALLS"): $OUT"
+
+rm -f "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"
+OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/fail-matrix.py" QM_UNINSTALL_LEAVES_UNIT=1 \
+  bash "$RUNNER" ABSENT_BROKEN -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 8 ] && [ -e "$TMP/home/.config/systemd/user/qwen-builder.service" ] && \
+  case "$OUT" in *"initially absent unit remains after restore"*) true;; *) false;; esac
+check "failed absence restore is detected with rc 8" $? "rc=$rc calls=$(tr '\n' ';' < "$CALLS"): $OUT"
+printf 'baseline unit\n' > "$TMP/home/.config/systemd/user/qwen-builder.service"
 
 # Domain control: only QWEN_NAME=value is accepted.
 OUT=$(env "${COMMON[@]}" bash "$RUNNER" bad -- NOT_QWEN=1 2>&1); rc=$?
