@@ -1,6 +1,6 @@
 # PC lane — N5m (S0-01 probe round 16: the census over every inherited fd, the pin scoped to main's launch, the literal denominator with a self-test, the fixture cleanup under failure)
 
-PIN: N5M-PIN-PLACEHOLDER
+PIN: 2c7ed47
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) — the local slot runs
 VERIFY-GOV1. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.

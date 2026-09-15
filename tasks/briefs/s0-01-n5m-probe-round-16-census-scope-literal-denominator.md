@@ -1,6 +1,6 @@
 # Lane N5m — S0-01 probe round 16: VERIFY-N5l's four findings closed — the census over EVERY inherited fd (an exact expected set, the FD_LEAK_PIPE row), the `close_fds` pin scoped to `main`'s launch, the driver's LITERAL denominator with a self-test, the socket fixture's cleanup under failure (build lane: PC Hermes `code-implementer`, the cloud build route; sandbox fallback `code-implementer`)
 
-PIN: `N5M-PIN-PLACEHOLDER`
+PIN: `2c7ed47`
 
 **Ground.** Round 15 (lane N5l) LANDED as 8b387d2 and was graded by VERIFY-N5l (`tasks/briefs/s0-01-n5l-support/VERIFY-N5l-report.md`, findings
 only, lint 50/50): F1 HIGH the census counts only fds that resolve to the framedir (`tests/test_s0_01_acp_probe.py:3820-3836`,
