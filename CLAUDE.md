@@ -390,7 +390,7 @@ immediately append a one-line fix to this file. Don't defer.
 **A `pgrep -f <pattern>` liveness/wait loop MUST exclude its own command line** — bracket the
 first char (`pgrep -f '[p]ytest ...'`) or match the binary with `-x` (two self-matching waiters
 spun for a whole lane in the source repo). **The bracket protects only the PATTERN: any other literal occurrence of the name in the same command line (a later `sed`/`nohup` argument naming the script) self-matches — a `pkill -f "[r]un_packs.sh"` killed the coordinator's own shell 2026-09-14 (rc 144); kill by pid, never by `pkill -f` inside a compound command that also names the target.**
-**`git rev-parse --short REV1 REV2` fails ("Needed a single revision") in this container's
+**`scripts/safe_commit.sh -m "…"`: no backticks inside a double-quoted message** — bash runs them as command substitutions and the phrase vanishes from the commit (three `in …` phrases eaten on 2026-09-15); write the message to a file or single-quote it. **`git rev-parse --short REV1 REV2` fails ("Needed a single revision") in this container's
 shell inside a compound command** — one rev-parse per call.
 **push_clean can LOSE A RACE with the GitNexus banner rewriter:** AGENTS.md/CLAUDE.md index-stat
 churn can regrow between its clean-check and filter-branch ("Cannot rewrite branches: You have

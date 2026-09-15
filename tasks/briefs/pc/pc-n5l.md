@@ -2,8 +2,9 @@
 
 PIN: 97bb0c0
 
-Role: code-implementer. Route: the LOCAL build route (`agentfactory-build-local`, `medium` — D-028, the owner's re-affirmed default); the
-dispatcher sets the server effort. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.
+Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) — the local server
+still carries the verify lane's `xhigh` default and the dispatcher cannot switch it to `medium` (D-028) until QM0's route-aware guard lands
+(the installer refuses under the two live cloud lanes); the route changes nothing in the brief. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.
 
 **The brief governs**: `tasks/briefs/s0-01-n5l-probe-the-symlink-red-and-the-v3-ports.md` — READ IT WHOLE and build items 1-8 in order.
 Your worktree IS `git archive <PIN>` plus the lane patch (the brief, this file, the pack `tasks/briefs/s0-01-n5l-support/N5l-pack.md`, the
