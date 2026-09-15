@@ -1,6 +1,6 @@
 # Lane QM0 — `harness-ports/bin/qwen-server.sh`: the matrix's cell knobs, a side-effect-free `guard` that tells local-route lanes from cloud lanes, and the guard BEFORE every persistent write (AF-AP-79 closed with a byte-identity regression) — the prerequisite lane QM1 found missing (build lane: PC Hermes `code-implementer` on the CLOUD build route)
 
-PIN: `PIN-PLACEHOLDER`
+PIN: `7537910`
 
 **Why (measured by lane QM1, `tasks/briefs/qwen-matrix-support/QM1-report.md`, in your tree).** The L1 matrix (`docs/research/findings/
 RESEARCH-FINDINGS-1-VERIFIED.md` §4) needs server cells with `--cache-ram`, `-ctxcp`, `-cms`, a selectable `--spec-type`, `-ub` and

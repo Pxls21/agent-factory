@@ -1,6 +1,6 @@
 # PC lane — QM0 (qwen-server.sh: the six matrix knobs, the side-effect-free `guard` that tells local from cloud lanes, the guard before every persistent write — AF-AP-79)
 
-PIN: PIN-PLACEHOLDER
+PIN: 7537910
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`). Venue:
 `tasks/briefs/pc/VENUE-MAP.md` — read it first.
