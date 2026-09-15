@@ -60,8 +60,10 @@ Nothing here is adopted yet; every lever carries its accuracy tag and its gate.
 4. **`-np 2` has a Hermes precondition:** each local lane must believe the window is the SLOT size (131K), or it overflows the slot exactly as
    the 2026-09-14 `-np 4` run did. Hermes live-resolves the window from the model catalog (no `context_length` in the profile); the clean
    seam is a per-slot-size model alias advertised by OmniRoute (e.g. a `qwen-local-131k` combo) — the load-generator lane names the exact seam.
-5. **Effort stays `medium` provisionally** (D-028) until VERIFY-N5k grades arm A against arm B; the council on adopting it as the default,
-   on the Hermes trims and on any build upgrade runs AFTER that verdict (it is the oracle's input).
+5. **Effort: `medium` for build lanes is DECIDED, not provisional** (D-028, the owner 2026-09-15, re-affirmed 12:2xZ: "just keep it on
+   medium … the verifier arms will catch anything left"); `xhigh` stays the verify/analysis effort. VERIFY-N5k's comparative grade
+   now INFORMS (which of v3's tests port into arm A) and no longer gates the default. The council still runs before the Hermes trims
+   or any build upgrade change lane behaviour (both are output-changing), after VERIFY-N5k's verdict is in hand.
 6. **DFlash and the GDN fix both live behind an upgrade** of the model server — output-changing, so an A/B on the N5k brief per the prompt's
    guard; not before the matrix has a baseline on the current build.
 
