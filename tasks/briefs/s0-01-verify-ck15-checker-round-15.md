@@ -1,6 +1,6 @@
 # VERIFY-CK15 — adversarial verification of S0-01 checker round 15 as LANDED (lane A5m, in the PIN): the exact-shape exclusivity lock on `_pinned_process_count`, the module-wide comparison/predicate inventories, the compile-and-collect driver with a real-assertion kill rule — graded against VERIFY-CK14's F1/F2 and the checker CONTRACT, never against the builder's own cases (verify lane: PC Hermes `adversarial-verifier`; on the CLOUD verify route the SINGLE-MODEL RULE applies — findings, no verdict; on the LOCAL route a verdict is allowed)
 
-PIN: `A5M-LANDING-PLACEHOLDER`
+PIN: `bf8a5dc`
 
 **What you grade.** `proofs/S0-01/check_acp_conformance.py` (C, 1906 lines at the PIN), `tests/test_s0_01_check_acp_conformance.py`
 (T, 5707 lines), `proofs/S0-01/pins.py` (P, 629 lines, unchanged and read-only), the driver `tasks/briefs/s0-01-a5m-support/mutants.sh`

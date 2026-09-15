@@ -1,6 +1,6 @@
 # PC lane — VERIFY-CK15 (adversarial verification of S0-01 checker round 15 as LANDED: the exact-shape exclusivity lock, the inventories, the valid driver)
 
-PIN: A5M-LANDING-PLACEHOLDER
+PIN: bf8a5dc
 
 Role: adversarial-verifier. Route: the LOCAL verify route (`agentfactory-verify-local`, xhigh — a verdict is allowed: the builder ran on the
 cloud model) when the local slot is free; otherwise the CLOUD verify route (`HERMES_MODEL=agentfactory-verify`, `HERMES_REASONING=ultra`;
