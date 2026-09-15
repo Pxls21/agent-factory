@@ -6,12 +6,13 @@
 # key that ONLY OmniRoute reads (project rule 3: OmniRoute is the sole model egress — Hermes never talks to
 # this port directly; harness-ports/bin/omniroute_local_builder.py wires the provider node + combo).
 #
-#   harness-ports/bin/qwen-server.sh argv|unit|keygen|install|start|stop|restart|status|health|probe|uninstall
+#   harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|start|stop|restart|status|health|probe|uninstall
 #
 #   argv      print the llama-server argv (one token per line) — the testable surface
 #   unit      print the systemd --user unit text
 #   keygen    create the API key file (0600, 64 hex) if absent; the value is never printed
-#   install   verify binary + model identity, keygen, write the unit, enable --now, wait for /health
+#   guard     report live lane routes; rc 7 when a local-route lane makes a service change unsafe
+#   install   guard before writes, verify binary + model, write/enable the unit, wait for /health
 #   status    unit state + the served model list (no key ever printed)
 #   health    rc 0 iff /health is ok AND /v1/models lists the alias
 #   probe     one 24-token completion through the server; prints the served model id + timings
@@ -35,14 +36,22 @@ QWEN_SLOTS="${QWEN_SLOTS:-1}"            # ONE slot = the whole 262k context per
                                          # >= 200k. Parallel lanes need a Hermes-side context cap first (a follow-up).
 QWEN_NGL="${QWEN_NGL:-99}"               # everything resident: the brief's -ngl 54 offload measured 7.0x slower
 QWEN_KV_TYPE="${QWEN_KV_TYPE:-q4_0}"
+QWEN_MTP_N_EXPLICIT="${QWEN_MTP_N+x}"
 QWEN_MTP_N="${QWEN_MTP_N:-3}"            # draft-mtp n=3: 86.9 t/s at 90 % acceptance on code (n=2: 79.9)
 QWEN_EFFORT="${QWEN_EFFORT:-medium}"     # the server-side default; a request's own reasoning_effort wins
 QWEN_CACHE_REUSE="${QWEN_CACHE_REUSE:-256}"
+QWEN_CACHE_RAM="${QWEN_CACHE_RAM:-8192}"       # MiB; rendered so a saved unit identifies the matrix cell
+QWEN_CTXCP="${QWEN_CTXCP:-}"
+QWEN_CMS="${QWEN_CMS:-}"
+QWEN_UBATCH="${QWEN_UBATCH:-}"
+QWEN_SPEC_P_MIN="${QWEN_SPEC_P_MIN:-}"
+QWEN_SPEC_TYPE="${QWEN_SPEC_TYPE-draft-mtp}"  # the matrix admits only draft-mtp, none and ngram-mod
 QWEN_KEY_FILE="${QWEN_KEY_FILE:-$HOME/.config/qwen-builder/api-key}"
 QWEN_UNIT="${QWEN_UNIT:-qwen-builder}"
 QWEN_HOME="${QWEN_HOME:-$HOME/qwen-builder}"
 QWEN_HEALTH_WAIT_S="${QWEN_HEALTH_WAIT_S:-180}"
-QWEN_LANES_DIR="${QWEN_LANES_DIR:-$HOME/agent-factory/.lanes}"   # live lane pidfiles: install never restarts under one
+QWEN_LANES_DIR="${QWEN_LANES_DIR:-$HOME/agent-factory/.lanes}"
+QWEN_PROC_ROOT="${QWEN_PROC_ROOT:-/proc}"       # tests point this at a fixture only for unreadable-environ failure
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 die() { echo "qwen-server: $*" >&2; exit "${2:-1}"; }
@@ -54,7 +63,33 @@ resolve_model() {
   printf '%s\n' "$m"
 }
 
+validate_knobs() {
+  local name value
+  for name in QWEN_CACHE_RAM QWEN_CTXCP QWEN_CMS QWEN_UBATCH; do
+    value=${!name}
+    [ -z "$value" ] || [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "$name must be a positive integer (got ${value@Q})" 3
+  done
+  if [ -n "$QWEN_SPEC_P_MIN" ]; then
+    python3 - "$QWEN_SPEC_P_MIN" <<'PY' || die "QWEN_SPEC_P_MIN must be a finite number in [0,1] (got ${QWEN_SPEC_P_MIN@Q})" 3
+import math
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(value) and 0 <= value <= 1 else 1)
+PY
+  fi
+  case "$QWEN_SPEC_TYPE" in
+    draft-mtp|none|ngram-mod) ;;
+    *) die "QWEN_SPEC_TYPE must be one of draft-mtp, none, ngram-mod (got ${QWEN_SPEC_TYPE@Q})" 3;;
+  esac
+  [ "$QWEN_SPEC_TYPE" = draft-mtp ] || [ -z "$QWEN_MTP_N_EXPLICIT" ] || \
+    die "QWEN_MTP_N applies only to QWEN_SPEC_TYPE=draft-mtp" 3
+}
+
 argv() {
+  validate_knobs
   local model; model=$(resolve_model)
   printf '%s\n' "$QWEN_LLAMA_SERVER" \
     -m "$model" \
@@ -63,7 +98,17 @@ argv() {
     --api-key-file "$QWEN_KEY_FILE" \
     -ngl "$QWEN_NGL" -c "$QWEN_CTX" -fa on -ctk "$QWEN_KV_TYPE" -ctv "$QWEN_KV_TYPE" \
     -np "$QWEN_SLOTS" --cache-reuse "$QWEN_CACHE_REUSE" \
-    --spec-type draft-mtp --spec-draft-n-max "$QWEN_MTP_N" \
+    --cache-ram "$QWEN_CACHE_RAM"
+  [ -z "$QWEN_CTXCP" ] || printf '%s\n' -ctxcp "$QWEN_CTXCP"
+  [ -z "$QWEN_CMS" ] || printf '%s\n' -cms "$QWEN_CMS"
+  [ -z "$QWEN_UBATCH" ] || printf '%s\n' -ub "$QWEN_UBATCH"
+  [ -z "$QWEN_SPEC_P_MIN" ] || printf '%s\n' --spec-draft-p-min "$QWEN_SPEC_P_MIN"
+  case "$QWEN_SPEC_TYPE" in
+    draft-mtp) printf '%s\n' --spec-type draft-mtp --spec-draft-n-max "$QWEN_MTP_N";;
+    ngram-mod) printf '%s\n' --spec-type ngram-mod;;
+    none) ;;
+  esac
+  printf '%s\n' \
     --jinja --chat-template-kwargs "{\"reasoning_effort\":\"$QWEN_EFFORT\"}" \
     --metrics --slots
 }
@@ -78,6 +123,8 @@ sd_quote() {
 }
 
 unit() {
+  # Process-substitution failures do not set the while loop's status, so validate in this shell too.
+  validate_knobs
   local exec="" tok
   while IFS= read -r tok; do exec+="$(sd_quote "$tok") "; done < <(argv)
   cat <<EOF
@@ -107,6 +154,41 @@ keygen() {
   ( umask 077; openssl rand -hex 32 > "$QWEN_KEY_FILE" ) || die "keygen failed" 4
   chmod 600 "$QWEN_KEY_FILE"
   echo "qwen-server: key file created ($QWEN_KEY_FILE, 0600); the value is never printed"
+}
+
+guard() {
+  local f pid route environ model
+  local local_live=0
+  for f in "$QWEN_LANES_DIR"/*/lane.pid; do
+    [ -f "$f" ] || continue
+    pid=$(cat "$f" 2>/dev/null || true)
+    if ! [[ "$pid" =~ ^[1-9][0-9]*$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+      printf '%s %s stale\n' "$f" "${pid:-<empty>}"
+      continue
+    fi
+    environ="$QWEN_PROC_ROOT/$pid/environ"
+    if [ ! -r "$environ" ]; then
+      route=LOCAL
+    else
+      model=$(tr '\0' '\n' < "$environ" 2>/dev/null | awk -F= '$1 == "HERMES_MODEL" && !found {sub(/^[^=]*=/, ""); value=$0; found=1} END {if (found) print value}') || model=
+      case "$model" in
+        *-local) route=LOCAL;;
+        '') route=LOCAL;;
+        *) route=CLOUD;;
+      esac
+    fi
+    printf '%s %s %s\n' "$f" "$pid" "$route"
+    [ "$route" != LOCAL ] || local_live=1
+  done
+  [ "$local_live" -eq 0 ] && return 0
+  return 7
+}
+
+guard_or_die() {
+  local out rc
+  out=$(guard); rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || die "a local-route lane is alive — service change refused" "$rc"
 }
 
 verify_inputs() {
@@ -139,20 +221,27 @@ wait_health() {
 }
 
 install() {
+  local unit_path="$HOME/.config/systemd/user/$QWEN_UNIT.service"
+  local candidate changed=1 was_active=0
+  validate_knobs
+  candidate=$(unit) || exit $?
+  if [ -f "$unit_path" ] && printf '%s\n' "$candidate" | cmp -s - "$unit_path"; then changed=0; fi
+  if [ "$changed" -eq 0 ]; then
+    verify_inputs
+    echo "qwen-server: unit $QWEN_UNIT unchanged; no service change needed"
+    return 0
+  fi
+  guard_or_die
   verify_inputs
+  # This observation is intentionally after the pre-write guard: it decides whether a changed running unit needs restart.
+  systemctl --user is-active --quiet "$QWEN_UNIT" >/dev/null 2>&1 && was_active=1
   mkdir -p "$QWEN_HOME/logs" "$HOME/.config/systemd/user"
   keygen
-  local unit_path="$HOME/.config/systemd/user/$QWEN_UNIT.service" changed=0
-  if [ -f "$unit_path" ] && ! unit | cmp -s - "$unit_path"; then changed=1; fi
-  unit > "$unit_path"
+  printf '%s\n' "$candidate" > "$unit_path"
   systemd-analyze --user verify "$unit_path" || die "unit does not verify (systemd-analyze)" 5
   systemctl --user daemon-reload || die "daemon-reload failed" 5
   systemctl --user enable --now "$QWEN_UNIT" >/dev/null 2>&1 || die "enable --now $QWEN_UNIT failed" 5
-  if [ "$changed" = 1 ] && systemctl --user is-active --quiet "$QWEN_UNIT"; then
-    # enable --now is a no-op on a running unit: a changed argv only takes effect through a restart. A restart
-    # kills every lane mid-turn — install refuses while a lane pidfile is alive (check .lanes/*/lane.pid first).
-    local live; live=$(for f in "$QWEN_LANES_DIR"/*/lane.pid; do [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null && echo "$f"; done)
-    [ -z "$live" ] || die "unit text changed but a lane is alive ($live) — stop it by pid first, then re-run install" 7
+  if [ "$changed" -eq 1 ] && [ "$was_active" -eq 1 ]; then
     echo "qwen-server: unit text changed and the unit is running — restarting it"
     systemctl --user restart "$QWEN_UNIT" || die "restart $QWEN_UNIT failed" 5
   fi
@@ -184,16 +273,30 @@ print("qwen-server: probe served model=%s finish=%s prompt_n=%s predicted_n=%s d
 sys.exit(0 if "pong" in c.lower() else 7)' || die "probe returned no pong in content" 7
 }
 
+change_service() {
+  guard_or_die
+  systemctl --user "$1" "$QWEN_UNIT"
+}
+
+uninstall() {
+  guard_or_die
+  systemctl --user disable --now "$QWEN_UNIT" 2>/dev/null || true
+  rm -f "$HOME/.config/systemd/user/$QWEN_UNIT.service"
+  systemctl --user daemon-reload || die "daemon-reload failed" 5
+  echo "qwen-server: unit removed (key file and logs kept)"
+}
+
 case "${1:-}" in
   argv) argv;;
   unit) unit;;
   keygen) keygen;;
+  guard) guard; exit $?;;
   verify) verify_inputs && echo "qwen-server: inputs verified (binary, model, sha256 $QWEN_MODEL_SHA256, GGUF magic)";;
   install) install;;
-  start|stop|restart) systemctl --user "$1" "$QWEN_UNIT";;
+  start|stop|restart) change_service "$1";;
   status) status;;
   health) health;;
   probe) probe;;
-  uninstall) systemctl --user disable --now "$QWEN_UNIT" 2>/dev/null; rm -f "$HOME/.config/systemd/user/$QWEN_UNIT.service"; systemctl --user daemon-reload; echo "qwen-server: unit removed (key file and logs kept)";;
-  *) sed -n '2,20p' "$0"; exit 64;;
+  uninstall) uninstall;;
+  *) sed -n '2,21p' "$0"; exit 64;;
 esac

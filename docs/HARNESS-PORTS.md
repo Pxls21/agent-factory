@@ -394,13 +394,19 @@ the local Qwen3.8-27B (unsloth UD-IQ4_XS, sha256 `40fac405…6199`) served by th
 owner's 3090, FIRST, then the `agentfactory-build` cloud chain as fallback. Two scripts own it, both idempotent and
 both proven live on the PC that day (no owner step was needed):
 
-- `harness-ports/bin/qwen-server.sh install|status|health|probe|uninstall` — the systemd `--user` unit
-  `qwen-builder` (loopback `127.0.0.1:8080`, `--api-key-file ~/.config/qwen-builder/api-key` 0600, the measured shape
-  `-ngl 99 -c 262144 -np 4 -fa on -ctk/-ctv q4_0 --spec-type draft-mtp --spec-draft-n-max 3 --jinja
-  reasoning_effort=medium`; every knob an env override). `verify` fails closed on the binary, the HF blob name ==
-  sha256 and the GGUF magic; `probe` gates on the CONTENT of a completion (Qwen thinks first — a 24-token budget
-  returns an empty answer). Suite: `harness-ports/tests/test_qwen_server.sh` (43 checks; the unit is quoted by
-  systemd.syntax(7), never bash `%q`).
+- `harness-ports/bin/qwen-server.sh argv|unit|keygen|guard|install|start|stop|restart|status|health|probe|uninstall` — the
+  systemd `--user` unit `qwen-builder` (loopback `127.0.0.1:8080`, `--api-key-file
+  ~/.config/qwen-builder/api-key` 0600). The default measured shape is `-ngl 99 -c 262144 -np 1 -fa on
+  -ctk/-ctv q4_0 --cache-reuse 256 --cache-ram 8192 --spec-type draft-mtp --spec-draft-n-max 3 --jinja
+  reasoning_effort=medium`. Matrix cells can set `QWEN_CACHE_RAM`, `QWEN_CTXCP`, `QWEN_CMS`, `QWEN_UBATCH`,
+  `QWEN_SPEC_P_MIN`, and `QWEN_SPEC_TYPE`; the launcher admits only `draft-mtp`, `none`, and `ngram-mod` even
+  though the binary supports more speculation types. Invalid domains fail closed with rc 3. `guard` reports each live
+  lane's route from `/proc/<pid>/environ`; local and absent/empty routes refuse with rc 7, cloud routes do not block,
+  and stale pidfiles are reported and ignored. `install` returns without a service operation when the
+  rendered unit is unchanged; otherwise it guards before keygen, directory/unit writes, or systemd calls. `start|stop|restart|uninstall`
+  guard before their first effect (AF-AP-79). `verify` fails
+  closed on the binary, HF blob name == sha256, and GGUF magic; `probe` gates on completion CONTENT. Suite:
+  `harness-ports/tests/test_qwen_server.sh` (the unit is quoted by systemd.syntax(7), never bash `%q`).
 - `harness-ports/bin/omniroute_local_builder.py ensure|status|probe|remove` — node `qwen-local` → connection
   (the key from the key file) → the model in `/v1/models` → combo `agentfactory-build-local`, through
   `harness-ports/bin/omni_api.mjs` = the installed OmniRoute CLI's own machine-bound loopback-token `apiFetch`

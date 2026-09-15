@@ -168,10 +168,13 @@ question; the containment proof itself does not depend on cgroups. Platform: sys
   token (`harness-ports/bin/omni_api.mjs`; run with `OMNIROUTE_API_KEY` unset). Exposed model id
   `qwen-local/qwen3.8-27b-local`.
 - **Operate:** `bash scripts/pc.sh 'cd ~/agent-factory && bash harness-ports/bin/qwen-server.sh status'` (health +
-  `/v1/models` + GPU line); `… probe` for one content-gated completion; `… restart` ONLY with no lane alive (a restart
-  kills every lane mid-turn — check `.lanes/*/lane.pid` first) and never while the owner's own sessions use the route.
-  The bridge shell has no `XDG_RUNTIME_DIR`; the script exports `/run/user/$(id -u)` itself — do the same for any
-  bare `systemctl --user` / `systemd-analyze --user` call over the bridge.
+  `/v1/models` + GPU line); `… probe` for one content-gated completion. Run `… guard` before any matrix or
+  model-server restart: it reports local/cloud route per live lane from `/proc/<pid>/environ`, refuses local and
+  absent-route lanes with rc 7, and lets cloud-route lanes continue. `install` returns with no service operation for an
+  unchanged rendered unit; otherwise it runs that guard before it writes the unit or invokes systemd.
+  `start|stop|restart|uninstall` guard before their first effect (AF-AP-79). Never
+  restart while the owner's own sessions use the route. The bridge shell has no `XDG_RUNTIME_DIR`; the script exports
+  `/run/user/$(id -u)` itself — do the same for any bare `systemctl --user` / `systemd-analyze --user` call over the bridge.
 
 
 ## OmniRoute on the PC — the managed unit, and the process-kill rule (2026-09-05)
