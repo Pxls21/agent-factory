@@ -190,6 +190,29 @@ if [ -s "$LANE_PATCH_FILE" ]; then
   fi
 fi
 
+# --- code intel in the lane tree (2026-09-15) ----------------------------------
+# A lane tree is a fresh worktree of the PIN: no graft index, no GitNexus index — so `graft ask` and the pack
+# script (scripts/lane_context.sh) could not run there, and no lane used them (arm A: graft x1; arm B v3: x0,
+# 132 whole-file reads, 456 shell calls — the owner, 2026-09-15: "why isn't it using the quartet?").
+# `graft build` in a worktree SEEDS from the clone's graph: 4 s measured on the v3 tree (2026-09-15 07:05Z), after
+# which `graft ask` answers in 1 s and the whole pack in 4 s — so it runs at every launch. Fail-LOUD, never fatal:
+# a lane without an index falls back to grep and says so. The coordinator's report tooling is not proof code:
+# the CURRENT report_lint.py is overlaid so a lane never runs the PIN's older lint (v3 ran a lint without fix
+# hints and looped on its report — the same class the hints were written to close).
+if command -v graft >/dev/null 2>&1; then
+  if ( cd "$TREE" && graft build > "$LANE_DIR/graft-build.log" 2>&1 ) && [ -f "$TREE/graft/INDEX.md" ]; then
+    echo "pc-lane: graft index built in the lane tree ($TREE/graft/INDEX.md)" >&2
+  else
+    echo "pc-lane: graft build FAILED (see $LANE_DIR/graft-build.log) — the lane falls back to grep" >&2
+  fi
+else
+  echo "pc-lane: graft not on PATH — no lane index (harness-ports/bin/pc-setup.sh installs it)" >&2
+fi
+for tool in scripts/report_lint.py; do
+  if [ -f "$AF_REPO/$tool" ] && ! cmp -s "$AF_REPO/$tool" "$TREE/$tool" 2>/dev/null; then
+    cp "$AF_REPO/$tool" "$TREE/$tool" && echo "pc-lane: overlaid the current $tool into the lane tree" >&2
+  fi
+done
 # --- the prompt: role file, then brief --------------------------------------
 PROMPT_FILE="$LANE_DIR/prompt.md"
 : > "$PROMPT_FILE"
@@ -217,6 +240,9 @@ printf '\n\n---\nMECHANICAL GATES ARE BOUNDED (standing lane rule): `scripts/rep
 # stated a leak the coordinator had never measured at the real emitter; the medium arm flagged the same
 # non-reproduction in DISCREPANCIES and built. The cap lives here; the brief-writer measures premises before writing.
 printf '\n\n---\nPREMISE CONFLICTS ARE BOUNDED (standing lane rule): when a premise the brief states does not reproduce in your tree (a mutant that does not die, a count that differs, a mechanism that is not there), spend at most THREE experiments on it, then write ONE DISCREPANCIES entry with your measurement (the command and its output) and either build the item on the measured truth when its intent is still satisfiable, or STOP and report when it is not. Never read interpreter or library sources, write C programs or probe the kernel to re-derive a mechanism the brief did not ask you to build; never re-read a file region the harness has already returned (a BLOCKED read is a loop signal — move on). A brief premise is a claim to check once, not a research question.\n' >> "$PROMPT_FILE"
+# Standing lane rule (2026-09-15): the instruments are IN the tree now (the block above) — say so, or the lane
+# never looks (v3 never called graft; the profile's MCP servers were never searched under the context-budget rule).
+printf '\n\n---\nCODE INTEL FIRST (standing lane rule): the dispatcher built a graft index in your tree at launch (`graft/INDEX.md`, seeded from the clone in seconds). Every semantic code question — who calls X, where is the seam for Y, which flags does Z pass, which tests exercise W — goes to the instruments BEFORE any grep or whole-file read: `graft ask "<question>" [--in <path>]` and `graft skeleton <file>` (symbols + line ranges at a twentieth of the tokens of the file); `bash scripts/ripwire_review.sh for|callers|impact|exercises <symbol>` (a second, independent instrument); `python3 scripts/ap_screen.py <file>` (the anti-pattern registry screen; `--tests` for a test file); the whole pack in ONE command: `bash scripts/lane_context.sh -q "<question>" -s <SYMBOL> -o pack.md <files>` (about 4 s). GitNexus blast radius reads the CLONE index: `node %s/.gitnexus/run.cjs impact "<symbol>" --direction upstream --repo %s` (its line numbers are the clone HEAD, not your PIN). Read files by line range from their answers, never whole. `scripts/report_lint.py` in your tree is the dispatcher CURRENT copy, overlaid at launch — not yours: never revert it, never list it in FILE IDENTITY.\n' "$AF_REPO" "$AF_REPO" >> "$PROMPT_FILE"
 
 echo "pc-lane: lane=$LANE_ID harness=$HARNESS role=${ROLE:-none} pin=$PIN" >&2
 echo "pc-lane: tree=$TREE" >&2

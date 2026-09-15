@@ -50,10 +50,26 @@ for test_role in adversarial-verifier researcher curator contract-runner; do
 ROLE-MARKER: this is the $test_role role body.
 EOF
 done
+mkdir -p "$REPO/scripts"; echo "LINT-AT-PIN" > "$REPO/scripts/report_lint.py"   # the PIN's copy of the report tooling
 echo hello > "$REPO/file.txt"
 git -C "$REPO" add -A >/dev/null
 git -C "$REPO" commit -qm base
 SHA="$(git -C "$REPO" rev-parse HEAD)"
+# The clone's WORKING copy of the report tooling moves on after the PIN (the coordinator lands lint fixes);
+# the dispatcher overlays the current copy into every lane tree (2026-09-15: v3 ran the PIN's old lint and looped).
+echo "LINT-CURRENT" > "$REPO/scripts/report_lint.py"
+# A FAKE graft on PATH (test double, labelled): logs its argv, writes the index file, fails on demand.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/graft" <<'EOF2'
+#!/usr/bin/env bash
+# TEST DOUBLE for the graft CLI: records the call, seeds a fake index, or fails when GRAFT_FAKE_FAIL=1.
+echo "graft $* (cwd $PWD)" >> "${GRAFT_FAKE_LOG:?}"
+[ "${GRAFT_FAKE_FAIL:-0}" = 1 ] && { echo "fake graft: build failed"; exit 1; }
+[ "$1" = build ] && { mkdir -p graft && echo "fake index" > graft/INDEX.md; }
+exit 0
+EOF2
+chmod +x "$TMP/bin/graft"
+export PATH="$TMP/bin:$PATH" GRAFT_FAKE_LOG="$TMP/graft-calls.log"
 
 # --- the FAKE HARNESS (test double, labelled) -------------------------------
 FAKE="$TMP/fake-harness.sh"
@@ -92,6 +108,22 @@ grep -q "ROLE-MARKER" "$LD/report.md" 2>/dev/null; check "role file was PREPENDE
 
 grep -q "BRIEF-MARKER" "$LD/report.md" 2>/dev/null; check "brief body reached the harness" $? \
   "role must not displace the brief"
+
+# --- code intel in the lane tree (2026-09-15) --------------------------------------------------
+grep -q "CODE INTEL FIRST" "$LD/prompt.md"; check "the standing code-intel rule (graft ask / the pack / ripwire / ap_screen before any grep) is in every lane prompt" $? \
+  "2026-09-15: no lane had used the quartet — arm A graft x1, arm B v3 x0 with 132 whole-file reads; a tree with no index and a prompt that never names the instruments cannot use them"
+check "the dispatcher builds the graft index IN the lane tree at launch" \
+  "$([ -f "$LD/tree/graft/INDEX.md" ] && grep -q "graft build (cwd $LD/tree)" "$GRAFT_FAKE_LOG" && grep -q "graft index built in the lane tree" "$TMP/err" && echo 0 || echo 1)" \
+  "a lane worktree of the PIN carries no index; graft build seeds from the clone in 4 s (measured on the v3 tree)"
+check "the CURRENT report_lint.py is overlaid into the lane tree (the PIN's older copy never runs a lane's gate)" \
+  "$([ "$(cat "$LD/tree/scripts/report_lint.py")" = "LINT-CURRENT" ] && grep -q "overlaid the current scripts/report_lint.py" "$TMP/err" && echo 0 || echo 1)" \
+  "v3 (2026-09-15) ran the PIN's lint without fix hints and looped on its report after the hints had landed in the clone"
+BRIEF_GF="$TMP/tests/brief-graftfail.md"; { echo "PIN: $SHA"; echo; echo "graft build fails here"; } > "$BRIEF_GF"
+GRAFT_FAKE_FAIL=1 bash "$LANE" "$BRIEF_GF" codex code-implementer >"$TMP/out-gf" 2>"$TMP/err-gf"; rc_gf=$?
+LD_GF="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-graftfail.md' | head -1)"
+check "NEGATIVE CONTROL: a failing graft build is LOUD and never fatal — the lane still runs, stderr names the fallback" \
+  "$([ $rc_gf -eq 0 ] && grep -q "graft build FAILED" "$TMP/err-gf" && [ ! -f "$LD_GF/tree/graft/INDEX.md" ] && grep -q "FAKE-HARNESS-REPORT" "$LD_GF/report.md" && echo 0 || echo 1)" \
+  "an index is a speed-up, not a gate: a lane without one falls back to grep and says so"
 
 # role BEFORE brief
 awk '/ROLE-MARKER/{r=NR} /BRIEF-MARKER/{b=NR} END{exit !(r && b && r<b)}' "$LD/report.md"

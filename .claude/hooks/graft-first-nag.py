@@ -25,10 +25,15 @@ def main() -> int:
     glob = ti.get("glob") or ""
     ftype = ti.get("type") or ""
 
+    # Project code lives under proofs/, spikes/, scripts/, src/ and harness-ports/ (CLAUDE.md, code-intel section) —
+    # the inherited `"src" in path` test was blind to every real code path here (found 2026-09-15 while porting the
+    # nag to the Hermes spool: a `_read_regular` search under proofs/S0-01 drew no nag).
+    code_prefixes = ("proofs", "spikes", "scripts", "src", "harness-ports")
     targets_py = (
         ftype == "py"
         or glob.endswith(".py")
-        or "src" in path
+        or path.endswith(".py")
+        or any(part in code_prefixes for part in path.strip("/").split("/"))
         or (not path and not glob and not ftype)
     )
     # Bare identifier(s) — no regex operators beyond | between plain names.

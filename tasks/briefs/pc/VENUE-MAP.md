@@ -30,6 +30,12 @@ design, gates and report discipline.
   OmniRoute key, any `~/.hermes/profiles/*/.env`, or any credential.
 - Processes: kill only what you start, by pid (never `pkill`/`pgrep -f`); long gates in ONE foreground call; podman and runsc only
   where the original brief's design requires them (build lanes: never). `kernel.dmesg_restrict=1` here and you are unprivileged.
+- Code intel: the dispatcher builds a graft index IN your tree at launch (`graft/INDEX.md`) and overlays the clone's current
+  `scripts/report_lint.py`. Semantic questions go to the instruments BEFORE any grep or whole-file read: `graft ask "<q>"`,
+  `graft skeleton <file>`, `bash scripts/ripwire_review.sh for|callers|impact|exercises <symbol>`, `python3 scripts/ap_screen.py <file>`,
+  the whole pack `bash scripts/lane_context.sh -q "<q>" -s <SYMBOL> -o pack.md <files>` (about 4 s); GitNexus blast radius against the
+  clone's index: `node /home/rocco/agent-factory/.gitnexus/run.cjs impact "<symbol>" --direction upstream --repo /home/rocco/agent-factory`
+  (line numbers = the clone HEAD, not your PIN). Read by line range from their answers.
 - Report: the standing incremental rule applies (append each finished section to `$LANE_REPORT_DRAFT`). Your FINAL message is the
   whole report, in the shape the original brief demands — FILE IDENTITY of the final bytes, red-before/green-after, the mutant table
   with a killer line per mutant, the class sweep, `report_lint` run LAST under the BOUNDED rule (its `fix:` hints for at most three rounds, then the summary pasted — a `MISS 0` demand is a target, never a stop condition; AF-AP-76), the gate RESULT lines pasted verbatim, DISCREPANCIES,

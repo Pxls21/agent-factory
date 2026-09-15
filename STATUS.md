@@ -33,8 +33,8 @@ a distillation and the ledger wins on any disagreement).
   QUALITY at `medium` — the first lane on it (N5k, arm A of the effort A/B) LANDED 2026-09-14 (`113 passed` ×3, 12 mutants
   killed; substantive completion at 4 h 53 m of lane time, then a 47-minute lint loop the BRIEF built — AF-AP-76, fixed the
   same day at the tool/dispatcher/skill layer); arm B (`xhigh`): the v2 run STOPPED at 2 h 05 m after two premise-investigation loops on item 2 (one line of code — A/B data points 1-2: at xhigh an unmeasured premise is a sink); v3 runs on the twice-amended brief (the measured premise + the bounded gates) under the fourth standing lane rule; the verify
-  lanes route to `agentfactory-verify-local` at `xhigh` (D-028); the comparative verify after arm B; the default effort is
-  NOT decided.
+  lanes route to `agentfactory-verify-local` at `xhigh` (D-028); arm B v3 STOPPED at substantive completion 2026-09-15 07:02Z (`119 passed` in 6 h 41 m, first write at 48 min); the default effort DECIDED by the owner 2026-09-15 — `medium` builds, `xhigh` verifies/analyses (D-028); it is
+  settled; the landed round 14 (arm A) goes to its verify round with v3's six extra tests and its DISCREPANCIES as material.
 
 - Wave 0 spikes, all POSITIVE (2026-09-04): rust ai-memory builds on the PC; Docker starts in the sandbox; runsc runs rootless in
   the sandbox and on the PC; selective egress works with a veth pair and iptables. S0-06 and S0-08 therefore moved from deferred to

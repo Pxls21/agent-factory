@@ -116,6 +116,27 @@ def main() -> int:
 
     run("edit-snapshot.py", "post_tool_call", dict(EDIT, session_id="otherlane"),
         spool=True)
+    # --- graft-first nag as a spooled observer (2026-09-15; owner: "why isn't it using the quartet?") ------
+    # pre_tool_call can only block/modify/approve, so the ADVISORY nag rides the same spool as the edit snapshot:
+    # a bare-identifier search_files pattern spools the nag text; the next pre_llm_call injects it (one turn late).
+    SEM = {"hook_event_name": "post_tool_call", "tool_name": "search_files", "session_id": SID,
+           "tool_input": {"pattern": "_read_regular", "path": "proofs/S0-01"}}
+    LIT = dict(SEM, tool_input={"pattern": "exceeds the available context size", "path": "proofs"})
+    spool_for(SID).unlink(missing_ok=True)
+    o, e, _ = run("graft-first-nag.py", "post_tool_call", SEM, spool=True)
+    check("graft-first nag on a semantic search_files pattern is SPOOLED, silent on stdout",
+          o.strip() == "" and spool_for(SID).exists() and "graft ask" in spool_for(SID).read_text(),
+          "no lane had used the quartet (arm A graft x1, arm B v3 x0); the nag reaches a Hermes lane only through the spool")
+    ctx_nag = ctx_of(run("wiki-context.py", "pre_llm_call", PROMPT, spool=True)[0])
+    check("next pre_llm_call injects the spooled nag", "graft ask" in ctx_nag,
+          "one turn late, like the edit snapshot — better than never, never a block")
+    o, e, _ = run("graft-first-nag.py", "post_tool_call", LIT, spool=True)
+    sp_lit = spool_for(SID)
+    check("NEGATIVE CONTROL: a literal-text search spools nothing",
+          o.strip() == "" and (not sp_lit.exists() or sp_lit.read_text().strip() == ""),
+          "the nag fires on bare-identifier searches only — a literal sweep is legal grep")
+    spool_for(SID).unlink(missing_ok=True)
+
     check("spool is keyed per session",
           spool_for("otherlane").exists() and not spool_for(SID).exists(),
           "two lanes running at once must not drain each other's snapshots")

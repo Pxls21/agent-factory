@@ -148,6 +148,13 @@ hooks:
     - matcher: "patch|write_file"
       command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py edit-snapshot.py post_tool_call --spool"
       timeout: 60
+  # graft-first nag, ADVISORY on Hermes (2026-09-15; owner: "why isn't it using the quartet?"): a spooled
+  # post_tool_call OBSERVER on search_files — when the pattern is a bare identifier (a semantic search), the
+  # nag text goes into the per-session spool and the NEXT pre_llm_call injects it (one turn late, exactly like
+  # the edit snapshot; never a block). The pre_tool_call HARD-BLOCK form below stays the owner's call.
+    - matcher: "search_files"
+      command: "python3 ${AF_REPO}/harness-ports/bin/hermes-hook-adapter.py graft-first-nag.py post_tool_call --spool"
+      timeout: 20
 
   # Turn-retro gate. Blocks with the retro checklist once per landed batch.
   # PARTIAL PORT: pre_verify fires at the bounded edited-code verify gate, so a
