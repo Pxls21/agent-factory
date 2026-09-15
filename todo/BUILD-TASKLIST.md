@@ -98,6 +98,13 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-15 20:0xZ VERIFY-A5n landed → A5o (checker round 17); QM1-d still live:**
+
+VERIFY-A5n (cloud verify, findings only) returned two BLOCKERs on checker round 16 (A5n). F1 (AF-AP-85 recurrence): the module-wide classifier-operand inventory (T:2984-3041) compares only raw ast.unparse() operands, so a pin behind a LOCAL NAME or a walrus (NamedExpr) derived from PINNED_TEE_PATH/PINNED_AGENT_REALPATH is invisible — helper-direct, nested-helper, and membership-alias mutations all ESCAPED. F2 (AF-AP-84 variant): the driver's fixed TOTAL_ROWS=20 silently skips any row past the cap — an added M14_EXTRA row with unchanged EXPECTED=19 exits 0. V2 (labelled asserts) SOLID, the driver baseline 19/19 reproduced. F3 SHOULD-FIX is a coordinator brief bug: the V7 gate command passed `-n 8` to lane_gate.sh where -n is RUNS not xdist (the checker file is ~15 min serial → the A5o gate uses pc_suite.sh xdist, never lane_gate -n 8). → A5o (#71): a BINDING-AWARE AST audit (track assignment + NamedExpr aliases across scopes; the 3 escapes as permanent controls) + the driver cardinality derived from ${#cases[@]} with total==EXPECTED+control and an added-row self-test. No new AP class (both are existing classes recurring). Report + transcript filed.
+
+LIVE: QM1-d (cloud build, closing VERIFY-QM1-c's two findings); local slot free. NEXT: harvest QM1-d; A5o (#71) and VERIFY-N5n; GOV2 (#67); then #64 CI + #65/#66. Tip c16de0d.
+
+
 **2026-09-15 20:0xZ N5n landed (probe round 17); VERIFY-A5n + QM1-d live:**
 
 N5n (S0-01 probe round 17, cloud build) LANDED as b0254cf: VERIFY-N5m F1 closed at the test/driver layer, production probe BYTE-IDENTICAL (git diff --quiet c728be5 rc 0, one direct Popen at probe:371). The broad main walker classifies subprocess.Popen by call shape independent of target and rejects For/AsyncFor/While + all four comprehension forms via an ancestor check; a module-wide count closes the moved-to-helper bypass. Driver EXPECTED=13 KILLED=13 SURVIVED=0 INVALID=0 CONTROL=1, self-test wrapper rc 0. Identities T 0b5588d4/4046, D ac11428c/181, P unchanged f42a9025/678. Sandbox static-copy gate green + deterministic: RESULT rev=c728be59526a files=2 runs=2 tests=a5097bab1417 identical=yes rc=0 summary="129 passed in 47.83s 129 passed in 48.06s". AP screen rc 0, no new class (AF-AP-85 observation-scope + AF-AP-84 literal denominator, both existing). NOT-DONE: no dedicated AsyncFor/While committed fixture (shared tuple rejection) → a VERIFY-N5n attack target. The lane used graft + ripwire in-tree (code-intel wiring working). → VERIFY-N5n next.
