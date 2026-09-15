@@ -25,6 +25,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -254,8 +255,15 @@ def _run_probe(tmp_path, agent, timeout_override=None, extra_env=None):
     return r, framedir
 
 
+@contextmanager
 def _short_unix_socket_path():
-    return Path(tempfile.mkdtemp(prefix="n5l-sock-", dir="/tmp")) / "socket"
+    directory = Path(tempfile.mkdtemp(prefix="n5l-sock-", dir="/tmp"))
+    try:
+        yield directory / "socket"
+    finally:
+        for child in directory.iterdir():
+            child.unlink()
+        directory.rmdir()
 
 
 # ---- Core scenarios ----
@@ -3581,24 +3589,34 @@ def test_probe_cloexec_is_load_bearing_child_sees_no_framedir_fd(tmp_path):
 
 
 def _agent_popen_close_fds_value(src):
-    """Return the literal close_fds value on the one Popen assigned to proc."""
+    """Return literal close_fds for the one agent launch in main, excluding nested defs."""
     import ast
 
+    module = ast.parse(src)
+    mains = [node for node in module.body
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name == "main"]
+    assert len(mains) == 1, f"expected one top-level main, got {len(mains)}"
     calls = []
-    for node in ast.walk(ast.parse(src)):
-        if not isinstance(node, ast.Assign):
+    pending = list(ast.iter_child_nodes(mains[0]))
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "proc"
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == "proc"
                    for target in node.targets):
-            continue
-        call = node.value
-        if not isinstance(call, ast.Call):
-            continue
-        func = call.func
-        if (isinstance(func, ast.Attribute) and func.attr == "Popen"
-                and isinstance(func.value, ast.Name) and func.value.id == "subprocess"):
-            calls.append(call)
-    assert len(calls) == 1, f"expected one agent Popen assigned to proc, got {len(calls)}"
+                call = node.value
+                if isinstance(call, ast.Call):
+                    func = call.func
+                    if (isinstance(func, ast.Attribute) and func.attr == "Popen"
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "subprocess"):
+                        calls.append(call)
+        pending.extend(ast.iter_child_nodes(node))
+    assert len(calls) == 1, (
+        f"expected one agent Popen assigned to proc in main, got {len(calls)}"
+    )
     assert all(keyword.arg is not None for keyword in calls[0].keywords), (
         "the agent Popen must not hide close_fds in **kwargs"
     )
@@ -3634,6 +3652,30 @@ def test_probe_agent_launch_pins_the_close_fds_default_second_defence(tmp_path):
     assert _agent_popen_close_fds_value(comment_mutant) is False, (
         "a close_fds=True comment masked the real False keyword"
     )
+
+
+def test_probe_agent_launch_pin_ignores_a_nested_helper_but_rejects_two_main_launches():
+    """N5m item 2: pin exactly one agent launch in main, not nested helpers."""
+    nested = textwrap.dedent("""\
+        import subprocess
+        def main():
+            def safe_nested_helper():
+                proc = subprocess.Popen(["safe"], close_fds=True)
+                return proc
+            proc = subprocess.Popen(["agent"], close_fds=True)
+            return proc
+    """)
+    assert _agent_popen_close_fds_value(nested) is True
+
+    nested_anchor = "        return proc\n    proc ="
+    assert nested.count(nested_anchor) == 1
+    second_top_level = nested.replace(
+        nested_anchor,
+        "        return proc\n    proc = subprocess.Popen([\"other\"], close_fds=True)\n    proc =",
+        1,
+    )
+    with pytest.raises(AssertionError, match=r"in main, got 2"):
+        _agent_popen_close_fds_value(second_top_level)
 
 
 # ---- N5l round 15: final-symlink red, v3 read ports, real-emitter census ----
@@ -3728,9 +3770,20 @@ def test_probe_socket_fixture_uses_a_short_path():
         held_socket.close()
     assert "AF_UNIX path too long" in str(caught.value)
 
-    target = _short_unix_socket_path()
-    assert len(os.fsencode(target)) < len(os.fsencode(too_long))
-    target.parent.rmdir()
+    with _short_unix_socket_path() as target:
+        assert len(os.fsencode(target)) < len(os.fsencode(too_long))
+
+
+def test_probe_socket_fixture_cleans_up_after_failure():
+    """N5m item 4: the short-path fixture removes its directory on any exit."""
+    before = set(Path("/tmp").glob("n5l-sock-*"))
+    with pytest.raises(AssertionError, match="forced after allocation"):
+        with _short_unix_socket_path():
+            raise AssertionError("forced after allocation")
+    after = set(Path("/tmp").glob("n5l-sock-*"))
+    assert after == before, (
+        f"short socket fixture leaked paths: {sorted(map(str, after - before))}"
+    )
 
 
 @pytest.mark.parametrize("shape", ["fifo", "directory", "devzero", "socket"])
@@ -3739,7 +3792,6 @@ def test_probe_read_primitive_refuses_named_non_regular_shapes(tmp_path, shape):
     import socket
 
     probe = _load_probe_module(PROBE, f"n5l_non_regular_{shape}_probe")
-    held_socket = None
     if shape == "fifo":
         target = tmp_path / "fifo"
         os.mkfifo(str(target))
@@ -3752,19 +3804,20 @@ def test_probe_read_primitive_refuses_named_non_regular_shapes(tmp_path, shape):
         target = Path("/dev/zero")
         expected = "not a regular file: /dev/zero"
     else:
-        target = _short_unix_socket_path()
-        held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        held_socket.bind(str(target))
-        expected = f"[Errno {errno.ENXIO}] {os.strerror(errno.ENXIO)}: '{target}'"
+        with _short_unix_socket_path() as target:
+            held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            held_socket.bind(str(target))
+            expected = f"[Errno {errno.ENXIO}] {os.strerror(errno.ENXIO)}: '{target}'"
+            try:
+                with pytest.raises(OSError) as caught:
+                    probe._read_regular(str(target))
+            finally:
+                held_socket.close()
+            assert str(caught.value) == expected
+        return
 
-    try:
-        with pytest.raises(OSError) as caught:
-            probe._read_regular(str(target))
-    finally:
-        if held_socket is not None:
-            held_socket.close()
-            target.unlink()
-            target.parent.rmdir()
+    with pytest.raises(OSError) as caught:
+        probe._read_regular(str(target))
     assert str(caught.value) == expected
 
 
@@ -3819,21 +3872,21 @@ def test_probe_read_primitive_mutants_die_at_the_open_level(tmp_path):
 
 _CENSUS_AGENT = """#!%s
 import json, os, sys
-frame = os.path.realpath(os.environ["S0_01_FRAMEDIR"])
 out = os.environ["S0_01_CENSUS_OUT"]
-count = 0
+handle = open(out, "w")
+expected = {0, 1, 2, handle.fileno()}
+inventory = []
 for entry in os.listdir("/proc/self/fd"):
     try:
+        fd = int(entry)
         target = os.readlink("/proc/self/fd/" + entry)
-    except OSError:
+    except (OSError, ValueError):
         continue
-    try:
-        if os.path.isdir(target) and os.path.realpath(target) == frame:
-            count += 1
-    except OSError:
-        continue
-with open(out, "w") as handle:
-    handle.write("CENSUS=%%d\\n" %% count)
+    inventory.append((fd, target))
+for fd, target in sorted(inventory):
+    handle.write("FD=%%d TARGET=%%s\\n" %% (fd, target))
+handle.write("CENSUS=%%d\\n" %% sum(fd not in expected for fd, _ in inventory))
+handle.close()
 for line in sys.stdin:
     message = json.loads(line)
     if message.get("method") == "initialize":
@@ -3849,8 +3902,8 @@ sys.stdin.read()
 """
 
 
-def test_probe_census_agent_sees_no_framedir_fd_on_final_bytes(tmp_path):
-    """Ported from N5k-xhigh-v3: the real Popen child observes CENSUS=0."""
+def test_probe_census_agent_sees_only_stdio_and_its_output_fd(tmp_path):
+    """N5m item 1: the real Popen child inventories every inherited fd."""
     agent = tmp_path / "census_agent.py"
     agent.write_text(_CENSUS_AGENT % sys.executable)
     agent.chmod(0o755)
@@ -3863,6 +3916,16 @@ def test_probe_census_agent_sees_no_framedir_fd_on_final_bytes(tmp_path):
         f"real-emitter census probe failed: rc={result.returncode} stderr={result.stderr!r}"
     )
     assert census.is_file(), f"the real agent did not emit its fd census: {result.stderr!r}"
-    assert census.read_text() == "CENSUS=0\n", (
-        f"the real agent inherited the framedir fd: {census.read_text()!r}"
-    )
+    lines = census.read_text().splitlines()
+    assert lines[-1] == "CENSUS=0", f"unexpected inherited fd inventory: {lines!r}"
+    inventory = {}
+    for line in lines[:-1]:
+        prefix, target = line.split(" TARGET=", 1)
+        assert prefix.startswith("FD="), line
+        inventory[int(prefix.removeprefix("FD="))] = target
+    assert set(inventory) == {0, 1, 2, 3}, inventory
+    for fd in (0, 1, 2):
+        assert inventory[fd].startswith(("pipe:[", "/dev/pts/", "/dev/tty")), (
+            f"stdio fd {fd} did not resolve to a pipe/tty: {inventory[fd]!r}"
+        )
+    assert os.path.samefile(inventory[3], census), inventory[3]

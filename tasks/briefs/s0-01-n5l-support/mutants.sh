@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# N5l mutation driver. Every row runs in a fresh archive copy with the lane's
+# N5m mutation driver. Every row runs in a fresh archive copy with the lane's
 # probe and test bytes overlaid. Mutants must compile and collect before a test
 # result can grade them. The one comment-only control must remain green.
+EXPECTED=11
 ROOT=$(git rev-parse --show-toplevel)
 PIN=${PIN:-97bb0c0}
 OUT=${N5L_MUTANT_DIR:-"$ROOT/../scratch/n5l/mutants"}
@@ -14,13 +15,51 @@ export S0_01_REAL_LEG_DIR=${S0_01_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg
 export S0_02_BUZZ_SRC=${S0_02_BUZZ_SRC:-/home/rocco/s0-01-pinned/buzz}
 mkdir -p "$OUT"
 
+if [[ ${1:-} == --self-test ]]; then
+  self_dir="$OUT/self-test"
+  self_copy="$self_dir/mutants-row-deleted.sh"
+  rm -rf "$self_dir"
+  mkdir -p "$self_dir"
+  cp "$0" "$self_copy"
+  python3 - "$self_copy" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text().splitlines(keepends=True)
+marker = "  'FD_LEAK_PIPE;"
+hits = [index for index, line in enumerate(lines) if line.startswith(marker)]
+assert len(hits) == 1, (marker, hits)
+del lines[hits[0]]
+path.write_text("".join(lines))
+PY
+  set +e
+  N5L_MUTANT_DIR="$self_dir/run" bash "$self_copy" >"$self_dir/output.txt" 2>&1
+  rc=$?
+  set -e
+  summary=$(python3 - "$self_dir/output.txt" <<'PY'
+from pathlib import Path
+import sys
+
+lines = Path(sys.argv[1]).read_text(errors="replace").splitlines()
+summary = [line for line in lines if line.startswith("EXPECTED=")]
+print(summary[-1] if summary else "")
+PY
+  )
+  printf 'SELF_TEST rc=%s %s\n' "$rc" "$summary"
+  [[ $rc -ne 0 && "$summary" == \
+      "EXPECTED=11 KILLED=10 SURVIVED=0 INVALID=0 CONTROL=1" ]]
+  exit
+fi
+
 cases=(
   'READ_NOFOLLOW_DROP;probe;test_probe_read_regular_refuses_final_symlink_with_eloop;    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC;    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC'
   'READ_NONBLOCK_DROP;probe;test_probe_read_primitive_refuses_named_non_regular_shapes;    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC;    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC'
   'READ_SISREG_DROP;probe;test_probe_read_primitive_refuses_named_non_regular_shapes;        st = os.fstat(fd)\n        if not stat.S_ISREG(st.st_mode):\n            raise OSError("not a regular file: %s" % (path,));        st = os.fstat(fd)\n        if False:\n            raise OSError("not a regular file: %s" % (path,))'
   'READ_NO_CLOSE_ON_REFUSAL;probe;test_probe_read_primitive_leaves_no_fd_on_refusal;    except Exception:\n        os.close(fd)\n        raise\n    try:\n        handle = os.fdopen(fd, mode);    except Exception:\n        raise\n    try:\n        handle = os.fdopen(fd, mode)'
   'CLOSE_BEFORE_FSTAT;probe;test_probe_read_primitive_reads_a_regular_file;        st = os.fstat(fd)\n        if not stat.S_ISREG(st.st_mode):\n            raise OSError("not a regular file: %s" % (path,));        os.close(fd)\n        st = os.fstat(fd)\n        if not stat.S_ISREG(st.st_mode):\n            raise OSError("not a regular file: %s" % (path,))'
-  'FD_LEAK_TRIPLE;probe;test_probe_census_agent_sees_no_framedir_fd_on_final_bytes;        framedir_fd = os.open(\n            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)\n\n        # A16:;        framedir_fd = os.open(\n            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)\n        os.set_inheritable(framedir_fd, True)\n\n        # A16:'
+  'FD_LEAK_TRIPLE;probe;test_probe_census_agent_sees_only_stdio_and_its_output_fd;        framedir_fd = os.open(\n            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)\n\n        # A16:;        framedir_fd = os.open(\n            framedir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)\n        os.set_inheritable(framedir_fd, True)\n\n        # A16:'
+  'FD_LEAK_PIPE;probe;test_probe_census_agent_sees_only_stdio_and_its_output_fd;        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE, close_fds=True\n        );        n5m_leak_read_fd, n5m_leak_write_fd = os.pipe()\n        os.set_inheritable(n5m_leak_read_fd, True)\n        proc = subprocess.Popen(\n            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE, close_fds=False\n        )'
   'CLOSE_FDS_FALSE;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;            stderr=subprocess.PIPE, close_fds=True;            stderr=subprocess.PIPE, close_fds=False'
   'CLOSE_FDS_COMMENT_ONLY;probe;test_probe_agent_launch_pins_the_close_fds_default_second_defence;            stderr=subprocess.PIPE, close_fds=True;            stderr=subprocess.PIPE, close_fds=False  # close_fds=True'
   'NONREG_ERROR_TEXT;probe;test_probe_read_primitive_refuses_named_non_regular_shapes;            raise OSError("not a regular file: %s" % (path,));            raise OSError("not regular: %s" % (path,))'
@@ -135,7 +174,6 @@ PY
   fi
 done
 
-expected=$((killed + survived))
 printf 'EXPECTED=%s KILLED=%s SURVIVED=%s INVALID=%s CONTROL=%s\n' \
-  "$expected" "$killed" "$survived" "$invalid" "$control"
-[[ $invalid -eq 0 && $survived -eq 0 && $control -eq 1 ]]
+  "$EXPECTED" "$killed" "$survived" "$invalid" "$control"
+[[ $killed -eq $EXPECTED && $survived -eq 0 && $invalid -eq 0 && $control -eq 1 ]]
