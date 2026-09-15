@@ -141,15 +141,23 @@ fi
 # concurrent mixed efforts; it needs a Hermes profile `extra_body` and is not wired.
 if [ -n "$SERVER_EFFORT" ] && [ "${LANE_SET_SERVER_EFFORT:-1}" = 1 ]; then
   QWEN_PENDING_LOG="${QWEN_PENDING_LOG:-$PC_AF_REPO/qwen-builder/logs/deferred-restart.log}"
-  EFF_STATE="$(bridge "python3 - <<'PY'
-import os
+  # The MainPID lookup + argv read runs ON THE PC. systemctl --user needs XDG_RUNTIME_DIR (the bridge
+  # shell has none) and the substitutions are ESCAPED so they resolve on the PC, not in the sandbox:
+  # an unescaped $(systemctl ...) inside this double-quoted bridge argument expands LOCALLY to empty
+  # (the sandbox has no user bus), which silently read /proc//cmdline (= the kernel cmdline) and
+  # forced a false 'mismatch' that queued a needless restart (AF-AP-89). MP is passed as argv, not
+  # interpolated into the quoted heredoc (a quoted heredoc is not PC-expanded).
+  EFF_STATE="$(bridge "export XDG_RUNTIME_DIR=/run/user/\$(id -u); MP=\$(systemctl --user show -p MainPID --value qwen-builder 2>/dev/null); python3 - \"\$MP\" <<'PY'
+import sys
 wanted = '$SERVER_EFFORT'
+mp = sys.argv[1] if len(sys.argv) > 1 else ''
 seen = ''
-for raw in open('/proc/$(systemctl --user show -p MainPID --value qwen-builder)/cmdline', 'rb').read().split(b'\\0'):
-    text = raw.decode('utf-8', 'replace')
-    if 'reasoning_effort' in text:
-        seen = text.split('reasoning_effort', 1)[1].lstrip('\\\" :=').split('\\\"', 1)[0].split('}', 1)[0]
-        break
+if mp and mp != '0':
+    for raw in open('/proc/' + mp + '/cmdline', 'rb').read().split(b'\\0'):
+        text = raw.decode('utf-8', 'replace')
+        if 'reasoning_effort' in text:
+            seen = text.split('reasoning_effort', 1)[1].lstrip('\\\" :=').split('\\\"', 1)[0].split('}', 1)[0]
+            break
 print('match' if seen == wanted else 'mismatch:' + (seen or 'unknown'))
 PY")" || die "server effort not read from the running argv"
   if [ "$EFF_STATE" != match ]; then
