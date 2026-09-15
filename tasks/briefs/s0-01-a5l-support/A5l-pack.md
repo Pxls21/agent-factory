@@ -1,14 +1,77 @@
-# lane context pack — d23762a 2026-09-15T07:57Z
-files: proofs/S0-01/tools/check_acp_conformance.py tests/test_s0_01_check_acp_conformance.py proofs/S0-01/tools/pins.py
-symbols: _parse_scan_v24 _is_pinned_process is_pinned_argv corpus_version _corpus_version test_real_leg_runtime_identity
+# lane context pack — d83baa8 2026-09-15T10:04Z
+files: proofs/S0-01/check_acp_conformance.py tests/test_s0_01_check_acp_conformance.py proofs/S0-01/pins.py
+symbols: _parse_scan_v24 _is_pinned_process is_pinned_argv corpus_version _corpus_version test_real_leg_runtime_identity _pinned_process_count test_v24_table_rows_key_cannot_be_replaced_by_rows _write_unknown_scan_header test_ck13_unknown_header_is_not_downgraded test_ck12_corpus_version_rejects_missing_scan test_ck13_main_closes_system_exit_status_domain test_ck13_checker_has_no_private_pinned_process_predicate test_ck13_process_evidence_consumes_shared_predicate classify test_ck13_bound_path_open_mutant test_ck13_os_link_mutant test_ck13_os_symlink_mutant test_ck13_shutil_move_mutant test_ck13_tar_extractall_mutant test_ck13_zip_extract_mutant test_ck13_presence_gate_detector_covers_each_probe_family _resolve_bound_path_aliases test_ck13_read_inventory_covers_each_declared_family _read_site_drift test_ck13_read_site_drift_names_added_and_removed_sites test_ck13_checker_names_each_missing_required_file _validate_dead_branch_citations test_ck13_dead_branch_citation_mutants_die test_ck13_read_site_drift_validator_rejects_rebound_expected test_ck11_dead_branch_comments_cite_a_real_guard test_ck13_dead_branch_validator_names_all_bad_and_missing_citations
 
-## proofs/S0-01/tools/check_acp_conformance.py
+## proofs/S0-01/check_acp_conformance.py
 ### graft skeleton
-graft skeleton — proofs/S0-01/tools/check_acp_conformance.py
+[graft] refreshed the graph (1 file changed) before answering
 
-no definitions indexed for this file
+graft skeleton — proofs/S0-01/check_acp_conformance.py
+- L34-L35  function _fixtures  def _fixtures() -> Path
+- L161-L162  class Deferred  class Deferred(Exception)
+- L165-L166  class Failure  class Failure(Exception)
+- L169-L174  function _sha256_file  def _sha256_file(path: Path) -> str
+- L177-L178  function _sha256_bytes  def _sha256_bytes(data: bytes) -> str
+- L181-L182  function _parse_utc  def _parse_utc(s: str) -> datetime
+- L185-L186  function _parse_utc_summary  def _parse_utc_summary(s: str) -> datetime
+- L189-L192  function _reject_nan  def _reject_nan(line: str, leg: str, seq_hint: int)
+- L190-L191  function _raise  def _raise(c)
+- L195-L204  function _require_file  def _require_file(path: Path, leg: str, name: str)
+- L207-L210  function _require_dir  def _require_dir(path: Path, leg: str, name: str)
+- L213-L215  function _is_strict_int  def _is_strict_int(v)
+- L254-L263  function _run_check  def _run_check(fn, leg, *args, **kwargs)
+- L266-L370  function check_timeline  def check_timeline(entries, leg, leg_dir)
+- L305-L332  function _load_dir  def _load_dir(fpath, name, expected_split)
+- L373-L394  function check_initialize_frames  def check_initialize_frames(c2a, a2c, leg, schema=None)
+- L397-L439  function check_runtime_identity  def check_runtime_identity(leg_dir, leg)
+- L410-L412  function _chk  def _chk(field, expected, desc=None)
+- L442-L512  function check_env  def check_env(leg_dir, leg, identities)
+- L515-L601  function check_mentions  def check_mentions(leg_dir, leg, identities, entries, post_summary_ts=None)
+- L604-L706  function check_route  def check_route(leg_dir, leg, entries)
+- L709-L722  function _prompt_windows  def _prompt_windows(entries, leg)
+- L725-L781  function check_prompt_turn  def check_prompt_turn(c2a, a2c, leg, entries, expect_stop="end_turn")
+- L784-L791  function _shape  def _shape(value)
+- L794-L861  function normalize_timeline  def normalize_timeline(entries)
+- L798-L800  function id_ph  def id_ph(v)
+- L802-L803  function sid_ph  def sid_ph(v)
+- L864-L887  function check_cancel  def check_cancel(entries, c2a, a2c, leg_dir, leg="cancel")
+- L890-L895  function check_shutdown  def check_shutdown(entries, c2a, a2c, leg_dir, leg="shutdown")
+- L898-L975  function check_two_users  def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir)
+- L978-L1013  function check_manifests  def check_manifests(leg_dir, leg, baseline_path, baseline_gz_sha)
+- L1016-L1052  function _parse_manifest_body  def _parse_manifest_body(body: bytes, leg: str) -> dict
+- L1055-L1066  function _parse_summary  def _parse_summary(summary_path, leg, name)
+- L1069-L1169  function check_config_echo  def check_config_echo(leg_dir, leg)
+- L1172-L1192  function _parse_scan_v24  def _parse_scan_v24(path, leg, name)
+- L1195-L1197  function _pinned_process_count  def _pinned_process_count(commands)
+- L1200-L1385  function check_process_evidence  def check_process_evidence(leg_dir, leg)
+- L1388-L1407  function check_buzzacp_log  def check_buzzacp_log(leg_dir, leg)
+- L1410-L1508  function check_tee_status  def check_tee_status(leg_dir, leg, entries)
+- L1511-L1531  function check_negative  def check_negative(neg_dir, leg="negative")
+- L1534-L1635  function check_golden  def check_golden(golden_dir, leg="golden")
+- L1614-L1620  function _raw_sid  def _raw_sid(ents)
+- L1638-L1647  function _load_timeline_raw  def _load_timeline_raw(leg_dir, leg)
+- L1650-L1666  function _check_with_timeout  def _check_with_timeout(timeout_s, fn, *args)
+- L1653-L1655  function _raise_timeout  def _raise_timeout(signum, frame)
+- L1669-L1680  function check_bundle  def check_bundle(root: Path, timeout_s: int = 90) -> str: # R8-CK-F2: the wall-clock cap lives HERE so in-process consumers get it too. # Default 90 s < the runner's 120 s. # R9-CK-F1: reject non-positive, non-int, and out-of-range caps. # alarm(0) cancels the alarm silently; bool/float/NaN/inf/str are not ints; # values >= 2**31 overflow signal.alarm's C int (AF-AP-58 sibling).
+- L1683-L1702  function _captured_leg_version  def _captured_leg_version(golden: Path) -> str
+- L1705-L1851  function _check_bundle_uncapped  def _check_bundle_uncapped(root: Path) -> str
+- L1854-L1903  function main  def main(argv) -> int
 ### anti-pattern screen (whole file)
---- AP_SCREEN over 1 path(s): 0 hits over 0 files ---
+--- AP_SCREEN over 1 path(s): 11 hits over 1 files ---
+AF-AP-40: 5
+    proofs/S0-01/check_acp_conformance.py:1514: if neg_dir.is_dir():
+    proofs/S0-01/check_acp_conformance.py:1527: if stderr_path.exists():
+    proofs/S0-01/check_acp_conformance.py:1751: if item.is_dir() and item.name not in expected_dirs:
+    proofs/S0-01/check_acp_conformance.py:1753: if item.is_file() and item.name not in expected_files:
+    proofs/S0-01/check_acp_conformance.py:1766: if post_sum_path.exists():
+AF-AP-72: 4
+    proofs/S0-01/check_acp_conformance.py:1188: pid, ppid, etimes = int(parts[0]), int(parts[1]), int(parts[2])
+    proofs/S0-01/check_acp_conformance.py:1188: pid, ppid, etimes = int(parts[0]), int(parts[1]), int(parts[2])
+    proofs/S0-01/check_acp_conformance.py:1188: pid, ppid, etimes = int(parts[0]), int(parts[1]), int(parts[2])
+    proofs/S0-01/check_acp_conformance.py:1873: timeout_s = int(args[idx + 1])
+AP-32: 2
+    proofs/S0-01/check_acp_conformance.py:170: h = hashlib.sha256()
+    proofs/S0-01/check_acp_conformance.py:178: return hashlib.sha256(data).hexdigest()
 
 ## tests/test_s0_01_check_acp_conformance.py
 ### graft skeleton
@@ -98,49 +161,66 @@ AP-66: 2
     tests/test_s0_01_check_acp_conformance.py:87: nv._point_mul = _cached_pm
     tests/test_s0_01_check_acp_conformance.py:89: nv._point_mul = _orig_pm
 AF-AP-48: 1
-    tests/test_s0_01_check_acp_conformance.py:5106: assert all(site[3] in {"walk", "require_regular_file", "stdin"}
+    tests/test_s0_01_check_acp_conformance.py:5352: assert all(site[3] in {"walk", "require_regular_file", "stdin", "consumer"}
 AF-AP-57: 1
-    tests/test_s0_01_check_acp_conformance.py:4687: if call_count[0] == 2:
+    tests/test_s0_01_check_acp_conformance.py:4797: if call_count[0] == 2:
 
-## proofs/S0-01/tools/pins.py
+## proofs/S0-01/pins.py
 ### graft skeleton
-graft skeleton — proofs/S0-01/tools/pins.py
 
-no definitions indexed for this file
+graft skeleton — proofs/S0-01/pins.py
+- L19-L28  function require_regular_file  def require_regular_file(path: Path, what: str, failure_type: type[Exception] = ValueError) -> Path
+- L365-L366  function _version_key  def _version_key(version)
+- L369-L382  function required_files  def required_files(version)
+- L385-L392  function entry_allowlist  def entry_allowlist()
+- L395-L447  function corpus_version  def corpus_version(leg_dir)
+- L450-L461  function content_constraint  def content_constraint(version, name)
+- L464-L572  function validate_artifact  def validate_artifact(leg_dir, name, version)
+- L499-L503  function _utf8  def _utf8(b)
+- L575-L576  class ConstraintFailure  class ConstraintFailure(ValueError)
+- L579-L607  function is_pinned_argv  def is_pinned_argv(argv)
+- L610-L629  function hermes_home  def hermes_home()
 ### anti-pattern screen (whole file)
---- AP_SCREEN over 1 path(s): 0 hits over 0 files ---
+--- AP_SCREEN over 1 path(s): 4 hits over 1 files ---
+AF-AP-72: 3
+    proofs/S0-01/pins.py:567: int(parts[0]); int(parts[1]); int(parts[2])
+    proofs/S0-01/pins.py:567: int(parts[0]); int(parts[1]); int(parts[2])
+    proofs/S0-01/pins.py:567: int(parts[0]); int(parts[1]); int(parts[2])
+AP-1: 1
+    proofs/S0-01/pins.py:623: override = os.environ.get("S0_01_HERMES_HOME")
 
 ## graft ask — How does check_acp_conformance.py decide a process is the pinned hermes-acp and which corpus version a leg carries; where do its private _parse_scan_v24 / _is_pinned_process and the test-side _corpus_version fold duplicate pins.is_pinned_argv / pins.corpus_version, and who consumes each?
 graft ask — "How does check_acp_conformance.py decide a process is the pinned hermes-acp and which corpus version a leg carries; where do its private _parse_scan_v24 / _is_pinned_process and the test-side _corpus_version fold duplicate pins.is_pinned_argv / pins.corpus_version, and who consumes each?"  (lexical)
 
-1. main · function  [symbol]
+1. _parse_scan_v24 · function  [symbol]
+   proofs/S0-01/check_acp_conformance.py:L1172-L1192
+   def _parse_scan_v24(path, leg, name)
+
+2. corpus_version · function  [symbol]
+   proofs/S0-01/pins.py:L395-L447
+   def corpus_version(leg_dir)
+
+3. main · function  [symbol]
    proofs/S0-01/tools/pc/pc_launch.py:L281-L425
    def main()
 
-2. main · function  [symbol]
+4. main · function  [symbol]
    proofs/S0-01/tools/build_capture_record.py:L48-L217
    def main() -> int
 
-3. main · function  [symbol]
+5. check_initialize.py · file  [symbol]
+   proofs/S0-01/check_initialize.py
+
+6. main · function  [symbol]
    proofs/S0-01/tools/pc/pc_negative.py:L19-L50
    def main()
 
-4. acp_probe.py · file  [symbol]
-   proofs/S0-01/tools/acp_probe.py
-
-5. main · function  [symbol]
-   proofs/S0-01/tools/archive/build_capture_record_v1.py:L43-L101
-   def main() -> int
-
-6. frame_tee.py · file  [symbol]
+7. frame_tee.py · file  [symbol]
    proofs/S0-01/tools/frame_tee.py
 
-7. _carries_secret · method  [symbol]
-   proofs/S0-01/tools/scripted_backend.py:L489-L512
-   def _carries_secret(self, s: str, *, byte_view: bool) -> bool
-
-8. nostr_verify.py · file  [symbol]
-   proofs/S0-01/tools/nostr_verify.py
+8. main · function  [symbol]
+   proofs/S0-01/tools/archive/build_capture_record_v1.py:L43-L101
+   def main() -> int
 
 ## symbol _parse_scan_v24
 ### GitNexus impact (upstream)
@@ -155,7 +235,7 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
       "name": "check_process_evidence",
   "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-01/check_acp_conformance.py::_parse_scan_v24')",
 ### ripwire callers
-<callers of="_parse_scan_v24" defs="1" count="1" root="/home/user/agent-factory" hop_tested="1" hop_untested="0" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=_parse_scan_v24">
+<callers of="_parse_scan_v24" defs="1" count="2" root="/home/user/agent-factory" hop_tested="1" hop_untested="1" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_parse_scan_v24">
 
 ## symbol _is_pinned_process
 ### GitNexus impact (upstream)
@@ -171,7 +251,6 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
       "name": "test_v24_entry_point_rule_matches_tokens_not_substrings",
   "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-01/check_acp_conformance.py::_is_pinned_process')",
 ### ripwire callers
-<callers of="_is_pinned_process" defs="1" count="2" root="/home/user/agent-factory" hop_tested="1" hop_untested="1" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=_is_pinned_process">
 
 ## symbol is_pinned_argv
 ### GitNexus impact (upstream)
@@ -182,26 +261,17 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
     "direct": 0,
     "processes_affected": 0,
 ### code-review-graph callers_of / tests_for
-  "summary": "'is_pinned_argv' matches 4 node(s). Re-run with a qualified_name from disambiguation.",
-      "name": "is_pinned_argv",
+  "summary": "Found 4 result(s) for callers_of('/home/user/agent-factory/proofs/S0-01/pins.py::is_pinned_argv')",
+      "name": "test_is_pinned_argv_matches_the_entry_point_only",
       "name": "test_is_pinned_argv_does_not_count_a_pinned_binary_reached_by_another_path",
       "name": "test_is_pinned_argv_matches_every_row_of_the_real_corpus_scan",
+      "name": "_is_pinned",
+  "summary": "Found 3 result(s) for tests_for('/home/user/agent-factory/proofs/S0-01/pins.py::is_pinned_argv')",
       "name": "test_is_pinned_argv_matches_the_entry_point_only",
-      "name": "is_pinned_argv",
       "name": "test_is_pinned_argv_does_not_count_a_pinned_binary_reached_by_another_path",
       "name": "test_is_pinned_argv_matches_every_row_of_the_real_corpus_scan",
-      "name": "test_is_pinned_argv_matches_the_entry_point_only",
-  "summary": "'is_pinned_argv' matches 4 node(s). Re-run with a qualified_name from disambiguation.",
-      "name": "is_pinned_argv",
-      "name": "test_is_pinned_argv_does_not_count_a_pinned_binary_reached_by_another_path",
-      "name": "test_is_pinned_argv_matches_every_row_of_the_real_corpus_scan",
-      "name": "test_is_pinned_argv_matches_the_entry_point_only",
-      "name": "is_pinned_argv",
-      "name": "test_is_pinned_argv_does_not_count_a_pinned_binary_reached_by_another_path",
-      "name": "test_is_pinned_argv_matches_every_row_of_the_real_corpus_scan",
-      "name": "test_is_pinned_argv_matches_the_entry_point_only",
 ### ripwire callers
-<callers of="is_pinned_argv" defs="1" count="4" root="/home/user/agent-factory" hop_tested="0" hop_untested="4" shown="4" capped="0" total="4" has_more="0" next_offset="4" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=is_pinned_argv">
+<callers of="is_pinned_argv" defs="1" count="6" root="/home/user/agent-factory" hop_tested="1" hop_untested="5" shown="6" capped="0" total="6" has_more="0" next_offset="6" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=is_pinned_argv">
 
 ## symbol corpus_version
 ### GitNexus impact (upstream)
@@ -212,32 +282,32 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
     "processes_affected": 1,
       "impact": "direct"
 ### code-review-graph callers_of / tests_for
-  "summary": "'corpus_version' matches 16 node(s). Re-run with a qualified_name from disambiguation.",
-      "name": "corpus_version",
+  "summary": "Found 13 result(s) for callers_of('/home/user/agent-factory/proofs/S0-01/pins.py::corpus_version')",
       "name": "_corpus_version",
-      "name": "test_ck12_corpus_version_rejects_malformed_newer_corpus",
-      "name": "test_ck12_corpus_version_rejects_missing_newer_artifact",
+      "name": "test_the_one_corpus_version_detector_reads_the_header",
+      "name": "test_the_one_corpus_version_detector_refuses_to_default",
+      "name": "test_the_corpus_version_detector_defers_to_the_completeness_gate_when_there_is_no_scan",
+      "name": "test_build_capture_record_accepts_a_v2_2_corpus_leg",
+      "name": "main",
       "name": "test_corpus_version_accepts_the_good_v24_header",
+      "name": "test_corpus_version_refuses_a_second_header_line_in_the_body",
       "name": "test_corpus_version_refuses_a_header_in_the_body_after_rows",
       "name": "test_corpus_version_refuses_a_header_with_trailing_fields",
-      "name": "test_corpus_version_refuses_a_headerless_leg_that_claims_a_v24_name",
-      "name": "test_corpus_version_refuses_a_second_header_line_in_the_body",
-      "name": "test_corpus_version_refuses_an_unknown_header_version",
       "name": "test_corpus_version_refuses_crlf_line_endings",
-  "summary": "'corpus_version' matches 16 node(s). Re-run with a qualified_name from disambiguation.",
-      "name": "corpus_version",
-      "name": "_corpus_version",
-      "name": "test_ck12_corpus_version_rejects_malformed_newer_corpus",
-      "name": "test_ck12_corpus_version_rejects_missing_newer_artifact",
+  "summary": "Found 11 result(s) for tests_for('/home/user/agent-factory/proofs/S0-01/pins.py::corpus_version')",
+      "name": "test_the_one_corpus_version_detector_reads_the_header",
+      "name": "test_the_one_corpus_version_detector_refuses_to_default",
+      "name": "test_the_corpus_version_detector_defers_to_the_completeness_gate_when_there_is_no_scan",
+      "name": "test_build_capture_record_accepts_a_v2_2_corpus_leg",
       "name": "test_corpus_version_accepts_the_good_v24_header",
+      "name": "test_corpus_version_refuses_a_second_header_line_in_the_body",
       "name": "test_corpus_version_refuses_a_header_in_the_body_after_rows",
       "name": "test_corpus_version_refuses_a_header_with_trailing_fields",
-      "name": "test_corpus_version_refuses_a_headerless_leg_that_claims_a_v24_name",
-      "name": "test_corpus_version_refuses_a_second_header_line_in_the_body",
-      "name": "test_corpus_version_refuses_an_unknown_header_version",
       "name": "test_corpus_version_refuses_crlf_line_endings",
+      "name": "test_corpus_version_refuses_an_unknown_header_version",
+      "name": "test_corpus_version_refuses_a_headerless_leg_that_claims_a_v24_name",
 ### ripwire callers
-<callers of="corpus_version" defs="1" count="13" root="/home/user/agent-factory" hop_tested="0" hop_untested="13" shown="13" capped="0" total="13" has_more="0" next_offset="13" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=corpus_version">
+<callers of="corpus_version" defs="1" count="15" root="/home/user/agent-factory" hop_tested="1" hop_untested="14" shown="15" capped="0" total="15" has_more="0" next_offset="15" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=corpus_version">
 
 ## symbol _corpus_version
 ### GitNexus impact (upstream)
@@ -266,7 +336,7 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
       "name": "test_corpus_version_refuses_an_unknown_header_version",
       "name": "test_corpus_version_refuses_a_headerless_leg_that_claims_a_v24_name",
 ### ripwire callers
-<callers of="_corpus_version" defs="2" count="5" root="/home/user/agent-factory" hop_tested="0" hop_untested="5" shown="5" capped="0" total="5" has_more="0" next_offset="5" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=_corpus_version">
+<callers of="_corpus_version" defs="2" count="6" root="/home/user/agent-factory" hop_tested="0" hop_untested="6" shown="6" capped="0" total="6" has_more="0" next_offset="6" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_corpus_version">
 
 ## symbol test_real_leg_runtime_identity
 ### GitNexus impact (upstream)
@@ -291,6 +361,215 @@ graft ask — "How does check_acp_conformance.py decide a process is the pinned 
       "name": "test_real_leg_buzzacp_log",
       "name": "test_real_leg_prompt_turn",
 ### ripwire callers
-<callers of="test_real_leg_runtime_identity" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="9" graph_unresolved="87" counts_floor="1" next="--uses=test_real_leg_runtime_identity">
+<callers of="test_real_leg_runtime_identity" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_real_leg_runtime_identity">
+
+## symbol _pinned_process_count
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/proofs/S0-01/check_acp_conformance.py::_pinned_process_count'.",
+  "summary": "No node found matching '/home/user/agent-factory/proofs/S0-01/check_acp_conformance.py::_pinned_process_count'.",
+### ripwire callers
+<callers of="_pinned_process_count" defs="1" count="2" root="/home/user/agent-factory" hop_tested="1" hop_untested="1" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_pinned_process_count">
+
+## symbol test_v24_table_rows_key_cannot_be_replaced_by_rows
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_v24_table_rows_key_cannot_be_replaced_by_rows'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_v24_table_rows_key_cannot_be_replaced_by_rows'.",
+### ripwire callers
+<callers of="test_v24_table_rows_key_cannot_be_replaced_by_rows" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_v24_table_rows_key_cannot_be_replaced_by_rows">
+
+## symbol _write_unknown_scan_header
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_write_unknown_scan_header'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_write_unknown_scan_header'.",
+### ripwire callers
+<callers of="_write_unknown_scan_header" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_write_unknown_scan_header">
+
+## symbol test_ck13_unknown_header_is_not_downgraded
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_unknown_header_is_not_downgraded'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_unknown_header_is_not_downgraded'.",
+### ripwire callers
+<callers of="test_ck13_unknown_header_is_not_downgraded" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_unknown_header_is_not_downgraded">
+
+## symbol test_ck12_corpus_version_rejects_missing_scan
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck12_corpus_version_rejects_missing_scan'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck12_corpus_version_rejects_missing_scan'.",
+### ripwire callers
+<callers of="test_ck12_corpus_version_rejects_missing_scan" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck12_corpus_version_rejects_missing_scan">
+
+## symbol test_ck13_main_closes_system_exit_status_domain
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_main_closes_system_exit_status_domain'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_main_closes_system_exit_status_domain'.",
+### ripwire callers
+<callers of="test_ck13_main_closes_system_exit_status_domain" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_main_closes_system_exit_status_domain">
+
+## symbol test_ck13_checker_has_no_private_pinned_process_predicate
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_checker_has_no_private_pinned_process_predicate'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_checker_has_no_private_pinned_process_predicate'.",
+### ripwire callers
+<callers of="test_ck13_checker_has_no_private_pinned_process_predicate" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_checker_has_no_private_pinned_process_predicate">
+
+## symbol test_ck13_process_evidence_consumes_shared_predicate
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_process_evidence_consumes_shared_predicate'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_process_evidence_consumes_shared_predicate'.",
+### ripwire callers
+<callers of="test_ck13_process_evidence_consumes_shared_predicate" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_process_evidence_consumes_shared_predicate">
+
+## symbol classify
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_classify_read_guard')",
+      "name": "_enumerate_read_sites",
+  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_classify_read_guard')",
+### ripwire callers
+<callers of="classify" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=classify">
+
+## symbol test_ck13_bound_path_open_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_bound_path_open_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_bound_path_open_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_os_link_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_os_link_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_os_link_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_os_symlink_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_os_symlink_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_os_symlink_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_shutil_move_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_shutil_move_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_shutil_move_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_tar_extractall_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_tar_extractall_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_tar_extractall_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_zip_extract_mutant
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_zip_extract_mutant'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_zip_extract_mutant'.",
+### ripwire callers
+
+## symbol test_ck13_presence_gate_detector_covers_each_probe_family
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_presence_gate_detector_covers_each_probe_family'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_presence_gate_detector_covers_each_probe_family'.",
+### ripwire callers
+<callers of="test_ck13_presence_gate_detector_covers_each_probe_family" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_presence_gate_detector_covers_each_probe_family">
+
+## symbol _resolve_bound_path_aliases
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_resolve_bound_path_aliases'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_resolve_bound_path_aliases'.",
+### ripwire callers
+<callers of="_resolve_bound_path_aliases" defs="1" count="2" root="/home/user/agent-factory" hop_tested="0" hop_untested="2" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_resolve_bound_path_aliases">
+
+## symbol test_ck13_read_inventory_covers_each_declared_family
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_inventory_covers_each_declared_family'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_inventory_covers_each_declared_family'.",
+### ripwire callers
+<callers of="test_ck13_read_inventory_covers_each_declared_family" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_read_inventory_covers_each_declared_family">
+
+## symbol _read_site_drift
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_read_site_drift'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_read_site_drift'.",
+### ripwire callers
+<callers of="_read_site_drift" defs="1" count="3" root="/home/user/agent-factory" hop_tested="0" hop_untested="3" shown="3" capped="0" total="3" has_more="0" next_offset="3" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_read_site_drift">
+
+## symbol test_ck13_read_site_drift_names_added_and_removed_sites
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_site_drift_names_added_and_removed_sites'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_site_drift_names_added_and_removed_sites'.",
+### ripwire callers
+<callers of="test_ck13_read_site_drift_names_added_and_removed_sites" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_read_site_drift_names_added_and_removed_sites">
+
+## symbol test_ck13_checker_names_each_missing_required_file
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_checker_names_each_missing_required_file'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_checker_names_each_missing_required_file'.",
+### ripwire callers
+<callers of="test_ck13_checker_names_each_missing_required_file" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_checker_names_each_missing_required_file">
+
+## symbol _validate_dead_branch_citations
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_validate_dead_branch_citations'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::_validate_dead_branch_citations'.",
+### ripwire callers
+<callers of="_validate_dead_branch_citations" defs="1" count="3" root="/home/user/agent-factory" hop_tested="0" hop_untested="3" shown="3" capped="0" total="3" has_more="0" next_offset="3" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=_validate_dead_branch_citations">
+
+## symbol test_ck13_dead_branch_citation_mutants_die
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_dead_branch_citation_mutants_die'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_dead_branch_citation_mutants_die'.",
+### ripwire callers
+<callers of="test_ck13_dead_branch_citation_mutants_die" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_dead_branch_citation_mutants_die">
+
+## symbol test_ck13_read_site_drift_validator_rejects_rebound_expected
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_site_drift_validator_rejects_rebound_expected'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_read_site_drift_validator_rejects_rebound_expected'.",
+### ripwire callers
+<callers of="test_ck13_read_site_drift_validator_rejects_rebound_expected" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_read_site_drift_validator_rejects_rebound_expected">
+
+## symbol test_ck11_dead_branch_comments_cite_a_real_guard
+### GitNexus impact (upstream)
+  "impactedCount": 0,
+  "risk": "UNKNOWN",
+  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
+  "epistemic": "exact",
+    "direct": 0,
+    "processes_affected": 0,
+### code-review-graph callers_of / tests_for
+  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck11_dead_branch_comments_cite_a_real_guard')",
+  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck11_dead_branch_comments_cite_a_real_guard')",
+### ripwire callers
+<callers of="test_ck11_dead_branch_comments_cite_a_real_guard" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck11_dead_branch_comments_cite_a_real_guard">
+
+## symbol test_ck13_dead_branch_validator_names_all_bad_and_missing_citations
+### GitNexus impact (upstream)
+### code-review-graph callers_of / tests_for
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_dead_branch_validator_names_all_bad_and_missing_citations'.",
+  "summary": "No node found matching '/home/user/agent-factory/tests/test_s0_01_check_acp_conformance.py::test_ck13_dead_branch_validator_names_all_bad_and_missing_citations'.",
+### ripwire callers
+<callers of="test_ck13_dead_branch_validator_names_all_bad_and_missing_citations" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="11" graph_unresolved="87" counts_floor="1" next="--uses=test_ck13_dead_branch_validator_names_all_bad_and_missing_citations">
 
 ## ripwire test-gate — tests to run + the UNTESTED blast radius (a zero is 'none found', never 'none exists')

@@ -65,9 +65,6 @@ from pins import (  # noqa: E402
     PINNED_IDLE_TIMEOUT,
     PINNED_IDLE_TIMEOUT_ARG,
     PINNED_LAUNCH_ARGV,
-    PINNED_LEG_DIRS,
-    PINNED_LEG_FILES,
-    PINNED_LEG_FILES_SINCE,
     PINNED_LOG_LINES_TWO_USERS,
     PINNED_MAX_TURN,
     PINNED_MAX_TURN_DURATION_ARG,
@@ -973,7 +970,7 @@ def check_two_users(c2a, a2c, entries, identities, leg="two-users", *, leg_dir):
     term_seqs = [e for e in entries if e["dir"] == "a2c" and "id" in e["frame"] and "method" not in e["frame"]
                  and (e["frame"].get("result") or {}).get("stopReason") == "end_turn"]
     # R9-CK-F6: new_seqs >= 2 guaranteed by check_two_users' own cardinality
-    # guard at C:914-915; term_seqs >= 1 by the stopReason guard C:930-933.
+    # guard at C:909-912; term_seqs >= 1 by the stopReason guard C:930-933.
     if new_seqs[1]["seq"] < term_seqs[0]["seq"]:
         raise Failure(f"{leg}: second session/new precedes the first terminal")
 
@@ -1195,11 +1192,9 @@ def _parse_scan_v24(path, leg, name):
     return m, procs
 
 
-def _is_pinned_process(cmd: str) -> bool:
-    """Match the producer's v2.4 entry-point rule, never a path substring."""
-    argv = cmd.split()
-    return (argv[:1] == [PINNED_BUZZ_ACP_EXE_REALPATH]
-            or (len(argv) > 1 and argv[1] in (PINNED_TEE_PATH, PINNED_AGENT_REALPATH)))
+def _pinned_process_count(commands):
+    """Classify collected scan rows only through the shared producer predicate."""
+    return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))
 
 
 def check_process_evidence(leg_dir, leg):
@@ -1277,7 +1272,7 @@ def check_process_evidence(leg_dir, leg):
     if int(hdr.group(3)) != buzz_pid:
         raise Failure(f"{leg}: process-scan-after.txt header buzz_acp_pid={hdr.group(3)} != buzz-acp.pid {buzz_pid}")
     # F17: pinned_present must equal rows pinned by the v2.4 entry-point rule.
-    body_pinned = sum(1 for _, _, _, cmd in all_procs if _is_pinned_process(cmd))
+    body_pinned = _pinned_process_count(cmd for _, _, _, cmd in all_procs)
     if int(hdr.group(7)) != body_pinned:
         raise Failure(f"{leg}: process-scan-after.txt header pinned_present={hdr.group(7)} inconsistent with body ({body_pinned})")
     # R9-CK-F11: owned_zombies is validated as a non-negative int by the header regex
@@ -1686,24 +1681,25 @@ def check_bundle(root: Path, timeout_s: int = 90) -> str:
 
 
 def _captured_leg_version(golden: Path) -> str:
-    """Infer the capture contract from every positive leg's scan header."""
+    """Return the one strict capture-contract version shared by every positive leg."""
+    for leg in LEGS:
+        if not (golden / leg).is_dir():
+            raise Failure(f"golden: golden/{leg} absent")
     versions = set()
     for leg in LEGS:
         scan = golden / leg / "process-scan-after.txt"
-        if not scan.is_file():
-            continue
-        first = _require_file(scan, leg, "process-scan-after.txt").read_text().splitlines()
-        if first and first[0].startswith("# process-scan v2.4 "):
-            versions.add("v2.4")
-        elif first and first[0].startswith("# process-scan v2.3 "):
-            versions.add("v2.3")
-        else:
-            versions.add("v2.2")
-    return min(versions or {"v2.2"}, key=lambda value: tuple(map(int, value[1:].split("."))))
-
-
-def _version_before(actual: str, since: str) -> bool:
-    return tuple(map(int, actual[1:].split("."))) < tuple(map(int, since[1:].split(".")))
+        _require_file(scan, leg, "process-scan-after.txt")
+        try:
+            versions.add(pins.corpus_version(golden / leg))
+        except ValueError as exc:
+            message = str(exc)
+            marker = "process-scan header malformed: unknown version "
+            if marker in message:
+                message = message.replace(marker, "unrecognised process-scan header version ")
+            raise Failure(f"{leg}: {message}") from None
+    if len(versions) != 1:
+        raise Failure(f"golden: positive-leg capture versions disagree: {sorted(versions)}")
+    return versions.pop()
 
 
 def _check_bundle_uncapped(root: Path) -> str:
@@ -1774,14 +1770,9 @@ def _check_bundle_uncapped(root: Path) -> str:
     # F20/F21: consume the producer's ONE pinned leg-file contract. Positive legs
     # allow exactly the names produced there; agent-stderr.txt belongs only to the
     # negative probe and is pinned by NEGATIVE_REQUIRED_FILES.
-    allowed = ({name for name, status in PINNED_LEG_FILES.items()
-                if status in {"required", "optional"}}
-               | set(PINNED_LEG_DIRS))
-    required = {name for name, status in PINNED_LEG_FILES.items() if status == "required"}
     captured_version = _captured_leg_version(golden)
-    for name, since in PINNED_LEG_FILES_SINCE.items():
-        if _version_before(captured_version, since):
-            required.discard(name)
+    allowed = pins.entry_allowlist()
+    required = pins.required_files(captured_version)
     for leg in LEGS:
         d = golden / leg
         if not d.is_dir():
@@ -1901,7 +1892,12 @@ def main(argv) -> int:
         print(f"failure_reason: {f}")
         return 1
     except SystemExit as se:
-        return 70 if se.code is None else int(se.code)
+        if se.code is None:
+            return 70
+        if type(se.code) is int:
+            return se.code
+        print(f"failure_reason: check exited with a non-integer status: {se.code!r}")
+        return 70
     except Exception as exc:
         print(f"failure_reason: malformed evidence: {type(exc).__name__}: {exc}")
         return 1

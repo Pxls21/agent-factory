@@ -1,0 +1,34 @@
+A5l RED-BEFORE PATCH RECORD
+
+This patch records the pre-fix failures reproduced against PIN d23762a. It is an evidence record, not an applyable source patch.
+
+1. Shared classifier consumer
+   Command: pytest -q tests/test_s0_01_check_acp_conformance.py -k ck13_process_evidence_consumes_shared_predicate
+   Pre-fix result: the test was absent; the checker used private _is_pinned_process instead of pins.is_pinned_argv.
+
+2. Strict version classification
+   Input: process-scan-after.txt begins '# process-scan v9.9 ...'.
+   Pre-fix behavior: _corpus_version returned v2.2 and _captured_leg_version accepted missing/unknown evidence through local inference.
+   Required red: exact unknown-version tests fail before both consumers call pins.corpus_version.
+
+3. Scanner domains
+   Inputs: os.fdopen, shutil.copyfile source, subprocess stdin, Path.open alias, p.stat under OSError, os.path.getsize, next(p.glob(...), None), os.link, shutil.move, tar.extractall.
+   Pre-fix behavior: the CK13 report recorded all requested forms as survivors.
+   Required red: family self-tests fail before each syntax family is enumerated.
+
+4. Set pins
+   Inputs: PINNED_LEG_FILES['argv.txt'] changed to optional; teardown.txt changed to required.
+   Pre-fix behavior: representative timeline.jsonl assertion stayed green.
+   Required red: complete required_files/version and entry_allowlist equality fails.
+
+5. Gate-integrity survivors
+   Inputs: ignore later dead-comment citations; allow citationless comment; return empty read-set drift.
+   Pre-fix behavior: M14, M16 and M21 survived.
+   Required red: extracted-validator self-tests fail.
+
+6. CLI SystemExit
+   Input: check_bundle raises SystemExit('text').
+   Pre-fix behavior: int('text') raises ValueError outside the advertised exit mapping.
+   Required red: exact None/0/7/text parameterization fails for text.
+
+Source of reproduced baseline: tasks/briefs/s0-01-a5k-support/VERIFY-CK13-report.md. The A5l mutation driver replays the named expected-kill classes on fresh PIN archives.
