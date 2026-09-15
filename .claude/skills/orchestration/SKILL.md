@@ -42,7 +42,11 @@ subordinate to, the Anthropic docs.
    The second stop was on the coordinator's own AMENDMENT, which repeated the class it was fixing. The measurement that
    settles a quantifier costs seconds (`stat -c %s` over the corpus legs, `git ls-files -s | grep ^120000`, a producer
    grep): run it, paste the table into the brief, and derive the rule per member (`(version, file)` → the invalid
-   mutation). A "every / all N / no X" line with no pasted enumeration is unverified and does not ship.
+   mutation). A "every / all N / no X" line with no pasted enumeration is unverified and does not ship. The same rule
+   at a FLOOR (2026-09-15): a test count pasted into a brief carries its SET — the RESULT line's `files=` + `-t` list, or
+   the run record's pytest argv — or the brief says "re-collect on the PIN". VERIFY-CK14's item 10 carried the ledger's
+   `1556 passed, 9 xfailed` (an 18-file set) as the floor for a 13-file glob that collects 1354: a 215-test "drop" that was
+   no drop, and a premise the lane had to bound.
 
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
    adopts a metric/threshold formula from findings prose, check its grain and units against a
