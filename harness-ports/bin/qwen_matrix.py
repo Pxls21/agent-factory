@@ -406,7 +406,11 @@ def run_load(prompts_dir: Path, concurrency: int, max_tokens: int, rounds: int, 
 
 
 def _load_cell(path: Path) -> dict[str, Any]:
-    candidate = path / "result.json" if path.is_dir() else path
+    cell_dir = path if path.is_dir() else path.parent
+    candidate = cell_dir / "result.json" if path.is_dir() else path
+    run_complete = cell_dir / "run-complete"
+    run_error = cell_dir / "run-error"
+    unit_text_path = cell_dir / "unit-text"
     try:
         data = json.loads(candidate.read_text())
     except (OSError, json.JSONDecodeError) as exc:
@@ -417,6 +421,17 @@ def _load_cell(path: Path) -> dict[str, Any]:
     argv_text = identity.get("argv_text")
     argv_sha = identity.get("argv_sha256")
     unit_sha = identity.get("unit_sha256")
+    run_id = identity.get("run_id")
+    if run_error.exists():
+        raise MatrixError(f"cell run has error state: {run_error}")
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{64}", run_id):
+        raise MatrixError(f"cell result run_id is not lowercase sha256-shaped: {candidate}")
+    try:
+        completed_run_id = run_complete.read_text().strip()
+    except OSError as exc:
+        raise MatrixError(f"cell completion record unreadable: {run_complete}") from exc
+    if completed_run_id != run_id:
+        raise MatrixError(f"cell completion record does not match run_id: {run_complete}")
     if not isinstance(argv_text, str) or not argv_text:
         raise MatrixError(f"cell result missing non-empty argv_text: {candidate}")
     if not isinstance(argv_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", argv_sha):
@@ -425,6 +440,12 @@ def _load_cell(path: Path) -> dict[str, Any]:
         raise MatrixError(f"cell result argv_sha256 does not match argv_text: {candidate}")
     if not isinstance(unit_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", unit_sha):
         raise MatrixError(f"cell result unit_sha256 is not lowercase sha256: {candidate}")
+    try:
+        unit_text = unit_text_path.read_bytes()
+    except OSError as exc:
+        raise MatrixError(f"cell unit text unreadable: {unit_text_path}") from exc
+    if hashlib.sha256(unit_text).hexdigest() != unit_sha:
+        raise MatrixError(f"cell result unit_sha256 does not match unit-text: {candidate}")
     return data
 
 
@@ -491,6 +512,8 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--cell", default=os.environ.get("QWEN_MATRIX_CELL", "adhoc"))
     run.add_argument("--argv-file", type=Path)
     run.add_argument("--unit-sha-file", type=Path)
+    run.add_argument("--unit-text-file", type=Path)
+    run.add_argument("--run-id")
 
     table = sub.add_parser("table")
     table.add_argument("cells", nargs="+", type=Path)
@@ -516,20 +539,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"qwen-matrix: wrote {len(paths)} prompts; final={paths[-1]}")
             return 0
         cell: dict[str, Any] = {"name": args.cell}
-        if args.argv_file:
-            try:
-                cell["argv_text"] = args.argv_file.read_text()
-            except OSError as exc:
-                raise MatrixError(f"cell identity file unreadable: {args.argv_file}: {exc.strerror}") from exc
-            cell["argv_sha256"] = _sha256(args.argv_file)
-        if args.unit_sha_file:
-            try:
-                unit_sha = args.unit_sha_file.read_text().strip()
-            except OSError as exc:
-                raise MatrixError(f"cell identity file unreadable: {args.unit_sha_file}: {exc.strerror}") from exc
-            if not re.fullmatch(r"[0-9a-f]{64}", unit_sha):
-                raise MatrixError(f"unit sha file is not lowercase sha256: {args.unit_sha_file}")
-            cell["unit_sha256"] = unit_sha
+        if not args.argv_file:
+            raise MatrixError("run requires --argv-file")
+        try:
+            cell["argv_text"] = args.argv_file.read_text()
+        except OSError as exc:
+            raise MatrixError(f"cell identity file unreadable: {args.argv_file}: {exc.strerror}") from exc
+        cell["argv_sha256"] = _sha256(args.argv_file)
+        if not args.unit_sha_file:
+            raise MatrixError("run requires --unit-sha-file")
+        try:
+            unit_sha = args.unit_sha_file.read_text().strip()
+        except OSError as exc:
+            raise MatrixError(f"cell identity file unreadable: {args.unit_sha_file}: {exc.strerror}") from exc
+        if not re.fullmatch(r"[0-9a-f]{64}", unit_sha):
+            raise MatrixError(f"unit sha file is not lowercase sha256: {args.unit_sha_file}")
+        cell["unit_sha256"] = unit_sha
+        if not args.unit_text_file:
+            raise MatrixError("run requires --unit-text-file")
+        unit_text_sha = _sha256(args.unit_text_file)
+        if unit_text_sha != cell.get("unit_sha256"):
+            raise MatrixError(f"unit sha does not match unit text: {args.unit_text_file}")
+        if not args.run_id:
+            raise MatrixError("run requires --run-id")
+        if not re.fullmatch(r"[0-9a-f]{64}", args.run_id):
+            raise MatrixError("run-id is not lowercase sha256-shaped")
+        cell["run_id"] = args.run_id
         run_load(args.prompts, args.concurrency, args.max_tokens, args.rounds, args.out,
                  args.base_url, key, args.log, cell)
         print(args.out)

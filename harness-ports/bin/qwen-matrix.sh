@@ -59,7 +59,11 @@ ENV_FILE="$CELL_DIR/env"
 ARGV_FILE="$CELL_DIR/argv.txt"
 RESULT_FILE="$CELL_DIR/result.json"
 PEAK_FILE="$CELL_DIR/vram-peak-mib"
+UNIT_TEXT_FILE="$CELL_DIR/unit-text"
+RUN_COMPLETE="$CELL_DIR/run-complete"
 RUN_ERROR="$CELL_DIR/run-error"
+RUN_ID=$("$PYTHON" -c 'import secrets; print(secrets.token_hex(32))') || fail "cannot generate run id" 3
+[[ "$RUN_ID" =~ ^[0-9a-f]{64}$ ]] || fail "generated run id is not lowercase sha256-shaped" 3
 : > "$ENV_FILE"
 for assignment in "${OVERRIDES[@]}"; do printf '%s\n' "$assignment" >> "$ENV_FILE"; done
 # Bind the execution controls too; they are matrix inputs even though qwen-server does not consume them.
@@ -67,8 +71,8 @@ printf '%s\n' "QWEN_MATRIX_CONCURRENCY=$QWEN_MATRIX_CONCURRENCY" \
   "QWEN_MATRIX_ROUNDS=$QWEN_MATRIX_ROUNDS" "QWEN_MATRIX_MAX_TOKENS=$QWEN_MATRIX_MAX_TOKENS" >> "$ENV_FILE"
 
 env "${OVERRIDES[@]}" bash "$QWEN_SERVER" argv > "$ARGV_FILE" || fail "cell argv did not render" 3
-UNIT_TEXT=$(env "${OVERRIDES[@]}" bash "$QWEN_SERVER" unit) || fail "cell unit did not render" 3
-UNIT_SHA=$(printf '%s\n' "$UNIT_TEXT" | sha256sum | cut -d' ' -f1)
+env "${OVERRIDES[@]}" bash "$QWEN_SERVER" unit > "$UNIT_TEXT_FILE" || fail "cell unit did not render" 3
+UNIT_SHA=$(sha256sum "$UNIT_TEXT_FILE" | cut -d' ' -f1)
 printf '%s\n' "$UNIT_SHA" > "$CELL_DIR/unit-sha256"
 if [ ! -s "$QWEN_MATRIX_BASELINE_ENV" ]; then
   # The baseline is the launcher's measured defaults, never this cell's overrides.
@@ -103,28 +107,36 @@ cleanup() {
         echo "qwen-matrix: initially absent unit remains after restore" >&2
         rc=8
       fi
-      exit "$rc"
-    fi
-    restore_args=()
-    if [ -s "$QWEN_MATRIX_BASELINE_ENV" ]; then
-      while IFS= read -r line || [ -n "$line" ]; do
-        [ -z "$line" ] || case "$line" in \#*) ;; QWEN_[A-Z0-9_]*=*) restore_args+=("$line");; *) echo "qwen-matrix: invalid baseline env line: ${line@Q}" >&2; rc=8;; esac
-      done < "$QWEN_MATRIX_BASELINE_ENV"
-    fi
-    if [ "$rc" -ne 8 ]; then
-      env "${restore_args[@]}" bash "$QWEN_SERVER" install || rc=8
-      if [ ! -f "$QWEN_MATRIX_UNIT_PATH" ]; then
-        echo "qwen-matrix: baseline unit restore missing" >&2
-        rc=8
-      elif [ "$(sha256sum "$QWEN_MATRIX_UNIT_PATH" | cut -d' ' -f1)" != "$BASELINE_SHA" ]; then
-        echo "qwen-matrix: baseline unit sha mismatch after restore" >&2
-        rc=8
+    else
+      restore_args=()
+      if [ -s "$QWEN_MATRIX_BASELINE_ENV" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+          [ -z "$line" ] || case "$line" in \#*) ;; QWEN_[A-Z0-9_]*=*) restore_args+=("$line");; *) echo "qwen-matrix: invalid baseline env line: ${line@Q}" >&2; rc=8;; esac
+        done < "$QWEN_MATRIX_BASELINE_ENV"
       fi
+      if [ "$rc" -ne 8 ]; then
+        env "${restore_args[@]}" bash "$QWEN_SERVER" install || rc=8
+        if [ ! -f "$QWEN_MATRIX_UNIT_PATH" ]; then
+          echo "qwen-matrix: baseline unit restore missing" >&2
+          rc=8
+        elif [ "$(sha256sum "$QWEN_MATRIX_UNIT_PATH" | cut -d' ' -f1)" != "$BASELINE_SHA" ]; then
+          echo "qwen-matrix: baseline unit sha mismatch after restore" >&2
+          rc=8
+        fi
+      fi
+    fi
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$RUN_ID" > "$RUN_COMPLETE.tmp" || rc=8
+    if [ "$rc" -eq 0 ]; then
+      mv "$RUN_COMPLETE.tmp" "$RUN_COMPLETE" || rc=8
     fi
   fi
   exit "$rc"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # install is the launcher's only persistent cell path. The guard above is intentionally before it;
 # install repeats the guard at its own pre-write boundary.
@@ -151,14 +163,15 @@ if command -v nvidia-smi >/dev/null 2>&1; then sample_gpu & GPU_PID=$!; else pri
 if ! QWEN_MATRIX_CELL="$CELL" "$PYTHON" "$QWEN_MATRIX_PY" run \
   --prompts "$QWEN_MATRIX_PROMPTS" --concurrency "$QWEN_MATRIX_CONCURRENCY" \
   --max-tokens "$QWEN_MATRIX_MAX_TOKENS" --rounds "$QWEN_MATRIX_ROUNDS" \
-  --argv-file "$ARGV_FILE" --unit-sha-file "$CELL_DIR/unit-sha256" --out "$RESULT_FILE"; then
+  --argv-file "$ARGV_FILE" --unit-sha-file "$CELL_DIR/unit-sha256" \
+  --unit-text-file "$UNIT_TEXT_FILE" --run-id "$RUN_ID" --out "$RESULT_FILE"; then
   printf 'load generator failed\n' > "$RUN_ERROR"
   fail "load generator failed for cell $CELL" 7
 fi
 if [ -n "$GPU_PID" ]; then kill "$GPU_PID" 2>/dev/null || true; wait "$GPU_PID" 2>/dev/null || true; GPU_PID=""; fi
 [ -s "$PEAK_FILE" ] || printf '0\n' > "$PEAK_FILE"
 
-"$PYTHON" - "$RESULT_FILE" "$PEAK_FILE" <<'PY'
+if ! "$PYTHON" - "$RESULT_FILE" "$PEAK_FILE" <<'PY'
 import json
 import pathlib
 import sys
@@ -167,4 +180,8 @@ data = json.loads(result.read_text())
 data["vram_peak_mib"] = int(pathlib.Path(sys.argv[2]).read_text().strip())
 result.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 PY
+then
+  printf 'result post-processing failed\n' > "$RUN_ERROR"
+  fail "result post-processing failed for cell $CELL" 7
+fi
 printf 'qwen-matrix: cell %s recorded at %s; restoring baseline\n' "$CELL" "$RESULT_FILE"

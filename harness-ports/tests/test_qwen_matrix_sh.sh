@@ -39,7 +39,8 @@ case "$1" in
   argv) printf '%s\n' fake-server --cache-ram "${QWEN_CACHE_RAM:-8192}" --spec-type "${QWEN_SPEC_TYPE:-draft-mtp}";;
   unit) printf '[Service]\nExecStart=fake --cache-ram %s\n' "${QWEN_CACHE_RAM:-8192}";;
   install)
-    if [ "${QWEN_CACHE_RAM:-8192}" = 8192 ]; then printf 'baseline unit\n' > "$QWEN_MATRIX_UNIT_PATH"
+    if [ "${QM_RESTORE_WRONG_BYTES:-0}" -eq 1 ] && [ "${QWEN_CACHE_RAM:-8192}" = 8192 ]; then printf 'wrong restored unit\n' > "$QWEN_MATRIX_UNIT_PATH"
+    elif [ "${QWEN_CACHE_RAM:-8192}" = 8192 ]; then printf 'baseline unit\n' > "$QWEN_MATRIX_UNIT_PATH"
     else printf 'cell unit %s\n' "$QWEN_CACHE_RAM" > "$QWEN_MATRIX_UNIT_PATH"; fi;;
   uninstall)
     [ "${QM_UNINSTALL_LEAVES_UNIT:-0}" -eq 1 ] || rm -f "$QWEN_MATRIX_UNIT_PATH";;
@@ -58,11 +59,15 @@ args = sys.argv[1:]
 out = pathlib.Path(args[args.index("--out") + 1])
 argv_file = pathlib.Path(args[args.index("--argv-file") + 1])
 unit_sha_file = pathlib.Path(args[args.index("--unit-sha-file") + 1])
+unit_text_file = pathlib.Path(args[args.index("--unit-text-file") + 1])
+run_id = args[args.index("--run-id") + 1]
 out.write_text(json.dumps({
   "schema": "qwen-matrix-v1",
   "cell": {"name": __import__("os").environ["QWEN_MATRIX_CELL"],
            "argv_text": argv_file.read_text(), "argv_sha256": "fixture",
            "unit_sha256": unit_sha_file.read_text().strip(),
+           "unit_text_sha256": __import__("hashlib").sha256(unit_text_file.read_bytes()).hexdigest(),
+           "run_id": run_id,
            "props": {"model_alias": "fixture", "total_slots": 2,
                      "default_generation_settings": {"n_ctx": 200000}, "build_info": "fixture"}},
   "summary": {"decode_tps": 1, "prompt_tps": 2, "busy_slots_per_decode": 2, "re_prefill_count": 0},
@@ -93,13 +98,16 @@ check "launcher guard is the first call and receives every cell override" $? "fi
 grep -qx 'install QWEN_CACHE_RAM=8192' "$CALLS" && grep -qx 'install QWEN_CACHE_RAM=32768 QWEN_CTXCP=32 QWEN_CMS=4096 QWEN_UBATCH=1024 QWEN_SPEC_P_MIN=0.25 QWEN_SPEC_TYPE=none' "$CALLS"
 check "cell install and baseline-env restore both ran" $? "$(tr '\n' ';' < "$CALLS")"
 [ "$(sed -n '1p' "$TMP/matrix/T/env")" = "QWEN_CACHE_RAM=32768" ] && \
-  grep -qx 'QWEN_MATRIX_CONCURRENCY=2' "$TMP/matrix/T/env" && [ -s "$TMP/matrix/T/argv.txt" ] && [ -s "$TMP/matrix/T/unit-sha256" ]
-check "cell env, argv text, and unit sha are recorded" $? "$(tr '\n' ';' < "$TMP/matrix/T/env")"
-python3 - "$TMP/matrix/T/result.json" <<'PY'
-import json,sys
-d=json.load(open(sys.argv[1])); assert d["cell"]["name"]=="T" and d["vram_peak_mib"]==1234
+  grep -qx 'QWEN_MATRIX_CONCURRENCY=2' "$TMP/matrix/T/env" && [ -s "$TMP/matrix/T/argv.txt" ] && \
+  [ -s "$TMP/matrix/T/unit-text" ] && [ -s "$TMP/matrix/T/unit-sha256" ] && [ -s "$TMP/matrix/T/run-complete" ]
+check "cell env, argv text, unit text, unit sha, and completion are recorded" $? "$(tr '\n' ';' < "$TMP/matrix/T/env")"
+python3 - "$TMP/matrix/T/result.json" "$TMP/matrix/T/run-complete" "$TMP/matrix/T/unit-text" <<'PY'
+import hashlib,json,pathlib,sys
+d=json.load(open(sys.argv[1])); completion=pathlib.Path(sys.argv[2]).read_text().strip(); unit=pathlib.Path(sys.argv[3]).read_bytes()
+assert d["cell"]["name"]=="T" and d["vram_peak_mib"]==1234
+assert d["cell"]["run_id"]==completion and d["cell"]["unit_sha256"]==hashlib.sha256(unit).hexdigest()
 PY
-check "result JSON carries cell identity and measured VRAM peak" $? "result.json decoded"
+check "result JSON is bound to completion and persisted unit bytes" $? "result.json decoded"
 
 # Negative control: a completed cell name is immutable, so a rerun cannot leave stale evidence current.
 : > "$CALLS"
@@ -130,6 +138,69 @@ OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/fail-matrix.py" bash "$RUNNER"
 [ "$rc" -eq 7 ] && [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ] && \
   grep -qx 'install QWEN_CACHE_RAM=8192' "$CALLS"
 check "load failure returns rc 7 and restores baseline" $? "rc=$rc after=$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1): $OUT"
+
+cat > "$TMP/bin/fail-after-result-matrix.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index("--out") + 1])
+argv_file = pathlib.Path(args[args.index("--argv-file") + 1])
+unit_sha_file = pathlib.Path(args[args.index("--unit-sha-file") + 1])
+run_id = args[args.index("--run-id") + 1]
+out.write_text(json.dumps({
+  "schema": "qwen-matrix-v1",
+  "cell": {"name": os.environ["QWEN_MATRIX_CELL"], "argv_text": argv_file.read_text(),
+           "argv_sha256": "fixture", "unit_sha256": unit_sha_file.read_text().strip(),
+           "run_id": run_id},
+  "summary": {"requests": 1, "decode_tps": 1, "prompt_tps": 2,
+              "busy_slots_per_decode": 2, "re_prefill_count": 0},
+  "rounds": []}) + "\n")
+PY
+chmod +x "$TMP/bin/fail-after-result-matrix.py"
+printf 'baseline unit\n' > "$TMP/home/.config/systemd/user/qwen-builder.service"
+: > "$CALLS"
+OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/fail-after-result-matrix.py" QM_RESTORE_WRONG_BYTES=1 \
+  bash "$RUNNER" AFTER_RESULT_FAIL -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 8 ] && [ -s "$TMP/matrix/AFTER_RESULT_FAIL/result.json" ] && \
+  [ ! -e "$TMP/matrix/AFTER_RESULT_FAIL/run-complete" ]
+check "failed restoration after result write leaves no completion record" $? "rc=$rc: $OUT"
+
+cat > "$TMP/bin/invalid-result-matrix.py" <<'PY'
+#!/usr/bin/env python3
+import pathlib
+import sys
+args = sys.argv[1:]
+pathlib.Path(args[args.index("--out") + 1]).write_text("not-json\n")
+PY
+chmod +x "$TMP/bin/invalid-result-matrix.py"
+printf 'baseline unit\n' > "$TMP/home/.config/systemd/user/qwen-builder.service"
+: > "$CALLS"
+OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/invalid-result-matrix.py" \
+  bash "$RUNNER" POSTPROCESS_FAIL -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 7 ] && [ -s "$TMP/matrix/POSTPROCESS_FAIL/result.json" ] && \
+  grep -qx 'result post-processing failed' "$TMP/matrix/POSTPROCESS_FAIL/run-error" && \
+  [ ! -e "$TMP/matrix/POSTPROCESS_FAIL/run-complete" ] && \
+  [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ]
+check "failed result post-processing restores baseline and leaves no completion record" $? "rc=$rc: $OUT"
+
+cat > "$TMP/bin/signal-matrix.py" <<'PY'
+#!/usr/bin/env python3
+import os
+import signal
+os.kill(os.getppid(), signal.SIGTERM)
+raise SystemExit(0)
+PY
+chmod +x "$TMP/bin/signal-matrix.py"
+printf 'baseline unit\n' > "$TMP/home/.config/systemd/user/qwen-builder.service"
+: > "$CALLS"
+OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/signal-matrix.py" \
+  bash "$RUNNER" SIGNAL_FAIL -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+[ "$rc" -eq 143 ] && [ ! -e "$TMP/matrix/SIGNAL_FAIL/run-complete" ] && \
+  [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ]
+check "TERM interruption restores baseline and leaves no completion record" $? "rc=$rc: $OUT"
 
 # Initially absent is a distinct baseline state: success and failure must both remove the created unit.
 rm -f "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"

@@ -293,15 +293,27 @@ def test_export_and_live_fixture():
         assert json.loads((root / "result.json").read_text()) == result
 
 
+def cell_unit_text(name):
+    del name
+    return b"[Service]\nExecStart=fake --cache-ram 8192\n"
+
+
+def cell_run_id(name):
+    return hashlib.sha256(f"run:{name}".encode()).hexdigest()
+
+
 def cell_record(name, **summary_overrides):
     argv_text = f"fake-server --cell {name}\n"
+    unit_text = cell_unit_text(name)
+    run_id = cell_run_id(name)
     summary = {"requests": 1, "decode_tps": 10, "prompt_tps": 20,
                "re_prefill_count": 4, "busy_slots_per_decode": 1}
     summary.update(summary_overrides)
     return {
         "cell": {"name": name, "argv_text": argv_text,
                  "argv_sha256": hashlib.sha256(argv_text.encode()).hexdigest(),
-                 "unit_sha256": "a" * 64},
+                 "unit_sha256": hashlib.sha256(unit_text).hexdigest(),
+                 "run_id": run_id},
         "summary": summary,
         "vram_peak_mib": 100,
     }
@@ -335,12 +347,53 @@ def test_table():
             raise AssertionError(f"invalid request count was accepted: {bad_requests!r}")
 
     with tempfile.TemporaryDirectory() as tmp:
-        result = pathlib.Path(tmp) / "result.json"
+        cell_dir = pathlib.Path(tmp) / "A"
+        cell_dir.mkdir()
+        result = cell_dir / "result.json"
+        unit_text = cell_unit_text("A")
+        run_id = cell_run_id("A")
+        result.write_text(json.dumps(cell_record("A")))
+        (cell_dir / "unit-text").write_bytes(unit_text)
+
+        try:
+            QM.render_table([QM._load_cell(cell_dir)])
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell completion record unreadable: {cell_dir / 'run-complete'}"
+        else:
+            raise AssertionError("cell without completion record rendered")
+
+        (cell_dir / "run-error").write_text("load generator failed\n")
+        try:
+            QM.render_table([QM._load_cell(cell_dir)])
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell run has error state: {cell_dir / 'run-error'}"
+        else:
+            raise AssertionError("cell with run-error rendered")
+        (cell_dir / "run-error").unlink()
+
+        (cell_dir / "run-complete").write_text(run_id + "\n")
+        assert QM._load_cell(cell_dir) == cell_record("A")
+        assert "| A | 10.000 | 20.000 | 1.000 | 4 | 100 |" in QM.render_table(
+            [QM._load_cell(cell_dir)]
+        )
+
+        result_path_load = QM._load_cell(result)
+        assert result_path_load == cell_record("A")
+
+        (cell_dir / "run-complete").write_text("f" * 64 + "\n")
+        try:
+            QM._load_cell(cell_dir)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell completion record does not match run_id: {cell_dir / 'run-complete'}"
+        else:
+            raise AssertionError("mismatched completion record was accepted")
+        (cell_dir / "run-complete").write_text(run_id + "\n")
+
         mismatch = cell_record("A")
         mismatch["cell"]["argv_sha256"] = "0" * 64
         result.write_text(json.dumps(mismatch))
         try:
-            QM._load_cell(result)
+            QM._load_cell(cell_dir)
         except QM.MatrixError as exc:
             assert str(exc) == f"cell result argv_sha256 does not match argv_text: {result}"
         else:
@@ -350,11 +403,30 @@ def test_table():
         malformed_unit["cell"]["unit_sha256"] = "NOT-A-SHA"
         result.write_text(json.dumps(malformed_unit))
         try:
-            QM._load_cell(result)
+            QM._load_cell(cell_dir)
         except QM.MatrixError as exc:
             assert str(exc) == f"cell result unit_sha256 is not lowercase sha256: {result}"
         else:
             raise AssertionError("malformed unit identity was accepted")
+
+        mismatched_unit = cell_record("A")
+        mismatched_unit["cell"]["unit_sha256"] = "b" * 64
+        result.write_text(json.dumps(mismatched_unit))
+        try:
+            QM._load_cell(cell_dir)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell result unit_sha256 does not match unit-text: {result}"
+        else:
+            raise AssertionError("mismatched unit identity was accepted")
+
+        result.write_text(json.dumps(cell_record("A")))
+        (cell_dir / "unit-text").write_bytes(unit_text + b"tampered\n")
+        try:
+            QM._load_cell(cell_dir)
+        except QM.MatrixError as exc:
+            assert str(exc) == f"cell result unit_sha256 does not match unit-text: {result}"
+        else:
+            raise AssertionError("tampered persisted unit text was accepted")
 
 
 def main():
