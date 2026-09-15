@@ -49,6 +49,19 @@ if git diff --cached --name-only | grep -q '^\.claude/skills/' \
     exit 1
   fi
 fi
+# MIRROR GATE (2026-09-15, owner: "claude.md properly copied into the agents.md"): a staged
+# CLAUDE.md / AGENTS.md / .hermes.md must keep section parity, the size caps (Hermes chars,
+# Codex bytes) and the standing-rules hash — harness-ports/tests/test_context_mirrors.sh --check.
+# Bypass (printed, so it shows in review): SKIP_MIRROR_CHECK=1 git commit ...
+if [ -z "${SKIP_MIRROR_CHECK:-}" ] && git diff --cached --name-only | grep -qxE 'CLAUDE\.md|AGENTS\.md|\.hermes\.md' \
+   && [ -f "$REPO_ROOT/harness-ports/tests/test_context_mirrors.sh" ]; then
+  if ! out="$(bash "$REPO_ROOT/harness-ports/tests/test_context_mirrors.sh" --check 2>&1)"; then
+    echo "COMMIT BLOCKED by the MIRROR gate — CLAUDE.md and its ports (AGENTS.md, .hermes.md) disagree:" >&2
+    printf '%s\n' "$out" >&2
+    exit 1
+  fi
+fi
+
 # LANE-SKILLS GATE (2026-09-03): .agents/lane-skills/ is the curated subset lanes load; it must
 # mirror .agents/skills/ for every name in harness-ports/lane-skills.txt.
 if git diff --cached --name-only | grep -qE '^(\.agents/skills/|\.agents/lane-skills/|harness-ports/lane-skills\.txt)' \

@@ -33,8 +33,16 @@ a distillation and the ledger wins on any disagreement).
   QUALITY at `medium` — the first lane on it (N5k, arm A of the effort A/B) LANDED 2026-09-14 (`113 passed` ×3, 12 mutants
   killed; substantive completion at 4 h 53 m of lane time, then a 47-minute lint loop the BRIEF built — AF-AP-76, fixed the
   same day at the tool/dispatcher/skill layer); arm B (`xhigh`): the v2 run STOPPED at 2 h 05 m after two premise-investigation loops on item 2 (one line of code — A/B data points 1-2: at xhigh an unmeasured premise is a sink); v3 runs on the twice-amended brief (the measured premise + the bounded gates) under the fourth standing lane rule; the verify
-  lanes route to `agentfactory-verify-local` at `xhigh` (D-028); arm B v3 STOPPED at substantive completion 2026-09-15 07:02Z (`119 passed` in 6 h 41 m, first write at 48 min); the default effort DECIDED by the owner 2026-09-15 — `medium` builds, `xhigh` verifies/analyses (D-028); it is
-  settled; the landed round 14 (arm A) goes to its verify round with v3's six extra tests and its DISCREPANCIES as material.
+  lanes route to `agentfactory-verify-local` at `xhigh` (D-028); arm B v3 STOPPED at substantive completion 2026-09-15 07:02Z (`119 passed` in 6 h 41 m, first write at 48 min); the default effort DECIDED by the owner 2026-09-15 — `medium` builds, `xhigh` verifies/analyses (D-028).
+  VERIFY-N5k — the adversarial grade of the LANDED arm A plus the comparative grade of v3's unlanded build (its 8 new tests and
+  its DISCREPANCIES as material, a PORT LIST for the coordinator) — DISPATCHED 2026-09-15 07:36Z on `agentfactory-verify-local`.
+- The HARNESS MIRRORS (2026-09-15; owner: "claude.md not properly copied into agents.md … skills and hooks"): measured from
+  Hermes's own source, a lane loads ONE project context file — `.hermes.md` — under a char cap that drops the file's MIDDLE on
+  overflow; CLAUDE.md's seven missing sections are now in `.hermes.md` in full (43 K chars, cap 48 K; the 25 lane-skills
+  named; four of the five hooks wired, the retro gate off for lanes by design) and in `AGENTS.md` as digests (32.4 KB under
+  Codex's 32 KiB budget), gated by `harness-ports/tests/test_context_mirrors.sh` (section parity keyed off CLAUDE.md, the
+  caps, the standing-rules hash; also a pre-commit gate). NOT proven: that a lane's BEHAVIOUR improves from the fuller file —
+  the next lanes dispatched on a PIN carrying it are the measurement.
 
 - Wave 0 spikes, all POSITIVE (2026-09-04): rust ai-memory builds on the PC; Docker starts in the sandbox; runsc runs rootless in
   the sandbox and on the PC; selective egress works with a veth pair and iptables. S0-06 and S0-08 therefore moved from deferred to

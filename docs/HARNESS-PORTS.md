@@ -119,6 +119,17 @@ Had we shipped only `AGENTS.md`, Hermes would have loaded the **Codex-worded** f
 about `apply_patch`, `spawn_agent`, and Codex hook events — none of which exist for it. Writing
 `.hermes.md` gives each harness a file written for the tools it actually has.
 
+**Measured 2026-09-15 in Hermes `b3399c1` (`agent/prompt_builder.py`):** only ONE project context TYPE loads, first found
+wins (`:1578-1598`); the `.hermes.md` walk stops at the git root (`:110-119`). The injected file is capped at
+`context_file_max_chars` when set in config.yaml, else the dynamic cap `max(20_000, min(ctx_tokens × 4 × 0.06, 500_000))`
+(`:1013-1035`); an over-cap file is truncated head 70 % + tail 20 % with one marker — the MIDDLE is dropped silently
+(`:1412-1433`). At the 200 K window the routes report, the dynamic cap is 48,000 chars; the snippet pins
+`context_file_max_chars: 60000` so a route reporting a smaller window cannot truncate the rules, and
+`harness-ports/tests/test_context_mirrors.sh` holds `.hermes.md` under 48,000 chars regardless. The coding-context snapshot
+(`agent/coding_context.py:38`, `:491`) only LISTS the names of `AGENTS.md` / `CLAUDE.md` present at the root — it never
+injects their content — which is why a lane asked "which context file did you load?" can answer `AGENTS.md` while its
+request carries `.hermes.md` (§7's caution).
+
 ### Rewording in the instructions files
 
 | File | Reworded | Why |
@@ -221,7 +232,7 @@ through `harness-ports/bin/`.
 | `wiki-context.py` | `UserPromptSubmit` | `pre_llm_call` | Full equivalent |
 | `edit-snapshot.py` | `PostToolUse` (matcher `Write\|Edit`) | `post_tool_call` | Spool mechanism (see below) |
 | `turn-retro-gate.sh` | `Stop` | `pre_verify` | **Partial** — edited-code verify gate only |
-| `graft-first-nag.py` | `PreToolUse` (matcher `Bash`) | `pre_tool_call` | **NOT WIRED** — would become a hard block |
+| `graft-first-nag.py` | `PreToolUse` (matcher `Bash`) | `post_tool_call` (matcher `search_files`) | **Spool, advisory** (2026-09-15) — one turn late, never a block; the `pre_tool_call` hard-block form stays commented out |
 
 ### Hermes edit-snapshot spool (deliverable J)
 
@@ -239,10 +250,15 @@ Restated inside `.hermes.md` so the agent sees them even without this document.
 1. **`edit-snapshot.py` on Hermes — SPOOL (one turn late).** The spool mechanism delivers the
    output, but delayed. **Standing instruction:** run `scripts/why.sh <file> [function]` and
    GitNexus `impact` before editing a symbol.
-2. **`graft-first-nag.py` on Hermes — NO HOOK by default.** A commented-out config line exists;
-   enabling it converts the advisory warning into a hard block. Owner's call.
-3. **`turn-retro-gate.sh` on Hermes — PARTIAL.** `pre_verify` fires only at the edited-code
-   verify gate, not on every turn end.
+2. **`graft-first-nag.py` on Hermes — SPOOL (one turn late), since 2026-09-15.** A `post_tool_call` observer on
+   `search_files` spools the nag for a semantic identifier search; the next `pre_llm_call` injects it. Advisory only —
+   the commented-out `pre_tool_call` line would turn it into a hard block (owner's call). Merged into the PC lane
+   profile 2026-09-15 (`hermes-config-merge.py`, backup written; `skills.external_dirs` and the duplicate
+   `codebase-memory` server skipped by request).
+3. **`turn-retro-gate.sh` on Hermes — PARTIAL, and OFF for lanes.** `pre_verify` fires after code edits at round end and
+   accepts the Claude Stop shape `{"decision":"block","reason"}` as a CONTINUE NUDGE bounded by `agent.max_verify_nudges`
+   (3), never a hard block (measured: `hermes_cli/plugins.py:1885-1903`, `agent/shell_hooks.py:408-413`). Commented out in
+   the snippet since 2026-09-03: on a one-shot lane it replaced the brief's final DATA report with the retro answer.
 4. **`session-start.sh` context injection on Hermes — NO HOOK.** Observer event; live-state
    injected through `pre_llm_call` instead.
 5. **`SubagentStart` honey injection — no equivalent on either harness.**
@@ -332,8 +348,9 @@ own git worktree, and leaves the final message in `report.md`.
 2. **Worktree.** `git worktree add` under `$AF_REPO/.lanes/<lane-id>` (disjoint per lane,
    same pattern as the sandbox's agent worktrees).
 3. **Role prepend.** If a role is named, `harness-ports/roles/<role>.md` is prepended to the
-   brief before the harness sees it. Three STANDING LANE RULES are appended after the brief on every
-   run, so no brief carries them by hand: CONTEXT BUDGET (no skill reloads, files by line range),
+   brief before the harness sees it. FIVE STANDING LANE RULES are appended after the brief on every
+   run (the fourth PREMISE CONFLICTS ARE BOUNDED and the fifth CODE INTEL FIRST since 2026-09-14/15; the graft index is
+   built in the lane tree and the clone's current `report_lint.py` overlaid at launch), so no brief carries them by hand: CONTEXT BUDGET (no skill reloads, files by line range),
    INCREMENTAL REPORT (each finished section appended to `report-draft.md`) and MECHANICAL GATES ARE
    BOUNDED (the `report_lint` fix hints applied for at most three rounds, then paste and finish — a
    brief's `MISS 0` is a target, never a stop condition; AF-AP-76, 2026-09-14).
@@ -531,8 +548,14 @@ Settings from `.claude/settings.json` that have no mapping on either harness:
 
 ## 10. Keeping the ports in sync
 
-The rules now live in three places: `CLAUDE.md`, `AGENTS.md`, `.hermes.md`. That is a drift risk
-and there is **no mechanical check** for it.
+The rules now live in three places: `CLAUDE.md`, `AGENTS.md`, `.hermes.md`. That is a drift risk,
+and since 2026-09-15 there IS a mechanical check for it: `harness-ports/tests/test_context_mirrors.sh` (in
+`run-all.sh`; `--check` is the pre-commit MIRROR gate when any of the three is staged) holds SECTION PARITY keyed
+off CLAUDE.md's own `## ` list (a new CLAUDE.md section with no TABLE row and no mirror heading is red), the
+mirror-only markers and the five STANDING LANE RULES by name, the size caps (`.hermes.md` ≤ 48,000 CHARS,
+`AGENTS.md` ≤ 32,768 BYTES), the STANDING PROJECT RULES hash across the three, and the GitNexus block staying
+last — with eight negative controls on mutated copies (each must fail for its exact reason). Parity is by
+SECTION, not by text: `.hermes.md` carries the full port (43 K chars), `AGENTS.md` the digest (Codex's budget).
 
 When a rule changes:
 1. Change `CLAUDE.md` (the source of truth).
@@ -575,7 +598,9 @@ Test: `harness-ports/tests/test_sync_skills.sh` (19 checks).
 
     diff <(sed -n '/^## /,$p' AGENTS.md) <(sed -n '/^## /,$p' .hermes.md)
 
-The differences should only be mechanism names.
+Until 2026-09-15 the differences were only mechanism names. Since the port of CLAUDE.md's remaining sections the two
+mirrors differ in DEPTH by design (`.hermes.md` full, `AGENTS.md` digest under the 32 KiB budget); the mechanical
+parity check above is by section heading, and this diff is a reading aid only.
 
 ---
 
@@ -637,5 +662,5 @@ export HERMES_BIN="hermes"                    # or full path
 | `harness-ports/roles/` | 3 files, ~2 KB each |
 | `harness-ports/bin/` | 8 scripts |
 | `.codex/config.toml` | ~3 KB |
-| `AGENTS.md` | ~24.5 KB (under 32 KB budget) |
-| `.hermes.md` | ~22.7 KB |
+| `AGENTS.md` | 32,428 B on 2026-09-15 (budget 32,768 B; 340 B headroom — the GitNexus stats line churns a few bytes) |
+| `.hermes.md` | 43,291 chars / 43,766 B on 2026-09-15 (cap 48,000 chars; `context_file_max_chars: 60000` pinned) |

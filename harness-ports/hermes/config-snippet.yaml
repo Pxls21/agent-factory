@@ -114,6 +114,13 @@ mcp_servers:
 #   edit-snapshot.py   -> post_tool_call    OBSERVER — output is DISCARDED.
 #                                           Not wired. Ask for the snapshot.
 #   graft-first-nag.py -> pre_tool_call     NOT WIRED BY DEFAULT (see below)
+# Context-file cap (measured 2026-09-15, Hermes agent/prompt_builder.py:1013-1035): unset, the cap on the ONE
+# project context file (.hermes.md) floats with the routed model's window — ctx_tokens × 4 × 0.06 chars, floor
+# 20,000, ceiling 500,000 — and an over-cap file loses its MIDDLE (head 70 % + tail 20 % kept, one marker).
+# A route that reports a smaller window would silently truncate the rules. Pinned explicitly instead;
+# harness-ports/tests/test_context_mirrors.sh holds .hermes.md under 48,000 chars regardless.
+context_file_max_chars: 60000
+
 hooks:
 
   # Toolchain rebuild + orientation. Observer: Hermes ignores what it prints,
@@ -157,9 +164,11 @@ hooks:
       timeout: 20
 
   # Turn-retro gate. Blocks with the retro checklist once per landed batch.
-  # PARTIAL PORT: pre_verify fires at the bounded edited-code verify gate, so a
-  # turn that edits nothing is never gated. .hermes.md tells the agent to run
-  # the retro anyway — do not read this hook as full coverage.
+  # PARTIAL PORT (contract measured 2026-09-15 in Hermes b3399c1, hermes_cli/plugins.py:1885-1903 +
+  # agent/shell_hooks.py:408-413): pre_verify fires after code edits at round end; it accepts the
+  # Claude-Code Stop shape {"decision":"block","reason":…} (or {"action":"continue","message":…})
+  # as a CONTINUE NUDGE bounded by agent.max_verify_nudges (default 3) — never a hard block — so a
+  # turn that edits nothing is never gated. .hermes.md tells the agent to run the retro anyway.
   # OFF FOR BUILD LANES (2026-09-03, fifth real lane): the retro checklist is a COORDINATOR
   # turn-end mechanism; on a one-shot lane it replaced the brief's final DATA report with the
   # retro answer. Sandbox delegates never get the Stop hook either. Re-enable only for an

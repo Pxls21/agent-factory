@@ -10,7 +10,10 @@ is per-event, and it is not the same as Claude Code's:
                  {"context": "..."} on stdout. Plain text is NOT injected.
   pre_verify     Directive. Uses {"decision":"block","reason":...} /
                  {"action":"continue","message":...}. Exit-2-plus-stderr is
-                 documented for pre_tool_call, not for this event.
+                 documented for pre_tool_call, not for this event. Both shapes
+                 become a CONTINUE NUDGE bounded by agent.max_verify_nudges (3),
+                 never a hard block; fires only after code edits (measured
+                 2026-09-15: Hermes b3399c1 hermes_cli/plugins.py:1885-1903).
   pre_tool_call  Directive. block / modify / approve only — there is NO
                  advisory channel, so a warn-don't-block hook cannot speak here.
   post_tool_call Observer. RETURN IS IGNORED. Nothing it prints reaches the

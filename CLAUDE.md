@@ -258,7 +258,12 @@ pending increment is named in the ledger.
   `.hermes.md`, `.agents/skills/` synced by `harness-ports/bin/sync-skills.sh`, `harness-ports/`
   adapters + lane roles + the PC-side spawn path `scripts/pc_lane.sh`): what each harness
   enforces and what it does NOT. Unit-proven in the sandbox (`harness-ports/tests/run-all.sh`);
-  NOT smoke-tested on the PC — owner-run smoke steps are in the doc.
+  NOT smoke-tested on the PC — owner-run smoke steps are in the doc. **The three instruction files are
+  gated (2026-09-15): `harness-ports/tests/test_context_mirrors.sh` holds section parity keyed off THIS
+  file's `## ` list (a new section here with no mirror is red), the caps (`.hermes.md` ≤ 48,000 chars —
+  Hermes drops an over-cap file's MIDDLE; `AGENTS.md` ≤ 32 KiB, Codex's budget) and the STANDING PROJECT
+  RULES hash; it runs in `run-all.sh` and as the pre-commit MIRROR gate.** Hermes loads ONE project
+  context type, `.hermes.md` first (its `prompt_builder.py`); `AGENTS.md` is Codex-only.
 - `sandbox-kit/` — the vendored operating kit (operating guide, research-prompt guide + two
   worked examples, telemetry reference, vendored tools; provenance `sandbox-kit/VENDORED-FROM.md`).
 - `wiki/` — **PER-COMMIT FRESHNESS MANDATE (owner 2026-08-25, inherited: "wiki is updated at

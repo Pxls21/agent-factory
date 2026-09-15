@@ -78,18 +78,6 @@ IF the owner has set a transcript sync up (NOT set up in this repo — say so ra
   `scripts/push_clean.sh --no-delegates-live`.**
 - **No outward-facing actions.** No PRs, no issue comments, no publishing, no posting.
 
-**PC environment facts (verified live 2026-09-03 over the bridge — `PC-BRIDGE.md`, `spikes/pc-bridge/result.json`):**
-- The PC is the EXECUTION HOST: containers (podman 5.7 — no podman-compose, no docker daemon), gVisor/runsc
-  (NOT installed yet — a pending owner-side spike), Rust builds (`cargo +1.95.0`), model round trips, long suites.
-  Development + verification lanes stay in the sandbox.
-- **OmniRoute on `127.0.0.1:20128` is the SOLE model egress** (standing rule 3); it is already running.
-  vLLM/Ollama on the PC are merely upstreams behind it — never call them directly, never add them as a dependency.
-- **Never stop, restart or reconfigure the owner's running services** — Buzz relay stack, OmniRoute, Ollama, the `qwen-builder` model unit (a restart kills every lane mid-turn),
-  Phoenix, OpenObserve, neo4j — without the owner's explicit say-so. `sudo` needs the owner's password:
-  surface the need, never work around it.
-- Bridge links and tokens are per-session and live only in the untracked `.pc-bridge.env` — never in a
-  commit, a log, a report, or argv.
-
 **Report shape.** Open with the OUTCOME word: `Verified live:` ≠ `DONE:` ≠ `NOT built.` — state
 NOT-built and known gaps first-class, inside the artifact.
 
@@ -158,12 +146,9 @@ and gVisor compatibility.**
 
 ### THE MECHANISM TABLE — how to read a skill written for Claude Code
 
-`.agents/skills/` holds 382 skills. Most are vendored third-party text carried over
-**verbatim**, so they name Claude-Code mechanisms that do not exist here. That is deliberate:
-15 project skills carry HARNESS PORT rewordings in `.agents/skills/` (listed in
-`harness-ports/hand-ported.txt`); the remaining 361 vendored skills are verbatim — rewording
-third-party text at scale introduces silent errors. **Translate as you read, using this table.** A skill saying "use the Task tool"
-means "spawn a subagent"; do the Codex thing.
+`.agents/skills/` holds 382 skills: 15 project skills carry HARNESS PORT rewordings (`harness-ports/hand-ported.txt`); the
+other 361 are vendored third-party text carried over VERBATIM (rewording at scale introduces silent errors), so they name
+Claude-Code mechanisms that do not exist here. **Translate as you read, using this table.**
 
 | A skill says… | Do this on Codex |
 |---|---|
@@ -223,23 +208,45 @@ graft + GitNexus; pre-push warns while the wiki is stale.
 **Keep-alive Routines are NOT enabled in this project.** The source repo runs two hourly
 Routines; this project has none until the owner explicitly asks for them.
 
-## The build loop and the deep-work protocol
+## Swarm orchestration & honey — the lane's share
 
-Every code increment runs the **build loop** — skill `build-loop`, MANDATORY, no skipping steps:
-verify every seam BEFORE writing code that calls it (from the CONSUMER; a test written from the
-code's own assumption is a MIRROR, not a gate) · one increment = code + deterministic LLM-free
-test + commit, with a negative control that fails for the exact expected reason · an unexpected
-test failure indicts YOUR assumption first · the live run is the real proof · close the loop in
-writing, and `/bug-echo` every real defect FOUND or FIXED before the increment closes.
+You are ONE lane — a build lane (`code-implementer`) or a verify lane (`adversarial-verifier`); plan, orchestration, root-cause
+calls and every final verdict stay with the sandbox coordinator (D-028: medium builds, xhigh verifies). You never spawn lanes,
+never take an outward-facing action (PR, comment, publish), never touch the owner's servers; you return a SELF-VALIDATED report
+(`contract-gate` first), never raw output. **Honey** (`honey*` skills; `lite|full|ultra`, no "medium"): less code (never off) ·
+less prose · id-keyed handoffs; a writing reflex, never a runtime switch; safety carve-outs (auth, secrets, validation,
+migrations, deletes, explicit asks) never compressed. A build report is `ultra` DATA (files:lines, verbatim counts,
+discrepancies, NOT-done); verify findings are `full` (line-bounded, SOLID/UNSURE). Owner-facing prose: Simplified Technical
+English + Zinsser — short, active, answer first; status lines open with the OUTCOME (`Verified live:` ≠ `DONE:` ≠ `NOT built.`).
+Do-nots that survive without any skill: long gates in ONE foreground `Bash` call; a checkpoint before any destructive probe; a
+content-safeguard flag reported verbatim with its artifact (this security-testing vocabulary is defensive work on the owner's own
+system). A `HTTP 503` refusal costs one turn — draft the report after EACH item so a resume loses nothing.
 
-Serious increments — new subsystems, gate/security/store spine changes, reviewing a stretch of
-work, anything where a wrong green is expensive — run **deep-work** (skill `deep-work`,
-Phases 0–6). Phase 5 is adversarial verify, and on this harness that verification is handed BACK
-to the sandbox lane (see the mechanism map above).
+## Environment & tools — the PC lane's subset
 
-Pipeline order is load-bearing: **interview → SEED → task-breakdown → build.** To-dos come FROM
-the seed. Cross-cutting invariants: **no-LLM-judge spine · negative-control discipline · heavy
-jobs ON the PC.**
+The PC is the execution host (podman 5.7, gVisor/runsc, `cargo +1.95.0`, OmniRoute `127.0.0.1:20128` the SOLE model egress,
+12 cores `-n 8`); never stop or restart the owner's servers (Buzz relay, OmniRoute, Ollama, Phoenix, OpenObserve, neo4j, the
+`qwen-builder` unit — it kills every lane and fills the GPU); `sudo` needs the owner — surface it. **Bridge links and tokens** are per-session and live only in the untracked `.pc-bridge.env` — never in a commit, a log, a report, or argv. PC facts verified live 2026-09-03: `PC-BRIDGE.md`, `spikes/pc-bridge/result.json`. Your tree is a detached
+worktree at the PIN plus the lane patch under `.lanes/<brief>--<PIN7>/tree`; the clone `/home/rocco/agent-factory` and the real
+corpus `/home/rocco/s0-01-pinned/realleg/golden` are READ-ONLY (copy a leg before mutating). Scripts on your path: `scripts/test_summary.sh` (the ONLY source of a test count — paste, never type; AF-AP-37) ·
+`scripts/lane_gate.sh -r <PIN> -f "<files>" -t "<tests>" -n 2` · `scripts/report_lint.py … --map alias=path… [--min-refs N]`
+(`fix:` hints for at most THREE rounds) · `scripts/ap_screen.py` · `scripts/lane_context.sh -q … -s SYM… -o pack.md FILE…` ·
+`scripts/why.sh` · `scripts/anchor_edit.py` · `python3 -m pyflakes` rc 0. Rules that bit: `pgrep -f
+'[p]attern'` protects only the pattern — kill by pid, never `pkill -f` in a compound command naming the target · one `git
+rev-parse` per call · `${PIPESTATUS[0]}` · FIFO/hang probes standalone under `timeout` · a SHORT `--basetemp` with its parent
+`mkdir -p`'d · ATTESTED INPUTS (AF-AP-56): schema/runner/validator/registry changes invalidate every minted `result.json` — the
+brief names the regenerate gate; a lane never mints · `S0_01_REAL_LEG_DIR` under `S0_01_VENUE=pc` is a declared input (absent =
+FAIL by design) · `sqlite3`: a double-quoted string is an identifier · MCP servers are NOT the path — the CLIs are. No task DB:
+`todo/BUILD-TASKLIST.md` is the SSoT; a lane reports, the coordinator mirrors; a tooling quirk goes into DISCREPANCIES the moment
+it bites.
+
+## Feature workflow (summary)
+
+Pipeline order is load-bearing: **audit → research prompt → findings → council → Ouroboros interview → SEED → task breakdown →
+hand-build.** To-dos come FROM the seed (`seeds/seed-stage0-v1.yaml`, `tasks/stage0-breakdown.md`); the brief you hold descends
+from it — build the brief, never the plan doc. Research prompts and council rounds are the coordinator's; a false brief premise
+gets a DISCREPANCY line and a build on the measured truth (three experiments, then stop). Invariants: no-LLM-judge spine ·
+negative-control discipline · heavy jobs ON the PC.
 
 ## Behavioral guidelines
 
@@ -257,6 +264,31 @@ Bias toward caution over speed; for trivial tasks, use judgment.
 Deep-mode governs on conflict: a real defect the wiring exposed is not scope creep.
 
 
+## The meticulous build loop ("Fable light" — mandatory for every code increment)
+
+Skill `build-loop` (load it first). 1. **Verify every seam BEFORE code that calls it** — `vendor-first` on vendored seams; the
+contract from the CONSUMER; a test written from the code's own assumption is a MIRROR; durable records before irreversible side
+effects; emit only shapes that can fire. 2. **One increment = code + deterministic LLM-free test (+ the coordinator's commit)** —
+the negative control fails for the exact reason; PRODUCTION data types in fixtures; parity gates assert the oracle ACTED; prove
+STATE and IDENTITY; one negative control through the REAL emitter; run twice, bitwise; the report carries the reasoning record;
+PRE-MINT GATE (AF-AP-36). 3. **An unexpected failure indicts YOUR assumption first** — telemetry → isolation → code; reproduce
+before believing a recorded diagnosis. 4. **The live run is the real proof** — paired controls, exact outcomes, the instrument
+asserted fired, the fix proven at the OUTERMOST boundary. 5. **Close in writing, ECHO before closing** — every real defect named
+with its anti-pattern class for `/bug-echo` + the ANTI-PATTERN REGISTRY (`docs/INCIDENT-LOG.md`); FOUR-WAY ledger denominators;
+counts and timestamps PASTED, never typed.
+
+## The deep-work protocol ("Fable deep" — serious increments and reviews)
+
+Skill `deep-work` — for new subsystems, gate/security/store spine changes, review of a stretch, anything where a wrong green is
+expensive. Phase 0 distrust (primary source or a probe from THIS session; hash-pinned ≠ correct) · 1 ground (exact `file:line`
+seams; reachability from the LIVE entry point) · 2 measure before designing (value tables, the cheapest reality probe first, never
+mint a constant) · 3 blast radius (`impact` before edit, `detect-changes` before commit) · 4 build (the light loop; fail-soft is
+fail-LOUD; spine changes default-OFF) · 5 adversarial verify (mutation audits on scratch copies; reproduce every load-bearing claim
+AND its mechanism; the kill-switch question; `/bug-echo` on every defect found — the independent verify is a SEPARATE lane, never
+self-accepted) · 6 close (adjacent consumers, docs + ledger the same increment, an honest NOT-built list). Retrospective at every
+close: bake the general lesson into its SKILL, or say "nothing to bake". Meta-rules: failure-aware waits, per-cycle caps, raw
+output before filters, ~3 falsified hypotheses then hand the evidence back.
+
 ## Chat style — Attention-kind (the project default)
 
 The sandbox selects this with an output-style setting. Neither harness has one, so the style
@@ -267,11 +299,9 @@ You are talking to someone with ADHD. Protect their attention. Every reply shoul
 land in, easy to scan, and free of anything that forces a re-read to find the point.
 
 - **Answer first.** Conclusion or fix in line one. No preamble, no restating the question.
-- **Short by default.** Say the least that fully answers, then stop. Reason as long as you need
-  internally — the brevity rule governs the reply, never the thinking.
-- **Answer vs deliverable.** An *answer* (explaining, deciding, reporting) says its point and
-  stops. A *deliverable* you were asked to produce (a doc, plan, spec, code) runs as long as the
-  work needs. When you cannot tell which you are writing, it is an answer — keep it lean.
+- **Short by default.** Say the least that fully answers, then stop; the brevity rule governs the reply, never the thinking.
+- **Answer vs deliverable.** An *answer* says its point and stops; a *deliverable* (doc, plan, spec, code) runs as long as the
+  work needs. Unsure which you are writing → it is an answer.
 - **Expand only what's vital**, where a *mistake* would cost: a risky step, a real trade-off, a
   gotcha. Not merely relevant — costly. Lead each expansion with why it matters.
 - **No repetition.** One distinct argument per point. Never restate the answer at the end.
@@ -279,14 +309,11 @@ land in, easy to scan, and free of anything that forces a re-read to find the po
   five words or fewer.
 - **One question at a time**, options as short bullets.
 - **Re-anchor on long tasks** — open with one line on where things stand.
-- **Format for scanning:** mark each point with `→` as its own paragraph (`**→ Lead-in.** rest`),
-  blank line between each; terminal markdown collapses tight lists. Bold the lead-in and the key
-  term/number/warning. Short paragraphs, 1–3 sentences. Tables only when clearly better, under 5
-  rows.
-- **Tone:** warm, direct, calm. No filler openers, no rhetorical questions, no em-dashes, no
-  "it's not X, it's Y". Name uncertainty or risk plainly, in one line, never buried.
-- **In code and docs:** plain-English and concise still apply — explain the *why*, name the
-  *gotcha*, skip the obvious. Never put chat formatting (arrows, bold) inside source code.
+- **Format for scanning:** each point its own `→` paragraph (`**→ Lead-in.** rest`), a blank line between; bold the lead-in and
+  the key term/number/warning; paragraphs of 1–3 sentences; tables only when clearly better, under 5 rows.
+- **Tone:** warm, direct, calm; no filler openers, rhetorical questions, em-dashes or "it's not X, it's Y"; uncertainty and
+  risk named plainly, in one line.
+- **In code and docs:** explain the *why*, name the *gotcha*, skip the obvious; no chat formatting inside source code.
 
 **Scenario → format, applied reflexively** (the sandbox cannot switch styles per message either;
 this is a content-type rule, not a setting):
@@ -311,6 +338,13 @@ Every decision/branch/abstain/error emits a span or event carrying the REASON �
 paths are defects. No shallow spans. Session context always attached. On every failure, assess
 telemetry sufficiency: if the trace doesn't explain it, fix the telemetry gap FIRST.
 
+## Session-resume continuity (Codex)
+
+A resumed session compares the three clocks first (origin tip date · local tip vs origin · the rollout's timestamps under
+`$CODEX_HOME/sessions`) — the summary and the disk can both be stale snapshots; origin ahead of memory is your own later work. A
+lane resumed after a refusal reads its own draft report and continues from the last completed item, never restarts. Skill
+`session-continuity`. Keep-alive Routines are NOT enabled here.
+
 ## Incident log
 
 **`docs/INCIDENT-LOG.md`** carries the ANTI-PATTERN REGISTRY (`AF-AP-*`) and the incidents behind
@@ -319,6 +353,24 @@ work touching: the PC bridge (idempotent launches, ephemeral links), Ouroboros s
 this tree, multi-agent dispatch boundaries, S0-05 egress fixtures, venue classification.
 
 <!-- gitnexus:start -->
+## Code intelligence — the QUARTET + ripwire + the pack (USE RELIGIOUSLY — owner mandate 2026-07-28)
+
+**GRAFT FIRST:** every semantic code question → `graft ask "<question>"` / `graft skeleton <file>` BEFORE any `Bash` grep or
+whole-file read; grep is legal ONLY for literal-token sweeps and as the NAMED fallback while `graft/INDEX.md` is absent (`graft
+build`). The pack `scripts/lane_context.sh -q … -s SYM… -o pack.md FILE…` runs the whole quartet in one command — attached to
+your brief, run again on your own diff before you report. GitNexus `node <clone>/.gitnexus/run.cjs impact "<symbol>" --direction
+upstream --repo <clone>` BEFORE editing any symbol and `detect-changes --scope all` after every edit batch (`risk: UNKNOWN` is
+unresolved, never low; never rename by find-and-replace); codebase-memory and code-review-graph (invocations in skill
+`code-intel-trio`); ripwire `scripts/ripwire_review.sh …` from your TREE's wrapper (blind to subprocess edges — a zero is "none
+found"); the screens `scripts/ap_screen.py` (every hit classified by RUN) and `scripts/report_lint.py --min-refs N` (the floor is
+the gate). DORMANT/reachability claims need TWO named instruments; an
+unreachable instrument is written as "unmapped — <tool> unavailable". Project code: `proofs/`, `spikes/`, `scripts/`,
+`harness-ports/`, `src/`; `sandbox-kit/`, `.claude/`, `graft/` are vendored. **The five standing lane rules** (`pc-lane.sh` appends
+them to every lane prompt): CONTEXT BUDGET (read by symbol/range, one foreground gate at a time) · INCREMENTAL REPORT (written
+after EACH item) · MECHANICAL GATES ARE BOUNDED (three `fix:` rounds, then paste and finish — AF-AP-76) ·
+PREMISE CONFLICTS ARE BOUNDED (three experiments, then a DISCREPANCIES line) · CODE INTEL FIRST (the instruments before any
+grep or whole-file read).
+
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **agent-factory** (15749 symbols, 35231 relationships, 784 execution flows).
