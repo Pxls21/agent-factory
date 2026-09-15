@@ -32,7 +32,7 @@ a distillation and the ledger wins on any disagreement).
   `medium`; proven live the same afternoon (install, probes, Hermes end-to-end with a tool call), no owner step. NOT proven: lane
   QUALITY at `medium` — the first lane on it (N5k, arm A of the effort A/B) LANDED 2026-09-14 (`113 passed` ×3, 12 mutants
   killed; substantive completion at 4 h 53 m of lane time, then a 47-minute lint loop the BRIEF built — AF-AP-76, fixed the
-  same day at the tool/dispatcher/skill layer); arm B (`xhigh`, the amended brief) runs under the bounded gate; the verify
+  same day at the tool/dispatcher/skill layer); arm B (`xhigh`): the v2 run STOPPED at 2 h 05 m after two premise-investigation loops on item 2 (one line of code — A/B data points 1-2: at xhigh an unmeasured premise is a sink); v3 runs on the twice-amended brief (the measured premise + the bounded gates) under the fourth standing lane rule; the verify
   lanes route to `agentfactory-verify-local` at `xhigh` (D-028); the comparative verify after arm B; the default effort is
   NOT decided.
 
