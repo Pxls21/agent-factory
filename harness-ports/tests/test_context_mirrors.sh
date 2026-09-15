@@ -28,6 +28,8 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 HERMES_MAX_CHARS=48000
 AGENTS_MAX_BYTES=32768
 GITNEXUS_H1='# GitNexus — Code Intelligence'
+GITNEXUS_START='<!-- gitnexus:start -->'
+GITNEXUS_END='<!-- gitnexus:end -->'
 MANAGED_H2='Always Do|Never Do|Resources|CLI'
 
 # CLAUDE.md-heading pattern  |  heading pattern required in each mirror (grep -i -E on `## `/`### ` lines)
@@ -106,12 +108,17 @@ check_mirrors() {
   [ "$(rules_count "$c")" -eq 15 ] || { echo "FAIL CLAUDE.md STANDING PROJECT RULES count is $(rules_count "$c"), expected 15"; fails=$((fails+1)); }
   [ "$hc" = "$ha" ] || { echo "FAIL STANDING PROJECT RULES differ between CLAUDE.md and AGENTS.md (md5 $hc vs $ha)"; fails=$((fails+1)); }
   [ "$hc" = "$hh" ] || { echo "FAIL STANDING PROJECT RULES differ between CLAUDE.md and .hermes.md (md5 $hc vs $hh)"; fails=$((fails+1)); }
-  # 5. the GitNexus-managed block stays last (where present)
+  # 5. the GitNexus-managed REGION (<!-- gitnexus:start --> … <!-- gitnexus:end -->, where present) holds only the
+  #    managed headings and is last. The boundary is the MARKER, not the visible H1: on 2026-09-15 a section placed
+  #    between the start marker and the H1 was silently deleted by the next `analyze` (this check had anchored on the H1).
   for m in "$c" "$a"; do
-    if grep -qF -- "$GITNEXUS_H1" "$m"; then
-      local after
-      after="$(sed -n "/^$GITNEXUS_H1\$/,\$p" "$m" | grep -E '^## ' | grep -vE "^## ($MANAGED_H2)$" || true)"
-      [ -z "$after" ] || { echo "FAIL $(basename "$m") has a project section after the GitNexus block (analyze would clobber it): $after"; fails=$((fails+1)); }
+    if grep -qF -- "$GITNEXUS_START" "$m"; then
+      local inside after
+      grep -qF -- "$GITNEXUS_END" "$m" || { echo "FAIL $(basename "$m") has $GITNEXUS_START without $GITNEXUS_END"; fails=$((fails+1)); continue; }
+      inside="$(sed -n "/^$GITNEXUS_START\$/,/^$GITNEXUS_END\$/p" "$m" | grep -E '^#{1,2} ' | grep -vE "^## ($MANAGED_H2)$|^$GITNEXUS_H1\$" || true)"
+      [ -z "$inside" ] || { echo "FAIL $(basename "$m") has a project heading INSIDE the GitNexus region (analyze deletes it): $inside"; fails=$((fails+1)); }
+      after="$(sed -n "/^$GITNEXUS_END\$/,\$p" "$m" | tail -n +2 | grep -E '^#{1,3} ' || true)"
+      [ -z "$after" ] || { echo "FAIL $(basename "$m") has a heading after the GitNexus region (the region must be last): $after"; fails=$((fails+1)); }
     fi
   done
   return $fails
@@ -149,7 +156,14 @@ expect_fail "n4 a new CLAUDE.md section with no mirror rule is red as unmapped" 
 d="$(fresh n5)"; python3 -c 'import sys; open(sys.argv[1],"a",encoding="utf-8").write("y"*1000)' "$d/AGENTS.md"
 expect_fail "n5 an over-budget AGENTS.md is red on BYTES" "$d" "bytes > $AGENTS_MAX_BYTES"
 d="$(fresh n6)"; printf '\n## Telemetry\n\nmoved here\n' >> "$d/AGENTS.md"
-expect_fail "n6 a project section after the GitNexus block is red" "$d" "after the GitNexus block"
+expect_fail "n6 a heading after the GitNexus region is red" "$d" "after the GitNexus region"
+d="$(fresh n10)"; python3 - "$d/AGENTS.md" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+s = s.replace("<!-- gitnexus:start -->\n", "<!-- gitnexus:start -->\n## Planted inside the region\n\ntext\n\n", 1)
+p.write_text(s, encoding="utf-8")
+PY
+expect_fail "n10 a project heading between the start marker and the H1 is red (the 2026-09-15 clobber shape)" "$d" "INSIDE the GitNexus region"
 d="$(fresh n7)"; sed -i 's/CODE INTEL FIRST/CODE INTEL LATER/g' "$d/.hermes.md"
 expect_fail "n7 a missing standing lane rule is red by name" "$d" "does not name the standing lane rule 'CODE INTEL FIRST'"
 d="$(fresh n9)"; sed -i 's/CONTEXT BUDGET/CONTEXT\nBUDGET/' "$d/.hermes.md"

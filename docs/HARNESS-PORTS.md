@@ -104,7 +104,9 @@ detail into a skill rather than into this file. Check with `wc -c AGENTS.md`.
 GitNexus block between `gitnexus:start` / `gitnexus:end` markers. The rewriter
 (`ai-context.js:250-254`) computes `before = content[0..startIdx]` and
 `after = content[endIdx+len..]` and writes `before + newBlock + after` — everything outside the
-marked span is re-emitted verbatim. The port is written **above** the block.
+marked span is re-emitted verbatim. The port is written **above** the block — above the START MARKER, not
+the H1: on 2026-09-15 a section spliced between `<!-- gitnexus:start -->` and the H1 was deleted by the next `analyze`
+(AF-AP-77); check 5 of `test_context_mirrors.sh` now holds the marker region.
 
 Confirmed empirically: the post-commit hook ran `gitnexus analyze` during this work, the banner's
 symbol counts were rewritten, and the ported content above it survived untouched.
@@ -553,8 +555,11 @@ and since 2026-09-15 there IS a mechanical check for it: `harness-ports/tests/te
 `run-all.sh`; `--check` is the pre-commit MIRROR gate when any of the three is staged) holds SECTION PARITY keyed
 off CLAUDE.md's own `## ` list (a new CLAUDE.md section with no TABLE row and no mirror heading is red), the
 mirror-only markers and the five STANDING LANE RULES by name, the size caps (`.hermes.md` ≤ 48,000 CHARS,
-`AGENTS.md` ≤ 32,768 BYTES), the STANDING PROJECT RULES hash across the three, and the GitNexus block staying
-last — with eight negative controls on mutated copies (each must fail for its exact reason). Parity is by
+`AGENTS.md` ≤ 32,768 BYTES), the STANDING PROJECT RULES hash across the three, and the GitNexus MARKER REGION (`<!-- gitnexus:start -->` …
+`<!-- gitnexus:end -->`) holding only its own headings and staying last — with ten negative controls on mutated copies
+(each must fail for its exact reason). The region's boundary is the MARKER, not the visible H1: on 2026-09-15 a section
+spliced in before the H1 landed inside the region and the next `analyze` deleted it (AF-AP-77) — place project content
+BEFORE `<!-- gitnexus:start -->`. Parity is by
 SECTION, not by text: `.hermes.md` carries the full port (43 K chars), `AGENTS.md` the digest (Codex's budget).
 
 When a rule changes:

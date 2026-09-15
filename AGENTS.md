@@ -352,7 +352,6 @@ the rules above. Log a one-line entry there the moment a rule bites for real. Re
 work touching: the PC bridge (idempotent launches, ephemeral links), Ouroboros stdio, GitNexus on
 this tree, multi-agent dispatch boundaries, S0-05 egress fixtures, venue classification.
 
-<!-- gitnexus:start -->
 ## Code intelligence — the QUARTET + ripwire + the pack (USE RELIGIOUSLY — owner mandate 2026-07-28)
 
 **GRAFT FIRST:** every semantic code question → `graft ask "<question>"` / `graft skeleton <file>` BEFORE any `Bash` grep or
@@ -371,9 +370,10 @@ after EACH item) · MECHANICAL GATES ARE BOUNDED (three `fix:` rounds, then past
 PREMISE CONFLICTS ARE BOUNDED (three experiments, then a DISCREPANCIES line) · CODE INTEL FIRST (the instruments before any
 grep or whole-file read).
 
+<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **agent-factory** (15749 symbols, 35231 relationships, 784 execution flows).
+This project is indexed by GitNexus as **agent-factory** (43932 symbols, 69585 relationships, 738 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
