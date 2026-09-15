@@ -2985,6 +2985,73 @@ def _assert_ck16_classifier_operand_contract(checker_path):
         "PINNED_TEE_PATH", "PINNED_AGENT_REALPATH",
         "PINNED_BUZZ_ACP_EXE_REALPATH", "argv", "cmd.split()",
     }
+
+    def assignment_binding(node):
+        if isinstance(node, ast.Assign):
+            return node.targets, node.value
+        if isinstance(node, ast.AnnAssign) and node.value is not None:
+            return [node.target], node.value
+        if isinstance(node, ast.NamedExpr):
+            return [node.target], node.value
+        return [], None
+
+    def binding_names(nodes):
+        return {
+            item.id
+            for node in nodes
+            for item in ast.walk(node)
+            if isinstance(item, ast.Name)
+        }
+
+    helper_returns = {
+        function.name: [node.value for node in ast.walk(function)
+                        if isinstance(node, ast.Return) and node.value is not None]
+        for function in functions
+    }
+
+    def direct_derivation(node, aliases, helpers):
+        if ast.unparse(node) in classifier_operands:
+            return True
+        if isinstance(node, ast.Name) and node.id in aliases:
+            return True
+        return (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in helpers)
+
+    def expression_derives_from_operand(node, aliases, helpers):
+        if direct_derivation(node, aliases, helpers):
+            return True
+        if isinstance(node, ast.NamedExpr):
+            return expression_derives_from_operand(node.value, aliases, helpers)
+        return False
+
+    helper_operands = set()
+    while True:
+        resolved = {
+            name for name, returns in helper_returns.items()
+            if any(expression_derives_from_operand(value, set(), helper_operands)
+                   for value in returns)
+        }
+        if resolved == helper_operands:
+            break
+        helper_operands = resolved
+
+    def function_operand_aliases(function):
+        aliases = set()
+        while True:
+            resolved = set(aliases)
+            for node in ast.walk(function):
+                targets, value = assignment_binding(node)
+                if value is not None and expression_derives_from_operand(
+                        value, aliases, helper_operands):
+                    resolved.update(binding_names(targets))
+            if resolved == aliases:
+                return aliases
+            aliases = resolved
+
+    def operand_derivation(node, aliases):
+        return expression_derives_from_operand(node, aliases, helper_operands)
+
     def is_membership(node):
         return (isinstance(node, ast.Compare)
                 and any(isinstance(op, (ast.In, ast.NotIn))
@@ -2999,12 +3066,21 @@ def _assert_ck16_classifier_operand_contract(checker_path):
     for function in functions:
         if function.name == "_pinned_process_count":
             continue
+        aliases = function_operand_aliases(function)
         for node in ast.walk(function):
             if not isinstance(node, ast.Compare):
                 continue
-            operands = {ast.unparse(node.left),
-                        *(ast.unparse(item) for item in node.comparators)}
-            if operands & classifier_operands and not is_membership(node):
+            operands = [node.left, *node.comparators]
+            derived = (
+                any(operand_derivation(operand, aliases) for operand in operands)
+                or any(
+                    isinstance(item, ast.NamedExpr)
+                    and operand_derivation(item.value, aliases)
+                    for operand in operands
+                    for item in ast.walk(operand)
+                )
+            )
+            if derived and not is_membership(node):
                 actual_compares.add((function.name, ast.unparse(node)))
     assert actual_compares == allowed_compares, (
         f"classifier-operand comparison inventory changed: "
@@ -3026,6 +3102,7 @@ def _assert_ck16_classifier_operand_contract(checker_path):
     for function in functions:
         if function.name == "_pinned_process_count":
             continue
+        aliases = function_operand_aliases(function)
         for node in ast.walk(function):
             if isinstance(node, ast.BoolOp):
                 operands = node.values
@@ -3033,8 +3110,7 @@ def _assert_ck16_classifier_operand_contract(checker_path):
                 operands = [node.left, *node.comparators]
             else:
                 continue
-            unparsed = {ast.unparse(operand) for operand in operands}
-            if unparsed & classifier_operands:
+            if any(operand_derivation(operand, aliases) for operand in operands):
                 actual_predicates.add((function.name, ast.unparse(node)))
     assert actual_predicates == allowed_predicates, (
         f"classifier-operand BoolOp/membership inventory changed: "
@@ -3076,6 +3152,54 @@ def test_ck16_classifier_operand_comparison_anywhere_is_rejected(tmp_path):
     with pytest.raises(
             AssertionError,
             match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_helper_alias_is_rejected(tmp_path):
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def _classifier_pin():\n"
+        "    return PINNED_TEE_PATH\n\n\n"
+        "def _alias_classifier(value):\n"
+        "    pin = _classifier_pin()\n"
+        "    return value == pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_nested_walrus_alias_is_rejected(tmp_path):
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def _outer_classifier_alias(value):\n"
+        "    def nested():\n"
+        "        return value == (pin := PINNED_AGENT_REALPATH)\n"
+        "    return nested()\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_membership_alias_is_rejected(tmp_path):
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def _membership_classifier(values):\n"
+        "    pin: str = PINNED_TEE_PATH\n"
+        "    return pin in values\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand BoolOp/membership inventory changed"):
         _assert_ck16_classifier_operand_contract(checker)
 
 
