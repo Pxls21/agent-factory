@@ -22,6 +22,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from pathlib import Path
@@ -251,6 +252,10 @@ def _run_probe(tmp_path, agent, timeout_override=None, extra_env=None):
         capture_output=True, text=True, timeout=60, env=env,
     )
     return r, framedir
+
+
+def _short_unix_socket_path():
+    return Path(tempfile.mkdtemp(prefix="n5l-sock-", dir="/tmp")) / "socket"
 
 
 # ---- Core scenarios ----
@@ -3575,18 +3580,289 @@ def test_probe_cloexec_is_load_bearing_child_sees_no_framedir_fd(tmp_path):
     assert _census_agent_fd_leaks(tmp_path, cloexec=False) == 1
 
 
+def _agent_popen_close_fds_value(src):
+    """Return the literal close_fds value on the one Popen assigned to proc."""
+    import ast
+
+    calls = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "proc"
+                   for target in node.targets):
+            continue
+        call = node.value
+        if not isinstance(call, ast.Call):
+            continue
+        func = call.func
+        if (isinstance(func, ast.Attribute) and func.attr == "Popen"
+                and isinstance(func.value, ast.Name) and func.value.id == "subprocess"):
+            calls.append(call)
+    assert len(calls) == 1, f"expected one agent Popen assigned to proc, got {len(calls)}"
+    assert all(keyword.arg is not None for keyword in calls[0].keywords), (
+        "the agent Popen must not hide close_fds in **kwargs"
+    )
+    keywords = [keyword for keyword in calls[0].keywords if keyword.arg == "close_fds"]
+    assert len(keywords) == 1, "the agent Popen must have exactly one close_fds keyword"
+    value = keywords[0].value
+    if isinstance(value, ast.Constant) and value.value is True:
+        return True
+    if isinstance(value, ast.Constant) and value.value is False:
+        return False
+    return "non-literal"
+
+
 def test_probe_agent_launch_pins_the_close_fds_default_second_defence(tmp_path):
-    """Item 2 (second, independent defence): the probe launches the agent through
-    subprocess.Popen with the close_fds default (True). This is what actually masks the framedir
-    fd slot in the probe's real topology, independent of O_CLOEXEC. The test asserts the Popen
-    call does not override the default (so the child's fd table is what it is) and that the
-    framedir open still carries O_CLOEXEC — the two defences together, asserted as the child's
-    fd table, never the flag alone."""
+    """N5l item 4, ported from N5k-xhigh-v3 with an AST-scoped pin.
+
+    Explicit literal True passes; False, absence, or a computed value is red. A
+    file-wide `close_fds=True` substring, including one in a comment, cannot
+    satisfy this assertion.
+    """
     src = PROBE.read_text()
-    popen_block = src.split("subprocess.Popen(", 1)[1].split(")", 1)[0]
-    assert "close_fds" not in popen_block, (
-        "the probe must not override the Popen close_fds default (True); "
-        f"found: {popen_block!r}"
+    actual = _agent_popen_close_fds_value(src)
+    assert actual is True, (
+        f"the agent Popen must use literal close_fds=True, got {actual!r}"
     )
     flags = _framedir_flags_from_probe_source()
     assert flags & os.O_CLOEXEC, "the framedir open must still carry O_CLOEXEC"
+
+    anchor = "stderr=subprocess.PIPE, close_fds=True"
+    assert src.count(anchor) == 1, "could not build the comment-only negative control"
+    comment_mutant = src.replace(
+        anchor, "stderr=subprocess.PIPE, close_fds=False  # close_fds=True", 1)
+    assert _agent_popen_close_fds_value(comment_mutant) is False, (
+        "a close_fds=True comment masked the real False keyword"
+    )
+
+
+# ---- N5l round 15: final-symlink red, v3 read ports, real-emitter census ----
+
+
+def _load_probe_module(path, name):
+    """Load exactly one probe path without adding it to the process import cache."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None, f"cannot load probe at {path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    loaded_path = getattr(module, "__file__", None)
+    assert loaded_path is not None, f"loaded probe at {path} has no __file__"
+    assert Path(loaded_path).resolve() == Path(path).resolve(), loaded_path
+    return module
+
+
+def test_probe_read_regular_refuses_final_symlink_with_eloop(tmp_path):
+    """N5l item 1: the landed primitive refuses a final symlink behaviorally."""
+    probe = _load_probe_module(PROBE, "n5l_final_symlink_probe")
+    regular = tmp_path / "known-regular"
+    content = b"N5L-KNOWN-CONTENT"
+    regular.write_bytes(content)
+    final_symlink = tmp_path / "final-symlink"
+    final_symlink.symlink_to(regular)
+
+    returned_content = None
+    with pytest.raises(OSError) as caught:
+        with probe._read_regular(str(final_symlink)) as handle:
+            returned_content = handle.read()
+    assert caught.value.errno == errno.ELOOP, (
+        f"final symlink errno {caught.value.errno!r} != ELOOP {errno.ELOOP}"
+    )
+    assert returned_content is None, f"final symlink returned forbidden {returned_content!r}"
+    assert regular.read_bytes() == content
+
+
+def test_probe_fixture_reader_refuses_final_symlink_at_outer_boundary(
+        tmp_path, agent_result):
+    """N5l item 1: main's real fixture-reader chain emits its named refusal."""
+    tree = _probe_tree_copy(tmp_path / "tree")
+    probe = tree / "tools" / "acp_probe.py"
+    fixture = tree / "fixtures" / "neg-malformed-initialize.json"
+    target = tmp_path / "known-fixture.json"
+    target.write_bytes(fixture.read_bytes())
+    fixture.unlink()
+    fixture.symlink_to(target)
+    framedir = tmp_path / "outer-frame"
+    framedir.mkdir()
+    env = {
+        "S0_01_AGENT": agent_result,
+        "S0_01_FRAMEDIR": str(framedir),
+        "ACP_PROBE_TIMEOUT": "5",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    result = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True,
+        timeout=15, env=env,
+    )
+    expected = f"acp_probe: fixture is not a regular file: {fixture}\n"
+    assert result.returncode == 64, (
+        f"final fixture symlink was followed: rc={result.returncode} stderr={result.stderr!r}"
+    )
+    assert result.stderr == expected
+    assert result.stdout == ""
+    assert not (framedir / "runtime-identity.json").exists()
+
+
+def test_probe_read_primitive_reads_a_regular_file(tmp_path):
+    """Ported from N5k-xhigh-v3: a regular read returns the exact bytes."""
+    probe = _load_probe_module(PROBE, "n5l_regular_read_probe")
+    regular = tmp_path / "regular"
+    regular.write_bytes(b"abc123")
+    with probe._read_regular(str(regular)) as handle:
+        assert handle.read() == b"abc123"
+
+
+def test_probe_socket_fixture_uses_a_short_path():
+    """Negative control: a temp path longer than Linux's AF_UNIX limit is refused."""
+    import socket
+
+    too_long = "/tmp/" + ("n5l-" * 30) + "socket"
+    held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(OSError) as caught:
+            held_socket.bind(too_long)
+    finally:
+        held_socket.close()
+    assert "AF_UNIX path too long" in str(caught.value)
+
+    target = _short_unix_socket_path()
+    assert len(os.fsencode(target)) < len(os.fsencode(too_long))
+    target.parent.rmdir()
+
+
+@pytest.mark.parametrize("shape", ["fifo", "directory", "devzero", "socket"])
+def test_probe_read_primitive_refuses_named_non_regular_shapes(tmp_path, shape):
+    """Ported from N5k-xhigh-v3: each non-regular read has an exact refusal."""
+    import socket
+
+    probe = _load_probe_module(PROBE, f"n5l_non_regular_{shape}_probe")
+    held_socket = None
+    if shape == "fifo":
+        target = tmp_path / "fifo"
+        os.mkfifo(str(target))
+        expected = f"not a regular file: {target}"
+    elif shape == "directory":
+        target = tmp_path / "directory"
+        target.mkdir()
+        expected = f"not a regular file: {target}"
+    elif shape == "devzero":
+        target = Path("/dev/zero")
+        expected = "not a regular file: /dev/zero"
+    else:
+        target = _short_unix_socket_path()
+        held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        held_socket.bind(str(target))
+        expected = f"[Errno {errno.ENXIO}] {os.strerror(errno.ENXIO)}: '{target}'"
+
+    try:
+        with pytest.raises(OSError) as caught:
+            probe._read_regular(str(target))
+    finally:
+        if held_socket is not None:
+            held_socket.close()
+            target.unlink()
+            target.parent.rmdir()
+    assert str(caught.value) == expected
+
+
+def test_probe_read_primitive_leaves_no_fd_on_refusal(tmp_path):
+    """Ported from N5k-xhigh-v3: refusal leaves fd_delta exactly zero."""
+    probe = _load_probe_module(PROBE, "n5l_fd_refusal_probe")
+    fifo = tmp_path / "fifo"
+    os.mkfifo(str(fifo))
+    before_fds = set(os.listdir("/proc/self/fd"))
+    with pytest.raises(OSError) as caught:
+        probe._read_regular(str(fifo))
+    after_fds = set(os.listdir("/proc/self/fd"))
+    fd_delta = len(after_fds) - len(before_fds)
+    assert str(caught.value) == f"not a regular file: {fifo}"
+    assert fd_delta == 0, (
+        f"fd_delta={fd_delta}; before={sorted(before_fds)} after={sorted(after_fds)}"
+    )
+    assert after_fds == before_fds, (
+        f"fd table changed: before={sorted(before_fds)} after={sorted(after_fds)}"
+    )
+
+
+def test_probe_read_primitive_mutants_die_at_the_open_level(tmp_path):
+    """Ported from N5k-xhigh-v3 as a behavioral source-mutant rig.
+
+    The scratch mutation drops O_NOFOLLOW from `_read_regular`, then the loaded
+    mutant actually follows a final symlink and returns its known bytes. The
+    landed arm observes ELOOP. No source substring is used as the oracle.
+    """
+    landed = _load_probe_module(PROBE, "n5l_open_level_landed")
+    tree = _probe_tree_copy(tmp_path / "tree")
+    mutant_path = tree / "tools" / "acp_probe.py"
+    src = mutant_path.read_text()
+    old = "    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC\n"
+    new = "    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC\n"
+    assert src.count(old) == 1, "the scratch mutation did not target exactly one primitive"
+    mutant_path.write_text(src.replace(old, new, 1))
+    mutant = _load_probe_module(mutant_path, "n5l_open_level_mutant")
+
+    content = b"N5L-OPEN-LEVEL-CONTENT"
+    regular = tmp_path / "known"
+    regular.write_bytes(content)
+    final_symlink = tmp_path / "final"
+    final_symlink.symlink_to(regular)
+    with pytest.raises(OSError) as caught:
+        landed._read_regular(str(final_symlink))
+    assert caught.value.errno == errno.ELOOP
+    with mutant._read_regular(str(final_symlink)) as handle:
+        observed = handle.read()
+    assert observed == content, f"mutant did not expose the symlink read: {observed!r}"
+
+
+_CENSUS_AGENT = """#!%s
+import json, os, sys
+frame = os.path.realpath(os.environ["S0_01_FRAMEDIR"])
+out = os.environ["S0_01_CENSUS_OUT"]
+count = 0
+for entry in os.listdir("/proc/self/fd"):
+    try:
+        target = os.readlink("/proc/self/fd/" + entry)
+    except OSError:
+        continue
+    try:
+        if os.path.isdir(target) and os.path.realpath(target) == frame:
+            count += 1
+    except OSError:
+        continue
+with open(out, "w") as handle:
+    handle.write("CENSUS=%%d\\n" %% count)
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("method") == "initialize":
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0", "id": message["id"],
+            "result": {"protocolVersion": 1,
+                       "agentInfo": {"name": "census", "version": "0"},
+                       "agentCapabilities": {}}
+        }) + "\\n")
+        sys.stdout.flush()
+    break
+sys.stdin.read()
+"""
+
+
+def test_probe_census_agent_sees_no_framedir_fd_on_final_bytes(tmp_path):
+    """Ported from N5k-xhigh-v3: the real Popen child observes CENSUS=0."""
+    agent = tmp_path / "census_agent.py"
+    agent.write_text(_CENSUS_AGENT % sys.executable)
+    agent.chmod(0o755)
+    census = tmp_path / "census.txt"
+    result, _framedir = _run_probe(
+        tmp_path, str(agent),
+        extra_env={"S0_01_CENSUS_OUT": str(census)},
+    )
+    assert result.returncode == 0, (
+        f"real-emitter census probe failed: rc={result.returncode} stderr={result.stderr!r}"
+    )
+    assert census.is_file(), f"the real agent did not emit its fd census: {result.stderr!r}"
+    assert census.read_text() == "CENSUS=0\n", (
+        f"the real agent inherited the framedir fd: {census.read_text()!r}"
+    )

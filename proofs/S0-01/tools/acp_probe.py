@@ -369,7 +369,8 @@ def main():
         agent_realpath = os.path.realpath(agent)
 
         proc = subprocess.Popen(
-            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            [agent], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, close_fds=True
         )
         child_pid = proc.pid
 
