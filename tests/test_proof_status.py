@@ -389,6 +389,25 @@ def test_anchor_check_needs_a_git_repository_and_no_anchors_skips_explicitly(tmp
     assert "ACCEPTED anchor verification SKIPPED (--no-anchors)" in skipped.stderr
 
 
+def test_anchor_check_refuses_a_root_nested_inside_another_repository(tmp_path):
+    """A root that is not the TOP LEVEL of its own repository is 'not a git repository' for anchors — the PC
+    suite's basetemp lives inside the clone (2026-09-15: the negative control above read the enclosing clone)."""
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    root = _make_root(outer / "nested", ACCEPTED_LEDGER)
+    completed = _run(root)
+    assert completed.returncode == 1
+    assert "is not a git repository — the anchor tag accepted/S0-11 cannot be verified" in completed.stderr
+    assert "the enclosing repository at" in completed.stderr
+    # the same root as its OWN top level passes the repository check (and fails later, on the missing key)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    own = _run(root)
+    assert own.returncode == 1
+    assert "is not a git repository" not in own.stderr
+    assert "no signed tag accepted/S0-11" in own.stderr  # past the repository check; its OWN (empty) tag set
+
+
 def test_pending_declaration_for_a_proof_that_is_not_accepted_is_refused(tmp_path):
     text = _ledger("PROOF-STATUS: S0-11 = REVIEW-PENDING\nPROOF-ANCHOR: S0-11 = PENDING-OWNER-TAG (wrong)")
     completed = _run_status_only(_make_root(tmp_path, text))

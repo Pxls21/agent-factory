@@ -96,9 +96,16 @@ def _anchor_findings(repo_root, proof_id, pending):
     """(errors, warnings) for one ACCEPTED proof's anchor tag."""
     errors, warnings = [], []
     tag = ANCHOR_TAG.format(proof_id=proof_id)
-    if _git(repo_root, "rev-parse", "--git-dir").returncode != 0:
+    # The root must be the TOP LEVEL of its own repository: `--git-dir` succeeds for a directory nested
+    # inside any enclosing repository (the PC suite's basetemp lives under the clone — 2026-09-15 the
+    # "no repository" negative control read the enclosing clone's tags instead), and a nested root cannot
+    # anchor its own accepted/<id> tags.
+    toplevel = _git(repo_root, "rev-parse", "--show-toplevel")
+    own_repo = toplevel.returncode == 0 and Path(toplevel.stdout.strip()).resolve() == Path(repo_root).resolve()
+    if not own_repo:
+        nested = f" (the enclosing repository at {toplevel.stdout.strip()} does not count)" if toplevel.returncode == 0 else ""
         return [f"{proof_id}: ACCEPTED but {repo_root} is not a git repository — the anchor tag {tag} "
-                f"cannot be verified (AF-AP-32)"], []
+                f"cannot be verified (AF-AP-32){nested}"], []
     tag_file = Path(repo_root) / TAG_FILE_REL.format(proof_id=proof_id)
     ref_exists = _git(repo_root, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}").returncode == 0
     if ref_exists and tag_file.is_file():
