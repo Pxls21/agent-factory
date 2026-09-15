@@ -2906,40 +2906,58 @@ def test_real_leg_corpus_declared():
             pytest.skip("S0_01_VENUE=ci — real-leg corpus not required")
 
 
-def test_ck13_checker_has_no_private_pinned_process_predicate():
-    """Reject CK14 local-helper, prefilter, and conjunction forms; a second classifier can diverge."""
+def _assert_ck16_classifier_operand_contract(checker_path):
     import ast
 
-    tree = ast.parse(CHECKER.read_text())
+    tree = ast.parse(checker_path.read_text())
     classifier = next(node for node in tree.body
                       if isinstance(node, ast.FunctionDef)
                       and node.name == "_pinned_process_count")
 
-    assert len(classifier.body) == 1
+    assert len(classifier.body) == 1, (
+        f"classifier body must be one Return, got {len(classifier.body)} statements")
     return_node = classifier.body[0]
-    assert isinstance(return_node, ast.Return)
-    assert isinstance(return_node.value, ast.Call)
-    assert ast.unparse(return_node.value.func) == "sum"
-    assert len(return_node.value.args) == 1
-    assert not return_node.value.keywords
+    assert isinstance(return_node, ast.Return), (
+        "classifier body statement must be Return")
+    assert isinstance(return_node.value, ast.Call), (
+        "classifier Return must contain the sum call")
+    assert ast.unparse(return_node.value.func) == "sum", (
+        "classifier Return call must be sum")
+    assert len(return_node.value.args) == 1, (
+        f"classifier sum must have one argument, got {len(return_node.value.args)}")
+    assert not return_node.value.keywords, (
+        "classifier sum must not have keyword arguments")
     generator = return_node.value.args[0]
-    assert isinstance(generator, ast.GeneratorExp)
-    assert ast.unparse(generator.elt) == "1"
-    assert len(generator.generators) == 1
+    assert isinstance(generator, ast.GeneratorExp), (
+        "classifier sum argument must be a generator expression")
+    assert ast.unparse(generator.elt) == "1", (
+        "classifier generator element must be literal 1")
+    assert len(generator.generators) == 1, (
+        f"classifier generator must have one for-clause, got {len(generator.generators)}")
     comprehension = generator.generators[0]
-    assert ast.unparse(comprehension.target) == "cmd"
-    assert ast.unparse(comprehension.iter) == "commands"
-    assert not comprehension.is_async
-    assert len(comprehension.ifs) == 1
+    assert ast.unparse(comprehension.target) == "cmd", (
+        "classifier generator target must be cmd")
+    assert ast.unparse(comprehension.iter) == "commands", (
+        "classifier generator iterable must be commands")
+    assert not comprehension.is_async, (
+        "classifier generator must not be async")
+    assert len(comprehension.ifs) == 1, (
+        f"classifier generator must have one predicate, got {len(comprehension.ifs)}")
     predicate = comprehension.ifs[0]
-    assert isinstance(predicate, ast.Call)
-    assert ast.unparse(predicate.func) == "pins.is_pinned_argv"
-    assert [ast.unparse(arg) for arg in predicate.args] == ["cmd.split()"]
-    assert not predicate.keywords
-    assert len([node for node in ast.walk(classifier)
-                if isinstance(node, ast.Call)]) == 3
+    assert isinstance(predicate, ast.Call), (
+        "classifier predicate must be the shared predicate call")
+    assert ast.unparse(predicate.func) == "pins.is_pinned_argv", (
+        "classifier predicate must call pins.is_pinned_argv")
+    assert [ast.unparse(arg) for arg in predicate.args] == ["cmd.split()"], (
+        "classifier predicate argument must be cmd.split()")
+    assert not predicate.keywords, (
+        "classifier predicate must not have keyword arguments")
+    calls = [node for node in ast.walk(classifier) if isinstance(node, ast.Call)]
+    assert len(calls) == 3, (
+        f"classifier must contain three calls, got {len(calls)}")
     assert not any(isinstance(node, (ast.BoolOp, ast.Compare))
-                   for node in ast.walk(classifier))
+                   for node in ast.walk(classifier)), (
+        "BoolOp/Compare inside the classifier")
 
     functions = [node for node in ast.walk(tree)
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
@@ -2950,7 +2968,9 @@ def test_ck13_checker_has_no_private_pinned_process_predicate():
                and ast.unparse(node) == "pins.is_pinned_argv"
                for node in ast.walk(function))
     }
-    assert shared_predicate_users == {"_pinned_process_count"}
+    assert shared_predicate_users == {"_pinned_process_count"}, (
+        f"a second shared-predicate user: "
+        f"{sorted(shared_predicate_users - {'_pinned_process_count'})}")
 
     forbidden_names = {
         function.name for function in functions
@@ -2958,7 +2978,8 @@ def test_ck13_checker_has_no_private_pinned_process_predicate():
         and (function.name.startswith("_is_pinned_process")
              or "pinned_argv" in function.name)
     }
-    assert not forbidden_names
+    assert not forbidden_names, (
+        f"private pinned-process helper names: {sorted(forbidden_names)}")
 
     classifier_operands = {
         "PINNED_TEE_PATH", "PINNED_AGENT_REALPATH",
@@ -2985,7 +3006,9 @@ def test_ck13_checker_has_no_private_pinned_process_predicate():
                         *(ast.unparse(item) for item in node.comparators)}
             if operands & classifier_operands and not is_membership(node):
                 actual_compares.add((function.name, ast.unparse(node)))
-    assert actual_compares == allowed_compares
+    assert actual_compares == allowed_compares, (
+        f"classifier-operand comparison inventory changed: "
+        f"{sorted(actual_compares ^ allowed_compares)}")
 
     # Existing membership and boolean checks consume these pins for other
     # contracts. Pin that finite set so any new classifier-like use is red.
@@ -3013,7 +3036,47 @@ def test_ck13_checker_has_no_private_pinned_process_predicate():
             unparsed = {ast.unparse(operand) for operand in operands}
             if unparsed & classifier_operands:
                 actual_predicates.add((function.name, ast.unparse(node)))
-    assert actual_predicates == allowed_predicates
+    assert actual_predicates == allowed_predicates, (
+        f"classifier-operand BoolOp/membership inventory changed: "
+        f"{sorted(actual_predicates ^ allowed_predicates)}")
+
+
+def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():
+    """Inventory every comparison/membership/boolean using classifier operands."""
+    _assert_ck16_classifier_operand_contract(CHECKER)
+
+
+def _ck16_checker_copy(tmp_path, old, new):
+    checker = tmp_path / "check_acp_conformance.py"
+    source = CHECKER.read_text()
+    assert source.count(old) == 1
+    _rewrite(checker, source.replace(old, new, 1))
+    return checker
+
+
+def test_ck16_unrelated_comparison_is_outside_classifier_operand_contract(tmp_path):
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "    expected_keys = set(PINNED_ENV_KEYS)\n",
+        "    if env.get(\"X\") == \"1\":\n"
+        "        pass\n"
+        "    expected_keys = set(PINNED_ENV_KEYS)\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_classifier_operand_comparison_anywhere_is_rejected(tmp_path):
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "    expected_keys = set(PINNED_ENV_KEYS)\n",
+        "    if env.get(\"X\") == PINNED_TEE_PATH:\n"
+        "        pass\n"
+        "    expected_keys = set(PINNED_ENV_KEYS)\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
 
 
 @pytest.mark.parametrize("cmd,expected", [

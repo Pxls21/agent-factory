@@ -1,20 +1,99 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A5m mutation driver. Each row runs in a fresh archive tree. A mutant is
+# A5n mutation driver. Each row runs in a fresh archive tree. A mutant is
 # countable only after its target changed, all mutated Python compiles, the
 # named pytest selector collects at least one test, and pytest reports that node
-# with assertion or exception detail.
+# with assertion or exception detail. EXPECTED is the brief's literal row count.
 ROOT=$(git rev-parse --show-toplevel)
-PIN=${PIN:-1231624}
-OUT=${A5M_MUTANT_DIR:-"$ROOT/../scratch/a5m/mutants"}
+PIN=${PIN:-c41aab6}
+OUT=${A5M_MUTANT_DIR:-"$ROOT/../scratch/a5n/mutants"}
 PYTEST=${PYTEST:-python}
+EXPECTED=19
+TOTAL_ROWS=20
+ROW_TIMEOUT_S=${ROW_TIMEOUT_S:-4}
 export PATH=/home/rocco/venv-agent-factory/bin:$PATH
 export S0_01_VENUE=${S0_01_VENUE:-pc}
 export S0_01_REAL_LEG_DIR=${S0_01_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg/golden}
 export S0_02_BUZZ_SRC=${S0_02_BUZZ_SRC:-/home/rocco/s0-01-pinned/buzz}
 export PYTHONHASHSEED=0
 mkdir -p "$OUT"
+
+if [[ ${1:-} == "--self-test" ]]; then
+  copy="$OUT/self-test-mutants.sh"
+  log="$OUT/self-test-output.txt"
+  python3 - "$0" "$copy" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+row = "  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|"
+lines = source.splitlines(keepends=True)
+matches = [index for index, line in enumerate(lines) if line.startswith(row)]
+if len(matches) != 1:
+    raise SystemExit(f"self-test row matches={len(matches)}")
+del lines[matches[0]]
+Path(sys.argv[2]).write_text("".join(lines))
+PY
+  chmod +x "$copy"
+  set +e
+  A5M_MUTANT_DIR="$OUT/self-test" "$copy" >"$log" 2>&1
+  rc=$?
+  set -e
+  summary=$(sed -n '/^EXPECTED=/{p;q;}' "$log")
+  printf 'SELF_TEST rc=%s %s\n' "$rc" "$summary"
+  [[ $rc -ne 0 && "$summary" == \
+      "EXPECTED=19 KILLED=18 SURVIVED=0 INVALID=0 CONTROL=1" ]]
+  exit $?
+fi
+
+if [[ ${1:-} == "--timeout-control" ]]; then
+  copy="$OUT/timeout-control-mutants.sh"
+  log="$OUT/timeout-control-output.txt"
+  python3 - "$0" "$copy" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+old = "  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|if pins.is_pinned_argv(cmd.split()))|if cmd and pins.is_pinned_argv(cmd.split()))'"
+new = "  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|T|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():\\n    \"\"\"Inventory every comparison/membership/boolean using classifier operands.\"\"\"\\n    _assert_ck16_classifier_operand_contract(CHECKER)|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():\\n    \"\"\"Inventory every comparison/membership/boolean using classifier operands.\"\"\"\\n    import time\\n    time.sleep(60)\\n    _assert_ck16_classifier_operand_contract(CHECKER)'"
+lines = source.splitlines(keepends=True)
+matches = [index for index, line in enumerate(lines) if line.rstrip("\n") == old]
+if len(matches) != 1:
+    raise SystemExit(f"timeout-control row matches={len(matches)}")
+lines[matches[0]] = new + "\n"
+Path(sys.argv[2]).write_text("".join(lines))
+PY
+  chmod +x "$copy"
+  set +e
+  A5M_MUTANT_DIR="$OUT/timeout-control" "$copy" >"$log" 2>&1
+  rc=$?
+  set -e
+  timeout_line=$(sed -n '/^INVALID F1_SECOND_IF TIMEOUT /{p;q;}' "$log")
+  summary=$(sed -n '/^EXPECTED=/{p;q;}' "$log")
+  printf 'TIMEOUT_CONTROL rc=%s %s | %s\n' "$rc" "$timeout_line" "$summary"
+  [[ $rc -ne 0 && -n "$timeout_line" && "$summary" == \
+      "EXPECTED=19 KILLED=18 SURVIVED=0 INVALID=1 CONTROL=1" ]]
+  exit $?
+fi
+
+row_start=1
+row_end=$TOTAL_ROWS
+if [[ ${1:-} == "--rows" ]]; then
+  [[ ${2:-} =~ ^[0-9]+-[0-9]+$ ]] || {
+    printf 'usage: %s [--self-test|--timeout-control|--rows START-END]\n' "$0" >&2
+    exit 64
+  }
+  row_start=${2%-*}
+  row_end=${2#*-}
+  (( row_start >= 1 && row_end >= row_start && row_end <= TOTAL_ROWS )) || {
+    printf 'invalid row range: %s\n' "$2" >&2
+    exit 64
+  }
+elif [[ $# -ne 0 ]]; then
+  printf 'usage: %s [--self-test|--timeout-control|--rows START-END]\n' "$0" >&2
+  exit 64
+fi
 
 cases=(
   'M14|test_ck13_dead_branch_citation_mutants_die|T|for idx, fn in checks:|for idx, fn in checks[:1]:'
@@ -30,21 +109,27 @@ cases=(
   'WRITE_LINK|test_f43_no_direct_writes_outside_rewrite|T|, "link", "symlink"|'
   'WRITE_MOVE|test_f43_no_direct_writes_outside_rewrite|T|, "move"|'
   'WRITE_EXTRACT|test_f43_no_direct_writes_outside_rewrite|T|_ARCHIVE_WRITERS = {"extract", "extractall"}|_ARCHIVE_WRITERS = set()'
-  'F1_ALT_USE|test_ck13_checker_has_no_private_pinned_process_predicate|C|def _pinned_process_count(commands):\n    return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))|def _is_pinned_process_alt(argv):\n    return argv[:1] == [PINNED_BUZZ_ACP_EXE_REALPATH]\n\n\ndef _pinned_process_count(commands):\n    return sum(1 for cmd in commands if _is_pinned_process_alt(cmd.split()) or pins.is_pinned_argv(cmd.split()))'
-  'F1_AND|test_ck13_checker_has_no_private_pinned_process_predicate|C|if pins.is_pinned_argv(cmd.split()))|if pins.is_pinned_argv(cmd.split()) and cmd.startswith("/"))'
-  'F1_LOCAL_HELPER_USE|test_ck13_checker_has_no_private_pinned_process_predicate|C|def _pinned_process_count(commands):\n    return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))|def _pinned_argv_local(argv):\n    return pins.is_pinned_argv(argv)\n\n\ndef _pinned_process_count(commands):\n    return sum(1 for cmd in commands if _pinned_argv_local(cmd.split()))'
-  'F1_DEAD_PIN_COMPARE|test_ck13_checker_has_no_private_pinned_process_predicate|C|def _pinned_process_count(commands):|def _dead_pin_compare(argv):\n    return argv[0] == PINNED_TEE_PATH\n\n\ndef _pinned_process_count(commands):'
-  'F1_SECOND_SHARED_USER|test_ck13_checker_has_no_private_pinned_process_predicate|C|def _pinned_process_count(commands):|def unrelated_shared_user(argv):\n    return pins.is_pinned_argv(argv)\n\n\ndef _pinned_process_count(commands):'
-  'F1_SECOND_IF|test_ck13_checker_has_no_private_pinned_process_predicate|C|if pins.is_pinned_argv(cmd.split()))|if cmd and pins.is_pinned_argv(cmd.split()))'
+  'F1_ALT_USE|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):\n    return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))|def _is_pinned_process_alt(argv):\n    return argv[:1] == [PINNED_BUZZ_ACP_EXE_REALPATH]\n\n\ndef _pinned_process_count(commands):\n    return sum(1 for cmd in commands if _is_pinned_process_alt(cmd.split()) or pins.is_pinned_argv(cmd.split()))'
+  'F1_AND|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|if pins.is_pinned_argv(cmd.split()))|if pins.is_pinned_argv(cmd.split()) and cmd.startswith("/"))'
+  'F1_LOCAL_HELPER_USE|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):\n    return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))|def _pinned_argv_local(argv):\n    return pins.is_pinned_argv(argv)\n\n\ndef _pinned_process_count(commands):\n    return sum(1 for cmd in commands if _pinned_argv_local(cmd.split()))'
+  'F1_DEAD_PIN_COMPARE|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):|def _dead_pin_compare(argv):\n    return argv[0] == PINNED_TEE_PATH\n\n\ndef _pinned_process_count(commands):'
+  'F1_SECOND_SHARED_USER|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):|def unrelated_shared_user(argv):\n    return pins.is_pinned_argv(argv)\n\n\ndef _pinned_process_count(commands):'
+  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|if pins.is_pinned_argv(cmd.split()))|if cmd and pins.is_pinned_argv(cmd.split()))'
   'CONTROL_COMMENT|test_ck13_read_site_drift_validator_rejects_rebound_expected|T|Every read site is named exactly|Every read operation is named exactly'
 )
 
-expected=0
 killed=0
 survived=0
 invalid=0
 control=0
+row_number=0
+selected_rows=0
 for row in "${cases[@]}"; do
+  row_number=$((row_number + 1))
+  if (( row_number < row_start || row_number > row_end )); then
+    continue
+  fi
+  selected_rows=$((selected_rows + 1))
   IFS='|' read -r name test_name target_key old new <<<"$row"
   dir="$OUT/$name"
   rm -rf "$dir"
@@ -114,11 +199,16 @@ PY
   fi
 
   set +e
-  (cd "$dir/tree" && "$PYTEST" -m pytest -q \
+  (cd "$dir/tree" && timeout "$ROW_TIMEOUT_S" "$PYTEST" -m pytest -q \
       tests/test_s0_01_check_acp_conformance.py -k "$test_name" \
       --basetemp="$dir/base/run" -p no:cacheprovider) >"$dir/output.txt" 2>&1
   rc=$?
   set -e
+  if [[ $rc -eq 124 ]]; then
+    invalid=$((invalid + 1))
+    printf 'INVALID %s TIMEOUT after=%ss\n' "$name" "$ROW_TIMEOUT_S"
+    continue
+  fi
   if [[ "$name" == CONTROL_COMMENT ]]; then
     if [[ $rc -ne 0 ]]; then
       invalid=$((invalid + 1))
@@ -130,7 +220,6 @@ PY
     continue
   fi
 
-  expected=$((expected + 1))
   if [[ $rc -eq 0 ]]; then
     survived=$((survived + 1))
     printf 'SURVIVED %s\n' "$name"
@@ -142,13 +231,29 @@ PY
   [[ -n "$killer_detail" ]] && detail="$killer_detail"
   if [[ -z "$killer" || -z "$detail" ]]; then
     invalid=$((invalid + 1))
-    expected=$((expected - 1))
     printf 'INVALID %s pytest rc=%s no-assertion-line\n' "$name" "$rc"
     continue
   fi
   killed=$((killed + 1))
   printf 'KILLED %s | %s | %s\n' "$name" "$killer" "$detail"
 done
-printf 'EXPECTED=%s KILLED=%s SURVIVED=%s INVALID=%s CONTROL=%s\n' \
-  "$expected" "$killed" "$survived" "$invalid" "$control"
-[[ $invalid -eq 0 && $survived -eq 0 && $control -eq 1 && $killed -eq $expected ]]
+if (( row_start == 1 && row_end == TOTAL_ROWS )); then
+  printf 'EXPECTED=%s KILLED=%s SURVIVED=%s INVALID=%s CONTROL=%s\n' \
+    "$EXPECTED" "$killed" "$survived" "$invalid" "$control"
+  [[ $killed -eq $EXPECTED && $survived -eq 0 && $invalid -eq 0 && $control -eq 1 ]]
+else
+  expected_rows=$((row_end - row_start + 1))
+  expected_kills=$expected_rows
+  if (( row_start <= ${#cases[@]} && row_end >= ${#cases[@]} )); then
+    expected_kills=$((expected_kills - 1))
+  fi
+  printf 'ROWS=%s-%s SELECTED=%s KILLED=%s SURVIVED=%s INVALID=%s CONTROL=%s\n' \
+    "$row_start" "$row_end" "$selected_rows" "$killed" "$survived" "$invalid" "$control"
+  [[ $selected_rows -eq $expected_rows && $killed -eq $expected_kills && \
+     $survived -eq 0 && $invalid -eq 0 ]]
+  if (( row_start <= ${#cases[@]} && row_end >= ${#cases[@]} )); then
+    [[ $control -eq 1 ]]
+  else
+    [[ $control -eq 0 ]]
+  fi
+fi
