@@ -8,7 +8,7 @@ last_compiled: 2026-09-03
 ## Clocks
 
 - **Origin tip:** 2026-09-15 17:5xZ (`claude/soundbox-kit-migration-iz1jwf`) — de71481 = VERIFY-QM1 findings, on top of ca4dd20 (QM0-b restart-when-idle + AF-AP-87), 60615c9 (N5m probe r16) and 2e8f5b6 (the exporter --tool-body-cap); this ledger plane follows.- **Local HEAD:** = origin + this ledger plane (pushed at the end of the turn); the sandbox tree is CLEAN of lanes — NO sandbox lane is live; TWO PC lanes are live — VERIFY-GOV1 on the LOCAL verify route (since 15:01Z) and A5n (checker round 16, cloud build, since 16:50Z); QM0-b (ca4dd20), N5m (60615c9) and VERIFY-QM1 (de71481) are HOME and LANDED; two cloud slots are free; the next dispatch (QM1-c, VERIFY-N5m) follows.  survivors) landed with verifier verdicts; checkpoint 7a (A5c header requirement) and 6 are on origin. SHAs are rewritten by `push_clean.sh` at push, so this page names commits by subject.
-- **Today:** 2026-09-15
+- **Local HEAD:** = origin + this ledger plane; the sandbox tree is CLEAN of lanes; FOUR PC lanes are live — VERIFY-GOV1 on the LOCAL verify route (since 15:01Z, no draft yet at 18:0xZ — a long xhigh verify), A5n (checker r16, cloud, since 16:50Z), VERIFY-N5m (probe r16 verify, cloud, pid 71913, since 18:14Z) and QM1-c (the six matrix-runner fixes, cloud build, pid 75312, since 18:16Z) — the cloud slots are full; the matrix waits on the local slot (VERIFY-GOV1) + QM1-c.
 
 ## Active lanes
 - **S0-01 ACP conformance `s0-07-s0-01-acp-conformance` (tasks #10, #37) — REPAIR IN PROGRESS, REVIEW-PENDING, nothing minted.**
