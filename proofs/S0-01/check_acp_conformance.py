@@ -1193,7 +1193,6 @@ def _parse_scan_v24(path, leg, name):
 
 
 def _pinned_process_count(commands):
-    """Classify collected scan rows only through the shared producer predicate."""
     return sum(1 for cmd in commands if pins.is_pinned_argv(cmd.split()))
 
 
@@ -1577,7 +1576,7 @@ def check_golden(golden_dir, leg="golden"):
                 session_new_idx = i
     # R9-CK-F6: init_resp_idx is guaranteed non-None — check_initialize_frames
     # validates the a2c initialize response (protocolVersion); session_new_idx is
-    # guaranteed by the req_methods guard at C:1561-1564 (exactly one session/new).
+    # guaranteed by the req_methods guard at C:1561-1565 (exactly one session/new).
     if init_resp_idx >= session_new_idx:
         raise Failure(f"{leg}: a2c initialize response does not precede c2a session/new")
     # §8: session/new response precedes session/prompt
@@ -1592,7 +1591,7 @@ def check_golden(golden_dir, leg="golden"):
             if prompt_idx is None:
                 prompt_idx = i
     # R9-CK-F6: new_resp_idx guaranteed by check_prompt_turn C:751-753 (session/new
-    # has sessionId response); prompt_idx by req_methods guard C:1561-1564.
+    # has sessionId response); prompt_idx by req_methods guard C:1561-1565.
     if new_resp_idx >= prompt_idx:
         raise Failure(f"{leg}: session/new response does not precede session/prompt")
     # §8: every a2c notification carries <SID1>

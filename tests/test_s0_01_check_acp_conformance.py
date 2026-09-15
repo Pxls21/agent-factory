@@ -2907,21 +2907,113 @@ def test_real_leg_corpus_declared():
 
 
 def test_ck13_checker_has_no_private_pinned_process_predicate():
+    """Reject CK14 local-helper, prefilter, and conjunction forms; a second classifier can diverge."""
     import ast
+
     tree = ast.parse(CHECKER.read_text())
-    assert not hasattr(cc, "_is_pinned_process")
     classifier = next(node for node in tree.body
                       if isinstance(node, ast.FunctionDef)
                       and node.name == "_pinned_process_count")
-    assert "pins.is_pinned_argv" in ast.unparse(classifier)
-    for node in ast.walk(classifier):
-        if isinstance(node, ast.Compare):
-            assert not any(
-                isinstance(child, ast.Name)
-                and child.id in {"PINNED_TEE_PATH", "PINNED_AGENT_REALPATH",
-                                 "PINNED_BUZZ_ACP_EXE_REALPATH"}
-                for child in ast.walk(node)
-            ), ast.unparse(node)
+
+    assert len(classifier.body) == 1
+    return_node = classifier.body[0]
+    assert isinstance(return_node, ast.Return)
+    assert isinstance(return_node.value, ast.Call)
+    assert ast.unparse(return_node.value.func) == "sum"
+    assert len(return_node.value.args) == 1
+    assert not return_node.value.keywords
+    generator = return_node.value.args[0]
+    assert isinstance(generator, ast.GeneratorExp)
+    assert ast.unparse(generator.elt) == "1"
+    assert len(generator.generators) == 1
+    comprehension = generator.generators[0]
+    assert ast.unparse(comprehension.target) == "cmd"
+    assert ast.unparse(comprehension.iter) == "commands"
+    assert not comprehension.is_async
+    assert len(comprehension.ifs) == 1
+    predicate = comprehension.ifs[0]
+    assert isinstance(predicate, ast.Call)
+    assert ast.unparse(predicate.func) == "pins.is_pinned_argv"
+    assert [ast.unparse(arg) for arg in predicate.args] == ["cmd.split()"]
+    assert not predicate.keywords
+    assert len([node for node in ast.walk(classifier)
+                if isinstance(node, ast.Call)]) == 3
+    assert not any(isinstance(node, (ast.BoolOp, ast.Compare))
+                   for node in ast.walk(classifier))
+
+    functions = [node for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    shared_predicate_users = {
+        function.name
+        for function in functions
+        if any(isinstance(node, ast.Attribute)
+               and ast.unparse(node) == "pins.is_pinned_argv"
+               for node in ast.walk(function))
+    }
+    assert shared_predicate_users == {"_pinned_process_count"}
+
+    forbidden_names = {
+        function.name for function in functions
+        if function.name != "_pinned_process_count"
+        and (function.name.startswith("_is_pinned_process")
+             or "pinned_argv" in function.name)
+    }
+    assert not forbidden_names
+
+    classifier_operands = {
+        "PINNED_TEE_PATH", "PINNED_AGENT_REALPATH",
+        "PINNED_BUZZ_ACP_EXE_REALPATH", "argv", "cmd.split()",
+    }
+    def is_membership(node):
+        return (isinstance(node, ast.Compare)
+                and any(isinstance(op, (ast.In, ast.NotIn))
+                        for op in node.ops))
+
+    allowed_compares = {
+        ("check_env", "env.get('S0_01_AGENT') != PINNED_AGENT_REALPATH"),
+        ("check_process_evidence",
+         "cmd.split(' ')[0] == PINNED_BUZZ_ACP_EXE_REALPATH"),
+    }
+    actual_compares = set()
+    for function in functions:
+        if function.name == "_pinned_process_count":
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = {ast.unparse(node.left),
+                        *(ast.unparse(item) for item in node.comparators)}
+            if operands & classifier_operands and not is_membership(node):
+                actual_compares.add((function.name, ast.unparse(node)))
+    assert actual_compares == allowed_compares
+
+    # Existing membership and boolean checks consume these pins for other
+    # contracts. Pin that finite set so any new classifier-like use is red.
+    allowed_predicates = {
+        ("check_config_echo", "'--idle-timeout' not in argv"),
+        ("check_config_echo", "'--max-turn-duration' not in argv"),
+        ("check_process_evidence", "PINNED_BUZZ_ACP_EXE_REALPATH in cmd"),
+        ("check_process_evidence", "PINNED_TEE_PATH in cmd"),
+        ("check_process_evidence", "PINNED_AGENT_REALPATH in cmd"),
+        ("check_process_evidence", "PINNED_TEE_PATH not in tee_lines[0][3]"),
+        ("check_process_evidence",
+         "PINNED_AGENT_REALPATH not in agent_lines[0][3]"),
+    }
+    actual_predicates = set()
+    for function in functions:
+        if function.name == "_pinned_process_count":
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.BoolOp):
+                operands = node.values
+            elif is_membership(node):
+                operands = [node.left, *node.comparators]
+            else:
+                continue
+            unparsed = {ast.unparse(operand) for operand in operands}
+            if unparsed & classifier_operands:
+                actual_predicates.add((function.name, ast.unparse(node)))
+    assert actual_predicates == allowed_predicates
 
 
 @pytest.mark.parametrize("cmd,expected", [
