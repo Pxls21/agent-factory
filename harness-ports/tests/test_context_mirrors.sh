@@ -86,9 +86,12 @@ check_mirrors() {
       [ -n "$mk" ] || continue
       headings "$m" | grep -qiF -- "$mk" || { echo "FAIL $(basename "$m") lacks the heading marker '$mk'"; fails=$((fails+1)); }
     done <<< "$MIRROR_ONLY"
+    # whitespace-normalized: a rule name wrapped across a line break still counts (the gate's first run
+    # flagged exactly such a wrap in AGENTS.md; the layout is not the rule)
+    local flat; flat="$(tr -s '[:space:]' ' ' < "$m")"
     while IFS= read -r r; do
       [ -n "$r" ] || continue
-      grep -qF -- "$r" "$m" || { echo "FAIL $(basename "$m") does not name the standing lane rule '$r'"; fails=$((fails+1)); }
+      printf '%s' "$flat" | grep -qF -- "$r" || { echo "FAIL $(basename "$m") does not name the standing lane rule '$r'"; fails=$((fails+1)); }
     done <<< "$LANE_RULES"
   done
   # 3. size caps — chars for Hermes (len(content)), bytes for Codex (project_doc_max_bytes)
@@ -149,6 +152,8 @@ d="$(fresh n6)"; printf '\n## Telemetry\n\nmoved here\n' >> "$d/AGENTS.md"
 expect_fail "n6 a project section after the GitNexus block is red" "$d" "after the GitNexus block"
 d="$(fresh n7)"; sed -i 's/CODE INTEL FIRST/CODE INTEL LATER/g' "$d/.hermes.md"
 expect_fail "n7 a missing standing lane rule is red by name" "$d" "does not name the standing lane rule 'CODE INTEL FIRST'"
+d="$(fresh n9)"; sed -i 's/CONTEXT BUDGET/CONTEXT\nBUDGET/' "$d/.hermes.md"
+if out="$(check_mirrors "$d")"; then ok "n9 a rule name wrapped across a line break still counts (layout is not the rule)"; else bad "n9 wrapped rule name rejected: $(printf '%s' "$out" | head -2 | tr '\n' '|')"; fi
 d="$(fresh n8)"; sed -i '/^3\. OmniRoute is the sole model API egress/d' "$d/CLAUDE.md"
 expect_fail "n8 a dropped standing rule in CLAUDE.md is red on the count" "$d" "STANDING PROJECT RULES count is 14, expected 15"
 
