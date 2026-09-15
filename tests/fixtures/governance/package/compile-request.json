@@ -1,0 +1,14 @@
+{
+  "package_id": "synthia@0.0.1",
+  "branch": "main",
+  "active_person": "operator",
+  "request": {
+    "text": "agent-factory governance bootstrap",
+    "task_type": "strategy",
+    "third_party_visible": false
+  },
+  "session_id": "governance-bootstrap",
+  "memory_cutoff": "2026-01-01T00:00:00Z",
+  "adapter": "claude@agent-factory-bootstrap",
+  "example_budget": 0
+}

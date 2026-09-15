@@ -407,6 +407,13 @@ redefined signal_gen_s while a pre-registered benchmark said "read signal_gen_s"
   and treat its findings as immediate follow-up fixes. Record the deviation in the wiki the
   same turn; this is a fallback for infra failure only, never a shortcut when the lane can run.
 
+**A brief that names a declared environment input names its PROVISIONING on every venue** (the sandbox default
+path, the PC path, the CI step) — GOV1 (2026-09-15) named `FUBUKI_OS_ROOT` for the tests and no provisioning, so the
+lane's shell supplied it ad hoc and the count came home green on a hidden input (AF-AP-81); the shape is
+`scripts/fubuki_pin_sync.sh`: one idempotent script, every venue (setup.sh, pc-setup.sh, CI's `$GITHUB_ENV`), and the
+gate scripts (`test_summary.sh`, `pc_suite.sh`) export each venue's defaults so the bare gate never depends on a
+session's leftovers.
+
 ## Checkpoint discipline for delegate lanes (baked 2026-08-31, after TWO restart-kills)
 The sandbox container restarts without warning and kills running lanes; uncommitted delegate
 work died twice in 24h (the original perf build, then its repair lane mid-edit). EVERY

@@ -29,6 +29,9 @@ git config core.hooksPath scripts/hooks && ok "core.hooksPath=scripts/hooks"
 say "project venv ($AF_VENV)"
 [ -x "$AF_VENV/bin/python" ] || "$PY311" -m venv "$AF_VENV" || warn "venv create failed"
 if [ -x "$AF_VENV/bin/python" ]; then
+  if [ -f "$AF_REPO/pyproject.toml" ]; then "$AF_VENV/bin/pip" install -q -e "$AF_REPO" >/dev/null 2>&1 && ok "agent-factory editable" || warn "agent-factory editable install failed"; fi
+  # the pinned fubuki-os + its negative control (DECLARED inputs of the governance tests; scripts/pc_suite.sh exports them)
+  bash "$AF_REPO/scripts/fubuki_pin_sync.sh" "$HOME/fubuki-pin" >/dev/null 2>&1 && ok "fubuki-os pinned checkout + negative control ($HOME/fubuki-pin)" || warn "fubuki_pin_sync failed — the governance tests fail by design until $HOME/fubuki-pin is provisioned"
   "$AF_VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1
   "$AF_VENV/bin/pip" install -q pyflakes pytest pytest-xdist "PyYAML>=6.0" "jsonschema==4.25.1" "rfc3339-validator==0.1.4" "mcp==1.29.1" >/dev/null 2>&1 && ok "pyflakes pytest pytest-xdist PyYAML jsonschema==4.25.1 rfc3339-validator==0.1.4 mcp==1.29.1" || warn "base pip install failed"
   "$AF_VENV/bin/pip" install -q -e "$AF_REPO/sandbox-kit/aleph[mcp]" >/dev/null 2>&1 && ok "aleph (editable, [mcp])" || warn "aleph install failed"

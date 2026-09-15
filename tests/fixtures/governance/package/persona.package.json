@@ -1,0 +1,49 @@
+{
+  "core_hash": "sha256:36996eeb2b6878f916bed2d8c4da837017a334ad57b1fcca6e00be9194a17c6e",
+  "files": [
+    {
+      "load_condition": "on_demand",
+      "owner": "core",
+      "path": "compile-request.json",
+      "required": true,
+      "role": "asset",
+      "sha256": "sha256:5a10d66eab7bb373db7b70d05b9f9c1a75b3e84036ee911f70fe5e7fe5b62dd9"
+    },
+    {
+      "load_condition": "always",
+      "owner": "core",
+      "path": "core/persona.md",
+      "required": true,
+      "role": "constitution",
+      "sha256": "sha256:36996eeb2b6878f916bed2d8c4da837017a334ad57b1fcca6e00be9194a17c6e"
+    },
+    {
+      "load_condition": "always",
+      "owner": "core",
+      "path": "core/doctrine.md",
+      "required": true,
+      "role": "doctrine",
+      "sha256": "sha256:23fa46e0877ee67767a6b593c1330b8f6fd2b92d3fd9d7969ac8da4773aeb548"
+    },
+    {
+      "load_condition": "on_demand",
+      "owner": "core",
+      "path": "modes/strategy.md",
+      "required": true,
+      "role": "mode",
+      "sha256": "sha256:1c8246c5441d924fcf1c02636290e714909b481fcde8c7255cd0d51430261cda"
+    },
+    {
+      "load_condition": "on_demand",
+      "owner": "core",
+      "path": "examples/gold.jsonl",
+      "required": true,
+      "role": "examples",
+      "sha256": "sha256:62e46b8032d456fa6ef58b719aa48750cd1227765fc8a5ad32b17197769d179a"
+    }
+  ],
+  "package_schema": "fubuki-persona-package/0.1",
+  "persona_id": "synthia",
+  "persona_version": "0.0.1",
+  "schemas": {}
+}

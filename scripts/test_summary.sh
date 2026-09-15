@@ -13,6 +13,9 @@ set -u
 # Restore a fresh container: bash scripts/realleg_sync.sh pull
 export S0_01_VENUE="${S0_01_VENUE:-sandbox}"
 export S0_01_REAL_LEG_DIR="${S0_01_REAL_LEG_DIR:-/root/s0-01-realleg/golden}"
+# the pinned fubuki-os + its negative control: DECLARED inputs of the governance tests (scripts/fubuki_pin_sync.sh)
+export FUBUKI_OS_ROOT="${FUBUKI_OS_ROOT:-/root/fubuki-pin/fubuki-os}"
+export FUBUKI_OTHER_ROOT="${FUBUKI_OTHER_ROOT:-/root/fubuki-pin/fubuki-os-other}"
 
 paths=("${@:-tests/}")
 

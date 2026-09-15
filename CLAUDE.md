@@ -191,9 +191,10 @@ memory scopes via a first-party composite adapter, and every tool call passing a
 policy gate inside gVisor containment. A separate improvement plane (GBrain-informed dream
 cycles → JIT Harness Foundry → isolated AlphaEval/PandaProbe evaluation → human promotion gate)
 feeds reviewable proposals only; it has no production write or execution authority until later
-gates pass. **No application code exists yet** — the pipeline (findings → council → Ouroboros
-interview → seed → task breakdown) is COMPLETE and the Stage 0 build is the next work; the first
-pending increment is named in the ledger.
+gates pass. **The first application code exists** (the Stage 3 governance core under
+`src/agent_factory/`, landed 2026-09-15 by D-029, its verify round pending) — the pipeline
+(findings → council → Ouroboros interview → seed → task breakdown) is COMPLETE and the Stage 0
+build continues; the first pending increment is named in the ledger.
 
 ### STANDING PROJECT RULES (the planning repo's own — binding on every harness; mirrored verbatim in `AGENTS.md` / `.hermes.md`)
 

@@ -25,6 +25,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${PC_SUITE_ORIG:-${BASH_SOURCE[0]}}")/.." && pwd)"
 PC="$ROOT/scripts/pc.sh"
 PC_AF_REPO="${PC_AF_REPO:-/home/rocco/agent-factory}"
+PC_FUBUKI_PIN="${PC_FUBUKI_PIN:-/home/rocco/fubuki-pin}"   # scripts/fubuki_pin_sync.sh on the PC (pc-setup.sh runs it)
 # The project venv on the PC (harness-ports/bin/pc-setup.sh installs the pinned deps there); /usr/bin/python3 lacks
 # rfc3339-validator, so scripts/validate-ledger fails closed under it (39 venue reds on the first PC run, 2026-09-06).
 PC_PY="${PC_PY:-/home/rocco/venv-agent-factory/bin/python}"
@@ -82,7 +83,7 @@ launch)
   # guard keys on state the run creates (rule 1b), and a replayed launch call is a no-op.
   RUNSH="#!/bin/bash
 cd $WT || exit 97
-S0_01_VENUE=pc S0_01_REAL_LEG_DIR=$PC_REAL_LEG_DIR S0_02_BUZZ_SRC=$PC_BUZZ_SRC $PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
+S0_01_VENUE=pc S0_01_REAL_LEG_DIR=$PC_REAL_LEG_DIR S0_02_BUZZ_SRC=$PC_BUZZ_SRC FUBUKI_OS_ROOT=$PC_FUBUKI_PIN/fubuki-os FUBUKI_OTHER_ROOT=$PC_FUBUKI_PIN/fubuki-os-other $PC_PY -m pytest $SET -q -p no:cacheprovider -n $WORKERS --basetemp=$RD/tmp > $RD/log 2>&1 < /dev/null
 echo \$? > $RD/rc
 [ \"\$(cat $RD/rc)\" = 0 ] && rm -rf $RD/tmp
 "

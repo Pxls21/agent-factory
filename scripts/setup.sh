@@ -243,6 +243,14 @@ else
 fi
 
 if [ -x "$VENV_PY" ]; then
+  # the pinned fubuki-os + its negative control (DECLARED inputs of the governance tests; AF-AP-81)
+  bash "$REPO_ROOT/scripts/fubuki_pin_sync.sh" /root/fubuki-pin >/dev/null 2>&1 \
+    && ok "fubuki-os pinned checkout + negative control (/root/fubuki-pin)" \
+    || warn "fubuki_pin_sync failed — the governance tests fail by design until /root/fubuki-pin is provisioned"
+  if [ -f "$REPO_ROOT/pyproject.toml" ]; then "$VENV_PY" -m pip install -q -e "$REPO_ROOT" 2>&1 \
+    && ok "agent-factory installed editable" \
+    || warn "agent-factory editable install failed"; fi
+
   # pyflakes powers the edit-snapshot hook's lint-delta tell.
   "$VENV_PY" -m pip install -q pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4" 2>&1 \
     && ok "pyflakes installed (edit-snapshot hook lint delta)" \

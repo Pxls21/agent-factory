@@ -10,7 +10,7 @@ positive. Five of the twelve proofs are minted (three conformance-checked decisi
 two verify lanes live on the PC) after the owner's 2026-09-05 review declined closure. Four
 execution proofs are absent and two carry blocked markers. No application code
 for the production spine has landed yet; the first proof-backed build lane under D-029, GOV1 (the Stage 3 governance core from
-S0-07, `src/agent_factory/governance/`, brief `tasks/briefs/stage3-gov1-governance-core-from-s0-07.md`), has nothing landed. Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
+S0-07, `src/agent_factory/governance/`, brief `tasks/briefs/stage3-gov1-governance-core-from-s0-07.md`), LANDED 2026-09-15 (unverified: VERIFY-GOV1 next; S0-07's owner review still gates acceptance). Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
 a distillation and the ledger wins on any disagreement).
 **Deployment readiness:** no
 **Last audit snapshot:** 2026-09-07

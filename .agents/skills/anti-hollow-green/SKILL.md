@@ -49,6 +49,12 @@ expansion.
    finger the wrong suspect (#319: a paper daemon's startup `os.environ[flag]="1"` flipped the
    co-resident GA's blend features ON for a whole day's runs and mis-accused the GPU; fix = pure
    resolver + RunConfig-sourced flags threaded to `generate_signals`).**
+   **(f) The interpreter's import path is an input too (AF-AP-81, GOV1 2026-09-15): a suite that imports an
+   upstream the repo neither vendors nor installs reaches it ONLY through the declared input's own contract — a
+   pin/fixture that verifies the root and inserts its paths — never an ambient PYTHONPATH; the lane shell read
+   `29 passed`, the bare static-copy gate `12 failed, 17 passed`. A report's count is graded in the BARE gate on
+   the coordinator's venue before it is believed, and a mutation driver exports only repo roots (an ambient
+   upstream path masked the root-insertion mutant).**
 3. **Mutation-testing IS the hollow-green detector.** Inject bugs into the code-under-gate; a gate
    that still passes is hollow. Demand BRANCH coverage. A gate surviving no mutants is a tautology
    — reject it. **3-EQ. Mutate the EQUIVALENCE CLASS, not the named specimen (AF-AP-30, S0-11
