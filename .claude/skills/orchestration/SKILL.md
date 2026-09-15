@@ -414,6 +414,11 @@ lane's shell supplied it ad hoc and the count came home green on a hidden input 
 gate scripts (`test_summary.sh`, `pc_suite.sh`) export each venue's defaults so the bare gate never depends on a
 session's leftovers.
 
+**An auth/key finding is reproduced against the REAL sink, read-only, before it blocks** — VERIFY-QM0 (2026-09-15) graded
+`curl_key()` against its own strict fake, called it BLOCKING, and was refuted by one live keyed GET (`/props` 401/401/200); a
+verifier's fake is a hypothesis about the sink, never the sink (AF-AP-83's twin rule). A verify brief that forbids lifecycle
+commands still names the read-only live probes it allows.
+
 ## Checkpoint discipline for delegate lanes (baked 2026-08-31, after TWO restart-kills)
 The sandbox container restarts without warning and kills running lanes; uncommitted delegate
 work died twice in 24h (the original perf build, then its repair lane mid-edit). EVERY

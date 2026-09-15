@@ -92,6 +92,11 @@ expansion.
    loop, a file the later stage writes, a protocol byte) and assert the mechanism from the
    wrapper. And RUN the named mutant before landing the killer: a proposed killer is a
    hypothesis, not a kill.
+   **The driver's denominator is a LITERAL from the brief, never a sum of what ran (AF-AP-84, VERIFY-N5l 2026-09-15):**
+   `expected=$((killed + survived))` let a deleted row read `EXPECTED=9 KILLED=9 SURVIVED=0` — pin `EXPECTED=N`, gate
+   `[[ $killed -eq $EXPECTED ]]`, and give the driver a self-test (a copy with one row deleted must exit non-zero). A census or
+   sweep named for a GENERAL property observes the whole population or names its subset (AF-AP-85: a framedir-only fd count
+   read `CENSUS=0` while an inheritable pipe leaked through the same Popen).
 4. **Ban hardcoded expected outputs.** The oracle is spec-authored, independent, un-importable by
    the thing it grades. **4a. DROP an inapplicable assertion, NEVER REWRITE it** (rewriting lets
    the graded artifact choose its own oracle value). Drop ONLY when: (a) change provably scoped,
