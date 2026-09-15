@@ -1,6 +1,6 @@
 # PC lane — A5n (S0-01 checker round 16: the narrowed claim, labelled asserts, the literal denominator with a self-test, the per-row timeout)
 
-PIN: A5N-PIN-PLACEHOLDER
+PIN: c41aab6
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) — the local slot runs
 VERIFY-GOV1. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.

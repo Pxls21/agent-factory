@@ -1,6 +1,6 @@
 # VERIFY-QM1 — adversarial verification of the L1 concurrency-matrix runner as LANDED (lane QM1-b, in the PIN): `harness-ports/bin/qwen_matrix.py` (M) + `harness-ports/bin/qwen-matrix.sh` (R) + their tests (T = `harness-ports/tests/test_qwen_matrix.py`, X = `harness-ports/tests/test_qwen_matrix_sh.sh`), graded against the matrix CONTRACT (`docs/research/findings/RESEARCH-FINDINGS-1-VERIFIED.md` §4: cells A-H, the `>= 1.5x A` throughput bar, re-prefills `< A`), D-030 (the launcher-owned guard is the ONLY lifecycle seam), AF-AP-79 (nothing persistent before the guard), AF-AP-83 (an auth oracle is never unauthenticated), never against the builder's own cases (verify lane: PC Hermes `adversarial-verifier` on the CLOUD verify route — the SINGLE-MODEL RULE applies: findings, no verdict; sandbox fallback Opus 5 `adversarial-verifier`)
 
-PIN: `VQM1-PIN-PLACEHOLDER`
+PIN: `c41aab6`
 
 **What you grade.** M (507 lines at the PIN), R (159), T (301), X (132), the `run-all.sh` wiring (+10 lines); the builder's report
 `tasks/briefs/qwen-matrix-support/QM1-report.md` (REVIEW-PENDING; its lint `21 refs — OK 21`); the QM1 brief with its AMENDMENT 1

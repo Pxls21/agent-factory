@@ -1,6 +1,6 @@
 # Lane A5n — S0-01 checker round 16: VERIFY-CK15's two findings and its NOT-done closed — the exclusivity test's claim narrowed to what the lock inventories, labelled failure messages per structural check, the driver's LITERAL denominator with a self-test (AF-AP-84), a per-row timeout that reads INVALID instead of hanging the gate (build lane: PC Hermes `code-implementer`, the cloud build route; sandbox fallback `code-implementer`)
 
-PIN: `A5N-PIN-PLACEHOLDER`
+PIN: `c41aab6`
 
 **Ground.** Round 15 (lane A5m) LANDED as d353f92 and was graded by VERIFY-CK15 (`tasks/briefs/s0-01-a5m-support/VERIFY-CK15-report.md`,
 findings only): F1 MEDIUM — the brief's claim that "one legitimate-looking comparison anywhere in C must go red" is wider than the lock:

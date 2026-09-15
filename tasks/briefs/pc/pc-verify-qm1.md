@@ -1,6 +1,6 @@
 # PC lane — VERIFY-QM1 (adversarial verification of the L1 concurrency-matrix runner as LANDED: the guard-first cell runner, the fail-closed corpus builder, the keyed reads, the overlap and table decisions)
 
-PIN: VQM1-PIN-PLACEHOLDER
+PIN: c41aab6
 
 Role: adversarial-verifier. Route: the CLOUD verify route (`HERMES_MODEL=agentfactory-verify`, `HERMES_REASONING=ultra`) — the local slot runs
 VERIFY-GOV1 on the very unit the runner would restart: NEVER a real cell, load or lifecycle command. The SINGLE-MODEL RULE applies (findings,
