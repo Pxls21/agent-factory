@@ -1,6 +1,7 @@
 # Project status
 
-**Phase:** Stage 0 proof pack in progress. No feature work until the proof pack validates the spine
+**Phase:** Stage 0 proof pack in progress; since D-029 (owner 2026-09-15) proof-backed components build in parallel with the
+remaining proofs. Spine-dependent feature work waits until the proof pack validates the spine
 (Buzz → `buzz-acp` → Hermes → OmniRoute, memory composition, Fubuki seams, policy failure behaviour, gVisor compatibility).
 **Implementation:** branch `claude/soundbox-kit-migration-iz1jwf`. The proof machinery is built. The Wave 0 spikes are all
 positive. Five of the twelve proofs are minted (three conformance-checked decisions, two execution proofs — S0-11 accepted, S0-07 minted
@@ -8,7 +9,8 @@ positive. Five of the twelve proofs are minted (three conformance-checked decisi
 2026-09-08, the probe's and the checker's round 14 and the PC tools' round 3 landed by 2026-09-15; every component under a verify round,
 two verify lanes live on the PC) after the owner's 2026-09-05 review declined closure. Four
 execution proofs are absent and two carry blocked markers. No application code
-for the production spine exists yet, by design. Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
+for the production spine has landed yet; the first proof-backed build lane under D-029, GOV1 (the Stage 3 governance core from
+S0-07, `src/agent_factory/governance/`, brief `tasks/briefs/stage3-gov1-governance-core-from-s0-07.md`), has nothing landed. Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
 a distillation and the ledger wins on any disagreement).
 **Deployment readiness:** no
 **Last audit snapshot:** 2026-09-07

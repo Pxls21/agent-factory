@@ -67,4 +67,4 @@ The supplied v2 plan is preserved unchanged in [`docs/archive/v2-original/`](doc
 
 ## Current gate
 
-Do not begin broad feature work until the Stage 0 proof pack in [the build plan](docs/07_BUILD_PLAN.md) validates the Buzz→ACP→Hermes→OmniRoute spine, memory composition, Fubuki seams, policy failure behavior, and gVisor compatibility. JIT and GBrain work can begin as isolated research spikes, but their output has no production write or execution authority until later gates pass.
+Spine-dependent feature work waits until the Stage 0 proof pack in [the build plan](docs/07_BUILD_PLAN.md) validates the Buzz→ACP→Hermes→OmniRoute spine, memory composition, Fubuki seams, policy failure behavior, and gVisor compatibility. A component whose Stage 0 proof is minted builds now, in its own lane, in parallel with the remaining proofs (decision D-029, owner 2026-09-15; the first is the Stage 3 governance core from S0-07). JIT and GBrain work can begin as isolated research spikes, but their output has no production write or execution authority until later gates pass.

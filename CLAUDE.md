@@ -225,9 +225,12 @@ pending increment is named in the ledger.
 2. **`docs/02_COMPONENT_AUDIT.md`** — the VERIFIED component inventory: read it FIRST among the
    plan docs, it corrects the v2 plan's optimistic claims. Then `docs/01_ARCHITECTURE.md` …
    `docs/11_DREAM_PHASE.md` (the CURRENT plan; reading order in `README.md`);
-   `docs/07_BUILD_PLAN.md` is the staged backlog. **The current gate: no broad feature work until
-   the Stage 0 proof pack validates the Buzz→ACP→Hermes→OmniRoute spine, memory composition,
-   Fubuki seams, policy failure behavior, and gVisor compatibility.**
+   `docs/07_BUILD_PLAN.md` is the staged backlog. **The current gate (narrowed by D-029, owner
+   2026-09-15): spine-dependent feature work waits until the Stage 0 proof pack validates the
+   Buzz→ACP→Hermes→OmniRoute spine, memory composition, Fubuki seams, policy failure behavior,
+   and gVisor compatibility; a component whose Stage 0 proof is MINTED builds now, in its own
+   lane, in parallel with the remaining proofs (first: GOV1, the Stage 3 governance core from
+   S0-07).**
 3. **`seeds/seed-stage0-v1.yaml`** (the Stage 0 contract — Ouroboros-generated, self-validation
    8/8, twelve per-proof blocks + the frozen `spike_to_class_mapping`) + **`tasks/stage0-breakdown.md`**
    (the 18-increment decomposition, pinned decisions with rejected alternatives, owner answers).
