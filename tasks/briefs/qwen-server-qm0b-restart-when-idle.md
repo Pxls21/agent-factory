@@ -1,6 +1,6 @@
 # Lane QM0-b — `qwen-server.sh restart-when-idle`: a deferred, PC-side restart that applies a pending unit change only once every piece of work the local server is used for has finished (no local-route lane alive, no request in flight, no matrix cell running), and the dispatcher queues local lanes behind it instead of failing (build lane: PC Hermes `code-implementer`; dispatched on QM0's landing — same file)
 
-PIN: `QM0-LANDING-PLACEHOLDER` (QM0 lands first: the six knobs, the route-aware `guard`, the guard before every persistent write; this
+PIN: `efde78d` (QM0 lands first: the six knobs, the route-aware `guard`, the guard before every persistent write; this
 lane builds ON those bytes — re-derive `harness-ports/bin/qwen-server.sh`'s sha256 + line count at the PIN and paste them).
 
 **Why (owner ask 2026-09-15 13:2xZ: "is there a way where you can script it where the server restarts when all the current work it's

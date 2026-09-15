@@ -1,6 +1,10 @@
 # PC lane — QM1 (the L1 concurrency-matrix runner: replay load generator + per-cell server runner + the matrix table)
 
-PIN: 47549c7
+PIN: efde78d
+
+**RE-PINNED 2026-09-15 15:1xZ (QM1-b): QM0 LANDED as 8aecbf8 — the six knobs and the side-effect-free `guard` are IN this archive
+(`harness-ports/bin/qwen-server.sh`, 302 lines at the PIN). The brief's AMENDMENT 1 (its STATUS line) governs items 2-3; everything else stands.
+Route: the CLOUD build route (the local slot runs VERIFY-GOV1 at xhigh — never touch the unit).**
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) — the local slot
 holds VERIFY-N5k and the model unit must not be touched. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.

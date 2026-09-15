@@ -2,7 +2,7 @@
 
 **STATUS 2026-09-15 12:21Z: lane QM1 came home BLOCKED, correctly — three premises below were false (the launcher has no cell knobs, its guard is inline and runs AFTER the unit write, `/props` carries no cell flags; `tasks/briefs/qwen-matrix-support/QM1-report.md`). AMENDMENT 1 (12:3xZ): the launcher prerequisite is lane QM0 (`tasks/briefs/qwen-server-qm0-cell-knobs-and-guard-before-write.md`): the six knobs `QWEN_CACHE_RAM`, `QWEN_CTXCP`, `QWEN_CMS`, `QWEN_UBATCH`, `QWEN_SPEC_P_MIN`, `QWEN_SPEC_TYPE` and the side-effect-free `qwen-server.sh guard` (rc 7 = a LOCAL-route lane is alive; cloud lanes never block). QM1-b re-runs on QM0's landing with these changes to items 2-3: the per-cell runner sets the cell through those knobs and calls `guard` before any restart (never its own census); the cell record binds `/props` runtime fields (`model_alias`, `total_slots`, `default_generation_settings.n_ctx`, `build_info`) + the text and sha256 of `qwen-server.sh argv` rendered with the cell's env + the sha256 of `qwen-server.sh unit` — never a flag "read from /props"; the restore is `install` with the baseline env, proven by the unit-text sha returning to the baseline's. Everything else in the brief stands.**
 
-PIN: `47549c7`
+PIN: `efde78d` (re-pinned 2026-09-15 15:1xZ for QM1-b on QM0's landing 8aecbf8; the first run was on `47549c7`)
 
 **Why.** `docs/research/findings/RESEARCH-FINDINGS-1-VERIFIED.md` §4 defines the matrix (cells A–H) that decides the MTP-vs-`-np` fork,
 the `--cache-ram` and checkpoint levers, and the q8_0 fit. Nothing runs it yet. Build the two tools; do NOT run the matrix in this lane

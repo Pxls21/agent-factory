@@ -1,6 +1,6 @@
 # PC lane — QM0-b (qwen-server.sh restart-when-idle: the deferred restart that fires only when the local server's work is done; the dispatcher queues local lanes behind it)
 
-PIN: QM0-LANDING-PLACEHOLDER
+PIN: efde78d
 
 Role: code-implementer. Route: the CLOUD build route (`HERMES_MODEL=agentfactory-build`, `HERMES_REASONING=ultra`) unless the local slot is
 free and at `medium` at dispatch. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first.
