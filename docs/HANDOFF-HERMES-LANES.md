@@ -77,7 +77,7 @@ Copy these too; each was paid for by a real failure in agent-factory:
 - **`scripts/pc_fetch.sh`** — chunked, size-verified single-file fetch (the bridge caps replies at ~45 KB; a truncated tail decodes to a plausible file).
 - **The PC checkout is a deploy target.** Edits land in the sandbox (or a pushed branch) and arrive by `git merge --ff-only`; a dirty PC checkout at deploy time is read and ported, never overwritten blind.
 - **Lane liveness is the lane's own pidfile**, not "any pc-lane.sh process" — two lanes run concurrently now.
-- **Recovery path when a lane dies:** its worktree keeps its files; `state.db` keeps the session — export with `harness-ports/bin/hermes-session-export.py --db ~/.hermes/profiles/<profile>/state.db --session <id>`; never re-run before recovering.
+- **Recovery path when a lane dies:** its worktree keeps its files; `state.db` keeps the session — export with `harness-ports/bin/hermes-session-export.py --db ~/.hermes/profiles/<profile>/state.db --session <id>`; never re-run before recovering. Tool-result bodies are NOT exported by default; `--tool-body-cap N` exports them scrubbed and capped (PC-local matrix corpora only — the committed `transcripts/pc/*.md` stay body-less).
 
 ## (end of prompt)
 

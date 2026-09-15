@@ -7,7 +7,7 @@ Reads sessions + messages (role, timestamp, content, tool_name / tool_calls name
 bodies are summarized by length only; every turn is capped; the same structural scrubber as
 scripts/transcript_export.py is applied (imported by path so the two never drift).
 
-Usage: hermes-session-export.py --db <state.db> --session <id> --out <file.md> [--cap 3000]
+Usage: hermes-session-export.py --db <state.db> --session <id> --out <file.md> [--cap 3000] [--tool-body-cap 0]
 Exit 0 = written, 3 = session not found, 2 = usage.
 """
 import argparse
@@ -15,6 +15,7 @@ import datetime as dt
 import importlib.util
 import json
 import pathlib
+import re
 import sqlite3
 import sys
 
@@ -29,7 +30,19 @@ def _scrub():
     return mod.scrub
 
 
-def export(db: str, session: str, out: str, cap: int) -> bool:
+_HEADING_SHAPED = re.compile(r"(?m)^(## (?:user|assistant|tool result \())")
+
+
+def _body(scrub, text: str, cap: int) -> str:
+    """Cap, scrub, and indent any heading-shaped line by one space so the export grammar stays
+    unambiguous: a quoted `## user @ …` inside a body would otherwise read as a turn boundary
+    to the consumer (qwen_matrix.parse_export)."""
+    return _HEADING_SHAPED.sub(r" \1", scrub(text[:cap]))
+
+
+def export(db: str, session: str, out: str, cap: int, tool_body_cap: int = 0) -> bool:
+    """tool_body_cap 0 (the default) keeps tool-result bodies OUT of the export — the committed
+    transcripts stay body-less; > 0 exports them scrubbed and capped (matrix corpora on the PC)."""
     scrub = _scrub()
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
@@ -50,7 +63,11 @@ def export(db: str, session: str, out: str, cap: int) -> bool:
         ts = dt.datetime.fromtimestamp(r["timestamp"], dt.timezone.utc).strftime("%H:%M:%S") if r["timestamp"] else "?"
         role = r["role"]
         if role == "tool":
-            lines.append(f"## tool result ({r['tool_name'] or '?'}) @ {ts} — {len(r['content'] or '')} chars (body not exported)\n")
+            head = f"## tool result ({r['tool_name'] or '?'}) @ {ts} — {len(r['content'] or '')} chars"
+            if tool_body_cap > 0:
+                lines.append(f"{head} (body capped at {tool_body_cap})\n\n{_body(scrub, r['content'] or '', tool_body_cap)}\n")
+            else:
+                lines.append(f"{head} (body not exported)\n")
             continue
         names = ""
         if r["tool_calls"]:
@@ -59,7 +76,7 @@ def export(db: str, session: str, out: str, cap: int) -> bool:
                 names = ", ".join((c.get("function") or {}).get("name") or c.get("name") or "?" for c in calls)
             except (json.JSONDecodeError, TypeError, AttributeError):
                 names = "(unparsed)"
-        body = scrub((r["content"] or "")[:cap])
+        body = _body(scrub, r["content"] or "", cap)
         lines.append(f"## {role} @ {ts}" + (f" → tools: {names}" if names else "") + f"\n\n{body}\n")
     pathlib.Path(out).parent.mkdir(parents=True, exist_ok=True)
     pathlib.Path(out).write_text("\n".join(lines) + "\n")
@@ -72,8 +89,10 @@ def main() -> int:
     ap.add_argument("--session", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--cap", type=int, default=3000)
+    ap.add_argument("--tool-body-cap", type=int, default=0,
+                    help="export scrubbed tool-result bodies capped at N chars (default 0: not exported)")
     a = ap.parse_args()
-    if not export(a.db, a.session, a.out, a.cap):
+    if not export(a.db, a.session, a.out, a.cap, a.tool_body_cap):
         print(f"hermes-session-export: session {a.session} not found in {a.db}", file=sys.stderr)
         return 3
     print(a.out)
