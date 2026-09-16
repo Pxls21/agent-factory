@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from agent_factory.audit.events import Event, JsonlSink
 
 from .packet import Packet
-from .pin import GovernanceError
+from .pin import GovernanceError, import_pinned
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def bound_records(
     sink: JsonlSink | None = None,
 ) -> BoundResult:
     """Evaluate each source record and join decisions by ``record_id`` only."""
-    from fubuki_os.memory.bounds import evaluate_records
+    evaluate_records = import_pinned("fubuki_os.memory.bounds").evaluate_records
 
     source_records = tuple(records)
     by_id: dict[str, Any] = {}

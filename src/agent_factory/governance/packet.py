@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .pin import GovernanceError
+from .pin import GovernanceError, import_pinned
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,8 @@ def _source_files(root: Path) -> tuple[Path, ...]:
 
 def lint_sources(root: str | Path) -> LintResult:
     """Lint every declared source with Fubuki's pinned persona linter."""
-    from lint.persona_lint import lint, load_banned
+    persona_lint = import_pinned("lint.persona_lint")
+    lint, load_banned = persona_lint.lint, persona_lint.load_banned
 
     root = Path(root)
     if not root.exists():
@@ -79,7 +80,7 @@ def lint_sources(root: str | Path) -> LintResult:
 
 
 def _compile_request(sources_root: Path, package_id: str) -> Any:
-    from fubuki_os.compiler.models import CompileRequest
+    CompileRequest = import_pinned("fubuki_os.compiler.models").CompileRequest
 
     request_path = sources_root / "compile-request.json"
     if request_path.is_file():
@@ -107,10 +108,10 @@ def _compile_request(sources_root: Path, package_id: str) -> Any:
 
 def compile_canonical(sources_root: str | Path) -> bytes:
     """Compile through Fubuki's own loader, validator, compiler, and canonicalizer."""
-    from fubuki_os.compiler.compiler import compile_packet
-    from fubuki_os.package.loader import load_package
-    from fubuki_os.package.validator import validate_package
-    from fubuki_os.release.hashing import canonical_json
+    compile_packet = import_pinned("fubuki_os.compiler.compiler").compile_packet
+    load_package = import_pinned("fubuki_os.package.loader").load_package
+    validate_package = import_pinned("fubuki_os.package.validator").validate_package
+    canonical_json = import_pinned("fubuki_os.release.hashing").canonical_json
 
     sources_root = Path(sources_root)
     try:
