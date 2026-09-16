@@ -96,7 +96,16 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
-**2026-09-16 04:44Z CONCURRENCY VERDICT CORRECTED — batching HELPS on the one card; the 02:0xZ "throughput halves / a 2nd GPU is the only way" verdict below was WRONG (the owner's pushback was right):**
+**2026-09-16 05:16Z vLLM MIGRATION — the one-3090 path for Qwen3.8 FOUND by research (owner: must stay 3.8, the on-disk 3.6 is OUT); base downloading; cutover needs owner go for the qwen-builder takedown:**
+
+Full research + the exact recipe in `docs/research/findings/VLLM-MIGRATION.md`. Model stays Qwen3.8-27B; vLLM behind OmniRoute (served-model-name `qwen3.8-27b-local`) — sole-egress unchanged.
+
+- [x] HARDWARE WALL: stock 3.8 vLLM quants do NOT fit one 24 GB 3090 — `Qwen3.8-27B-FP8` ≈28 GB, the community AWQ `barrydeen/Qwen3.8-27B-AWQ-4bit` is **27.8 GB** "built for 2×3090" (the 48 Gated-DeltaNet layers stay BF16), NVFP4 needs Blackwell. The only 3.8 that fits one card at stock is the aggressive GGUF llama.cpp runs now.
+- [x] THE WAY THROUGH: **`syv-ai/qwen38-27b-rtx3090`** — a benchmarked one-3090 vLLM build. Base `dbirks/Qwen3.8-27B-W4A16-AutoRound` (~19.5 GB) + requant (lm_head/embed/MTP→int8, int4 head, 40k draft vocab) + vLLM **0.28.0** patches (split-KV attn, MTP own-output draft). Budget ~21.8 GB fits 24 GB. MEASURED on one 3090: single-user 118-133 t/s (382 DFlash2), **BATCH C64 ≈ 1,035 t/s aggregate**; context to 268k; MTP included. (vs current llama.cpp 62 single / 93 at 4-up.)
+- [x] PC ready: /home 569 GB free, `~/qwen-serving` absent (clean), python 3.13 (recipe assumes 3.12 → a patch-path/venv fixup, or use the `ghcr.io/syv-ai/...` podman image), no HF token (base likely public). Base DOWNLOAD kicked off (GPU-free, reversible).
+- [ ] EXECUTION FORK: native vLLM-0.28 venv (recommended; I handle the 3.13 patch-path) vs the prebuilt podman image (needs container-GPU). Prep (venv/download/requant/patch/`verify.sh --no-server`) is NON-DISRUPTIVE — qwen-builder stays up. Only serve+benchmark needs the qwen-builder takedown (owner say-so, standing rule). Fallback: keep the qwen-builder unit.
+
+
 
 TL;DR: llama.cpp DOES batch concurrent requests. The 02:0xZ cells were confounded twice — they ran at ~85K context, so a cold prefill dominated the end-to-end wall, and the number labelled "aggregate" was really the PER-REQUEST rate (the llama.cpp metric sums per-slot seconds). A clean re-measure (short "quick job" prompt so decode dominates, warm, each request's own `timings.predicted_per_second` + the concurrent wall) shows concurrency scales. Numbers pasted from the PC logs (`run-conctest.log`/`run-np2test.log`/`run-np2b.log`); full table in `docs/research/findings/MATRIX-L1-RESULTS.md`.
 
