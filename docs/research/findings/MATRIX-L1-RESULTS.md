@@ -29,28 +29,66 @@ Each concurrency cell ran two SYMMETRIC full-length (1000-token) generations at 
 `busy_slots` = llama.cpp `n_busy_slots_per_decode` (≈2 ⇒ both slots genuinely concurrent). The
 `metric` decode t/s is prefill-independent; the end-to-end t/s = total tokens / round wall time.
 
-| Cell | Server config | Load | busy_slots | decode t/s (aggregate, metric) | end-to-end t/s | VRAM MiB |
-|---|---|---|---:|---:|---:|---:|
-| **A** | MTP n=3, `-np 1`, q4_0 (default) | 1 request | 1.000 | **45.27** | **33.10** | 21585 |
-| **Aq** | MTP n=3, `-np 1`, q4_0 | 2 requests | 1.000 (serialized) | 52.13 | 23.45 | 21585 |
-| **G2** | MTP n=3, `-np 2`, q4_0 | 2 concurrent | 1.920 | 21.94 | 7.80 | 21927 |
-| **D2** | no-MTP, `-np 2`, q4_0 | 2 concurrent | 1.984 | 16.36 | 7.83 | 19791 |
+> **CORRECTION (2026-09-16, later the same day, after owner pushback).** The verdict first written
+> here — "`-np 2` halves throughput, buy a 2nd GPU" — was **WRONG**. It was confounded twice: (1)
+> these cells ran at an 85K context, so a large COLD prefill dominated the end-to-end wall and
+> masked the decode; (2) the number I labelled "aggregate decode t/s" is actually the **per-request**
+> rate (the llama.cpp metric counter sums per-slot seconds), so ~16–22 is *one* lane's rate under
+> sharing, not the combined rate. A clean re-measure (below) shows concurrency **HELPS**. The
+> confounded cells are kept for the record; the clean test is the authority.
 
-Decision rule (from the plan): adopt `-np 2` only if aggregate decode ≥ 1.5× A (≥ 68 t/s).
-- G2 (MTP + `-np 2`): 21.94 = **0.48× A → NO.**
-- D2 (no-MTP + `-np 2`): 16.36 = **0.36× A → NO.**
+**CONFOUNDED cells** (85K context, prefill-dominated wall, per-request rate mislabelled "aggregate"):
 
-**Verdict: on a single 3090, `-np 2` genuinely runs both lanes at once (busy_slots ≈ 2) but total
-throughput HALVES or worse.** Two concurrent lanes deliver ~16–22 t/s combined vs 45 t/s for one
-lane; each lane then runs at ~1/4 speed. Stacking two requests on the current `-np 1` is also worse
-(Aq end-to-end 23.45 < A 33.10 — the 2nd request just queues). The single card's compute is SHARED
-between slots, not added. MTP's win is a `-np 1` phenomenon; under `-np 2` it collapses (G2 ~11 t/s
-per slot).
+| Cell | Server config | Load | busy_slots | per-req decode t/s | end-to-end t/s (incl. prefill) |
+|---|---|---|---:|---:|---:|
+| A | MTP n=3, `-np 1`, q4_0 | 1 req | 1.000 | 45.27 | 33.10 |
+| Aq | MTP n=3, `-np 1`, q4_0 | 2 req | 1.000 (serial) | 52.13 | 23.45 |
+| G2 | MTP n=3, `-np 2`, q4_0 | 2 concurrent | 1.920 | 21.94 | 7.80 |
+| D2 | no-MTP, `-np 2`, q4_0 | 2 concurrent | 1.984 | 16.36 | 7.83 |
 
-This VALIDATES the current default (MTP, one 262K slot) and the dispatcher's one-local-lane rule.
-The "89 t/s" reference was a low-context figure; at a real ~85K lane context single-stream is
-45 t/s decode / 33 t/s end-to-end (decode slows with the attention span). **The only way to run two
-concurrent lanes at full speed is a second GPU** (the owner's pending decision — now answered).
+### Clean re-measure (2026-09-16) — the authority
+
+Short "quick job" prompt (prefill ~0.1 s, so it isolates DECODE), warm, 500-token generations,
+reading each request's own `timings.predicted_per_second` and the concurrent wall. Aggregate =
+total tokens decoded / wall.
+
+| Setup | Chats | Aggregate t/s | Per-chat t/s |
+|---|---:|---:|---:|
+| MTP, `-np 1` | 1 | **62.4** | 65 |
+| MTP, `-np 1` | 4 (serial/queued) | 64.2 | 65 each, one at a time |
+| MTP, `-np 2` | 2 (batched) | 60.1 | 30.9 each |
+| **no-MTP, `-np 2`** | **2 (batched)** | **70.6** | 36.3 each, concurrent |
+| **no-MTP, `-np 4`** | **4 (batched)** | **93.0** | 25 each, concurrent |
+| MTP, `-np 4` | 4 (batched) | 62.4 | 16 each |
+| no-MTP, `-np 4` | 1 | 42.6 | 44 |
+
+Source logs (PC): `run-conctest.log` (np1/np4), `run-np2test.log` (MTP-np2 60.1), `run-np2b.log`
+(no-MTP-np2 70.6). **no-MTP aggregate scales monotonically with slot count: 62 → 70.6 → 93** as
+slots go 1 → 2 → 4; MTP does NOT (60.1 at np2, 62.4 at np4 — no gain over single-stream).
+
+**Corrected verdict: concurrency HELPS.** 4 batched chats (no-MTP `-np 4`) do **93 t/s combined vs
+64 serial** — ~1.45× more total throughput on the one card. llama.cpp's continuous batching works.
+Two findings fall out:
+1. **Throughput-vs-latency trade.** One chat with MTP is fastest per-chat (62 t/s); four batched is
+   more TOTAL work (93 t/s) but each chat is slower (~25 t/s). For fire-and-forget build lanes,
+   total throughput wins.
+2. **MTP does NOT stack with batching on this build.** MTP `-np 4` collapses to 62 (16 t/s/chat) —
+   the speculative draft/verify overhead doesn't parallelize. So concurrency ⇒ drop MTP:
+   **fast-single (MTP `-np 1`, 62) OR high-concurrent (no-MTP `-np N`, 93 at N=4)**, not both.
+
+The `-np 1` MTP default is right for running lanes ONE AT A TIME (fastest per-lane). To run several
+lanes at once, no-MTP `-np N` is the win — a 2nd GPU is NOT required for concurrency (it would raise
+the ceiling further, but the one card already gains ~1.45× from batching 4-up). The "89 t/s"
+reference was a low-context figure; at short/quick-job context single-stream MTP is ~62 t/s, at a
+real ~85K lane context ~45 t/s (decode slows with the attention span).
+
+> **Incident during the run (AF-AP-91).** The concurrency probes restarted `qwen-builder` ~7× by
+> hand in a few minutes; the unit's `StartLimitBurst=3` / `StartLimitIntervalSec=5min` tripped, so
+> np2b's `restore -np 1` step logged `restart qwen-builder failed 5` and left the unit `failed`
+> (server DOWN). Recovered with `systemctl --user reset-failed qwen-builder && … start`; confirmed
+> healthy on the `-np 1` MTP baseline. Any restart-per-iteration probe needs `reset-failed` between
+> restarts (or a wider burst limit), and the restore step must treat `failed N` as a server-down
+> finding, not a log line.
 
 ## Lossless single-lane levers (cache-ram, ngram vs MTP, prefill ubatch)
 
@@ -76,16 +114,23 @@ q8_0 only costs decode speed with no context to gain. Both are deferred, not ado
 
 ## Decisions
 
-- **Concurrency:** keep `-np 1` MTP as the default; do NOT enable `-np 2` on one card. Re-open only
-  with a second GPU. (Cells D/D2/E/F/G decided against.)
-- **Lossless levers:** **no change to `harness-ports/bin/qwen-server.sh` defaults.** The measured
-  optimum IS the current unit (MTP n=3, `-np 1`, q4_0, `--cache-ram 8192`, default ubatch). Every
-  tried lever either matched the default (cache-ram) or lost (ngram, ub 2048). The matrix's job was
-  to find a real win or prove none exists at this scale; it proved none.
-- **The bottleneck is the single 24 GB card**, not any server flag. The next real speed lever is
-  hardware (a 2nd GPU) or a model-server upgrade (the DFlash/GDN A/B, gated, future).
-
-- **Concurrency:** keep `-np 1` MTP as the default; do NOT enable `-np 2` on one card. Re-open only
-  with a second GPU. (Cells D/D2/E/F/G decided against.)
-- **Lossless levers:** pending the optimization sweep; any adopted change is written into
-  `harness-ports/bin/qwen-server.sh` defaults with its measurement pasted here.
+- **Concurrency (CORRECTED):** llama.cpp DOES batch — 4 concurrent no-MTP chats = 93 t/s aggregate
+  vs 64 serial (~1.45×). To run several lanes at once, use no-MTP `-np N` (drop MTP under batching).
+  A 2nd GPU is NOT required for concurrency; it would raise the ceiling but the one card already
+  gains from batching.
+  - **Context-per-slot constraint:** `-np N` splits the 262K context into 262K/N per slot. `-np 4`
+    = 65K/slot (build lanes grow past that — overflow). `-np 2` = 131K/slot (fits real lanes). The
+    DEPLOYABLE concurrent config for build lanes is `-np 2` no-MTP — **70.6 t/s aggregate, two lanes
+    at 36 t/s each** (`run-np2b.log`), a +13% aggregate gain over single-stream while each lane runs
+    at ~55% of a solo lane's rate. It needs the Hermes-side window cap noted in
+    `RESEARCH-FINDINGS-1-VERIFIED.md` §4 (each lane must believe its window is the slot size), or
+    lanes overflow exactly as the `-np 4` N5k run did.
+- **Single-lane speed:** MTP `-np 1` is fastest for ONE lane (62 t/s short context, 45 at 85K).
+  Keep it as the default while lanes run one at a time.
+- **Lossless levers:** **no change to the `-np 1` defaults.** cache-ram 32768 matched the default,
+  ngram and ub 2048 lost (see §Lossless).
+- **vLLM:** the real upgrade for high concurrency. Its paged-attention batching beats llama.cpp's
+  AND its speculative decoding (EAGLE-style) stacks with batching — removing the MTP-vs-batch trade.
+  It sits behind OmniRoute like llama.cpp does now (no egress-rule conflict) but is a re-decision of
+  the 2026-09-03 "no vLLM" call and likely a different quant (AWQ/GPTQ/FP8, not this GGUF). If
+  concurrent lanes matter, the data says vLLM is worth the switch.
