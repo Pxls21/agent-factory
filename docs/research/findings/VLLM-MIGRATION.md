@@ -86,8 +86,16 @@ blocked by a CUDA-toolchain version triangle**, not a model problem:
 - The `qwen-builder` llama.cpp unit stays the live server until the container is healthy; it is the
   instant fallback (restore: `systemctl --user reset-failed qwen-builder && … start`).
 
-STATE 2026-09-16 13:0xZ: image pulling; qwen-builder serving; the container run + MTP benchmark
-(1/2/4/7) pending the pull.
+STATE 2026-09-16 17:0xZ — KEEPER (D-032). The container is up and serving Qwen3.8-27B (`qwen3.8-27b`)
+on :8080; measured ~45 tok/s single-request decode, near-linear to ~310 tok/s aggregate at 7 concurrent
+lanes; `qwen-builder` (llama.cpp) is stopped and becomes the manual fallback. Image digest pinned in
+`upstream.lock.yaml`. NOT YET DONE (no hollow green): (a) NAME RECONCILE — the container serves
+`qwen3.8-27b` but OmniRoute's `qwen-local` node + the `agentfactory-*-local` combos forward
+`qwen3.8-27b-local`, so a local-route lane 404s and falls back to cloud until either the two combos are
+repointed to `qwen3.8-27b` (owner OmniRoute admin, one field) or the container is relaunched with
+`--served-model-name qwen3.8-27b-local`; (b) BOOT UNIT — a `--user` systemd unit (user linger is on) plus
+disabling qwen-builder's autostart so they do not collide on :8080/GPU at reboot; (c) per-agent Buzz
+routing (which agents/scopes use local Qwen) is a later design item behind the policy gate.
 
 ## Sources
 
