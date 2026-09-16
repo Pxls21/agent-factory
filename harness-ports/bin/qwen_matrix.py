@@ -154,16 +154,19 @@ def build_corpus(source: Path, target_tokens: int, out_dir: Path, base_url: str,
     for old in out_dir.glob("prompt-*.json"):
         old.unlink()
 
-    # Measure only assistant boundaries, where the exported conversation is valid for replay. Tokenize
-    # independently because llama.cpp's /tokenize accepts one rendered prompt, not an incremental state.
+    # Replay stops at a USER/TOOL boundary, where the model must GENERATE the next assistant turn — a
+    # real decode. A prefix ending at an ASSISTANT turn instead asks the model to speak after a complete
+    # turn: greedy decode emits end-of-turn at once (1 token, predicted_seconds 0) and the round guard
+    # rejects the empty decode (AF-AP-90). Tokenize independently because llama.cpp's /tokenize accepts
+    # one rendered prompt, not an incremental state.
     candidates: list[tuple[list[dict[str, str]], int]] = []
     prefix: list[dict[str, str]] = []
     for message in messages:
         prefix.append(message)
-        if message["role"] == "assistant":
+        if message["role"] in {"user", "tool"}:
             candidates.append((list(prefix), 0))
     if not candidates:
-        raise MatrixError("session export yielded no assistant-complete replay prompt")
+        raise MatrixError("session export yielded no user/tool boundary for a generation prompt")
 
     counts: dict[int, int] = {}
 

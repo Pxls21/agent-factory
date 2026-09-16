@@ -211,11 +211,13 @@ def test_export_and_live_fixture():
             assert str(exc) == "/props returned HTTP 401"
         else:
             raise AssertionError("missing bearer key did not fail")
-        # The first assistant boundary crosses the target; later turns are excluded.
+        # The first user/tool boundary crosses the target; the trailing assistant turn is the model's to
+        # generate — the prompt never ends at an assistant turn (AF-AP-90).
         manifests = QM.build_corpus(export, 4, out, base, secret)
         assert [p.name for p in manifests] == ["prompt-001.json"]
         payload = json.loads((out / "prompt-001.json").read_text())
-        assert [m["role"] for m in payload["messages"]] == ["system", "assistant"]
+        assert [m["role"] for m in payload["messages"]] == ["system", "assistant", "user"]
+        assert payload["messages"][-1]["role"] in {"user", "tool"}
         expected_rendered = "".join(
             f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in payload["messages"]
         )
@@ -238,17 +240,17 @@ def test_export_and_live_fixture():
         assert "api-key=<redacted>" in secret_payload
         assert "sk-<redacted>" in secret_payload
 
-        # A larger but reachable target emits the first target-sized cumulative prompt and preserves tool markers.
-        manifests = QM.build_corpus(export, 15, out, base, secret)
+        # A larger but reachable target emits the first target-sized cumulative prompt, preserves tool
+        # markers, and still ends at a user turn (the trailing assistant turn is the model's to generate).
+        manifests = QM.build_corpus(export, 13, out, base, secret)
         assert [p.name for p in manifests] == ["prompt-001.json"]
         second = json.loads(manifests[0].read_text())
+        assert [m["role"] for m in second["messages"]] == ["system", "assistant", "user", "user"]
         assert second["messages"][2]["role"] == "user"
         assert "tool result (terminal)" in second["messages"][2]["content"]
         assert second["messages"][2]["content"].startswith("<tool_response>")
-        assert second["messages"][-2:] == [
-            {"role": "user", "content": "USER-B"},
-            {"role": "assistant", "content": "ASSISTANT-B"},
-        ]
+        assert second["messages"][-1] == {"role": "user", "content": "USER-B"}
+        assert "ASSISTANT-B" not in json.dumps(second)
         try:
             QM.build_corpus(export, 99, out, base, secret)
         except QM.MatrixError as exc:
