@@ -132,10 +132,11 @@ sd_quote() {
 }
 
 unit() {
-  # Process-substitution failures do not set the while loop's status, so validate in this shell too.
+  # Validate before capturing argv output; argv validates too, but a subshell exit would be silent.
   validate_knobs
-  local exec="" tok
-  while IFS= read -r tok; do exec+="$(sd_quote "$tok") "; done < <(argv)
+  local exec="" tok argv_out
+  argv_out=$(argv) || return $?
+  while IFS= read -r tok; do exec+="$(sd_quote "$tok") "; done <<< "$argv_out"
   cat <<EOF
 [Unit]
 Description=Qwen3.8-27B local build-lane model (llama-server, loopback, API-keyed; FINDINGS-LOCAL-BUILDER-QWEN38 §6)
@@ -204,10 +205,14 @@ verify_inputs() {
   [ -x "$QWEN_LLAMA_SERVER" ] || die "llama-server binary absent or not executable: $QWEN_LLAMA_SERVER" 2
   local model; model=$(resolve_model)
   [ -n "$model" ] && [ -f "$model" ] || die "model GGUF absent under $QWEN_MODEL_REPO_DIR/snapshots/*/$QWEN_MODEL_FILE" 3
+  # Cheap pre-check: the HF blob filename should equal the sha256 (catches wrong downloads instantly).
   local blob; blob=$(basename "$(readlink -f "$model")")
   [ "$blob" = "$QWEN_MODEL_SHA256" ] || die "model identity mismatch: blob $blob, expected sha256 $QWEN_MODEL_SHA256" 3
   local magic; magic=$(head -c 4 "$model")
   [ "$magic" = "GGUF" ] || die "model file is not a GGUF (magic ${magic@Q})" 3
+  # Authority: verify that the actual file bytes hash to the expected sha256.
+  local digest; digest=$(sha256sum "$model" | cut -d' ' -f1)
+  [ "$digest" = "$QWEN_MODEL_SHA256" ] || die "model content sha256 mismatch: computed $digest, expected $QWEN_MODEL_SHA256" 3
 }
 
 curl_key() { curl -s -m "${1:-5}" -H "Authorization: Bearer $(<"$QWEN_KEY_FILE")" "${@:2}"; }

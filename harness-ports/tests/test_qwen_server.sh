@@ -40,16 +40,17 @@ check() { # check <label> <cond-rc> <why>
   echo "         because: $3"
 }
 
-SHA=40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199   # the real blob name = sha256 of the GGUF
 FILE=Qwen3.8-27B-UD-IQ4_XS.gguf
 
 # --- the FAKE inputs (labelled test doubles: a stub binary, a stub HF snapshot tree) --------------------------
 BIN="$TMP/llama-server"; printf '#!/bin/sh\necho "version: 1 (fake)"\n' > "$BIN"; chmod +x "$BIN"
 REPO="$TMP/models--unsloth--Qwen3.8-27B-GGUF"
 mkdir -p "$REPO/snapshots/4ca7" "$REPO/blobs"
-printf 'GGUF\x03\x00\x00\x00rest' > "$REPO/blobs/$SHA"
+printf 'GGUF\x03\x00\x00\x00rest' > "$TMP/fixture-gguf"
+SHA=$(sha256sum "$TMP/fixture-gguf" | awk '{print $1}')   # content-derived: identity check verifies bytes
+mv "$TMP/fixture-gguf" "$REPO/blobs/$SHA"
 ln -s "../../blobs/$SHA" "$REPO/snapshots/4ca7/$FILE"
-export QWEN_LLAMA_SERVER="$BIN" QWEN_MODEL_REPO_DIR="$REPO" QWEN_HOME="$TMP/qwen-home" \
+export QWEN_LLAMA_SERVER="$BIN" QWEN_MODEL_REPO_DIR="$REPO" QWEN_MODEL_SHA256="$SHA" QWEN_HOME="$TMP/qwen-home" \
        QWEN_KEY_FILE="$TMP/cfg/api-key" QWEN_PORT=65123 QWEN_HOST=127.0.0.1
 
 bash -n "$QS"; check "bash -n qwen-server.sh" $? "the script parses"
@@ -192,6 +193,9 @@ grep -qx 'StartLimitBurst=3' "$UNIT"; check "unit StartLimitBurst=3" $? "a model
 # a token that needs every escape: backslash, quote, dollar, percent
 QWEN_ALIAS='a\b"c$d%e' bash "$QS" unit | grep -qF -- '"--alias" "a\\b\"c$$d%%e"'
 check "sd_quote escapes \\ \" \$ % per systemd.syntax(7)" $? "\\\\ \\\" \$\$ %% — a literal in each class survives"
+# Portability: unit renderer must not use bash process substitution (the /dev/fd dependency class).
+! grep -E '<\(|>\(' "$QS"
+check "no process substitution <( or >( in qwen-server.sh" $? "portability: no /dev/fd dependency"
 
 # --- keygen: 0600, 64 hex, never printed, idempotent ---------------------------------------------------------
 OUT=$(bash "$QS" keygen); rc=$?
@@ -222,6 +226,15 @@ check "install identity refusal creates no persistent paths" $? "rc=$rc: $OUT"
 REPO2="$TMP/models-notgguf"; mkdir -p "$REPO2/snapshots/s" "$REPO2/blobs"; printf 'NOTGGUF' > "$REPO2/blobs/$SHA"; ln -s "../../blobs/$SHA" "$REPO2/snapshots/s/$FILE"
 OUT=$(QWEN_MODEL_REPO_DIR="$REPO2" bash "$QS" verify 2>&1); rc=$?
 [ $rc -eq 3 ] && case "$OUT" in *"not a GGUF"*) true;; *) false;; esac; check "verify rc 3 on a non-GGUF blob with the right name" $? "rc=$rc: $OUT"
+# SECURITY red control: a GGUF whose bytes are replaced in place (same filename, same GGUF magic) MUST be
+# rejected. On the unfixed code this test FAILS (verify accepts the tampered blob because it only checks
+# the filename, not the content hash). After adding the byte sha256 check it PASSES.
+TAMPERED="$TMP/models-tampered"; mkdir -p "$TAMPERED/snapshots/s" "$TAMPERED/blobs"
+printf 'GGUFtampered-content-not-the-real-model' > "$TAMPERED/blobs/$SHA"
+ln -s "../../blobs/$SHA" "$TAMPERED/snapshots/s/$FILE"
+OUT=$(QWEN_MODEL_REPO_DIR="$TAMPERED" bash "$QS" verify 2>&1); rc=$?
+[ $rc -eq 3 ] && case "$OUT" in *"content sha256 mismatch"*) true;; *) false;; esac
+check "SECURITY: tampered GGUF with correct filename and magic is rejected by content sha256" $? "rc=$rc: $OUT"
 
 # --- guard: classify live lane routes from the real child process environment -------------------------------
 LANES="$TMP/lanes"; mkdir -p "$LANES"
