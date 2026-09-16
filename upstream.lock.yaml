@@ -153,6 +153,8 @@ local_model_server:
     digest: sha256:c52d9033527df5249d2f7306b35173a47f4f87d45bb60927fbe93fdb4986aacb
     base_model: dbirks/Qwen3.8-27B-W4A16-AutoRound
     engine: "vLLM 0.28 (MTP/batch), one RTX 3090, OpenAI-compatible on loopback :8080"
+    served_model_names: [qwen3.8-27b-local, qwen3.8-27b]  # qwen3.8-27b-local = the id OmniRoute's agentfactory-*-local combos forward
+    boot_unit: "deploy/qwen.container (--user rootless podman Quadlet; Restart=always; default.target.wants; linger on)"
     role: keeper_local_model_server_behind_omniroute
-    replaces: "the llama.cpp qwen-builder unit (D-027), retained as the manual fallback"
+    replaces: "the llama.cpp qwen-builder unit (D-027), retained as the manual fallback (autostart disabled 2026-09-16)"
     adopted: "2026-09-16 (owner; D-032); provenance docs/research/findings/VLLM-MIGRATION.md"

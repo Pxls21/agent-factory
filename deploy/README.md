@@ -4,6 +4,10 @@ No runnable production Compose file is included yet. The first-party adapters, p
 
 `topology.blueprint.yaml` is a planning inventory and must not be passed to Docker Compose.
 
+## Deployed non-spine units
+
+- `qwen.container` — the PC-side rootless Quadlet for the vLLM Qwen3.8-27B local model server (D-032), the keeper build/verify backend behind OmniRoute. This is real, running dev/build infrastructure on the owner's PC — NOT part of the production spine below, which is still planned. It sits behind OmniRoute (rule 3), never a direct egress. See `docs/research/findings/VLLM-MIGRATION.md` and `PC-BRIDGE.md`.
+
 ## Planned production deployables
 
 | Unit | Strategy | Persistent data |

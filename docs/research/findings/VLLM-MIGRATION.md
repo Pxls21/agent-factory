@@ -86,16 +86,24 @@ blocked by a CUDA-toolchain version triangle**, not a model problem:
 - The `qwen-builder` llama.cpp unit stays the live server until the container is healthy; it is the
   instant fallback (restore: `systemctl --user reset-failed qwen-builder && … start`).
 
-STATE 2026-09-16 17:0xZ — KEEPER (D-032). The container is up and serving Qwen3.8-27B (`qwen3.8-27b`)
-on :8080; measured ~45 tok/s single-request decode, near-linear to ~310 tok/s aggregate at 7 concurrent
-lanes; `qwen-builder` (llama.cpp) is stopped and becomes the manual fallback. Image digest pinned in
-`upstream.lock.yaml`. NOT YET DONE (no hollow green): (a) NAME RECONCILE — the container serves
-`qwen3.8-27b` but OmniRoute's `qwen-local` node + the `agentfactory-*-local` combos forward
-`qwen3.8-27b-local`, so a local-route lane 404s and falls back to cloud until either the two combos are
-repointed to `qwen3.8-27b` (owner OmniRoute admin, one field) or the container is relaunched with
-`--served-model-name qwen3.8-27b-local`; (b) BOOT UNIT — a `--user` systemd unit (user linger is on) plus
-disabling qwen-builder's autostart so they do not collide on :8080/GPU at reboot; (c) per-agent Buzz
-routing (which agents/scopes use local Qwen) is a later design item behind the policy gate.
+STATE 2026-09-16 18:2xZ — KEEPER (D-032), PRODUCTIONIZED. The container runs under a `--user` rootless
+Quadlet (`deploy/qwen.container`, mirrored to `~/.config/containers/systemd/qwen.container`) and serves
+Qwen3.8-27B under BOTH `qwen3.8-27b-local` and `qwen3.8-27b` on :8080; measured ~45 tok/s single-request
+decode, near-linear to ~310 tok/s aggregate at 7 concurrent lanes. Image digest pinned in
+`upstream.lock.yaml`. DONE + verified live this session:
+- (a) NAME RECONCILE — the served name is now `qwen3.8-27b-local` (the id OmniRoute's `qwen-local` node +
+  the `agentfactory-*-local` combos already forward, and the same name the llama.cpp `qwen-builder`
+  served), so local-route lanes resolve with NO OmniRoute change; a 1-token completion under
+  `qwen3.8-27b-local` returned `model=qwen3.8-27b-local`. Set via `EXTRA_ARGS` because the image hardcodes
+  `--served-model-name qwen3.8-27b` and appends `${EXTRA_ARGS}` last, and vLLM's `--served-model-name` is
+  last-occurrence-wins. Because both servers present the same name on the same port, primary↔fallback is
+  transparent to OmniRoute.
+- (b) BOOT UNIT — the Quadlet has `Restart=always` and is wired into `default.target.wants` (linger on),
+  so it survives reboot; `qwen-builder`'s autostart is DISABLED (`systemctl --user disable qwen-builder`;
+  the unit is kept installed as the manual fallback) so they no longer collide on :8080/GPU at boot.
+
+STILL PENDING (no hollow green): (c) per-agent Buzz routing — which Buzz agents/scopes use local Qwen is a
+later design item behind the policy gate, not wired today.
 
 ## Sources
 

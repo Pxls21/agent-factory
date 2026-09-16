@@ -1,0 +1,39 @@
+# Qwen3.8-27B vLLM local model server (keeper local backend behind OmniRoute; D-032).
+# Provenance: agent-factory docs/research/findings/VLLM-MIGRATION.md + upstream.lock.yaml (digest pin).
+# Reconciles the served name to qwen3.8-27b-local (what OmniRoute's agentfactory-*-local combos forward),
+# and answers the bare qwen3.8-27b too. Adds boot persistence + restart. Replaces the manual `podman run`.
+#
+# This is the deployed copy of the PC-side rootless Quadlet at
+#   ~/.config/containers/systemd/qwen.container  (systemctl --user, linger on).
+# Deploy: copy to that path, `systemctl --user daemon-reload`, `systemctl --user start qwen`.
+# It requires the syv-ai rootless CDI spec (~/cdi/nvidia.yaml + containers.conf cdi_spec_dirs),
+# the prepared model tree at ~/qwen-serving/models, and the api-key file at
+# ~/.config/qwen-builder/api-key (mounted read-only to /app/api_key.txt; the entrypoint reads it).
+# Fallback = the llama.cpp qwen-builder unit (D-027), which serves the SAME name on the SAME port:
+#   systemctl --user stop qwen ; podman rm -f qwen ; systemctl --user reset-failed qwen-builder ; systemctl --user start qwen-builder
+[Unit]
+Description=Qwen3.8-27B vLLM local model server (behind OmniRoute; D-032)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=qwen
+Image=ghcr.io/syv-ai/qwen38-27b-rtx3090@sha256:c52d9033527df5249d2f7306b35173a47f4f87d45bb60927fbe93fdb4986aacb
+Exec=batch
+PublishPort=8080:8080
+Volume=qwen-cache:/cache
+Volume=/home/rocco/qwen-serving/models:/app/models
+Volume=/home/rocco/.config/qwen-builder/api-key:/app/api_key.txt:ro
+Environment=PORT=8080
+Environment=SPEC=mtp
+Environment=MAX_LEN=131072
+Environment=PREFIX_CACHE=1
+Environment="EXTRA_ARGS=--served-model-name qwen3.8-27b-local qwen3.8-27b"
+PodmanArgs=--ipc=host --device nvidia.com/gpu=all
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
