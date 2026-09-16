@@ -106,3 +106,25 @@ def test_a_source_without_the_pin_is_refused_and_leaves_nothing(tmp_path: Path, 
     assert result.returncode == 3
     assert "commit-absent" in result.stderr
     assert not (tmp_path / "pin" / "fubuki-os").exists()
+
+
+def test_the_sync_script_needs_no_dev_fd(  # review 2026-09-15: "every venue" must not rely on /dev/fd
+) -> None:
+    """The header promises the script runs on every venue. Process substitution `>(…)`/`<(…)` is bash's only
+    /dev/fd dependency here (four tests failed where /dev/fd was absent); assert it is gone — the source-text half
+    of the fix, paired with the behavioral controls below and the four provisioning tests above."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert ">(" not in text, "output process substitution needs /dev/fd — not mounted on every venue"
+    assert "<(" not in text, "input process substitution needs /dev/fd — not mounted on every venue"
+
+
+def test_a_nonrepo_source_fails_loudly_and_keeps_gits_error(tmp_path: Path) -> None:
+    """The portable clone filter must preserve git's exit code and its real stderr (only the benign 'shallow' note
+    is dropped). A source that is not a repository makes `git clone` itself fail before any checkout — the failure
+    and its message must surface, and the stderr tempfile must be cleaned up. No FUBUKI_OS_ROOT: the clone fails first."""
+    dest = tmp_path / "pin"
+    result = _sync(dest, tmp_path / "not-a-repo")  # nonexistent source → git clone fails at the first clone
+    assert result.returncode != 0
+    assert result.returncode != 3  # not a die-3 provisioning refusal — the clone itself failed, code preserved
+    assert "does not exist" in result.stderr or "not a git repository" in result.stderr
+    assert list(dest.glob(".fubuki-clone-stderr.*")) == []  # the stderr tempfile is removed even on failure

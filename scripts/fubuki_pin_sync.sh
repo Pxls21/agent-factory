@@ -35,10 +35,21 @@ PIN="$DEST/fubuki-os"; OTHER="$DEST/fubuki-os-other"
 head_of() { git -C "$1" rev-parse HEAD; }
 tree_of() { git -C "$1" rev-parse 'HEAD^{tree}'; }
 clean() { [ -z "$(git -C "$1" status --porcelain)" ]; }
+# Clone quietly, dropping git's benign "source repository is shallow" note from stderr, but keeping every other
+# line and the exit code. A tempfile in the already-created $DEST does this on EVERY venue; the process
+# substitution it replaces needs /dev/fd, which the header promises but not every venue mounts (review
+# 2026-09-15: four tests failed where /dev/fd was absent — the claim was broader than the impl).
+git_clone_quiet() { # $1=source $2=dest
+  local err="$DEST/.fubuki-clone-stderr.$$" rc
+  git clone -q "$1" "$2" 2> "$err" && rc=0 || rc=$?
+  grep -v 'shallow' "$err" >&2 || true
+  rm -f "$err"
+  return "$rc"
+}
 
 mkdir -p "$DEST"
 if [ ! -d "$PIN/.git" ]; then
-  git clone -q "$SOURCE" "$PIN" 2> >(grep -v 'shallow' >&2 || true)
+  git_clone_quiet "$SOURCE" "$PIN"
   git -C "$PIN" checkout -q -B pinned "$COMMIT" 2>/dev/null || { rm -rf "$PIN"; die 3 "commit-absent: $COMMIT is not in $SOURCE"; }
 fi
 [ "$(head_of "$PIN")" = "$COMMIT" ] || die 3 "commit-mismatch: $PIN is at $(head_of "$PIN"), the lock pins $COMMIT (a drifted checkout is a finding; remove it by hand to re-provision)"
@@ -46,7 +57,7 @@ clean "$PIN" || die 3 "dirty: $PIN has local changes (a dirty pinned checkout is
 [ -d "$PIN/src/fubuki_os" ] || die 3 "source-missing: $PIN/src/fubuki_os"
 
 if [ ! -d "$OTHER/.git" ]; then
-  git clone -q "$PIN" "$OTHER" 2> >(grep -v 'shallow' >&2 || true)
+  git_clone_quiet "$PIN" "$OTHER"
   git -C "$OTHER" checkout -q -B pinned "$COMMIT"
   git -C "$OTHER" -c user.name=fubuki-pin-sync -c user.email=fubuki-pin-sync@agent-factory.invalid \
     commit -q --allow-empty -m "negative control: one empty commit on top of the pinned $COMMIT (identical tree)"
