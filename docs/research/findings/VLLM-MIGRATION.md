@@ -102,8 +102,12 @@ decode, near-linear to ~310 tok/s aggregate at 7 concurrent lanes. Image digest 
   so it survives reboot; `qwen-builder`'s autostart is DISABLED (`systemctl --user disable qwen-builder`;
   the unit is kept installed as the manual fallback) so they no longer collide on :8080/GPU at boot.
 
-STILL PENDING (no hollow green): (c) per-agent Buzz routing — which Buzz agents/scopes use local Qwen is a
-later design item behind the policy gate, not wired today.
+(c) BUZZ LOCAL-MODEL TEAMMATE — PROVEN live 2026-09-16: a standalone `buzz-agent` ACP smoke held a session
+backed by Qwen via OmniRoute (`buzz_agent::llm: call completed model="qwen-local/qwen3.8-27b-local"
+provider=OpenAi`), no relay/pairing touched. Recorded: D-033, ADR-0007, `docs/LOCAL-MODEL-GUIDE.md` (the
+portable how-to). STILL PENDING (no hollow green): which Buzz agents/scopes get a Qwen teammate, a policy gate
+for the buzz-agent tool path (rule 9 — so a Qwen teammate is chat-only until then), a dedicated OmniRoute Buzz
+key, and pairing (the owner's per-community step in the Buzz app).
 
 ## Sources
 
