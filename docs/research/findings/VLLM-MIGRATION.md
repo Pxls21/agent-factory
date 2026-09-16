@@ -56,6 +56,39 @@ All facts below are from live PC probes (read-only; GPU untouched) and web resea
 - Serving mode: **batch mode** (SPEC=mtp, GPU_UTIL 0.90) for the fire-and-forget lanes; single-user
   DFlash2 mode is available if a latency-first path is ever wanted.
 
+## Serving on the PC — the toolchain reality (2026-09-16)
+
+The model is prepared and `verify.sh` green (above). **Native vLLM serving on this bare-metal PC is
+blocked by a CUDA-toolchain version triangle**, not a model problem:
+- vLLM 0.28.0 is built for **CUDA 13** (needs `libcudart.so.13`); the box's CUDA **toolkit is 12.9**.
+- With `CUDA_HOME=/usr/local/cuda` + PATH set (nvcc 12.9 found), torch.compile/inductor works, but
+  **flashinfer** can't JIT its fp8-KV attention kernel: the recipe pins `flashinfer-cubin==0.6.13`
+  while the *unpinned* `flashinfer-python` pulled 0.6.16.post3 (no 0.6.16 cubin exists) → JIT → ninja
+  exit 1.
+- Pinning `flashinfer-python==0.6.13` to match dragged torch back to **cu128**, which then breaks vLLM
+  (`libcudart.so.13: cannot open`). vLLM(cu130) ↔ flashinfer(cu128) ↔ toolkit(12.9) don't reconcile
+  natively without installing the CUDA 13.0 toolkit (a sudo step).
+
+**The path: the vendor's Docker image via ROOTLESS CDI — no sudo, no bypass tool.**
+- `ghcr.io/syv-ai/qwen38-27b-rtx3090:latest` (~9.5 GB) bundles the exact matched
+  torch+vLLM+flashinfer+CUDA 13, so the triangle vanishes.
+- `nvidia-ctk cdi generate --output=$HOME/cdi/nvidia.yaml` runs WITHOUT root (reads driver info via
+  NVML); `~/.config/containers/containers.conf` `[engine] cdi_spec_dirs=["/home/rocco/cdi", …]` lets
+  rootless podman 5.7 inject `--device nvidia.com/gpu=all`. (A third-party "nopasswd-sudo" tool the
+  owner offered was DECLINED — running untrusted root-escalation on a production box is exactly what
+  the no-sudo-workaround rule forbids; rootless CDI made it moot.)
+- Run (batch/MTP, port 8080, mount the already-prepared model so there is no 20 GB re-download):
+  `podman run -d --name qwen --device nvidia.com/gpu=all --ipc=host -p 8080:8080 -e PORT=8080
+  -e VLLM_API_KEY=$(cat ~/.config/qwen-builder/api-key) -v ~/qwen-serving/models:/app/models
+  -v qwen-cache:/cache ghcr.io/syv-ai/qwen38-27b-rtx3090:latest batch`
+  (first boot ~15 min: torch.compile + graphs + flashinfer JIT, all inside the matched image).
+  Container-measured batch: **~1,042 tok/s @ C64**; `single` profile = DFlash2 (owner chose MTP/batch).
+- The `qwen-builder` llama.cpp unit stays the live server until the container is healthy; it is the
+  instant fallback (restore: `systemctl --user reset-failed qwen-builder && … start`).
+
+STATE 2026-09-16 13:0xZ: image pulling; qwen-builder serving; the container run + MTP benchmark
+(1/2/4/7) pending the pull.
+
 ## Sources
 
 - https://huggingface.co/Qwen/Qwen3.8-27B-FP8

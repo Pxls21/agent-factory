@@ -96,6 +96,15 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-16 13:02Z vLLM MIGRATION — model READY + verified; native serve blocked by a CUDA-toolchain triangle → the Docker image via ROOTLESS CDI (no sudo); image pulling; qwen-builder still serving:**
+
+Full detail in `docs/research/findings/VLLM-MIGRATION.md` §"Serving reality". Owner chose **MTP/batch** (DFlash2 is single-user only — measured: it doesn't stack with parallelism, collapses past ~3 concurrent).
+
+- [x] MODEL DONE: `dbirks/Qwen3.8-27B-W4A16-AutoRound` downloaded, requant (lm_head/embed/MTP→int8, int4 head, 40k draft vocab, DFlash2 drafter), 22 vLLM-0.28 patches applied, `verify.sh --no-server` GREEN (0 failures), at `~/qwen-serving/models`.
+- [x] NATIVE serve BLOCKED (toolchain triangle, not the model): vLLM 0.28 wants CUDA 13 (`libcudart.so.13`), box toolkit is 12.9; flashinfer JIT fails (cubin 0.6.13 vs python 0.6.16, no 0.6.16 cubin); pinning python 0.6.13 drags torch→cu128 → vLLM breaks. Won't reconcile without a CUDA-13 toolkit (sudo). Lesson: use the vendor's matched-toolchain CONTAINER, don't fight a bare-metal CUDA-version triangle.
+- [x] SECURITY: owner offered a third-party `nopasswd-sudo` GitHub tool — DECLINED (untrusted root-escalation on the production box hosting the live relay/OmniRoute; the never-work-around-sudo rule). ROOTLESS CDI made sudo unnecessary: `nvidia-ctk cdi generate` runs as user → `~/cdi/nvidia.yaml`; `~/.config/containers/containers.conf` points rootless podman 5.7 at it.
+- [ ] IN FLIGHT: pulling `ghcr.io/syv-ai/qwen38-27b-rtx3090:latest` (~9.5 GB, matched toolchain). NEXT (GPU): stop qwen-builder → `podman run … --device nvidia.com/gpu=all -p 8080:8080 -e PORT=8080 -e VLLM_API_KEY=<qwen key> -v ~/qwen-serving/models:/app/models … :latest batch` → benchmark MTP 1/2/4/7 (container-measured batch ~1,042 t/s @ C64) → wire OmniRoute (served-model-name `qwen3.8-27b` vs route's `qwen3.8-27b-local` to reconcile). qwen-builder = live fallback until the container is healthy.
+
 **2026-09-16 05:16Z vLLM MIGRATION — the one-3090 path for Qwen3.8 FOUND by research (owner: must stay 3.8, the on-disk 3.6 is OUT); base downloading; cutover needs owner go for the qwen-builder takedown:**
 
 Full research + the exact recipe in `docs/research/findings/VLLM-MIGRATION.md`. Model stays Qwen3.8-27B; vLLM behind OmniRoute (served-model-name `qwen3.8-27b-local`) — sole-egress unchanged.
