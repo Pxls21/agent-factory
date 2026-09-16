@@ -28,6 +28,11 @@ out="$(bash "$HERE/test_pc_lane_dispatcher.sh" 2>&1)"; rc=$?
 printf '%s\n' "$(printf '%s' "$out" | tail -1)"
 [ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
 
+printf '%-34s ' "test_pc_lane_admission.sh"
+out="$(bash "$HERE/test_pc_lane_admission.sh" 2>&1)"; rc=$?
+printf '%s\n' "$(printf '%s' "$out" | tail -1)"
+[ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
+
 printf '%-34s ' "test_qwen_server.sh"
 out="$(bash "$HERE/test_qwen_server.sh" 2>&1)"; rc=$?
 printf '%s\n' "$(printf '%s' "$out" | tail -1)"

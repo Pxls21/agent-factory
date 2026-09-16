@@ -46,11 +46,58 @@ set -uo pipefail
 
 die() { echo "pc_lane: $*" >&2; exit 64; }
 
+# --- headroom admission (testable unit) ----------------------------------------
+# Defaults: the 2026-09-15 incident — 4 lanes hit full swap + 3 MB local disk.
+# 256 MB disk catches a write-space crisis; 512 MB memory catches swap exhaustion.
+: "${PC_LANE_MIN_DISK_MB:=256}"
+: "${PC_LANE_MIN_MEM_MB:=512}"
+
+# _admit_verdict <local_disk_mb> <pc_mem_mb> <pc_disk_mb>
+#   -1 = unknown (probe failed) — skipped (fail-open).
+#   Prints "admit" or "defer: <reason>". Returns 0 or 1.
+_admit_verdict() {
+  local ld="$1" pm="$2" pd="$3"
+  [ "$ld" -ge 0 ] 2>/dev/null && [ "$ld" -lt "$PC_LANE_MIN_DISK_MB" ] && {
+    echo "defer: local disk ${ld} MB below floor ${PC_LANE_MIN_DISK_MB} MB"; return 1; }
+  [ "$pm" -ge 0 ] 2>/dev/null && [ "$pm" -lt "$PC_LANE_MIN_MEM_MB" ] && {
+    echo "defer: PC memory ${pm} MB below floor ${PC_LANE_MIN_MEM_MB} MB"; return 1; }
+  [ "$pd" -ge 0 ] 2>/dev/null && [ "$pd" -lt "$PC_LANE_MIN_DISK_MB" ] && {
+    echo "defer: PC disk ${pd} MB below floor ${PC_LANE_MIN_DISK_MB} MB"; return 1; }
+  if [ "$pm" -lt 0 ] 2>/dev/null && [ "$pd" -lt 0 ] 2>/dev/null; then
+    echo "pc_lane: headroom unknown: PC probe unreachable — admitted (fail-open)" >&2
+  fi
+  echo "admit"
+  return 0
+}
+
+# _parse_free_mem_mb: stdin = free -m output -> stdout = available MB (or -1).
+_parse_free_mem_mb() {
+  awk 'NR==1{for(i=1;i<=NF;i++)if($i=="available")ac=i+1}
+       /^Mem:/{if(ac+0>0)print $(ac);else print -1;f=1}
+       END{if(!f)print -1}'
+}
+
+# _parse_df_avail_mb: stdin = df -P output -> stdout = available MB (or -1).
+_parse_df_avail_mb() {
+  awk 'NR==2{print int($4/1024);f=1} END{if(!f)print -1}'
+}
+
 ROOT="$(cd "$(dirname "${PC_LANE_ORIG:-${BASH_SOURCE[0]}}")/.." && pwd)"
 [ -f "$ROOT/.pc-bridge.env" ] && . "$ROOT/.pc-bridge.env"
 # The env file holds plain KEY=value lines; the bridge() helper below is a python child and
 # only sees EXPORTED variables (bit 2026-09-03 on the first real lane: KeyError PC_BRIDGE_URL).
 export PC_BRIDGE_URL PC_BRIDGE_TOKEN 2>/dev/null || true
+
+# admit-check subcommand — the testable unit for headroom admission.
+if [ "${1:-}" = "admit-check" ]; then
+  shift
+  case "${1:-}" in
+    --parse-free) _parse_free_mem_mb; exit;;
+    --parse-df) _parse_df_avail_mb; exit;;
+    *) [ $# -ge 3 ] || die "admit-check: requires 3 args (local_disk_mb pc_mem_mb pc_disk_mb)"
+       _admit_verdict "$1" "$2" "$3"; exit $?;;
+  esac
+fi
 
 BRIEF="${1:-}"; HARNESS="${2:-codex}"; ROLE="${3:-}"
 [ -n "$BRIEF" ] || die "usage: scripts/pc_lane.sh <brief-file> [codex|hermes] [role]"
@@ -100,6 +147,27 @@ server_effort_for_role() { # role [HERMES_MODEL] [HERMES_REASONING] -> the serve
 }
 SERVER_EFFORT="${LANE_SERVER_EFFORT:-$(server_effort_for_role "${ROLE:-}" "${HERMES_MODEL:-}" "${HERMES_REASONING:-}")}"
 if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-<cloud route>}"; exit 0; fi
+
+# --- 0. headroom admission check -----------------------------------------------
+if [ "${PC_LANE_SKIP_ADMIT:-0}" != 1 ]; then
+  _adm_ld="$(df -P "${PC_LANE_LOCAL_MOUNT:-$ROOT}" 2>/dev/null | _parse_df_avail_mb)"
+  [ "$_adm_ld" -ge 0 ] 2>/dev/null || _adm_ld=-1
+  _adm_pm=-1; _adm_pd=-1
+  if declare -F bridge >/dev/null 2>&1; then
+    _adm_raw="$(bridge 'free -m 2>/dev/null; echo __ADMSEP__; df -P /home 2>/dev/null' 2>/dev/null)" || _adm_raw=""
+    if [ -n "$_adm_raw" ]; then
+      _adm_pm="$(printf '%s\n' "$_adm_raw" | sed '/__ADMSEP__/,$d' | _parse_free_mem_mb)"
+      _adm_pd="$(printf '%s\n' "$_adm_raw" | sed '1,/__ADMSEP__/d' | _parse_df_avail_mb)"
+    fi
+  fi
+  [ "$_adm_pm" -ge 0 ] 2>/dev/null || _adm_pm=-1
+  [ "$_adm_pd" -ge 0 ] 2>/dev/null || _adm_pd=-1
+  _adm_v="$(_admit_verdict "$_adm_ld" "$_adm_pm" "$_adm_pd")"
+  _adm_rc=$?
+  if [ $_adm_rc -ne 0 ]; then
+    echo "pc_lane: DEFERRED — $_adm_v" >&2; exit 75
+  fi
+fi
 
 # --- 1. ship the brief -------------------------------------------------------
 # base64 so arbitrary brief content (quotes, $(), backticks) survives the trip
