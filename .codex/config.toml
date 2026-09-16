@@ -190,7 +190,7 @@ description = "The BUILD lane: turns a settled design into verified code, proves
 config_file = "./agents/code-implementer.toml"
 
 [agents.adversarial-verifier]
-description = "The VERIFY lane: attacks a finished increment or claim against the FULL contract (never the builder's own cases), reproduces every claim it relies on, runs the minimum attack set, and returns MERGE-READY / NOT-READY with evidence. Reports everything found, without severity filtering."
+description = "The VERIFY lane: attacks a finished increment or claim against the FULL frozen contract (never the builder's own cases), reproduces every claim it relies on through the real production path, and returns a GATE RECOMMENDATION (MERGE-READY / MERGE-READY-WITH-FOLLOWUPS / NOT-READY / CONTRACT-INVALID). Reports every observation with no severity filter; a strict blocking predicate governs readiness; the coordinator owns the gate."
 config_file = "./agents/adversarial-verifier.toml"
 
 [agents.evidence-gatherer]

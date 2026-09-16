@@ -287,7 +287,7 @@ seams; reachability from the LIVE entry point) · 2 measure before designing (va
 mint a constant) · 3 blast radius (`impact` before edit, `detect-changes` before commit) · 4 build (the light loop; fail-soft is
 fail-LOUD; spine changes default-OFF) · 5 adversarial verify (mutation audits on scratch copies; reproduce every load-bearing claim
 AND its mechanism; the kill-switch question; `/bug-echo` on every defect found — the independent verify is a SEPARATE lane, never
-self-accepted) · 6 close (adjacent consumers, docs + ledger the same increment, an honest NOT-built list). Retrospective at every
+self-accepted; exhaustive findings, bounded blockers (D-031)) · 6 close (adjacent consumers, docs + ledger the same increment, an honest NOT-built list). Retrospective at every
 close: bake the general lesson into its SKILL, or say "nothing to bake". Meta-rules: failure-aware waits, per-cycle caps, raw
 output before filters, ~3 falsified hypotheses then hand the evidence back.
 

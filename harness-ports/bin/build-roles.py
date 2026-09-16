@@ -46,8 +46,10 @@ ROLES = {
                         "proves it mechanically, and escalates rather than improvises "
                         "when reality contradicts the brief.",
     "adversarial-verifier": "The VERIFY lane: attacks a finished increment against the "
-                            "FULL contract, reproduces every claim it relies on, and "
-                            "returns MERGE-READY / NOT-READY with evidence.",
+                            "FULL frozen contract, reproduces every claim it relies on, "
+                            "reports every observation with no severity filter, and returns a "
+                            "GATE RECOMMENDATION (MERGE-READY / MERGE-READY-WITH-FOLLOWUPS / "
+                            "NOT-READY / CONTRACT-INVALID); the coordinator owns the gate.",
     "evidence-gatherer": "The EXPLORE lane: collects exhaustive file:line-cited evidence "
                          "WITHOUT concluding. It must not propose root causes, verdicts, "
                          "or fixes.",

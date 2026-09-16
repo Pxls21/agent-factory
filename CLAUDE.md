@@ -575,7 +575,14 @@ Phase index (each expanded in the skill):
   on the clean tree; spine behavior changes ship default-OFF; every fail-soft is fail-LOUD
   (config-presence ≠ delivery — acceptance-probe external sinks; events need a real, shared
   production sink); re-Read before Edit after out-of-band writes; pre-init every `finally` local.
-- **Phase 5 — adversarial verify.** Done = a hostile reviewer failed to break it: loaded briefs,
+- **Phase 5 — adversarial verify.** Discovery stays exhaustive; DISPOSITION is disciplined — a
+  finding blocks only if it meets the blocking predicate (contract-mapped · canonically reproduced
+  through the real production path · materially effective · a concrete discriminator · in-boundary;
+  a red test is necessary but not sufficient), the lane emits a GATE RECOMMENDATION
+  (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`) not a verdict,
+  and the repair budget is ONE focused repair keyed by component/proof ID + frozen contract
+  revision + production-code digest, never reset by a renamed wave (skill `contract-gate`; D-031).
+  Done = a hostile reviewer failed to break it: loaded briefs,
   mutation audits (scratchpad-copy restore ONLY — never git-restore/stash a shared tree; never
   disable a guard while tests point at a real protected resource), independently reproduce every
   load-bearing claim AND its mechanism (the Chairman's netns probe was reproduced before it

@@ -29,11 +29,10 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
                         │  self-declared cases prove nothing
               3. EVALUATE (adversarial-verifier agent — Opus 5 lane, separate context,
                         │  graded against the FULL contract)
-              4. failures ──► back to 2 (builder receives the verbatim failure list)
+              4. QUALIFYING BLOCKERS ──► ONE focused repair, then reverify (§4 budget)
                         │
-              ≤3 rounds; still failing ─► FAIL CLOSED: surface the blocker to the
-                                          main loop / owner. Never soften the contract
-                                          to mint a pass.
+              budget spent ─► HONEST BLOCKED decision for human prioritization.
+                              Never soften the contract to mint a pass.
 ```
 
 1. **Negotiate the contract BEFORE any code.** The coordinator (main loop) turns the brief /
@@ -54,23 +53,37 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
 3. **Adversarially evaluate.** Dispatch `adversarial-verifier` (Opus 5) with the contract and
    the diff — a separate context that did not watch the build. It executes the full contract
    plus its minimum attack set and returns the verbatim failure list.
-4. **Repair loop.** Failures go back to the builder as data (`build(failures)`), not as a new
-   design conversation. Bounded: 3 rounds default. Budget exhausted → the increment is BLOCKED,
-   reported honestly; never route around with a stub or a softened assertion.
-   **THE CAP IS ENFORCED, NOT ADVISORY (owner mandate 2026-09-02 — RP-30b I3 ran SEVEN
-   verify rounds under this very rule).** Round 3 returns NOT-READY → the coordinator does
-   NOT author a round-4 repair brief. It stops, root-causes the CHURN in the main loop
-   (why did the builder's exit gate pass what the verifier failed?), fixes the process
-   defect (a missing gate stage, a mirror test class, a brief that named lines instead of
-   tests), and only then re-enters at round 1 with the fixed process. A fourth brief for the
-   same wave is a process failure by definition.
+4. **Repair loop — ONE focused repair is the default budget (exhaustive findings, bounded
+   blockers; docs/08_DECISION_LOG.md D-031).** Failures go back to the builder as data
+   (`build(failures)`), not a new design conversation. The normal loop is
+   `build → independent verify → one focused repair → reverify`. A SECOND repair happens only
+   when the first repair introduced or failed to close a QUALIFYING BLOCKER, and only with
+   explicit coordinator authorization; there is no automatic third wave. Only a finding meeting
+   the WHOLE blocking predicate (skill `adversarial-verifier`: contract-mapped, canonically
+   reproduced through the real production path, materially effective, a concrete discriminator,
+   inside the component boundary) opens a repair — a FOLLOW-UP is filed, never a reason to keep
+   the builder looping.
+   **The cumulative budget is keyed by `component/proof ID + frozen contract revision +
+   production-code digest`, and it does NOT reset because of:** a renamed lane or "new wave"; a
+   new verifier; report-only, test-only, mutation-only, transcript, ledger, or documentation
+   commits; a process-policy edit; or rediscovery of the same defect under a new label. A NEW
+   budget requires a material production implementation change OR an explicit coordinator/owner
+   contract amendment with the reason recorded. Budget exhaustion produces an HONEST BLOCKED
+   decision for human prioritization — never an automatic round-one restart, never a stub or a
+   softened assertion. When the churn is a PROCESS defect (the builder's exit gate passed what
+   the verifier failed — a missing gate stage, a mirror test class, a brief that named lines
+   instead of tests), root-cause and fix the process; the process fix does not by itself re-open
+   a repair round, because a process-only commit does not move the budget key (owner mandate
+   2026-09-02 — RP-30b I3 ran SEVEN verify rounds under the old resettable cap; that reset was
+   the bug).
    **Round mechanics that stop the churn:**
    (a) **Verifier output = RED TESTS, not prose.** Every finding the verifier wants fixed
    ships as a committed failing test (or a mutant in the lane's `scripts/mutants/<lane>.py`
-   manifest) in its report; a finding with no test is INFO, not a repair item. The repair
-   brief is then literally "make these N tests green; do not edit them" — a builder cannot
-   mis-read a red test the way it mis-reads a file:line paragraph, and cannot mark it fixed
-   without it going green.
+   manifest) in its report; a finding with no red discriminator is INFO/FOLLOW-UP, not a repair
+   item — and a red test is NECESSARY but NOT SUFFICIENT: the finding must also satisfy the
+   blocking predicate. The repair brief is then literally "make these N tests green; do not edit
+   them" — a builder cannot mis-read a red test the way it mis-reads a file:line paragraph, and
+   cannot mark it fixed without it going green.
    (b) **Every lane exits through `scripts/lane_gate.sh <push-base> <gate-files.txt>
    [--mutants …] [--digest …]`** (builder AND verifier run the same script; the VERDICT
    block is pasted verbatim in the report and the commit body). It computes what rounds
@@ -95,6 +108,22 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
    grows a stage-0 derivation check, the brief author owns this step.
 5. **Coordinator verdict.** The main loop re-runs the deterministic gates itself before commit
    (never self-accept applies to delegates too — an evaluator PASS is evidence, not authority).
+   The verify lane emits a GATE RECOMMENDATION (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` /
+   `NOT-READY` / `CONTRACT-INVALID`); the coordinator owns the final gate decision.
+
+## Workload routing — match the apparatus to the change class
+
+The full proof apparatus is NOT the default for every "serious" increment. Route by what the
+change actually touches:
+- **Ordinary pure logic:** TDD, focused tests, clean/delta CI, and normal review.
+- **Integration or stateful boundary:** TDD plus ONE focused independent contract verification.
+- **Proof / evidence / minting / external venue:** the full proof workflow — canonical producer,
+  pre-registered negative controls, evidence binding, and an independent verifier.
+
+Pre-existing unrelated CI failures stay visible and tracked but do NOT repeatedly reopen a
+component; NEW failures block. If full-tree green is a frozen criterion but cannot currently
+execute cleanly, return `CONTRACT-INVALID` or an environment blocker rather than repeatedly
+repairing unrelated component code.
 
 ## Workflow mapping
 

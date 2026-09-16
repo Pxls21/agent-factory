@@ -37,11 +37,10 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
                         │  self-declared cases prove nothing
               3. EVALUATE (adversarial-verifier agent — Opus 5 lane, separate context,
                         │  graded against the FULL contract)
-              4. failures ──► back to 2 (builder receives the verbatim failure list)
+              4. QUALIFYING BLOCKERS ──► ONE focused repair, then reverify (§4 budget)
                         │
-              ≤3 rounds; still failing ─► FAIL CLOSED: surface the blocker to the
-                                          main loop / owner. Never soften the contract
-                                          to mint a pass.
+              budget spent ─► HONEST BLOCKED decision for human prioritization.
+                              Never soften the contract to mint a pass.
 ```
 
 1. **Negotiate the contract BEFORE any code.** The coordinator (main loop) turns the brief /
@@ -64,11 +63,35 @@ brief/seed ─► 1. NEGOTIATE contract ─► recorded in the task/breakdown (p
    the diff — a separate context that did not watch the build. It executes the full contract
    plus its minimum attack set and returns the verbatim failure list. **On a single-model
    harness this step cannot run locally — hand it back (see "Harness mapping" below).**
-4. **Repair loop.** Failures go back to the builder as data (`build(failures)`), not as a new
-   design conversation. Bounded: 3 rounds default. Budget exhausted → the increment is BLOCKED,
-   reported honestly; never route around with a stub or a softened assertion.
+4. **Repair loop — ONE focused repair is the default budget (exhaustive findings, bounded
+   blockers; the project decision log D-031).** Failures go back to the builder as data
+   (`build(failures)`), not a new design conversation. The normal loop is
+   `build → independent verify → one focused repair → reverify`. A SECOND repair happens only
+   when the first repair introduced or failed to close a QUALIFYING BLOCKER (a finding meeting
+   the whole blocking predicate — skill `adversarial-verifier`), and only with explicit
+   coordinator authorization; there is no automatic third wave. The cumulative budget is keyed by
+   `component/proof ID + frozen contract revision + production-code digest` and does NOT reset on
+   a renamed lane, a new verifier, report/test/mutation/transcript/ledger/doc-only commits, a
+   process-policy edit, or rediscovery of the same defect under a new label; a NEW budget needs a
+   material production change or a recorded contract amendment. Budget exhaustion → an HONEST
+   BLOCKED decision for human prioritization, never a round-one restart, never a stub or a
+   softened assertion. A FOLLOW-UP is filed and does not open a round.
 5. **Coordinator verdict.** The main loop re-runs the deterministic gates itself before commit
    (never self-accept applies to delegates too — an evaluator PASS is evidence, not authority).
+
+## Workload routing — match the apparatus to the change class
+
+The full proof apparatus is NOT the default for every "serious" increment. Route by what the
+change actually touches:
+- **Ordinary pure logic:** TDD, focused tests, clean/delta CI, and normal review.
+- **Integration or stateful boundary:** TDD plus ONE focused independent contract verification.
+- **Proof / evidence / minting / external venue:** the full proof workflow — canonical producer,
+  pre-registered negative controls, evidence binding, and an independent verifier.
+
+Pre-existing unrelated CI failures stay visible and tracked but do NOT repeatedly reopen a
+component; NEW failures block. If full-tree green is a frozen criterion but cannot currently
+execute cleanly, return `CONTRACT-INVALID` or an environment blocker rather than repeatedly
+repairing unrelated component code.
 
 ## Harness mapping — ON THIS HARNESS YOU ARE NOT THE EVALUATOR
 
@@ -81,7 +104,9 @@ So on this harness:
 - You may do step 1 (negotiate the contract) and step 2 (build against it).
 - **Step 3 is HANDED BACK.** Emit the contract, the diff, and your own test output as a
   package for the sandbox `adversarial-verifier` lane. Say plainly that step 3 has not run.
-- Steps 4 and 5 belong to whoever ran step 3. You never issue the verdict.
+- Steps 4 and 5 belong to whoever ran step 3. The verify lane emits a GATE RECOMMENDATION
+  (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`); you never
+  issue the final gate verdict.
 
 A single-model harness may run the contract's deterministic assertions and report their raw
 output — that is instrument data, not an evaluation. Never label it a PASS.

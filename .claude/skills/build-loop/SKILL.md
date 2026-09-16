@@ -8,6 +8,17 @@ description: The meticulous build loop ("Fable light") — MANDATORY for every c
 Model-agnostic, per increment, no skipping steps. This is the verbatim protocol; CLAUDE.md's
 build-loop section is the condensed index of it. On any doubt, THIS text governs.
 
+**Workload routing — the light loop is universal; the VERIFY apparatus scales with the change
+class (skill `contract-gate`).** Ordinary pure logic: TDD + focused tests + clean/delta CI +
+normal review. Integration or a stateful boundary: add ONE focused independent contract
+verification. Proof / evidence / minting / external venue: the full proof workflow (canonical
+producer, pre-registered negative controls, evidence binding, independent verifier). The full
+proof apparatus is NOT the default for every "serious" increment. The independent-verifier repair
+budget is BOUNDED — one focused repair by default, keyed by component/proof ID + frozen contract
+revision + production-code digest, not reset by a renamed wave or a report/test/policy-only commit
+(`contract-gate` §4; docs/08_DECISION_LOG.md D-031) — and a verifier returns a GATE RECOMMENDATION,
+never the final gate verdict.
+
 > **Golden-fence rule for byte-constrained refactors (2026-08-28, refactor waves G+A):** when an
 > extraction/dedup must be byte-output-identical (identity hashes, persisted hash chains, feature
 > bytes, parity contracts), the golden fixtures — serialized bytes, digests, chain tips, captured

@@ -166,6 +166,9 @@ expansion.
    across seven RP-30b I3 rounds. The exit gate is `scripts/lane_gate.sh <push-base>
    <gate-files> [--mutants] [--digest]` and its VERDICT block pasted verbatim; a verifier
    finding with no red test or mutant is INFO, not a repair item (skill `contract-gate` §4).
+   A red discriminator is NECESSARY but NOT SUFFICIENT to block: the finding must also satisfy
+   the whole blocking predicate (contract-mapped, canonically reproduced, materially effective,
+   in-boundary — skill `adversarial-verifier`; D-031); otherwise it is a FOLLOW-UP, not a round.
    The gate script gets its own negative control (tactic 1): a seeded probe with a known
    lint hit, a surviving mutant and a drifted anchor must come back RED before the first
    real lane trusts it.
