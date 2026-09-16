@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .pin import GovernanceError, import_pinned
+from .review import verify_review
 
 
 @dataclass(frozen=True)
@@ -132,24 +133,24 @@ def governance_hash(canonical_bytes: bytes) -> str:
     return hashlib.sha256(canonical_bytes).hexdigest()
 
 
-def _reviewed(packet: dict[str, Any]) -> bool:
-    """Read review only from the compiled packet; absence is never approval."""
-    if packet.get("reviewed") is True:
-        return True
-    return packet.get("review_status") in {"approved", "reviewed", "certified"}
+def load_packet(
+    root: str | Path,
+    *,
+    reviews_dir: str | Path | None = None,
+    owner_key: str | Path | None = None,
+) -> Packet:
+    """Lint, compile, hash, and refuse packets without a first-party, owner-signed review record.
 
-
-def load_packet(root: str | Path) -> Packet:
-    """Lint, compile, hash, and refuse packets without an upstream review field."""
+    GOV2b (VERIFY-GOV1 F2): the reviewed bit is NOT read from the compiled packet's own body — that field
+    is forgeable by whoever shapes the sources, and the pinned upstream emits none, so `load_packet` failed
+    closed on every real packet. It now comes from a first-party record keyed by THIS packet's governance
+    hash and signed by the committed owner key (`review.verify_review`); a one-byte source change changes the
+    hash and invalidates every prior review. `reviews_dir`/`owner_key` default to `docs/governance/`.
+    """
     result = lint_sources(root)
     if result.exit_code == 1:
         raise GovernanceError("fubuki-lint-violation")
     canonical = compile_canonical(root)
-    try:
-        compiled = json.loads(canonical)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise GovernanceError("fubuki-packet-invalid", str(exc)) from exc
-    reviewed = _reviewed(compiled)
-    if not reviewed:
-        raise GovernanceError("fubuki-packet-unreviewed")
-    return Packet(canonical=canonical, hash=governance_hash(canonical), reviewed=True)
+    packet_hash = governance_hash(canonical)
+    verify_review(packet_hash, reviews_dir=reviews_dir, owner_key=owner_key)
+    return Packet(canonical=canonical, hash=packet_hash, reviewed=True)
