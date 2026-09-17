@@ -144,6 +144,12 @@ def test_passing_bundle_passes(passing):
     assert "env clean" in result.stdout
 
 
+def test_credential_name_recognises_authorization_header_identity():
+    """The exact O4 mechanism: both standard header names must hit the NAME screen."""
+    assert check.is_credential_name("Authorization") is True
+    assert check.is_credential_name("Proxy-Authorization") is True
+
+
 # --------------------------------------------------------------------------- the committed
 # --------------------------------------------------------------------------- negative bundles
 @pytest.mark.parametrize("bundle,reason", [
@@ -439,6 +445,29 @@ def test_credential_screen_allows_only_the_provider_key_env_name(passing):
     profile.write_text(yaml.safe_dump(doc, sort_keys=False))
     result = run_checker(passing)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("header,value", [
+    ("Authorization", "Token placeholder-secret"),
+    ("Authorization", "opaque-placeholder-secret"),
+    ("Authorization", "Basic dXNlcg=="),
+    ("Proxy-Authorization", "opaque-placeholder-secret"),
+])
+def test_credential_screen_rejects_authorization_header_by_identity(
+        passing, header, value):
+    """O4 blocker: Authorization is one segment, so AUTH did not match it. Token and opaque
+    values also evade the independent value-prefix screen; NAME identity must reject every scheme."""
+    profile = passing / "hermes" / "profile.yaml"
+    doc = yaml.safe_load(profile.read_text())
+    provider = doc["providers"]["s0-03-omniroute"]
+    provider.setdefault("extra_headers", {})[header] = value
+    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert result.stdout.strip() == (
+        "failure_reason: bundle: profile.yaml carries an inline credential under "
+        f"providers.s0-03-omniroute.extra_headers.{header}")
+
 
 def test_conjunct_v_rejects_an_inline_key_in_the_captured_profile(passing):
     profile = passing / "hermes" / "profile.yaml"
@@ -1137,11 +1166,43 @@ def test_a_second_route_row_inside_the_hermes_window_is_unattributable(passing):
         extra["id"] = "log_someone_else"
         extra["session_tag"] = "someone-elses-session"
         record["requests"].append(extra)
+        record["row_counts"]["hermes"] += 1
     _edit(passing, "omniroute-requests.json", add_row)
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
         "failure_reason: identity: 2 call_logs rows in the hermes leg's window — unattributable")
+
+
+def test_row_counts_must_match_the_exported_rows_for_each_query(passing):
+    """FU1: a collector count that is emitted but not compared with the consumed export is a
+    hollow green. Grade each query's count before identity checks consume the rows."""
+    _edit(passing, "omniroute-requests.json",
+          lambda record: record["row_counts"].__setitem__("hermes", 0))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert result.stdout.strip() == (
+        "failure_reason: bundle: omniroute-requests.json row_counts['hermes'] is 0, "
+        "expected 1 exported hermes row(s)")
+
+
+@pytest.mark.parametrize("value", [True, "1", 1.0])
+def test_row_counts_requires_strict_integers(passing, value):
+    """JSON booleans compare equal to Python integers; reject type-confused count records."""
+    _edit(passing, "omniroute-requests.json",
+          lambda record: record["row_counts"].__setitem__("hermes", value))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "row_counts['hermes']" in result.stdout
+
+
+@pytest.mark.parametrize("leg", ["direct", "hermes"])
+def test_row_counts_match_the_exported_rows_in_the_passing_bundle(passing, leg):
+    """Positive control: the recorded count is tied to the exact row list the checker consumes."""
+    record = json.loads((passing / "omniroute-requests.json").read_text())
+    assert record["row_counts"][leg] == sum(
+        row["leg"] == leg for row in record["requests"])
+    assert run_checker(passing).returncode == 0
 
 
 def test_two_rows_for_the_direct_leg_is_a_bundle_failure(passing):
@@ -1151,6 +1212,7 @@ def test_two_rows_for_the_direct_leg_is_a_bundle_failure(passing):
         stub = dict(record["requests"][0])
         stub["provider"] = "s0-01-scripted"
         record["requests"].insert(0, stub)
+        record["row_counts"]["direct"] += 1
     _edit(passing, "omniroute-requests.json", shadow)
     result = run_checker(passing)
     assert result.returncode == 1
@@ -1776,6 +1838,33 @@ def test_collect_leg_exports_every_row_in_the_window_not_the_earliest(tmp_path):
     assert _run_collect(bundle, data).returncode == 0
     record = json.loads((bundle / "omniroute-requests.json").read_text())
     assert [r["leg"] for r in record["requests"]] == ["direct", "hermes", "hermes"]
+
+
+def test_collect_leg_coarse_sql_bound_keeps_offset_rows_for_exact_filter(tmp_path):
+    """FU2: SQLite orders timestamps lexically. These two local-date prefixes sort outside the
+    old UTC +/- seconds query although both instants are inside the declared UTC window."""
+    data = tmp_path / "data"
+    data.mkdir()
+    rows = [
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z",
+             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_plus_14", timestamp="2026-09-08T14:00:02+14:00",
+             response_id="resp_plus", session_tag="0f1e2d3c4b5a6978"),
+        dict(_BASE_ROW, id="log_minus_12", timestamp="2026-09-07T12:00:02-12:00",
+             response_id="resp_minus", session_tag="somebody-else"),
+    ]
+    assert "2026-09-08T14:00:02+14:00" >= "2026-09-08T00:00:03"
+    assert "2026-09-07T12:00:02-12:00" < "2026-09-07T23:59:59"
+    _call_logs_db(data / "storage.sqlite", rows)
+    bundle = _collect_bundle(
+        tmp_path, window_start="2026-09-08T00:00:01.000000Z",
+        window_end="2026-09-08T00:00:03.000000Z")
+    result = _run_collect(bundle, data)
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads((bundle / "omniroute-requests.json").read_text())
+    assert [row["id"] for row in record["requests"] if row["leg"] == "hermes"] == [
+        "log_minus_12", "log_plus_14"]
+    assert record["row_counts"] == {"direct": 1, "hermes": 2}
 
 
 def test_collect_leg_compares_stamps_as_instants_not_strings(tmp_path):

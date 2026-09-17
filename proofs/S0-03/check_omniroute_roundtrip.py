@@ -164,6 +164,10 @@ ENV_CREDENTIAL_ALLOWLIST = frozenset({"OMNIROUTE_API_KEY"})
 # PAT / AUTH / PW / BEARER are real credential-name shapes with no KEY|TOKEN|SECRET segment —
 # `GITHUB_PAT`, `ANTHROPIC_AUTH` and `DB_PW` all rode straight through the earlier set
 # (VERIFY-O1 F-12, mutants V7a-c).
+# AUTHORIZATION (and Proxy-Authorization's second segment) is a header-IDENTITY credential: the
+# AUTH segment above is a DIFFERENT token, so the split never matched the whole header name. An
+# `Authorization: Token <x>` or opaque value therefore slipped the value-prefix screen entirely
+# (VERIFY-O3 blocker, O4). By segment, the header is now flagged by NAME regardless of scheme.
 # SESSION is deliberately NOT here, and that is a decision, not an omission: the launched agent's
 # environment key set is PINNED at `proofs/S0-01/pins.py` PINNED_ENV_KEYS and contains
 # `BUZZ_ACP_SESSION_POLICY`, so a SESSION segment would make conjunct (vi) impossible for any real
@@ -171,7 +175,7 @@ ENV_CREDENTIAL_ALLOWLIST = frozenset({"OMNIROUTE_API_KEY"})
 # one. The residual the segment would have caught (`AWS_SESSION_TOKEN`) is already caught by TOKEN.
 CREDENTIAL_SEGMENTS = frozenset({"KEY", "KEYS", "TOKEN", "TOKENS", "SECRET", "SECRETS",
                                  "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS", "APIKEY",
-                                 "PAT", "AUTH", "PW", "BEARER"})
+                                 "PAT", "AUTH", "PW", "BEARER", "AUTHORIZATION"})
 
 
 def is_credential_name(name: str) -> bool:
@@ -451,6 +455,26 @@ def _rows_by_leg(requests: dict) -> dict:
         raise Failure("bundle: omniroute-requests.json has "
                       f"{len(grouped['direct'])} rows for the direct leg")
     return grouped
+
+
+def check_row_counts(requests: dict):
+    """The collector records how many rows it EXPORTED per leg (`collect_leg.sh:153-162`); this
+    grades that the record matches the rows the checker actually consumes, per leg. Without it
+    `row_counts` is an emitted-but-unchecked field — a hollow green (FU1): the collector could
+    write `{"direct": 0, "hermes": 0}` over a full export and the proof would not notice. The two
+    legs are checked SEPARATELY because the direct leg is a single-row correlation join while the
+    hermes leg legitimately exports every window row (graded for uniqueness just below)."""
+    recorded = requests.get("row_counts")
+    if not isinstance(recorded, dict):
+        raise Failure("bundle: omniroute-requests.json has no row_counts record")
+    grouped = _rows_by_leg(requests)
+    for leg in ("direct", "hermes"):
+        expected = len(grouped[leg])
+        value = recorded.get(leg)
+        if isinstance(value, bool) or not isinstance(value, int) or value != expected:
+            raise Failure(
+                f"bundle: omniroute-requests.json row_counts[{leg!r}] is "
+                f"{value!r}, expected {expected} exported {leg} row(s)")
 
 
 def _instant(value, name: str):
@@ -836,6 +860,7 @@ def check_bundle(root: Path, spec: dict) -> str:
     check_credential_in_the_environ(bundle["env_names"])
     check_direct_stream(bundle["direct"])
     check_identity_model(bundle["direct"], spec)
+    check_row_counts(bundle["requests"])
     provider = check_identity_route(bundle["requests"], bundle["direct"], bundle["leg"], spec)
     check_roundtrip(bundle["entries"], _str(bundle["leg"].get("nonce2"), "hermes/leg.json nonce2"))
     check_transport(bundle["profile"])

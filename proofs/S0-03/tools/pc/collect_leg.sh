@@ -118,11 +118,13 @@ if isinstance(leg, dict) and leg.get("window_start") is not None:
     if end < start:
         sys.exit("collect_leg: hermes/leg.json window_end precedes window_start")
     window = {"start": leg["window_start"], "end": leg["window_end"]}
-    # SQL compares the shared 19-character UTC prefix only as a coarse, complete bound. The
-    # exact aware-instant test below remains authoritative across either producer's precision.
-    sql_start = (start - datetime.timedelta(seconds=1)).astimezone(
+    # SQLite compares RFC3339 values as raw text here. Offset-bearing rows can represent an
+    # in-window instant while their local date sorts outside the UTC date prefix. RFC3339
+    # permits offsets only through +/-23:59, so one full day on each side makes this lexical
+    # query a proven superset; the aware-instant comparison below remains authoritative.
+    sql_start = (start - datetime.timedelta(days=1)).astimezone(
         datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    sql_end = (end + datetime.timedelta(seconds=2)).astimezone(
+    sql_end = (end + datetime.timedelta(days=1)).astimezone(
         datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
