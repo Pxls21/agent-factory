@@ -219,16 +219,22 @@ if [ -n "$SERVER_EFFORT" ] && [ "${LANE_SET_SERVER_EFFORT:-1}" = 1 ]; then
 import sys
 wanted = '$SERVER_EFFORT'
 mp = sys.argv[1] if len(sys.argv) > 1 else ''
+if not mp or mp == '0':
+    # qwen-builder llama-server is not running (vLLM is the local server since D-032). Its
+    # chat-template-kwargs effort default does not apply, and restarting the retired unit would
+    # collide with vLLM on :8080/GPU. Never manage effort against it — run at the vLLM default.
+    print('inactive'); sys.exit(0)
 seen = ''
-if mp and mp != '0':
-    for raw in open('/proc/' + mp + '/cmdline', 'rb').read().split(b'\\0'):
-        text = raw.decode('utf-8', 'replace')
-        if 'reasoning_effort' in text:
-            seen = text.split('reasoning_effort', 1)[1].lstrip('\\\" :=').split('\\\"', 1)[0].split('}', 1)[0]
-            break
+for raw in open('/proc/' + mp + '/cmdline', 'rb').read().split(b'\\0'):
+    text = raw.decode('utf-8', 'replace')
+    if 'reasoning_effort' in text:
+        seen = text.split('reasoning_effort', 1)[1].lstrip('\\\" :=').split('\\\"', 1)[0].split('}', 1)[0]
+        break
 print('match' if seen == wanted else 'mismatch:' + (seen or 'unknown'))
 PY")" || die "server effort not read from the running argv"
-  if [ "$EFF_STATE" != match ]; then
+  if [ "$EFF_STATE" = inactive ]; then
+    echo "pc_lane: local route — qwen-builder llama-server not running (vLLM is the local server since D-032); server-effort restart skipped, lane runs at the vLLM server default" >&2
+  elif [ "$EFF_STATE" != match ]; then
     echo "pc_lane: local route — queueing server effort $SERVER_EFFORT and waiting before launch" >&2
     EFF_OUT="$(bridge "cd $PC_AF_REPO && QWEN_EFFORT=$SERVER_EFFORT bash harness-ports/bin/qwen-server.sh restart-when-idle --max-wait 1800")" || die "server effort restart not queued: ${EFF_OUT##*$'\n'}"
     case "$EFF_OUT" in
