@@ -576,6 +576,87 @@ def test_the_adapter_uses_no_clock_and_no_randomness():
 
 # --------------------------------------------------------------------------- offline negative control
 
+def _run_with_bindings(tmp_path, rows, *, verb="recall", base_url=None):
+    """Run the public CLI with a scratch copy of the committed, non-configurable table.
+
+    There is deliberately no `--bindings` flag. Copying the adapter beside a test table keeps that
+    production invariant while exercising the real load_bindings -> _bind -> recall/write path.
+    """
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    adapter_path = adapter_dir / "factory_memory.py"
+    shutil.copy2(ADAPTER_PATH, adapter_path)
+    (adapter_dir / "bindings.json").write_text(json.dumps({"bindings": rows}))
+    tuple_file = tmp_path / "tuple.json"
+    tuple_file.write_text(json.dumps(AUTHORIZED_TUPLE))
+    out_file = tmp_path / "out.json"
+    events_file = tmp_path / "events.jsonl"
+    command = [sys.executable, str(adapter_path), verb,
+               "--tuple-file", str(tuple_file), "--out", str(out_file),
+               "--events", str(events_file)]
+    if verb == "recall":
+        command.extend(["--query", "x"])
+    else:
+        record_file = tmp_path / "record.json"
+        record_file.write_text(json.dumps({
+            "session": "s1", "turn": "t1", "event_id": "e1", "body": "x",
+        }))
+        command.extend(["--scope", "agent", "--record-file", str(record_file)])
+    if base_url is not None:
+        command.extend(["--base-url", base_url])
+    return subprocess.run(command, capture_output=True, text=True, timeout=60), out_file
+
+
+@pytest.mark.parametrize(
+    ("scopes", "message"),
+    [
+        pytest.param(_UNSET, "bindings row a-alpha: scopes must be a list", id="absent"),
+        pytest.param("agent", "bindings row a-alpha: scopes must be a list", id="string"),
+        pytest.param(1, "bindings row a-alpha: scopes must be a list", id="integer"),
+        pytest.param([], "bindings row a-alpha: scopes must be non-empty", id="empty"),
+        pytest.param([1], "bindings row a-alpha: scopes must contain only strings",
+                     id="non-string-element"),
+        pytest.param(["agent", "agent"], "bindings row a-alpha: scopes has duplicates",
+                     id="duplicate"),
+    ],
+)
+def test_malformed_binding_scopes_fail_closed_through_the_public_cli(tmp_path, scopes, message):
+    row = dict(AUTHORIZED_TUPLE)
+    if scopes is not _UNSET:
+        row["scopes"] = scopes
+    proc, out_file = _run_with_bindings(tmp_path, [row])
+    assert proc.returncode == 78
+    assert proc.stdout == ""
+    assert proc.stderr.splitlines() == ["factory_memory: configuration error: " + message]
+    assert "recall: complete" not in proc.stdout + proc.stderr
+    assert not out_file.exists()
+
+
+@pytest.mark.parametrize("verb", ["recall", "write"])
+def test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli(tmp_path, verb):
+    identity = tuple(AUTHORIZED_TUPLE[field] for field in fm.TUPLE_FIELDS)
+    rows = [dict(AUTHORIZED_TUPLE, scopes=["agent", "project"]),
+            dict(AUTHORIZED_TUPLE, scopes=["company"])]
+    proc, out_file = _run_with_bindings(tmp_path, rows, verb=verb)
+    expected = f"bindings: duplicate identity tuple {identity}"
+    assert proc.returncode == 78
+    assert proc.stdout == ""
+    assert proc.stderr.splitlines() == ["factory_memory: configuration error: " + expected]
+    assert "recall: complete" not in proc.stdout + proc.stderr
+    assert not out_file.exists()
+
+
+def test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes(tmp_path, server):
+    row = dict(AUTHORIZED_TUPLE, scopes=["agent", "team"])
+    proc, out_file = _run_with_bindings(tmp_path, [row], base_url=server.base_url)
+    assert proc.returncode == 0
+    assert proc.stdout == "recall: complete\n"
+    result = json.loads(out_file.read_text())
+    assert [entry["scope"] for entry in result["scopes_queried"]] == ["agent", "team"]
+    assert [call["query"]["project"][0] for call in server.calls
+            if call["path"] == "/api/v1/search"] == ["agent--a-alpha", "team--t-core"]
+
+
 def test_the_negative_control_denies_without_a_network_call(tmp_path):
     """The seed's negative fixture against a CLOSED port: the denial arrives first, in bounded
     time, and the event stream carries no request."""
@@ -1337,10 +1418,10 @@ def test_an_absent_bindings_table_is_a_named_failure(tmp_path):
         [sys.executable, str(solo / "factory_memory.py"), "recall",
          "--tuple-file", str(NEG_FIXTURE), "--query", "x"],
         capture_output=True, text=True, timeout=60)
-    assert proc.returncode == 70                                     # never `denied`'s exit 1
+    assert proc.returncode == 78                  # configuration, never `denied`'s exit 1
     assert proc.stdout == ""
     assert proc.stderr.splitlines() == [
-        "factory_memory: unexpected ValueError: bindings table is unreadable: %s "
+        "factory_memory: configuration error: bindings table is unreadable: %s "
         "(FileNotFoundError)" % (solo / "bindings.json")]
     assert "Traceback" not in proc.stderr
 

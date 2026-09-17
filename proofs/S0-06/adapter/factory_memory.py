@@ -37,8 +37,8 @@ CLI:
     factory_memory.py write  --tuple-file F --scope S --record-file R [--base-url U]
                              [--token-file T] [--out FILE] [--events FILE]
 
-Exit: 0 ok · 1 denied · 3 degraded · 70 unexpected (a crash never shares an exit code with a
-decision, F-11). The final stdout line is the bare status reason, so a proof
+Exit: 0 ok · 1 denied · 3 degraded · 70 unexpected · 78 invalid configuration. The final
+stdout line is the bare status reason, so a proof
 spec can pin the COMPLETE reason string (AF-AP-29). `--out` receives the result JSON; `--events`
 receives the decision event stream (one JSON object per line, also mirrored to stderr).
 
@@ -94,6 +94,10 @@ REASONS = {
 }
 
 
+class _BindingsConfigurationError(ValueError):
+    """The authorization table could not be loaded or violated its schema."""
+
+
 class Binding(NamedTuple):
     """The caller-supplied identity tuple. Ordering matches TUPLE_FIELDS."""
 
@@ -118,24 +122,44 @@ def load_bindings(path: Path = BINDINGS_PATH) -> list:
 
     Every failure is a NAMED ValueError, never a bare OSError traceback: an absent table is the
     same class of event as a directory or a FIFO in its place, and the caller's exit contract has
-    to be able to report it (F-10). A row naming a scope this adapter does not know is a hard load
-    failure too — intersecting it away would turn a typo in the committed table into a quietly
-    NARROWER binding with no refusal anywhere (F-14).
+    to be able to report it (F-10). Every row must carry a non-empty unique list of known scope
+    names, and identity tuples must be unique across the table: malformed or order-dependent
+    grants are configuration failures, never silently narrower authorizations (F-14, F-32).
     """
     path = Path(path)
     try:
         mode = path.lstat().st_mode
     except OSError as exc:
-        raise ValueError(f"bindings table is unreadable: {path} ({type(exc).__name__})")
+        raise _BindingsConfigurationError(
+            f"bindings table is unreadable: {path} ({type(exc).__name__})")
     if not stat.S_ISREG(mode):
-        raise ValueError(f"bindings table is not a regular file: {path}")
+        raise _BindingsConfigurationError(f"bindings table is not a regular file: {path}")
     table = json.loads(path.read_text(encoding="utf-8"))
     rows = list(table["bindings"])
+    seen_identities = set()
     for row in rows:
-        unknown = sorted(set(row.get("scopes", [])) - set(SCOPE_ORDER))
+        agent = row.get("agent")
+        scopes = row.get("scopes")
+        if not isinstance(scopes, list):
+            raise _BindingsConfigurationError(
+                f"bindings row {agent}: scopes must be a list")
+        if not scopes:
+            raise _BindingsConfigurationError(
+                f"bindings row {agent}: scopes must be non-empty")
+        if any(not isinstance(scope, str) for scope in scopes):
+            raise _BindingsConfigurationError(
+                f"bindings row {agent}: scopes must contain only strings")
+        if len(scopes) != len(set(scopes)):
+            raise _BindingsConfigurationError(
+                f"bindings row {agent}: scopes has duplicates")
+        unknown = sorted(set(scopes) - set(SCOPE_ORDER))
         if unknown:
-            raise ValueError(
-                f"bindings row {row.get('agent')} names unknown scopes: {', '.join(unknown)}")
+            raise _BindingsConfigurationError(
+                f"bindings row {agent} names unknown scopes: {', '.join(unknown)}")
+        identity = tuple(row.get(field) for field in TUPLE_FIELDS)
+        if identity in seen_identities:
+            raise _BindingsConfigurationError(f"bindings: duplicate identity tuple {identity}")
+        seen_identities.add(identity)
     return rows
 
 
@@ -490,16 +514,20 @@ def _main(argv=None):
 
 
 def main(argv=None):
-    """Exit 0 ok · 1 denied · 3 degraded · 70 unexpected.
+    """Exit 0 ok · 1 denied · 3 degraded · 70 unexpected · 78 invalid configuration.
 
     A crash must never share an exit code with a decision: a spec leg pinning
     `denied: scope-tuple-unauthorized` on exit 1 could not otherwise tell a refusal from a bug
-    (F-11). `SystemExit` is re-raised so argparse keeps its own usage exit.
+    (F-11). Binding-table configuration failures use 78 so they also cannot be mistaken for an
+    unexpected crash. `SystemExit` is re-raised so argparse keeps its own usage exit.
     """
     try:
         return _main(argv)
     except SystemExit:
         raise
+    except _BindingsConfigurationError as exc:
+        print(f"factory_memory: configuration error: {exc}", file=sys.stderr)
+        return 78
     except Exception as exc:                                  # noqa: BLE001 - the top-level net
         print(f"factory_memory: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
         return 70

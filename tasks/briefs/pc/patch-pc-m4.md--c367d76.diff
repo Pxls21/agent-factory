@@ -1,0 +1,1638 @@
+diff --git a/proofs/S0-06/adapter/factory_memory.py b/proofs/S0-06/adapter/factory_memory.py
+index 6f4ffcc..2bee9ee 100755
+--- a/proofs/S0-06/adapter/factory_memory.py
++++ b/proofs/S0-06/adapter/factory_memory.py
+@@ -37,8 +37,8 @@ CLI:
+     factory_memory.py write  --tuple-file F --scope S --record-file R [--base-url U]
+                              [--token-file T] [--out FILE] [--events FILE]
+ 
+-Exit: 0 ok · 1 denied · 3 degraded · 70 unexpected (a crash never shares an exit code with a
+-decision, F-11). The final stdout line is the bare status reason, so a proof
++Exit: 0 ok · 1 denied · 3 degraded · 70 unexpected · 78 invalid configuration. The final
++stdout line is the bare status reason, so a proof
+ spec can pin the COMPLETE reason string (AF-AP-29). `--out` receives the result JSON; `--events`
+ receives the decision event stream (one JSON object per line, also mirrored to stderr).
+ 
+@@ -94,6 +94,10 @@ REASONS = {
+ }
+ 
+ 
++class _BindingsConfigurationError(ValueError):
++    """The authorization table could not be loaded or violated its schema."""
++
++
+ class Binding(NamedTuple):
+     """The caller-supplied identity tuple. Ordering matches TUPLE_FIELDS."""
+ 
+@@ -118,24 +122,44 @@ def load_bindings(path: Path = BINDINGS_PATH) -> list:
+ 
+     Every failure is a NAMED ValueError, never a bare OSError traceback: an absent table is the
+     same class of event as a directory or a FIFO in its place, and the caller's exit contract has
+-    to be able to report it (F-10). A row naming a scope this adapter does not know is a hard load
+-    failure too — intersecting it away would turn a typo in the committed table into a quietly
+-    NARROWER binding with no refusal anywhere (F-14).
++    to be able to report it (F-10). Every row must carry a non-empty unique list of known scope
++    names, and identity tuples must be unique across the table: malformed or order-dependent
++    grants are configuration failures, never silently narrower authorizations (F-14, F-32).
+     """
+     path = Path(path)
+     try:
+         mode = path.lstat().st_mode
+     except OSError as exc:
+-        raise ValueError(f"bindings table is unreadable: {path} ({type(exc).__name__})")
++        raise _BindingsConfigurationError(
++            f"bindings table is unreadable: {path} ({type(exc).__name__})")
+     if not stat.S_ISREG(mode):
+-        raise ValueError(f"bindings table is not a regular file: {path}")
++        raise _BindingsConfigurationError(f"bindings table is not a regular file: {path}")
+     table = json.loads(path.read_text(encoding="utf-8"))
+     rows = list(table["bindings"])
++    seen_identities = set()
+     for row in rows:
+-        unknown = sorted(set(row.get("scopes", [])) - set(SCOPE_ORDER))
++        agent = row.get("agent")
++        scopes = row.get("scopes")
++        if not isinstance(scopes, list):
++            raise _BindingsConfigurationError(
++                f"bindings row {agent}: scopes must be a list")
++        if not scopes:
++            raise _BindingsConfigurationError(
++                f"bindings row {agent}: scopes must be non-empty")
++        if any(not isinstance(scope, str) for scope in scopes):
++            raise _BindingsConfigurationError(
++                f"bindings row {agent}: scopes must contain only strings")
++        if len(scopes) != len(set(scopes)):
++            raise _BindingsConfigurationError(
++                f"bindings row {agent}: scopes has duplicates")
++        unknown = sorted(set(scopes) - set(SCOPE_ORDER))
+         if unknown:
+-            raise ValueError(
+-                f"bindings row {row.get('agent')} names unknown scopes: {', '.join(unknown)}")
++            raise _BindingsConfigurationError(
++                f"bindings row {agent} names unknown scopes: {', '.join(unknown)}")
++        identity = tuple(row.get(field) for field in TUPLE_FIELDS)
++        if identity in seen_identities:
++            raise _BindingsConfigurationError(f"bindings: duplicate identity tuple {identity}")
++        seen_identities.add(identity)
+     return rows
+ 
+ 
+@@ -490,16 +514,20 @@ def _main(argv=None):
+ 
+ 
+ def main(argv=None):
+-    """Exit 0 ok · 1 denied · 3 degraded · 70 unexpected.
++    """Exit 0 ok · 1 denied · 3 degraded · 70 unexpected · 78 invalid configuration.
+ 
+     A crash must never share an exit code with a decision: a spec leg pinning
+     `denied: scope-tuple-unauthorized` on exit 1 could not otherwise tell a refusal from a bug
+-    (F-11). `SystemExit` is re-raised so argparse keeps its own usage exit.
++    (F-11). Binding-table configuration failures use 78 so they also cannot be mistaken for an
++    unexpected crash. `SystemExit` is re-raised so argparse keeps its own usage exit.
+     """
+     try:
+         return _main(argv)
+     except SystemExit:
+         raise
++    except _BindingsConfigurationError as exc:
++        print(f"factory_memory: configuration error: {exc}", file=sys.stderr)
++        return 78
+     except Exception as exc:                                  # noqa: BLE001 - the top-level net
+         print(f"factory_memory: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
+         return 70
+diff --git a/tasks/briefs/s0-06-support/M4-pack.md b/tasks/briefs/s0-06-support/M4-pack.md
+new file mode 100644
+index 0000000..a00b551
+--- /dev/null
++++ b/tasks/briefs/s0-06-support/M4-pack.md
+@@ -0,0 +1,234 @@
++# lane context pack — c367d76 2026-09-17T12:59Z
++files: proofs/S0-06/adapter/factory_memory.py tests/test_s0_06_four_scope.py
++symbols: load_bindings authorize _bind _run_with_bindings test_malformed_binding_scopes_fail_closed_through_the_public_cli test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes
++
++## proofs/S0-06/adapter/factory_memory.py
++### graft skeleton
++⬆ graft 0.16.0 → 0.18.0 available: run `npm i -g @nanonets/graft@latest` (restart your agent after).
++[graft] refreshed the graph (1 file changed) before answering
++
++graft skeleton — proofs/S0-06/adapter/factory_memory.py
++- L97-L98  class _BindingsConfigurationError  class _BindingsConfigurationError(ValueError)
++- L101-L107  class Binding  class Binding(NamedTuple)
++- L110-L117  function scopes_for  def scopes_for(binding: Binding) -> dict
++- L120-L163  function load_bindings  def load_bindings(path: Path = BINDINGS_PATH) -> list
++- L166-L186  function authorize  def authorize(tuple_obj: dict, table: list) -> dict | None
++- L189-L216  function normalize_hit  def normalize_hit(hit: dict, scope: str, updated_at: str | None) -> dict
++- L219-L249  function merge  def merge(records_by_scope: dict) -> list
++- L252-L261  function idempotency_path  def idempotency_path(session: str, turn: str, event_id: str) -> str
++- L264-L267  class _Denied  class _Denied(Exception)
++- L265-L267  method __init__  def __init__(self, reason: str)
++- L270-L449  class FactoryMemory  class FactoryMemory
++- L273-L280  method __init__  def __init__(self, base_url=DEFAULT_BASE_URL, token=None, bindings_path=BINDINGS_PATH, timeout_s=DEFAULT_TIMEOUT_S, events=None)
++- L283-L295  method _emit  def _emit(self, event, reason, **fields)
++- L298-L308  method _bind  def _bind(self, tuple_obj)
++- L311-L324  method _request  def _request(self, method, path, body=None, event_path=None, event_fields=None)
++- L326-L335  method _search  def _search(self, workspace, project, query, limit)
++- L337-L343  method _page_times  def _page_times(self, workspace, project)
++- L346-L386  method recall  def recall(self, tuple_obj, query, limit=DEFAULT_LIMIT)
++- L388-L449  method write  def write(self, tuple_obj, active_scope, record)
++- L452-L456  function _read_json_file  def _read_json_file(path)
++- L459-L466  function _read_token  def _read_token(path)
++- L469-L486  function _build_parser  def _build_parser()
++- L489-L513  function _main  def _main(argv=None)
++- L516-L533  function main  def main(argv=None)
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 3 hits over 1 files ---
++AP-32: 2
++    proofs/S0-06/adapter/factory_memory.py:261: return "observations/" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16] + ".md"
++    proofs/S0-06/adapter/factory_memory.py:332: query_sha256_16 = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
++AF-AP-70: 1
++    proofs/S0-06/adapter/factory_memory.py:491: # DOCUMENTED LIMIT (F-21): every READ path in this module is lstat+S_ISREG guarded, but these
++
++## tests/test_s0_06_four_scope.py
++### graft skeleton
++⬆ graft 0.16.0 → 0.18.0 available: run `npm i -g @nanonets/graft@latest` (restart your agent after).
++
++graft skeleton — tests/test_s0_06_four_scope.py
++- L52-L56  function _load  def _load(name, path)
++- L65-L67  function _hit  def _hit(scope, project, path, title, snippet, rank)
++- L70-L76  function _closed_port  def _closed_port()
++- L82-L125  class _Recorder  class _Recorder(BaseHTTPRequestHandler)
++- L87-L88  method log_message  def log_message(self, *_args)
++- L90-L96  method _send  def _send(self, payload)
++- L98-L115  method do_GET  def do_GET(self)
++- L117-L125  method do_POST  def do_POST(self)
++- L128-L148  class _Server  class _Server
++- L129-L135  method __init__  def __init__(self, extra_pages=(), bad_search=_UNSET)
++- L138-L139  method base_url  def base_url(self)
++- L142-L143  method calls  def calls(self)
++- L145-L148  method close  def close(self)
++- L152-L157  function server  def server()
++- L160-L167  function _repair_wrong_scope  def _repair_wrong_scope(dest: Path) -> Path
++- L170-L179  function _repair_leak  def _repair_leak(dest: Path) -> Path
++- L183-L184  function good  def good(tmp_path)
++- L187-L189  function _run_checker  def _run_checker(root)
++- L192-L194  function _verdict  def _verdict(root)
++- L197-L200  function _edit  def _edit(path: Path, fn)
++- L203-L206  function _edit_recalls  def _edit_recalls(root: Path, fn)
++- L211-L215  function test_authorized_tuples_are_accepted  def test_authorized_tuples_are_accepted()
++- L219-L228  function test_every_single_field_corruption_is_denied  def test_every_single_field_corruption_is_denied(field)
++- L237-L238  function test_shape_violations_are_denied  def test_shape_violations_are_denied(presented)
++- L241-L249  function test_the_committed_table_is_the_only_authorization_source  def test_the_committed_table_is_the_only_authorization_source()
++- L252-L262  function test_a_malformed_table_row_can_never_authorize_a_null_tuple  def test_a_malformed_table_row_can_never_authorize_a_null_tuple()
++- L265-L272  function test_cli_has_no_bindings_override_flag  def test_cli_has_no_bindings_override_flag()
++- L275-L283  function test_seed_negative_fixture_is_a_real_looking_tuple_with_one_wrong_field  def test_seed_negative_fixture_is_a_real_looking_tuple_with_one_wrong_field()
++- L288-L295  function test_scopes_for_is_the_docs_03_mapping  def test_scopes_for_is_the_docs_03_mapping()
++- L300-L303  function _four_way  def _four_way(scope, rank)
++- L306-L310  function _collision_input  def _collision_input()
++- L313-L317  function test_merge_is_byte_identical_on_a_repeat_call  def test_merge_is_byte_identical_on_a_repeat_call()
++- L320-L326  function test_merge_is_independent_of_input_order  def test_merge_is_independent_of_input_order()
++- L329-L335  function test_merge_resolves_a_four_way_collision_to_the_agent_record  def test_merge_resolves_a_four_way_collision_to_the_agent_record()
++- L338-L341  function test_merge_output_is_sorted_by_precedence_then_stable_id  def test_merge_output_is_sorted_by_precedence_then_stable_id()
++- L344-L348  function test_merge_does_not_mutate_its_input  def test_merge_does_not_mutate_its_input()
++- L351-L353  function test_merge_carries_the_docs_03_read_contract_fields  def test_merge_carries_the_docs_03_read_contract_fields()
++- L356-L360  function test_a_lower_precedence_only_record_survives_the_merge  def test_a_lower_precedence_only_record_survives_the_merge()
++- L365-L367  function test_public_adapter_surface_is_recall_and_write_only  def test_public_adapter_surface_is_recall_and_write_only()
++- L370-L383  function test_no_module_level_mutation_entry_point_exists  def test_no_module_level_mutation_entry_point_exists()
++- L389-L396  function test_write_refuses_a_scope_the_binding_does_not_authorize  def test_write_refuses_a_scope_the_binding_does_not_authorize(scope, server)
++- L399-L413  function test_a_company_write_is_refused_even_when_the_table_authorizes_it  def test_a_company_write_is_refused_even_when_the_table_authorizes_it(server)
++- L416-L429  function test_write_lands_in_the_active_scope_only  def test_write_lands_in_the_active_scope_only(server)
++- L432-L445  function test_a_retry_with_the_same_key_is_a_recorded_no_op  def test_a_retry_with_the_same_key_is_a_recorded_no_op()
++- L448-L459  function test_the_idempotency_key_covers_every_component  def test_the_idempotency_key_covers_every_component()
++- L463-L469  function test_an_incomplete_record_is_refused_before_the_write  def test_an_incomplete_record_is_refused_before_the_write(missing, server)
++- L474-L489  function test_recall_queries_every_authorized_scope_on_the_read_route  def test_recall_queries_every_authorized_scope_on_the_read_route(server)
++- L492-L499  function test_a_partly_authorized_binding_never_touches_the_other_scopes  def test_a_partly_authorized_binding_never_touches_the_other_scopes(server)
++- L502-L517  function test_the_recording_server_answers_with_the_real_ai_memory_shapes  def test_the_recording_server_answers_with_the_real_ai_memory_shapes(server)
++- L520-L530  function test_the_record_timestamp_comes_from_the_page_listing  def test_the_record_timestamp_comes_from_the_page_listing(server)
++- L533-L539  function test_every_request_carries_the_bearer_token  def test_every_request_carries_the_bearer_token(server)
++- L542-L552  function test_a_failing_scope_degrades_visibly_and_names_the_scope  def test_a_failing_scope_degrades_visibly_and_names_the_scope(server, tmp_path)
++- L555-L568  function test_the_token_never_reaches_the_event_stream  def test_the_token_never_reaches_the_event_stream(tmp_path, server)
++- L571-L574  function test_the_adapter_uses_no_clock_and_no_randomness  def test_the_adapter_uses_no_clock_and_no_randomness()
++- L579-L607  function _run_with_bindings  def _run_with_bindings(tmp_path, rows, *, verb="recall", base_url=None)
++- L623-L632  function test_malformed_binding_scopes_fail_closed_through_the_public_cli  def test_malformed_binding_scopes_fail_closed_through_the_public_cli(tmp_path, scopes, message)
++- L636-L646  function test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli  def test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli(tmp_path, verb)
++- L649-L657  function test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes  def test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes(tmp_path, server)
++- L660-L677  function test_the_negative_control_denies_without_a_network_call  def test_the_negative_control_denies_without_a_network_call(tmp_path)
++- L680-L686  function test_the_cli_denial_line_is_exactly_the_seed_reason  def test_the_cli_denial_line_is_exactly_the_seed_reason()
++- L692-L702  function test_committed_bundles_carry_the_real_ai_memory_record_shapes  def test_committed_bundles_carry_the_real_ai_memory_record_shapes(bundle)
++- L706-L717  function test_committed_bundle_recall_records_match_the_adapters_own_shape  def test_committed_bundle_recall_records_match_the_adapters_own_shape(bundle)
++- L720-L725  function test_the_honeytoken_fixture_names_all_four_scopes  def test_the_honeytoken_fixture_names_all_four_scopes()
++- L730-L734  function test_a_repaired_wrong_scope_bundle_passes  def test_a_repaired_wrong_scope_bundle_passes(good)
++- L737-L740  function test_a_repaired_leak_bundle_passes  def test_a_repaired_leak_bundle_passes(tmp_path)
++- L743-L760  function test_the_checker_prints_exactly_one_stdout_line  def test_the_checker_prints_exactly_one_stdout_line(good, tmp_path)
++- L763-L766  function test_an_absent_evidence_root_defers  def test_an_absent_evidence_root_defers(tmp_path)
++- L769-L771  function test_the_sandbox_tree_has_no_captured_evidence_so_the_spec_positive_leg_defers  def test_the_sandbox_tree_has_no_captured_evidence_so_the_spec_positive_leg_defers()
++- L776-L779  function test_the_committed_leak_bundle_is_refused  def test_the_committed_leak_bundle_is_refused()
++- L782-L785  function test_the_committed_wrong_scope_bundle_is_refused  def test_the_committed_wrong_scope_bundle_is_refused()
++- L790-L792  function test_substrate_commit_mutant  def test_substrate_commit_mutant(good)
++- L795-L797  function test_substrate_version_mutant  def test_substrate_version_mutant(good)
++- L800-L804  function test_substrate_binary_digest_mutant  def test_substrate_binary_digest_mutant(good)
++- L807-L815  function test_posture_wrong_value_mutant  def test_posture_wrong_value_mutant(good)
++- L810-L812  function unsafe  def unsafe(doc)
++- L818-L821  function test_posture_absent_key_mutant  def test_posture_absent_key_mutant(good)
++- L824-L831  function test_a_declared_posture_the_instance_never_received_is_refused  def test_a_declared_posture_the_instance_never_received_is_refused(good)
++### anti-pattern screen (whole file)
++--- TEST_SCREEN over 1 path(s): 13 hits over 1 files ---
++AF-AP-80: 9
++    tests/test_s0_06_four_scope.py:381: assert route not in source
++    tests/test_s0_06_four_scope.py:383: assert "/admin/write-page" in source
++    tests/test_s0_06_four_scope.py:574: assert token not in source
++    tests/test_s0_06_four_scope.py:677: assert "http_request" not in events.read_text()
++    tests/test_s0_06_four_scope.py:1112: assert lock["selected_core"]["ai-memory"]["commit"] not in CHECKER_PATH.read_text()
++    tests/test_s0_06_four_scope.py:1508: assert lock["selected_core"]["ai-memory"]["observed_version"] not in CHECKER_PATH.read_text()
++    ... +3
++AF-AP-34: 2
++    tests/test_s0_06_four_scope.py:1149: for banned in ("pkill", "killall", "pgrep"):
++    tests/test_s0_06_four_scope.py:1149: for banned in ("pkill", "killall", "pgrep"):
++AF-AP-35: 2
++    tests/test_s0_06_four_scope.py:980: path.write_text(path.read_text().replace(tokens["team"], "HT-team-scrubbed"))
++    tests/test_s0_06_four_scope.py:987: path.write_text(path.read_text().replace(tokens["agent"], "HT-agent-scrubbed"))
++
++## graft ask — where is a binding row validated and consumed for authorization
++⬆ graft 0.16.0 → 0.18.0 available: run `npm i -g @nanonets/graft@latest` (restart your agent after).
++graft ask — "where is a binding row validated and consumed for authorization"  (lexical)
++
++1. _bind · method  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L298-L308
++   def _bind(self, tuple_obj)
++
++2. Binding · class  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L101-L107
++   class Binding(NamedTuple)
++
++3. FactoryMemory · class  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L270-L449
++   class FactoryMemory
++
++4. authorize · function  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L166-L186
++   def authorize(tuple_obj: dict, table: list) -> dict | None
++
++5. load_bindings · function  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L120-L163
++   def load_bindings(path: Path = BINDINGS_PATH) -> list
++
++6. recall · method  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L346-L386
++   def recall(self, tuple_obj, query, limit=DEFAULT_LIMIT)
++
++7. scopes_for · function  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L110-L117
++   def scopes_for(binding: Binding) -> dict
++
++8. write · method  [symbol]
++   proofs/S0-06/adapter/factory_memory.py:L388-L449
++   def write(self, tuple_obj, active_scope, record)
++
++## symbol load_bindings
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="load_bindings" defs="1" count="10" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="1" hop_untested="9" shown="10" capped="0" total="10" has_more="0" next_offset="10" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=load_bindings">
++
++## symbol authorize
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="authorize" defs="1" count="7" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="1" hop_untested="6" shown="7" capped="0" total="7" has_more="0" next_offset="7" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=authorize">
++
++## symbol _bind
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="_bind" defs="2" count="7" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="2" hop_untested="5" shown="7" capped="0" total="7" has_more="0" next_offset="7" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=_bind">
++
++## symbol _run_with_bindings
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="_run_with_bindings" defs="1" count="3" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="0" hop_untested="3" shown="3" capped="0" total="3" has_more="0" next_offset="3" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=_run_with_bindings">
++
++## symbol test_malformed_binding_scopes_fail_closed_through_the_public_cli
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="test_malformed_binding_scopes_fail_closed_through_the_public_cli" defs="1" count="0" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=test_malformed_binding_scopes_fail_closed_through_the_public_cli">
++
++## symbol test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli" defs="1" count="0" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli">
++
++## symbol test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes
++### GitNexus impact (upstream)
++unmapped — GitNexus index absent
++### code-review-graph callers_of / tests_for
++unmapped — code-review-graph graph absent (run: /home/rocco/venv-crg/bin/code-review-graph build)
++### ripwire callers
++<callers of="test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes" defs="1" count="0" root="/home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="108" graph_unresolved="109" counts_floor="1" next="--uses=test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes">
++
++## ripwire test-gate — tests to run + the UNTESTED blast radius (a zero is 'none found', never 'none exists')
+diff --git a/tasks/briefs/s0-06-support/M4-report.md b/tasks/briefs/s0-06-support/M4-report.md
+new file mode 100644
+index 0000000..0a55a3b
+--- /dev/null
++++ b/tasks/briefs/s0-06-support/M4-report.md
+@@ -0,0 +1,164 @@
++# M4 — S0-06 round 4 build report (F-32)
++
++PIN: `c367d76`
++Role: code-implementer, PC venue (`tasks/briefs/pc/VENUE-MAP.md`).
++
++## Outcome
++
++**REVIEW-PENDING — GATE RECOMMENDATION: MERGE-READY for independent adversarial verification.** F-32 reproduced on the PIN and the implementation plus deterministic public-CLI controls are green locally. This single-model build lane cannot grade its own change; the coordinator owns the final decision and must send these bytes to the sandbox adversarial-verifier before acceptance or live capture.
++
++## NOT done
++
++- The live ai-memory leg was not run: the venue forbids it and the coordinator owns it.
++- No EXPIRED→mint transition was run; nothing was minted.
++- The S0-11 re-sign was not run; it is owner-owned.
++- Independent adversarial verification has not run on this build lane.
++- Close census found no leftover child server, pytest, or S0-06 helper. Only the lane wrapper and this Hermes process remained.
++- No commit, add, stash, checkout, reset, push, bridge call, server restart, or credential read occurred.
++
++## Contract
++
++1. Each bindings row requires a present, list-valued, non-empty `scopes` field.
++2. Every scope element is a string member of `SCOPE_ORDER`; duplicates are refused.
++3. No two rows share the same `TUPLE_FIELDS` identity tuple.
++4. The public recall/write CLI emits a named configuration error with a nonzero exit before authorization, and never emits `recall: complete`, for an invalid table.
++5. A valid unique non-empty scope list authorizes exactly the same scopes as before.
++6. Tuple values remain exact/verbatim; F-33 normalization is not added.
++
++## FILE IDENTITY (final bytes)
++
++- `proofs/S0-06/adapter/factory_memory.py` — 537 lines — git blob `2bee9eea7a84ae69026397104d59d4d792f26420`; SHA-256 `3cd91af9c02f244d5c61e359018c66fa8d77f950d0f10911d136c86dd5034034`.
++- `tests/test_s0_06_four_scope.py` — 2157 lines — git blob `b1b3d19fab674c8e07474dc1204bd3711c3ca2e2`; SHA-256 `566d81103cc33fda71f0d777c499a6538cdf17f42b6e08a6bda677e029087d52`.
++- `tasks/briefs/s0-06-support/M4-pack.md` — 234 lines — attached code-intel pack; git blob `a00b5510e87be41c5584a8c7600da5f1a63249a2`; SHA-256 `65247dd482dc3f469d4059c6a057b29cace03acaa943925d66a1e019841d4009`.
++- `tasks/briefs/s0-06-support/M4-report.md` — this report; its self-referential hash is intentionally omitted. Final line count is recorded in the handoff.
++
++## Premise and red-before proof
++
++F-32 reproduced through the actual public `factory_memory.py recall` CLI on a `git archive c367d76` scratch copy. Missing `scopes` and `[]` returned rc 0 with `recall: complete` and `scopes_queried=[]`; `"agent"` returned rc 70 naming its characters as unknown scopes; integer `1` returned rc 70 with a bare `TypeError`; duplicate scopes were silently set-deduplicated; duplicate identity rows selected the first row and changed authorization with table order.
++
++The final tests copied onto the unmodified PIN adapter produced `8 failed, 1 passed, 214 deselected in 2.27s`. All eight public-CLI negative rows failed; the valid-table positive row passed. This is red-before against the old production bytes without mutating the shared tree.
++
++## Implementation
++
++- `A:97-99` defines `_BindingsConfigurationError`, a `ValueError` subtype, so the CLI classifies table failures by type instead of by parsing messages.
++- `A:120-163` validates `scopes` list type, non-empty content, string elements, unknown names, duplicate names, and duplicate identity tuples before returning the table. The identity key is constructed from `TUPLE_FIELDS` at `A:159` and checked before it enters the seen set at `A:160-162`.
++- `A:516-533` maps named binding-configuration failures to rc 78 and one stderr line. Decision exits remain 0/1/3; unexpected failures remain rc 70.
++- `T:579-607` copies the real stdlib-only adapter beside a scratch `bindings.json`. This preserves the production invariant that no caller-selectable `--bindings` flag exists while driving the real `load_bindings -> _bind -> recall/write` CLI path.
++- `T:610-646` carries malformed-scope and duplicate-identity negative controls. They assert exact rc 78, exact named message, empty stdout, no result file, and absence of `recall: complete`.
++- `T:649-657` is the positive control. It drives a valid agent+team table through the CLI and loopback recording server and asserts exactly those two queried projects.
++- The existing absent-table public-CLI test now expects the same named configuration class at `T:1412-1426`; the unrelated unexpected tuple-file failure remains rc 70.
++
++No fixture file changed. `_bind`, raw-origin, query scrub, file manifest, and telemetry behavior are untouched.
++
++## Green-after evidence
++
++Focused F-32 plus adjacent bindings/exit controls: `15 passed, 208 deselected in 1.98s`.
++
++Full S0-06 file, direct final run: `223 passed in 30.32s`.
++
++Machine-counted full S0-06 file:
++
++```text
++pytest-summary: 223 passed in 30.32s
++```
++
++Canonical static-copy gate, the exact brief command and final bytes:
++
++```text
++RESULT: rev=c367d76a1676 files=2 deleted=0 runs=2 tests=0b96e6ceb879 identical=yes rc=0 summary="291 passed in 46.23s 291 passed in 46.02s"
++```
++
++Static checks:
++
++```text
++pyflakes rc=0
++git diff --check rc=0
++```
++
++## Named mutant table
++
++| ID | hostile table / positive | observed final result | killer |
++|---|---|---|---|
++| M1 | `scopes` absent | KILLED, rc 78, `scopes must be a list` | `T:613`, `T:623-632` |
++| M2 | `scopes="agent"` | KILLED, rc 78, `scopes must be a list` | `T:614`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli` at `T:623-632` |
++| M3 | `scopes=1` | KILLED, rc 78, `scopes must be a list` | `T:615`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli` at `T:623-632` |
++| M4 | `scopes=[]` | KILLED, rc 78, `scopes must be non-empty` | `T:616`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli` at `T:623-632` |
++| M4b | `scopes=[1]` | KILLED, rc 78, `scopes must contain only strings` | `T:617-618`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli` at `T:623-632` |
++| M5 | `scopes=["agent","agent"]` | KILLED, rc 78, `scopes has duplicates` | `T:619-632` |
++| M6 | duplicate `TUPLE_FIELDS` rows | KILLED on recall and write, rc 78, exact tuple named | `T:635-646` |
++| P1 | valid unique `["agent"]` | accepted at load; normal post-auth degraded result against closed port; queried scope is `agent` | scratch driver; stronger loopback positive at `T:649-657` |
++
++Scratch driver final line:
++
++```text
++SUMMARY: mutants=6 killed=6 positive=1 failures=0
++```
++
++## Anti-pattern screens
++
++Adapter:
++
++```text
++--- AP_SCREEN over 1 path(s): 3 hits over 1 files ---
++AP-32: 2
++    proofs/S0-06/adapter/factory_memory.py:261: return "observations/" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16] + ".md"
++    proofs/S0-06/adapter/factory_memory.py:332: query_sha256_16 = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
++AF-AP-70: 1
++    proofs/S0-06/adapter/factory_memory.py:491: # DOCUMENTED LIMIT (F-21): every READ path in this module is lstat+S_ISREG guarded, but these
++```
++
++Classification: both AP-32 rows are pre-existing deterministic SHA-256 path/query-digest derivations. AF-AP-70 is the pre-existing documented F-21 runner-owned output-sink limit. None is introduced by F-32.
++
++Tests:
++
++```text
++--- TEST_SCREEN over 1 path(s): 13 hits over 1 files ---
++AF-AP-80: 9
++AF-AP-34: 2
++AF-AP-35: 2
++```
++
++Classification: AF-AP-80 rows are source-contract assertions; AF-AP-34 is the banned-process-command scanner's own literal tuple; AF-AP-35 is deterministic synthetic honeytoken scrubbing. None is introduced by F-32.
++
++## Code intelligence
++
++Attached final pack: `tasks/briefs/s0-06-support/M4-pack.md`.
++
++Pre-edit GitNexus resolved `load_bindings -> _bind -> recall/write` with exact LOW risk, but named its clone index as 233 commits stale. Ripwire independently found `_bind` as the production caller and recall/write upstream. `scripts/why.sh` tied `load_bindings` to the cb91edf/e776dd0 S0-06 history. Post-edit `detect-changes` reported 2 changed files, four affected Recall/Write→Authorize/Load_bindings flows, and medium risk. The pack records GitNexus/code-review-graph as unavailable in its own lane invocation and carries the ripwire results rather than implying a graph result it did not obtain.
++
++## Self-attack
++
++1. **The test could bypass the public CLI.** Ruled out: `_run_with_bindings` executes the copied real script with `recall` or `write` in a subprocess (`T:579-607`); red-before on PIN production bytes failed eight rows, and green-after runs the same tests.
++2. **A configuration failure could still write a false-success artifact.** Ruled out: every negative asserts rc 78, empty stdout, no `recall: complete`, and no `--out` file (`T:628-632`, `T:642-646`).
++3. **Duplicate tuples could remain order-dependent on one verb.** Ruled out locally: the duplicate control is parametrized over recall and write (`T:635-646`), and validation executes before either verb's authorization/network path. Independent verifier still must attack this claim.
++
++## Evidence tiers
++
++- **Verified:** PIN red-before behavior; final focused and full tests; exact two-run archive gate; pyflakes/diff checks; six hostile table classes and one positive control; final line identities; direct production caller path.
++- **Inferred:** no external consumer requires configuration failures to remain rc 70. A literal sweep found the proof spec pins only decision rc 1 and `collect_leg.sh` relies on generic nonzero under `set -e`; the independent verifier should confirm outside this component.
++- **Assumed:** none about live ai-memory semantics. No live substrate claim is made.
++
++## Discrepancies
++
++1. The first archive-gate attempt inherited `/usr/bin/python3`, which lacks `rfc3339-validator`, and produced `33 failed, 258 passed`. This was a venue-instrument PATH error, not a product failure. Exporting `PATH=/home/rocco/venv-agent-factory/bin:$PATH` made `python3` resolve to the mandated interpreter; the final canonical `-n 2` gate is green above.
++2. The brief's pack command wrote `-s load_bindings authorize _bind`; this script requires repeated flags. The literal form treated `authorize` as a file and exited 64. `-s load_bindings -s authorize -s _bind` produced the attached pack.
++3. An initial `ripwire_review.sh edit-check` call omitted the required symbol and returned usage rc 64. Re-running `ripwire_review.sh edit-check load_bindings` produced `status="unchanged" callers="10" incompatible="0"`; the final pack supplies per-symbol callers and GitNexus `detect-changes` supplies the post-edit blast radius.
++4. Final report lint, worktree mode after one hint round: `report_lint: 29 refs — OK 24, NEAR 1, MISS 0, UNCHECKABLE 4, UNRESOLVED 0 (worktree)`. The brief-required PIN-mode invocation, which cannot resolve new worktree lines, produced `report_lint: 29 refs — OK 3, NEAR 1, MISS 21, UNCHECKABLE 4, UNRESOLVED 0 (at c367d76)`; those misses are the new F-32 code/tests and are resolved by the worktree-mode run.
++
++## Recommendation
++
++**MERGE-READY for independent adversarial verification.** This is a build-lane recommendation, not a final verdict. The verifier should especially attack exception classification, duplicate-tuple identity coverage, and whether any external CLI consumer hardcodes rc 70 for table failures.
++
++## Reasoning record for coordinator commit
++
++Rejected alternative: silently deduplicate scope lists or pick a deterministic duplicate tuple row. That preserves ambiguous policy and leaves authorization dependent on an arbitrary conflict rule. Ordering rationale: validate every row and table uniqueness in `load_bindings` before `authorize`, so recall and write share one fail-closed choke point. Primary source: the public CLI reproduction of F-32 at c367d76 plus `load_bindings -> _bind -> recall/write` from the adapter and two code-intel instruments. Logical hunks: (1) typed table/schema validation and rc 78 configuration surface; (2) public-CLI negative and positive controls.
++
++## Retro
++
++F-32 is the already-registered malformed-policy-table fail-open class from VERIFY-M3. No new bug class was found, so no new anti-pattern registry row or skill update is proposed. The only tooling wrinkles are recorded in DISCREPANCIES. Retro: nothing else to bake.
++
++## Final mechanical records
++
++- Worktree report lint after one bounded hint round: `report_lint: 29 refs — OK 24, NEAR 1, MISS 0, UNCHECKABLE 4, UNRESOLVED 0 (worktree)`.
++- Brief-required PIN lint: `report_lint: 29 refs — OK 3, NEAR 1, MISS 21, UNCHECKABLE 4, UNRESOLVED 0 (at c367d76)`; all 21 misses target new worktree lines and therefore cannot exist at the PIN.
++- Canonical archive gate: `RESULT: rev=c367d76a1676 files=2 deleted=0 runs=2 tests=0b96e6ceb879 identical=yes rc=0 summary="291 passed in 46.23s 291 passed in 46.02s"`.
+diff --git a/tests/test_s0_06_four_scope.py b/tests/test_s0_06_four_scope.py
+index 4775747..b1b3d19 100644
+--- a/tests/test_s0_06_four_scope.py
++++ b/tests/test_s0_06_four_scope.py
+@@ -576,6 +576,87 @@ def test_the_adapter_uses_no_clock_and_no_randomness():
+ 
+ # --------------------------------------------------------------------------- offline negative control
+ 
++def _run_with_bindings(tmp_path, rows, *, verb="recall", base_url=None):
++    """Run the public CLI with a scratch copy of the committed, non-configurable table.
++
++    There is deliberately no `--bindings` flag. Copying the adapter beside a test table keeps that
++    production invariant while exercising the real load_bindings -> _bind -> recall/write path.
++    """
++    adapter_dir = tmp_path / "adapter"
++    adapter_dir.mkdir()
++    adapter_path = adapter_dir / "factory_memory.py"
++    shutil.copy2(ADAPTER_PATH, adapter_path)
++    (adapter_dir / "bindings.json").write_text(json.dumps({"bindings": rows}))
++    tuple_file = tmp_path / "tuple.json"
++    tuple_file.write_text(json.dumps(AUTHORIZED_TUPLE))
++    out_file = tmp_path / "out.json"
++    events_file = tmp_path / "events.jsonl"
++    command = [sys.executable, str(adapter_path), verb,
++               "--tuple-file", str(tuple_file), "--out", str(out_file),
++               "--events", str(events_file)]
++    if verb == "recall":
++        command.extend(["--query", "x"])
++    else:
++        record_file = tmp_path / "record.json"
++        record_file.write_text(json.dumps({
++            "session": "s1", "turn": "t1", "event_id": "e1", "body": "x",
++        }))
++        command.extend(["--scope", "agent", "--record-file", str(record_file)])
++    if base_url is not None:
++        command.extend(["--base-url", base_url])
++    return subprocess.run(command, capture_output=True, text=True, timeout=60), out_file
++
++
++@pytest.mark.parametrize(
++    ("scopes", "message"),
++    [
++        pytest.param(_UNSET, "bindings row a-alpha: scopes must be a list", id="absent"),
++        pytest.param("agent", "bindings row a-alpha: scopes must be a list", id="string"),
++        pytest.param(1, "bindings row a-alpha: scopes must be a list", id="integer"),
++        pytest.param([], "bindings row a-alpha: scopes must be non-empty", id="empty"),
++        pytest.param([1], "bindings row a-alpha: scopes must contain only strings",
++                     id="non-string-element"),
++        pytest.param(["agent", "agent"], "bindings row a-alpha: scopes has duplicates",
++                     id="duplicate"),
++    ],
++)
++def test_malformed_binding_scopes_fail_closed_through_the_public_cli(tmp_path, scopes, message):
++    row = dict(AUTHORIZED_TUPLE)
++    if scopes is not _UNSET:
++        row["scopes"] = scopes
++    proc, out_file = _run_with_bindings(tmp_path, [row])
++    assert proc.returncode == 78
++    assert proc.stdout == ""
++    assert proc.stderr.splitlines() == ["factory_memory: configuration error: " + message]
++    assert "recall: complete" not in proc.stdout + proc.stderr
++    assert not out_file.exists()
++
++
++@pytest.mark.parametrize("verb", ["recall", "write"])
++def test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli(tmp_path, verb):
++    identity = tuple(AUTHORIZED_TUPLE[field] for field in fm.TUPLE_FIELDS)
++    rows = [dict(AUTHORIZED_TUPLE, scopes=["agent", "project"]),
++            dict(AUTHORIZED_TUPLE, scopes=["company"])]
++    proc, out_file = _run_with_bindings(tmp_path, rows, verb=verb)
++    expected = f"bindings: duplicate identity tuple {identity}"
++    assert proc.returncode == 78
++    assert proc.stdout == ""
++    assert proc.stderr.splitlines() == ["factory_memory: configuration error: " + expected]
++    assert "recall: complete" not in proc.stdout + proc.stderr
++    assert not out_file.exists()
++
++
++def test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes(tmp_path, server):
++    row = dict(AUTHORIZED_TUPLE, scopes=["agent", "team"])
++    proc, out_file = _run_with_bindings(tmp_path, [row], base_url=server.base_url)
++    assert proc.returncode == 0
++    assert proc.stdout == "recall: complete\n"
++    result = json.loads(out_file.read_text())
++    assert [entry["scope"] for entry in result["scopes_queried"]] == ["agent", "team"]
++    assert [call["query"]["project"][0] for call in server.calls
++            if call["path"] == "/api/v1/search"] == ["agent--a-alpha", "team--t-core"]
++
++
+ def test_the_negative_control_denies_without_a_network_call(tmp_path):
+     """The seed's negative fixture against a CLOSED port: the denial arrives first, in bounded
+     time, and the event stream carries no request."""
+@@ -1337,10 +1418,10 @@ def test_an_absent_bindings_table_is_a_named_failure(tmp_path):
+         [sys.executable, str(solo / "factory_memory.py"), "recall",
+          "--tuple-file", str(NEG_FIXTURE), "--query", "x"],
+         capture_output=True, text=True, timeout=60)
+-    assert proc.returncode == 70                                     # never `denied`'s exit 1
++    assert proc.returncode == 78                  # configuration, never `denied`'s exit 1
+     assert proc.stdout == ""
+     assert proc.stderr.splitlines() == [
+-        "factory_memory: unexpected ValueError: bindings table is unreadable: %s "
++        "factory_memory: configuration error: bindings table is unreadable: %s "
+         "(FileNotFoundError)" % (solo / "bindings.json")]
+     assert "Traceback" not in proc.stderr
+ 
+diff --git a/transcripts/pc/pc-m4.md--c367d76.md b/transcripts/pc/pc-m4.md--c367d76.md
+new file mode 100644
+index 0000000..7676cd7
+--- /dev/null
++++ b/transcripts/pc/pc-m4.md--c367d76.md
+@@ -0,0 +1,1015 @@
++# Hermes lane session 20260917_125633_ae29e0
++
++- model: agentfactory-build-local
++- started: 2026-09-17T11:56:35.752109+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree
++- messages: 305; tool calls: 169
++- tokens in/out/cache_read/reasoning: 392963/92119/17906272/52948
++
++## user @ 11:56:35
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 11:57:27 → tools: read_file, terminal
++
++I'm an M4 build lane for S0-06 round 4 (F-32: bindings table schema validation). Starting by reading the venue map, the VERIFY-M3 report, and checking my worktree state.
++
++## tool result (read_file) @ 11:57:27 — 6035 chars (body not exported)
++
++## tool result (terminal) @ 11:57:28 — 426 chars (body not exported)
++
++## assistant @ 11:57:37 → tools: read_file, terminal
++
++Worktree is at PIN c367d76, clean. Now reading the VERIFY-M3 report whole (finding source), and checking the lane env.
++
++## tool result (read_file) @ 11:57:37 — 38180 chars (body not exported)
++
++## tool result (terminal) @ 11:57:37 — 270 chars (body not exported)
++
++## assistant @ 11:58:02 → tools: terminal
++
++I found that F-32 is a blocker with line numbers matching the pinned bytes, and the lane environment is properly set up with the real-leg directory in place. Next I'll get a skeleton view of the adapter to understand the exact lines involved.
++
++## tool result (terminal) @ 11:58:03 — 2275 chars (body not exported)
++
++## assistant @ 11:58:13 → tools: read_file
++
++Skeleton matches the brief's line numbers. Now reading the exact regions: the header constants, `load_bindings`, `authorize`, `_bind`, and the CLI path.
++
++## tool result (read_file) @ 11:58:13 — 8720 chars (body not exported)
++
++## assistant @ 11:58:21 → tools: read_file
++
++Now the `_bind`, `recall`, and `_main` regions to see where the CLI surfaces `recall: complete` and how errors exit.
++
++## tool result (read_file) @ 11:58:21 — 6115 chars (body not exported)
++
++## assistant @ 11:58:28 → tools: read_file
++
++Now `_main` and `main` (L465-509) to see how `load_bindings` errors surface as exit codes.
++
++## tool result (read_file) @ 11:58:28 — 2442 chars (body not exported)
++
++## assistant @ 11:59:01 → tools: terminal
++
++I now have the full picture of the adapter. Let me run the mandatory code-intel pack (the brief requires it attached), set up scratch, and confirm the current FAIL behavior of the canonical repro before I change anything (verify the premise first).
++
++## tool result (terminal) @ 11:59:03 — 1221 chars (body not exported)
++
++## assistant @ 11:59:19 → tools: terminal
++
++Now let me verify the premise by reproducing F-32's fail-open on the PIN's bytes (the brief is a hypothesis — confirm before building). Setting up the scratch archive and running the canonical repro.
++
++## tool result (terminal) @ 11:59:21 — 1303 chars (body not exported)
++
++## assistant @ 11:59:44 → tools: read_file, terminal
++
++I used a non-existent `--bindings-path` flag (rc 2 = argparse error). The CLI reads a **fixed** `ADAPTER_DIR/"bindings.json"` (no flag, by design). Let me check the parser and the committed table to confirm the real injection path.
++
++## tool result (read_file) @ 11:59:44 — 1146 chars (body not exported)
++
++## tool result (terminal) @ 11:59:44 — 1552 chars (body not exported)
++
++## assistant @ 11:59:59 → tools: read_file
++
++My repro failed on a flag that doesn't exist. The CLI reads a **fixed** `ADAPTER_DIR/"bindings.json"` (no flag, by design — "the authorization table is not caller-selectable"). So the malformed-table injection for red controls must use the test-file's established mechanism. Let me read how the existing bindings tests invoke the public CLI with a custom table.
++
++## tool result (read_file) @ 11:59:59 — 5281 chars (body not exported)
++
++## assistant @ 12:01:18 → tools: terminal, read_file
++
++My repro used a non-existent flag — the CLI reads a **fixed** `ADAPTER_DIR/"bindings.json"` (no `--bindings` flag, by design). So red controls inject a malformed table by copying the real adapter to scratch (the CLI then reads the scratch table = the same production path). Let me confirm the adapter's imports are stdlib-only (so a scratch copy is self-contained) and find the test-file constants/fixtures.
++
++## tool result (terminal) @ 12:01:18 — 433 chars (body not exported)
++
++## tool result (read_file) @ 12:01:18 — 2790 chars (body not exported)
++
++## assistant @ 12:03:02 → tools: write_file
++
++Confirmed: the adapter is stdlib-only (self-contained) and the test file loads it via `importlib`. The red controls must drive the **actual public CLI** (`recall`/`write`) — the cleanest injection is a scratch copy of the real adapter beside a malformed `bindings.json` (the CLI reads `<ADAPTER_DIR>/bindings.json` by fixed design, no flag). Let me reproduce all six F-32 cases as the **red-before** baseline on the PIN's bytes.
++
++## tool result (write_file) @ 12:03:04 — 302 chars (body not exported)
++
++## assistant @ 12:03:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:03:50 — 2734 chars (body not exported)
++
++## assistant @ 12:06:04 → tools: terminal
++
++Premise **fully reproduced** on the PIN's bytes — all six F-32 cases are live defects:
++
++| case | red-before (PIN bytes) | class |
++|---|---|---|
++| a — `scopes` absent | rc **0**, `recall: complete`, `scopes_queried=[]` | **fail-open empty-success** |
++| b — `scopes="agent"` (string) | rc 70, `ValueError: ... names unknown scopes: a,e,g,n,t` (chars!) | misleading, not named |
++| c — `scopes=1` (int) | rc 70, `TypeError: 'int' object is not iterable` | crash net, not named |
++| d — `scopes=[]` (empty) | rc **0**, `recall: complete`, `scopes_queried=[]` | **fail-open empty-success** |
++| e — `["agent","agent"]` (dup) | rc 3, silently set-dedup → authorizes `["agent"]` | no rejection |
++| f — dup identity tuple | rc 3, **first match wins** → all 4 scopes, order-dependent | no uniqueness check |
++
++Exactly the brief's F-32. Now let me ground the exit-code decision: confirm how the module's *existing* named load-failure (F-10, absent table) currently surfaces through the CLI, so my fix stays in the same class rather than inventing a new exit code.
++
++## tool result (terminal) @ 12:06:05 — 152 chars (body not exported)
++
++## assistant @ 12:11:05 → tools: terminal, read_file
++
++Premise fully reproduced on the PIN's bytes — all six F-32 cases are live defects (fail-open empty-success for absent/empty, crash-net for str/int, silent dedup for dup-scope, first-match-wins for dup-tuple).
++
++Now, the design requires a **new named exit code** for the config error (F-11's spirit: a deterministic config error must not share 70 with an unexpected crash). Let me ground the exception design: find all `load_bindings` callers (don't break a third), read the "missing identity fields" test to match style, and check the `server` fixture.
++
++## tool result (terminal) @ 12:11:05 — 1382 chars (body not exported)
++
++## tool result (read_file) @ 12:11:05 — 2697 chars (body not exported)
++
++## assistant @ 12:12:55 → tools: terminal
++
++Premise fully reproduced. I have all callers (`load_bindings`: 1 production caller at L275; tests use it in-process with the committed table or a valid forged single-row). My fix keeps `ValueError` (matches the brief's message shape and the existing F-10/F-14 style) and adds a **distinct exit code** in the CLI so a deterministic config error can't share 70 with an unexpected crash (F-11's rule).
++
++Let me ground the test-file fixtures (`server`, `good`) and see the tail of the file to pick an insertion point.
++
++## tool result (terminal) @ 12:12:55 — 2082 chars (body not exported)
++
++## assistant @ 12:14:47 → tools: terminal, terminal, terminal, read_file
++
++
++
++## tool result (terminal) @ 12:14:48 — 4285 chars (body not exported)
++
++## tool result (terminal) @ 12:14:51 — 4856 chars (body not exported)
++
++## tool result (terminal) @ 12:14:52 — 5457 chars (body not exported)
++
++## tool result (read_file) @ 12:14:52 — 6423 chars (body not exported)
++
++## assistant @ 12:16:17 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 12:16:17 — 168 chars (body not exported)
++
++## tool result (terminal) @ 12:16:25 — 12804 chars (body not exported)
++
++## tool result (terminal) @ 12:16:26 — 10933 chars (body not exported)
++
++## assistant @ 12:17:04 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 12:17:05 — 1413 chars (body not exported)
++
++## tool result (terminal) @ 12:17:05 — 888 chars (body not exported)
++
++## assistant @ 12:17:47 → tools: search_files, search_files, terminal
++
++
++
++## tool result (search_files) @ 12:17:48 — 18 chars (body not exported)
++
++## tool result (search_files) @ 12:17:48 — 6616 chars (body not exported)
++
++## tool result (terminal) @ 12:17:54 — 108 chars (body not exported)
++
++## assistant @ 12:18:10 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:18:10 — 3941 chars (body not exported)
++
++## assistant @ 12:19:02 → tools: skill_view, skill_view, skill_view, search_files
++
++
++
++## tool result (skill_view) @ 12:19:03 — 26402 chars (body not exported)
++
++## tool result (skill_view) @ 12:19:03 — 12490 chars (body not exported)
++
++## tool result (skill_view) @ 12:19:03 — 24119 chars (body not exported)
++
++## tool result (search_files) @ 12:19:03 — 8239 chars (body not exported)
++
++## assistant @ 12:21:19 → tools: search_files, search_files, read_file
++
++
++
++## tool result (search_files) @ 12:21:19 — 18 chars (body not exported)
++
++## tool result (search_files) @ 12:21:19 — 18 chars (body not exported)
++
++## tool result (read_file) @ 12:21:19 — 16565 chars (body not exported)
++
++## assistant @ 12:21:43 → tools: read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 12:21:43 — 3421 chars (body not exported)
++
++## tool result (read_file) @ 12:21:43 — 2463 chars (body not exported)
++
++## tool result (terminal) @ 12:21:44 — 9766 chars (body not exported)
++
++## assistant @ 12:22:25 → tools: patch
++
++
++
++## tool result (patch) @ 12:22:30 — 5227 chars (body not exported)
++
++## assistant @ 12:22:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:22:47 — 11435 chars (body not exported)
++
++## assistant @ 12:23:47 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:23:47 — 4524 chars (body not exported)
++
++## assistant @ 12:23:56 → tools: patch
++
++
++
++## tool result (patch) @ 12:23:58 — 982 chars (body not exported)
++
++## assistant @ 12:24:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:24:15 — 11415 chars (body not exported)
++
++## assistant @ 12:24:30 → tools: patch
++
++
++
++## tool result (patch) @ 12:24:32 — 2203 chars (body not exported)
++
++## assistant @ 12:24:44 → tools: patch
++
++
++
++## tool result (patch) @ 12:24:46 — 1105 chars (body not exported)
++
++## assistant @ 12:24:52 → tools: patch
++
++
++
++## tool result (patch) @ 12:24:54 — 1201 chars (body not exported)
++
++## assistant @ 12:25:00 → tools: patch
++
++
++
++## tool result (patch) @ 12:25:02 — 889 chars (body not exported)
++
++## assistant @ 12:25:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:25:17 — 159 chars (body not exported)
++
++## assistant @ 12:25:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:25:32 — 1933 chars (body not exported)
++
++## assistant @ 12:25:39 → tools: patch
++
++
++
++## tool result (patch) @ 12:25:41 — 1251 chars (body not exported)
++
++## assistant @ 12:25:52 → tools: patch
++
++
++
++## tool result (patch) @ 12:25:54 — 1413 chars (body not exported)
++
++## assistant @ 12:26:01 → tools: patch
++
++
++
++## tool result (patch) @ 12:26:03 — 1023 chars (body not exported)
++
++## assistant @ 12:26:18 → tools: patch
++
++
++
++## tool result (patch) @ 12:26:20 — 1734 chars (body not exported)
++
++## assistant @ 12:26:35 → tools: patch
++
++
++
++## tool result (patch) @ 12:26:37 — 1337 chars (body not exported)
++
++## assistant @ 12:26:46 → tools: patch
++
++
++
++## tool result (patch) @ 12:26:48 — 1066 chars (body not exported)
++
++## assistant @ 12:27:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:27:03 — 160 chars (body not exported)
++
++## assistant @ 12:27:58 → tools: patch
++
++
++
++## tool result (patch) @ 12:28:00 — 813 chars (body not exported)
++
++## assistant @ 12:28:10 → tools: patch
++
++
++
++## tool result (patch) @ 12:28:12 — 1160 chars (body not exported)
++
++## assistant @ 12:28:28 → tools: patch
++
++
++
++## tool result (patch) @ 12:28:30 — 2210 chars (body not exported)
++
++## assistant @ 12:28:39 → tools: patch
++
++
++
++## tool result (patch) @ 12:28:41 — 1394 chars (body not exported)
++
++## assistant @ 12:28:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:28:57 — 160 chars (body not exported)
++
++## assistant @ 12:29:07 → tools: patch
++
++
++
++## tool result (patch) @ 12:29:09 — 886 chars (body not exported)
++
++## assistant @ 12:29:23 → tools: patch
++
++
++
++## tool result (patch) @ 12:29:25 — 1352 chars (body not exported)
++
++## assistant @ 12:29:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:29:41 — 160 chars (body not exported)
++
++## assistant @ 12:30:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 12:30:00 — 309 chars (body not exported)
++
++## assistant @ 12:30:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:30:07 — 1419 chars (body not exported)
++
++## assistant @ 12:30:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:30:12 — 10518 chars (body not exported)
++
++## assistant @ 12:30:18 → tools: patch
++
++
++
++## tool result (patch) @ 12:30:20 — 796 chars (body not exported)
++
++## assistant @ 12:30:25 → tools: patch
++
++
++
++## tool result (patch) @ 12:30:27 — 1045 chars (body not exported)
++
++## assistant @ 12:30:37 → tools: patch
++
++
++
++## tool result (patch) @ 12:30:39 — 1317 chars (body not exported)
++
++## assistant @ 12:30:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:31:23 — 389 chars (body not exported)
++
++## assistant @ 12:31:36 → tools: patch
++
++
++
++## tool result (patch) @ 12:31:39 — 1367 chars (body not exported)
++
++## assistant @ 12:31:49 → tools: patch
++
++
++
++## tool result (patch) @ 12:31:51 — 956 chars (body not exported)
++
++## assistant @ 12:31:56 → tools: patch
++
++
++
++## tool result (patch) @ 12:31:58 — 956 chars (body not exported)
++
++## assistant @ 12:32:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:32:09 — 160 chars (body not exported)
++
++## assistant @ 12:32:19 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 12:32:20 — 58 chars (body not exported)
++
++## tool result (terminal) @ 12:32:20 — 529 chars (body not exported)
++
++## tool result (terminal) @ 12:32:20 — 1448 chars (body not exported)
++
++## tool result (terminal) @ 12:32:20 — 66 chars (body not exported)
++
++## assistant @ 12:32:46 → tools: write_file
++
++
++
++## tool result (write_file) @ 12:32:47 — 292 chars (body not exported)
++
++## assistant @ 12:32:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:32:57 — 946 chars (body not exported)
++
++## assistant @ 12:33:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:33:42 — 14305 chars (body not exported)
++
++## assistant @ 12:33:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:34:27 — 389 chars (body not exported)
++
++## assistant @ 12:34:34 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:34:34 — 2832 chars (body not exported)
++
++## assistant @ 12:34:39 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:34:39 — 5542 chars (body not exported)
++
++## assistant @ 12:34:49 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:34:49 — 1666 chars (body not exported)
++
++## assistant @ 12:34:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:35:43 — 665 chars (body not exported)
++
++## assistant @ 12:36:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:37:01 — 2367 chars (body not exported)
++
++## assistant @ 12:37:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:37:11 — 599 chars (body not exported)
++
++## assistant @ 12:37:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:38:14 — 894 chars (body not exported)
++
++## assistant @ 12:38:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:39:45 — 894 chars (body not exported)
++
++## assistant @ 12:39:58 → tools: patch
++
++
++
++## tool result (patch) @ 12:40:00 — 1693 chars (body not exported)
++
++## assistant @ 12:40:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:40:22 — 1063 chars (body not exported)
++
++## assistant @ 12:40:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:40:37 — 124 chars (body not exported)
++
++## assistant @ 12:41:11 → tools: write_file
++
++
++
++## tool result (write_file) @ 12:41:12 — 309 chars (body not exported)
++
++## assistant @ 12:41:27 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 12:41:27 — 88 chars (body not exported)
++
++## tool result (terminal) @ 12:41:29 — 1419 chars (body not exported)
++
++## tool result (terminal) @ 12:41:29 — 162 chars (body not exported)
++
++## assistant @ 12:41:40 → tools: patch
++
++
++
++## tool result (patch) @ 12:41:42 — 1478 chars (body not exported)
++
++## assistant @ 12:41:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:42:42 — 896 chars (body not exported)
++
++## assistant @ 12:44:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:45:42 — 896 chars (body not exported)
++
++## assistant @ 12:46:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:47:05 — 124 chars (body not exported)
++
++## assistant @ 12:50:01 → tools: terminal, terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 12:50:01 — 58 chars (body not exported)
++
++## tool result (terminal) @ 12:50:02 — 529 chars (body not exported)
++
++## tool result (terminal) @ 12:50:02 — 1448 chars (body not exported)
++
++## tool result (terminal) @ 12:50:02 — 66 chars (body not exported)
++
++## tool result (terminal) @ 12:50:03 — 946 chars (body not exported)
++
++## assistant @ 12:50:24 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 12:50:25 — 296 chars (body not exported)
++
++## tool result (terminal) @ 12:50:25 — 1431 chars (body not exported)
++
++## tool result (terminal) @ 12:50:25 — 162 chars (body not exported)
++
++## assistant @ 12:51:22 → tools: patch
++
++
++
++## tool result (patch) @ 12:51:25 — 886 chars (body not exported)
++
++## assistant @ 12:52:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:52:15 — 160 chars (body not exported)
++
++## assistant @ 12:54:18 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:55:54 — 1150 chars (body not exported)
++
++## assistant @ 12:59:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:00:01 — 124 chars (body not exported)
++
++## assistant @ 13:01:30 → tools: write_file
++
++
++
++## tool result (write_file) @ 13:01:30 — 368 chars (body not exported)
++
++## assistant @ 13:01:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:01:42 — 10116 chars (body not exported)
++
++## assistant @ 13:01:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:01:48 — 2643 chars (body not exported)
++
++## assistant @ 13:02:03 → tools: patch
++
++
++
++## tool result (patch) @ 13:02:04 — 2259 chars (body not exported)
++
++## assistant @ 13:02:44 → tools: patch
++
++
++
++## tool result (patch) @ 13:02:44 — 2172 chars (body not exported)
++
++## assistant @ 13:03:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:03:19 — 654 chars (body not exported)
++
++## assistant @ 13:03:37 → tools: patch
++
++
++
++## tool result (patch) @ 13:03:37 — 1812 chars (body not exported)
++
++## assistant @ 13:03:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:03:51 — 10580 chars (body not exported)
++
++## assistant @ 13:04:00 → tools: patch
++
++
++
++## tool result (patch) @ 13:04:01 — 2147 chars (body not exported)
++
++## assistant @ 13:04:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:04:06 — 654 chars (body not exported)
++
++## assistant @ 13:04:48 → tools: patch
++
++
++
++## tool result (patch) @ 13:04:48 — 1587 chars (body not exported)
++
++## assistant @ 13:05:27 → tools: patch
++
++
++
++## tool result (patch) @ 13:05:27 — 1198 chars (body not exported)
++
++## assistant @ 13:05:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:05:35 — 654 chars (body not exported)
++
++## assistant @ 13:06:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:06:14 — 528 chars (body not exported)
++
++## assistant @ 13:06:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:06:36 — 2032 chars (body not exported)
++
++## assistant @ 13:07:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:07:01 — 459 chars (body not exported)
++
++## assistant @ 13:07:30 → tools: patch
++
++
++
++## tool result (patch) @ 13:07:30 — 1737 chars (body not exported)
++
++## assistant @ 13:07:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:07:39 — 654 chars (body not exported)
++
++## assistant @ 13:08:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:08:12 — 412 chars (body not exported)
++
++## assistant @ 13:08:32 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:08:32 — 13238 chars (body not exported)
++
++## assistant @ 13:09:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:09:42 — 443 chars (body not exported)
++
++## assistant @ 13:09:52 → tools: patch
++
++
++
++## tool result (patch) @ 13:09:52 — 978 chars (body not exported)
++
++## assistant @ 13:10:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:10:06 — 1490 chars (body not exported)
++
++## assistant @ 13:10:40 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 13:10:41 — 267 chars (body not exported)
++
++## tool result (terminal) @ 13:10:42 — 5457 chars (body not exported)
++
++## assistant @ 13:11:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 13:11:25 — 299 chars (body not exported)
++
++## assistant @ 13:11:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:11:37 — 16269 chars (body not exported)
++
++## assistant @ 13:11:54 → tools: patch
++
++
++
++## tool result (patch) @ 13:11:55 — 1000 chars (body not exported)
++
++## assistant @ 13:12:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:12:05 — 838 chars (body not exported)
++
++## assistant @ 13:12:27 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:12:27 — 13381 chars (body not exported)
++
++## assistant @ 13:13:20 → tools: search_files, terminal
++
++
++
++## tool result (search_files) @ 13:13:20 — 3658 chars (body not exported)
++
++## tool result (terminal) @ 13:13:21 — 45 chars (body not exported)
++
++## assistant @ 13:13:27 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:13:27 — 3579 chars (body not exported)
++
++## assistant @ 13:13:46 → tools: search_files
++
++
++
++## tool result (search_files) @ 13:13:46 — 2688 chars (body not exported)
++
++## assistant @ 13:14:04 → tools: patch
++
++
++
++## tool result (patch) @ 13:14:04 — 1444 chars (body not exported)
++
++## assistant @ 13:14:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:14:30 — 387 chars (body not exported)
++
++## assistant @ 13:14:56 → tools: patch
++
++
++
++## tool result (patch) @ 13:14:57 — 1797 chars (body not exported)
++
++## assistant @ 13:15:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:15:07 — 985 chars (body not exported)
++
++## assistant @ 13:15:59 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 13:15:59 — 2300 chars (body not exported)
++
++## tool result (read_file) @ 13:15:59 — 1186 chars (body not exported)
++
++## tool result (read_file) @ 13:15:59 — 1685 chars (body not exported)
++
++## assistant @ 13:16:04 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:16:04 — 1721 chars (body not exported)
++
++## assistant @ 13:16:10 → tools: patch
++
++
++
++## tool result (patch) @ 13:16:10 — 688 chars (body not exported)
++
++## assistant @ 13:16:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:16:15 — 497 chars (body not exported)
++
++## assistant @ 13:16:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:16:34 — 11055 chars (body not exported)
++
++## assistant @ 13:16:50 → tools: search_files
++
++
++
++## tool result (search_files) @ 13:16:50 — 1961 chars (body not exported)
++
++## assistant @ 13:17:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:17:30 — 7316 chars (body not exported)
++
++## assistant @ 13:17:39 → tools: patch
++
++
++
++## tool result (patch) @ 13:17:40 — 2190 chars (body not exported)
++
++## assistant @ 13:17:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:17:50 — 838 chars (body not exported)
++
++## assistant @ 13:19:27
++
++REVIEW-PENDING: F-32 repaired and locally verified. Independent adversarial verification remains.
++
++Report: /home/rocco/agent-factory/.lanes/pc-m4.md--c367d76/tree/tasks/briefs/s0-06-support/M4-report.md
++Identity: 164 lines, SHA-256 <opaque-redacted>
++
++# M4 — S0-06 round 4 build report (F-32)
++
++PIN: `c367d76`
++Role: code-implementer, PC venue (`tasks/briefs/pc/VENUE-MAP.md`).
++
++## Outcome
++
++**REVIEW-PENDING — GATE RECOMMENDATION: MERGE-READY for independent adversarial verification.** F-32 reproduced on the PIN and the implementation plus deterministic public-CLI controls are green locally. This single-model build lane cannot grade its own change; the coordinator owns the final decision and must send these bytes to the sandbox adversarial-verifier before acceptance or live capture.
++
++## NOT done
++
++- The live ai-memory leg was not run: the venue forbids it and the coordinator owns it.
++- No EXPIRED→mint transition was run; nothing was minted.
++- The S0-11 re-sign was not run; it is owner-owned.
++- Independent adversarial verification has not run on this build lane.
++- Close census found no leftover child server, pytest, or S0-06 helper. Only the lane wrapper and this Hermes process remained.
++- No commit, add, stash, checkout, reset, push, bridge call, server restart, or credential read occurred.
++
++## Contract
++
++1. Each bindings row requires a present, list-valued, non-empty `scopes` field.
++2. Every scope element is a string member of `SCOPE_ORDER`; duplicates are refused.
++3. No two rows share the same `TUPLE_FIELDS` identity tuple.
++4. The public recall/write CLI emits a named configuration error with a nonzero exit before authorization, and never emits `recall: complete`, for an invalid table.
++5. A valid unique non-empty scope list authorizes exactly the same scopes as before.
++6. Tuple values remain exact/verbatim; F-33 normalization is not added.
++
++## FILE IDENTITY (final bytes)
++
++- `proofs/S0-06/adapter/factory_memory.py` — 537 lines — git blob `<opaque-redacted>`; SHA-256 `<opaque-redacted>`.
++- `tests/test_s0_06_four_scope.py` — 2157 lines — git blob `<opaque-redacted>`; SHA-256 `<opaque-redacted>`.
++- `tasks/briefs/s0-06-support/M4-pack.md` — 234 lines — attached code-intel pack; git blob `<opaque-redacted>`; SHA-256 `<opaque-redacted>`.
++- `tasks/briefs/s0-06-support/M4-report.md` — this report; its self-referential hash is intentionally omitted. Final line count is recorded in the handoff.
++
++## Premise and red-before proof
++
++F-32 reproduced through the actual public `factory_memory.py recall` CLI on a `git archive c367d76` scratch copy. Missing `scopes` and `[]` returned rc 0 with `recall: complete` and `scopes_queried=[]`; `"agent"` returned rc 70 naming its characters as unknown scopes; integer `1` returned
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 392963,
++  "output_tokens": 92119,
++  "cache_read_tokens": 17906272,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 52948,
++  "total_tokens": 18391354,
++  "api_calls": 135,
++  "model": "agentfactory-build-local",
++  "provider": "custom",
++  "session_id": "20260917_125633_ae29e0",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
