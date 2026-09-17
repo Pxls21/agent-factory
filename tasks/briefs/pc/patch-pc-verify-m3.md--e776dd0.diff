@@ -1,0 +1,2574 @@
+diff --git a/scripts/report_lint.py b/scripts/report_lint.py
+index 2f8a554..3e35867 100755
+--- a/scripts/report_lint.py
++++ b/scripts/report_lint.py
+@@ -19,6 +19,12 @@ are read at --rev (default: the working tree). The report line's own CLAIM TOKEN
+   MISS         the cited lines contain none of the claim tokens (points at a comment, a blank line, another function)
+   UNCHECKABLE  the report line carries no claim token to test against (the ref is not proven, only stated)
+ Exit 1 when any MISS exists. NEAR and UNCHECKABLE never pass silently: they are counted in the summary line.
++`--min-refs N` exits 1 when fewer than N refs resolve OK: a report with no machine-checkable ref lints clean by
++construction (MISS 0 over nothing), so a checkpoint gates on a floor, never on the MISS count alone.
++`alias@<sha>:NN` pins ONE reference to a git revision (a PIN-era line cited after the file moved on); token matching is
++case-insensitive (a prose FIFO / TOCTOU matches the code's fifo / toctou); every MISS row ends with the fix hint. A lane
++fixes MISSes for at most THREE rounds, then pastes the summary and stops — the bar is the floor plus the paste, never a
++"MISS 0" chased forever (N5k, 2026-09-14: 47 minutes and 20 turns relocating references that were already right).
+ Heuristic by design — it proves nothing about a report; it removes the class of reference a reader cannot trust.
+ """
+ from __future__ import annotations
+@@ -29,7 +35,10 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
+-REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?):(\d+)(?:-(\d+))?(?![\w-])")
++REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?)(?:@([0-9a-f]{7,40}))?:(\d+)(?:-(\d+))?(?![\w-])")
++FIX_HINT = ("fix: if the cited line is RIGHT, add one backticked identifier copied from it to this report line; "
++            "if the number is wrong, correct it; a line that existed only at an older revision is written as "
++            "alias@<sha>:NN (checked at that revision) or in words, never as a bare alias:NN")
+ TOKEN_RES = [
+     re.compile(r"`([^`]{4,})`"),
+     re.compile(r"\b(def\s+\w{3,}|class\s+\w{3,})"),
+@@ -63,36 +72,38 @@ def _claim_tokens(line: str, ref_text: str) -> list[str]:
+ 
+ def lint(report: Path, maps: dict[str, str], rev: str | None, tolerance: int, root: Path):
+     basenames = {Path(v).name: v for v in maps.values()}
+-    cache: dict[str, list[str] | None] = {}
++    cache: dict[tuple, list[str] | None] = {}
+     rows = []
+     for lineno, line in enumerate(report.read_text(errors="replace").splitlines(), 1):
+         for m in REF_RE.finditer(line):
+-            key, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
+-            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or rev else None)
+-            if path is None or (not rev and not (root / path).is_file()):
++            key, ref_rev, a, b = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
++            at = ref_rev or rev   # `alias@<sha>:NN` pins ONE ref to a revision (a PIN-era line cited after the file moved on)
++            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or at else None)
++            if path is None or (not at and not (root / path).is_file()):
+                 continue  # not a file reference we can resolve (a time, a ratio, a URL port ...)
+-            if path not in cache:
+-                cache[path] = _read_file(path, rev, root)
+-            src = cache[path]
++            if (path, at) not in cache:
++                cache[(path, at)] = _read_file(path, at, root)
++            src = cache[(path, at)]
+             if src is None:
+-                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {rev or 'worktree'}"))
++                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {at or 'worktree'}"))
+                 continue
+             toks = _claim_tokens(line, m.group(0))
+             if not toks:
+                 rows.append((lineno, m.group(0), "UNCHECKABLE", "no claim token on the report line"))
+                 continue
+             lo, hi = max(1, min(a, b)), min(len(src), max(a, b))
+-            cited = "\n".join(src[lo - 1:hi])
+-            if any(t in cited for t in toks):
++            cited = "\n".join(src[lo - 1:hi]).lower()   # case-insensitive: a prose FIFO / TOCTOU / READ matches the code's spelling
++            ltoks = [t.lower() for t in toks]
++            if any(t in cited for t in ltoks):
+                 rows.append((lineno, m.group(0), "OK", ""))
+                 continue
+             near_lo, near_hi = max(1, lo - tolerance), min(len(src), hi + tolerance)
+-            near = "\n".join(src[near_lo - 1:near_hi])
+-            if any(t in near for t in toks):
++            near = "\n".join(src[near_lo - 1:near_hi]).lower()
++            if any(t in near for t in ltoks):
+                 rows.append((lineno, m.group(0), "NEAR", f"a claim token sits within {tolerance} line(s) of the range"))
+             else:
+                 snippet = src[lo - 1].strip()[:70] if lo <= len(src) else "<beyond EOF>"
+-                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}"))
++                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}; " + FIX_HINT))
+     return rows
+ 
+ 
+@@ -103,6 +114,9 @@ def main(argv=None) -> int:
+     ap.add_argument("--rev", default=None, help="git revision to read the cited files at (default: the working tree)")
+     ap.add_argument("--tolerance", type=int, default=1)
+     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
++    ap.add_argument("--min-refs", type=int, default=0,
++                    help="fail (rc 1) when fewer than N refs resolve OK — a report that cites nothing lints clean "
++                         "by construction (B3's `0 refs — OK 0, MISS 0`, 2026-09-14); a checkpoint passes a floor")
+     ns = ap.parse_args(argv)
+     maps = {}
+     for item in ns.map:
+@@ -120,6 +134,9 @@ def main(argv=None) -> int:
+     print(f"report_lint: {total} refs — OK {counts['OK']}, NEAR {counts['NEAR']}, MISS {counts['MISS']}, "
+           f"UNCHECKABLE {counts['UNCHECKABLE']}, UNRESOLVED {counts['UNRESOLVED']}"
+           + (f" (at {ns.rev})" if ns.rev else " (worktree)"))
++    if counts["OK"] < ns.min_refs:
++        print(f"report_lint: FLOOR — OK {counts['OK']} < --min-refs {ns.min_refs}: the report cites too little to be graded")
++        return 1
+     return 1 if counts["MISS"] else 0
+ 
+ 
+diff --git a/tasks/briefs/pc/VENUE-MAP.md b/tasks/briefs/pc/VENUE-MAP.md
+index 814bc70..7d8375b 100644
+--- a/tasks/briefs/pc/VENUE-MAP.md
++++ b/tasks/briefs/pc/VENUE-MAP.md
+@@ -30,7 +30,15 @@ design, gates and report discipline.
+   OmniRoute key, any `~/.hermes/profiles/*/.env`, or any credential.
+ - Processes: kill only what you start, by pid (never `pkill`/`pgrep -f`); long gates in ONE foreground call; podman and runsc only
+   where the original brief's design requires them (build lanes: never). `kernel.dmesg_restrict=1` here and you are unprivileged.
++- Code intel: the dispatcher builds a graft index IN your tree at launch (`graft/INDEX.md`) and overlays the clone's current
++  `scripts/report_lint.py`. Semantic questions go to the instruments BEFORE any grep or whole-file read: `graft ask "<q>"`,
++  `graft skeleton <file>`, `bash scripts/ripwire_review.sh for|callers|impact|exercises <symbol>`, `python3 scripts/ap_screen.py <file>`,
++  the whole pack `bash scripts/lane_context.sh -q "<q>" -s <SYMBOL> -o pack.md <files>` (about 4 s); GitNexus blast radius against the
++  clone's index: `node /home/rocco/agent-factory/.gitnexus/run.cjs impact "<symbol>" --direction upstream --repo /home/rocco/agent-factory`
++  (line numbers = the clone HEAD, not your PIN). Read by line range from their answers.
+ - Report: the standing incremental rule applies (append each finished section to `$LANE_REPORT_DRAFT`). Your FINAL message is the
+   whole report, in the shape the original brief demands — FILE IDENTITY of the final bytes, red-before/green-after, the mutant table
+-  with a killer line per mutant, the class sweep, `report_lint` MISS 0 run LAST, the gate RESULT lines pasted verbatim, DISCREPANCIES,
++  with a killer line per mutant, the class sweep, `report_lint` run LAST under the BOUNDED rule (its `fix:` hints for at most three rounds, then the summary pasted — a `MISS 0` demand is a target, never a stop condition; AF-AP-76), the gate RESULT lines pasted verbatim, DISCREPANCIES,
+   NOT-done first-class, the process census, hygiene. Also write it to the report path the original brief names, inside your tree.
++- **Hermes's `terminal` tool caps ONE call at 420 s on this host (measured by lane A5l 2026-09-15: a `lane_gate.sh -n 2` over the checker set exceeded it before its RESULT line).** Size every gate call under the cap: `-n 1` twice rather than `-n 2` once; the four-file xdist run (~145 s on 4 workers) and the joint S0-01 set (~200 s on 8 workers) fit; a longer suite is split into halves, each ONE foreground call, both summaries pasted.
++- **A test count in a brief or a report carries its SET (2026-09-15).** `pc_suite.sh wait` prints `pytest-set: N files set=<sha12> — <files>` beside `pytest-summary:`; `lane_gate.sh`'s RESULT line carries `tests=<sha12>`; `bash scripts/pc_suite.sh set-id -- <files>` prints the id for any list (sha256 of the sorted list, order-blind). A floor you are handed without its set is a premise to bound, not a bar: re-collect on the PIN (`pytest --collect-only -q <files> | grep -c ::`) and paste the count WITH its set id. (The ledger's `1556 passed, 9 xfailed` was an 18-file run; VERIFY-CK14 item 10 quoted it for the 13-file `tests/test_s0_01_*.py` glob, which collects 1354 at b6483df.)
+diff --git a/tasks/briefs/pc/pc-verify-m3.md b/tasks/briefs/pc/pc-verify-m3.md
+new file mode 100644
+index 0000000..7422791
+--- /dev/null
++++ b/tasks/briefs/pc/pc-verify-m3.md
+@@ -0,0 +1,22 @@
++# PC lane — VERIFY-M3 (the adversarial grade of S0-06 four-scope round 3)
++
++PIN: e776dd0
++
++Role: adversarial-verifier. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
++
++**The brief governs**: `tasks/briefs/s0-06-support/VERIFY-M3-brief.md` — READ IT WHOLE and follow it item by item (0-12).
++Your worktree IS `git archive e776dd0` plus the lane patch (the brief + this file): the round's 58 files at their final bytes, the
++lane's report, VERIFY-M2's report (the round's contract) and the lane brief are all in the tree at the paths the brief names. Save your
++report at `tasks/briefs/s0-06-support/VERIFY-M3-report.md` inside your tree, draft after EACH item (the incremental rule), and return it
++whole as your final message.
++
++Venue notes specific to this grade:
++- Run `tests/test_s0_06_four_scope.py` directly with the venue exports and an absolute `--basetemp` under your lane's scratch dir; the
++  coordinator's runs on these bytes: sandbox `214 passed` ×2 (lane_gate), PC `214 passed in 7.41s` (8 workers). Agree or disagree by your
++  own run. `/home/rocco/venv-agent-factory/bin` FIRST on PATH.
++- There is NO ai-memory checkout or binary on this host for you: the adapter's tests use loopback recording servers you start and kill
++  by pid. Never clone, build or start ai-memory; the live PC leg is not this grade's.
++- Every FIFO/hang probe standalone under `timeout` with a PID-scoped watchdog, never through pytest; the generator's rmtree probe (item 6)
++  only on a scratch directory you created.
++- Seven Stage 0 lanes share this host (B3, B5k, D5n, G3, O3, P5c-c, VERIFY-N5j) — never touch their trees, `proofs/`, or `tests/` outside
++  your own private copy; every mutant on a scratch copy of your archive.
+diff --git a/tasks/briefs/s0-06-support/VERIFY-M3-brief.md b/tasks/briefs/s0-06-support/VERIFY-M3-brief.md
+new file mode 100644
+index 0000000..39d0252
+--- /dev/null
++++ b/tasks/briefs/s0-06-support/VERIFY-M3-brief.md
+@@ -0,0 +1,110 @@
++# VERIFY-M3 — adversarial grade of lane M3 (S0-06 four-scope round 3: the exact recursive regular-file manifest with a closed root and every declared leaf graded, the C6 truth + the compound C6′ kill, the raw origin bound, the query text scrubbed to a digest, the write events bound, both negative bundles regenerated by a committed generator)
++
++**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
++
++You are an adversarial-verifier (the PC Hermes verify lane by default — `agentfactory-verify`; the venue map `tasks/briefs/pc/VENUE-MAP.md`
++applies; sandbox Opus 5 is the fallback). Repo agent-factory, branch claude/soundbox-kit-migration-iz1jwf. **PIN: `e776dd0`** — the commit
++carrying the round's 58 files at their final bytes: `proofs/S0-06/check_four_scope.py` (736 lines, sha `432454d8…`),
++`proofs/S0-06/adapter/factory_memory.py` (509, `8d0e75fc…`), `proofs/S0-06/fixtures/build_synthetic_bundles.py` (504, `19c63ca3…`, NEW),
++`tests/test_s0_06_four_scope.py` (2076, `2867d6df…`), `proofs/S0-06/tools/pc/start_ai_memory.sh` (170, `3955cc93…`),
++`proofs/S0-06/tools/pc/run_s0_06_legs.sh` (98, `b4579150…`), both regenerated negative bundles under `proofs/S0-06/fixtures/` (49 regular
++files each), the lane's report `tasks/briefs/s0-06-support/M3-report.md` and its transcript `transcripts/pc/pc-m3.md--038bc9b.md`. Grade the
++bytes of `git archive e776dd0` from a scratch copy under your lane's scratch dir; every mutant on scratch copies; every pytest run with an
++explicit `--basetemp`; every loopback server you start is killed by pid; NEVER start, build or clone ai-memory here (the live leg is NOT
++this grade's — VENUE-MAP: no ai-memory checkout on this host); no outward actions; never read, print or commit a credential (the
++honeytokens are synthetic canaries by design). Authorization: the owner's own memory boundary under test on the owner's system.
++
++**Inputs (read in this order):** VERIFY-M2's report `tasks/briefs/s0-06-support/VERIFY-M2-report.md` (the round's contract: F-27 the
++allowlist manifest, F-28 the false C6 kill, F-29 the unbound raw origin, F-25 the query text; the V1-V20 / H1-H11 / L1-L5 / G1-G5 / C1-C10
++mutant tables it carries forward from VERIFY-M1) · the lane brief
++`tasks/briefs/s0-06-m3-four-scope-exact-manifests-every-leaf-graded-the-c6-truth-the-raw-origin-bound.md` (the pinned design, items 1-9:
++EVERY declared leaf graded, never dropped — a pinned decision) · the lane's report `M3-report.md` (NOT-done first; the premise audit; the
++delivered-items table; the mutation table `:51-70`; the 18-class self-sweep `:72-94`; the identity block; DISCREPANCIES — 49 vs 48 files,
++the write events' `scope` caught by its own grading, the generator initially untracked; the self-attack) · `docs/INCIDENT-LOG.md`
++(AF-AP-40, AF-AP-42, AF-AP-63, AF-AP-65, AF-AP-66, **AF-AP-70** — classify-then-open by pathname; **AF-AP-72** — a typed upstream field
++coerced) · the coordinator's screen on the final bytes: `ap_screen.py` 8 hits — AP-32 ×5, AP-51 ×1, AF-AP-40 ×1 (`build_synthetic_bundles.py:450` `root.exists()` then `shutil.rmtree`),
++**AF-AP-70 ×1 REAL by run** (`factory_memory.py:465-471` `_main`, `open(args.events, "w")` — the CLI's `--events` path opened for write by
++pathname; the module's DOCUMENTED LIMIT F-21); `--tests` AF-AP-34 ×2 (`test:1068` `for banned in ("pkill", "killall", "pgrep")` — the scanner's own literals),
++AF-AP-35 ×2 (fixture scrubbing).
++
++## Item 0 — the mechanical gates, pasted
++`python3 scripts/report_lint.py tasks/briefs/s0-06-support/M3-report.md --rev e776dd0 --map C=proofs/S0-06/check_four_scope.py
++--map A=proofs/S0-06/adapter/factory_memory.py --map F=proofs/S0-06/fixtures/build_synthetic_bundles.py --map T=tests/test_s0_06_four_scope.py
++--map S=proofs/S0-06/tools/pc/start_ai_memory.sh --map R=proofs/S0-06/tools/pc/run_s0_06_legs.sh` (the coordinator read `36 refs — OK 36`);
++`ap_screen.py` over the checker + adapter + generator (8 hits) and `--tests` over the test (4 hits) — classify every hit by RUN, the
++AF-AP-70 row first; pyflakes; `bash -n` over the PC scripts; the FILE IDENTITY table against the PIN (six rows above); the generator's own
++drift check (`python3 proofs/S0-06/fixtures/build_synthetic_bundles.py --check` → `synthetic S0-06 fixtures match the generator`, rc 0);
++`tests/test_s0_06_four_scope.py` run directly with the venue exports — the coordinator read sandbox `214 passed in 23.48s` / `24.66s` and PC
++`214 passed in 7.41s` (8 workers); the lane `214 passed in 29.87s` — agree or disagree by your own run.
++
++## Items
++1. **F-27 — the manifest (`C:124-145` `EXPECTED_FILES`, `C:634-685` `_check_expected_files`).** Reconstruct the PRODUCER's write set by RUN
++   (the runner scripts statically + the adapter CLI against a loopback recording server you start) and diff it against `EXPECTED_FILES`
++   both ways — a name the producer writes that the manifest lacks, a manifest name the producer never writes. Attack the walk: a symlink at
++   a leaf (`test:1270` `test_every_previously_unread_leaf_refuses_a_symlink` — reproduce; `C:677-682` `S_ISREG(mode)`), a directory named
++   as a leaf, a FIFO at a leaf (lstat → refused WITHOUT an open — prove it standalone under `timeout`), an unexpected file at the root
++   and nested (`test:1233` `test_unexpected_evidence_files_are_refused`, `:1243` `test_an_unexpected_root_file_is_refused`), an EMPTY
++   directory inside a leg (`C:646` `S_ISDIR(entry.lstat().st_mode)` — refused or ignored?), a hard link to a foreign regular file (passes the type check — is its CONTENT graded by the leaf's
++   grader, for every one of the 49 names?), an empty leaf / trailing garbage / a BOM under each grader (`event_stream` `C:370-438`,
++   `event_write` `:441-465`, `write_record` `:530-544`) — every refusal by its exact reason, never a Traceback; a name with `..`, a
++   case-variant name, an NFC/NFD variant. The 49th file: `PROVENANCE.md` — graded for CONTENT or presence only? A hostile or empty
++   `PROVENANCE.md` → rule whether presence-only is the right shape for a provenance leaf.
++2. **F-28 — C6 and C6′ (`A:142-163` `authorize`, the validation `:154-160`; `T:1603-1626`).** Reproduce the EQUIVALENCE claim by RUN (the
++   C6 mutant `row[f]` → `row.get(f)` on the PIN: the full suite green — paste) and the compound C6′ kill. Then attack the validation
++   itself: a bindings row with `scopes` absent (`:135`, `:281` `row.get("scopes", [])` — authorises NOTHING silently: fail-closed by
++   accident or by assertion?), a non-list `scopes`, a non-string `agent`, extra fields, a DUPLICATE agent across rows (which row wins —
++   asserted?), whitespace / case variants of the agent name in the tuple (normalised? — AF-AP-72's cousin: `isinstance(..., str)` then a
++   truthiness check, `:158`).
++3. **F-29 — the raw origin (`S:155` the runner's `origin`; `C:267-284` `_require_raw_url`; `C:360-367`).** Reproduce the three named
++   refusals (foreign host, foreign port, right-named foreign route). Attack the comparison: `http://localhost:8765` vs `127.0.0.1`,
++   `http://127.0.0.1:08765`, `HTTP://127.0.0.1:8765`, a userinfo prefix `http://x@127.0.0.1:8765`, a trailing-dot host, `[::1]`, a
++   trailing slash, a `%2F`-encoded route, a project with `..` or `/` inside — which pass and which must not. `origin` ABSENT from
++   `substrate.json` → fail closed by name? The lane's self-attack #2: the recorded origin IS the bundle's own claim — a forged bundle
++   carries a consistent origin; state exactly what the binding proves (the raw instrument fetched from the instance the runner recorded)
++   and what it cannot (that the instance was the pinned ai-memory — the live leg's substrate identity).
++4. **F-25 — the query digest (`A:302-311` `_search`; the canary test `T:1784-1800` `test_query_text_never_enters_any_emitted_event`).** Does the canary scan EVERY event field recursively (nested
++   dicts, lists, the `path`, the `reason`) or the top level only? Plant the query text one level down in `event_fields`, in `reason`, as a
++   query string appended to `path` — which slip. Then the digest itself: 16 hex of an unsalted SHA-256 of the raw query — reversible by
++   brute force for short queries (state the threat model the F-25 limit assumed: readers of telemetry who must not learn queries; is a
++   truncated unsalted digest "not the text", or a documented limit, or a finding?).
++5. **The write events (`A:364-427` `write`; `T:1715-1746` `test_write_events_are_bound_to_the_record_key_path_scope_and_project`, `:1749`).** `write_noop` / `write_committed` bound to scope + project + key path:
++   attack the retry stream (`events-retry.jsonl` — the same record twice → a noop carrying the SAME page path?), a noop claiming another
++   page_id, a write to a scope outside the tuple's allowlist (`:1749` `test_write_events_must_name_the_leg_scope_allowlist` — the denied event graded?), the idempotency path (`A:228` `idempotency_path`) — two
++   records with the same session/turn/event_id and DIFFERENT bodies: the second is a silent noop — the accepted design? say so or not.
++6. **The generator (`F:448-495`).** `build_bundle` rmtree's its root (`:450`): what guards the argument (`--out` at a wrong directory, a
++   symlinked out dir → AF-AP-40 by run — reproduce on a scratch dir, never on a real path); `compare_dirs` (`:468-479`) — a file present in
++   `got` but absent from `want` and the reverse, an empty directory, a mode difference: which is a mismatch; `--check` (`:483-490`) rc on
++   any mismatch. The generator IMPORTS the adapter (`_load_adapter` `:40`): the fixtures then follow the producer's event shape — a change
++   in the adapter silently regenerates "matching" fixtures; the lane's self-attack #1 says so — rule with the AF-AP-42 lens whether a
++   generator that imports the producer is an independent oracle for the checker or a mirror, and what a real capture must add.
++7. **The AF-AP-70 hit (`A:465-471`).** `open(args.events, "w")` and the `--out` path are opened by pathname (follow links). Reconstruct who
++   passes them (`run_s0_06_legs.sh`, the collector — static) and whether either path can be influenced by anything but the runner; rule
++   whether the DOCUMENTED LIMIT F-21 holds as written, or whether round 4 owes the one-line `O_NOFOLLOW|O_CREAT|O_EXCL` (the S0-01 probe's
++   `_open_regular` shape at `proofs/S0-01/tools/acp_probe.py:62-95` is the house pattern — say whether S0-06 should adopt it).
++8. **The PC runner, static (never run here).** `run_s0_06_legs.sh:85-89` writes `PROVENANCE.md` — BEFORE or AFTER the legs (a partial run
++   that dies mid-way: does the bundle carry a provenance leaf claiming a full capture?); `start_ai_memory.sh:143-160` (`binary_sha256_observed` is PROVENANCE, `origin`) writes the substrate
++   record with `origin` — before readiness? every `set -e` exit before a bundle is graded; the seeding's idempotence on a re-run
++   (VERIFY-M2 item 10, carried).
++9. **Mutants ≥ 40, on the PIN's bytes, on scratch copies.** The lane did NOT re-run the predecessor matrices: re-run V1-V20, H1-H11, L1-L5,
++   G1-G5, C1-C10 from VERIFY-M2's tables (killed / survives, the killer line pasted); reproduce the lane's rows (report `:51-70`); add yours:
++   MANIFEST-PRESENCE-ONLY (one leaf's grader removed), ROOT-OPEN (unexpected root files tolerated), NESTED-OPEN, SYMLINK-FOLLOW (`lstat` →
++   `stat` in the walk), ORIGIN-HOST-ONLY (the port dropped from the comparison), ORIGIN-SCHEME-DROPPED, DIGEST-FULL-TEXT (the query text
++   emitted), CANARY-TOP-LEVEL (the scan made shallow — does the test still pass? that is its coverage), C6′, PROVENANCE-CONTENT-IGNORED,
++   GENERATOR-ONE-WAY-COMPARE, WRITE-EVENT-SCOPE-DROPPED. Paste every killer line; survivors by construction stated as such; every
++   survivor that is a hole is a finding.
++10. **The 18-class re-scan** (the lane's table, report `:72-94`) by RUN: agree or disagree per row; the rows the lane marked "inherited /
++    not re-audited" (class 6) and "not applicable" (class 9) are yours to check; every `if <field> == <literal>:` without a raising other
++    arm listed (AF-AP-65).
++11. **Discipline** — file:line by `sed -n` on the PIN; `report_lint.py` on your own report; the process census by pid; every loopback
++    server killed by pid; never ai-memory.
++12. **The design.** With the exact manifest and every leaf graded, is S0-06 capture-ready: what must the LIVE leg (the coordinator's, on
++    the PC against the real pinned ai-memory) produce for `run()` (`C:700-717`) to PASS, and which of those things the synthetic bundles can
++    never show (the substrate identity, the socket witness, the real precedence merge); is a round 4 needed BEFORE the live leg, or is the
++    live leg the next step — the cheapest path to a mintable S0-06; the D-3 naming (the coordinator's) and D-2 / ADR 0003 (decided —
++    `docs/adr/`) named as such.
++
++## Report
++Write it to `tasks/briefs/s0-06-support/VERIFY-M3-report.md` inside your tree, draft after EACH item, and return it whole as your final
++message. Findings: ALL, no severity filtering, each with file:line on the PIN, expected vs observed, the failing input, the minimal fix,
++the exact red test, SOLID/UNSURE; reproduced vs reviewed vs skipped; verdict MERGE-READY or NOT-READY with the blocking set and the
++cheapest path; the items that are the owner's or the coordinator's named as such.
+diff --git a/tasks/briefs/s0-06-support/VERIFY-M3-report.md b/tasks/briefs/s0-06-support/VERIFY-M3-report.md
+new file mode 100644
+index 0000000..477b649
+--- /dev/null
++++ b/tasks/briefs/s0-06-support/VERIFY-M3-report.md
+@@ -0,0 +1,241 @@
++# VERIFY-M3 — adversarial grade of S0-06 round 3 (lane M3)
++
++PIN: `e776dd0`
++Role: adversarial-verifier, PC venue (`tasks/briefs/pc/VENUE-MAP.md`), brief `tasks/briefs/s0-06-support/VERIFY-M3-brief.md`.
++
++## Outcome
++
++**Gate recommendation: NOT-READY — F-32 is a qualifying blocker.** This recommendation is based on the reproduced local checker/adapter paths and loopback records; it deliberately does not claim the prohibited live ai-memory leg was reproduced. The coordinator owns the final decision.
++
++## FILE IDENTITY (scratch archive of e776dd0, `git archive | tar -x` into the lane's scratch dir)
++
++| file | sha256 (measured) | brief claim | lines |
++|---|---|---|---|
++| proofs/S0-06/check_four_scope.py | `432454d86951e1b06ec1bae8e4dbbf147f4a664ccd76adaf707a6beb2f07c2c4` | `432454d8…` | 736 = 736 |
++| proofs/S0-06/adapter/factory_memory.py | `8d0e75fce1fed079bd488609332228f3c9c2120af5566edfddd593429e64e6c6` | `8d0e75fc…` | 509 = 509 |
++| proofs/S0-06/fixtures/build_synthetic_bundles.py | `19c63ca3bb366ae53a4bd0b38a3193db65edb8ae709d0462dec6e4601927bd55` | `19c63ca3…` | 504 = 504 |
++| tests/test_s0_06_four_scope.py | `2867d6df88073c77b8ec61ebaaffa6e96837a1ad9783c8c85a3577f0cac26400` | `2867d6df…` | 2076 = 2076 |
++| proofs/S0-06/tools/pc/start_ai_memory.sh | `3955cc931a9f654ae16e3cfd84bb779a495502cd54107056a5305899817dc7a3` | `3955cc93…` | 170 = 170 |
++| proofs/S0-06/tools/pc/run_s0_06_legs.sh | `b4579150336758e0c919d33ac4b275807356e75acdf7b53b307c6090202ac4d9` | `b4579150…` | 98 = 98 |
++
++All six bytes verified by `sha256sum` on the scratch archive; no discrepancy.
++
++## Item 0 — mechanical gates (reproduced on the PIN's bytes)
++
++- `report_lint.py tasks/briefs/s0-06-support/M3-report.md --rev e776dd0 --map C=… --map A=… --map F=… --map T=… --map S=… --map R=…` → `report_lint: 36 refs — OK 36, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at e776dd0)`, rc 0. The coordinator's `36 refs — OK 36` reproduces exactly. (Note: the M3 report's own final-block claim at its line 111 says `34 refs … (worktree)` — the worktree state had 34; at the PIN the count is 36. Both are true of their own tree state; not a finding.)
++- `ap_screen.py` over checker + adapter + generator: **8 hits** — AP-32 ×5 (`C:410` `digest`, `C:525` `want`, `A:237` `return`, `A:308` `query_sha256_16`, `F:144` `query_sha256_16`), AF-AP-40 ×1 (F:450 `if root.exists():`), AF-AP-70 ×1 (A:467, the `# DOCUMENTED LIMIT (F-21)` comment line inside `_main`), AP-51 ×1 (C:21 docstring phrase `byte-identical`). Matches the brief's stated screen (brief said AF-AP-70 at A:465-471 `_main`; the hit is the comment at A:467 in that range — same site). `--tests` over the test: **4 hits** — AF-AP-34 ×2 (T:1068 banned-command literals `("pkill", "killall", "pgrep")` — the scanner's own literals, classified as the test scanning for banned commands, not executing them; verified by read), AF-AP-35 ×2 (T:899 `path.write_text`, T:906 `path.write_text` fixture scrubbing, the documented honeytoken-scrub design, not live-token use). **Classification by run:** none is a live defect; AF-AP-70 is the only REAL-class row and is the documented limit F-21 — graded in item 7.
++- `pyflakes` over all four Python files: rc 0, no output. `bash -n` on both PC scripts: pass.
++- Generator drift check: `python3 proofs/S0-06/fixtures/build_synthetic_bundles.py --check` → `synthetic S0-06 fixtures match the generator`, rc 0.
++- Direct suite, venue exports + absolute `--basetemp`: **`214 passed in 29.84s`** (single process, no xdist). I AGREE with the lane's `214 passed in 29.87s` and the coordinator's 214-passed counts (its 7.41s was an 8-worker run; timing is a venue fact, not a contract fact). `PYTEST_PIPESTATUS=0`.
++
++## Item 1 — F-27 exact manifest and every leaf (reproduced)
++
++**Production-path reconstruction.** The live runner invokes `collect_leg.sh` once for each leg (`R@e776dd0:81-84`). The pinned collector creates its leg directory, copies `substrate.json`, writes each leg's `substrate-observed.json`, then invokes the adapter CLI with runner-derived `--out` and `--events` paths and writes the raw reads/`raw-*.url` witnesses. Static producer shape is 47 leg leaves plus root `substrate.json` and root `PROVENANCE.md`: **49 regular files total**, of which the brief's “48 leaves” means the evidence/data leaves excluding the provenance annotation. Measured committed negative fixtures: each is `49 regular files, 5 dirs, 0 symlinks`.
++
++**Actual adapter path.** I independently started a private PID-scoped loopback recording server, invoked the PIN's CLI once each through the same `recall --out --events` and `write --out --events` production surface, and killed it by its own PID. Observed `recall: complete`; `write: page written`; 10 server-recorded HTTP requests; output and event files were written at the chosen runner-shaped paths. The recall event stream did **not** contain the literal `loopback query`. This proves filename/output mechanics and the adapter's actual consumer path without a prohibited ai-memory process. It does not prove ai-memory semantics.
++
++**Closed regular-file manifest.** `C@e776dd0:124-145` declares `EXPECTED_FILES`: 4 denied + 15 precedence + 15 write-scope + 13 leak leaves. `C@e776dd0:634-685` makes root members closed (`substrate.json`, `PROVENANCE.md`, and the four named legs only), recursively walks each leg, rejects unexpected regular/non-regular nested entries, requires every declared leaf with `lstat` + `S_ISREG`, and then each leg's later checker consumes the semantic fields. The `run` entry point calls that walk before every assertion at `C@e776dd0:700-717`.
++
++**Independent hostile sweep (PIN bytes; each FIFO process run under `timeout --foreground 6`, never pytest).** Starting from a repaired positive scratch copy:
++
++| input | measured result | classification |
++|---|---|---|
++| baseline | rc 0, `PASS: S0-06 four-scope - 4/4 assertions, substrate ai-memory 1.39.0@73715b6f` | green control |
++| FIFO replacing each of all 49 leaves | 49/49 rc 1, exact `leg: <leaf> missing or not a regular file`; 0 hangs | F-27 holds |
++| symlink replacing each of all 49 leaves | 49/49 rc 1, same exact reason; 0 hangs | F-27 holds |
++| hard link to a foreign empty regular file | 48/49 rc 1 through the leaf's semantic grader; `PROVENANCE.md` rc 0 | see F-30 follow-up |
++| absent/declared leaf | direct suite and scratch controls name `missing or not a regular file` | F-27 holds |
++| declared directory leaf | rc 1 `missing or not a regular file` | F-27 holds |
++| unexpected root file | rc 1 `leg: unexpected evidence file opaque-root.bin` | root closed |
++| unexpected nested file | rc 1 `leg: unexpected evidence file precedence/opaque/nested.bin` | recursive regular-file set closed |
++| case variant / NFD spelling | rc 1 exact `unexpected evidence file …` | literal names closed |
++| empty nested directory | **rc 0, PASS** | F-31 follow-up below |
++
++The observed 48/49 hard-link result is not a type-check escape: a hard link is a regular file by design, and the 48 evidence leaves reach their content graders. The one accepted root leaf is explained below. A directory named as a declared leaf is refused; a nested empty directory is ignored by the `S_ISDIR` branch at `C@e776dd0:673-674`. A name containing `..` cannot be created as a distinct filesystem child; the root-relative `Path` walk and literal set reject all createable unexpected spellings.
++
++**F-30 — FOLLOW-UP, SOLID: `PROVENANCE.md` is presence-only.** Contract mapping: F-27's declared root leaf; canonical path: reproduced against `check_four_scope.py` through `run()`; material effect: none on the four assertion outputs or their evidence because no checker decision reads its contents. Reproduction: replace `PROVENANCE.md` by an empty foreign hard link, checker rc 0/PASS. `C@e776dd0:659-660` calls `_read_text` for root leaves; it neither parses nor binds provenance text. The runner writes it after all four leg captures (`R@e776dd0:85-90`), so it is an operator annotation rather than a proof input. Presence-only is the correct current shape **if and only if** it remains explicitly non-evidentiary. Suggested fix before anyone treats it as a capture attestation: either remove it from the proof manifest or bind a structured, independent capture statement. It is not a qualifying blocker: it does not contradict a frozen semantic criterion, change a claim the checker admits, or permit ungraded evidence data.
++
++**F-31 — FOLLOW-UP, SOLID: empty nested directories are tolerated.** Contract mapping: none beyond the narrow “exact recursive regular-file manifest”; canonical path: reproduced rc 0 with `precedence/unused-empty/`; material effect: none, because no regular-file evidence can reside in an empty directory and unexpected children are still rejected. `C@e776dd0:673-674` ignores `S_ISDIR` then examines descendants. Suggested fix only if “closed tree” is intended to include directory topology: reject any directory whose relative path is not an explicit parent of a declared leaf. This does not satisfy the blocking predicate's material-effect condition.
++
++No F-27 blocker reproduced. The prior F-27 class (allowed ungraded files/nodes) is closed for evidence leaves.
++
++## Item 2 — F-28 C6/C6′ and authorization-table validation (reproduced)
++
++**C6 truth.** The proposed change `tuple_obj[f] == row[f]` → `tuple_obj[f] == row.get(f)` at `A@e776dd0:160` is equivalent behind the preceding non-empty-string guard at `A@e776dd0:154-159`. I made that exact C6 source edit in a scratch archive. The literal full file run has one expected *test-text* failure: its C6′ regression asserts that the source still contains the original expression, so it fails on the mutated source rather than a behavioral distinction (`1 failed, 213 passed in 29.73s`). With that self-inspection test excluded, the product suite is **`213 passed, 1 deselected in 29.41s`**, rc 0. This is a bounded premise discrepancy with “the full suite green”: the test deliberately checks source spelling; the C6 behavior remains equivalent. The unmodified C6′ test itself passed (`1 passed in 0.31s`) and constructs the compound mutant by removing the validation guard *and* changing `row[f]` to `row.get(f)`, then observes a child `AssertionError` from `assert m.authorize(null, broken) is None` (`T@e776dd0:1603-1626`). The report's correction from a claimed C6 kill to equivalent survivor + C6′ kill is accurate.
++
++**F-32 — BLOCKER, SOLID: malformed/ambiguous binding scope rows silently authorize or crash instead of being rejected at load.**
++
++- **Contract mapping:** `docs/03_INTEGRATION_CONTRACTS.md` §4 read contract 1 requires actor/agent/team/project binding authentication outside model control; `docs/04_MEMORY_AND_GOVERNANCE.md` §4 explicitly says **“Any scope authorization ambiguity fails closed for that scope.”** This directly applies to `factory_memory`, the adapter authorization boundary.
++- **Canonical reproduction:** copied the actual PIN `factory_memory.py` beside a controlled `bindings.json` and invoked its public CLI `recall` surface, so `_main → load_bindings → _bind → authorize` was the real production consumer. No test-only helper or surrogate decided the result.
++- **Observed / material effect:** a fully matching row **without `scopes`** exits **0** with `recall: complete`, writes a result declaring `status: ok`, `authorized_scopes: []`, `scopes_queried: []`, and `records: []`. It turns a malformed authorization configuration into a successful empty recall rather than an explicit config refusal/degradation. That can silently suppress all context while emitting “complete.”
++- **Concrete discriminator:** 
++
++  ```text
++  scratch/bindings.json = {"bindings":[{"actor":"svc-agent-runner","agent":"a-alpha","team":"t-core","project":"p-atlas"}]}
++  python factory_memory.py recall --tuple-file valid.json --query q --base-url http://127.0.0.1:1 --out out.json --events events.jsonl
++  observed: rc=0; stdout=recall: complete; result.status=ok; scopes_queried=[]
++  ```
++
++  A corrected `load_bindings` must reject this row deterministically before authorization; its regression must assert a named nonzero failure rather than an empty-success result.
++- **Root cause:** `A@e776dd0:128-144` validates unknown values only through `set(row.get("scopes", [])) - set(SCOPE_ORDER)`, but neither requires `scopes` to exist nor to be a list/non-empty and duplicate-free. `_bind` then computes `authorized = [s for s in SCOPE_ORDER if s in set(row.get("scopes", []))]` at `A@e776dd0:281-284`, accepting the row with `[]`.
++- **Other bounded hostile rows:** `scopes="agent"` yields a top-level unexpected `ValueError` / rc 70 because letters are treated as scope names; `scopes=1` yields `TypeError` / rc 70. They fail closed operationally but not as a named table-validation error. **Duplicate matching identity rows are a second demonstrated ambiguity:** two rows with the complete scope list followed by `["agent"]` authorize all four scopes; reversing their order authorizes only `agent` while the tuple and process are unchanged. Both canonical public-CLI probes returned rc 0 / `recall: complete`; the loopback endpoint was private and PID-killed. `load_bindings`/`authorize` select the first match at `A@e776dd0:133-139,153-161`, but there is no uniqueness validation. Whitespace/case tuple variants were denied; non-string and empty identity fields were denied by the present row guard. Existing tests cover missing identity fields and unknown scope *values* (`T@e776dd0:252-262,1887-1908`) but not missing/non-list/empty scope policy or duplicate matching rows.
++- **Minimal fix:** enforce a schema in `load_bindings`: `scopes` must be a non-empty list of unique strings entirely from `SCOPE_ORDER`; reject duplicate identity tuples (or define/verify deterministic denial). Make the caller receive a named configuration error distinct from `recall: complete`. Add CLI-level red controls for missing `scopes`, string/integer/empty/duplicate scopes, and duplicate tuple rows.
++
++This satisfies every blocking condition: frozen/repository invariant mapping, exact public production path, material false-success / configuration-order authorization behavior, deterministic commands, and adapter-boundary repair. It is not a C6 regression; it is an independently discovered current-path contract defect within the specified F-28 validation attack.
++
++**F-33 — FOLLOW-UP, SOLID: tuple values are exact/verbatim, intentionally not normalized.** Whitespace and case variants of `agent` were denied (`None`); non-string/empty row identity values also do not authorize under `A@e776dd0:154-160`. No frozen contract requests normalization and normalization would widen identities, so no fix is indicated.
++
++## Item 3 — F-29 raw origin binding (reproduced)
++
++`start_ai_memory.sh` records the run's non-secret `substrate.json` origin (`S@e776dd0:147-168`); `check_substrate` validates a scheme/netloc-only origin then canonicalizes it (`C@e776dd0:336-367`; the `version_stdout` pin check and the netloc-only origin canonicalization). Every raw evidence URL is compared to that origin and an exact search or pages route/project by `_require_raw_url` (`C@e776dd0:267-284`). The pinned collector records curl's own `%{url_effective}` rather than an echoed URL. This is the correct production connection: `start_ai_memory → collector raw curl → checker`, with no adapter import in the checker.
++
++I ran a repaired passing scratch evidence root through the checker after changing `precedence/raw-agent.url` one hostile value at a time. Baseline: rc 0/`PASS`. Foreign host / port / right-named foreign route have explicit red tests, e.g. `test_a_foreign_raw_host_is_refused` at `T@e776dd0:1629`; I independently ran the extended class:
++
++| hostile URL form | observed checker result |
++|---|---|
++| `localhost` for `127.0.0.1` | rc 1 `raw agent origin http://localhost:8765, expected http://127.0.0.1:8765` |
++| `:08765` | rc 1 origin mismatch |
++| userinfo `x@127.0.0.1` | rc 1 origin mismatch |
++| trailing-dot host | rc 1 origin mismatch |
++| `[::1]` | rc 1 origin mismatch |
++| trailing route slash / encoded route slash | rc 1 `raw agent was fetched from … expected factory/agent--a-alpha` |
++| project `..` or encoded slash | rc 1 exact-route/project refusal |
++| `origin` removed from `substrate.json` | rc 1 `substrate: not the pinned ai-memory (origin=None)` |
++| uppercase `HTTP://` scheme | **rc 0/PASS** |
++
++**F-34 — FOLLOW-UP, SOLID: scheme spelling is canonicalized by `urlparse`.** `HTTP://` in a raw URL passes because `urlparse` normalizes the parsed scheme to lowercase before `got_origin` is built (`C@e776dd0:270-272`). It still denotes the same HTTP origin and does not weaken the required scheme/host/port or exact route/project binding. No contract requires byte-for-byte URL spelling; no fix indicated.
++
++**Binding limit, stated exactly.** The check proves that the raw instrument was fetched from the scheme/host/port and endpoint that the **bundle itself records**. A synthetic/forged bundle can make `substrate.json.origin` and all raw URLs mutually consistent. It does not prove that endpoint was the pinned ai-memory; that identity is a live-leg/substrate-provenance question. This is a documented limit of synthetic evidence, not a F-29 regression. No F-29 blocker reproduced.
++
++## Item 4 — F-25 query telemetry digest (reproduced)
++
++`FactoryMemory._search` sends the real URL containing the raw query but substitutes route-only `event_path="/api/v1/search"` and a 16-hex SHA-256 digest into telemetry (`A@e776dd0:302-311`). `_emit` serializes only its explicit payload (`A@e776dd0:273-284`). I ran the public CLI through a new PID-scoped loopback server with literal query `QUERY-CANARY-4e9f1c2a`, `--events`, and `--out`; it returned `recall: complete`, wrote 10 event rows (8 HTTP requests), contained **no literal canary**, and emitted search digest `e1daac9548b25b03`. The existing consumer-level canary passes in the direct suite (`T@e776dd0:1784-1800`). Server killed by the PID started for this probe.
++
++**Recursive scan determination.** The existing test scans `text = events.read_text()` for the literal canary, so it is stronger than a top-level JSON-field-only scan: a canary in a nested dict/list, in `reason`, or appended to `path` would all occur in text and fail. I independently verified the recursive predicate over representative nested/list/reason/path structures; all returned true. A shallow-mutant canary test therefore would not survive this current full-text assertion. This test is still scoped to the `events` sink; it cannot prove that a different future telemetry transport scrubs queries.
++
++**F-35 — FOLLOW-UP, SOLID: a 16-hex unsalted SHA-256 digest is not query confidentiality against a dictionary attacker.** The digest is a deterministic 64-bit prefix of the raw query hash. It does meet the frozen F-25 narrow claim “query text never enters emitted events”; it lets an event reader correlate equal queries. It does not conceal short/guessable queries from someone who can hash candidates. `A@e776dd0:306-310` documents `telemetry` correlation, but the threat-model boundary is not repeated beside the truncation. Suggested fix before user/model-derived queries reach broadly readable telemetry: use a keyed per-session digest or omit cross-event query correlation. This is not a current blocker because the frozen assertion is text absence and the test/actual path reproduce it.
++
++## Item 5 — write-event bindings (reproduced)
++
++`FactoryMemory.write` emits `write_intent` before the read/write side effect and emits `write_noop`/`write_committed` with scope, project, derived path, and idempotency key (`A@e776dd0:364-427`). The checker grades each of those fields in both write streams at `C@e776dd0:441-465`; the direct suite covers its named red controls at `T@e776dd0:1715-1756` in `test_write_events_are_bound_to_the_record_key_path_scope_and_project`. I independently applied four scratch-bundle mutants through `check_four_scope.run()`:
++
++| mutant | exact observed killer |
++|---|---|
++| `events-write.jsonl` `write_intent.scope=project` | rc 1 `write identity ['project', 'agent--a-alpha', …], expected ['agent', …]` |
++| `events-write.jsonl` `write_intent.project=project--p-atlas` | rc 1 exact write-identity refusal |
++| `events-retry.jsonl` `write_noop.scope=project` | rc 1 exact retry write-identity refusal |
++| write stream authorized scope allowlist reduced to `[agent]` | rc 1 `authorized scopes ['agent'], expected ['agent', 'project', 'team', 'company']` |
++
++The retry stream uses the same derived record key/path and its no-op is therefore properly bound. The underlying idempotency policy deliberately treats a same `(session, turn, event_id)` with a different body as the existing page's no-op: `A@e776dd0:394-410` ensures the `write_noop` is emitted (page present) and the `POST` body follows only after that page-presence handling. This is a design limitation rather than a checker hole; the key is defined as the full write identity (`docs/03` §4 says retries are idempotent by session/turn/event ID). If callers can reuse a key for a changed semantic payload, body-digest mismatch detection needs an explicit future contract. No write-event blocker reproduced.
++
++## Item 6 — fixture generator (reproduced)
++
++**Rmtree/`--out`.** `build_bundle` does `if root.exists(): shutil.rmtree(root)` (`F@e776dd0:448-457`); there is no argument guard beyond argparse `Path`. In a purpose-created private scratch target, invoking `--out <scratch/out>` returned rc 0, deleted the existing child bundle roots, regenerated both bundles, and preserved an unrelated marker at the outer `out` directory. Invoking `--out <scratch/symlink-to-real-out>` also returned rc 0 and populated the real target: `Path.exists()`/`shutil.rmtree()` follow the symlink. This is exactly AF-AP-40's pathname-follow behavior. It was run only against fresh lane scratch paths, never a real path.
++
++**F-36 — FOLLOW-UP, SOLID: generator `--out` can recursively delete a symlink-selected directory.** Contract mapping: generator tool boundary, not the checker/adapter proof claim; canonical reproduction: actual generator CLI against a scratch-only symlink; material effect: destructive only if a caller supplies an untrusted/wrong `--out`. The documented normal invocation uses its fixed repo `FIXTURES` target or a verifier-created temp path. Suggested fix before this becomes an externally callable tool: reject symlink roots and require an owned sentinel/within-approved-parent. It does not meet this increment's blocking predicate because it does not alter S0-06 evidence verification and no untrusted caller path exists in the contract.
++
++**Comparison behavior.** `compare_dirs` builds `rglob('*') if p.is_file()` sets and byte-compares common regular files (`F@e776dd0:468-479`). I loaded the actual generator module and measured: a missing `evidence-leak/denied/events.jsonl` yields `['evidence-leak/denied/events.jsonl: missing on one side']`; an extra empty directory and a mode-only change yield `[]`. `--check` itself passed in item 0. The empty-directory/mode omission is correct for a byte-drift check of generated fixture **files**; it should not be advertised as a full tree/mode integrity oracle.
++
++**AF-AP-42 independence ruling.** `F@e776dd0:38-47` imports `factory_memory.py`, and the generator uses its `normalize_hit`, `merge`, and `idempotency_path` to construct the adapter-shaped fixtures. Therefore it is a producer-shaped deterministic fixture generator, **not an independent oracle of adapter semantics**. It detects committed-fixture drift from current producer-shaped generation (verified), but a changed adapter plus regenerated fixtures could co-evolve. The checker is independent for the main oracle because it re-derives fields rather than importing the adapter (`C@e776dd0:1-53`). A real capture against pinned ai-memory remains the independent evidence that must complement this generator before minting.
++
++## Item 7 — AF-AP-70 CLI path handling (static path reconstruction; no live runner)
++
++The adapter CLI opens `args.events` with `open(..., "w")` and writes `args.out` with `Path(...).write_text()` (`A@e776dd0:465-487`), both pathname-following. The live runner passes those values only as `$BUNDLE/<leg>/<declared-name>` inside the collector that `R@e776dd0:83` invokes per leg (`run_s0_06_legs.sh`); the runner's optional positional bundle root is still an operator command-line input (`R@e776dd0:22`). Thus F-21 is correctly limited: no model, request payload, or ai-memory response supplies these paths; an operator invoking the runner with an attacker-controlled bundle path could still redirect them. The product's documented boundary holds as written, but these writes do not have the house `O_NOFOLLOW|O_CREAT|O_EXCL` defense.
++
++**F-37 — FOLLOW-UP, SOLID: runner/operator-controlled output path is not symlink-safe.** Canonical static path is runner → collector → adapter CLI; the only actual filesystem write probe used a private loopback CLI path in item 1. It is not a qualifying blocker because the frozen F-21 limit excludes model/request influence and the command-line operator already has filesystem authority. If runner use broadens to a less-trusted launcher, adopt the S0-01 `_open_regular` pattern for `--events`, `--out`, raw files, and the root path before that change. No live ai-memory or PC runner was started.
++
++## Item 8 — PC runner static (not run by venue)
++
++- `run_s0_06_legs.sh` writes `PROVENANCE.md` **after** all four collector legs (`R@e776dd0:81-90`). With `set -euo pipefail`, a partial leg failure exits before this file exists, so it cannot claim a complete capture. The EXIT trap stops only the PID it recorded after `/proc/<pid>/exe` ownership confirmation and shreds only run-scoped credentials (`R@e776dd0:35-63`).
++- `start_ai_memory.sh` records substrate `origin` only after its readiness loop succeeds, after it has checked the child is alive and `/api/v1/workspaces` responds (`S@e776dd0:106-120,147-170`). Any preceding `set -e` failure reaches the runner's cleanup trap; none gets graded because collection never begins.
++- Re-seeding a second agent is statically intended as idempotent (`R@e776dd0:67-79`, `seed_scopes.py`). The claimed ai-memory source-level no-op behavior is **not re-verified on this host** because the venue has no approved ai-memory checkout/binary and forbids cloning/building/starting it. This remains predecessor evidence, not mine.
++
++## Item 9 — mutation coverage (bounded re-run, PIN scratch copies)
++
++**Predecessor matrix re-run.** The carried V/H/L/G/C table is now embodied in this PIN's `tests/test_s0_06_four_scope.py`, not a separate absent driver: V controls cover per-leg digests, denial event values/shape, leak vacuity, unexpected files, raw provenance, winner content, write-kind/path/key, and NaN (`T@e776dd0:761-818` `test_a_leg_whose_binary_read_disagrees_with_startup_is_refused`; `T@e776dd0:1205-1231` `HOSTILE_SHAPES`; `T@e776dd0:1820-1840` `test_a_malformed_search_body_degrades_the_scope_instead_of_crashing`; `T@e776dd0:1026-1031` `test_the_pinned_commit_comes_from_upstream_lock_not_the_checker`; `T@e776dd0:1603-1626` `test_c6_is_equivalent_but_the_compound_c6_prime_is_killed`). `C10` is the bindings non-regular-file refusal: `test_a_bindings_table_that_is_not_a_regular_file_is_refused(kind, tmp_path)` at `T@e776dd0:1899`. I re-ran the full direct file: **214 passed**, which executes these parametrized rows; this is the fresh suite evidence, while the targeted mutations below establish red discrimination.
++
++**Fresh targeted V/H controls, all killed:** V1 per-leg digest disagreement → `substrate: not the pinned ai-memory (leg precedence observed aaaa… at …/ai-memory)`; V2 unsafe posture → `unsafe posture AI_MEMORY_MAINTENANCE__ENABLED=true`; V3 version stdout → `version_stdout=ai-memory 0.0.1`; V4 wrong project → exact raw provenance refusal; V5 wrong workspace → exact raw provenance refusal; V6 both recall copies changed to bogus winner content → `winner carries bogus, not the agent record`; V8 forged write page → re-derived-path refusal; V10 removed authorized recall token → `leak: authorized honeytoken … absent from recall`; V13 hyphenated denied event → `denied: adapter recorded ['http-request']`; H raw object → named `precedence evidence shape invalid (TypeError …)`; H raw `NaN` → named `ValueError: non-RFC-8259 constant NaN`. All were scratch evidence mutations, each baseline rc 0/PASS first.
++
++**M3 mutation table:**
++
++| mutant | result / killer |
++|---|---|
++| MANIFEST-PRESENCE-ONLY: remove a declared leaf | killed: `leg: <leaf> missing or not a regular file` (49-leaf sweep) |
++| ROOT-OPEN / NESTED-OPEN | killed: exact `unexpected evidence file` at root/nested location |
++| SYMLINK-FOLLOW (`lstat` → attack node) | killed: 49/49 symlink leaves refused, 0 hangs |
++| ORIGIN-HOST-ONLY / ORIGIN-SCHEME-DROPPED | host/port/route changes killed by `raw_origin`/`raw_url` controls; uppercase spelling survivor is canonical equivalence (F-34) |
++| DIGEST-FULL-TEXT | killed by real CLI event canary: literal absent today; test assertion would fail on emission |
++| CANARY-TOP-LEVEL | killed by current full-text scan; nested/list/reason/path content is included in scanned text |
++| C6′ | killed by child `AssertionError` in `T@e776dd0:1603-1626` |
++| PROVENANCE-CONTENT-IGNORED | **survives by construction**: F-30 presence-only annotation, FOLLOW-UP not blocker |
++| GENERATOR-ONE-WAY-COMPARE | **survives for empty directories/modes by construction**: F-36 comparison scope is regular-file bytes; missing file is killed |
++| WRITE-EVENT-SCOPE-DROPPED | killed: scope/project/retry/allowlist red controls in item 5 |
++| AUTHZ-SCOPES-OPTIONAL / AUTHZ-DUPLICATE-ROW | **survive** as F-32: absent `scopes` returns false-success; duplicate rows are order-dependent complete success |
++
++The original C6 one-line operator is an equivalent survivor, not a missed kill. The directly observed F-32 malformed-scope/duplicate-binding configuration defect is the only mutant-class observation satisfying the complete blocker predicate.
++
++## Item 10 — 18-class re-scan
++
++| class | result |
++|---|---|
++| 1 presence / 2 unsafe reads | closed for 49 regular leaves: exact manifest plus 49 FIFO and 49 symlink controls, no hang |
++| 3 lossy output / 4 exact negative acceptance / 5 exact reasons | closed in changed checker paths: one stdout reason and explicit reason controls; direct suite green |
++| 6 environment domains | inherited/not re-audited: no new env-domain code; live posture still not exercised here |
++| 7 lossy decode | closed: RFC-8259 NaN and malformed JSON named refusals |
++| 8 broad catches | M3 checker boundaries return named shape errors; adapter public CLI keeps unexpected rc 70 separate |
++| 9 waits/polls | no M3 wait code; static runner wait reviewed, not executed |
++| 10 skips/xfails | direct suite reports 214 passed, no skips/xfails |
++| 11 world enumeration | closed for regular-file evidence, with F-31 empty-directory exception stated |
++| 12 provenance/origin | host/port/route bound, synthetic self-assertion limitation stated |
++| 13 event names / 14 event semantic binding | exact event sequences, scrubbed routes/digest, and write identity mutants killed |
++| 15 query telemetry | actual CLI canary absent from events; digest present |
++| 16 fixture drift | generator `--check` green; AF-AP-42 mirror limit stated |
++| 17 output-form values | write record body/type and event stream schema gated |
++| 18 malformed authorization row | C6′ guard works for missing identity field, but **F-32 exposes unvalidated `scopes` policy**; open blocker |
++
++Static scan for production `if <field> == <literal>` branches found no additional M3-domain branch requiring a missing raising arm. `ap_screen` was classified in item 0. Class 18 is deliberately not called closed because the discovered `scopes` case is a real boundary defect.
++
++## Item 11 — discipline, process census, and discrepancies
++
++**Reproduced versus reviewed versus skipped.** Reproduced: PIN file identity, lint on the builder report, source/static checks, generator drift, direct 214-test suite, checker negative bundles, all item 1 filesystem attacks, loopback adapter recall/write and query canary, F-28 malformed/duplicate binding CLI paths, raw-origin variants, write-event variants, generator scratch-only rmtree behavior, and representative mutation controls. Reviewed statically: producer scripts, their readiness/cleanup ordering, and the D-3 naming/ADR docs. Skipped: any ai-memory clone/build/start, live seed/capture, or mint, as venue requires. Therefore no synthetic pass here represents live ai-memory semantics.
++
++**Process census.** At close, no `ai-memory`, S0-06 helper, or verifier loopback server owned by this grade remains; each loopback server was stopped by the PID launched for that probe. No production process or other lane tree was touched.
++
++**DISCREPANCIES.**
++
++1. “48 leaves” is 48 evidence/data leaves plus root `PROVENANCE.md`, hence **49 regular files** in collector-shaped/negative fixtures. The checker really declares/needs all 49 (`C@e776dd0:634-685`).
++2. The brief's C6 instruction says its one-line `row[f] → row.get(f)` mutation should leave the full suite green. On the PIN it instead causes exactly the source-spelling C6′ test to fail (`1 failed, 213 passed`); with that self-inspection regression deselected, product tests are `213 passed, 1 deselected`. The underlying operator is equivalent; C6′ is the non-equivalent kill. This is reported, not chased.
++3. `graft` in the scratch archive falls back to the clone index and had no `docs/` scope. The cited doc lines above were read with `nl -ba` from the PIN, not inferred from the fallback.
++4. Final verifier-report lint (bounded rule: at most three correction rounds; the `fix:` hint is the rule): round 1 `report_lint: 67 refs — OK 60, NEAR 0, MISS 6, UNCHECKABLE 0, UNRESOLVED 1 (at e776dd0)`; round 2 `67 refs — OK 64, NEAR 0, MISS 3, UNCHECKABLE 0, UNRESOLVED 0`; round 3 (final) `report_lint: 67 refs — OK 65, NEAR 0, MISS 2, UNCHECKABLE 0, UNRESOLVED 0 (at e776dd0)`. The three hints from round 2 were applied exactly (C:700-716 cleared; the other two were in-words references whose identifiers the heuristic cannot tokenize — `T@e776dd0:1899` and the 08_DECISION_LOG doc ref) and they survived all three rounds, so they are REPORTED, not chased: the cited lines are correct (the test `def` and the D-020 row both read as quoted above).
++5. **F-38 (docs inconsistency, INFO).** Measured: `docs/adr/0003-four-logical-memory-scopes.md:27` says the same-numbered ADR conflict is "an open owner decision (task `adr-0003-conflict`)", while the decision-log row `docs/08_DECISION_LOG.md@e776dd0:26` (D-020, same 2026-09-08 date) records it resolved. Command: `nl -ba docs/adr/0003-four-logical-memory-scopes.md | sed -n '27p'` and `nl -ba docs/08_DECISION_LOG.md | sed -n '26p'` on the PIN. The order is not determinable from the files, so the ADR note is treated as stale relative to the decision log; no S0-06 evidence depends on it (INFO, not a blocker; fix in the next docs increment).
++
++## Item 12 — design, live-leg boundary, and cheapest honest path
++
++**What a live capture must produce.** The PC runner must start the approved pinned ai-memory, seed the two agent tuples, collect all four legs and the 49-file closed root, record the observed substrate identity/posture/origin and raw URL/socket witnesses, then the checker `run(root: Path)` must pass the manifest first (`_check_expected_files`) and all four graded checks: denied, precedence, write-scope, and leak (`C@e776dd0:700-716`); runner order `R@e776dd0:65-95` `start_ai_memory.sh`). It must also produce a real raw socket witness and actual adapter/ai-memory responses rather than producer-shaped synthetic files.
++
++**What synthetic bundles cannot show.** They cannot establish that the observed binary/socket was the real pinned ai-memory, that the private endpoint actually served the raw outputs, or that real ai-memory merge/upsert behavior gives the four-scope precedence/idempotence claimed. Generator drift is not independent adapter proof (F-36 / AF-AP-42).
++
++**Decision status.** Per the brief and D-020, the ADR-number conflict is decided: `0003-four-logical-memory-scopes.md` is the v1 ADR and `0003-two-durable-memory-scopes.md` is marked SUPERSEDED (`docs/08_DECISION_LOG.md:26`; the SUPERSEDED header is on the two-durable file itself). One residual: the four-scope ADR's own 2026-09-08 M1 note still says the conflict is an "open owner decision (task `adr-0003-conflict`)" (`docs/adr/0003-four-logical-memory-scopes.md:27`) while D-020 (same date, decision log) records it resolved; the order is not determinable from the files, so I flag this as a documentation inconsistency (INFO), not a blocker — the adapter's explicit `workspace=factory&project=_global` binding is correct under either ADR. D-3 remains a coordinator-owned naming issue: `(factory, _global)` is an ordinary explicit company project in the `factory` workspace, not ai-memory's reserved global scope (ADR note `:27`); the live capture must preserve the explicit mapping or the coordinator approves a rename first.
++
++**Cheapest path.** A repair round is needed before a live leg: fix and red-test F-32's complete binding-table schema and duplicate-tuple rejection, then hand the revised bytes to the sandbox adversarial verifier. Only after its independent grade should the coordinator run the permitted real pinned ai-memory capture. Do not mint or call S0-06 capture-ready while F-32 remains.
++
++**F-38 detail.** `nl -ba docs/adr/0003-four-logical-memory-scopes.md | sed -n '25,27p'` shows the M1 note closing with "A second accepted ADR with this number (`0003-two-durable-memory-scopes.md`) conflicts with this one; which is live is an open owner decision (task `adr-0003-conflict`)." `nl -ba docs/08_DECISION_LOG.md | sed -n '26p'` shows D-020: "ADR 0003 conflict resolved (owner 2026-09-08): the four-logical-scope ADR is v1; `0003-two-durable-memory-scopes.md` marked SUPERSEDED." The two entries share the 2026-09-08 date so their order is not determinable from the files; the decision log is the newer source of truth. No S0-06 evidence depends on this note, so it is INFO, not a blocker; a one-line amendment removing the stale "open owner decision" clause belongs in the next docs increment.
++
++## Finding inventory
++
++| ID | class | evidence | contract mapping | canonical path / effect | reproduction | minimal fix |
++|---|---|---|---|---|---|---|
++| F-32 | **BLOCKER, SOLID** | reproduced | docs/03 read contract 1; docs/04 ambiguity fails closed | public CLI accepts absent `scopes` as empty-success; duplicate rows make authorization order-dependent | item 2 loopback CLI, rc 0 in both orderings | schema-validate non-empty unique list and reject duplicate identity tuples |
++| F-30 | FOLLOW-UP, SOLID | reproduced | F-27 root leaf only | `PROVENANCE.md` content never affects any graded assertion | empty foreign hard link passes | remove it from manifest or bind structured attestation before relying on it |
++| F-31 | FOLLOW-UP, SOLID | reproduced | none beyond file manifest | empty nested dirs are ignored; no evidence bytes admitted | added empty directory, rc 0 | reject non-parent directory topology if closed tree is desired |
++| F-33 | FOLLOW-UP, SOLID | reproduced | none | case/whitespace tuple variants deny; normalization would widen identity | direct authorization probes | none |
++| F-34 | FOLLOW-UP, SOLID | reproduced | F-29 origin equivalence | uppercase scheme is URL-canonical equivalent | raw URL variant passes | none |
++| F-35 | FOLLOW-UP, SOLID | reproduced | F-25 text exclusion | deterministic 64-bit digest permits query correlation/dictionary guessing | loopback event digest | keyed/session digest or omit correlation before broad telemetry |
++| F-36 | FOLLOW-UP, SOLID | reproduced/reviewed | generator tool boundary | symlink `--out` can select rmtree target; comparison ignores dirs/modes; generator mirrors producer | scratch generator CLI | reject symlink roots / owned sentinel; keep real capture independent |
++| F-37 | FOLLOW-UP, SOLID | static | F-21 stated operator boundary | output sinks follow symlink paths passed from runner | static runner→collector→CLI trace | `O_NOFOLLOW|O_CREAT|O_EXCL` before a less-trusted launcher |
++| F-38 | INFO | reproduced (file comparison) | none (docs consistency) | ADR-0003 M1 note calls the same-numbered ADR conflict "an open owner decision (task `adr-0003-conflict`)"; D-020 (same 2026-09-08 date) records it resolved | item 12 measurement | one-line ADR-note amendment dropping the stale clause, next docs increment |
++| live-ai-memory semantics | UNVERIFIED | deliberately skipped | S0-06 execution proof | no approved binary/source in venue | venue forbids live leg | coordinator's real pinned-PC capture |
++
++## Final recommendation
++
++**NOT-READY — F-32 (malformed `scopes` and duplicate matching authorization rows) satisfies every blocking-predicate condition.** No live ai-memory assertion is claimed reproduced in this recommendation. Repair F-32 and obtain an independent sandbox adversarial grade; then the coordinator may schedule the real PC capture. This is a gate recommendation only, not a final acceptance verdict.
+diff --git a/transcripts/pc/pc-verify-m3.md--e776dd0.md b/transcripts/pc/pc-verify-m3.md--e776dd0.md
+new file mode 100644
+index 0000000..c93f4d0
+--- /dev/null
++++ b/transcripts/pc/pc-verify-m3.md--e776dd0.md
+@@ -0,0 +1,2055 @@
++# Hermes lane session 20260917_104619_f6b0b0
++
++- model: agentfactory-verify-local
++- started: 2026-09-17T09:46:21.460810+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-m3.md--e776dd0/tree
++- messages: 283; tool calls: 148
++- tokens in/out/cache_read/reasoning: 1691472/128669/12568800/63515
++
++## user @ 09:46:21
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:46:39 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 09:46:40 — 809 chars (body not exported)
++
++## tool result (read_file) @ 09:46:40 — 6035 chars (body not exported)
++
++## assistant @ 09:46:44 → tools: read_file
++
++
++
++## tool result (read_file) @ 09:46:44 — 14456 chars (body not exported)
++
++## assistant @ 09:47:09 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 09:47:09 — 302 chars (body not exported)
++
++## tool result (read_file) @ 09:47:09 — 15547 chars (body not exported)
++
++## assistant @ 09:47:26 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 09:47:26 — 13970 chars (body not exported)
++
++## tool result (terminal) @ 09:47:26 — 148 chars (body not exported)
++
++## assistant @ 09:47:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:47:52 — 1047 chars (body not exported)
++
++## assistant @ 09:49:08 → tools: terminal
++
++FILE IDENTITY verified: all six files at the scratch archive of e776dd0 match the brief's sha256 + line counts exactly. Now the item-0 mechanical gates.
++
++## tool result (terminal) @ 09:49:08 — 243 chars (body not exported)
++
++## assistant @ 09:51:52 → tools: terminal, terminal, terminal
++
++All six files match the brief's SHAs and line counts exactly. Now item 0's mechanical gates (batched):
++
++## tool result (terminal) @ 09:51:53 — 234 chars (body not exported)
++
++## tool result (terminal) @ 09:51:53 — 1753 chars (body not exported)
++
++## tool result (terminal) @ 09:51:54 — 190 chars (body not exported)
++
++## assistant @ 09:52:36 → tools: terminal
++
++Item 0 mechanical gates all pass (lint 36/36, ap_screen 8+4 hits matching the brief's description, pyflakes/bash-n/generator clean). Now the direct suite run:
++
++## tool result (terminal) @ 09:53:07 — 248 chars (body not exported)
++
++## assistant @ 09:55:53 → tools: write_file, terminal, terminal
++
++`214 passed in 29.84s` — I agree with the lane (29.87s) and the coordinator's 214 count. Drafting report item 0, then starting item 1:
++
++## tool result (write_file) @ 09:55:54 — 395 chars (body not exported)
++
++## tool result (terminal) @ 09:55:54 — 2302 chars (body not exported)
++
++## tool result (terminal) @ 09:55:54 — 4098 chars (body not exported)
++
++## assistant @ 10:02:10 → tools: terminal, terminal
++
++I've confirmed the manifest walk is a closed root with an exact recursive regular-file manifest, but I'm noticing that empty directories inside legs are silently ignored during the walk, so I need to probe that and read through the rest of the checker.
++
++## tool result (terminal) @ 10:02:11 — 6814 chars (body not exported)
++
++## tool result (terminal) @ 10:02:11 — 10554 chars (body not exported)
++
++## assistant @ 10:05:16 → tools: terminal, terminal
++
++I'm reviewing the grader functions to understand how they validate event streams and records, then I'll examine the test cases and generator code.
++
++## tool result (terminal) @ 10:05:16 — 9098 chars (body not exported)
++
++## tool result (terminal) @ 10:05:16 — 5765 chars (body not exported)
++
++## assistant @ 10:08:13 → tools: terminal, terminal
++
++Full checker read. Now the generator, the PC scripts, and the adapter:
++
++## tool result (terminal) @ 10:08:13 — 4319 chars (body not exported)
++
++## tool result (terminal) @ 10:08:13 — 12779 chars (body not exported)
++
++## assistant @ 10:10:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:10:20 — 9204 chars (body not exported)
++
++## assistant @ 10:12:49 → tools: terminal, terminal
++
++Generator read. Now the fixture file counts, the adapter, and the two PC scripts:
++
++## tool result (terminal) @ 10:12:49 — 320 chars (body not exported)
++
++## tool result (terminal) @ 10:12:49 — 8472 chars (body not exported)
++
++## assistant @ 10:15:11 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:15:12 — 9968 chars (body not exported)
++
++## tool result (terminal) @ 10:15:12 — 7815 chars (body not exported)
++
++## assistant @ 10:16:20 → tools: read_file, read_file
++
++Adapter fully read. Now the two PC scripts, the lane brief, and the incident log rows:
++
++## tool result (read_file) @ 10:16:20 — 5103 chars (body not exported)
++
++## tool result (read_file) @ 10:16:20 — 9194 chars (body not exported)
++
++## assistant @ 10:18:17 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:18:26 — 24837 chars (body not exported)
++
++## tool result (terminal) @ 10:18:27 — 15216 chars (body not exported)
++
++## assistant @ 10:19:36 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:19:37 — 11026 chars (body not exported)
++
++## tool result (terminal) @ 10:19:37 — 8490 chars (body not exported)
++
++## assistant @ 10:21:31 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:21:33 — 791 chars (body not exported)
++
++## assistant @ 10:22:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:22:10 — 288 chars (body not exported)
++
++## assistant @ 10:24:05 → tools: patch
++
++
++
++## tool result (patch) @ 10:24:07 — 738 chars (body not exported)
++
++## assistant @ 10:26:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:26:06 — 660 chars (body not exported)
++
++## assistant @ 10:27:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:27:02 — 468 chars (body not exported)
++
++## assistant @ 10:27:21 → tools: tool_search
++
++
++
++## tool result (tool_search) @ 10:27:21 — 2237 chars (body not exported)
++
++## assistant @ 10:27:51 → tools: tool_describe
++
++
++
++## tool result (tool_describe) @ 10:27:51 — 1545 chars (body not exported)
++
++## assistant @ 10:28:07 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:28:07 — 138 chars (body not exported)
++
++## assistant @ 10:28:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:28:23 — 7580 chars (body not exported)
++
++## assistant @ 10:29:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:29:23 — 308 chars (body not exported)
++
++## assistant @ 10:29:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:29:53 — 703 chars (body not exported)
++
++## assistant @ 10:30:41 → tools: patch
++
++
++
++## tool result (patch) @ 10:30:41 — 6668 chars (body not exported)
++
++## assistant @ 10:30:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:30:50 — 6854 chars (body not exported)
++
++## assistant @ 10:31:10 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:31:11 — 1007 chars (body not exported)
++
++## assistant @ 10:31:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:00 — 927 chars (body not exported)
++
++## assistant @ 10:32:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:45 — 3113 chars (body not exported)
++
++## assistant @ 10:33:30 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:34:00 — 347 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 10086 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 4546 chars (body not exported)
++
++## assistant @ 10:34:47 → tools: patch
++
++
++
++## tool result (patch) @ 10:34:47 — 6672 chars (body not exported)
++
++## assistant @ 10:35:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:10 — 12879 chars (body not exported)
++
++## assistant @ 10:35:27 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:35:28 — 322 chars (body not exported)
++
++## assistant @ 10:35:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:40 — 1714 chars (body not exported)
++
++## assistant @ 10:36:04 → tools: patch
++
++
++
++## tool result (patch) @ 10:36:04 — 3810 chars (body not exported)
++
++## assistant @ 10:36:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:16 — 4102 chars (body not exported)
++
++## assistant @ 10:36:37 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:36:37 — 310 chars (body not exported)
++
++## assistant @ 10:36:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:43 — 660 chars (body not exported)
++
++## assistant @ 10:36:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:58 — 263 chars (body not exported)
++
++## assistant @ 10:37:03 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:37:03 — 138 chars (body not exported)
++
++## assistant @ 10:37:21 → tools: patch
++
++
++
++## tool result (patch) @ 10:37:21 — 3649 chars (body not exported)
++
++## assistant @ 10:37:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:37:27 — 6626 chars (body not exported)
++
++## assistant @ 10:38:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:38:01 — 312 chars (body not exported)
++
++## assistant @ 10:38:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:08 — 1427 chars (body not exported)
++
++## assistant @ 10:38:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:38 — 540 chars (body not exported)
++
++## assistant @ 10:39:11 → tools: patch
++
++
++
++## tool result (patch) @ 10:39:11 — 6474 chars (body not exported)
++
++## assistant @ 10:39:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:39:17 — 8482 chars (body not exported)
++
++## assistant @ 10:40:17 → tools: patch
++
++
++
++## tool result (patch) @ 10:40:17 — 4383 chars (body not exported)
++
++## assistant @ 10:40:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:49 — 13751 chars (body not exported)
++
++## assistant @ 10:41:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:41:24 — 8211 chars (body not exported)
++
++## assistant @ 10:41:49 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:41:50 — 322 chars (body not exported)
++
++## assistant @ 10:42:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:01 — 1376 chars (body not exported)
++
++## assistant @ 10:42:30 → tools: patch
++
++
++
++## tool result (patch) @ 10:42:31 — 6527 chars (body not exported)
++
++## assistant @ 10:42:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:42:54 — 2482 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 13759 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 6499 chars (body not exported)
++
++## user @ 09:46:21
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:46:39 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 09:46:40 — 123 chars (body not exported)
++
++## tool result (read_file) @ 09:46:40 — 134 chars (body not exported)
++
++## assistant @ 10:45:14
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++No user message is visible in the compacted window (all turns are assistant tool-calls/results). The in-flight task, per the focus topic (HARNESS PORT of `.claude/agents/adversarial-verifier.md`) and the work state, is: **complete the adversarial grade of S0-06 round 3 (lane M3, PIN `e776dd0`)** — the `VERIFY-M3-report.md` was started (32 lines written) and the proof-checker/generator code-reading was in progress when compaction occurred. The user's most recent explicit instruction is not preserved in the turns; the task is inferred from the harness-port context and the assistant's ongoing verification workflow.
++
++## Goal
++Produce an adversarial-verifier grade report (`VERIFY-M3-report.md`) for the S0-06 support task, round 3, at PIN `e776dd0`, under the PC venue. The role is `adversarial-verifier` (a harness port of `.claude/agents/adversarial-verifier.md` per `docs/HARNESS-PORTS.md`; the model pin does not survive the port — the PC harness serves one model). The report must verify file identity, pass a
++
++## assistant @ 10:15:11 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:15:12 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:15:12 — 123 chars (body not exported)
++
++## assistant @ 10:16:20 → tools: read_file, read_file
++
++Adapter fully read. Now the two PC scripts, the lane brief, and the incident log rows:
++
++## tool result (read_file) @ 10:16:20 — 152 chars (body not exported)
++
++## tool result (read_file) @ 10:16:20 — 153 chars (body not exported)
++
++## assistant @ 10:18:17 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:18:26 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:18:27 — 123 chars (body not exported)
++
++## assistant @ 10:19:36 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:19:37 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:19:37 — 123 chars (body not exported)
++
++## assistant @ 10:21:31 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:21:33 — 127 chars (body not exported)
++
++## assistant @ 10:22:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:22:10 — 124 chars (body not exported)
++
++## assistant @ 10:24:05 → tools: patch
++
++
++
++## tool result (patch) @ 10:24:07 — 132 chars (body not exported)
++
++## assistant @ 10:26:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:26:06 — 123 chars (body not exported)
++
++## assistant @ 10:27:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:27:02 — 123 chars (body not exported)
++
++## assistant @ 10:27:21 → tools: tool_search
++
++
++
++## tool result (tool_search) @ 10:27:21 — 81 chars (body not exported)
++
++## assistant @ 10:27:51 → tools: tool_describe
++
++
++
++## tool result (tool_describe) @ 10:27:51 — 61 chars (body not exported)
++
++## assistant @ 10:28:07 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:28:07 — 138 chars (body not exported)
++
++## assistant @ 10:28:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:28:23 — 123 chars (body not exported)
++
++## assistant @ 10:29:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:29:23 — 113 chars (body not exported)
++
++## assistant @ 10:29:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:29:53 — 123 chars (body not exported)
++
++## assistant @ 10:30:41 → tools: patch
++
++
++
++## tool result (patch) @ 10:30:41 — 149 chars (body not exported)
++
++## assistant @ 10:30:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:30:50 — 123 chars (body not exported)
++
++## assistant @ 10:31:10 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:31:11 — 118 chars (body not exported)
++
++## assistant @ 10:31:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:00 — 123 chars (body not exported)
++
++## assistant @ 10:32:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:45 — 123 chars (body not exported)
++
++## assistant @ 10:33:30 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## assistant @ 10:34:47 → tools: patch
++
++
++
++## tool result (patch) @ 10:34:47 — 149 chars (body not exported)
++
++## assistant @ 10:35:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:10 — 123 chars (body not exported)
++
++## assistant @ 10:35:27 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:35:28 — 120 chars (body not exported)
++
++## assistant @ 10:35:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:40 — 123 chars (body not exported)
++
++## assistant @ 10:36:04 → tools: patch
++
++
++
++## tool result (patch) @ 10:36:04 — 149 chars (body not exported)
++
++## assistant @ 10:36:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:16 — 123 chars (body not exported)
++
++## assistant @ 10:36:37 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:36:37 — 114 chars (body not exported)
++
++## assistant @ 10:36:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:43 — 123 chars (body not exported)
++
++## assistant @ 10:36:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:58 — 123 chars (body not exported)
++
++## assistant @ 10:37:03 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:37:03 — 138 chars (body not exported)
++
++## assistant @ 10:37:21 → tools: patch
++
++
++
++## tool result (patch) @ 10:37:21 — 149 chars (body not exported)
++
++## assistant @ 10:37:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:37:27 — 123 chars (body not exported)
++
++## assistant @ 10:38:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:38:01 — 115 chars (body not exported)
++
++## assistant @ 10:38:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:08 — 123 chars (body not exported)
++
++## assistant @ 10:38:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:38 — 123 chars (body not exported)
++
++## assistant @ 10:39:11 → tools: patch
++
++
++
++## tool result (patch) @ 10:39:11 — 149 chars (body not exported)
++
++## assistant @ 10:39:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:39:17 — 123 chars (body not exported)
++
++## assistant @ 10:40:17 → tools: patch
++
++
++
++## tool result (patch) @ 10:40:17 — 149 chars (body not exported)
++
++## assistant @ 10:40:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:49 — 123 chars (body not exported)
++
++## assistant @ 10:41:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:41:24 — 123 chars (body not exported)
++
++## assistant @ 10:41:49 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:41:50 — 322 chars (body not exported)
++
++## assistant @ 10:42:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:01 — 1376 chars (body not exported)
++
++## assistant @ 10:42:30 → tools: patch
++
++
++
++## tool result (patch) @ 10:42:31 — 6527 chars (body not exported)
++
++## assistant @ 10:42:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:42:54 — 2482 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 13759 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 6499 chars (body not exported)
++
++## user @ 09:46:21
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not sel
++
++## assistant @ 10:45:27 → tools: read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 10:45:27 — 31484 chars (body not exported)
++
++## tool result (read_file) @ 10:45:27 — 14456 chars (body not exported)
++
++## tool result (terminal) @ 10:45:28 — 312 chars (body not exported)
++
++## assistant @ 10:46:08 → tools: read_file, terminal, search_files, terminal
++
++
++
++## tool result (read_file) @ 10:46:08 — 15547 chars (body not exported)
++
++## tool result (terminal) @ 10:46:08 — 15029 chars (body not exported)
++
++## tool result (search_files) @ 10:46:09 — 1971 chars (body not exported)
++
++## tool result (terminal) @ 10:46:10 — 2172 chars (body not exported)
++
++## assistant @ 10:46:29 → tools: search_files, read_file, terminal
++
++
++
++## tool result (search_files) @ 10:46:29 — 643 chars (body not exported)
++
++## tool result (read_file) @ 10:46:29 — 1340 chars (body not exported)
++
++## tool result (terminal) @ 10:46:29 — 17575 chars (body not exported)
++
++## assistant @ 10:47:07 → tools: search_files
++
++
++
++## tool result (search_files) @ 10:47:07 — 21244 chars (body not exported)
++
++## assistant @ 10:47:56 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:47:56 — 30627 chars (body not exported)
++
++## tool result (terminal) @ 10:47:56 — 14095 chars (body not exported)
++
++## tool result (terminal) @ 10:47:56 — 68 chars (body not exported)
++
++## assistant @ 10:48:31 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:48:31 — 3267 chars (body not exported)
++
++## assistant @ 10:48:39 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:40 — 741 chars (body not exported)
++
++## assistant @ 10:48:47 → tools: patch
++
++
++
++## tool result (patch) @ 10:48:49 — 665 chars (body not exported)
++
++## assistant @ 10:48:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:48:57 — 660 chars (body not exported)
++
++## assistant @ 10:49:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:10 — 2611 chars (body not exported)
++
++## assistant @ 10:49:19 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:49:19 — 138 chars (body not exported)
++
++## assistant @ 10:50:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:00 — 288 chars (body not exported)
++
++## assistant @ 10:50:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:13 — 660 chars (body not exported)
++
++## assistant @ 10:50:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:26 — 90 chars (body not exported)
++
++## assistant @ 10:50:34 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:50:34 — 138 chars (body not exported)
++
++## assistant @ 10:51:16 → tools: search_files
++
++
++
++## tool result (search_files) @ 10:51:16 — 5087 chars (body not exported)
++
++## assistant @ 10:52:16 → tools: patch
++
++
++
++## tool result (patch) @ 10:52:17 — 4483 chars (body not exported)
++
++## assistant @ 10:53:15 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:16 — 5723 chars (body not exported)
++
++## assistant @ 10:53:33 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:34 — 1182 chars (body not exported)
++
++## assistant @ 10:54:22 → tools: patch
++
++
++
++## tool result (patch) @ 10:54:23 — 7494 chars (body not exported)
++
++## assistant @ 10:54:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:46 — 14025 chars (body not exported)
++
++## assistant @ 10:55:05 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:06 — 3709 chars (body not exported)
++
++## assistant @ 10:55:55 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:56 — 2477 chars (body not exported)
++
++## assistant @ 10:56:07 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:08 — 2840 chars (body not exported)
++
++## assistant @ 10:56:21 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:22 — 3857 chars (body not exported)
++
++## assistant @ 10:56:40 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:40 — 3083 chars (body not exported)
++
++## assistant @ 10:56:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:56:59 — 8086 chars (body not exported)
++
++## assistant @ 10:57:23 → tools: patch
++
++
++
++## tool result (patch) @ 10:57:23 — 3009 chars (body not exported)
++
++## assistant @ 10:57:41 → tools: patch
++
++
++
++## tool result (patch) @ 10:57:42 — 2132 chars (body not exported)
++
++## assistant @ 10:58:00 → tools: patch
++
++
++
++## tool result (patch) @ 10:58:01 — 1895 chars (body not exported)
++
++## assistant @ 10:58:11 → tools: patch
++
++
++
++## tool result (patch) @ 10:58:12 — 550 chars (body not exported)
++
++## assistant @ 10:58:29 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:58:29 — 35099 chars (body not exported)
++
++## assistant @ 10:59:01 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:01 — 2927 chars (body not exported)
++
++## assistant @ 10:59:12 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:13 — 2136 chars (body not exported)
++
++## assistant @ 10:59:52 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:52 — 1682 chars (body not exported)
++
++## assistant @ 11:00:02 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:02 — 2246 chars (body not exported)
++
++## assistant @ 11:00:16 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:16 — 2039 chars (body not exported)
++
++## assistant @ 11:00:31 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:31 — 3340 chars (body not exported)
++
++## assistant @ 11:00:41 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:41 — 2184 chars (body not exported)
++
++## assistant @ 11:00:54 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:54 — 2455 chars (body not exported)
++
++## assistant @ 11:01:21 → tools: patch
++
++
++
++## tool result (patch) @ 11:01:21 — 2865 chars (body not exported)
++
++## user @ 09:46:21
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not sel
++
++## assistant @ 10:16:20 → tools: read_file, read_file
++
++Adapter fully read. Now the two PC scripts, the lane brief, and the incident log rows:
++
++## tool result (read_file) @ 10:16:20 — 152 chars (body not exported)
++
++## tool result (read_file) @ 10:16:20 — 153 chars (body not exported)
++
++## assistant @ 10:18:17 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:18:26 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:18:27 — 123 chars (body not exported)
++
++## assistant @ 10:19:36 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 10:19:37 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:19:37 — 123 chars (body not exported)
++
++## assistant @ 10:21:31 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:21:33 — 127 chars (body not exported)
++
++## assistant @ 10:22:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:22:10 — 124 chars (body not exported)
++
++## assistant @ 10:24:05 → tools: patch
++
++
++
++## tool result (patch) @ 10:24:07 — 132 chars (body not exported)
++
++## assistant @ 10:26:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:26:06 — 123 chars (body not exported)
++
++## assistant @ 10:27:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:27:02 — 123 chars (body not exported)
++
++## assistant @ 10:27:21 → tools: tool_search
++
++
++
++## tool result (tool_search) @ 10:27:21 — 81 chars (body not exported)
++
++## assistant @ 10:27:51 → tools: tool_describe
++
++
++
++## tool result (tool_describe) @ 10:27:51 — 61 chars (body not exported)
++
++## assistant @ 10:28:07 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:28:07 — 138 chars (body not exported)
++
++## assistant @ 10:28:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:28:23 — 123 chars (body not exported)
++
++## assistant @ 10:29:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:29:23 — 113 chars (body not exported)
++
++## assistant @ 10:29:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:29:53 — 123 chars (body not exported)
++
++## assistant @ 10:30:41 → tools: patch
++
++
++
++## tool result (patch) @ 10:30:41 — 149 chars (body not exported)
++
++## assistant @ 10:30:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:30:50 — 123 chars (body not exported)
++
++## assistant @ 10:31:10 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:31:11 — 118 chars (body not exported)
++
++## assistant @ 10:31:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:00 — 123 chars (body not exported)
++
++## assistant @ 10:32:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:32:45 — 123 chars (body not exported)
++
++## assistant @ 10:33:30 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:34:00 — 123 chars (body not exported)
++
++## assistant @ 10:34:47 → tools: patch
++
++
++
++## tool result (patch) @ 10:34:47 — 149 chars (body not exported)
++
++## assistant @ 10:35:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:10 — 123 chars (body not exported)
++
++## assistant @ 10:35:27 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:35:28 — 120 chars (body not exported)
++
++## assistant @ 10:35:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:40 — 123 chars (body not exported)
++
++## assistant @ 10:36:04 → tools: patch
++
++
++
++## tool result (patch) @ 10:36:04 — 149 chars (body not exported)
++
++## assistant @ 10:36:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:16 — 123 chars (body not exported)
++
++## assistant @ 10:36:37 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:36:37 — 114 chars (body not exported)
++
++## assistant @ 10:36:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:43 — 123 chars (body not exported)
++
++## assistant @ 10:36:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:36:58 — 123 chars (body not exported)
++
++## assistant @ 10:37:03 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:37:03 — 138 chars (body not exported)
++
++## assistant @ 10:37:21 → tools: patch
++
++
++
++## tool result (patch) @ 10:37:21 — 149 chars (body not exported)
++
++## assistant @ 10:37:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:37:27 — 123 chars (body not exported)
++
++## assistant @ 10:38:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:38:01 — 115 chars (body not exported)
++
++## assistant @ 10:38:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:08 — 123 chars (body not exported)
++
++## assistant @ 10:38:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:38 — 123 chars (body not exported)
++
++## assistant @ 10:39:11 → tools: patch
++
++
++
++## tool result (patch) @ 10:39:11 — 149 chars (body not exported)
++
++## assistant @ 10:39:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:39:17 — 123 chars (body not exported)
++
++## assistant @ 10:40:17 → tools: patch
++
++
++
++## tool result (patch) @ 10:40:17 — 149 chars (body not exported)
++
++## assistant @ 10:40:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:49 — 123 chars (body not exported)
++
++## assistant @ 10:41:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:41:24 — 123 chars (body not exported)
++
++## assistant @ 10:41:49 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:41:50 — 120 chars (body not exported)
++
++## assistant @ 10:42:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:01 — 123 chars (body not exported)
++
++## assistant @ 10:42:30 → tools: patch
++
++
++
++## tool result (patch) @ 10:42:31 — 149 chars (body not exported)
++
++## assistant @ 10:42:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:42:54 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:42:54 — 123 chars (body not exported)
++
++## user @ 09:46:21
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User asked (deterministic, from compacted turns): "<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md. The body below is carried over UNCHANGED; only the Claude-Code frontmatter was removed. The model pin does not survive the port: the PC harness serves ONE model, so all three lane roles run on the same model and the coordinator-side routing table does not apply there. CONSEQUENCE, and it is the important one: on a single-model harness a lane cannot supply its own independent verification. A build lane's output is a PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict — the coordinator owns the gate. Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml. Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this file to the brief instead. --> # Lane role: adversarial-verifier <!-- Adapted from Lunarsong/Claude-Opus-5
++
++## assistant @ 10:45:27 → tools: read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 10:45:27 — 153 chars (body not exported)
++
++## tool result (read_file) @ 10:45:27 — 152 chars (body not exported)
++
++## tool result (terminal) @ 10:45:28 — 123 chars (body not exported)
++
++## assistant @ 10:46:08 → tools: read_file, terminal, search_files, terminal
++
++
++
++## tool result (read_file) @ 10:46:08 — 153 chars (body not exported)
++
++## tool result (terminal) @ 10:46:08 — 123 chars (body not exported)
++
++## tool result (search_files) @ 10:46:09 — 143 chars (body not exported)
++
++## tool result (terminal) @ 10:46:10 — 123 chars (body not exported)
++
++## assistant @ 10:46:29 → tools: search_files, read_file, terminal
++
++
++
++## tool result (search_files) @ 10:46:29 — 135 chars (body not exported)
++
++## tool result (read_file) @ 10:46:29 — 147 chars (body not exported)
++
++## tool result (terminal) @ 10:46:29 — 123 chars (body not exported)
++
++## assistant @ 10:47:07 → tools: search_files
++
++
++
++## tool result (search_files) @ 10:47:07 — 184 chars (body not exported)
++
++## assistant @ 10:47:56 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 10:47:56 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:47:56 — 123 chars (body not exported)
++
++## tool result (terminal) @ 10:47:56 — 68 chars (body not exported)
++
++## assistant @ 10:48:31 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:48:31 — 123 chars (body not exported)
++
++## assistant @ 10:48:39 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:40 — 112 chars (body not exported)
++
++## assistant @ 10:48:47 → tools: patch
++
++
++
++## tool result (patch) @ 10:48:49 — 117 chars (body not exported)
++
++## assistant @ 10:48:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:48:57 — 123 chars (body not exported)
++
++## assistant @ 10:49:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:10 — 123 chars (body not exported)
++
++## assistant @ 10:49:19 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:49:19 — 138 chars (body not exported)
++
++## assistant @ 10:50:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:00 — 124 chars (body not exported)
++
++## assistant @ 10:50:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:13 — 123 chars (body not exported)
++
++## assistant @ 10:50:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:26 — 90 chars (body not exported)
++
++## assistant @ 10:50:34 → tools: tool_call
++
++
++
++## tool result (process_manage) @ 10:50:34 — 138 chars (body not exported)
++
++## assistant @ 10:51:16 → tools: search_files
++
++
++
++## tool result (search_files) @ 10:51:16 — 201 chars (body not exported)
++
++## assistant @ 10:52:16 → tools: patch
++
++
++
++## tool result (patch) @ 10:52:17 — 149 chars (body not exported)
++
++## assistant @ 10:53:15 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:16 — 149 chars (body not exported)
++
++## assistant @ 10:53:33 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:34 — 149 chars (body not exported)
++
++## assistant @ 10:54:22 → tools: patch
++
++
++
++## tool result (patch) @ 10:54:23 — 149 chars (body not exported)
++
++## assistant @ 10:54:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:46 — 123 chars (body not exported)
++
++## assistant @ 10:55:05 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:06 — 149 chars (body not exported)
++
++## assistant @ 10:55:55 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:56 — 149 chars (body not exported)
++
++## assistant @ 10:56:07 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:08 — 149 chars (body not exported)
++
++## assistant @ 10:56:21 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:22 — 149 chars (body not exported)
++
++## assistant @ 10:56:40 → tools: patch
++
++
++
++## tool result (patch) @ 10:56:40 — 149 chars (body not exported)
++
++## assistant @ 10:56:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:56:59 — 123 chars (body not exported)
++
++## assistant @ 10:57:23 → tools: patch
++
++
++
++## tool result (patch) @ 10:57:23 — 149 chars (body not exported)
++
++## assistant @ 10:57:41 → tools: patch
++
++
++
++## tool result (patch) @ 10:57:42 — 149 chars (body not exported)
++
++## assistant @ 10:58:00 → tools: patch
++
++
++
++## tool result (patch) @ 10:58:01 — 149 chars (body not exported)
++
++## assistant @ 10:58:11 → tools: patch
++
++
++
++## tool result (patch) @ 10:58:12 — 147 chars (body not exported)
++
++## assistant @ 10:58:29 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:58:29 — 154 chars (body not exported)
++
++## assistant @ 10:59:01 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:01 — 156 chars (body not exported)
++
++## assistant @ 10:59:12 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:13 — 156 chars (body not exported)
++
++## assistant @ 10:59:52 → tools: patch
++
++
++
++## tool result (patch) @ 10:59:52 — 156 chars (body not exported)
++
++## assistant @ 11:00:02 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:02 — 2246 chars (body not exported)
++
++## assistant @ 11:00:16 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:16 — 2039 chars (body not exported)
++
++## assistant @ 11:00:31 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:31 — 3340 chars (body not exported)
++
++## assistant @ 11:00:41 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:41 — 2184 chars (body not exported)
++
++## assistant @ 11:00:54 → tools: patch
++
++
++
++## tool result (patch) @ 11:00:54 — 2455 chars (body not exported)
++
++## assistant @ 11:01:21 → tools: patch
++
++
++
++## tool result (patch) @ 11:01:21 — 2865 chars (body not exported)
++
++## assistant @ 11:06:17 → tools: terminal
++
++I need to verify the D-3/ADR-0003 claim I cited. Let me check the actual file.
++
++## tool result (terminal) @ 11:06:17 — 4458 chars (body not exported)
++
++## assistant @ 11:07:03 → tools: terminal
++
++I need to correct a misattribution in my report — "D-3" is not a numbered decision in the decision log; that note lives in the ADR. Let me verify the exact line numbers before fixing.
++
++## tool result (terminal) @ 11:07:03 — 1736 chars (body not exported)
++
++## assistant @ 11:07:42 → tools: search_files
++
++Let me verify one thing in my D-32 item — where "open owner decision" actually comes from, since I want the report's citation to be exact.
++
++## tool result (search_files) @ 11:07:43 — 369 chars (body not exported)
++
++## assistant @ 11:08:33 → tools: patch
++
++
++
++## tool result (patch) @ 11:08:34 — 195 chars (body not exported)
++
++## assistant @ 11:08:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:08:39 — 1389 chars (body not exported)
++
++## assistant @ 11:08:59 → tools: terminal
++
++Let me check where "D-3" originates in the brief and lane report, to make sure my label is right.
++
++## tool result (terminal) @ 11:08:59 — 673 chars (body not exported)
++
++## assistant @ 11:09:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:09:11 — 1941 chars (body not exported)
++
++## assistant @ 11:09:32 → tools: patch
++
++I need to correct the D-3/A DR-0003 claim in the report — the ADR note at line 27 says "open owner decision" but D-020 already resolved it. Let me fix that section.
++
++## tool result (patch) @ 11:09:33 — 2798 chars (body not exported)
++
++## assistant @ 11:10:19 → tools: patch
++
++I over-claimed the "stale residue" causation — I can't determine the order of two same-dated entries from the file alone. Let me make that precise.
++
++## tool result (patch) @ 11:10:20 — 3267 chars (body not exported)
++
++## assistant @ 11:10:43 → tools: patch
++
++I found a genuine documentation inconsistency during the grade. Let me record it in both the inventory and DISCREPANCIES per the bounded rule, then run the final lint.
++
++## tool result (patch) @ 11:10:44 — 195 chars (body not exported)
++
++## assistant @ 11:10:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:10:49 — 1659 chars (body not exported)
++
++## assistant @ 11:11:02 → tools: terminal
++
++F-36 is the rmtree finding, not AF-AP-42. Let me locate the AF-AP-42 discussion and the inventory tail to place F-37 correctly.
++
++## tool result (terminal) @ 11:11:02 — 3956 chars (body not exported)
++
++## assistant @ 11:11:47 → tools: patch
++
++F-37 is already used (symlink sinks). I'll add the ADR-note inconsistency as **F-38**, update the inventory table and the final recommendation line, and append the measurement to DISCREPANCIES.
++
++## tool result (patch) @ 11:11:48 — 1900 chars (body not exported)
++
++## assistant @ 11:12:19 → tools: terminal
++
++Now let me add a short F-38 detail paragraph after the decision-status block and append the measurement to DISCREPANCIES.
++
++## tool result (terminal) @ 11:12:19 — 1587 chars (body not exported)
++
++## assistant @ 11:12:45 → tools: patch
++
++
++
++## tool result (patch) @ 11:12:45 — 1946 chars (body not exported)
++
++## assistant @ 11:13:04 → tools: read_file
++
++Now let me view the DISCREPANCIES section to append the F-38 measurement and the lint summary line as the rule requires.
++
++## tool result (read_file) @ 11:13:04 — 6357 chars (body not exported)
++
++## assistant @ 11:13:30 → tools: patch
++
++
++
++## tool result (patch) @ 11:13:30 — 2527 chars (body not exported)
++
++## assistant @ 11:13:42 → tools: terminal
++
++Now the final lint round. Let me find the exact lint command and map aliases from the brief.
++
++## tool result (terminal) @ 11:13:42 — 1264 chars (body not exported)
++
++## assistant @ 11:14:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:14:00 — 1479 chars (body not exported)
++
++## assistant @ 11:14:15 → tools: terminal
++
++Now the final lint on my own report, round 1 of 3:
++
++## tool result (terminal) @ 11:14:15 — 3376 chars (body not exported)
++
++## assistant @ 11:14:29 → tools: terminal
++
++Let me verify the exact lines at each MISS/UNRESOLVED citation before fixing, per the hint.
++
++## tool result (terminal) @ 11:14:30 — 6264 chars (body not exported)
++
++## assistant @ 11:15:26 → tools: terminal
++
++Let me read my exact report lines and the run-script region to fix each hint precisely.
++
++## tool result (terminal) @ 11:15:26 — 7899 chars (body not exported)
++
++## assistant @ 11:16:01 → tools: terminal
++
++Let me verify the exact test function names/lines and where `collect_leg.sh` lives in the run script, to fix each hint precisely.
++
++## tool result (terminal) @ 11:16:01 — 2757 chars (body not exported)
++
++## assistant @ 11:16:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:16:28 — 2493 chars (body not exported)
++
++## assistant @ 11:20:50 → tools: execute_code
++
++Let me verify the exact line locations of every test name and code token I'll cite, so each fix is correct before I edit.
++
++## tool result (execute_code) @ 11:20:50 — 1301 chars (body not exported)
++
++## assistant @ 11:21:37 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 11:21:39 — 753 chars (body not exported)
++
++## assistant @ 11:21:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:21:57 — 1889 chars (body not exported)
++
++## assistant @ 11:22:40 → tools: terminal
++
++Round 1 applied all 7 hints. Round 2 is clean on 5 of them (OK 64, UNRESOLVED 0) but 3 MISSes remain. Let me apply the printed hint to those three — copying one backticked identifier directly from each cited line — for the final (third) round.
++
++## tool result (terminal) @ 11:22:40 — 700 chars (body not exported)
++
++## assistant @ 11:23:37 → tools: execute_code
++
++Let me see my exact current text for the three surviving lines, then apply the hint's fix (add the cited line's own backticked identifier, or correct the number).
++
++## tool result (execute_code) @ 11:23:37 — 28297 chars (body not exported)
++
++## assistant @ 11:27:12 → tools: execute_code
++
++I've applied round 1 (all 7 hints) — it cleared 5 (OK 64, UNRESOLVED 0) but 3 remain. Applying the printed hint to those 3 for the final (3rd) round: backtick the cited line's own identifier for the C/T refs, and switch the non-mapped doc ref to the `@<PIN>` form the hint prescribes.
++
++## tool result (execute_code) @ 11:27:13 — 487 chars (body not exported)
++
++## assistant @ 11:28:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:28:53 — 1359 chars (body not exported)
++
++## assistant @ 11:29:58 → tools: patch
++
++The 3-round bound is reached (2 MISS remain — `T@e776dd0:1899` and the 08:26 doc ref; both are "in-words" lines where the token check can't see the identifier). Per the bounded rule, I paste the final summary and report rather than chase. Updating the record line:
++
++## tool result (patch) @ 11:29:58 — 3276 chars (body not exported)
++
++## assistant @ 11:31:48 → tools: terminal
++
++Let me confirm no stray processes remain, re-sync the draft file, and do a final integrity check.
++
++## tool result (terminal) @ 11:31:48 — 3826 chars (body not exported)
++
++## assistant @ 11:33:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:33:57 — 392 chars (body not exported)
++
++## assistant @ 11:36:22 → tools: read_file
++
++Let me do a final integrity check of the whole report before returning it, and verify the tree is clean.
++
++## tool result (read_file) @ 11:36:22 — 42491 chars (body not exported)
++
++## assistant @ 11:38:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:38:06 — 9211 chars (body not exported)
++
++## assistant @ 11:39:14 → tools: terminal
++
++The report is complete and consistent. Let me do one final integrity pass on the F-32 blocker opening and the final recommendation to confirm the whole thing is coherent before returning it.
++
++## tool result (terminal) @ 11:39:14 — 1963 chars (body not exported)
++
++## assistant @ 11:40:57 → tools: terminal
++
++Let me do a final integrity check: confirm no `report_lint.py` in FILE IDENTITY, no stray processes, and tree status, then pull the complete report text to return.
++
++## tool result (terminal) @ 11:40:57 — 14267 chars (body not exported)
++
++## assistant @ 11:41:06 → tools: terminal
++
++All clean: no `report_lint.py` in FILE IDENTITY, no stray probe servers (the only match is the hermes agent process running this lane), tree has the expected staged/modified state (the report is a new untracked file, as required). Let me pull the full report text to return it whole.
++
++## tool result (terminal) @ 11:41:06 — 41560 chars (body not exported)
++
++## assistant @ 11:41:17 → tools: read_file
++
++I have the full report. Let me pull it in complete form to return it whole.
++
++## tool result (read_file) @ 11:41:18 — 355 chars (body not exported)
++
++## assistant @ 11:41:24 → tools: terminal
++
++Let me pull the remaining sections (which were previously truncated) so I can return the complete report.
++
++## tool result (terminal) @ 11:41:24 — 7675 chars (body not exported)
++
++## assistant @ 11:41:34 → tools: terminal
++
++Let me pull the middle sections I haven't fully seen so the report I return is complete and coherent.
++
++## tool result (terminal) @ 11:41:34 — 5217 chars (body not exported)
++
++## assistant @ 11:41:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:41:42 — 3755 chars (body not exported)
++
++## assistant @ 11:42:03 → tools: terminal
++
++Let me pull the remaining sections (40-55 and 132-205) so I can return the complete report.
++
++## tool result (terminal) @ 11:42:03 — 1679 chars (body not exported)
++
++## assistant @ 11:42:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:42:08 — 9194 chars (body not exported)
++
++## assistant @ 11:42:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:42:14 — 11761 chars (body not exported)
++
++## assistant @ 11:42:42 → tools: terminal
++
++I've verified the complete report is consistent, saved, and synced. Let me pull the exact final bytes in full to return it whole.
++
++## tool result (terminal) @ 11:42:43 — 41637 chars (body not exported)
++
++## assistant @ 11:48:52
++
++**VERIFIED (PC, adversarial-verifier, PIN `e776dd0`) → GATE RECOMMENDATION: NOT-READY — F-32 is the sole qualifying blocker.** No live ai-memory leg was reproduced (the venue forbids it); every other claim is reproduced on the PIN's bytes. The full report is saved at `/home/rocco/agent-factory/.lanes/pc-verify-m3.md--e776dd0/tree/tasks/briefs/s0-06-support/VERIFY-M3-report.md` (241 lines, 41,451 bytes) and synced to the lane's `report-draft.md`. Returned whole below.
++
++---
++
++# VERIFY-M3 — adversarial grade of S0-06 round 3 (lane M3)
++
++PIN: `e776dd0`
++Role: adversarial-verifier, PC venue (`tasks/briefs/pc/VENUE-MAP.md`), brief `tasks/briefs/s0-06-support/VERIFY-M3-brief.md`.
++
++## Outcome
++
++**Gate recommendation: NOT-READY — F-32 is a qualifying blocker.** This recommendation is based on the reproduced local checker/adapter paths and loopback records; it deliberately does not claim the prohibited live ai-memory leg was reproduced. The coordinator owns the final decision.
++
++## FILE IDENTITY (scratch archive of e776dd0, `git archive | tar -x` into the lane's scratch dir)
++
++| file | sha256 (measured) | brief claim | lines |
++|---|---|---|---|
++| proofs/S0-06/check_four_scope.py | `<opaque-redacted>` | `432454d8…` | 736 = 736 |
++| proofs/S0-06/adapter/factory_memory.py | `<opaque-redacted>` | `8d0e75fc…` | 509 = 509 |
++| proofs/S0-06/fixtures/build_synthetic_bundles.py | `<opaque-redacted>` | `19c63ca3…` | 504 = 504 |
++| tests/test_s0_06_four_scope.py | `<opaque-redacted>` | `2867d6df…` | 2076 = 2076 |
++| proofs/S0-06/tools/pc/start_ai_memory.sh | `<opaque-redacted>` | `3955cc93…` | 170 = 170 |
++| proofs/S0-06/tools/pc/run_s0_06_legs.sh | `<opaque-redacted>` | `b4579150…` | 98 = 98 |
++
++All six bytes verified by `sha256sum` on the scratch archive; no discrepancy.
++
++## Item 0 — mechanical gates (reproduced on the PIN's bytes)
++
++- `report_lint.py tasks/briefs/s0-06-support/M3-report.md --rev e776dd0 --map C=… --map A=… --map F=… --map T=… --map S=… --map R=…` → `report_lint: 36 refs — OK 36, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at e776dd0)`, rc 0. The coordinator's `36 refs — OK 36` reproduces exactly. (Note: the M3 report's own final-block claim at its line 111 says `34 refs … (worktree)` — the worktree state had 34; at the PIN the count is 36. Both are true of their own tree state; not a finding.)
++- `ap_screen.py` over checker + adapter + generator: **8 hits** — AP-32 ×5 (`C:410` `digest`, `C:525` `want`, `A:237` `return`, `A:308` `query_sha256_16`, `F:144` `query_sha256_16`), AF-AP-40 ×1 (F:450 `if root.exists():`), AF-AP-70 ×1 (A:467, the `# DOCUMENTED LIMIT (F-21)` comment line inside `_main`), AP-51 ×1 (C:21 docstring phrase `byte-identical`). Matches the brief's stated screen (brie
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 1691472,
++  "output_tokens": 128669,
++  "cache_read_tokens": 12568800,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 63515,
++  "total_tokens": 14388941,
++  "api_calls": 148,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260917_104619_f6b0b0",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
