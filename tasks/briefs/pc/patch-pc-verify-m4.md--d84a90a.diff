@@ -1,0 +1,1399 @@
+diff --git a/tasks/briefs/s0-06-support/VERIFY-M4-report.md b/tasks/briefs/s0-06-support/VERIFY-M4-report.md
+new file mode 100644
+index 0000000..75d2c2c
+--- /dev/null
++++ b/tasks/briefs/s0-06-support/VERIFY-M4-report.md
+@@ -0,0 +1,159 @@
++# VERIFY-M4 — adversarial grade of S0-06 round 4 (M4 / F-32)
++
++PIN: `d84a90a6bb1c73859db5ab9f86814dc572ca6f17`
++Role: adversarial-verifier, PC venue.
++
++## Outcome
++
++**GATE RECOMMENDATION: NOT-READY — F-39 is a qualifying blocker.** M4 correctly closes the six named *row-level* `scopes`/identity failures, including both public CLI verbs. Its stated whole-table validation is incomplete: a malformed table with `{"bindings": {}}` is consumed as an empty iterable and produces normal `denied: scope-tuple-unauthorized`, rc 1, and an output result rather than a named configuration error. Other malformed top-level/row shapes produce rc 70 `unexpected` errors, not the named rc 78 configuration class. The coordinator owns the final gate decision.
++
++## NOT done
++
++- The live ai-memory leg was not run; venue forbids it and the coordinator owns it.
++- No EXPIRED→mint, S0-11 re-sign, production service request, bridge action, credential read, or evidence capture was run.
++- I made no commit/add/stash/checkout/reset/push. All hostile tables and mutations were throwaway files/copies under this lane's scratch directory.
++- F-39 has no repair here. A repair must implement and public-CLI test complete table/root and row-object schema validation, then receive a new adversarial grade.
++
++## FILE IDENTITY
++
++| path | measured identity | M4-report claim | result |
++|---|---|---|---|
++| `proofs/S0-06/adapter/factory_memory.py` | 537 lines; blob `2bee9eea7a84ae69026397104d59d4d792f26420` | same blob, 537 lines | match |
++| `tests/test_s0_06_four_scope.py` | 2157 lines; blob `b1b3d19fab674c8e07474dc1204bd3711c3ca2e2` | same blob, 2157 lines | match |
++
++The M4 code/test commit is `339f383`; its adapter blob is the measured blob above. `c91cbb3` is the later M4 grade/pack harvest and does not itself modify the adapter/test. The worktree was clean before this report artifact was written.
++
++## Item 0 — baseline gate
++
++Venue interpreter: `/home/rocco/venv-agent-factory/bin/python` (Python 3.11.14). Both test runs used `S0_01_VENUE=pc`, `S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`, `S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`, the required interpreter first on `PATH`, and a short absolute scratch `--basetemp` via `PYTEST_ADDOPTS`.
++
++Run #1:
++
++```text
++pytest-exit: 0
++pytest-summary: 291 passed in 46.46s
++```
++
++Run #2:
++
++```text
++pytest-exit: 0
++pytest-summary: 291 passed in 46.17s
++```
++
++Both counts match the coordinator's four-file floor, `291 passed`.
++
++## Item 1 — validation reachability
++
++`load_bindings` executes its checks before returning rows at `A:120-163`. The only production caller is `_bind`: `authorize(tuple_obj, load_bindings(self._bindings_path))` at `A:298-308`. Therefore validation runs before authorization and before any request.
++
++Both public operations call `_bind`: `recall` at `A:346-352` and `write` at `A:388-397`. The only CLI verbs are recall/write (`A:469-513`), and `FactoryMemory` exposes only those public methods (`T:365-383`). Literal caller sweep found no second production `load_bindings(` or `authorize(` call.
++
++The CLI has no caller-selectable bindings path (`A:45` explicitly says `--bindings`, and `_build_parser` at `A:469-486` only adds tuple/base/token/out/events arguments); `BINDINGS_PATH` is beside the executing adapter (`A:63-64`). Every attack copied the real adapter next to a scratch `bindings.json` and ran its public subprocess CLI, matching the committed test harness (`T:579-607`) rather than using an in-process substitute.
++
++## Item 2 — six red controls, siblings, identity coverage, and positive control
++
++All table tests ran `factory_memory.py recall` as a subprocess against a scratch adjacent bindings file and valid tuple. The base URL was a closed, throwaway loopback port. A valid table therefore reaches authorization then degrades only because no test server is listening; rejected tables stop before output/network behavior.
++
++| attack | public CLI result |
++|---|---|
++| absent `scopes` | rc 78; stdout `''`; stderr `factory_memory: configuration error: bindings row a-alpha: scopes must be a list`; no result file |
++| `scopes="agent"` | rc 78; stdout `''`; same named list error; no result file |
++| `scopes=1` | rc 78; stdout `''`; same named list error; no result file |
++| `scopes=[]` | rc 78; stdout `''`; `scopes must be non-empty`; no result file |
++| `scopes=["agent","agent"]` | rc 78; stdout `''`; `scopes has duplicates`; no result file |
++| duplicate full identity tuple | rc 78; stdout `''`; `bindings: duplicate identity tuple ('svc-agent-runner', 'a-alpha', 't-core', 'p-atlas')`; no result file |
++| `scopes={}` / `{"agent":1}` / `null` | rc 78; stdout `''`; named `scopes must be a list`; no result file |
++| `scopes=[1]` / `[null]` / `["agent",1]` | rc 78; stdout `''`; named `scopes must contain only strings`; no result file |
++| `scopes=["unknown"]` | rc 78; stdout `''`; named unknown scope `unknown`; no result file |
++| `scopes=[" agent"]` / `["agent "]` / `["Agent"]` | rc 78; stdout `''`; named unknown scope spelling; no result file |
++| duplicate identity with exactly equal scopes | rc 78; stdout `''`; named duplicate tuple; no result file |
++| well-formed unique `scopes=["agent","team"]` | rc 3; stdout `recall: degraded: agent,team`; `scopes_queried=['agent','team']`; expected closed-port positive |
++
++No rejected row case emitted `recall: complete`. The same public CLI write path rejects absent, empty, duplicate scope, and duplicate identity tables at rc 78 with empty stdout; a valid table reaches its ordinary closed-port degraded write result.
++
++Identity coverage is exact: `TUPLE_FIELDS=('actor','agent','team','project')` at `A:71`, and the uniqueness key is `tuple(row.get(field) for field in TUPLE_FIELDS)` at `A:159`. A direct scratch probe changed each individual field and produced a distinct key. Changing only `scopes`, `note`, or `extra` retained the key, so conflicting policy rows under the same full identity cannot coexist. A malformed null identity row cannot authorize a JSON-null tuple because `authorize` skips any row with a non-string/empty tuple field at `A:177-185`.
++
++## Item 3 — exception classification and consumers
++
++For the six rows plus siblings, `_BindingsConfigurationError` is caught at `A:516-530` and produces exactly one named stderr configuration line, rc 78, no stdout, and no `--out` result. The outcome is distinct from both empty success and the regular decision codes.
++
++The committed real bindings file passes `load_bindings()` with three rows. Thus the spec's normal negative continues to pin its intended valid-table rc 1 and `denied: scope-tuple-unauthorized` (`proofs/S0-06/spec.json:15-24`). The PC collector's only adapter-specific rc assertion is the valid-table denied leg command `python3 "$ADAPTER" recall` at `proofs/S0-06/tools/pc/collect_leg.sh:191-195`, which requires `rc == 1`; the other valid-table calls operate under `set -e`. Literal consumer sweep found no external client hardcoding rc 70 for table failures.
++
++## Item 4 — M3 closures remain discriminating
++
++M4 changes only adapter + tests from M3; `check_four_scope.py` is byte-unchanged. Scratch-only mutations produced these independent discriminators:
++
++| M3 closure mutant | result | killer |
++|---|---|---|
++| tautology the raw-origin comparison | killed: `1 failed in 0.65s`; `test_a_foreign_raw_host_is_refused` failed | `T:1710-1718` defines `test_a_foreign_raw_host_is_refused` |
++| remove F-27's two evidence-leaf `S_ISREG` checks | original manifest rejects a FIFO as `leg: leak/raw-team.json missing or not a regular file`; mutant manifest accepts it | `C:677-683`; isolated scratch manifest probe |
++| emit literal query text before route-only telemetry | killed: `1 failed in 0.94s`; `test_query_text_never_enters_any_emitted_event` failed | `T:1865-1881` defines `test_query_text_never_enters_any_emitted_event` |
++
++The F-27 direct probe isolates the manifest because later semantic readers also reject a FIFO. It used no live service and did not mutate this worktree. F-25's `query_sha256_16` SHA-256 telemetry line remains byte-identical from M3 to M4 at `A:332`.
++
++## Item 5 — new-bypass hunt
++
++**F-39 — BLOCKER, SOLID: the claimed whole-table schema validation is absent.**
++
++- **Contract mapping.** The frozen M4 brief explicitly claims `load_bindings` schema-validates each row **and the whole table** before `authorize`/`_bind`; a malformed/ambiguous table must be rejected with a named reason and nonzero exit, never presented as normal authorization/denial behavior.
++- **Canonical reproduction.** A scratch adjacent `bindings.json` containing `{"bindings": {}}` was consumed by the real copied `factory_memory.py` public CLI. In `recall` and `write`, it returned rc 1, stdout `denied: scope-tuple-unauthorized`, wrote a normal result JSON, and emitted normal denial telemetry. It did not emit a configuration error. This reaches `load_bindings` at `A:120-163`, `_bind` at `A:298-308`, then both public verbs (`A:346-397`) at the current PIN.
++- **Mechanism.** `table = json.loads(...)` then `rows = list(table["bindings"])` at `A:137-138` accepts a dictionary as an empty iterable when it has no keys. No check requires JSON root object, a list-valued `bindings`, non-empty policy table, or dict-valued rows before `row.get`.
++- **Bounded sibling class.** Top-level list/number/null/string and dict lacking `bindings`; `bindings=null|string|int`; `bindings=[null|1|"x"]`; and a valid row plus integer all exit rc 70 with `factory_memory: unexpected TypeError|KeyError|AttributeError`, empty stdout, and no result. They are not named rc 78 configuration errors. An intentional `{"bindings": []}` also behaves as ordinary denial rc 1 with an output result. F-39 is based on the malformed `bindings={}` acceptance, not on a policy judgment about whether an explicit empty list may mean deny-all.
++- **Material effect.** A malformed authorization table is represented externally as a legitimate access-control decision instead of a failed configuration. A caller cannot distinguish bad policy structure from a real denied actor, while the frozen closure specifically requires named table rejection.
++- **Concrete discriminator.** The command described above deterministically distinguishes current bytes (normal rc 1 denial for `{}`) from a corrected implementation (expected named rc 78 configuration rejection). It was reproduced in both public CLI verbs.
++- **Task ownership.** The repair is entirely in `proofs/S0-06/adapter/factory_memory.py` plus its F-32 public-CLI tests.
++- **Suggested fix.** Before `list(table["bindings"])`, require a JSON object with a list-valued `bindings` member; require every row to be a dict; decide and freeze whether `bindings=[]` is an invalid configuration or an explicit deny-all. Raise `_BindingsConfigurationError` for every malformed shape and add public-CLI red controls for root/container/row shapes in recall and write.
++
++No scope-policy property is silently deduped: duplicate values and duplicate identity rows refuse; the valid positive retains exactly `agent, team`.
++
++## Item 6 — F-32 mutation table
++
++Each source mutant used a separate complete `git archive d84a90a` scratch copy. Its listed test ran from that scratch copy and imported the mutant bytes.
++
++| mutant | result | killer |
++|---|---|---|
++| remove list-type guard | killed: `3 failed, 3 passed in 1.21s`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli` failed | malformed public CLI control `T:623-632` |
++| remove non-empty guard | killed: `1 failed in 0.60s`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli[empty]` failed; parameterized `scopes, message` test | `[empty]`, `T:623-632` |
++| remove string-element guard | killed: `1 failed in 0.58s`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli[non-string-element]` failed; parameterized `scopes, message` test | `[non-string-element]`, `T:623-632` |
++| remove duplicate-scope guard | killed: `1 failed in 0.58s`; `test_malformed_binding_scopes_fail_closed_through_the_public_cli[duplicate]` failed; parameterized `scopes, message` test | `[duplicate]`, `T:623-632` |
++| remove unknown-scope guard | killed: `1 failed in 0.53s`; `test_a_bindings_row_naming_an_unknown_scope_is_refused` failed | `T:1968-1976` defines `test_a_bindings_row_naming_an_unknown_scope_is_refused` |
++| remove duplicate-identity guard | killed: `2 failed in 0.79s`; parametrized `test_duplicate_binding_identity_tuples_fail_closed_through_each_public_cli` failed for both verbs | public recall + write control `T:635-646` (`@pytest.mark.parametrize("verb", ["recall", "write"])`) |
++| valid unique `agent,team` positive | valid: rc 3 only because closed port; exact scopes retained | public CLI; stronger loopback `test_a_well_formed_scratch_binding_still_authorizes_exactly_its_scopes` at `T:649-657` |
++
++The six row-level controls therefore have real red discriminators. They do not cover the F-39 root/container/row-object schema class.
++
++## Item 7 — repeated four-file gate
++
++See Item 0: both independently run gates passed `291`, with the raw `test_summary.sh` lines pasted there.
++
++## Finding inventory
++
++| ID | class | evidence | contract mapping | canonical path/status | reproduction | suggested fix |
++|---|---|---|---|---|---|---|
++| F-39 | **BLOCKER** | SOLID, reproduced | M4 whole-table named-fail-closed closure | public recall/write classify `{"bindings": {}}` as normal denial rc 1; other whole-table bad shapes as rc 70, not rc 78 | Item 5 scratch real-CLI table sweep | validate root/list/row types before iteration; decide empty-table contract; public-CLI red tests |
++| M3 F-27/F-29/F-25 | INFO | SOLID, reproduced | regression preservation | all retain concrete discriminators; M4 did not alter checker | Item 4 scratch mutations | none |
++| live ai-memory semantics | UNVERIFIED | deliberately skipped | S0-06 execution proof | venue forbids this lane | no live probe | coordinator's approved real pinned-PC capture after a passing repair grade |
++
++## Discrepancies
++
++1. The brief labels the M4 landing `c252408` and the build report PIN `c367d76`; neither object is present in this archive's reachable history. The relevant F-32 commit is `339f383`, and both grade-target blobs exactly match M4-report.md. This is a provenance naming mismatch, not source-byte drift.
++2. The first scratch mutation archive omitted root files such as `upstream.lock.yaml`, so pytest collection stopped before the target test. That invalid attempt was discarded. The final mutation audit used a complete `git archive d84a90a` and its results above.
++3. An initial simple F-27 mutation appeared green because the public full checker has a later semantic-file reader that independently rejects the FIFO. I isolated the exact manifest guard in a scratch direct probe; the original rejects and the two-guard mutant accepts. The final record above uses that valid discriminator.
++
++## Mechanical report lint
++
++```text
++report_lint: 31 refs — OK 31, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at d84a90a)
++report_lint_rc=0
++```
++
++## GATE RECOMMENDATION
++
++**NOT-READY — F-39 is a qualifying blocker.** It maps to the frozen M4 whole-table validation requirement; reproduces through both real public CLI verbs at the PIN; materially converts malformed policy structure into normal denial or unnamed unexpected failure; has a deterministic current-vs-corrected discriminator; and belongs within the current adapter/test boundary. This is a recommendation, not the final gate verdict.
++
++## Hygiene and retro
++
++No process was started other than short-lived Python/pytest/subprocess probes; no loopback server, pytest, S0-06 helper, ai-memory process, or FIFO remains. All FIFO/table/mutant files lived in lane scratch and were removed by their temp contexts or scratch cleanup. `git status` is checked at close.
++
++F-39 is the same general malformed-policy-table fail-open family as F-32, but its new root/table/row-shape sub-class was not covered by M4. `/bug-echo` / the coordinator should add it to the existing malformed authorization-table anti-pattern before closing the repair. No skill update is proposed by this verifier lane.
+diff --git a/transcripts/pc/pc-verify-m4.md--d84a90a.md b/transcripts/pc/pc-verify-m4.md--d84a90a.md
+new file mode 100644
+index 0000000..a4597a6
+--- /dev/null
++++ b/transcripts/pc/pc-verify-m4.md--d84a90a.md
+@@ -0,0 +1,1228 @@
++# Hermes lane session 20260917_143053_f3f885
++
++- model: agentfactory-verify-local
++- started: 2026-09-17T13:30:54.234876+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-m4.md--d84a90a/tree
++- messages: 152; tool calls: 79
++- tokens in/out/cache_read/reasoning: 667396/81867/9022144/43499
++
++## user @ 13:30:53
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 13:31:12 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 13:31:13 — 6035 chars (body not exported)
++
++## tool result (read_file) @ 13:31:13 — 13653 chars (body not exported)
++
++## assistant @ 13:32:09 → tools: terminal
++
++Reading the key context. Let me start item 0 (ground + baseline) with file identity, and pull the packs and M3 grade in parallel.
++
++## tool result (terminal) @ 13:32:09 — 866 chars (body not exported)
++
++## assistant @ 13:33:16 → tools: terminal
++
++Item 0 identity check: both load-bearing blobs match M4's claims exactly (`2bee9eea…` 537 lines, `b1b3d19f…` 2157 lines). Note: `c252408`/`c367d76` aren't in this tree's history (the M4 landing here is `c91cbb3 "M4 landed"`), but the bytes are what matter and they match. Let me locate the F-32 code and confirm the landing commit, then run the gate.
++
++## tool result (terminal) @ 13:33:16 — 2842 chars (body not exported)
++
++## assistant @ 13:33:41 → tools: terminal
++
++M4's "M4 landed" commit `c91cbb3` only touches briefs/packs/ledger — NOT the adapter or test. The F-32 code must have landed in a different commit. Let me find where `factory_memory.py` and the test actually changed, and read the F-32 implementation region directly.
++
++## tool result (terminal) @ 13:33:41 — 2655 chars (body not exported)
++
++## assistant @ 13:34:02 → tools: read_file, read_file
++
++F-32's actual landing is commit `339f383` (in d84a90a's history); the blob `2bee9eea` at 339f383 == the one at my PIN, confirming byte-identity. Now let me read the full F-32 implementation region and the CLI dispatch structure.
++
++## tool result (read_file) @ 13:34:02 — 5789 chars (body not exported)
++
++## tool result (read_file) @ 13:34:02 — 8460 chars (body not exported)
++
++## assistant @ 13:34:46 → tools: read_file, read_file
++
++Now the critical part — `main()` and how the adapter resolves its bindings path (the "no `--bindings` flag" invariant). Let me read the CLI region and the top-of-file constants.
++
++## tool result (read_file) @ 13:34:47 — 6250 chars (body not exported)
++
++## tool result (read_file) @ 13:34:47 — 4285 chars (body not exported)
++
++## assistant @ 13:37:06 → tools: read_file, terminal
++
++I now have the full F-32 implementation. Key observation for the bypass hunt: `BINDINGS_PATH = Path(__file__).resolve().parent / "bindings.json"` (line 64), `_build_parser` has no `--bindings` flag (line 45/472), and `_bind` (line 299) always calls `load_bindings(self._bindings_path)` — the single choke point. Let me read `__init__`, the test harness, the spec, the M3 grade, and the pack, and confirm all `authorize`/`load_bindings` callers.
++
++## tool result (read_file) @ 13:37:06 — 2279 chars (body not exported)
++
++## tool result (terminal) @ 13:37:06 — 6187 chars (body not exported)
++
++## assistant @ 13:37:40 → tools: read_file, read_file
++
++The architecture is clear now: `_bind` (A:299) is the single choke point — both `recall` (A:349) and `write` (A:395) call it, and it always runs `load_bindings` first. The CLI can't point at a scratch bindings file (no `--bindings` flag, A:45/472); the default is `Path(__file__).parent/bindings.json` (A:64). Let me read the test harness to confirm how it drives scratch bindings, plus the spec, the M3 grade, and the pack.
++
++## tool result (read_file) @ 13:37:40 — 5162 chars (body not exported)
++
++## tool result (read_file) @ 13:37:40 — 3547 chars (body not exported)
++
++## assistant @ 13:38:12 → tools: terminal
++
++The test harness is the canonical one: `_run_with_bindings` (T:579-607) copies the real adapter, writes a scratch `bindings.json` beside it, and drives the real public CLI as a subprocess — this is the real `load_bindings → _bind → recall/write` path, not a surrogate. Good.
++
++Let me gather the remaining ground truth: constants, spec, the M3 grade (what to re-check for regressions), the M3 pack, and how external consumers (spec, collect_leg, checker) treat the adapter's exit codes.
++
++## tool result (terminal) @ 13:38:12 — 2658 chars (body not exported)
++
++## assistant @ 13:38:44 → tools: terminal
++
++No external consumer hardcodes rc 70 for a table failure (the `70` hits are unrelated: `start_ai_memory.sh` version check, `pc_lane.sh`, `setup.sh`). Critically, the spec's negative leg (spec.json) runs the adapter with the **real committed** `bindings.json` and pins `exit_code: 1` — so F-32's stricter validation must still PASS on the committed table or that spec leg breaks. Let me verify the committed table passes the new validation, and read the M3 grade/pack for the regression items.
++
++## tool result (terminal) @ 13:38:44 — 1776 chars (body not exported)
++
++## assistant @ 13:38:58 → tools: read_file, read_file
++
++The committed table passes the new validation (3 unique rows, no duplicate tuples) — so F-32's stricter check does NOT break the spec's negative leg (spec.json pins `exit_code: 1` on the committed table, not a config failure). Now let me read the M3 grade, the M3/M4 packs, and the M3 guard locations for item 4.
++
++## tool result (read_file) @ 13:38:58 — 38180 chars (body not exported)
++
++## tool result (read_file) @ 13:38:58 — 19276 chars (body not exported)
++
++## assistant @ 13:39:38 → tools: terminal
++
++I have the full picture now: M3's sole blocker was F-32, and M3's other closures (F-27 manifest, F-29 raw-origin, F-25 query scrub) are the regression items for item 4. The pack confirms `_bind` is the single choke point with GitNexus LOW risk.
++
++Let me check the gate script's interface, set up scratch, and run the 4-file gate (item 0).
++
++## tool result (terminal) @ 13:39:38 — 2485 chars (body not exported)
++
++## assistant @ 13:40:20 → tools: terminal
++
++The `test_summary.sh` doesn't take a `--basetemp` arg, so I'll inject it via `PYTEST_ADDOPTS` (pytest honors that env). Running the 4-file gate (item 0) with venue exports and a short absolute basetemp — one foreground call.
++
++## tool result (terminal) @ 13:41:07 — 634 chars (body not exported)
++
++## assistant @ 13:42:53 → tools: terminal
++
++Item 0 gate: **291 passed in 46.46s**, `PIPESTATUS=0` — exactly matches the coordinator's `291 passed` floor. (The `mkdir` error is cosmetic — pytest creates the basetemp itself; the run is unaffected.) Let me record item 0 and gather the M3-guard test locations for items 4 and the bypass/sibling evidence for items 1-3.
++
++## tool result (terminal) @ 13:42:53 — 605 chars (body not exported)
++
++## assistant @ 13:43:18 → tools: terminal
++
++Now let me read the three M3 guard locations (F-27 manifest walk, F-29 raw-origin check, F-25 query scrub) to set up spot mutations for item 4.
++
++## tool result (terminal) @ 13:43:18 — 3352 chars (body not exported)
++
++## assistant @ 13:43:56 → tools: terminal
++
++Now let me build the CLI attack driver. First, let me confirm the exact error-message strings and the `AUTHORIZED_TUPLE` value, then write a comprehensive hostile-table driver that drives the real public CLI on scratch bindings (item 2 + siblings + identity-coverage + write path).
++
++## tool result (terminal) @ 13:43:56 — 580 chars (body not exported)
++
++## assistant @ 13:47:45 → tools: write_file
++
++Now I have everything needed. Let me write a hostile-table CLI driver that drives the **real public CLI** on scratch bindings (the same `_run_with_bindings` mechanism the committed tests use — subprocess of the real adapter script, not an in-process surrogate), attacking the six controls plus all the siblings the brief lists, with a closed port so I can distinguish validation-rejection (rc 78) from fail-open authorization (rc 3 + non-empty `scopes_queried`).
++
++## tool result (write_file) @ 13:47:48 — 326 chars (body not exported)
++
++## assistant @ 13:49:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:49:12 — 4320 chars (body not exported)
++
++## assistant @ 13:49:59 → tools: terminal
++
++The hostile-table sweep is clean: **every** malformed shape (all 6 controls + every sibling I listed + mixed good/bad + write-verb) returns **rc 78** with a named `factory_memory: configuration error:` line and no `recall: complete`. The positive `valid-unique` and `diff-actor` cases authorize exactly their scopes (rc 3, degraded only because the port is closed — `scopes_queried` is populated and correct). The `missing-field` case (a row with `project: null` + a well-formed sibling) does NOT authorize the null row — `authorize`'s own row guard (A:182) denies it; it fails closed at the match, not by the schema, but it never authorizes. No fail-open.
++
++Two things to verify before I write this up: (1) confirm the `missing-field` and `valid-unique` rows do NOT authorize (I saw rc 3 = degraded, not rc 0 = complete, so they degraded on the closed port — good, no network), and (2) the identity-key coverage question. Let me verify the identity-key coverage claim and the `authorize` row-guard behavior directly, since the brief specifically asks me to "prove the key covers every TUPLE_FIELDS field."
++
++## tool result (terminal) @ 13:50:00 — 1348 chars (body not exported)
++
++## assistant @ 13:51:41 → tools: terminal
++
++Identity-key coverage is proven: the key covers exactly the four `TUPLE_FIELDS` fields — rows differing in any one field produce distinct identities (genuine distinctions preserved), while rows differing only in a non-`TUPLE_FIELDS` field (`scopes`/`note`) produce the *same* identity (so such a "duplicate" is correctly caught). And `authorize`'s row guard (A:182) confirms a null/missing-field row can never authorize.
++
++Now item 3: I need to confirm no external consumer (runner/proof-runner/spec) hardcodes rc 70 or 0 for a table failure, and that the new rc 78 doesn't break the spec's pinned legs. Let me read the runner/collector/proof-runner.
++
++## tool result (terminal) @ 13:51:41 — 9891 chars (body not exported)
++
++## assistant @ 13:52:02 → tools: terminal
++
++The runner uses `set -euo pipefail`, so any nonzero from the adapter aborts the leg — no consumer hardcodes rc 70 or 0 for a table failure. Let me confirm the `collect_leg.sh` adapter-invocation section and how the proof-runner consumes the spec's `expect`, to complete item 3.
++
++## tool result (terminal) @ 13:52:02 — 6685 chars (body not exported)
++
++## assistant @ 13:52:52 → tools: terminal
++
++Now I have the full runner picture: the only exit-code assertion in the entire leg machinery is the **denied leg's `rc == 1`** (collect_leg.sh:194), and the spec's negative leg pins `exit_code: 1` — both against the *committed* (well-formed) table, which I verified passes the new validation. The precedence/write/leak legs run against the committed table under `set -euo pipefail`, so a 78 there would abort the leg — but the committed table is valid, so no regression. Let me confirm the diff M3→M4 only touched the two files (so M3's F-27/F-29/F-25 lines are untouched), and spot-mutate one M3 guard to confirm its test still kills it.
++
++## tool result (terminal) @ 13:52:52 — 6158 chars (body not exported)
++
++## assistant @ 13:53:17 → tools: terminal
++
++The diff is clean and precisely scoped: only the adapter + test changed, `check_four_scope.py` is **untouched** (M3's F-27/F-29/F-25 closures are structurally preserved), and the F-25 query-scrub line (A:332) is byte-identical M3→M4. Now item 4 — spot-mutate M3 guards on **scratch copies** and confirm their tests still kill them. Let me check how the test imports the checker first.
++
++## tool result (terminal) @ 13:53:17 — 2621 chars (body not exported)
++
++## assistant @ 13:54:00 → tools: terminal
++
++The test is path-bound (`REPO = parents[1]`, imports `CHECKER_PATH`/`ADAPTER_PATH` from the tree). To spot-mutate an M3 guard and confirm its test still kills it, I'll extract a **scratch archive copy** (never touching my worktree), mutate the scratch guard, and run that specific M3 test from the scratch copy. Let me check conftest deps and set it up.
++
++## tool result (terminal) @ 13:54:00 — 817 chars (body not exported)
++
++## assistant @ 13:54:37 → tools: terminal
++
++Scratch archive ready. Let me read the exact guard lines in the scratch copy so my mutations target them precisely, then apply all three spot-mutations to separate scratch copies and run the corresponding M3 tests (item 4).
++
++## tool result (terminal) @ 13:54:37 — 2115 chars (body not exported)
++
++## assistant @ 13:57:09 → tools: write_file
++
++Both M3 guards are clear. Now item 4 — spot-mutate three M3 guards on separate scratch copies (never my worktree) and confirm each M3 test still kills it. I'll also add one F-32 mutation (drop the duplicate-identity check) for item 6's coverage.
++
++## tool result (write_file) @ 13:57:10 — 304 chars (body not exported)
++
++## assistant @ 13:59:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:59:12 — 4282 chars (body not exported)
++
++## assistant @ 13:59:26 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 13:59:26 — 1964 chars (body not exported)
++
++## tool result (read_file) @ 13:59:26 — 1621 chars (body not exported)
++
++## tool result (read_file) @ 13:59:26 — 6473 chars (body not exported)
++
++## assistant @ 14:00:41 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:00:42 — 304 chars (body not exported)
++
++## assistant @ 14:00:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:01 — 726 chars (body not exported)
++
++## assistant @ 14:01:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:12 — 1896 chars (body not exported)
++
++## assistant @ 14:01:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:28 — 337 chars (body not exported)
++
++## assistant @ 14:01:37 → tools: patch
++
++
++
++## tool result (patch) @ 14:01:38 — 784 chars (body not exported)
++
++## assistant @ 14:01:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:47 — 3038 chars (body not exported)
++
++## assistant @ 14:01:58 → tools: patch
++
++
++
++## tool result (patch) @ 14:02:00 — 773 chars (body not exported)
++
++## assistant @ 14:02:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:07:20 — 844 chars (body not exported)
++
++## assistant @ 14:07:46 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 14:07:46 — 1943 chars (body not exported)
++
++## tool result (read_file) @ 14:07:46 — 2985 chars (body not exported)
++
++## assistant @ 14:08:04 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 14:08:04 — 2828 chars (body not exported)
++
++## tool result (read_file) @ 14:08:04 — 2375 chars (body not exported)
++
++## tool result (read_file) @ 14:08:04 — 2562 chars (body not exported)
++
++## assistant @ 14:08:22 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:08:22 — 1773 chars (body not exported)
++
++## assistant @ 14:08:46 → tools: patch
++
++
++
++## tool result (patch) @ 14:08:46 — 2191 chars (body not exported)
++
++## assistant @ 14:09:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:14:17 — 849 chars (body not exported)
++
++## assistant @ 14:15:13 → tools: patch
++
++
++
++## tool result (patch) @ 14:15:15 — 822 chars (body not exported)
++
++## assistant @ 14:15:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:12 — 752 chars (body not exported)
++
++## assistant @ 14:16:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:27 — 1287 chars (body not exported)
++
++## assistant @ 14:16:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:42 — 254 chars (body not exported)
++
++## assistant @ 14:16:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:58 — 186 chars (body not exported)
++
++## assistant @ 14:17:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:17:14 — 1335 chars (body not exported)
++
++## assistant @ 14:17:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:17:31 — 949 chars (body not exported)
++
++## assistant @ 14:17:54 → tools: patch
++
++
++
++## tool result (patch) @ 14:17:55 — 457 chars (body not exported)
++
++## assistant @ 14:18:08 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:10 — 1929 chars (body not exported)
++
++## assistant @ 14:18:35 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:36 — 457 chars (body not exported)
++
++## assistant @ 14:18:52 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:53 — 890 chars (body not exported)
++
++## assistant @ 14:18:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:19:39 — 919 chars (body not exported)
++
++## assistant @ 14:20:04 → tools: patch
++
++
++
++## tool result (patch) @ 14:20:05 — 2534 chars (body not exported)
++
++## assistant @ 14:21:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:22:00 — 776 chars (body not exported)
++
++## assistant @ 14:23:42 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:23:43 — 322 chars (body not exported)
++
++## assistant @ 14:23:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:23:50 — 5842 chars (body not exported)
++
++## assistant @ 14:24:39 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:24:39 — 330 chars (body not exported)
++
++## assistant @ 14:24:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:24:46 — 2845 chars (body not exported)
++
++## assistant @ 14:25:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:25:29 — 3110 chars (body not exported)
++
++## assistant @ 14:25:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:25:46 — 162 chars (body not exported)
++
++## assistant @ 14:25:59 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:26:00 — 320 chars (body not exported)
++
++## assistant @ 14:26:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:26:05 — 370 chars (body not exported)
++
++## assistant @ 14:26:19 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:26:20 — 320 chars (body not exported)
++
++## assistant @ 14:26:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:26:27 — 1946 chars (body not exported)
++
++## assistant @ 14:27:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:27:43 — 2387 chars (body not exported)
++
++## assistant @ 14:28:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:28:27 — 63 chars (body not exported)
++
++## assistant @ 14:28:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:29:36 — 438 chars (body not exported)
++
++## assistant @ 14:31:34 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:31:34 — 396 chars (body not exported)
++
++## assistant @ 14:31:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:31:46 — 6256 chars (body not exported)
++
++## assistant @ 14:31:58 → tools: patch
++
++
++
++## tool result (patch) @ 14:31:59 — 1772 chars (body not exported)
++
++## assistant @ 14:32:12 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:13 — 2017 chars (body not exported)
++
++## assistant @ 14:32:23 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:23 — 1307 chars (body not exported)
++
++## assistant @ 14:32:36 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:37 — 1607 chars (body not exported)
++
++## assistant @ 14:32:47 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:47 — 1581 chars (body not exported)
++
++## assistant @ 14:32:56 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:57 — 1245 chars (body not exported)
++
++## assistant @ 14:33:10 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:10 — 1375 chars (body not exported)
++
++## assistant @ 14:33:25 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:25 — 1569 chars (body not exported)
++
++## assistant @ 14:33:39 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:39 — 1787 chars (body not exported)
++
++## assistant @ 14:33:48 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:49 — 1718 chars (body not exported)
++
++## assistant @ 14:34:00 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:01 — 1898 chars (body not exported)
++
++## assistant @ 14:34:10 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:11 — 1815 chars (body not exported)
++
++## assistant @ 14:34:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:34:21 — 1836 chars (body not exported)
++
++## assistant @ 14:34:42 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:43 — 1806 chars (body not exported)
++
++## assistant @ 14:34:52 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:53 — 2133 chars (body not exported)
++
++## assistant @ 14:35:00 → tools: patch
++
++
++
++## tool result (patch) @ 14:35:01 — 2361 chars (body not exported)
++
++## assistant @ 14:35:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:35:07 — 149 chars (body not exported)
++
++## assistant @ 14:35:30 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 14:35:30 — 1934 chars (body not exported)
++
++## tool result (terminal) @ 14:35:31 — 75 chars (body not exported)
++
++## tool result (terminal) @ 14:35:33 — 65 chars (body not exported)
++
++## tool result (terminal) @ 14:35:33 — 124 chars (body not exported)
++
++## assistant @ 14:35:41 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:35:41 — 4288 chars (body not exported)
++
++## assistant @ 14:35:56 → tools: patch
++
++
++
++## tool result (patch) @ 14:35:56 — 1119 chars (body not exported)
++
++## assistant @ 14:36:08 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 14:36:08 — 179 chars (body not exported)
++
++## tool result (terminal) @ 14:36:08 — 50494 chars (body not exported)
++
++## user @ 13:30:53
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 13:31:12 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 13:31:13 — 134 chars (body not exported)
++
++## tool result (read_file) @ 13:31:13 — 146 chars (body not exported)
++
++## assistant @ 14:40:33
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++Ongoing adversarial-verification task (the agent is the PC-harness port of `adversarial-verifier.md`): execute **VERIFY-M4** per `tasks/briefs/s0-06-support/VERIFY-M4-pack.md` — an independent hostile re-verification of the F-32 bindings-table-validation security fix in `proofs/S0-06/adapter/factory_memory.py`, following the pack's numbered items (0–4). No new direct user message appears in these turns; the last unresolved work the agent owes is **item 4** (spot-mutate the three M3 guards — F-27 manifest walk, F-29 raw-origin check, F-25 query scrub — on scratch copies and confirm each M3 test still kills the mutation) followed by finalizing the written verdict at `/home/rocco/agent-factory/.lanes/pc-verify-m4.md--d84a90a/report-draft.md`.
++
++## Goal
++Independently verify (as an adversarial verifier) that the F-32 security fix (bindings-table validation → fail-closed with rc 78) in `factory_memory.py` is correct, bypass-free, and non-regressing against the prior M3 closures (F-27/F-29/F-25), using only th
++
++## assistant @ 13:54:37 → tools: terminal
++
++Scratch archive ready. Let me read the exact guard lines in the scratch copy so my mutations target them precisely, then apply all three spot-mutations to separate scratch copies and run the corresponding M3 tests (item 4).
++
++## tool result (terminal) @ 13:54:37 — 123 chars (body not exported)
++
++## assistant @ 13:57:09 → tools: write_file
++
++Both M3 guards are clear. Now item 4 — spot-mutate three M3 guards on separate scratch copies (never my worktree) and confirm each M3 test still kills it. I'll also add one F-32 mutation (drop the duplicate-identity check) for item 6's coverage.
++
++## tool result (write_file) @ 13:57:10 — 112 chars (body not exported)
++
++## assistant @ 13:59:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:59:12 — 123 chars (body not exported)
++
++## assistant @ 13:59:26 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 13:59:26 — 139 chars (body not exported)
++
++## tool result (read_file) @ 13:59:26 — 139 chars (body not exported)
++
++## tool result (read_file) @ 13:59:26 — 121 chars (body not exported)
++
++## assistant @ 14:00:41 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:00:42 — 112 chars (body not exported)
++
++## assistant @ 14:00:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:01 — 123 chars (body not exported)
++
++## assistant @ 14:01:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:12 — 123 chars (body not exported)
++
++## assistant @ 14:01:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:28 — 123 chars (body not exported)
++
++## assistant @ 14:01:37 → tools: patch
++
++
++
++## tool result (patch) @ 14:01:38 — 116 chars (body not exported)
++
++## assistant @ 14:01:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:01:47 — 123 chars (body not exported)
++
++## assistant @ 14:01:58 → tools: patch
++
++
++
++## tool result (patch) @ 14:02:00 — 116 chars (body not exported)
++
++## assistant @ 14:02:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:07:20 — 123 chars (body not exported)
++
++## assistant @ 14:07:46 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 14:07:46 — 139 chars (body not exported)
++
++## tool result (read_file) @ 14:07:46 — 140 chars (body not exported)
++
++## assistant @ 14:08:04 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 14:08:04 — 138 chars (body not exported)
++
++## tool result (read_file) @ 14:08:04 — 139 chars (body not exported)
++
++## tool result (read_file) @ 14:08:04 — 139 chars (body not exported)
++
++## assistant @ 14:08:22 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:08:22 — 140 chars (body not exported)
++
++## assistant @ 14:08:46 → tools: patch
++
++
++
++## tool result (patch) @ 14:08:46 — 118 chars (body not exported)
++
++## assistant @ 14:09:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:14:17 — 123 chars (body not exported)
++
++## assistant @ 14:15:13 → tools: patch
++
++
++
++## tool result (patch) @ 14:15:15 — 116 chars (body not exported)
++
++## assistant @ 14:15:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:12 — 123 chars (body not exported)
++
++## assistant @ 14:16:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:27 — 123 chars (body not exported)
++
++## assistant @ 14:16:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:42 — 123 chars (body not exported)
++
++## assistant @ 14:16:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:16:58 — 186 chars (body not exported)
++
++## assistant @ 14:17:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:17:14 — 123 chars (body not exported)
++
++## assistant @ 14:17:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:17:31 — 123 chars (body not exported)
++
++## assistant @ 14:17:54 → tools: patch
++
++
++
++## tool result (patch) @ 14:17:55 — 60 chars (body not exported)
++
++## assistant @ 14:18:08 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:10 — 118 chars (body not exported)
++
++## assistant @ 14:18:35 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:36 — 116 chars (body not exported)
++
++## assistant @ 14:18:52 → tools: patch
++
++
++
++## tool result (patch) @ 14:18:53 — 116 chars (body not exported)
++
++## assistant @ 14:18:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:19:39 — 123 chars (body not exported)
++
++## assistant @ 14:20:04 → tools: patch
++
++
++
++## tool result (patch) @ 14:20:05 — 118 chars (body not exported)
++
++## assistant @ 14:21:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:22:00 — 123 chars (body not exported)
++
++## assistant @ 14:23:42 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:23:43 — 120 chars (body not exported)
++
++## assistant @ 14:23:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:23:50 — 123 chars (body not exported)
++
++## assistant @ 14:24:39 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:24:39 — 124 chars (body not exported)
++
++## assistant @ 14:24:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:24:46 — 123 chars (body not exported)
++
++## assistant @ 14:25:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:25:29 — 123 chars (body not exported)
++
++## assistant @ 14:25:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:25:46 — 162 chars (body not exported)
++
++## assistant @ 14:25:59 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:26:00 — 119 chars (body not exported)
++
++## assistant @ 14:26:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:26:05 — 123 chars (body not exported)
++
++## assistant @ 14:26:19 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:26:20 — 119 chars (body not exported)
++
++## assistant @ 14:26:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:26:27 — 123 chars (body not exported)
++
++## assistant @ 14:27:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:27:43 — 123 chars (body not exported)
++
++## assistant @ 14:28:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:28:27 — 63 chars (body not exported)
++
++## assistant @ 14:28:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:29:36 — 123 chars (body not exported)
++
++## assistant @ 14:31:34 → tools: write_file
++
++
++
++## tool result (write_file) @ 14:31:34 — 143 chars (body not exported)
++
++## assistant @ 14:31:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:31:46 — 123 chars (body not exported)
++
++## assistant @ 14:31:58 → tools: patch
++
++
++
++## tool result (patch) @ 14:31:59 — 149 chars (body not exported)
++
++## assistant @ 14:32:12 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:13 — 149 chars (body not exported)
++
++## assistant @ 14:32:23 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:23 — 149 chars (body not exported)
++
++## assistant @ 14:32:36 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:37 — 149 chars (body not exported)
++
++## assistant @ 14:32:47 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:47 — 149 chars (body not exported)
++
++## assistant @ 14:32:56 → tools: patch
++
++
++
++## tool result (patch) @ 14:32:57 — 149 chars (body not exported)
++
++## assistant @ 14:33:10 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:10 — 149 chars (body not exported)
++
++## assistant @ 14:33:25 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:25 — 149 chars (body not exported)
++
++## assistant @ 14:33:39 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:39 — 149 chars (body not exported)
++
++## assistant @ 14:33:48 → tools: patch
++
++
++
++## tool result (patch) @ 14:33:49 — 149 chars (body not exported)
++
++## assistant @ 14:34:00 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:01 — 149 chars (body not exported)
++
++## assistant @ 14:34:10 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:11 — 149 chars (body not exported)
++
++## assistant @ 14:34:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:34:21 — 123 chars (body not exported)
++
++## assistant @ 14:34:42 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:43 — 149 chars (body not exported)
++
++## assistant @ 14:34:52 → tools: patch
++
++
++
++## tool result (patch) @ 14:34:53 — 149 chars (body not exported)
++
++## assistant @ 14:35:00 → tools: patch
++
++
++
++## tool result (patch) @ 14:35:01 — 149 chars (body not exported)
++
++## assistant @ 14:35:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:35:07 — 149 chars (body not exported)
++
++## assistant @ 14:35:30 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 14:35:30 — 123 chars (body not exported)
++
++## tool result (terminal) @ 14:35:31 — 75 chars (body not exported)
++
++## tool result (terminal) @ 14:35:33 — 65 chars (body not exported)
++
++## tool result (terminal) @ 14:35:33 — 124 chars (body not exported)
++
++## assistant @ 14:35:41 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:35:41 — 4288 chars (body not exported)
++
++## assistant @ 14:35:56 → tools: patch
++
++
++
++## tool result (patch) @ 14:35:56 — 1119 chars (body not exported)
++
++## assistant @ 14:36:08 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 14:36:08 — 179 chars (body not exported)
++
++## tool result (terminal) @ 14:36:08 — 50494 chars (body not exported)
++
++## user @ 13:30:53
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not sel
++
++## assistant @ 14:40:58 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:40:58 — 16950 chars (body not exported)
++
++## assistant @ 14:41:32
++
++Verified live: NOT-READY recommendation. F-39 is a qualifying blocker.
++
++→ The M4 row-level F-32 controls hold: six malformed `scopes`/duplicate-identity cases reject through the real public CLI with named rc 78 errors; valid unique bindings retain authorization.
++
++→ F-39: malformed whole-table shapes are not schema-rejected. `{"bindings": {}}` reaches both public CLI verbs as normal denial (rc 1 with output); other malformed root/container/row forms produce unnamed rc 70 errors. This violates the frozen whole-table named-fail-closed requirement.
++
++→ Both independent four-file gates passed: `291 passed` in 46.46s and `291 passed` in 46.17s.
++
++→ M3 F-27/F-29/F-25 guards remain discriminating under scratch-only mutations. Report lint passed: `OK 31, MISS 0`. No live service, capture, credentials, or git write action occurred.
++
++Full report:
++`/home/rocco/agent-factory/.lanes/pc-verify-m4.md--d84a90a/tree/tasks/briefs/s0-06-support/VERIFY-M4-report.md`
++
++Matching incremental draft:
++`/home/rocco/agent-factory/.lanes/pc-verify-m4.md--d84a90a/report-draft.md`
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 667396,
++  "output_tokens": 81867,
++  "cache_read_tokens": 9022144,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 43499,
++  "total_tokens": 9771407,
++  "api_calls": 93,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260917_143053_f3f885",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
