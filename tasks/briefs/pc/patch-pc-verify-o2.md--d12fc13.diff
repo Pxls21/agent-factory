@@ -1,0 +1,1539 @@
+diff --git a/tasks/briefs/pc/pc-verify-o2.md b/tasks/briefs/pc/pc-verify-o2.md
+new file mode 100644
+index 0000000..4017f22
+--- /dev/null
++++ b/tasks/briefs/pc/pc-verify-o2.md
+@@ -0,0 +1,18 @@
++# PC lane — VERIFY-O2 (the adversarial grade of S0-03 round 2)
++
++PIN: d12fc13
++
++Role: adversarial-verifier. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
++
++**The brief governs**: `tasks/briefs/s0-03-support/VERIFY-O2-brief.md` — READ IT WHOLE and follow it item by item (0-11).
++Your worktree IS `git archive d12fc13`: O2's bytes on top of checkpoint 9c (the joint landing with P5b's launcher seam), the
++lane's report, VERIFY-O1's report (the round's contract), P5b's report and the lane brief are all in the tree at the paths
++the brief names. Save your report at `tasks/briefs/s0-03-support/VERIFY-O2-report.md` inside your tree, draft after EACH
++item (the incremental rule), and return it whole as your final message.
++
++Venue notes specific to this grade:
++- NEVER make an OmniRoute or model request, never launch Hermes/buzz-acp/the agent, never read the OmniRoute key: the checker
++  and tools are graded through loopback stand-ins you start and kill by pid, the committed bundles, and the S0-01 corpus's
++  real `runtime-identity.json` files (`/home/rocco/s0-01-pinned/realleg/golden`, read-only).
++- Run the four test files the lane brief names directly with the venue exports; state the load before long runs (the other
++  verify lanes share this box).
+diff --git a/tasks/briefs/s0-03-support/VERIFY-O2-brief.md b/tasks/briefs/s0-03-support/VERIFY-O2-brief.md
+new file mode 100644
+index 0000000..61d4a76
+--- /dev/null
++++ b/tasks/briefs/s0-03-support/VERIFY-O2-brief.md
+@@ -0,0 +1,78 @@
++# VERIFY-O2 — adversarial grade of lane O2 (S0-03 round 2: the call_logs row BOUND to the leg, conjunct (v) reads the wire, the credential screen over the whole provider block, `credential_rejected` RED, the round trip real, the pid the tee writes, leg B on the real capture path, a negative leg the producer can make, the model where Hermes reads it)
++
++You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo
++agent-factory, branch claude/soundbox-kit-migration-iz1jwf. **PIN: `d12fc13`** — the S0-03 round-2 checkpoint, landed on top of
++checkpoint 9c (the joint landing that carries P5b's `pc_launch.py --profile` seam the runner now uses: the runner's leg-B
++invocation is red on any tree without it — `['--profile']` not declared — so the PIN's parent matters). O2's bytes on the PIN:
++`proofs/S0-03/check_omniroute_roundtrip.py` (824 lines, sha `efba8162…`), `proofs/S0-03/tools/pc/{run_s0_03_legs.sh (313),
++collect_leg.sh (175), direct_responses_probe.py (285), hermes_env_names.py (148)}`, `proofs/S0-03/hermes/config.yaml`,
++`proofs/S0-03/spec.json` (54), the four fixture bundles under `proofs/S0-03/fixtures/` (two of them REGENERATED to the
++producer's shape, `evidence-credential-rejected` NEW, the stale `evidence-credential-absent/hermes/*` files DELETED with a
++`NOT-CAPTURED.md` in their place), `tests/test_s0_03_omniroute.py` (1734, `715a3cc6…`) and the lane's report
++`tasks/briefs/s0-03-support/O2-report.md`. Grade the bytes of `git archive d12fc13` from a scratch copy under your lane's scratch
++dir; every mutant on scratch copies; every pytest run with an explicit `--basetemp`; loopback servers you start are killed by
++pid; NEVER make an OmniRoute, model or bridge request and NEVER launch Hermes, buzz-acp or the agent — the live legs (A, B, the
++negative) are the coordinator's later capture; the OmniRoute API key on this host is never read or printed; no outward actions.
++Authorization: the owner's own OmniRoute round-trip proof under test on the owner's system.
++
++**Inputs (read in this order):** VERIFY-O1's report `tasks/briefs/s0-03-support/VERIFY-O1-report.md` (the round's contract:
++F-1..F-23, the blocking set F-1/F-7/F-8/F-9/F-3/F-4/F-5/F-13, the cheapest path (a)-(i)) · the lane brief
++`tasks/briefs/s0-03-o2-omniroute-the-row-bound-to-the-leg-and-the-real-capture-path.md` and its PC continuation
++`tasks/briefs/pc/pc-o2.md` · the lane's report `O2-report.md` (§0 identity, §1 items 1-10 with red-before on b5670c1, §2 what it
++added, §3 the mutant table, §4 the two RESULT lines, §7 DISCREPANCIES, §8 NOT-done, §9 self-attack) · P5b's report
++`tasks/briefs/s0-01-p5b-support/P5b-report.md` §"THE EXACT ARGV FOR THE S0-03 RUNNER" and DECISIONS (the `S0_01_HERMES_HOME` seam
++never moves the pinned constant) · `docs/INCIDENT-LOG.md` (AF-AP-40, AF-AP-42, AF-AP-56, AF-AP-65).
++
++## Item 0 — the mechanical gates, pasted
++`python3 scripts/report_lint.py tasks/briefs/s0-03-support/O2-report.md --rev d12fc13 --map C=proofs/S0-03/check_omniroute_roundtrip.py --map T=tests/test_s0_03_omniroute.py --map P=proofs/S0-03/probe_omniroute.py`
++plus maps for every bare script name the report cites — the lane pasted `28 refs — OK 8, NEAR 0, MISS 0, UNCHECKABLE 20`; the
++coordinator's run with the brief's three maps read `12 refs — OK 1, UNCHECKABLE 11`: resolve which map set the lane used and
++whether any ref is a MISS at the PIN; `ap_screen.py` over the four S0-03 python files (4 hits, AP-1) and `--tests` (AF-AP-34 ×3,
++AF-AP-59 ×1) — classify by RUN; pyflakes; `bash -n` ×2; `python3 scripts/validate-ledger integrity --root .` (S0-03 stays
++EXPIRED/unminted — say so); the FILE IDENTITY table against the PIN; the four test files the lane brief names run directly
++(the coordinator's runs are pasted in the checkpoint commit) — agree or disagree by your own run.
++
++## Items
++1. **F-1 — the row is BOUND to the leg (`C:455-686`).** Reproduce the lane's two red-before controls on the PIN's parent
++   (forged identity PASS; duplicate row PASS) and the greens; attack the binding: a `response_id` that matches but a
++   `status != 200`; two rows with the same `response_id` (one 200, one 500); a row whose timestamp sits at the window edge
++   (the lane's "window equality, timestamp containment, unique-row controls"); the session tag on leg B (`extra_headers`) —
++   INFERRED, not live-proven: what exactly must the capture show for it to count, and what does the checker do when the tag
++   is absent vs foreign?
++2. **F-3/F-4/F-5 — conjunct (v) reads the wire; the credential screen over the whole provider block; `credential_rejected`
++   RED.** A credential under a key other than `api_key` (`extra_headers.Authorization`, `headers`, a nested dict, an env
++   reference); `call_logs.path` variants (`/v1/responses` vs `/v1/chat/completions` vs a trailing slash); a REJECTED credential
++   (401/403 rows) graded `credential_rejected` never `blocked:`.
++3. **F-6/F-7 — the round trip real; the pid the tee writes.** The tool-output nonce assertion (an agent that quotes the prompt
++   back must FAIL); `agent_child_pid` read from a real-shaped `runtime-identity.json` (the S0-01 corpus's real files at
++   `/home/rocco/s0-01-pinned/realleg/golden/run-*/runtime-identity.json` — read-only: does `hermes_env_names.py` parse them?).
++4. **F-8/F-22 — leg B on the real capture path (`run_s0_03_legs.sh:136-195`).** The invocation vs `pc_launch.py`'s DECLARED
++   flags on the PIN (the test `test_runner_leg_b_uses_only_flags_pc_launch_declares` — reproduce it green here and RED on a
++   tree without `--profile`); the escape hatch (F-22) gone?; the marker preflight; the per-leg Hermes profile/header wiring
++   — static, every `set -e` exit path before a bundle exists.
++5. **F-9/F-10 — a negative leg the producer can make.** `direct_responses_probe.py --no-credential` (or the lane's shape) +
++   `collect_leg.sh` on the negative root produce the committed `evidence-credential-absent` bundle's SHAPE (AF-AP-42): regenerate
++   from the producer on a loopback stand-in and diff against the committed fixture — every field the writer emits vs what
++   PROVENANCE says.
++6. **F-11/F-12/F-13/F-16/F-17/F-15/F-21 — one run each:** the env record's `exe`/`pid` asserted; the env allow-list deny-by-default
++   over the name domain (a `BUZZ_PRIVATE_KEY` finding stays declared — the lane's self-attack 3); the profile's `model:` where
++   Hermes reads it (cite the Hermes source path the lane read); decision-irrelevant fields; `NaN`/`Infinity` refused; the bound
++   SQL route parameter (`collect_leg.sh:82-141` — a route value with a quote); the mktemp leak closed.
++7. **The deleted fixture files and `NOT-CAPTURED.md`.** Is a bundle that carries only `direct/` + `omniroute-requests.json` +
++   `NOT-CAPTURED.md` gradeable by design (which reason does the checker return), or does it PASS a conjunct by absence
++   (AF-AP-40)?; the `evidence-credential-rejected` bundle's PROVENANCE vs its bytes.
++8. **The mutant table (§3, the lane's + the verifier's)** reconstructed on YOUR scratch copies → ≥ 40 with the attacks above,
++   killers pasted; by-construction survivors stated.
++9. **The 18-class re-scan** on the checker, the two scripts and the two tools by RUN; every `if <field> == <literal>:` without a
++   raising other arm (AF-AP-65); the lane's §6 table agreed or disagreed per row; the lane's declared deviations (read order,
++   one `hermes sessions list`, three skill loads, one overwritten draft) weighed.
++10. **Discipline** — file:line by `sed -n` on the PIN; `report_lint.py` on your own report; the process census by pid.
++11. **The design.** Is `response_id` + `status` + the time window the right binding, or must the tag be mandatory for leg B?
++    What must the coordinator's capture (legs A, B, negative) show for S0-03 to flip from EXPIRED to a minted result, and which
++    items are the coordinator's (the capture, the class flip, the remint) vs round 3's (O3)?
++
++## Report
++Write it to `tasks/briefs/s0-03-support/VERIFY-O2-report.md` inside your tree, draft after EACH item, and return it whole as
++your final message. Findings: ALL, no severity filtering, each with file:line on the PIN, expected vs observed, the failing input,
++the minimal fix, the exact red test, SOLID/UNSURE; reproduced vs reviewed vs skipped; verdict MERGE-READY or NOT-READY with the
++blocking set and the cheapest path; the items that are the coordinator's named as such.
+diff --git a/tasks/briefs/s0-03-support/VERIFY-O2-report.md b/tasks/briefs/s0-03-support/VERIFY-O2-report.md
+new file mode 100644
+index 0000000..74c3139
+--- /dev/null
++++ b/tasks/briefs/s0-03-support/VERIFY-O2-report.md
+@@ -0,0 +1,241 @@
++# VERIFY-O2 — adversarial grade of S0-03 round 2
++
++## Verdict
++
++NOT-READY — reproduced static and loopback evidence finds six bypasses in the proposed checker/exporter. No OmniRoute/model/bridge request was made and Hermes/buzz-acp were not launched. The four-test suite passes, but it does not cover these bypasses. Blocking set: V-O2-1 through V-O2-6.
++
++Cheap path: repair the recursive credential screen, bind the completed tool call to the prompt's exact terminal request and ordering, remove or verify the collector truncation, validate RFC3339 offset-awareness before comparing, validate `pid` as a positive integer that belongs to the captured process record, and require both call-log rows to be POST requests. Add independent tests and rerun the listed suite plus this mutation campaign. Coordinator-owned after code repair: real A/B/negative capture, check result class flip from EXPIRED, and result remint.
++
++Scope: pin d12fc13 (`d12fc1312621c8dd426765b4eebd4e6063fafe23`). All observations below concern those bytes. I used archive scratch copies at `../scratch/o2-pin` and `../scratch/o2-parent`; the live lane tree was not restored, stashed, or mutated. The two staged files are lane instructions, not this grade.
++
++## Item 0 — identity and mechanical gates
++
++Verified file identity at the pin:
++
++| path | blob | lines |
++|---|---:|---:|
++| `proofs/S0-03/check_omniroute_roundtrip.py` | `143bc57c…` | 824 |
++| `proofs/S0-03/hermes/config.yaml` | `b05f021e…` | 50 |
++| `proofs/S0-03/spec.json` | `05b394d6…` | 54 |
++| `proofs/S0-03/tools/pc/run_s0_03_legs.sh` | `fddb1505…` | 313 |
++| `proofs/S0-03/tools/pc/collect_leg.sh` | `dd441844…` | 175 |
++| `proofs/S0-03/tools/pc/direct_responses_probe.py` | `e4978382…` | 285 |
++| `proofs/S0-03/tools/pc/hermes_env_names.py` | `80c70511…` | 148 |
++| `tests/test_s0_03_omniroute.py` | `ca57bbd1…` | 1734 |
++
++Reproduced gates:
++
++* Direct suite, with `S0_01_VENUE=pc`, `S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`, and `S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`: `216 passed in 37.49s` across `tests/test_s0_03_omniroute.py`, `test_spec_probe_schemas.py`, `test_validate_ledger.py`, and `test_proof_runner.py`.
++* `python -m pyflakes` over the three S0-03 Python tools/checker: rc 0. `bash -n` over both PC shell tools: rc 0.
++* `python scripts/validate-ledger integrity --root .`: rc 0, reports `S0-03 EXPIRED`; no live evidence/result is minted.
++* `ap_screen.py` over the five S0-03 source files: 3 AP-1 hits, all one-time environment defaults (`S0_03_BASE_URL`, `S0_03_KEY_FILE`, `PROC_ROOT`), not admission logic. Test scan: four documented AF-AP-34/59 tokens in the test that forbids name-based process killing.
++* `report_lint.py` on O2-report with the brief's three maps: rc 0, `51 refs — OK 1, MISS 0, UNCHECKABLE 11, UNRESOLVED 39`. With the fuller local map set I used for spot-checking, it found one mechanical MISS: the `pc_launch.py` 293-294 citation is described as a rewrite anchored on `s0-01-scripted/…`, while the cited line carries the concrete regex `s0-01-\w+`. I treated that as a report citation defect, not as a proof-code failure.
++
++The direct suite is a real count, not a filtered no-op. Host load before the final suite was `4.70 3.89 3.86`; before the larger mutation sweeps it ranged from `2.36 2.90 3.42` to `8.00 3.91 3.47`. I made no process changes.
++
++## Item 1 — F-1 binding to the leg
++
++Reproduced green behavior for the revised positive bundle and the intended killers. The parent checker passes both red controls that d12fc13 is intended to close:
++
++| scratch control on parent | observed |
++|---|---|
++| forged rows: 1999 timestamp, `status: 500`, foreign `response_id` | rc 0, PASS |
++| prepended duplicate direct row carrying `s0-01-scripted` provider | rc 0, PASS |
++
++At the pin, 39 ordinary single-purpose mutants were killed. Relevant examples:
++
++| mutant | pin result |
++|---|---|
++| direct `response_id` differs from streamed id | rc 1, `identity: direct leg row response_id …` |
++| direct or Hermes `status: 500` | rc 1, `identity: <leg> leg row status 500, expected 200` |
++| Hermes foreign `session_tag` | rc 1, `identity: hermes leg row session_tag …` |
++| duplicate direct row | rc 1, `2 rows for the direct leg` |
++| duplicate Hermes row in window | rc 1, `2 call_logs rows … unattributable` |
++| Hermès row timestamp outside closed window | rc 1, named window failure |
++| endpoints exactly at each window edge | covered green by `tests/test_s0_03_omniroute.py:1724-1734` |
++
++The implementation does bind direct rows to the streamed id, requires exactly one direct row, compares `response_id`, checks `row.get("status") != 200`, compares the exported Hermes window with leg.json, requires one Hermes row, and compares its tag with nonce2 at `proofs/S0-03/check_omniroute_roundtrip.py:497-564`.
++
++However, the collector's `LIMIT 50` breaks the claimed uniqueness property.
++
++### V-O2-1 — collector truncation hides a concurrent Hermes row
++
++SOLID, blocking.
++
++* Location: `proofs/S0-03/tools/pc/collect_leg.sh:75,133-141`.
++* Expected: every route row in the declared Hermes time window reaches the checker, so `len(grouped["hermes"]) == 1` at checker line 509 is meaningful.
++* Observed: the collector runs `SELECT … WHERE requested_model = ? ORDER BY timestamp ASC LIMIT ?` with the default `S0_03_LOG_LIMIT=50`, then filters window membership in Python. It can stop before a later concurrent row in the same window.
++* Concrete loopback mutation: a temporary SQLite database contained 49 earlier rows, one target Hermes row at `00:00:02.400Z` with the correct tag, and one foreign row at `00:00:02.500Z`, also inside the declared `01.000000Z..04.000000Z` window. `collect_leg.sh` returned 0 and exported only direct `log_0` plus Hermes `log_49`; the checker returned rc 0 PASS. The foreign same-window row was row 51 and never exported.
++* Minimal fix: remove the truncation for the per-window query, or make the SQL time-bounded using correctly normalized/parseable timestamps and fail if completeness cannot be guaranteed. A configurable limit cannot sit upstream of a uniqueness gate.
++* Exact red test: construct a real SQLite `call_logs` fixture with more than the limit of route rows before two same-window rows and assert collection fails or exports both, then checker returns `identity_unattributable`.
++
++The session-tag mechanism itself is only statically inferred from external OmniRoute source references. For a live capture to count, leg B must show the per-leg `x-omniroute-session-id` in the launched captured profile, `leg.json.nonce2` must equal call_logs `session_tag`, and exactly one complete exported row must lie inside the recorded closed window. Missing/foreign tags produce a named checker failure at lines 538-541.
++
++## Item 2 — F-3/F-4/F-5 transport and credentials
++
++Reproduced intended behavior:
++
++* `/v1/chat/completions` and a trailing `/v1/responses/` both fail `path.endswith("/responses")` at checker lines 544-546.
++* direct/Hermes `status: 500` each fail.
++* A direct `Authorization` header and `X-Api-Key` directly under `extra_headers` fail. An `api_key` directly under the provider block fails.
++* committed direct-only absent fixture returns `blocked: credential_absent`; committed rejected fixture returns `credential_rejected: OmniRoute refused the presented key (HTTP 401)`. The latter is an exit-1 RED rather than a `blocked:` result.
++* `direct_responses_probe.py --no-credential` was also exercised against a loopback 401 `http.server`: rc 1, `credential_presented: false`, no Authorization header name, `status: 401`, `error_code: AUTH_002`, and the writer emitted the same 19-key `direct.json` shape as the committed credential fixtures.
++
++### V-O2-2 — credential screen is not over the whole provider block
++
++SOLID, blocking.
++
++* Location: `proofs/S0-03/check_omniroute_roundtrip.py:680-685`.
++* Expected: the brief demands a credential under any provider-block key, including nested dictionaries, is rejected.
++* Observed: the loop inspects only `list(block.items()) + list(headers.items())`. It neither recursively traverses values nor treats `headers` as the special header mapping. Three independently passing hostile profiles were reproduced:
++  1. `providers.<only>.nested.api_key: secret`
++  2. providers.<only>.headers.Authorization with a Bearer value
++  3. providers.<only>.extra_headers.Authorization with a Basic value
++  Each returned rc 0 PASS.
++* Minimal fix: walk every mapping/list value in the provider block recursively, preserve the full path in the error, and reject credential-shaped keys or non-empty credential-shaped values across the whole structure. Decide and test permitted `key_env` by exact full path, not by key name alone.
++* Exact red tests: each of the three structures above must return rc 1 with the path-bearing inline-credential error. Include nested lists/mappings and a non-Bearer `Authorization` value.
++
++### V-O2-6 — wire transport check admits non-POST call-log rows
++
++SOLID, blocking.
++
++* Location: `proofs/S0-03/check_omniroute_roundtrip.py:542-546`.
++* Expected: the wire evidence for both legs must be a `POST /v1/responses` request. The exporter deliberately emits `method` at `proofs/S0-03/tools/pc/collect_leg.sh:82-83`, and the checker docstring claims both rows prove the transport used.
++* Observed: set either the direct or Hermes call-log row's `method` to `GET`. Each hostile bundle returns rc 0 PASS because the checker reads only status and path; `method` is decision-irrelevant.
++* Minimal fix: require exact `method == "POST"` for both selected rows, with a named transport failure. Keep the path assertion exact enough to reject `/v1/responses/` and query/foreign variants.
++* Exact red tests: direct `GET /v1/responses` and Hermes `GET /v1/responses` must each return rc 1 with the leg and observed method; preserve a POST positive control.
++
++The direct-leg credential classification itself is sound for the two recorded 401/403 cases: `check_credential_at_the_gate` at lines 333-367 inspects the direct request's recorded Authorization header name before loading the Hermes half. The committed direct-only fixtures honestly carry `NOT-CAPTURED.md`; once direct exists, omitted Hermes evidence is not accepted as a positive conjunct. That fixture structure is gradeable by design for the priority credential verdict only, not a pass through absent positive evidence.
++
++## Item 3 — F-6/F-7 real round trip and tee pid
++
++Reproduced:
++
++* Removing nonce2 from a completed tool-call content fails at checker lines 629-637.
++* A refusal that quotes the prompt but removes tool output fails. This is covered at `tests/test_s0_03_omniroute.py:1208-1227`.
++* A completed tool-call id that did not start fails; a missing tool start fails.
++* `hermes_env_names.py` resolves `agent_child_pid` from the real S0-01 corpus record. The corpus key set contains `agent_child_pid`, `agent_realpath`, and `agent_interpreter_realpath`; the resolver returned `(2726049, '/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp')` for run-1 without reading its `/proc` environment. The test swaps in its own live test-process pid and passed in the 216-test run.
++
++### V-O2-3 — roundtrip does not bind the completed tool call to `printf <nonce2>`
++
++SOLID, blocking.
++
++* Location: `proofs/S0-03/check_omniroute_roundtrip.py:614-641`.
++* Expected: the evidence must show the requested terminal command was executed, rather than merely that an arbitrary completed tool call happened to emit the nonce.
++* Observed: mutate the completed tool call to `title: "read_file: /tmp/nonce.txt"`, `rawInput: {"path": "/tmp/nonce.txt"}`, and content containing nonce2. The checker returns rc 0 PASS. It checks only whether nonce2 serializes somewhere in the output; it never reads the tool name or input. A second temporal mutant moves that completion before the matching start; it also returns rc 0 PASS because lines 614-625 build unordered sets/lists rather than enforcing event order.
++* Minimal fix: from the exact prompt/leg record derive the expected terminal request, require the started/completed same call to identify the `terminal`/execute tool and a command exactly `printf <nonce2>` under the ACP schema's known input shape, and require the completion index to follow the matching start index. Do not use loose substring matches.
++* Exact red tests: a completed `read_file` call whose output contains nonce2, and a matching completion placed before its start, must each return rc 1. Add a positive control for the exact ordered terminal call and output.
++
++### V-O2-4 — pid is emitted but not validated
++
++SOLID, non-primary but load-bearing.
++
++* Producer location: `proofs/S0-03/tools/pc/hermes_env_names.py:128-141` writes the `record` carrying `pid`.
++* Checker location: `proofs/S0-03/check_omniroute_roundtrip.py:728-734` contains `record.get("exe")` and `record.get("agent_realpath")`; the same function does not read `pid`.
++* Expected: the environment record identifies the tee-selected process, not merely a binary path copied into an artifact.
++* Observed: set `hermes-env-names.json.pid` to string `"not-a-pid"`. The checker returns rc 0 PASS because it reads only `exe` and `agent_realpath`, never `pid`. A fabricated pid value is therefore invisible.
++* Minimal fix: require `pid` to be a positive integer in `check_env_record`; stronger, include the tee's recorded `agent_child_pid` in the evidence and compare it exactly. The present bundle lacks that second independently preserved binding.
++* Exact red test: string, zero, negative, and mismatched pid values must all fail with named reasons.
++
++`exe` and `agent_realpath` are correctly checked against the S0-01 pins. An env value list remains intentionally name-only; I neither read nor printed any live environment values.
++
++## Item 4 — F-8/F-22 runner path
++
++Static review plus producer-contract tests show the invocation repair is real:
++
++* Pin runner calls `python3 "$LAUNCHER" --leg … --model … --profile …` at `run_s0_03_legs.sh:198-200`.
++* AST-derived declared launcher flags are `--allowlist`, `--leg`, `--model`, `--profile`, `--respond-to`, and `--settle-seconds`; runner passes only `--leg`, `--model`, `--profile`.
++* Parent runner passed undeclared `--config`, `--prompt`. The pin's `--profile` requirement is supplied by the P5b launcher seam; this test red/green result is reproduced from archive scratch copies.
++* `S0_03_HERMES_CONFIG` is absent from executable runner code. `S0_03_LAUNCHER` must realpath equal the pinned `pc_launch.py` at lines 125-129.
++* marker-tree preflight, launch-ready wait, copied buzz-acp pid, captured profile checksum, model-line check, and pid-scoped teardown all exist on the static path at lines 136-270.
++
++Not live reproduced by restriction: launching this script would make forbidden OmniRoute, Hermes, buzz-acp, and agent actions. Thus runner reachability remains a coordinator capture obligation, not a verified live claim.
++
++Potential static concern: the runner relies on `pc_mention.sh` hard-coded BASE `/home/rocco/s0-01-pinned`; it does compare derived marker paths before launch. That comparison is correct on current pins, but only a capture proves it reaches the intended active session.
++
++## Item 5 — F-9/F-10 producer-shaped negative bundle
++
++Reproduced over the suite's loopback server and temporary SQLite database:
++
++* `--no-credential` omits Authorization rather than reading an empty key file, writes a direct record with `credential_presented: false`, and returns a nonzero HTTP result that the runner intentionally permits for this negative control.
++* `collect_leg.sh` on a direct-only 401 root writes an honest empty `omniroute-requests.json` (`requests: []`, `windows: {}`), which matches the negative producer shape.
++* fixture provenance accurately calls the response side not live-proven and distinguishes local-server fields from OmniRoute-source transcriptions.
++
++I did not run the negative producer against OmniRoute, by lane constraint. The coordinator must demonstrate the deployment's actual unauthenticated behavior. If it returns 200, that is a deployment finding, not credential-absent evidence.
++
++## Item 6 — remaining contract attacks
++
++* `NaN` in `omniroute-requests.json` fails named JSON parsing (`ValueError`). `Infinity` follows the same `parse_constant` rejection path. This closes the JSON NaN class for files read with `_read_json`.
++* SQL route quote `a' OR '1'='1` was exercised by `tests/test_s0_03_omniroute.py:1639-1657`; the collector uses `?` parameters and returns a named no-row failure rather than SQL syntax/injection.
++* `mktemp` cleanup is static: `MODELS_BODY` is removed in `stop_all` at runner lines 81-91. The test suite does not force every preflight exit against a safe complete environment, so it is static, not live-reproduced.
++
++### V-O2-5 — naive timestamp crashes the checker instead of producing a named failure
++
++SOLID, non-primary but violates evidence parser fail-closed reporting.
++
++* Location: `proofs/S0-03/check_omniroute_roundtrip.py:456-472`.
++* Expected: malformed/non-RFC3339 timestamp becomes a `Failure` and main returns the checker’s named rc-1 result.
++* Observed: set Hermes row timestamp to `2026-09-08T00:00:02` (no UTC offset). `_instant` accepts it as a naive datetime, then `_require_in_window` compares it with aware window timestamps and throws uncaught `TypeError: can't compare offset-naive and offset-aware datetimes`. The process exits 1 with traceback, no `failure_reason`.
++* Minimal fix: require `parsed.tzinfo is not None` and `utcoffset() is not None` in `_instant`, then normalize to UTC before comparison.
++* Exact red test: offset-less timestamp in row, window start, and window end each return the named invalid-RFC3339 bundle failure, no traceback.
++
++## Item 7 — deleted fixture files and provenance
++
++Verified the credential-absent and credential-rejected fixtures contain only `direct/direct.json`, `omniroute-requests.json`, `PROVENANCE.md`, and `NOT-CAPTURED.md`. `load_direct` accepts a direct-only root, `check_credential_at_the_gate` runs before `load_bundle`, and both fixture reasons are exact and declared by spec. An incomplete positive bundle does not pass by the same absence: after a non-rejecting direct leg, `load_bundle` requires all Hermes files and fails named absences.
++
++The rejected fixture’s provenance says the writer was run against a loopback 401 source transcribed from pinned OmniRoute source and explicitly marks response behavior as not live-proven. Its `credential_presented: true`, redacted Authorization header, 401, and declared exact checker reason match its bytes.
++
++## Item 8 — mutation audit
++
++Scratch campaigns exercised 130 single-bundle or producer/checker mutations. The 48-case contract set was killed 48/48 with exact named reasons. An additional 82 hostile-domain probes exposed expected decision-irrelevant fields plus the reportable bypasses: recursive `nested.api_key`, `headers.Authorization`, Basic Authorization, invalid/zero/negative pid, unrelated completed tool output carrying nonce, completion before start, and GET rows for both legs. The pagination bypass is a producer-plus-checker composition, not a checker-only unit mutant; it also passed. The offset-less timestamp is a crash rather than a controlled red.
++
++I did not count every surviving extra-field mutation as a defect. For example, call-log internal `id`, response compression headers (S0-04 owns whether compression was honored), protocol-version metadata, and direct usage are outside this checker's stated decision contract. The six numbered findings are the survivors that contradict this increment's own wire, credential, process-identity, parser, round-trip, or completeness claims.
++
++Therefore the numerical campaign does not support the builder’s broad green claim despite a 48/48 core kill count: the omitted composition and hostile-domain mutants are the relevant holes.
++
++## Item 9 — 18-class rescan
++
++Reviewed the checker, runner, collector, direct probe, and environment tool using an `if`/exception scan plus code paths. No additional unconditional literal equality with a silent non-raising arm was found. Notable outcomes:
++
++| class | result |
++|---|---|
++| typed evidence reads and FIFOs | regular-file guard exists before JSON/YAML reads; tests cover FIFO/dir/missing cases |
++| numeric JSON fail-open | JSON NaN/Infinity rejected; YAML scalar domain remains not exercised by graded numeric fields |
++| source/producer contract | launcher flags and corpus pid key are independently tested |
++| process containment | runner only signals recorded pid files; no name/pattern killer was found |
++| time-domain parser | finding V-O2-5: naive time is unhandled |
++| wire method identity | finding V-O2-6: GET rows pass the claimed Responses transport assertion |
++| emitter-to-checker completeness | finding V-O2-1: collector truncation hides rows |
++| recursive provider value domain | finding V-O2-2 |
++| tool-call reachability and ordering | finding V-O2-3 |
++| process identity record | finding V-O2-4 |
++
++The builder report’s declared deviations are real enough to weigh: direct-only negative evidence is honest for credential classification, and the old answer-text-only V5 mutation is not sufficient once tool output is checked. That does not excuse the unrelated-tool-with-nonce mutant above.
++
++## Item 10 — discipline and report lint
++
++No production service was contacted or changed. No bridge or OmniRoute key was read. Loopback-only servers were created by the direct test suite and stopped by the suite. I started no durable service and killed no process. Final process census found only the current Hermes lane process, the shell wrapper, and the census helper itself, no leftover loopback/server/runner process.
++
++Discipline deviation: after the compaction boundary I loaded the `anti-hollow-green` and `adversarial-review` skills despite the lane's context-budget instruction not to call `skill_view`. I did not use them to change the proof code or substitute for any required run; this report treats that as my lane-process error, not as a proof-code finding.
++
++Own report lint was run after this file was written with local maps: rc 0, `13 refs — OK 5, NEAR 1, MISS 0, UNCHECKABLE 7, UNRESOLVED 0`. The one NEAR is the runner launcher invocation range, where the command starts one line earlier than the cited range. The report file is intentionally uncommitted. Retro: this verification found six reusable attack patterns, but this verification lane should not self-accept or patch the proposed code.
++
++## Item 11 — design and coordinator handoff
++
++`response_id + status + closed time window + session tag` is an appropriate direction, but session tag must remain mandatory for leg B and the exporter must be complete over the window. A `LIMIT` before filtering makes uniqueness a hollow green. Direct response id must be exact; status must remain exact 200. The coordinator’s capture must show:
++
++1. Leg A direct `/v1/responses` streaming with recorded id/model and a corresponding call_logs direct row.
++2. Leg B launched through the exact P5b-enabled `pc_launch.py --profile` path; captured launched profile includes this turn’s session header; timeline has one prompt, an exact terminal `printf <nonce2>` call completed with nonce output, and final agent text; env record identifies the tee-selected Hermes process.
++3. Collector exports every route row in the recorded closed window, not a capped prefix; one, and only one, has the session tag equal to nonce2.
++4. Negative request actually has no Authorization header and gets the seed’s expected observed outcome. A refused presented credential must grade `credential_rejected`, never `blocked`.
++5. Checker runs against captured evidence with a real expected upstream model id, then deterministic ledger tooling records the outcome. Until that happens, `S0-03 EXPIRED` remains correct.
++
++Coordinator-owned: the live capture, evidence validation, EXPIRED-to-result transition, and remint. Round-3/O3-owned: repair the six code defects above and add their deterministic controls.
++
++## Reproduced, reviewed, and skipped
++
++Reproduced: archive identity; parent red controls; pin test suite; pyflakes/bash/ledger/AP screens; 130 scratch mutations including the 48/48 killed core set, successful hostile bypasses, and decision-irrelevant survivors; collector-pagination bypass through a real temporary SQLite database; real-corpus identity key parsing; launcher declared-vs-passed flags; direct probe loopback coverage; exact fixture reasons.
++
++Reviewed statically: OmniRoute/Hermes source claims cited from absent pinned external source paths; runner’s forbidden live launch path; marker/session reachability; temp-file cleanup on every physical preflight exit.
++
++Deliberately skipped: OmniRoute/model requests, Hermes/buzz-acp/agent launch, production data inspection, API-key read, bridge action, and direct run of the PC runner. The brief prohibits them. These omissions are why no live evidence claim or gate verdict is issued here.
+diff --git a/transcripts/pc/pc-verify-o2.md--d12fc13.md b/transcripts/pc/pc-verify-o2.md--d12fc13.md
+new file mode 100644
+index 0000000..35da31b
+--- /dev/null
++++ b/transcripts/pc/pc-verify-o2.md--d12fc13.md
+@@ -0,0 +1,1178 @@
++# Hermes lane session 20260908_181620_43e846
++
++- model: agentfactory-verify
++- started: 2026-09-08T17:16:21.516891+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-o2.md--d12fc13/tree
++- messages: 315; tool calls: 210
++- tokens in/out/cache_read/reasoning: 766938/114333/12979456/74704
++
++## user @ 17:16:20
++
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-verify-o2.md--d12fc13/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++Your job is to make the change fail, not to confirm it works. The author's report is a list of
++claims; reproduce every claim you rely on. You have no stake in the change passing.
++
++## Minimum attack set
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — the builder's
++   own tests prove only what the builder thought of.
++2. **Fresh gates, real counts.** Re-run the suites yourself; verify the suite RAN by its test
++   counts (a filter matching nothing exits 0). Read `${PIPESTATUS[0]}` on piped runs.
++3. **Red-green.** Reproduce the red state for new tests (revert the change on a SCRATCHPAD COPY,
++   keep the tests, observe the failure). A test that was never red is a claim. Hunt tautologies —
++   a control assertion that stays green in the red build. NEVER `git checkout/restore/stash` a
++   tree carrying uncommitted work — scratchpad copies only.
++4. **Hostile inputs.** Anything touching externally-sourced values gets the fail-open class:
++   NaN, ±inf, empty, zero-range, post-scaling degenerates, timeouts, stale/truncated identifiers.
++   A hang is a finding. This repo's incident log says NaN wormholes bit TWICE — always test the
++   whole unusable class, not a bare `<= 0`.
++5. **Mutation audit.** Inject targeted bugs one at a time (tautology the check, delete
++
++## assistant @ 17:16:29 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:16:29 — 22810 chars (body not exported)
++
++## assistant @ 17:16:40 → tools: read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:16:40 — 3972 chars (body not exported)
++
++## tool result (read_file) @ 17:16:40 — 8833 chars (body not exported)
++
++## tool result (read_file) @ 17:16:40 — 54311 chars (body not exported)
++
++## tool result (read_file) @ 17:16:40 — 430 chars (body not exported)
++
++## tool result (terminal) @ 17:16:40 — 739 chars (body not exported)
++
++## assistant @ 17:17:01 → tools: read_file, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:17:01 — 22810 chars (body not exported)
++
++## tool result (read_file) @ 17:17:01 — 51529 chars (body not exported)
++
++## tool result (read_file) @ 17:17:01 — 54032 chars (body not exported)
++
++## tool result (read_file) @ 17:17:01 — 99825 chars (body not exported)
++
++## tool result (read_file) @ 17:17:01 — 2226 chars (body not exported)
++
++## tool result (terminal) @ 17:17:02 — 1049 chars (body not exported)
++
++## assistant @ 17:18:24 → tools: terminal, terminal, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (terminal) @ 17:19:27 — 334 chars (body not exported)
++
++## tool result (terminal) @ 17:19:28 — 1409 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 19673 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 5795 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 4433 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 13651 chars (body not exported)
++
++## tool result (terminal) @ 17:19:28 — 604 chars (body not exported)
++
++## assistant @ 17:19:50 → tools: read_file, read_file, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:19:50 — 8086 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 14158 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 13492 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 11436 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 2834 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 761 chars (body not exported)
++
++## tool result (terminal) @ 17:19:54 — 1819 chars (body not exported)
++
++## assistant @ 17:20:27 → tools: read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:20:27 — 7293 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 7128 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 15501 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 3502 chars (body not exported)
++
++## tool result (terminal) @ 17:20:27 — 8758 chars (body not exported)
++
++## assistant @ 17:21:25 → tools: read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:21:25 — 3204 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 6326 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 11787 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 3310 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 453 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 439 chars (body not exported)
++
++## assistant @ 17:22:59 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:22:59 — 4821 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 7444 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 6812 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 4072 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 3896 chars (body not exported)
++
++## assistant @ 17:24:31 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:24:33 — 338 chars (body not exported)
++
++## assistant @ 17:25:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:25:36 — 2204 chars (body not exported)
++
++## assistant @ 17:28:37 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:28:38 — 335 chars (body not exported)
++
++## user @ 17:16:20
++
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-verify-o2.md--d12fc13/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++Your job is to make the change fail, not to confirm it works. The author's report is a list of
++claims; reproduce every claim you rely on. You have no stake in the change passing.
++
++## Minimum attack set
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — the builder's
++   own tests prove only what the builder thought of.
++2. **Fresh gates, real counts.** Re-run the suites yourself; verify the suite RAN by its test
++   counts (a filter matching nothing exits 0). Read `${PIPESTATUS[0]}` on piped runs.
++3. **Red-green.** Reproduce the red state for new tests (revert the change on a SCRATCHPAD COPY,
++   keep the tests, observe the failure). A test that was never red is a claim. Hunt tautologies —
++   a control assertion that stays green in the red build. NEVER `git checkout/restore/stash` a
++   tree carrying uncommitted work — scratchpad copies only.
++4. **Hostile inputs.** Anything touching externally-sourced values gets the fail-open class:
++   NaN, ±inf, empty, zero-range, post-scaling degenerates, timeouts, stale/truncated identifiers.
++   A hang is a finding. This repo's incident log says NaN wormholes bit TWICE — always test the
++   whole unusable class, not a bare `<= 0`.
++5. **Mutation audit.** Inject targeted bugs one at a time (tautology the check, delete
++
++## assistant @ 17:16:29 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:16:29 — 60 chars (body not exported)
++
++## assistant @ 17:30:00
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User asked: “RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its in…” — resume remains pending; the final clause was truncated in the preserved focus text.
++
++## Goal
++Resume the PC `VERIFY-O2` lane attempt without discarding its existing worktree edits; establish the prior verification context and inspect the O2 proof/tooling state before continuing the lane work.
++
++## Constraints & Preferences
++- “a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision.”
++- “Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch)”
++- Preserve existing lane/worktree edits; do not treat the prior stop/refusal as a deliberate completion decision.
++- The remainder of the resume instruction is unavailable because the supplied f
++
++## assistant @ 17:18:24 → tools: terminal, terminal, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (terminal) @ 17:19:27 — 123 chars (body not exported)
++
++## tool result (terminal) @ 17:19:28 — 123 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 87 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 80 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 85 chars (body not exported)
++
++## tool result (read_file) @ 17:19:28 — 84 chars (body not exported)
++
++## tool result (terminal) @ 17:19:28 — 114 chars (body not exported)
++
++## assistant @ 17:19:50 → tools: read_file, read_file, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:19:50 — 74 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 76 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 76 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 76 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 86 chars (body not exported)
++
++## tool result (read_file) @ 17:19:50 — 79 chars (body not exported)
++
++## tool result (terminal) @ 17:19:54 — 123 chars (body not exported)
++
++## assistant @ 17:20:27 → tools: read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:20:27 — 72 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 75 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 85 chars (body not exported)
++
++## tool result (read_file) @ 17:20:27 — 74 chars (body not exported)
++
++## tool result (terminal) @ 17:20:27 — 123 chars (body not exported)
++
++## assistant @ 17:21:25 → tools: read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:21:25 — 65 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 86 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 87 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 106 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 111 chars (body not exported)
++
++## tool result (read_file) @ 17:21:25 — 98 chars (body not exported)
++
++## assistant @ 17:22:59 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:22:59 — 75 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 7444 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 6812 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 4072 chars (body not exported)
++
++## tool result (read_file) @ 17:22:59 — 3896 chars (body not exported)
++
++## assistant @ 17:24:31 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:24:33 — 338 chars (body not exported)
++
++## assistant @ 17:25:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:25:36 — 2204 chars (body not exported)
++
++## assistant @ 17:28:37 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:28:38 — 335 chars (body not exported)
++
++## user @ 17:16:20
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-verify-o2.md--d12fc13/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++Your job is to make the change fail, not to confirm it works. The author's report is a list of
++claims; reproduce every claim you rely on. You have no stake in the change passing.
++
++## Minimum attack set
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — the builder's
++   own tests prove only what the builder thought of.
++2. **Fresh gates, real counts.** Re-run the suites yourself; verify the suite RAN by its test
++   counts (a filter matching nothing exits 0). Read `${PIPESTATUS[0]}` on piped runs.
++3. **Red-green.** Reproduce the red state for new tests (revert the change on a SCRATCHPAD COPY,
++   keep the tests, observe the failure). A test that was never red is a claim. Hunt tautologies —
++   a control assertion that stays green in the red build. NEVER `git checkout/restore/stash` a
++   tree carrying uncommitted work — scratchpad copies only.
++4. **Hostile inputs.** Anything touching externally-sourced values gets the fail-open class:
++   NaN, ±inf, empty, zero-range, post-scaling degenerates, timeouts, stale/truncated identifiers.
++   A hang is a finding. This repo's incident log says NaN wormholes bit 
++
++## assistant @ 17:30:08 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:30:08 — 23004 chars (body not exported)
++
++## assistant @ 17:30:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:30:33 — 9761 chars (body not exported)
++
++## assistant @ 17:31:21 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:31:22 — 334 chars (body not exported)
++
++## assistant @ 17:31:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:31:30 — 1181 chars (body not exported)
++
++## assistant @ 17:31:35 → tools: patch
++
++
++
++## tool result (patch) @ 17:31:36 — 1375 chars (body not exported)
++
++## assistant @ 17:31:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:31:50 — 12507 chars (body not exported)
++
++## assistant @ 17:32:34 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:32:35 — 342 chars (body not exported)
++
++## assistant @ 17:32:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:32:48 — 12086 chars (body not exported)
++
++## assistant @ 17:32:56 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:32:57 — 7046 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 5731 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 5388 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 6400 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 3771 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 4460 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 1637 chars (body not exported)
++
++## tool result (read_file) @ 17:32:57 — 453 chars (body not exported)
++
++## assistant @ 17:33:26 → tools: read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:33:26 — 8833 chars (body not exported)
++
++## tool result (read_file) @ 17:33:26 — 12601 chars (body not exported)
++
++## tool result (read_file) @ 17:33:26 — 10407 chars (body not exported)
++
++## tool result (read_file) @ 17:33:26 — 18274 chars (body not exported)
++
++## tool result (terminal) @ 17:33:27 — 302 chars (body not exported)
++
++## assistant @ 17:37:31 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 17:37:31 — 6465 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 7918 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 6639 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 3257 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 6471 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 10368 chars (body not exported)
++
++## tool result (read_file) @ 17:37:31 — 1945 chars (body not exported)
++
++## assistant @ 17:39:11 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:39:12 — 340 chars (body not exported)
++
++## assistant @ 17:39:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:40:04 — 3743 chars (body not exported)
++
++## assistant @ 17:40:28 → tools: search_files
++
++
++
++## tool result (search_files) @ 17:40:29 — 2503 chars (body not exported)
++
++## assistant @ 17:40:35 → tools: search_files
++
++
++
++## tool result (search_files) @ 17:40:35 — 3165 chars (body not exported)
++
++## assistant @ 17:42:06 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:42:06 — 7735 chars (body not exported)
++
++## assistant @ 17:42:56 → tools: patch
++
++
++
++## tool result (patch) @ 17:42:56 — 2835 chars (body not exported)
++
++## assistant @ 17:44:06 → tools: patch
++
++
++
++## tool result (patch) @ 17:44:06 — 2638 chars (body not exported)
++
++## assistant @ 17:45:42 → tools: patch
++
++
++
++## tool result (patch) @ 17:45:42 — 2714 chars (body not exported)
++
++## assistant @ 17:46:49 → tools: patch
++
++
++
++## tool result (patch) @ 17:46:49 — 2708 chars (body not exported)
++
++## assistant @ 17:50:46 → tools: patch
++
++
++
++## tool result (patch) @ 17:50:47 — 1569 chars (body not exported)
++
++## assistant @ 17:53:45 → tools: search_files
++
++
++
++## tool result (search_files) @ 17:53:45 — 3947 chars (body not exported)
++
++## assistant @ 17:54:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:55:01 — 1361 chars (body not exported)
++
++## assistant @ 17:55:54 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:55:56 — 811 chars (body not exported)
++
++## assistant @ 17:58:38 → tools: patch
++
++
++
++## tool result (patch) @ 17:58:40 — 1243 chars (body not exported)
++
++## assistant @ 18:00:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:00:50 — 779 chars (body not exported)
++
++## assistant @ 18:03:19 → tools: patch
++
++
++
++## tool result (patch) @ 18:03:20 — 1578 chars (body not exported)
++
++## assistant @ 18:03:52 → tools: skill_view, skill_view
++
++
++
++## tool result (skill_view) @ 18:03:52 — 22327 chars (body not exported)
++
++## tool result (skill_view) @ 18:03:52 — 5011 chars (body not exported)
++
++## assistant @ 18:04:36 → tools: search_files
++
++
++
++## tool result (search_files) @ 18:04:36 — 8110 chars (body not exported)
++
++## assistant @ 18:05:36 → tools: search_files, terminal, read_file, read_file
++
++
++
++## tool result (search_files) @ 18:05:36 — 127 chars (body not exported)
++
++## tool result (terminal) @ 18:05:36 — 604 chars (body not exported)
++
++## tool result (read_file) @ 18:05:36 — 3572 chars (body not exported)
++
++## tool result (read_file) @ 18:05:36 — 6018 chars (body not exported)
++
++## assistant @ 18:06:46 → tools: terminal, read_file, terminal
++
++
++
++## tool result (terminal) @ 18:06:46 — 429 chars (body not exported)
++
++## tool result (read_file) @ 18:06:46 — 24846 chars (body not exported)
++
++## tool result (terminal) @ 18:06:46 — 129 chars (body not exported)
++
++## assistant @ 18:07:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:07:32 — 10051 chars (body not exported)
++
++## assistant @ 18:08:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:08:30 — 748 chars (body not exported)
++
++## assistant @ 18:09:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:09:15 — 1443 chars (body not exported)
++
++## assistant @ 18:11:02 → tools: patch
++
++
++
++## tool result (patch) @ 18:11:03 — 1046 chars (body not exported)
++
++## assistant @ 18:12:14 → tools: patch
++
++
++
++## tool result (patch) @ 18:12:14 — 1456 chars (body not exported)
++
++## assistant @ 18:14:27 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:14:27 — 7246 chars (body not exported)
++
++## assistant @ 18:15:58 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:15:58 — 5019 chars (body not exported)
++
++## assistant @ 18:17:28 → tools: patch
++
++
++
++## tool result (patch) @ 18:17:28 — 1756 chars (body not exported)
++
++## assistant @ 18:18:47 → tools: patch
++
++
++
++## tool result (patch) @ 18:18:48 — 1613 chars (body not exported)
++
++## assistant @ 18:19:24 → tools: patch
++
++
++
++## tool result (patch) @ 18:19:24 — 1692 chars (body not exported)
++
++## assistant @ 18:20:21 → tools: patch
++
++
++
++## tool result (patch) @ 18:20:22 — 2439 chars (body not exported)
++
++## assistant @ 18:21:14 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 18:21:14 — 8981 chars (body not exported)
++
++## tool result (read_file) @ 18:21:14 — 3610 chars (body not exported)
++
++## assistant @ 18:22:28 → tools: patch
++
++
++
++## tool result (patch) @ 18:22:28 — 579 chars (body not exported)
++
++## assistant @ 18:23:29 → tools: patch
++
++
++
++## tool result (patch) @ 18:23:29 — 1791 chars (body not exported)
++
++## assistant @ 18:25:42 → tools: read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 18:25:42 — 2345 chars (body not exported)
++
++## tool result (terminal) @ 18:25:42 — 1355 chars (body not exported)
++
++## tool result (terminal) @ 18:25:43 — 154 chars (body not exported)
++
++## assistant @ 18:26:54 → tools: patch
++
++
++
++## tool result (patch) @ 18:26:55 — 579 chars (body not exported)
++
++## assistant @ 18:28:07 → tools: terminal, read_file, read_file
++
++
++
++## tool result (terminal) @ 18:28:07 — 565 chars (body not exported)
++
++## tool result (read_file) @ 18:28:07 — 999 chars (body not exported)
++
++## tool result (read_file) @ 18:28:07 — 1333 chars (body not exported)
++
++## assistant @ 18:29:30 → tools: patch
++
++
++
++## tool result (patch) @ 18:29:31 — 579 chars (body not exported)
++
++## assistant @ 18:30:33 → tools: patch
++
++
++
++## tool result (patch) @ 18:30:34 — 1626 chars (body not exported)
++
++## assistant @ 18:31:15 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 18:31:15 — 2732 chars (body not exported)
++
++## tool result (read_file) @ 18:31:15 — 10016 chars (body not exported)
++
++## assistant @ 18:32:09 → tools: search_files
++
++
++
++## tool result (search_files) @ 18:32:09 — 322 chars (body not exported)
++
++## assistant @ 18:33:08 → tools: patch, patch
++
++
++
++## tool result (patch) @ 18:33:09 — 1763 chars (body not exported)
++
++## tool result (patch) @ 18:33:09 — 1610 chars (body not exported)
++
++## assistant @ 18:34:25 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:34:25 — 2350 chars (body not exported)
++
++## assistant @ 18:35:16 → tools: patch
++
++
++
++## tool result (patch) @ 18:35:17 — 2031 chars (body not exported)
++
++## assistant @ 18:35:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:35:51 — 1523 chars (body not exported)
++
++## assistant @ 18:37:12 → tools: patch
++
++
++
++## tool result (patch) @ 18:37:13 — 1489 chars (body not exported)
++
++## assistant @ 18:38:13 → tools: patch
++
++
++
++## tool result (patch) @ 18:38:13 — 1611 chars (body not exported)
++
++## assistant @ 18:39:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:39:03 — 1399 chars (body not exported)
++
++## assistant @ 18:40:03 → tools: patch
++
++
++
++## tool result (patch) @ 18:40:04 — 1710 chars (body not exported)
++
++## assistant @ 18:40:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:40:40 — 1173 chars (body not exported)
++
++## assistant @ 18:41:36 → tools: patch
++
++
++
++## tool result (patch) @ 18:41:36 — 1670 chars (body not exported)
++
++## assistant @ 18:41:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:42:00 — 1015 chars (body not exported)
++
++## assistant @ 18:43:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:43:58 — 4273 chars (body not exported)
++
++## assistant @ 18:44:39 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:44:39 — 1818 chars (body not exported)
++
++## assistant @ 18:45:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:45:32 — 5364 chars (body not exported)
++
++## assistant @ 18:47:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:47:10 — 1217 chars (body not exported)
++
++## assistant @ 18:48:20 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 18:48:20 — 25275 chars (body not exported)
++
++## tool result (terminal) @ 18:48:20 — 116 chars (body not exported)
++
++## assistant @ 18:49:20 → tools: patch
++
++
++
++## tool result (patch) @ 18:49:21 — 2040 chars (body not exported)
++
++## assistant @ 18:49:50 → tools: patch
++
++
++
++## tool result (patch) @ 18:49:51 — 1604 chars (body not exported)
++
++## assistant @ 18:51:05 → tools: patch
++
++
++
++## tool result (patch) @ 18:51:05 — 2223 chars (body not exported)
++
++## assistant @ 18:51:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:51:39 — 6567 chars (body not exported)
++
++## assistant @ 18:52:27 → tools: patch
++
++
++
++## tool result (patch) @ 18:52:27 — 1777 chars (body not exported)
++
++## assistant @ 18:53:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:53:14 — 1025 chars (body not exported)
++
++## assistant @ 18:55:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:55:26 — 9016 chars (body not exported)
++
++## assistant @ 18:56:44 → tools: search_files
++
++
++
++## tool result (search_files) @ 18:56:45 — 6743 chars (body not exported)
++
++## assistant @ 18:57:33 → tools: patch
++
++
++
++## tool result (patch) @ 18:57:34 — 2054 chars (body not exported)
++
++## assistant @ 18:58:20 → tools: patch
++
++
++
++## tool result (patch) @ 18:58:21 — 1766 chars (body not exported)
++
++## assistant @ 18:58:58 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 18:58:58 — 1088 chars (body not exported)
++
++## tool result (read_file) @ 18:58:58 — 26148 chars (body not exported)
++
++## assistant @ 19:00:14 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 19:00:15 — 25595 chars (body not exported)
++
++## assistant @ 19:01:52 → tools: read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 19:01:52 — 9210 chars (body not exported)
++
++## tool result (read_file) @ 19:01:52 — 10604 chars (body not exported)
++
++## tool result (read_file) @ 19:01:52 — 4789 chars (body not exported)
++
++## tool result (terminal) @ 19:01:52 — 201 chars (body not exported)
++
++## assistant @ 19:02:26 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 19:02:26 — 11870 chars (body not exported)
++
++## tool result (read_file) @ 19:02:26 — 14268 chars (body not exported)
++
++## assistant @ 19:03:18 → tools: execute_code, read_file, read_file, read_file
++
++
++
++## tool result (execute_code) @ 19:03:18 — 390 chars (body not exported)
++
++## tool result (read_file) @ 19:03:18 — 8709 chars (body not exported)
++
++## tool result (read_file) @ 19:03:18 — 10148 chars (body not exported)
++
++## tool result (read_file) @ 19:03:18 — 7673 chars (body not exported)
++
++## assistant @ 19:04:01 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:04:01 — 5281 chars (body not exported)
++
++## tool result (read_file) @ 19:04:01 — 6779 chars (body not exported)
++
++## tool result (read_file) @ 19:04:01 — 6991 chars (body not exported)
++
++## tool result (read_file) @ 19:04:01 — 7673 chars (body not exported)
++
++## assistant @ 19:04:58 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:04:58 — 2701 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 2770 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 3618 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 3351 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 3809 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 3376 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 3567 chars (body not exported)
++
++## tool result (read_file) @ 19:04:58 — 4300 chars (body not exported)
++
++## assistant @ 19:06:25 → tools: read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:06:25 — 1658 chars (body not exported)
++
++## tool result (read_file) @ 19:06:25 — 1948 chars (body not exported)
++
++## tool result (read_file) @ 19:06:25 — 1758 chars (body not exported)
++
++## tool result (read_file) @ 19:06:25 — 1240 chars (body not exported)
++
++## tool result (read_file) @ 19:06:25 — 2281 chars (body not exported)
++
++## tool result (read_file) @ 19:06:25 — 1361 chars (body not exported)
++
++## assistant @ 19:07:18 → tools: read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:07:18 — 2380 chars (body not exported)
++
++## tool result (read_file) @ 19:07:18 — 2226 chars (body not exported)
++
++## tool result (read_file) @ 19:07:18 — 3426 chars (body not exported)
++
++## tool result (read_file) @ 19:07:18 — 1948 chars (body not exported)
++
++## tool result (read_file) @ 19:07:18 — 2732 chars (body not exported)
++
++## tool result (read_file) @ 19:07:18 — 3897 chars (body not exported)
++
++## assistant @ 19:07:54 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:07:54 — 2055 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 1363 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 2190 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 1278 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 1514 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 2362 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 1744 chars (body not exported)
++
++## tool result (read_file) @ 19:07:54 — 1818 chars (body not exported)
++
++## assistant @ 19:08:46 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:08:46 — 1445 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 588 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 1048 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 1406 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 714 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 1030 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 1664 chars (body not exported)
++
++## tool result (read_file) @ 19:08:46 — 1048 chars (body not exported)
++
++## assistant @ 19:09:28 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:09:28 — 1286 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1008 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1689 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1042 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1597 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1429 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1171 chars (body not exported)
++
++## tool result (read_file) @ 19:09:28 — 1104 chars (body not exported)
++
++## assistant @ 19:10:15 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 19:10:15 — 1646 chars (body not exported)
++
++## tool result (read_file) @ 19:10:15 — 2579 chars (body not exported)
++
++## tool result (read_file) @ 19:10:15 — 1617 chars (body not exported)
++
++## tool result (read_file) @ 19:10:15 — 1739 chars (body not exported)
++
++## tool result (read_file) @ 19:10:15 — 3140 chars (body not exported)
++
++## assistant @ 19:10:52 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:10:52 — 1302 chars (body not exported)
++
++## assistant @ 19:13:14
++
++# VERIFY-O2 — adversarial grade of S0-03 round 2
++
++## Verdict
++
++NOT-READY — reproduced static and loopback evidence finds six bypasses in the proposed checker/exporter. No OmniRoute/model/bridge request was made and Hermes/buzz-acp were not launched. The four-test suite passes, but it does not cover these bypasses. Blocking set: V-O2-1 through V-O2-6.
++
++Cheap path: repair the recursive credential screen, bind the completed tool call to the prompt's exact terminal request and ordering, remove or verify the collector truncation, validate RFC3339 offset-awareness before comparing, validate `pid` as a positive integer that belongs to the captured process record, and require both call-log rows to be POST requests. Add independent tests and rerun the listed suite plus this mutation campaign. Coordinator-owned after code repair: real A/B/negative capture, check result class flip from EXPIRED, and result remint.
++
++Scope: pin d12fc13 (`<opaque-redacted>`). All observations below concern those bytes. I used archive scratch copies at `../scratch/o2-pin` and `../scratch/o2-parent`; the live lane tree was not restored, stashed, or mutated. The two staged files are lane instructions, not this grade.
++
++## Item 0 — identity and mechanical gates
++
++Verified file identity at the pin:
++
++| path | blob | lines |
++|---|---:|---:|
++| `proofs/S0-03/check_omniroute_roundtrip.py` | `143bc57c…` | 824 |
++| `proofs/S0-03/hermes/config.yaml` | `b05f021e…` | 50 |
++| `proofs/S0-03/spec.json` | `05b394d6…` | 54 |
++| `proofs/S0-03/tools/pc/run_s0_03_legs.sh` | `fddb1505…` | 313 |
++| `proofs/S0-03/tools/pc/collect_leg.sh` | `dd441844…` | 175 |
++| `proofs/S0-03/tools/pc/direct_responses_probe.py` | `e4978382…` | 285 |
++| `proofs/S0-03/tools/pc/hermes_env_names.py` | `80c70511…` | 148 |
++| `tests/test_s0_03_omniroute.py` | `ca57bbd1…` | 1734 |
++
++Reproduced gates:
++
++* Direct suite, with `S0_01_VENUE=pc`, `S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`, and `S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`: `216 passed in 37.49s` across `tests/test_s0_03_omniroute.py`, `test_spec_probe_schemas.py`, `test_validate_ledger.py`, and `test_proof_runner.py`.
++* `python -m pyflakes` over the three S0-03 Python tools/checker: rc 0. `bash -n` over both PC shell tools: rc 0.
++* `python scripts/validate-ledger integrity --root .`: rc 0, reports `S0-03 EXPIRED`; no live evidence/result is minted.
++* `ap_screen.py` over the five S0-03 source files: 3 AP-1 hits, all one-time environment defaults (`S0_03_BASE_URL`, `S0_03_KEY_FILE`, `PROC_ROOT`), not admission logic. Test scan: four documented AF-AP-34/59 tokens in the test that forbids name-based process killing.
++* `report_lint.py` on O2-report with the brief's three maps: rc 0, `51 refs — OK 1, MISS 0, UNCHECKABLE 11, UNRESOLVED 39`. With the fuller local map set I used for spot-checking, it found one mechanical MISS: the `pc_launch.py` 293-294 citation is described as a rewrite anchored on `s0-01-scripted/…`, while the cited line carri
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 766938,
++  "output_tokens": 114333,
++  "cache_read_tokens": 12979456,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 74704,
++  "total_tokens": 13860727,
++  "api_calls": 104,
++  "model": "codex/gpt-5.5-xhigh",
++  "provider": "custom",
++  "session_id": "20260908_181620_43e846",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
