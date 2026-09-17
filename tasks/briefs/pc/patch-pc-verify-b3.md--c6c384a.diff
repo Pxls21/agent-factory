@@ -1,0 +1,2382 @@
+diff --git a/scripts/report_lint.py b/scripts/report_lint.py
+index 2f8a554..3e35867 100755
+--- a/scripts/report_lint.py
++++ b/scripts/report_lint.py
+@@ -19,6 +19,12 @@ are read at --rev (default: the working tree). The report line's own CLAIM TOKEN
+   MISS         the cited lines contain none of the claim tokens (points at a comment, a blank line, another function)
+   UNCHECKABLE  the report line carries no claim token to test against (the ref is not proven, only stated)
+ Exit 1 when any MISS exists. NEAR and UNCHECKABLE never pass silently: they are counted in the summary line.
++`--min-refs N` exits 1 when fewer than N refs resolve OK: a report with no machine-checkable ref lints clean by
++construction (MISS 0 over nothing), so a checkpoint gates on a floor, never on the MISS count alone.
++`alias@<sha>:NN` pins ONE reference to a git revision (a PIN-era line cited after the file moved on); token matching is
++case-insensitive (a prose FIFO / TOCTOU matches the code's fifo / toctou); every MISS row ends with the fix hint. A lane
++fixes MISSes for at most THREE rounds, then pastes the summary and stops — the bar is the floor plus the paste, never a
++"MISS 0" chased forever (N5k, 2026-09-14: 47 minutes and 20 turns relocating references that were already right).
+ Heuristic by design — it proves nothing about a report; it removes the class of reference a reader cannot trust.
+ """
+ from __future__ import annotations
+@@ -29,7 +35,10 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
+-REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?):(\d+)(?:-(\d+))?(?![\w-])")
++REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?)(?:@([0-9a-f]{7,40}))?:(\d+)(?:-(\d+))?(?![\w-])")
++FIX_HINT = ("fix: if the cited line is RIGHT, add one backticked identifier copied from it to this report line; "
++            "if the number is wrong, correct it; a line that existed only at an older revision is written as "
++            "alias@<sha>:NN (checked at that revision) or in words, never as a bare alias:NN")
+ TOKEN_RES = [
+     re.compile(r"`([^`]{4,})`"),
+     re.compile(r"\b(def\s+\w{3,}|class\s+\w{3,})"),
+@@ -63,36 +72,38 @@ def _claim_tokens(line: str, ref_text: str) -> list[str]:
+ 
+ def lint(report: Path, maps: dict[str, str], rev: str | None, tolerance: int, root: Path):
+     basenames = {Path(v).name: v for v in maps.values()}
+-    cache: dict[str, list[str] | None] = {}
++    cache: dict[tuple, list[str] | None] = {}
+     rows = []
+     for lineno, line in enumerate(report.read_text(errors="replace").splitlines(), 1):
+         for m in REF_RE.finditer(line):
+-            key, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
+-            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or rev else None)
+-            if path is None or (not rev and not (root / path).is_file()):
++            key, ref_rev, a, b = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
++            at = ref_rev or rev   # `alias@<sha>:NN` pins ONE ref to a revision (a PIN-era line cited after the file moved on)
++            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or at else None)
++            if path is None or (not at and not (root / path).is_file()):
+                 continue  # not a file reference we can resolve (a time, a ratio, a URL port ...)
+-            if path not in cache:
+-                cache[path] = _read_file(path, rev, root)
+-            src = cache[path]
++            if (path, at) not in cache:
++                cache[(path, at)] = _read_file(path, at, root)
++            src = cache[(path, at)]
+             if src is None:
+-                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {rev or 'worktree'}"))
++                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {at or 'worktree'}"))
+                 continue
+             toks = _claim_tokens(line, m.group(0))
+             if not toks:
+                 rows.append((lineno, m.group(0), "UNCHECKABLE", "no claim token on the report line"))
+                 continue
+             lo, hi = max(1, min(a, b)), min(len(src), max(a, b))
+-            cited = "\n".join(src[lo - 1:hi])
+-            if any(t in cited for t in toks):
++            cited = "\n".join(src[lo - 1:hi]).lower()   # case-insensitive: a prose FIFO / TOCTOU / READ matches the code's spelling
++            ltoks = [t.lower() for t in toks]
++            if any(t in cited for t in ltoks):
+                 rows.append((lineno, m.group(0), "OK", ""))
+                 continue
+             near_lo, near_hi = max(1, lo - tolerance), min(len(src), hi + tolerance)
+-            near = "\n".join(src[near_lo - 1:near_hi])
+-            if any(t in near for t in toks):
++            near = "\n".join(src[near_lo - 1:near_hi]).lower()
++            if any(t in near for t in ltoks):
+                 rows.append((lineno, m.group(0), "NEAR", f"a claim token sits within {tolerance} line(s) of the range"))
+             else:
+                 snippet = src[lo - 1].strip()[:70] if lo <= len(src) else "<beyond EOF>"
+-                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}"))
++                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}; " + FIX_HINT))
+     return rows
+ 
+ 
+@@ -103,6 +114,9 @@ def main(argv=None) -> int:
+     ap.add_argument("--rev", default=None, help="git revision to read the cited files at (default: the working tree)")
+     ap.add_argument("--tolerance", type=int, default=1)
+     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
++    ap.add_argument("--min-refs", type=int, default=0,
++                    help="fail (rc 1) when fewer than N refs resolve OK — a report that cites nothing lints clean "
++                         "by construction (B3's `0 refs — OK 0, MISS 0`, 2026-09-14); a checkpoint passes a floor")
+     ns = ap.parse_args(argv)
+     maps = {}
+     for item in ns.map:
+@@ -120,6 +134,9 @@ def main(argv=None) -> int:
+     print(f"report_lint: {total} refs — OK {counts['OK']}, NEAR {counts['NEAR']}, MISS {counts['MISS']}, "
+           f"UNCHECKABLE {counts['UNCHECKABLE']}, UNRESOLVED {counts['UNRESOLVED']}"
+           + (f" (at {ns.rev})" if ns.rev else " (worktree)"))
++    if counts["OK"] < ns.min_refs:
++        print(f"report_lint: FLOOR — OK {counts['OK']} < --min-refs {ns.min_refs}: the report cites too little to be graded")
++        return 1
+     return 1 if counts["MISS"] else 0
+ 
+ 
+diff --git a/tasks/briefs/pc/VENUE-MAP.md b/tasks/briefs/pc/VENUE-MAP.md
+index 814bc70..7d8375b 100644
+--- a/tasks/briefs/pc/VENUE-MAP.md
++++ b/tasks/briefs/pc/VENUE-MAP.md
+@@ -30,7 +30,15 @@ design, gates and report discipline.
+   OmniRoute key, any `~/.hermes/profiles/*/.env`, or any credential.
+ - Processes: kill only what you start, by pid (never `pkill`/`pgrep -f`); long gates in ONE foreground call; podman and runsc only
+   where the original brief's design requires them (build lanes: never). `kernel.dmesg_restrict=1` here and you are unprivileged.
++- Code intel: the dispatcher builds a graft index IN your tree at launch (`graft/INDEX.md`) and overlays the clone's current
++  `scripts/report_lint.py`. Semantic questions go to the instruments BEFORE any grep or whole-file read: `graft ask "<q>"`,
++  `graft skeleton <file>`, `bash scripts/ripwire_review.sh for|callers|impact|exercises <symbol>`, `python3 scripts/ap_screen.py <file>`,
++  the whole pack `bash scripts/lane_context.sh -q "<q>" -s <SYMBOL> -o pack.md <files>` (about 4 s); GitNexus blast radius against the
++  clone's index: `node /home/rocco/agent-factory/.gitnexus/run.cjs impact "<symbol>" --direction upstream --repo /home/rocco/agent-factory`
++  (line numbers = the clone HEAD, not your PIN). Read by line range from their answers.
+ - Report: the standing incremental rule applies (append each finished section to `$LANE_REPORT_DRAFT`). Your FINAL message is the
+   whole report, in the shape the original brief demands — FILE IDENTITY of the final bytes, red-before/green-after, the mutant table
+-  with a killer line per mutant, the class sweep, `report_lint` MISS 0 run LAST, the gate RESULT lines pasted verbatim, DISCREPANCIES,
++  with a killer line per mutant, the class sweep, `report_lint` run LAST under the BOUNDED rule (its `fix:` hints for at most three rounds, then the summary pasted — a `MISS 0` demand is a target, never a stop condition; AF-AP-76), the gate RESULT lines pasted verbatim, DISCREPANCIES,
+   NOT-done first-class, the process census, hygiene. Also write it to the report path the original brief names, inside your tree.
++- **Hermes's `terminal` tool caps ONE call at 420 s on this host (measured by lane A5l 2026-09-15: a `lane_gate.sh -n 2` over the checker set exceeded it before its RESULT line).** Size every gate call under the cap: `-n 1` twice rather than `-n 2` once; the four-file xdist run (~145 s on 4 workers) and the joint S0-01 set (~200 s on 8 workers) fit; a longer suite is split into halves, each ONE foreground call, both summaries pasted.
++- **A test count in a brief or a report carries its SET (2026-09-15).** `pc_suite.sh wait` prints `pytest-set: N files set=<sha12> — <files>` beside `pytest-summary:`; `lane_gate.sh`'s RESULT line carries `tests=<sha12>`; `bash scripts/pc_suite.sh set-id -- <files>` prints the id for any list (sha256 of the sorted list, order-blind). A floor you are handed without its set is a premise to bound, not a bar: re-collect on the PIN (`pytest --collect-only -q <files> | grep -c ::`) and paste the count WITH its set id. (The ledger's `1556 passed, 9 xfailed` was an 18-file run; VERIFY-CK14 item 10 quoted it for the 13-file `tests/test_s0_01_*.py` glob, which collects 1354 at b6483df.)
+diff --git a/tasks/briefs/pc/pc-verify-b3.md b/tasks/briefs/pc/pc-verify-b3.md
+new file mode 100644
+index 0000000..f3f791a
+--- /dev/null
++++ b/tasks/briefs/pc/pc-verify-b3.md
+@@ -0,0 +1,26 @@
++# PC continuation — VERIFY-B3 (the adversarial grade of S0-02 round 3, the landing c6c384a)
++
++PIN: c6c384a
++
++Role: adversarial-verifier. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
++
++## CONTINUATION (read second)
++This lane is the FIRST run of the grade — nothing precedes it; start at item 0.
++
++**The brief governs**: `tasks/briefs/s0-02-support/VERIFY-B3-brief.md` — READ IT WHOLE and follow it item by item (0-12). Your
++worktree IS `git archive c6c384a` plus the lane patch (the brief + this file); the lane's report `tasks/briefs/s0-02-support/B3-report.md`,
++the B3 lane brief, VERIFY-B2's report and the pack `tasks/briefs/s0-02-support/VERIFY-B3-pack.md` are IN the archive or the patch. Save
++your report at `tasks/briefs/s0-02-support/VERIFY-B3-report.md` inside your tree, draft after EACH item (the incremental rule), and
++return it whole as your final message.
++
++Venue notes specific to this grade:
++- You are on the PC: run `tests/test_s0_02_buzz_authz.py` directly with the venue exports
++  (`S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`);
++  `/home/rocco/venv-agent-factory/bin` FIRST on PATH; a SHORT absolute `--basetemp` under your lane's scratch dir; ONE foreground call
++  per run (the coordinator's PC count for this file: `137 passed`), twice, counts pasted verbatim.
++- The pinned Buzz source `/home/rocco/s0-01-pinned/buzz` is READ-ONLY: every regex attack of item 5 runs on a scratch COPY of the one
++  file. You never deliver to the live relay, never write relay membership, never read a role key; every key of item 3 is a throwaway
++  you mint on scratch and never print.
++- Every FIFO/hang probe under `timeout` and standalone, never through pytest.
++- Any other Stage 0 lane sharing this host: never touch its tree, `proofs/`, or `tests/test_s0_*` outside your own private copy; every
++  mutant on a scratch copy of your archive; kill only what you start, by pid.
+diff --git a/tasks/briefs/s0-02-support/VERIFY-B3-brief.md b/tasks/briefs/s0-02-support/VERIFY-B3-brief.md
+new file mode 100644
+index 0000000..995a10b
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/VERIFY-B3-brief.md
+@@ -0,0 +1,133 @@
++# VERIFY-B3 — adversarial grade of lane B3 (S0-02 round 3: closure is containment, the receipt typed at the producer, the key normalised first, D3 pinned as a limit, the tolerance bound, the removal receipt labelled — and the three brief items the lane's report never mentions)
++
++**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
++
++You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo
++agent-factory, branch claude/soundbox-kit-migration-iz1jwf. **PIN: `c6c384a`** — the S0-02 round-3 LANDING: the coordinator's harvest
++of lane B3's PC tree (PIN 887f341), a straight copy plus ONE coordinator touch (two unused imports removed from the test — the sandbox
++pyflakes), plus the coordinator's attested regeneration (item 8). FILE IDENTITY at the PIN (lines, sha256[:8]):
++`proofs/S0-02/check_buzz_authz.py` (765, `fc791273`) · `proofs/S0-02/tools/pc/deliver_event.py` (221, `a14c027b`) ·
++`proofs/S0-02/tools/build_fixtures.py` (549, `38ae5a69`) · `proofs/S0-02/spec.json` (26, `7cc99c95`) ·
++`proofs/S0-02/fixtures/PROVENANCE.md` (20, `23b1c09f`) · `proofs/schemas/spec.schema.json` (48, `f425996d`) ·
++`tests/test_s0_02_buzz_authz.py` (1599, `3bfc6703`); the eight regenerated `delivery.json` under `fixtures/evidence-{pass,blanket}/legs/`;
++the lane's report `tasks/briefs/s0-02-support/B3-report.md`; its transcript `transcripts/pc/pc-b3.md--887f341.md`.
++Grade the bytes of `git archive c6c384a` from a scratch copy under your lane's scratch dir; every mutant on scratch copies; every pytest
++run with an explicit SHORT absolute `--basetemp`, `/home/rocco/venv-agent-factory/bin` FIRST on PATH and the venue exports
++(`S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz` — the
++drift-window test `T:643` reads the pinned Buzz tree through `_buzz_src()` `T:102-117` and FAILS, never skips, when the declared checkout
++is absent; `T:37-38` names the env var and the sandbox default); kill only what you start, by pid; never background a run and stop; no
++outward actions; no live relay delivery, membership write or role-key read — the live legs are the coordinator's; never read, print or
++commit a credential (the identities files hold TEST identities — cite pubkeys only; every key you mint for item 3 is a throwaway on
++scratch). Authorization: the owner's own Buzz authorization proof under test on the owner's system. Do NOT spawn subagents.
++
++**Inputs (read in this order):** VERIFY-B2's report `tasks/briefs/s0-02-support/VERIFY-B2-report.md` (the round's contract: F1-F5
++and the observations) · the lane brief `tasks/briefs/s0-02-b3-buzz-authz-closure-is-containment-the-receipt-typed-the-key-normalised-first.md`
++(NINE pinned design items — the report covers six) · the lane's report (prose: `line ~120`, `line 651-vicinity`; no identity table; no
++mutant list; `Items built (1–9)` over six subsections) · the pack `tasks/briefs/s0-02-support/VERIFY-B3-pack.md` (graft skeletons,
++impact, callers, the registry screen — a start, never a verdict) · the pinned Buzz source (read-only) · `docs/INCIDENT-LOG.md`
++(AF-AP-56 attested inputs, AF-AP-62, AF-AP-65, AF-AP-72, AF-AP-73).
++
++## Item 0 — the mechanical gates, pasted
++The coordinator's gates on these bytes: sandbox `RESULT: rev=887f341ced9a files=19 deleted=0 runs=2 identical=yes rc=0
++summary="137 passed in 86.36s (0:01:26) 137 passed in 70.82s (0:01:10)"`; the PC union run on the landed tip `4 failed, 1561 passed,
++9 xfailed in 232.41s` (8 workers, 20260914T121247Z-c6c384a) — the four reds are `tests/test_proof_status.py`'s S0-11 re-acceptance class
++(item 8), none in this suite. Agree or disagree by your own run of `tests/test_s0_02_buzz_authz.py` (ONE foreground call, twice, counts
++pasted). Then the report-discipline gap: the B3 report lints `report_lint: 0 refs — OK 0, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0
++(at c6c384a)` — machine-clean because it cites NOTHING machine-checkable (brief item 9 demanded every `file:line` from `grep -n` on the
++final bytes with MISS 0; round 2's report had the same gap, VERIFY-B2 item 0). Resolve every claim in the report against the PIN
++yourself and list the claims with no anchor. `ap_screen.py` over the four production sources (paste; the coordinator's run: AP-32 ×3 —
++the specimen/payload sha256 derivations; AF-AP-40 ×1 — `build_fixtures.py:428 if root.exists():`, a check-then-act on the fixture
++root, classify by RUN; AP-1 ×1 — `deliver_event.py:78`, the resolve-once design, classify) and `--tests` (AF-AP-34 ×4 = the test's own
++scanner words at `T:1467,1471`); pyflakes; `bash -n proofs/S0-02/tools/pc/run_s0_02_legs.sh`; `build_fixtures.py --check`
++(`fixture-drift: none`); the FILE IDENTITY table against the PIN; the external-command census (VERIFY-B1 F23) by pid.
++
++## Items
++1. **F1 — containment (`C:102-118` `_require_real_dir`; `C:651-660` the root; `C:155-171` `_leg_closure`; `C:629-650`
++   `_has_any_timeline`; `C:96` `_require_file = s0_01._require_file` → `proofs/S0-01/check_acp_conformance.py:198-208` →
++   `proofs/S0-01/pins.py:19-26` `require_regular_file`, `os.stat(follow_symlinks=False)` + `S_ISREG`).** Reproduce the B2 attack first
++   (the expected leg `legs/neg-stale` replaced by a symlink to a complete outside copy → rc 1, the named reason). Then: a symlinked ROOT;
++   a symlinked replay sub-leg; a symlinked FILE inside a leg (`delivery.json` → an outside file: which guard refuses it, which message);
++   a HARDLINKED file inside a leg (`S_ISREG` passes — state whether shared bytes are inside or outside the containment claim, and why);
++   an extra regular file; a leftover `.probe/` directory (the runner makes and removes it, `R:163-166`; dotfiles ARE in `iterdir()`); an
++   EMPTY required file; a leg directory that is a FIFO (standalone under `timeout`, never through pytest); a leg name with a trailing
++   space; the replay leg with a third sub-leg, with `first` only, with both sub-legs symlinked; `membership.json` inside a PLAIN leg;
++   the revoked leg without it (the named `missing`); the two committed bundles PASS unchanged. The brief's item 1 also demanded a
++   `path.resolve()` ancestor belt per node: `.resolve(` occurs at `C:660` only (the root) — decide whether the lstat chain (root →
++   leg → sub-leg → every file) makes the belt redundant, name the one node class it would still catch if any (a root reached THROUGH a
++   symlinked parent is the operator's own path — say so or refute), and rule the brief's `RESOLVE-DROPPED` mutant EQUIVALENT or a
++   missing belt with its red test. The table `C:143-152` against the PRODUCERS, pasted as your own enumeration: `fixture.json`,
++   `delivered-event.json`, `t0.json`, `delivery.json` from `deliver_event.py:206-212`; `timeline.jsonl`, `buzzacp.log` from
++   `R:115,117`; `membership.json` from `R:185`. Then `test_leg_file_table_matches_the_runner_writes` (`T:1373-1465`): what does it
++   PARSE — the runner, the producer, both? A write it cannot see (a `tee`, a heredoc `cat > "$out/x"`, a `python3 -c` that opens a
++   file, an `mv` into the leg) planted in a scratch copy of the runner — red? If not, the test is a mirror of its own regex: say so
++   with the red test that would make it a gate.
++2. **F2 — the receipt typed at the producer (`D:118-163` `_normalise`; `type(blob["accepted"]) is bool` at `D:143`; the malformed
++   message `D:148`).** Direct in-process calls: `"false"`, `"true"`, `0`, `1`, `1.0`, `True`, `False`, `None`, the key absent, a non-JSON
++   body, an empty body, a JSON array, a 2xx with `accepted: false`, a 4xx/5xx with `accepted: true` — every outcome exact (five fields
++   always; `accepted` never truthy from a non-bool). `event_id_echoed`: an echoed id differing by case, by whitespace, an id echoed under
++   another key. Is `_normalise` the ONE writer of `delivery.json` (grep every writer: the runner, the builder `B`, tests)? Rebuild the
++   eight fixtures fresh on scratch and diff BYTES against the committed set. Then the consumer: a receipt `{accepted:false,
++   http_status:200, message:"malformed relay response: …"}` on a POSITIVE leg — the checker's leg verdict (find the receipt rule at
++   the PIN; reproduce that the leg FAILS with a reason naming the receipt, never a pass on `http_status`).
++3. **F3 — normalise, then refuse (`D:71-90` `_privkey`: `.strip().lower()` at `:78`, empty → `SystemExit` `:80`, the shape `:85-86`
++   "exactly 64 lowercase hex"; `main` calls `_privkey()` at `:182` before `_post` at `:203`).** Throwaway keys never printed: spaces
++   only; `\t\n` only; a valid key with surrounding whitespace and a trailing newline (normalised); 63 chars; 65 chars; UPPERCASE hex
++   (lowercased → accepted: intended? state it); an inner space; a `0x` prefix. The network-ordering claim by BEHAVIOUR: an unreachable
++   `--relay-http` (a closed port on 127.0.0.1 — or a listening socket of yours that must see nothing) with an invalid key → the shape
++   `SystemExit` and NO connection attempt (`strace -e trace=connect` or your socket's log); `T:1588`
++   `test_privkey_normalises_then_refuses_before_any_network_action` asserts SOURCE ORDER — state whether it is a mirror and what a
++   behavioural test needs (the red test).
++4. **F4 — D3 pinned as a documented limit (`T:599-614`).** Reproduce that the three-statement plant is NOT caught and that the control
++   is written so the claim cannot silently widen (which assertion dies if the scanner grows to catch it — is that the intended
++   direction?). Then the direct-expression scanner itself with VERIFY-B2 item 2's shapes (a helper `fn age(e)`, a bound `now` two
++   statements earlier, `saturating_sub`, a `Duration` comparison, the other direction, `9000` vs `900`, a `match` arm): which evade; and
++   quote the test docstring and the report's D3 sentence side by side — is the stated class EXACTLY the class the scanner proves?
++5. **The tolerance bound (`C:121` `RELAY_DRIFT_WINDOW_S = 900` — typed, the comment cites `ingest.rs:2224`; `C:124`
++   `LEG_CLOCK_TOLERANCE_S = 120`; `C:127` `REPLAY_CLOCK_TOLERANCE_S = 150`; `T:643-660`
++   `test_relay_drift_window_matches_the_checker_constant` reads `const MAX_TIMESTAMP_DRIFT_SECS: i64 = N;` from the pinned tree).**
++   Attack the regex (`T:646`) on a scratch copy of the pinned `ingest.rs`: the constant as `u64`, as `900_000`, as an expression, declared
++   twice, commented out — which passes a wrong value. Brief item 6 demanded TWO assertions: `REPLAY + LEG < RELAY` (joint satisfiability)
++   and the runner's replay gap constant `<= REPLAY_CLOCK_TOLERANCE_S` (grep the gap in `R`; cite it) — which exists at the PIN, which is
++   missing (each missing one is a finding with its red test; the `TOLERANCE-9000` mutant must die by name). `T:1033`
++   `test_replay_second_subleg_uses_only_the_wider_replay_tolerance`: the tolerance applied to `first`; `second/t0.json` carrying the
++   first's t0; 149 s / 151 s; a replay whose second delivery is EARLIER than the first.
++6. **F5 — the removal receipt labelled (`C:547-555` the per-leg line, `C:718` the bundle line; `spec.json:3-4` `limits.removal_receipt`;
++   `spec.schema.json:10-12` — `limits` is an object of strings with OPEN keys; `fixtures/PROVENANCE.md`).** Does `T:702` pin the KEY
++   `removal_receipt` or only the sentence (a `limits.anything` with the sentence passes the schema — say what the test binds)? The
++   sentence mutated in ONE of its two occurrences (the lane mutated both) — which test dies? The report's self-attack 3 makes three
++   claims — the label is appended only after a 2xx relay response, only when the removal precedes delivery, and the revoked leg never
++   PASSES without its receipt — reproduce each conjunct by RUN (a revoked leg whose `membership.json` is empty, `{}`, a symlink, a bool
++   `at_epoch_s`, `at_epoch_s == t0`, one second after t0, a removal for another sender, for another channel — B2's item-4 set re-run).
++   State the trust boundary of the receipt exactly (unauthenticated bytes; what the checker verifies, what it cannot).
++7. **Items 7, 8, 9 of the build brief — absent from the report.** (7) the B2 report carries NO stamp line (`head -3` of
++   `tasks/briefs/s0-02-support/B2-report.md` at the PIN) — NOT done; (8) the report offers two red controls and one label mutation as its
++   only mutation evidence — no named mutants, no killer lines; (9) no identity table, no lint, no `ap_screen` paste, no pack. Grade each
++   NOT-done unless the tree shows otherwise; the `Items built (1–9)` heading over six items is itself a report-discipline finding.
++8. **The attested regeneration (the coordinator's, inside the PIN).** `proofs/schemas/spec.schema.json` gained `limits` → the five minted
++   `proofs/*/result.json` regenerated (AF-AP-56) → the owner's signed `accepted/S0-11` tag no longer matches. Confirm at the PIN:
++   `python3 scripts/validate-ledger integrity --root .` PRESENT ×5; `python3 scripts/ledger-gen --root .` then `git diff --exit-code
++   proofs/ledger.json` clean; `check-proof-status.py` reports the re-acceptance line for S0-11 and nothing else; `tests/test_proof_status.py`
++   with a SHORT `--basetemp`: which tests fail and by WHICH assertion (expected three, the committed-state re-acceptance class; read the
++   assertion, never the count — a long basetemp adds gpg-socket false reds, a venue fact).
++9. **Mutants ≥ 30 in total**, every one on a scratch copy, the killer line pasted, by-construction survivors stated: the brief's ten named
++   (`LEG-SYMLINK`, `ACCEPTED-TRUTHINESS`, `KEY-WHITESPACE`, `ROOT-SYMLINK`, `LEG-EXTRA-FILE`, `RESOLVE-DROPPED`, `LSTAT-TO-ISDIR`,
++   `TYPE-TO-ISINSTANCE-INT`, `TOLERANCE-9000`, `LABEL-DROPPED`), B2's 20 rows from YOUR reconstruction (never the lane's driver), the
++   attacks above that no test kills.
++10. **The 18-class re-scan** over the seven files by RUN; every `if <field> == <literal>:` without a raising other arm (AF-AP-65); every
++    evidence read through the regular-file guard — enumerate the guarded reads (`C:171,379,499,506,665` and the rest) and every
++    `read_text()` / `open(` / `json.load` on evidence bytes NOT behind it.
++11. **Discipline** — `file:line` by `sed -n` on the PIN; `report_lint.py` on your own report with `--rev c6c384a --map
++    C=proofs/S0-02/check_buzz_authz.py --map T=tests/test_s0_02_buzz_authz.py --map O=proofs/S0-02/oracle/denial_table.py --map
++    B=proofs/S0-02/tools/build_fixtures.py --map D=proofs/S0-02/tools/pc/deliver_event.py --map R=proofs/S0-02/tools/pc/run_s0_02_legs.sh`
++    pasted (MISS 0, UNRESOLVED 0); the process census by pid.
++12. **The design.** Is the synthetic proof now the PRODUCER's shape end to end — the `.probe` sub-leg and the `--reuse` replay path
++    (`R:145-166`), the flipped-signature refusal (`D:191`), the receipt the producer writes vs the receipt the checker grades? What must
++    the live eight-leg capture show (RUST_LOG through P5c's `--env-set s0-02`, the role keys, the owner-run membership removal — the
++    coordinator's and the owner's), and is anything left that is the LANE's? What must round 4 do, if anything, for S0-02 to be
++    MERGE-READY?
++
++## Report
++Write it to `tasks/briefs/s0-02-support/VERIFY-B3-report.md` inside your tree, draft after EACH item, and return it whole as your final
++message. Findings: ALL, no severity filtering, each with `file:line` on the PIN, expected vs observed, the failing input, the minimal
++fix, the exact red test, SOLID/UNSURE; reproduced vs reviewed vs skipped; verdict MERGE-READY or NOT-READY with the blocking set and the
++cheapest path; the items that are the coordinator's or the owner's named as such.
+diff --git a/tasks/briefs/s0-02-support/VERIFY-B3-pack.md b/tasks/briefs/s0-02-support/VERIFY-B3-pack.md
+new file mode 100644
+index 0000000..0d90cb8
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/VERIFY-B3-pack.md
+@@ -0,0 +1,485 @@
++# lane context pack — 1a1ec4b 2026-09-14T12:30Z
++files: proofs/S0-02/check_buzz_authz.py proofs/S0-02/tools/build_fixtures.py proofs/S0-02/tools/pc/deliver_event.py tests/test_s0_02_buzz_authz.py
++symbols: _leg_closure _require_real_dir test_evidence_root_replaced_by_a_symlink_is_refused test_extra_regular_file_inside_a_leg_is_refused test_leg_file_table_matches_the_runner_writes test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused test_missing_required_file_inside_a_leg_is_named test_normalise_takes_accepted_only_when_upstream_is_bool test_privkey_normalises_then_refuses_before_any_network_action test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance test_replay_leg_must_carry_exactly_the_two_subleg_directories test_replay_subleg_replaced_by_a_symlink_is_refused test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened
++
++## proofs/S0-02/check_buzz_authz.py
++### graft skeleton
++
++graft skeleton — proofs/S0-02/check_buzz_authz.py
++- L64-L76  class Anchors  class Anchors
++- L65-L68  method __init__  def __init__(self, identities_path: Path, fixtures_dir: Path, synthetic: bool)
++- L71-L72  method default  def default(cls)
++- L75-L76  method from_synthetic_root  def from_synthetic_root(cls, root: Path)
++- L79-L85  function _load_by_path  def _load_by_path(name: str, path: Path)
++- L102-L117  function _require_real_dir  def _require_real_dir(path: Path, leg: str, name: str) -> Path
++- L155-L167  function _leg_closure  def _leg_closure(leg_dir: Path, leg: str, expected: frozenset)
++- L170-L175  function _read_json  def _read_json(path: Path, leg: str, name: str)
++- L178-L190  function _prompt_frames  def _prompt_frames(entries, leg)
++- L193-L196  function _prompt_text  def _prompt_text(frame) -> str
++- L199-L201  function _check_masking  def _check_masking(log_text: str, leg: str)
++- L204-L253  function _check_delivered_event  def _check_delivered_event(leg_dir: Path, leg: str, fixture: dict, identities: dict) -> dict
++- L256-L295  function _check_freshness  def _check_freshness(leg_dir: Path, leg: str, fixture: dict, delivered: dict)
++- L298-L360  function _check_delivery  def _check_delivery( leg_dir: Path, leg: str, delivered: dict, fixture: dict, expected_accepted: "bool | None" = None, ) -> dict
++- L368-L406  function _observe_all  def _observe_all(leg_dir: Path, leg: str, delivery: dict, fixture_name: str) -> frozenset
++- L409-L411  function _observed_key  def _observed_key(found: frozenset) -> str
++- L414-L448  function _check_named_observable  def _check_named_observable(leg: str, fixture_name: str, found: frozenset, delivery: dict)
++- L451-L454  function _turns  def _turns(leg_dir: Path, leg: str)
++- L457-L558  function _check_leg  def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anchors: "Anchors")
++- L561-L626  function _check_replay  def _check_replay(root: Path, identities: dict, anchors: "Anchors")
++- L629-L648  function _has_any_timeline  def _has_any_timeline(root: Path) -> bool
++- L651-L725  function _check_bundle_uncapped  def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str: # The root itself must be a real directory, not a symlink: resolve() would # happily re-anchor every later containment check under the symlink target.
++- L728-L731  function check_bundle  def check_bundle(root: Path, anchors: "Anchors | None" = None) -> str
++- L734-L761  function main  def main(argv) -> int
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-02/tools/build_fixtures.py
++### graft skeleton
++
++graft skeleton — proofs/S0-02/tools/build_fixtures.py
++- L52-L58  function _load_module  def _load_module(name: str, path: Path)
++- L61-L63  function _load_nostr_verify  def _load_nostr_verify()
++- L83-L85  function _specimen_privkey  def _specimen_privkey(fixture_name: str) -> str
++- L88-L89  function _identities  def _identities() -> dict
++- L176-L180  function _oracle  def _oracle()
++- L183-L185  function _tags  def _tags(ids: dict) -> list
++- L188-L252  function build_one  def build_one(spec: dict, ids: dict, built: dict) -> dict
++- L255-L260  function build_all  def build_all(ids: dict | None = None) -> dict
++- L263-L264  function _serialise  def _serialise(fixture: dict) -> str
++- L283-L284  function _bundle_privkey  def _bundle_privkey(bundle: str, role: str) -> str
++- L287-L294  function _bundle_identities  def _bundle_identities(bundle: str) -> dict
++- L297-L302  function _iso  def _iso(offset_ms: int) -> str
++- L305-L338  function _timeline  def _timeline(with_turn: bool, prompt_text: str) -> str
++- L341-L352  function _log  def _log(extra_lines) -> str
++- L355-L361  function _raw_delivery_response  def _raw_delivery_response(*, accepted: bool, event_id: str, message: str) -> str
++- L364-L401  function _write_leg  def _write_leg(leg_dir: Path, fixture: dict, ids: dict, bundle: str, *, accepted: bool, message: str, with_turn: bool, log_extra, membership: dict | None = None)
++- L407-L420  function _tamper  def _tamper(leg_dir: Path, pos_delivered: dict) -> None
++- L423-L506  function build_bundle  def build_bundle(bundle: str, root: Path) -> None
++- L448-L449  function leg  def leg(name)
++- L509-L545  function main  def main(argv) -> int
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 3 hits over 1 files ---
++AP-32: 2
++    proofs/S0-02/tools/build_fixtures.py:85: return hashlib.sha256(f"{SPECIMEN_SEED}/{fixture_name}".encode()).hexdigest()
++    proofs/S0-02/tools/build_fixtures.py:284: return hashlib.sha256(f"{SPECIMEN_SEED}/bundle/{bundle}/{role}".encode()).hexdigest()
++AF-AP-40: 1
++    proofs/S0-02/tools/build_fixtures.py:428: if root.exists():
++
++## proofs/S0-02/tools/pc/deliver_event.py
++### graft skeleton
++
++graft skeleton — proofs/S0-02/tools/pc/deliver_event.py
++- L59-L65  function _load  def _load(name: str, path: Path)
++- L71-L89  function _privkey  def _privkey() -> str
++- L92-L103  function _nip98_header  def _nip98_header(privkey: str, url: str, method: str, body: bytes) -> str
++- L106-L115  function _post  def _post(url: str, body: bytes, header: str) -> tuple
++- L118-L162  function _normalise  def _normalise(status: int, raw: str, event_id: str) -> dict
++- L165-L217  function main  def main(argv) -> int
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 2 hits over 1 files ---
++AP-1: 1
++    proofs/S0-02/tools/pc/deliver_event.py:78: key = os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()
++AP-32: 1
++    proofs/S0-02/tools/pc/deliver_event.py:95: payload = hashlib.sha256(body).hexdigest()
++
++## tests/test_s0_02_buzz_authz.py
++### graft skeleton
++
++graft skeleton — tests/test_s0_02_buzz_authz.py
++- L42-L46  function _load  def _load(name: str, path: Path)
++- L60-L64  function _bundle  def _bundle(tmp_path: Path, src: Path = PASS_BUNDLE) -> Path
++- L67-L70  function _run_checker  def _run_checker(bundle_root: Path, legs: str = "legs")
++- L73-L77  function _expect_failure  def _expect_failure(bundle_root: Path, needle: str, legs: str = "legs")
++- L80-L81  function _leg  def _leg(bundle_root: Path, name: str) -> Path
++- L84-L87  function _set_delivery_outcome  def _set_delivery_outcome(blob: dict, *, accepted: bool, status: int, echoed: bool) -> None
++- L90-L93  function _set_delivery_event_id  def _set_delivery_event_id(blob: dict, event_id: str) -> None
++- L96-L99  function _rewrite  def _rewrite(path: Path, mutate)
++- L102-L117  function _buzz_src  def _buzz_src() -> Path
++- L123-L126  function test_committed_fixtures_equal_a_fresh_build  def test_committed_fixtures_equal_a_fresh_build()
++- L129-L132  function test_fixture_build_is_byte_identical_across_two_runs  def test_fixture_build_is_byte_identical_across_two_runs()
++- L135-L161  function test_every_bundle_delivery_uses_the_real_producer_normalizer  def test_every_bundle_delivery_uses_the_real_producer_normalizer()
++- L164-L168  function test_every_named_fixture_exists_and_names_itself  def test_every_named_fixture_exists_and_names_itself()
++- L171-L176  function test_positive_specimen_verifies  def test_positive_specimen_verifies()
++- L179-L183  function test_bad_signature_specimen_is_rejected_by_verify_event  def test_bad_signature_specimen_is_rejected_by_verify_event()
++- L186-L191  function test_bad_signature_specimen_differs_from_positive_only_in_the_signature  def test_bad_signature_specimen_differs_from_positive_only_in_the_signature()
++- L194-L199  function test_replayed_specimen_is_the_positive_event_id  def test_replayed_specimen_is_the_positive_event_id()
++- L202-L209  function test_stale_specimen_created_at_clears_the_relay_window  def test_stale_specimen_created_at_clears_the_relay_window()
++- L212-L216  function test_self_authored_specimen_names_the_agent_identity  def test_self_authored_specimen_names_the_agent_identity()
++- L219-L225  function test_unauthorized_specimen_is_not_a_known_identity  def test_unauthorized_specimen_is_not_a_known_identity()
++- L228-L244  function test_no_committed_fixture_carries_a_private_key  def test_no_committed_fixture_carries_a_private_key()
++- L234-L241  function walk  def walk(node, where)
++- L247-L253  function test_every_negative_fixture_carries_its_own_expected_failure_block  def test_every_negative_fixture_carries_its_own_expected_failure_block()
++- L256-L263  function test_the_four_seed_reasons_are_all_present  def test_the_four_seed_reasons_are_all_present()
++- L266-L272  function test_not_allowlisted_specimen_is_relay_accepted_user2  def test_not_allowlisted_specimen_is_relay_accepted_user2()
++- L278-L287  function test_pinned_tree_is_the_locked_commit  def test_pinned_tree_is_the_locked_commit()
++- L290-L297  function test_pinned_tree_non_git_path_is_a_named_failure  def test_pinned_tree_non_git_path_is_a_named_failure(tmp_path, monkeypatch)
++- L301-L312  function test_oracle_row_line_still_carries_its_pattern  def test_oracle_row_line_still_carries_its_pattern(row)
++- L315-L319  function test_oracle_secondary_silent_drop_row_is_pinned_too  def test_oracle_secondary_silent_drop_row_is_pinned_too()
++- L322-L340  function test_oracle_prose_file_line_references_exist  def test_oracle_prose_file_line_references_exist()
++- L343-L420  function _rust_code_lines  def _rust_code_lines(text: str) -> list[tuple[int, str]]
++- L423-L439  function _production_verify_sites  def _production_verify_sites() -> list[str]
++- L442-L454  function _channel_event_region  def _channel_event_region(relay_text: str) -> tuple[int, int]
++- L457-L462  function _copy_buzz_acp_src  def _copy_buzz_acp_src(tmp_path: Path) -> Path
++- L465-L478  function test_verify_site_scan_rejects_a_channel_path_plant  def test_verify_site_scan_rejects_a_channel_path_plant(tmp_path, monkeypatch)
++- L481-L490  function test_verify_site_scan_finds_an_aliased_call  def test_verify_site_scan_finds_an_aliased_call(tmp_path, monkeypatch)
++- L493-L505  function test_verify_site_scan_ignores_cfg_test_items_and_comments  def test_verify_site_scan_ignores_cfg_test_items_and_comments(tmp_path, monkeypatch)
++- L508-L530  function test_buzz_acp_performs_no_signature_check_on_a_channel_event  def test_buzz_acp_performs_no_signature_check_on_a_channel_event()
++- L533-L545  function test_buzz_acp_has_no_per_event_freshness_constant_for_channel_events  def test_buzz_acp_has_no_per_event_freshness_constant_for_channel_events()
++- L548-L560  function _is_wall_clock_freshness_rule  def _is_wall_clock_freshness_rule(line: str) -> bool
++- L563-L582  function test_buzz_acp_has_no_wall_clock_freshness_rule_on_the_channel_event_path  def test_buzz_acp_has_no_wall_clock_freshness_rule_on_the_channel_event_path()
++- L585-L596  function test_wall_clock_freshness_scan_rejects_an_inline_rule  def test_wall_clock_freshness_scan_rejects_an_inline_rule()
++- L599-L618  function test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened  def test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened()
++- L621-L640  function test_shipped_respond_to_and_subscription_rule_defaults_do_not_reference_timestamp  def test_shipped_respond_to_and_subscription_rule_defaults_do_not_reference_timestamp()
++- L643-L648  function test_relay_drift_window_matches_the_checker_constant  def test_relay_drift_window_matches_the_checker_constant()
++- L651-L656  function test_debug_canary_line_exists_in_the_pinned_source  def test_debug_canary_line_exists_in_the_pinned_source()
++- L659-L661  function test_every_negative_row_has_a_distinct_observable_key  def test_every_negative_row_has_a_distinct_observable_key()
++- L664-L670  function test_revoked_row_declares_its_shared_text_as_a_discrepancy  def test_revoked_row_declares_its_shared_text_as_a_discrepancy()
++- L674-L676  function test_rows_without_a_buzz_acp_observable_say_so  def test_rows_without_a_buzz_acp_observable_say_so(fixture)
++- L682-L688  function test_pass_bundle_passes  def test_pass_bundle_passes()
++- L691-L699  function test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output  def test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output()
++- L702-L710  function test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance  def test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance()
++- L713-L716  function test_blanket_bundle_is_a_blanket_rejection  def test_blanket_bundle_is_a_blanket_rejection()
++- L719-L730  function test_spec_negative_leg_reason_is_the_exact_observed_line  def test_spec_negative_leg_reason_is_the_exact_observed_line()
++- L733-L737  function test_spec_validates_against_the_repo_schema  def test_spec_validates_against_the_repo_schema()
++- L740-L747  function test_spec_positive_leg_points_at_the_real_evidence_root  def test_spec_positive_leg_points_at_the_real_evidence_root()
++- L750-L755  function test_deferred_when_the_evidence_root_is_absent  def test_deferred_when_the_evidence_root_is_absent(tmp_path)
++- L758-L763  function test_real_evidence_root_defers_today  def test_real_evidence_root_defers_today()
++- L766-L778  function test_all_timelines_removed_defers_and_never_passes  def test_all_timelines_removed_defers_and_never_passes(tmp_path)
++- L781-L787  function test_deferral_stops_once_any_leg_carries_a_timeline  def test_deferral_stops_once_any_leg_carries_a_timeline(tmp_path)
++- L794-L806  function test_removing_a_legs_observable_fails_that_leg  def test_removing_a_legs_observable_fails_that_leg(tmp_path, name)
++- L810-L827  function test_swapping_a_legs_observable_for_another_legs_fails  def test_swapping_a_legs_observable_for_another_legs_fails(tmp_path, name)
++- L830-L845  function test_bad_signature_leg_delivering_a_VALID_event_fails  def test_bad_signature_leg_delivering_a_VALID_event_fails(tmp_path)
++- L848-L867  function test_two_legs_with_swapped_observables_fail_the_named_check  def test_two_legs_with_swapped_observables_fail_the_named_check(tmp_path)
++- L870-L882  function test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check  def test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check(tmp_path)
++- L885-L900  function test_wrong_channel_observables_are_rejected  def test_wrong_channel_observables_are_rejected(tmp_path)
++- L903-L911  function test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason  def test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason(tmp_path)
++- L914-L919  function test_a_negative_leg_that_produced_a_turn_fails  def test_a_negative_leg_that_produced_a_turn_fails(tmp_path)
++- L922-L930  function test_a_positive_leg_with_two_turns_fails  def test_a_positive_leg_with_two_turns_fails(tmp_path)
++- L933-L937  function test_a_positive_leg_with_no_turn_fails  def test_a_positive_leg_with_no_turn_fails(tmp_path)
++- L940-L945  function test_a_positive_turn_without_the_fixture_nonce_fails  def test_a_positive_turn_without_the_fixture_nonce_fails(tmp_path)
++- L948-L954  function test_positive_nonce_must_be_a_complete_json_token  def test_positive_nonce_must_be_a_complete_json_token()
++- L957-L963  function test_a_missing_debug_canary_fails_a_buzz_acp_leg  def test_a_missing_debug_canary_fails_a_buzz_acp_leg(tmp_path)
++- L966-L970  function test_an_info_level_canary_does_not_prove_debug_capture  def test_an_info_level_canary_does_not_prove_debug_capture(tmp_path)
++- L973-L980  function test_relay_decided_leg_needs_no_debug_canary  def test_relay_decided_leg_needs_no_debug_canary(tmp_path)
++- L983-L988  function test_self_authored_leg_requires_ignore_self_true  def test_self_authored_leg_requires_ignore_self_true(tmp_path)
++- L991-L995  function test_unmasked_pubkey_in_the_log_fails  def test_unmasked_pubkey_in_the_log_fails(tmp_path)
++- L1001-L1006  function test_replay_second_delivery_with_a_turn_fails  def test_replay_second_delivery_with_a_turn_fails(tmp_path)
++### anti-pattern screen (whole file)
++--- TEST_SCREEN over 1 path(s): 4 hits over 1 files ---
++AF-AP-34: 4
++    tests/test_s0_02_buzz_authz.py:1467: """AF-AP-34: no pkill/killall/name match anywhere in the PC runner."""
++    tests/test_s0_02_buzz_authz.py:1467: """AF-AP-34: no pkill/killall/name match anywhere in the PC runner."""
++    tests/test_s0_02_buzz_authz.py:1471: for word in ("pkill", "killall", "pgrep"):
++    tests/test_s0_02_buzz_authz.py:1471: for word in ("pkill", "killall", "pgrep"):
++
++## graft ask — who calls _require_real_dir and _leg_closure in proofs/S0-02/check_buzz_authz.py, and who consumes the receipt that _normalise in proofs/S0-02/tools/pc/deliver_event.py writes
++graft ask — "who calls _require_real_dir and _leg_closure in proofs/S0-02/check_buzz_authz.py, and who consumes the receipt that _normalise in proofs/S0-02/tools/pc/deliver_event.py writes"  (lexical)
++
++⚠ structural index: no entries for 'check_buzz_authz.py' — showing lexical matches; for precise edges try graft callers 'check_buzz_authz.py', or graft grep 'check_buzz_authz.py' for every reference (loosen the pattern if it returns nothing)
++
++1. deliver_event.py · file  [symbol]
++   proofs/S0-02/tools/pc/deliver_event.py
++
++2. _check_leg · function  [symbol]
++   proofs/S0-02/check_buzz_authz.py:L457-L558
++   def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anchors: "Anchors")
++
++3. _write_leg · function  [symbol]
++   proofs/S0-02/tools/build_fixtures.py:L364-L401
++   def _write_leg(leg_dir: Path, fixture: dict, ids: dict, bundle: str, *, accepted: bool, message: str, with_turn: bool, log_extra, membership: dict | None = None)
++
++4. denial_table.py · file  [symbol]
++   proofs/S0-02/oracle/denial_table.py
++
++5. main · function  [symbol]
++   proofs/S0-02/tools/pc/deliver_event.py:L165-L217
++   def main(argv) -> int
++
++6. check_buzz_authz.py · file  [symbol]
++   proofs/S0-02/check_buzz_authz.py
++
++7. build_fixtures.py · file  [symbol]
++   proofs/S0-02/tools/build_fixtures.py
++
++8. row · function  [symbol]
++   proofs/S0-02/oracle/denial_table.py:L277-L279
++   def row(fixture: str) -> dict
++
++## symbol _leg_closure
++### GitNexus impact (upstream)
++  "impactedCount": 3,
++  "risk": "LOW",
++  "epistemic": "exact",
++    "direct": 2,
++    "processes_affected": 0,
++      "impact": "direct"
++### code-review-graph callers_of / tests_for
++  "summary": "Found 2 result(s) for callers_of('/home/user/agent-factory/proofs/S0-02/check_buzz_authz.py::_leg_closure')",
++      "name": "_check_leg",
++      "name": "_check_replay",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-02/check_buzz_authz.py::_leg_closure')",
++### ripwire callers
++<callers of="_leg_closure" defs="1" count="2" root="/home/user/agent-factory" hop_tested="0" hop_untested="2" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_leg_closure">
++
++## symbol _require_real_dir
++### GitNexus impact (upstream)
++  "impactedCount": 3,
++  "risk": "LOW",
++  "epistemic": "exact",
++    "direct": 2,
++    "processes_affected": 0,
++      "impact": "direct"
++### code-review-graph callers_of / tests_for
++  "summary": "Found 2 result(s) for callers_of('/home/user/agent-factory/proofs/S0-02/check_buzz_authz.py::_require_real_dir')",
++      "name": "_check_leg",
++      "name": "_check_replay",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-02/check_buzz_authz.py::_require_real_dir')",
++### ripwire callers
++<callers of="_require_real_dir" defs="1" count="2" root="/home/user/agent-factory" hop_tested="0" hop_untested="2" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_require_real_dir">
++
++## symbol test_evidence_root_replaced_by_a_symlink_is_refused
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_evidence_root_replaced_by_a_symlink_is_refused')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_evidence_root_replaced_by_a_symlink_is_refused')",
++      "name": "test_blanket_bundle_is_a_blanket_rejection",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++      "name": "test_a_positive_leg_with_no_turn_fails",
++### ripwire callers
++<callers of="test_evidence_root_replaced_by_a_symlink_is_refused" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_evidence_root_replaced_by_a_symlink_is_refused">
++
++## symbol test_extra_regular_file_inside_a_leg_is_refused
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_extra_regular_file_inside_a_leg_is_refused')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_extra_regular_file_inside_a_leg_is_refused')",
++      "name": "test_blanket_bundle_is_a_blanket_rejection",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++      "name": "test_a_positive_leg_with_no_turn_fails",
++### ripwire callers
++<callers of="test_extra_regular_file_inside_a_leg_is_refused" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_extra_regular_file_inside_a_leg_is_refused">
++
++## symbol test_leg_file_table_matches_the_runner_writes
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_leg_file_table_matches_the_runner_writes')",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_leg_file_table_matches_the_runner_writes')",
++### ripwire callers
++<callers of="test_leg_file_table_matches_the_runner_writes" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_leg_file_table_matches_the_runner_writes">
++
++## symbol test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused')",
++      "name": "test_all_timelines_removed_defers_and_never_passes",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_swapping_a_legs_observable_for_another_legs_fails",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++### ripwire callers
++<callers of="test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_leg_replaced_by_a_symlink_to_an_outside_copy_is_refused">
++
++## symbol test_missing_required_file_inside_a_leg_is_named
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_missing_required_file_inside_a_leg_is_named')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_missing_required_file_inside_a_leg_is_named')",
++      "name": "test_all_timelines_removed_defers_and_never_passes",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_swapping_a_legs_observable_for_another_legs_fails",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++### ripwire callers
++<callers of="test_missing_required_file_inside_a_leg_is_named" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_missing_required_file_inside_a_leg_is_named">
++
++## symbol test_normalise_takes_accepted_only_when_upstream_is_bool
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_normalise_takes_accepted_only_when_upstream_is_bool')",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_normalise_takes_accepted_only_when_upstream_is_bool')",
++### ripwire callers
++<callers of="test_normalise_takes_accepted_only_when_upstream_is_bool" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_normalise_takes_accepted_only_when_upstream_is_bool">
++
++## symbol test_privkey_normalises_then_refuses_before_any_network_action
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_privkey_normalises_then_refuses_before_any_network_action')",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_privkey_normalises_then_refuses_before_any_network_action')",
++### ripwire callers
++<callers of="test_privkey_normalises_then_refuses_before_any_network_action" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_privkey_normalises_then_refuses_before_any_network_action">
++
++## symbol test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output')",
++  "summary": "Found 8 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output')",
++      "name": "test_pass_bundle_passes",
++      "name": "test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output",
++      "name": "test_all_timelines_removed_defers_and_never_passes",
++      "name": "test_swapping_a_legs_observable_for_another_legs_fails",
++      "name": "test_relay_decided_leg_needs_no_debug_canary",
++      "name": "test_replay_with_two_different_event_ids_fails",
++      "name": "test_replay_second_subleg_uses_only_the_wider_replay_tolerance",
++      "name": "test_a_fifo_in_place_of_a_leg_file_is_named_not_read",
++### ripwire callers
++<callers of="test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output">
++
++## symbol test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance')",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance')",
++### ripwire callers
++<callers of="test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_removal_receipt_label_is_pinned_in_spec_and_fixture_provenance">
++
++## symbol test_replay_leg_must_carry_exactly_the_two_subleg_directories
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_replay_leg_must_carry_exactly_the_two_subleg_directories')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_replay_leg_must_carry_exactly_the_two_subleg_directories')",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_swapping_a_legs_observable_for_another_legs_fails",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++      "name": "test_a_positive_leg_with_no_turn_fails",
++### ripwire callers
++<callers of="test_replay_leg_must_carry_exactly_the_two_subleg_directories" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_replay_leg_must_carry_exactly_the_two_subleg_directories">
++
++## symbol test_replay_subleg_replaced_by_a_symlink_is_refused
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_replay_subleg_replaced_by_a_symlink_is_refused')",
++  "summary": "Found 53 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_replay_subleg_replaced_by_a_symlink_is_refused')",
++      "name": "test_all_timelines_removed_defers_and_never_passes",
++      "name": "test_deferral_stops_once_any_leg_carries_a_timeline",
++      "name": "test_removing_a_legs_observable_fails_that_leg",
++      "name": "test_swapping_a_legs_observable_for_another_legs_fails",
++      "name": "test_bad_signature_leg_delivering_a_VALID_event_fails",
++      "name": "test_two_legs_with_swapped_observables_fail_the_named_check",
++      "name": "test_a_buzz_acp_leg_showing_only_a_relay_reason_fails_the_named_check",
++      "name": "test_wrong_channel_observables_are_rejected",
++      "name": "test_a_leg_with_two_denial_observables_is_not_counted_as_a_distinct_reason",
++      "name": "test_a_negative_leg_that_produced_a_turn_fails",
++      "name": "test_a_positive_leg_with_two_turns_fails",
++### ripwire callers
++<callers of="test_replay_subleg_replaced_by_a_symlink_is_refused" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_replay_subleg_replaced_by_a_symlink_is_refused">
++
++## symbol test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened')",
++  "summary": "Found 3 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_02_buzz_authz.py::test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened')",
++      "name": "test_buzz_acp_has_no_wall_clock_freshness_rule_on_the_channel_event_path",
++      "name": "test_wall_clock_freshness_scan_rejects_an_inline_rule",
++      "name": "test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened",
++### ripwire callers
++<callers of="test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_wall_clock_freshness_scan_documented_limit_is_not_silently_widened">
++
++## ripwire test-gate — tests to run + the UNTESTED blast radius (a zero is 'none found', never 'none exists')
+diff --git a/tasks/briefs/s0-02-support/VERIFY-B3-report.md b/tasks/briefs/s0-02-support/VERIFY-B3-report.md
+new file mode 100644
+index 0000000..b00fd87
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/VERIFY-B3-report.md
+@@ -0,0 +1,334 @@
++# VERIFY-B3 — adversarial grade of S0-02 round 3 (landing c6c384a)
++
++PIN: c6c384aee4fc192860dc0cf87cbf71f681b4dbca · Role: adversarial-verifier · Venue: PC
++This is a RECOMMENDATION, not a final gate verdict. The coordinator owns the gate.
++
++## Item 0 — mechanical gates and identity
++
++Reproduced, SOLID: FILE IDENTITY on the c6c384a archive exactly matched every
++brief value: `proofs/S0-02/check_buzz_authz.py` 765/`fc791273`;
++`proofs/S0-02/tools/pc/deliver_event.py` 221/`a14c027b`;
++`proofs/S0-02/tools/build_fixtures.py` 549/`38ae5a69`; `proofs/S0-02/spec.json`
++26/`7cc99c95`; `proofs/S0-02/fixtures/PROVENANCE.md` 20/`23b1c09f`;
++`proofs/schemas/spec.schema.json` 48/`f425996d`; and
++`tests/test_s0_02_buzz_authz.py` 1599/`3bfc6703`.
++
++Reproduced, SOLID: collection was 137 tests. Canonical direct suite, with PC
++venue exports and isolated absolute basetemps, ran twice: `137 passed in 77.62s
++(0:01:17)` (worktree) and `137 passed in 77.82s (0:01:17)` (fresh `git archive
++c6c384a`). This agrees with the coordinator's 137-count claim.
++
++Reproduced, INFO: `python3 scripts/ap_screen.py` over the four production
++sources yielded AP-1 x1 (`D:78` `key = os.environ.get` `_privkey`), AP-32 x3 (`D:95` `payload`,
++`B:85` `hashlib`, `B:284` `hashlib`), and AF-AP-40 x1 (`B:428` `root`); the
++test scan yielded AF-AP-34 x4 at `T:1467,1471`
++`test_pc_runner_parses_and_never_kills_by_name`. `pyflakes` exited 0,
++`bash -n R` succeeded, and `python B --check` returned `fixture-drift: none
++(8 fixtures match a fresh build)`.
++
++Finding B3-00 — BLOCKER, SOLID. Contract mapping: B3 design item 7 requires
++one top-of-report stamp in VERIFY-B2, and item 9 requires B3's final-byte
++identity table, machine-checkable `file:line` anchors, lint, scanner paste,
++pack, named mutants, and both gate results. Canonical evidence path: these are
++the required report artifacts at the landing PIN. Expected: the B3 report says
++Items 1-9 were built and provides this evidence. Observed: line 10 of
++`tasks/briefs/s0-02-support/B3-report.md` claims `Items built (1–9)`, but only
++six item subsections appear on lines 12–89; its refs are prose `line 102` /
++`line 651-vicinity` on lines 16–19, `line ~120` on line 37, no identity table,
++no report-lint output, no pack or ap_screen paste, and only three unnamed
++self-attacks on lines 146–159. The opening three lines of
++`tasks/briefs/s0-02-support/VERIFY-B2-report.md` likewise have no required B3
++stamp. The original zero-reference lint summary is mechanically clean only
++because the report has no checkable anchors. This makes the required
++mutation/evidence claims uninterpretable, is owned by the B3 scope, and is not
++a cosmetic report issue. Reproduction: `grep -n 'Items built|^### Item'
++B3-report.md` reports heading plus items 1-6 only; `head -3 VERIFY-B2-report.md`
++has no stamp. Minimal fix: write the mandated B2 stamp and complete a grounded
++B3 report, including real mutant names/killer lines and final-byte references.
++Exact red discriminator: report_lint plus a deterministic report-contract test
++requiring the stamp, identity table, and named mutant/killer inventory.
++
++## Item 1 — F1 containment and closure
++
++Reproduced, SOLID: `C:651-681` `_check_bundle_uncapped` drives the canonical
++checker only after a root `lstat` regular-directory check; every ordinary leg
++reaches `_require_real_dir` then `_leg_closure` at `C:457-465`, and each replay
++node reaches `_require_real_dir` after `C:567` `leg_dir` is set. `_require_file = s0_01._require_file` aliases S0-01
++at `C:94-99`; that consumer calls `require_regular_file`, whose
++`os.stat(..., follow_symlinks=False)` and `S_ISREG` guard are at
++`proofs/S0-01/pins.py:19-26`.
++
++I drove 17 independent scratch mutations through checker `main`, not an
++in-process surrogate. All expected red controls were exact: outside-copy
++`neg-stale` symlink -> rc 1 `is a symlink, not a real directory`; symlinked
++root -> rc 1 `bundle: the evidence root is a symlink or not a regular
++directory`; replay sub-leg symlink -> rc 1; file `delivery.json` symlink -> rc
++1 `is not a regular file`; extra `garbage.txt` -> rc 1 `unexpected entries`;
++leftover `.probe/` -> rc 1; empty `fixture.json` -> rc 1 JSON failure; FIFO
++leg -> rc 1 `is not a directory` under timeout; trailing-space root name ->
++rc 1; third replay sub-leg / first only / both symlinked -> rc 1; plain-leg
++membership -> rc 1 unexpected; revoked-without-membership -> rc 1 missing.
++Both unmodified committed bundles retained their intended outcomes: pass rc 0,
++blanket rc 1 `blanket-rejection:`.
++
++INFO, SOLID: a hardlinked `delivery.json` passes because it is a regular node,
++which is correctly inside the checker’s path containment claim: the bytes are
++reachable inside the captured root even if inode storage is shared outside.
++No claimed content-integrity property is defeated. `C:660` `root.resolve()` resolves only the root. The per-node `.resolve()`
++ancestor belt requested by the build brief is redundant for root/leg/subleg/file
++entries because the lstat chain refuses symlink nodes before every evidence
++read. It would catch only an operator supplying the root through a symlinked
++parent; that is not a bundle node. I confirmed such an operator-selected parent
++path still returns rc 0. This is not a containment bypass of evidence within
++the supplied root, so RESOLVE-DROPPED is EQUIVALENT rather than a blocker.
++
++Finding B3-01 — BLOCKER, SOLID. Contract mapping: B3 item 1 requires the
++file-table test to derive the closure table from every runner write, not a
++hand-copied pattern subset. Canonical path status: `R:112-121` `cp` copies the
++two capture artifacts, `R:145-166` `deliver pos-allowed "$out/first"` creates replay output, and
++`R:185` `cp "$MEMBERSHIP" "$out/membership.json"` runs other output paths, while `C:143-152` `_LEG_FILES_PLAIN`
++enforces the resulting exact allowed set. Expected: `T:1373-1383`
++`test_closure_table_covers_all_producer_and_runner_writes` parses the runner
++and producer such that an added write it cannot see is red. Observed: it only
++searches literal declared names in `D` and three literal `cp` strings in R; it
++does not parse either program. Four scratch runner mutations each left that
++exact test green: `tee "$out/x-tee"`, heredoc `cat > "$out/x-heredoc"`,
++`python3 -c ...Path(...).write_text`, and `mv` into `$out/x-mv` all returned
++`1 passed`. Material effect: a future runner can write an evidence file that C
++will reject, making actual capture fail closure despite the claimed drift gate
++remaining green. It belongs in the B3 table/test scope. Minimal fix: a
++deliberately bounded parser/allowlist over every output write form the runner
++permits, or a structural runner contract that enumerates all final outputs and
++is exercised by an actual fake-output run. Exact red control: each four mutation
++above must make the table-drift test fail. (The runner source did not change in
++B3, but this exact test and its B3 claim did.)
++
++## Item 2 — F2 producer receipt typing
++
++Reproduced, SOLID: direct `D:118-162` `_normalise` calls always returned the
++five keys `accepted,event_id,event_id_echoed,http_status,message`. `"false"`,
++`"true"`, 0, 1, 1.0, and None became `accepted=False` with the named
++malformed-type reason; booleans retained their value; absent accepted, non-JSON,
++empty body, and JSON array retained false. Case/whitespace event-id echoes are
++retained but the consumer rejects them at `C:314-318` `delivery["event_id"]`;
++an id under another key is not an echo. A 2xx false and 4xx/5xx true are
++retained by normalisation, then refused by the canonical checker’s `accepted` /
++status consistency rules at `C:319-358`.
++
++Reproduced, SOLID: replacing a positive leg receipt with producer-normalised
++`{accepted:"false",http_status:200}` while retaining the real event id caused
++canonical checker rc 1: `pos-allowed: buzz-acp decides this leg, so the relay
++must have ACCEPTED ... got False`. `D:204` `receipt = _normalise(...)` is the
++live writer; B writes its fixtures through `_normalise` at `B:391-393`;
++additional test mutations are test-only. `B --check` verified the eight
++committed fixtures are byte identical to a fresh producer-shaped build.
++
++INFO: a malformed accepted response carrying an upstream `message` overwrites
++the normaliser’s malformed reason at `D:154-159` `message`. Accepted remains
++false, so this does not reopen F2 or prevent the consumer refusal; preserving
++both messages is optional diagnostic hardening.
++
++## Item 3 — F3 key normalisation and ordering
++
++Reproduced, SOLID: direct `_privkey` calls at `D:71-89` rejected spaces-only
++and tab/newline-only after normalization; accepted wrapped valid and uppercase
++hex (lowercased intentionally); rejected 63/65 chars, inner-space, and 0x
++forms. No throwaway key was printed. A listener socket owned by the probe saw
++zero connections when the CLI was given whitespace-only input and an otherwise
++reachable relay URL: `invalid-key rc=1 ... listener-connections=0`. That
++behaviourally proves refusal before `_post` at `D:203`, beyond the source-order
++mirror at `T:1588-1600`.
++
++## Item 4 — F4 documented scanner limit
++
++Reproduced, SOLID: `T:563-618` explicitly defines and pins the direct
++same-expression class. Its three-statement control is not caught. The direct
++helper form evades; direct `saturating_sub`, `Duration`, reversed comparison,
++9000/900 constants and a direct match-arm are caught. A bound-now declaration
++on a prior statement naturally evades by itself, while a following direct
++`now.duration_since(event.created_at)` line is caught. This matches the
++narrowed B3 report wording at `B3-report.md:58-63`; no broad dataflow claim is
++now made. This is an honest documented limitation, not a blocker.
++
++## Item 5 — F4/F5 drift and tolerance bounds
++
++Finding B3-02 — BLOCKER, SOLID. Contract mapping: B3 design item 6 requires
++an assertion `REPLAY_CLOCK_TOLERANCE_S + LEG_CLOCK_TOLERANCE_S <
++RELAY_DRIFT_WINDOW_S` and a runner-gap assertion `<= REPLAY_CLOCK_TOLERANCE_S`;
++VERIFY-B3 item 5 expressly requires the named TOLERANCE-9000 mutant to die.
++Canonical production path: replay tolerance controls C freshness at
++`C:256-295`; the runner’s default replay wait is 100 s at `R:34` and reuse
++passes first t0 at `R:145-156`. Expected: both relations are tested. Observed:
++no such test exists. Changing `C:127` from 150 to 9000 left all 137 tests
++green (`137 passed in 78.47s`); a 151-second second-replay t0 mutation then
++passes the mutant but correctly fails the PIN at `C:280-283` with `outside the
++150s tolerance`. Changing R's default wait from 100 to 151 also left all 137
++tests green (`137 passed in 78.20s`). This falsifies the claimed bounded
++replay timing assurance and belongs wholly in B3. Minimal fix: add the two
++literal relationship assertions and mutation tests. Exact red controls: the
++9000 and 151 mutants above.
++
++Reproduced, INFO: `T:643-648` parses only a literal `i64 = digits;` upstream
++constant. On scratch source text it refuses u64, underscores, and expressions;
++it accepts the first literal in duplicate declarations and comments, so a
++commented or duplicate wrong first value fails the assertion rather than
++passing a wrong value. It is an availability/false-red limitation, not a
++false-green on the current pinned source. Replay behaviour itself matched the
++local policy: second at 149 s passed, 151 s failed; first at 149/151 s failed
++with its 120-s limit; second 151 s earlier also failed.
++
++## Item 6 — removal receipt label and trust boundary
++
++Reproduced, SOLID: `C:512-556` checks that a revoked receipt names the actual
++sender/channel, records `removed is True`, integer `at_epoch_s < t0`, and an
++integer 2xx HTTP status, then appends the explicit unauthenticated label. Eight
++canonical scratch cases were all red: empty receipt -> invalid JSON; `{}` ->
++sender mismatch; symlink -> regular-file guard; bool time -> not int; equal
++and one-second-after time -> ordering failure; wrong sender and wrong channel
++-> their named binding failures. The committed label appears in checker output
++at `C:547-556`, fallback output at `C:717-724`, spec under the named key at
++`spec.json:3-5`, and provenance at `fixtures/PROVENANCE.md:15-20`. The trust
++boundary is exactly those unauthenticated coordinator-provided bytes: the
++checker verifies structure, identity/binding, ordering, and claimed 2xx, but
++cannot verify the actual relay membership transition or observe post-removal
++state.
++
++Finding B3-03 — BLOCKER, SOLID. Contract mapping: B3 item 5 promises the
++same label is pinned in checker output, `limits.removal_receipt`, and
++provenance; VERIFY-B3 item 6 requires one-of-two-occurrences mutation testing.
++Canonical path: real revoked output uses the per-leg label, but the checker
++also exposes fallback label `C:717-720`. Expected: each occurrence is bound by
++a test. Observed: a scratch mutation of only the fallback second occurrence
++left both published label tests green (`2 passed`); `T:691-710` only runs a
++revoked bundle (thus `removal_note` is non-None) and checks substring presence
++in a named spec key/provenance. Mutating the per-leg occurrence, spec, or
++provenance individually instead killed one test (`1 failed, 1 passed`), so the
++survivor is exact and bounded. Material effect: a future no-receipt /
++structurally changed path can print an altered or unlabelled fallback while the
++claimed “checker output is labelled” gate remains green. Minimal fix: remove
++the unreachable/undesired fallback, or directly test its exact full sentence.
++Exact red control: `LABEL-FALLBACK-DROPPED` must fail. Note schema open keys at
++`spec.schema.json:10-12` are not themselves a defect because `T:702-710`
++binds the required `removal_receipt` key.
++
++## Item 7 — omitted B3 brief items
++
++Reproduced, SOLID: items 7–9 are NOT done in `B3-report.md`: no B2 stamp, no
++named mutation table/killer lines, no identity table/lint/ap-screen/pack, yet
++`B3-report.md:10` says “Items built (1–9)” over six subsections. This is the
++separate report-contract blocker B3-00, not merely an informational omission.
++
++## Item 8 — attested regeneration and S0-11 state
++
++Reproduced, SOLID: `python scripts/validate-ledger integrity --root .` reported
++PRESENT exactly for S0-07, S0-09, S0-10, S0-11, S0-12 and returned 0;
++`python scripts/ledger-gen --root .` followed by `git diff --exit-code
++proofs/ledger.json` was clean. `check-proof-status.py` returned rc 1 with only
++`S0-11: the committed tag object ... is not the object the ref accepted/S0-11
++names`. The direct ref object was `7b250da1...`, whereas `git hash-object` of
++the committed tag file was `b74ee186...`.
++
++Finding B3-04 — FOLLOW-UP, SOLID. `tests/test_proof_status.py` returned `4
++failed, 28 passed in 6.17s`, not the brief’s anticipated three re-acceptance
++class. Two current-tree failures are the S0-11 committed-tag/ref disagreement;
++the non-git fixture expects a git-repository error but now receives the missing
++owner-key error. This is outside B3’s component scope and arose in the
++coordinator’s attested regeneration/status machinery. It is reportable to the
++coordinator, not a B3 repair loop. The S0-02 suite itself remained 137 green.
++
++## Item 9 — mutation inventory
++
++Reproduced mutation results (all mutations were scratch copies):
++
++| mutant | result / killer |
++| --- | --- |
++| LEG-SYMLINK | KILLED: canonical rc 1 `neg-stale ... is a symlink` |
++| ROOT-SYMLINK | KILLED: canonical rc 1 `bundle ... is a symlink` |
++| LEG-EXTRA-FILE | KILLED: canonical rc 1 `unexpected entries ['garbage.txt']` |
++| ACCEPTED-TRUTHINESS | KILLED by `T:1555-1585`; string false normalizes to accepted false |
++| KEY-WHITESPACE | KILLED behaviorally: CLI rc 1, listener connections 0 |
++| RESOLVE-DROPPED | EQUIVALENT: lstat root/leg/subleg/file chain rejects node symlinks; only an operator-selected parent symlink remains |
++| LSTAT-TO-ISDIR | KILLED by `T:1323-1352` and canonical B2 outside-leg symlink rc 1 |
++| TYPE-TO-ISINSTANCE-INT | KILLED by `T:1555-1585` direct `0/1` receipt cases and `T:1210-1222` bool status case |
++| TOLERANCE-9000 | SURVIVED: all 137 green; canonical second-t0 +151 passes under mutant |
++| RUNNER-GAP-151 | SURVIVED: all 137 green after R default 100 -> 151 |
++| LABEL-DROPPED (per-leg) | KILLED: one test failure under checker-only label change |
++| LABEL-FALLBACK-DROPPED | SURVIVED: fallback-only alteration -> `2 passed` |
++| RUNNER-TEE-UNSEEN | SURVIVED: `T:1373` -> `1 passed` |
++| RUNNER-HEREDOC-UNSEEN | SURVIVED: `T:1373` -> `1 passed` |
++| RUNNER-PYTHON-UNSEEN | SURVIVED: `T:1373` -> `1 passed` |
++| RUNNER-MV-UNSEEN | SURVIVED: `T:1373` -> `1 passed` |
++
++The unperformed “B2 20 rows” reconstruction cannot be claimed: B3-report has
++no named list or killer lines from which to reproduce it, and B3 item 8 was
++not completed. This is covered by blocking report finding B3-00 rather than
++inventing 20 results.
++
++## Item 10 — bounded 18-class / evidence-read rescan
++
++Reproduced, INFO: in C, AST/literal scan found field-literal equality branches
++at `C:248`, `C:386`, `C:443`; the first has a raising consequence and the other
++two select required channel policy followed by checks, so no fail-open
++`if <field> == <literal>` branch was found. Evidence byte reads are regular-file
++guarded through `_read_json` at `C:170-175` (fixture, delivered event, t0,
++delivery, membership); direct log reads are guarded at `C:379-380`, `C:499-500`,
++and `C:506`; identities at `C:664-666` is guarded. `_load_timeline_raw` is the
++S0-01 guarded reader aliased at `C:96-99`. I found no C evidence `read_text`,
++`open`, or `json.load` bypassing the regular-file guard. D/B/R reads are
++producer/build-time inputs, not checker evidence reads; D's `fixture_path` and
++`--reuse` at `D:178-184`, B construction reads at `B:89,417,499,503,535`, and
++R role/replay helper opens at `R:132,153` are not an S0-02 checker bypass.
++
++## Item 11 — discipline, process census, and gaps
++
++Reproduced: no background jobs started, no live relay delivery, membership
++write, role-key read, PC service action, or process kill occurred. All scratch
++probes were foreground and self-terminated; FIFO was canonical and bounded.
++Skipped as forbidden: live eight-leg capture and membership removal. The
++S0-11 owner re-sign remains owner/coordinator-only.
++
++DISCREPANCIES: `tests/test_proof_status.py` measured `4 failed, 28 passed`, not
++the brief’s expected three committed-state failures. `check-proof-status.py`
++has no `--root` option despite the brief’s command spelling; direct invocation
++returned the exact S0-11 tag/ref mismatch above. `strace` was unavailable to
++this unprivileged lane (`Permission denied`), so the permitted owned listener
++was used for F3 network-order evidence. `report_lint` final third bounded round:
++`report_lint: 67 refs — OK 25, NEAR 0, MISS 13, UNCHECKABLE 23, UNRESOLVED 6
++(at c6c384a)` (rc 1). Per the bounded instruction, these remaining heuristic
++misses/unresolved report references are reported, not chased further.
++
++## Item 12 — design state
++
++The synthetic bundles use the producer normaliser end-to-end for receipt shape
++(`B:391-393`, `D:118-162`) and test checker policy only. They do not prove a
++live relay HTTP exchange, Buzz membership transition, ACP launch, or turn
++reachability. A live eight-leg capture must record: RUST_LOG=debug through
++P5c’s `--env-set s0-02` seam for buzz-acp denial observables; owner-provided
++role keys without exposing them; and the owner/coordinator’s real membership
++removal plus receipt for revoked. Those are coordinator/owner operations, not
++this lane’s. Round 4 must repair B3-00 through B3-03 with red discriminators,
++then undergo a fresh sandbox-side independent grade; the live capture remains
++a separate readiness prerequisite.
++
++## Finding inventory and recommendation
++
++1. B3-00 — BLOCKER / SOLID: B3 report discipline items 7–9 omitted while
++   claimed; canonical required artifact lacks evidence. Fix report/stamp and
++   grounded named mutation inventory.
++2. B3-01 — BLOCKER / SOLID: table-drift test does not parse/cover actual
++   runner writes; four write forms survive. Fix structural runner-output gate.
++3. B3-02 — BLOCKER / SOLID: tolerance and runner-gap relations absent;
++   TOLERANCE-9000 and gap-151 survive. Add relation assertions and red mutants.
++4. B3-03 — BLOCKER / SOLID: checker fallback label is unbound; exact
++   fallback-only mutant survives. Remove or test fallback.
++5. B3-04 — FOLLOW-UP / SOLID: coordinator’s S0-11 re-acceptance/tag state has
++   four proof-status test failures, outside B3 scope.
++6. INFO: F1 containment, F2 typing, F3 pre-network refusal, and F4 narrow
++   scanner limit reproduced as described; no runtime containment bypass found.
++
++GATE RECOMMENDATION: NOT-READY — B3-00, B3-01, B3-02, and B3-03 each satisfy
++the full blocking predicate: frozen B3 criterion, current canonical path,
++material evidence/gate effect, deterministic survivor/red control, and B3
++ownership. This is a recommendation from the PC single-model verifier; final
++gate decision and independent adversarial grade belong to the coordinator.
++
+diff --git a/transcripts/pc/pc-verify-b3.md--c6c384a.md b/transcripts/pc/pc-verify-b3.md--c6c384a.md
+new file mode 100644
+index 0000000..99af144
+--- /dev/null
++++ b/transcripts/pc/pc-verify-b3.md--c6c384a.md
+@@ -0,0 +1,1252 @@
++# Hermes lane session 20260917_104216_5cb01b
++
++- model: agentfactory-verify-local
++- started: 2026-09-17T09:42:18.282262+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-b3.md--c6c384a/tree
++- messages: 182; tool calls: 97
++- tokens in/out/cache_read/reasoning: 1520356/93583/8443200/53604
++
++## user @ 09:42:17
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:42:38 → tools: terminal
++
++I'll start by reading the venue map and the brief, as directed.
++
++## tool result (terminal) @ 09:42:39 — 2758 chars (body not exported)
++
++## assistant @ 09:42:44 → tools: read_file, read_file
++
++Let me read the venue map and the brief in full, plus the lane-specific venue file.
++
++## tool result (read_file) @ 09:42:44 — 6035 chars (body not exported)
++
++## tool result (read_file) @ 09:42:44 — 2211 chars (body not exported)
++
++## assistant @ 09:42:48 → tools: read_file
++
++Now the brief itself, in full.
++
++## tool result (read_file) @ 09:42:48 — 16881 chars (body not exported)
++
++## assistant @ 09:43:12 → tools: terminal
++
++This is a large adversarial grade. Let me set up my scratch workspace and verify the environment before reading inputs.
++
++## tool result (terminal) @ 09:43:12 — 1070 chars (body not exported)
++
++## assistant @ 09:43:35 → tools: terminal
++
++FILE IDENTITY at the PIN: all seven match the brief's table exactly (765/`fc791273`, 221/`a14c027b`, 549/`38ae5a69`, 26/`7cc99c95`, 20/`23b1c09f`, 48/`f425996d`, 1599/`3bfc6703`). Now let me set up scratch and run item 0's test suite.
++
++## tool result (terminal) @ 09:43:37 — 660 chars (body not exported)
++
++## assistant @ 09:43:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:45:03 — 269 chars (body not exported)
++
++## assistant @ 09:45:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:46:29 — 357 chars (body not exported)
++
++## assistant @ 09:46:48 → tools: terminal
++
++Both runs: **137 passed** (worktree and PIN archive). Matches the coordinator's `137 passed`. Now the rest of item 0's mechanical gates.
++
++## tool result (terminal) @ 09:46:49 — 1504 chars (body not exported)
++
++## assistant @ 09:47:10 → tools: terminal
++
++ap_screen matches the coordinator's paste (AP-1 ×1, AP-32 ×3, AF-AP-40 ×1). Now the rest of item 0's gates.
++
++## tool result (terminal) @ 09:47:10 — 993 chars (body not exported)
++
++## assistant @ 09:47:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:47:27 — 1360 chars (body not exported)
++
++## assistant @ 09:47:36 → tools: read_file
++
++Let me read the B3 report and B2 report in full, plus the pack, before I start the item-by-item attack.
++
++## tool result (read_file) @ 09:47:36 — 10553 chars (body not exported)
++
++## assistant @ 09:47:57 → tools: read_file
++
++Now the round's contract (VERIFY-B2 report) and the lane brief (9 design items).
++
++## tool result (read_file) @ 09:47:57 — 15108 chars (body not exported)
++
++## assistant @ 09:48:15 → tools: read_file
++
++Now the lane brief (the 9 design items) and the pack.
++
++## tool result (read_file) @ 09:48:15 — 12813 chars (body not exported)
++
++## assistant @ 09:48:38 → tools: read_file
++
++Now the pack and the incident-log rows the brief names.
++
++## tool result (read_file) @ 09:48:38 — 45565 chars (body not exported)
++
++## assistant @ 09:49:11 → tools: terminal
++
++I have all the inputs. Let me initialize the incremental report draft and begin reading the primary production file (item 1, F1 containment).
++
++## tool result (terminal) @ 09:49:11 — 64 chars (body not exported)
++
++## assistant @ 09:50:20 → tools: read_file
++
++
++
++## tool result (read_file) @ 09:50:20 — 8601 chars (body not exported)
++
++## assistant @ 09:50:31 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 09:50:31 — 6323 chars (body not exported)
++
++## tool result (terminal) @ 09:50:31 — 2208 chars (body not exported)
++
++## assistant @ 09:50:39 → tools: read_file
++
++
++
++## tool result (read_file) @ 09:50:39 — 9373 chars (body not exported)
++
++## assistant @ 09:57:31 → tools: read_file
++
++Now the runner — what it actually writes per leg (the file table's producers).
++
++## tool result (read_file) @ 09:57:32 — 9832 chars (body not exported)
++
++## assistant @ 09:59:34 → tools: read_file
++
++Now let me read the deliverer fully (items 2, 3) and the relevant test file regions.
++
++## tool result (read_file) @ 09:59:34 — 10619 chars (body not exported)
++
++## assistant @ 10:00:50 → tools: read_file
++
++Now the test file — the key regions: the drift-window test, D3 freshness scan, the file-table test, and the privkey/tolerance tests.
++
++## tool result (read_file) @ 10:00:50 — 7031 chars (body not exported)
++
++## assistant @ 10:02:28 → tools: read_file
++
++Now the file-table test (T:1373-1465), the privkey-order test (T:1588), and the replay-tolerance test (T:1033 region).
++
++## tool result (read_file) @ 10:02:28 — 7118 chars (body not exported)
++
++## assistant @ 10:04:16 → tools: read_file
++
++Now the privkey-order test (T:1588) and the replay-tolerance test (T:1033) and the normalise test region.
++
++## tool result (read_file) @ 10:04:16 — 5454 chars (body not exported)
++
++## assistant @ 10:06:26 → tools: read_file
++
++Now the replay-tolerance test (T:1033) and the removal-receipt tests (T:691-710).
++
++## tool result (read_file) @ 10:06:26 — 3583 chars (body not exported)
++
++## assistant @ 10:08:59 → tools: read_file
++
++Now the freshness checker (where tolerance is applied) and the removal-receipt tests (T:691-710), plus the bundle/fixture helpers.
++
++## tool result (read_file) @ 10:08:59 — 6007 chars (body not exported)
++
++## assistant @ 10:11:21 → tools: read_file, read_file
++
++Now the removal-receipt tests (T:682-755) and `_check_delivered_event` (T:204-253).
++
++## tool result (read_file) @ 10:11:21 — 4249 chars (body not exported)
++
++## tool result (read_file) @ 10:11:21 — 3085 chars (body not exported)
++
++## assistant @ 10:13:43 → tools: read_file
++
++Let me read the test file header (helpers, paths, imports) to understand the bundle layout for my scratch attacks.
++
++## tool result (read_file) @ 10:13:43 — 5267 chars (body not exported)
++
++## assistant @ 10:16:14 → tools: terminal
++
++Now let me examine the fixtures bundle structure, spec.json, spec.schema.json, and PROVENANCE.md (item 5).
++
++## tool result (terminal) @ 10:16:14 — 7758 chars (body not exported)
++
++## assistant @ 10:21:55 → tools: write_file
++
++I now have a thorough read of all primary sources. Let me build the F1 containment attack driver (item 1) — every node-class attack, driven through the real checker `main` (canonical path) on scratch copies.
++
++## tool result (write_file) @ 10:21:58 — 298 chars (body not exported)
++
++## assistant @ 10:23:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:23:55 — 440 chars (body not exported)
++
++## assistant @ 10:26:01 → tools: patch
++
++
++
++## tool result (patch) @ 10:26:02 — 820 chars (body not exported)
++
++## assistant @ 10:26:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:27:01 — 3493 chars (body not exported)
++
++## assistant @ 10:28:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:28:10 — 10087 chars (body not exported)
++
++## assistant @ 10:29:20 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:29:21 — 981 chars (body not exported)
++
++## assistant @ 10:29:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:29:32 — 4257 chars (body not exported)
++
++## assistant @ 10:29:56 → tools: patch
++
++
++
++## tool result (patch) @ 10:29:57 — 1174 chars (body not exported)
++
++## assistant @ 10:30:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:30:12 — 1681 chars (body not exported)
++
++## assistant @ 10:30:48 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:30:49 — 978 chars (body not exported)
++
++## assistant @ 10:31:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:31:02 — 746 chars (body not exported)
++
++## assistant @ 10:31:25 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:31:25 — 314 chars (body not exported)
++
++## assistant @ 10:31:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:31:38 — 113 chars (body not exported)
++
++## assistant @ 10:32:45 → tools: patch
++
++
++
++## tool result (patch) @ 10:32:46 — 3427 chars (body not exported)
++
++## assistant @ 10:33:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:33:23 — 11124 chars (body not exported)
++
++## assistant @ 10:34:57 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:34:58 — 312 chars (body not exported)
++
++## assistant @ 10:35:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:12 — 313 chars (body not exported)
++
++## assistant @ 10:35:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:57 — 67 chars (body not exported)
++
++## assistant @ 10:36:09 → tools: patch
++
++
++
++## tool result (patch) @ 10:36:12 — 1087 chars (body not exported)
++
++## assistant @ 10:36:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:37:47 — 331 chars (body not exported)
++
++## assistant @ 10:38:13 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:38:14 — 326 chars (body not exported)
++
++## assistant @ 10:38:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:25 — 526 chars (body not exported)
++
++## assistant @ 10:38:38 → tools: patch
++
++
++
++## tool result (patch) @ 10:38:41 — 1007 chars (body not exported)
++
++## assistant @ 10:38:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:13 — 333 chars (body not exported)
++
++## assistant @ 10:41:02 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:41:03 — 314 chars (body not exported)
++
++## assistant @ 10:41:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:41:16 — 2801 chars (body not exported)
++
++## assistant @ 10:41:30 → tools: patch
++
++
++
++## tool result (patch) @ 10:41:31 — 848 chars (body not exported)
++
++## assistant @ 10:41:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:04 — 253 chars (body not exported)
++
++## assistant @ 10:42:35 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:42:36 — 979 chars (body not exported)
++
++## assistant @ 10:42:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:51 — 272 chars (body not exported)
++
++## assistant @ 10:43:18 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:43:18 — 310 chars (body not exported)
++
++## assistant @ 10:43:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:43:27 — 530 chars (body not exported)
++
++## assistant @ 10:44:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:44:44 — 288 chars (body not exported)
++
++## assistant @ 10:45:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:45:00 — 312 chars (body not exported)
++
++## assistant @ 10:45:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:45:13 — 912 chars (body not exported)
++
++## assistant @ 10:45:54 → tools: patch
++
++
++
++## tool result (patch) @ 10:45:55 — 94 chars (body not exported)
++
++## assistant @ 10:46:46 → tools: patch
++
++
++
++## tool result (patch) @ 10:46:46 — 8800 chars (body not exported)
++
++## assistant @ 10:47:38 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:47:38 — 6440 chars (body not exported)
++
++## assistant @ 10:48:09 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:10 — 298 chars (body not exported)
++
++## assistant @ 10:48:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:48:36 — 1057 chars (body not exported)
++
++## assistant @ 10:48:52 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:53 — 304 chars (body not exported)
++
++## assistant @ 10:49:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:15 — 211 chars (body not exported)
++
++## assistant @ 10:49:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:32 — 798 chars (body not exported)
++
++## assistant @ 10:49:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:54 — 345 chars (body not exported)
++
++## assistant @ 10:50:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:13 — 3134 chars (body not exported)
++
++## assistant @ 10:50:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:29 — 5124 chars (body not exported)
++
++## assistant @ 10:50:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:50:41 — 6867 chars (body not exported)
++
++## assistant @ 10:51:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:51:07 — 874 chars (body not exported)
++
++## assistant @ 10:52:08 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:52:09 — 322 chars (body not exported)
++
++## assistant @ 10:52:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:52:41 — 166 chars (body not exported)
++
++## assistant @ 10:53:49 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:50 — 4418 chars (body not exported)
++
++## assistant @ 10:54:16 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:54:16 — 14518 chars (body not exported)
++
++## assistant @ 10:54:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:31 — 640 chars (body not exported)
++
++## assistant @ 10:54:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:39 — 2125 chars (body not exported)
++
++## assistant @ 10:54:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:50 — 567 chars (body not exported)
++
++## assistant @ 10:55:26 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:26 — 6483 chars (body not exported)
++
++## assistant @ 10:55:48 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:55:48 — 21824 chars (body not exported)
++
++## user @ 09:42:17
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:42:38 → tools: terminal
++
++I'll start by reading the venue map and the brief, as directed.
++
++## tool result (terminal) @ 09:42:39 — 123 chars (body not exported)
++
++## assistant @ 10:59:56
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++No explicit user turn is present in the supplied turns. Retained recent-focus text verbatim:  
++`<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md. The body below is carried over UNCHANGED; only the Claude-Code frontmatter was removed. The model pin does not survive the port: the PC harness serves ONE model, so all t…`  
++
++In-flight work implied by that focus: continue the PC-harness `adversarial-verifier` lane work for **VERIFY-B3 — adversarial grade of S0-02 round 3 (landing c6c384a)**, specifically completing item-by-item verification after the item-0 mechanical gates have been checked.
++
++## Goal
++Produce an adversarial verification checkpoint / recommendation for **S0-02 round 3**, landing/PIN **<opaque-redacted>**, in venue **PC**, based on the VERIFY-B3 brief, B2/B3 reports, lane brief, pack, implementation files, and tests. The output is a **RECOMMENDATION, not a final gate verdict**; the coordinator owns the gate.
++
++## Constraints & Prefer
++
++## assistant @ 10:16:14 → tools: terminal
++
++Now let me examine the fixtures bundle structure, spec.json, spec.schema.json, and PROVENANCE.md (item 5).
++
++## tool result (terminal) @ 10:16:14 — 123 chars (body not exported)
++
++## assistant @ 10:21:55 → tools: write_file
++
++I now have a thorough read of all primary sources. Let me build the F1 containment attack driver (item 1) — every node-class attack, driven through the real checker `main` (canonical path) on scratch copies.
++
++## tool result (write_file) @ 10:21:58 — 109 chars (body not exported)
++
++## assistant @ 10:23:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:23:55 — 123 chars (body not exported)
++
++## assistant @ 10:26:01 → tools: patch
++
++
++
++## tool result (patch) @ 10:26:02 — 113 chars (body not exported)
++
++## assistant @ 10:26:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:27:01 — 123 chars (body not exported)
++
++## assistant @ 10:28:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:28:10 — 123 chars (body not exported)
++
++## assistant @ 10:29:20 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:29:21 — 108 chars (body not exported)
++
++## assistant @ 10:29:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:29:32 — 123 chars (body not exported)
++
++## assistant @ 10:29:56 → tools: patch
++
++
++
++## tool result (patch) @ 10:29:57 — 115 chars (body not exported)
++
++## assistant @ 10:30:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:30:12 — 123 chars (body not exported)
++
++## assistant @ 10:30:48 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:30:49 — 108 chars (body not exported)
++
++## assistant @ 10:31:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:31:02 — 123 chars (body not exported)
++
++## assistant @ 10:31:25 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:31:25 — 116 chars (body not exported)
++
++## assistant @ 10:31:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:31:38 — 113 chars (body not exported)
++
++## assistant @ 10:32:45 → tools: patch
++
++
++
++## tool result (patch) @ 10:32:46 — 113 chars (body not exported)
++
++## assistant @ 10:33:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:33:23 — 152 chars (body not exported)
++
++## assistant @ 10:34:57 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:34:58 — 115 chars (body not exported)
++
++## assistant @ 10:35:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:12 — 123 chars (body not exported)
++
++## assistant @ 10:35:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:35:57 — 67 chars (body not exported)
++
++## assistant @ 10:36:09 → tools: patch
++
++
++
++## tool result (patch) @ 10:36:12 — 150 chars (body not exported)
++
++## assistant @ 10:36:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:37:47 — 123 chars (body not exported)
++
++## assistant @ 10:38:13 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:38:14 — 122 chars (body not exported)
++
++## assistant @ 10:38:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:38:25 — 123 chars (body not exported)
++
++## assistant @ 10:38:38 → tools: patch
++
++
++
++## tool result (patch) @ 10:38:41 — 159 chars (body not exported)
++
++## assistant @ 10:38:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:13 — 123 chars (body not exported)
++
++## assistant @ 10:41:02 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:41:03 — 116 chars (body not exported)
++
++## assistant @ 10:41:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:41:16 — 123 chars (body not exported)
++
++## assistant @ 10:41:30 → tools: patch
++
++
++
++## tool result (patch) @ 10:41:31 — 121 chars (body not exported)
++
++## assistant @ 10:41:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:04 — 123 chars (body not exported)
++
++## assistant @ 10:42:35 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:42:36 — 108 chars (body not exported)
++
++## assistant @ 10:42:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:42:51 — 123 chars (body not exported)
++
++## assistant @ 10:43:18 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:43:18 — 114 chars (body not exported)
++
++## assistant @ 10:43:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:43:27 — 123 chars (body not exported)
++
++## assistant @ 10:44:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:44:44 — 123 chars (body not exported)
++
++## assistant @ 10:45:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:45:00 — 115 chars (body not exported)
++
++## assistant @ 10:45:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:45:13 — 123 chars (body not exported)
++
++## assistant @ 10:45:54 → tools: patch
++
++
++
++## tool result (patch) @ 10:45:55 — 94 chars (body not exported)
++
++## assistant @ 10:46:46 → tools: patch
++
++
++
++## tool result (patch) @ 10:46:46 — 113 chars (body not exported)
++
++## assistant @ 10:47:38 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:47:38 — 139 chars (body not exported)
++
++## assistant @ 10:48:09 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:10 — 108 chars (body not exported)
++
++## assistant @ 10:48:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:48:36 — 123 chars (body not exported)
++
++## assistant @ 10:48:52 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:48:53 — 111 chars (body not exported)
++
++## assistant @ 10:49:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:15 — 123 chars (body not exported)
++
++## assistant @ 10:49:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:32 — 123 chars (body not exported)
++
++## assistant @ 10:49:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:49:54 — 123 chars (body not exported)
++
++## assistant @ 10:50:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:13 — 123 chars (body not exported)
++
++## assistant @ 10:50:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:29 — 123 chars (body not exported)
++
++## assistant @ 10:50:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:50:41 — 134 chars (body not exported)
++
++## assistant @ 10:51:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:51:07 — 123 chars (body not exported)
++
++## assistant @ 10:52:08 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:52:09 — 120 chars (body not exported)
++
++## assistant @ 10:52:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:52:41 — 166 chars (body not exported)
++
++## assistant @ 10:53:49 → tools: patch
++
++
++
++## tool result (patch) @ 10:53:50 — 113 chars (body not exported)
++
++## assistant @ 10:54:16 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:54:16 — 141 chars (body not exported)
++
++## assistant @ 10:54:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:31 — 640 chars (body not exported)
++
++## assistant @ 10:54:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:39 — 2125 chars (body not exported)
++
++## assistant @ 10:54:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:54:50 — 567 chars (body not exported)
++
++## assistant @ 10:55:26 → tools: patch
++
++
++
++## tool result (patch) @ 10:55:26 — 6483 chars (body not exported)
++
++## assistant @ 10:55:48 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:55:48 — 21824 chars (body not exported)
++
++## user @ 09:42:17
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not sel
++
++## assistant @ 11:00:14 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 11:00:14 — 217 chars (body not exported)
++
++## tool result (terminal) @ 11:00:14 — 253 chars (body not exported)
++
++## assistant @ 11:00:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:00:23 — 4115 chars (body not exported)
++
++## assistant @ 11:00:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:00:43 — 10999 chars (body not exported)
++
++## assistant @ 11:01:17 → tools: patch
++
++
++
++## tool result (patch) @ 11:01:17 — 442 chars (body not exported)
++
++## assistant @ 11:02:07 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 11:02:07 — 1795 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 562 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 601 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 679 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 793 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 843 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 1544 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 1252 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 841 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 777 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 726 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 784 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 916 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 729 chars (body not exported)
++
++## tool result (read_file) @ 11:02:07 — 1191 chars (body not exported)
++
++## assistant @ 11:02:32 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:02:32 — 2052 chars (body not exported)
++
++## assistant @ 11:03:29 → tools: patch
++
++
++
++## tool result (patch) @ 11:03:29 — 4118 chars (body not exported)
++
++## assistant @ 11:03:39 → tools: patch
++
++
++
++## tool result (patch) @ 11:03:39 — 1603 chars (body not exported)
++
++## assistant @ 11:04:02 → tools: patch
++
++
++
++## tool result (patch) @ 11:04:02 — 4774 chars (body not exported)
++
++## assistant @ 11:04:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:04:45 — 13887 chars (body not exported)
++
++## assistant @ 11:05:20 → tools: patch
++
++
++
++## tool result (patch) @ 11:05:20 — 1248 chars (body not exported)
++
++## assistant @ 11:05:43 → tools: patch
++
++
++
++## tool result (patch) @ 11:05:43 — 3210 chars (body not exported)
++
++## assistant @ 11:06:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:06:00 — 10599 chars (body not exported)
++
++## assistant @ 11:06:06 → tools: patch
++
++
++
++## tool result (patch) @ 11:06:06 — 1231 chars (body not exported)
++
++## assistant @ 11:06:11 → tools: patch
++
++
++
++## tool result (patch) @ 11:06:12 — 986 chars (body not exported)
++
++## assistant @ 11:06:17 → tools: patch
++
++
++
++## tool result (patch) @ 11:06:17 — 1092 chars (body not exported)
++
++## assistant @ 11:07:07 → tools: patch
++
++
++
++## tool result (patch) @ 11:07:07 — 1306 chars (body not exported)
++
++## assistant @ 11:07:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:07:31 — 8815 chars (body not exported)
++
++## assistant @ 11:07:52 → tools: patch
++
++
++
++## tool result (patch) @ 11:07:52 — 1176 chars (body not exported)
++
++## assistant @ 11:08:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:08:23 — 22596 chars (body not exported)
++
++## assistant @ 11:10:10 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 11:10:10 — 700 chars (body not exported)
++
++## assistant @ 11:10:18 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 11:10:18 — 385 chars (body not exported)
++
++## tool result (read_file) @ 11:10:18 — 2373 chars (body not exported)
++
++## assistant @ 11:12:12
++
++NOT-READY — recommendation only; coordinator owns the final gate.
++
++Saved full report: `/home/rocco/agent-factory/.lanes/pc-verify-b3.md--c6c384a/tree/tasks/briefs/s0-02-support/VERIFY-B3-report.md`
++
++# VERIFY-B3 — adversarial grade of S0-02 round 3 (landing c6c384a)
++
++PIN: <opaque-redacted> · Role: adversarial-verifier · Venue: PC  
++This is a RECOMMENDATION, not a final gate verdict. The coordinator owns the gate.
++
++## Item 0 — mechanical gates and identity
++
++Reproduced, SOLID: FILE IDENTITY on the c6c384a archive exactly matched every brief value: `proofs/S0-02/check_buzz_authz.py` 765/`fc791273`; `proofs/S0-02/tools/pc/deliver_event.py` 221/`a14c027b`; `proofs/S0-02/tools/build_fixtures.py` 549/`38ae5a69`; `proofs/S0-02/spec.json` 26/`7cc99c95`; `proofs/S0-02/fixtures/PROVENANCE.md` 20/`23b1c09f`; `proofs/schemas/spec.schema.json` 48/`f425996d`; and `tests/test_s0_02_buzz_authz.py` 1599/`3bfc6703`.
++
++Reproduced, SOLID: collection was 137 tests. Canonical direct suite, with PC venue exports and isolated absolute basetemps, ran twice: `137 passed in 77.62s (0:01:17)` (worktree) and `137 passed in 77.82s (0:01:17)` (fresh `git archive c6c384a`). This agrees with the coordinator's 137-count claim.
++
++Reproduced, INFO: `python3 scripts/ap_screen.py` over the four production sources yielded AP-1 x1 (`D:78` `key = os.environ.get` `_privkey`), AP-32 x3 (`D:95` `payload`, `B:85` `hashlib`, `B:284` `hashlib`), and AF-AP-40 x1 (`B:428` `root`); the test scan yielded AF-AP-34 x4 at `T:1467,1471` `<opaque-redacted>`. `pyflakes` exited 0, `bash -n R` succeeded, and `python B --check` returned `fixture-drift: none (8 fixtures match a fresh build)`.
++
++Finding B3-00 — BLOCKER, SOLID. Contract mapping: B3 design item 7 requires one top-of-report stamp in VERIFY-B2, and item 9 requires B3's final-byte identity table, machine-checkable `file:line` anchors, lint, scanner paste, pack, named mutants, and both gate results. Canonical evidence path: these are the required report artifacts at the landing PIN. Expected: the B3 report says Items 1-9 were built and provides this evidence. Observed: line 10 of `tasks/briefs/s0-02-support/B3-report.md` claims `Items built (1–9)`, but only six item subsections appear on lines 12–89; its refs are prose `line 102` / `line 651-vicinity` on lines 16–19, `line ~120` on line 37, no identity table, no report-lint output, no pack or ap_screen paste, and only three unnamed self-attacks on lines 146–159. The opening three lines of `tasks/briefs/s0-02-support/VERIFY-B2-report.md` likewise have no required B3 stamp. The original zero-reference lint summary is mechanically clean only because the report has no checkable anchors. This makes the required mutation/evidence claims uninterpretable, is owned by the B3 scope, and is not a cosmetic report issue. Reproduction: `grep -n 'Items built|^### Item' B3-report.md` reports heading plus items 1-6 only; `head -3 VERIFY-B2-report.md` has no stamp. Min
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 1520356,
++  "output_tokens": 93583,
++  "cache_read_tokens": 8443200,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 53604,
++  "total_tokens": 10057139,
++  "api_calls": 108,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260917_104216_5cb01b",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
