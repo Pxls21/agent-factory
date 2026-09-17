@@ -250,11 +250,14 @@ PY
   grep -qF "$ROUTE_ID" "$framedir/hermes-model.txt" \
     || { echo "run_s0_03_legs: the launcher read model line $(cat "$framedir/hermes-model.txt") — it does not name '$ROUTE_ID'" >&2; return 6; }
 
-  python3 - "$EVIDENCE/hermes/leg.json" "$NONCE2" "$PROMPT" "$ROUTE_ID" \
-           "$window_start" "$window_end" <<'PY'
+  python3 - "$EVIDENCE/hermes/leg.json" "$EVIDENCE/hermes/hermes-env-names.json" \
+           "$NONCE2" "$PROMPT" "$ROUTE_ID" "$window_start" "$window_end" <<'PY'
 import json, sys
-out, nonce2, prompt, route, start, end = sys.argv[1:7]
+out, env_path, nonce2, prompt, route, start, end = sys.argv[1:8]
+with open(env_path, encoding="utf-8") as fh:
+    agent_child_pid = json.load(fh)["pid"]
 json.dump({"leg": "hermes", "nonce2": nonce2, "prompt": prompt, "route_id": route,
+           "agent_child_pid": agent_child_pid,
            "window_start": start, "window_end": end},
           open(out, "w"), indent=2, sort_keys=True)
 open(out, "a").write("\n")

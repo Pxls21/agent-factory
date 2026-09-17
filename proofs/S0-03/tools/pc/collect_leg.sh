@@ -67,18 +67,15 @@ BUNDLE=${1:?usage: collect_leg.sh <bundle-dir> <route-id>}
 ROUTE=${2:?usage: collect_leg.sh <bundle-dir> <route-id>}
 DATA_DIR=${OMNIROUTE_DATA_DIR:-/home/rocco/.omniroute-migrated}
 DB="$DATA_DIR/storage.sqlite"
-LIMIT=${S0_03_LOG_LIMIT:-50}
-
 [ -r "$DB" ] || { echo "collect_leg: OmniRoute database unreadable: $DB" >&2; exit 3; }
 mkdir -p "$BUNDLE"
 
 # Every value below is BOUND as a query parameter inside python's sqlite3 (VERIFY-O1 F-15): the
 # old form interpolated $ROUTE into the SQL text, where one quote breaks or extends the query.
-BUNDLE="$BUNDLE" ROUTE="$ROUTE" DB="$DB" LIMIT="$LIMIT" python3 - <<'PY'
+BUNDLE="$BUNDLE" ROUTE="$ROUTE" DB="$DB" python3 - <<'PY'
 import datetime, json, os, sqlite3, sys
 
-bundle, route, db, limit = (os.environ["BUNDLE"], os.environ["ROUTE"],
-                            os.environ["DB"], int(os.environ["LIMIT"]))
+bundle, route, db = os.environ["BUNDLE"], os.environ["ROUTE"], os.environ["DB"]
 COLUMNS = ("id, timestamp, method, path, status, model, requested_model, provider, "
            "connection_id, combo_name, correlation_id, session_tag, response_id")
 
@@ -91,9 +88,13 @@ def parse_stamp(value, what):
     if not isinstance(value, str) or not value:
         sys.exit(f"collect_leg: {what} is not an RFC3339 stamp: {value!r}")
     try:
-        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.datetime.fromisoformat(
+            value[:-1] + "+00:00" if value.endswith("Z") else value)
     except ValueError:
         sys.exit(f"collect_leg: {what} is not an RFC3339 stamp: {value!r}")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        sys.exit(f"collect_leg: {what} is not an RFC3339 stamp with an offset: {value!r}")
+    return parsed.astimezone(datetime.timezone.utc)
 
 
 def read_json(path):
@@ -117,6 +118,12 @@ if isinstance(leg, dict) and leg.get("window_start") is not None:
     if end < start:
         sys.exit("collect_leg: hermes/leg.json window_end precedes window_start")
     window = {"start": leg["window_start"], "end": leg["window_end"]}
+    # SQL compares the shared 19-character UTC prefix only as a coarse, complete bound. The
+    # exact aware-instant test below remains authoritative across either producer's precision.
+    sql_start = (start - datetime.timedelta(seconds=1)).astimezone(
+        datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    sql_end = (end + datetime.timedelta(seconds=2)).astimezone(
+        datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
 conn.row_factory = sqlite3.Row
@@ -126,15 +133,16 @@ try:
         rows = conn.execute(
             f"SELECT {COLUMNS} FROM call_logs "
             "WHERE requested_model = ? AND response_id = ? "
-            "ORDER BY timestamp ASC LIMIT ?",
-            (route, response_id, limit)).fetchall()
+            "ORDER BY timestamp ASC",
+            (route, response_id)).fetchall()
         for row in rows:
             requests.append(dict(row, leg="direct"))
     if window is not None:
         rows = conn.execute(
             f"SELECT {COLUMNS} FROM call_logs "
-            "WHERE requested_model = ? ORDER BY timestamp ASC LIMIT ?",
-            (route, limit)).fetchall()
+            "WHERE requested_model = ? AND timestamp >= ? AND timestamp < ? "
+            "ORDER BY timestamp ASC",
+            (route, sql_start, sql_end)).fetchall()
         for row in rows:
             stamp = parse_stamp(row["timestamp"], "call_logs.timestamp")
             if start <= stamp <= end:
@@ -142,20 +150,21 @@ try:
 finally:
     conn.close()
 
+counts = {"direct": 0, "hermes": 0}
+for row in requests:
+    counts[row["leg"]] += 1
 record = {
     "source": f"sqlite:{db} table call_logs (read-only, immutable=1)",
     "captured_at": datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.%fZ"),
     "windows": {} if window is None else {"hermes": window},
+    "row_counts": counts,
     "requests": requests,
 }
 with open(os.path.join(bundle, "omniroute-requests.json"), "w", encoding="utf-8") as fh:
     json.dump(record, fh, indent=2, sort_keys=True)
     fh.write("\n")
 
-counts = {"direct": 0, "hermes": 0}
-for row in requests:
-    counts[row["leg"]] += 1
 summary = ", ".join(
     f"{r['leg']}={r.get('provider')!r}/{r.get('model')!r} status={r.get('status')} "
     f"session_tag={r.get('session_tag')!r}" for r in requests)

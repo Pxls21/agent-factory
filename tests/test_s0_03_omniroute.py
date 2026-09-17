@@ -25,6 +25,7 @@ import threading
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PROOF = ROOT / "proofs" / "S0-03"
@@ -328,7 +329,7 @@ def test_conjunct_iv_roundtrip_requires_a_completed_tool_call(passing):
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
-        "failure_reason: roundtrip: no tool_call that started reached status 'completed'")
+        "failure_reason: roundtrip: no tool_call that started reached status 'completed' after it started")
 
 
 def test_conjunct_iv_roundtrip_requires_a_tool_call_at_all(passing):
@@ -380,6 +381,17 @@ def test_conjunct_iv_binds_the_answer_to_the_question(passing):
     assert "absent from the prompt frame" in result.stdout
 
 
+# --------------------------------------------------------------------------- O3 exact POST method
+@pytest.mark.parametrize("leg,method", [("direct", "GET"), ("hermes", "GET"),
+                                         ("direct", "post")])
+def test_transport_requires_exact_post_on_both_rows(passing, leg, method):
+    _edit(passing, "omniroute-requests.json", lambda r: [
+        row.__setitem__("method", method) for row in r["requests"] if row["leg"] == leg])
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert result.stdout.strip() == (
+        f"failure_reason: transport: {leg} leg row method {method!r}, expected 'POST'")
+
 def test_conjunct_v_transport(passing):
     """(v) the ADR's transport. The owner's live profiles currently use `chat_completions`
     (docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md:17) — this proof PINS the ADR and reports the
@@ -394,6 +406,40 @@ def test_conjunct_v_transport(passing):
         "'codex_responses' (ADR 0002)")
 
 
+# --------------------------------------------------------------------------- O3 recursive credential screen
+@pytest.mark.parametrize("mutation,path", [
+    (lambda provider: provider.__setitem__("nested", {"api_key": "x" * 32}),
+     "providers.s0-03-omniroute.nested.api_key"),
+    (lambda provider: provider.setdefault("headers", {}).__setitem__(
+        "Authorization", "Bearer placeholder-token"),
+     "providers.s0-03-omniroute.headers.Authorization"),
+    (lambda provider: provider.setdefault("extra_headers", {}).__setitem__(
+        "Authorization", "Basic placeholder-token"),
+     "providers.s0-03-omniroute.extra_headers.Authorization"),
+    (lambda provider: provider.__setitem__(
+        "nested", [{"headers": [{"X-Api-Key": "x" * 32}]}]),
+     "providers.s0-03-omniroute.nested.0.headers.0.X-Api-Key"),
+])
+def test_credential_screen_recurses_over_the_whole_provider_block(passing, mutation, path):
+    profile = passing / "hermes" / "profile.yaml"
+    doc = yaml.safe_load(profile.read_text())
+    mutation(doc["providers"]["s0-03-omniroute"])
+    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert result.stdout.strip() == (
+        f"failure_reason: bundle: profile.yaml carries an inline credential under {path}")
+
+
+def test_credential_screen_allows_only_the_provider_key_env_name(passing):
+    profile = passing / "hermes" / "profile.yaml"
+    doc = yaml.safe_load(profile.read_text())
+    provider = doc["providers"]["s0-03-omniroute"]
+    provider["key_env"] = "OMNIROUTE_API_KEY"
+    profile.write_text(yaml.safe_dump(doc, sort_keys=False))
+    result = run_checker(passing)
+    assert result.returncode == 0, result.stdout + result.stderr
+
 def test_conjunct_v_rejects_an_inline_key_in_the_captured_profile(passing):
     profile = passing / "hermes" / "profile.yaml"
     profile.write_text(profile.read_text().replace(
@@ -401,7 +447,7 @@ def test_conjunct_v_rejects_an_inline_key_in_the_captured_profile(passing):
         "    key_env: OMNIROUTE_API_KEY\n    api_key: sk-not-a-real-key"))
     result = run_checker(passing)
     assert result.returncode == 1
-    assert "profile.yaml carries an inline credential under 'api_key'" in result.stdout
+    assert "profile.yaml carries an inline credential under providers.s0-03-omniroute.api_key" in result.stdout
 
 
 @pytest.mark.parametrize("line,named", [
@@ -420,7 +466,8 @@ def test_conjunct_v_rejects_a_credential_in_extra_headers(passing, line, named):
         '      x-omniroute-compression: "off"\n' + line))
     result = run_checker(passing)
     assert result.returncode == 1
-    assert f"profile.yaml carries an inline credential under '{named}'" in result.stdout
+    assert (f"profile.yaml carries an inline credential under "
+            f"providers.s0-03-omniroute.extra_headers.{named}") in result.stdout
 
 
 def test_conjunct_v_still_accepts_the_key_env_NAME(passing):
@@ -1173,6 +1220,54 @@ def test_conjunct_i_rejects_a_transport_error_beside_a_200(passing):
 
 # --------------------------------------------------------------------------- conjunct (iv):
 # --------------------------------------------------------------------------- the tool OUTPUT
+# --------------------------------------------------------------------------- O3 exact, ordered terminal call
+def _tool_updates(entries):
+    return [((entry.get("frame") or {}).get("params") or {}).get("update") or {}
+            for entry in entries]
+
+
+def test_roundtrip_rejects_read_file_whose_output_quotes_nonce(passing):
+    path, entries = _timeline(passing)
+    for update in _tool_updates(entries):
+        if update.get("sessionUpdate") == "tool_call":
+            update["kind"] = "read"
+            update["title"] = "read_file: /tmp/nonce.txt"
+            update["rawInput"] = {"path": "/tmp/nonce.txt"}
+    _write_timeline(path, entries)
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "no exact terminal tool_call for" in result.stdout
+
+
+def test_roundtrip_rejects_completion_before_exact_start(passing):
+    path, entries = _timeline(passing)
+    start_index = next(i for i, update in enumerate(_tool_updates(entries))
+                       if update.get("sessionUpdate") == "tool_call")
+    complete_index = next(i for i, update in enumerate(_tool_updates(entries))
+                          if update.get("status") == "completed")
+    completion = entries.pop(complete_index)
+    entries.insert(start_index, completion)
+    _write_timeline(path, entries)
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "reached status 'completed' after it started" in result.stdout
+
+
+def test_roundtrip_rejects_wrong_terminal_command_with_unrelated_nonce_output(passing):
+    path, entries = _timeline(passing)
+    for update in _tool_updates(entries):
+        if update.get("sessionUpdate") == "tool_call":
+            update["rawInput"] = {"command": "printf other"}
+    _write_timeline(path, entries)
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "no exact terminal tool_call for" in result.stdout
+
+
+def test_committed_fixture_has_the_exact_ordered_terminal_call(passing):
+    result = run_checker(passing)
+    assert result.returncode == 0, result.stdout + result.stderr
+
 def test_conjunct_iv_requires_the_tool_output_to_carry_the_nonce(passing):
     """F-6. The conjunct needed only "some tool call finished" and "the nonce is in some agent
     text", with nothing joining them. The prompt asked for `printf <nonce2>`, so the completed
@@ -1241,6 +1336,28 @@ def test_conjunct_iv_requires_the_completed_call_to_be_one_that_started(passing)
 
 
 # --------------------------------------------------------------------------- the env RECORD
+# --------------------------------------------------------------------------- O3 pid binding
+@pytest.mark.parametrize("value", ["48211", 0, -1, True])
+def test_env_record_pid_is_a_strict_positive_int(passing, value):
+    _edit(passing, "hermes/hermes-env-names.json", lambda r: r.__setitem__("pid", value))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "pid is not a strict positive integer" in result.stdout
+
+
+def test_env_record_pid_matches_the_tee_child_pid(passing):
+    _edit(passing, "hermes/hermes-env-names.json", lambda r: r.__setitem__("pid", 48212))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "does not match hermes/leg.json agent_child_pid" in result.stdout
+
+
+def test_leg_requires_the_tee_child_pid(passing):
+    _edit(passing, "hermes/leg.json", lambda r: r.pop("agent_child_pid", None))
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert "agent_child_pid is not a strict positive integer" in result.stdout
+
 @pytest.mark.parametrize("field,value,pin", [
     ("exe", "/usr/bin/sleep", "PINNED_AGENT_INTERPRETER_REALPATH"),
     ("agent_realpath", "/usr/bin/false", "PINNED_AGENT_REALPATH"),
@@ -1507,6 +1624,55 @@ def test_runner_negative_leg_has_a_producer_and_says_what_it_cannot_capture():
     assert "NOT-CAPTURED.md" in body and "launch_env" in body
 
 
+# --------------------------------------------------------------------------- O3 collector completeness
+def test_collect_leg_exports_every_window_row_beyond_the_old_cap(passing, tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    direct = json.loads((passing / "direct" / "direct.json").read_text())
+    prior = json.loads((passing / "omniroute-requests.json").read_text())["requests"]
+    direct_row = next(row for row in prior if row["leg"] == "direct")
+    hermes_row = next(row for row in prior if row["leg"] == "hermes")
+    # Forty-nine route rows precede the target: the direct row plus 48 unrelated rows. The target
+    # is row 50 and the foreign same-window row is 51, so the old LIMIT 50 exported one apparently
+    # attributable Hermes row and let the checker PASS.
+    rows = [dict(direct_row, id="log_direct", timestamp="2026-09-08T00:00:00.100Z",
+                 response_id=direct["id"])]
+    rows += [dict(hermes_row, id=f"log_early_{i:02d}",
+                  timestamp=f"2026-09-08T00:00:00.{200 + i:03d}Z",
+                  response_id=f"resp_early_{i:02d}", session_tag=f"early-{i:02d}")
+             for i in range(48)]
+    rows += [dict(hermes_row, id="log_target", timestamp="2026-09-08T00:00:01.100Z",
+                  response_id="resp_target", session_tag="0f1e2d3c4b5a6978"),
+             dict(hermes_row, id="log_foreign", timestamp="2026-09-08T00:00:01.200Z",
+                  response_id="resp_foreign", session_tag="somebody-else")]
+    _call_logs_db(data / "storage.sqlite", rows)
+    result = _run_collect(passing, data)
+    assert result.returncode == 0, result.stdout + result.stderr
+    checked = run_checker(passing)
+    assert checked.returncode == 1
+    assert checked.stdout.strip() == (
+        "failure_reason: identity: 2 call_logs rows in the hermes leg's window — unattributable")
+    record = json.loads((passing / "omniroute-requests.json").read_text())
+    assert [row["id"] for row in record["requests"] if row["leg"] == "hermes"] == [
+        "log_target", "log_foreign"]
+    assert record["row_counts"] == {"direct": 1, "hermes": 2}
+
+
+def test_collect_leg_exports_a_duplicate_direct_row_beyond_the_old_cap(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    rows = [dict(_BASE_ROW, id=f"log_direct_{i:02d}",
+                 timestamp=f"2026-09-08T00:00:00.{100 + i:03d}Z",
+                 response_id="resp_abc123") for i in range(51)]
+    _call_logs_db(data / "storage.sqlite", rows)
+    bundle = _collect_bundle(tmp_path, window=False)
+    result = _run_collect(bundle, data)
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = json.loads((bundle / "omniroute-requests.json").read_text())
+    direct_ids = [row["id"] for row in record["requests"] if row["leg"] == "direct"]
+    assert direct_ids == [f"log_direct_{i:02d}" for i in range(51)]
+    assert record["row_counts"]["direct"] == 51
+
 # --------------------------------------------------------------------------- collect_leg.sh,
 # --------------------------------------------------------------------------- over a REAL sqlite
 # The `call_logs` column list, verbatim from the producer's INSERT statement (OmniRoute 488f57e9,
@@ -1708,6 +1874,38 @@ def test_env_names_resolves_the_pid_the_tee_actually_writes(tmp_path):
     assert written["agent_realpath"] == real["agent_realpath"]
     assert "PATH" in written["names"]
 
+
+# --------------------------------------------------------------------------- O3 aware instants
+@pytest.mark.parametrize("target", ["row", "window_start", "window_end"])
+def test_checker_rejects_offsetless_instants_without_traceback(passing, target):
+    if target == "row":
+        _edit(passing, "omniroute-requests.json", lambda r: [
+            row.__setitem__("timestamp", "2026-09-08T00:00:02")
+            for row in r["requests"] if row["leg"] == "hermes"])
+        name = "omniroute-requests.json hermes.timestamp"
+    else:
+        stamp = ("2026-09-08T00:00:01" if target == "window_start"
+                 else "2026-09-08T00:00:04")
+        _edit(passing, "hermes/leg.json", lambda r: r.__setitem__(target, stamp))
+        _edit(passing, "omniroute-requests.json",
+              lambda r: r["windows"]["hermes"].__setitem__(
+                  "start" if target == "window_start" else "end", stamp))
+        name = f"hermes/leg.json {target}"
+    result = run_checker(passing)
+    assert result.returncode == 1
+    assert f"{name} is not an RFC3339 stamp with an offset" in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_checker_normalises_offset_instants_to_utc(passing):
+    values = {"start": "2026-09-08T02:00:01+02:00",
+              "end": "2026-09-08T02:00:04+02:00"}
+    _edit(passing, "hermes/leg.json", lambda r: r.update({
+        "window_start": values["start"], "window_end": values["end"]}))
+    _edit(passing, "omniroute-requests.json",
+          lambda r: r["windows"]["hermes"].update(values))
+    result = run_checker(passing)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 def test_the_hermes_row_must_really_be_inside_the_declared_window(passing):
     """The checker verifies the exporter's window filter rather than trusting it: the row it

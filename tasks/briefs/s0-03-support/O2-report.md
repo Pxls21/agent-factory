@@ -1,3 +1,5 @@
+STAMP 2026-09-08 (O3): the pc_launch.py:293-294 citation is a MISS (VERIFY-O2 item 0).
+
 # O2 — S0-03 round 2: the call_logs row bound to the leg, leg B on the real capture path
 
 PIN: `246bec7` (PC translation of sandbox pin `218dc2f`; the staged lane patch carries the same O2 implementation bytes)

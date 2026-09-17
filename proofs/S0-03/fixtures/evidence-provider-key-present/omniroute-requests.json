@@ -34,6 +34,10 @@
       "timestamp": "2026-09-08T00:00:02.400Z"
     }
   ],
+  "row_counts": {
+    "direct": 1,
+    "hermes": 1
+  },
   "source": "sqlite:/home/rocco/.omniroute-migrated/storage.sqlite table call_logs (read-only, immutable=1)",
   "windows": {
     "hermes": {

@@ -145,6 +145,7 @@ REASONS = {
     "identity_unattributable": "identity: {} call_logs rows in the hermes leg's window — unattributable",
     "roundtrip": "roundtrip: {}",
     "transport": "transport: profile api_mode {!r} != 'codex_responses' (ADR 0002)",
+    "transport_method": "transport: {} leg row method {!r}, expected 'POST'",
     "transport_path": "transport: {} leg row path {!r} does not end in /responses (ADR 0002)",
     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
     "env_process": "env: the environ record's {} is {!r}, not the pinned Hermes agent {!r}",
@@ -456,9 +457,14 @@ def _instant(value, name: str):
     if not isinstance(value, str) or not value:
         raise Failure(f"bundle: {name} is not an RFC3339 stamp ({value!r})")
     try:
-        return _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = _dt.datetime.fromisoformat(
+            value[:-1] + "+00:00" if value.endswith("Z") else value)
     except ValueError:
         raise Failure(f"bundle: {name} is not an RFC3339 stamp ({value!r})")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise Failure(
+            f"bundle: {name} is not an RFC3339 stamp with an offset ({value!r})")
+    return parsed.astimezone(_dt.timezone.utc)
 
 
 def _require_in_window(row: dict, window: dict):
@@ -541,6 +547,8 @@ def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: d
                 _fail("identity_session_tag", tag, nonce2)
         if row.get("status") != 200:
             _fail("identity_status", leg, row.get("status"))
+        if row.get("method") != "POST":
+            _fail("transport_method", leg, row.get("method"))
         path = _str(row.get("path"), f"omniroute-requests.json {leg}.path")
         if not path.endswith("/responses"):
             _fail("transport_path", leg, path)
@@ -606,33 +614,45 @@ def check_roundtrip(entries, nonce2: str):
     if len(prompts) != 1:
         _fail("roundtrip", f"{len(prompts)} session/prompt turns, expected exactly 1")
 
-    # Structural bind: the nonce the checker looks for in the answer is the one the PROMPT asked
-    # for, so a bundle cannot pass by carrying an answer to a different question.
-    if nonce2 not in json.dumps(prompts[0]["frame"], ensure_ascii=False):
+    prompt = prompts[0]["frame"]
+    if nonce2 not in json.dumps(prompt, ensure_ascii=False):
         _fail("roundtrip", f"nonce2 {nonce2!r} absent from the prompt frame")
+    expected_commands = {f"printf {nonce2}", f"printf '{nonce2}'", f'printf "{nonce2}"'}
 
-    starts = [u for u in _updates(entries) if u.get("sessionUpdate") == "tool_call"]
+    indexed_updates = list(enumerate(_updates(entries)))
+    starts = [(index, update) for index, update in indexed_updates
+              if update.get("sessionUpdate") == "tool_call"]
     if not starts:
         _fail("roundtrip", "no tool_call update in the timeline")
 
-    started_ids = {u.get("toolCallId") for u in starts if isinstance(u.get("toolCallId"), str)}
+    exact_starts = [
+        (index, update) for index, update in starts
+        if update.get("kind") == "execute"
+        and isinstance(update.get("rawInput"), dict)
+        and update["rawInput"].get("command") in expected_commands
+        and set(update["rawInput"]) == {"command"}
+        and isinstance(update.get("toolCallId"), str)
+    ]
+    if len(exact_starts) != 1:
+        _fail("roundtrip", f"no exact terminal tool_call for 'printf {nonce2}'")
+    start_index, start = exact_starts[0]
+    call_id = start["toolCallId"]
+
     completed = [
-        u for u in _updates(entries)
-        if u.get("sessionUpdate") in ("tool_call", "tool_call_update")
-        and u.get("status") == "completed"
-        and isinstance(u.get("toolCallId"), str)
-        and u.get("toolCallId") in started_ids
+        (index, update) for index, update in indexed_updates
+        if index > start_index
+        and update.get("sessionUpdate") == "tool_call_update"
+        and update.get("status") == "completed"
+        and update.get("toolCallId") == call_id
     ]
     if not completed:
-        _fail("roundtrip", "no tool_call that started reached status 'completed'")
+        _fail("roundtrip", "no tool_call that started reached status 'completed' after it started")
 
-    # THE ROUND TRIP, not a coincidence of two facts. The conjunct used to need only "some tool
-    # call finished" AND "the nonce appears in some agent text", with nothing joining them: an
-    # unrelated `read_file` completion satisfied it (F-6, mutant V6). The prompt asked the agent
-    # to run `printf <nonce2>`, so the OUTPUT of the completed call is where the nonce must be —
-    # that is the evidence that this tool call is the one the prompt asked for and that it really
-    # ran. The committed fixture already carries it in the completed update's `content`.
-    if not any(nonce2 in json.dumps(u.get("content"), ensure_ascii=False) for u in completed):
+    # THE ROUND TRIP, not a coincidence of two facts: the ACP `tool_call` start carries
+    # kind=execute and rawInput.command; only a later completed update with the same toolCallId
+    # can prove that exact request ran.
+    if not any(nonce2 in json.dumps(update.get("content"), ensure_ascii=False)
+               for _index, update in completed):
         _fail("roundtrip",
               f"nonce2 {nonce2!r} absent from the completed tool call's output")
 
@@ -642,19 +662,39 @@ def check_roundtrip(entries, nonce2: str):
 
 
 # --- conjunct (v): the transport the ADR pins -------------------------------------------------
-def _provider_block(profile) -> dict:
+def _provider_block(profile) -> tuple[str, dict]:
     providers = _obj(profile, "profile.yaml").get("providers")
     providers = _obj(providers, "profile.yaml providers")
     if len(providers) != 1:
         raise Failure(
             f"bundle: profile.yaml declares {len(providers)} providers, expected exactly 1"
         )
-    (_name, block), = providers.items()
-    return _obj(block, "profile.yaml provider block")
+    (name, block), = providers.items()
+    return str(name), _obj(block, "profile.yaml provider block")
+
+
+def _walk_credentials(node, path: str):
+    """Reject credential-bearing names or values anywhere below a provider block."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child_path = f"{path}.{key}"
+            key_is_allowed_env_name = (
+                key == "key_env" and path.count(".") == 1 and path.startswith("providers."))
+            if is_credential_name(key) and not key_is_allowed_env_name:
+                raise Failure(
+                    f"bundle: profile.yaml carries an inline credential under {child_path}")
+            if (isinstance(value, str)
+                    and value.lower().startswith(("bearer ", "basic ", "sk-", "sk_"))):
+                raise Failure(
+                    f"bundle: profile.yaml carries an inline credential under {child_path}")
+            _walk_credentials(value, child_path)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            _walk_credentials(value, f"{path}.{index}")
 
 
 def check_transport(profile):
-    block = _provider_block(profile)
+    provider_name, block = _provider_block(profile)
     api_mode = block.get("api_mode")
     if api_mode != REQUIRED_API_MODE:
         _fail("transport", api_mode)
@@ -671,18 +711,9 @@ def check_transport(profile):
             f"bundle: profile.yaml {COMPRESSION_REQUEST_HEADER} is {value!r}, expected 'off'"
         )
 
-    # The launched profile must never carry a key VALUE. Only the env NAME may appear.
-    # The literal `api_key` was the whole screen; Hermes' own config example documents
-    # `extra_headers` as the place operators put custom auth ("Header values are treated as
-    # secrets", cli-config.yaml.example:141-154), so `Authorization: Bearer sk-…` under
-    # extra_headers walked straight through it (F-4, mutant V3). Screen the WHOLE provider block
-    # and its headers, by name AND by value shape.
-    for key, value in list(block.items()) + list(headers.items()):
-        name = str(key)
-        if is_credential_name(name) and name.upper() != "KEY_ENV":
-            raise Failure(f"bundle: profile.yaml carries an inline credential under {name!r}")
-        if isinstance(value, str) and value.strip().lower().startswith("bearer "):
-            raise Failure(f"bundle: profile.yaml carries an inline credential under {name!r}")
+    # The launched profile must never carry a key VALUE. Only the exact provider-level env NAME
+    # may appear. Walk mappings and lists recursively so nested custom headers cannot hide it.
+    _walk_credentials(block, f"providers.{provider_name}")
     if block.get("key_env") != "OMNIROUTE_API_KEY":
         raise Failure(
             f"bundle: profile.yaml key_env is {block.get('key_env')!r}, expected 'OMNIROUTE_API_KEY'"
@@ -708,7 +739,7 @@ def check_env(env_names):
 
 
 # --- conjunct (vi.b): WHICH process the environ belongs to --------------------------------------
-def check_env_record(record: dict):
+def check_env_record(record: dict, leg: dict):
     """"HERMES holds no upstream provider key" is the assertion; "some process holds none" is what
     a name list alone proves. The record carries the pid it read, the `exe` symlink of that pid and
     the tee's own record of the binary it spawned — all three were written and none was ever read
@@ -726,6 +757,20 @@ def check_env_record(record: dict):
         process's. It is required: a record without it cannot support the assertion.
     """
     s0_01 = _load_s0_01_module()
+    pid = record.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise Failure(
+            f"bundle: hermes/hermes-env-names.json pid is not a strict positive integer ({pid!r})")
+    agent_child_pid = leg.get("agent_child_pid")
+    if (isinstance(agent_child_pid, bool) or not isinstance(agent_child_pid, int)
+            or agent_child_pid <= 0):
+        raise Failure(
+            "bundle: hermes/leg.json agent_child_pid is not a strict positive integer "
+            f"({agent_child_pid!r})")
+    if pid != agent_child_pid:
+        raise Failure(
+            f"bundle: hermes/hermes-env-names.json pid {pid} does not match "
+            f"hermes/leg.json agent_child_pid {agent_child_pid}")
     exe = _str(record.get("exe"), "hermes/hermes-env-names.json exe")
     if exe != s0_01.PINNED_AGENT_INTERPRETER_REALPATH:
         _fail("env_process", "exe", exe, s0_01.PINNED_AGENT_INTERPRETER_REALPATH)
@@ -794,7 +839,7 @@ def check_bundle(root: Path, spec: dict) -> str:
     provider = check_identity_route(bundle["requests"], bundle["direct"], bundle["leg"], spec)
     check_roundtrip(bundle["entries"], _str(bundle["leg"].get("nonce2"), "hermes/leg.json nonce2"))
     check_transport(bundle["profile"])
-    check_env_record(bundle["env_record"])
+    check_env_record(bundle["env_record"], bundle["leg"])
     check_env(bundle["env_names"])
 
     return (

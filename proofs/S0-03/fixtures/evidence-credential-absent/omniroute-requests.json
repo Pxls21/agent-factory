@@ -1,6 +1,10 @@
 {
   "captured_at": "2026-09-08T00:00:05.000000Z",
   "requests": [],
+  "row_counts": {
+    "direct": 0,
+    "hermes": 0
+  },
   "source": "sqlite:/home/rocco/.omniroute-migrated/storage.sqlite table call_logs (read-only, immutable=1)",
   "windows": {}
 }
