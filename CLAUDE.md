@@ -718,6 +718,7 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
   skills/hooks are never installed. Attach a lane's `compare` delta to its verify brief; a "degraded" line is information
   for the verifier, not a verdict. Known blind spot: Python import resolution is weak on this tree,
   so its coupling/cycle numbers are near-empty here; complexity and function length are the live signal.
+- **The prism review skills (advisory, NEVER a gate; owner 2026-09-17):** `prism-scan`/`prism-full`/`prism-3way`/`prism-discover`/`prism-reflect` (`.claude/skills/`, mirrored to `.agents/skills/`; vendored super-hermes MIT, `.claude/skills/PROVENANCE-PRISM.md`). On a hard-to-see bug or an important artifact, run one — it cooks a custom analytical lens for THAT artifact and reports a findings table (location · what breaks · severity · fixable-or-structural); `prism-full` adds a mandatory adversarial self-correction pass (attack your own findings, retract overclaims), the deep-work Phase-5 ethos in prompt form. LLM analysis, so a prism FINDS and INFORMS; it never DECIDES a green (no LLM-judge in the gate spine) — its output feeds the human/coordinator verdict and the deterministic gates, exactly like slopo/sentrux/ripwire.
 - **DORMANT/reachability claims need TWO independent instruments, named in the report** (e.g.
   crg `callers_of` AND a cbm Cypher trace) — never off one.
 - Fallbacks (CCR sessions often drop MCP): GitNexus 3-tier (MCP → stdio `scripts/gn_mcp.py` →

@@ -146,6 +146,29 @@ Never a gate: a ripwire zero is "none found", never "none exists".
 Pins + telemetry posture: `upstream.lock.yaml` `advisory_tooling.ripwire`; no telemetry found.
 `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §ripwire. Missing binary → `scripts/setup.sh`.
 
+## prism — deep structural review (ADVISORY prompt-skills; adopted 2026-09-17)
+
+Axis: not code-graph facts (the quartet/ripwire) or architecture health (sentrux) but a DEEP
+STRUCTURAL READ of one artifact — the bugs and trade-offs a checklist misses. Prompt-only skills
+(`.agents/skills/`, from `.claude/skills/`; vendored super-hermes MIT,
+`.claude/skills/PROVENANCE-PRISM.md`). Invoke via the skill mechanism. Use for:
+- **`prism-scan`** — cook a custom analytical lens for THIS artifact, execute it → findings table
+  (location · what breaks · severity · fixable-or-structural). The default entry on a hard-to-see
+  bug or an important file / design / spec.
+- **`prism-full`** — multi-pass + a MANDATORY adversarial self-correction pass (attack your own
+  findings, retract overclaims). The deep-work Phase-5 ethos in prompt form; for a core module or
+  a design about to be committed to.
+- **`prism-3way`** — WHERE/WHEN/WHY orthogonal passes + synthesis; findings corroborated by ≥2
+  passes are the real ones.
+- **`prism-discover`** — enumerate the analysis domains worth taking BEFORE committing a scan.
+- **`prism-reflect`** — constraint transparency (what the analysis maximized vs sacrificed);
+  writes `.prism-history.md` (gitignored) so later scans steer around exhausted angles.
+
+NEVER a gate: LLM analysis FINDS and INFORMS; it never DECIDES a green (no LLM-judge in the gate
+spine). A prism's findings feed the human/coordinator verdict and the deterministic gates, the
+same posture as slopo/sentrux/ripwire; a prism is not one of the two independent instruments a
+reachability/containment claim still needs.
+
 ## § lane_context — the ONE-COMMAND tool pass (owner escalation 2026-09-07)
 
 `scripts/lane_context.sh [-q "<question>"] [-s SYMBOL]... [-o pack.md] FILE...` runs the whole quartet + ripwire +

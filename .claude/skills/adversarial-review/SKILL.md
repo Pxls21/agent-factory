@@ -7,6 +7,8 @@ description: The pre-merge review playbook — reproduce, don't adopt. Use for a
 
 Your job is to try to make the change fail, not to confirm it works. The author's report is a list of claims; reproduce every claim you rely on.
 
+For a deep structural pass on a gnarly artifact, the `prism-full` skill (advisory) cooks a custom analytical lens and runs a mandatory adversarial self-correction pass — feed its findings into this review as leads to reproduce, never as its verdict (no LLM-judge in the gate spine).
+
 ## Minimum attack set
 
 1. **Merge reality.** Fetch, then `merge-tree` against the LIVE tip (it moves during long reviews — re-check before verdict). Check file overlap with recent history for *semantic* conflicts, not just textual ones.
