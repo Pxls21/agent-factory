@@ -96,6 +96,17 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-17 10:03Z — the 4-batch runs on LOCAL Qwen (owner: "actually run quen … do our 4 batch jobs … finish building all our proofs … validate and verified"); VERIFY-O2 CONFIRMED NOT-READY (6 blockers); O3 dispatched to close them:**
+
+Resumed. The four Stage-0 lanes run on the vLLM Qwen3.8-27B (local route) — the owner's directive. The batch: B3 (S0-02 r3 verify, pid 3146337), M3 (S0-06 r3 verify, 3152753), G3 (S0-08 r3 verify, 3153288), O3 (S0-03 r3 BUILD, 3202364) — all ALIVE; `qwen-builder` inactive+disabled (vLLM is the local server since D-032).
+
+VERIFY-O2 (S0-03 round 2, local Qwen verify route, pin d12fc13) harvested + committed (d1b742a) and COORDINATOR-CONFIRMED by primary source at the pin — NOT-READY, six SOLID blockers all reproduced in the checker/collector bytes: V-O2-1 collector `LIMIT 50` upstream of the Hermes-window uniqueness gate (collect_leg.sh:133-141); V-O2-2 credential screen non-recursive + value-shape catches only `bearer ` (check:680-685); V-O2-3 completed tool call bound only by nonce2-in-content, no tool-name/input/ordering (check:614-641); V-O2-4 `pid` emitted, never validated (check:729-734); V-O2-5 naive RFC3339 stamp crashes `_instant`→window compare, not a named Failure (check:456-461); V-O2-6 no `method=="POST"` (check:542-546). 130 mutations, 48/48 core kills. The local Qwen produced a real, reproducible deep grade.
+
+O3 (S0-03 round 3 BUILD) DISPATCHED on the local Qwen build route (`agentfactory-build-local`; `pc-o3.md` re-pinned 887f341→a827346 = the O2 code + the committed grade + the governing brief; commit a8ddf7a → pushed 302da61) to close all six with pinned fixes + red tests (delete the collector LIMIT + a 19-char-prefix SQL window bound, register AF-AP-71; `_walk_credentials` recursive, path-named; the terminal call bound to the exact `printf <nonce2>` and ordered after its start; `pid` a strict positive int == leg.agent_child_pid; aware instants only; method==POST on both rows). Report → `tasks/briefs/s0-03-support/O3-report.md`.
+
+The pc_lane vLLM effort-skip fix (b336427 → ea32017, this session's earlier work) PROVEN LIVE: O3's build-effort dispatch queued 0 qwen-builder restarts (the retired unit is inactive) — all three sibling verify lanes undisturbed. Per-lane effort under vLLM stays the server default (per-request effort not wired); local build+verify lanes share it. S0-03 stays EXPIRED; nothing minted. NOT this round's: the live legs A/B/negative capture, the EXPIRED→result flip, the remint (coordinator's).
+
+
 **2026-09-17 00:35Z GOV2c — the independent verify caught 2 real blockers in GOV2b; both closed (27a3465); #67 GOV2 COMPLETE:**
 
 The "never self-accept spine" rule earned its keep. The independent adversarial verify of GOV2b (a sandbox adversarial-verifier attacking the review binding through the real gpg path) returned NOT-READY with two BLOCKERS my own tests+mutation had missed — I had prematurely called GOV2b done. Reproduced both on HEAD, then closed them in GOV2c (`src/agent_factory/governance/review.py` + tests + `reviews/README.md`):
