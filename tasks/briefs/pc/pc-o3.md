@@ -1,6 +1,8 @@
 # PC lane — O3 (S0-03 round 3: the collector complete over the window, the credential screen recursive, the terminal call exact and ordered, pid bound, aware instants, POST on both rows)
 
-PIN: 887f341
+PIN: a827346
+
+(a827346 = origin tip 2026-09-17: it carries lane O2's landing d12fc13 with every S0-03 file byte-identical since — VERIFY-O2's identity table holds — PLUS the committed VERIFY-O2 grade `tasks/briefs/s0-03-support/VERIFY-O2-report.md` and this round's governing brief. The old pin 887f341 was a transcript-sync commit that predates the O2 code; it never carried the checker/collector this round fixes.)
 
 Role: code-implementer. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
 
