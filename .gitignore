@@ -47,3 +47,6 @@ vendor/
 
 # the S0-01 pinned-upstream oracle (crates/buzz-acp/src/acp.rs at 1c8321cd, sha-pinned in its VENDORED-FROM.md) is committed on purpose
 !proofs/S0-01/vendor/
+
+# super-hermes prism growth-loop constraint log (per-project, not tracked)
+.prism-history.md
