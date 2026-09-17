@@ -1400,16 +1400,54 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
     """Parse the bounded grammar permitted to write a literal ``$out`` path.
 
     Recognised writers are cp, tee, shell redirection (including a heredoc), mv,
-    and Python write_text/open-with-write-mode. Every other executable line that
-    names ``"$out/..."`` must match one of the runner's bounded read/call/remove
-    forms or is refused as unrecognised rather than silently omitted.
+    and Python write_text/open-with-write-mode. Dynamic ``$out`` assignments and
+    writers targeting an unresolved shell variable are refused. Other executable
+    lines that name ``"$out/..."`` must match one of the runner's bounded
+    read/call/remove forms or is refused as unrecognised rather than silently
+    omitted.
     """
     writes = set()
     unrecognised = []
+    static_roots = {
+        match.group(1)
+        for raw in text.splitlines()
+        if (match := re.match(r"^\s*([A-Za-z_]\w*)=([^#]*)$", raw))
+        and "$out" not in match.group(2)
+    }
+    variable_path = r'"\$([A-Za-z_]\w*)[^\"]*"'
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        dynamic_out_assignment = re.search(r"\b\w+=[^#]*\$out\b", line)
+        variable_target = (
+            re.search(rf'(?:^|\s)\d*>>?\s*{variable_path}', line)
+            or (
+                re.search(r"(?:^|\|)\s*tee(?:\s+-\S+)*\s+", line)
+                and re.search(variable_path, line)
+            )
+            or (
+                re.match(r"(?:cp|mv)\b", line)
+                and re.search(rf'{variable_path}\s*$', line)
+            )
+            or (
+                ("write_text" in line or re.search(
+                    r"\bopen\([^)]*,\s*['\"][wax][bt+]*['\"]", line
+                ))
+                and re.search(variable_path, line)
+            )
+        )
+        unresolved_variable_target = (
+            variable_target
+            and variable_target.group(1) != "out"
+            and variable_target.group(1) not in static_roots
+        )
+        if unresolved_variable_target or (
+            dynamic_out_assignment and "local_first_t0=$(" not in line
+        ):
+            unrecognised.append(f"line {lineno}: {line}")
+            continue
+
         paths = re.findall(r'"\$out/([^"]+)"', line)
         if not paths:
             continue
@@ -1449,6 +1487,42 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
             continue
         unrecognised.append(f"line {lineno}: {line}")
     return writes, unrecognised
+
+
+def test_runner_output_writes_refuses_variable_root_assignment():
+    line = 'out2="$out"'
+    writes, unrecognised = _runner_output_writes(line)
+    assert writes == set()
+    assert unrecognised == [f"line 1: {line}"]
+
+
+def test_runner_output_writes_refuses_assignment_and_indirect_redirect():
+    text = 'f="$out"\n: > "$f/x-indirect"'
+    writes, unrecognised = _runner_output_writes(text)
+    assert writes == set()
+    assert unrecognised == [
+        'line 1: f="$out"',
+        'line 2: : > "$f/x-indirect"',
+    ]
+
+
+@pytest.mark.parametrize("line", (
+    'tee "$g/y"',
+    'cp x "$g/y"',
+    'mv x "$g/y"',
+    ': >> "$g/y"',
+    'Path("$g/y").write_text("x")',
+    'open("$g/y", "w").write("x")',
+))
+def test_runner_output_writes_refuses_variable_target_writers(line):
+    writes, unrecognised = _runner_output_writes(line)
+    assert writes == set()
+    assert unrecognised == [f"line 1: {line}"]
+
+
+def test_runner_output_writes_preserves_static_non_output_roots():
+    text = 'MARKERS=/tmp/markers\n: > "$MARKERS/launch.log"'
+    assert _runner_output_writes(text) == (set(), [])
 
 
 def test_leg_file_table_matches_the_runner_writes():

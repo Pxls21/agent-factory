@@ -1,0 +1,921 @@
+diff --git a/tasks/briefs/s0-02-support/B5-report.md b/tasks/briefs/s0-02-support/B5-report.md
+new file mode 100644
+index 0000000..66841d9
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/B5-report.md
+@@ -0,0 +1,124 @@
++# B5 report — S0-02 round 5 closure-oracle refusal hardening
++
++PIN: `0c67ae9` · Lane: `pc-b5.md--0c67ae9` · Role: code-implementer · Venue: PC
++
++This is a build-lane proposal, not a gate verdict. The sandbox-side adversarial-verifier lane owns the independent grade.
++
++## Outcome
++
++MERGE-READY — recommendation only. The closure oracle now fails loud on dynamic `$out` assignments and unresolved variable-target writer forms. The named B4-01 survivor and new assignment/target mutations are killed. Independent verification is NOT done here.
++
++NOT done: the preferred structural execution control; live eight-leg capture; revoked-leg membership write; F3 execute-the-CLI strengthening; EXPIRED→mint; S0-11 re-sign; independent adversarial grade. These remain coordinator/owner work and were not attempted.
++
++## Premise verification
++
++VERIFIED. On a clean PIN archive I inserted `f="$out"` and `: > "$f/x-indirect"` after the runner's `out` assignment. The unchanged closure test returned `1 passed in 0.30s`, rc 0. Executing the same shell statements created `x-indirect` (`emitted=true`). This reproduced B4-01: the oracle omitted a real output write.
++
++The other required red-before archive mutations also survived the PIN oracle:
++
++- EDGE-VARIABLE-ASSIGN: `out2="$out"`, `1 passed in 0.33s`, rc 0.
++- EDGE-VARIABLE-TARGET-WRITE: `tee "$g/y"` plus `cp /dev/null "$g/y"`, `1 passed in 0.35s`, rc 0.
++
++The finding source was read whole from the harvested `tasks/briefs/pc/report-pc-verify-b4.md--95c0bb1.md`. The brief-named `tasks/briefs/s0-02-support/VERIFY-B4-report.md` is absent from this PIN.
++
++## Implementation
++
++VERIFIED. `_runner_output_writes` now inventories `static_roots` at `T:1411-1416`, identifies `variable_path` tokens at `T:1417`, and examines `dynamic_out_assignment` and `unresolved_variable_target` before the former no-literal-path skip at `T:1422-1449`.
++
++A line is refused when it assigns a value containing `$out` to a variable, except the existing `local_first_t0` read form. Redirect, `tee`, `cp`, `mv`, `write_text`, and write-mode `open` are refused when their quoted target starts at a shell variable that is neither literal `out` nor a statically assigned non-output root. The real runner's `MARKERS`, `FD`, and other fixed roots therefore remain outside output closure, while an undeclared `$g/...` target fails loud.
++
++The literal `$out/` writer grammar remains unchanged at `T:1451-1478`. The existing allow-list starts with `if (` at `T:1480-1487` and still covers grep / rm / deliver|collect_leg / --reuse / local_first_t0.
++
++## Test-first evidence
++
++RED before implementation: the added direct tests returned `8 failed in 0.66s`, rc 1. Every failure was the exact expected empty-`unrecognised` mismatch for the dynamic assignment/root or variable-target writer form.
++
++GREEN after implementation: the direct assignment, indirect redirect, six variable-target writer cases, static non-output-root control, and unmodified runner closure returned `10 passed in 0.28s`, rc 0.
++
++The tests at `T:1492-1525` assert exact refused line text and include a positive control for a statically assigned non-output root. The real closure test at `T:1528-1549` still binds the parsed producer/direct write sets to `C:143-152` and replay subleg closure.
++
++## Named mutant inventory
++
++| mutant / control | result | killer |
++| --- | --- | --- |
++| EDGE-VARIABLE-ROOT-BYPASS | KILLED: rc 1, `1 failed in 0.39s`; assignment and redirect named unrecognised | `unresolved_variable_target` at `T:1440-1449`, asserted through `direct_writes, unrecognised` at `T:1533-1534` |
++| EDGE-VARIABLE-ASSIGN | KILLED: rc 1, `1 failed in 0.39s`; `out2="$out"` named unrecognised | `T:1422`, `T:1445-1449` |
++| EDGE-VARIABLE-TARGET-TEE | KILLED: rc 1, `1 failed in 0.38s`; `tee "$g/y"` named unrecognised | `T:1423-1428`, `T:1440-1449` |
++| EDGE-VARIABLE-TARGET-CP | KILLED: rc 1, `1 failed in 0.39s`; `cp ... "$g/y"` named unrecognised | `T:1429-1432`, `T:1440-1449` |
++| CLOSURE-POSITIVE | PASS: included in `10 passed in 0.28s` | unmodified runner at `R:20-205`, closure at `T:1528-1549` |
++| PRESERVED-B4-TEE | KILLED: rc 1, `1 failed in 0.39s`; extra `x-tee` reached set equality | `re.search` literal tee parser at `T:1460-1462`, then `assert producer_writes` equality at `T:1539-1540` |
++| PRESERVED-B4-HEREDOC | KILLED: rc 1, `1 failed in 0.38s`; extra `x-heredoc` | redirect `re.search` at `T:1463-1468`, then `assert producer_writes` at `T:1539-1540` |
++| PRESERVED-B4-PYTHON | KILLED: rc 1, `1 failed in 0.39s`; extra `x-python` | `write_text` parser at `T:1474-1478`, then `assert producer_writes` at `T:1539-1540` |
++| PRESERVED-B4-MV | KILLED: rc 1, `1 failed in 0.38s`; extra `x-mv` | `re.match` mv parser at `T:1469-1473`, then `assert producer_writes` at `T:1539-1540` |
++
++All runner mutations ran only in fresh PIN archives under lane scratch. No shared-tree mutation remained.
++
++## Final file identity
++
++| path | lines | git blob sha |
++| --- | ---: | --- |
++| `tests/test_s0_02_buzz_authz.py` | 1784 | `7fca45e05b07713bed4d04b6e0119343a54db5b1` |
++| `proofs/S0-02/check_buzz_authz.py` | 762 | `039e4170f1d80fb397ef86d41be8daa3cacdf858` (read-only) |
++| `proofs/S0-02/tools/pc/run_s0_02_legs.sh` | 205 | `3b5ebf178c482d0292558269d26cf6797e8f41d1` (read-only) |
++| `tasks/briefs/s0-02-support/B5-report.md` | SELF | SELF |
++
++The report's identity is self-referential. The coordinator can hash the harvested final bytes directly.
++
++## Mechanical gates
++
++The venue map requires two `-n 1` runs under the 420-second cap. Both fresh `git archive` runs copied only the changed test over PIN `0c67ae9`; test-set id and count agreed:
++
++- `RESULT: rev=0c67ae9922e5 files=1 deleted=0 runs=1 tests=f0ba2500dd96 identical=yes rc=0 summary="216 passed in 95.00s (0:01:34)"`
++- `RESULT: rev=0c67ae9922e5 files=1 deleted=0 runs=1 tests=f0ba2500dd96 identical=yes rc=0 summary="216 passed in 94.41s (0:01:34)"`
++
++The two archive gates include the complete B4 test file. Its prior edge probes, tolerance/RUNNER-GAP relations, and LABEL-FALLBACK tests all stayed green without edits.
++
++`/home/rocco/venv-agent-factory/bin/python -m pyflakes tests/test_s0_02_buzz_authz.py`: `pyflakes-rc: 0`.
++
++`git diff --check`: `git-diff-check-rc: 0`.
++
++Test anti-pattern screen:
++
++`--- TEST_SCREEN over 1 path(s): 11 hits over 1 files ---`
++
++- AF-AP-80: 7 unchanged source-shape assertions at `T:697`, `T:698`, `T:1003`, `T:1577`, `T:1578`, `T:1610`, `T:1633`.
++- AF-AP-34: 4 unchanged defensive process-safety hits at `T:1641`, `T:1645`.
++
++The final code-intel pack is `/home/rocco/agent-factory/.lanes/pc-b5.md--0c67ae9/scratch/B5-final-pack.md`. The brief-supplied `tasks/briefs/s0-02-support/B5-pack.md` was also read whole before edit.
++
++## Code intelligence
++
++VERIFIED before edit: Graft and Ripwire independently resolved one caller, `test_leg_file_table_matches_the_runner_writes`. `scripts/why.sh` tied the symbol to the B4 bounded-grammar commit. Clone GitNexus did not resolve `_runner_output_writes` and returned `risk: UNKNOWN`.
++
++After edit, GitNexus `detect-changes` reported one file and low risk, but mislabeled the changed symbol as `test_deliver_normalizer_exposes_echo_provenance`; that result is not correctness evidence. Ripwire's file-level edit-check was ambiguous because report/pack files create four path-like contracts. The regenerated pack contains the post-edit skeleton, query, impact, caller, test-gate, and scanner output.
++
++## Self-attack
++
++1. The refusal could classify the runner's unrelated redirects as output writes. Ruled out by pre-inventorying static non-output roots, the dedicated `MARKERS` positive control at `T:1523-1525`, the unmodified runner closure control, and both 216-test archive gates.
++2. The assignment exception could reopen B4-01. Ruled out by exact direct tests at `T:1492-1506` and fresh-archive EDGE-VARIABLE-ROOT-BYPASS/ASSIGN kills. Only the pre-existing `local_first_t0` read form is exempted; it remains on the allow-list at `T:1485`.
++3. A variable-target writer branch could stop older literal `$out/` mutants from reaching set equality, yielding a different but hollow mechanism. Ruled out by rerunning all four B4 writer mutants: tee, heredoc, Python, and mv each failed on its extra file through closure equality.
++
++## Evidence tiers
++
++VERIFIED: PIN false-green reproduction plus emitted file; exact red-before direct tests; three required fresh-archive mutant kills; all four B4 writer-mutant kills; closure positive; two 216-test archive gates; pyflakes; diff check; final identities; scanner output.
++
++INFERRED: the bounded refusal covers the pinned forms in the brief. It does not claim arbitrary shell dataflow analysis.
++
++ASSUMED: none of the NOT-done coordinator/owner work has occurred elsewhere.
++
++## Discrepancies and process hygiene
++
++- The brief says `VERIFY-B4-report.md` is in `tasks/briefs/s0-02-support/`; only the harvested PC report is in this PIN. I used the harvested report, whose line 3 names the absent destination.
++- The first four-file archive gate used system `python3` because `lane_gate.sh` invokes `scripts/test_summary.sh`, which invokes `python3`. It returned `33 failed, 183 passed` because `rfc3339-validator` was unavailable. With the venue-required venv first in `PATH`, the same gate passed twice. No product code changed for this environment error.
++- The brief requests one `lane_gate.sh -n 2`; the newer venue map requires two `-n 1` calls under the terminal cap. The venue map wins. Both runs have the same set id and count.
++- The first final-pack command passed two symbols after one `-s`; `lane_context.sh` treated the second as a file and refused rc 64. Re-running with the changed symbol produced the 179-line pack.
++- The optional structural control was not added. Running the output-emitting section safely would require replacing its launch, key, network delivery, wait, and process-stop seams, outside this one-file parser-oracle repair. The deterministic refusal controls and fresh-archive runner mutations cover the pinned design without a fake emitter.
++- Final bounded report lint: `report_lint: 38 refs — OK 26, NEAR 0, MISS 0, UNCHECKABLE 12, UNRESOLVED 0 (worktree)`. The 12 uncheckable rows are line inventories without claim tokens.
++
++No background jobs, process kills, server actions, bridge calls, live relay/model requests, membership writes, role-key reads, credential reads, git write commands, or changes outside the brief's one test file occurred. All probes ran under lane scratch and self-terminated.
++
++## GATE RECOMMENDATION
++
++MERGE-READY — recommendation only. The implementation satisfies the frozen B5 design and kills every named blocker mutation on fresh archive copies. The proposal still requires the sandbox-side independent adversarial-verifier grade before acceptance.
++
++Retro: register the specified anti-pattern at landing: a text-parser oracle keyed on a literal token silently skips indirect construction. Refuse constructions not statically resolvable to the closure table, or verify produced state. No additional skill lesson arose.
+diff --git a/tests/test_s0_02_buzz_authz.py b/tests/test_s0_02_buzz_authz.py
+index b2532d0..7fca45e 100644
+--- a/tests/test_s0_02_buzz_authz.py
++++ b/tests/test_s0_02_buzz_authz.py
+@@ -1400,16 +1400,54 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
+     """Parse the bounded grammar permitted to write a literal ``$out`` path.
+ 
+     Recognised writers are cp, tee, shell redirection (including a heredoc), mv,
+-    and Python write_text/open-with-write-mode. Every other executable line that
+-    names ``"$out/..."`` must match one of the runner's bounded read/call/remove
+-    forms or is refused as unrecognised rather than silently omitted.
++    and Python write_text/open-with-write-mode. Dynamic ``$out`` assignments and
++    writers targeting an unresolved shell variable are refused. Other executable
++    lines that name ``"$out/..."`` must match one of the runner's bounded
++    read/call/remove forms or is refused as unrecognised rather than silently
++    omitted.
+     """
+     writes = set()
+     unrecognised = []
++    static_roots = {
++        match.group(1)
++        for raw in text.splitlines()
++        if (match := re.match(r"^\s*([A-Za-z_]\w*)=([^#]*)$", raw))
++        and "$out" not in match.group(2)
++    }
++    variable_path = r'"\$([A-Za-z_]\w*)[^\"]*"'
+     for lineno, raw in enumerate(text.splitlines(), 1):
+         line = raw.strip()
+         if not line or line.startswith("#"):
+             continue
++        dynamic_out_assignment = re.search(r"\b\w+=[^#]*\$out\b", line)
++        variable_target = (
++            re.search(rf'(?:^|\s)\d*>>?\s*{variable_path}', line)
++            or (
++                re.search(r"(?:^|\|)\s*tee(?:\s+-\S+)*\s+", line)
++                and re.search(variable_path, line)
++            )
++            or (
++                re.match(r"(?:cp|mv)\b", line)
++                and re.search(rf'{variable_path}\s*$', line)
++            )
++            or (
++                ("write_text" in line or re.search(
++                    r"\bopen\([^)]*,\s*['\"][wax][bt+]*['\"]", line
++                ))
++                and re.search(variable_path, line)
++            )
++        )
++        unresolved_variable_target = (
++            variable_target
++            and variable_target.group(1) != "out"
++            and variable_target.group(1) not in static_roots
++        )
++        if unresolved_variable_target or (
++            dynamic_out_assignment and "local_first_t0=$(" not in line
++        ):
++            unrecognised.append(f"line {lineno}: {line}")
++            continue
++
+         paths = re.findall(r'"\$out/([^"]+)"', line)
+         if not paths:
+             continue
+@@ -1451,6 +1489,42 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
+     return writes, unrecognised
+ 
+ 
++def test_runner_output_writes_refuses_variable_root_assignment():
++    line = 'out2="$out"'
++    writes, unrecognised = _runner_output_writes(line)
++    assert writes == set()
++    assert unrecognised == [f"line 1: {line}"]
++
++
++def test_runner_output_writes_refuses_assignment_and_indirect_redirect():
++    text = 'f="$out"\n: > "$f/x-indirect"'
++    writes, unrecognised = _runner_output_writes(text)
++    assert writes == set()
++    assert unrecognised == [
++        'line 1: f="$out"',
++        'line 2: : > "$f/x-indirect"',
++    ]
++
++
++@pytest.mark.parametrize("line", (
++    'tee "$g/y"',
++    'cp x "$g/y"',
++    'mv x "$g/y"',
++    ': >> "$g/y"',
++    'Path("$g/y").write_text("x")',
++    'open("$g/y", "w").write("x")',
++))
++def test_runner_output_writes_refuses_variable_target_writers(line):
++    writes, unrecognised = _runner_output_writes(line)
++    assert writes == set()
++    assert unrecognised == [f"line 1: {line}"]
++
++
++def test_runner_output_writes_preserves_static_non_output_roots():
++    text = 'MARKERS=/tmp/markers\n: > "$MARKERS/launch.log"'
++    assert _runner_output_writes(text) == (set(), [])
++
++
+ def test_leg_file_table_matches_the_runner_writes():
+     """Every final runner output is in the checker's exact closure table."""
+     text = RUNNER.read_text()
+diff --git a/transcripts/pc/pc-b5.md--0c67ae9.md b/transcripts/pc/pc-b5.md--0c67ae9.md
+new file mode 100644
+index 0000000..51cb7bd
+--- /dev/null
++++ b/transcripts/pc/pc-b5.md--0c67ae9.md
+@@ -0,0 +1,680 @@
++# Hermes lane session 20260917_152820_4ba9a7
++
++- model: agentfactory-build-local
++- started: 2026-09-17T14:28:22.713896+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-b5.md--0c67ae9/tree
++- messages: 192; tool calls: 101
++- tokens in/out/cache_read/reasoning: 213900/64756/7832704/37518
++
++## user @ 14:28:22
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 14:28:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:28:46 — 1961 chars (body not exported)
++
++## assistant @ 14:28:50 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:28:50 — 6035 chars (body not exported)
++
++## assistant @ 14:28:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:28:56 — 310 chars (body not exported)
++
++## assistant @ 14:29:16 → tools: terminal
++
++The brief says `VERIFY-B4-report.md` is in my tree, but it's not there — `B5-pack.md` is. Let me check where the B4 grade actually landed.
++
++## tool result (terminal) @ 14:29:17 — 873 chars (body not exported)
++
++## assistant @ 14:29:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:29:23 — 9284 chars (body not exported)
++
++## assistant @ 14:29:46 → tools: read_file
++
++The B4 grade is the harvested `report-pc-verify-b4.md--95c0bb1.md` in the tree (the named `VERIFY-B4-report.md` isn't in my tree — I'll note that as a minor discrepancy). I've read it whole. Now the pack and the oracle region.
++
++## tool result (read_file) @ 14:29:46 — 16504 chars (body not exported)
++
++## assistant @ 14:29:56 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:29:56 — 5820 chars (body not exported)
++
++## assistant @ 14:30:02 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:30:02 — 9832 chars (body not exported)
++
++## assistant @ 14:30:20 → tools: read_file
++
++Let me read the checker's closure tables and closure function to ground the design.
++
++## tool result (read_file) @ 14:30:20 — 9108 chars (body not exported)
++
++## assistant @ 14:30:29 → tools: read_file
++
++Let me see the test file's header (imports, RUNNER/DELIVER definitions) and the B4 edge-probe/tolerance tests so I extend the established patterns.
++
++## tool result (read_file) @ 14:30:29 — 2586 chars (body not exported)
++
++## assistant @ 14:30:35 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:30:35 — 7170 chars (body not exported)
++
++## assistant @ 14:30:42 → tools: search_files
++
++
++
++## tool result (search_files) @ 14:30:42 — 417 chars (body not exported)
++
++## assistant @ 14:32:20 → tools: terminal
++
++I've mapped the design. Let me verify the environment/exports and read the lane gate helper before building.
++
++## tool result (terminal) @ 14:32:21 — 5472 chars (body not exported)
++
++## assistant @ 14:32:32 → tools: read_file
++
++
++
++## tool result (read_file) @ 14:32:32 — 4061 chars (body not exported)
++
++## assistant @ 15:03:12 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 15:03:15 — 18705 chars (body not exported)
++
++## tool result (terminal) @ 15:03:17 — 8550 chars (body not exported)
++
++## tool result (terminal) @ 15:03:19 — 255 chars (body not exported)
++
++## assistant @ 15:04:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:04:03 — 297 chars (body not exported)
++
++## assistant @ 15:05:02 → tools: write_file
++
++
++
++## tool result (write_file) @ 15:05:02 — 308 chars (body not exported)
++
++## assistant @ 15:05:50 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:05:50 — 3163 chars (body not exported)
++
++## assistant @ 15:06:57 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 15:06:58 — 3529 chars (body not exported)
++
++## tool result (terminal) @ 15:06:58 — 1252 chars (body not exported)
++
++## assistant @ 15:08:05 → tools: patch
++
++
++
++## tool result (patch) @ 15:08:09 — 1924 chars (body not exported)
++
++## assistant @ 15:08:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:08:22 — 7350 chars (body not exported)
++
++## assistant @ 15:09:10 → tools: patch
++
++
++
++## tool result (patch) @ 15:09:10 — 395 chars (body not exported)
++
++## assistant @ 15:09:20 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:09:20 — 3995 chars (body not exported)
++
++## assistant @ 15:09:42 → tools: patch
++
++
++
++## tool result (patch) @ 15:09:44 — 2749 chars (body not exported)
++
++## assistant @ 15:09:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:09:55 — 1526 chars (body not exported)
++
++## assistant @ 15:10:27 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:10:27 — 805 chars (body not exported)
++
++## assistant @ 15:11:12 → tools: patch
++
++
++
++## tool result (patch) @ 15:11:15 — 932 chars (body not exported)
++
++## assistant @ 15:12:29 → tools: patch
++
++
++
++## tool result (patch) @ 15:12:31 — 1951 chars (body not exported)
++
++## assistant @ 15:12:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:12:54 — 143 chars (body not exported)
++
++## assistant @ 15:13:22 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 15:13:22 — 4179 chars (body not exported)
++
++## tool result (terminal) @ 15:13:24 — 225 chars (body not exported)
++
++## tool result (terminal) @ 15:13:25 — 962 chars (body not exported)
++
++## assistant @ 15:14:01 → tools: write_file
++
++
++
++## tool result (write_file) @ 15:14:02 — 309 chars (body not exported)
++
++## assistant @ 15:14:07 → tools: patch
++
++
++
++## tool result (patch) @ 15:14:08 — 1049 chars (body not exported)
++
++## assistant @ 15:14:13 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:14:13 — 1994 chars (body not exported)
++
++## assistant @ 15:14:29 → tools: patch
++
++
++
++## tool result (patch) @ 15:14:30 — 1458 chars (body not exported)
++
++## assistant @ 15:14:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:14:44 — 144 chars (body not exported)
++
++## assistant @ 15:15:22 → tools: patch
++
++
++
++## tool result (patch) @ 15:15:24 — 1011 chars (body not exported)
++
++## assistant @ 15:15:34 → tools: patch
++
++
++
++## tool result (patch) @ 15:15:35 — 1102 chars (body not exported)
++
++## assistant @ 15:15:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:16:05 — 823 chars (body not exported)
++
++## assistant @ 15:16:14 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:16:14 — 2371 chars (body not exported)
++
++## assistant @ 15:16:26 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:16:27 — 18 chars (body not exported)
++
++## assistant @ 15:16:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:16:43 — 230 chars (body not exported)
++
++## assistant @ 15:17:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:17:29 — 974 chars (body not exported)
++
++## assistant @ 15:17:51 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 15:17:53 — 175 chars (body not exported)
++
++## tool result (terminal) @ 15:17:56 — 181 chars (body not exported)
++
++## assistant @ 15:18:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:19:55 — 2220 chars (body not exported)
++
++## assistant @ 15:20:06 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:20:06 — 1615 chars (body not exported)
++
++## assistant @ 15:20:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:20:10 — 170 chars (body not exported)
++
++## assistant @ 15:20:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:21:59 — 773 chars (body not exported)
++
++## assistant @ 15:22:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:23:49 — 772 chars (body not exported)
++
++## assistant @ 15:24:05 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 15:24:05 — 59 chars (body not exported)
++
++## tool result (terminal) @ 15:24:05 — 1237 chars (body not exported)
++
++## tool result (terminal) @ 15:24:06 — 186 chars (body not exported)
++
++## tool result (terminal) @ 15:24:06 — 204 chars (body not exported)
++
++## assistant @ 15:24:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:24:19 — 130 chars (body not exported)
++
++## assistant @ 15:24:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:24:35 — 196 chars (body not exported)
++
++## assistant @ 15:24:54 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:24:54 — 10836 chars (body not exported)
++
++## assistant @ 15:24:58 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:24:58 — 2995 chars (body not exported)
++
++## assistant @ 15:25:18 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:25:18 — 7566 chars (body not exported)
++
++## assistant @ 15:26:17 → tools: write_file
++
++
++
++## tool result (write_file) @ 15:26:17 — 368 chars (body not exported)
++
++## assistant @ 15:26:38 → tools: write_file
++
++
++
++## tool result (write_file) @ 15:26:39 — 309 chars (body not exported)
++
++## assistant @ 15:26:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:26:45 — 8713 chars (body not exported)
++
++## assistant @ 15:26:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:26:53 — 902 chars (body not exported)
++
++## assistant @ 15:26:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:26:59 — 5040 chars (body not exported)
++
++## assistant @ 15:27:08 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:09 — 1578 chars (body not exported)
++
++## assistant @ 15:27:14 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:15 — 1470 chars (body not exported)
++
++## assistant @ 15:27:21 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:22 — 1397 chars (body not exported)
++
++## assistant @ 15:27:27 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:28 — 1403 chars (body not exported)
++
++## assistant @ 15:27:35 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:36 — 1645 chars (body not exported)
++
++## assistant @ 15:27:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:27:41 — 2330 chars (body not exported)
++
++## assistant @ 15:27:48 → tools: patch
++
++
++
++## tool result (patch) @ 15:27:48 — 1451 chars (body not exported)
++
++## assistant @ 15:27:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:27:54 — 1354 chars (body not exported)
++
++## assistant @ 15:28:00 → tools: patch
++
++
++
++## tool result (patch) @ 15:28:00 — 2108 chars (body not exported)
++
++## assistant @ 15:28:09 → tools: patch
++
++
++
++## tool result (patch) @ 15:28:09 — 2098 chars (body not exported)
++
++## assistant @ 15:28:20 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 15:28:21 — 16431 chars (body not exported)
++
++## tool result (terminal) @ 15:28:21 — 1354 chars (body not exported)
++
++## tool result (terminal) @ 15:28:23 — 225 chars (body not exported)
++
++## assistant @ 15:29:14 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:29:14 — 4110 chars (body not exported)
++
++## assistant @ 15:29:20 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:29:20 — 2507 chars (body not exported)
++
++## assistant @ 15:29:32 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:29:32 — 18 chars (body not exported)
++
++## assistant @ 15:29:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:29:40 — 10581 chars (body not exported)
++
++## assistant @ 15:29:47 → tools: search_files
++
++
++
++## tool result (search_files) @ 15:29:47 — 5322 chars (body not exported)
++
++## assistant @ 15:29:53 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:29:53 — 11078 chars (body not exported)
++
++## assistant @ 15:30:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:30:24 — 328 chars (body not exported)
++
++## assistant @ 15:30:35 → tools: patch
++
++
++
++## tool result (patch) @ 15:30:36 — 1570 chars (body not exported)
++
++## assistant @ 15:30:45 → tools: patch
++
++
++
++## tool result (patch) @ 15:30:46 — 1675 chars (body not exported)
++
++## assistant @ 15:30:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:30:59 — 4228 chars (body not exported)
++
++## assistant @ 15:31:10 → tools: patch
++
++
++
++## tool result (patch) @ 15:31:10 — 2067 chars (body not exported)
++
++## assistant @ 15:31:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:31:16 — 1354 chars (body not exported)
++
++## assistant @ 15:31:24 → tools: patch
++
++
++
++## tool result (patch) @ 15:31:24 — 1939 chars (body not exported)
++
++## assistant @ 15:31:30 → tools: patch
++
++
++
++## tool result (patch) @ 15:31:30 — 950 chars (body not exported)
++
++## assistant @ 15:31:45 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 15:31:45 — 1354 chars (body not exported)
++
++## tool result (terminal) @ 15:31:45 — 307 chars (body not exported)
++
++## assistant @ 15:32:29 → tools: patch
++
++
++
++## tool result (patch) @ 15:32:30 — 1166 chars (body not exported)
++
++## assistant @ 15:32:36 → tools: read_file
++
++
++
++## tool result (read_file) @ 15:32:36 — 11650 chars (body not exported)
++
++## assistant @ 15:32:47 → tools: patch
++
++
++
++## tool result (patch) @ 15:32:47 — 1245 chars (body not exported)
++
++## assistant @ 15:33:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 15:33:02 — 209 chars (body not exported)
++
++## assistant @ 15:34:07
++
++# B5 report — S0-02 round 5 closure-oracle refusal hardening
++
++PIN: `0c67ae9` · Lane: `pc-b5.md--0c67ae9` · Role: code-implementer · Venue: PC
++
++This is a build-lane proposal, not a gate verdict. The sandbox-side adversarial-verifier lane owns the independent grade.
++
++## Outcome
++
++MERGE-READY — recommendation only. The closure oracle now fails loud on dynamic `$out` assignments and unresolved variable-target writer forms. The named B4-01 survivor and new assignment/target mutations are killed. Independent verification is NOT done here.
++
++NOT done: the preferred structural execution control; live eight-leg capture; revoked-leg membership write; F3 execute-the-CLI strengthening; EXPIRED→mint; S0-11 re-sign; independent adversarial grade. These remain coordinator/owner work and were not attempted.
++
++## Premise verification
++
++VERIFIED. On a clean PIN archive I inserted `f="$out"` and `: > "$f/x-indirect"` after the runner's `out` assignment. The unchanged closure test returned `1 passed in 0.30s`, rc 0. Executing the same shell statements created `x-indirect` (`emitted=true`). This reproduced B4-01: the oracle omitted a real output write.
++
++The other required red-before archive mutations also survived the PIN oracle:
++
++- EDGE-VARIABLE-ASSIGN: `out2="$out"`, `1 passed in 0.33s`, rc 0.
++- EDGE-VARIABLE-TARGET-WRITE: `tee "$g/y"` plus `cp /dev/null "$g/y"`, `1 passed in 0.35s`, rc 0.
++
++The finding source was read whole from the harvested `tasks/briefs/pc/report-pc-verify-b4.md--95c0bb1.md`. The brief-named `tasks/briefs/s0-02-support/VERIFY-B4-report.md` is absent from this PIN.
++
++## Implementation
++
++VERIFIED. `_runner_output_writes` now inventories `static_roots` at `T:1411-1416`, identifies `variable_path` tokens at `T:1417`, and examines `dynamic_out_assignment` and `unresolved_variable_target` before the former no-literal-path skip at `T:1422-1449`.
++
++A line is refused when it assigns a value containing `$out` to a variable, except the existing `local_first_t0` read form. Redirect, `tee`, `cp`, `mv`, `write_text`, and write-mode `open` are refused when their quoted target starts at a shell variable that is neither literal `out` nor a statically assigned non-output root. The real runner's `MARKERS`, `FD`, and other fixed roots therefore remain outside output closure, while an undeclared `$g/...` target fails loud.
++
++The literal `$out/` writer grammar remains unchanged at `T:1451-1478`. The existing allow-list starts with `if (` at `T:1480-1487` and still covers grep / rm / deliver|collect_leg / --reuse / local_first_t0.
++
++## Test-first evidence
++
++RED before implementation: the added direct tests returned `8 failed in 0.66s`, rc 1. Every failure was the exact expected empty-`unrecognised` mismatch for the dynamic assignment/root or variable-target writer form.
++
++GREEN after implementation: the direct assignment, indirect redirect, six variable-target writer cases, static non-output-root control, and unmodified runner closure returned `10 passed in 0.28s`, rc 0.
++
++The te
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 213900,
++  "output_tokens": 64756,
++  "cache_read_tokens": 7832704,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 37518,
++  "total_tokens": 8111360,
++  "api_calls": 90,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260917_152820_4ba9a7",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
