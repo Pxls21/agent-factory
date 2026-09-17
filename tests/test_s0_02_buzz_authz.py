@@ -103,9 +103,10 @@ def _buzz_src() -> Path:
     """The pinned upstream tree, or a declared skip. Never a silent pass."""
     raw = os.environ.get(BUZZ_SRC_ENV)
     if raw is None:
-        if os.environ.get("S0_01_VENUE") is None:
+        venue = os.environ.get("S0_01_VENUE")
+        if venue in (None, "ci"):
             pytest.skip(
-                f"{BUZZ_SRC_ENV} unset and no venue declared — the pinned buzz "
+                f"{BUZZ_SRC_ENV} unset and venue={venue!r} — the pinned buzz "
                 f"checkout is a DECLARED input; CI skips by declaration"
             )
         raw = BUZZ_SRC_DEFAULT
@@ -115,6 +116,25 @@ def _buzz_src() -> Path:
         f"missing is a FAILURE, never a skip"
     )
     return path
+
+
+def test_buzz_src_gate_skips_in_ci_but_fails_on_explicit_absent(monkeypatch):
+    """The venue gate contract: CI (venue 'ci' or unset, no explicit source)
+    SKIPS by declaration; an explicit but absent S0_02_BUZZ_SRC FAILS loud, never
+    a silent skip (the regression behind the stage0-ci `tests` job going red)."""
+    # CI shape: venue declared 'ci', no explicit source -> skip by declaration
+    monkeypatch.delenv(BUZZ_SRC_ENV, raising=False)
+    monkeypatch.setenv("S0_01_VENUE", "ci")
+    with pytest.raises(pytest.skip.Exception):
+        _buzz_src()
+    # no venue declared, no explicit source -> also a declared skip
+    monkeypatch.delenv("S0_01_VENUE", raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        _buzz_src()
+    # an EXPLICIT but absent source is a FAILURE, never a skip (anti-hollow-green)
+    monkeypatch.setenv(BUZZ_SRC_ENV, "/nonexistent/buzz-src-xyzzy")
+    with pytest.raises(AssertionError):
+        _buzz_src()
 
 
 # ---------------------------------------------------------------------------
@@ -998,8 +1018,16 @@ def test_an_info_level_canary_does_not_prove_debug_capture(tmp_path):
 
 def test_relay_decided_leg_needs_no_debug_canary(tmp_path):
     """A real INFO-only corpus log is valid where the relay supplied the evidence."""
+    venue = os.environ.get("S0_01_VENUE")
+    if venue in (None, "ci"):
+        pytest.skip(
+            f"venue={venue!r} — the S0-01 real-leg corpus is a DECLARED input; "
+            f"CI skips by declaration"
+        )
+    real_leg_dir = os.environ.get("S0_01_REAL_LEG_DIR")
+    assert real_leg_dir, "S0_01_REAL_LEG_DIR must be set on a declared venue"
     bundle = _bundle(tmp_path)
-    real_log = Path(os.environ["S0_01_REAL_LEG_DIR"]) / "run-1" / "buzzacp.log"
+    real_log = Path(real_leg_dir) / "run-1" / "buzzacp.log"
     assert checker.DEBUG_LEVEL_CANARY not in real_log.read_text()
     target = _leg(bundle, "neg-unauthorized") / "buzzacp.log"
     shutil.copy2(real_log, target)
