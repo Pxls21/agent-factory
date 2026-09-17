@@ -461,13 +461,19 @@ def test_anchor_ref_and_committed_tag_object_must_be_one_object(tmp_path):
 
 
 def test_committed_tree_anchor_state_is_the_declared_pending_one():
-    """Today S0-11 is ACCEPTED with the anchor PENDING the owner's tag: the checker passes with exactly
-    that warning. When the owner signs, the declaration must go and this test flips to no warning."""
+    """S0-11 is ACCEPTED and the owner's signature is anchored — as a pushed ref where one exists, and
+    ALWAYS as the committed tag object docs/governance/tags/accepted-S0-11.tag (the CI/no-tags path: the
+    proxy refuses tag pushes and CI clones without tags — see docs/governance/README.md). The checker
+    (_anchor_findings) treats EITHER the ref or the committed object as the anchor, so it emits no S0-11
+    warning wherever the anchor is present; only if BOTH were absent (the pre-signing state) does it warn
+    PENDING. So key on anchor-present (ref OR committed object), not on the ref alone — keying on the ref
+    made this test demand a PENDING warning in CI even though the committed object already verifies."""
     completed = _run(ROOT)
     assert completed.returncode == 0, completed.stderr
-    tag = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", "refs/tags/accepted/S0-11"],
+    ref = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", "refs/tags/accepted/S0-11"],
                          capture_output=True, text=True, timeout=30)
-    if tag.returncode == 0:
+    anchor_present = ref.returncode == 0 or (ROOT / "docs" / "governance" / "tags" / "accepted-S0-11.tag").is_file()
+    if anchor_present:
         assert "WARNING" not in completed.stderr
     else:
         assert "WARNING S0-11: ACCEPTED with the anchor PENDING" in completed.stderr
