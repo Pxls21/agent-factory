@@ -688,6 +688,32 @@ def test_pass_bundle_passes():
     ), line
 
 
+def test_missing_revoked_leg_fails_before_the_removal_summary(tmp_path):
+    """The bundle contract requires revoked, so no summary fallback is reachable."""
+    bundle = _bundle(tmp_path)
+    shutil.rmtree(_leg(bundle, "revoked"))
+    _expect_failure(bundle, "revoked: revoked leg directory absent")
+    source = CHECKER.read_text()
+    assert "removal_line = removal_note\n" in source
+    assert "removal_line = removal_note or" not in source
+
+
+def test_removal_summary_uses_only_the_revoked_leg_note(tmp_path, monkeypatch):
+    """No fallback may supply a removal label when the revoked leg returns none."""
+    bundle = _bundle(tmp_path)
+    real_check_leg = checker._check_leg
+
+    def drop_revoked_note(leg_dir, leg, fixture_name, identities, anchors):
+        found, delivery, note = real_check_leg(
+            leg_dir, leg, fixture_name, identities, anchors
+        )
+        return found, delivery, None if fixture_name == "revoked" else note
+
+    monkeypatch.setattr(checker, "_check_leg", drop_revoked_note)
+    line = _run_checker(bundle)
+    assert line.endswith("; None"), line
+
+
 def test_removal_receipt_is_labelled_coordinator_supplied_in_checker_output():
     """F5 (B3 item 5): the checker's revoked-leg summary line says the removal
     evidence is a coordinator-supplied, unauthenticated receipt — no signature
@@ -1370,12 +1396,86 @@ def test_replay_leg_must_carry_exactly_the_two_subleg_directories(tmp_path):
     _expect_failure(bundle, "neg-replayed: expected exactly the sub-leg directories")
 
 
+def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
+    """Parse the bounded grammar permitted to write a literal ``$out`` path.
+
+    Recognised writers are cp, tee, shell redirection (including a heredoc), mv,
+    and Python write_text/open-with-write-mode. Every other executable line that
+    names ``"$out/..."`` must match one of the runner's bounded read/call/remove
+    forms or is refused as unrecognised rather than silently omitted.
+    """
+    writes = set()
+    unrecognised = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        paths = re.findall(r'"\$out/([^"]+)"', line)
+        if not paths:
+            continue
+
+        if re.match(r"cp\b", line):
+            target = re.search(r'"\$out/([^"]+)"\s*$', line)
+            if target:
+                writes.add(target.group(1))
+                continue
+        elif re.search(r"(?:^|\|)\s*tee(?:\s+-\S+)*\s+", line):
+            writes.update(paths)
+            continue
+        elif re.search(r'(?:^|\s)\d*>>?\s*"\$out/[^"]+"', line):
+            writes.update(
+                match.group(1)
+                for match in re.finditer(r'\d*>>?\s*"\$out/([^"]+)"', line)
+            )
+            continue
+        elif re.match(r"mv\b", line):
+            target = re.search(r'"\$out/([^"]+)"\s*$', line)
+            if target:
+                writes.add(target.group(1))
+                continue
+        elif "write_text" in line or re.search(
+            r"\bopen\([^)]*,\s*['\"][wax][bt+]*['\"]", line
+        ):
+            writes.update(paths)
+            continue
+
+        if (
+            re.match(r"(?:if\s+)?grep\b", line)
+            or re.match(r"rm\s+-", line)
+            or re.match(r"(?:deliver|collect_leg)\b", line)
+            or line.startswith("--reuse ")
+            or "local_first_t0=$(" in line
+        ):
+            continue
+        unrecognised.append(f"line {lineno}: {line}")
+    return writes, unrecognised
+
+
 def test_leg_file_table_matches_the_runner_writes():
-    """The checker's per-leg file set is derived from the runner, never the
-    other way around: deliver_event.py writes these four, collect_leg the two
-    more, and the revoked leg adds membership.json."""
+    """Every final runner output is in the checker's exact closure table."""
     text = RUNNER.read_text()
     deliver_text = DELIVER.read_text()
+
+    direct_writes, unrecognised = _runner_output_writes(text)
+    assert not unrecognised, f"unrecognised $out path grammar: {unrecognised}"
+    producer_writes = set(re.findall(
+        r'leg_dir / "([^"]+)"\)\.write_text', deliver_text
+    ))
+    revoked_only = {"membership.json"}
+    assert producer_writes | (direct_writes - revoked_only) == checker._LEG_FILES_PLAIN
+    assert producer_writes | direct_writes == checker._LEG_FILES_REVOKED
+
+    nested_writers = set(re.findall(
+        r'^\s*(?:deliver|collect_leg)\b[^\n]*"\$out/([^"/]+)"', text, re.MULTILINE
+    ))
+    removed_nested = set(re.findall(
+        r'^\s*rm -rf "\$out/([^"/]+)"', text, re.MULTILINE
+    ))
+    assert removed_nested == {".probe"}
+    assert nested_writers - removed_nested == set(checker.REPLAY_SUBLEGS)
+
+    # Keep the producer and cp shape checks: the set equality above is the
+    # closure gate; these assertions preserve a precise failure for a moved seam.
     for name in checker._LEG_FILES_PLAIN - {"timeline.jsonl", "buzzacp.log"}:
         assert f'"{name}"' in deliver_text, f"{name} has no producer in deliver_event.py"
     assert 'cp "$FD/timeline.jsonl" "$out/timeline.jsonl"' in text
@@ -1492,6 +1592,17 @@ def test_pc_runner_replay_window_and_nip98_guard_are_pinned():
     assert '--t0 "$local_first_t0"' in replay
     assert checker.REPLAY_CLOCK_TOLERANCE_S > 100 + 30
     assert checker.LEG_CLOCK_TOLERANCE_S < checker.REPLAY_CLOCK_TOLERANCE_S
+    assert (
+        checker.REPLAY_CLOCK_TOLERANCE_S + checker.LEG_CLOCK_TOLERANCE_S
+        < checker.RELAY_DRIFT_WINDOW_S
+    ), "the replay tolerance plus ordinary-leg slack must stay inside relay drift"
+    turn_wait = re.search(
+        r"^TURN_WAIT_S=\$\{S0_02_TURN_WAIT_S:-(\d+)\}$", text, re.MULTILINE
+    )
+    assert turn_wait, "runner TURN_WAIT_S default must remain a literal integer"
+    assert int(turn_wait.group(1)) <= checker.REPLAY_CLOCK_TOLERANCE_S, (
+        "runner replay wait must fit inside the checker's replay tolerance"
+    )
 
 
 def test_pc_runner_names_user2_for_the_not_allowlisted_leg():

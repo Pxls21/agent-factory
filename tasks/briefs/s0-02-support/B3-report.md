@@ -1,4 +1,5 @@
 # B3-report — S0-02 round 3: closure is containment, the receipt typed at the producer, the key normalised first, D3 narrowed, the tolerance bound, the removal receipt labelled
+STAMP 2026-09-17 (B4): VERIFY-B3 graded round 3 NOT-READY; B3-01/02/03 closed here, B3-00 (this report’s discipline) closed by the B4 report.
 
 PIN: 887f341 · Lane: pc-b3.md--887f341 · Role: code-implementer
 

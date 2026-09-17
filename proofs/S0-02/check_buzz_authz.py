@@ -714,10 +714,7 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
     # distinct observable, so it is counted separately instead of being folded
     # into "6 negative legs" — the count stays true to what the gate measured.
     n_extra = len(oracle.NEGATIVE_FIXTURES) - len(distinct_legs)
-    removal_line = removal_note or (
-        "removal evidence: coordinator-supplied receipt "
-        "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
-    )
+    removal_line = removal_note
     return (
         f"PASS: S0-02 buzz-authz - 1 positive, {len(distinct_legs)} negative legs, "
         f"{len(set(keys))} distinct reasons; +{n_extra} revocation leg (assertion 2); "
