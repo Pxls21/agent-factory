@@ -139,6 +139,11 @@ VERIFY-O3 (S0-03 round 3 grade, local Qwen verify route, pin b23ec03) HOME 2026-
 
 Live batch after this wave: B4 (S0-02 r4 build), O4 (S0-03 r4 build), VERIFY-M4 (S0-06 r4 grade) — three local-Qwen lanes.
 
+B4 (S0-02 round 4 BUILD) LANDED 2026-09-17 as 4bed85f (pushed 91e33f2). Closes all four VERIFY-B3 blockers: B3-01 the closure test now unions a BOUNDED `_runner_output_writes` parser (cp/tee/redirect+heredoc/mv/python write_text|open; REFUSES any unrecognised `"$out/"` write) with the producer writes and asserts exact equality with the checker's per-leg/replay/revoked file sets — the four VERIFY-B3 runner mutants (tee, heredoc, python, mv) each fail T:1465 red-before/green-after; B3-02 the tolerance relation pinned exactly (REPLAY_CLOCK_TOLERANCE_S + LEG_CLOCK_TOLERANCE_S < checker.RELAY_DRIFT_WINDOW_S + a runner-gap bound reading TURN_WAIT_S from R:34) — TOLERANCE-9000 and RUNNER-GAP-151 both red; B3-03 the removal-receipt fallback was DEAD (LEG_NAMES includes revoked) and is DELETED (check:717 removal_line = removal_note) with a missing-revoked test + a behavioral forced-None test killing LABEL-FALLBACK-DROPPED; B3-00 the B3 report stamped + the B4 report complete. Two independent gates AGREE: lane self-gate 6760808 `207 passed` x2 + coordinator sandbox gate 724befe `207 passed` x2 identical, test-set id f0ba2500dd96. The lane's pack landed at a relative `pack.md` (the brief's `-o pack.md`); relocated to tasks/briefs/s0-02-support/B4-pack.md (coordinator cleanup, bytes unchanged). VERIFY-B4 DISPATCHED on the local Qwen verify route (pin the B4 landing). NOT run (coordinator/owner): the live eight-leg capture (the RUST_LOG seam via --env-set s0-02), the revoked leg's relay membership write, the EXPIRED→mint, the S0-11 re-sign. S0-02 stays EXPIRED, nothing minted.
+
+BATCH STATUS after B4 lands: the 4-batch's build round is COMPLETE — O3/M4/B4 (S0-03/06/02 round-3/4 fixes) all landed green; the grades run now — VERIFY-O3 done (→ O4 fix live), VERIFY-M4 + VERIFY-B4 live, O4 (S0-03 r4) live. Live local-Qwen lanes: O4 (build), VERIFY-M4 (grade), VERIFY-B4 (grade). S0-08/G3 MERGE-READY-WITH-FOLLOWUPS awaits the coordinator's live runsc capture (owner steer pending).
+
+
 
 
 
