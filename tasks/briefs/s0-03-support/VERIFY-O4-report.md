@@ -1,0 +1,182 @@
+# VERIFY-O4 — adversarial grade of the S0-03 O4 landing
+
+PIN: a154431 (lane tree = `git archive` of the PIN; O4 fix commit 78b097b; build-lane's own PIN d84a90a6bb1c73859db5ab9f86814dc572ca6f17 confirmed present and ancestor of 78b097b)
+Role: adversarial-verifier, PC venue. Interpreter `/home/rocco/venv-agent-factory/bin/python`.
+Drafted 2026-09-17 (lane start 16:24 BST).
+
+## FILE IDENTITY of the bytes graded (measured at lane start)
+
+| file | lines | git blob | SHA-256 |
+|---|---|---|---|
+| proofs/S0-03/check_omniroute_roundtrip.py | 894 | b99f18cafbce2fde75c513457e1988aebcf5b0fa | 5cf11fe493a237ac40565b989b85aef81d5e312813844ccd8d7230688cd2b367 |
+| proofs/S0-03/tools/pc/collect_leg.sh | 186 | b159927241bfce1d3f2842ae36e946d162161914 | 491b4d4e7ef89ffe0c9104a4ab9b527cdb9b0a858b369f68524f0c5609715769 |
+| tests/test_s0_03_omniroute.py | 2021 | d513bdb11bab2be7d6b69a4903aa05619bf6b32d | 6a33eddca902605d6c17188483b4a0efdbfdd990f984020aa6f7036719f42407 |
+
+All three match the FILE IDENTITY table in the O4 build report (`O4-report.md`, its final-bytes section, lines 121–123) exactly — no drift.
+
+## Item 0 — ground + baseline
+
+- File identity confirmed (table above).
+- Four-file gate, ONE foreground call, venv interpreter first on PATH, venue exports `S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`:
+
+```text
+254 passed in 43.14s
+pytest-exit: 0
+pytest-summary: 254 passed in 43.14s
+
+real	0m43.536s
+user	0m31.078s
+sys	0m5.796s
+```
+
+Matches the coordinator's gate count (254 passed).
+
+BRIEF REFERENCE DISCREPANCY (measured, not a defect): the brief's `PIN: a154431` line says "the O4 landing is byte-identical to 19b2c6f", but 19b2c6f is NOT a resolvable object in either the lane archive or the main clone (`git rev-parse --verify 19b2c6f` → "Needed a single revision" / "unknown revision"). The O4 landing in this history is `78b097b` (s0-03: O4 (round 4 fix) …) with the build lane's stated PIN `d84a90a6bb1c73859db5ab9f86814dc572ca6f17` confirmed present as an ancestor of 78b097b. The three file blobs at a154431 equal the O4-report's final-bytes table, so the graded bytes are the O4 bytes regardless of which short hash the brief meant. Graded a154431's bytes as the PIN.
+
+(An early gate run with system `/usr/bin/python3` returned `33 failed, 221 passed` — all failures one class: `rfc3339_validator` missing in the system interpreter. That is the known venue invocation error the O4 build report records at the end of its DISCREPANCIES section, reproduced and cleared by putting the venv first on PATH. Not a source failure.)
+
+## Item 1 — Authorization by identity holds
+
+**Reproduced through the real production path** (the committed checker run on scratch bundles built from the committed `evidence-stub-route` fixture, `--expected-model-id TBD-pc-capture`, provider flipped to `openai-codex` so only the credential screen is under test):
+
+| profile value | checker verdict (verbatim) |
+|---|---|
+| (baseline, no auth header) | `PASS: S0-03 omniroute-roundtrip … env clean` (rc 0) |
+| `extra_headers.Authorization: Token [REDACTED]` | `failure_reason: bundle: profile.yaml carries an inline credential under providers.s0-03-omniroute.extra_headers.Authorization` (rc 1) |
+| `extra_headers.Authorization: opaque…` | `… inline credential under providers.s0-03-omniroute.extra_headers.Authorization` (rc 1) |
+| `extra_headers.Authorization: Basic [REDACTED]` | `… inline credential under providers.s0-03-omniroute.extra_headers.Authorization` (rc 1) |
+| `extra_headers.Proxy-Authorization: opaque…` | `… inline credential under providers.s0-03-omniroute.extra_headers.Proxy-Authorization` (rc 1) |
+| `nested.headers.Authorization: Token [REDACTED]` (deeper) | `… inline credential under providers.s0-03-omniroute.nested.headers.Authorization` (rc 1) |
+| `nested[0].headers[0].Authorization: [REDACTED]` (list, deeper) | `… inline credential under providers.s0-03-omniroute.nested.0.headers.0.Authorization` (rc 1) |
+| `key_env: OMNIROUTE_API_KEY` (the real, provider-level value) | `PASS` (rc 0) — exemption preserved |
+| `key_env: omniroute_api_key` (lowercase, provider level) | `failure_reason: bundle: profile.yaml key_env is 'omniroute_api_key', expected 'OMNIROUTE_API_KEY'` (rc 1) |
+| `key_env: OTHER_PROVIDER_KEY` (provider level, not the allowed name) | `failure_reason: bundle: profile.yaml key_env is 'OTHER_PROVIDER_KEY', expected 'OMNIROUTE_API_KEY'` (rc 1) |
+| `nested.key_env: OMNIROUTE_API_KEY` (a NON-provider level) | `… inline credential under providers.s0-03-omniroute.nested.key_env` (rc 1) — the exemption is path-scoped to the provider level only |
+
+`is_credential_name('Authorization')` returns True (`C:181-195`; segment `AUTHORIZATION` is in `CREDENTIAL_SEGMENTS`, `C:176-178`); `is_credential_name('Proxy-Authorization')` is also True (segment `AUTHORIZATION` is the second token after the `-` split). Confirmed: the name screen now fires on the header name alone, so `Authorization: Token [REDACTED]` / opaque — values which do NOT match the value-prefix screen (`bearer `/`basic `/`sk-`/`sk_`, `C:711`) — are still rejected. That is the load-bearing point: the value screen cannot see these two, so the identity screen is what closes the V-O3 fail-open.
+
+**EDGES (the ones the brief names).** `X-Api-Token` is split to `X`, `Api`, `Token` → `TOKEN` ∈ set → caught (confirmed by the existing O3 recursive-screen test, `T:416-437`, which I re-ran green in the item-0 suite). `Cookie` is a SINGLE token: `is_credential_name('Cookie')` is False, and a value like `sessid=[REDACTED]` carries no `bearer `/`basic `/`sk-`/`sk_` prefix, so `Cookie: sessid=…` PASSES key-free (measured above: `rc=0`). A `Cookie: bearer …` value IS caught by the value screen. Whether that is a finding turns on the contract: the S0-03 seed's credential criteria (`seeds/seed-stage0-v1.yaml`, `S0-03.assertions`) name the specific credential — the **upstream provider key** (`unblock_condition: "secret OMNIROUTE_UPSTREAM_KEY present and accepted"`, `blocked_marker.reason_enum: [credential_absent, credential_rejected]`). The screen's deny-by-default set is a closed allowlist of *environment/credential NAME shapes* keyed to the provider key; it is not a claim that it catches every conceivable auth header. A session `Cookie` is not the OMNIROUTE provider key and not a member of the graded name class, so its passing key-free is **not a contradiction of any frozen criterion** — it is a **SUBTLETY** (a fail-closed-by-construction screen that is deliberately narrower than "any auth header"). It is reported as such, not as a blocker, per the blocking predicate (no contract mapping: nothing in the frozen contract says `Cookie` must be rejected). This is the same class as the already-documented deliberate exclusion of `SESSION` (the checker's `CREDENTIAL_SEGMENTS` docstring, `C:171-175`): it names `BUZZ_ACP_SESSION_POLICY` as the reason a `SESSION` segment would make conjunct (vi) impossible.
+
+## Item 2 — row_counts graded, not mirrored
+
+**Mechanism (from primary source, re-derived):** `check_row_counts(requests)` (`C:460`) calls `_rows_by_leg(requests)` at `C:470`; `check_identity_route(requests, …)` calls the *same* `_rows_by_leg(requests)` at `C:527`; both are invoked on the same `bundle["requests"]` object at `C:863-864`. `_rows_by_leg` (`C:436-457`) groups the ACTUAL exported `requests` rows and rejects a missing leg / non-unique direct. So the count is compared to the very list the identity consumer consumes — there is no second, re-derived set. The only way `row_counts` can diverge from the consumed rows is by deleting/adding a row, which `_rows_by_leg` and the identity check both independently reject. I proved this (below) rather than asserting it.
+
+**Attack — malformed / mismatched / missing counts, each REJECTED with a named reason** (real checker, scratch bundle, provider flipped so only counts are under test):
+
+| case | checker verdict (verbatim) |
+|---|---|
+| `row_counts` set to direct one row, hermes one row (the correct, baseline record) | `PASS` (rc 0) |
+| `direct: 1.0` (float) | `failure_reason: bundle: omniroute-requests.json row_counts['direct'] is 1.0, expected 1 exported direct row(s)` (rc 1) |
+| `direct: True` (bool) | `… row_counts['direct'] is True, expected 1 exported direct row(s)` (rc 1) |
+| `direct: "1"` (string) | `… row_counts['direct'] is '1', expected 1 exported direct row(s)` (rc 1) |
+| `hermes: 0` but a real hermes row is present | `… row_counts['hermes'] is 0, expected 1 exported hermes row(s)` (rc 1) |
+| `row_counts` key absent | `failure_reason: bundle: omniroute-requests.json has no row_counts record` (rc 1) |
+| `row_counts: null` | `… has no row_counts record` (rc 1) |
+
+So a float / bool / string is rejected (strict-int check, not a numeric cast), a per-leg zero/under-count is rejected, and a missing record is rejected. The strictness is what makes `1.0` and `True` fail rather than compare-equal to `1` — the whole unusable numeric class is out, not just `<= 0`.
+
+**Mirror attack (the "not a re-derived set" question):** I built bundles where the `row_counts` still records one exported row per leg but the actual row is DELETED (so a naively reconstructed set would disagree with the record): `mirror1` (hermes row deleted) → `failure_reason: bundle: omniroute-requests.json has no row for the hermes leg`; `mirror2` (direct row deleted) → `… has no row for the direct leg`. Both rc 1. So the count cannot pass on a reconstructed set: the consumed-row count is derived from the *same* list the identity check consumes, and any deletion that would let a fabricated count match a reconstructed set is itself rejected by the row-existence invariant before the count is compared. **row_counts is graded against the actual exported rows it consumes, not mirrored.**
+
+## Item 3 — coarse SQL bound a proven superset, for ALL offsets
+
+**Reproduced the regression** and **attacked the edges** by running the REAL `collect_leg.sh` against throwaway SQLite DBs (OmniRoute's exact `call_logs` column set, `OMNIROUTE_DATA_DIR` pointed at scratch, no live service touched) and the REAL checker on the export. Window `2026-09-08T00:00:01.000Z .. 2026-09-08T00:00:03.000Z` (a 2 s closed window). The coarse bound is `start-1day .. end+1day` UTC (the collector's `sql_start`/`sql_end` at `K:125-128`); the authoritative filter is the per-row aware-instant `start <= stamp <= end` comparison.
+
+| DB rows (offset-bearing) | collector result (verbatim `direct`/`hermes`/counts) |
+|---|---|
+| +14:00 & -12:00 (the committed regression) | `collect_rc=0  direct=['log_direct']  hermes=['log_minus_12','log_plus_14']  counts direct=1 hermes=2` |
+| +13:00 & -11:00 **fractional** seconds, in-window | `collect_rc=0  hermes=['log_m11','log_p13']  counts direct=1 hermes=2` |
+| stamp **exactly at `start`** (-05:00) and **exactly at `end`** (+05:30) | `collect_rc=0  hermes=['log_at_start','log_at_end']  counts direct=1 hermes=2` |
+| in-window +14:00, **after**-end +14:00, **before**-start -11:00 | `collect_rc=0  hermes=['log_in']  counts direct=1 hermes=1` — the two out-of-window offset rows DROPPED by the exact filter |
+| ±23:59 (the RFC3339 offset extremes the superset proof relies on) | `collect_rc=0  hermes=['log_m2359','log_p2359']  counts direct=1 hermes=2` |
+
+**Verdict:** (a) No in-window offset-bearing row is EXCLUDED by the coarse lexical bound — completeness holds across +14/-12, +13/-11 fractional, exact start/end boundaries, and the ±23:59 extremes. The one-day-each-side margin covers the maximum RFC3339 offset swing, so a row whose local UTC date falls outside the literal window date-prefix is still fetched. (b) No out-of-window offset row is INCLUDED and then wrongly graded: the "drop out-of-window" case kept only the in-window row and the exact aware-instant comparison (`K:121-149`) dropped both the after-end and before-start offset rows. **The coarse bound is a proven superset and the exact filter remains the sole authority.** No completeness regression and no over-inclusion found across the offsets I could construct.
+
+## Item 4 — the O3 closures still hold (not regressed by O4)
+
+O3 closed six V-O2 bypass classes (collector completeness, recursive credential screen, exact terminal call, pid bound, aware instants, POST-both-rows). I confirmed O4 did not regress them two ways: (a) the committed guard tests all pass on the O4 bytes, and (b) at least one closure is still killable by a spot mutation.
+
+**The committed guard tests pass on the O4 bytes** (fresh run, `-k` select, venv): `16 passed, 170 deselected in 3.06s` covering:
+- collector completeness — `test_collect_leg_compares_stamps_as_instants_not_strings`, `test_collect_leg_exports_every_row_in_the_window_not_the_earliest`, `test_collect_leg_is_loud_when_a_declared_leg_has_no_row`
+- recursive credential screen — `test_credential_screen_recurses_over_the_whole_provider_block` (4 mutations)
+- exact terminal call — `test_roundtrip_rejects_completion_before_exact_start`
+- pid bound — `test_env_record_pid_is_a_strict_positive_int` (param), `test_env_record_pid_matches_the_tee_child_pid`
+- aware instants — `test_checker_rejects_offsetless_instants_without_traceback`, `test_checker_normalises_offset_instants_to_utc`
+- POST both rows — `test_transport_requires_exact_post_on_both_rows` (both legs)
+
+**Spot mutation (recursive credential screen):** in a scratch copy I made `_walk_credentials` stop recursing past depth 3 (M4, above) — the `test_credential_screen_recurses_over_the_whole_provider_block` test went RED (1 failed). So the O3 recursive-screen closure is still live and still killable; O4's changes (the `AUTHORIZATION` segment, the `key_env` path guard at `C:705-707`, the new `check_row_counts`) did not weaken it. **None of the six O3 closures regressed.**
+
+## Item 5 — new-bypass hunt (presence-only / mirror)
+
+I looked for any credential / count / window property that is graded by **presence only**, or against a **value the evidence itself supplies** (a mirror). The headline properties:
+
+| property | graded against | mirror? | verdict |
+|---|---|---|---|
+| `Authorization`/`Proxy-Authorization` header | the header NAME (identity) + value prefix (secondary) | no — name is unforgeable evidence the forger must write; the identity screen does not depend on a value the forger also supplies | holds |
+| `key_env` at provider level | the EXACT constant `OMNIROUTE_API_KEY` (deny-by-default, `C:156`) | no — a fixed constant, not a value from the bundle | holds (path-scoped exemption is correct; non-provider `key_env` is caught) |
+| `row_counts` | the count of the ACTUAL exported rows consumed by `_rows_by_leg` (`C:460-477`) | no — the consumed rows are the evidence; the count is cross-checked against them, not self-referential (item 2) | holds (see F-2 subtlety below) |
+| hermes window membership | the aware-instant `start <= stamp <= end` where the window is `leg.json`'s (runner-sourced, unforgeable) and the stamp is the row's own — compared as **instants**, not strings (`C:480-502`) | no — I forged an out-of-window offset stamp in the checker path and it was rejected (item 3 / below); an in-window offset form passes | holds |
+| hermes `session_tag` | `nonce2` from `leg.json` (runner-sourced, unforgeable, `C:548-571`) | no | holds |
+| direct `response_id` | `direct.json` `id` (client-streamed, unforgeable, `C:549-567`) | no | holds |
+
+**Forge test (checker path, not collector):** I wrote an `omniroute-requests.json` whose hermes `timestamp` was a forged OUT-of-window offset stamp, and aligned the leg window to the bundle's own `windows.hermes` (so the window-binding at `C:532-533` passed). The real checker REJECTED it: `hermes row timestamp '2026-09-08T14:00:10.000+14:00' is outside the leg's window '…00:00:01.000000Z'..'…00:00:04.000000Z'` (rc 1). In-window forged stamps (both Z and `+05:00` forms) PASS; before-start and after-end (both Z and offset) are REJECTED. So the window is anchored to the runner's `leg.json` and the row's own instant — it is NOT graded against a value the export forger can set both sides of. **No presence-only or mirror credential/count/window property found.** The FU2 superset claim is not just the collector's job: the checker independently re-verifies the window as instants, so a forged export that slips the collector's lexical bound is still killed at the checker.
+
+**Per D-033, every observation below is a SUBTLETY (test-strength / taxonomy on a fail-closed path), not a CORE hollow-green (the headline capability is real and reproduced).** The headline — Authorization is caught by identity, `row_counts` is graded against the consumed rows, the window is a proven superset with the exact filter authoritative — is all genuine, reproduced through the real production path at the PIN.
+
+- **F-1 (SUBTLETY) — `Cookie` (and other single-token auth headers) are not in the credential-name class.** `is_credential_name('Cookie')` is False and `Cookie: sessid=…` (opaque value, no `bearer `/`basic `/`sk-`/`sk_` prefix) PASSES key-free (item 1). This is the same deliberate-narrowness the checker documents for `SESSION` (`C:171-173`): the screen is a CLOSED allowlist of provider-credential NAME shapes, not a claim to catch every auth header. The S0-03 seed's graded credential is the upstream provider key (`seeds/seed-stage0-v1.yaml`, `S0-03.unblock_condition`), which `Cookie` is not. **Does NOT meet the blocking predicate** (no frozen criterion requires `Cookie` to be rejected) → FOLLOW-UP / hardening, not a blocker.
+- **F-2 (SUBTLETY) — `row_counts` extra keys for undeclared legs are not rejected.** `check_row_counts` (`C:460-477`) iterates only over `("direct","hermes")`; a `row_counts` with a third key (e.g. `{"third": 9}`) PASSES (measured, item 2). It is a record that is not *closed* on keys, so an exporter could emit a fabricated count for a leg the checker never checks. **Does NOT meet the blocking predicate**: it cannot falsify the graded direct/hermes counts (those are still checked against the consumed rows), so it is not a hollow green — it is a minor under-specification of the record's domain → FOLLOW-UP (close the key set on `{"direct","hermes"}`).
+- **F-3 (declared limit, not a finding) — a second non-exact `execute` start is still accepted.** This is FU3, explicitly carried by O4 as a declared limit for a later contract decision (the O4 build report's NOT-done list, its item 15); the EXACT bound call is proven. Per the brief, its persistence is NOT a blocker.
+
+## Item 6 — mutation audit (NAMED mutant table)
+
+Each mutant: restore pristine → inject ONE targeted bug on a scratch copy of the tree → run the COMMITTED test(s) (they resolve the checker/collector to the scratch tree) → record. All on scratch copies; the graded tree was never mutated; venv interpreter; all credentials in any mutated fixture are the committed fake placeholders (`placeholder-token`, `x`-repeats) and were never printed.
+
+| # | mutant (targeted bug) | result | killer (file:line) |
+|---|---|---|---|
+| M1 | remove `AUTHORIZATION` from `CREDENTIAL_SEGMENTS` (revert the O4 fix) | **RED — 4 failed, 1 passed** (killed) | `tests/test_s0_03_omniroute.py:147` (`test_credential_name_recognises_authorization_header_identity`) and the `test_credential_screen_rejects_authorization_header_by_identity` test at line 456 |
+| M1b | `is_credential_name` → `return False` (tautology: name screen off) | **RED — 5 failed, 3 passed** (killed) | `T:456` (`test_credential_screen_rejects_authorization_header_by_identity`) + `T:429` (`test_credential_screen_recurses_over_the_whole_provider_block`) |
+| M2 | `check_row_counts` → `return` (no-op; FU1 hollow-green) | **RED — 1 failed** (killed) | tests/test_s0_03_omniroute.py:1177 (`test_row_counts_must_match_the_exported_rows_for_each_query`) |
+| M3 | remove the `±1-day` SQL margins (completeness regression) | **RED — 1 failed** (killed) | tests/test_s0_03_omniroute.py:1843 (`test_collect_leg_coarse_sql_bound_keeps_offset_rows_for_exact_filter`) |
+| M4 | `_walk_credentials` stops recursing at depth 3 (O3-closure control) | **RED — 1 failed** (killed) | `tests/test_s0_03_omniroute.py:429` (`test_credential_screen_recurses_over_the_whole_provider_block`) |
+| M5 | comment-only change to the checker (POSITIVE control) | **GREEN — 6 passed** (survived, as it must) | n/a — a correct positive control proves the harness is not a tautology |
+
+Coverage required by the brief: Authorization-identity mutants (M1, M1b) ✓; the row_counts mutant (M2) ✓; the SQL-offset mutant (M3) ✓; one O3-closure control (M4) ✓; one positive control (M5) ✓. Every defect mutant was killed and the positive control survived — the gate is not a tautology.
+
+## Item 7 — gate
+
+Fresh four-file gate on the O4 bytes (venv interpreter first on PATH, venue exports, one foreground call):
+
+```text
+254 passed in 42.63s
+pytest-exit: 0
+pytest-summary: 254 passed in 42.63s
+```
+
+Same count as item 0 (`254 passed in 43.14s`) — the suite is deterministic across runs and matches the coordinator's 254 gate.
+
+## Item 8 — GATE RECOMMENDATION
+
+**`MERGE-READY-WITH-FOLLOWUPS`** — no finding satisfies the COMPLETE blocking predicate; F-1 and F-2 are real, non-blocking follow-up work.
+
+- The O4 blocker (Authorization by identity), FU1 (`row_counts` graded), and FU2 (SQL superset) are all **reproduced through the real production path at the PIN** and each is **killable by a targeted mutation** (M1/M1b, M2, M3) — the headline capability is real, not a mirror, not presence-only.
+- The O3 closures are **not regressed** (item 4: 16 guard tests green; M4 still kills the recursive-screen closure).
+- The new-bypass hunt (item 5) found only SUBTLETIES (F-1 `Cookie`, F-2 `row_counts` extra keys) — both on a fail-closed path, neither meeting the predicate (no frozen criterion is contradicted; a forged out-of-window stamp is still killed by the checker's own instant comparison, so the window is not a mirror).
+
+**This is a recommendation, not a verdict** — the coordinator owns the gate. **NOT-built / coordinator-owned (first-class, unchanged by this lane):** the live direct/Hermes/negative capture legs, the `EXPIRED`→result flip, and the remint (owner re-sign) were NOT run here and remain coordinator/owner work — this lane graded only the static-copy gate and the collector/checker against scratch DBs and bundles. No live OmniRoute/Hermes/model request was made; no owner key, database, or profile was read; every credential used was a committed fake placeholder and was never printed.
+
+**Suggested follow-ups (non-blocking, D-033 SUBTLETIES → issues):**
+- F-1: decide whether the credential-name class should extend to `Cookie`/single-token auth headers (today: deliberately narrow; the `CREDENTIAL_SEGMENTS` docstring at `C:171-175` documents the `SESSION` exclusion with the same reasoning, `BUZZ_ACP_SESSION_POLICY`).
+- F-2: close the `row_counts` key set on `{"direct","hermes"}` so an undeclared-leg count is rejected (`C:460-477`).
+
+## DISCREPANCIES
+
+1. **Brief reference mismatch (not a defect):** the brief's `PIN: a154431` note "the O4 landing is byte-identical to 19b2c6f" does not resolve — `git rev-parse --verify 19b2c6f` fails in both the lane archive and the main clone ("Needed a single revision" / "unknown revision"). The O4 landing in this history is `78b097b`; the build lane's stated PIN `d84a90a6bb1c73859db5ab9f86814dc572ca6f17` IS present and is an ancestor of `78b097b` (`git merge-base --is-ancestor` → exit 0). The three graded files at `a154431` are byte-identical to the O4 build report's FILE IDENTITY table, so the graded bytes are the O4 bytes under any reading of the short hash. (≤3 experiments spent: `rev-parse --verify` on the lane tree, on the clone, and the `merge-base` check.)
+2. **Venue quirk (known, from the O4 report's DISCREPANCIES):** a gate run with system `/usr/bin/python3` (the PATH default before the venv was prepended) yields `33 failed, 221 passed`, all one class — `rfc3339_validator` missing in the system interpreter. Cleared by the venue rule (venv first on PATH); both of my gate runs (items 0 and 7) were on the venv.
+3. **Tooling quirk (bites this lane only):** `tempfile.mkdtemp(prefix=…)` rejects a prefix containing `/` (my first item-3 attack script used `vfy_it3_<name>_` where the case name carried a `/`); fixed by sanitizing the prefix. No effect on results.
+4. **`report_lint.py` final line (pasted, bounded rule — three fix rounds applied, then this line is the record):** `report_lint: 29 refs — OK 29, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at a154431)`. No `fix:` hints outstanding.
+5. **`ap_screen.py` classification:** AP-51 reported three text matches: line 34 plus the line-172 brief-reference-mismatch record twice. These are report prose that exposes the unresolvable brief hash; no production code, guard, test, or evidence path has the AP-51 pattern. Classified **RUN / informational**, not a gate finding.
+
+## Retro
+
+- New rule candidate for the `anti-hollow-green` / `contract-gate` skills: *when a gate grades a value against a list, prove the list is the SAME object the consumer consumes (or bound it to unforgeable evidence) — a "count matches the record" check is a mirror the moment the record's producer is the party being screened.* (Bites the class this lane's F-2/F-1 findings belong to; the O4 fix itself did it correctly, and the item-5 forge test is the reusable discriminator.)
+- Second: *a lane that must run a gate twice (item 0 baseline + item 7 re-run) should paste both and state the diff is timing-only.* (Mechanical; no new rule beyond what the brief already says.)
+
