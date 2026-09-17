@@ -1,0 +1,2072 @@
+diff --git a/scripts/report_lint.py b/scripts/report_lint.py
+index 2f8a554..3e35867 100755
+--- a/scripts/report_lint.py
++++ b/scripts/report_lint.py
+@@ -19,6 +19,12 @@ are read at --rev (default: the working tree). The report line's own CLAIM TOKEN
+   MISS         the cited lines contain none of the claim tokens (points at a comment, a blank line, another function)
+   UNCHECKABLE  the report line carries no claim token to test against (the ref is not proven, only stated)
+ Exit 1 when any MISS exists. NEAR and UNCHECKABLE never pass silently: they are counted in the summary line.
++`--min-refs N` exits 1 when fewer than N refs resolve OK: a report with no machine-checkable ref lints clean by
++construction (MISS 0 over nothing), so a checkpoint gates on a floor, never on the MISS count alone.
++`alias@<sha>:NN` pins ONE reference to a git revision (a PIN-era line cited after the file moved on); token matching is
++case-insensitive (a prose FIFO / TOCTOU matches the code's fifo / toctou); every MISS row ends with the fix hint. A lane
++fixes MISSes for at most THREE rounds, then pastes the summary and stops — the bar is the floor plus the paste, never a
++"MISS 0" chased forever (N5k, 2026-09-14: 47 minutes and 20 turns relocating references that were already right).
+ Heuristic by design — it proves nothing about a report; it removes the class of reference a reader cannot trust.
+ """
+ from __future__ import annotations
+@@ -29,7 +35,10 @@ import subprocess
+ import sys
+ from pathlib import Path
+ 
+-REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?):(\d+)(?:-(\d+))?(?![\w-])")
++REF_RE = re.compile(r"(?<![\w/.-])([A-Za-z_][\w./-]*?)(?:@([0-9a-f]{7,40}))?:(\d+)(?:-(\d+))?(?![\w-])")
++FIX_HINT = ("fix: if the cited line is RIGHT, add one backticked identifier copied from it to this report line; "
++            "if the number is wrong, correct it; a line that existed only at an older revision is written as "
++            "alias@<sha>:NN (checked at that revision) or in words, never as a bare alias:NN")
+ TOKEN_RES = [
+     re.compile(r"`([^`]{4,})`"),
+     re.compile(r"\b(def\s+\w{3,}|class\s+\w{3,})"),
+@@ -63,36 +72,38 @@ def _claim_tokens(line: str, ref_text: str) -> list[str]:
+ 
+ def lint(report: Path, maps: dict[str, str], rev: str | None, tolerance: int, root: Path):
+     basenames = {Path(v).name: v for v in maps.values()}
+-    cache: dict[str, list[str] | None] = {}
++    cache: dict[tuple, list[str] | None] = {}
+     rows = []
+     for lineno, line in enumerate(report.read_text(errors="replace").splitlines(), 1):
+         for m in REF_RE.finditer(line):
+-            key, a, b = m.group(1), int(m.group(2)), int(m.group(3) or m.group(2))
+-            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or rev else None)
+-            if path is None or (not rev and not (root / path).is_file()):
++            key, ref_rev, a, b = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
++            at = ref_rev or rev   # `alias@<sha>:NN` pins ONE ref to a revision (a PIN-era line cited after the file moved on)
++            path = maps.get(key) or basenames.get(key) or (key if (root / key).is_file() or at else None)
++            if path is None or (not at and not (root / path).is_file()):
+                 continue  # not a file reference we can resolve (a time, a ratio, a URL port ...)
+-            if path not in cache:
+-                cache[path] = _read_file(path, rev, root)
+-            src = cache[path]
++            if (path, at) not in cache:
++                cache[(path, at)] = _read_file(path, at, root)
++            src = cache[(path, at)]
+             if src is None:
+-                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {rev or 'worktree'}"))
++                rows.append((lineno, m.group(0), "UNRESOLVED", f"{path} not at {at or 'worktree'}"))
+                 continue
+             toks = _claim_tokens(line, m.group(0))
+             if not toks:
+                 rows.append((lineno, m.group(0), "UNCHECKABLE", "no claim token on the report line"))
+                 continue
+             lo, hi = max(1, min(a, b)), min(len(src), max(a, b))
+-            cited = "\n".join(src[lo - 1:hi])
+-            if any(t in cited for t in toks):
++            cited = "\n".join(src[lo - 1:hi]).lower()   # case-insensitive: a prose FIFO / TOCTOU / READ matches the code's spelling
++            ltoks = [t.lower() for t in toks]
++            if any(t in cited for t in ltoks):
+                 rows.append((lineno, m.group(0), "OK", ""))
+                 continue
+             near_lo, near_hi = max(1, lo - tolerance), min(len(src), hi + tolerance)
+-            near = "\n".join(src[near_lo - 1:near_hi])
+-            if any(t in near for t in toks):
++            near = "\n".join(src[near_lo - 1:near_hi]).lower()
++            if any(t in near for t in ltoks):
+                 rows.append((lineno, m.group(0), "NEAR", f"a claim token sits within {tolerance} line(s) of the range"))
+             else:
+                 snippet = src[lo - 1].strip()[:70] if lo <= len(src) else "<beyond EOF>"
+-                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}"))
++                rows.append((lineno, m.group(0), "MISS", f"cited line reads: {snippet!r}; tokens {toks[:3]}; " + FIX_HINT))
+     return rows
+ 
+ 
+@@ -103,6 +114,9 @@ def main(argv=None) -> int:
+     ap.add_argument("--rev", default=None, help="git revision to read the cited files at (default: the working tree)")
+     ap.add_argument("--tolerance", type=int, default=1)
+     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
++    ap.add_argument("--min-refs", type=int, default=0,
++                    help="fail (rc 1) when fewer than N refs resolve OK — a report that cites nothing lints clean "
++                         "by construction (B3's `0 refs — OK 0, MISS 0`, 2026-09-14); a checkpoint passes a floor")
+     ns = ap.parse_args(argv)
+     maps = {}
+     for item in ns.map:
+@@ -120,6 +134,9 @@ def main(argv=None) -> int:
+     print(f"report_lint: {total} refs — OK {counts['OK']}, NEAR {counts['NEAR']}, MISS {counts['MISS']}, "
+           f"UNCHECKABLE {counts['UNCHECKABLE']}, UNRESOLVED {counts['UNRESOLVED']}"
+           + (f" (at {ns.rev})" if ns.rev else " (worktree)"))
++    if counts["OK"] < ns.min_refs:
++        print(f"report_lint: FLOOR — OK {counts['OK']} < --min-refs {ns.min_refs}: the report cites too little to be graded")
++        return 1
+     return 1 if counts["MISS"] else 0
+ 
+ 
+diff --git a/tasks/briefs/pc/VENUE-MAP.md b/tasks/briefs/pc/VENUE-MAP.md
+index 814bc70..7d8375b 100644
+--- a/tasks/briefs/pc/VENUE-MAP.md
++++ b/tasks/briefs/pc/VENUE-MAP.md
+@@ -30,7 +30,15 @@ design, gates and report discipline.
+   OmniRoute key, any `~/.hermes/profiles/*/.env`, or any credential.
+ - Processes: kill only what you start, by pid (never `pkill`/`pgrep -f`); long gates in ONE foreground call; podman and runsc only
+   where the original brief's design requires them (build lanes: never). `kernel.dmesg_restrict=1` here and you are unprivileged.
++- Code intel: the dispatcher builds a graft index IN your tree at launch (`graft/INDEX.md`) and overlays the clone's current
++  `scripts/report_lint.py`. Semantic questions go to the instruments BEFORE any grep or whole-file read: `graft ask "<q>"`,
++  `graft skeleton <file>`, `bash scripts/ripwire_review.sh for|callers|impact|exercises <symbol>`, `python3 scripts/ap_screen.py <file>`,
++  the whole pack `bash scripts/lane_context.sh -q "<q>" -s <SYMBOL> -o pack.md <files>` (about 4 s); GitNexus blast radius against the
++  clone's index: `node /home/rocco/agent-factory/.gitnexus/run.cjs impact "<symbol>" --direction upstream --repo /home/rocco/agent-factory`
++  (line numbers = the clone HEAD, not your PIN). Read by line range from their answers.
+ - Report: the standing incremental rule applies (append each finished section to `$LANE_REPORT_DRAFT`). Your FINAL message is the
+   whole report, in the shape the original brief demands — FILE IDENTITY of the final bytes, red-before/green-after, the mutant table
+-  with a killer line per mutant, the class sweep, `report_lint` MISS 0 run LAST, the gate RESULT lines pasted verbatim, DISCREPANCIES,
++  with a killer line per mutant, the class sweep, `report_lint` run LAST under the BOUNDED rule (its `fix:` hints for at most three rounds, then the summary pasted — a `MISS 0` demand is a target, never a stop condition; AF-AP-76), the gate RESULT lines pasted verbatim, DISCREPANCIES,
+   NOT-done first-class, the process census, hygiene. Also write it to the report path the original brief names, inside your tree.
++- **Hermes's `terminal` tool caps ONE call at 420 s on this host (measured by lane A5l 2026-09-15: a `lane_gate.sh -n 2` over the checker set exceeded it before its RESULT line).** Size every gate call under the cap: `-n 1` twice rather than `-n 2` once; the four-file xdist run (~145 s on 4 workers) and the joint S0-01 set (~200 s on 8 workers) fit; a longer suite is split into halves, each ONE foreground call, both summaries pasted.
++- **A test count in a brief or a report carries its SET (2026-09-15).** `pc_suite.sh wait` prints `pytest-set: N files set=<sha12> — <files>` beside `pytest-summary:`; `lane_gate.sh`'s RESULT line carries `tests=<sha12>`; `bash scripts/pc_suite.sh set-id -- <files>` prints the id for any list (sha256 of the sorted list, order-blind). A floor you are handed without its set is a premise to bound, not a bar: re-collect on the PIN (`pytest --collect-only -q <files> | grep -c ::`) and paste the count WITH its set id. (The ledger's `1556 passed, 9 xfailed` was an 18-file run; VERIFY-CK14 item 10 quoted it for the 13-file `tests/test_s0_01_*.py` glob, which collects 1354 at b6483df.)
+diff --git a/tasks/briefs/pc/pc-verify-g3.md b/tasks/briefs/pc/pc-verify-g3.md
+new file mode 100644
+index 0000000..dfdb3f9
+--- /dev/null
++++ b/tasks/briefs/pc/pc-verify-g3.md
+@@ -0,0 +1,27 @@
++# PC continuation — VERIFY-G3 (the adversarial grade of S0-08 round 3, the landing 7f60d83)
++
++PIN: 7f60d83
++
++Role: adversarial-verifier. Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path in the brief.
++
++## CONTINUATION (read second)
++This lane is the FIRST run of the grade — nothing precedes it; start at item 0.
++
++**The brief governs**: `tasks/briefs/s0-08-support/VERIFY-G3-brief.md` — READ IT WHOLE and follow it item by item (0-11). Your
++worktree IS `git archive 7f60d83` plus the lane patch (the brief + this file); the lane's report `tasks/briefs/s0-08-support/G3-report.md`,
++the G3 lane brief, VERIFY-G2's report and the pack `tasks/briefs/s0-08-support/VERIFY-G3-pack.md` are IN the archive or the patch. Save
++your report at `tasks/briefs/s0-08-support/VERIFY-G3-report.md` inside your tree, draft after EACH item (the incremental rule), and
++return it whole as your final message.
++
++Venue notes specific to this grade:
++- You are on the PC: run `tests/test_s0_08_containment.py` directly, then the five-file set the brief names, with the venue exports
++  (`S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`);
++  `/home/rocco/venv-agent-factory/bin` FIRST on PATH; a SHORT absolute `--basetemp` under your lane's scratch dir; ONE foreground call
++  per run (the coordinator's counts: `145 passed` for the file, the lane's `224 passed` for the five), twice, counts pasted verbatim.
++- **NO podman on this host, in any form** — no `podman build`, `run`, `exec`, `volume`, `inspect`; `run_containment.sh` is graded by
++  READING, never by running (lane G3's accidental 30 s build is the warning, its report §3). A gVisor cell, only if an item needs one:
++  `/usr/local/bin/runsc --rootless do` on a scratch dir under `timeout`, killed by pid.
++- The pinned checkout `/home/rocco/s0-01-pinned/hermes-agent` is READ-ONLY (`git -C … show`/`grep` only). The crun fixture's negative
++  control runs through the real checker on your archive copy.
++- Any other Stage 0 lane sharing this host: never touch its tree, `proofs/`, or `tests/test_s0_*` outside your own private copy; every
++  mutant on a scratch copy of your archive; kill only what you start, by pid.
+diff --git a/tasks/briefs/s0-08-support/VERIFY-G3-brief.md b/tasks/briefs/s0-08-support/VERIFY-G3-brief.md
+new file mode 100644
+index 0000000..562037c
+--- /dev/null
++++ b/tasks/briefs/s0-08-support/VERIFY-G3-brief.md
+@@ -0,0 +1,130 @@
++# VERIFY-G3 — adversarial grade of lane G3 (S0-08 gVisor containment round 3: the argv grammar closed, the observer uid read back, the image built from the pin's archive and measured, the P6 domain made explicit, the floors, the fixture split)
++
++**AMENDMENT 2026-09-14 — the `report_lint` bar in this brief's discipline item is BOUNDED (after lane N5k looped 47 minutes on exactly that line; AF-AP-76):** run the lint LAST with the maps named there, apply the `fix:` hint the lint prints on each MISS row for at most THREE rounds, then paste the final summary line into DISCREPANCIES and finish. `MISS 0` is the target, never a stop condition — a MISS that survives three rounds is reported, not chased. A line that existed only at the PIN is written `alias@<PIN>:NN` (checked at that revision) or in words. The harvest grades the floor (`--min-refs`) plus the paste. Nothing else in this brief changes.
++
++You are an adversarial-verifier (the PC Hermes verify lane; the venue map `tasks/briefs/pc/VENUE-MAP.md` applies). Repo agent-factory,
++branch claude/soundbox-kit-migration-iz1jwf. **PIN: `7f60d83`** — the S0-08 round-3 LANDING: the coordinator's harvest of lane G3's PC
++tree (PIN 488b238), a straight copy plus ONE coordinator touch (an f-string without placeholders at `T:1248` — the sandbox pyflakes).
++FILE IDENTITY at the PIN (lines, sha256[:8]): `proofs/S0-08/check_containment.py` (565, `52668a02`) ·
++`proofs/S0-08/tools/pc/run_containment.sh` (415, `9800a372`) · `proofs/S0-08/canaries/P1.sh` (28, `744df86c`) · `P2.sh` (63, `855fa645`) ·
++`P3.sh` (50, `a6c32030`) · `P4.sh` (57, `358923dc`) · `P5.sh` (46, `2ecf616c`) · `P6.sh` (61, `26cb113c`) · `P7.sh` (29, `8f082f6d`) ·
++`P8.sh` (31, `74d923fe`) · `proofs/S0-08/CONTAINMENT-SPEC.md` (471, `a47e04c8`) · `proofs/S0-08/fixtures/evidence-crun/PROVENANCE.md`
++(99, `75ac24ad`) · `canaries.jsonl` (8, `a83fba44`) · `runtime-identity.json` (60, `044a799b`) · `tests/test_s0_08_containment.py`
++(1740, `503f4e12`); the lane's report `tasks/briefs/s0-08-support/G3-report.md`; its transcript `transcripts/pc/pc-g3.md--488b238.md`.
++Grade the bytes of `git archive 7f60d83` from a scratch copy under your lane's scratch dir; every mutant on scratch copies; every pytest
++run with an explicit SHORT absolute `--basetemp`, `/home/rocco/venv-agent-factory/bin` FIRST on PATH and the venue exports
++(`S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`); kill only
++what you start, by pid; never background a run and stop; no outward actions. **NO podman — no container start, build or exec, ever,
++and NEVER `run_containment.sh` for real** (lane G3 itself started an accidental 30 s `podman build` by "testing the preflight" —
++its report §3; you grade the runner STATICALLY, and the live runsc leg is the coordinator's after this grade). gVisor cells, if you need
++one, only through `/usr/local/bin/runsc --rootless do` on a scratch dir, PID-scoped under `timeout`. The pinned hermes-agent checkout
++`/home/rocco/s0-01-pinned/hermes-agent` (527da608) is READ-ONLY. Never read, print or commit a credential. Authorization: the owner's own
++containment boundary under test on the owner's system. Do NOT spawn subagents.
++
++**Inputs (read in this order):** VERIFY-G2's report `tasks/briefs/s0-08-support/VERIFY-G2-report.md` (the round's contract: blockers
++3, 4, 10, 11; findings 1, 2, 5-9; the seven mutant survivors 31, 32, 33, 38, 45, 50, 51; the six-step coordinator path) · the lane
++brief `tasks/briefs/s0-08-g3-containment-the-argv-grammar-closed-the-observer-read-back-the-image-measured.md` (10 pinned items) ·
++the lane's report (its evidence tiers, §3 the incident, §4 NOT-done, §8 adjacent defects; refs written as `(:133-150)` inside a table —
++`report_lint` reads `3 refs — OK 0, NEAR 0, MISS 0, UNCHECKABLE 1, UNRESOLVED 2 (at 7f60d83)`) · the pack
++`tasks/briefs/s0-08-support/VERIFY-G3-pack.md` · `proofs/S0-08/CONTAINMENT-SPEC.md` · the pinned Dockerfile — **the coordinator verified
++at brief time (AP-43) what the lane left "Assumed": the upstream `Dockerfile` (the ROOT one; `docker/Dockerfile` does not exist — the G3
++brief's pointer was wrong) declares `ARG HERMES_GIT_SHA=` at `:336`, writes `/opt/hermes/.hermes_build_sha` at `:338-339` and
++`/etc/hermes/image-provenance.json` (`schema`, `deployment_kind`, `manager`, `image`, `version`, `revision`) at `:341-342`** — so the
++runner's two readbacks (`R:272-273`) CAN succeed on a build that passes the arg · `docs/INCIDENT-LOG.md` (AF-AP-34, AF-AP-40, AF-AP-56,
++AF-AP-59, AF-AP-63, AF-AP-65, AF-AP-72).
++
++## Item 0 — the mechanical gates, pasted
++The coordinator's gates on these bytes: sandbox `RESULT: rev=488b2385450f files=19 deleted=0 runs=2 identical=yes rc=0 summary="145 passed
++in 46.62s 145 passed in 9.02s"`; the lane's own `145 passed in 13.86s` / `145 passed in 13.23s` and its five-file corpus `224 passed in
++32.53s`; the PC union run on the landed tip `4 failed, 1561 passed, 9 xfailed in 232.41s` (8 workers, 20260914T121247Z-c6c384a; the four
++reds are `tests/test_proof_status.py`'s S0-11 re-acceptance class, none in this suite). Agree or disagree by your own run of
++`tests/test_s0_08_containment.py` (twice) AND the five-file set (`tests/test_s0_08_containment.py tests/test_spec_probe_schemas.py
++tests/test_validate_ledger.py tests/test_proof_runner.py tests/test_ledger_gen.py`), counts pasted. Then: the negative control through
++the real checker (`python3 proofs/S0-08/check_containment.py proofs/S0-08/fixtures/evidence-crun` → `failure_reason: containment: P1 host
++kernel …, not gVisor`, rc 1 — the kernel string is the FIXTURE's recorded one, not this host's: say so); `ap_screen.py` over
++`check_containment.py`, `run_containment.sh`, `canaries/` (the coordinator's run: 0 hits) and `--tests` (AF-AP-34 ×8 — the guard
++assertions' own words; classify by run); pyflakes; `bash -n`; `sh -n` on P1-P8; the FILE IDENTITY table against the PIN; the report's
++claims resolved against the PIN yourself (its refs are prose); the external-command census by pid.
++
++## Items
++1. **F3 — the closed argv grammar (`C:60-70` the constants; `C:200-212` `expected_run_argv`; `C:258-285` `_check_run_argv`, position-exact;
++   the runner's two argv shapes `R:198-212`).** VERIFY-G2's red table as committed tests (`T:1197-1259`): `--privileged=true`,
++   `--cap-add=SYS_ADMIN`, `--volume=/host:/host`, `--mount=type=bind,src=/,dst=/host`, two-token `--pid host`, an appended
++   `--network=none`, a duplicated required pair, a reordered pair, mutant 51's `--privileged=true` before the image — each rc 1 naming
++   the position and token; the runner's exact runsc argv AND its crun argv pass. Then the grammar's own INPUTS, all read from the
++   identity: `runtime` selects the pair set by `Path(runtime).name == "runsc"` (`C:206`) and is bound nowhere else by the checker — the
++   binary is bound only through `runsc_version`/`runsc_sha256` (`C:304-317`; the runner hashes `$RUNTIME` when executable, `R:259-261`) —
++   attack `runtime: "/tmp/runsc"`, `"runsc"`, `"/usr/local/bin/runsc/"` (a trailing slash), `"crun"` with the runsc pairs: which pass,
++   and does the spec's pinned-identity table pin the PATH (if so, the checker's silence is a finding with its red test); `data_volume`
++   (`C:196`): 16 UPPERCASE hex, 15 hex, a name the runner can never generate; the `-v` value mounted at `/opt/data2`; a wrong `image`
++   with a matching argv → confirm by run that `_check_image_identity` (called first, `C:326`) names it before the argv check does. The two
++   static runner tests `T:1170-1178` and `T:1189`: what do they PARSE — if a runner variant that carries the same substrings in a comment
++   or a dead branch stays green, they are mirrors of the runner's text: say so with the red test that would make them gates.
++2. **F4 — the observer uid READ BACK (`P1.sh`-`P8.sh`: `observed_exec_uid="$(id -u)"`; `C:334-342` `check_observer_identity`, run after
++   `check_p1` and before P2 (`C:534-536`); the exec wrapper `R:394-397` `podman exec -i --user "$CANARY_EXEC_UID" … sh -s < "$script"`).**
++   Read each canary: is `id -u` evaluated INSIDE the same exec as the observation (the line that composes `observed`)? Attacks on the
++   checker: typed `canary_exec_user: "10000"` with ONE canary's `observed_exec_uid: "0"` (mutant 50's shape — named, which canary);
++   `"10000\n"`, `" 10000"`, `10000` (int — `_field` `C:176-186` names the type), the key absent on one canary and present on seven;
++   every canary `"0"` with the typed value `"0"` (refused at `C:288-301` first — which message); a canary line duplicated or carrying
++   another canary's id (`C:128-160` refuses — reproduce). Order: a bundle failing P1 never reaches the uid check — state whether that
++   ordering hides anything for a partial-evidence reading. The live readback is NOT exercised (no container ran): write the exact
++   per-canary line the coordinator's first runsc run must show and the one value that would prove the exec ran as root.
++3. **F10/F11 — the archive build and the MEASURED image (`R:119-128` the preflight, `R:133-150` `git archive` of `PINNED_COMMIT` into a
++   runner-owned `BUILD_CONTEXT` + `podman build --build-arg HERMES_GIT_SHA=…`; `R:156-165` the immutable id/digest guards; `R:271-292` the
++   three readbacks and their exit-4 guards; `C:224-256` `_check_image_identity`; the Dockerfile `:325-342`).** Attacks on the checker:
++   `image_id` in UPPERCASE hex (lowered at `C:228` — accepted; intended?); `sha256:` + 63 hex; `container_image_id` ≠ `image_id`;
++   `image_build_sha` = the commit plus `\n`; `image_provenance: {"revision": <commit>}` alone (the upstream fields `image`, `version`,
++   `schema`, `deployment_kind`, `manager` are UNBOUND — is `version` from the pinned `pyproject.toml` worth binding? decide);
++   `image_provenance` a string; `revision: null`; `image_source_commit` right with `image_build_sha` wrong (which failure names first).
++   STATIC on the runner (never run it): the archive context vs an upstream checkout build — `.git` is absent from an archive (grep the
++   Dockerfile for `git ` / `.git` reads at build time; `.dockerignore`?): state what could differ; is the porcelain check `R:124-128`
++   still load-bearing once the archive is the context (a dirty tree cannot leak — keep or drop, with the reason); `tar -xf` without
++   `--no-same-owner` (the lane's §8); the fixed `/tmp/s0-08-run.err` and `/tmp/s0-08-canary.err` (predictable temp paths on a shared
++   host — classify against the registry); the readbacks `R:272-273` run as the image's default user (`USER root`, Dockerfile `:298`) —
++   correct as is? Then the exit-code semantics: `exit 2` at `R:160,164` vs `exit 4` at `R:179,276,280,292` — which does the proof-runner
++   read as deferred vs failed for the positive leg (the S0-08 `spec.json` `expect` table) — a build-time `exit 2` read as "deferred"
++   would be a hollow deferral: decide by reading `scripts/proof-runner`.
++4. **F1 — the P6 domain made explicit (`R:186-190` the fresh `s0-08-data-<16 hex>` volume, `R:202,210` `-v …:/opt/data`, removed by
++   `cleanup` `R:91-103`; `C:79-89` `CONTAINER_MAX_PIDS = 32` and its derivation comment).** Re-derive the bound for THIS configuration:
++   with an EMPTY `/opt/data`, which s6 services start (the pinned `docker/s6-rc.d/user/contents.d/`), what the stage-2 hook at
++   Dockerfile `:309-311` does to an empty dir, whether `container_boot.py` still walks `/profiles/` — is 32 now derived or still typed
++   (VERIFY-G2 item 2)? The checker sees only the volume's NAME: nothing in the bundle proves it was EMPTY when the container started —
++   name the observation that would (a canary's `ls -A /opt/data` at exec time, the `mount` line) and grade its absence. Attacks on
++   `own_pid_count` (`C:477-491`): `"0"`, `"-1"`, `"32"`, `"33"`, `"032"`, `"1e1"`, `" 32"`, `"²"` (`str.isdigit()` is True for a
++   superscript, `int()` then raises `ValueError` — `main` `C:552-563` catches only `Deferred`/`Failure`: reproduce the traceback, its rc,
++   and what the proof-runner records for a checker that dies without a `failure_reason:` line), `"٣"` (an Arabic-Indic digit: isdigit
++   True, `int()` = 3 — passes as a count; state whether the count must be ASCII).
++5. **F2/F5 — the floors (`C:288-301` `canary_exec_user` string-exact, the int named; `C:477-491` the count floor).** VERIFY-G2's survivors
++   31, 32 and 45 dead by NAME — re-run each; the absent-field reason preserved (`C:289-291`).
++6. **F6/F8/F7 — the claims narrowed, the fixture split, the control declared.** `P4.sh` and the spec now claim "the exec environment
++   exposed to the runtime uid" — quote both; is the claim exactly what P4 measures? The fixture tests `T:1607-1668` (producible by the
++   shipped canaries) and `T:1669-…` (every pinned field): the venue-independent arm and the capture-host arm — run them HERE; forge
++   `uname_r` in a scratch copy of the fixture: does the host-dependent half pass silently (the AF-AP-40 shape `if same_host: assert …`
++   with no else)? The fixture's `canaries.jsonl` carries `observed_exec_uid: "1000"` on every line while the checker expects `"10000"`:
++   the crun bundle fails at P1 BEFORE the observer check (`C:534-536`), so those eight values are never graded — state whether any test
++   asserts them and whether the fixture should carry the value a real capture would. F7's live single-holder positive control is
++   DECLARED NOT-run (`T:1007` `test_p2_reports_every_holder_of_the_main_cmdline` is the two-holder ambiguity test): write the exact cell the coordinator's run must show.
++7. **F9 — P7 stays recorded and documented.** Confirm the spec's paragraph and that no test claims more than "recorded".
++8. **Mutants ≥ 45, every one on a scratch copy, the killer line pasted, by-construction survivors named.** The lane produced NO
++   mutation evidence (its §4) — this round's score is yours: VERIFY-G2's seven survivors (31, 32, 33, 38, 45, 50, 51) each dead by name;
++   G1's 21 and G2's 21 re-run from YOUR reconstruction; the attacks above that no test kills (the `runtime` path, the unbound
++   provenance fields, the superscript count, the empty-volume observation).
++9. **The 18-class re-scan as an ENUMERATION**: class 11 (the closed grammar IS the world enumeration — state its domain); class 2 (a
++   TABLE of every identity field: measured by the runner / typed constant / read back inside the container / forgeable in a bundle);
++   every `if <field> == <literal>:` in the checker with its raising other arm (`C:360,400,408,446,497` and the rest — list any without,
++   AF-AP-65); every negative control's exact reason (AF-AP-63); no name kill anywhere (AF-AP-34/59).
++10. **Discipline** — `file:line` by `sed -n` on the PIN; `report_lint.py` on your own report with `--rev 7f60d83 --map
++    C=proofs/S0-08/check_containment.py --map R=proofs/S0-08/tools/pc/run_containment.sh --map T=tests/test_s0_08_containment.py --map
++    S=proofs/S0-08/CONTAINMENT-SPEC.md` pasted (MISS 0, UNRESOLVED 0); the process census by pid.
++11. **The design.** With the image measured and the observer read back, which SINGLE forged field still defeats the containment
++    signature set (VERIFY-G2 item 14) — the bundle is coordinator-supplied bytes; separate what an instrument the forger does not
++    control measures from what the checker merely cross-checks for internal consistency. Then the exact PC steps for the coordinator's
++    first runsc run (VERIFY-G2's six-step path updated for G3: the archive build with the arg, the baked provenance inspected, the run,
++    the per-canary uid, the volume's emptiness, P7's netns) with what a red at each step means; and what round 4 must do, if anything,
++    BEFORE the live leg — or state that nothing but the live leg remains.
++
++## Report
++Write it to `tasks/briefs/s0-08-support/VERIFY-G3-report.md` inside your tree, draft after EACH item, and return it whole as your final
++message. Findings: ALL, no severity filtering, each with `file:line` on the PIN, expected vs observed, the failing input, the minimal
++fix, the exact red test, SOLID/UNSURE; reproduced vs reviewed vs skipped; verdict MERGE-READY or NOT-READY with the blocking set and the
++cheapest path; the items that are the coordinator's (the live runsc leg) or the owner's named as such.
+diff --git a/tasks/briefs/s0-08-support/VERIFY-G3-pack.md b/tasks/briefs/s0-08-support/VERIFY-G3-pack.md
+new file mode 100644
+index 0000000..9198258
+--- /dev/null
++++ b/tasks/briefs/s0-08-support/VERIFY-G3-pack.md
+@@ -0,0 +1,569 @@
++# lane context pack — 1a1ec4b 2026-09-14T12:31Z
++files: proofs/S0-08/canaries/P1.sh proofs/S0-08/canaries/P2.sh proofs/S0-08/canaries/P3.sh proofs/S0-08/canaries/P4.sh proofs/S0-08/canaries/P5.sh proofs/S0-08/canaries/P6.sh proofs/S0-08/canaries/P7.sh proofs/S0-08/canaries/P8.sh proofs/S0-08/check_containment.py proofs/S0-08/tools/pc/run_containment.sh tests/test_s0_08_containment.py
++symbols: _check_canary_exec_user _check_image_identity _check_run_argv _identity_string check_identity check_observer_identity expected_run_argv test_canary_exec_user_must_be_a_json_string test_closed_run_argv_grammar_refuses_extra_tokens test_closed_run_argv_grammar_refuses_reordered_required_pair test_each_canary_must_read_back_the_requested_exec_uid test_each_required_run_argv_pair_is_required test_every_shipped_canary_measures_its_exec_uid test_image_identity_is_measured_and_bound test_image_identity_rejects_missing_baked_provenance test_p6_own_pid_count_has_a_positive_floor test_runner_builds_from_the_pin_archive_and_sets_image_provenance test_runner_measures_prebuilt_and_running_image_identity test_runner_uses_and_removes_a_fresh_named_data_volume
++
++## proofs/S0-08/canaries/P1.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P1.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P2.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P2.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P3.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P3.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P4.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P4.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 1 hits over 1 files ---
++AP-51: 1
++    proofs/S0-08/canaries/P4.sh:26: # the exec environment exposed to that uid; it is deliberately not claimed as byte-identical to the
++
++## proofs/S0-08/canaries/P5.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P5.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P6.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P6.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P7.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P7.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/canaries/P8.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/canaries/P8.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/check_containment.py
++### graft skeleton
++
++graft skeleton — proofs/S0-08/check_containment.py
++- L101-L102  class Deferred  class Deferred(Exception)
++- L105-L106  class Failure  class Failure(Exception)
++- L109-L117  function _require_file  def _require_file(path: Path, name: str) -> Path
++- L120-L125  function _load_json  def _load_json(path: Path, name: str)
++- L128-L159  function _load_canaries  def _load_canaries(path: Path) -> dict
++- L162-L173  function _canary  def _canary(canaries: dict, cid: str) -> dict
++- L176-L185  function _field  def _field(observed: dict, cid: str, key: str) -> str
++- L188-L190  function _csv  def _csv(observed: dict, cid: str, key: str) -> list[str]
++- L200-L212  function expected_run_argv  def expected_run_argv(runtime: str, image: str, data_volume: str) -> list[str]
++- L215-L221  function _identity_string  def _identity_string(identity: dict, key: str) -> str
++- L224-L255  function _check_image_identity  def _check_image_identity(identity: dict, commit: str) -> None
++- L258-L285  function _check_run_argv  def _check_run_argv(identity: dict) -> None
++- L288-L301  function _check_canary_exec_user  def _check_canary_exec_user(identity: dict) -> str
++- L304-L331  function check_identity  def check_identity(identity: dict) -> str
++- L334-L342  function check_observer_identity  def check_observer_identity(canaries: dict, expected_uid: str) -> None
++- L347-L354  function check_p1  def check_p1(canaries: dict) -> None
++- L357-L388  function check_p2  def check_p2(canaries: dict) -> None
++- L391-L402  function check_p3  def check_p3(canaries: dict) -> None
++- L405-L425  function check_p4  def check_p4(canaries: dict) -> None
++- L428-L447  function check_p5  def check_p5(canaries: dict, identity: dict) -> None
++- L450-L509  function check_p6  def check_p6(canaries: dict) -> None
++- L512-L523  function check_recorded  def check_recorded(canaries: dict) -> None
++- L528-L545  function check_bundle  def check_bundle(evidence_dir: Path) -> str
++- L548-L561  function main  def main(argv) -> int
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## proofs/S0-08/tools/pc/run_containment.sh
++### graft skeleton
++graft skeleton — proofs/S0-08/tools/pc/run_containment.sh
++
++no definitions indexed for this file
++### anti-pattern screen (whole file)
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++## tests/test_s0_08_containment.py
++### graft skeleton
++
++graft skeleton — tests/test_s0_08_containment.py
++- L43-L49  function dmesg_restrict  def dmesg_restrict() -> str
++- L52-L60  function dmesg_works  def dmesg_works() -> bool
++- L63-L65  function venue  def venue() -> str
++- L68-L72  function run_checker  def run_checker(evidence_dir) -> subprocess.CompletedProcess
++- L75-L79  function run_marker_gate  def run_marker_gate(proof_dir) -> subprocess.CompletedProcess
++- L86-L141  function passing_canaries  def passing_canaries() -> list[dict]
++- L144-L173  function passing_identity  def passing_identity() -> dict
++- L176-L184  function write_bundle  def write_bundle(directory: Path, canaries=None, identity=None) -> Path
++- L189-L199  function test_crun_bundle_fails_on_p1_with_the_exact_spec_reason  def test_crun_bundle_fails_on_p1_with_the_exact_spec_reason()
++- L202-L211  function test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it  def test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it()
++- L216-L220  function test_synthetic_passing_bundle_passes  def test_synthetic_passing_bundle_passes(tmp_path)
++- L223-L228  function test_passing_bundle_is_deterministic  def test_passing_bundle_is_deterministic(tmp_path)
++- L233-L236  function test_absent_evidence_dir_defers  def test_absent_evidence_dir_defers(tmp_path)
++- L239-L246  function test_present_dir_with_missing_files_is_a_failure_not_a_deferral  def test_present_dir_with_missing_files_is_a_failure_not_a_deferral(tmp_path)
++- L284-L292  function test_each_property_mutation_is_caught  def test_each_property_mutation_is_caught(tmp_path, mutant_id, canary, field, value, expected)
++- L295-L304  function test_p4_secret_env_key_is_caught  def test_p4_secret_env_key_is_caught(tmp_path)
++- L307-L318  function test_p4_count_and_names_must_agree  def test_p4_count_and_names_must_agree(tmp_path)
++- L323-L331  function test_runsc_version_unpinned_is_caught  def test_runsc_version_unpinned_is_caught(tmp_path)
++- L334-L342  function test_runsc_sha_unpinned_is_caught  def test_runsc_sha_unpinned_is_caught(tmp_path)
++- L345-L351  function test_identity_absent_fields_are_caught  def test_identity_absent_fields_are_caught(tmp_path)
++- L357-L364  function test_missing_canary_line_fails_by_name  def test_missing_canary_line_fails_by_name(tmp_path, dropped)
++- L367-L373  function test_duplicate_canary_line_is_rejected  def test_duplicate_canary_line_is_rejected(tmp_path)
++- L376-L387  function test_canary_that_did_not_observe_is_not_a_pass  def test_canary_that_did_not_observe_is_not_a_pass(tmp_path)
++- L390-L406  function test_p5_without_the_sentinel_env_var_fails_closed  def test_p5_without_the_sentinel_env_var_fails_closed(tmp_path)
++- L409-L415  function test_unknown_canary_id_is_rejected  def test_unknown_canary_id_is_rejected(tmp_path)
++- L420-L428  function test_p5_without_the_host_control_is_not_a_pass  def test_p5_without_the_host_control_is_not_a_pass(tmp_path)
++- L431-L439  function test_p5_path_mismatch_is_caught  def test_p5_path_mismatch_is_caught(tmp_path)
++- L442-L448  function test_p5_host_control_that_did_not_read_is_caught  def test_p5_host_control_that_did_not_read_is_caught(tmp_path)
++- L454-L463  function test_fifo_at_an_evidence_path_is_refused_not_hung  def test_fifo_at_an_evidence_path_is_refused_not_hung(tmp_path, victim)
++- L466-L472  function test_directory_at_an_evidence_path_is_refused  def test_directory_at_an_evidence_path_is_refused(tmp_path)
++- L475-L480  function test_malformed_jsonl_line_is_named  def test_malformed_jsonl_line_is_named(tmp_path)
++- L485-L492  function test_marker_gate_malformed_matches_the_spec_leg  def test_marker_gate_malformed_matches_the_spec_leg()
++- L495-L500  function test_marker_gate_absent  def test_marker_gate_absent(tmp_path)
++- L503-L510  function test_marker_gate_expired_without_result_is_red  def test_marker_gate_expired_without_result_is_red(tmp_path)
++- L513-L519  function test_marker_gate_completed_transition  def test_marker_gate_completed_transition(tmp_path)
++- L522-L530  function test_marker_gate_expired_with_result_is_green  def test_marker_gate_expired_with_result_is_green(tmp_path)
++- L533-L541  function test_marker_gate_honest_deferral_is_green  def test_marker_gate_honest_deferral_is_green(tmp_path)
++- L545-L553  function test_marker_gate_names_each_missing_field  def test_marker_gate_names_each_missing_field(tmp_path, field)
++- L556-L564  function test_marker_gate_rejects_out_of_enum_status  def test_marker_gate_rejects_out_of_enum_status(tmp_path)
++- L567-L574  function test_marker_gate_result_presence_alone_does_not_retire_the_marker  def test_marker_gate_result_presence_alone_does_not_retire_the_marker(tmp_path)
++- L577-L584  function test_marker_gate_rejects_a_result_from_another_proof  def test_marker_gate_rejects_a_result_from_another_proof(tmp_path)
++- L587-L594  function test_marker_gate_result_fifo_is_refused_not_hung  def test_marker_gate_result_fifo_is_refused_not_hung(tmp_path)
++- L597-L603  function test_marker_gate_fifo_is_refused_not_hung  def test_marker_gate_fifo_is_refused_not_hung(tmp_path)
++- L606-L613  function test_live_marker_is_expired_and_red  def test_live_marker_is_expired_and_red()
++- L618-L622  function test_every_canary_script_exists_and_is_executable  def test_every_canary_script_exists_and_is_executable()
++- L625-L629  function test_every_canary_script_is_shell_clean  def test_every_canary_script_is_shell_clean()
++- L632-L644  function test_committed_bundle_carries_every_canary_and_parses  def test_committed_bundle_carries_every_canary_and_parses()
++- L648-L658  function test_read_only_canaries_emit_one_parseable_line_when_run  def test_read_only_canaries_emit_one_parseable_line_when_run(canary)
++- L666-L746  function test_live_canary_output_binds_to_the_fields_the_checker_reads  def test_live_canary_output_binds_to_the_fields_the_checker_reads( tmp_path, canary, expected_reason_fragment)
++- L749-L756  function test_canaries_never_print_a_verdict  def test_canaries_never_print_a_verdict()
++- L759-L771  function test_a_canary_line_carrying_a_verdict_is_still_judged_by_the_checker  def test_a_canary_line_carrying_a_verdict_is_still_judged_by_the_checker(tmp_path)
++- L776-L779  function test_spec_validates_against_the_schema  def test_spec_validates_against_the_schema()
++- L782-L797  function test_spec_negative_legs_reproduce_their_pinned_reasons  def test_spec_negative_legs_reproduce_their_pinned_reasons()
++- L800-L811  function test_spec_positive_leg_defers_until_the_pc_run_lands  def test_spec_positive_leg_defers_until_the_pc_run_lands()
++- L814-L818  function test_pc_runner_is_bash_clean  def test_pc_runner_is_bash_clean()
++- L824-L834  function runner_code  def runner_code() -> str
++- L837-L844  function test_pc_runner_tears_down_by_id_never_by_name  def test_pc_runner_tears_down_by_id_never_by_name()
++- L847-L854  function test_pc_runner_pins_the_verified_runsc_flags  def test_pc_runner_pins_the_verified_runsc_flags()
++- L857-L863  function test_runner_code_filter_actually_removes_comments  def test_runner_code_filter_actually_removes_comments()
++- L874-L885  function _mount_failed_p6  def _mount_failed_p6(canaries, **overrides)
++- L888-L895  function test_p6_mount_failure_still_asserts_the_containment_signature  def test_p6_mount_failure_still_asserts_the_containment_signature(tmp_path)
++- L898-L910  function test_p6_mount_failure_is_not_a_silent_pass  def test_p6_mount_failure_is_not_a_silent_pass(tmp_path)
++- L913-L920  function test_p6_mount_failure_without_a_reason_is_caught  def test_p6_mount_failure_without_a_reason_is_caught(tmp_path)
++- L923-L933  function test_p6_pid1_comm_must_agree_with_p2s_independent_read  def test_p6_pid1_comm_must_agree_with_p2s_independent_read(tmp_path)
++- L936-L941  function test_p6_own_pid_count_must_be_a_count  def test_p6_own_pid_count_must_be_a_count(tmp_path)
++- L945-L952  function test_p6_own_pid_count_has_a_positive_floor  def test_p6_own_pid_count_has_a_positive_floor(tmp_path, value)
++- L957-L969  function test_p2_ambiguous_main_cmdline_is_refused  def test_p2_ambiguous_main_cmdline_is_refused(tmp_path)
++- L972-L980  function test_p2_pid_and_uid_lists_must_agree  def test_p2_pid_and_uid_lists_must_agree(tmp_path)
++- L983-L992  function test_p2_main_program_absent_is_named  def test_p2_main_program_absent_is_named(tmp_path)
++- L995-L1004  function test_p2_without_the_main_cmdline_env_fails_closed  def test_p2_without_the_main_cmdline_env_fails_closed()
++- L1007-L1037  function test_p2_reports_every_holder_of_the_main_cmdline  def test_p2_reports_every_holder_of_the_main_cmdline(tmp_path)
++- L1040-L1050  function test_runner_and_p2_share_one_source_for_the_main_cmdline  def test_runner_and_p2_share_one_source_for_the_main_cmdline()
++- L1053-L1060  function test_runner_main_cmd_does_not_collide_with_the_images_root_sleeper  def test_runner_main_cmd_does_not_collide_with_the_images_root_sleeper()
++- L1065-L1071  function test_pc_runner_execs_every_canary_as_the_runtime_user  def test_pc_runner_execs_every_canary_as_the_runtime_user()
++- L1074-L1081  function test_pc_runner_checks_the_exec_status_not_only_its_output  def test_pc_runner_checks_the_exec_status_not_only_its_output()
++- L1084-L1092  function test_canaries_exec_d_as_root_are_refused  def test_canaries_exec_d_as_root_are_refused(tmp_path)
++- L1095-L1101  function test_canary_exec_user_absent_is_refused  def test_canary_exec_user_absent_is_refused(tmp_path)
++- L1104-L1109  function test_canary_exec_user_must_be_a_json_string  def test_canary_exec_user_must_be_a_json_string(tmp_path)
++### anti-pattern screen (whole file)
++--- TEST_SCREEN over 1 path(s): 8 hits over 1 files ---
++AF-AP-34: 8
++    tests/test_s0_08_containment.py:829: pkill and host networking are forbidden — the check must read code, not
++    tests/test_s0_08_containment.py:838: """AF-AP-34: this runs on the owner's shared host. A name match or a pkill
++    tests/test_s0_08_containment.py:842: assert "pkill" not in code
++    tests/test_s0_08_containment.py:843: assert "killall" not in code
++    tests/test_s0_08_containment.py:862: assert "pkill" in raw, "the explanatory comment naming pkill is gone"
++    tests/test_s0_08_containment.py:862: assert "pkill" in raw, "the explanatory comment naming pkill is gone"
++    ... +2
++
++## graft ask — in proofs/S0-08, where is the observer uid read back from the executed canary, and where is the image digest measured and bound to the built image
++unmapped — graft ask unavailable or failed (rc 1): ✗ nothing indexed under "proofs/S0-08/canaries/" — scopes here: sandbox-kit/honey-for-devs/ · sandbox-kit/aleph/ (or any path prefix)
++
++## symbol _check_canary_exec_user
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_canary_exec_user')",
++      "name": "check_identity",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_canary_exec_user')",
++### ripwire callers
++<callers of="_check_canary_exec_user" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_check_canary_exec_user">
++
++## symbol _check_image_identity
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_image_identity')",
++      "name": "check_identity",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_image_identity')",
++### ripwire callers
++<callers of="_check_image_identity" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_check_image_identity">
++
++## symbol _check_run_argv
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_run_argv')",
++      "name": "check_identity",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::_check_run_argv')",
++### ripwire callers
++<callers of="_check_run_argv" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_check_run_argv">
++
++## symbol _identity_string
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 2 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::_identity_string')",
++      "name": "_check_image_identity",
++      "name": "_check_run_argv",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::_identity_string')",
++### ripwire callers
++<callers of="_identity_string" defs="1" count="2" root="/home/user/agent-factory" hop_tested="0" hop_untested="2" shown="2" capped="0" total="2" has_more="0" next_offset="2" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=_identity_string">
++
++## symbol check_identity
++### GitNexus impact (upstream)
++  "impactedCount": 3,
++  "risk": "LOW",
++  "epistemic": "exact",
++    "direct": 1,
++    "processes_affected": 1,
++      "impact": "direct"
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::check_identity')",
++      "name": "check_bundle",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::check_identity')",
++### ripwire callers
++<callers of="check_identity" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=check_identity">
++
++## symbol check_observer_identity
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::check_observer_identity')",
++      "name": "check_bundle",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::check_observer_identity')",
++### ripwire callers
++<callers of="check_observer_identity" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=check_observer_identity">
++
++## symbol expected_run_argv
++### GitNexus impact (upstream)
++### code-review-graph callers_of / tests_for
++  "summary": "Found 1 result(s) for callers_of('/home/user/agent-factory/proofs/S0-08/check_containment.py::expected_run_argv')",
++      "name": "_check_run_argv",
++  "summary": "Found 0 result(s) for tests_for('/home/user/agent-factory/proofs/S0-08/check_containment.py::expected_run_argv')",
++### ripwire callers
++<callers of="expected_run_argv" defs="1" count="1" root="/home/user/agent-factory" hop_tested="0" hop_untested="1" shown="1" capped="0" total="1" has_more="0" next_offset="1" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=expected_run_argv">
++
++## symbol test_canary_exec_user_must_be_a_json_string
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_canary_exec_user_must_be_a_json_string')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_canary_exec_user_must_be_a_json_string')",
++      "name": "test_crun_bundle_fails_on_p1_with_the_exact_spec_reason",
++      "name": "test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it",
++      "name": "test_synthetic_passing_bundle_passes",
++      "name": "test_passing_bundle_is_deterministic",
++      "name": "test_absent_evidence_dir_defers",
++      "name": "test_present_dir_with_missing_files_is_a_failure_not_a_deferral",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++### ripwire callers
++<callers of="test_canary_exec_user_must_be_a_json_string" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_canary_exec_user_must_be_a_json_string">
++
++## symbol test_closed_run_argv_grammar_refuses_extra_tokens
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_closed_run_argv_grammar_refuses_extra_tokens')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_closed_run_argv_grammar_refuses_extra_tokens')",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++      "name": "test_identity_absent_fields_are_caught",
++      "name": "test_p5_without_the_host_control_is_not_a_pass",
++      "name": "test_p5_path_mismatch_is_caught",
++      "name": "test_p5_host_control_that_did_not_read_is_caught",
++      "name": "test_canaries_exec_d_as_root_are_refused",
++      "name": "test_canary_exec_user_absent_is_refused",
++      "name": "test_canary_exec_user_must_be_a_json_string",
++      "name": "test_evidence_from_another_image_is_refused",
++      "name": "test_image_identity_is_measured_and_bound",
++### ripwire callers
++<callers of="test_closed_run_argv_grammar_refuses_extra_tokens" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_closed_run_argv_grammar_refuses_extra_tokens">
++
++## symbol test_closed_run_argv_grammar_refuses_reordered_required_pair
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_closed_run_argv_grammar_refuses_reordered_required_pair')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_closed_run_argv_grammar_refuses_reordered_required_pair')",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++      "name": "test_identity_absent_fields_are_caught",
++      "name": "test_p5_without_the_host_control_is_not_a_pass",
++      "name": "test_p5_path_mismatch_is_caught",
++      "name": "test_p5_host_control_that_did_not_read_is_caught",
++      "name": "test_canaries_exec_d_as_root_are_refused",
++      "name": "test_canary_exec_user_absent_is_refused",
++      "name": "test_canary_exec_user_must_be_a_json_string",
++      "name": "test_evidence_from_another_image_is_refused",
++      "name": "test_image_identity_is_measured_and_bound",
++### ripwire callers
++<callers of="test_closed_run_argv_grammar_refuses_reordered_required_pair" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_closed_run_argv_grammar_refuses_reordered_required_pair">
++
++## symbol test_each_canary_must_read_back_the_requested_exec_uid
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_each_canary_must_read_back_the_requested_exec_uid')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_each_canary_must_read_back_the_requested_exec_uid')",
++      "name": "test_crun_bundle_fails_on_p1_with_the_exact_spec_reason",
++      "name": "test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it",
++      "name": "test_synthetic_passing_bundle_passes",
++      "name": "test_passing_bundle_is_deterministic",
++      "name": "test_absent_evidence_dir_defers",
++      "name": "test_present_dir_with_missing_files_is_a_failure_not_a_deferral",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++### ripwire callers
++<callers of="test_each_canary_must_read_back_the_requested_exec_uid" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_each_canary_must_read_back_the_requested_exec_uid">
++
++## symbol test_each_required_run_argv_pair_is_required
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_each_required_run_argv_pair_is_required')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_each_required_run_argv_pair_is_required')",
++      "name": "test_crun_bundle_fails_on_p1_with_the_exact_spec_reason",
++      "name": "test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it",
++      "name": "test_synthetic_passing_bundle_passes",
++      "name": "test_passing_bundle_is_deterministic",
++      "name": "test_absent_evidence_dir_defers",
++      "name": "test_present_dir_with_missing_files_is_a_failure_not_a_deferral",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++### ripwire callers
++<callers of="test_each_required_run_argv_pair_is_required" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_each_required_run_argv_pair_is_required">
++
++## symbol test_every_shipped_canary_measures_its_exec_uid
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_every_shipped_canary_measures_its_exec_uid')",
++  "summary": "Found 3 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_every_shipped_canary_measures_its_exec_uid')",
++      "name": "test_runner_and_p2_share_one_source_for_the_main_cmdline",
++      "name": "test_every_shipped_canary_measures_its_exec_uid",
++      "name": "test_canary_code_filter_actually_removes_comments",
++### ripwire callers
++<callers of="test_every_shipped_canary_measures_its_exec_uid" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_every_shipped_canary_measures_its_exec_uid">
++
++## symbol test_image_identity_is_measured_and_bound
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_image_identity_is_measured_and_bound')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_image_identity_is_measured_and_bound')",
++      "name": "test_crun_bundle_fails_on_p1_with_the_exact_spec_reason",
++      "name": "test_crun_bundle_identity_is_valid_so_p1_is_what_catches_it",
++      "name": "test_synthetic_passing_bundle_passes",
++      "name": "test_passing_bundle_is_deterministic",
++      "name": "test_absent_evidence_dir_defers",
++      "name": "test_present_dir_with_missing_files_is_a_failure_not_a_deferral",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++### ripwire callers
++<callers of="test_image_identity_is_measured_and_bound" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_image_identity_is_measured_and_bound">
++
++## symbol test_image_identity_rejects_missing_baked_provenance
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_image_identity_rejects_missing_baked_provenance')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_image_identity_rejects_missing_baked_provenance')",
++      "name": "test_synthetic_passing_bundle_passes",
++      "name": "test_passing_bundle_is_deterministic",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_runsc_version_unpinned_is_caught",
++      "name": "test_runsc_sha_unpinned_is_caught",
++      "name": "test_identity_absent_fields_are_caught",
++      "name": "test_missing_canary_line_fails_by_name",
++      "name": "test_duplicate_canary_line_is_rejected",
++      "name": "test_canary_that_did_not_observe_is_not_a_pass",
++### ripwire callers
++<callers of="test_image_identity_rejects_missing_baked_provenance" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_image_identity_rejects_missing_baked_provenance">
++
++## symbol test_p6_own_pid_count_has_a_positive_floor
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_p6_own_pid_count_has_a_positive_floor')",
++  "summary": "Found 55 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_p6_own_pid_count_has_a_positive_floor')",
++      "name": "test_each_property_mutation_is_caught",
++      "name": "test_p4_secret_env_key_is_caught",
++      "name": "test_p4_count_and_names_must_agree",
++      "name": "test_missing_canary_line_fails_by_name",
++      "name": "test_duplicate_canary_line_is_rejected",
++      "name": "test_canary_that_did_not_observe_is_not_a_pass",
++      "name": "test_p5_without_the_sentinel_env_var_fails_closed",
++      "name": "test_unknown_canary_id_is_rejected",
++      "name": "test_live_canary_output_binds_to_the_fields_the_checker_reads",
++      "name": "test_a_canary_line_carrying_a_verdict_is_still_judged_by_the_checker",
++      "name": "test_p6_mount_failure_still_asserts_the_containment_signature",
++### ripwire callers
++<callers of="test_p6_own_pid_count_has_a_positive_floor" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_p6_own_pid_count_has_a_positive_floor">
++
++## symbol test_runner_builds_from_the_pin_archive_and_sets_image_provenance
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_builds_from_the_pin_archive_and_sets_image_provenance')",
++  "summary": "Found 11 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_builds_from_the_pin_archive_and_sets_image_provenance')",
++      "name": "test_pc_runner_tears_down_by_id_never_by_name",
++      "name": "test_pc_runner_pins_the_verified_runsc_flags",
++      "name": "test_runner_code_filter_actually_removes_comments",
++      "name": "test_runner_and_p2_share_one_source_for_the_main_cmdline",
++      "name": "test_runner_main_cmd_does_not_collide_with_the_images_root_sleeper",
++      "name": "test_pc_runner_execs_every_canary_as_the_runtime_user",
++      "name": "test_pc_runner_checks_the_exec_status_not_only_its_output",
++      "name": "test_runner_builds_from_the_pin_archive_and_sets_image_provenance",
++      "name": "test_runner_measures_prebuilt_and_running_image_identity",
++      "name": "test_runner_uses_and_removes_a_fresh_named_data_volume",
++      "name": "test_runner_calls_the_preflight_with_the_pinned_commit",
++### ripwire callers
++<callers of="test_runner_builds_from_the_pin_archive_and_sets_image_provenance" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_runner_builds_from_the_pin_archive_and_sets_image_provenance">
++
++## symbol test_runner_measures_prebuilt_and_running_image_identity
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_measures_prebuilt_and_running_image_identity')",
++  "summary": "Found 11 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_measures_prebuilt_and_running_image_identity')",
++      "name": "test_pc_runner_tears_down_by_id_never_by_name",
++      "name": "test_pc_runner_pins_the_verified_runsc_flags",
++      "name": "test_runner_code_filter_actually_removes_comments",
++      "name": "test_runner_and_p2_share_one_source_for_the_main_cmdline",
++      "name": "test_runner_main_cmd_does_not_collide_with_the_images_root_sleeper",
++      "name": "test_pc_runner_execs_every_canary_as_the_runtime_user",
++      "name": "test_pc_runner_checks_the_exec_status_not_only_its_output",
++      "name": "test_runner_builds_from_the_pin_archive_and_sets_image_provenance",
++      "name": "test_runner_measures_prebuilt_and_running_image_identity",
++      "name": "test_runner_uses_and_removes_a_fresh_named_data_volume",
++      "name": "test_runner_calls_the_preflight_with_the_pinned_commit",
++### ripwire callers
++<callers of="test_runner_measures_prebuilt_and_running_image_identity" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_runner_measures_prebuilt_and_running_image_identity">
++
++## symbol test_runner_uses_and_removes_a_fresh_named_data_volume
++### GitNexus impact (upstream)
++  "impactedCount": 0,
++  "risk": "UNKNOWN",
++  "riskNote": "No callers resolved. Absence of edges is not evidence the symbol is unused: a caller reaching it through a reference class this index does not record — plain-object property access, a bare-identifier read of a module-scope const — produces no edge to find. Confirm with a text search before treating the change as safe.",
++  "epistemic": "exact",
++    "direct": 0,
++    "processes_affected": 0,
++### code-review-graph callers_of / tests_for
++  "summary": "Found 0 result(s) for callers_of('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_uses_and_removes_a_fresh_named_data_volume')",
++  "summary": "Found 11 result(s) for tests_for('/home/user/agent-factory/tests/test_s0_08_containment.py::test_runner_uses_and_removes_a_fresh_named_data_volume')",
++      "name": "test_pc_runner_tears_down_by_id_never_by_name",
++      "name": "test_pc_runner_pins_the_verified_runsc_flags",
++      "name": "test_runner_code_filter_actually_removes_comments",
++      "name": "test_runner_and_p2_share_one_source_for_the_main_cmdline",
++      "name": "test_runner_main_cmd_does_not_collide_with_the_images_root_sleeper",
++      "name": "test_pc_runner_execs_every_canary_as_the_runtime_user",
++      "name": "test_pc_runner_checks_the_exec_status_not_only_its_output",
++      "name": "test_runner_builds_from_the_pin_archive_and_sets_image_provenance",
++      "name": "test_runner_measures_prebuilt_and_running_image_identity",
++      "name": "test_runner_uses_and_removes_a_fresh_named_data_volume",
++      "name": "test_runner_calls_the_preflight_with_the_pinned_commit",
++### ripwire callers
++<callers of="test_runner_uses_and_removes_a_fresh_named_data_volume" defs="1" count="0" root="/home/user/agent-factory" hop_tested="0" hop_untested="0" shown="0" capped="0" total="0" has_more="0" next_offset="0" offset="0" limit="20" graph_ambiguous="7" graph_unresolved="71" counts_floor="1" next="--uses=test_runner_uses_and_removes_a_fresh_named_data_volume">
++
++## ripwire test-gate — tests to run + the UNTESTED blast radius (a zero is 'none found', never 'none exists')
++<test-gate changed="1" impacted="0" tests="0" untested="0" shown_tests="0" tests_capped="0" shown_untested="0" untested_capped="0" script_gates_unmodelled="4" script_gates_registered="0" script_gates_mapped="0" script_gates_unresolved_dynamic="0" ccx_bar="15" counts_floor="1" total="0" has_more="0" next_offset="0" offset="0" limit="20" at="1a1ec4bf5+dirty" next="--situ">
+diff --git a/tasks/briefs/s0-08-support/VERIFY-G3-report.md b/tasks/briefs/s0-08-support/VERIFY-G3-report.md
+new file mode 100644
+index 0000000..aef7366
+--- /dev/null
++++ b/tasks/briefs/s0-08-support/VERIFY-G3-report.md
+@@ -0,0 +1,110 @@
++# VERIFY-G3 — adversarial grade of S0-08 round 3
++
++PIN: `7f60d83` · venue: PC, uid 1000 · role: adversarial verifier
++
++## Item 0 — mechanical gates and identity
++
++FILE IDENTITY: all 15 briefed files matched both the stated line counts/SHA-256 prefixes and an independent `git archive 7f60d83`: checker `52668a02`/565; runner `9800a372`/415; P1–P8 `744df86c`/28, `855fa645`/63, `a6c32030`/50, `358923dc`/57, `2ecf616c`/46, `26cb113c`/61, `8f082f6d`/29, `74d923fe`/31; spec `a47e04c8`/471; fixture provenance `75ac24ad`/99, canaries `a83fba44`/8, identity `044a799b`/60; tests `503f4e12`/1740.
++
++Reproduced under `/home/rocco/venv-agent-factory/bin` first on PATH, PC venue exports and absolute lane-scratch basetemps: `145 passed in 13.95s`; second independent run `145 passed in 13.72s`; five-file set `224 passed in 32.36s`. All exited 0.
++
++The real checker negative control exited 1 with `failure_reason: containment: P1 host kernel 6.18.44-fc-v24, not gVisor`. That is the fixture's recorded kernel, not this host (`6.17.11-200.fc42.x86_64`). `ap_screen.py` returned 0 production hits. `--tests` returned 8 AF-AP-34 hits: explanatory `pkill` prose, five guard assertions banning name-kills, and the by-handle `child.kill()` test cleanup. `bash -n` runner and `sh -n` P1–P8 all exited 0. Pyflakes on checker + tests exited 0; applying pyflakes to the bash runner was a non-applicable parser false error and is not relied upon.
++
++Status: reproduced. No container, podman, runsc, bridge or production service was touched.
++
++## Item 1 — F3 closed argv grammar
++
++SOLID: `C:258-285` rejects every deviation in the recorded token list at its first position. The committed tests cover all named extra tokens, duplicate/reordered/missing pairs and static runner substrings (`T:1197-1265`, `test_host_networked_privileged_run_argv_is_refused`). My direct checker attacks confirmed uppercase/short/foreign `data_volume` names and `/opt/data2` fail; a wrong image fails at `C:224-227` in `_check_image_identity` before argv validation.
++
++FINDING 1 — FOLLOW-UP, SOLID — runtime pathname is unconstrained metadata. `C:206-212` selects the pair grammar only by `Path(runtime).name`; `C:304-316` checks typed runsc version/digest but never binds the pathname. Scratch bundles carrying `/tmp/runsc`, bare `runsc`, `/usr/local/bin/runsc/`, or `crun` plus their matching grammar all returned `rc=0 PASS`. The frozen table `S:389-398` pins `runsc_version` and `runsc_sha256`, but does not list a runtime pathname; the brief explicitly makes path pinning conditional. Therefore this has no frozen-contract mapping and does not qualify as a blocker. The reproduction is the real checker CLI, but a forged bundle is not a canonical live capture: an actual crun capture must fail P1 before a PASS. Material effect is limited to a false runtime label in a deliberately forged artifact. Suggested next step: if pathname is intended to be attested, add it to the frozen identity contract, then require `/usr/local/bin/runsc` and add these red cases. Ownership: checker/spec/tests.
++
++The static runner tests are source-substring mirrors, not runtime gates: a runner mutant putting the required substrings in a comment/dead branch would still satisfy `T:1170-1189` and `test_runner_builds_from_the_pin_archive_and_sets_image_provenance`. This is INFO, not a blocker: no runner can execute at this venue by instruction and the production evidence consumer does close the emitted argv grammar.
++
++## Item 2 — F4 observer UID readback
++
++SOLID: each P1–P8 canary reads `id -u` within the same shell execution that emits its `observed` object; the files were checked as `proofs/S0-08/canaries/P1.sh` lines 12-28, P2 27-63, P3 30-50, and the all-canary source assertion is `T:1121-1125`. The runner’s `podman exec -i --user "$CANARY_EXEC_UID" … sh -s < "$script"` is at `R:394-397`; checker ordering is P1 then observer at `C:533-536`.
++
++Direct bundle attacks: typed uid `10000` plus P4 `observed_exec_uid="0"` failed named P4; absent uid failed named P4; `"10000\n"`, `" 10000"`, integer `10000`, and `"0"` each failed under `_check_canary_exec_user` (`C:288-301`, `exec_user`). A duplicated P1 and unknown Q1 id were refused at parser load. Every uid zero paired with typed `"0"` fails first at `C:288-301`. A P1-invalid bundle with P4 uid zero fails P1 first; that ordering hides later observer evidence only for an already-invalid partial bundle, not a green result.
++
++The coordinator’s live per-canary line must include `"observed_exec_uid":"10000"`; `"0"` is proof that the exec observed as root. Live container readback remains coordinator-owned and unrun.
++
++## Item 3 — F10/F11 archive and measured image
++
++SOLID: build context derives from `git archive "$PINNED_COMMIT"` at `R:133-146`; the arg is supplied; immutable ID/digest and launched-container identity checks are `R:156-165` (`image_id`) and `R:270-292`. The pinned upstream Dockerfile accepts `HERMES_GIT_SHA`, writes `/opt/hermes/.hermes_build_sha`, and creates `/etc/hermes/image-provenance.json` as stated in the brief. `scripts/proof-runner:177-190` treats exit 2 as `capability-unavailable` deferred and a positive-leg exit 4/any mismatch as failure, so a build exit 2 could become a hollow deferral, but archive build failure legitimately means no capable evidence and is recorded as deferred by the specified runner contract.
++
++FINDING 2 — FOLLOW-UP, SOLID — image digest is syntactic and not cross-bound to image ID/source. `C:228-255` checks image ID equality with container ID and validates `image_digest` only as `sha256:<64 hex>`. A scratch bundle with arbitrary `sha256:` plus 64 `d` characters returned PASS. `S:393-395` calls the digest measured but has no frozen equality/source relation to assert, and OCI image ID and repo digest are distinct identifiers. Thus it does not contradict a measurable frozen condition and cannot block this increment. Suggested fix: either downgrade it to recorded metadata or retain the inspect record/a registry attestation sufficient to bind it independently, then add a contract criterion and red test. Canonical check-cli reproduction exists, but no real production run was available under the venue prohibition.
++
++FINDING 3 — FOLLOW-UP — provenance is under-bound. A bundle with only `{"revision": <commit>}` passes although upstream provenance also claims schema, deployment_kind, manager, image and version (`S:389-395`; upstream Dockerfile `:341-342`). The frozen table only pins revision, so no blocking predicate contract mapping for those other fields. Bind schema/deployment_kind/manager/image, and version if the proof is intended to attest full image provenance; add red tests.
++
++Uppercase `image_id`/container ID passes because `C:228,236` lowercases values. That is semantically harmless canonicalization, INFO. A 63-hex digest, different container image ID, build SHA plus newline, malformed/non-object/null provenance and baked SHA mismatch all fail named; direct CLI results recorded in `item_attacks.py`.
++
++STATIC REVIEW: archive omits `.git` (`.dockerignore`) and upstream Dockerfile’s only build-time git-relevant behaviour is avoided by the passed arg, so a dirty source cannot leak into build context. The porcelain preflight is redundant to byte provenance but remains an operator-safety check and should remain. `tar -xf` without `--no-same-owner` and fixed `/tmp/s0-08-run.err`/`/tmp/s0-08-canary.err` are FOLLOW-UP risk observations on the shared execution host; they were not demonstrated through a container path and do not meet the blocking predicate here. The readbacks execute under image default `USER root` (pinned upstream Dockerfile line 298), which is correct because they inspect image-baked root-readable locations before canaries deliberately observe as uid 10000.
++
++## Item 4 — F1 P6 domain and hostile count parsing
++
++SOLID/REVIEWED: `C:81-89` derives 32 from two declared user services plus image/canary processes. The pinned contents declaration lists `main-hermes` and `dashboard`; stage-2 applies data setup only. With runner-created empty `/opt/data` (`R:183-190`) the stated persistent-profile inflation is excluded. The bundle only names the volume: it cannot prove it was empty at start. A canary `ls -A /opt/data` at exec time plus the mount source/target record would be the missing observation. This is a FOLLOW-UP absent a frozen required evidence field.
++
++Direct CLI hostile values: `0`, `-1`, `33`, `1e1`, and leading-space 32 fail; `32` and `032` pass. Arabic-Indic `٣` passes as 3. Superscript `²` reaches `int()` after `str.isdigit()` and produces an uncaught traceback/rc 1 (`C:477-482`, `own_count`; `C:553-561`); the scratch `proof-runner` consumes that as ordinary positive-leg mismatch and creates no result. This is a real diagnostic-quality defect, but its canonical consumer remains fail-closed with rc 1; ASCII-only count grammar was not frozen. Classification FOLLOW-UP: use `^[0-9]+$` and catch ValueError to retain `failure_reason:`.
++
++## Item 5 — floors
++
++SOLID: the verifier’s bulk scratch campaign killed the typed `canary_exec_user` and `own_pid_count` guards. Direct absent field and type/value attacks preserve named refusals. The only non-ASCII count survivors are recorded under Item 4; they do not yield a false PASS for an out-of-range value.
++
++## Item 6 — narrowed claims and fixture split
++
++SOLID: P4 claims the exec environment exposed to the runtime uid and measures environment from that exec; `R:394-397` supplies uid 10000 through `CANARY_EXEC_UID`. `T:1607-1668` reruns shipped canaries with a clean environment and has an explicit cross-host else assertion (`uname_r` nonempty), so it is not the silent `if same_host` skip shape. I forged the fixture’s `uname_r` to `FORGED-KERNEL` in an archive copy; the reproducibility test still passed at this PC venue. This is expected from its explicitly venue-dependent branch and is a FOLLOW-UP, not a blocker: the test demonstrates producer schema and host-independent fields, not immutable fixture kernel values cross-venue.
++
++The committed crun fixture has `observed_exec_uid="1000"` for all lines; `C:534-536` calls `check_p1` before observer identity. `T:1669-1680` asserts typed `canary_exec_user` but not individual fixture observer values. This is INFO: the negative fixture intentionally proves uncontained P1 and its current uid matches a PC-side host capture rather than a real uid-10000 container capture. Change fixture values to `10000` only if declaring it a positive-shape observer fixture; otherwise document them as unreachable under P1-first ordering.
++
++F7’s live single-holder control is not exercised. The exact coordinator cell must show one `sleep 2147483647` holder with uid 10000; `T:1007-1037` is `test_p2_reports_every_holder_of_the_main_cmdline` and only proves a deliberate two-holder ambiguity fixture.
++
++## Item 7 — P7
++
++SOLID: `S:304-318` expressly records P7 and asserts no egress claim; `C:512-523` defines `check_recorded` only for P7/P8 completed records. No test claims an egress property beyond the runner’s exact `--network none` grammar. This is consistent with the frozen boundary.
++
++## Item 8 — mutation audit
++
++A fresh-archive, actual-suite source-mutant campaign ran 45 targeted mutations (`scratch/verify-g3/bulk_mutate.py`) against `tests/test_s0_08_containment.py`. The first 21 include every asserted P1-P6 guard and all were killed, with deterministic named killers (for example P1 kernel: `test_crun_bundle_fails_on_p1_with_the_exact_spec_reason`; P6 ceiling: `test_each_property_mutation_is_caught[P6-HOST-SIZED-PROCESS-TABLE]`). Of mutations 22-45, 22 were killed; two survivors were named, not suppressed: M22 removes the P6 mounted-procfs non-empty guard and M34 removes the data-volume format guard, each leaving `145 passed` because their tests exercise a mismatched/empty mount and invalid volume through a later argv mismatch respectively. M43-M45 independently killed runner build-arg/image-ID/digest source mutations by their named static runner tests. Those are checker-test coverage gaps, not evidence of a passing unsafe production run. The campaign met the brief’s ≥45 floor; M46-61 are outside this bounded pass.
++
++Observed hollow-green rate: 2 / 45 product mutations = 4.4%. Both survivors are FOLLOW-UP test gaps. The seven G2 survivors were addressed by name in the covered set where applicable: provenance guards, observer wiring, and core identity/argv checks. The report does not claim every possible mutant was enumerated.
++
++## Item 9 — bounded rescan
++
++Class 11 grammar domain is exactly: `podman run -d --runtime <runtime>` from `RUN_ARGV_PREFIX_BEFORE_RUNTIME`; runsc basename selects three ordered pairs `--runtime-flag ignore-cgroups`, `--security-opt label=disable`, `--network none`; other basename selects the latter two; exactly `-v s0-08-data-<16 lowercase hex>:/opt/data`; `localhost/hermes-s0-08:527da608 sleep 2147483647` (`C:60-70`, `C:200-212`, `expected_run_argv`). The runtime-path finding means this is not a closed production-runtime identity domain.
++
++Identity table: runner measures runsc version/digest, image ID/digest, launched container image ID, baked SHA/provenance, volume and argv (`R:257-375`, `runsc_version`); checker binds version/digest, tag, source commit, ID/container-ID equality, build SHA, provenance revision and argv (`C:304-331`, `check_identity`). It syntactically validates but does not bind image digest (Finding 2); it accepts typed/forged runtime pathname (Finding 1); canary facts are bundle-forgeable absent an external capture trust root, which is coordinator-supplied evidence by contract.
++
++Checker literal branches reviewed: P1 kernel/dmesg (`C:350-354`, `kernel`), P2 uid (`C:360-388`, `pid1_uid`), P3 tool statuses (`C:400-402`, `if rc != "0"`), P4 socket (`C:408-425`, `sock`), P5 readability (`C:436-447`, `host`), P6 own PID/mount (`C:464-508`) all have named raising arms. P6 `int()` after Unicode `isdigit` is the only unhandled non-literal conversion described in Item 4. Negative control reason reproduced at Item 0; no name-kill production path observed.
++
++## Item 10 — discipline
++
++Reproduced: file identity, all test gates, negative checker control, static syntax, pyflakes for Python, source/manual runner review, real checker hostile-bundle attacks and scratch mutations.
++
++Reviewed statically: runner invocation, archive image provenance, Dockerfile build seam, canary inside-exec line composition, P6 service derivation and source-text runner tests.
++
++Skipped by venue rule: every podman/runsc/container operation, live readback, live empty-volume evidence, P7 netns observation, and any owner service. No PC production resource was altered. External command census: only verifier-owned `python`, `pytest`, `git archive`, `tar`, and short shell parsing processes ran; all scratch child processes exited.
++
++## Item 11 — design and coordinator steps
++
++The single decisive live check remains the coordinator’s real runsc evidence. The metadata weaknesses above are forgeable only in synthetic bundles; an instrumented live runner measurement, independently preserved by the coordinator, is the trust boundary. The arbitrary digest is a follow-up attestation weakness, not proof of a different runtime execution.
++
++Coordinator’s first live run, after blockers are repaired: (1) verify `/usr/local/bin/runsc` hash/version against `C:305-316` (`runsc_version`); red means binary/pin mismatch. (2) build from clean pinned archive with `HERMES_GIT_SHA`; red exit 2 means no evidence, not pass. (3) inspect baked SHA/provenance inside launched image; red exit 4 means image mismatch. (4) capture exact run argv and container/image IDs/digest; red checker means identity/grammar mismatch. (5) verify every canary record reports observer uid 10000; uid 0 is root observation. (6) record `ls -A /opt/data` and P7 network namespace alongside the bundle; nonempty data invalidates P6’s current bound domain and P7 is record-only. A P1/P6 red is containment failure under the checker’s specified reason.
++
++## Finding inventory and recommendation
++
++1. FOLLOW-UP, SOLID — runtime pathname is unconstrained metadata: synthetic `/tmp/runsc`, bare `runsc`, trailing-slash and `crun` bundles pass (`C:206-212`, `C:304-331`, `S:389-398`). Path is not a frozen pinned field; add it explicitly if desired.
++2. FOLLOW-UP, SOLID — `image_digest` only has a syntax test and arbitrary digest passes (`C:228-255`, `S:393-395`). No frozen OCI-valid equality/source oracle exists; retain an independent attestation or call it recorded metadata.
++3. FOLLOW-UP, SOLID — provenance fields other than revision unbound (`C:247-255`, `image_provenance`). Bind declared fields if full image provenance is claimed.
++4. FOLLOW-UP, SOLID — Unicode count parser lets Arabic digit ٣ pass and superscript ² traceback (`C:477-482`, `own_count`). Use ASCII grammar and named Failure.
++5. FOLLOW-UP, REVIEWED — evidence does not prove `/opt/data` empty at container start (`R:183-190`, `DATA_VOLUME`; `C:262-271`, `data_volume`). Add canary/mount observation if required.
++6. FOLLOW-UP, SOLID — fixture kernel forge passes cross-host producer test by designed venue branch (`T:1654-1667`, `same_host`). Make scope explicit in fixture test name/report.
++7. INFO, SOLID — runner source tests are substring mirrors (`T:1170-1194`, `test_runner_builds_from_the_pin_archive_and_sets_image_provenance`). The runner was not executed in this venue; execute it only in the authorized live coordinator leg.
++8. INFO, SOLID — crun fixture’s uid 1000 values are unreachable behind expected P1 failure (`C:533-536`, `check_identity`; `T:1669-1680`, `test_crun_fixture_identity_carries_every_pinned_field`).
++
++GATE RECOMMENDATION: MERGE-READY-WITH-FOLLOWUPS — no observation satisfies the complete blocking predicate. The two synthetic metadata forgeries have direct check-cli discriminators but lack a frozen path/digest binding and are not canonical live captures; the live runsc leg remains coordinator-owned and unexecuted. This is a recommendation only, not final gate acceptance.
++
++## DISCREPANCIES
++
++* The brief says report output goes to `tasks/briefs/s0-08-support/VERIFY-G3-report.md`; it did not exist in the archive. This report creates it.
++* The attempt to invoke `proof-runner` with venue `pc` returned argparse rc 2; rerun with `pc-bridge` reached the malformed superscript bundle and returned expected ordinary rc 1 mismatch.
++* report_lint final bounded run: `report_lint: 55 refs — OK 55, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at 7f60d83)`.
+diff --git a/transcripts/pc/pc-verify-g3.md--7f60d83.md b/transcripts/pc/pc-verify-g3.md--7f60d83.md
+new file mode 100644
+index 0000000..8654b1c
+--- /dev/null
++++ b/transcripts/pc/pc-verify-g3.md--7f60d83.md
+@@ -0,0 +1,1084 @@
++# Hermes lane session 20260917_104622_09cdba
++
++- model: agentfactory-verify-local
++- started: 2026-09-17T09:46:23.449918+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-g3.md--7f60d83/tree
++- messages: 215; tool calls: 120
++- tokens in/out/cache_read/reasoning: 1115547/84565/10341824/41488
++
++## user @ 09:46:22
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:46:57 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 09:46:57 — 6035 chars (body not exported)
++
++## tool result (read_file) @ 09:46:57 — 16975 chars (body not exported)
++
++## assistant @ 09:47:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:47:46 — 1173 chars (body not exported)
++
++## assistant @ 09:48:03 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 09:48:03 — 32425 chars (body not exported)
++
++## tool result (read_file) @ 09:48:03 — 8445 chars (body not exported)
++
++## assistant @ 09:48:22 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 09:48:22 — 16987 chars (body not exported)
++
++## tool result (read_file) @ 09:48:22 — 25184 chars (body not exported)
++
++## assistant @ 09:48:56 → tools: read_file
++
++
++
++## tool result (read_file) @ 09:48:56 — 24428 chars (body not exported)
++
++## assistant @ 09:50:54 → tools: terminal
++
++I've reviewed the key inputs and now I'm starting item 0 with the mechanical gates, setting up scratch space to verify the file identity.
++
++## tool result (terminal) @ 09:50:56 — 1684 chars (body not exported)
++
++## assistant @ 09:52:31 → tools: terminal
++
++File identity matches the brief's table exactly. Now the test suites (one file twice, then the five-file set):
++
++## tool result (terminal) @ 09:52:59 — 495 chars (body not exported)
++
++## assistant @ 09:54:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:54:52 — 264 chars (body not exported)
++
++## assistant @ 09:56:28 → tools: terminal
++
++I've confirmed 224 tests pass. Now I'll check the negative control, ap_screen, syntax, and pyflakes.
++
++## tool result (terminal) @ 09:56:29 — 1602 chars (body not exported)
++
++## assistant @ 09:57:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 09:57:32 — 468 chars (body not exported)
++
++## assistant @ 09:58:41 → tools: terminal
++
++Pyflakes on the shell file is a false parse (it's bash). Re-running it on the Python files only:
++
++## tool result (terminal) @ 09:58:41 — 58 chars (body not exported)
++
++## assistant @ 10:00:55 → tools: read_file, read_file
++
++Both Python files pass pyflakes. Now reading the core files under grade — the checker, the runner, and the canaries:
++
++## tool result (read_file) @ 10:00:55 — 27527 chars (body not exported)
++
++## tool result (read_file) @ 10:00:55 — 20635 chars (body not exported)
++
++## assistant @ 10:02:53 → tools: terminal
++
++Now the canaries and the test file's key regions:
++
++## tool result (terminal) @ 10:02:53 — 20821 chars (body not exported)
++
++## assistant @ 10:05:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:05:17 — 5769 chars (body not exported)
++
++## assistant @ 10:06:56 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:06:56 — 15450 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 23676 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 682 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 1361 chars (body not exported)
++
++## assistant @ 10:08:22 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:08:22 — 17962 chars (body not exported)
++
++## tool result (read_file) @ 10:08:22 — 12270 chars (body not exported)
++
++## tool result (read_file) @ 10:08:22 — 12384 chars (body not exported)
++
++## assistant @ 10:08:46 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:08:46 — 4805 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 214 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 2529 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 10047 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 12383 chars (body not exported)
++
++## assistant @ 10:10:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:10:05 — 1629 chars (body not exported)
++
++## assistant @ 10:10:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:10:11 — 4866 chars (body not exported)
++
++## assistant @ 10:10:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:10:59 — 116 chars (body not exported)
++
++## assistant @ 10:11:55 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:11:55 — 4008 chars (body not exported)
++
++## assistant @ 10:12:24 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:12:25 — 318 chars (body not exported)
++
++## assistant @ 10:12:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:12:32 — 2833 chars (body not exported)
++
++## assistant @ 10:12:43 → tools: patch
++
++
++
++## tool result (patch) @ 10:12:44 — 1021 chars (body not exported)
++
++## assistant @ 10:12:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:15:47 — 1766 chars (body not exported)
++
++## assistant @ 10:16:20 → tools: patch
++
++
++
++## tool result (patch) @ 10:16:21 — 1002 chars (body not exported)
++
++## assistant @ 10:18:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:21:39 — 136 chars (body not exported)
++
++## assistant @ 10:24:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:24:01 — 323 chars (body not exported)
++
++## assistant @ 10:26:38 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:26:39 — 328 chars (body not exported)
++
++## assistant @ 10:27:18 → tools: patch
++
++
++
++## tool result (patch) @ 10:27:18 — 984 chars (body not exported)
++
++## assistant @ 10:27:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:33:44 — 224 chars (body not exported)
++
++## assistant @ 10:33:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:00 — 3602 chars (body not exported)
++
++## assistant @ 10:40:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:46:31 — 3828 chars (body not exported)
++
++## assistant @ 10:46:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:22 — 2252 chars (body not exported)
++
++## assistant @ 10:50:59 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:50:59 — 8537 chars (body not exported)
++
++## assistant @ 10:51:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:51:37 — 424 chars (body not exported)
++
++## assistant @ 10:53:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:53:28 — 14316 chars (body not exported)
++
++## assistant @ 10:55:58 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:56:01 — 1029 chars (body not exported)
++
++## assistant @ 10:56:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:56:09 — 441 chars (body not exported)
++
++## assistant @ 10:57:59 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:58:00 — 1032 chars (body not exported)
++
++## user @ 09:46:22
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 09:46:57 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 09:46:57 — 134 chars (body not exported)
++
++## tool result (read_file) @ 09:46:57 — 152 chars (body not exported)
++
++## assistant @ 11:00:42
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User's most recent focus: HARNESS PORT of `.claude/agents/adversarial-verifier.md` to the PC harness (see `docs/HARNESS-PORTS.md`). The body of the agent file is carried over UNCHANGED; only the Claude-Code frontmatter was removed. The model pin does not survive the port because the PC harness serves ONE model. The compacted turns show the ported adversarial-verifier agent mid-execution of a G3 containment verification lane — no explicit user question or command is visible in the compacted segment; the assistant was autonomously working through verification gates (file identity → test suites → negative control → ap_screen → syntax) as the adversarial verifier.
++
++## Goal
++Execute the G3 containment verification lane (`pc-verify-g3.md--7f60d83`) as the adversarial-verifier agent ported to the PC harness. Verify file identity against the brief's table, run all test suites (one-file-twice and five-file sets), check negative control / ap_screen / pyflakes, and run syntax gates (`bash -n`, `sh -n`) on the cont
++
++## assistant @ 09:58:41 → tools: terminal
++
++Pyflakes on the shell file is a false parse (it's bash). Re-running it on the Python files only:
++
++## tool result (terminal) @ 09:58:41 — 58 chars (body not exported)
++
++## assistant @ 10:00:55 → tools: read_file, read_file
++
++Both Python files pass pyflakes. Now reading the core files under grade — the checker, the runner, and the canaries:
++
++## tool result (read_file) @ 10:00:55 — 140 chars (body not exported)
++
++## tool result (read_file) @ 10:00:55 — 147 chars (body not exported)
++
++## assistant @ 10:02:53 → tools: terminal
++
++Now the canaries and the test file's key regions:
++
++## tool result (terminal) @ 10:02:53 — 123 chars (body not exported)
++
++## assistant @ 10:05:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:05:17 — 123 chars (body not exported)
++
++## assistant @ 10:06:56 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:06:56 — 141 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 141 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 127 chars (body not exported)
++
++## tool result (read_file) @ 10:06:56 — 128 chars (body not exported)
++
++## assistant @ 10:08:22 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:08:22 — 139 chars (body not exported)
++
++## tool result (read_file) @ 10:08:22 — 141 chars (body not exported)
++
++## tool result (read_file) @ 10:08:22 — 127 chars (body not exported)
++
++## assistant @ 10:08:46 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 10:08:46 — 93 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 118 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 121 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 138 chars (body not exported)
++
++## tool result (read_file) @ 10:08:46 — 140 chars (body not exported)
++
++## assistant @ 10:10:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:10:05 — 127 chars (body not exported)
++
++## assistant @ 10:10:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:10:11 — 123 chars (body not exported)
++
++## assistant @ 10:10:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:10:59 — 116 chars (body not exported)
++
++## assistant @ 10:11:55 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:11:55 — 139 chars (body not exported)
++
++## assistant @ 10:12:24 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:12:25 — 118 chars (body not exported)
++
++## assistant @ 10:12:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:12:32 — 123 chars (body not exported)
++
++## assistant @ 10:12:43 → tools: patch
++
++
++
++## tool result (patch) @ 10:12:44 — 125 chars (body not exported)
++
++## assistant @ 10:12:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:15:47 — 123 chars (body not exported)
++
++## assistant @ 10:16:20 → tools: patch
++
++
++
++## tool result (patch) @ 10:16:21 — 125 chars (body not exported)
++
++## assistant @ 10:18:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:21:39 — 136 chars (body not exported)
++
++## assistant @ 10:24:00 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:24:01 — 106 chars (body not exported)
++
++## assistant @ 10:26:38 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:26:39 — 123 chars (body not exported)
++
++## assistant @ 10:27:18 → tools: patch
++
++
++
++## tool result (patch) @ 10:27:18 — 128 chars (body not exported)
++
++## assistant @ 10:27:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:33:44 — 125 chars (body not exported)
++
++## assistant @ 10:33:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:40:00 — 123 chars (body not exported)
++
++## assistant @ 10:40:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:46:31 — 159 chars (body not exported)
++
++## assistant @ 10:46:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:50:22 — 159 chars (body not exported)
++
++## assistant @ 10:50:59 → tools: read_file
++
++
++
++## tool result (read_file) @ 10:50:59 — 8537 chars (body not exported)
++
++## assistant @ 10:51:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:51:37 — 424 chars (body not exported)
++
++## assistant @ 10:53:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:53:28 — 14316 chars (body not exported)
++
++## assistant @ 10:55:58 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:56:01 — 1029 chars (body not exported)
++
++## assistant @ 10:56:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 10:56:09 — 441 chars (body not exported)
++
++## assistant @ 10:57:59 → tools: write_file
++
++
++
++## tool result (write_file) @ 10:58:00 — 1032 chars (body not exported)
++
++## user @ 09:46:22
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not sel
++
++## assistant @ 11:00:57 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 11:00:57 — 16975 chars (body not exported)
++
++## tool result (read_file) @ 11:00:57 — 217 chars (body not exported)
++
++## tool result (read_file) @ 11:00:57 — 1679 chars (body not exported)
++
++## tool result (read_file) @ 11:00:57 — 808 chars (body not exported)
++
++## assistant @ 11:01:10 → tools: terminal, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (terminal) @ 11:01:10 — 386 chars (body not exported)
++
++## tool result (read_file) @ 11:01:10 — 14073 chars (body not exported)
++
++## tool result (read_file) @ 11:01:10 — 4254 chars (body not exported)
++
++## tool result (read_file) @ 11:01:10 — 11780 chars (body not exported)
++
++## tool result (read_file) @ 11:01:10 — 11191 chars (body not exported)
++
++## tool result (read_file) @ 11:01:10 — 15348 chars (body not exported)
++
++## assistant @ 11:01:27 → tools: read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 11:01:27 — 7120 chars (body not exported)
++
++## tool result (read_file) @ 11:01:27 — 8702 chars (body not exported)
++
++## tool result (read_file) @ 11:01:27 — 1585 chars (body not exported)
++
++## tool result (read_file) @ 11:01:27 — 3451 chars (body not exported)
++
++## tool result (read_file) @ 11:01:27 — 2368 chars (body not exported)
++
++## assistant @ 11:01:53 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 11:01:53 — 7812 chars (body not exported)
++
++## tool result (read_file) @ 11:01:53 — 17404 chars (body not exported)
++
++## tool result (read_file) @ 11:01:53 — 10957 chars (body not exported)
++
++## tool result (read_file) @ 11:01:53 — 547 chars (body not exported)
++
++## assistant @ 11:02:37 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:02:37 — 6532 chars (body not exported)
++
++## assistant @ 11:03:06 → tools: write_file
++
++
++
++## tool result (write_file) @ 11:03:07 — 330 chars (body not exported)
++
++## assistant @ 11:03:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:03:19 — 4709 chars (body not exported)
++
++## assistant @ 11:03:40 → tools: write_file
++
++
++
++## tool result (write_file) @ 11:03:40 — 332 chars (body not exported)
++
++## assistant @ 11:03:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:03:53 — 150 chars (body not exported)
++
++## assistant @ 11:04:35 → tools: write_file
++
++
++
++## tool result (write_file) @ 11:04:36 — 853 chars (body not exported)
++
++## assistant @ 11:04:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:04:52 — 283 chars (body not exported)
++
++## assistant @ 11:05:17 → tools: patch
++
++
++
++## tool result (patch) @ 11:05:18 — 1700 chars (body not exported)
++
++## assistant @ 11:05:24 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:05:28 — 124 chars (body not exported)
++
++## assistant @ 11:05:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:05:36 — 915 chars (body not exported)
++
++## assistant @ 11:07:08 → tools: write_file
++
++
++
++## tool result (write_file) @ 11:07:09 — 396 chars (body not exported)
++
++## assistant @ 11:08:27 → tools: write_file
++
++
++
++## tool result (write_file) @ 11:08:28 — 324 chars (body not exported)
++
++## assistant @ 11:09:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:09:10 — 12790 chars (body not exported)
++
++## assistant @ 11:09:44 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:09:44 — 18812 chars (body not exported)
++
++## assistant @ 11:10:00 → tools: patch
++
++
++
++## tool result (patch) @ 11:10:01 — 2627 chars (body not exported)
++
++## assistant @ 11:10:15 → tools: patch
++
++
++
++## tool result (patch) @ 11:10:15 — 2520 chars (body not exported)
++
++## assistant @ 11:10:28 → tools: patch
++
++
++
++## tool result (patch) @ 11:10:28 — 1958 chars (body not exported)
++
++## assistant @ 11:10:42 → tools: patch
++
++
++
++## tool result (patch) @ 11:10:42 — 2285 chars (body not exported)
++
++## assistant @ 11:10:58 → tools: patch
++
++
++
++## tool result (patch) @ 11:10:59 — 2939 chars (body not exported)
++
++## assistant @ 11:11:29 → tools: patch
++
++
++
++## tool result (patch) @ 11:11:30 — 2555 chars (body not exported)
++
++## assistant @ 11:12:13 → tools: patch
++
++
++
++## tool result (patch) @ 11:12:14 — 2377 chars (body not exported)
++
++## assistant @ 11:12:32 → tools: patch
++
++
++
++## tool result (patch) @ 11:12:32 — 2560 chars (body not exported)
++
++## assistant @ 11:12:58 → tools: patch
++
++
++
++## tool result (patch) @ 11:12:58 — 2601 chars (body not exported)
++
++## assistant @ 11:13:16 → tools: patch
++
++
++
++## tool result (patch) @ 11:13:16 — 1655 chars (body not exported)
++
++## assistant @ 11:13:36 → tools: patch
++
++
++
++## tool result (patch) @ 11:13:36 — 1198 chars (body not exported)
++
++## assistant @ 11:13:54 → tools: patch
++
++
++
++## tool result (patch) @ 11:13:54 — 2168 chars (body not exported)
++
++## assistant @ 11:14:05 → tools: patch
++
++
++
++## tool result (patch) @ 11:14:05 — 2674 chars (body not exported)
++
++## assistant @ 11:14:18 → tools: patch
++
++
++
++## tool result (patch) @ 11:14:18 — 2113 chars (body not exported)
++
++## assistant @ 11:14:38 → tools: patch
++
++
++
++## tool result (patch) @ 11:14:38 — 2606 chars (body not exported)
++
++## assistant @ 11:15:01 → tools: patch
++
++
++
++## tool result (patch) @ 11:15:01 — 3685 chars (body not exported)
++
++## assistant @ 11:15:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:15:14 — 1070 chars (body not exported)
++
++## assistant @ 11:15:36 → tools: patch
++
++
++
++## tool result (patch) @ 11:15:36 — 2977 chars (body not exported)
++
++## assistant @ 11:15:54 → tools: patch
++
++
++
++## tool result (patch) @ 11:15:54 — 2169 chars (body not exported)
++
++## assistant @ 11:16:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:16:14 — 131 chars (body not exported)
++
++## assistant @ 11:16:53 → tools: patch, patch
++
++
++
++## tool result (patch) @ 11:16:54 — 1126 chars (body not exported)
++
++## tool result (patch) @ 11:16:54 — 980 chars (body not exported)
++
++## assistant @ 11:17:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:17:58 — 988 chars (body not exported)
++
++## assistant @ 11:19:57 → tools: patch
++
++
++
++## tool result (patch) @ 11:19:57 — 3642 chars (body not exported)
++
++## assistant @ 11:20:28 → tools: patch
++
++
++
++## tool result (patch) @ 11:20:29 — 3572 chars (body not exported)
++
++## assistant @ 11:20:50 → tools: patch
++
++
++
++## tool result (patch) @ 11:20:51 — 2207 chars (body not exported)
++
++## assistant @ 11:21:02 → tools: patch
++
++
++
++## tool result (patch) @ 11:21:03 — 2211 chars (body not exported)
++
++## assistant @ 11:21:10 → tools: patch
++
++
++
++## tool result (patch) @ 11:21:11 — 1891 chars (body not exported)
++
++## assistant @ 11:21:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:21:21 — 377 chars (body not exported)
++
++## assistant @ 11:21:47 → tools: patch, patch
++
++
++
++## tool result (patch) @ 11:21:47 — 1208 chars (body not exported)
++
++## tool result (patch) @ 11:21:47 — 1268 chars (body not exported)
++
++## assistant @ 11:22:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:28:40 — 45 chars (body not exported)
++
++## assistant @ 11:28:52 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 11:28:52 — 3728 chars (body not exported)
++
++## tool result (read_file) @ 11:28:52 — 5051 chars (body not exported)
++
++## assistant @ 11:29:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:36:00 — 55 chars (body not exported)
++
++## assistant @ 11:36:31 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:36:31 — 3954 chars (body not exported)
++
++## assistant @ 11:38:11 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:38:11 — 144 chars (body not exported)
++
++## assistant @ 11:38:36 → tools: patch
++
++
++
++## tool result (patch) @ 11:38:36 — 3526 chars (body not exported)
++
++## assistant @ 11:38:54 → tools: patch
++
++
++
++## tool result (patch) @ 11:38:54 — 2243 chars (body not exported)
++
++## assistant @ 11:39:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:39:16 — 183 chars (body not exported)
++
++## assistant @ 11:39:39 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:39:39 — 19019 chars (body not exported)
++
++## assistant @ 11:41:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:42:52 — 45 chars (body not exported)
++
++## assistant @ 11:44:59 → tools: read_file
++
++
++
++## tool result (read_file) @ 11:44:59 — 673 chars (body not exported)
++
++## assistant @ 11:45:16 → tools: patch
++
++
++
++## tool result (patch) @ 11:45:17 — 3299 chars (body not exported)
++
++## assistant @ 11:45:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:45:26 — 131 chars (body not exported)
++
++## assistant @ 11:47:06
++
++# VERIFY-G3 — adversarial grade of S0-08 round 3
++
++PIN: `7f60d83` · venue: PC, uid 1000 · role: adversarial verifier
++
++## Item 0 — mechanical gates and identity
++
++FILE IDENTITY: all 15 briefed files matched both the stated line counts/SHA-256 prefixes and an independent `git archive 7f60d83`: checker `52668a02`/565; runner `9800a372`/415; P1–P8 `744df86c`/28, `855fa645`/63, `a6c32030`/50, `358923dc`/57, `2ecf616c`/46, `26cb113c`/61, `8f082f6d`/29, `74d923fe`/31; spec `a47e04c8`/471; fixture provenance `75ac24ad`/99, canaries `a83fba44`/8, identity `044a799b`/60; tests `503f4e12`/1740.
++
++Reproduced under `/home/rocco/venv-agent-factory/bin` first on PATH, PC venue exports and absolute lane-scratch basetemps: `145 passed in 13.95s`; second independent run `145 passed in 13.72s`; five-file set `224 passed in 32.36s`. All exited 0.
++
++The real checker negative control exited 1 with `failure_reason: containment: P1 host kernel 6.18.44-fc-v24, not gVisor`. That is the fixture's recorded kernel, not this host (`6.17.11-200.fc42.x86_64`). `ap_screen.py` returned 0 production hits. `--tests` returned 8 AF-AP-34 hits: explanatory `pkill` prose, five guard assertions banning name-kills, and the by-handle `child.kill()` test cleanup. `bash -n` runner and `sh -n` P1–P8 all exited 0. Pyflakes on checker + tests exited 0; applying pyflakes to the bash runner was a non-applicable parser false error and is not relied upon.
++
++Status: reproduced. No container, podman, runsc, bridge or production service was touched.
++
++## Item 1 — F3 closed argv grammar
++
++SOLID: `C:258-285` rejects every deviation in the recorded token list at its first position. The committed tests cover all named extra tokens, duplicate/reordered/missing pairs and static runner substrings (`T:1197-1265`, `<opaque-redacted>`). My direct checker attacks confirmed uppercase/short/foreign `data_volume` names and `/opt/data2` fail; a wrong image fails at `C:224-227` in `_check_image_identity` before argv validation.
++
++FINDING 1 — FOLLOW-UP, SOLID — runtime pathname is unconstrained metadata. `C:206-212` selects the pair grammar only by `Path(runtime).name`; `C:304-316` checks typed runsc version/digest but never binds the pathname. Scratch bundles carrying `/tmp/runsc`, bare `runsc`, `/usr/local/bin/runsc/`, or `crun` plus their matching grammar all returned `rc=0 PASS`. The frozen table `S:389-398` pins `runsc_version` and `runsc_sha256`, but does not list a runtime pathname; the brief explicitly makes path pinning conditional. Therefore this has no frozen-contract mapping and does not qualify as a blocker. The reproduction is the real checker CLI, but a forged bundle is not a canonical live capture: an actual crun capture must fail P1 before a PASS. Material effect is limited to a false runtime label in a deliberately forged artifact. Suggested next step: if pathname is intended to be attested, add it to the frozen identity contract, then require `/usr/local/bin/runsc` and add 
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 1115547,
++  "output_tokens": 84565,
++  "cache_read_tokens": 10341824,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 41488,
++  "total_tokens": 11541936,
++  "api_calls": 101,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260917_104622_09cdba",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
