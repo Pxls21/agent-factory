@@ -24,7 +24,7 @@ Run from the repo root, with the owner signing key available to `gpg` (same key 
 1. Compute the packet's governance hash (the pin must verify first):
 
    ```
-   HASH=$(FUBUKI_OS_ROOT=<pinned fubuki-os checkout> python3 - <<'PY'
+   HASH=$(PYTHONPATH=src FUBUKI_OS_ROOT=<pinned fubuki-os checkout> python3 - <<'PY'
    import os
    from pathlib import Path
    from agent_factory.governance.pin import verify_pinned_fubuki
@@ -35,6 +35,9 @@ Run from the repo root, with the owner signing key available to `gpg` (same key 
    )
    ```
 
+   (`PYTHONPATH=src` because `agent_factory` is a `src`-layout package; the editable install may not be
+   active in every checkout.)
+
 2. Write the record and sign it:
 
    ```
@@ -43,7 +46,14 @@ Run from the repo root, with the owner signing key available to `gpg` (same key 
    gpg --armor --detach-sign --output "docs/governance/reviews/$HASH.json.asc" "docs/governance/reviews/$HASH.json"
    ```
 
-3. Commit both files and push. `load_packet` will then return a reviewed packet for that exact hash.
+3. Confirm the record verifies, then commit both files and push:
+
+   ```
+   PYTHONPATH=src python3 -c "from agent_factory.governance.review import verify_review; \
+     verify_review('$HASH'); print('review accepted for', '$HASH')"
+   ```
+
+   `load_packet` will then return a reviewed packet for that exact hash.
 
 A record whose sources later change no longer matches (the hash moves) — sign a new record for the new hash.
 Do not hand‑edit a record after signing: the detached signature will stop verifying.

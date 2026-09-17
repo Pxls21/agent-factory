@@ -180,3 +180,100 @@ def test_load_packet_without_a_record_refuses(tmp_path: Path, keys) -> None:
     owner = keys("owner")
     with pytest.raises(GovernanceError, match="^fubuki-packet-unreviewed"):
         load_packet(PACKAGE, reviews_dir=tmp_path / "empty-reviews", owner_key=_owner_key_file(tmp_path, owner))
+
+
+# --- VERIFY-GOV2b regressions -------------------------------------------------------------------
+
+
+def test_toctou_a_flip_after_verify_does_not_grant_review(tmp_path: Path, keys, monkeypatch) -> None:
+    """F1: gpg must verify the SAME bytes that are parsed. Simulate the attacker flipping the record file
+    the instant gpg finishes reading it — the bytes the signature covered (reviewed=false) must win over the
+    unsigned flip (reviewed=true). On the pre-fix code the second read reparses the attacker's bytes."""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    _write_review(reviews, _H, owner, reviewed=False)  # a genuinely owner-signed record that says NOT reviewed
+    attacker = json.dumps({"governance_hash": _H, "reviewed": True, "reviewer": "ATTACKER"}).encode("utf-8")
+    real_run = subprocess.run
+
+    def flipping_run(cmd, *args, **kwargs):
+        result = real_run(cmd, *args, **kwargs)
+        if isinstance(cmd, (list, tuple)) and "--verify" in cmd:
+            (reviews / f"{_H}.json").write_bytes(attacker)  # flip AFTER gpg has read it, before any reparse
+        return result
+
+    monkeypatch.setattr(subprocess, "run", flipping_run)
+    with pytest.raises(GovernanceError, match="^fubuki-packet-unreviewed"):
+        verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+
+
+def test_a_revoked_key_with_a_goodsig_notation_is_refused(tmp_path: Path, keys) -> None:
+    """F2: gpg exits 0 with REVKEYSIG (no GOODSIG line) for a revoked key, and prints an attacker's notation
+    verbatim on --status-fd. A record signed by a revoked key carrying a 'GOODSIG' notation must be refused —
+    a substring is not a status line, and revocation is the owner's remedy after key theft."""
+    thief = keys("thief")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    record = reviews / f"{_H}.json"
+    record.write_text(json.dumps({"governance_hash": _H, "reviewed": True}), encoding="utf-8")
+    subprocess.run(
+        ["gpg", "--batch", "--quiet", "--pinentry-mode", "loopback", "--passphrase", "",
+         "-u", thief.fpr, "--sig-notation", "x@e.invalid=GOODSIG_not_a_status_line",
+         "--detach-sign", "--armor", "--output", str(reviews / f"{_H}.json.asc"), str(record)],
+        check=True, capture_output=True, text=True, timeout=60, env=thief.env,
+    )
+    rev_cert = thief.home / "openpgp-revocs.d" / f"{thief.fpr}.rev"
+    cert = "\n".join(line[1:] if line.startswith(":") else line for line in rev_cert.read_text().splitlines())
+    subprocess.run(["gpg", "--batch", "--quiet", "--import"], input=cert, check=True,
+                   capture_output=True, text=True, timeout=30, env=thief.env)
+    published = tmp_path / "revoked-owner.asc"
+    published.write_text(
+        subprocess.run(["gpg", "--batch", "--armor", "--export", thief.fpr], check=True,
+                       capture_output=True, text=True, timeout=30, env=thief.env).stdout,
+        encoding="utf-8",
+    )
+    with pytest.raises(GovernanceError, match="^fubuki-review-signature-invalid"):
+        verify_review(_H, reviews_dir=reviews, owner_key=published)
+
+
+def test_two_keys_in_the_owner_file_are_refused(tmp_path: Path, keys) -> None:
+    """F6: the committed owner key file must hold exactly one key — a second key silently widens the trust root."""
+    owner, other = keys("owner"), keys("other")
+    two_keys = tmp_path / "two-keys.asc"
+    two_keys.write_text(owner.pub + other.pub, encoding="utf-8")
+    _write_review(tmp_path / "reviews", _H, owner)  # signed by one of the two keys — still refused
+    with pytest.raises(GovernanceError, match="^fubuki-owner-key-ambiguous"):
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=two_keys)
+
+
+def test_a_non_object_record_raises_a_governance_error(tmp_path: Path, keys) -> None:
+    """F7: an owner-signed record whose JSON top level is a list must raise GovernanceError, not AttributeError."""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    record = reviews / f"{_H}.json"
+    record.write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, but not an object
+    owner.sign(record, reviews / f"{_H}.json.asc")
+    with pytest.raises(GovernanceError, match="^fubuki-review-record-invalid"):
+        verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+
+
+def test_gpg_absent_raises_a_governance_error(tmp_path: Path, keys, monkeypatch) -> None:
+    """F7: gpg missing from PATH raises a stable reason, not FileNotFoundError."""
+    owner = keys("owner")
+    _write_review(tmp_path / "reviews", _H, owner)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with pytest.raises(GovernanceError, match="^fubuki-review-gpg-unavailable"):
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))
+
+
+def test_a_symlinked_record_is_refused(tmp_path: Path, keys) -> None:
+    """F8: a symlinked record must not be followed (O_NOFOLLOW), matching packet.py's symlink discipline."""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    real = tmp_path / "elsewhere.json"
+    real.write_text(json.dumps({"governance_hash": _H, "reviewed": True}), encoding="utf-8")
+    owner.sign(real, reviews / f"{_H}.json.asc")
+    (reviews / f"{_H}.json").symlink_to(real)
+    with pytest.raises(GovernanceError, match="^fubuki-review-record-invalid"):
+        verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
