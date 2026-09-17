@@ -1,5 +1,10 @@
 # 08 — Decision log
 
+> **Assigning a new D-id:** take the next number after the MAX `D-NNN` in THIS table — never from
+> `todo/BUILD-TASKLIST.md`, which is a distillation and can lag or collide. (A good-state ruling was
+> minted "D-033" over the existing Buzz-teammate ADR on 2026-09-17 → renumbered D-034.) One decision,
+> one id; a new decision is recorded HERE first, then distilled into the ledger.
+
 ## Accepted
 
 | ID | Decision | Rationale |
