@@ -184,6 +184,20 @@ commit. HIGH/CRITICAL risk gets said out loud with why it is safe.
 
 **Phase 5 — adversarial verify (the audit swarm). Done ≠ tests pass; done = a hostile reviewer
 failed to break it.**
+- **DISPOSITION IS GOOD-STATE-GATED — discovery stays exhaustive, disposition does not loop (owner
+  ruling D-033, 2026-09-17).** The main loop drives each proof to GOOD-STATE — headline capability
+  proven through the REAL production path, deterministic gates green — then STOPS. A verifier
+  finding re-opens the build ONLY if it is CORE-BLOCKING: it shows the headline capability is
+  actually fake (the claimed part never ran, the oracle is a tautology, a FROZEN criterion is
+  contradicted). That earns ONE focused repair, keyed by the D-031 contract-gate budget. Every
+  OTHER finding — oracle-completeness gaps, test-strength on already-pinned artifacts, edge cases,
+  a taxonomy narrower than any frozen criterion demanded — becomes a GitHub issue (`verify-followup`
+  + `stage0`, repo Pxls21/agent-factory) for later batch triage, and the increment CLOSES. A red
+  test is necessary but not sufficient — the blocking predicate still decides. Evidence: the S0-02
+  runner-output closure oracle drew three verify→fix→verify rounds that each bolted on another
+  guard (indirect `$out`, unresolved variable targets) without moving the CORE capability — the
+  diminishing-returns treadmill D-033 exists to end; its residue is issue #5, the S0-03 O4 residue
+  issue #6. Ship the good state now; the bells and whistles are issues we fix later.
 - **BUG-ECHO ON EVERY REAL DEFECT — FOUND, not just fixed (owner mandate 2026-08-20, widened
   2026-08-21).** The moment a genuine defect is FOUND — fixed or merely diagnosed, bug or
   wrinkle or weird pattern — run `/bug-echo` (or its inline equivalent: derive the
