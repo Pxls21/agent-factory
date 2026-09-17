@@ -96,6 +96,18 @@ Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed)
 
 ## 2. LIVE ledger (append-only sync blocks; newest first)
 
+**2026-09-17 11:23Z — VERIFY-B3 HOME (the FIRST fresh local-Qwen vLLM verify lane end-to-end): NOT-READY, 4 blockers all coordinator-CONFIRMED; B4 dispatched:**
+
+VERIFY-B3 (S0-02 round 3, adversarial grade at pin c6c384a) completed FRESH on the local Qwen (vLLM) verify route this session — its report.md dated today, the lane run live (unlike the re-fetched O2). Harvested + committed (`report-pc-verify-b3.md--c6c384a.md` + a 7-file patch; ca0a82f → 02ba98a). A deep, mutation-backed NOT-READY: 17 scratch mutations through the real checker main, identity table + gates reproduced (`137 passed` ×2). ALL FOUR blockers reproduced by primary source at c6c384a (S0-02 byte-identical since):
+- B3-01 `test_leg_file_table_matches_the_runner_writes` (T:1373) is a MIRROR — asserts 3 known `cp` strings exist, never enumerates every runner write; tee/heredoc/python-write_text/mv each survive while `_LEG_FILES_PLAIN` (C:143-152) would reject them at capture.
+- B3-02 CORRECTION of the verifier's "no such test exists": tolerance tests DO exist at T:1493-1494 but are too LOOSE (`REPLAY>130`, `LEG<REPLAY`); the tight relation `REPLAY_CLOCK_TOLERANCE_S + LEG_CLOCK_TOLERANCE_S < RELAY_DRIFT_WINDOW_S` and `TURN_WAIT_S(runner) <= REPLAY_CLOCK_TOLERANCE_S` are absent → TOLERANCE-9000 (C:127 `REPLAY_CLOCK_TOLERANCE_S=150`→9000) and RUNNER-GAP-151 (run_s0_02_legs.sh:34 `TURN_WAIT_S=100`→151) survive. B4 fix = TIGHTEN, not add.
+- B3-03 `removal_line = removal_note or (<fallback literal>)` at C:717-720; the fallback is unbound (both label tests hit the removal_note path). Fix = remove the unreachable fallback or bind it.
+- B3-00 `B3-report.md:10` claims "Items built (1–9)" but only Items 1–6 exist; no named-mutant inventory / identity table / lint / pack. A report-discipline blocker.
+B3-04 (the `tests/test_proof_status.py` S0-11 tag/ref failures) stays the owner's re-sign (AF-AP-56), out of B3 scope.
+
+B4 (S0-02 round 4) DISPATCHED on the local Qwen build route (`agentfactory-build-local`; self-contained brief `pc-b4.md` pinned to 6760808, commit 3ba3405 → pushed 3c94c5e; lane pc-b4.md--6760808, pid 4137329) to close B3-01/02/03 (code/test) + B3-00 (report) with the sharpened contract + red controls (the four runner-write mutants, TOLERANCE-9000, RUNNER-GAP-151, LABEL-FALLBACK-DROPPED). Batch full: M3/G3 verify + O3/B4 build, all four alive on local Qwen. Nothing minted; S0-02 stays unminted.
+
+
 **2026-09-17 10:03Z — the 4-batch runs on LOCAL Qwen (owner: "actually run quen … do our 4 batch jobs … finish building all our proofs … validate and verified"); VERIFY-O2 CONFIRMED NOT-READY (6 blockers); O3 dispatched to close them:**
 
 Resumed. The four Stage-0 lanes run on the vLLM Qwen3.8-27B (local route) — the owner's directive. The batch: B3 (S0-02 r3 verify, pid 3146337), M3 (S0-06 r3 verify, 3152753), G3 (S0-08 r3 verify, 3153288), O3 (S0-03 r3 BUILD, 3202364) — all ALIVE; `qwen-builder` inactive+disabled (vLLM is the local server since D-032).
