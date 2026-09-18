@@ -1,7 +1,7 @@
 {
 "schema": "proofs/registry-v1",
 "classes": {
-  "execution_proof": {"ledger_denominator": 7},
+  "execution_proof": {"ledger_denominator": 8},
   "conformance_checked_decision": {"ledger_denominator": 3},
   "blocked_credential": {"ledger_denominator": 1},
   "blocked_host": {"ledger_denominator": 1}
@@ -16,7 +16,7 @@
   {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1},
   {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1},
   {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
-  {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "blocked_host", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1, "blocked": {"owner": "TBD-owner-gvisor-host", "unblock_condition": "runsc executable and a trivial runsc container run succeeds", "marker_path": "proofs/S0-08/blocked.json"}},
+  {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1},
   {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
   {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
   {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1},

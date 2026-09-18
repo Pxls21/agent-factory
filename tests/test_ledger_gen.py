@@ -238,6 +238,21 @@ def test_blocked_state(tmp_path):
 
 def test_expired_state(tmp_path):
     root = _copy_contract(tmp_path)
+    # S0-08 became execution_proof when its live gVisor proof landed (2026-09-18);
+    # restore its historical blocked_host row in the fixture so the EXPIRED marker
+    # state (a blocked_host concept) matches the registry classification.
+    reg_path = root / "proofs" / "registry.yaml"
+    reg = json.loads("\n".join(
+        line for line in reg_path.read_text().splitlines() if not line.lstrip().startswith("#")))
+    for proof in reg["proofs"]:
+        if proof["proof_id"] == "S0-08":
+            proof["classification"] = "blocked_host"
+            proof["blocked"] = {
+                "owner": "TBD-owner-gvisor-host",
+                "unblock_condition": "runsc executable and a trivial runsc container run succeeds",
+                "marker_path": "proofs/S0-08/blocked.json",
+            }
+    reg_path.write_text(json.dumps(reg, indent=2) + "\n")
     artifact = _blocked(proof_id="S0-08", classification="blocked_host",
                          blocker_status="expired")
     del artifact["marker"]["reason"]

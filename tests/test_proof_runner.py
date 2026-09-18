@@ -37,9 +37,32 @@ def _copy_probe(root, proof_id):
     target = root / "proofs" / proof_id
     target.mkdir(parents=True, exist_ok=True)
     for source in (ROOT / "proofs" / proof_id).iterdir():
-        if source.is_file() and source.name != "blocked.json":
+        # A probe fixture starts from an unminted state: skip both marker artifacts
+        # (result.json now exists for S0-08 since its live gVisor proof was minted).
+        if source.is_file() and source.name not in ("blocked.json", "result.json"):
             shutil.copy(source, target / source.name)
     return target
+
+
+def _reblock_s008(root):
+    """S0-08 became execution_proof when its live gVisor proof landed (2026-09-18).
+    These tests exercise the GENERIC blocked_host deferral mechanism, whose only
+    specimen is S0-08's runsc probe; restore S0-08's historical blocked_host row in
+    the fixture copy so the mechanism stays under test."""
+    path = root / "proofs" / "registry.yaml"
+    text = "\n".join(
+        line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    registry = json.loads(text)
+    for proof in registry["proofs"]:
+        if proof["proof_id"] == "S0-08":
+            proof["classification"] = "blocked_host"
+            proof["blocked"] = {
+                "owner": "TBD-owner-gvisor-host",
+                "unblock_condition": "runsc executable and a trivial runsc container run succeeds",
+                "marker_path": "proofs/S0-08/blocked.json",
+            }
+    path.write_text(json.dumps(registry, indent=2) + "\n")
 
 
 def _runner(root, verb, proof_id, *, env=None, runner=RUNNER):
@@ -208,6 +231,7 @@ def test_spec_classification_is_rejected_and_registry_classification_is_used(tmp
 
 def test_unmapped_probe_exit_writes_no_marker(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s008(root)
     probe_dir = _copy_probe(root, "S0-08")
     probe = json.loads((probe_dir / "probe.json").read_text())
     probe["probe_cmd"] = [sys.executable, "-c", "raise SystemExit(12)"]
@@ -222,6 +246,7 @@ def test_unmapped_probe_exit_writes_no_marker(tmp_path):
 
 def test_runsc_absence_blocks_and_success_expires_the_deferral(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s008(root)
     probe_dir = _copy_probe(root, "S0-08")
     empty_path = root / "bin"
     empty_path.mkdir()

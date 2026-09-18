@@ -1,0 +1,87 @@
+{
+  "proof_id": "S0-08",
+  "classification": "execution_proof",
+  "recorded_at": "2026-09-18T09:56:32.795667Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-08/check_containment.py",
+        "proofs/S0-08/fixtures/evidence-crun"
+      ],
+      "started_at": "2026-09-18T09:56:32.670626Z",
+      "finished_at": "2026-09-18T09:56:32.698559Z",
+      "exit_code": 1,
+      "stdout_sha256": "bf3d96be1789d9b088874efa4a125ea671f78aa833487e245af7016e467851d2",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reason": "failure_reason: containment: P1 host kernel 6.18.44-fc-v24, not gVisor"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-08/marker_gate.py",
+        "--proof-dir",
+        "proofs/S0-08/fixtures/malformed-marker"
+      ],
+      "started_at": "2026-09-18T09:56:32.698849Z",
+      "finished_at": "2026-09-18T09:56:32.723656Z",
+      "exit_code": 1,
+      "stdout_sha256": "8cdda9b1e29060b775be8d2d5dbe7577cc595fd22bf2c6b267e0bb8361eba18b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reason": "marker: malformed: probe_run"
+    },
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-08/check_containment.py",
+        "proofs/S0-08/evidence/pc-runsc"
+      ],
+      "started_at": "2026-09-18T09:56:32.723798Z",
+      "finished_at": "2026-09-18T09:56:32.748528Z",
+      "exit_code": 0,
+      "stdout_sha256": "a20e60646185374d60d901b8058e5c6fd1d11d3173e9060899f5138ba252e876",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-08/check_containment.py proofs/S0-08/fixtures/evidence-crun",
+    "expected_failure_reason": "containment: P1 host kernel 6.18.44-fc-v24, not gVisor",
+    "observed_failure_reason": "failure_reason: containment: P1 host kernel 6.18.44-fc-v24, not gVisor"
+  },
+  "attestation": {
+    "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
+    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
+    "proofs/registry.yaml": "5229d7a56a89d68ae916037d7c6e590507869000de0342d2110f4cd69edd4dd2",
+    "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
+    "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
+    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
+    "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
+    "proofs/S0-08/CONTAINMENT-SPEC.md": "a47e04c851dfec84accf1257c66a0166bd402174a13741e1c1ef36c5ff73c4a5",
+    "proofs/S0-08/canaries/P1.sh": "744df86c51bbb8ead4190524eed09ccf607952968cb50c1c2b2ae81fc12b693a",
+    "proofs/S0-08/canaries/P2.sh": "855fa6457d0c3e220b14626a60b4d273e1f9cfe4023277fcef4b19f6ce7ece9d",
+    "proofs/S0-08/canaries/P3.sh": "a6c320304abc0883adc4044c5c767ec9de5ff272b1073ebee75f2b235b9ae434",
+    "proofs/S0-08/canaries/P4.sh": "358923dc01f4735d534dd4568113f3de7f05a87cbbf4d3035a22156c8073f8ca",
+    "proofs/S0-08/canaries/P5.sh": "2ecf616c8d95de2051b781753d2d72a9b0ca58924b8b5bb8b435bfbed413b056",
+    "proofs/S0-08/canaries/P6.sh": "26cb113ce698cfd250db1ce934cb86a05e7c4ecd2b636f3d5870031c6b2b52a0",
+    "proofs/S0-08/canaries/P7.sh": "8f082f6de13415b34d3b260323d7af29da90b0ce4140f44dd500cce97ba195c4",
+    "proofs/S0-08/canaries/P8.sh": "74d923fe3c105aa9075f31a8c71e99bd35fac0d1d653cf376d0575a85dddfb62",
+    "proofs/S0-08/check_containment.py": "52668a02e92edcfd901cdda271794d334892f8adfa0220e1fce54caf8b64668d",
+    "proofs/S0-08/evidence/pc-runsc/canaries.jsonl": "ef1a84457e841b6fe537496cf5fe31caf6ad30c6f1c548a26a25fae727284c16",
+    "proofs/S0-08/evidence/pc-runsc/runtime-identity.json": "99fd246833dc9641610c9af581cb562d1d549c7d9923010aba0a7ab0f6c1c3d1",
+    "proofs/S0-08/fixtures/evidence-crun/PROVENANCE.md": "75ac24ad2337498948d652897564d73e7ef1a35495b3657c8d5db93f23ce0562",
+    "proofs/S0-08/fixtures/evidence-crun/canaries.jsonl": "a83fba44db5bed7b91fb02164b26f042eddd206dc70bd189941d1218233154c9",
+    "proofs/S0-08/fixtures/evidence-crun/runtime-identity.json": "044a799b6185e84f2dcd5ad5c325a9a37c09c5f0d7a633d56911d7f95714e719",
+    "proofs/S0-08/marker_gate.py": "093d7412f237ede86f10157adce3ce15978f5458df63df779768d44fe838614c",
+    "proofs/S0-08/probe.json": "d91f8091094c0bd9b36cf6d4f178b383f59ac774beffe83c59d00bfbdd1e16ec",
+    "proofs/S0-08/probe_runsc.sh": "bebc21bacf30e6500b4a5cab3bfab4bd998626e9d1132768c2426380425ababf",
+    "proofs/S0-08/spec.json": "925b0f1706c96c4cee61a870301712bdbd79b40075c74ec29ba210fdc6fd8b79",
+    "proofs/S0-08/tools/pc/build_image_buildkit.sh": "44d93b086c0e5f40ca9e42c112e19f1027072acb6996e979d5ade8f6fbc45f11",
+    "proofs/S0-08/tools/pc/run_containment.sh": "49e752ce0d1337a4aad257fd757c7bf19a5a4de36b268a14004fc0cf96fa7212"
+  },
+  "digest": "7d8273dd935cea42b3a901d9111f8bd1d5739284f90d821c3263db1cb8306451"
+}

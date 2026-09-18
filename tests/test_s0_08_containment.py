@@ -79,6 +79,34 @@ def run_marker_gate(proof_dir) -> subprocess.CompletedProcess:
     )
 
 
+def expired_marker_payload() -> dict:
+    """S0-08's blocked-host deferral marker as it stood before the live gVisor
+    proof landed (2026-09-18) and retired it. The committed proofs/S0-08/blocked.json
+    is gone now that S0-08 is minted execution_proof; these tests reconstruct it to
+    keep the GENERIC marker-gate mechanism (any future blocked_host proof uses it)
+    under test. Recovered verbatim from git (proofs/S0-08/blocked.json, pre-mint)."""
+    return {
+        "proof_id": "S0-08",
+        "classification": "blocked_host",
+        "env_fingerprint": "pc-bridge:fedora",
+        "marker": {
+            "probe_cmd": ["sh", "proofs/S0-08/probe_runsc.sh"],
+            "probe_run": {
+                "leg": "negative",
+                "cmd": ["sh", "proofs/S0-08/probe_runsc.sh"],
+                "started_at": "2026-09-03T18:33:34.707753Z",
+                "finished_at": "2026-09-03T18:33:34.722402Z",
+                "exit_code": 0,
+                "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            },
+            "blocker_status": "expired",
+            "unblock_condition": "runsc executable and a trivial runsc container run succeeds",
+            "owner": "TBD-owner-gvisor-host",
+        },
+    }
+
+
 # --- the synthetic PASSING bundle ------------------------------------------
 # Built from the expected lines CONTAINMENT-SPEC.md pins. The gVisor-side
 # values (P1, P6) are the ones measured under runsc release-20260817.0.
@@ -504,7 +532,7 @@ def test_marker_gate_expired_without_result_is_red(tmp_path):
     """MARKER-EXPIRED-PASSES: a deferral may not outlive its blocker."""
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    shutil.copy(ROOT / "proofs" / "S0-08" / "blocked.json", proof / "blocked.json")
+    (proof / "blocked.json").write_text(json.dumps(expired_marker_payload()), encoding="utf-8")
     proc = run_marker_gate(proof)
     assert proc.returncode == 1
     assert proc.stdout.strip() == "marker: expired - the proof must run"
@@ -523,7 +551,7 @@ def test_marker_gate_expired_with_result_is_green(tmp_path):
     """The transition is only complete once the proof actually ran."""
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    shutil.copy(ROOT / "proofs" / "S0-08" / "blocked.json", proof / "blocked.json")
+    (proof / "blocked.json").write_text(json.dumps(expired_marker_payload()), encoding="utf-8")
     (proof / "result.json").write_text('{"proof_id": "S0-08"}\n', encoding="utf-8")
     proc = run_marker_gate(proof)
     assert proc.returncode == 0
@@ -533,7 +561,7 @@ def test_marker_gate_expired_with_result_is_green(tmp_path):
 def test_marker_gate_honest_deferral_is_green(tmp_path):
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    payload = json.loads((ROOT / "proofs" / "S0-08" / "blocked.json").read_text())
+    payload = expired_marker_payload()
     payload["marker"]["blocker_status"] = "absent"
     (proof / "blocked.json").write_text(json.dumps(payload), encoding="utf-8")
     proc = run_marker_gate(proof)
@@ -545,7 +573,7 @@ def test_marker_gate_honest_deferral_is_green(tmp_path):
 def test_marker_gate_names_each_missing_field(tmp_path, field):
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    payload = json.loads((ROOT / "proofs" / "S0-08" / "blocked.json").read_text())
+    payload = expired_marker_payload()
     del payload["marker"][field]
     (proof / "blocked.json").write_text(json.dumps(payload), encoding="utf-8")
     proc = run_marker_gate(proof)
@@ -556,7 +584,7 @@ def test_marker_gate_names_each_missing_field(tmp_path, field):
 def test_marker_gate_rejects_out_of_enum_status(tmp_path):
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    payload = json.loads((ROOT / "proofs" / "S0-08" / "blocked.json").read_text())
+    payload = expired_marker_payload()
     payload["marker"]["blocker_status"] = "fine"
     (proof / "blocked.json").write_text(json.dumps(payload), encoding="utf-8")
     proc = run_marker_gate(proof)
@@ -587,7 +615,7 @@ def test_marker_gate_rejects_a_result_from_another_proof(tmp_path):
 def test_marker_gate_result_fifo_is_refused_not_hung(tmp_path):
     proof = tmp_path / "S0-08"
     proof.mkdir()
-    shutil.copy(ROOT / "proofs" / "S0-08" / "blocked.json", proof / "blocked.json")
+    (proof / "blocked.json").write_text(json.dumps(expired_marker_payload()), encoding="utf-8")
     os.mkfifo(proof / "result.json")
     proc = run_marker_gate(proof)
     assert proc.returncode == 1
@@ -603,14 +631,15 @@ def test_marker_gate_fifo_is_refused_not_hung(tmp_path):
     assert "marker: malformed: blocked.json is not a regular file" in proc.stdout
 
 
-def test_live_marker_is_expired_and_red():
-    """The committed proofs/S0-08/blocked.json reads `expired` and no result.json
-    exists yet, so the gate is RED on the real tree. When the coordinator mints
-    result.json and removes blocked.json this flips to the completed
-    transition — that is the state change this gate exists to force."""
+def test_live_marker_is_the_completed_transition():
+    """S0-08's live gVisor proof landed 2026-09-18: proofs/S0-08/result.json is
+    minted and blocked.json is gone, so the marker gate reads the completed
+    transition on the real tree. This is exactly the state change this gate
+    exists to force — it was RED ('expired - the proof must run') until the
+    proof actually ran."""
     proc = run_marker_gate(ROOT / "proofs" / "S0-08")
-    assert proc.returncode == 1
-    assert proc.stdout.strip() == "marker: expired - the proof must run"
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "marker: completed transition"
 
 
 # --- canary shape ----------------------------------------------------------
@@ -797,18 +826,19 @@ def test_spec_negative_legs_reproduce_their_pinned_reasons():
             f"{leg['cmd']} did not print its pinned reason: {combined!r}"
 
 
-def test_spec_positive_leg_defers_until_the_pc_run_lands():
-    """The positive leg's evidence directory does not exist yet. The runner
-    treats exit 2 as capability-unavailable and preserves the artifact
-    (scripts/proof-runner:181-185), so this is the honest pre-run state."""
+def test_spec_positive_leg_passes_over_the_landed_pc_evidence():
+    """S0-08's PC gVisor run landed 2026-09-18: the positive leg's evidence
+    directory now exists and check_containment.py PASSES over it (exit 0).
+    Before the run it deferred with exit 2 (capability-unavailable), preserving
+    the capable-venue artifact (scripts/proof-runner:181-185)."""
     spec = json.loads((ROOT / "proofs" / "S0-08" / "spec.json").read_text())
     leg = next(l for l in spec["legs"] if l["leg"] == "positive")
     evidence = ROOT / leg["cmd"][2]
-    assert not evidence.exists(), "the PC run has landed; update this test's premise"
+    assert evidence.is_dir(), "the PC evidence bundle is missing; the positive leg cannot pass"
     proc = subprocess.run([sys.executable] + leg["cmd"][1:], cwd=ROOT,
                           capture_output=True, text=True, timeout=leg["timeout_s"])
-    assert proc.returncode == 2
-    assert proc.stdout.strip() == "deferred: containment evidence not captured"
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.startswith("PASS: S0-08 gvisor-containment")
 
 
 def test_pc_runner_is_bash_clean():
@@ -1691,6 +1721,12 @@ def _scratch_proof_root(tmp_path) -> Path:
     shutil.copy(ROOT / "proofs" / "registry.yaml", root / "proofs" / "registry.yaml")
     for name in ("proof-runner", "validate-ledger"):
         shutil.copy(ROOT / "scripts" / name, root / "scripts" / name)
+    # S0-08's live gVisor proof landed (2026-09-18): the real tree now carries the
+    # pc-runsc evidence and a minted result.json. This test exercises the runner's
+    # DEFERRAL ordering (the positive leg exits 2 when its evidence is absent), so
+    # restore the pre-run deferrable state in the scratch copy.
+    shutil.rmtree(root / "proofs" / "S0-08" / "evidence", ignore_errors=True)
+    (root / "proofs" / "S0-08" / "result.json").unlink(missing_ok=True)
     return root
 
 
