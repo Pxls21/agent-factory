@@ -141,6 +141,47 @@ call per leg:
 
 ---
 
+## Blocker 3 — the round-trip conjunct (iv) + the runner assertion bind a FICTIONAL tool_call shape (a SECOND fixtures-as-mirror layer, caught by the live re-capture 2026-09-18)
+
+The O4 realign (commit `be083e3`) fixed the call_logs bindings and gated green in the sandbox
+(193 passed ×2), but the first live re-capture with the realigned tooling **crashed** and would
+have red-ed the checker — because the round-trip parsing (conjunct iv) was built from an ASSUMED
+ACP `tool_call` shape, never a real one. The REAL shape (golden, from the live leg-B timeline):
+
+```json
+{"sessionUpdate":"tool_call","kind":"execute","locations":[],
+ "title":"terminal: printf 3ee033173c9eafc2",
+ "content":[{"content":{"text":"$ printf 3ee033173c9eafc2","type":"text"},"type":"content"}],
+ "toolCallId":"tc-8d38ea4c7025"}
+```
+and the completion:
+```json
+{"sessionUpdate":"tool_call_update","kind":"execute","status":"completed",
+ "content":[{"content":{"text":"terminal result\n- **output:** 3ee033173c9eafc2\n- **exit_code:** 0","type":"text"}, ...}],
+ "toolCallId":"tc-8d38ea4c7025"}
+```
+
+Two real defects the synthetic fixtures hid (both = AF-AP-101 recurring):
+1. **Runner AF-AP-100 assertion CRASHES** (`run_s0_03_legs.sh:256`): `update.get("content", {}).get("title", "")`
+   — but `content` is a **list** of content blocks and the title is `update["title"]`, not
+   `content.title`. Live rc: `AttributeError: 'list' object has no attribute 'get'`. The whole
+   re-capture aborts before collect. Fix: read `update.get("title", "")` (and/or the content
+   blocks' `content.text`).
+2. **Checker conjunct (iv) binds a field that DOES NOT EXIST** (`check_omniroute_roundtrip.py`
+   `check_roundtrip:671-677`): it requires `update["rawInput"]["command"] in {printf <nonce>, …}`.
+   The real ACP tool_call has **no `rawInput`** — the command is in `title`
+   (`terminal: printf <nonce>`) and in `content[].content.text` (`$ printf <nonce>`). Against a real
+   bundle `exact_starts` is empty → conjunct (iv) reds. Fix: bind the execute tool_call by
+   `kind == "execute"` + the command parsed from `title`/`content[].content.text` matching the
+   expected `printf <nonce>` set + a `toolCallId`; then a later `tool_call_update status=completed`
+   with the same `toolCallId` whose content contains the nonce (the tool output).
+
+The fix touches: `run_s0_03_legs.sh` (the assertion), `check_omniroute_roundtrip.py`
+(`check_roundtrip`), and the fixtures' `hermes/timeline.jsonl` (regenerate the tool_call frames to
+the REAL shape — content list + title, no rawInput — so the sandbox tests exercise the real shape).
+Then re-capture to validate end-to-end. This is the round-trip half of the "pin a real row before
+you trust the checker" rule — the call_logs half was fixed in O4; the ACP-timeline half is this.
+
 ## Reconciliation with the seed and ADR (no contract change)
 
 - Seed A1 pins a `/v1/responses` request: the **direct leg proves it live** (200, streamed text,
