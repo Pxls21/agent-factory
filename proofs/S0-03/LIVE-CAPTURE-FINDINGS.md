@@ -182,6 +182,45 @@ the REAL shape — content list + title, no rawInput — so the sandbox tests ex
 Then re-capture to validate end-to-end. This is the round-trip half of the "pin a real row before
 you trust the checker" rule — the call_logs half was fixed in O4; the ACP-timeline half is this.
 
+## Blocker 4 — /v1/responses gives NO client-visible handle to its call_logs row (a PROOF-DESIGN question for the owner)
+
+With the O4+O5 realigns in, the runner now COMPLETES a full live capture (2026-09-18): leg A 200,
+leg B a real 65-frame round trip, `round-trip OK`, and the collect binds **3 hermes rows** by
+`session_tag == nonce2` + `combo_name` (all `agentfactory-build`, `status=200`, `provider=codex`).
+The hermes-leg call_logs binding WORKS. But the DIRECT leg's call_logs identity binding does not,
+and it is not a bug — it is real OmniRoute behavior:
+
+- The direct leg uses `/v1/responses` (codex_responses, seed A1). Across two live captures its
+  response headers are INTERMITTENT: the v4 capture returned the full `x-omniroute-*` set
+  (`x-omniroute-request-id` = the call_logs PK, `x-omniroute-model`, `x-omniroute-provider`,
+  `x-correlation-id`); the later capture returned only `x-request-id` (a UUID) + `x-omniroute-route-class`.
+- Neither `direct.json.id` (a `resp_…` body id), `x-request-id` (`31d03e6c-…`, a UUID), nor anything
+  else in the response maps to the direct row's `call_logs.id` (`1789760900281-89f048`) or its
+  `correlation_id` (`4d8cbeef-…`). Verified against the live DB.
+- The direct row's `session_tag` is OmniRoute's OWN `conv_…` id, NOT the client's
+  `x-omniroute-session-id` nonce — because **`/v1/chat/completions` honors the client session-id as
+  `session_tag` but `/v1/responses` overrides it with a conv id**. That is precisely why the hermes
+  leg (chat_completions) binds by the nonce and the direct leg (responses) cannot.
+
+So `/v1/responses` provides no reliable client-visible handle to bind its own call_logs row. The
+O2/O3 checker's direct-leg `response_id` binding was fiction; the O4 realign's
+`id == x-omniroute-request-id` binding works only when that header happens to be present.
+
+**RECOMMENDED RESOLUTION (owner decision).** The independent call_logs identity instrument — the
+defense against the `echoRequestedModelName` hollow green (conjunct iii's whole reason to exist) —
+is fully provided by the **HERMES leg's rows**, which bind reliably (`session_tag == nonce`,
+`combo_name`, `provider=codex` non-stub, `model=gpt-5.6-sol-ultra`). The DIRECT leg proves
+`/v1/responses` streams real text + the response model (conjuncts i, ii — already green live). So:
+bind conjunct (iii) on the HERMES leg only; drop the direct-leg call_logs-row requirement and
+document that `/v1/responses` exposes no bindable handle (the real behavior). This keeps seed A1
+(leg A on `/v1/responses`) and A2 (non-stub fingerprint via the hermes leg's `codex` provider), and
+is HONEST about what the live system provides.
+Alternatives, weaker: (a) run the direct leg on `chat_completions` too (bindable, but loses the
+`/v1/responses` proof — rejected, A1 pins it); (b) window+combo_name uniqueness for the direct row
+(the weaker binding the realign deliberately moved away from). The coordinator's recommendation is
+the HERMES-leg instrument; awaiting the owner's call before the checker's direct-leg requirement is
+changed and the mint proceeds.
+
 ## Reconciliation with the seed and ADR (no contract change)
 
 - Seed A1 pins a `/v1/responses` request: the **direct leg proves it live** (200, streamed text,
