@@ -31,35 +31,18 @@
 # journal file — a live service keeps serving, undisturbed. Consequence, stated: rows still only
 # in the WAL are not visible, so the runner passes --settle first.
 #
-# HOW A ROW IS BOUND TO A LEG (VERIFY-O1 F-1 — the round's blocker)
+# HOW A ROW IS BOUND TO A LEG (live-capture 2026-09-18, AF-AP-103 realign)
 # -----------------------------------------------------------------
-# The previous version SELECTed the newest rows of the route and attributed "the earliest row
-# at/after a wall-clock stamp" to each leg. On the PC the route `agentfactory-build` is the route
-# the owner's OWN build lanes use, so any concurrent request inside the window became "our" row,
-# and a hand-written row with a foreign response id passed the identity assertion untouched.
-# Nothing bound a row to a leg. Two real bindings exist in the schema and are used here:
-#   direct  ->  call_logs.response_id, which is the `resp_…` id the CLIENT streamed
-#               (`open-sse/handlers/chatCore/attemptLogging.ts:501`
-#               `responseId: extractResponsesId(sourceFormat, clientResponse)`, stored at
-#               `src/lib/usage/callLogs.ts:521-524` and inserted as `response_id` at :564-584).
-#               `direct.json` already records the same value as `id`, so the two artefacts join
-#               on a value neither side can invent. Selected BY that id — not by time.
-#   hermes  ->  call_logs.session_tag, which OmniRoute fills from the CLIENT-SUPPLIED
-#               `x-omniroute-session-id` header: `src/sse/handlers/chat.ts:822` reads it,
-#               `open-sse/services/conversationTracker.ts:465-469` returns it verbatim ("Client
-#               override wins outright"), and `open-sse/handlers/chatCore.ts:1096` passes it as
-#               `sessionTag`. The runner puts the leg's nonce2 there through the launched
-#               profile's `extra_headers`. The header is NOT stripped by the authz pipeline
-#               (`src/server/authz/headers.ts:79-87` lists the seven trusted headers it deletes;
-#               x-omniroute-session-id is not one of them).
-#               Hermes' request is still window-bounded here: this script exports EVERY route row
-#               inside the leg's CLOSED window, and the checker fails the proof when there is
-#               more than one. Exporting them all is the point — the old code picked the earliest
-#               and hid the ambiguity.
-# The window comes from the leg's own `hermes/leg.json` (`window_start`/`window_end`, written by
-# the runner before and after the turn), so the export cannot widen it without the checker
-# seeing: `omniroute-requests.json` carries the window it used and the checker compares it with
-# the leg record.
+# Two real bindings exist in the schema:
+#   direct  ->  call_logs.id, which is the x-omniroute-request-id response header the client
+#               receives. `direct.json.response_headers['x-omniroute-request-id']` records it.
+#               The old binding on `response_id` was dead (always NULL in call_logs).
+#   hermes  ->  call_logs.session_tag == the leg's nonce2 (injected as x-omniroute-session-id),
+#               AND combo_name == the route id. The round trip logs MANY rows (>=1), all tagged.
+#               Window is kept as a sanity bound (every tagged row must fall within), not a
+#               uniqueness rule.
+# Route filter: combo_name, NOT requested_model (which holds the resolved ref
+# `codex/gpt-5.6-sol-ultra`, never the route id `agentfactory-build`).
 
 set -euo pipefail
 
@@ -107,9 +90,20 @@ def read_json(path):
 
 direct = read_json(os.path.join(bundle, "direct", "direct.json"))
 leg = read_json(os.path.join(bundle, "hermes", "leg.json"))
-response_id = direct.get("id") if isinstance(direct, dict) else None
-if response_id is not None and not isinstance(response_id, str):
-    sys.exit(f"collect_leg: direct/direct.json id is not a string: {response_id!r}")
+
+# Direct leg binding: x-omniroute-request-id from the response headers (== call_logs.id).
+# NOT direct.json.id, which is the resp_... Responses-API body id (a different thing).
+resp_headers = direct.get("response_headers") if isinstance(direct, dict) else None
+request_id = None
+if isinstance(resp_headers, dict):
+    request_id = resp_headers.get("x-omniroute-request-id")
+if request_id is not None and not isinstance(request_id, str):
+    sys.exit(f"collect_leg: x-omniroute-request-id is not a string: {request_id!r}")
+
+# Hermes leg binding: session_tag (the nonce2).
+nonce2 = leg.get("nonce2") if isinstance(leg, dict) else None
+if nonce2 is not None and not isinstance(nonce2, str):
+    sys.exit(f"collect_leg: hermes/leg.json nonce2 is not a string: {nonce2!r}")
 
 window = None
 if isinstance(leg, dict) and leg.get("window_start") is not None:
@@ -131,20 +125,20 @@ conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
 conn.row_factory = sqlite3.Row
 requests = []
 try:
-    if response_id is not None:
+    if request_id is not None:
         rows = conn.execute(
             f"SELECT {COLUMNS} FROM call_logs "
-            "WHERE requested_model = ? AND response_id = ? "
+            "WHERE combo_name = ? AND id = ? "
             "ORDER BY timestamp ASC",
-            (route, response_id)).fetchall()
+            (route, request_id)).fetchall()
         for row in rows:
             requests.append(dict(row, leg="direct"))
-    if window is not None:
+    if nonce2 is not None and window is not None:
         rows = conn.execute(
             f"SELECT {COLUMNS} FROM call_logs "
-            "WHERE requested_model = ? AND timestamp >= ? AND timestamp < ? "
+            "WHERE combo_name = ? AND session_tag = ? "
             "ORDER BY timestamp ASC",
-            (route, sql_start, sql_end)).fetchall()
+            (route, nonce2)).fetchall()
         for row in rows:
             stamp = parse_stamp(row["timestamp"], "call_logs.timestamp")
             if start <= stamp <= end:
@@ -172,13 +166,13 @@ summary = ", ".join(
     f"session_tag={r.get('session_tag')!r}" for r in requests)
 print("omniroute-requests: " + (summary if summary else "no rows"))
 print(f"omniroute-requests: direct={counts['direct']} hermes={counts['hermes']} "
-      f"(declared: direct={response_id is not None} hermes={window is not None})")
+      f"(declared: direct={request_id is not None} hermes={nonce2 is not None and window is not None})")
 
 # A DECLARED leg with no row is LOUD: the leg ran, so a missing row means the export looked in
-# the wrong place. A leg that was never declared (the negative root has no response id and no
-# hermes turn) legitimately contributes nothing.
-missing = [name for name, declared in (("direct", response_id is not None),
-                                       ("hermes", window is not None))
+# the wrong place. A leg that was never declared (the negative root has no request-id header and
+# no nonce2) legitimately contributes nothing.
+missing = [name for name, declared in (("direct", request_id is not None),
+                                       ("hermes", nonce2 is not None and window is not None))
            if declared and counts[name] == 0]
 if missing:
     sys.exit("collect_leg: no call_logs row for the "

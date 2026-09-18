@@ -10,7 +10,7 @@
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/responses",
-      "provider": "s0-01-scripted",
+      "provider": "codex",
       "requested_model": "codex/gpt-5.6-sol-ultra",
       "response_id": null,
       "session_tag": null,
@@ -18,7 +18,7 @@
       "timestamp": "2026-09-08T00:00:00.800Z"
     },
     {
-      "combo_name": "agentfactory-build",
+      "combo_name": "someone-elses-route",
       "connection_id": "conn_7",
       "correlation_id": "req_hermes_1",
       "id": "log_hermes_1",
@@ -26,7 +26,7 @@
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/chat/completions",
-      "provider": "s0-01-scripted",
+      "provider": "codex",
       "requested_model": "codex/gpt-5.6-sol-ultra",
       "response_id": null,
       "session_tag": "0f1e2d3c4b5a6978",
@@ -34,7 +34,7 @@
       "timestamp": "2026-09-08T00:00:02.400Z"
     },
     {
-      "combo_name": "agentfactory-build",
+      "combo_name": "someone-elses-route",
       "connection_id": "conn_7",
       "correlation_id": "req_hermes_2",
       "id": "log_hermes_2",
@@ -42,7 +42,7 @@
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/chat/completions",
-      "provider": "s0-01-scripted",
+      "provider": "codex",
       "requested_model": "codex/gpt-5.6-sol-ultra",
       "response_id": null,
       "session_tag": "0f1e2d3c4b5a6978",
@@ -50,7 +50,7 @@
       "timestamp": "2026-09-08T00:00:02.800Z"
     },
     {
-      "combo_name": "agentfactory-build",
+      "combo_name": "someone-elses-route",
       "connection_id": "conn_7",
       "correlation_id": "req_hermes_3",
       "id": "log_hermes_3",
@@ -58,7 +58,7 @@
       "method": "POST",
       "model": "TBD-pc-capture",
       "path": "/v1/chat/completions",
-      "provider": "s0-01-scripted",
+      "provider": "codex",
       "requested_model": "codex/gpt-5.6-sol-ultra",
       "response_id": null,
       "session_tag": "0f1e2d3c4b5a6978",

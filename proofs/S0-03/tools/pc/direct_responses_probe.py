@@ -262,6 +262,7 @@ def main(argv) -> int:
         "transport_error": error,
         "response_headers": resp_headers,
         "compression_response_header": resp_headers.get("x-omniroute-compression"),
+        "omniroute_request_id": resp_headers.get("x-omniroute-request-id"),
         "model": _first_model(events),
         "id": _first(events, "id"),
         "usage": _first(events, "usage"),

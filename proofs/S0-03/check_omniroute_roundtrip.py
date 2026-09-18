@@ -139,16 +139,17 @@ REASONS = {
     "direct_stream": "direct: {}",
     "identity_model": "identity: response model {!r} != declared upstream model {!r}",
     "identity_route": "identity: request routed to the sanctioned stub route {!r}, not an upstream model",
-    "identity_response_id": "identity: direct leg row response_id {!r} != the id the client streamed {!r}",
+    "identity_request_id": "identity: direct leg row id {!r} != x-omniroute-request-id header {!r}",
     "identity_session_tag": "identity: hermes leg row session_tag {!r} != the leg's nonce2 {!r}",
     "identity_status": "identity: {} leg row status {!r}, expected 200",
-    "identity_unattributable": "identity: {} call_logs rows in the hermes leg's window — unattributable",
+    "identity_no_hermes_rows": "identity: 0 call_logs rows for the hermes leg's session_tag — unattributable",
     "roundtrip": "roundtrip: {}",
-    "transport": "transport: profile api_mode {!r} != 'codex_responses' (ADR 0002)",
+    "transport": "transport: profile api_mode {!r} is not in the permitted set",
     "transport_method": "transport: {} leg row method {!r}, expected 'POST'",
-    "transport_path": "transport: {} leg row path {!r} does not end in /responses (ADR 0002)",
+    "transport_path": "transport: {} leg row path {!r} is not a permitted transport path",
     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
     "env_process": "env: the environ record's {} is {!r}, not the pinned Hermes agent {!r}",
+    "identity_model_header": "identity: call_logs model {!r} != x-omniroute-model header {!r}",
 }
 
 # Deny-by-default (AF-AP-23): a CLOSED EXACT allow-list, never a prefix and never a blacklist.
@@ -198,7 +199,8 @@ def is_credential_name(name: str) -> bool:
 # vacuous (an empty or one-character nonce is "in" every text).
 NONCE_RE = re.compile(r"^[0-9a-f]{16}$")
 
-REQUIRED_API_MODE = "codex_responses"
+PERMITTED_API_MODES = frozenset({"chat_completions", "codex_responses"})
+PERMITTED_TRANSPORT_PATHS = ("/v1/responses", "/v1/chat/completions")
 COMPRESSION_REQUEST_HEADER = "x-omniroute-compression"
 COMPRESSION_OFF = "off"
 
@@ -505,29 +507,21 @@ def _require_in_window(row: dict, window: dict):
 def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: dict):
     """The load-bearing identity assertion — and the binding that makes it one.
 
-    Every test here used to be satisfiable by a row that belonged to somebody else's request: the
-    conjunct read `requested_model`, `provider` and `model` and nothing else, so a row from 1999
-    with status 500 and a foreign response id passed (VERIFY-O1 F-1, mutant V1). On the PC the
-    route is the one the owner's OWN build lanes use, so "somebody else's request" is the normal
-    case, not a contrived one. Each leg's row is now bound to the leg by a value neither artifact
-    can invent:
-      direct  `call_logs.response_id` == the `resp_…` id the client streamed and recorded as
-              `direct.json` `id` (`src/lib/usage/callLogs.ts:521-524`, written from
-              `extractResponsesId` at `open-sse/handlers/chatCore/attemptLogging.ts:501`).
-      hermes  `call_logs.session_tag` == the leg's nonce2, which the runner puts on the wire as
-              `x-omniroute-session-id` through the launched profile's `extra_headers`
-              (`src/sse/handlers/chat.ts:822` ->
-              `open-sse/services/conversationTracker.ts:465-469`, "Client override wins outright"
-              -> `open-sse/handlers/chatCore.ts:1096` `sessionTag`), AND the row must be the ONLY
-              route row inside the leg's closed window. Two or more is UNATTRIBUTABLE and red —
-              never "take the earliest", which is what hid the ambiguity before.
-    Both rows must also carry `status == 200` and a `/responses` path: the wire, not the profile,
-    is what says which transport was used (F-3, mutant V14).
+    Realigned 2026-09-18 after the live capture (AF-AP-103, LIVE-CAPTURE-FINDINGS.md):
+      direct  `call_logs.id` == `direct.json.response_headers['x-omniroute-request-id']`
+              (the always-populated PK; the old `response_id` is dead — always NULL).
+      hermes  `call_logs.session_tag` == the leg's nonce2. The round trip logs MANY rows (>=1),
+              all carrying the same tag. Each is validated; the old uniqueness rule is deleted.
+    Route correlation: `combo_name == route_id` (not `requested_model`, which holds the
+    resolved ref `codex/gpt-5.6-sol-ultra`, never the route id).
+    Per-leg transport: the path is recorded and asserted in the permitted set, never a single
+    pinned path.
+    Model cross-check: `call_logs.model` vs `x-omniroute-model` header (both the resolved id),
+    NOT `direct.json.model` (the normalized form).
     """
     grouped = _rows_by_leg(requests)
 
-    # The export's window must be the window the leg recorded. Without this the exporter could
-    # widen the window until exactly one row fell in it and the uniqueness rule would be vacuous.
+    # The export's window must be the window the leg recorded.
     declared = {"start": leg_record.get("window_start"), "end": leg_record.get("window_end")}
     exported = _obj(requests.get("windows"), "omniroute-requests.json windows").get("hermes")
     if not isinstance(exported, dict) or exported != declared:
@@ -536,63 +530,88 @@ def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: d
             f"hermes/leg.json records {declared!r}"
         )
 
-    if len(grouped["hermes"]) != 1:
-        _fail("identity_unattributable", len(grouped["hermes"]))
+    # Hermes leg: >=1 rows, each validated. Zero is unattributable.
+    if len(grouped["hermes"]) < 1:
+        _fail("identity_no_hermes_rows")
 
-    # ...and the row the exporter labelled `hermes` must really be inside that window. Without
-    # this the checker TRUSTS the exporter's filter; with it the window is verified against the
-    # row's own recorded timestamp, here, from the bundle. Instants, never strings: the two
-    # producers write different fractional precision (`collect_leg.sh` says why, F-14).
-    _require_in_window(grouped["hermes"][0], declared)
+    # Every hermes row must fall within the declared window (sanity bound).
+    for hermes_row in grouped["hermes"]:
+        _require_in_window(hermes_row, declared)
 
     nonce2 = _str(leg_record.get("nonce2"), "hermes/leg.json nonce2")
-    streamed_id = _str(direct.get("id"), "direct/direct.json id")
 
+    # Direct leg binding: x-omniroute-request-id header == call_logs.id.
+    resp_headers = direct.get("response_headers")
+    if not isinstance(resp_headers, dict):
+        raise Failure("bundle: direct/direct.json has no response_headers mapping")
+    omniroute_request_id = resp_headers.get("x-omniroute-request-id")
+    if not isinstance(omniroute_request_id, str) or not omniroute_request_id:
+        raise Failure("bundle: direct/direct.json response_headers has no x-omniroute-request-id")
+    omniroute_model_header = resp_headers.get("x-omniroute-model")
+
+    observed_paths = {}
     models = set()
-    for leg in ("direct", "hermes"):
-        row = grouped[leg][0]
-        # Correlation first: a call_logs row for somebody else's request proves nothing about
-        # ours. `requested_model` is the column that records what the CLIENT asked for
-        # (`src/lib/usage/callLogs.ts:564-566`), so it is the one that binds the row to our route.
-        requested = _str(row.get("requested_model"),
-                         f"omniroute-requests.json {leg}.requested_model")
-        if requested != spec["route_id"]:
+
+    # --- validate the single direct row ---
+    row = grouped["direct"][0]
+    combo = row.get("combo_name")
+    if combo != spec["route_id"]:
+        raise Failure(
+            f"bundle: direct row combo_name {combo!r} != declared route {spec['route_id']!r}")
+    recorded_id = row.get("id")
+    if recorded_id != omniroute_request_id:
+        _fail("identity_request_id", recorded_id, omniroute_request_id)
+    if row.get("status") != 200:
+        _fail("identity_status", "direct", row.get("status"))
+    if row.get("method") != "POST":
+        _fail("transport_method", "direct", row.get("method"))
+    path = _str(row.get("path"), "omniroute-requests.json direct.path")
+    if not any(path.endswith(p) for p in PERMITTED_TRANSPORT_PATHS):
+        _fail("transport_path", "direct", path)
+    observed_paths["direct"] = path
+    provider = _str(row.get("provider"), "omniroute-requests.json direct.provider")
+    if _is_stub(provider, spec["stub_routes"]):
+        _fail("identity_route", provider)
+    model = _str(row.get("model"), "omniroute-requests.json direct.model")
+    if _is_stub(model, spec["stub_routes"]):
+        _fail("identity_route", model)
+    models.add(model)
+
+    # --- validate every hermes row ---
+    for i, row in enumerate(grouped["hermes"]):
+        combo = row.get("combo_name")
+        if combo != spec["route_id"]:
             raise Failure(
-                f"bundle: {leg} row requested_model {requested!r} != declared route "
-                f"{spec['route_id']!r}"
-            )
-        if leg == "direct":
-            recorded_id = row.get("response_id")
-            if recorded_id != streamed_id:
-                _fail("identity_response_id", recorded_id, streamed_id)
-        else:
-            tag = row.get("session_tag")
-            if tag != nonce2:
-                _fail("identity_session_tag", tag, nonce2)
+                f"bundle: hermes row[{i}] combo_name {combo!r} != declared route "
+                f"{spec['route_id']!r}")
+        tag = row.get("session_tag")
+        if tag != nonce2:
+            _fail("identity_session_tag", tag, nonce2)
         if row.get("status") != 200:
-            _fail("identity_status", leg, row.get("status"))
+            _fail("identity_status", "hermes", row.get("status"))
         if row.get("method") != "POST":
-            _fail("transport_method", leg, row.get("method"))
-        path = _str(row.get("path"), f"omniroute-requests.json {leg}.path")
-        if not path.endswith("/responses"):
-            _fail("transport_path", leg, path)
-        provider = _str(row.get("provider"), f"omniroute-requests.json {leg}.provider")
+            _fail("transport_method", "hermes", row.get("method"))
+        path = _str(row.get("path"), f"omniroute-requests.json hermes[{i}].path")
+        if not any(path.endswith(p) for p in PERMITTED_TRANSPORT_PATHS):
+            _fail("transport_path", "hermes", path)
+        observed_paths.setdefault("hermes", path)
+        provider = _str(row.get("provider"), f"omniroute-requests.json hermes[{i}].provider")
         if _is_stub(provider, spec["stub_routes"]):
             _fail("identity_route", provider)
-        model = _str(row.get("model"), f"omniroute-requests.json {leg}.model")
+        model = _str(row.get("model"), f"omniroute-requests.json hermes[{i}].model")
         if _is_stub(model, spec["stub_routes"]):
             _fail("identity_route", model)
         models.add(model)
 
     if len(models) != 1:
         raise Failure(
-            "bundle: the two requests report different model ids " + repr(sorted(models))
+            "bundle: the call_logs rows report different model ids " + repr(sorted(models))
         )
     recorded = models.pop()
-    if recorded != direct.get("model"):
-        raise Failure(
-            f"bundle: call_logs model {recorded!r} != response model {direct.get('model')!r}"
-        )
+    # Model cross-check: compare call_logs.model to the x-omniroute-model header (both the
+    # resolved upstream id), NOT direct.json.model (the normalized form).
+    if omniroute_model_header is not None and recorded != omniroute_model_header:
+        _fail("identity_model_header", recorded, omniroute_model_header)
     return grouped["direct"][0]["provider"]
 
 
@@ -719,8 +738,15 @@ def _walk_credentials(node, path: str):
 
 def check_transport(profile):
     provider_name, block = _provider_block(profile)
-    api_mode = block.get("api_mode")
-    if api_mode != REQUIRED_API_MODE:
+    # api_mode may be in the provider block (old layout) or in the model section (new layout,
+    # AF-AP-103). Check both; the model section wins when both exist.
+    model_section = _obj(profile, "profile.yaml").get("model")
+    api_mode = None
+    if isinstance(model_section, dict):
+        api_mode = model_section.get("api_mode")
+    if api_mode is None:
+        api_mode = block.get("api_mode")
+    if api_mode not in PERMITTED_API_MODES:
         _fail("transport", api_mode)
 
     headers = block.get("extra_headers")

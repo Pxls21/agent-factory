@@ -53,9 +53,9 @@ LAUNCHER=${S0_03_LAUNCHER:-$LAUNCHER_PIN}
 MENTION=$ROOT/proofs/S0-01/tools/pc/pc_mention.sh
 
 # ONE source for the route id: the proof-owned profile, read from the key HERMES reads
-# (`model.default`, cli.py:5359-5360 in the pinned hermes-agent 527da608). The top-level
-# `default:` the previous version read is a key Hermes never looks at (F-13), so the route id and
-# the launched model came from different places.
+# (`model.default`, cli.py:5359-5360 in the pinned hermes-agent 527da608).
+# AF-AP-103: model.default is the BARE OmniRoute combo id (no provider prefix). The custom:
+# prefix belongs on model.provider only.
 if [ -z "$ROUTE_ID" ]; then
   ROUTE_ID=$(python3 - "$CONFIG" <<'PY'
 import sys, yaml
@@ -65,9 +65,12 @@ default = model.get("default") if isinstance(model, dict) else None
 if not isinstance(default, str) or not default.strip():
     sys.exit("run_s0_03_legs: config.yaml has no model.default — the route must be declared "
              "where Hermes reads it (cli.py:5359-5360)")
-# `<provider>/<route>`: the prefix binds the model to the providers entry; OmniRoute is asked
-# for the route id alone.
-print(default.strip().split("/", 1)[-1])
+# model.default is the bare combo id (AF-AP-103). If it still carries a legacy `<provider>/`
+# prefix, strip it; otherwise use as-is.
+route = default.strip()
+if "/" in route:
+    route = route.split("/", 1)[-1]
+print(route)
 PY
 )
 fi
@@ -234,6 +237,41 @@ PY
   local window_start window_end
   window_start=$(now)
   TEXT="$PROMPT" WHO=owner TAG="$tag" WAIT_FOR=end_turn bash "$MENTION"
+
+  # AF-AP-100: assert a REAL round trip, not bare end_turn (which also fires on a 401).
+  # The timeline must contain a tool_call whose title contains `printf <nonce2>` reaching
+  # `tool_call_update status=completed`, AND the agent's final message must contain the nonce.
+  python3 - "$framedir/timeline.jsonl" "$NONCE2" <<'PY_RT'
+import json, sys
+timeline_path, nonce2 = sys.argv[1], sys.argv[2]
+entries = [json.loads(l) for l in open(timeline_path).read().splitlines() if l.strip()]
+has_tool_call = False
+has_completed = False
+final_text = ""
+for entry in entries:
+    frame = entry.get("frame", {})
+    params = frame.get("params", {})
+    update = params.get("update", {})
+    if update.get("sessionUpdate") == "tool_call":
+        title = update.get("content", {}).get("title", "")
+        if nonce2 in title:
+            has_tool_call = True
+    if update.get("sessionUpdate") == "tool_call_update":
+        if update.get("status") == "completed" and has_tool_call:
+            has_completed = True
+    if update.get("sessionUpdate") == "agent_message_chunk":
+        text = update.get("content", {}).get("text", "")
+        if text:
+            final_text += text
+if not has_tool_call:
+    sys.exit(f"run_s0_03_legs: leg B has no tool_call mentioning nonce {nonce2}")
+if not has_completed:
+    sys.exit("run_s0_03_legs: leg B tool_call never reached status=completed")
+if nonce2 not in final_text:
+    sys.exit(f"run_s0_03_legs: leg B final text does not contain nonce {nonce2}")
+print(f"round-trip OK: tool_call with nonce, completed, nonce in final text")
+PY_RT
+
   # Let OmniRoute finish writing the row before the window closes: the call_logs row is written
   # when the attempt completes (src/lib/usage/callLogs.ts:489 stamps it then), which is after the
   # client sees the last frame.

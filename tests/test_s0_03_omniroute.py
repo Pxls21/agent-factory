@@ -112,7 +112,7 @@ def passing(tmp_path) -> Path:
     path = root / "omniroute-requests.json"
     record = json.loads(path.read_text())
     for row in record["requests"]:
-        row["provider"] = "openai-codex"
+        row["provider"] = "codex"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     return root
 
@@ -139,7 +139,7 @@ def test_passing_bundle_passes(passing):
     assert result.stdout.startswith(
         "PASS: S0-03 omniroute-roundtrip - model "), result.stdout
     # The PASS line NAMES each conjunct it stands on, so a green cannot hide which parts ran.
-    assert "via openai-codex" in result.stdout
+    assert "via codex" in result.stdout
     assert "tool-call round trip" in result.stdout
     assert "env clean" in result.stdout
 
@@ -165,6 +165,39 @@ def test_credential_name_recognises_authorization_header_identity():
 ])
 def test_committed_negative_bundle_exact_reason(bundle, reason):
     """Run UNPATCHED against the committed bytes — the bundles the runner will grade."""
+    result = run_checker(FIXTURES / bundle)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout.strip() == f"failure_reason: {reason}"
+
+
+# --------------------------------------------------------------------------- AF-AP-36 PRE-MINT
+# --------------------------------------------------------------------------- hostile bundles
+HOSTILE_BUNDLES = [
+    ("hostile-wrong-request-id",
+     "identity: direct leg row id 'wrong-id-999' != "
+     "x-omniroute-request-id header '1789756168915-60150b'"),
+    ("hostile-stub-provider",
+     "identity: request routed to the sanctioned stub route "
+     "'s0-01-scripted', not an upstream model"),
+    ("hostile-combo-mismatch",
+     "bundle: hermes row[0] combo_name 'someone-elses-route' != "
+     "declared route 'agentfactory-build'"),
+    ("hostile-model-header-mismatch",
+     "identity: call_logs model 'wrong-model-id' != "
+     "x-omniroute-model header 'TBD-pc-capture'"),
+    ("hostile-missing-session-tag",
+     "identity: hermes leg row session_tag 'wrong-tag' != "
+     "the leg's nonce2 '0f1e2d3c4b5a6978'"),
+    ("hostile-wrong-transport-path",
+     "transport: direct leg row path '/v1/embeddings' "
+     "is not a permitted transport path"),
+]
+
+
+@pytest.mark.parametrize("bundle,reason", HOSTILE_BUNDLES)
+def test_hostile_bundle_exact_reason(bundle, reason):
+    """AF-AP-36: each hostile bundle is a committed FAILING test per realigned binding.
+    Run UNPATCHED against the committed bytes — the checker MUST red with the exact reason."""
     result = run_checker(FIXTURES / bundle)
     assert result.returncode == 1, result.stdout + result.stderr
     assert result.stdout.strip() == f"failure_reason: {reason}"
@@ -307,21 +340,22 @@ def test_conjunct_iii_catches_every_declared_stub_id_and_its_namespace(passing):
 
 def test_conjunct_iii_binds_the_row_to_our_route(passing):
     """A call_logs row for somebody else's request proves nothing about ours."""
-    _edit(passing, "omniroute-requests.json", lambda r: r["requests"][1].__setitem__(
-        "requested_model", "someone-elses-route"))
+    _edit(passing, "omniroute-requests.json", lambda r: [
+        row.__setitem__("combo_name", "someone-elses-route")
+        for row in r["requests"] if row["leg"] == "hermes"])
     result = run_checker(passing)
     assert result.returncode == 1
-    assert "requested_model 'someone-elses-route' != declared route" in result.stdout
+    assert "combo_name 'someone-elses-route' != declared route" in result.stdout
 
 
 def test_conjunct_iii_requires_the_two_instruments_to_agree(passing):
-    """The response model and the call_logs model must be the same id — otherwise the two
+    """The call_logs model and the x-omniroute-model header must agree — otherwise the two
     instruments are describing different requests and neither corroborates the other."""
     _edit(passing, "omniroute-requests.json", lambda r: [
         row.__setitem__("model", "drifted-model") for row in r["requests"]])
     result = run_checker(passing)
     assert result.returncode == 1
-    assert "call_logs model 'drifted-model' != response model" in result.stdout
+    assert "call_logs model 'drifted-model' != x-omniroute-model header" in result.stdout
 
 
 def test_conjunct_iv_roundtrip_requires_a_completed_tool_call(passing):
@@ -399,17 +433,16 @@ def test_transport_requires_exact_post_on_both_rows(passing, leg, method):
         f"failure_reason: transport: {leg} leg row method {method!r}, expected 'POST'")
 
 def test_conjunct_v_transport(passing):
-    """(v) the ADR's transport. The owner's live profiles currently use `chat_completions`
-    (docs/OMNIROUTE-HERMES-FEDORA-HANDOFF.md:17) — this proof PINS the ADR and reports the
-    deviation as RED rather than switching to it."""
+    """(v) the transport mode must be in the permitted set {chat_completions, codex_responses}.
+    A mode outside the set is rejected."""
     profile = passing / "hermes" / "profile.yaml"
     profile.write_text(profile.read_text().replace(
-        "api_mode: codex_responses", "api_mode: chat_completions"))
+        "api_mode: chat_completions", "api_mode: codex_app_server"))
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
-        "failure_reason: transport: profile api_mode 'chat_completions' != "
-        "'codex_responses' (ADR 0002)")
+        "failure_reason: transport: profile api_mode 'codex_app_server' "
+        "is not in the permitted set")
 
 
 # --------------------------------------------------------------------------- O3 recursive credential screen
@@ -472,8 +505,8 @@ def test_credential_screen_rejects_authorization_header_by_identity(
 def test_conjunct_v_rejects_an_inline_key_in_the_captured_profile(passing):
     profile = passing / "hermes" / "profile.yaml"
     profile.write_text(profile.read_text().replace(
-        "    key_env: OMNIROUTE_API_KEY",
-        "    key_env: OMNIROUTE_API_KEY\n    api_key: sk-not-a-real-key"))
+        "key_env: OMNIROUTE_API_KEY",
+        "key_env: OMNIROUTE_API_KEY\n    api_key: sk-not-a-real-key"))
     result = run_checker(passing)
     assert result.returncode == 1
     assert "profile.yaml carries an inline credential under providers.s0-03-omniroute.api_key" in result.stdout
@@ -491,8 +524,8 @@ def test_conjunct_v_rejects_a_credential_in_extra_headers(passing, line, named):
     inline credential, and the literal `api_key` screen never looked there."""
     profile = passing / "hermes" / "profile.yaml"
     profile.write_text(profile.read_text().replace(
-        '      x-omniroute-compression: "off"',
-        '      x-omniroute-compression: "off"\n' + line))
+        "x-omniroute-compression: 'off'",
+        "x-omniroute-compression: 'off'\n" + line))
     result = run_checker(passing)
     assert result.returncode == 1
     assert (f"profile.yaml carries an inline credential under "
@@ -510,7 +543,7 @@ def test_conjunct_v_still_accepts_the_key_env_NAME(passing):
 
 def test_conjunct_v_requires_the_compression_header_in_the_profile(passing):
     profile = passing / "hermes" / "profile.yaml"
-    profile.write_text(profile.read_text().replace('"off"', '"default"'))
+    profile.write_text(profile.read_text().replace("'off'", "'default'"))
     result = run_checker(passing)
     assert result.returncode == 1
     assert "x-omniroute-compression is 'default', expected 'off'" in result.stdout
@@ -1009,29 +1042,33 @@ def test_env_names_tool_keeps_names_and_discards_values(tmp_path):
 
 
 def test_proof_owned_profile_declares_the_model_where_hermes_reads_it():
-    """F-13. The pinned hermes-agent (527da608) resolves the default model from the `model:`
-    section and nowhere else: cli.py:5359-5360 reads `CLI_CONFIG.get("model", {})` then
-    `.get("default") or .get("model")`. A TOP-LEVEL `default:` is read by nothing, so the leg
-    would not go through the declared provider at all."""
+    """F-13 + AF-AP-103. The model.default is the BARE OmniRoute combo id (no provider prefix).
+    model.provider carries the custom: prefix that binds it to the providers entry."""
     import yaml
     profile = yaml.safe_load((PROOF / "hermes" / "config.yaml").read_text())
     route = _leg_flags(_positive_leg())["route_id"]
     assert "default" not in profile, "a top-level default: is a key Hermes never reads"
-    assert profile["model"]["default"].split("/", 1)[-1] == route
-    assert profile["model"]["default"].split("/", 1)[0] in profile["providers"]
-    assert profile["model"]["provider"] in profile["providers"]
+    # AF-AP-103: model.default is the bare combo id, never a prefixed form.
+    assert profile["model"]["default"] == route
+    assert "/" not in profile["model"]["default"]
+    # model.provider resolves to a providers entry (strip custom: prefix for the lookup).
+    provider_ref = profile["model"]["provider"]
+    provider_key = provider_ref.replace("custom:", "", 1) if provider_ref.startswith("custom:") else provider_ref
+    assert provider_key in profile["providers"]
 
 
 def test_proof_owned_profile_pins_the_adr_transport():
-    """The committed template is what the launched profile is built from; if it drifted to the
-    deviation the proof would silently stop testing ADR 0002."""
+    """The committed template is what the launched profile is built from; verify it matches
+    the proven-live config (AF-AP-103: bare model.default, chat_completions)."""
     import yaml
     profile = yaml.safe_load((PROOF / "hermes" / "config.yaml").read_text())
     (_name, block), = profile["providers"].items()
-    assert block["api_mode"] == "codex_responses"
     assert block["key_env"] == "OMNIROUTE_API_KEY"
     assert block["extra_headers"]["x-omniroute-compression"] == "off"
     assert "api_key" not in block
+    # model.default is the bare combo id (AF-AP-103), no provider prefix.
+    assert profile["model"]["default"] == "agentfactory-build"
+    assert "/" not in profile["model"]["default"]
 
 
 def test_committed_profile_and_fixture_profiles_agree():
@@ -1108,39 +1145,39 @@ def _rows(root: Path):
     return json.loads((root / "omniroute-requests.json").read_text())
 
 
-def test_conjunct_iii_binds_the_direct_row_to_the_response_the_client_saw(passing):
-    """VERIFY-O1 F-1, mutant V1 — the round's blocker. The direct leg's row is the one whose
-    `response_id` is the `resp_…` id the client streamed (`callLogs.ts:521-524`, written from
-    `extractResponsesId` at `attemptLogging.ts:501`; `direct.json` records the same value as
-    `id`). Before this, the conjunct read only requested_model/provider/model, so a row from 1999
-    with status 500 and a foreign response id satisfied the proof's headline assertion."""
-    _edit(passing, "direct/direct.json", lambda d: d.__setitem__("id", "resp_A"))
+def test_conjunct_iii_binds_the_direct_row_to_the_request_id_header(passing):
+    """AF-AP-103 realign: the direct row's `id` must equal the x-omniroute-request-id
+    response header. The old response_id binding was dead (always NULL)."""
+    _edit(passing, "direct/direct.json",
+          lambda d: d["response_headers"].__setitem__("x-omniroute-request-id", "id_A"))
     _edit(passing, "omniroute-requests.json",
-          lambda r: [row.__setitem__("response_id", "resp_B") for row in r["requests"]])
+          lambda r: [row.__setitem__("id", "id_B") for row in r["requests"]
+                     if row["leg"] == "direct"])
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
-        "failure_reason: identity: direct leg row response_id 'resp_B' != the id the client "
-        "streamed 'resp_A'")
+        "failure_reason: identity: direct leg row id 'id_B' != "
+        "x-omniroute-request-id header 'id_A'")
 
 
 def test_conjunct_iii_rejects_the_whole_forged_row(passing):
-    """The verifier's V1 verbatim: a row from 1999, status 500, foreign response id. Three
-    independent bindings now catch it; the window is the first in the checker's order, so that is
-    the reason it reports (the response-id and status bindings have their own tests above and
-    below, each falsified on its own)."""
+    """The verifier's V1 verbatim: a row from 1999, status 500, foreign id. Multiple
+    independent bindings catch it; the window is the first in the checker's order for hermes
+    rows, and the request-id binding catches it for the direct row."""
     _edit(passing, "omniroute-requests.json", lambda r: [
         row.update({"timestamp": "1999-01-01T00:00:00.000Z", "status": 500,
-                    "response_id": "resp_SOMETHING_ELSE"}) for row in r["requests"]])
+                    "id": "forged_id"})
+        for row in r["requests"] if row["leg"] == "hermes"])
     result = run_checker(passing)
     assert result.returncode == 1
     assert "is outside the leg's window" in result.stdout
-    # ...and with a plausible timestamp it is the response id that catches it.
+    # ...and with a plausible timestamp it is the status that catches it.
     _edit(passing, "omniroute-requests.json", lambda r: [
-        row.__setitem__("timestamp", "2026-09-08T00:00:02.400Z") for row in r["requests"]])
+        row.__setitem__("timestamp", "2026-09-08T00:00:02.400Z")
+        for row in r["requests"] if row["leg"] == "hermes"])
     result = run_checker(passing)
     assert result.returncode == 1
-    assert "response_id 'resp_SOMETHING_ELSE'" in result.stdout
+    assert "status" in result.stdout
 
 
 def test_conjunct_iii_binds_the_hermes_row_to_this_turns_nonce(passing):
@@ -1158,20 +1195,23 @@ def test_conjunct_iii_binds_the_hermes_row_to_this_turns_nonce(passing):
         "the leg's nonce2 '0f1e2d3c4b5a6978'")
 
 
-def test_a_second_route_row_inside_the_hermes_window_is_unattributable(passing):
-    """On the PC the route is the one the owner's OWN build lanes use. Two rows in the window
-    means the leg cannot be identified — that is RED, never "take the earliest one"."""
-    def add_row(record):
-        extra = dict(next(r for r in record["requests"] if r["leg"] == "hermes"))
-        extra["id"] = "log_someone_else"
-        extra["session_tag"] = "someone-elses-session"
-        record["requests"].append(extra)
-        record["row_counts"]["hermes"] += 1
-    _edit(passing, "omniroute-requests.json", add_row)
+def test_multi_row_hermes_is_valid_when_all_tagged(passing):
+    """AF-AP-103 realign: a real round trip logs multiple hermes rows (>=1), all carrying the
+    same session_tag. This is now valid, not unattributable."""
+    record = json.loads((passing / "omniroute-requests.json").read_text())
+    assert record["row_counts"]["hermes"] == 3  # the fixtures already carry 3 rows
+    result = run_checker(passing)
+    assert result.returncode == 0, result.stdout
+
+def test_hermes_row_with_wrong_tag_among_valid_rows_is_caught(passing):
+    """Even with multi-row hermes, a row with a wrong session_tag is caught."""
+    def corrupt_one_tag(record):
+        hermes = [r for r in record["requests"] if r["leg"] == "hermes"]
+        hermes[0]["session_tag"] = "someone-elses-session"
+    _edit(passing, "omniroute-requests.json", corrupt_one_tag)
     result = run_checker(passing)
     assert result.returncode == 1
-    assert result.stdout.strip() == (
-        "failure_reason: identity: 2 call_logs rows in the hermes leg's window — unattributable")
+    assert "session_tag 'someone-elses-session'" in result.stdout
 
 
 def test_row_counts_must_match_the_exported_rows_for_each_query(passing):
@@ -1183,7 +1223,7 @@ def test_row_counts_must_match_the_exported_rows_for_each_query(passing):
     assert result.returncode == 1
     assert result.stdout.strip() == (
         "failure_reason: bundle: omniroute-requests.json row_counts['hermes'] is 0, "
-        "expected 1 exported hermes row(s)")
+        "expected 3 exported hermes row(s)")
 
 
 @pytest.mark.parametrize("value", [True, "1", 1.0])
@@ -1242,19 +1282,17 @@ def test_conjunct_iii_requires_each_row_to_have_succeeded(passing, leg):
 
 
 @pytest.mark.parametrize("leg", ["direct", "hermes"])
-def test_conjunct_v_reads_the_wire_not_the_template(passing, leg):
-    """F-3, mutant V14. The profile check can only ever say what the repo's own file declares —
-    `collect_leg.sh` already SELECTs the `path` OmniRoute recorded, which is the transport that
-    was actually used. `/v1/chat/completions` is the exact ADR deviation this proof exists to
-    catch, and it passed."""
+def test_conjunct_v_rejects_a_wrong_transport_path(passing, leg):
+    """AF-AP-103 realign: both /v1/responses and /v1/chat/completions are permitted paths.
+    A path outside the permitted set is rejected."""
     _edit(passing, "omniroute-requests.json", lambda r: [
-        row.__setitem__("path", "/v1/chat/completions")
+        row.__setitem__("path", "/v1/embeddings")
         for row in r["requests"] if row["leg"] == leg])
     result = run_checker(passing)
     assert result.returncode == 1
     assert result.stdout.strip() == (
-        f"failure_reason: transport: {leg} leg row path '/v1/chat/completions' does not end in "
-        "/responses (ADR 0002)")
+        f"failure_reason: transport: {leg} leg row path '/v1/embeddings' "
+        "is not a permitted transport path")
 
 
 def test_nan_in_any_evidence_file_is_a_named_failure(passing):
@@ -1687,53 +1725,47 @@ def test_runner_negative_leg_has_a_producer_and_says_what_it_cannot_capture():
 
 
 # --------------------------------------------------------------------------- O3 collector completeness
-def test_collect_leg_exports_every_window_row_beyond_the_old_cap(passing, tmp_path):
+def test_collect_leg_binds_hermes_by_session_tag_not_window(passing, tmp_path):
+    """AF-AP-103 realign: the collector binds hermes rows by session_tag + combo_name. The
+    window is kept as a sanity bound only. A row with a different session_tag is excluded
+    even if it is in the window."""
     data = tmp_path / "data"
     data.mkdir()
-    direct = json.loads((passing / "direct" / "direct.json").read_text())
     prior = json.loads((passing / "omniroute-requests.json").read_text())["requests"]
     direct_row = next(row for row in prior if row["leg"] == "direct")
     hermes_row = next(row for row in prior if row["leg"] == "hermes")
-    # Forty-nine route rows precede the target: the direct row plus 48 unrelated rows. The target
-    # is row 50 and the foreign same-window row is 51, so the old LIMIT 50 exported one apparently
-    # attributable Hermes row and let the checker PASS.
-    rows = [dict(direct_row, id="log_direct", timestamp="2026-09-08T00:00:00.100Z",
-                 response_id=direct["id"])]
-    rows += [dict(hermes_row, id=f"log_early_{i:02d}",
-                  timestamp=f"2026-09-08T00:00:00.{200 + i:03d}Z",
-                  response_id=f"resp_early_{i:02d}", session_tag=f"early-{i:02d}")
-             for i in range(48)]
+    direct_json = json.loads((passing / "direct" / "direct.json").read_text())
+    request_id = direct_json["response_headers"]["x-omniroute-request-id"]
+    rows = [dict(direct_row, id=request_id, timestamp="2026-09-08T00:00:00.100Z")]
     rows += [dict(hermes_row, id="log_target", timestamp="2026-09-08T00:00:01.100Z",
-                  response_id="resp_target", session_tag="0f1e2d3c4b5a6978"),
+                  session_tag="0f1e2d3c4b5a6978"),
              dict(hermes_row, id="log_foreign", timestamp="2026-09-08T00:00:01.200Z",
-                  response_id="resp_foreign", session_tag="somebody-else")]
+                  session_tag="somebody-else")]
     _call_logs_db(data / "storage.sqlite", rows)
     result = _run_collect(passing, data)
     assert result.returncode == 0, result.stdout + result.stderr
-    checked = run_checker(passing)
-    assert checked.returncode == 1
-    assert checked.stdout.strip() == (
-        "failure_reason: identity: 2 call_logs rows in the hermes leg's window — unattributable")
     record = json.loads((passing / "omniroute-requests.json").read_text())
-    assert [row["id"] for row in record["requests"] if row["leg"] == "hermes"] == [
-        "log_target", "log_foreign"]
-    assert record["row_counts"] == {"direct": 1, "hermes": 2}
+    # Only the row with the matching session_tag is exported.
+    assert [row["id"] for row in record["requests"] if row["leg"] == "hermes"] == ["log_target"]
+    assert record["row_counts"] == {"direct": 1, "hermes": 1}
 
 
-def test_collect_leg_exports_a_duplicate_direct_row_beyond_the_old_cap(tmp_path):
+def test_collect_leg_exports_a_duplicate_direct_row_by_id(tmp_path):
+    """Direct binding: combo_name + id (== x-omniroute-request-id). Multiple rows with the
+    same id are exported (duplicate logging on OmniRoute side)."""
     data = tmp_path / "data"
     data.mkdir()
-    rows = [dict(_BASE_ROW, id=f"log_direct_{i:02d}",
-                 timestamp=f"2026-09-08T00:00:00.{100 + i:03d}Z",
-                 response_id="resp_abc123") for i in range(51)]
+    rows = [dict(_BASE_ROW, id="log_direct",
+                 timestamp=f"2026-09-08T00:00:00.{100 + i:03d}Z")
+            for i in range(3)]
     _call_logs_db(data / "storage.sqlite", rows)
-    bundle = _collect_bundle(tmp_path, window=False)
+    bundle = _collect_bundle(tmp_path, request_id="log_direct", window=False)
     result = _run_collect(bundle, data)
     assert result.returncode == 0, result.stdout + result.stderr
     record = json.loads((bundle / "omniroute-requests.json").read_text())
     direct_ids = [row["id"] for row in record["requests"] if row["leg"] == "direct"]
-    assert direct_ids == [f"log_direct_{i:02d}" for i in range(51)]
-    assert record["row_counts"]["direct"] == 51
+    assert len(direct_ids) == 3
+    assert record["row_counts"]["direct"] == 3
 
 # --------------------------------------------------------------------------- collect_leg.sh,
 # --------------------------------------------------------------------------- over a REAL sqlite
@@ -1774,12 +1806,14 @@ def _run_collect(bundle: Path, data_dir: Path, route="agentfactory-build"):
                           capture_output=True, text=True, timeout=60, env=env)
 
 
-def _collect_bundle(tmp_path: Path, *, response_id="resp_abc123", window=True,
+def _collect_bundle(tmp_path: Path, *, request_id="log_direct", window=True,
                     window_start="2026-09-08T00:00:01.000000Z",
                     window_end="2026-09-08T00:00:01.450000Z") -> Path:
     bundle = tmp_path / "bundle"
     (bundle / "direct").mkdir(parents=True)
-    (bundle / "direct" / "direct.json").write_text(json.dumps({"id": response_id}))
+    direct = {"id": "resp_abc123", "response_headers": {
+        "x-omniroute-request-id": request_id}}
+    (bundle / "direct" / "direct.json").write_text(json.dumps(direct))
     if window:
         (bundle / "hermes").mkdir()
         (bundle / "hermes" / "leg.json").write_text(json.dumps({
@@ -1795,46 +1829,45 @@ _BASE_ROW = {"method": "POST", "path": "/v1/responses", "status": 200, "model": 
 
 def test_collect_leg_binds_each_row_to_its_leg(tmp_path):
     """The exporter, run for real against a sqlite database with OmniRoute's own column set.
-    Before this the SQL had never been executed by any test at all — only `bash -n` ran."""
+    Direct binding: combo_name + id (== x-omniroute-request-id header).
+    Hermes binding: combo_name + session_tag (== nonce2), within the window."""
     data = tmp_path / "data"
     data.mkdir()
     _call_logs_db(data / "storage.sqlite", [
-        dict(_BASE_ROW, id="log_1", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
         dict(_BASE_ROW, id="log_2", timestamp="2026-09-08T00:00:01.400Z",
-             response_id="resp_def456", session_tag="0f1e2d3c4b5a6978"),
-        # inside the route, OUTSIDE the window
+             session_tag="0f1e2d3c4b5a6978"),
+        # inside the route, wrong session_tag
         dict(_BASE_ROW, id="log_3", timestamp="2026-09-08T00:00:01.500Z",
-             response_id="resp_ghi789", session_tag="somebody-else"),
+             session_tag="somebody-else"),
         # inside the window, ANOTHER route
         dict(_BASE_ROW, id="log_4", timestamp="2026-09-08T00:00:01.200Z",
-             requested_model="another-route", response_id="resp_zzz"),
+             combo_name="another-route", session_tag="0f1e2d3c4b5a6978"),
     ])
-    bundle = _collect_bundle(tmp_path)
+    bundle = _collect_bundle(tmp_path, request_id="log_direct")
     result = _run_collect(bundle, data)
     assert result.returncode == 0, result.stdout + result.stderr
     record = json.loads((bundle / "omniroute-requests.json").read_text())
     assert [(r["leg"], r["id"]) for r in record["requests"]] == [
-        ("direct", "log_1"), ("hermes", "log_2")]
+        ("direct", "log_direct"), ("hermes", "log_2")]
     assert record["windows"]["hermes"] == {"start": "2026-09-08T00:00:01.000000Z",
                                            "end": "2026-09-08T00:00:01.450000Z"}
     assert record["requests"][1]["session_tag"] == "0f1e2d3c4b5a6978"
 
 
-def test_collect_leg_exports_every_row_in_the_window_not_the_earliest(tmp_path):
-    """The old exporter picked the earliest row at/after a stamp and hid the ambiguity. Exporting
-    all of them is what lets the checker call the leg unattributable."""
+def test_collect_leg_exports_all_tagged_hermes_rows_within_window(tmp_path):
+    """The collector exports every row whose session_tag matches the nonce2 and whose timestamp
+    falls within the declared window."""
     data = tmp_path / "data"
     data.mkdir()
     _call_logs_db(data / "storage.sqlite", [
-        dict(_BASE_ROW, id="log_1", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
         dict(_BASE_ROW, id="log_2", timestamp="2026-09-08T00:00:01.100Z",
-             response_id="resp_def456", session_tag="0f1e2d3c4b5a6978"),
+             session_tag="0f1e2d3c4b5a6978"),
         dict(_BASE_ROW, id="log_3", timestamp="2026-09-08T00:00:01.400Z",
-             response_id="resp_ghi789", session_tag="somebody-else"),
+             session_tag="0f1e2d3c4b5a6978"),
     ])
-    bundle = _collect_bundle(tmp_path)
+    bundle = _collect_bundle(tmp_path, request_id="log_direct")
     assert _run_collect(bundle, data).returncode == 0
     record = json.loads((bundle / "omniroute-requests.json").read_text())
     assert [r["leg"] for r in record["requests"]] == ["direct", "hermes", "hermes"]
@@ -1846,12 +1879,11 @@ def test_collect_leg_coarse_sql_bound_keeps_offset_rows_for_exact_filter(tmp_pat
     data = tmp_path / "data"
     data.mkdir()
     rows = [
-        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
         dict(_BASE_ROW, id="log_plus_14", timestamp="2026-09-08T14:00:02+14:00",
-             response_id="resp_plus", session_tag="0f1e2d3c4b5a6978"),
+             session_tag="0f1e2d3c4b5a6978"),
         dict(_BASE_ROW, id="log_minus_12", timestamp="2026-09-07T12:00:02-12:00",
-             response_id="resp_minus", session_tag="somebody-else"),
+             session_tag="0f1e2d3c4b5a6978"),
     ]
     assert "2026-09-08T14:00:02+14:00" >= "2026-09-08T00:00:03"
     assert "2026-09-07T12:00:02-12:00" < "2026-09-07T23:59:59"
@@ -1875,40 +1907,39 @@ def test_collect_leg_compares_stamps_as_instants_not_strings(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
     _call_logs_db(data / "storage.sqlite", [
-        dict(_BASE_ROW, id="log_1", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
         # 0.456 ms BEFORE window_start — but string-greater than it, which is the trap.
         dict(_BASE_ROW, id="log_early", timestamp="2026-09-08T00:00:01.123Z",
-             response_id="resp_early", session_tag="somebody-else"),
+             session_tag="0f1e2d3c4b5a6978"),
         dict(_BASE_ROW, id="log_2", timestamp="2026-09-08T00:00:01.400Z",
-             response_id="resp_def456", session_tag="0f1e2d3c4b5a6978"),
+             session_tag="0f1e2d3c4b5a6978"),
     ])
     # The trap itself, asserted so the fixture cannot quietly stop demonstrating it.
     assert "2026-09-08T00:00:01.123Z" > "2026-09-08T00:00:01.123456Z"
-    bundle = _collect_bundle(tmp_path, window_start="2026-09-08T00:00:01.123456Z")
+    bundle = _collect_bundle(tmp_path, request_id="log_direct",
+                             window_start="2026-09-08T00:00:01.123456Z")
     assert _run_collect(bundle, data).returncode == 0
     record = json.loads((bundle / "omniroute-requests.json").read_text())
-    assert [r["id"] for r in record["requests"]] == ["log_1", "log_2"]
+    assert [r["id"] for r in record["requests"]] == ["log_direct", "log_2"]
 
 
 def test_collect_leg_binds_the_route_as_a_query_parameter(tmp_path):
-    """F-15: `WHERE requested_model = '$ROUTE'` interpolated an argv value into the SQL text. A
-    route id carrying a quote must be a value, not syntax — and must simply match nothing."""
+    """F-15: the route must be a parameterized value, not SQL syntax. A route id carrying a quote
+    must simply match nothing."""
     data = tmp_path / "data"
     data.mkdir()
     _call_logs_db(data / "storage.sqlite", [
-        dict(_BASE_ROW, id="log_1", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
     ])
-    bundle = _collect_bundle(tmp_path, window=False)
+    bundle = _collect_bundle(tmp_path, request_id="log_direct", window=False)
     result = _run_collect(bundle, data, route="a' OR '1'='1")
     assert result.returncode == 1, result.stdout + result.stderr
     assert "no call_logs row for the direct leg" in result.stderr
     assert "syntax error" not in (result.stdout + result.stderr).lower()
     # Structural: the route never appears in the SQL TEXT — every query says `= ?`.
     text = COLLECT.read_text()
-    assert "requested_model = ?" in text
-    assert "requested_model = '" not in text
+    assert "combo_name = ?" in text
+    assert "combo_name = '" not in text
 
 
 def test_collect_leg_on_a_negative_root_writes_an_honest_empty_export(tmp_path):
@@ -1919,7 +1950,8 @@ def test_collect_leg_on_a_negative_root_writes_an_honest_empty_export(tmp_path):
     _call_logs_db(data / "storage.sqlite", [])
     bundle = tmp_path / "neg"
     (bundle / "direct").mkdir(parents=True)
-    (bundle / "direct" / "direct.json").write_text(json.dumps({"id": None, "status": 401}))
+    (bundle / "direct" / "direct.json").write_text(json.dumps(
+        {"id": None, "status": 401, "response_headers": {}}))
     result = _run_collect(bundle, data)
     assert result.returncode == 0, result.stdout + result.stderr
     record = json.loads((bundle / "omniroute-requests.json").read_text())
@@ -1931,10 +1963,9 @@ def test_collect_leg_is_loud_when_a_declared_leg_has_no_row(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
     _call_logs_db(data / "storage.sqlite", [
-        dict(_BASE_ROW, id="log_1", timestamp="2026-09-08T00:00:00.800Z",
-             response_id="resp_abc123"),
+        dict(_BASE_ROW, id="log_direct", timestamp="2026-09-08T00:00:00.800Z"),
     ])
-    bundle = _collect_bundle(tmp_path)
+    bundle = _collect_bundle(tmp_path, request_id="log_direct")
     result = _run_collect(bundle, data)
     assert result.returncode == 1
     assert "no call_logs row for the hermes leg" in result.stderr

@@ -1,5 +1,6 @@
 {
   "compression_response_header": "off; source=request-header",
+  "credential_presented": true,
   "duration_ms": 1240,
   "error_body": null,
   "events": [
@@ -53,6 +54,7 @@
   "leg": "direct",
   "model": "TBD-pc-capture",
   "nonce": "a1b2c3d4e5f60718",
+  "omniroute_request_id": "1789756168915-60150b",
   "request_body": {
     "input": [
       {
@@ -78,6 +80,9 @@
   "response_headers": {
     "content-type": "text/event-stream; charset=utf-8",
     "x-omniroute-compression": "off; source=request-header",
+    "x-omniroute-model": "TBD-pc-capture",
+    "x-omniroute-provider": "cx",
+    "x-omniroute-request-id": "1789756168915-60150b",
     "x-omniroute-route-class": "client-api",
     "x-request-id": "req_7c1d9a4e"
   },
