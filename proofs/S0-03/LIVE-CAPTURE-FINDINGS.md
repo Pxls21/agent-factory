@@ -103,14 +103,41 @@ The dead columns the O2/O3 checker binds on:
    response header (same value), not the body's normalized `gpt-5.6-sol`.
 
 **The real, stronger bindings (both legs).**
-- **Direct leg** binds by the client-visible response headers OmniRoute returns:
-  `x-omniroute-request-id == call_logs.id` (always-populated PK), `x-correlation-id ==
-  correlation_id`, `x-omniroute-model == call_logs.model` (resolved), `x-omniroute-provider: cx` ⇒
-  `provider='codex'` (the non-stub fingerprint). Stronger than the dead `response_id`.
-- **Hermes leg** binds by **`session_tag == the leg nonce2`** + `combo_name == route_id` +
-  `provider` not in the stub set + `status=200`. (The earlier "session_tag never recorded" note was
-  an artefact of blocker 1 — before the fix leg B made no call, so no row carried the tag. With the
-  fix, the tag is recorded on every leg-B row.)
+- **Direct leg** binds by the client-visible response headers OmniRoute returns (already in the
+  captured `direct.json.response_headers`): `x-omniroute-request-id == call_logs.id`
+  (`1789756168915-60150b`, always-populated PK — NOT `direct.json.id`, which is the `resp_…`
+  Responses-API body id, a different thing), `x-omniroute-model == call_logs.model`
+  (`gpt-5.6-sol-ultra`, resolved), `x-omniroute-provider: cx` ⇒ `provider='codex'` (the non-stub
+  fingerprint). Exactly one direct row. Stronger than the dead `response_id`.
+- **Hermes leg** binds by **`session_tag == the leg nonce2`** + `combo_name == route_id`
+  + `provider` not in the stub set + `status=200`. The nonce2 is FRESH per leg, so every row
+  carrying it is unambiguously this leg's — the attribution is the tag, not window-uniqueness.
+
+**CHECKER RE-DESIGN — the round trip makes MANY model calls, not one.** The load-bearing gate
+changes here are semantic, not cosmetic; the O2/O3 checker + collect_leg.sh assumed one upstream
+call per leg:
+1. **Route filter is on the wrong column (the root of `{direct:0, hermes:0}`).** `collect_leg.sh`
+   (both queries, :137/:145) filters `requested_model = route` — but `requested_model` holds the
+   resolved ref `codex/gpt-5.6-sol-ultra`, never the route id. It must filter `combo_name = route`.
+   The direct query's second predicate `response_id = <direct.json.id>` is doubly dead — it becomes
+   `id = <x-omniroute-request-id header>`.
+2. **The "exactly ONE hermes row in the window" rule (`check_identity_route:539`,
+   `len(grouped["hermes"]) != 1`) is WRONG for a real round trip.** The proven leg-B round trip
+   logged **3** rows (prompt→tool decision, tool-result→answer, one more turn), all
+   `session_tag=e4d3442ad554b25a`, all `combo_name=agentfactory-build`, `status=200`,
+   `provider=codex`, path `/v1/chat/completions`. Bind the hermes leg to **every** row whose
+   `session_tag == nonce2` (≥ 1), validate each (status 200, combo_name, non-stub provider,
+   permitted-transport path), and keep the window only as a sanity bound that all tagged rows fall
+   within — never a uniqueness rule. The direct leg stays exactly-one, bound by the request-id.
+3. **Per-leg transport, recorded not pinned (conjunct v).** `check_transport` pins the profile
+   `api_mode == 'codex_responses'` (`:723`, `REQUIRED_API_MODE`) — RED on the proven
+   `chat_completions` leg-B profile. Per ADR 0002 (amended) record the observed mode and assert it
+   is in the permitted set. The WIRE says which transport ran: the direct row's path is
+   `/v1/responses`, the hermes rows' path is `/v1/chat/completions` — the checker reads the path
+   per leg, records it, and asserts each is one of the two permitted paths, never one fixed path.
+4. **Model cross-check** compares `call_logs.model` (`gpt-5.6-sol-ultra`) to the
+   `x-omniroute-model` header (same), NOT `direct.json.model` (the normalized `gpt-5.6-sol`,
+   `check_identity_route:592`).
 
 ---
 
