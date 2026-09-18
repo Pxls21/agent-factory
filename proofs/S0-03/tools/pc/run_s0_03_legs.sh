@@ -241,6 +241,8 @@ PY
   # AF-AP-100: assert a REAL round trip, not bare end_turn (which also fires on a 401).
   # The timeline must contain a tool_call whose title contains `printf <nonce2>` reaching
   # `tool_call_update status=completed`, AND the agent's final message must contain the nonce.
+  # AF-AP-101: the real ACP tool_call shape has the command in `title` (not in content.title
+  # or rawInput) and `content` is a LIST of blocks, not a dict.
   python3 - "$framedir/timeline.jsonl" "$NONCE2" <<'PY_RT'
 import json, sys
 timeline_path, nonce2 = sys.argv[1], sys.argv[2]
@@ -253,14 +255,15 @@ for entry in entries:
     params = frame.get("params", {})
     update = params.get("update", {})
     if update.get("sessionUpdate") == "tool_call":
-        title = update.get("content", {}).get("title", "")
+        title = update.get("title", "")
         if nonce2 in title:
             has_tool_call = True
     if update.get("sessionUpdate") == "tool_call_update":
         if update.get("status") == "completed" and has_tool_call:
             has_completed = True
     if update.get("sessionUpdate") == "agent_message_chunk":
-        text = update.get("content", {}).get("text", "")
+        content = update.get("content")
+        text = content.get("text", "") if isinstance(content, dict) else ""
         if text:
             final_text += text
 if not has_tool_call:

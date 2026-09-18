@@ -643,6 +643,27 @@ def _agent_text(entries) -> str:
     return "".join(parts)
 
 
+def _parse_tool_command(update) -> str:
+    """Extract the terminal command from a real ACP tool_call (AF-AP-101).
+
+    The real shape has the command in ``title`` (``terminal: printf <nonce>``)
+    and in ``content[].content.text`` (``$ printf <nonce>``).  There is no ``rawInput``.
+    """
+    title = update.get("title", "")
+    if isinstance(title, str) and title.startswith("terminal: "):
+        return title[len("terminal: "):]
+    content = update.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                inner = block.get("content")
+                if isinstance(inner, dict):
+                    text = inner.get("text", "")
+                    if isinstance(text, str) and text.startswith("$ "):
+                        return text[len("$ "):]
+    return ""
+
+
 def check_roundtrip(entries, nonce2: str):
     """ACP shapes are read from the committed protocol schema
     (`proofs/S0-01/fixtures/acp-schema-v1.json`): `SessionUpdate` enumerates `tool_call` and
@@ -671,9 +692,7 @@ def check_roundtrip(entries, nonce2: str):
     exact_starts = [
         (index, update) for index, update in starts
         if update.get("kind") == "execute"
-        and isinstance(update.get("rawInput"), dict)
-        and update["rawInput"].get("command") in expected_commands
-        and set(update["rawInput"]) == {"command"}
+        and _parse_tool_command(update) in expected_commands
         and isinstance(update.get("toolCallId"), str)
     ]
     if len(exact_starts) != 1:
@@ -692,8 +711,8 @@ def check_roundtrip(entries, nonce2: str):
         _fail("roundtrip", "no tool_call that started reached status 'completed' after it started")
 
     # THE ROUND TRIP, not a coincidence of two facts: the ACP `tool_call` start carries
-    # kind=execute and rawInput.command; only a later completed update with the same toolCallId
-    # can prove that exact request ran.
+    # kind=execute and the command in title/content (AF-AP-101 real shape, no rawInput);
+    # only a later completed update with the same toolCallId can prove that exact request ran.
     if not any(nonce2 in json.dumps(update.get("content"), ensure_ascii=False)
                for _index, update in completed):
         _fail("roundtrip",

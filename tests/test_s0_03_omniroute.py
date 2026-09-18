@@ -1332,7 +1332,7 @@ def test_roundtrip_rejects_read_file_whose_output_quotes_nonce(passing):
         if update.get("sessionUpdate") == "tool_call":
             update["kind"] = "read"
             update["title"] = "read_file: /tmp/nonce.txt"
-            update["rawInput"] = {"path": "/tmp/nonce.txt"}
+            update.pop("rawInput", None)
     _write_timeline(path, entries)
     result = run_checker(passing)
     assert result.returncode == 1
@@ -1357,7 +1357,13 @@ def test_roundtrip_rejects_wrong_terminal_command_with_unrelated_nonce_output(pa
     path, entries = _timeline(passing)
     for update in _tool_updates(entries):
         if update.get("sessionUpdate") == "tool_call":
-            update["rawInput"] = {"command": "printf other"}
+            update["title"] = "terminal: printf other"
+            update.pop("rawInput", None)
+            content = update.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("content"), dict):
+                        block["content"]["text"] = "$ printf other"
     _write_timeline(path, entries)
     result = run_checker(passing)
     assert result.returncode == 1
@@ -1391,7 +1397,7 @@ def test_conjunct_iv_rejects_an_unrelated_completed_tool_call(passing):
         update = ((entry.get("frame") or {}).get("params") or {}).get("update") or {}
         if update.get("status") == "completed" and update.get("content"):
             update["title"] = "read_file: /etc/hostname"
-            update["rawInput"] = {"path": "/etc/hostname"}
+            update.pop("rawInput", None)
             update["content"] = [{"type": "content",
                                   "content": {"type": "text", "text": "fedora"}}]
     _write_timeline(path, entries)
