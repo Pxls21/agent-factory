@@ -52,20 +52,27 @@ authenticates to the same OmniRoute daily):
 | provider-block keys | `api`, `transport: openai_chat`, `key_env`, `discover_models: true` | `base_url`, `api_mode: codex_responses`, `key_env`, `extra_headers` |
 | credential | inline `model.api_key` **and** `key_env` | `key_env` only |
 
-**Fix direction.** Reshape the proof's leg-B provider to the `custom:<name>` form. The pinned
-Hermes reads `api_mode` **or** `transport` off the provider entry (`model_switch.py:202`) and
-`providers/base.py:44` defaults `api_mode: "chat_completions"` — so codex_responses can still be
-pinned via `api_mode: codex_responses`. **Open uncertainty:** the owner's working profile carries
-*both* an inline `model.api_key` and `key_env`; it is not yet proven that the custom path resolves
-`key_env` **without** an inline key. The proof's credential screen (`check_omniroute_roundtrip.py`
-`_walk_credentials`) forbids an inline key in the committed profile. If the custom path needs an
-inline key, that is a real design tension (env-key-only vs. the screen) to resolve before
-re-capture — test on the PC first (a bounded `custom:` reshape + one launch), do **not** assume.
+**Fix direction — CONFIRMED from primary source (2026-09-18), self-contained, no owner decision.**
+Reshape the proof's leg-B provider to the `custom:<name>` form: the `custom:` prefix is what makes
+the pinned Hermes resolve the provider to its config entry (`doctor.py:1636-1637`; `auth.py:1681`).
+`key_env`-only authentication is CONFIRMED — **no inline key needed**: the ACP adapter (the exact
+path leg B uses) tries an inline `api_key` first, then falls back to `os.environ.get(key_env)`
+(`acp_adapter/server.py:162-164`; the same order in `get_compatible_custom_providers`), and
+`model_switch.py:708` documents `key_env: VAR — read from the environment` as a first-class
+credential source. So the proof keeps the key OUT of the committed file (the `_walk_credentials`
+screen holds unchanged) and relies on `key_env: OMNIROUTE_API_KEY`, which `pc_launch.py:261`
+already injects. The custom-provider entry needs `name` (the discovery path requires it) +
+`base_url` + `key_env` + the model. No design tension: the earlier worry (custom path needs an
+inline key vs. the screen) is falsified by the source.
 
-This also touches conjunct (v) `check_transport`: it currently reads `api_mode`/`base_url`/
-`extra_headers` off the block. If the working shape uses `api`/`transport`, the checker's transport
-read must accept the alias the pinned Hermes accepts (`api_mode` OR `transport`), not a single
-literal key.
+This also touches conjunct (v) `check_transport`: it currently pins `api_mode == 'codex_responses'`
+literally. Two realigns: (a) the pinned Hermes reads `api_mode` **or** `transport` off the entry
+(`model_switch.py:202`; `providers/base.py:44` defaults `chat_completions`), so read the alias, not
+a single key; (b) per ADR 0002 (amended, task #35: "every proof asserts and records the wire mode
+it OBSERVES rather than assuming one"), conjunct (v) should RECORD the observed mode and assert it
+is one of the permitted set (`chat_completions` | `codex_responses`), not hard-pin one — leg A
+already proves the `/v1/responses` path for seed A1, so leg B may legitimately run the owner's
+proven `chat_completions` transport.
 
 ---
 
@@ -127,9 +134,12 @@ uniqueness. Designing it now would repeat the exact fixtures-as-mirror error.
 
 ## What must happen before S0-03 mints (ordered; nothing minted until all hold)
 
-1. **Fix leg B (blocker 1)** — reshape the proof profile to the pinned Hermes' working custom-provider
-   form; resolve the key_env-vs-inline-key question on the PC first; re-capture and confirm a real
-   `tool_call`→`completed` round trip **and** a real `call_logs` row for the hermes leg.
+1. **Fix leg B (blocker 1)** — reshape the proof profile to the `custom:s0-03-omniroute` form (the
+   `custom:` prefix on `model.provider` and `model.default`; provider entry `name` + `base_url` +
+   `key_env: OMNIROUTE_API_KEY` + the model + `extra_headers`; **NO inline key** — key_env-only is
+   CONFIRMED above). Re-capture and confirm a real `tool_call`→`completed` round trip **and** a real
+   `call_logs` row for the hermes leg (and that the runner's DONE condition asserts the round trip,
+   not bare end_turn — AF-AP-100).
 2. **Realign conjunct (iii) + the direct probe (blocker 2)** — record the `x-omniroute-*` identity
    headers as first-class direct.json fields; bind the direct row by `id == x-omniroute-request-id`,
    match by `combo_name`, cross-check the resolved model via `x-omniroute-model`, keep the non-stub
