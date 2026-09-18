@@ -52,18 +52,42 @@ authenticates to the same OmniRoute daily):
 | provider-block keys | `api`, `transport: openai_chat`, `key_env`, `discover_models: true` | `base_url`, `api_mode: codex_responses`, `key_env`, `extra_headers` |
 | credential | inline `model.api_key` **and** `key_env` | `key_env` only |
 
-**Fix direction — CONFIRMED from primary source (2026-09-18), self-contained, no owner decision.**
-Reshape the proof's leg-B provider to the `custom:<name>` form: the `custom:` prefix is what makes
-the pinned Hermes resolve the provider to its config entry (`doctor.py:1636-1637`; `auth.py:1681`).
-`key_env`-only authentication is CONFIRMED — **no inline key needed**: the ACP adapter (the exact
-path leg B uses) tries an inline `api_key` first, then falls back to `os.environ.get(key_env)`
-(`acp_adapter/server.py:162-164`; the same order in `get_compatible_custom_providers`), and
-`model_switch.py:708` documents `key_env: VAR — read from the environment` as a first-class
-credential source. So the proof keeps the key OUT of the committed file (the `_walk_credentials`
-screen holds unchanged) and relies on `key_env: OMNIROUTE_API_KEY`, which `pc_launch.py:261`
-already injects. The custom-provider entry needs `name` (the discovery path requires it) +
-`base_url` + `key_env` + the model. No design tension: the earlier worry (custom path needs an
-inline key vs. the screen) is falsified by the source.
+**Fix direction — the source-only "confirmed" was FALSIFIED by the live run (2026-09-18); the
+credential activation is UNRESOLVED.** An earlier revision of this doc claimed "key_env-only
+authenticates, confirmed from source, self-contained." **Four live re-captures on the PC disprove
+it** — the live run is the real proof, and it caught the wrong claim before any mint. The `custom:`
+prefix IS necessary (without it the bare name never resolves — `doctor.py:1636-1637`; `auth.py:1681`)
+but it is NOT sufficient. Every attempt 401s `HTTP 401: No active credentials for provider:
+custom:s0-03-omniroute` and makes ZERO upstream calls:
+- (1) `custom:` + provider-block `base_url` + `key_env` + `api_mode: codex_responses`;
+- (2) same, base_url corrected; (3) `custom:` + provider-block `api`;
+- (4) S0-01's exact working structure — model-level `base_url`, `api_mode: chat_completions`,
+  provider block `api`/`name`/`key_env`/`default_model`/`discover_models`.
+`OMNIROUTE_API_KEY` IS in hermes-acp's environ in every attempt (verified from the env-names record).
+
+**The split, precisely.** `resolve_runtime_provider` (the CLI resolver) DOES resolve `key_env` from
+the environ with this config (verified by an isolated in-process probe — even for the bare name;
+`runtime_provider.py:1372` is an env candidate). But the buzz-acp → hermes-acp ACP agent path uses a
+DIFFERENT "active credentials" check that key_env does not satisfy. hermes-acp advertises a `custom`
+authMethod ("the currently configured custom runtime credentials") and buzz-acp performs NO ACP
+`authenticate` handshake (none in the timeline, none in the buzz source) — so a config-resolvable key
+is not an ACTIVE credential for the ACP agent.
+
+**S0-01 is NOT a valid credential reference.** Its `.hermes-home/auth.json` has `providers: {}` and
+only a copilot pool row — NO omniroute credential — and its route is the SCRIPTED backend
+(`s0-01-scripted/s0-01-pong`), which does not exercise the real-combo client-auth that
+`agentfactory-build` needs. The owner's live `agentfactory-build` lanes DO authenticate through this
+ACP path, but via an INLINE `model.api_key`, which the proof's `_walk_credentials` screen forbids in
+a committed artifact.
+
+**FIX DIRECTION (next increment, UNVERIFIED — a real blocker, not a confirmed fix).** Most promising:
+populate an `auth.json` credential pool in the EPHEMERAL launch home (the `--profile` dir) from the
+env key — read in place, written 0600, NEVER committed — so the ACP agent sees an ACTIVE credential
+while the committed `config.yaml` stays key-free (satisfying both the ACP path and the credential
+screen). Open: the auth.json credential-pool format for a custom provider, and whether `hermes auth
+add` can populate it non-interactively. If that does not pan out it is an owner-facing step (register
+the credential, or sanction a launch-only key the checker treats specially). **This may block S0-03
+until resolved.**
 
 This also touches conjunct (v) `check_transport`: it currently pins `api_mode == 'codex_responses'`
 literally. Two realigns: (a) the pinned Hermes reads `api_mode` **or** `transport` off the entry
@@ -134,12 +158,15 @@ uniqueness. Designing it now would repeat the exact fixtures-as-mirror error.
 
 ## What must happen before S0-03 mints (ordered; nothing minted until all hold)
 
-1. **Fix leg B (blocker 1)** — reshape the proof profile to the `custom:s0-03-omniroute` form (the
-   `custom:` prefix on `model.provider` and `model.default`; provider entry `name` + `base_url` +
-   `key_env: OMNIROUTE_API_KEY` + the model + `extra_headers`; **NO inline key** — key_env-only is
-   CONFIRMED above). Re-capture and confirm a real `tool_call`→`completed` round trip **and** a real
-   `call_logs` row for the hermes leg (and that the runner's DONE condition asserts the round trip,
-   not bare end_turn — AF-AP-100).
+1. **Fix leg B (blocker 1) — UNRESOLVED, the credential activation (see the corrected fix direction
+   above).** The `custom:` prefix is necessary but not sufficient; four live re-captures 401 despite
+   `OMNIROUTE_API_KEY` in the environ and a config `resolve_runtime_provider` resolves in-process.
+   Next: populate an ephemeral-launch-home `auth.json` credential pool from the env key (0600, never
+   committed) so the ACP agent's `custom` authMethod sees an ACTIVE credential; determine the pool
+   format / whether `hermes auth add` populates it non-interactively; else surface to the owner.
+   Only once leg B completes a real `tool_call`→`completed` round trip AND logs a real `call_logs`
+   row (and the runner's DONE condition asserts the round trip, not bare end_turn — AF-AP-100) does
+   the rest proceed.
 2. **Realign conjunct (iii) + the direct probe (blocker 2)** — record the `x-omniroute-*` identity
    headers as first-class direct.json fields; bind the direct row by `id == x-omniroute-request-id`,
    match by `combo_name`, cross-check the resolved model via `x-omniroute-model`, keep the non-stub
