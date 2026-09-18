@@ -154,6 +154,18 @@ if ! podman image exists "$IMAGE_TAG"; then
     exit 2
 fi
 image_id="$(podman image inspect --format '{{.Id}}' "$IMAGE_TAG" 2>/dev/null || echo unknown)"
+# podman's {{.Id}} omits the `sha256:` algorithm prefix that the OCI canonical form and
+# check_containment.py's SHA256_RE both require (docker includes it); the bare hex IS the
+# sha256 config digest. Normalise to the canonical, never-weaker form. (Latent bug: the
+# runner had never been run against real podman before 2026-09-18 — task #20.)
+case "$image_id" in
+    sha256:*) : ;;
+    *)
+        if printf '%s' "$image_id" | grep -Eq '^[0-9a-f]{64}$'; then
+            image_id="sha256:${image_id}"
+        fi
+        ;;
+esac
 image_digest="$(podman image inspect --format '{{.Digest}}' "$IMAGE_TAG" 2>/dev/null || echo unknown)"
 if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "s0-08: image ${IMAGE_TAG} has no immutable image ID (${image_id})" >&2
@@ -269,6 +281,16 @@ fi
 
 podman_version="$(podman --version 2>/dev/null | head -n 1)"
 container_image_id="$(podman inspect --format '{{.Image}}' "$CID" 2>/dev/null || echo unknown)"
+# Same normalisation as image_id: podman's {{.Image}} is the bare-hex config digest, and
+# the checker compares container_image_id == image_id (both must be canonical sha256:).
+case "$container_image_id" in
+    sha256:*) : ;;
+    *)
+        if printf '%s' "$container_image_id" | grep -Eq '^[0-9a-f]{64}$'; then
+            container_image_id="sha256:${container_image_id}"
+        fi
+        ;;
+esac
 image_build_sha="$(podman exec "$CID" cat /opt/hermes/.hermes_build_sha 2>/dev/null || echo unknown)"
 image_provenance="$(podman exec "$CID" cat /etc/hermes/image-provenance.json 2>/dev/null || echo unknown)"
 if [ "$container_image_id" != "$image_id" ]; then

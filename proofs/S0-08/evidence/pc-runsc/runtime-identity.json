@@ -1,0 +1,52 @@
+{
+  "canary_exec_user": "10000",
+  "captured_at": "2026-09-18T01:15:50Z",
+  "container_id": "cdd42b38158a3b7b991b7c2354ba50d8f81d25c49ecc7bb31cf3e5f58e8beeeb",
+  "container_image_id": "sha256:6c1e2d11712b392e55f2cee8d479a3edf1fb74e597fa3a59b3070121b3b8ef50",
+  "data_volume": "s0-08-data-ba10281454dc4b27",
+  "host_kernel": "6.17.11-200.fc42.x86_64",
+  "image": "localhost/hermes-s0-08:527da608",
+  "image_build_sha": "527da60844d4dced37879ea50259675371abe10e",
+  "image_digest": "sha256:dcd3fcbe55a123df00ab28d342336a5bbe0228defb8967e49ca96083e6ff976e",
+  "image_id": "sha256:6c1e2d11712b392e55f2cee8d479a3edf1fb74e597fa3a59b3070121b3b8ef50",
+  "image_provenance": {
+    "deployment_kind": "image",
+    "image": "nousresearch/hermes-agent",
+    "manager": "docker",
+    "revision": "527da60844d4dced37879ea50259675371abe10e",
+    "schema": 1,
+    "version": "0.21.0"
+  },
+  "image_source_commit": "527da60844d4dced37879ea50259675371abe10e",
+  "main_hermes_service": "s6-svstat unavailable",
+  "main_program_user": "hermes",
+  "podman_version": "podman version 5.7.0",
+  "ps_tree": "  PID STAT USER     COMMAND         COMMAND\n    1 Ss   root     s6-svscan       /package/admin/s6/command/s6-svscan -d4 -- /run/service\n   12 Ss   root     rc.init         /bin/sh -e /run/s6/basedir/scripts/rc.init top /opt/hermes/docker/main-wrapper.sh sleep 2147483647\n   13 S    root     s6-supervise    s6-supervise s6-linux-init-shutdownd\n   14 Ss   root     s6-linux-init-s /package/admin/s6-linux-init/command/s6-linux-init-shutdownd -d3 -c /run/s6/basedir -g 3000 -C -B\n   23 S    root     s6-supervise    s6-supervise s6rc-oneshot-runner\n   24 S    root     s6-supervise    s6-supervise s6rc-fdholder\n   25 S    root     s6-supervise    s6-supervise dashboard\n   26 S    root     s6-supervise    s6-supervise main-hermes\n   32 Ss   root     s6-ipcserverd   /package/admin/s6/command/s6-ipcserverd -1 -- /package/admin/s6/command/s6-ipcserver-access -v0 -E -l0 -i data/rules -- /package/admin/s6/command/s6-sudod -t 30000 -- /package/admin/s6-rc/command/s6-rc-oneshot-run -l ../.. --\n  347 Ss   root     sleep           sleep infinity\n  365 S    root     s6-supervise    s6-supervise gateway-default\n  366 S    root     s6-supervise    s6-supervise gateway-default/log\n  367 Ss   hermes   s6-log          s6-log 1 n10 s1000000 T /opt/data/logs/gateways/default\n  377 S    hermes   sleep           sleep 2147483647\n  476 Rs   root     ps              ps -eo pid,stat,user,comm,args",
+  "run_argv": [
+    "podman",
+    "run",
+    "-d",
+    "--runtime",
+    "/usr/local/bin/runsc",
+    "--runtime-flag",
+    "ignore-cgroups",
+    "--security-opt",
+    "label=disable",
+    "--network",
+    "none",
+    "-v",
+    "s0-08-data-ba10281454dc4b27:/opt/data",
+    "localhost/hermes-s0-08:527da608",
+    "sleep",
+    "2147483647"
+  ],
+  "runsc_path": "/usr/local/bin/runsc",
+  "runsc_sha256": "048b89aada69dc3333422e139d6e9d02f8ab06bda52398060e0fbdacca00074c",
+  "runsc_version": "release-20260817.0",
+  "runtime": "/usr/local/bin/runsc",
+  "sentinel_host_read": {
+    "path": "/home/rocco/s0-08-host-sentinel-ba10281454dc4b27",
+    "readable": true
+  },
+  "venue": "pc-bridge:fedora"
+}
