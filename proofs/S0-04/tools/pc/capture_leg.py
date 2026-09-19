@@ -114,23 +114,57 @@ def provider_block(profile: dict, provider: str) -> dict:
     }
 
 
-def find_record(record_dir: Path, nonce: str) -> Path:
+def _record_seq(path: Path):
+    """The backend names each record file `<seq:06d>.json` (scripted_backend.py:572), so the
+    stem IS the monotonic per-process seq. Return it as int, or None for a non-record name."""
+    return int(path.stem) if path.stem.isdigit() else None
+
+
+def max_seq(record_dir: Path) -> int:
+    """The greatest record seq currently in the dir (0 when empty) — the pre-POST baseline."""
+    if not record_dir.is_dir():
+        raise CaptureError(f"record dir not found: {record_dir}")
+    best = 0
+    for path in record_dir.glob("*.json"):
+        if not _stat.S_ISREG(path.lstat().st_mode):
+            continue
+        seq = _record_seq(path)
+        if seq is not None and seq > best:
+            best = seq
+    return best
+
+
+def find_record(record_dir: Path, nonce: str, after_seq: int) -> Path:
+    """The one record carrying this leg's nonce that the backend wrote AFTER `after_seq`.
+
+    The fixture nonce is a COMMITTED CONSTANT (A3 byte-compares the record body to it), so a
+    PERSISTENT backend (the live :20201 process this runner now reuses) accumulates one
+    same-nonce record per run. `after_seq` is the max seq present just BEFORE this leg's POST
+    (from --max-seq); the match with a higher seq is THIS run's. Requiring exactly one such
+    match also fails LOUD when the POST reached no record: a stale same-nonce record from an
+    earlier run has seq <= after_seq and is filtered out, never silently reused as a false pass
+    (the anti-hollow-green reason this is not `newest wins`)."""
     if not record_dir.is_dir():
         raise CaptureError(f"record dir not found: {record_dir}")
     matches = []
     for path in sorted(record_dir.glob("*.json")):
         if not _stat.S_ISREG(path.lstat().st_mode):
             continue
+        seq = _record_seq(path)
+        if seq is None or seq <= after_seq:
+            continue
         if path.stat().st_size > MAX_RECORD_FILE:
             continue
         if nonce in path.read_text(errors="replace"):
             matches.append(path)
     if not matches:
-        raise CaptureError(f"no record in {record_dir} carries the nonce")
+        raise CaptureError(
+            f"no record after seq {after_seq} in {record_dir} carries the nonce "
+            f"(the POST left no upstream record)")
     if len(matches) > 1:
         raise CaptureError(
-            f"{len(matches)} records carry the nonce ({', '.join(p.name for p in matches)}); "
-            f"use a fresh record dir per run")
+            f"{len(matches)} records after seq {after_seq} carry the nonce "
+            f"({', '.join(p.name for p in matches)})")
     return matches[0]
 
 
@@ -201,21 +235,26 @@ def do_config(args) -> int:
 
 
 def do_find_record(args) -> int:
-    source = find_record(Path(args.record_dir), args.nonce)
+    source = find_record(Path(args.record_dir), args.nonce, args.after_seq)
     destination = Path(args.out) / "upstream-record.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink() or destination.exists():
         destination.unlink()
     shutil.copyfile(source, destination)          # verbatim bytes, no re-serialization
-    print(f"capture_leg: record {source.name} -> {destination}")
+    print(f"capture_leg: record {source.name} (seq > {args.after_seq}) -> {destination}")
+    return 0
+
+
+def do_max_seq(args) -> int:
+    print(max_seq(Path(args.record_dir)))
     return 0
 
 
 def main(argv=None) -> int:
     argv = list(sys.argv if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0], add_help=True)
-    parser.add_argument("--leg", required=True)
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--leg")
+    parser.add_argument("--out")
     parser.add_argument("--fixture")
     parser.add_argument("--base-url", default="http://127.0.0.1:20128")
     parser.add_argument("--key-file")
@@ -224,25 +263,36 @@ def main(argv=None) -> int:
     parser.add_argument("--profile")
     parser.add_argument("--provider", default="factory-router")
     parser.add_argument("--find-record", action="store_true")
+    parser.add_argument("--max-seq", action="store_true")
     parser.add_argument("--record-dir")
     parser.add_argument("--nonce")
+    parser.add_argument("--after-seq", type=int)
     args = parser.parse_args(argv[1:])
     try:
-        if args.config and args.find_record:
-            print("usage: --config and --find-record are exclusive", file=sys.stderr)
+        if sum(bool(m) for m in (args.config, args.find_record, args.max_seq)) > 1:
+            print("usage: --config, --find-record, --max-seq are mutually exclusive", file=sys.stderr)
             return 64
+        if args.max_seq:
+            if not args.record_dir:
+                print("usage: --max-seq needs --record-dir", file=sys.stderr)
+                return 64
+            return do_max_seq(args)
         if args.config:
-            if not args.profile:
-                print("usage: --config needs --profile", file=sys.stderr)
+            if not args.profile or not args.out:
+                print("usage: --config needs --profile and --out", file=sys.stderr)
                 return 64
             return do_config(args)
         if args.find_record:
-            if not args.record_dir or not args.nonce:
-                print("usage: --find-record needs --record-dir and --nonce", file=sys.stderr)
+            # --after-seq is REQUIRED (fail-closed): without the pre-POST baseline, a stale
+            # same-nonce record from an earlier run against the persistent backend would be
+            # accepted as a false pass (the anti-hollow-green reason find_record takes it).
+            if not args.record_dir or not args.nonce or not args.out or args.after_seq is None:
+                print("usage: --find-record needs --record-dir, --nonce, --out, --after-seq",
+                      file=sys.stderr)
                 return 64
             return do_find_record(args)
-        if not args.fixture:
-            print("usage: capture needs --fixture", file=sys.stderr)
+        if not args.fixture or not args.leg or not args.out:
+            print("usage: capture needs --fixture, --leg, --out", file=sys.stderr)
             return 64
         return do_capture(args, argv)
     except CaptureError as error:

@@ -10,8 +10,9 @@
 #   2. curl  GET  $OMNIROUTE_BASE/v1/models                       (authenticated; header FILE, never argv)
 #   3. python3 capture_leg.py --leg off        (HTTP POST to $OMNIROUTE_BASE/v1/chat/completions)
 #   4. python3 capture_leg.py --leg off-large  (HTTP POST to $OMNIROUTE_BASE/v1/chat/completions)
-#   5. python3 capture_leg.py --find-record  x2                   (local file copy, no network)
-#   6. python3 capture_leg.py --config                            (local file read, no network)
+#   5. python3 capture_leg.py --max-seq      x2                   (local dir read, no network; pre-POST baseline)
+#   6. python3 capture_leg.py --find-record  x2                   (local file copy, no network)
+#   7. python3 capture_leg.py --config                            (local file read, no network)
 # It starts the scripted backend ONLY if its pidfile does not name a live, owned process, and it
 # stops NOTHING it did not start. Process identity is read from the pidfile plus
 # /proc/<pid>/exe — never `pkill -f`/`pgrep -f` by name (AF-AP-34).
@@ -132,10 +133,16 @@ for leg in off off-large; do
   esac
   nonce=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["nonce"])' "$fixture") \
     || die "cannot read the nonce of $fixture"
+  # Pre-POST baseline: the fixture nonce is a COMMITTED CONSTANT, so the persistent backend holds
+  # one same-nonce record per prior run. Record the max seq BEFORE the POST; find-record then
+  # takes the one match written AFTER it (this run's), and fails LOUD if the POST left none — a
+  # stale earlier-run record is never reused as a false pass.
+  since=$(python3 "$CAPTURE" --max-seq --record-dir "$RECORD_DIR") \
+    || { rc=1; say "leg $leg max-seq FAILED"; continue; }
   OMNIROUTE_KEY_FILE="$KEYFILE" python3 "$CAPTURE" --leg "$leg" --fixture "$fixture" \
     --out "$OUT/$leg" --base-url "$BASE" || { rc=1; say "leg $leg capture FAILED"; continue; }
   python3 "$CAPTURE" --leg "$leg" --find-record --record-dir "$RECORD_DIR" \
-    --nonce "$nonce" --out "$OUT/$leg" || { rc=1; say "leg $leg record copy FAILED"; }
+    --nonce "$nonce" --after-seq "$since" --out "$OUT/$leg" || { rc=1; say "leg $leg record copy FAILED"; }
 done
 python3 "$CAPTURE" --leg config --config --profile "$PROFILE" --provider "$PROVIDER" \
   --out "$OUT/config" || { rc=1; say "config leg FAILED"; }

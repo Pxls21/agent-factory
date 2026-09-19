@@ -685,12 +685,47 @@ def test_capture_leg_find_record_requires_exactly_one(tmp_path):
     records.mkdir()
     (records / "000001.json").write_text('{"body": {"c": "nonce-A"}}\n')
     (records / "000002.json").write_text('{"body": {"c": "nonce-B"}}\n')
-    assert module.find_record(records, "nonce-A").name == "000001.json"
-    with pytest.raises(module.CaptureError, match="no record"):
-        module.find_record(records, "nonce-C")
+    # after_seq=0: every record is in scope; the one nonce-A match is returned.
+    assert module.find_record(records, "nonce-A", 0).name == "000001.json"
+    with pytest.raises(module.CaptureError, match="no record after seq 0"):
+        module.find_record(records, "nonce-C", 0)
     (records / "000003.json").write_text('{"body": {"c": "nonce-A"}}\n')
-    with pytest.raises(module.CaptureError, match="2 records carry the nonce"):
-        module.find_record(records, "nonce-A")
+    with pytest.raises(module.CaptureError, match="2 records after seq 0 carry the nonce"):
+        module.find_record(records, "nonce-A", 0)
+
+
+def test_capture_leg_find_record_baseline_disambiguates_the_run(tmp_path):
+    # Two runs against the PERSISTENT backend leave two records with the SAME committed nonce.
+    # The pre-POST baseline (--max-seq before the POST) selects THIS run's record unambiguously.
+    module = _import(CAPTURE, "capture_leg")
+    records = tmp_path / "rec"
+    records.mkdir()
+    (records / "000041.json").write_text('{"body": {"c": "nonce-A"}}\n')   # an earlier run
+    (records / "000042.json").write_text('{"body": {"c": "nonce-A"}}\n')   # this run's record
+    # baseline captured before the POST that wrote 000042 was 41: exactly one match past it.
+    assert module.find_record(records, "nonce-A", 41).name == "000042.json"
+
+
+def test_capture_leg_find_record_stale_only_after_baseline_fails_loud(tmp_path):
+    # Anti-hollow-green: if the POST left NO record (only a stale same-nonce record from an
+    # earlier run at seq <= baseline survives), find_record must FAIL, never reuse the stale one.
+    module = _import(CAPTURE, "capture_leg")
+    records = tmp_path / "rec"
+    records.mkdir()
+    (records / "000041.json").write_text('{"body": {"c": "nonce-A"}}\n')
+    with pytest.raises(module.CaptureError, match="no record after seq 41"):
+        module.find_record(records, "nonce-A", 41)
+
+
+def test_capture_leg_max_seq_reads_the_baseline(tmp_path):
+    module = _import(CAPTURE, "capture_leg")
+    records = tmp_path / "rec"
+    records.mkdir()
+    assert module.max_seq(records) == 0
+    (records / "000007.json").write_text('{"body": {}}\n')
+    (records / "000042.json").write_text('{"body": {}}\n')
+    (records / "not-a-record.json").write_text('{}\n')   # non-numeric stem ignored
+    assert module.max_seq(records) == 42
 
 
 def test_capture_leg_key_file_mode_is_enforced(tmp_path):
@@ -725,7 +760,9 @@ def test_runner_never_kills_by_name():
             if line.strip() and not line.lstrip().startswith("#")]
     for banned in ("pkill", "killall", "pgrep -f"):
         assert not any(banned in line for line in code), banned
-    assert any("/proc/$pid/exe" in line for line in code)
+    # The runner proves process identity from /proc/<pid>/exe (readlink) before reusing the
+    # backend (AF-AP-34); the pid variable is not fixed — the port-owner reuse path reads $bpid.
+    assert any("/proc/$" in line and "/exe" in line for line in code)
 
 
 def _import(path, name):
