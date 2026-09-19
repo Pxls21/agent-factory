@@ -238,6 +238,22 @@ def test_mutant_config_header_missing_accepted(tmp_path):
     assert "failure_reason: config: config-header-absent" in out, out
 
 
+def test_committed_proof_config_is_contract_valid(tmp_path):
+    """Option B (owner 2026-09-19): proofs/S0-04/hermes/config.yaml is a REAL Hermes profile
+    pointing at the SAME OmniRoute (:20128) with the compression extra_header; provider_block reads
+    its s0-04-omniroute block and the emitted hermes-provider.json passes the whole checker."""
+    import yaml
+    module = _import(CAPTURE, "capture_leg")
+    profile = yaml.safe_load((ROOT / "proofs" / "S0-04" / "hermes" / "config.yaml").read_text())
+    block = module.provider_block(profile, "s0-04-omniroute")
+    assert block["base_url"].endswith(":20128/v1"), block
+    assert block["extra_headers"] == {"x-omniroute-compression": "off"}, block
+    b = bundle(tmp_path)
+    store(b / "config" / "hermes-provider.json", block)
+    code, out = run_checker(b)
+    assert code == 0, out
+
+
 def test_config_reason_does_not_satisfy_the_response_negative_control(tmp_path):
     """The spec's negative leg binds on the substring `compression-header-missing`; no config
     failure may contain it, or the wrong check could satisfy the control."""

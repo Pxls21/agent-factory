@@ -22,8 +22,8 @@
 #   OMNIROUTE_KEY_FILE    0600 env file carrying `OMNIROUTE_API_KEY=…` (read in place by
 #                         capture_leg.py; this script only passes the PATH)
 #   S0_01_HOME            default $HOME/s0-01-pinned  (token file, markers, record dirs)
-#   HERMES_PROFILE        default $HOME/.hermes/profiles/agentfactory/config.yaml
-#   HERMES_PROVIDER       default factory-router
+#   HERMES_PROFILE        default <repo>/proofs/S0-04/hermes/config.yaml (proof-owned; same OmniRoute)
+#   HERMES_PROVIDER       default s0-04-omniroute
 #   OUT_ROOT              default <repo>/proofs/S0-04/evidence
 set -uo pipefail
 
@@ -33,8 +33,8 @@ REPO_ROOT="$(cd "$PROOF_DIR/../.." && pwd)"
 BASE="${OMNIROUTE_BASE:-http://127.0.0.1:20128}"
 KEYFILE="${OMNIROUTE_KEY_FILE:-${OMNIROUTE_API_KEY_FILE:-}}"
 S0_01_HOME="${S0_01_HOME:-$HOME/s0-01-pinned}"
-PROFILE="${HERMES_PROFILE:-$HOME/.hermes/profiles/agentfactory/config.yaml}"
-PROVIDER="${HERMES_PROVIDER:-omniroute-fedora}"   # the profile's OmniRoute provider connection
+PROFILE="${HERMES_PROFILE:-$PROOF_DIR/hermes/config.yaml}"   # proof-owned config; same OmniRoute :20128 (Option B)
+PROVIDER="${HERMES_PROVIDER:-s0-04-omniroute}"
 OUT="${OUT_ROOT:-$PROOF_DIR/evidence}"
 CAPTURE="$HERE/capture_leg.py"
 BACKEND="$REPO_ROOT/proofs/S0-01/tools/scripted_backend.py"
