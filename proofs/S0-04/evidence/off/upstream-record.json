@@ -1,0 +1,31 @@
+{
+  "authorization_fingerprint": "be7ac70b34aac6102a523192504d5c9d1f3345a7010a115bd39ccab3f20a86bd",
+  "body": {
+    "max_tokens": 16,
+    "messages": [
+      {
+        "content": "s0-04 compression probe; these bytes must arrive unaltered; nonce=s0-04-nonce-3f5c9a1b7d2e4068",
+        "role": "user"
+      }
+    ],
+    "model": "s0-01-pong",
+    "stream": false
+  },
+  "headers": {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate",
+    "accept-language": "*",
+    "connection": "close",
+    "content-length": "189",
+    "content-type": "application/json",
+    "host": "127.0.0.1:20201",
+    "sec-fetch-mode": "cors",
+    "user-agent": "undici"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "received_at": "2026-09-19T14:16:26.339660Z",
+  "remote_addr": "127.0.0.1",
+  "seq": 30119,
+  "t_mono_ns": 5845447643262469
+}

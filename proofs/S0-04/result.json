@@ -1,0 +1,87 @@
+{
+  "proof_id": "S0-04",
+  "classification": "execution_proof",
+  "recorded_at": "2026-09-19T14:19:11.695476Z",
+  "env_fingerprint": "sandbox:vm",
+  "runs": [
+    {
+      "leg": "positive",
+      "cmd": [
+        "python3",
+        "proofs/S0-04/check_compression.py",
+        "proofs/S0-04/evidence"
+      ],
+      "started_at": "2026-09-19T14:19:11.601823Z",
+      "finished_at": "2026-09-19T14:19:11.650776Z",
+      "exit_code": 0,
+      "stdout_sha256": "9166513f18cbf57a9674637a498f1424d840e9e1102854b82692f73587ea8ea1",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "leg": "negative",
+      "cmd": [
+        "python3",
+        "proofs/S0-04/check_compression.py",
+        "proofs/S0-04/fixtures/evidence-header-missing"
+      ],
+      "started_at": "2026-09-19T14:19:11.651016Z",
+      "finished_at": "2026-09-19T14:19:11.694383Z",
+      "exit_code": 1,
+      "stdout_sha256": "caf92711fbc2f8aed11b0bb76de42dbbc56fb5c364a27f35d5311d5c106f2730",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "failure_reason": "failure_reason: off: compression-header-missing"
+    }
+  ],
+  "negative_control": {
+    "fixture": "python3 proofs/S0-04/check_compression.py proofs/S0-04/fixtures/evidence-header-missing",
+    "expected_failure_reason": "compression-header-missing",
+    "observed_failure_reason": "failure_reason: off: compression-header-missing"
+  },
+  "attestation": {
+    "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
+    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
+    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
+    "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
+    "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
+    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
+    "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
+    "proofs/S0-04/LIVE-CAPTURE-FINDINGS.md": "6f231adadb1446175c3e29ed15c23326c70a1f37cd33b236b3139c27388f0505",
+    "proofs/S0-04/check_compression.py": "2a380c93df73a2b6115afde3530af2938bf8603d7894e200588cab564e10634e",
+    "proofs/S0-04/evidence/config/hermes-provider.json": "e33b10c37d3da9292f13fe3eddd092b39c1822b3b614bff710a8d3e4a0c1775d",
+    "proofs/S0-04/evidence/off/request.json": "5e5d2b85673a18bbb25e596b748a2b750e378b1f655ce062a6e41f1e9ca0d418",
+    "proofs/S0-04/evidence/off/response.json": "3e15611c5d18a29eb6ecdf0215a03c07bc9174aee293f6d80948a02cec9d422e",
+    "proofs/S0-04/evidence/off/upstream-record.json": "c80868de4d5a8cc086edc1cfb31e05fc891bd2a8ae4784e74d861f4fd1232347",
+    "proofs/S0-04/evidence/off-large/request.json": "e6169e711810092505765c23ea212534f5eef53eb13a6b886bf5ca5c06567315",
+    "proofs/S0-04/evidence/off-large/response.json": "faa9094338068f87b80aeeb08926b09253e23f7e07bb5e38521f3086c8ca8e8f",
+    "proofs/S0-04/evidence/off-large/upstream-record.json": "7582f7b6d688111acfcf278262f2028cc02a7009082c602c2db8fe7a527293bc",
+    "proofs/S0-04/fixtures/evidence-body-diff/config/hermes-provider.json": "90c1efd19296419c66f5a288a73b6a2206a7be64b5e729aebd11b14d15a5ff88",
+    "proofs/S0-04/fixtures/evidence-body-diff/off/request.json": "e7abdcc147412c184f13d06eca71cd77f70079e71583d459aa3bafda5df99fe8",
+    "proofs/S0-04/fixtures/evidence-body-diff/off/response.json": "02d96e06983d99ec43dc8c2823a634611431dbd7fe624ef3b0ccd9491300ec1f",
+    "proofs/S0-04/fixtures/evidence-body-diff/off/upstream-record.json": "6318d8e41828c33415ee13226971a1025cc6d9b60455095e428c0b945a144682",
+    "proofs/S0-04/fixtures/evidence-body-diff/off-large/request.json": "0848605965d609c34bfb0c745eb0efbb08407f06f7ecf27d52638af44f221e7e",
+    "proofs/S0-04/fixtures/evidence-body-diff/off-large/response.json": "01fc7980cf6ab40e88297a7c38649df777cb08b25a38479d783f3785a4764221",
+    "proofs/S0-04/fixtures/evidence-body-diff/off-large/upstream-record.json": "c1df52691a16dea6a8d1fb67c4d05e5f06061d6d785a04e0847641e58144dfdf",
+    "proofs/S0-04/fixtures/evidence-header-missing/config/hermes-provider.json": "90c1efd19296419c66f5a288a73b6a2206a7be64b5e729aebd11b14d15a5ff88",
+    "proofs/S0-04/fixtures/evidence-header-missing/off/request.json": "e7abdcc147412c184f13d06eca71cd77f70079e71583d459aa3bafda5df99fe8",
+    "proofs/S0-04/fixtures/evidence-header-missing/off/response.json": "a7d9429b95440383f1f62e6179880e0bebc35c2788ea75c4de4b46ac729372fa",
+    "proofs/S0-04/fixtures/evidence-header-missing/off/upstream-record.json": "2b7d09f11c4f19f088263556df7443c9cb5db6793551a20c45994b27f3d57ac7",
+    "proofs/S0-04/fixtures/evidence-header-missing/off-large/request.json": "0848605965d609c34bfb0c745eb0efbb08407f06f7ecf27d52638af44f221e7e",
+    "proofs/S0-04/fixtures/evidence-header-missing/off-large/response.json": "01fc7980cf6ab40e88297a7c38649df777cb08b25a38479d783f3785a4764221",
+    "proofs/S0-04/fixtures/evidence-header-missing/off-large/upstream-record.json": "c1df52691a16dea6a8d1fb67c4d05e5f06061d6d785a04e0847641e58144dfdf",
+    "proofs/S0-04/fixtures/evidence-pass/config/hermes-provider.json": "90c1efd19296419c66f5a288a73b6a2206a7be64b5e729aebd11b14d15a5ff88",
+    "proofs/S0-04/fixtures/evidence-pass/off/request.json": "e7abdcc147412c184f13d06eca71cd77f70079e71583d459aa3bafda5df99fe8",
+    "proofs/S0-04/fixtures/evidence-pass/off/response.json": "02d96e06983d99ec43dc8c2823a634611431dbd7fe624ef3b0ccd9491300ec1f",
+    "proofs/S0-04/fixtures/evidence-pass/off/upstream-record.json": "2b7d09f11c4f19f088263556df7443c9cb5db6793551a20c45994b27f3d57ac7",
+    "proofs/S0-04/fixtures/evidence-pass/off-large/request.json": "0848605965d609c34bfb0c745eb0efbb08407f06f7ecf27d52638af44f221e7e",
+    "proofs/S0-04/fixtures/evidence-pass/off-large/response.json": "01fc7980cf6ab40e88297a7c38649df777cb08b25a38479d783f3785a4764221",
+    "proofs/S0-04/fixtures/evidence-pass/off-large/upstream-record.json": "c1df52691a16dea6a8d1fb67c4d05e5f06061d6d785a04e0847641e58144dfdf",
+    "proofs/S0-04/fixtures/request-baseline.json": "6b1772d4e30183fd8fccb552cadd18e38f9ca7e589d6d9de0bab5ebdd8f96cb8",
+    "proofs/S0-04/fixtures/request-large.json": "de33670256f6a83b71a438d876bd1904e714f7af4c6f1c5df43a1208cf998901",
+    "proofs/S0-04/hermes/config.yaml": "a8fbedb9e53b5d73265270e0a6eeb9765f51b2269b9dec4c933d1cc0d7a530f4",
+    "proofs/S0-04/spec.json": "968d9034b08c110c3a3078f596a4b6933fc32785d6ef3aa385adeaea8ef23bc3",
+    "proofs/S0-04/tools/pc/capture_leg.py": "1d4234c1b39ca8594f54ccf0f8b7007c2aa23c61646b33ab1faffc23a21ba908",
+    "proofs/S0-04/tools/pc/run_s0_04_legs.sh": "a871c9a12c65000002a20d3121c468040ad2bda69937004d9a9c1c42fc090e8c"
+  },
+  "digest": "f125a45eef74cd407cb53418d3d6a2427515fd3b895d33a1e51c180baf010c0b"
+}

@@ -1,0 +1,139 @@
+{
+  "body_b64": "eyJpZCI6ImNoYXRjbXBsLXMwLTAxIiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uIiwiY3JlYXRlZCI6MTc4ODU2NjQwMCwibW9kZWwiOiJzMC0wMS1wb25nIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImZpbmlzaF9yZWFzb24iOiJzdG9wIiwibWVzc2FnZSI6eyJyb2xlIjoiYXNzaXN0YW50IiwiY29udGVudCI6InBvbmcifX1dLCJ1c2FnZSI6eyJwcm9tcHRfdG9rZW5zIjoxLCJjb21wbGV0aW9uX3Rva2VucyI6MSwidG90YWxfdG9rZW5zIjoyfX0=",
+  "headers": [
+    [
+      "Content-Security-Policy",
+      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; media-src 'self' data: blob:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: ws: wss:; worker-src 'self' blob:; manifest-src 'self'"
+    ],
+    [
+      "X-Frame-Options",
+      "DENY"
+    ],
+    [
+      "X-Content-Type-Options",
+      "nosniff"
+    ],
+    [
+      "Referrer-Policy",
+      "strict-origin-when-cross-origin"
+    ],
+    [
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()"
+    ],
+    [
+      "Strict-Transport-Security",
+      "max-age=63072000; includeSubDomains; preload"
+    ],
+    [
+      "access-control-allow-headers",
+      "Content-Type, Authorization, x-api-key, anthropic-version, x-omniroute-connection, X-OmniRoute-Lease-Owner, X-OmniRoute-Lease-Generation, x-internal-test, accept"
+    ],
+    [
+      "access-control-allow-methods",
+      "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    ],
+    [
+      "access-control-allow-origin",
+      "*"
+    ],
+    [
+      "vary",
+      "Origin, Accept-Encoding"
+    ],
+    [
+      "vary",
+      "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch"
+    ],
+    [
+      "x-omniroute-route-class",
+      "CLIENT_API"
+    ],
+    [
+      "x-request-id",
+      "1d3254c2-c38c-4a53-aab7-0a0f798739dc"
+    ],
+    [
+      "content-length",
+      "254"
+    ],
+    [
+      "content-type",
+      "application/json"
+    ],
+    [
+      "x-conversationid",
+      "conv_25ea8c52-2da7-4736-9d08-97124e46c23d"
+    ],
+    [
+      "x-correlation-id",
+      "153d45bd-8c8e-4a44-8823-aeb1515f728a"
+    ],
+    [
+      "x-omniroute-cache",
+      "MISS"
+    ],
+    [
+      "x-omniroute-cache-hit",
+      "false"
+    ],
+    [
+      "x-omniroute-compression",
+      "off; source=request-header"
+    ],
+    [
+      "x-omniroute-decision",
+      "strategy=single; provider=openai-compatible-chat-4d5a535e-8aca-45e5-a971-cb54eed86414; latency_ms=31"
+    ],
+    [
+      "x-omniroute-latency-ms",
+      "31"
+    ],
+    [
+      "x-omniroute-model",
+      "s0-01-pong"
+    ],
+    [
+      "x-omniroute-provider",
+      "openai-compatible-chat-4d5a535e-8aca-45e5-a971-cb54eed86414"
+    ],
+    [
+      "x-omniroute-request-id",
+      "8f8678dd-3419-4ae5-babf-342a7afb62a5"
+    ],
+    [
+      "x-omniroute-response-cost",
+      "0.0000000000"
+    ],
+    [
+      "x-omniroute-session-id",
+      "5fe1d89492cce7b5"
+    ],
+    [
+      "x-omniroute-tokens-in",
+      "1"
+    ],
+    [
+      "x-omniroute-tokens-out",
+      "1"
+    ],
+    [
+      "x-omniroute-version",
+      "3.8.50"
+    ],
+    [
+      "Date",
+      "Sat, 19 Sep 2026 14:16:26 GMT"
+    ],
+    [
+      "Connection",
+      "keep-alive"
+    ],
+    [
+      "Keep-Alive",
+      "timeout=65"
+    ]
+  ],
+  "leg": "off",
+  "status": 200
+}

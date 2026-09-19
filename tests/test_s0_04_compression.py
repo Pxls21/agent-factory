@@ -684,15 +684,17 @@ def test_spec_negative_reason_is_produced_by_the_real_checker():
                for line in (proc.stdout + proc.stderr).splitlines())
 
 
-def test_spec_positive_leg_defers_today():
-    """The evidence root is not captured yet: the positive leg must DEFER, never pass."""
+def test_spec_positive_leg_passes_over_the_committed_bundle():
+    """The real evidence bundle is committed (minted 2026-09-19, PC live capture): the positive
+    leg PASSES. The GENERIC absent-root deferral stays covered by test_mutant_deferred_as_pass and
+    test_empty_root_defers (tmp_path); this one tracks the minted reality (the S0-06 retirement)."""
     spec = json.loads(SPEC.read_text())
     positive = [leg for leg in spec["legs"] if leg["leg"] == "positive"][0]
-    assert not (ROOT / "proofs" / "S0-04" / "evidence").exists()
+    assert (ROOT / "proofs" / "S0-04" / "evidence").exists()
     proc = subprocess.run([sys.executable] + positive["cmd"][1:], cwd=str(ROOT),
                           capture_output=True, text=True, timeout=180)
-    assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "deferred: S0-04 evidence not captured" in proc.stdout
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PASS: S0-04 compression-contract" in proc.stdout
 
 
 # --------------------------------------------------------------------------- capture tool

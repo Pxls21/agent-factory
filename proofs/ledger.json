@@ -18,8 +18,9 @@
     },
     {
       "classification": "execution_proof",
+      "normalized_digest": "ca6c4660a7430709b5552b03c9f06bd4df63da241f7b9b4a23ff4c3c2d989e80",
       "proof_id": "S0-04",
-      "state": "ABSENT"
+      "state": "PRESENT"
     },
     {
       "classification": "execution_proof",

@@ -1,0 +1,9 @@
+{
+  "api_mode": "openai_chat",
+  "base_url": "http://127.0.0.1:20128/v1",
+  "extra_headers": {
+    "x-omniroute-compression": "off"
+  },
+  "key_env": "OMNIROUTE_API_KEY",
+  "provider": "s0-04-omniroute"
+}
