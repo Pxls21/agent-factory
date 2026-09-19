@@ -154,7 +154,19 @@ REASONS = {
 
 # Deny-by-default (AF-AP-23): a CLOSED EXACT allow-list, never a prefix and never a blacklist.
 # Every environment NAME that looks like a credential must be an EXACT member of this set.
-ENV_CREDENTIAL_ALLOWLIST = frozenset({"OMNIROUTE_API_KEY"})
+# TWO members, both PINNED in the launched agent's closed environment (proofs/S0-01/pins.py
+# PINNED_ENV_KEYS, set by pc_launch.py:launch_env):
+#   * OMNIROUTE_API_KEY  — the sole model egress key.
+#   * BUZZ_PRIVATE_KEY   — the buzz-acp relay SIGNING key. buzz-acp needs it to authenticate to the
+#     Buzz relay, and hermes-acp inherits it as buzz-acp's child (measured 2026-09-19: the real
+#     hermes-acp environ carries it). It is NOT an upstream MODEL provider key — it cannot make a
+#     model request, so it does not undermine A3 (Hermes holds no upstream provider key → OmniRoute
+#     failure cannot fall back to a provider). Flagging it would red EVERY real capture on a pinned,
+#     structurally-required key — an assertion no live leg can satisfy is a broken gate, not a
+#     stronger one (the same reasoning that keeps SESSION out of CREDENTIAL_SEGMENTS below).
+# An upstream provider key (OPENAI_API_KEY, ANTHROPIC_API_KEY, …) is NOT a member and is still
+# caught — see test_conjunct_vi_env and the evidence-provider-key-present negative bundle.
+ENV_CREDENTIAL_ALLOWLIST = frozenset({"OMNIROUTE_API_KEY", "BUZZ_PRIVATE_KEY"})
 
 # The screen is SEGMENT-based, not an anchored suffix. An anchored `(_API_KEY|_TOKEN|_SECRET|
 # _KEY)$` reads well and is wrong: `OMNIROUTE_API_KEY_2` does not end in any of those, so it is

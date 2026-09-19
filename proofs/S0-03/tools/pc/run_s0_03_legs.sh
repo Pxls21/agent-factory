@@ -197,6 +197,16 @@ with open(dst, "w", encoding="utf-8") as fh:
     yaml.safe_dump(cfg, fh, sort_keys=False)
 PY
 
+  # Close the stale-framedir race (AF-AP-105): the framedir is REUSED by leg name
+  # (`<markers>/v2-<leg>`). pc_launch.py rmtree's it on start (pc_launch.py:308) and writes
+  # launch.ready LAST (:419), but this runner launches pc_launch in the background and polls for
+  # launch.ready immediately — so a stale launch.ready + runtime-identity.json left by a PRIOR run
+  # in the same framedir is seen by the first poll before pc_launch cleans it, and the leg then
+  # binds a DEAD prior pid (a v6 leftover 2941354 → `readlink /proc/<pid>/exe` FileNotFoundError,
+  # 2026-09-19). Remove the framedir here so the readiness check can only fire on THIS launch's
+  # fresh marker; pc_launch's own rmtree is then a no-op.
+  rm -rf "$framedir"
+
   python3 "$LAUNCHER" --leg "$LEG_NAME" --model "$ROUTE_ID" --profile "$profile" \
       </dev/null > "$WORK/$tag.launch.log" 2>&1 &
   local leg_pid=$!
