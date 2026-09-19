@@ -61,6 +61,11 @@ LEG_FIXTURE = {"off": "request-baseline.json", "off-large": "request-large.json"
 
 COMPRESSION_HEADER = "x-omniroute-compression"   # matched case-insensitively
 COMPRESSION_VALUE = "off"                        # docs/03_INTEGRATION_CONTRACTS.md:31-51
+# OmniRoute's real response value is structured `<state>; source=<origin>` (verified live
+# 2026-09-19). source=request-header is the structural signature that the OFF state came from OUR
+# request directive, not an OmniRoute default — asserting it closes the hollow green where a
+# gateway that ignored the header but defaults to off would still read `off` (anti-hollow-green #7).
+COMPRESSION_SOURCE = "request-header"
 OMNIROUTE_PORT = 20128                           # PC-BRIDGE.md:153-163
 OMNIROUTE_BASE_SUFFIX = f":{OMNIROUTE_PORT}/v1"
 KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
@@ -249,7 +254,11 @@ def check_request_leg(leg: str, leg_dir: Path, fixtures_dir: Path, observations:
         raise Failure(f"{leg}: sent-compression-header-value: "
                       f"{_short(sent.get(COMPRESSION_HEADER))}")
 
-    # A2 — the response reports compression off.
+    # A2 — the response reports compression off, honoured from OUR request header. OmniRoute's
+    # real value is structured `<state>; source=<origin>` (verified live). The STATE must be
+    # exactly off (AF-AP-38: not mere presence) and the source must be request-header (the
+    # structural signature that the OFF came from our directive, not an OmniRoute default —
+    # anti-hollow-green #7). Parameters are `;`-separated and stripped; the state is the first.
     response = _read_json(leg_dir / "response.json", leg, "response.json")
     if not isinstance(response.get("status"), int):
         raise Failure(f"{leg}: response-status-absent")
@@ -259,8 +268,12 @@ def check_request_leg(leg: str, leg_dir: Path, fixtures_dir: Path, observations:
         raise Failure(f"{leg}: compression-header-missing")
     if len(values) > 1:
         raise Failure(f"{leg}: compression-header-duplicated: {len(values)} occurrences")
-    if values[0] != COMPRESSION_VALUE:
+    parts = [p.strip() for p in str(values[0]).split(";")]
+    if parts[0] != COMPRESSION_VALUE:
         raise Failure(f"{leg}: compression-header-value: {_short(values[0])}")
+    source = next((p[len("source="):] for p in parts[1:] if p.startswith("source=")), None)
+    if source != COMPRESSION_SOURCE:
+        raise Failure(f"{leg}: compression-source-unexpected: {_short(values[0])}")
 
     # A3 — the upstream received the fixture.
     record = _read_json(leg_dir / "upstream-record.json", leg, "upstream-record.json")

@@ -70,14 +70,22 @@ part of Deviation 2's fix; the negative-control bundles must still fail for thei
 (`evidence-header-missing` keeps no compression header; `evidence-body-diff` keeps the real value
 and still fails at A3).
 
+## LANDED so far (option-independent realignment)
+
+- `capture_leg.provider_block` reads the real Hermes schema (`api`->base_url, `transport`->api_mode,
+  `extra_headers`), emitting the checker's key names (commit `adc8cd7`).
+- A2 (Deviation 2) parses the structured value and asserts state `off` + `source=request-header`;
+  the golden `response.json` fixtures carry the real value; two negative controls (bare `off` and a
+  defaulted source both fail `compression-source-unexpected`). 73 passed x2 sandbox.
+
 ## Ordered remaining work (nothing minted until all hold)
 
 1. **Owner decides Deviation 1** (config leg: Option A live-profile+edit, or Option B proof-owned
    config). Recommendation deferred to the owner — it is a proof-integrity + reproducibility call.
-2. **One realignment increment** — `capture_leg.provider_block` to the real schema; `check_config_leg`
-   per the chosen option; A2 parse + source assertion (Deviation 2); regenerate the 3 fixture
-   bundles' `response.json` (+ `hermes-provider.json` for the config option); update tests; a
-   committed FAILING negative control per new binding (AF-AP-36) BEFORE re-mint.
+2. **Config-leg realignment per the choice** — Option A: the owner adds the compression
+   `extra_headers` to the live `omniroute-fedora`; Option B: commit `proofs/S0-04/hermes/config.yaml`
+   and point the runner's `--profile` at it. `check_config_leg` is unchanged either way; a committed
+   FAILING negative control per new binding (AF-AP-36) BEFORE re-mint.
 3. **Re-capture on the PC** with the final tools -> a complete, gradeable bundle.
 4. **Mint** — `proof-runner run --proof S0-04 --venue sandbox`, retire the deferral tests to the
    minted reality, `validate-ledger integrity` PRESENT, `ledger-gen`, ledger + task #18; class

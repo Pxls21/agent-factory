@@ -251,6 +251,37 @@ def test_config_reason_does_not_satisfy_the_response_negative_control(tmp_path):
     assert negative not in out, out
 
 
+def test_response_source_must_be_request_header(tmp_path):
+    # A2 asserts the OFF state came from OUR request header (source=request-header), not an
+    # OmniRoute default — a bare `off` (no source) or a defaulted source is a hollow green where a
+    # gateway that ignored the header would still read off. Both are refused (anti-hollow-green #7).
+    for i, value in enumerate(("off", "off; source=default", "off;source=config")):
+        b = bundle(tmp_path, f"src-{i}")
+        path = b / "off" / "response.json"
+        obj = load(path)
+        for pair in obj["headers"]:
+            if pair[0].lower() == "x-omniroute-compression":
+                pair[1] = value
+        store(path, obj)
+        code, out = run_checker(b)
+        assert code == 1, (value, out)
+        assert "compression-source-unexpected" in out, (value, out)
+
+
+def test_response_state_on_fails_at_value_before_source(tmp_path):
+    # A non-off state fails at the value check even when the source is right.
+    b = bundle(tmp_path)
+    path = b / "off" / "response.json"
+    obj = load(path)
+    for pair in obj["headers"]:
+        if pair[0].lower() == "x-omniroute-compression":
+            pair[1] = "on; source=request-header"
+    store(path, obj)
+    code, out = run_checker(b)
+    assert code == 1, out
+    assert "compression-header-value" in out, out
+
+
 def test_mutant_fifo_hang(tmp_path):
     """FIFO-HANG — a FIFO in the bundle is named and refused, never read."""
     b = bundle(tmp_path)

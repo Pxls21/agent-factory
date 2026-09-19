@@ -7,7 +7,7 @@
     ],
     [
       "X-OmniRoute-Compression",
-      "off"
+      "off; source=request-header"
     ],
     [
       "connection",
