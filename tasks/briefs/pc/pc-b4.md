@@ -1,29 +1,77 @@
-# PC lane — B4 (S0-02 round 4: the closure table derived from ALL runner writes, the tolerance relation pinned exactly, the removal-receipt fallback removed or bound)
+# PC lane — B4 (S0-02 round 4: close VERIFY-B3's four BLOCKERs)
 
-PIN: 6760808
+PIN: 798ce74
 
-Role: code-implementer. Venue: `tasks/briefs/pc/VENUE-MAP.md` — READ IT FIRST; it maps every sandbox path (interpreter `/home/rocco/venv-agent-factory/bin/python`, the `S0_01_VENUE=pc S0_01_REAL_LEG_DIR=… S0_02_BUZZ_SRC=…` exports, the lane worktree, the no-bridge rule, the code-intel instruments in your tree).
+Role: code-implementer. Route: the LOCAL Qwen build route (`agentfactory-build-local`, medium —
+the pc_lane.sh default for code-implementer; do NOT set HERMES_MODEL). Venue:
+`tasks/briefs/pc/VENUE-MAP.md` — read it first; it maps every sandbox path.
 
-This brief is SELF-CONTAINED and GOVERNS. Your worktree is `git archive 6760808` (S0-02 is byte-identical to the B3 landing c6c384a; the VERIFY-B3 report is committed at `tasks/briefs/pc/report-pc-verify-b3.md--c6c384a.md` — READ IT WHOLE FIRST, it is the finding source). Save your report at `tasks/briefs/s0-02-support/B4-report.md` inside your tree, draft after EACH item (the incremental rule), and return it whole as your final message. Do NOT `git commit/add/stash/checkout/reset/push` — the coordinator harvests your worktree diff.
+**The brief governs**: `tasks/briefs/pc/report-pc-verify-b3.md--c6c384a.md` (the full VERIFY-B3
+report, PIN c6c384a) — READ IT WHOLE. Close its four BLOCKERs (B3-00, B3-01, B3-02, B3-03) with the
+EXACT red controls it names. B3-04 is a FOLLOW-UP outside your scope (the coordinator's S0-11
+re-sign) — do NOT touch it. Your worktree IS `git archive 798ce74` plus the lane patch (this brief).
+Save your report at `tasks/briefs/s0-02-support/B4-report.md`, draft after EACH item (the incremental
+rule), and return it whole as your final message.
 
-**Why (VERIFY-B3 graded round 3 NOT-READY; the coordinator reproduced all four blockers by primary source at c6c384a — every line number below is those bytes'):**
-- **B3-01 BLOCKING** — `tests/test_s0_02_buzz_authz.py:1373` `test_leg_file_table_matches_the_runner_writes` is a MIRROR, not a gate: it asserts three literal `cp` strings exist in the runner and each `_LEG_FILES_PLAIN` name exists in `deliver_event.py`, but it never enumerates EVERY runner output write. Four scratch runner mutations each left it green — `tee "$out/x-tee"`, a `cat > "$out/x-heredoc"` heredoc, `python3 -c ...Path("$out/x").write_text(...)`, and `mv … "$out/x-mv"` — while the checker's `_LEG_FILES_PLAIN` (`proofs/S0-02/check_buzz_authz.py:143-152`) would REJECT each new file at capture as an unexpected entry. A future runner write therefore fails real closure while the drift test stays green.
-- **B3-02 BLOCKING** — the tolerance tests at `tests/test_s0_02_buzz_authz.py:1493-1494` exist but are TOO LOOSE: `assert REPLAY_CLOCK_TOLERANCE_S > 100 + 30` and `assert LEG_CLOCK_TOLERANCE_S < REPLAY_CLOCK_TOLERANCE_S`. Neither pins the tight safety relation. TOLERANCE-9000 (`check_buzz_authz.py:127` `REPLAY_CLOCK_TOLERANCE_S = 150` → `9000`) and RUNNER-GAP-151 (the runner's `TURN_WAIT_S=${S0_02_TURN_WAIT_S:-100}` default at `proofs/S0-02/tools/pc/run_s0_02_legs.sh:34`, `100` → `151`) each leave all 137 tests green. `RELAY_DRIFT_WINDOW_S` is the outer bound; `check_buzz_authz.py:280-283` refuses a second-replay t0 outside `REPLAY_CLOCK_TOLERANCE_S`.
-- **B3-03 BLOCKING** — `check_buzz_authz.py:717-720` builds `removal_line = removal_note or (<fallback literal>)`. Both label tests (`:691-710`) run only PASS_BUNDLE, where `removal_note` is non-None, so they exercise the `removal_note` path and NEVER the fallback literal. A scratch mutation of ONLY the fallback left both tests green (`2 passed`); mutating the per-leg occurrence, spec, or provenance individually each killed one test — so the survivor is exactly the fallback.
-- **B3-00 BLOCKING (report discipline)** — `tasks/briefs/s0-02-support/B3-report.md:10` claims “Items built (1–9)” but only Items 1–6 have subsections; there is no B2 stamp, no final-byte identity table, no named-mutant/killer inventory, no report-lint paste, no `ap_screen`/pack paste, and only three unnamed self-attacks. Your B4 report MUST carry all of these (see Report discipline below); that closes B3-00 by construction.
-- **B3-04 is NOT yours** — the `tests/test_proof_status.py` failures are the coordinator/owner’s S0-11 re-sign (AF-AP-56). Do not touch `proofs/registry.yaml`, `proofs/ledger.json`, `blocked.json`, the governance keys, or any `proofs/<id>/result.json`.
-- **What HELD and must stay held** (VERIFY-B3 INFO, reproduced): F1 containment (root/leg/subleg/file lstat chain, `_require_real_dir`/`_require_file`), F2 producer receipt typing (`deliver_event._normalise` five keys, `accepted` bool), F3 pre-network key refusal (`_privkey` before `_post`), F4 the narrow same-expression scanner (a DOCUMENTED limit, `:563-618`), and the 8 committed fixtures byte-identical under `python check_buzz_authz.py --check`. The RESOLVE-DROPPED and hardlink cases are EQUIVALENT (argued) — do NOT add a redundant per-node `.resolve()` belt.
+The four blockers and their FROZEN red discriminators (make each named mutant die; a fix with no
+red control is NOT done):
 
-## Scope (only these; every change traces to a finding)
-`tests/test_s0_02_buzz_authz.py` · `proofs/S0-02/check_buzz_authz.py` (only if item 3 removes the fallback) · `proofs/S0-02/tools/pc/run_s0_02_legs.sh` (READ ONLY, for item 1/2 — do not change runner behaviour) · `proofs/S0-02/spec.json` (only if a failure key is enumerated there) · `tasks/briefs/s0-02-support/B3-report.md` (one stamp line, item 4) · your report. Authorization: this is the owner’s own Buzz authorization boundary under test; the forged bundles are defensive fixtures.
+1. **B3-01 — the closure table-drift test does not parse the runner's writes.** Four runner
+   output-write forms each leave `test_closure_table_covers_all_producer_and_runner_writes`
+   (`T:1373-1383`) green: `RUNNER-TEE-UNSEEN` (`tee "$out/x-tee"`), `RUNNER-HEREDOC-UNSEEN`
+   (`cat > "$out/x-heredoc"`), `RUNNER-PYTHON-UNSEEN` (`python3 -c ...Path(...).write_text`),
+   `RUNNER-MV-UNSEEN` (`mv` into `$out/x-mv`). Fix: a deliberately BOUNDED parser/allowlist over
+   every output-write form the runner permits, OR a structural runner-output contract that
+   enumerates all final outputs and is exercised by an actual fake-output run. Red control: each
+   of the four mutations above must make the table-drift test FAIL. (This is the AF-AP-96 class —
+   a source parser as a closure oracle is inherently incomplete; the durable execute-and-diff-STATE
+   rewrite is already filed as issue #5. Your job is the BOUNDED parser that kills the four named
+   forms, with the domain stated — not an unbounded shell-dataflow engine.)
 
-Shared-tree rules: every gate from a `git archive 6760808 | tar -x` copy under your lane scratch dir with your working-tree files copied in — `scripts/lane_gate.sh -r 6760808 -f "<your files>" -t "tests/test_s0_02_buzz_authz.py tests/test_spec_probe_schemas.py tests/test_validate_ledger.py tests/test_proof_runner.py" -n 2`, ONE foreground call, `LANE_GATE_DIR` under scratch; explicit absolute `--basetemp`; kill only your own pids; NEVER background a run and stop; NO OmniRoute/Hermes/buzz-acp/relay request, NO live capture, NO membership write; never read/print/commit a credential. The S0-02 suite is ~137 tests / ~78 s serial — size every terminal call under the PC's 420 s cap (`lane_gate.sh -n 2` is two ~78 s runs = fine; a single call, never `-n` over three runs).
+2. **B3-02 — the tolerance/runner-gap relations are untested.** `TOLERANCE-9000` (change the
+   RELAY_DRIFT_WINDOW constant `C:127` 150→9000) and `RUNNER-GAP-151` (change the runner default
+   replay wait `R:34` 100→151) both leave all tests green. Fix: add the two literal relationship
+   assertions — `REPLAY_CLOCK_TOLERANCE_S + LEG_CLOCK_TOLERANCE_S < RELAY_DRIFT_WINDOW_S` and the
+   runner-gap `<= REPLAY_CLOCK_TOLERANCE_S` — plus their mutation tests. Red controls: TOLERANCE-9000
+   and RUNNER-GAP-151 must each red.
 
-## Design (pinned — build it, do not redesign it)
-1. **B3-01 — the closure table is derived from EVERY runner write.** Rewrite `test_leg_file_table_matches_the_runner_writes` so it enumerates every path the runner writes under `"$out"` and asserts that set equals the checker's declared per-leg/replay/revoked file sets (`_LEG_FILES_PLAIN` + the replay/membership additions) EXACTLY — nothing the runner writes is outside the checker's table, and nothing in the table is unproduced. Prefer a STRUCTURAL contract over a text parser: run the real runner (or its output-emitting section) against a fake FD/timeline tree in a tmp dir and diff the produced file set against the checker's expected set; if a live runner section cannot be exercised in-sandbox, fall back to a BOUNDED parser that recognises every output-write form the runner is permitted to use (`cp … "$out/…"`, `tee "$out/…"`, `> "$out/…"` / heredoc redirect, `mv … "$out/…"`, a `python3 - <<'PY' … write_text/​open("$out/…","w")` block) and refuses any unrecognised `"$out/"` write token — state the recognised grammar in the test and in your report. Red controls (paste red-before/green-after): the four VERIFY-B3 mutations (`tee`, heredoc, `python write_text`, `mv`) each make the test FAIL; a positive control on the unmutated runner passes. Keep the existing producer/`cp` assertions.
-2. **B3-02 — the tolerance relation pinned EXACTLY (tighten, do not merely add).** At `:1493-1494`, keep the existing loose asserts AND add the tight safety relations as named assertions: `assert REPLAY_CLOCK_TOLERANCE_S + LEG_CLOCK_TOLERANCE_S < RELAY_DRIFT_WINDOW_S` (the second-replay window must sit inside the relay drift window) and a runner-gap bound `assert <runner default replay wait constant> <= REPLAY_CLOCK_TOLERANCE_S` reading the runner's default from its source (grep the exact `run_s0_02_legs.sh` variable at the PIN — do not hard-type 100). Red controls: TOLERANCE-9000 (`check_buzz_authz.py:127` 150→9000) makes the first relation FAIL; RUNNER-GAP-151 (runner default 100→151) makes the runner-gap relation FAIL; both are pasted red-before/green-after. If `spec.json` enumerates a failure key for this, leave it; do not invent one.
-3. **B3-03 — the removal-receipt fallback removed or bound.** First DETERMINE reachability: read how `removal_note` is set and whether any GRADED bundle reaches `check_buzz_authz.py:717` with `removal_note` falsy. If the fallback is unreachable in every graded path (PASS_BUNDLE always carries a revoked leg → `removal_note` set), DELETE the `or (<fallback literal>)` so `removal_line = removal_note`, and add a test that a bundle WITHOUT the revoked leg fails earlier with its named reason (proving the fallback was dead) — remove the dead branch, do not leave an emitted-but-unreachable shape. If a legitimate graded no-revocation path exists, KEEP the fallback and bind it with a test that drives that exact bundle and asserts the fallback's full sentence in checker output. Red control: LABEL-FALLBACK-DROPPED (mutate the fallback sentence, or — if removed — restore the `or <altered literal>`) makes a test FAIL. State which branch you took and why in the report.
-4. **B3-00 — the report complete + the B2 stamp.** Stamp the top of `tasks/briefs/s0-02-support/B3-report.md` with one line: `STAMP 2026-09-17 (B4): VERIFY-B3 graded round 3 NOT-READY; B3-01/02/03 closed here, B3-00 (this report’s discipline) closed by the B4 report.` Your B4 report carries EVERY required artifact (Report discipline).
+3. **B3-03 — the checker's fallback removal-label is unbound.** `LABEL-FALLBACK-DROPPED` (alter the
+   fallback-only occurrence at `C:717-720`) survives (`2 passed`). Fix: REMOVE the unreachable
+   fallback, OR test its exact full sentence. Red control: LABEL-FALLBACK-DROPPED must fail.
 
-## Report discipline
-FILE IDENTITY of the FINAL bytes (path · line count · blob sha for every file you changed); every `file:line` from `grep -n` on the FINAL bytes; `python3 scripts/report_lint.py tasks/briefs/s0-02-support/B4-report.md --rev 6760808 --map C=proofs/S0-02/check_buzz_authz.py --map T=tests/test_s0_02_buzz_authz.py --map R=proofs/S0-02/tools/pc/run_s0_02_legs.sh --map D=proofs/S0-02/tools/pc/deliver_event.py` pasted (apply its `fix:` hints for at most THREE rounds, then paste the summary and finish — `MISS 0` is the target, never a stop condition); the ONE `scripts/lane_gate.sh` RESULT line; every red-before pasted beside its green-after; `python -m pyflakes` over the changed `.py` (rc 0) and `bash -n` over any shell you read; `python3 scripts/ap_screen.py` over `check_buzz_authz.py` and `--tests` over the test file (paste both); the code-intel pack for your change: `bash scripts/lane_context.sh -q 'what selects the per-leg file set the closure test grades' -s _LEG_FILES_PLAIN removal_note REPLAY_CLOCK_TOLERANCE_S -o pack.md proofs/S0-02/check_buzz_authz.py tests/test_s0_02_buzz_authz.py` (attach it); a NAMED mutant table (mutant · result · killer file:line) covering the four runner-write mutants, TOLERANCE-9000, RUNNER-GAP-151, LABEL-FALLBACK-DROPPED, plus at least one positive control per item; the GATE RECOMMENDATION (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`) — a recommendation, not a verdict; NOT-done first-class. NOT this lane's: the live eight-leg capture (the RUST_LOG seam via `--env-set s0-02`), the revoked leg's relay membership write, the EXPIRED→mint, the S0-11 re-sign — all coordinator/owner.
+4. **B3-00 — the B3 report discipline items 7-9 were omitted while claimed.** Produce a GROUNDED
+   B4 report: the required top-of-report stamp in `tasks/briefs/s0-02-support/VERIFY-B2-report.md`,
+   B4's final-byte identity table, machine-checkable `file:line` anchors, `report_lint` output above
+   its floor, the `ap_screen` paste, the pack, and a NAMED mutant/killer inventory with real killer
+   lines (the four B3-01 forms + TOLERANCE-9000 + RUNNER-GAP-151 + LABEL-FALLBACK-DROPPED, each with
+   its killer test). A report that cites nothing lints clean by construction — cite real anchors.
+
+## Boundary (touch ONLY these)
+- `proofs/S0-02/check_buzz_authz.py` (the checker — B3-02/B3-03 assertions)
+- `proofs/S0-02/tools/pc/run_s0_02_legs.sh` / `deliver_event.py` (READ for the closure table; do not
+  change the runner's real output set to game the test — fix the TEST/oracle)
+- `proofs/S0-02/spec.json`, `proofs/S0-02/fixtures/**`
+- `tests/test_s0_02_buzz_authz.py` (the meta-tests + the four new red controls + the two relations)
+- `tasks/briefs/s0-02-support/B4-report.md` (your report), `VERIFY-B2-report.md` (the stamp)
+
+`proofs/schemas/**` is OFF LIMITS (it is an attested input of five minted results; B3 already added
+`limits`). `proofs/S0-01/*` is read-only. Report adjacent defects, never fix them.
+
+## Gate (a script, not a paragraph)
+- Venue exports before every gate run: `S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`,
+  `S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`,
+  `/home/rocco/venv-agent-factory/bin` FIRST on PATH; an absolute SHORT `--basetemp` under your
+  lane's scratch.
+- The pytest gate is `scripts/pc_suite.sh launch -n 8 -- tests/test_s0_02_buzz_authz.py` then
+  `wait <RUN_ID>` (fits under Hermes's 420 s terminal cap; the serial run does not). Paste the
+  `pytest-summary:` + `pytest-set:` lines verbatim. Then run each named mutant on a SCRATCH copy
+  (never git-restore/stash the shared tree) and paste its kill line.
+- `report_lint` gates on a FLOOR, not `MISS 0`; apply its `fix:` hints for at most THREE rounds,
+  then paste and finish. CODE INTEL FIRST: `graft ask` / `ripwire` before grep; the pack is built
+  at launch.
+- No relay delivery, no live leg, no membership write — those are the coordinator's live capture.
+  `deliver_event.py` and the runner are read/`bash -n`/pyflakes-checked/unit-tested in-process only.
+
+Under D-034 these are test-strength/report-discipline findings on a checker whose CORE authz
+capability the verifier reproduced SOLID; the owner directed this build round. Close the four named
+red controls, prove them, STOP — do not widen scope beyond the boundary.
