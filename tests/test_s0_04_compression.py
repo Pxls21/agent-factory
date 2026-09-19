@@ -679,6 +679,22 @@ def test_capture_leg_provider_block_without_key_env_is_null_not_a_value():
     assert "sk-inline-secret-value" not in json.dumps(block)
 
 
+def test_capture_leg_provider_block_reads_the_real_hermes_schema():
+    # The live Hermes custom-provider block names the endpoint `api` and the transport `transport`,
+    # not the docs/03 base_url/api_mode (verified live 2026-09-19: omniroute-fedora, and the
+    # proven-live proofs/S0-03/hermes/config.yaml, use api/transport). provider_block must resolve
+    # either spelling so the config leg grades a REAL profile, emitting the checker's key names.
+    module = _import(CAPTURE, "capture_leg")
+    block = module.provider_block({"providers": {"omniroute-fedora": {
+        "api": "http://127.0.0.1:20128/v1", "transport": "openai_chat",
+        "key_env": "OMNIROUTE_API_KEY",
+        "extra_headers": {"x-omniroute-compression": "off"}}}}, "omniroute-fedora")
+    assert block["base_url"] == "http://127.0.0.1:20128/v1"
+    assert block["api_mode"] == "openai_chat"
+    assert block["key_env"] == "OMNIROUTE_API_KEY"
+    assert block["extra_headers"] == {"x-omniroute-compression": "off"}
+
+
 def test_capture_leg_find_record_requires_exactly_one(tmp_path):
     module = _import(CAPTURE, "capture_leg")
     records = tmp_path / "rec"

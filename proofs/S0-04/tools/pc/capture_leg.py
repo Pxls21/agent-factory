@@ -107,8 +107,13 @@ def provider_block(profile: dict, provider: str) -> dict:
     key_env = block.get("key_env")
     return {
         "provider": provider,
-        "base_url": block.get("base_url"),
-        "api_mode": block.get("api_mode"),
+        # The REAL Hermes custom-provider schema names the endpoint `api` and the wire protocol
+        # `transport` (verified live 2026-09-19; docs/03 §2's base_url/api_mode are illustrative,
+        # and the proven-live proofs/S0-03/hermes/config.yaml uses api/transport). Read either
+        # spelling so the block resolves against a live profile or a proof-owned config; the
+        # emitted key names stay base_url/api_mode (the checker's committed contract).
+        "base_url": block.get("base_url") or block.get("api"),
+        "api_mode": block.get("api_mode") or block.get("transport"),
         "key_env": key_env if isinstance(key_env, str) else None,
         "extra_headers": block.get("extra_headers") if isinstance(block.get("extra_headers"), dict) else {},
     }
