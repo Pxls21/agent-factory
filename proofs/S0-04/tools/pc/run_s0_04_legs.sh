@@ -76,7 +76,9 @@ code=$(curl -s -o "$catalog" -w '%{http_code}' -m 30 \
              "$(grep '^OMNIROUTE_API_KEY=' "$KEYFILE" | head -1 | cut -d= -f2- | tr -d '\r\n"')") \
        "$BASE/v1/models")
 if [ "$code" != "200" ]; then rm -f "$catalog"; die "GET $BASE/v1/models -> $code"; fi
-if ! grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$MODEL\"" "$catalog"; then
+# OmniRoute namespaces catalog ids by provider connection (`<provider>/<id>`), while
+# /v1/chat/completions routes the bare id too — accept either form for the SAME model name.
+if ! grep -qE "\"id\"[[:space:]]*:[[:space:]]*\"([^\"]*/)?$MODEL\"" "$catalog"; then
   observed=$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*s0-01[^"]*"' "$catalog" | tr '\n' ' ')
   rm -f "$catalog"
   die "fixture model '$MODEL' is not in the OmniRoute catalog; observed scripted ids: ${observed:-none}. \
