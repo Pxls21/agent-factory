@@ -6,10 +6,10 @@ set -euo pipefail
 # named pytest selector collects at least one test, and pytest reports that node
 # with assertion or exception detail. EXPECTED is the brief's literal destructive-row count.
 ROOT=$(git rev-parse --show-toplevel)
-PIN=${PIN:-99ecb36}
+PIN=${PIN:-798ce74}
 OUT=${A5O_MUTANT_DIR:-${A5M_MUTANT_DIR:-"$ROOT/../scratch/a5o/mutants"}}
 PYTEST=${PYTEST:-python}
-EXPECTED=22
+EXPECTED=24
 CONTROL_ROWS=1
 ROW_TIMEOUT_S=${ROW_TIMEOUT_S:-4}
 export PATH=/home/rocco/venv-agent-factory/bin:$PATH
@@ -18,6 +18,39 @@ export S0_01_REAL_LEG_DIR=${S0_01_REAL_LEG_DIR:-/home/rocco/s0-01-pinned/realleg
 export S0_02_BUZZ_SRC=${S0_02_BUZZ_SRC:-/home/rocco/s0-01-pinned/buzz}
 export PYTHONHASHSEED=0
 mkdir -p "$OUT"
+
+if [[ ${1:-} == "--old-model-control" ]]; then
+  copy="$OUT/old-model-control"
+  log="$OUT/old-model-control.txt"
+  mkdir -p "$copy/tests"
+  git show "$PIN:tests/test_s0_01_check_acp_conformance.py" > "$copy/tests/test_s0_01_check_acp_conformance.py"
+  python3 - "$ROOT/tests/test_s0_01_check_acp_conformance.py" "$copy/tests/test_s0_01_check_acp_conformance.py" <<'PY'
+from pathlib import Path
+import sys
+
+work = Path(sys.argv[1]).read_text()
+pin = Path(sys.argv[2]).read_text()
+start = work.index("def test_ck17_classifier_operand_rebound_local_is_not_classifier_operand")
+end = work.index("@pytest.mark.parametrize(\"cmd,expected\"")
+block = work[start:end]
+anchor = pin.index("@pytest.mark.parametrize(\"cmd,expected\"")
+Path(sys.argv[2]).write_text(pin[:anchor] + block + pin[anchor:])
+PY
+  cp -a "$ROOT/proofs" "$copy/"
+  set +e
+  (cd "$copy" && "$PYTEST" -m pytest -q tests/test_s0_01_check_acp_conformance.py \
+      -k "rebound_local or transitive_local_chain or module_alias_chain or augmented_alias or lambda_default or default_argument_helper or container_hop or attribute_hop" \
+      --basetemp="$OUT/old-model-base" -p no:cacheprovider) >"$log" 2>&1
+  rc=$?
+  set -e
+  summary=$(sed -n '/failed.*passed/{p;q;}' "$log")
+  rebind=$(sed -n '/^E       AssertionError: classifier-operand comparison inventory changed/{p;q;}' "$log")
+  did_not_raise=$(grep -c 'DID NOT RAISE AssertionError' "$log" || true)
+  printf 'OLD_MODEL_CONTROL rc=%s did_not_raise=%s | %s | %s\n' \
+    "$rc" "$did_not_raise" "$summary" "$rebind"
+  [[ $rc -ne 0 && "$did_not_raise" -ge 4 && -n "$rebind" ]]
+  exit $?
+fi
 
 if [[ ${1:-} == "--self-test" ]]; then
   copy="$OUT/self-test-mutants.sh"
@@ -43,7 +76,7 @@ PY
   cardinality=$(sed -n '/^CARDINALITY_MISMATCH /{p;q;}' "$log")
   printf 'SELF_TEST rc=%s %s\n' "$rc" "$cardinality"
   [[ $rc -ne 0 && "$cardinality" == \
-      "CARDINALITY_MISMATCH rows=22 expected=23 destructive=22 control=1" ]]
+      "CARDINALITY_MISMATCH rows=24 expected=25 destructive=24 control=1" ]]
   exit $?
 fi
 
@@ -69,7 +102,7 @@ PY
   cardinality=$(sed -n '/^CARDINALITY_MISMATCH /{p;q;}' "$log")
   printf 'ADDED_ROW_CONTROL rc=%s %s\n' "$rc" "$cardinality"
   [[ $rc -ne 0 && "$cardinality" == \
-      "CARDINALITY_MISMATCH rows=24 expected=23 destructive=22 control=1" ]]
+      "CARDINALITY_MISMATCH rows=26 expected=25 destructive=24 control=1" ]]
   exit $?
 fi
 
@@ -82,7 +115,7 @@ import sys
 
 source = Path(sys.argv[1]).read_text()
 old = "  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|if pins.is_pinned_argv(cmd.split()))|if cmd and pins.is_pinned_argv(cmd.split()))'"
-new = "  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|T|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():\\n    \"\"\"Inventory every comparison/membership/boolean using classifier operands.\"\"\"\\n    _assert_ck16_classifier_operand_contract(CHECKER)|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():\\n    \"\"\"Inventory every comparison/membership/boolean using classifier operands.\"\"\"\\n    import time\\n    time.sleep(60)\\n    _assert_ck16_classifier_operand_contract(CHECKER)'"
+new = r"  'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|T|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():|def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():\n    import time\n    time.sleep(60)'"
 lines = source.splitlines(keepends=True)
 matches = [index for index, line in enumerate(lines) if line.rstrip("\n") == old]
 if len(matches) != 1:
@@ -99,7 +132,7 @@ PY
   summary=$(sed -n '/^EXPECTED=/{p;q;}' "$log")
   printf 'TIMEOUT_CONTROL rc=%s %s | %s\n' "$rc" "$timeout_line" "$summary"
   [[ $rc -ne 0 && -n "$timeout_line" && "$summary" == \
-      "EXPECTED=22 KILLED=21 SURVIVED=0 INVALID=1 CONTROL=1" ]]
+      "EXPECTED=24 KILLED=23 SURVIVED=0 INVALID=1 CONTROL=1" ]]
   exit $?
 fi
 
@@ -107,13 +140,13 @@ row_start=1
 row_end=0
 if [[ ${1:-} == "--rows" ]]; then
   [[ ${2:-} =~ ^[0-9]+-[0-9]+$ ]] || {
-    printf 'usage: %s [--self-test|--timeout-control|--added-row-control|--rows START-END]\n' "$0" >&2
+    printf 'usage: %s [--old-model-control|--self-test|--timeout-control|--added-row-control|--rows START-END]\n' "$0" >&2
     exit 64
   }
   row_start=${2%-*}
   row_end=${2#*-}
 elif [[ $# -ne 0 ]]; then
-  printf 'usage: %s [--self-test|--timeout-control|--added-row-control|--rows START-END]\n' "$0" >&2
+  printf 'usage: %s [--old-model-control|--self-test|--timeout-control|--added-row-control|--rows START-END]\n' "$0" >&2
   exit 64
 fi
 
@@ -140,6 +173,8 @@ cases=(
   'F1_MEMBERSHIP_ALIAS|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):|def _membership_classifier(values):\n    pin: str = PINNED_TEE_PATH\n    return pin in values\n\n\ndef _pinned_process_count(commands):'
   'F1_SECOND_SHARED_USER|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|def _pinned_process_count(commands):|def unrelated_shared_user(argv):\n    return pins.is_pinned_argv(argv)\n\n\ndef _pinned_process_count(commands):'
   'F1_SECOND_IF|test_ck16_checker_inventories_classifier_operand_predicates_module_wide|C|if pins.is_pinned_argv(cmd.split()))|if cmd and pins.is_pinned_argv(cmd.split()))'
+  'A5P_REBIND|test_ck17_classifier_operand_rebound_local_is_not_classifier_operand|T|    _assert_ck16_classifier_operand_contract(checker)\n\n\ndef test_ck17_classifier_operand_transitive_local_chain_is_rejected|    with pytest.raises(AssertionError):\n        _assert_ck16_classifier_operand_contract(checker)\n\n\ndef test_ck17_classifier_operand_transitive_local_chain_is_rejected'
+  'A5P_TRANSITIVE|test_ck17_classifier_operand_transitive_local_chain_is_rejected|T|        _assert_ck16_classifier_operand_contract(checker)\n\n\ndef test_ck17_classifier_operand_module_alias_chain_is_rejected|        pass\n\n\ndef test_ck17_classifier_operand_module_alias_chain_is_rejected'
   'CONTROL_COMMENT|test_ck13_read_site_drift_validator_rejects_rebound_expected|T|Every read site is named exactly|Every read operation is named exactly'
 )
 

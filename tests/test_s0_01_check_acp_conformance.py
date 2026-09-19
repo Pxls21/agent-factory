@@ -2986,71 +2986,172 @@ def _assert_ck16_classifier_operand_contract(checker_path):
         "PINNED_BUZZ_ACP_EXE_REALPATH", "argv", "cmd.split()",
     }
 
-    def assignment_binding(node):
-        if isinstance(node, ast.Assign):
-            return node.targets, node.value
-        if isinstance(node, ast.AnnAssign) and node.value is not None:
-            return [node.target], node.value
-        if isinstance(node, ast.NamedExpr):
-            return [node.target], node.value
-        return [], None
+    # CK16's deliberately finite data-flow domain (D-034): simple names in
+    # module and function scopes, tracked in source order. A later assignment
+    # replaces the earlier binding, so a re-bound alias is not accumulated.
+    #
+    # Covered expression classes: Assign / AnnAssign / AugAssign / NamedExpr,
+    # transitive simple-name aliases, module aliases visible at function
+    # definition, lambda/function defaults, and direct calls to helpers whose
+    # explicit return expressions are all derived in this same domain.
+    #
+    # Stated limits: container/subscript and attribute hops, nested closures
+    # beyond a direct default/walrus use, control-flow path sensitivity, module
+    # walrus, and global/nonlocal. A real checker use in a stated limit is a
+    # finding; it does not silently widen this frozen test-side model.
+    def target_names(node):
+        if isinstance(node, ast.Name):
+            return {node.id}
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return {
+                name
+                for item in node.elts
+                for name in target_names(item)
+            }
+        return set()
 
-    def binding_names(nodes):
-        return {
-            item.id
-            for node in nodes
-            for item in ast.walk(node)
-            if isinstance(item, ast.Name)
-        }
-
-    helper_returns = {
-        function.name: [node.value for node in ast.walk(function)
-                        if isinstance(node, ast.Return) and node.value is not None]
-        for function in functions
-    }
-
-    def direct_derivation(node, aliases, helpers):
+    def value_is_derived(node, state, globals_state, helpers):
         if ast.unparse(node) in classifier_operands:
             return True
-        if isinstance(node, ast.Name) and node.id in aliases:
-            return True
+        if isinstance(node, ast.Name):
+            return state.get(node.id, globals_state.get(node.id, False))
+        if isinstance(node, ast.NamedExpr):
+            return value_is_derived(node.value, state, globals_state, helpers)
         return (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
                 and node.func.id in helpers)
 
-    def expression_derives_from_operand(node, aliases, helpers):
-        if direct_derivation(node, aliases, helpers):
-            return True
-        if isinstance(node, ast.NamedExpr):
-            return expression_derives_from_operand(node.value, aliases, helpers)
-        return False
-
-    helper_operands = set()
-    while True:
-        resolved = {
-            name for name, returns in helper_returns.items()
-            if any(expression_derives_from_operand(value, set(), helper_operands)
-                   for value in returns)
+    def default_seeds(function, globals_state, helpers):
+        args = function.args
+        return {
+            arg.arg: True
+            for arg, default in zip(args.args[-len(args.defaults):],
+                                    args.defaults)
+            if value_is_derived(default, {}, globals_state, helpers)
         }
-        if resolved == helper_operands:
+
+    def analyze_body(body, scope_name, globals_state, helpers,
+                     collect_uses, initial_state=None):
+        state = dict(initial_state or {})
+        uses = []
+        returns = []
+
+        def visit(node):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda, ast.ClassDef)):
+                return
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                visit(node.value)
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                else:
+                    targets = [node.target]
+                derived = value_is_derived(
+                    node.value, state, globals_state, helpers)
+                if isinstance(node, ast.AugAssign):
+                    derived = derived or any(
+                        state.get(name, False)
+                        for target in targets
+                        for name in target_names(target))
+                for target in targets:
+                    for name in target_names(target):
+                        state[name] = derived
+                return
+            if isinstance(node, ast.NamedExpr):
+                visit(node.value)
+                derived = value_is_derived(
+                    node.value, state, globals_state, helpers)
+                for name in target_names(node.target):
+                    state[name] = derived
+                return
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+            if isinstance(node, ast.Return) and node.value is not None:
+                returns.append(value_is_derived(
+                    node.value, state, globals_state, helpers))
+            if collect_uses and isinstance(node, (ast.Compare, ast.BoolOp)):
+                operands = (node.values if isinstance(node, ast.BoolOp)
+                            else [node.left, *node.comparators])
+                if any(value_is_derived(
+                        item, state, globals_state, helpers)
+                       for item in operands):
+                    uses.append((scope_name, node))
+
+        for statement in body:
+            visit(statement)
+        return state, uses, returns
+
+    def module_assign(statement, module_state, helpers):
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+            targets = [statement.target]
+        else:
+            return
+        value = statement.value
+        derived = (value is not None
+                   and value_is_derived(value, module_state, {}, helpers))
+        if isinstance(statement, ast.AugAssign):
+            derived = derived or any(
+                module_state.get(name, False)
+                for target in targets
+                for name in target_names(target))
+        for target in targets:
+            for name in target_names(target):
+                module_state[name] = derived
+
+    def helper_pass(helpers):
+        module_state = {}
+        returns_by_name = {}
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                globals_state = dict(module_state)
+                defaults = default_seeds(statement, globals_state, helpers)
+                _state, _uses, returns = analyze_body(
+                    statement.body, statement.name, globals_state,
+                    helpers, False, defaults)
+                returns_by_name[statement.name] = returns
+            else:
+                module_assign(statement, module_state, helpers)
+        return {
+            name for name, returns in returns_by_name.items()
+            if returns and all(returns)
+        }
+
+    helpers = set()
+    for _ in range(len(functions) + 1):
+        resolved = helper_pass(helpers)
+        if resolved == helpers:
             break
-        helper_operands = resolved
+        helpers = resolved
 
-    def function_operand_aliases(function):
-        aliases = set()
-        while True:
-            resolved = set(aliases)
-            for node in ast.walk(function):
-                targets, value = assignment_binding(node)
-                if value is not None and expression_derives_from_operand(
-                        value, aliases, helper_operands):
-                    resolved.update(binding_names(targets))
-            if resolved == aliases:
-                return aliases
-            aliases = resolved
-
-    def operand_derivation(node, aliases):
-        return expression_derives_from_operand(node, aliases, helper_operands)
+    module_state = {}
+    module_uses = []
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            globals_state = dict(module_state)
+            defaults = default_seeds(statement, globals_state, helpers)
+            _state, uses, _returns = analyze_body(
+                statement.body, statement.name, globals_state,
+                helpers, True, defaults)
+            module_uses.extend(uses)
+            for nested in ast.walk(statement):
+                if nested is statement or not isinstance(
+                        nested, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda)):
+                    continue
+                defaults = default_seeds(nested, globals_state, helpers)
+                nested_body = (nested.body if isinstance(nested.body, list)
+                               else [nested.body])
+                _state, uses, _returns = analyze_body(
+                    nested_body, getattr(nested, "name", "<lambda>"),
+                    globals_state, helpers, True, defaults)
+                module_uses.extend(uses)
+        else:
+            _state, uses, _returns = analyze_body(
+                [statement], "<module>", module_state, helpers, True)
+            module_uses.extend(uses)
+            module_assign(statement, module_state, helpers)
 
     def is_membership(node):
         return (isinstance(node, ast.Compare)
@@ -3063,25 +3164,11 @@ def _assert_ck16_classifier_operand_contract(checker_path):
          "cmd.split(' ')[0] == PINNED_BUZZ_ACP_EXE_REALPATH"),
     }
     actual_compares = set()
-    for function in functions:
-        if function.name == "_pinned_process_count":
+    for scope, node in module_uses:
+        if scope == "_pinned_process_count":
             continue
-        aliases = function_operand_aliases(function)
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Compare):
-                continue
-            operands = [node.left, *node.comparators]
-            derived = (
-                any(operand_derivation(operand, aliases) for operand in operands)
-                or any(
-                    isinstance(item, ast.NamedExpr)
-                    and operand_derivation(item.value, aliases)
-                    for operand in operands
-                    for item in ast.walk(operand)
-                )
-            )
-            if derived and not is_membership(node):
-                actual_compares.add((function.name, ast.unparse(node)))
+        if isinstance(node, ast.Compare) and not is_membership(node):
+            actual_compares.add((scope, ast.unparse(node)))
     assert actual_compares == allowed_compares, (
         f"classifier-operand comparison inventory changed: "
         f"{sorted(actual_compares ^ allowed_compares)}")
@@ -3099,26 +3186,26 @@ def _assert_ck16_classifier_operand_contract(checker_path):
          "PINNED_AGENT_REALPATH not in agent_lines[0][3]"),
     }
     actual_predicates = set()
-    for function in functions:
-        if function.name == "_pinned_process_count":
+    for scope, node in module_uses:
+        if scope == "_pinned_process_count":
             continue
-        aliases = function_operand_aliases(function)
-        for node in ast.walk(function):
-            if isinstance(node, ast.BoolOp):
-                operands = node.values
-            elif is_membership(node):
-                operands = [node.left, *node.comparators]
-            else:
-                continue
-            if any(operand_derivation(operand, aliases) for operand in operands):
-                actual_predicates.add((function.name, ast.unparse(node)))
+        if isinstance(node, (ast.BoolOp,)) or is_membership(node):
+            actual_predicates.add((scope, ast.unparse(node)))
     assert actual_predicates == allowed_predicates, (
         f"classifier-operand BoolOp/membership inventory changed: "
         f"{sorted(actual_predicates ^ allowed_predicates)}")
 
 
 def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():
-    """Inventory every comparison/membership/boolean using classifier operands."""
+    """Inventory every derived use in the STATED domain (D-034, frozen).
+
+    The scope-sequential model (see _assert_ck16_classifier_operand_contract):
+    every top-level and nested function/lambda scope, module-scope bindings
+    in source order, and each scope's current last binding of a name.
+    Stated limits (NOT tracked — an untracked operand may hide there):
+    container/subscript hops, attribute binding or read, closure reads of an
+    enclosing function's locals, global/nonlocal statements.
+    """
     _assert_ck16_classifier_operand_contract(CHECKER)
 
 
@@ -3156,6 +3243,8 @@ def test_ck16_classifier_operand_comparison_anywhere_is_rejected(tmp_path):
 
 
 def test_ck17_classifier_operand_helper_alias_is_rejected(tmp_path):
+    """A plain-Name call whose defining function returns only operands is a
+    helper; a derived local seeded from that call must be inventoried."""
     checker = _ck16_checker_copy(
         tmp_path,
         "def _pinned_process_count(commands):\n",
@@ -3189,6 +3278,8 @@ def test_ck17_classifier_operand_nested_walrus_alias_is_rejected(tmp_path):
 
 
 def test_ck17_classifier_operand_membership_alias_is_rejected(tmp_path):
+    """An annotated local bound to an operand is derived; the membership
+    form must land in the predicate inventory."""
     checker = _ck16_checker_copy(
         tmp_path,
         "def _pinned_process_count(commands):\n",
@@ -3201,6 +3292,150 @@ def test_ck17_classifier_operand_membership_alias_is_rejected(tmp_path):
             AssertionError,
             match="classifier-operand BoolOp/membership inventory changed"):
         _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_rebound_local_is_not_classifier_operand(
+        tmp_path):
+    """Scope-sequential rebind (V1 fix): a local bound to an operand then
+    reassigned to a non-operand is NOT derived at the later use — the
+    old accumulating alias set false-positived here."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def unrelated(value):\n"
+        "    pin = PINNED_TEE_PATH\n"
+        "    pin = 'literal'\n"
+        "    return value == pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_transitive_local_chain_is_rejected(tmp_path):
+    """A local-to-local derivation chain (no operand on the final rhs) is
+    still tracked: each rebind inherits the current derived-ness."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def transitive_local(value):\n"
+        "    a = PINNED_TEE_PATH\n"
+        "    b = a\n"
+        "    c = b\n"
+        "    return value == c\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_module_alias_chain_is_rejected(tmp_path):
+    """Module-scope bindings are inventoried in source order (V1 fix): a
+    chain of top-level aliases used inside a function is derived. The
+    old per-function walk never saw module assignments at all."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "module_a = PINNED_TEE_PATH\n"
+        "module_b = module_a\n"
+        "module_c = module_b\n\n"
+        "def module_alias(value):\n"
+        "    return value == module_c\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_augmented_alias_is_rejected(tmp_path):
+    """An augmented assignment to a name first bound non-derived still
+    derives the name (the rhs operand feeds the in-place combine)."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def augmented_alias(value):\n"
+        "    pin = ''\n"
+        "    pin += PINNED_TEE_PATH\n"
+        "    return value == pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_lambda_default_is_rejected(tmp_path):
+    """A lambda default argument bound to an operand seeds the lambda
+    scope; the comparison inside the lambda body is inventoried."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def lambda_default(value):\n"
+        "    return (lambda pin=PINNED_TEE_PATH: value == pin)()\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_default_argument_helper_is_rejected(
+        tmp_path):
+    """A function whose top-level returns are all derived is a helper;
+    a derived default argument makes one, and a call to it is a
+    derived operand (fixed point over the module)."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def default_pin(pin=PINNED_TEE_PATH):\n"
+        "    return pin\n\n"
+        "def default_helper(value):\n"
+        "    return value == default_pin()\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_container_hop_is_stated_limit(tmp_path):
+    """STATED LIMIT (D-034 frozen domain): a container literal or subscript
+    is not propagated, so this form escapes by design. It is documented
+    here so a later round must not silently re-claim it; if the real
+    checker ever uses this form, that is a FINDING, not a contract fix."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def container_hop(value):\n"
+        "    pins_tuple = (PINNED_TEE_PATH,)\n"
+        "    return value == pins_tuple[0]\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck17_classifier_operand_attribute_hop_is_stated_limit(tmp_path):
+    """STATED LIMIT (D-034 frozen domain): an attribute bind/read is not
+    tracked, so this form escapes by design. Same rule as
+    test_ck17_classifier_operand_container_hop_is_stated_limit."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def attribute_hop(value):\n"
+        "    class Holder:\n"
+        "        pass\n"
+        "    holder = Holder()\n"
+        "    holder.pin = PINNED_TEE_PATH\n"
+        "    return value == holder.pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
 
 
 @pytest.mark.parametrize("cmd,expected", [
