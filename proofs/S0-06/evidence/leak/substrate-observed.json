@@ -1,0 +1,5 @@
+{
+  "bin_path": "/tmp/s0-06-run-kJGtUq/src/ai-memory/target/release/ai-memory",
+  "binary_sha256_observed": "5cb29de9baa9d910a50c3662b947719cd88b867df2ec27b5e9bdb9b266954fb3",
+  "leg": "leak"
+}

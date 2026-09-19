@@ -1,0 +1,54 @@
+{
+  "binding": {
+    "actor": "svc-agent-runner",
+    "agent": "a-alpha",
+    "project": "p-atlas",
+    "team": "t-core"
+  },
+  "degraded_scopes": [],
+  "reason": "recall: complete",
+  "records": [
+    {
+      "confidence": -2.639926527859239,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 0,
+        "project": "agent--a-alpha",
+        "shadowed_scopes": [
+          "project",
+          "team",
+          "company"
+        ],
+        "snippet": "# <mark>Deploy</mark> <mark>window</mark> (agent variant)\n\nThe agent <mark>deploy</mark> <mark>window</mark> is Tuesday 09:00-11:00 UTC.\n",
+        "title": "Deploy window (agent variant)",
+        "workspace": "factory"
+      },
+      "scope": "agent",
+      "stable_id": "notes/deploy-window.md",
+      "timestamp": "2026-09-19T07:56:45.920758Z"
+    }
+  ],
+  "scopes_queried": [
+    {
+      "project": "agent--a-alpha",
+      "scope": "agent",
+      "workspace": "factory"
+    },
+    {
+      "project": "project--p-atlas",
+      "scope": "project",
+      "workspace": "factory"
+    },
+    {
+      "project": "team--t-core",
+      "scope": "team",
+      "workspace": "factory"
+    },
+    {
+      "project": "_global",
+      "scope": "company",
+      "workspace": "factory"
+    }
+  ],
+  "status": "ok"
+}

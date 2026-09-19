@@ -1,0 +1,5 @@
+{"agent": "a-alpha", "authorized_scopes": ["agent", "project", "team", "company"], "event": "scope_tuple_authorized", "reason": "authz: tuple matched the committed table", "seq": 1}
+{"event": "write_intent", "key": {"event_id": "evt-0003", "session": "sess-7f2a", "turn": "12"}, "page_path": "observations/2c1c1acbd4e41f93.md", "project": "agent--a-alpha", "reason": "write: intent recorded", "scope": "agent", "seq": 2}
+{"event": "http_request", "method": "GET", "path": "/api/v1/workspaces/factory/projects/agent--a-alpha/pages", "reason": "substrate: request issued", "seq": 3}
+{"event": "http_request", "method": "POST", "path": "/admin/write-page", "reason": "substrate: request issued", "seq": 4}
+{"event": "write_committed", "key": {"event_id": "evt-0003", "session": "sess-7f2a", "turn": "12"}, "page_path": "observations/2c1c1acbd4e41f93.md", "project": "agent--a-alpha", "reason": "write: page written", "scope": "agent", "seq": 5}

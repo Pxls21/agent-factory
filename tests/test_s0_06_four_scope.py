@@ -766,9 +766,13 @@ def test_an_absent_evidence_root_defers(tmp_path):
     assert line == "deferred: S0-06 evidence not captured"
 
 
-def test_the_sandbox_tree_has_no_captured_evidence_so_the_spec_positive_leg_defers():
+def test_the_committed_real_bundle_passes():
+    """The real captured PC bundle now lives at proofs/S0-06/evidence (minted 2026-09-19,
+    substrate ai-memory 1.39.0@73715b6f); the checker grades it 4/4. The generic absent-root
+    deferral stays covered by test_an_absent_evidence_root_defers above."""
     rc, line = _verdict(PROOF / "evidence")
-    assert (rc, line) == (2, "deferred: S0-06 evidence not captured")
+    assert (rc, line) == (0, "PASS: S0-06 four-scope - 4/4 assertions, "
+                             "substrate ai-memory 1.39.0@73715b6f")
 
 
 # --------------------------------------------------------------------------- checker: committed negatives
@@ -1096,12 +1100,12 @@ def test_spec_negative_legs_reproduce_their_pinned_reason_exactly():
         assert proc.stdout.strip().splitlines()[-1] == leg["expect"]["failure_reason"]
 
 
-def test_spec_positive_leg_defers_in_this_venue():
+def test_spec_positive_leg_passes_over_the_committed_bundle():
     spec = json.loads((PROOF / "spec.json").read_text())
     leg = next(x for x in spec["legs"] if x["leg"] == "positive")
     proc = subprocess.run([sys.executable] + leg["cmd"][1:], capture_output=True, text=True,
                           cwd=str(REPO), timeout=leg["timeout_s"])
-    assert proc.returncode == 2       # the runner reads exit 2 as Deferred and mints nothing
+    assert proc.returncode == leg["expect"]["exit_code"]   # 0: the committed real bundle passes
 
 
 def test_the_pinned_commit_comes_from_upstream_lock_not_the_checker():

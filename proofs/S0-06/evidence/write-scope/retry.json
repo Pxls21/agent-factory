@@ -1,0 +1,14 @@
+{
+  "idempotency_key": {
+    "event_id": "evt-0003",
+    "session": "sess-7f2a",
+    "turn": "12"
+  },
+  "page_id": null,
+  "page_path": "observations/2c1c1acbd4e41f93.md",
+  "project": "agent--a-alpha",
+  "reason": "write: idempotent no-op",
+  "scope": "agent",
+  "status": "ok",
+  "workspace": "factory"
+}

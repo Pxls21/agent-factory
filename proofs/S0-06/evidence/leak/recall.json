@@ -1,0 +1,55 @@
+{
+  "binding": {
+    "actor": "svc-agent-runner",
+    "agent": "a-beta",
+    "project": "p-atlas",
+    "team": "t-core"
+  },
+  "degraded_scopes": [],
+  "reason": "recall: complete",
+  "records": [
+    {
+      "confidence": -0.9912309992609696,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 0,
+        "project": "agent--a-beta",
+        "shadowed_scopes": [],
+        "snippet": "# Canary (agent)\n\n<mark>honeytoken</mark> HT-agent-3f1c9a2e staged in the agent scope.\n",
+        "title": "Canary (agent)",
+        "workspace": "factory"
+      },
+      "scope": "agent",
+      "stable_id": "canaries/agent.md",
+      "timestamp": "2026-09-19T07:56:46.142923Z"
+    },
+    {
+      "confidence": -0.9912309992609696,
+      "provenance": {
+        "kind": "decision",
+        "precedence_rank": 1,
+        "project": "project--p-atlas",
+        "shadowed_scopes": [],
+        "snippet": "# Canary (project)\n\n<mark>honeytoken</mark> HT-project-8b40d17c staged in the project scope.\n",
+        "title": "Canary (project)",
+        "workspace": "factory"
+      },
+      "scope": "project",
+      "stable_id": "canaries/project.md",
+      "timestamp": "2026-09-19T07:56:45.94673Z"
+    }
+  ],
+  "scopes_queried": [
+    {
+      "project": "agent--a-beta",
+      "scope": "agent",
+      "workspace": "factory"
+    },
+    {
+      "project": "project--p-atlas",
+      "scope": "project",
+      "workspace": "factory"
+    }
+  ],
+  "status": "ok"
+}
