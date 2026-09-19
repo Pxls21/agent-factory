@@ -103,12 +103,12 @@ The dead columns the O2/O3 checker binds on:
    response header (same value), not the body's normalized `gpt-5.6-sol`.
 
 **The real, stronger bindings (both legs).**
-- **Direct leg** binds by the client-visible response headers OmniRoute returns (already in the
-  captured `direct.json.response_headers`): `x-omniroute-request-id == call_logs.id`
-  (`1789756168915-60150b`, always-populated PK — NOT `direct.json.id`, which is the `resp_…`
-  Responses-API body id, a different thing), `x-omniroute-model == call_logs.model`
-  (`gpt-5.6-sol-ultra`, resolved), `x-omniroute-provider: cx` ⇒ `provider='codex'` (the non-stub
-  fingerprint). Exactly one direct row. Stronger than the dead `response_id`.
+- **Direct leg** — the `x-omniroute-request-id == call_logs.id` binding stated here was
+  **SUPERSEDED / FALSIFIED 2026-09-19 (see Blocker 4):** on the live 3.8.50 instance
+  `x-omniroute-request-id` is a UUID and `call_logs.id` is an epoch-suffix key — different id-spaces,
+  never equal; a streaming `/v1/responses` returns no `x-omniroute-*` headers at all. The real direct
+  binding is the FRESH NONCE recorded in OmniRoute's artifact `requestBody.input` (Blocker 4),
+  mirroring the hermes leg's `session_tag == nonce2`.
 - **Hermes leg** binds by **`session_tag == the leg nonce2`** + `combo_name == route_id`
   + `provider` not in the stub set + `status=200`. The nonce2 is FRESH per leg, so every row
   carrying it is unambiguously this leg's — the attribution is the tag, not window-uniqueness.
@@ -182,44 +182,57 @@ the REAL shape — content list + title, no rawInput — so the sandbox tests ex
 Then re-capture to validate end-to-end. This is the round-trip half of the "pin a real row before
 you trust the checker" rule — the call_logs half was fixed in O4; the ACP-timeline half is this.
 
-## Blocker 4 — /v1/responses gives NO client-visible handle to its call_logs row (a PROOF-DESIGN question for the owner)
+## Blocker 4 — the /v1/responses call_logs binding — RESOLVED 2026-09-19 (OmniRoute docs + live measurement on 3.8.50)
 
-With the O4+O5 realigns in, the runner now COMPLETES a full live capture (2026-09-18): leg A 200,
-leg B a real 65-frame round trip, `round-trip OK`, and the collect binds **3 hermes rows** by
-`session_tag == nonce2` + `combo_name` (all `agentfactory-build`, `status=200`, `provider=codex`).
-The hermes-leg call_logs binding WORKS. But the DIRECT leg's call_logs identity binding does not,
-and it is not a bug — it is real OmniRoute behavior:
+The owner directed: read OmniRoute's ACTUAL documentation, not just the source. OmniRoute is a
+PUBLIC open-source AI gateway (an OpenAI-compatible multi-provider router). Its public docs + a
+later PR ("request-id correlated routing decisions, decision lookup, diagnostics") describe the
+intended correlation model; the owner's instance is 3.8.50 and was then probed directly. Docs +
+live probe together resolve the binding.
 
-- The direct leg uses `/v1/responses` (codex_responses, seed A1). Across two live captures its
-  response headers are INTERMITTENT: the v4 capture returned the full `x-omniroute-*` set
-  (`x-omniroute-request-id` = the call_logs PK, `x-omniroute-model`, `x-omniroute-provider`,
-  `x-correlation-id`); the later capture returned only `x-request-id` (a UUID) + `x-omniroute-route-class`.
-- Neither `direct.json.id` (a `resp_…` body id), `x-request-id` (`31d03e6c-…`, a UUID), nor anything
-  else in the response maps to the direct row's `call_logs.id` (`1789760900281-89f048`) or its
-  `correlation_id` (`4d8cbeef-…`). Verified against the live DB.
-- The direct row's `session_tag` is OmniRoute's OWN `conv_…` id, NOT the client's
-  `x-omniroute-session-id` nonce — because **`/v1/chat/completions` honors the client session-id as
-  `session_tag` but `/v1/responses` overrides it with a conv id**. That is precisely why the hermes
-  leg (chat_completions) binds by the nonce and the direct leg (responses) cannot.
+**What the docs say (public OmniRoute + PR #34):** non-streaming `/v1/responses` carries
+`X-OmniRoute-Decision-Id`; STREAMING responses are sent BEFORE routing finishes, so their decision
+is not in headers — it is "recorded under the id the client receives" and retrieved by a lookup
+(`GET /api/omniroute/route/decisions/{id}`, `GET /api/usage/route-explain/{id}`) or the
+`routing_decisions` table keyed by `request_id`.
 
-So `/v1/responses` provides no reliable client-visible handle to bind its own call_logs row. The
-O2/O3 checker's direct-leg `response_id` binding was fiction; the O4 realign's
-`id == x-omniroute-request-id` binding works only when that header happens to be present.
+**What the owner's 3.8.50 actually does (live probes 2026-09-19, three captures):**
+1. `routing_decisions` table EXISTS in the schema but is EMPTY — PR #34's population is a LATER
+   version. The docs' request-id lookup path is NOT available on this instance.
+2. NO client-visible header equals any `call_logs` column for `/v1/responses`. On one request:
+   `x-request-id=fe09a6be…`, `x-omniroute-request-id=6e455263…`, and the row's
+   `correlation_id=a2a3a6f8…` are THREE distinct UUIDs; `call_logs.id` is an epoch-suffix key
+   (`1789791165766-9edc2a`). So the O4 binding `call_logs.id == x-omniroute-request-id` cannot hold
+   — different id-spaces — which is exactly why it was never validated against a real row (Blocker 2
+   asserted it from an assumed schema; falsified here).
+3. `call_logs.response_id` == the response body's own `resp_…` id works for NON-streaming rows, but
+   is NULL for STREAMING rows, and streaming returns only `x-request-id` in headers (no
+   decision/model/provider headers — matching the docs). Seed A1 requires the direct leg to STREAM,
+   so `response_id` is unavailable to it.
+4. `request_detail_logs` is EMPTY (count 0). The per-request pipeline detail is stored as an
+   ARTIFACT FILE (`call_logs.artifact_relpath` → `<DATA_DIR>/call_logs/<YYYY-MM-DD>/<…>_<id>.json`,
+   with `has_request_body=1`, `detail_state='ready'`). Its `requestBody` is a dict
+   `{model, input, stream, max_output_tokens}`; the client's request text is at `requestBody.input`.
 
-**RECOMMENDED RESOLUTION (owner decision).** The independent call_logs identity instrument — the
-defense against the `echoRequestedModelName` hollow green (conjunct iii's whole reason to exist) —
-is fully provided by the **HERMES leg's rows**, which bind reliably (`session_tag == nonce`,
-`combo_name`, `provider=codex` non-stub, `model=gpt-5.6-sol-ultra`). The DIRECT leg proves
-`/v1/responses` streams real text + the response model (conjuncts i, ii — already green live). So:
-bind conjunct (iii) on the HERMES leg only; drop the direct-leg call_logs-row requirement and
-document that `/v1/responses` exposes no bindable handle (the real behavior). This keeps seed A1
-(leg A on `/v1/responses`) and A2 (non-stub fingerprint via the hermes leg's `codex` provider), and
-is HONEST about what the live system provides.
-Alternatives, weaker: (a) run the direct leg on `chat_completions` too (bindable, but loses the
-`/v1/responses` proof — rejected, A1 pins it); (b) window+combo_name uniqueness for the direct row
-(the weaker binding the realign deliberately moved away from). The coordinator's recommendation is
-the HERMES-leg instrument; awaiting the owner's call before the checker's direct-leg requirement is
-changed and the mint proceeds.
+**RESOLUTION — bind the direct leg by its FRESH NONCE, recorded in OmniRoute's artifact requestBody.**
+This mirrors the hermes leg exactly (it binds `session_tag == nonce2`, a fresh client nonce OmniRoute
+independently records). The direct leg already sends a fresh 16-hex nonce in its `/v1/responses`
+`input` (conjunct i already requires that nonce in the streamed text); OmniRoute records that input
+verbatim in the row's artifact. The collector selects the `/v1/responses` row (in the direct
+window, `combo_name == route`) whose artifact `requestBody` contains the nonce and exports it with a
+`recorded_input` field; the checker cross-checks `direct.json.nonce in recorded_input` plus
+`combo_name == route`, `provider` non-stub, `status == 200`, permitted path. This is INDEPENDENT
+(OmniRoute wrote the artifact), RE-VERIFIABLE in the sandbox (the recorded input travels in the
+bundle), and FORGERY-RESISTANT (a fresh client nonce inside the aggregator's own record). VERIFIED
+live: streaming row `1789791699678-ec4e47`, `provider=codex`, `combo_name=agentfactory-build`,
+`status=200`, `response_id=NULL`, the nonce present at `requestBody.input`.
+
+The `x-omniroute-model` header cross-check (checker ~line 613) is DROPPED for the direct leg — a
+streaming `/v1/responses` returns no such header. Direct-leg model identity stays asserted by
+conjunct (ii) (`direct.json.model == expected`) and by `call_logs.model` consistency across the
+hermes+direct rows (the `models` set stays size 1). The hermes-leg binding (`session_tag == nonce2`)
+is unchanged and proven live (3 rows). No seed/ADR contract change: A1 (leg A on `/v1/responses`,
+streamed) and A2 (non-stub fingerprint, now via BOTH legs' `provider=codex` rows) both hold.
 
 ## Reconciliation with the seed and ADR (no contract change)
 
@@ -237,13 +250,16 @@ changed and the mint proceeds.
    `model.provider: custom:s0-03-omniroute`, `api_mode: chat_completions`, provider block
    `api`/`key_env`/`transport: openai_chat`. Port to the committed `proofs/S0-03/hermes/config.yaml`.
 2. **Runner collect step (`collect_leg.sh`) realign** — query `call_logs` by
-   `session_tag == nonce2` + `combo_name == route_id` (hermes leg) and by
-   `id == x-omniroute-request-id` (direct leg); drop `response_id` and the `requested_model==route`
-   filter. Also: the runner's DONE condition must assert a real `tool_call`→`completed`, not bare
-   `end_turn` (AF-AP-100).
-3. **Checker conjunct (iii)+(v) realign** — bind on the real columns above; record-and-assert the
-   observed wire mode in the permitted set, not a `codex_responses` literal; the direct probe records
-   the `x-omniroute-*` headers as first-class `direct.json` fields.
+   `session_tag == nonce2` + `combo_name == route_id` (hermes leg, DONE) and, for the direct leg,
+   select the `/v1/responses` row (in the direct window, `combo_name == route_id`) whose ARTIFACT
+   `requestBody` contains `direct.json.nonce`, exporting a `recorded_input` field (Blocker 4). Drop
+   `response_id`, the `requested_model==route` filter, and the dead `id == x-omniroute-request-id`
+   direct binding. The runner's DONE condition asserts a real `tool_call`→`completed`, not bare
+   `end_turn` (AF-AP-100, DONE in O5).
+3. **Checker conjunct (iii)+(v) realign** — hermes rows bound on the real columns (DONE); direct row
+   bound by `direct.json.nonce in recorded_input` (Blocker 4); drop the direct-leg `x-omniroute-model`
+   header cross-check (a streaming `/v1/responses` returns no such header); record-and-assert the
+   observed wire mode in the permitted set, not a `codex_responses` literal.
 4. **PRE-MINT regression (AF-AP-36)** — a committed hostile bundle per realigned binding (wrong
    request-id; stub `provider`; `combo_name` mismatch; normalized-model mismatch; missing session_tag)
    is a FAILING test before re-mint.
