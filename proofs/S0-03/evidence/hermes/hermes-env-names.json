@@ -1,0 +1,20 @@
+{
+  "agent_realpath": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+  "exe": "/usr/bin/python3.13",
+  "names": [
+    "BUZZ_ACP_AGENT_OWNER",
+    "BUZZ_ACP_RESPOND_TO",
+    "BUZZ_ACP_SESSION_POLICY",
+    "BUZZ_PRIVATE_KEY",
+    "BUZZ_RELAY_URL",
+    "HERMES_HOME",
+    "HOME",
+    "LC_CTYPE",
+    "OMNIROUTE_API_KEY",
+    "PATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "S0_01_AGENT",
+    "S0_01_FRAMEDIR"
+  ],
+  "pid": 3615828
+}

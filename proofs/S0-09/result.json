@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-09",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-18T09:56:41.520774Z",
+  "recorded_at": "2026-09-19T05:54:02.534276Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-09/check_conformance.py",
         "docs/adr/0005-foundry-host.md"
       ],
-      "started_at": "2026-09-18T09:56:41.148061Z",
-      "finished_at": "2026-09-18T09:56:41.502756Z",
+      "started_at": "2026-09-19T05:54:02.488560Z",
+      "finished_at": "2026-09-19T05:54:02.511400Z",
       "exit_code": 0,
       "stdout_sha256": "4ffd7da7307802f31441c4f15fe445290765cc67e3f036c107b5c98f7e8207e3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-09/check_conformance.py",
         "proofs/S0-09/fixtures/neg-missing-section.md"
       ],
-      "started_at": "2026-09-18T09:56:41.502935Z",
-      "finished_at": "2026-09-18T09:56:41.520359Z",
+      "started_at": "2026-09-19T05:54:02.511634Z",
+      "finished_at": "2026-09-19T05:54:02.533611Z",
       "exit_code": 1,
       "stdout_sha256": "43b055be9e864094e2cf2c5ac64ba07b2eb3bdc6e9af949f5826bda4d6652448",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -40,7 +40,7 @@
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
     "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "5229d7a56a89d68ae916037d7c6e590507869000de0342d2110f4cd69edd4dd2",
+    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
     "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
@@ -50,5 +50,5 @@
     "proofs/S0-09/fixtures/neg-missing-section.md": "9f2904e0a82c6297a008f646b5c58385462873173aa674e20458be0a1e8e2cfe",
     "proofs/S0-09/spec.json": "45b9f6e0951e173f1ed8dd87d5a5bc0c3561768468ad7291c960be11da7d552a"
   },
-  "digest": "d112bfaefd3d44e0f022b520e7506e9c50edb092b701a4d6d9e6f30c09fbdc56"
+  "digest": "c7f7ef2985f755d0ae95d143ceab8060a02372e9e4c2414faaa1f14c67437c90"
 }

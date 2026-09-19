@@ -117,7 +117,7 @@ def _empty_lines():
             "blocked_credential numerator=0 denominator=1",
             "blocked_host numerator=0 denominator=1",
             "conformance_checked_decision numerator=0 denominator=3",
-            "execution_proof numerator=0 denominator=8"]
+            "execution_proof numerator=0 denominator=9"]
 
 
 # Negative controls first: each asserts the contract's exact reason and exit code.
@@ -411,7 +411,7 @@ def test_valid_result_is_present_and_increments_its_class(tmp_path):
 
     assert completed.returncode == 0
     assert "S0-01 PRESENT" in completed.stdout
-    assert "execution_proof numerator=1 denominator=8" in completed.stdout
+    assert "execution_proof numerator=1 denominator=9" in completed.stdout
 
 
 def test_attestation_mismatch_flips_present_to_invalid(tmp_path):
@@ -542,10 +542,13 @@ def test_registry_matches_seed_classes_and_counts():
     assert by_class == {
         # S0-08 completed its declared blocked_host -> execution_proof transition
         # (map-runsc-s008 positive branch) when its live gVisor proof landed 2026-09-18;
-        # blocked_host is now an empty class (denominator 1 kept — the canonical four).
-        "execution_proof": {"S0-01", "S0-02", "S0-04", "S0-05", "S0-06", "S0-07", "S0-08", "S0-11"},
+        # S0-03 completed its declared blocked_credential -> execution_proof transition
+        # (map-pcbridge-s003 positive branch) when its live OmniRoute round-trip proof
+        # landed 2026-09-19. Both blocked_* are now empty classes (denominator 1 kept
+        # each — the canonical four).
+        "execution_proof": {"S0-01", "S0-02", "S0-03", "S0-04", "S0-05", "S0-06", "S0-07", "S0-08", "S0-11"},
         "conformance_checked_decision": {"S0-09", "S0-10", "S0-12"},
-        "blocked_credential": {"S0-03"},
+        "blocked_credential": set(),
         "blocked_host": set(),
     }
     assert next(entry for entry in registry["proofs"] if entry["proof_id"] == "S0-02")["required_negative_controls"] == 4

@@ -1,7 +1,7 @@
 {
 "schema": "proofs/registry-v1",
 "classes": {
-  "execution_proof": {"ledger_denominator": 8},
+  "execution_proof": {"ledger_denominator": 9},
   "conformance_checked_decision": {"ledger_denominator": 3},
   "blocked_credential": {"ledger_denominator": 1},
   "blocked_host": {"ledger_denominator": 1}
@@ -11,7 +11,7 @@
 "proofs": [
   {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
   {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4},
-  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "blocked_credential", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "blocked": {"owner": "TBD-owner-credential", "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted", "marker_path": "proofs/S0-03/blocked.json"}},
+  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1},
   {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1},
   {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1},
   {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1},

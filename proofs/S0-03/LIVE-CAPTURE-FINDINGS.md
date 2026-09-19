@@ -10,6 +10,23 @@ passed on fiction, and the first real run broke it.
 (a real tool-call round trip); blocker 2 fully characterised against real rows. The tooling
 realign + re-capture + mint are the ordered remaining work. Nothing minted yet.**
 
+**STATUS 2026-09-19: MINTED.** Blocker 4 (the direct-leg binding, the last open blocker) resolved —
+the direct leg binds by the fresh 16-hex nonce OmniRoute records in its artifact `requestBody`
+(exported as `recorded_input`), mirroring the hermes leg's `session_tag == nonce2`. The full
+re-capture landed the real v8b bundle at `evidence/` (leg A `/v1/responses` stream, model
+`gpt-5.6-sol` via codex; leg B a 38-frame real Hermes tool-call round trip; the credential-absent
+401 kill switch, direct-leg only — `evidence/credential-absent/NOT-CAPTURED.md` names the S0-01
+launcher seam that makes a key-free Hermes leg unproducible). Two further live defects, found and
+fixed during the re-capture: AF-AP-104 (`sqlite3 ?immutable=1` misses rows still in the `-wal` on a
+live WAL DB → `?mode=ro`, WAL-aware) and AF-AP-105 (a fixed-name framedir raced the prior run's
+`launch.ready` marker → `rm -rf "$framedir"` before launch). Checker PASS rc 0 on the real bundle;
+all four hostile-fixture negatives RED with their exact reasons; sandbox suite `195 passed` ×2.
+Class flip blocked_credential→execution_proof (map-pcbridge-s003), `blocked.json` removed,
+`result.json` minted, all six attested results regenerated + ledger-gen (execution_proof 4/9),
+`validate-ledger integrity` PRESENT ×7. Remaining, NOT done: the adversarial-verify round
+(pending); the owner re-sign of `accepted/S0-11` (AF-AP-56 — the registry attested-input change
+re-stales every minted result, including S0-11's accepted tag).**
+
 Every fact here is a primary-source probe from the 2026-09-18 session (the live `call_logs` DB
 read-only, the captured bundle, the pinned hermes-agent 0.21.0 source at
 `/home/rocco/s0-01-pinned/hermes-agent`, and in-process resolver probes). Redaction: no key value,

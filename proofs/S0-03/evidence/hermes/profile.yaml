@@ -1,0 +1,16 @@
+model:
+  default: agentfactory-build
+  provider: custom:s0-03-omniroute
+  base_url: http://127.0.0.1:20128/v1
+  api_mode: chat_completions
+providers:
+  s0-03-omniroute:
+    api: http://127.0.0.1:20128/v1
+    name: S0-03 OmniRoute
+    key_env: OMNIROUTE_API_KEY
+    default_model: agentfactory-build
+    transport: openai_chat
+    discover_models: true
+    extra_headers:
+      x-omniroute-compression: 'off'
+      x-omniroute-session-id: 909ee3c91d19d85d

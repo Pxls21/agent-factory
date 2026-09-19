@@ -65,6 +65,27 @@ def _reblock_s008(root):
     path.write_text(json.dumps(registry, indent=2) + "\n")
 
 
+def _reblock_s003(root):
+    """S0-03 became execution_proof when its live OmniRoute round-trip proof landed
+    (2026-09-19). This test exercises the GENERIC credential-blocked deferral mechanism,
+    whose only remaining specimen is S0-03's OmniRoute probe; restore S0-03's historical
+    blocked_credential row in the fixture copy so the mechanism stays under test."""
+    path = root / "proofs" / "registry.yaml"
+    text = "\n".join(
+        line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    registry = json.loads(text)
+    for proof in registry["proofs"]:
+        if proof["proof_id"] == "S0-03":
+            proof["classification"] = "blocked_credential"
+            proof["blocked"] = {
+                "owner": "TBD-owner-credential",
+                "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted",
+                "marker_path": "proofs/S0-03/blocked.json",
+            }
+    path.write_text(json.dumps(registry, indent=2) + "\n")
+
+
 def _runner(root, verb, proof_id, *, env=None, runner=RUNNER):
     return subprocess.run(
         [sys.executable, str(runner), verb, "--proof", proof_id, "--venue", "sandbox", "--root", str(root)],
@@ -307,6 +328,7 @@ class _RejectingHandler(http.server.BaseHTTPRequestHandler):
 
 def test_credential_absence_blocks_and_rejection_is_proof_red_without_secret_leak(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s003(root)
     probe_dir = _copy_probe(root, "S0-03")
     environment = os.environ.copy()
     environment.pop("OMNIROUTE_API_KEY", None)

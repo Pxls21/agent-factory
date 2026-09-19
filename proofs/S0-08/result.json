@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-08",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-18T09:56:32.795667Z",
+  "recorded_at": "2026-09-19T05:54:02.313126Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-08/check_containment.py",
         "proofs/S0-08/fixtures/evidence-crun"
       ],
-      "started_at": "2026-09-18T09:56:32.670626Z",
-      "finished_at": "2026-09-18T09:56:32.698559Z",
+      "started_at": "2026-09-19T05:54:02.218485Z",
+      "finished_at": "2026-09-19T05:54:02.252273Z",
       "exit_code": 1,
       "stdout_sha256": "bf3d96be1789d9b088874efa4a125ea671f78aa833487e245af7016e467851d2",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -26,8 +26,8 @@
         "--proof-dir",
         "proofs/S0-08/fixtures/malformed-marker"
       ],
-      "started_at": "2026-09-18T09:56:32.698849Z",
-      "finished_at": "2026-09-18T09:56:32.723656Z",
+      "started_at": "2026-09-19T05:54:02.252438Z",
+      "finished_at": "2026-09-19T05:54:02.281399Z",
       "exit_code": 1,
       "stdout_sha256": "8cdda9b1e29060b775be8d2d5dbe7577cc595fd22bf2c6b267e0bb8361eba18b",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -40,8 +40,8 @@
         "proofs/S0-08/check_containment.py",
         "proofs/S0-08/evidence/pc-runsc"
       ],
-      "started_at": "2026-09-18T09:56:32.723798Z",
-      "finished_at": "2026-09-18T09:56:32.748528Z",
+      "started_at": "2026-09-19T05:54:02.281534Z",
+      "finished_at": "2026-09-19T05:54:02.312630Z",
       "exit_code": 0,
       "stdout_sha256": "a20e60646185374d60d901b8058e5c6fd1d11d3173e9060899f5138ba252e876",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -55,7 +55,7 @@
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
     "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "5229d7a56a89d68ae916037d7c6e590507869000de0342d2110f4cd69edd4dd2",
+    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
     "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
@@ -83,5 +83,5 @@
     "proofs/S0-08/tools/pc/build_image_buildkit.sh": "44d93b086c0e5f40ca9e42c112e19f1027072acb6996e979d5ade8f6fbc45f11",
     "proofs/S0-08/tools/pc/run_containment.sh": "49e752ce0d1337a4aad257fd757c7bf19a5a4de36b268a14004fc0cf96fa7212"
   },
-  "digest": "7d8273dd935cea42b3a901d9111f8bd1d5739284f90d821c3263db1cb8306451"
+  "digest": "3db4183f39d80cd7a61f9460095fee73987302d3baf061922d4d7f65fa5da8fc"
 }

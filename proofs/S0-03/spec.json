@@ -3,7 +3,7 @@
   "legs": [
     {
       "leg": "positive",
-      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/evidence"],
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "gpt-5.6-sol", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/evidence"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
@@ -12,7 +12,7 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-absent"],
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "gpt-5.6-sol", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-absent"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
@@ -22,7 +22,7 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-rejected"],
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "gpt-5.6-sol", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-credential-rejected"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
@@ -32,7 +32,7 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-stub-route"],
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "gpt-5.6-sol", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-stub-route"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {
@@ -42,7 +42,7 @@
     },
     {
       "leg": "negative",
-      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "TBD-pc-capture", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-provider-key-present"],
+      "cmd": ["python3", "proofs/S0-03/check_omniroute_roundtrip.py", "--route-id", "agentfactory-build", "--expected-model-id", "gpt-5.6-sol", "--stub-route", "s0-01-scripted", "--stub-route", "s0-01-scripted/s0-01-pong", "--stub-route", "s0-01-scripted/s0-01-slow", "proofs/S0-03/fixtures/evidence-provider-key-present"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {

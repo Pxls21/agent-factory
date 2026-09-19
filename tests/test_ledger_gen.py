@@ -124,6 +124,25 @@ def _blocked(proof_id="S0-03", classification="blocked_credential",
     }
 
 
+def _reblock_s003(root):
+    """S0-03 became execution_proof when its live OmniRoute round-trip proof landed
+    (2026-09-19); restore its historical blocked_credential row in the fixture copy so
+    the GENERIC blocked/marker deferral mechanism (whose remaining specimen this is)
+    stays under test."""
+    reg_path = root / "proofs" / "registry.yaml"
+    reg = json.loads("\n".join(
+        line for line in reg_path.read_text().splitlines() if not line.lstrip().startswith("#")))
+    for proof in reg["proofs"]:
+        if proof["proof_id"] == "S0-03":
+            proof["classification"] = "blocked_credential"
+            proof["blocked"] = {
+                "owner": "TBD-owner-credential",
+                "unblock_condition": "secret OMNIROUTE_UPSTREAM_KEY present and accepted",
+                "marker_path": "proofs/S0-03/blocked.json",
+            }
+    reg_path.write_text(json.dumps(reg, indent=2) + "\n")
+
+
 def _load_ledger(path):
     return json.loads(path.read_text())
 
@@ -158,6 +177,7 @@ def test_forged_digest_produces_invalid(tmp_path):
 
 def test_substantive_change_alters_digest(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s003(root)
     _write_json(root / "proofs" / "S0-03" / "blocked.json",
                 _blocked(blocker_status="absent"))
     output_a = tmp_path / "ledger_a.json"
@@ -184,6 +204,7 @@ def test_substantive_change_alters_digest(tmp_path):
 
 def test_byte_identical(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s003(root)
     _write_json(root / "proofs" / "S0-03" / "blocked.json",
                 _blocked(blocker_status="absent"))
     out_a = tmp_path / "a.json"
@@ -225,6 +246,7 @@ def test_result_present(tmp_path):
 
 def test_blocked_state(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s003(root)
     _write_json(root / "proofs" / "S0-03" / "blocked.json",
                 _blocked(blocker_status="absent"))
     output = tmp_path / "ledger.json"
@@ -291,6 +313,7 @@ def test_volatile_fields_irrelevant(tmp_path):
 
 def test_validates_with_integrity(tmp_path):
     root = _copy_contract(tmp_path)
+    _reblock_s003(root)
     _write_json(root / "proofs" / "S0-03" / "blocked.json",
                 _blocked(blocker_status="absent"))
     output = tmp_path / "ledger.json"

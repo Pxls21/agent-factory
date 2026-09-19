@@ -11,10 +11,10 @@
       "state": "ABSENT"
     },
     {
-      "classification": "blocked_credential",
-      "normalized_digest": "8e6126aee93ea8ce572a1aba5a625f2daeaa5252bbd2973b8851e176f599b262",
+      "classification": "execution_proof",
+      "normalized_digest": "249b4b3808d56e0746147ebcb248d36be99bff4e89d1a798a0a973fcba875b57",
       "proof_id": "S0-03",
-      "state": "EXPIRED"
+      "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
@@ -33,37 +33,37 @@
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "3357f9cdd6e2202adcd660c3eae2c2ddc4ef2aa033ce43e53c545529a68934d6",
+      "normalized_digest": "d2a31be15a58824bcbe111fac9e949387283098482dbb193f8ffb46e6fbcefe4",
       "proof_id": "S0-07",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "5751816cfd686ee96c74aa5e52a3ad9d132cd4b78206a0694358a4c7900c305f",
+      "normalized_digest": "c73ccdf454ffb9950235711e210c43f4e8f4a92295fe4293c250999c669130cd",
       "proof_id": "S0-08",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "863c7d6e8add6ecb54b4f9f5e14fcf3291b058161d62f34dcc285e38289a976e",
+      "normalized_digest": "7cd77bc1bcf54c0ff9702b1e4992d0a81ab428439742fd26e11f9fd5218019f0",
       "proof_id": "S0-09",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "27d71ab500e32a1031956448b2c9aaba0bb39997204e8bddcee71ca564435e5e",
+      "normalized_digest": "2052e3eb24941f6af10381c5c869da3e1eceaaf1072866e660e659783f029c5d",
       "proof_id": "S0-10",
       "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
-      "normalized_digest": "f3e07f1bf8645409d531a64b41808838e7e20fa42df8aa144d9dd4999d5af1c1",
+      "normalized_digest": "ed25e4a5ed7a93ff5856592a22e9e99ef462ea06fd986b8e81504721eaf46a72",
       "proof_id": "S0-11",
       "state": "PRESENT"
     },
     {
       "classification": "conformance_checked_decision",
-      "normalized_digest": "ddbbca8861005d0e3037ab7b0346c01b6c331473cc6f4e22ff332098b492d028",
+      "normalized_digest": "e547bf539d55852930fcaa2db1446f8ac1e8f4c4d749fd9a303eb5c167ef4fb3",
       "proof_id": "S0-12",
       "state": "PRESENT"
     }
