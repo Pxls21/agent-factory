@@ -9,7 +9,8 @@
 # Writes <bundle-dir>/omniroute-requests.json:
 #   {"source": ..., "captured_at": ..., "windows": {"hermes": {"start":..., "end":...}},
 #    "requests": [{leg, id, timestamp, method, path, status, model, requested_model, provider,
-#                  connection_id, combo_name, correlation_id, session_tag, response_id}, ...]}
+#                  connection_id, combo_name, correlation_id, session_tag, response_id,
+#                  recorded_input (direct leg only: OmniRoute's own recorded requestBody)}, ...]}
 #
 # WHY THIS INSTRUMENT, AND NOT THE HTTP API
 # -----------------------------------------
@@ -27,16 +28,25 @@
 # (src/lib/db/core.ts:104-106); on the PC DATA_DIR is /home/rocco/.omniroute-migrated
 # (PC-BRIDGE.md:153-163), overridable here with OMNIROUTE_DATA_DIR.
 #
-# `file:...?immutable=1` opens the database without taking a lock and without writing a WAL or
-# journal file — a live service keeps serving, undisturbed. Consequence, stated: rows still only
-# in the WAL are not visible, so the runner passes --settle first.
+# `file:...?mode=ro` opens the database READ-ONLY and WAL-aware. This DB runs in WAL mode, so a
+# live service keeps serving undisturbed (WAL allows concurrent readers + one writer) AND rows
+# still in the -wal file ARE visible. `immutable=1` was WRONG here: it reads only the main DB file
+# and MISSES any row not yet checkpointed out of the WAL — measured 2026-09-19, a fresh
+# /v1/responses row stayed invisible to immutable for minutes while mode=ro saw it at once
+# (AF-AP-104). The runner still passes --settle so the row is COMMITTED before the read.
 #
-# HOW A ROW IS BOUND TO A LEG (live-capture 2026-09-18, AF-AP-103 realign)
+# HOW A ROW IS BOUND TO A LEG (docs + live measurement 2026-09-19, AF-AP-103 / Blocker 4)
 # -----------------------------------------------------------------
-# Two real bindings exist in the schema:
-#   direct  ->  call_logs.id, which is the x-omniroute-request-id response header the client
-#               receives. `direct.json.response_headers['x-omniroute-request-id']` records it.
-#               The old binding on `response_id` was dead (always NULL in call_logs).
+#   direct  ->  the fresh 16-hex nonce the direct leg sent (`direct.json.nonce`), which OmniRoute
+#               records verbatim in the row's ARTIFACT requestBody. /v1/responses exposes no
+#               client-visible header or column that maps to call_logs on 3.8.50: routing_decisions
+#               is empty, response_id is NULL for a streaming row, and x-request-id /
+#               x-omniroute-request-id / correlation_id are three distinct id-spaces (none equal the
+#               epoch-suffix call_logs.id). We scan the route's /v1/responses rows in the direct
+#               leg's window, read each row's artifact (<DATA_DIR>/call_logs/<artifact_relpath>) and
+#               select the ONE whose requestBody carries the nonce; that recorded request travels on
+#               as `recorded_input` so the checker re-verifies the binding from the bundle alone.
+#               Mirrors the hermes binding: a fresh client nonce OmniRoute records independently.
 #   hermes  ->  call_logs.session_tag == the leg's nonce2 (injected as x-omniroute-session-id),
 #               AND combo_name == the route id. The round trip logs MANY rows (>=1), all tagged.
 #               Window is kept as a sanity bound (every tagged row must fall within), not a
@@ -55,10 +65,11 @@ mkdir -p "$BUNDLE"
 
 # Every value below is BOUND as a query parameter inside python's sqlite3 (VERIFY-O1 F-15): the
 # old form interpolated $ROUTE into the SQL text, where one quote breaks or extends the query.
-BUNDLE="$BUNDLE" ROUTE="$ROUTE" DB="$DB" python3 - <<'PY'
+BUNDLE="$BUNDLE" ROUTE="$ROUTE" DB="$DB" DATA_DIR="$DATA_DIR" python3 - <<'PY'
 import datetime, json, os, sqlite3, sys
 
 bundle, route, db = os.environ["BUNDLE"], os.environ["ROUTE"], os.environ["DB"]
+data_dir = os.environ["DATA_DIR"]
 COLUMNS = ("id, timestamp, method, path, status, model, requested_model, provider, "
            "connection_id, combo_name, correlation_id, session_tag, response_id")
 
@@ -91,14 +102,51 @@ def read_json(path):
 direct = read_json(os.path.join(bundle, "direct", "direct.json"))
 leg = read_json(os.path.join(bundle, "hermes", "leg.json"))
 
-# Direct leg binding: x-omniroute-request-id from the response headers (== call_logs.id).
-# NOT direct.json.id, which is the resp_... Responses-API body id (a different thing).
-resp_headers = direct.get("response_headers") if isinstance(direct, dict) else None
-request_id = None
-if isinstance(resp_headers, dict):
-    request_id = resp_headers.get("x-omniroute-request-id")
-if request_id is not None and not isinstance(request_id, str):
-    sys.exit(f"collect_leg: x-omniroute-request-id is not a string: {request_id!r}")
+
+def read_artifact_request(relpath):
+    """OmniRoute's own recorded client request for a call_logs row, serialized — or None.
+
+    request_detail_logs is empty on 3.8.50; the per-request detail is an artifact FILE under
+    <DATA_DIR>/call_logs/<artifact_relpath>, with the client request under `requestBody`.
+    Serializing it (dict or str) makes the nonce a decidable substring check regardless of the
+    Responses-API `input` shape (a string, or a list of message blocks)."""
+    if not relpath:
+        return None
+    path = os.path.join(data_dir, "call_logs", relpath)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            art = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    body = art.get("requestBody") if isinstance(art, dict) else None
+    if body is None:
+        return None
+    return body if isinstance(body, str) else json.dumps(body, sort_keys=True)
+
+
+# Direct leg binding (Blocker 4): the fresh nonce direct.json sent, recorded by OmniRoute in the
+# row's artifact requestBody. No client-visible header/column maps to call_logs for /v1/responses
+# on 3.8.50; the fresh nonce, which OmniRoute records independently, is the identity (mirrors
+# hermes). Only a SUCCEEDED (200) leg is bound: a 401 negative leg produces no bound success row
+# and is graded on direct.json's own evidence.
+direct_nonce = None
+direct_window = None
+if isinstance(direct, dict) and direct.get("status") == 200:
+    direct_nonce = direct.get("nonce")
+    if direct_nonce is not None and not isinstance(direct_nonce, str):
+        sys.exit(f"collect_leg: direct.json nonce is not a string: {direct_nonce!r}")
+    if direct.get("started_at") is not None:
+        d_start = parse_stamp(direct.get("started_at"), "direct.json started_at")
+        d_end = parse_stamp(direct.get("finished_at"), "direct.json finished_at")
+        if d_end < d_start:
+            sys.exit("collect_leg: direct.json finished_at precedes started_at")
+        # A lexical superset for the SQL fetch (RFC3339 fractional precision differs between the two
+        # producers; widen by a day and precise-filter below — the same rule as the hermes window).
+        d_sql_start = (d_start - datetime.timedelta(days=1)).astimezone(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        d_sql_end = (d_end + datetime.timedelta(days=1)).astimezone(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        direct_window = (d_start, d_end, d_sql_start, d_sql_end)
 
 # Hermes leg binding: session_tag (the nonce2).
 nonce2 = leg.get("nonce2") if isinstance(leg, dict) else None
@@ -121,18 +169,44 @@ if isinstance(leg, dict) and leg.get("window_start") is not None:
     sql_end = (end + datetime.timedelta(days=1)).astimezone(
         datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-conn = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
+conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
 conn.row_factory = sqlite3.Row
 requests = []
 try:
-    if request_id is not None:
-        rows = conn.execute(
-            f"SELECT {COLUMNS} FROM call_logs "
-            "WHERE combo_name = ? AND id = ? "
-            "ORDER BY timestamp ASC",
-            (route, request_id)).fetchall()
+    if direct_nonce is not None:
+        # Scan the route's /v1/responses rows and select the ONE whose recorded request carries the
+        # nonce. The window bounds the fetch cheaply; the fresh nonce is the identity.
+        if direct_window is not None:
+            _, _, d_sql_start, d_sql_end = direct_window
+            rows = conn.execute(
+                f"SELECT {COLUMNS}, artifact_relpath FROM call_logs "
+                "WHERE combo_name = ? AND path LIKE '%/v1/responses' "
+                "AND timestamp >= ? AND timestamp <= ? "
+                "ORDER BY timestamp ASC",
+                (route, d_sql_start, d_sql_end)).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT {COLUMNS}, artifact_relpath FROM call_logs "
+                "WHERE combo_name = ? AND path LIKE '%/v1/responses' "
+                "ORDER BY timestamp ASC",
+                (route,)).fetchall()
+        matches = []
         for row in rows:
-            requests.append(dict(row, leg="direct"))
+            if direct_window is not None:
+                stamp = parse_stamp(row["timestamp"], "call_logs.timestamp")
+                slack = datetime.timedelta(seconds=5)
+                if not (direct_window[0] - slack <= stamp <= direct_window[1] + slack):
+                    continue
+            recorded_input = read_artifact_request(row["artifact_relpath"])
+            if recorded_input is not None and direct_nonce in recorded_input:
+                out = {k: row[k] for k in row.keys() if k != "artifact_relpath"}
+                out["leg"] = "direct"
+                out["recorded_input"] = recorded_input
+                matches.append(out)
+        if len(matches) > 1:
+            sys.exit(f"collect_leg: {len(matches)} /v1/responses rows carry the direct nonce — "
+                     "the nonce must select exactly one row")
+        requests.extend(matches)
     if nonce2 is not None and window is not None:
         rows = conn.execute(
             f"SELECT {COLUMNS} FROM call_logs "
@@ -150,7 +224,7 @@ counts = {"direct": 0, "hermes": 0}
 for row in requests:
     counts[row["leg"]] += 1
 record = {
-    "source": f"sqlite:{db} table call_logs (read-only, immutable=1)",
+    "source": f"sqlite:{db} table call_logs (read-only, mode=ro, WAL-aware)",
     "captured_at": datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.%fZ"),
     "windows": {} if window is None else {"hermes": window},
@@ -166,12 +240,12 @@ summary = ", ".join(
     f"session_tag={r.get('session_tag')!r}" for r in requests)
 print("omniroute-requests: " + (summary if summary else "no rows"))
 print(f"omniroute-requests: direct={counts['direct']} hermes={counts['hermes']} "
-      f"(declared: direct={request_id is not None} hermes={nonce2 is not None and window is not None})")
+      f"(declared: direct={direct_nonce is not None} hermes={nonce2 is not None and window is not None})")
 
 # A DECLARED leg with no row is LOUD: the leg ran, so a missing row means the export looked in
-# the wrong place. A leg that was never declared (the negative root has no request-id header and
-# no nonce2) legitimately contributes nothing.
-missing = [name for name, declared in (("direct", request_id is not None),
+# the wrong place. A leg that was never declared (the negative root's direct leg 401s, so no
+# succeeded row, and it has no nonce2) legitimately contributes nothing.
+missing = [name for name, declared in (("direct", direct_nonce is not None),
                                        ("hermes", nonce2 is not None and window is not None))
            if declared and counts[name] == 0]
 if missing:

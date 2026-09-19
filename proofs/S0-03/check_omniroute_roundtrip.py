@@ -65,9 +65,10 @@ negative bundle at `evidence/credential-absent/`):
                                   proof-owned template carrying this leg's session tag), key-free
       hermes/leg.json             leg B's nonce2, prompt and the CLOSED window the runner
                                   recorded at both ends of the turn
-      omniroute-requests.json     the correlation instrument: OmniRoute's own call_logs rows,
-                                  the direct leg's selected BY the response id the client saw and
-                                  every route row inside the hermes leg's window
+      omniroute-requests.json     the correlation instrument: OmniRoute's own call_logs rows — the
+                                  direct leg's row selected by the fresh nonce OmniRoute recorded in
+                                  its artifact requestBody (exported as `recorded_input`), and every
+                                  route row inside the hermes leg's window (session_tag == nonce2)
 
 The negative bundle is DIRECT-LEG ONLY, and that is a producer fact, not an omission: the pinned
 S0-01 launcher reads OMNIROUTE_API_KEY from the owner's env file, so a key-free Hermes leg cannot
@@ -139,7 +140,7 @@ REASONS = {
     "direct_stream": "direct: {}",
     "identity_model": "identity: response model {!r} != declared upstream model {!r}",
     "identity_route": "identity: request routed to the sanctioned stub route {!r}, not an upstream model",
-    "identity_request_id": "identity: direct leg row id {!r} != x-omniroute-request-id header {!r}",
+    "identity_direct_nonce": "identity: direct leg nonce {!r} is not in OmniRoute's recorded request for the row",
     "identity_session_tag": "identity: hermes leg row session_tag {!r} != the leg's nonce2 {!r}",
     "identity_status": "identity: {} leg row status {!r}, expected 200",
     "identity_no_hermes_rows": "identity: 0 call_logs rows for the hermes leg's session_tag — unattributable",
@@ -149,7 +150,6 @@ REASONS = {
     "transport_path": "transport: {} leg row path {!r} is not a permitted transport path",
     "env_provider_key": "env: upstream provider key {} present in the Hermes environ",
     "env_process": "env: the environ record's {} is {!r}, not the pinned Hermes agent {!r}",
-    "identity_model_header": "identity: call_logs model {!r} != x-omniroute-model header {!r}",
 }
 
 # Deny-by-default (AF-AP-23): a CLOSED EXACT allow-list, never a prefix and never a blacklist.
@@ -507,17 +507,24 @@ def _require_in_window(row: dict, window: dict):
 def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: dict):
     """The load-bearing identity assertion — and the binding that makes it one.
 
-    Realigned 2026-09-18 after the live capture (AF-AP-103, LIVE-CAPTURE-FINDINGS.md):
-      direct  `call_logs.id` == `direct.json.response_headers['x-omniroute-request-id']`
-              (the always-populated PK; the old `response_id` is dead — always NULL).
+    Realigned 2026-09-19 after the docs+measurement resolution (AF-AP-103 / Blocker 4,
+    LIVE-CAPTURE-FINDINGS.md):
+      direct  the fresh nonce `direct.json.nonce` is recorded by OmniRoute in the row's artifact
+              requestBody; collect_leg.sh exports that record as `recorded_input`, and this binds
+              `direct.json.nonce in recorded_input`. /v1/responses exposes no client-visible header
+              or column that maps to call_logs on 3.8.50 (routing_decisions is empty; response_id is
+              NULL for a streaming row; x-request-id / x-omniroute-request-id / correlation_id are
+              distinct id-spaces). This mirrors the hermes binding: a fresh client nonce OmniRoute
+              records independently.
       hermes  `call_logs.session_tag` == the leg's nonce2. The round trip logs MANY rows (>=1),
               all carrying the same tag. Each is validated; the old uniqueness rule is deleted.
     Route correlation: `combo_name == route_id` (not `requested_model`, which holds the
     resolved ref `codex/gpt-5.6-sol-ultra`, never the route id).
     Per-leg transport: the path is recorded and asserted in the permitted set, never a single
     pinned path.
-    Model cross-check: `call_logs.model` vs `x-omniroute-model` header (both the resolved id),
-    NOT `direct.json.model` (the normalized form).
+    Model identity: conjunct (ii) pins `direct.json.model`; here every row's call_logs `model` must
+    agree (the `models` set is size 1). The old `x-omniroute-model` header cross-check is dropped —
+    a streaming /v1/responses returns no such header.
     """
     grouped = _rows_by_leg(requests)
 
@@ -540,14 +547,11 @@ def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: d
 
     nonce2 = _str(leg_record.get("nonce2"), "hermes/leg.json nonce2")
 
-    # Direct leg binding: x-omniroute-request-id header == call_logs.id.
-    resp_headers = direct.get("response_headers")
-    if not isinstance(resp_headers, dict):
-        raise Failure("bundle: direct/direct.json has no response_headers mapping")
-    omniroute_request_id = resp_headers.get("x-omniroute-request-id")
-    if not isinstance(omniroute_request_id, str) or not omniroute_request_id:
-        raise Failure("bundle: direct/direct.json response_headers has no x-omniroute-request-id")
-    omniroute_model_header = resp_headers.get("x-omniroute-model")
+    # Direct leg binding (Blocker 4): the fresh nonce the direct leg sent, recorded by OmniRoute in
+    # the row's artifact requestBody and exported by collect_leg.sh as `recorded_input`. The nonce
+    # is a fresh 16-hex token (conjunct i floors it), so the row whose recorded request carries it
+    # is unambiguously this leg's — the attribution is the nonce, mirroring the hermes session_tag.
+    direct_nonce = _str(direct.get("nonce"), "direct.json nonce")
 
     observed_paths = {}
     models = set()
@@ -558,9 +562,10 @@ def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: d
     if combo != spec["route_id"]:
         raise Failure(
             f"bundle: direct row combo_name {combo!r} != declared route {spec['route_id']!r}")
-    recorded_id = row.get("id")
-    if recorded_id != omniroute_request_id:
-        _fail("identity_request_id", recorded_id, omniroute_request_id)
+    recorded_input = _str(row.get("recorded_input"),
+                          "omniroute-requests.json direct.recorded_input")
+    if direct_nonce not in recorded_input:
+        _fail("identity_direct_nonce", direct_nonce)
     if row.get("status") != 200:
         _fail("identity_status", "direct", row.get("status"))
     if row.get("method") != "POST":
@@ -607,11 +612,9 @@ def check_identity_route(requests: dict, direct: dict, leg_record: dict, spec: d
         raise Failure(
             "bundle: the call_logs rows report different model ids " + repr(sorted(models))
         )
-    recorded = models.pop()
-    # Model cross-check: compare call_logs.model to the x-omniroute-model header (both the
-    # resolved upstream id), NOT direct.json.model (the normalized form).
-    if omniroute_model_header is not None and recorded != omniroute_model_header:
-        _fail("identity_model_header", recorded, omniroute_model_header)
+    # Every row's resolved model id agrees (the size-1 set above). Conjunct (ii) pins
+    # direct.json.model to the expected id; the old x-omniroute-model header cross-check is dropped —
+    # a streaming /v1/responses returns no such header (Blocker 4).
     return grouped["direct"][0]["provider"]
 
 
