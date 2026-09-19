@@ -33,7 +33,7 @@ BASE="${OMNIROUTE_BASE:-http://127.0.0.1:20128}"
 KEYFILE="${OMNIROUTE_KEY_FILE:-${OMNIROUTE_API_KEY_FILE:-}}"
 S0_01_HOME="${S0_01_HOME:-$HOME/s0-01-pinned}"
 PROFILE="${HERMES_PROFILE:-$HOME/.hermes/profiles/agentfactory/config.yaml}"
-PROVIDER="${HERMES_PROVIDER:-factory-router}"
+PROVIDER="${HERMES_PROVIDER:-omniroute-fedora}"   # the profile's OmniRoute provider connection
 OUT="${OUT_ROOT:-$PROOF_DIR/evidence}"
 CAPTURE="$HERE/capture_leg.py"
 BACKEND="$REPO_ROOT/proofs/S0-01/tools/scripted_backend.py"
@@ -76,7 +76,10 @@ code=$(curl -s -o "$catalog" -w '%{http_code}' -m 30 \
              "$(grep '^OMNIROUTE_API_KEY=' "$KEYFILE" | head -1 | cut -d= -f2- | tr -d '\r\n"')") \
        "$BASE/v1/models")
 if [ "$code" != "200" ]; then rm -f "$catalog"; die "GET $BASE/v1/models -> $code"; fi
-if ! grep -q "\"id\"[[:space:]]*:[[:space:]]*\"$MODEL\"" "$catalog"; then
+# OmniRoute namespaces /v1/models ids by provider connection (`<provider>/<id>`) while it routes
+# the bare id too (both return 200, and the bare id reaches the scripted backend — verified live
+# 2026-09-19). Accept either form for the SAME model name; a different model still fails.
+if ! grep -qE "\"id\"[[:space:]]*:[[:space:]]*\"([^\"]*/)?$MODEL\"" "$catalog"; then
   observed=$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*s0-01[^"]*"' "$catalog" | tr '\n' ' ')
   rm -f "$catalog"
   die "fixture model '$MODEL' is not in the OmniRoute catalog; observed scripted ids: ${observed:-none}. \
@@ -85,14 +88,23 @@ fi
 rm -f "$catalog"
 say "catalog exposes $MODEL"
 
-# 3. the scripted backend: reuse the running one by PIDFILE + /proc/<pid>/exe, never by name.
-if [ -f "$PIDFILE" ] && pid=$(cat "$PIDFILE" 2>/dev/null) && [ -n "${pid:-}" ] \
-   && [ -d "/proc/$pid" ] && readlink "/proc/$pid/exe" 2>/dev/null | grep -q 'python'; then
-  # /proc/<pid> can be a RECYCLED pid (AF-AP-55): confirm the SERVICE answers, not just the pid.
-  code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:20201/healthz") || code=000
-  [ "$code" = "200" ] || die "pidfile names pid $pid but :20201/healthz -> $code; not reusing it"
-  say "reusing scripted backend pid $pid (pidfile $PIDFILE, /healthz 200)"
-  RECORD_DIR="$S0_01_HOME/.markers/upstream-records"
+# 3. the scripted backend behind OmniRoute's s0-01-scripted route lives on :20201. Reuse WHATEVER
+# process owns :20201 — that is the one OmniRoute forwards to — and read ITS OWN --record-dir from
+# /proc/<pid>/cmdline. Never assume the dir name and never start a second backend on a port already
+# served: the request records in the LIVE backend's dir, not ours (a persistent backend recording
+# to upstream-records-v2-* was why the nonce record went missing, 2026-09-19).
+code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:20201/healthz") || code=000
+if [ "$code" = "200" ]; then
+  bpid=$(ss -ltnp 2>/dev/null | grep '127.0.0.1:20201 ' | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+  { [ -n "${bpid:-}" ] && [ -d "/proc/$bpid" ]; } \
+    || die ":20201 answers /healthz but ss -ltnp found no owning pid"
+  readlink "/proc/$bpid/exe" 2>/dev/null | grep -q 'python' \
+    || die ":20201 owner pid $bpid is not a python scripted backend"
+  RECORD_DIR=$(tr '\0' ' ' < "/proc/$bpid/cmdline" 2>/dev/null \
+               | grep -oE -- '--record-dir[= ][^ ]+' | head -1 | sed -E 's/^--record-dir[= ]//')
+  { [ -n "${RECORD_DIR:-}" ] && [ -d "$RECORD_DIR" ]; } \
+    || die ":20201 backend pid $bpid exposes no readable --record-dir in its cmdline"
+  say "reusing the live scripted backend pid $bpid on :20201, records $RECORD_DIR"
 else
   [ -r "$TOKEN_FILE" ] || die "scripted backend is not running and $TOKEN_FILE is unreadable"
   mkdir -p "$RECORD_DIR" "$(dirname "$PIDFILE")" || die "cannot create $RECORD_DIR"
