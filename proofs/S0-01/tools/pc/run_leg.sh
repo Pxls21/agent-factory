@@ -33,7 +33,10 @@ LOCAL_TEE=$(sha256sum proofs/S0-01/tools/frame_tee.py | cut -c1-16); echo "sandb
 
 step "launch (detached) model=$MODEL respond_to=$RT"
 EXTRA=""; [ -n "$AL" ] && EXTRA="--respond-to allowlist --allowlist $AL"
-$PC "rm -f $L/v2-$LEG.launch.log; setsid /usr/bin/python3 $TOOLS/pc_launch.py --leg $LEG --model $MODEL $EXTRA </dev/null >$L/v2-$LEG.launch.log 2>&1 & sleep 1; echo launched"
+# AF-AP-105: the CALLER removes the reused framedir before the detached launch — pc_launch.py rmtree's it
+# itself (:308) and writes launch.ready last (:419), but the first READY poll below can run before that and
+# bind the PRIOR run's stale marker + dead pid (S0-03's runner hit it 2026-09-19; this driver had the same shape).
+$PC "rm -rf $FD $L/v2-$LEG.launch.log; setsid /usr/bin/python3 $TOOLS/pc_launch.py --leg $LEG --model $MODEL $EXTRA </dev/null >$L/v2-$LEG.launch.log 2>&1 & sleep 1; echo launched"
 for i in $(seq 1 12); do
   OUT=$($PC "test -f $FD/launch.ready && echo READY || { test -f $FD/buzz-acp.exit && echo DEAD; tail -3 $L/v2-$LEG.launch.log; }")
   case "$OUT" in *READY*) break;; *DEAD*) echo "$OUT"; echo "launch failed"; exit 4;; esac; sleep 5
@@ -41,6 +44,8 @@ done
 $PC "cat $L/v2-$LEG.launch.log"
 step "wait for the pre manifest (it must finish BEFORE the first mention)"
 for i in $(seq 1 40); do $PC "test -f $FD/manifest-pre.done && echo PRE-DONE" | grep -q PRE-DONE && break; sleep 5; done
+# failure-aware wait: a manifest that never finishes is a named failure, not a summary read that happens to fail
+$PC "test -f $FD/manifest-pre.done" || { echo "pre manifest not done after the wait — read $FD/manifest-pre.log on the PC"; exit 5; }
 $PC "cat $FD/manifest-pre.summary"
 
 case "$LEG" in

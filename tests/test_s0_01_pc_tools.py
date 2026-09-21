@@ -852,6 +852,24 @@ def _glob_match(pattern, name):
     return fnmatch.fnmatchcase(name, pattern)
 
 
+def test_run_leg_removes_the_framedir_before_the_detached_launch():
+    """AF-AP-105 (registered 2026-09-19 on S0-03's runner; the sibling here found 2026-09-21 while authoring
+    the recapture brief): run_leg.sh launches pc_launch.py DETACHED into the fixed-name framedir
+    `$L/v2-<leg>` and then polls `$FD/launch.ready` — the first poll can precede pc_launch.py's own rmtree
+    (:308) and read the PRIOR run's stale marker, binding a dead pid. The CALLER must remove the framedir
+    on the launch step's own bridge call, textually AHEAD of the setsid, so no READY poll can see a leftover.
+    Red-before on 167e063's driver (only `v2-<leg>.launch.log` was pre-removed)."""
+    lines = RUN_LEG.read_text().splitlines()
+    launch = [i for i, ln in enumerate(lines) if "setsid /usr/bin/python3 $TOOLS/pc_launch.py" in ln]
+    assert len(launch) == 1, launch
+    (launch_idx,) = launch
+    launch_line = lines[launch_idx]
+    assert "rm -rf $FD" in launch_line, launch_line
+    assert launch_line.index("rm -rf $FD") < launch_line.index("setsid"), launch_line
+    ready_polls = [i for i, ln in enumerate(lines) if "$FD/launch.ready" in ln]
+    assert ready_polls and min(ready_polls) > launch_idx, (launch_idx, ready_polls)
+
+
 def test_the_leg_drivers_stop_on_the_first_failure():
     """`set -euo pipefail` in both drivers: a failed PC step must stop the leg, never fall through to collect
     (SWEEP-prod #33's blast radius — pc_negative.py's dropped exit code was harmless only because nothing
