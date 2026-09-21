@@ -1,6 +1,6 @@
 # PC lane — VB-F12-T2 (pin the committed S0-01 bundle's behaviour through the REAL proof-runner)
 
-PIN: 592d9a8
+PIN: 38ad46b
 
 Role: code-implementer. Route: the LOCAL Qwen build route (the pc_lane.sh default for code-implementer; do NOT
 set HERMES_MODEL). Venue: `tasks/briefs/pc/VENUE-MAP.md` — read it first. Report: draft after EACH item at
