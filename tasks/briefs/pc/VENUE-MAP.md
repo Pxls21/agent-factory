@@ -22,6 +22,7 @@ design, gates and report discipline.
   (`/tmp/claude-0/…/scratchpad/…`) maps there. `scripts/lane_gate.sh -r <PIN> -f "<files>" -t "<tests>" -n 2` works from your tree
   (it archives the PIN and copies your working-tree files over it) — ONE foreground call per gate.
 - NO bridge tools: `scripts/pc.sh`, `scripts/pc_suite.sh`, `scripts/pc_lane.sh`, `scripts/realleg_sync.sh` are the SANDBOX's way onto
+- The pytest GATE on this host is `python -m pytest -n 8 -q -p no:cacheprovider --basetemp ../scratch/bt <files>` DIRECTLY (pytest-xdist is installed here; each call under Hermes's 420 s terminal cap). A brief that says `scripts/pc_suite.sh launch … wait` was written for the sandbox side — on this host that launcher has no bridge (`bridge_http_code=000`, G1 2026-09-21); read it as the direct xdist command above.
   this host — never call them here.
 - Never touch the owner's running servers (OmniRoute on :20128, the Buzz relay stack, Ollama, Phoenix, OpenObserve, neo4j), the Hermes
   profiles under `~/.hermes/`, or the main clone `/home/rocco/agent-factory` outside your own lane directory. Never
