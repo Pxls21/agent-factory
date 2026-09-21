@@ -56,6 +56,7 @@ expansion.
    the coordinator's venue before it is believed, and a mutation driver exports only repo roots (an ambient
    upstream path masked the root-insertion mutant).**
 3. **Mutation-testing IS the hollow-green detector.** Inject bugs into the code-under-gate; a gate
+   A CONTROL mutation is itself verified before its effect is asserted — same length, same multiset (`sorted(moved) == sorted(orig)`), different order — and every "the output differs" control is paired with a NAMED production mutant it must kill: a slice-built "swap" that duplicated the neighbour let two production mutants survive a 476-test suite while the real checker's verdicts changed (S0-01 golden, VERIFY-VB-F12 2026-09-21, AF-AP-109).
    that still passes is hollow. Demand BRANCH coverage. A gate surviving no mutants is a tautology
    — reject it. **3-EQ. Mutate the EQUIVALENCE CLASS, not the named specimen (AF-AP-30, S0-11
    closed 3× before this stuck).** When a review names cases, the fix and its tests must cover

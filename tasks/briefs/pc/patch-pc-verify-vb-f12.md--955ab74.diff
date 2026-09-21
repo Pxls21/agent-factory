@@ -1,0 +1,1175 @@
+diff --git a/tasks/briefs/s0-01-vb-f12-support/VERIFY-VB-F12-report.md b/tasks/briefs/s0-01-vb-f12-support/VERIFY-VB-F12-report.md
+new file mode 100644
+index 0000000..7598658
+--- /dev/null
++++ b/tasks/briefs/s0-01-vb-f12-support/VERIFY-VB-F12-report.md
+@@ -0,0 +1,138 @@
++# VERIFY-VB-F12 report — adversarial verification of the S0-01 mint (v2.4 capture + order-free golden, owner decision (a))
++
++PIN: 955ab74 · lane: pc-verify-vb-f12.md--955ab74 · role: adversarial-verifier (local Qwen, xhigh)
++Scope: V1 golden-decision reach · V2 seed intent · V3 evidence bundle · V4 mint attested inputs · V5/V6 mutant audit · V7 doubled prefix · V8 lane-claim reproduction · V9 sweep.
++
++Gate env (every run): S0_01_VENUE=pc, S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden, S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz; /home/rocco/venv-agent-factory/bin first on PATH; scratch = ../scratch.
++
++## V1 — the golden decision's REACH (SOLID — every probe reproduced through the real checker CLI on scratch copies)
++
++Method: scratch copies of the committed bundle; run-2 (or run-1) timeline mutated, seq 1..N re-synced, a2c/c2a splits + tee-status recomputed to the mutated timeline, then the REAL `python3 proofs/S0-01/check_acp_conformance.py <evidence>` (env per VENUE-MAP). Only the moved/inserted frames are re-stamped, so the c2a prompt/terminal frames (which define the upstream POST window, C:660-680) keep their original timestamps and the probe reaches the check under test.
++
++Command: `cd ../scratch/v1 && python3 hostile.py` → (i) duplicate async rc=1 mismatch line 5; (ii) foreign sid rc=1 `notifications carry a foreign session id`; (iii) before-initialize rc=0 PASS; (iv) duplicate after terminal rc=1 mismatch line 5; (v) altered payload rc=1 mismatch line 4. `python3 run1_after.py` → `run-1 async moved after terminal: 0` and the 63-check PASS. `python3 hostile-one-payload.py | grep -A1 v1a-one-payload-alter` → rc=1 mismatch line 4. SOLID.
++
++| case | mutation (run-2 unless noted) | outcome (exact) |
++|---|---|---|
++| V1(b) duplicate | a SECOND `session_info_update` appended after the terminal | rc=1 `golden: golden mismatch between run-1 and run-2 at normalized line 5` — the count binds (n1 has 1, n2 has 2). |
++| V1(c) foreign sid | the async frame's `sessionId` changed to a foreign uuid | rc=1 `run-2: notifications carry a foreign session id` (C:775, `raise Failure` inside `check_prompt_turn`) — that check runs ahead of `golden_lines = _run_check(check_golden, "golden", golden)` (C:1856). |
++| V1(d) before-init | the async frame moved to BEFORE the `initialize` request | **rc=0 PASS** — intended by the decision: the normalizer (C:795-811) slots every `ASYNC_SESSION_UPDATES` frame right after the `session/new` response, so it normalizes to the SAME position the golden was generated from. The first-line rule (C:1582-1584: first normalized line must be the c2a `initialize` request) still holds — the moved frame is a2c, so it never becomes first. |
++| V1(d) after-terminal | the ONE run-2 `session_info_update` occurs after the raw `end_turn` terminal (committed baseline), and run-1's one async was independently moved there | **rc=0 PASS**; normalization re-homes it after the session/new response, so the first normalized line remains initialize and the last remains end_turn. |
++| V1(d) duplicate after-terminal | a SECOND async frame appended after terminal | rc=1 `golden: golden mismatch ... at normalized line 5` — the count binds. |
++| V1(e) payload-alter | a second async frame whose `update` carries an extra key (`extra:1`) | rc=1 `golden: golden mismatch ... at normalized line 4` — `first = next((i for i, (a, b) in enumerate(zip(n1, n2)) if a != b), min(len(n1), len(n2)))` at C:1563-1564 detects the differing normalized line. |
++| V1(d') run-1 side (symmetric) | run-1's single async frame moved AFTER its terminal | **rc=0 PASS** — symmetric: both runs normalize to the same 11 lines regardless of where the async landed. This is exactly the race the decision redefines. |
++
++V1(a) (a DIFFERENT payload in run-2): reproduced against ONE existing `session_info_update` frame, with the count and position unchanged, by adding non-volatile `extra:1`; real checker result: rc=1 `failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 4`. The normalized line is `{"dir":"a2c","kind":"notif","method":"session/update","sessionId":"<SID1>","sessionUpdate":"session_info_update","update":{"updatedAt":"str"}}`; a changed payload changes the sorted JSON line and the `n1 != n2` comparison catches it. SOLID.
++
++V1(e) (other checks consuming raw order for the async frame): **no other check binds the async frame's relative raw position** — deliberately. V1(d)'s valid before-initialize and after-terminal moves both PASS, proving that raw position is the exception the owner decision makes order-free. Raw timeline integrity still applies: `check_timeline` enforces seq 1..N, monotonic `t_mono_ns`/`t_utc`, and exact timeline→a2c/c2a split parity (C:267-340); `check_tee_status` binds per-direction counts/last seq. The protocol-ordered sub-stream (the ten non-async normalized lines) remains fully order-bound: the prompt must precede its terminal with an `agent_message_chunk` between (C:765-775), and all non-async normalized lines are golden-compared. Thus the only order information lost is the explicitly designated async frame's relative position, not its count, session identity, payload shape, or the order of the protocol-defined stream.
++
++## V4 — the mint's attested inputs (AF-AP-56) (SOLID — all three sub-claims reproduced)
++
++1. `scripts/validate-ledger integrity --root .` → rc 0, prints `S0-01 PRESENT` (full 12-line table: S0-01/03/04/06/07/08/09/10/11/12 PRESENT, S0-02/05 ABSENT; four-way numerators as printed). SOLID.
++2. Commands in fresh archive copy: `python3 proofs/S0-01/check_acp_conformance.py proofs/S0-01/evidence` → rc=0 and `ae7ea2ee…` stdout / `e3b0c442…` stderr; `python3 proofs/S0-01/check_initialize.py request proofs/S0-01/evidence/golden/negative` → rc=1 and `319663a8…` stdout / `e3b0c442…` stderr.
++   - positive: `ae7ea2ee…` (stdout) / `e3b0c442…` (stderr, empty) — EXACTLY the committed result.json values.
++   - negative: `319663a8…` (stdout) / `e3b0c442…` (stderr) — EXACTLY the committed result.json values.
++   The mint's `stdout_sha256`/`stderr_sha256`/`exit_code`/`failure_reason` are therefore byte-faithful to what the two commands produce today. SOLID.
++3. Re-ran `python3 scripts/proof-runner run --proof S0-01 --venue pc-bridge --root <scratch>` (rc 0). The re-minted `result.json` differs from the committed one only in non-deterministic fields:
++   - `recorded_at` (2026-09-21T20:59:09.915655Z → …21:34:18.480262Z)
++   - `env_fingerprint` (`pc-bridge:vm` → `pc-bridge:fedora`) — the mint ran on the VM; this PC is fedora.
++   - the per-run `started_at`/`finished_at` timestamps, and
++   - the derived whole-record `digest` (`86118573…` → `aeb7da57…`) which hashes those fields.
++   Every deterministic field (both legs' `cmd`, `exit_code`, `stdout_sha256`, `stderr_sha256`, `failure_reason`, `negative_control`) is IDENTICAL. The digest difference is expected: it is derived from the wall-clock fields. This is NOT a defect — the mint's digest is valid for the mint's own recorded fields; a different host timestamp legitimately yields a different digest. SOLID.
++4. `python3 scripts/ledger-gen --root <scratch>` reproduces `proofs/ledger.json` BYTE-IDENTICAL (diff rc 0). SOLID.
++
++## V8 — the lane process claims (reproduced)
++
++The G1 report (PIN 772ce3b) claims: (i) `n1 == n2` after the normalizer change; (ii) a 5a red line against the PIN's OLD normalizer (reproduced via `git show 772ce3b:proofs/S0-01/check_acp_conformance.py` on a scratch copy); (iii) the C6 (i)-(v) table.
++
++- (i) `n1 == n2` SOLID: the current normalizer produces 11 normalized lines, identical for run-1 and run-2 (see V1's `n1n2_new.py` output: `NEW n1==n2: True`). The golden is 11 lines, sha `6225adb8…`.
++- (ii) 5a red against the OLD normalizer SOLID: in the `772ce3b` (old) tree, `n1==n2: False; checker index: 7` — run-1's normalized line 7 is `session_info_update`, run-2's is `agent_message_chunk`. This is EXACTLY the failure the pre-decision test pinned (`golden mismatch between run-1 and run-2 at normalized line 7`). So the test was genuinely RED on the old normalizer and is GREEN on the new one. The golden's pre-decision sha was `265f6809…` (now `6225adb8…`). SOLID.
++- (iii) C6 table SOLID, independently reproduced by `cd ../scratch/c6 && python3 run.py`: (i) protocol-valid chunk/usage adjacent swap → rc=1 `golden mismatch ... normalized line 8`; (ii) ONE existing async payload altered → rc=1 mismatch line 4; (iii) golden byte changed → rc=1 `golden.jsonl sha256 28a8d82018de != pinned 6225adb8ecc2`; (iv) pin reset to old `265f6809…` → rc=1 current sha != pinned; (v) untouched control → rc=0 exact 63-check PASS. The original literal C6(i) is unreachable because `check_prompt_turn` precedes `check_golden`; this uses the nearest protocol-valid swap.
++
++## V3 — the evidence bundle's integrity, independently (SOLID — every sub-claim reproduced from the committed bytes)
++
++- Manifests: command `python3 ../scratch/v3/manifests.py` → for all five positive legs `pre==post: True pre==baseline: True baseline-gz==PINNED_GZ: True`; negative `NO-MANIFESTS` (correct different leg shape).
++- Per-tree digests: independently recomputed each tree section's sha256 (concatenated body lines) and compared to `PINNED_BASELINE_DIGESTS` — hermes-agent `31843deb…`, buzz `a5614f3c…`, acp `0039fb35…`, venv-hermes `c181f47c…` ALL match for the baseline and for every leg's manifest-pre. SOLID.
++- `buzz-acp.pid` committed in every positive leg (AF-AP-62 sibling, fixed in .gitignore): `git ls-files proofs/S0-01/evidence/golden | grep buzz-acp.pid` → run-1, run-2, cancel, shutdown, two-users (5 files). SOLID.
++- Mention receipts bound to the relay: for all five legs, `mentions/owner.receipt.json: event_id` == `mentions/owner.event.json: id` (e.g. run-1 `835a139f…`). The receipt carries the relay's `event_id` + the recipient pubkey; the event carries the relay's `id`, `sig`, and `created_at`. SOLID.
++- Negative leg: observed error code/message (`-32602`/`Invalid params`) == `pins.PINNED_NEGATIVE_ERROR_CODE`/`_MESSAGE`; `runtime-identity.json` carries `probe_sha256` (`f42a9025…`), `agent_interpreter_sha256` (`8be0f8e5…`) == pin, `agent_interpreter_realpath` (`/usr/bin/python3.13`), `agent_exit_code: 0`. The `agent-stderr.txt` (933 bytes) contains ZERO matches of the checker's `_STDERR_LEAK_RE` secret-shape regex (the leak guard). SOLID.
++- `tee-status.json`: validated by `check_tee_status` (the 12-key shape + the recorded/forwarded counts equal the timeline's per-dir counts, `updated_seq` within one of the last seq) — the real checker PASS already exercised this; I additionally confirmed the counts recompute to the timeline for the V1-mutated trees (see V1's `_fix_tee`). SOLID.
++
++## V5/V6 — the meta-tests as gates, not mirrors (BLOCKER F1; canonical scratch reproduction)
++
++### Mutant table (all scratch copies of `git archive 955ab74`; no production tree changed)
++
++| ID | production mutation | named test first run | outcome | disposition |
++|---|---|---|---|---|
++| M1 | `ASYNC_SESSION_UPDATES += agent_message_chunk` | T:2010 `test_golden_synchronous_frame_order_still_binds` | **SURVIVED** (`1 passed`). The test's `moved` expression duplicates `entries[idx+1]`, so it observes a 12-entry addition, not a swap. `test_real_bundle_passes_every_check` kills M1 because the committed frozen golden disagrees, but that is an accidental golden mismatch, not a direct closed-set test. | covered for today only; test-specific hollow green (see F1) |
++| M2 | slot every async line at end (`intro.get(...)`→`None`) | T:1943 `def test_golden_async_notification_is_order_free()` | **KILLED**: `last normalized line is not the end_turn terminal` at T:1966. | SOLID |
++| M3 | include async records in pass 1 (`sync = [norm(entry) for entry in entries]`) | T:1977 `def test_golden_async_placement_is_independent_of_the_session_new_response()` | **KILLED**: `async notification before the session/new response changed the output` at T:1997. | SOLID |
++| M4 | `ASYNC_SESSION_UPDATES += tool_call` | T:2036 `def test_golden_async_set_is_closed()` | **SURVIVED** (`1 passed`) for the same duplicated-neighbour defect. Full two-file suite also SURVIVES: `476 passed in 77.84s`. Canonical real-checker path below proves material loss. | **BLOCKER F1** |
++| M5 | skip `if frozen_sha != PINNED_GOLDEN_SHA256` (C:1570) | T:2074 `test_golden_regen` | **KILLED**: `assert rc == 1` at T:2092 sees success. | SOLID |
++| M6 | force `check_bundle` to raise `Failure("MUTANT broken checker")` | `S:106 def test_committed_bundle_runner_mints_a_result` | **KILLED**: expected runner rc=0, got 1; actual canonical runner stderr `leg-exit-mismatch: S0-01 positive expected 0 got 1`. | SOLID |
++| M7 | delete `golden/negative` evidence leg | `S:127 def test_committed_negative_leg_cmd_reports_the_protocol_violation` | **KILLED**: expected rc=1, got 2 (`deferred: negative probe not captured`). | SOLID |
++| M8 | remove `async_lines.sort(key=lambda item: item[1])` (C:880) | 5a/5b/5c/5d/regen/real-bundle and full two-file suite | **SURVIVED**: each named test passed; whole current evidence suite `476 passed in 81.32s`. Canonical real-checker path below proves material loss. | **BLOCKER F1** |
++
++### Canonical discriminators for the two full-suite survivors
++
++1. **M4 closed-set violation — command `cd ../scratch/canonical-mutants && python3 run.py`:** fresh scratch evidence converted ordinary `usage_update` to `tool_call` in both runs, moved run-2's tool_call after terminal, regenerated golden+pin with correct code. Widened M4 checker rc=0 PASS; corrected checker on SAME evidence rc=1 `failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 6`. This proves M4 makes forbidden `tool_call` ordering irrelevant while the frozen tuple is closed. Canonical path: real CLI. SOLID.
++2. **M8 sort deletion — same command:** fresh scratch evidence contains TWO distinct valid `session_info_update` metadata records (A/B) in opposite raw orders; golden+pin generated with correct canonical sort. Correct checker rc=0 `golden x2 identical (12 normalized lines, sha256 c9e7f414126a)`; M8 rc=1 `failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 4`. Thus sort deletion breaks valid multi-async order-freedom, while all existing tests miss it because committed data has only one async line (sort no-op). Canonical path: real CLI. SOLID.
++
++**F1 — BLOCKER.** Contract mapping: the frozen decision defines a CLOSED `ASYNC_SESSION_UPDATES` set and sorted JSON-line multiset canonicalization (pins.py:130-145; C:874-880; T:2036-2056). Canonical reproduction: M4/M8 reproduce through the real checker CLI on a scratch copy. Material effect: M4 accepts a forbidden non-async order; M8 rejects valid order-free multiple async notifications. Concrete discriminator: exact CLI commands/outcomes above. Task ownership: checker tests/normalizer boundary. All five blocking-predicate clauses are met.
++
++Root cause: T:2023-2026 and T:2051 compute `moved` as `... + entries[idx+1:]`; the adjacent neighbour occurs twice. Correct adjacent-swap form ends with `entries[idx+2:]`. My exact comparison: on current code the malformed variant has len=12 and differs (as it should); on M1/M4 it ALSO differs because it added a second frame, while the correct 11-entry adjacent swap is equal (the actual violation). The controls appear green for the wrong reason.
++
++`test_golden_regen` coverage conclusion: C:1578 (`raise Failure` for normalized runs differing from frozen golden) remains independently tested by T:1872 `test_golden_frozen_lines`, which mutates frozen golden bytes while monkeypatching the hash and gets exactly `failure_reason: golden: normalized runs differ from the frozen golden.jsonl`. The *regen path* has changed purpose: T:2074 now proves the set REAL sha pin rejects synthetic regenerated bytes; it does NOT exercise a multi-async sort case, as M8 demonstrates.
++
++## V7 — doubled `observed` prefix (FOLLOW-UP)
++
++Producer chain: `negative_contract.validate_negative_dir` returns `observed: error code=…`; `check_negative` wraps it at C:1556 as `observed: {observed}`; `_check_bundle_uncapped` then formats `negative: {neg_observed}` at C:1876. Thus the PASS line is mechanically `negative: observed: observed: error code=-32602 message=Invalid params`.
++
++Consumers: `scripts/proof-runner` only matches the spec's `expected_reason = leg["expect"]["failure_reason"]` by a per-line substring on stdout+stderr (runner:193-203); it does NOT consume the PASS line. `proofs/S0-01/spec.json` specifies no PASS-text matcher. The ledger stores only command, exit, stdout/stderr SHA256, and the negative leg's classified failure reason; it does NOT parse that prose. Tests T:552-556 pin the whole current PASS line, so a text cleanup would require a test update but cannot affect protocol evidence, mint attestation, or ledger state.
++
++Classification: FOLLOW-UP / `verify-followup` (D-034), not a blocker: no frozen S0-01 criterion requires a single prefix, and the exact expected negative classification is separately bound by spec.json and `assert r.stdout.splitlines() == [...]` at S:141-144. Suggested repair (out of scope): make `check_negative` return the raw `observed` from the validator rather than prepending it again, then update the exact PASS-line test.
++
++## V2 — seed intent (FOLLOW-UP: documentation decision, not a blocker)
++
++Seed S0-01's `fixture_format:` at seed:347-350 says `normalized-then-golden transcript compare (declared minimal volatile-field list), run twice byte-identical`. It does not literally say that raw transcript order must be preserved; the current normalizer's declared exception defines `ASYNC_SESSION_UPDATES` as the closed tuple `("session_info_update",)` and moves that record after the session/new response (pins.py:130-145; `sync = [norm(entry) for entry in entries if not is_async(entry)]` at C:868-886). Therefore owner decision (a) satisfies the seed's high-level words **only if the decision record is treated as the declared normalization rule**.
++
++The decision is in the authoritative incident/brief evidence (AF-AP-107; G1 specification, pc-vb-f12-g1.md:22-40; tests' decision-a docstrings), but NOT in `tasks/stage0-breakdown.md` (it remains at the older general phrase, line 21) or `docs/08_DECISION_LOG.md` (no D-row for decision (a)). This is a precise stale-context/documentation finding. It does not contradict an executable seed assertion, does not affect the minted evidence, and is outside the checker/test component boundary. Disposition: FOLLOW-UP / `verify-followup`; recommend a decision-log or breakdown amendment that names the closed order-free `session_info_update` exception and its count/payload binding.
++
++## V9 — additional observation
++
++No other in-boundary production defect found beyond F1. `build_capture_record.py --check proofs/S0-01/evidence/golden/run-1 run-1` → `run-1: capture.json matches (--check)` / rc=0. The real checker CLI, proof-runner, ledger integrity, bundle manifests, and attested output digests reproduce as recorded above.
++
++## Clean final-byte gates (SOLID)
++
++- `python -m pytest -n 8 -q -p no:cacheprovider --basetemp ../scratch/bt/final1 tests/test_s0_01_check_acp_conformance.py tests/test_s0_01_spec_runner.py` → `476 passed in 79.05s (0:01:19)` / rc=0.
++- Same command with `final2` → `476 passed in 82.16s (0:01:22)` / rc=0.
++- `scripts/test_summary.sh tests/test_s0_01_check_acp_conformance.py tests/test_s0_01_spec_runner.py` → `pytest-summary: 476 passed in 343.93s (0:05:43)` / rc=0 (the only authoritative summary count).
++- `python -m pyflakes proofs/S0-01/check_acp_conformance.py proofs/S0-01/pins.py tests/test_s0_01_check_acp_conformance.py tests/test_s0_01_spec_runner.py` → rc=0; `git diff --check` → rc=0.
++
++## Finding inventory
++
++1. **BLOCKER F1 — V5 controls do not kill widened closed-set and missing-sort production mutants.** Evidence SOLID. Contract mapping: exact closed tuple/sorted canonicalization. Canonical path: real CLI scratch copies. Material: M4 accepts forbidden `tool_call` reordering; M8 rejects valid multiple-async order-free captures. Concrete discriminator: M4/M8 commands/outcomes in V5. In boundary: normalizer + its tests. Suggested fix: repair the adjacent-swap expressions to end `entries[idx+2:]`; add a two-distinct-async opposite-order real-checker regression; rerun mutation audit. **Blocks.**
++2. **FOLLOW-UP F2 — doubled `negative: observed: observed:` prefix.** Evidence SOLID. Contract mapping: none beyond readability. Canonical path: `def check_negative` at C:1536-1556 and `f"sha256 {golden_sha_12}); negative: {neg_observed}")` at C:1876. Material effect: none on state/evidence/consumer. Suggested fix: remove the second prefix in a future focused round. Does not block.
++3. **FOLLOW-UP F3 — decision (a) lacks a durable D-row/breakdown amendment.** Evidence SOLID. Contract mapping: seed's declared-normalization wording; the owner decision has been made but the cross-reference is stale. Canonical path: N/A (documentation only). Material effect: future maintenance ambiguity, not current checker behavior. Suggested fix: document the closed exception in the decision log/breakdown. Does not block.
++
++## DISCREPANCIES
++
++1. The initial direct xdist command failed before collection because `rm -rf ../scratch/bt/final1` also removed the parent `../scratch/bt`; pytest creates only its final component and returned `FileNotFoundError .../scratch/bt/final1`. Re-created the parent (`mkdir -p ../scratch/bt`) and both final xdist gates passed. Tooling/fixture setup issue only; no source behavior changed.
++2. The brief's C6(i) literal mutation (move a chunk before `session/prompt`) is structurally rejected by `check_prompt_turn` before `check_golden`, as G1 reported. I used the nearest protocol-valid chunk/usage adjacent swap; it reached the golden checker and failed at normalized line 8.
++3. report_lint final bounded result: report_lint: 38 refs — OK 36, NEAR 2, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree).
++
++## NOT-done
++
++- No repair was made. This lane is read-only; F1 requires a new focused build/repair increment and independent re-verification.
++- No live captures or relay/model/server action was performed. All attacks used fresh scratch copies.
++- No decision-log/breakdown amendment was made; F3 is a coordinator follow-up.
++- The local route cannot independently self-accept. This report is a recommendation only.
++
++## GATE RECOMMENDATION
++
++`NOT-READY` — F1 satisfies the complete blocking predicate (frozen closed-set/sort contract; real production CLI reproduction; material accept/reject behavior; deterministic mutants; normalizer/test boundary). F2/F3 are non-blocking verify-followups. Coordinator owns the final gate decision.
++
++retro: found a real test-oracle defect (duplicated-neighbour “swap” makes closed-set tests hollow) — coordinator must register the bug-echo/incident entry before repair closes.
++
++🌱 graft saved ~34,247 tokens this turn.
++
++
+diff --git a/transcripts/pc/pc-verify-vb-f12.md--955ab74.md b/transcripts/pc/pc-verify-vb-f12.md--955ab74.md
+new file mode 100644
+index 0000000..9ffe8e8
+--- /dev/null
++++ b/transcripts/pc/pc-verify-vb-f12.md--955ab74.md
+@@ -0,0 +1,1025 @@
++# Hermes lane session 20260921_220839_6f1e25
++
++- model: agentfactory-verify-local
++- started: 2026-09-21T21:08:40.647873+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-vb-f12.md--955ab74/tree
++- messages: 316; tool calls: 169
++- tokens in/out/cache_read/reasoning: 809529/129250/19551904/74896
++
++## user @ 21:08:40
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 21:09:14 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 21:09:15 — 588 chars (body not exported)
++
++## tool result (read_file) @ 21:09:15 — 6035 chars (body not exported)
++
++## assistant @ 21:09:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:09:31 — 405 chars (body not exported)
++
++## assistant @ 21:09:38 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 21:09:38 — 14474 chars (body not exported)
++
++## tool result (read_file) @ 21:09:38 — 15175 chars (body not exported)
++
++## assistant @ 21:09:52 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:09:52 — 11129 chars (body not exported)
++
++## tool result (terminal) @ 21:09:52 — 12176 chars (body not exported)
++
++## assistant @ 21:10:08 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:10:09 — 5986 chars (body not exported)
++
++## assistant @ 21:10:20 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:10:21 — 1783 chars (body not exported)
++
++## assistant @ 21:10:26 → tools: search_files
++
++
++
++## tool result (search_files) @ 21:10:26 — 3166 chars (body not exported)
++
++## assistant @ 21:10:30 → tools: search_files
++
++
++
++## tool result (search_files) @ 21:10:30 — 1048 chars (body not exported)
++
++## assistant @ 21:10:38 → tools: read_file, execute_code
++
++
++
++## tool result (read_file) @ 21:10:38 — 3702 chars (body not exported)
++
++## tool result (execute_code) @ 21:10:39 — 6367 chars (body not exported)
++
++## assistant @ 21:10:58 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:10:58 — 5681 chars (body not exported)
++
++## tool result (terminal) @ 21:10:58 — 3320 chars (body not exported)
++
++## assistant @ 21:13:20 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 21:13:20 — 7260 chars (body not exported)
++
++## tool result (read_file) @ 21:13:20 — 10302 chars (body not exported)
++
++## assistant @ 21:15:09 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:15:09 — 7594 chars (body not exported)
++
++## tool result (terminal) @ 21:15:09 — 1371 chars (body not exported)
++
++## assistant @ 21:15:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:15:35 — 3503 chars (body not exported)
++
++## assistant @ 21:17:54 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:17:54 — 7749 chars (body not exported)
++
++## tool result (terminal) @ 21:17:54 — 3221 chars (body not exported)
++
++## assistant @ 21:18:05 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:18:05 — 4850 chars (body not exported)
++
++## tool result (terminal) @ 21:18:05 — 338 chars (body not exported)
++
++## assistant @ 21:18:17 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 21:18:17 — 4189 chars (body not exported)
++
++## tool result (read_file) @ 21:18:17 — 4229 chars (body not exported)
++
++## assistant @ 21:19:00 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:19:00 — 3423 chars (body not exported)
++
++## tool result (terminal) @ 21:19:01 — 39086 chars (body not exported)
++
++## assistant @ 21:21:32 → tools: write_file, execute_code
++
++Context gathered. Setting up scratch infrastructure, then starting the V items.
++
++## tool result (write_file) @ 21:21:33 — 330 chars (body not exported)
++
++## tool result (execute_code) @ 21:21:33 — 1757 chars (body not exported)
++
++## assistant @ 21:21:52 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:21:56 — 656 chars (body not exported)
++
++## assistant @ 21:22:17 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:22:18 — 1108 chars (body not exported)
++
++## assistant @ 21:22:40 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:22:40 — 867 chars (body not exported)
++
++## assistant @ 21:22:53 → tools: write_file
++
++The f-string ate my Python variables. Let me write the script to a file instead.
++
++## tool result (write_file) @ 21:22:53 — 698 chars (body not exported)
++
++## assistant @ 21:23:06 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:23:06 — 3117 chars (body not exported)
++
++## assistant @ 21:23:21 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:23:21 — 1572 chars (body not exported)
++
++## assistant @ 21:23:47 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:23:48 — 921 chars (body not exported)
++
++## assistant @ 21:24:22 → tools: execute_code
++
++V8's red/green reproduced exactly against the PIN. Now the NEW (current) side of the same probes:
++
++## tool result (execute_code) @ 21:24:23 — 861 chars (body not exported)
++
++## assistant @ 21:25:22 → tools: write_file
++
++I've confirmed the n1==n2 red/green test and 5a-5d controls are working as expected. Now I'll write the V1 hostile probes script to test the golden-decision reach.
++
++## tool result (write_file) @ 21:25:23 — 314 chars (body not exported)
++
++## assistant @ 21:26:18 → tools: write_file
++
++I found that naive timestamp mutations are being blocked by the `check_timeline` monotonicity validation before the test can reach `check_golden`, so I need to adjust the probe to use genuinely chronological timestamps instead.
++
++## tool result (write_file) @ 21:26:18 — 314 chars (body not exported)
++
++## assistant @ 21:27:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:27:11 — 572 chars (body not exported)
++
++## assistant @ 21:27:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:27:17 — 2028 chars (body not exported)
++
++## assistant @ 21:27:35 → tools: patch
++
++tee-status is a 12-key count shape, no shas. Fixing the probe to recompute counts instead:
++
++## tool result (patch) @ 21:27:36 — 2284 chars (body not exported)
++
++## assistant @ 21:27:51 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:27:51 — 4850 chars (body not exported)
++
++## tool result (terminal) @ 21:27:51 — 3966 chars (body not exported)
++
++## assistant @ 21:28:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:28:03 — 839 chars (body not exported)
++
++## assistant @ 21:28:25 → tools: terminal
++
++The probes hit the upstream-window check because re-stamping every timestamp shifted the c2a prompt window. Let me look at the exact checks, then fix the probe to move only the async frame's timestamps:
++
++## tool result (terminal) @ 21:28:26 — 3915 chars (body not exported)
++
++## assistant @ 21:28:42 → tools: terminal
++
++The probes are being blocked by the upstream-window check because my global re-stamp shifts the prompt frame's timestamp, which invalidates the `received_at` binding. I need to re-stamp only the moved/inserted async frames instead, keeping the prompt and other frames at their original timestamps. Let me check how the first-line and window checks work so I can position the "before initialize" case correctly.
++
++## tool result (terminal) @ 21:28:42 — 327 chars (body not exported)
++
++## assistant @ 21:28:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:28:48 — 6181 chars (body not exported)
++
++## assistant @ 21:29:48 → tools: write_file
++
++The upstream-window check (C:680) binds `received_at` to the prompt windows; my global re-stamp shifted them. I'll re-stamp ONLY the moved/inserted frames, leaving the prompt/terminal frames (which define the windows) untouched:
++
++## tool result (write_file) @ 21:29:49 — 314 chars (body not exported)
++
++## assistant @ 21:29:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:29:58 — 4073 chars (body not exported)
++
++## assistant @ 21:30:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:30:38 — 800 chars (body not exported)
++
++## assistant @ 21:31:24 → tools: execute_code
++
++Now the before-init case **passes** (rc=0). I need to confirm this is intended order-freeness, not data loss, and name the "foreign session id" check that caught v1c. Let me inspect the before-init normalized output and find that check:
++
++## tool result (execute_code) @ 21:31:24 — 590 chars (body not exported)
++
++## assistant @ 21:31:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:31:30 — 6304 chars (body not exported)
++
++## assistant @ 21:31:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:31:36 — 2254 chars (body not exported)
++
++## assistant @ 21:32:16 → tools: terminal
++
++I've confirmed the V1(b)/(e) counts are binding, and V1(c) was caught by `check_prompt_turn` due to a foreign session id. Now I'll test the symmetric case where run-1's single async moves after the terminal, then examine the normalizer's slotting mechanism.
++
++## tool result (terminal) @ 21:32:16 — 4526 chars (body not exported)
++
++## assistant @ 21:32:21 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:32:21 — 5730 chars (body not exported)
++
++## assistant @ 21:32:52 → tools: execute_code
++
++Now the symmetric case: run-1's single async moved to AFTER the terminal (the other half of the race), through the real checker:
++
++## tool result (execute_code) @ 21:32:56 — 540 chars (body not exported)
++
++## assistant @ 21:33:36 → tools: patch
++
++V1 complete. Let me record it in the draft, then move to V4 (mint's attested inputs).
++
++## tool result (patch) @ 21:33:36 — 4500 chars (body not exported)
++
++## assistant @ 21:33:46 → tools: terminal
++
++Now V4 — the mint's attested inputs. First the integrity check, then the re-run diff:
++
++## tool result (terminal) @ 21:33:46 — 35534 chars (body not exported)
++
++## assistant @ 21:33:58 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:34:01 — 651 chars (body not exported)
++
++## assistant @ 21:34:14 → tools: execute_code
++
++Both stdout/stderr hashes match the committed `result.json` exactly (positive `ae7ea2…`/`e3b0c4…`, negative `319663…`/`e3b0c4…`). Now the full proof-runner re-run and the ledger:
++
++## tool result (execute_code) @ 21:34:18 — 1300 chars (body not exported)
++
++## assistant @ 21:34:38 → tools: execute_code
++
++Clean re-run: only the wall-clock timestamps, the venue fingerprint (`pc-bridge:vm`→`pc-bridge:fedora`, since the mint ran on a VM and this PC is fedora), and the derived whole-record `digest` differ — every deterministic field (exit codes, stdout_sha256, stderr_sha256, failure_reason, leg structure) is identical. Now the ledger repro:
++
++## tool result (execute_code) @ 21:34:39 — 476 chars (body not exported)
++
++## assistant @ 21:35:02 → tools: patch
++
++V4 is SOLID on all three sub-claims. Let me record it and move to V3 (evidence bundle integrity).
++
++## tool result (patch) @ 21:35:02 — 3285 chars (body not exported)
++
++## assistant @ 21:35:21 → tools: patch
++
++I overwrote the V8 header in that patch. Let me restore it after V4:
++
++## tool result (patch) @ 21:35:21 — 2355 chars (body not exported)
++
++## assistant @ 21:35:31 → tools: terminal
++
++Now V3. First, the baseline manifest structure and what `PINNED_BASELINE_*` covers:
++
++## tool result (terminal) @ 21:35:31 — 3285 chars (body not exported)
++
++## assistant @ 21:35:42 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:35:42 — 7712 chars (body not exported)
++
++## assistant @ 21:35:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:35:48 — 87 chars (body not exported)
++
++## assistant @ 21:35:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:35:53 — 1685 chars (body not exported)
++
++## assistant @ 21:36:01 → tools: terminal
++
++I'm checking that the manifest pre/post digests match the pinned baseline, starting by examining how the manifests are structured and how the baseline is validated in `check_baseline`.
++
++## tool result (terminal) @ 21:36:01 — 955 chars (body not exported)
++
++## assistant @ 21:36:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:36:12 — 3027 chars (body not exported)
++
++## assistant @ 21:36:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:36:23 — 4185 chars (body not exported)
++
++## assistant @ 21:36:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:36:30 — 1122 chars (body not exported)
++
++## assistant @ 21:36:52 → tools: execute_code
++
++Now I'll independently verify the V3 bundle. The checker already passed, but the brief asks for independent recomputation — let me do it:
++
++## tool result (execute_code) @ 21:36:52 — 4619 chars (body not exported)
++
++## assistant @ 21:37:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:37:03 — 590 chars (body not exported)
++
++## assistant @ 21:37:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:37:08 — 434 chars (body not exported)
++
++## assistant @ 21:37:33 → tools: write_file
++
++All five positive legs: pre==post==baseline and the baseline gz sha matches the pin. The negative leg carries no manifest (it's a different leg shape — the malformed-initialize capture). Now the per-tree digests vs `PINNED_BASELINE_DIGESTS`, plus the remaining V3 items:
++
++## tool result (write_file) @ 21:37:34 — 585 chars (body not exported)
++
++## assistant @ 21:37:40 → tools: terminal
++
++Let me first check the actual summary format so my parser matches:
++
++## tool result (terminal) @ 21:37:40 — 1562 chars (body not exported)
++
++## assistant @ 21:37:48 → tools: terminal
++
++The summary format is `<tree> <sha256>` (name first). My digest parser assumed sha-first. Let me check the checker's actual `_parse_manifest_body` to see how it derives per-tree digests, then match it:
++
++## tool result (terminal) @ 21:37:48 — 2109 chars (body not exported)
++
++## assistant @ 21:37:57 → tools: terminal
++
++Let me read the exact body-digest computation so I recompute it identically (independently of the checker):
++
++## tool result (terminal) @ 21:37:57 — 1302 chars (body not exported)
++
++## assistant @ 21:38:19 → tools: write_file
++
++The per-tree digest is sha256 of each tree's concatenated body section. Let me recompute it independently and compare to the pin:
++
++## tool result (write_file) @ 21:38:20 — 588 chars (body not exported)
++
++## assistant @ 21:38:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:38:30 — 721 chars (body not exported)
++
++## assistant @ 21:38:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:38:39 — 545 chars (body not exported)
++
++## assistant @ 21:38:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:38:49 — 907 chars (body not exported)
++
++## assistant @ 21:38:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:38:57 — 1099 chars (body not exported)
++
++## assistant @ 21:39:19 → tools: execute_code
++
++The negative leg is fully bound (probe sha, interpreter sha/realpath, exit code, observed error code/message all present in `runtime-identity.json` + `timeline.jsonl`). Let me independently confirm the negative leg's observed error vs the pins, and check the mention-receipt relay binding:
++
++## tool result (execute_code) @ 21:39:19 — 590 chars (body not exported)
++
++## assistant @ 21:39:26 → tools: terminal
++
++The event file uses a different key. Let me inspect its actual shape (the receipt binds to the relay via the event's content hash):
++
++## tool result (terminal) @ 21:39:26 — 787 chars (body not exported)
++
++## assistant @ 21:39:35 → tools: terminal
++
++The receipt's `event_id` (`835a139f…`) matches the event's `id` — the mention receipt is bound to the relay's event. Let me confirm that match explicitly:
++
++## tool result (terminal) @ 21:39:35 — 357 chars (body not exported)
++
++## assistant @ 21:39:56 → tools: patch
++
++V3 is SOLID — every sub-claim reproduced. Let me record it:
++
++## tool result (patch) @ 21:39:57 — 3572 chars (body not exported)
++
++## assistant @ 21:40:09 → tools: terminal
++
++Now V5/V6 — the mutation audit. First I need the exact normalizer body (the two passes) and the test's import alias:
++
++## tool result (terminal) @ 21:40:09 — 2801 chars (body not exported)
++
++## assistant @ 21:40:14 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:40:14 — 7854 chars (body not exported)
++
++## assistant @ 21:40:20 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:40:20 — 6514 chars (body not exported)
++
++## assistant @ 21:40:24 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:40:24 — 2690 chars (body not exported)
++
++## assistant @ 21:42:25 → tools: read_file
++
++I've confirmed the mechanism: pass 1 builds the sync order and session indices, pass 2 slots async lines by session intro and canonicalizes their order by JSON. Now I'll read through the five golden/async tests to plan the mutations.
++
++## tool result (read_file) @ 21:42:25 — 6104 chars (body not exported)
++
++## assistant @ 21:42:30 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:42:30 — 2316 chars (body not exported)
++
++## assistant @ 21:44:21 → tools: read_file
++
++Let me read the test file's fixture setup and the 5b/5c test bodies to design the mutations precisely:
++
++## tool result (read_file) @ 21:44:21 — 3831 chars (body not exported)
++
++## assistant @ 21:44:39 → tools: read_file
++
++I have all five target tests. Let me read the V6 spec-runner tests in full, then build the mutation harness:
++
++## tool result (read_file) @ 21:44:39 — 5630 chars (body not exported)
++
++## assistant @ 21:45:15 → tools: terminal
++
++I have all the target tests mapped. Let me inspect the test file's import/fixture setup and the spec.json negative leg, then build the mutation harness:
++
++## tool result (terminal) @ 21:45:16 — 680 chars (body not exported)
++
++## assistant @ 21:45:48 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:45:48 — 1643 chars (body not exported)
++
++## assistant @ 21:49:20 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:49:21 — 316 chars (body not exported)
++
++## assistant @ 21:51:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:51:44 — 3179 chars (body not exported)
++
++## assistant @ 21:52:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:52:05 — 6122 chars (body not exported)
++
++## assistant @ 21:52:35 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:52:35 — 344 chars (body not exported)
++
++## assistant @ 21:52:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:52:39 — 555 chars (body not exported)
++
++## assistant @ 21:53:17 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:53:18 — 342 chars (body not exported)
++
++## assistant @ 21:53:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:53:21 — 496 chars (body not exported)
++
++## assistant @ 21:54:11 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:54:12 — 320 chars (body not exported)
++
++## assistant @ 21:54:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:54:36 — 1411 chars (body not exported)
++
++## assistant @ 21:56:47 → tools: write_file
++
++
++
++## tool result (write_file) @ 21:56:47 — 336 chars (body not exported)
++
++## assistant @ 21:58:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:58:55 — 3461 chars (body not exported)
++
++## assistant @ 21:59:14 → tools: patch
++
++
++
++## tool result (patch) @ 21:59:14 — 1696 chars (body not exported)
++
++## assistant @ 21:59:21 → tools: patch
++
++
++
++## tool result (patch) @ 21:59:21 — 1921 chars (body not exported)
++
++## assistant @ 21:59:25 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:59:25 — 3150 chars (body not exported)
++
++## assistant @ 21:59:36 → tools: patch
++
++
++
++## tool result (patch) @ 21:59:36 — 1176 chars (body not exported)
++
++## assistant @ 21:59:41 → tools: patch
++
++
++
++## tool result (patch) @ 21:59:41 — 899 chars (body not exported)
++
++## assistant @ 21:59:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:00:04 — 1045 chars (body not exported)
++
++## assistant @ 22:00:28 → tools: terminal, search_files, search_files
++
++
++
++## tool result (terminal) @ 22:00:28 — 3618 chars (body not exported)
++
++## tool result (search_files) @ 22:00:28 — 1436 chars (body not exported)
++
++## tool result (search_files) @ 22:00:28 — 18 chars (body not exported)
++
++## assistant @ 22:00:50 → tools: terminal, search_files, search_files
++
++
++
++## tool result (terminal) @ 22:03:32 — 1464 chars (body not exported)
++
++## tool result (search_files) @ 22:03:32 — 5193 chars (body not exported)
++
++## tool result (search_files) @ 22:03:32 — 14439 chars (body not exported)
++
++## assistant @ 22:04:14 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 22:05:32 — 910 chars (body not exported)
++
++## tool result (terminal) @ 22:06:54 — 910 chars (body not exported)
++
++## assistant @ 22:07:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 22:08:09 — 248 chars (body not exported)
++
++## tool result (terminal) @ 22:08:10 — 1350 chars (body not exported)
++
++## tool result (terminal) @ 22:13:55 — 708 chars (body not exported)
++
++## assistant @ 22:15:13 → tools: write_file
++
++
++
++## tool result (write_file) @ 22:15:15 — 306 chars (body not exported)
++
++## assistant @ 22:15:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:15:42 — 842 chars (body not exported)
++
++## assistant @ 22:16:12 → tools: patch
++
++
++
++## tool result (patch) @ 22:16:12 — 6704 chars (body not exported)
++
++## assistant @ 22:16:37 → tools: read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 22:16:37 — 3163 chars (body not exported)
++
++## tool result (read_file) @ 22:16:37 — 2819 chars (body not exported)
++
++## tool result (read_file) @ 22:16:37 — 15883 chars (body not exported)
++
++## tool result (terminal) @ 22:16:37 — 2085 chars (body not exported)
++
++## assistant @ 22:17:13 → tools: patch
++
++
++
++## tool result (patch) @ 22:17:14 — 7365 chars (body not exported)
++
++## assistant @ 22:17:54 → tools: patch
++
++
++
++## tool result (patch) @ 22:17:55 — 3906 chars (body not exported)
++
++## assistant @ 22:18:06 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 22:18:06 — 22471 chars (body not exported)
++
++## tool result (terminal) @ 22:18:06 — 80 chars (body not exported)
++
++## assistant @ 22:18:27 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 22:18:27 — 833 chars (body not exported)
++
++## assistant @ 22:18:54 → tools: patch
++
++
++
++## tool result (patch) @ 22:18:54 — 1504 chars (body not exported)
++
++## assistant @ 22:18:58 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:18:58 — 22457 chars (body not exported)
++
++## assistant @ 22:19:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:19:28 — 8342 chars (body not exported)
++
++## assistant @ 22:19:57 → tools: patch
++
++
++
++## tool result (patch) @ 22:19:58 — 3330 chars (body not exported)
++
++## assistant @ 22:20:17 → tools: patch
++
++
++
++## tool result (patch) @ 22:20:18 — 4127 chars (body not exported)
++
++## assistant @ 22:20:25 → tools: patch
++
++
++
++## tool result (patch) @ 22:20:25 — 2025 chars (body not exported)
++
++## assistant @ 22:20:35 → tools: patch
++
++
++
++## tool result (patch) @ 22:20:35 — 2471 chars (body not exported)
++
++## assistant @ 22:20:43 → tools: patch
++
++
++
++## tool result (patch) @ 22:20:43 — 2035 chars (body not exported)
++
++## assistant @ 22:20:52 → tools: patch
++
++
++
++## tool result (patch) @ 22:20:52 — 2492 chars (body not exported)
++
++## assistant @ 22:20:59 → tools: patch
++
++
++
++## tool result (patch) @ 22:21:00 — 2229 chars (body not exported)
++
++## assistant @ 22:21:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:21:06 — 1396 chars (body not exported)
++
++## assistant @ 22:21:13 → tools: patch
++
++
++
++## tool result (patch) @ 22:21:13 — 2767 chars (body not exported)
++
++## assistant @ 22:21:20 → tools: patch
++
++
++
++## tool result (patch) @ 22:21:20 — 2304 chars (body not exported)
++
++## assistant @ 22:21:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:21:26 — 945 chars (body not exported)
++
++## assistant @ 22:21:34 → tools: patch
++
++
++
++## tool result (patch) @ 22:21:34 — 2840 chars (body not exported)
++
++## assistant @ 22:21:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:21:41 — 363 chars (body not exported)
++
++## assistant @ 22:22:03 → tools: patch
++
++
++
++## tool result (patch) @ 22:22:03 — 2510 chars (body not exported)
++
++## assistant @ 22:22:10 → tools: patch
++
++
++
++## tool result (patch) @ 22:22:11 — 2289 chars (body not exported)
++
++## assistant @ 22:22:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:22:17 — 550 chars (body not exported)
++
++## assistant @ 22:22:58 → tools: patch
++
++
++
++## tool result (patch) @ 22:22:59 — 1633 chars (body not exported)
++
++## assistant @ 22:23:08 → tools: patch
++
++
++
++## tool result (patch) @ 22:23:08 — 1666 chars (body not exported)
++
++## assistant @ 22:23:31 → tools: patch
++
++
++
++## tool result (patch) @ 22:23:31 — 2183 chars (body not exported)
++
++## assistant @ 22:23:38 → tools: patch
++
++
++
++## tool result (patch) @ 22:23:38 — 2074 chars (body not exported)
++
++## assistant @ 22:23:54 → tools: patch
++
++
++
++## tool result (patch) @ 22:23:54 — 3631 chars (body not exported)
++
++## assistant @ 22:24:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:24:01 — 488 chars (body not exported)
++
++## assistant @ 22:24:25 → tools: patch
++
++
++
++## tool result (patch) @ 22:24:25 — 1310 chars (body not exported)
++
++## assistant @ 22:24:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:24:33 — 550 chars (body not exported)
++
++## assistant @ 22:24:43 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:24:43 — 23608 chars (body not exported)
++
++## assistant @ 22:25:01 → tools: patch
++
++
++
++## tool result (patch) @ 22:25:02 — 721 chars (body not exported)
++
++## assistant @ 22:25:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:25:08 — 550 chars (body not exported)
++
++## assistant @ 22:25:17
++
++NOT-READY — F1 is a reproducible, in-boundary blocker: existing controls miss both a widened async closed set and removed async sort.
++
++Report: `tasks/briefs/s0-01-vb-f12-support/VERIFY-VB-F12-report.md`  
++SHA256: `<opaque-redacted>`
++
++Verified:
++- Clean current bytes: 476 passed twice under xdist.
++- Ledger integrity: S0-01 PRESENT.
++- Mint output hashes, evidence manifests, receipts, negative-leg identity/error, and ledger generation reproduce.
++- Real checker CLI mutations validate payload/count/session binding.
++
++Blocker:
++- `tests/test_s0_01_check_acp_conformance.py:2023-2026` and `:2051` duplicate the adjacent entry instead of swapping it (`entries[idx+1:]` vs required `entries[idx+2:]`).
++- M4 widening `ASYNC_SESSION_UPDATES` to `tool_call` survives the full 476-test suite and accepts forbidden reordering on the real checker path.
++- M8 removing the async-line sort survives the full suite and rejects a valid two-async opposite-order capture on the real checker path.
++
++Follow-ups:
++- Double `negative: observed: observed:` prefix is cosmetic.
++- Decision (a) lacks a decision-log/breakdown entry.
++
++`report_lint`: 38 refs — OK 36, NEAR 2, MISS 0.
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 809529,
++  "output_tokens": 129250,
++  "cache_read_tokens": 19551904,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 74896,
++  "total_tokens": 20490683,
++  "api_calls": 146,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260921_220839_6f1e25",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
