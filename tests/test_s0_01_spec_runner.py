@@ -1,6 +1,20 @@
-"""S0-01 through the CANONICAL proof-runner: with the committed evidence still v1
-(no timeline.jsonl), the runner's positive leg must DEFER (exit 2, no result.json).
-The negative leg also defers today (the negative/ directory does not exist yet).
+"""S0-01 through the CANONICAL proof-runner.
+
+The committed evidence (since the 2026-09-21 recapture, the REAL v2.4 bundle:
+five legs + the negative leg) is a real capture. The deferral tests exercise
+the DEFERRED path on a controlled input instead: _strip_v2_evidence puts a COPY
+of the tree into the v1 shape (no leg carries a timeline; negative/ absent) so
+the deferral path still runs.
+
+The two "committed" tests pin the COMMITTED tree's real behaviour, measured on
+a copy of PIN 38ad46b: the runner over the committed bundle reports
+"leg-exit-mismatch: S0-01 positive expected 0 got 1" (rc 1, no result.json —
+it neither mints nor defers) because the frozen checker's check_golden fails on
+the pinned hermes-acp's asynchronous session_info_update (AF-AP-107, an OPEN
+owner decision — docs/INCIDENT-LOG.md 2026-09-21), and the negative leg cmd
+prints the two-line protocol-violation classification and exits 1. When the
+AF-AP-107 golden decision lands, that round must update these two tests — the
+committed behaviour they pin will then differ.
 
 V3: this test invokes scripts/proof-runner run --proof <id> --venue sandbox --root <root>
 for real (not just the leg cmd directly). The runner matches failure_reason with:
@@ -88,6 +102,54 @@ def test_negative_leg_defers_directly(tmp_path):
     )
     assert r.returncode == 2, f"expected exit 2 (deferred), got {r.returncode}: {r.stdout}"
     assert r.stdout.strip() == "deferred: negative probe not captured"
+
+
+def test_committed_bundle_runner_reports_leg_exit_mismatch_not_a_result(tmp_path):
+    """The committed (unstripped) v2.4 bundle through the REAL runner: the frozen checker's
+    check_golden fails the positive leg (AF-AP-107 — the pinned hermes-acp emits
+    session_info_update asynchronously), so the runner reports a leg exit mismatch and
+    NEITHER mints a result.json NOR defers. Pins the committed tree's current behaviour;
+    must be updated when the AF-AP-107 golden decision lands.
+
+    Measured on a copy of PIN 38ad46b: wall 3.86 s (the checker walks the whole
+    bundle). Timeout is well over 3x the measured wall time (the brief rule: at least 3x)."""
+    root = _copy(tmp_path)
+    r = subprocess.run(
+        [sys.executable, str(RUNNER), "run", "--proof", "S0-01",
+         "--venue", "sandbox", "--root", str(root)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert r.returncode == 1, (
+        f"expected exit 1 (leg exit mismatch), got {r.returncode}: "
+        f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    )
+    assert r.stderr.strip() == (
+        "leg-exit-mismatch: S0-01 positive expected 0 got 1"
+    )
+    assert r.stdout == ""
+    assert not (root / "proofs" / "S0-01" / "result.json").exists()
+
+
+def test_committed_negative_leg_cmd_reports_the_protocol_violation(tmp_path):
+    """The committed (unstripped) negative leg cmd: on the real v2.4 capture the probe
+    is a valid capture whose request params violate the initialize contract, so the
+    checker prints the classification on line 1 and the observed error on line 2 and
+    exits 1. Pins the committed tree's current behaviour; must be updated when the
+    AF-AP-107 golden decision lands."""
+    root = _copy(tmp_path)
+    spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
+    neg = next(leg for leg in spec["legs"] if leg["leg"] == "negative")
+    r = subprocess.run(
+        [sys.executable, *neg["cmd"][1:]],
+        cwd=root, capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 1, (
+        f"expected exit 1, got {r.returncode}: {r.stdout!r}"
+    )
+    assert r.stdout.splitlines() == [
+        "protocol-violation: missing required initialize field",
+        "observed: error code=-32602 message=Invalid params",
+    ]
 
 
 def test_spec_structure_matches_brief(tmp_path):
