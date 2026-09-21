@@ -37,6 +37,7 @@ sys.path.insert(0, str(HERE))
 import pins  # noqa: E402
 from pins import (  # noqa: E402
     ALLOWED_UPSTREAM_GET,
+    ASYNC_SESSION_UPDATES,
     ENV_ALLOWLIST_KEY,
     EXPECTED_MENTIONS,
     EXPECTED_MODEL,
@@ -802,10 +803,15 @@ def normalize_timeline(entries):
     def sid_ph(v):
         return sids.setdefault(str(v), f"<SID{len(sids) + 1}>")
 
-    out = []
-    for entry in entries:
+    def is_async(entry):
         o = entry["frame"]
-        d = entry["dir"]
+        upd = (o.get("params") or {}).get("update")
+        return (entry["dir"] == "a2c" and "method" in o and "id" not in o
+                and o["method"] == "session/update" and isinstance(upd, dict)
+                and upd.get("sessionUpdate") in ASYNC_SESSION_UPDATES)
+
+    def norm(entry):
+        o, d = entry["frame"], entry["dir"]
         rec = {"dir": d}
         if d == "c2a":
             if "method" in o and "id" in o:
@@ -830,35 +836,55 @@ def normalize_timeline(entries):
             else:
                 rec.update(kind="resp", id=id_ph(o.get("id")),
                            result=_shape(o.get("result")), error="error" in o)
+        elif "method" in o and "id" not in o:
+            params = o.get("params") or {}
+            rec.update(kind="notif", method=o["method"],
+                       sessionId=sid_ph(params.get("sessionId")))
+            update = params.get("update")
+            upd = update if isinstance(update, dict) else {}
+            rec["sessionUpdate"] = upd.get("sessionUpdate")
+            rec["update"] = _shape({k: v for k, v in upd.items()
+                                    if k not in ("sessionUpdate",)})
+        elif "method" in o:
+            rec.update(kind="req", id=id_ph(o["id"]), method=o["method"],
+                       params=_shape(o.get("params")))
         else:
-            if "method" in o and "id" not in o:
-                params = o.get("params") or {}
-                rec.update(kind="notif", method=o["method"],
-                           sessionId=sid_ph(params.get("sessionId")))
-                upd = params.get("update") if isinstance(params.get("update"), dict) else {}
-                rec["sessionUpdate"] = upd.get("sessionUpdate")
-                rec["update"] = _shape({k: v for k, v in upd.items()
-                                        if k not in ("sessionUpdate",)})
-            elif "method" in o:
-                rec.update(kind="req", id=id_ph(o["id"]), method=o["method"],
-                           params=_shape(o.get("params")))
+            res = o.get("result")
+            rec.update(kind="resp", id=id_ph(o.get("id")), error="error" in o)
+            if isinstance(res, dict):
+                rec["result_keys"] = sorted(res)
+                if "protocolVersion" in res:
+                    rec["protocolVersion"] = res["protocolVersion"]
+                    rec["agentCapabilities"] = res.get("agentCapabilities")
+                    rec["agentInfo.name"] = (res.get("agentInfo") or {}).get("name")
+                if "sessionId" in res:
+                    rec["sessionId"] = sid_ph(res["sessionId"])
+                if "stopReason" in res:
+                    rec["stopReason"] = res["stopReason"]
             else:
-                res = o.get("result")
-                rec.update(kind="resp", id=id_ph(o.get("id")), error="error" in o)
-                if isinstance(res, dict):
-                    rec["result_keys"] = sorted(res)
-                    if "protocolVersion" in res:
-                        rec["protocolVersion"] = res["protocolVersion"]
-                        rec["agentCapabilities"] = res.get("agentCapabilities")
-                        rec["agentInfo.name"] = (res.get("agentInfo") or {}).get("name")
-                    if "sessionId" in res:
-                        rec["sessionId"] = sid_ph(res["sessionId"])
-                    if "stopReason" in res:
-                        rec["stopReason"] = res["stopReason"]
-                else:
-                    rec["result"] = _shape(res)
-        out.append(rec)
-    return [json.dumps(r, sort_keys=True, separators=(",", ":")) for r in out]
+                rec["result"] = _shape(res)
+        return rec
+
+    sync = [norm(entry) for entry in entries if not is_async(entry)]
+    intro = {}
+    for i, rec in enumerate(sync):
+        if (rec.get("dir") == "a2c" and rec.get("kind") == "resp"
+                and rec.get("sessionId") is not None):
+            intro.setdefault(rec["sessionId"], i)
+    async_lines = []
+    for entry in entries:
+        if is_async(entry):
+            rec = norm(entry)
+            line = json.dumps(rec, sort_keys=True, separators=(",", ":"))
+            async_lines.append((intro.get(rec.get("sessionId")), line))
+    async_lines.sort(key=lambda item: item[1])
+    result = []
+    for i, rec in enumerate(sync):
+        result.append(json.dumps(rec, sort_keys=True, separators=(",", ":")))
+        result.extend(line for slot, line in async_lines if slot == i)
+    # Only a malformed capture lacks a synchronous a2c response for an async session.
+    result.extend(line for slot, line in async_lines if slot is None)
+    return result
 
 
 def check_cancel(entries, c2a, a2c, leg_dir, leg="cancel"):

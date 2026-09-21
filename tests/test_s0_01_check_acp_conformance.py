@@ -10,6 +10,7 @@ monkeypatched, commented).
 """
 from __future__ import annotations
 
+import copy
 import gzip
 import hashlib
 import json
@@ -109,40 +110,6 @@ def _load_frames(leg_dir: Path):
 
 def _load_fingerprint():
     return FIXTURES.joinpath("upstream-token.fingerprint").read_text().strip()
-
-
-_ASYNC_UPDATES = ("session_info_update",)
-
-
-def _session_update_kind(frame):
-    params = frame.get("params")
-    if not isinstance(params, dict) or frame.get("method") != "session/update":
-        return None
-    return (params.get("update") or {}).get("sessionUpdate")
-
-
-def _align_async_order(a2c_ref, a2c):
-    """Place the ASYNCHRONOUS agent notifications of `a2c` at the positions they hold in `a2c_ref`.
-
-    2026-09-21 (AF-AP-107): the pinned hermes-acp emits `session_info_update` from an independent task, so its
-    position relative to the prompt's reply stream differs between the real run-1 and run-2 captures (before the
-    reply chunk in run-1, after the end_turn result in run-2). This SYNTHETIC passing bundle is the checker's
-    positive control — its interleaving is fabricated by design (`_make_interleaved_timeline`) — so run-2's async
-    notifications follow run-1's order here; the real race is a recorded finding (test_real_bundle_cli), not
-    something this fixture decides."""
-    async_frames = [f for f in a2c if _session_update_kind(f) in _ASYNC_UPDATES]
-    kept = [f for f in a2c if _session_update_kind(f) not in _ASYNC_UPDATES]
-    out, it = [], iter(async_frames)
-    for ref in a2c_ref:
-        if _session_update_kind(ref) in _ASYNC_UPDATES:
-            nxt = next(it, None)
-            if nxt is not None:
-                out.append(nxt)
-        elif kept:
-            out.append(kept.pop(0))
-    out.extend(kept)
-    out.extend(it)
-    return out
 
 
 def _make_interleaved_timeline(c2a, a2c, leg):
@@ -474,12 +441,9 @@ def _session_bundle(tmp_path_factory):
     for fn in ("neg-malformed-initialize.json", "upstream-token.fingerprint", "acp-schema-v1.json"):
         src = FIXTURES / fn
         shutil.copy2(src, tmp_fixtures / fn)
-    run1_a2c = _load_frames(GOLDEN / "run-1")[1]
     for leg in LEGS:
         ld = g / leg
         c2a, a2c = _load_frames(GOLDEN / leg)
-        if leg == "run-2":
-            a2c = _align_async_order(run1_a2c, a2c)   # AF-AP-107: the synthetic golden pair shares one async order
         entries = _make_interleaved_timeline(c2a, a2c, leg)
         _write_timeline(ld, entries)
         _write_runtime_identity(ld, leg)
@@ -559,15 +523,14 @@ def _check(bndl, timeout_s=60):
 
 
 # === CLI tests ===
-_GOLDEN_RACE_REASON = ("AF-AP-107 (2026-09-21, OPEN owner decision): the pinned hermes-acp's asynchronous "
-                       "session_info_update lands at a different position in run-1 and run-2, so the frozen "
-                       "check_golden fails on the real v2.4 bundle until the golden's definition is decided")
-
-
-@pytest.mark.xfail(strict=True, reason=_GOLDEN_RACE_REASON)
 def test_real_bundle_cli():
-    """The committed bundle is a real v2.4 capture (2026-09-21); the PASS intent stands and flips this strict
-    xfail the moment the golden race is resolved (an XPASS here is the signal to retire the marker)."""
+    """The committed bundle is a real v2.4 capture (2026-09-21). Since the owner's golden
+    decision (a) landed (owner decision (a), 2026-09-21 — AF-AP-107, docs/INCIDENT-LOG.md:
+    the normalizer makes asynchronous session-metadata notifications order-free), the
+    checker's check_golden now PASSES on the real evidence, so this is an unmarked PASS:
+    rc 0 and the PASS line. The strict xfail that guarded the async-notification race is
+    retired (it XPASSed the moment the golden was redefined — the signal this docstring
+    always promised)."""
     r = _run(P / "evidence")
     if (P / "evidence" / "golden" / "run-1" / "timeline.jsonl").exists():
         assert r.returncode == 0 and r.stdout.strip().startswith("PASS:")
@@ -576,14 +539,21 @@ def test_real_bundle_cli():
         assert r.stdout.strip() == "deferred: v2 evidence not captured"
 
 
-def test_real_bundle_fails_only_at_the_golden_race():
-    """The exact current verdict on the committed real bundle, pinned: EVERY check ahead of check_golden in
-    EXPECTED_CHECK_SEQUENCE passes on the 2026-09-21 v2.4 evidence, and the one failure is the async-notification
-    race (AF-AP-107). A different reason here is a regression of the capture or the checker; a PASS means the
-    golden was redefined — retire this test with test_real_bundle_cli's marker."""
+def test_real_bundle_passes_every_check():
+    """The exact verdict on the committed real bundle after the golden decision (a) landed:
+    rc 0 and the EXACT PASS line (owner decision (a), 2026-09-21, AF-AP-107). The old
+    test_real_bundle_fails_only_at_the_golden_race pinned the pre-decision single failure
+    ('golden mismatch between run-1 and run-2 at normalized line 7'); now EVERY check in
+    EXPECTED_CHECK_SEQUENCE passes, so the checker reports the full PASS line. A DIFFERENT
+    line here is a regression of the capture, the checker, or the pin — a red that must not
+    be papered over. (This is the brief's item 8, pinned into the suite.)"""
     r = _run(P / "evidence")
-    assert r.returncode == 1, (r.returncode, r.stdout)
-    assert r.stdout.strip() == "failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 7"
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    assert r.stdout.strip() == (
+        "PASS: S0-01 acp-conformance - 63 checks executed over 5 legs; "
+        "golden x2 identical (11 normalized lines, sha256 6225adb8ecc2); "
+        "negative: observed: observed: error code=-32602 message=Invalid params"
+    )
 
 
 def test_passing_v2_bundle(bundle):
@@ -596,12 +566,18 @@ def test_passing_v2_bundle(bundle):
 
 
 def test_cli_pass_path_fails_on_golden_pin(bundle, _session_bundle):
-    """The subprocess does NOT have monkeypatched PINNED_GOLDEN_SHA256=None, so golden not pinned.
+    """The subprocess does NOT have the in-test monkeypatched PINNED_GOLDEN_SHA256, so it sees the
+    REAL pin set at pins.py (the regenerated golden's sha, owner decision (a), 2026-09-21). The
+    SYNTHETIC bundle's golden.jsonl is NOT the real golden, so its sha does not match the pin and
+    check_golden fails with the sha-mismatch text (C:1545) — NOT the pre-decision 'golden not
+    pinned'. This is what the test proves now: the pin binds the REAL golden; the synthetic golden
+    is not it, and the subprocess catches that. (Before decision (a) the pin was None and this
+    test asserted the 'golden not pinned' text; the pin is now set, so the assertion changes.)
     A15: --fixtures-dir points the subprocess at the synthetic identities (not the tracked ones)."""
     _, _, tmp_fixtures = _session_bundle
     r = _run(bundle, fixtures_dir=tmp_fixtures)
     assert r.returncode == 1
-    assert r.stdout.strip() == "failure_reason: golden: golden not pinned"
+    assert r.stdout.strip() == "failure_reason: golden: golden.jsonl sha256 93b3122bc208 != pinned 6225adb8ecc2"
 
 
 def test_cli_usage_error_exit_64():
@@ -1936,6 +1912,150 @@ def test_golden_last_line(bundle, monkeypatch):
     assert out == "failure_reason: run-1: terminal stopReason is 'max_turns', expected 'end_turn'"
 
 
+# ============================================================================
+# ORDER-FREE asynchronous session-metadata notifications (owner decision (a),
+# 2026-09-21 — AF-AP-107, docs/INCIDENT-LOG.md; the S0-01 VB-F12-G1 contract).
+#
+# The pinned hermes-acp emits `session_info_update` from an independent task, so its
+# position relative to the prompt's request/response stream is undefined by the
+# protocol: it lands before the first agent_message_chunk in real run-1 and after the
+# end_turn terminal in real run-2. The new normalizer (C:normalize_timeline) makes
+# exactly the closed set pins.ASYNC_SESSION_UPDATES order-free, so the golden is
+# defined over the protocol-ordered sub-stream and run-1 and run-2 normalize to the
+# SAME list regardless of where the async frame landed.
+#
+# Every test below exercises the REAL run-1 timeline (corpus if declared, else the
+# committed bundle's golden/run-1). The first two are RED against the PIN's
+# old normalizer (proven red-first) and GREEN against the new one; the last two are
+# negative controls that MUST keep failing — a control that passes is a tautology.
+# ============================================================================
+
+def _is_async_frame(e):
+    """An a2c session/update notification whose sessionUpdate kind is in the closed
+    ASYNC_SESSION_UPDATES set (the owner's async, order-free notifications)."""
+    o = e["frame"]
+    if e["dir"] != "a2c" or not ("method" in o and "id" not in o) or o["method"] != "session/update":
+        return False
+    upd = (o.get("params") or {}).get("update")
+    return isinstance(upd, dict) and upd.get("sessionUpdate") in cc.ASYNC_SESSION_UPDATES
+
+
+def test_golden_async_notification_is_order_free():
+    """5a (RED on the PIN, GREEN on the new normalizer): take the real run-1 entries and,
+    for EVERY index of the entry list, re-insert the async session_info_update there.
+    normalize_timeline must return the IDENTICAL list of JSON lines every time — the
+    output is a function of the session's protocol-ordered sub-stream, not of where the
+    async frame happened to land in the raw timeline.
+
+    It also pins the two shape invariants the brief demands on the real run-1: the first
+    normalized line stays the c2a initialize request and the last stays the end_turn
+    terminal. (The old normalizer is NOT order-free: each of the 11 positions gave a
+    different output — that is the red.)"""
+    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
+    base = [e for e in entries if not _is_async_frame(e)]
+    asyncs = [e for e in entries if _is_async_frame(e)]
+    assert len(asyncs) == 1, f"expected exactly one async run-1 frame, got {len(asyncs)}"
+    async_entry = asyncs[0]
+    expected = cc.normalize_timeline(entries)
+
+    # 5a's two shape invariants, on the real run-1 (the first and last normalized line).
+    first = json.loads(expected[0])
+    assert first["dir"] == "c2a" and first["kind"] == "req" and first["method"] == "initialize", \
+        f"first normalized line is not the c2a initialize request: {expected[0]}"
+    last = json.loads(expected[-1])
+    assert last["dir"] == "a2c" and last.get("stopReason") == "end_turn", \
+        f"last normalized line is not the end_turn terminal: {expected[-1]}"
+
+    for pos in range(len(base) + 1):
+        variant = base[:pos] + [async_entry] + base[pos:]
+        got = cc.normalize_timeline(variant)
+        assert got == expected, \
+            f"async notification placed at index {pos} changed the golden (not order-free)\n" \
+            f"  variant[{pos}]: {got}\n  expected: {expected}"
+
+
+def test_golden_async_placement_is_independent_of_the_session_new_response():
+    """5b (RED on the PIN, GREEN on the new normalizer): the async entry placed BEFORE the
+    session/new response must normalize to the SAME output AND the SAME <SID1> as when it
+    is placed after it. This is the pass-1/pass-2 property: because pass 1 walks only the
+    synchronous entries, the <SID1> placeholder is assigned by the session/new response and
+    is never shifted by where the async frame lands. (The old normalizer assigned
+    placeholders in raw-timeline order, so an async frame ahead of session/new changed the
+    output — that is the red.)"""
+    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
+    async_idx = next(i for i, e in enumerate(entries) if _is_async_frame(e))
+    async_entry = entries[async_idx]
+    base = [e for i, e in enumerate(entries) if i != async_idx]
+
+    # Async placed BEFORE the session/new response (at the very front).
+    before = [async_entry] + base
+    # ...and the original placement (after it).
+    after = entries
+
+    out_before = cc.normalize_timeline(before)
+    out_after = cc.normalize_timeline(after)
+    assert out_before == out_after, \
+        f"async notification before the session/new response changed the output\n" \
+        f"  before: {out_before}\n  after: {out_after}"
+    # And it carries the same session placeholder in both.
+    def _sid(lines):
+        for l in lines:
+            if "session_info_update" in l:
+                return json.loads(l)["sessionId"]
+        return None
+    assert _sid(out_before) == _sid(out_after) == "<SID1>", \
+        f"the async record's session placeholder changed: {_sid(out_before)} vs {_sid(out_after)}"
+
+
+def test_golden_synchronous_frame_order_still_binds():
+    """5c (negative CONTROL — must FAIL; a passing control is a tautology): a SYNCHRONOUS
+    a2c notification (the prompt's agent_message_chunk) is NOT in ASYNC_SESSION_UPDATES, so
+    it is NOT order-free. Moving it one position must change the output — the normalizer
+    still binds the protocol-ordered (synchronous) sub-stream exactly. (It differs under
+    BOTH the old and the new normalizer: this is what keeps 5a/5b from being vacuous.)"""
+    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
+    chunk_idx = next(
+        i for i, e in enumerate(entries)
+        if e["dir"] == "a2c" and e["frame"].get("method") == "session/update"
+        and (e["frame"].get("params", {}).get("update") or {}).get("sessionUpdate")
+        == "agent_message_chunk"
+    )
+    moved = (entries[:chunk_idx]
+             + entries[chunk_idx + 1:chunk_idx + 2]
+             + entries[chunk_idx:chunk_idx + 1]
+             + entries[chunk_idx + 1:])
+    n_orig = cc.normalize_timeline(entries)
+    n_moved = cc.normalize_timeline(moved)
+    assert n_orig != n_moved, \
+        f"moving the SYNCHRONOUS agent_message_chunk did not change the output — the control is a tautology.\n" \
+        f"  orig: {n_orig}\n  moved: {n_moved}"
+    first_diff = next(i for i, (a, b) in enumerate(zip(n_orig, n_moved)) if a != b)
+    assert json.loads(n_orig[first_diff]) != json.loads(n_moved[first_diff])
+
+
+def test_golden_async_set_is_closed():
+    """5d (negative CONTROL — must FAIL; a passing control is a tautology): an a2c
+    session/update whose sessionUpdate kind is NOT in ASYNC_SESSION_UPDATES (here
+    'tool_call', a synchronous, protocol-ordered kind) is NOT order-free, so moving it one
+    position must change the output. This is what keeps the closed-set contract honest:
+    only the kinds in pins.ASYNC_SESSION_UPDATES are made order-free; any other kind stays
+    bound to its position. (It differs under BOTH the old and the new normalizer.)"""
+    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
+    tc = copy.deepcopy(entries)
+    # Turn one real synchronous session/update into a 'tool_call' kind.
+    idx9 = next(i for i, e in enumerate(tc)
+                if e["frame"].get("method") == "session/update"
+                and (e["frame"].get("params", {}).get("update") or {}).get("sessionUpdate") == "usage_update")
+    tc[idx9]["frame"]["params"]["update"]["sessionUpdate"] = "tool_call"
+    # Move it one position.
+    moved = tc[:idx9] + tc[idx9 + 1:idx9 + 2] + tc[idx9:idx9 + 1] + tc[idx9 + 1:]
+    n_orig = cc.normalize_timeline(tc)
+    n_moved = cc.normalize_timeline(moved)
+    assert n_orig != n_moved, \
+        f"moving a NON-async (tool_call) session/update did not change the output — the async set is not closed.\n" \
+        f"  orig: {n_orig}\n  moved: {n_moved}"
+
+
 def test_golden_distinctness_all(bundle, monkeypatch):
     """m69: run-2 copied from run-1 — the mention replay check fires because
     the event ids are duplicated across legs."""
@@ -1952,11 +2072,18 @@ def test_golden_distinctness_all(bundle, monkeypatch):
 
 
 def test_golden_regen(bundle):
+    """The now-set REAL golden pin rejects regenerated synthetic golden bytes.
+
+    Remove the asynchronous session_info_update from both synthetic runs, preserving
+    each otherwise-valid prompt/terminal sequence. The resulting run pair still agrees,
+    but its regenerated golden cannot satisfy the real-bundle sha256 pin.
+    """
     for leg in ("run-1", "run-2"):
         ld = bundle / "golden" / leg
         es = [json.loads(l) for l in (ld / "timeline.jsonl").read_text().splitlines() if l.strip()]
-        del es[-2]
-        for i, e in enumerate(es): e["seq"] = i + 1
+        es = [e for e in es if not _is_async_frame(e)]
+        for i, e in enumerate(es):
+            e["seq"] = i + 1
         _write_timeline(ld, es)
         _write_tee_status(ld, es)
     n1 = cc.normalize_timeline(cc._load_timeline_raw(bundle / "golden" / "run-1", "run-1"))

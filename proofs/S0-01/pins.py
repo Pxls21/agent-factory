@@ -127,7 +127,22 @@ UPSTREAM_WINDOW_SLACK_S = 5.0    # backend received_at vs the prompt/terminal fr
 
 # --- the frozen golden: set to the sha256 of golden/golden.jsonl by the coordinator AFTER the
 # first accepted v2 capture; None means "no golden pinned yet" and the checker FAILS on it. ---
-PINNED_GOLDEN_SHA256 = None
+# ASYNC_SESSION_UPDATES (owner decision (a), 2026-09-21 — AF-AP-107, docs/INCIDENT-LOG.md): the CLOSED
+# set of session/update kinds the pinned hermes-acp emits from an INDEPENDENT task, so their position
+# relative to the prompt's request/response stream is undefined by the protocol. The normalizer makes
+# exactly these kinds order-free (placed right after the session/new response that introduced their
+# session), so the golden is defined over the protocol-ordered sub-stream. Measured 2026-09-21 on
+# run-1/run-2 of the real v2.4 bundle: session_info_update is the only async kind observed (run-1:
+# before the reply chunk; run-2: after the end_turn result). A NEW kind is a pins change with its own
+# measurement — this tuple is closed, not open.
+ASYNC_SESSION_UPDATES = ("session_info_update",)
+# Set under owner decision (a), 2026-09-21 (AF-AP-107), from the regenerated
+# golden/golden.jsonl (order-free session_info_update, 11 lines). None was the pre-decision state: the
+# checker failed on it. See the ASYNC_SESSION_UPDATES comment above for why the golden is defined this
+# way; D-034 (no round-19 bypass fix) stands — this is a contract change the owner made, not a checker
+# round that papers over the race.
+# sha256 = sha256 of the regenerated golden.jsonl bytes (11 lines, new order-free normalizer).
+PINNED_GOLDEN_SHA256 = "6225adb8ecc21a24d578696e2b9c25c81ebd5a82068c4411f780930c2fa54221"
 
 # --- the negative control (audit 2026-09-05 P1 "negative execution"): the pinned hermes-acp REJECTS a
 # malformed initialize (missing protocolVersion) with this JSON-RPC error — observed live on the PC

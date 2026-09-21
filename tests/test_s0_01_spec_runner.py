@@ -6,15 +6,10 @@ the DEFERRED path on a controlled input instead: _strip_v2_evidence puts a COPY
 of the tree into the v1 shape (no leg carries a timeline; negative/ absent) so
 the deferral path still runs.
 
-The two "committed" tests pin the COMMITTED tree's real behaviour, measured on
-a copy of PIN 38ad46b: the runner over the committed bundle reports
-"leg-exit-mismatch: S0-01 positive expected 0 got 1" (rc 1, no result.json —
-it neither mints nor defers) because the frozen checker's check_golden fails on
-the pinned hermes-acp's asynchronous session_info_update (AF-AP-107, an OPEN
-owner decision — docs/INCIDENT-LOG.md 2026-09-21), and the negative leg cmd
-prints the two-line protocol-violation classification and exits 1. When the
-AF-AP-107 golden decision lands, that round must update these two tests — the
-committed behaviour they pin will then differ.
+The two "committed" tests pin the COMMITTED tree's real behaviour after owner
+decision (a), 2026-09-21 (AF-AP-107): the order-free golden lets the canonical
+runner finish with rc 0 and mint result.json on its copy, while the negative leg
+cmd still prints the two-line protocol-violation classification and exits 1.
 
 V3: this test invokes scripts/proof-runner run --proof <id> --venue sandbox --root <root>
 for real (not just the leg cmd directly). The runner matches failure_reason with:
@@ -104,38 +99,30 @@ def test_negative_leg_defers_directly(tmp_path):
     assert r.stdout.strip() == "deferred: negative probe not captured"
 
 
-def test_committed_bundle_runner_reports_leg_exit_mismatch_not_a_result(tmp_path):
-    """The committed (unstripped) v2.4 bundle through the REAL runner: the frozen checker's
-    check_golden fails the positive leg (AF-AP-107 — the pinned hermes-acp emits
-    session_info_update asynchronously), so the runner reports a leg exit mismatch and
-    NEITHER mints a result.json NOR defers. Pins the committed tree's current behaviour;
-    must be updated when the AF-AP-107 golden decision lands.
-
-    Measured on a copy of PIN 38ad46b: wall 3.86 s (the checker walks the whole
-    bundle). Timeout is well over 3x the measured wall time (the brief rule: at least 3x)."""
+def test_committed_bundle_runner_mints_a_result(tmp_path):
+    """The committed v2.4 bundle through the REAL runner succeeds after owner decision
+    (a) made asynchronous session metadata order-free. The runner is silent on success
+    and writes result.json in the copied tree; it never mutates the source checkout."""
     root = _copy(tmp_path)
+    result = root / "proofs" / "S0-01" / "result.json"
     r = subprocess.run(
         [sys.executable, str(RUNNER), "run", "--proof", "S0-01",
          "--venue", "sandbox", "--root", str(root)],
         capture_output=True, text=True, timeout=120,
     )
-    assert r.returncode == 1, (
-        f"expected exit 1 (leg exit mismatch), got {r.returncode}: "
+    assert r.returncode == 0, (
+        f"expected exit 0, got {r.returncode}: "
         f"stdout={r.stdout!r} stderr={r.stderr!r}"
     )
-    assert r.stderr.strip() == (
-        "leg-exit-mismatch: S0-01 positive expected 0 got 1"
-    )
     assert r.stdout == ""
-    assert not (root / "proofs" / "S0-01" / "result.json").exists()
+    assert r.stderr == ""
+    assert result.is_file()
 
 
 def test_committed_negative_leg_cmd_reports_the_protocol_violation(tmp_path):
-    """The committed (unstripped) negative leg cmd: on the real v2.4 capture the probe
-    is a valid capture whose request params violate the initialize contract, so the
-    checker prints the classification on line 1 and the observed error on line 2 and
-    exits 1. Pins the committed tree's current behaviour; must be updated when the
-    AF-AP-107 golden decision lands."""
+    """The committed v2.4 negative leg remains unchanged by the golden decision: its
+    malformed initialize is classified on line 1, the observed error is on line 2,
+    and the command exits 1."""
     root = _copy(tmp_path)
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
     neg = next(leg for leg in spec["legs"] if leg["leg"] == "negative")
