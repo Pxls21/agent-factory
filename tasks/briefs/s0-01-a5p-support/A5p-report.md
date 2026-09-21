@@ -122,3 +122,19 @@ Rejected alternative: chase every container, subscript, attribute, closure, and 
 ## Retro
 
 Defect class: AF-AP-30 / resolver-mirror variant, already recorded by VERIFY-A5o. Lesson: any alias inventory must state its lifetime/scope domain and pin both an over-match negative and an under-match hostile form. No new general lesson beyond that existing registry entry; nothing else to bake.
+
+## AUDIT DISPOSITION (coordinator, 2026-09-21) — read this before the sections above
+
+The independent audit of 2026-09-21 ran the hostile pass this lane did not have (line 112 above
+is honest: no independent verifier result existed). Its findings A5P-02..A5P-05 were REPRODUCED by
+the coordinator with executable evidence against this lane's model and filed as GitHub issue #8
+(`verify-followup` + `stage0`): a reserved `argv` local rebind still false-positives (the literal
+spelling is matched before the binding state), keyword-only defaults are not processed, positional-
+only defaults are zipped to the wrong parameter, and bare truth tests (`if pin:`) are not
+inventoried. The V1 fix itself (A5P-01, the ordinary reassigned-alias false positive) HOLDS.
+
+Consequently the wording "the deliberately finite CK16 classifier-operand domain is stated exactly"
+(line 7) and the "## VERIFIED" heading overstate the landing. Corrected status: MECHANICALLY GATED —
+MERGE-READY-WITH-FOLLOWUPS / GATED-PENDING-VERIFY. The coordinator's 432 passed / 13 xfailed was a
+re-run of this lane's own gate, not independent verification. Per D-034 no checker round 19 is opened
+for these; they stay parked in #8. The production checker and pins.py remain byte-identical to the PIN.

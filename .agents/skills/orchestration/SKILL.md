@@ -56,6 +56,34 @@ subordinate to, the Anthropic docs.
    `1556 passed, 9 xfailed` (an 18-file set) as the floor for a 13-file glob that collects 1354: a 215-test "drop" that was
    no drop, and a premise the lane had to bound.
 
+0e. **A repair brief's premise is checked against ANCESTRY at dispatch, never against a verify
+   report alone (2026-09-19, lane B4; audit 2026-09-21 B4-02).** A verify report describes the
+   state at ITS pin; the proof directory's log describes HEAD. Before dispatching any repair /
+   round brief: (1) resolve the exact HEAD and PIN; (2) `git log --format='%h %s' -- <every
+   implementation file in the boundary>` and READ the latest subjects — a later round that already
+   closed the report's blockers makes the brief stale; (3) `git merge-base --is-ancestor <sha> HEAD`
+   for every commit that could be a prior repair; (4) confirm each "surviving" mutant survives on
+   HEAD's bytes, not on the report's pin; (5) abort or rewrite the brief if the premise is already
+   satisfied. The incident: an S0-02 "round 4" brief was authored from VERIFY-B3 (pin c6c384a,
+   round 3) without reading the proof dir's log; B4 (91e33f2) and B5 (3a6c961) had closed those
+   blockers two days earlier and were ancestors of HEAD. The lane correctly refused (code-implementer
+   rule 1 + the premise-conflict bound) and re-verified rather than regressing B5's hardening —
+   ~2 PC-hours on done work. A lane must never be the first place stale coordinator state is found.
+
+0f. **Coordinator re-execution of a builder's gate is NOT independent verification (audit
+   2026-09-21, A5P-06).** Re-running the lane's own gate — even on the PC, even with the patch sha
+   pinned — is a second execution of the SAME oracle: it proves reproducibility, not the
+   correctness of the claimed equivalence class. For any repair that changes a verifier, a checker
+   meta-test, or a mutation oracle: (1) run the deterministic gate; (2) run ONE independent
+   adversarial review of the changed equivalence class (a hostile pass with NEW shapes, never the
+   builder's own cases); (3) file the non-core residue as `verify-followup` BEFORE any
+   "good-state" / "frozen" label; (4) if no independent review ran, the landing is labelled
+   `GATED-PENDING-VERIFY` / `MERGE-READY-WITH-FOLLOWUPS` — never "verified", never "frozen". The
+   incident: A5p (S0-01 checker r18) landed as "verified, declared-final, tools frozen" on the
+   coordinator's re-run of its own gate (432 passed, 13 xfailed) while its report said no
+   independent verifier ran; the audit's first hostile pass found four in-domain defects (issue #8).
+
+
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
    adopts a metric/threshold formula from findings prose, check its grain and units against a
    KNOWN MEASURED instance of the same quantity; where prose and prior measured values imply
