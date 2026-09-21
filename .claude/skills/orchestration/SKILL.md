@@ -51,7 +51,7 @@ subordinate to, the Anthropic docs.
 0e. **A repair brief's premise is checked against ANCESTRY at dispatch, never against a verify
    report alone (2026-09-19, lane B4; audit 2026-09-21 B4-02).** A verify report describes the
    state at ITS pin; the proof directory's log describes HEAD. Before dispatching any repair /
-   round brief: (1) resolve the exact HEAD and PIN; (2) `git log --format='%h %s' -- <every
+   round brief: (1) resolve the exact HEAD and PIN — a PIN is the POST-PUSH SHA read from `git log origin/<branch>` after push_clean has rewritten the range, never the local commit SHA (2026-09-21: the VB-F12-T2 brief pinned 592d9a8, which became 38ad46b on origin and did not exist on the PC clone); (2) `git log --format='%h %s' -- <every
    implementation file in the boundary>` and READ the latest subjects — a later round that already
    closed the report's blockers makes the brief stale; (3) `git merge-base --is-ancestor <sha> HEAD`
    for every commit that could be a prior repair; (4) confirm each "surviving" mutant survives on
