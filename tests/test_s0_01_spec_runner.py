@@ -48,6 +48,10 @@ def _strip_v2_evidence(root):
     for tl in golden.glob("*/timeline.jsonl"):
         tl.unlink()
     shutil.rmtree(golden / "negative", ignore_errors=True)
+    # The committed tree carries proofs/S0-01/result.json since the 2026-09-21 mint; the DEFERRED state never
+    # had one and the runner PRESERVES an existing artifact on deferral, so strip the copy's too — the deferral
+    # tests prove NON-CREATION (the PC 13-file gate on e458801 caught the inherited artifact: 2 failed).
+    (root / "proofs" / "S0-01" / "result.json").unlink(missing_ok=True)
     return root
 
 
@@ -105,6 +109,7 @@ def test_committed_bundle_runner_mints_a_result(tmp_path):
     and writes result.json in the copied tree; it never mutates the source checkout."""
     root = _copy(tmp_path)
     result = root / "proofs" / "S0-01" / "result.json"
+    result.unlink(missing_ok=True)   # the copy carries the committed mint: prove the runner WRITES one
     r = subprocess.run(
         [sys.executable, str(RUNNER), "run", "--proof", "S0-01",
          "--venue", "sandbox", "--root", str(root)],
