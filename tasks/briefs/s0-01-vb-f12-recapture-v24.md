@@ -214,3 +214,132 @@ gates ~3 min per PC run; ≈ 1.5 h of bridge time, all in bounded calls.
   baseline (caches stripped) is the owner's optional cleanup — not needed for this capture.
 - Driver fix gate 13:3xZ: `bash -n rc 0`; the new test RED on the PIN's driver (`AssertionError: $PC "rm -f
   $L/v2-$LEG.launch.log; setsid …`), GREEN on the fix; `tests/test_s0_01_pc_tools.py` → `105 passed in 11.02s`.
+- Increment 1 committed 6d196ef → pushed as 36dac29 (+ the transcript sync f74e12a); PC clone ff-synced to f74e12a.
+- LEG run-1 13:38:23-13:39:03Z rc 0: PC tree f74e12a, tee sha16 990a2ad24475fde3 both sides; launch READY (buzz-acp pid
+  199206, owned pids 3, `config echo: idle_timeout=900s max_turn=3600s session_policy=thread respond_to=owner-only`);
+  pre manifest = the new baseline (all four digests); `send(owner,owner) accepted=True`; `timeline: 11 frames; seq ok:
+  True | c2a: initialize, session/new, session/prompt | terminals: end_turn`; post: `scan-after: 3 lines, owned=3,
+  owned_present=3`, `backend records window: 5 -> 7`, `scan-teardown: 0 lines, owned=3, owned_present=0`,
+  `buzz-acp.exit: 0`, `leak guard: clean`; pre/post manifest gz sha == baseline ff6af513… (materialised). Validation:
+  `build_capture_record.py` rc 0 (`run-1: 9 raw files, 11 timeline entries`), `corpus_version: v2.4`, required
+  missing [], not admitted [], scan header `# process-scan v2.4 mode=after rows=3 … table_rows=341`.
+- LEG run-2 13:39:33-13:40:10Z rc 0: same shape (11 frames, end_turn, records 7 -> 9, manifests == baseline, exit 0,
+  leak guard clean); validation rc 0, v2.4, tee sha 990a2ad24475fde3 on both legs.
+- LEG cancel 13:40:20-13:41:02Z rc 0 (route s0-01-slow): first chunk, then `!cancel` → `session/cancel`, 13 frames,
+  `cancelled` terminal, records 10 -> 12, manifests == baseline, exit 0, leak guard clean; validation rc 0, v2.4.
+- **LIVE FINDING 13:4xZ — the golden determinism claim is FALSIFIED on the real pinned agent (a real result, not a
+  capture error).** `check_golden` (C:1533-1552) requires the run-1 and run-2 normalized timelines to be identical;
+  through the checker's own `normalize_timeline` they differ at normalized line 7. Raw evidence (seq · t_utc · a2c
+  `sessionUpdate`) after `session/prompt`:
+  · new run-1: prompt 13:38:50.914 → `session_info_update` 51.701 → `agent_message_chunk` 52.217 → `usage_update`
+    52.299 → result (end_turn) 52.300;
+  · new run-2: prompt 13:39:59.104 → `agent_message_chunk` 00.027 → `usage_update` 00.107 → result 00.108 →
+    `session_info_update` 00.218 (AFTER the terminal result);
+  · the 2026-09-05 golden runs (git 957fb4d, both): `agent_message_chunk` → `session_info_update` → `usage_update`.
+  Three samples, three positions: `session_info_update` (a session-metadata notification carrying only `updatedAt`) is
+  emitted by an asynchronous path in the pinned hermes-acp and RACES the prompt's response stream; the protocol orders a
+  request against its response and the turn-bound chunks, not this notification. The 2026-09-05 "golden x2 identical"
+  was two matching dice rolls, not determinism. The scripted backend (deterministic content, 2 records per turn) is not
+  the source — the race is agent-side. Disposition: NOT a capture defect, NOT re-rolled (a re-run until two samples
+  agree would mint a hollow green). The checker as frozen will report `golden: golden mismatch between run-1 and run-2
+  at normalized line 7` → the bundle is NOT mintable under the current golden definition → an OWNER DECISION on the
+  golden's definition (recommended: the normalizer treats asynchronous session-metadata notifications as ORDER-FREE —
+  counted, not positioned — under a checker round with a red-first test; alternatives: N-sample multiset equality, or
+  a documented limit that abandons the byte-identical claim). The remaining legs proceed — they do not depend on it.
+  Second failure mode from the same race: C:1608-1609 requires the golden's LAST normalized line to be the `end_turn`
+  terminal — run-2's last line is the trailing `session_info_update`, so the frozen checker also reports `golden: last
+  normalized line is not end_turn terminal`. Both are the one finding.
+- LEG shutdown 13:42:04-13:42:44Z rc 0: owner mention → end_turn (11 frames), `!shutdown` as a thread reply →
+  `buzz-acp exited rc=0` at 13:42:33Z, `scan-after: 0 lines, owned=3, owned_present=0` (the successful-shutdown
+  enumeration), records 12 -> 14, manifests == baseline, leak guard clean; validation rc 0, v2.4.
+- LEG two-users 13:42:55-13:43:36Z rc 0 (`respond_to=allowlist(1)`): owner then user2 mentions both `accepted=True`,
+  `timeline: 20 frames; c2a: initialize, session/new, session/prompt, session/new, session/prompt` (two sessions, two
+  end_turns), records 14 -> 18, manifests == baseline, leak guard clean; validation rc 0 (`20 timeline entries`), v2.4;
+  `mentions/` = owner + user2 receipt/event pairs.
+- NEGATIVE take 1 (13:43:52Z): the probe ran (`probe rc 0`, timeline 805 bytes) but `collect_leg.sh` DIED after the
+  pack — a second driver defect: the remote pack command ended on `[ -f manifest-<p>.txt.gz.sha256 ] && echo …` for
+  the last sidecar name, a leg with NO sidecars (the negative writes none) returned status 1, pc.sh propagated it,
+  pipefail + set -e stopped the collect (tgz written, nothing fetched, the leg dir deleted and never re-made).
+  FIXED (`if … fi`) with the executable red-first control
+  `test_collect_leg_sidecar_loop_exits_zero_when_a_leg_has_no_manifest_sidecars` (RED on 77f46a2's script: `(1, '',
+  '')`; GREEN on the fix; `tests/test_s0_01_pc_tools.py` → `106 passed in 4.72s`).
+- NEGATIVE ×3 13:45:40-13:45:51Z, rc 0 each: identical across takes — files {agent-stderr.txt, env.json,
+  runtime-identity.json, timeline.jsonl}, probe f42a9025ba5436c0, interpreter `/usr/bin/python3.13`, 2 frames, the
+  observed error `-32602 Invalid params`, `spawned_at_utc` < the first frame's `t_utc` in every take (agent-stderr
+  differs per take, unpinned). `check_initialize.py request golden/negative` → exit 1 `protocol-violation: missing
+  required initialize field` (the spec's negative leg); `check_negative` → `observed: error code=-32602 message=Invalid
+  params`. Take 3 is the collected `negative/`.
+- `golden.jsonl` written from the normalized run-1 (11 lines, sha 265f6809747b8fa0); `PINNED_GOLDEN_SHA256` left
+  `None` on purpose (the golden's definition is the owner's decision — pinning a coin toss is a hollow green).
+- THE FROZEN CHECKER OVER THE WHOLE REAL BUNDLE (`check_acp_conformance.py proofs/S0-01/evidence`): exit 1,
+  `failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 7` — i.e. EVERY check before
+  `check_golden` in `EXPECTED_CHECK_SEQUENCE` passed on real v2.4 evidence: per leg (all five) timeline, initialize
+  frames, runtime identity, env, mentions, route; the prompt turns (run-1, run-2, shutdown); config echo, manifests,
+  process evidence, buzzacp log, tee status for all legs. The one open item is the golden's definition (§log finding).
+- CORPUS 13:5xZ: `realleg_sync.sh` LEGS += run-2; `pc-build` (the PC tree from the fresh framedirs) → `pull` →
+  `realleg_sync: /root/s0-01-realleg/golden == the PC tree (174 files, every sha256 equal)` → `check … intact (174
+  files)`; six legs, `process-scan v2.4` headers.
+- T (test-side only; C byte-identical): `_POSITIVE_LEGS`/`_EXPECTED_REAL_LEGS` += run-2, the declaration test grades
+  `tee-status.json` on a ≥ v2.3 corpus. RED-FIRST for the B1 retirement, on the new corpus before the edit:
+  `-k "real_leg or corpus"` → `1 failed, 64 passed` — the one failure `test_real_leg_negative`: `check_negative PASSES
+  on the real negative leg — the known-stale reasons […] no longer reproduce; retire them (B1)` (the designed signal);
+  the twelve former strict xfails PASS. After the retirement (`_KNOWN_XFAIL_REASONS = frozenset()`, the grade `pass`
+  expected, a retired reason a real failure; the CK11 whole-reason equality test pinned on a one-element set):
+  `-k "real_leg or corpus or grade_negative or known_stale"` → `67 passed, 389 deselected in 10.08s`; pyflakes rc 0.
+- C6 — the five 2026-09-05 owner mutations on SCRATCH copies of the REAL bundle, graded by the frozen checker CLI
+  (control = the unmutated copy):
+  · control → `golden: golden mismatch between run-1 and run-2 at normalized line 7` (the one open finding)
+  · zeroed manifests (pre+post gz emptied, all five legs) → `run-1: manifest body != baseline body`
+  · rejected mention + foreign route (`accepted: false`, `hermes-model.txt` = openai/gpt-4o) → `run-1: mention owner
+    receipt not accepted`
+  · foreign-session cancel without chunks → `cancel: timeline seq not strictly 1..N at index 7`
+  · initialize-only shutdown (timeline cut to 2 lines) → `shutdown: frames-client-to-agent.jsonl line count 3 !=
+    timeline split count 1`
+  · `max_turn` 1 s (startup-line.txt) → `run-1: startup-line.txt does not match buzzacp.log startup line`
+  Each mutation is refused by the check that owns it, ahead of the golden check; no mutation reaches PASS.
+- GATES launched 13:5xZ: PC `pc_suite.sh launch -n 8 -- tests/test_s0_01_check_acp_conformance.py
+  tests/test_s0_01_pc_tools.py` (the working tree as a patch, the v2.4 PC corpus); sandbox full run of the same two
+  files with `-rfExXs` detached (`t-full.log`).
+- THE RACE PROPAGATES INTO THE META-TEST FIXTURE (found by the gates, 14:0xZ): the PC gate on that tree read
+  `pytest-summary: 36 failed, 526 passed in 75.96s` (set f571c8c15c29); the sandbox's first sixty tests `10 failed,
+  76 passed`. Root cause: the session fixture `_session_bundle` (T:426) builds the SYNTHETIC passing bundle from
+  the committed legs' directional frames (`_load_frames(GOLDEN / leg)`) and re-interleaves them
+  (`_make_interleaved_timeline`), so the synthetic run-2 inherited the real run-2's trailing `session_info_update`
+  and the synthetic golden failed too — every `bundle`-fixture test expecting a PASS or a failure AFTER
+  `check_golden` was masked by the mismatch (`test_passing_v2_bundle`, `test_del_negative*`, `test_del_golden_jsonl`,
+  `test_ck7_f9*`, `test_ck8_running_*`, `test_neg_*`, …). Fix (test-side, the fixture's own artifice):
+  `_align_async_order(run1_a2c, a2c)` places run-2's asynchronous notifications where run-1 has them — the
+  synthetic positive control shares one async order; the real race stays a recorded finding. `test_real_bundle_cli`
+  (the committed tree, PASS intent) is a STRICT xfail with the AF-AP-107 reason (an XPASS retires it), and the new
+  `test_real_bundle_fails_only_at_the_golden_race` pins today's exact verdict (`failure_reason: golden: golden
+  mismatch between run-1 and run-2 at normalized line 7`). Two `pc_tools` tests had assumed a v2.2 declared corpus
+  (`…accepts_a_v2_2_corpus_leg` → `…accepts_a_real_corpus_leg`, version-aware; the real-scan predicate test skips the
+  v2.3+ enumeration header). After: the ten early failures `12 passed, 444 deselected, 1 xfailed`;
+  `tests/test_s0_01_pc_tools.py` `106 passed in 4.45s` / `106 passed in 5.22s` on the v2.4 corpus; pyflakes rc 0.
+  The pre-fix sandbox run keeps running as the RED record; the PC gate re-launched on the fixed tree (below).
+- RED RECORD (pre-fix tree, both venues agree): sandbox serial `36 failed, 526 passed in 984.66s (0:16:24)`, PC xdist
+  `36 failed, 526 passed in 75.96s` (set f571c8c15c29) — 34 checker meta-tests (the `bundle`-fixture family masked by
+  the synthetic golden mismatch: `test_del_negative_file`×4, `test_ck7_f9{a,b,c}_golden_*`, `test_ck8_running_*`×3,
+  `test_ck8_f38_check_sequence_omission`, `test_ck9_a25_reorder_diagnostic`, `test_ck11_{fifo,dir}_at_tools_acp_probe_is_named`,
+  `test_neg_*`×6, `test_stderr_*_token`×2, `test_golden_{regen,frozen_lines}`, `test_pass_line_has_negative_prefix`,
+  `test_passing_v2_bundle`, `test_cli_pass_path_fails_on_golden_pin`, `test_del_{negative,golden_jsonl,neg_fixture}`,
+  `test_session_new_resp_after_prompt`, `test_init_resp_after_session_new`, `test_sequence_guard_skip_one_leg`,
+  `test_real_bundle_cli`) + 2 `pc_tools` tests that assumed a v2.2 declared corpus.
+- GITIGNORE FINDING (14:1xZ, an AF-AP-62 sibling): `*.pid` (.gitignore:16) silently ignored the five legs'
+  `buzz-acp.pid` — a REQUIRED leg file (`pins.PINNED_LEG_FILES`; `check_runtime_identity` binds `buzz_acp_pid` to it) —
+  so the committed bundle would have failed `buzz-acp.pid absent` on any fresh clone while the working tree passed.
+  Fixed with the negation `!proofs/*/evidence/**/buzz-acp.pid` (the pattern of the 2026-09-08 `*.log` negations);
+  `git ls-files -o --ignored` over the evidence tree → 0.
+- SPEC-RUNNER DEFERRAL TESTS (14:2xZ): the three `tests/test_s0_01_spec_runner.py` deferral tests read the committed
+  tree's v1 shape as their fixture and went red on the real bundle (the eleven-file run `3 failed, 831 passed in
+  362.49s (0:06:02)`); `_strip_v2_evidence(root)` strips a COPY into the deferred state (no leg timeline, no negative/)
+  and the three tests use it → `13 passed in 3.83s`. The committed tree's real behaviour through the runner, measured
+  14:27Z on a fresh copy: `proof-runner run --proof S0-01 --venue sandbox` → stderr `leg-exit-mismatch: S0-01 positive
+  expected 0 got 1`, rc 1, no result.json; the negative leg cmd → `protocol-violation: missing required initialize
+  field` / `observed: error code=-32602 message=Invalid params`, rc 1 — pinned by lane VB-F12-T2 (a PC Qwen build lane,
+  `tasks/briefs/pc/pc-vb-f12-t2.md`; owner ruling 2026-09-21: build work goes to the local Hermes lane).
+- GATES ON THE FIXED TREE: the two heavy files serial `562 passed, 1 xfailed in 988.03s (0:16:28)` (the xfail =
+  `test_real_bundle_cli`, strict, AF-AP-107); GitNexus `detect_changes` through the stdio tier (`scripts/gn_mcp.py` —
+  the CLI tier is MODULE_NOT_FOUND in this container): touched test functions only, `affected_processes: []`. The PC
+  xdist gate on the pushed head is pasted in the ledger note.
+

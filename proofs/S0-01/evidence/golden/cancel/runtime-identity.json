@@ -1,0 +1,32 @@
+{
+ "agent_argv": [
+  "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp"
+ ],
+ "agent_child_pid": 201822,
+ "agent_entrypoint_sha256": "f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1",
+ "agent_interpreter_realpath": "/usr/bin/python3.13",
+ "agent_interpreter_sha256": "8be0f8e534b7fe4ace77feaa47e2b6a15c3458523c76dab4582867727c286637",
+ "agent_realpath": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+ "buzz_acp_exe_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+ "buzz_acp_exe_sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
+ "buzz_acp_pid": 201808,
+ "buzz_acp_version": "n/a: this buzz-acp build has no --version flag (identity = exe sha256 above)",
+ "launch_argv": [
+  "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+  "--relay-url",
+  "ws://127.0.0.1:3999",
+  "--agent-command",
+  "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py",
+  "--agent-args",
+  "",
+  "--idle-timeout",
+  "900",
+  "--max-turn-duration",
+  "3600"
+ ],
+ "python_dont_write_bytecode": true,
+ "spawned_at_utc": "2026-09-21T13:40:24.562614Z",
+ "tee_path": "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py",
+ "tee_pid": 201821,
+ "tee_sha256": "990a2ad24475fde35291cd940e5f02d5e8dcf8f413cb16e4948f46407362cdb0"
+}

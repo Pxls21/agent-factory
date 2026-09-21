@@ -1,0 +1,14 @@
+{
+  "final": false,
+  "agent_returncode": null,
+  "drained": false,
+  "stdin_reader_done": false,
+  "recorded_c2a": 4,
+  "recorded_a2c": 9,
+  "forwarded_c2a": 4,
+  "forwarded_a2c": 8,
+  "write_errors": [],
+  "exit_code": null,
+  "updated_seq": 13,
+  "updated_utc": "2026-09-21T13:40:48.782429Z"
+}

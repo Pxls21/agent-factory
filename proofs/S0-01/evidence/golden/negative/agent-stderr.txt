@@ -1,0 +1,14 @@
+2026-09-21 14:45:48 [INFO] acp_adapter.entry: No .env found at /home/rocco/s0-01-pinned/.hermes-home/.env, using system env
+2026-09-21 14:45:48 [INFO] acp_adapter.entry: Starting hermes-agent ACP adapter
+2026-09-21 14:45:48 [INFO] acp_adapter.server: ACP client connected
+2026-09-21 14:45:48 [ERROR] root: Background task failed
+Traceback (most recent call last):
+  File "/home/rocco/s0-01-pinned/.venv-hermes/lib64/python3.13/site-packages/acp/task/supervisor.py", line 51, in _on_done
+    task.result()
+    ~~~~~~~~~~~^^
+  File "/home/rocco/s0-01-pinned/.venv-hermes/lib64/python3.13/site-packages/acp/task/dispatcher.py", line 81, in runner
+    result = await self._request_runner(message)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rocco/s0-01-pinned/.venv-hermes/lib64/python3.13/site-packages/acp/connection.py", line 227, in _run_request
+    raise err from None
+acp.exceptions.RequestError: Invalid params

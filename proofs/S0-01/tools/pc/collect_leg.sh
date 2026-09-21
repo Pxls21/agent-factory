@@ -16,7 +16,10 @@ DST=proofs/S0-01/evidence/golden/$LEG; FD=/home/rocco/s0-01-pinned/.markers/v2-$
 BASE_GZ=proofs/S0-01/evidence/golden/manifests/manifest-baseline.txt.gz
 BASE_SHA=$(sha256sum "$BASE_GZ" | cut -d" " -f1)
 S=/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/collect; mkdir -p "$S"
-bash scripts/pc.sh "cd $FD && tar czf /tmp/s0-01-$LEG.tgz --exclude=buzzacp.raw.log --exclude='manifest-*.txt' --exclude='manifest-*.txt.gz' --exclude='manifest-*.log' --exclude='*.launch.log' . && ls -la /tmp/s0-01-$LEG.tgz && for p in pre post; do [ -f manifest-\$p.txt.gz.sha256 ] && echo \"MANIFEST \$p \$(cat manifest-\$p.txt.gz.sha256)\"; done" | tee "$S/$LEG.pack.log"
+bash scripts/pc.sh "cd $FD && tar czf /tmp/s0-01-$LEG.tgz --exclude=buzzacp.raw.log --exclude='manifest-*.txt' --exclude='manifest-*.txt.gz' --exclude='manifest-*.log' --exclude='*.launch.log' . && ls -la /tmp/s0-01-$LEG.tgz && for p in pre post; do if [ -f manifest-\$p.txt.gz.sha256 ]; then echo \"MANIFEST \$p \$(cat manifest-\$p.txt.gz.sha256)\"; fi; done" | tee "$S/$LEG.pack.log"
+# The sidecar loop is an `if`, not `[ -f ] && echo`: a leg with NO manifest sidecars (the negative probe) made the
+# remote shell's last status 1, pc.sh returned it, pipefail + set -e killed the collect right after the pack
+# (2026-09-21, the first v2.4 negative take: tgz written, nothing fetched, the leg dir deleted and never re-made).
 bash scripts/pc_fetch.sh "/tmp/s0-01-$LEG.tgz" "$S/$LEG.tgz"
 rm -rf "$DST"; mkdir -p "$DST"; tar xzf "$S/$LEG.tgz" -C "$DST"
 for p in pre post; do

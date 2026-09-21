@@ -19,7 +19,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 G=/home/rocco/s0-01-pinned/realleg/golden; M=/home/rocco/s0-01-pinned/.markers
-LEGS="cancel negative run-1 shutdown two-users"
+LEGS="cancel negative run-1 run-2 shutdown two-users"   # run-2 since the 2026-09-21 v2.4 recapture (pins.LEGS needs it)
 DST="${S0_01_REAL_LEG_DIR:-/root/s0-01-realleg/golden}"
 BASE_GZ=proofs/S0-01/evidence/golden/manifests/manifest-baseline.txt.gz
 pc() { bash scripts/pc.sh "$1" 2> >(grep -v "bind: warning" >&2); }

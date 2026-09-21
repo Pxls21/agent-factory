@@ -1,0 +1,4 @@
+# process-scan v2.4 mode=after rows=3 buzz_acp_pid=201808 buzz_present=1 owned=3 owned_present=3 pinned_present=3 owned_zombies=0 table_rows=340 utc=2026-09-21T13:40:54Z
+201808 201726 29 /home/rocco/s0-01-pinned/buzz/target/release/buzz-acp --relay-url ws://127.0.0.1:3999 --agent-command /home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py --agent-args  --idle-timeout 900 --max-turn-duration 3600
+201821 201808 29 python3 /home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py
+201822 201821 29 /home/rocco/s0-01-pinned/.venv-hermes/bin/python3 /home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp

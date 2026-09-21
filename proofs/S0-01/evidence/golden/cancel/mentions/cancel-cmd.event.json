@@ -1,0 +1,24 @@
+{
+ "content": "!cancel",
+ "created_at": 1789998048,
+ "id": "2c28f178bf92343526f653c6870c7e83dbd591072232065ec006fc4ec3032cb8",
+ "kind": 9,
+ "pubkey": "2267fe91571e5c9166ddf1a80176e988bdd00b9023edcc33375e1be85928000c",
+ "sig": "c12e56867d326c0643a9a309136fddd0e2f2e6b65125beef3b75c48c8fea6ce16286fcacd47c89ae5bd3a1cd732ca300ca84670b77bce262ed166856cbcfd18e",
+ "tags": [
+  [
+   "h",
+   "73701f66-6e12-42ff-b561-7d36db1ad91b"
+  ],
+  [
+   "e",
+   "ca1538be8d024a09cae8a1122935a9150020288ffdfeefd1199fec564ff814ac",
+   "",
+   "reply"
+  ],
+  [
+   "p",
+   "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
+  ]
+ ]
+}

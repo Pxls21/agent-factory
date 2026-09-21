@@ -111,6 +111,40 @@ def _load_fingerprint():
     return FIXTURES.joinpath("upstream-token.fingerprint").read_text().strip()
 
 
+_ASYNC_UPDATES = ("session_info_update",)
+
+
+def _session_update_kind(frame):
+    params = frame.get("params")
+    if not isinstance(params, dict) or frame.get("method") != "session/update":
+        return None
+    return (params.get("update") or {}).get("sessionUpdate")
+
+
+def _align_async_order(a2c_ref, a2c):
+    """Place the ASYNCHRONOUS agent notifications of `a2c` at the positions they hold in `a2c_ref`.
+
+    2026-09-21 (AF-AP-107): the pinned hermes-acp emits `session_info_update` from an independent task, so its
+    position relative to the prompt's reply stream differs between the real run-1 and run-2 captures (before the
+    reply chunk in run-1, after the end_turn result in run-2). This SYNTHETIC passing bundle is the checker's
+    positive control — its interleaving is fabricated by design (`_make_interleaved_timeline`) — so run-2's async
+    notifications follow run-1's order here; the real race is a recorded finding (test_real_bundle_cli), not
+    something this fixture decides."""
+    async_frames = [f for f in a2c if _session_update_kind(f) in _ASYNC_UPDATES]
+    kept = [f for f in a2c if _session_update_kind(f) not in _ASYNC_UPDATES]
+    out, it = [], iter(async_frames)
+    for ref in a2c_ref:
+        if _session_update_kind(ref) in _ASYNC_UPDATES:
+            nxt = next(it, None)
+            if nxt is not None:
+                out.append(nxt)
+        elif kept:
+            out.append(kept.pop(0))
+    out.extend(kept)
+    out.extend(it)
+    return out
+
+
 def _make_interleaved_timeline(c2a, a2c, leg):
     """Build physically-possible interleaving with realistic sub-second spacing."""
     frames = []
@@ -440,9 +474,12 @@ def _session_bundle(tmp_path_factory):
     for fn in ("neg-malformed-initialize.json", "upstream-token.fingerprint", "acp-schema-v1.json"):
         src = FIXTURES / fn
         shutil.copy2(src, tmp_fixtures / fn)
+    run1_a2c = _load_frames(GOLDEN / "run-1")[1]
     for leg in LEGS:
         ld = g / leg
         c2a, a2c = _load_frames(GOLDEN / leg)
+        if leg == "run-2":
+            a2c = _align_async_order(run1_a2c, a2c)   # AF-AP-107: the synthetic golden pair shares one async order
         entries = _make_interleaved_timeline(c2a, a2c, leg)
         _write_timeline(ld, entries)
         _write_runtime_identity(ld, leg)
@@ -522,13 +559,31 @@ def _check(bndl, timeout_s=60):
 
 
 # === CLI tests ===
+_GOLDEN_RACE_REASON = ("AF-AP-107 (2026-09-21, OPEN owner decision): the pinned hermes-acp's asynchronous "
+                       "session_info_update lands at a different position in run-1 and run-2, so the frozen "
+                       "check_golden fails on the real v2.4 bundle until the golden's definition is decided")
+
+
+@pytest.mark.xfail(strict=True, reason=_GOLDEN_RACE_REASON)
 def test_real_bundle_cli():
+    """The committed bundle is a real v2.4 capture (2026-09-21); the PASS intent stands and flips this strict
+    xfail the moment the golden race is resolved (an XPASS here is the signal to retire the marker)."""
     r = _run(P / "evidence")
     if (P / "evidence" / "golden" / "run-1" / "timeline.jsonl").exists():
         assert r.returncode == 0 and r.stdout.strip().startswith("PASS:")
     else:
         assert r.returncode == 2
         assert r.stdout.strip() == "deferred: v2 evidence not captured"
+
+
+def test_real_bundle_fails_only_at_the_golden_race():
+    """The exact current verdict on the committed real bundle, pinned: EVERY check ahead of check_golden in
+    EXPECTED_CHECK_SEQUENCE passes on the 2026-09-21 v2.4 evidence, and the one failure is the async-notification
+    race (AF-AP-107). A different reason here is a regression of the capture or the checker; a PASS means the
+    golden was redefined — retire this test with test_real_bundle_cli's marker."""
+    r = _run(P / "evidence")
+    assert r.returncode == 1, (r.returncode, r.stdout)
+    assert r.stdout.strip() == "failure_reason: golden: golden mismatch between run-1 and run-2 at normalized line 7"
 
 
 def test_passing_v2_bundle(bundle):
@@ -2630,7 +2685,7 @@ def test_v23_teardown_survivor(tmp_path):
 _VENUE = os.environ.get("S0_01_VENUE", "sandbox")
 _REAL_LEG_DIR = Path(os.environ["S0_01_REAL_LEG_DIR"]) if os.environ.get("S0_01_REAL_LEG_DIR") else None
 
-_POSITIVE_LEGS = ("run-1", "cancel", "shutdown", "two-users")
+_POSITIVE_LEGS = ("run-1", "run-2", "cancel", "shutdown", "two-users")   # run-2 since the 2026-09-21 v2.4 recapture
 _CHECKER_LEGS = tuple(pins.LEGS)
 
 
@@ -2644,7 +2699,7 @@ def _run_check_safe(fn, *args, **kwargs):
         return (False, f"deferred: {d}")
 
 
-_EXPECTED_REAL_LEGS = {"cancel", "negative", "run-1", "shutdown", "two-users"}
+_EXPECTED_REAL_LEGS = {"cancel", "negative", "run-1", "run-2", "shutdown", "two-users"}
 
 
 def _real_leg(leg: str) -> Path:
@@ -2892,7 +2947,10 @@ def test_real_leg_corpus_declared():
                          "process-scan-after.txt", "process-scan-teardown.txt",
                          "owned-pids.json", "buzzacp.log", "startup-line.txt",
                          "hermes-model.txt", "argv.txt", "buzz-acp.pid", "buzz-acp.exit"}
-        for leg in ("run-1", "cancel", "shutdown", "two-users"):
+        # a v2.3+ corpus (the 2026-09-21 v2.4 recapture) also carries the tee's status file per positive leg
+        if _CORPUS_VERSION != "v2.2":
+            _V22_POSITIVE = _V22_POSITIVE | {"tee-status.json"}
+        for leg in _POSITIVE_LEGS:
             ld = _REAL_LEG_DIR / leg
             for fn in sorted(_V22_POSITIVE):
                 assert (ld / fn).is_file(), (
@@ -3615,11 +3673,12 @@ def test_real_leg_two_users():
     assert ok, f"unexpected failure: {result}"
 
 
-_KNOWN_XFAIL_REASONS = frozenset({
-    "negative: probe_sha256 mismatch",
-    "negative: agent_interpreter_realpath mismatch",
-    "negative: spawned_at_utc is later than the first frame",
-})
+# RETIRED 2026-09-21 (the CK11-B1 rule, exercised): the v2.4 recapture's negative leg PASSES check_negative — three
+# takes with the identical probe sha, interpreter realpath and observed error — so the three v2.2 stale reasons
+# ("negative: probe_sha256 mismatch", "negative: agent_interpreter_realpath mismatch", "negative: spawned_at_utc is
+# later than the first frame") no longer reproduce and are gone. The set stays as the ONE place a stale reason could be
+# grandfathered again, visibly; empty means every failure on the real negative leg is a hard FAIL.
+_KNOWN_XFAIL_REASONS = frozenset()
 
 
 def _is_known_stale(result: str) -> bool:
@@ -3629,34 +3688,31 @@ def _is_known_stale(result: str) -> bool:
 
 def _grade_negative(ok, result) -> str:
     if ok:
-        return "pass-is-hard-failure"
+        return "pass"
     if _is_known_stale(result):
         return "known-stale-xfail"
     return "real-failure"
 
 
 def test_grade_negative_covers_all_three_outcomes():
-    assert _grade_negative(True, "observed") == "pass-is-hard-failure"
-    assert _grade_negative(False, next(iter(_KNOWN_XFAIL_REASONS))) == "known-stale-xfail"
+    assert _grade_negative(True, "observed") == "pass"
     assert _grade_negative(False, "negative: new failure") == "real-failure"
+    assert _KNOWN_XFAIL_REASONS == frozenset(), "B1 retirement: no stale reason is grandfathered"
+    # a retired reason is a real failure now, not an xfail
+    assert _grade_negative(False, "negative: probe_sha256 mismatch") == "real-failure"
 
 
-def test_real_leg_negative(request):
-    """Real-producer: negative leg — CK11-B1: the check MUST fail on the current corpus.
-    If check_negative PASSES, the known-stale reasons no longer reproduce and must be
-    retired.  A known-stale failure is xfailed; any other failure is a hard FAIL."""
+def test_real_leg_negative():
+    """Real-producer: negative leg — CK11-B1 after the 2026-09-21 v2.4 recapture: check_negative MUST PASS on the
+    current corpus (the probe regenerated three times; identical identity fields and observed error). Any failure is
+    a hard FAIL — the stale-reason xfail path is retired (the set above is empty)."""
     neg_dir = _real_leg("negative")
     ok, result = _run_check_safe(cc.check_negative, neg_dir)
     grade = _grade_negative(ok, result)
-    if grade == "pass-is-hard-failure":
-        pytest.fail(
-            "check_negative PASSES on the real negative leg — the known-stale reasons "
-            f"{sorted(_KNOWN_XFAIL_REASONS)} no longer reproduce; retire them (B1)")
-    if grade == "known-stale-xfail":
-        request.node.add_marker(pytest.mark.xfail(
-            reason=f"real v2.2 sample: {result} (capture predates current probe)"))
-        pytest.fail(f"real v2.2 sample: {result} (capture predates current probe)")
-    pytest.fail(f"unexpected failure: {result}")
+    if grade == "pass":
+        assert result.startswith("observed: "), result
+        return
+    pytest.fail(f"unexpected failure on the real negative leg: {result} (grade {grade})")
 
 
 def test_real_leg_normalize_timeline():
@@ -5406,8 +5462,10 @@ def test_ck9_default_timeout_is_90():
 # ============================================================================
 
 # B1 (CK11): known-stale xfail uses WHOLE-reason equality, not a tail segment.
-def test_ck11_known_stale_is_the_whole_reason_not_a_tail():
-    """CK11-B1: _is_known_stale matches the WHOLE reason, never a tail collision."""
+def test_ck11_known_stale_is_the_whole_reason_not_a_tail(monkeypatch):
+    """CK11-B1: _is_known_stale matches the WHOLE reason, never a tail collision. The live set is EMPTY since the
+    2026-09-21 retirement, so the equality rule is pinned against a one-element set installed for this test."""
+    monkeypatch.setattr(sys.modules[__name__], "_KNOWN_XFAIL_REASONS", frozenset({"negative: probe_sha256 mismatch"}))
     assert _is_known_stale("negative: probe_sha256 mismatch")
     assert not _is_known_stale("probe_sha256 mismatch"), "tail alone must not match"
     assert not _is_known_stale(

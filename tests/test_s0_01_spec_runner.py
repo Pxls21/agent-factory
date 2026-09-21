@@ -30,10 +30,22 @@ def _copy(tmp_path):
     return root
 
 
+def _strip_v2_evidence(root):
+    """Put a copy of the tree into the DEFERRED state on purpose: no leg carries a timeline (the checker's
+    `v2 evidence not captured` predicate) and negative/ is absent. Until 2026-09-21 the committed tree WAS in
+    this state (the withdrawn 2026-09-05 v1 bundle); since the v2.4 recapture it is a real bundle, so the
+    deferral path is exercised on a controlled input instead of on whatever the tree happens to hold."""
+    golden = root / "proofs" / "S0-01" / "evidence" / "golden"
+    for tl in golden.glob("*/timeline.jsonl"):
+        tl.unlink()
+    shutil.rmtree(golden / "negative", ignore_errors=True)
+    return root
+
+
 def test_positive_leg_defers_on_v1_evidence(tmp_path):
-    """The positive leg defers (exit 2) because the committed evidence is v1
-    (no timeline.jsonl). The runner must NOT create a result.json."""
-    root = _copy(tmp_path)
+    """The positive leg defers (exit 2) when no leg carries a timeline (the v1 shape of the withdrawn
+    2026-09-05 bundle, reconstructed on the copy). The runner must NOT create a result.json."""
+    root = _strip_v2_evidence(_copy(tmp_path))
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
     pos = next(leg for leg in spec["legs"] if leg["leg"] == "positive")
     r = subprocess.run(
@@ -47,8 +59,8 @@ def test_positive_leg_defers_on_v1_evidence(tmp_path):
 
 def test_runner_defers_s0_01_via_real_runner(tmp_path):
     """V3(a): invoke proof-runner run --proof S0-01 --venue sandbox --root <root>
-    for real → exact deferral stderr and exit 2. The positive leg defers first."""
-    root = _copy(tmp_path)
+    for real on a copy stripped to the v1 shape → exact deferral stderr and exit 2. The positive leg defers first."""
+    root = _strip_v2_evidence(_copy(tmp_path))
     r = subprocess.run(
         [sys.executable, str(RUNNER), "run", "--proof", "S0-01",
          "--venue", "sandbox", "--root", str(root)],
@@ -66,8 +78,8 @@ def test_runner_defers_s0_01_via_real_runner(tmp_path):
 
 
 def test_negative_leg_defers_directly(tmp_path):
-    """The negative leg cmd defers today (directory absent) with the exact text."""
-    root = _copy(tmp_path)
+    """The negative leg cmd defers (negative/ absent on the stripped copy) with the exact text."""
+    root = _strip_v2_evidence(_copy(tmp_path))
     spec = json.loads((root / "proofs" / "S0-01" / "spec.json").read_text())
     neg = next(leg for leg in spec["legs"] if leg["leg"] == "negative")
     r = subprocess.run(

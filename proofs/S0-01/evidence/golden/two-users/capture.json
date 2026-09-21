@@ -1,99 +1,133 @@
 {
-  "acp_sequence": {
-    "agent_to_client_order": [
-      [
-        "RESP",
-        0
-      ],
-      [
-        "RESP",
-        1
-      ],
-      [
-        "NOTIF",
-        "available_commands_update"
-      ],
-      [
-        "NOTIF",
-        "usage_update"
-      ],
-      [
-        "NOTIF",
-        "session_info_update"
-      ],
-      [
-        "NOTIF",
-        "agent_message_chunk"
-      ],
-      [
-        "NOTIF",
-        "usage_update"
-      ],
-      [
-        "RESP",
-        2
-      ],
-      [
-        "RESP",
-        3
-      ],
-      [
-        "NOTIF",
-        "available_commands_update"
-      ],
-      [
-        "NOTIF",
-        "usage_update"
-      ],
-      [
-        "NOTIF",
-        "agent_message_chunk"
-      ],
-      [
-        "NOTIF",
-        "session_info_update"
-      ],
-      [
-        "NOTIF",
-        "usage_update"
-      ],
-      [
-        "RESP",
-        4
-      ]
-    ],
-    "client_to_agent": [
-      [
-        0,
-        "initialize"
-      ],
-      [
-        1,
-        "session/new"
-      ],
-      [
-        2,
-        "session/prompt"
-      ],
-      [
-        3,
-        "session/new"
-      ],
-      [
-        4,
-        "session/prompt"
-      ]
-    ],
-    "session_ids": [
-      "9780b169-8005-4a31-bc7b-133ceb7b19f1",
-      "7e3d0a1d-0f5e-4a26-bce3-b709d4677990"
-    ],
-    "session_update_kind_counts": {
-      "agent_message_chunk": 2,
-      "available_commands_update": 2,
-      "session_info_update": 2,
-      "usage_update": 4
+  "buzz_acp_exit": "0",
+  "capture": "s0-01-golden-leg:two-users",
+  "config_echo": {
+    "idle_timeout": "900s",
+    "max_turn": "3600s",
+    "session_policy": "thread"
+  },
+  "env_names": [
+    "BUZZ_ACP_AGENT_OWNER",
+    "BUZZ_ACP_RESPOND_TO",
+    "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
+    "BUZZ_ACP_SESSION_POLICY",
+    "BUZZ_PRIVATE_KEY",
+    "BUZZ_RELAY_URL",
+    "HERMES_HOME",
+    "HOME",
+    "OMNIROUTE_API_KEY",
+    "PATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "S0_01_AGENT",
+    "S0_01_FRAMEDIR"
+  ],
+  "files": {
+    "buzz-acp.exit": {
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "size": 2
     },
+    "buzz-acp.pid": {
+      "sha256": "e25a3283096e28062b990179b6ed66c3ac88d2d02f8fd088b8774948cecd64b8",
+      "size": 7
+    },
+    "buzzacp.log": {
+      "sha256": "3afb4afaaa97b7a99c07f3c39ca940d1809748aba62cc66340023a228cd8f732",
+      "size": 12039
+    },
+    "env.json": {
+      "sha256": "21f9c0a29dd666212cbd9529be1766c749e4648174716c8ab66f50e248290142",
+      "size": 777
+    },
+    "hermes-model.txt": {
+      "sha256": "13373aafcde2e7cb8cac660296c5507cd3515c4225fbe6bcced43b6f095fde39",
+      "size": 37
+    },
+    "process-scan-after.txt": {
+      "sha256": "769531b9950e3cc61700095b61a5fa8b559fe2736fa2c6836b88ad70c0b4cafa",
+      "size": 608
+    },
+    "runtime-identity.json": {
+      "sha256": "2e79b958109a2a9e02297442c0d3b234d4f18f05988d09dcd0eb78dcf878e945",
+      "size": 1290
+    },
+    "startup-line.txt": {
+      "sha256": "9f0863b7265f261aec27c6b549b4c6cc353a07edab8ef4e0b6fc1ead8cddc8b1",
+      "size": 474
+    },
+    "timeline.jsonl": {
+      "sha256": "b6da5d28eb68510a45a848f4890d0a1f1a31bc5e7856bc8afc37d1cfc5ead44b",
+      "size": 1822018
+    }
+  },
+  "manifests": {
+    "manifest-post.txt.gz": {
+      "acp": "0039fb357d4170d9e67313210b8933726a6b82ea2f2882e17164c08c41603122",
+      "buzz": "a5614f3c1d904c145c26d5a49e670fa49fc9075b9e0e39ccbed93bc2771e1e95",
+      "hermes-agent": "31843deb9602d5299c417fcca7c435edcf365e8523cdeb3dfec3db2c4c068e96",
+      "venv-hermes": "c181f47c563cdc6edfbe4550352ac0cfc7221760e2ddf0396d6efed2a39ee523"
+    },
+    "manifest-pre.txt.gz": {
+      "acp": "0039fb357d4170d9e67313210b8933726a6b82ea2f2882e17164c08c41603122",
+      "buzz": "a5614f3c1d904c145c26d5a49e670fa49fc9075b9e0e39ccbed93bc2771e1e95",
+      "hermes-agent": "31843deb9602d5299c417fcca7c435edcf365e8523cdeb3dfec3db2c4c068e96",
+      "venv-hermes": "c181f47c563cdc6edfbe4550352ac0cfc7221760e2ddf0396d6efed2a39ee523"
+    }
+  },
+  "mentions": {
+    "owner": {
+      "accepted": true,
+      "content": "Reply with exactly the single word: pong",
+      "event_id": "d209a9634445df625f95d93041de9d156109469f2d7c6db322f6859780bbade9",
+      "pubkey": "2267fe91571e5c9166ddf1a80176e988bdd00b9023edcc33375e1be85928000c"
+    },
+    "user2": {
+      "accepted": true,
+      "content": "Reply with exactly the single word: pong",
+      "event_id": "6ea792c49dd097921006c732ba01da7f5af2c579749cd7241197db8b3491130c",
+      "pubkey": "fec645734c4bdd1a6867ab061b0a7aca7f8128d98ace364707814043b090ea22"
+    }
+  },
+  "model": "default: s0-01-scripted/s0-01-pong",
+  "runtime_identity": {
+    "agent_argv": [
+      "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp"
+    ],
+    "agent_child_pid": 204903,
+    "agent_entrypoint_sha256": "f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1",
+    "agent_interpreter_realpath": "/usr/bin/python3.13",
+    "agent_interpreter_sha256": "8be0f8e534b7fe4ace77feaa47e2b6a15c3458523c76dab4582867727c286637",
+    "agent_realpath": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+    "buzz_acp_exe_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+    "buzz_acp_exe_sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
+    "buzz_acp_pid": 204889,
+    "buzz_acp_version": "n/a: this buzz-acp build has no --version flag (identity = exe sha256 above)",
+    "launch_argv": [
+      "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+      "--relay-url",
+      "ws://127.0.0.1:3999",
+      "--agent-command",
+      "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py",
+      "--agent-args",
+      "",
+      "--idle-timeout",
+      "900",
+      "--max-turn-duration",
+      "3600"
+    ],
+    "python_dont_write_bytecode": true,
+    "spawned_at_utc": "2026-09-21T13:42:59.927621Z",
+    "tee_path": "/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py",
+    "tee_pid": 204902,
+    "tee_sha256": "990a2ad24475fde35291cd940e5f02d5e8dcf8f413cb16e4948f46407362cdb0"
+  },
+  "timeline": {
+    "a2c": 15,
+    "c2a": 5,
+    "entries": 20,
+    "sessions": [
+      "fd22fbef-07f0-4d84-a8bc-c70e9dea733b",
+      "3fae2713-665a-4044-b2ed-a94c3f097aa8"
+    ],
     "terminals": [
       [
         2,
@@ -103,157 +137,14 @@
         4,
         "end_turn"
       ]
-    ]
-  },
-  "capture": "s0-01-golden-leg:two-users",
-  "components": {
-    "acp-schema-v1": {
-      "commit": "37a7d4f8a0a0632653a14084b8140ceb486ab0e8",
-      "copy_in_repo": "proofs/S0-01/fixtures/acp-schema-v1.json",
-      "path": "schema/v1/schema.json",
-      "repo": "agent-client-protocol",
-      "sha256": "caf62ff962ada396878372ced11efb2c6764e59d90919a38583c319948931a42",
-      "tree": "d5ee4635bc543c330415e2e166e606f2ef68dcf5"
-    },
-    "buzz-acp": {
-      "build": "cargo build --release -p buzz-acp (rustc/cargo 1.93.0)",
-      "path": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
-      "sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
-      "source": {
-        "commit": "1c8321cd08feb597f8bcff5195c21148fb3e98ed",
-        "porcelain_untracked_all_empty": true,
-        "repo": "buzz",
-        "tree": "660315900bcd5432568016633c47d46d8ccee07b"
-      }
-    },
-    "frame_tee": {
-      "copy_in_repo": "proofs/S0-01/tools/frame_tee.py",
-      "path": "/home/rocco/s0-01-pinned/.markers/frame_tee.py",
-      "role": "byte-preserving stdio tee between buzz-acp and hermes-acp; proof instrument, not a pinned component",
-      "sha256": "a7a0c367e5251b2cca2aca145ff6b4308ce5b9a40d4a184c73d79b27d32d1f38"
-    },
-    "hermes-acp": {
-      "entrypoint_sha256": "f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1",
-      "install": "editable, fresh venv (owner Option 2), PYTHONDONTWRITEBYTECODE=1",
-      "path": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
-      "provenance_record": "/home/rocco/s0-01-pinned/.markers/hermes-provenance.json",
-      "source": {
-        "archive_sha256": "b65c49908d8bba3e87e234a5fc972ac294d6411aa3f794d82c706aff97302ee3",
-        "commit": "527da60844d4dced37879ea50259675371abe10e",
-        "porcelain_untracked_all_empty": true,
-        "repo": "hermes-agent",
-        "tree": "a36bba5ee05b1b27eaee510287e74f976e2bbf21"
-      },
-      "version": "0.21.0"
-    }
-  },
-  "config_echo": {
-    "argv_idle_timeout": "900",
-    "idle_timeout": "900s",
-    "max_turn": "7200s",
-    "respond_to": "allowlist(1)",
-    "session_policy": "thread",
-    "source": "startup-line.txt"
-  },
-  "frames": {
-    "argv": {
-      "file": "argv.txt",
-      "lines": 9,
-      "sha256": "29775981443c644d360fb6624f31b1263b0e8ecc942ec04e5874649b9124efce"
-    },
-    "env_names": {
-      "file": "env-names.txt",
-      "lines": 13,
-      "sha256": "5e648b0ca53ed88ee6c7c66e524367d2acd229774fb43897730755d24e27ee5a"
-    },
-    "frames_agent_to_client": {
-      "file": "frames-agent-to-client.jsonl",
-      "lines": 15,
-      "sha256": "ab64a52a77cc2a7760d7b10f8e2e4b4b1f8a5433c67b69cfcd92259af70f9042"
-    },
-    "frames_client_to_agent": {
-      "file": "frames-client-to-agent.jsonl",
-      "lines": 5,
-      "sha256": "9ab2440eb8b72802d67e4c6b1111dd18a7cb69b52f0037173cba94bd7c1c5bc5"
-    },
-    "startup_line": {
-      "file": "startup-line.txt",
-      "lines": 1,
-      "sha256": "d9d274b2f5fdba77c35c67993abd2649a3117fb43b89427d3cb01a6caddded56"
-    }
-  },
-  "hermes_config_sha256_prefix": "c967420c5d67a2f3",
-  "manifests": {
-    "baseline": {
-      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
-      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
-      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
-    },
-    "identical": true,
-    "method": "manifest.sh: find <tree> -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; digest = sha256 of that manifest",
-    "post_capture": {
-      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
-      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
-      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
-    },
-    "pre_capture": {
-      "acp": "5579023c865ec10ecc026ddaa0947f9a2104ad0e2e92ed870989a7d5d66c80d8",
-      "buzz": "f00e3463f75d6b0716a3f89913de1b06db37af7c8d3433330590022e94a7d987",
-      "hermes-agent": "1e11d5dcdf3c38ff26a972c839547c532c91dd2ec942324e75bd310def2b87cb"
-    }
-  },
-  "mentions": {
-    "owner": {
-      "accepted": true,
-      "event_id": "9c3e6902b3ea3d08343575ebc5e7fb0afc69e8eb69f1d30c24905575a1741400",
-      "mention_pubkeys": [
-        "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
-      ]
-    },
-    "user2": {
-      "accepted": true,
-      "event_id": "1be9ff396ff30f69ce8343ad568402951dfd7f79cd4d901bdc1d1f7fc9b20e23",
-      "mention_pubkeys": [
-        "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
-      ]
-    }
-  },
-  "model_route": "s0-01-scripted/s0-01-pong",
-  "process": {
-    "argv": [
-      "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
-      "--relay-url",
-      "ws://127.0.0.1:3999",
-      "--agent-command",
-      "/home/rocco/s0-01-pinned/.markers/frame_tee.py",
-      "--agent-args",
-      "",
-      "--idle-timeout",
-      "900"
     ],
-    "buzz_acp_exit_code": null,
-    "credential_source": "the owner's Hermes lane profile env (the rotated key), read at launch, never printed",
-    "env_names": [
-      "BUZZ_ACP_AGENT_OWNER",
-      "BUZZ_ACP_RESPOND_TO",
-      "BUZZ_ACP_RESPOND_TO_ALLOWLIST",
-      "BUZZ_ACP_SESSION_POLICY",
-      "BUZZ_PRIVATE_KEY",
-      "BUZZ_RELAY_URL",
-      "HERMES_HOME",
-      "HOME",
-      "OMNIROUTE_API_KEY",
-      "PATH",
-      "PYTHONDONTWRITEBYTECODE",
-      "S0_01_AGENT",
-      "S0_01_FRAMEDIR"
-    ],
-    "omniroute_credential_in_env": true
+    "update_kinds": {
+      "agent_message_chunk": 2,
+      "available_commands_update": 2,
+      "session_info_update": 2,
+      "usage_update": 4
+    }
   },
-  "timestamps_utc": {
-    "buzz_acp_start": "2026-09-05T11:36:40.873060Z",
-    "manifest_post": "2026-09-05T11:37:07Z",
-    "manifest_pre": "2026-09-05T11:36:44Z"
-  },
-  "venue": "pc-bridge:fedora (isolated pinned clones under /home/rocco/s0-01-pinned; isolated relay ws://127.0.0.1:3999; model route s0-01-scripted via the managed OmniRoute)"
+  "upstream_records": 4,
+  "version": 2
 }

@@ -1,0 +1,24 @@
+{
+ "content": "!shutdown",
+ "created_at": 1789998153,
+ "id": "0535718574efb033ce840f879ecd931ec38412ffe577a3ea85ec1d9b7b617b02",
+ "kind": 9,
+ "pubkey": "2267fe91571e5c9166ddf1a80176e988bdd00b9023edcc33375e1be85928000c",
+ "sig": "8c00c63535789133047bf709dbe43a9096dfc25cde97d7937c418b2f952988cc73a928f2b1020c43a5aadca19caa4da4088764a7ff3f571029b0affb45ad7a69",
+ "tags": [
+  [
+   "h",
+   "73701f66-6e12-42ff-b561-7d36db1ad91b"
+  ],
+  [
+   "e",
+   "97ac6f04eddd93a4d361a43e76c60adb7f8779514a623179cc69d9eb0674d7f3",
+   "",
+   "reply"
+  ],
+  [
+   "p",
+   "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
+  ]
+ ]
+}

@@ -1,0 +1,1 @@
+# process-scan v2.4 mode=teardown rows=0 buzz_acp_pid=201808 buzz_present=0 owned=3 owned_present=0 pinned_present=0 owned_zombies=0 table_rows=338 utc=2026-09-21T13:40:55Z

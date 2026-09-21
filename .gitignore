@@ -14,6 +14,9 @@
 # …and the REAL evidence roots too (VERIFY-B1 F4, 2026-09-08): the checker requires buzzacp.log in every captured leg
 !proofs/*/evidence/**/*.log
 *.pid
+# the same class for pidfiles (2026-09-21, the v2.4 recapture): `buzz-acp.pid` is a REQUIRED leg file (pins.PINNED_LEG_FILES;
+# check_runtime_identity binds buzz_acp_pid to it) — five legs' pidfiles were silently ignored by the rule above
+!proofs/*/evidence/**/buzz-acp.pid
 .DS_Store
 .idea/
 .vscode/

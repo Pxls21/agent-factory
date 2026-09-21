@@ -530,16 +530,18 @@ def test_build_capture_record_requires_a_regular_file_not_just_an_entry(tmp_path
     assert not (leg / "capture.json").exists()
 
 
-def test_build_capture_record_accepts_a_v2_2_corpus_leg(tmp_path):
+def test_build_capture_record_accepts_a_real_corpus_leg(tmp_path):
     """VERIFY-P5a F2, the regression that mattered most: the tool hard-failed EVERY leg the pipeline has ever
     produced. It read the raw mapping and never consulted PINNED_LEG_FILES_SINCE, so a v2.2 corpus leg died on
     `missing required leg files: tee-status.json` — while the version rule sat in this file, correct and
-    unused. Run over a real corpus leg copied to tmp_path (the corpus is a DECLARED input)."""
+    unused. Run over a real corpus leg copied to tmp_path (the corpus is a DECLARED input; v2.2 until the
+    2026-09-21 recapture, v2.4 since — the tool must accept whichever version the declared corpus carries)."""
     corpus = _corpus()
     leg = tmp_path / "run-1"
     shutil.copytree(corpus / "run-1", leg)
-    assert pins.corpus_version(leg) == "v2.2"
+    assert pins.corpus_version(leg) in ("v2.2",) + tuple(pins.PINNED_SCAN_VERSIONS)
     assert "tee-status.json" not in pins.required_files("v2.2")
+    assert "tee-status.json" in pins.required_files("v2.4")
     r = _capture(str(leg), "run-1")
     assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
     assert r.stdout.strip() == "run-1: 9 raw files, 11 timeline entries"
@@ -852,6 +854,34 @@ def _glob_match(pattern, name):
     return fnmatch.fnmatchcase(name, pattern)
 
 
+def _collect_leg_sidecar_loop():
+    """The manifest-sidecar loop inside collect_leg.sh's remote pack command, un-escaped for a local bash."""
+    text = COLLECT_LEG.read_text()
+    m = re.search(r"for p in pre post; do .*? done", text)
+    assert m, "collect_leg.sh: the sidecar loop is gone"
+    return m.group(0).replace('\\"', '"').replace("\\$", "$")
+
+
+def test_collect_leg_sidecar_loop_exits_zero_when_a_leg_has_no_manifest_sidecars(tmp_path):
+    """2026-09-21, the first v2.4 negative take: the pack command ended on `[ -f sidecar ] && echo …` for the LAST
+    sidecar name, so a leg WITHOUT manifest sidecars (the negative probe writes none) returned status 1 from the
+    remote shell, pc.sh propagated it, and pipefail + set -e killed collect_leg.sh right after the tar — the leg dir
+    was deleted and never re-made. The loop must be an `if`: status 0 and no output when no sidecar exists, the
+    `MANIFEST <phase> <sha>` line when one does. Red-before on 77f46a2's collect_leg.sh (status 1, no sidecars)."""
+    loop = _collect_leg_sidecar_loop()
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    r = subprocess.run(["bash", "-c", loop], cwd=bare, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    assert r.stdout == "", r.stdout
+    with_pre = tmp_path / "with_pre"
+    with_pre.mkdir()
+    (with_pre / "manifest-pre.txt.gz.sha256").write_text("ab" * 32 + "\n")
+    r = subprocess.run(["bash", "-c", loop], cwd=with_pre, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+    assert r.stdout == f"MANIFEST pre {'ab' * 32}\n", r.stdout
+
+
 def test_run_leg_removes_the_framedir_before_the_detached_launch():
     """AF-AP-105 (registered 2026-09-19 on S0-03's runner; the sibling here found 2026-09-21 while authoring
     the recapture brief): run_leg.sh launches pc_launch.py DETACHED into the fixed-name framedir
@@ -946,7 +976,9 @@ def test_is_pinned_argv_matches_every_row_of_the_real_corpus_scan():
     """The positive control against reality: the narrowing must not lose a real row. Every body row of a real
     collected leg's process-scan-after.txt is one of the proof's three pinned processes."""
     corpus = _corpus()
-    rows = (corpus / "run-1" / "process-scan-after.txt").read_text().splitlines()
+    lines = (corpus / "run-1" / "process-scan-after.txt").read_text().splitlines()
+    # a v2.3+ scan (the 2026-09-21 v2.4 recapture) carries the enumeration header on line 1; the body rows follow
+    rows = [ln for ln in lines if not ln.startswith("#")]
     assert len(rows) == 3, rows
     for row in rows:
         cmd = row.split(None, 3)[3]
