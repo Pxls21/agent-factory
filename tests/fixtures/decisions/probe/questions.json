@@ -1,0 +1,5246 @@
+{
+  "questions": [
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "validate_ledger",
+        "file": "scripts/validate_ledger.py",
+        "snippet": "def validate_ledger(args): # line 10\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "proof_runner",
+        "file": "scripts/proof_runner.py",
+        "snippet": "def proof_runner(args): # line 13\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "push_clean",
+        "file": "scripts/push_clean.py",
+        "snippet": "def push_clean(args): # line 16\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "anchor_edit",
+        "file": "scripts/anchor_edit.py",
+        "snippet": "def anchor_edit(args): # line 19\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "lane_context",
+        "file": "scripts/lane_context.py",
+        "snippet": "def lane_context(args): # line 22\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "test_summary",
+        "file": "scripts/test_summary.py",
+        "snippet": "def test_summary(args): # line 25\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "resume_heal",
+        "file": "scripts/resume_heal.py",
+        "snippet": "def resume_heal(args): # line 28\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "orient",
+        "file": "scripts/orient.py",
+        "snippet": "def orient(args): # line 31\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "decide_harvest",
+        "file": "scripts/decide_harvest.py",
+        "snippet": "def decide_harvest(args): # line 34\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "canonical",
+        "file": "scripts/canonical.py",
+        "snippet": "def canonical(args): # line 37\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "gn_mcp",
+        "file": "scripts/gn_mcp.py",
+        "snippet": "def gn_mcp(args): # line 40\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "ooo_mcp",
+        "file": "scripts/ooo_mcp.py",
+        "snippet": "def ooo_mcp(args): # line 43\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "pc_lane",
+        "file": "scripts/pc_lane.py",
+        "snippet": "def pc_lane(args): # line 46\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "lane_gate",
+        "file": "scripts/lane_gate.py",
+        "snippet": "def lane_gate(args): # line 49\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "sentrux_review",
+        "file": "scripts/sentrux_review.py",
+        "snippet": "def sentrux_review(args): # line 52\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "ripwire_review",
+        "file": "scripts/ripwire_review.py",
+        "snippet": "def ripwire_review(args): # line 55\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "chat_tail",
+        "file": "scripts/chat_tail.py",
+        "snippet": "def chat_tail(args): # line 58\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "replay_transcript",
+        "file": "scripts/replay_transcript.py",
+        "snippet": "def replay_transcript(args): # line 61\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "lint_delta",
+        "file": "scripts/lint_delta.py",
+        "snippet": "def lint_delta(args): # line 64\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "report_lint",
+        "file": "scripts/report_lint.py",
+        "snippet": "def report_lint(args): # line 67\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "verify_planning",
+        "file": "scripts/verify_planning.py",
+        "snippet": "def verify_planning(args): # line 70\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "safe_commit",
+        "file": "scripts/safe_commit.py",
+        "snippet": "def safe_commit(args): # line 73\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "setup",
+        "file": "scripts/setup.py",
+        "snippet": "def setup(args): # line 76\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "why",
+        "file": "scripts/why.py",
+        "snippet": "def why(args): # line 79\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "realleg_sync",
+        "file": "scripts/realleg_sync.py",
+        "snippet": "def realleg_sync(args): # line 82\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "pc_suite",
+        "file": "scripts/pc_suite.py",
+        "snippet": "def pc_suite(args): # line 85\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "relaunch_suite",
+        "file": "scripts/relaunch_suite.py",
+        "snippet": "def relaunch_suite(args): # line 88\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "no_laya_in_gates",
+        "file": "scripts/no_laya_in_gates.py",
+        "snippet": "def no_laya_in_gates(args): # line 91\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "laya_probe",
+        "file": "scripts/laya_probe.py",
+        "snippet": "def laya_probe(args): # line 94\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "ap_screen",
+        "file": "scripts/ap_screen.py",
+        "snippet": "def ap_screen(args): # line 97\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "edit_snapshot",
+        "file": "scripts/edit_snapshot.py",
+        "snippet": "def edit_snapshot(args): # line 100\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "pc_bridge_exec",
+        "file": "scripts/pc_bridge_exec.py",
+        "snippet": "def pc_bridge_exec(args): # line 103\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "graft_first_nag",
+        "file": "scripts/graft_first_nag.py",
+        "snippet": "def graft_first_nag(args): # line 106\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "wiki_context",
+        "file": "scripts/wiki_context.py",
+        "snippet": "def wiki_context(args): # line 109\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "turn_retro_gate",
+        "file": "scripts/turn_retro_gate.py",
+        "snippet": "def turn_retro_gate(args): # line 112\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "session_start",
+        "file": "scripts/session_start.py",
+        "snippet": "def session_start(args): # line 115\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "test_proof_status",
+        "file": "scripts/test_proof_status.py",
+        "snippet": "def test_proof_status(args): # line 118\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "test_s0_01",
+        "file": "scripts/test_s0_01.py",
+        "snippet": "def test_s0_01(args): # line 121\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "test_mirror",
+        "file": "scripts/test_mirror.py",
+        "snippet": "def test_mirror(args): # line 124\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b2.hit_role",
+      "state": {
+        "sym": "test_harvest",
+        "file": "scripts/test_harvest.py",
+        "snippet": "def test_harvest(args): # line 127\n    result = process(args)\n    return result"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Which agent role should handle this task based on its complexity, risk, and required capabilities?",
+        "criteria": {
+          "coordinator": "orchestration and planning",
+          "code-implementer": "fire-and-forget code + test",
+          "adversarial-verifier": "adversarial review and verification",
+          "evidence-gatherer": "forensics and evidence tables",
+          "hive-scout": "read-only locate and triage"
+        }
+      },
+      "options": [
+        "coordinator",
+        "code-implementer",
+        "adversarial-verifier",
+        "evidence-gatherer",
+        "hive-scout"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "dead-code",
+        "msg": "Finding F-100: dead-code detected in validation path at line 20"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "missing-guard",
+        "msg": "Finding F-101: missing-guard detected in validation path at line 25"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "race-condition",
+        "msg": "Finding F-102: race-condition detected in validation path at line 30"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "type-mismatch",
+        "msg": "Finding F-103: type-mismatch detected in validation path at line 35"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "resource-leak",
+        "msg": "Finding F-104: resource-leak detected in validation path at line 40"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "unhandled-error",
+        "msg": "Finding F-105: unhandled-error detected in validation path at line 45"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "logic-inversion",
+        "msg": "Finding F-106: logic-inversion detected in validation path at line 50"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "stale-comment",
+        "msg": "Finding F-107: stale-comment detected in validation path at line 55"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "dead-code",
+        "msg": "Finding F-108: dead-code detected in validation path at line 60"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "missing-guard",
+        "msg": "Finding F-109: missing-guard detected in validation path at line 65"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "race-condition",
+        "msg": "Finding F-110: race-condition detected in validation path at line 70"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "type-mismatch",
+        "msg": "Finding F-111: type-mismatch detected in validation path at line 75"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "resource-leak",
+        "msg": "Finding F-112: resource-leak detected in validation path at line 80"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "unhandled-error",
+        "msg": "Finding F-113: unhandled-error detected in validation path at line 85"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "logic-inversion",
+        "msg": "Finding F-114: logic-inversion detected in validation path at line 90"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "stale-comment",
+        "msg": "Finding F-115: stale-comment detected in validation path at line 95"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "dead-code",
+        "msg": "Finding F-116: dead-code detected in validation path at line 100"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "missing-guard",
+        "msg": "Finding F-117: missing-guard detected in validation path at line 105"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "race-condition",
+        "msg": "Finding F-118: race-condition detected in validation path at line 110"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "type-mismatch",
+        "msg": "Finding F-119: type-mismatch detected in validation path at line 115"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "resource-leak",
+        "msg": "Finding F-120: resource-leak detected in validation path at line 120"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "unhandled-error",
+        "msg": "Finding F-121: unhandled-error detected in validation path at line 125"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "logic-inversion",
+        "msg": "Finding F-122: logic-inversion detected in validation path at line 130"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "stale-comment",
+        "msg": "Finding F-123: stale-comment detected in validation path at line 135"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "dead-code",
+        "msg": "Finding F-124: dead-code detected in validation path at line 140"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "missing-guard",
+        "msg": "Finding F-125: missing-guard detected in validation path at line 145"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "race-condition",
+        "msg": "Finding F-126: race-condition detected in validation path at line 150"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "type-mismatch",
+        "msg": "Finding F-127: type-mismatch detected in validation path at line 155"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/core.py",
+        "kind": "resource-leak",
+        "msg": "Finding F-128: resource-leak detected in validation path at line 160"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_sev",
+      "state": {
+        "file": "src/agent_factory/governance/policy.py",
+        "kind": "unhandled-error",
+        "msg": "Finding F-129: unhandled-error detected in validation path at line 165"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Rate the severity of this code review finding.",
+        "criteria": {
+          "low": "cosmetic or style issue",
+          "medium": "functional defect, recoverable",
+          "high": "data loss, security, or correctness failure"
+        }
+      },
+      "options": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_01/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 50: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_02/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 51: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_03/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 52: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_04/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 53: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_05/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 54: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_06/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 55: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_07/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 56: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_08/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 57: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_09/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 58: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_10/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 59: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_11/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 60: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_12/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 61: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_01/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 62: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_02/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 63: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_03/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 64: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_04/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 65: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_05/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 66: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_06/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 67: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_07/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 68: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_08/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 69: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_09/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 70: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_10/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 71: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_11/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 72: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_12/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 73: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_01/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 74: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_02/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 75: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_03/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 76: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_04/check_main.py",
+        "kind": "unknown",
+        "msg": "Line 77: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_05/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 78: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "b1.finding_kind",
+      "state": {
+        "file": "proofs/s0_06/check_aux.py",
+        "kind": "unknown",
+        "msg": "Line 79: potential issue in assertion chain, reviewer flagged as suspicious"
+      },
+      "question": {
+        "type": "choice",
+        "instructions": "Classify this finding into its defect category.",
+        "criteria": {
+          "dead-code": "unreachable code path",
+          "missing-guard": "absent validation or boundary check",
+          "race-condition": "concurrent access without synchronization",
+          "type-mismatch": "incompatible type usage",
+          "resource-leak": "unclosed handle or connection",
+          "unhandled-error": "exception path with no recovery",
+          "logic-inversion": "negated or reversed condition",
+          "stale-comment": "comment contradicts current code"
+        }
+      },
+      "options": [
+        "dead-code",
+        "missing-guard",
+        "race-condition",
+        "type-mismatch",
+        "resource-leak",
+        "unhandled-error",
+        "logic-inversion",
+        "stale-comment"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "null-deref-in-finally",
+        "finding_title": "AF-AP-12: pre-init every finally local"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "stale-index-after-rewrite",
+        "finding_title": "AF-AP-56: attested inputs hash drift"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "unbounded-retry-loop",
+        "finding_title": "AF-AP-67: refusal line family missed by grep"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "pid-self-match",
+        "finding_title": "AF-AP-73: pasted count without set id"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "timing-on-contended-box",
+        "finding_title": "AF-AP-76: unbounded lint fix loop"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How closely does this code match the original bug pattern?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "If this instance is live, how severe is the impact?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How confident are you this is a real instance, not a false positive?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How complex is the fix for this instance?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How wide is the blast radius if this instance fires?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "d1.bug_echo_scores",
+      "state": {
+        "class_slug": "bridge-stderr-merge",
+        "finding_title": "AF-AP-92: non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "score",
+        "instructions": "How difficult would this instance be to detect without the echo scan?",
+        "criteria": [
+          "negligible",
+          "low",
+          "moderate",
+          "significant",
+          "critical"
+        ]
+      },
+      "options": [
+        "negligible",
+        "low",
+        "moderate",
+        "significant",
+        "critical"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-D5m",
+        "finding_id": "F-D5m-1",
+        "title": "Finding 1: missing negative control",
+        "paths": [
+          "proofs/s0_01/result.json",
+          "tests/test_s0_01_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-O2",
+        "finding_id": "F--O2-2",
+        "title": "Finding 2: stale fixture path",
+        "paths": [
+          "proofs/s0_02/result.json",
+          "tests/test_s0_02_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-B5j",
+        "finding_id": "F-B5j-3",
+        "title": "Finding 3: undocumented contract change",
+        "paths": [
+          "proofs/s0_03/result.json",
+          "tests/test_s0_03_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-N5g",
+        "finding_id": "F-N5g-4",
+        "title": "Finding 4: missing negative control",
+        "paths": [
+          "proofs/s0_04/result.json",
+          "tests/test_s0_04_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-CK10",
+        "finding_id": "F-K10-5",
+        "title": "Finding 5: stale fixture path",
+        "paths": [
+          "proofs/s0_05/result.json",
+          "tests/test_s0_05_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-A5l",
+        "finding_id": "F-A5l-6",
+        "title": "Finding 6: undocumented contract change",
+        "paths": [
+          "proofs/s0_06/result.json",
+          "tests/test_s0_06_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-K1d",
+        "finding_id": "F-K1d-7",
+        "title": "Finding 7: missing negative control",
+        "paths": [
+          "proofs/s0_07/result.json",
+          "tests/test_s0_07_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-T90",
+        "finding_id": "F-T90-8",
+        "title": "Finding 8: stale fixture path",
+        "paths": [
+          "proofs/s0_08/result.json",
+          "tests/test_s0_08_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-G1",
+        "finding_id": "F--G1-9",
+        "title": "Finding 9: undocumented contract change",
+        "paths": [
+          "proofs/s0_09/result.json",
+          "tests/test_s0_09_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-GOV2c",
+        "finding_id": "F-V2c-10",
+        "title": "Finding 10: missing negative control",
+        "paths": [
+          "proofs/s0_10/result.json",
+          "tests/test_s0_10_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-D5m",
+        "finding_id": "F-D5m-11",
+        "title": "Finding 11: stale fixture path",
+        "paths": [
+          "proofs/s0_11/result.json",
+          "tests/test_s0_11_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-O2",
+        "finding_id": "F--O2-12",
+        "title": "Finding 12: undocumented contract change",
+        "paths": [
+          "proofs/s0_12/result.json",
+          "tests/test_s0_12_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-B5j",
+        "finding_id": "F-B5j-13",
+        "title": "Finding 13: missing negative control",
+        "paths": [
+          "proofs/s0_01/result.json",
+          "tests/test_s0_01_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-N5g",
+        "finding_id": "F-N5g-14",
+        "title": "Finding 14: stale fixture path",
+        "paths": [
+          "proofs/s0_02/result.json",
+          "tests/test_s0_02_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-CK10",
+        "finding_id": "F-K10-15",
+        "title": "Finding 15: undocumented contract change",
+        "paths": [
+          "proofs/s0_03/result.json",
+          "tests/test_s0_03_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-A5l",
+        "finding_id": "F-A5l-16",
+        "title": "Finding 16: missing negative control",
+        "paths": [
+          "proofs/s0_04/result.json",
+          "tests/test_s0_04_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-K1d",
+        "finding_id": "F-K1d-17",
+        "title": "Finding 17: stale fixture path",
+        "paths": [
+          "proofs/s0_05/result.json",
+          "tests/test_s0_05_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-T90",
+        "finding_id": "F-T90-18",
+        "title": "Finding 18: undocumented contract change",
+        "paths": [
+          "proofs/s0_06/result.json",
+          "tests/test_s0_06_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-G1",
+        "finding_id": "F--G1-19",
+        "title": "Finding 19: missing negative control",
+        "paths": [
+          "proofs/s0_07/result.json",
+          "tests/test_s0_07_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-GOV2c",
+        "finding_id": "F-V2c-20",
+        "title": "Finding 20: stale fixture path",
+        "paths": [
+          "proofs/s0_08/result.json",
+          "tests/test_s0_08_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-D5m",
+        "finding_id": "F-D5m-21",
+        "title": "Finding 21: undocumented contract change",
+        "paths": [
+          "proofs/s0_09/result.json",
+          "tests/test_s0_09_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-O2",
+        "finding_id": "F--O2-22",
+        "title": "Finding 22: missing negative control",
+        "paths": [
+          "proofs/s0_10/result.json",
+          "tests/test_s0_10_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-B5j",
+        "finding_id": "F-B5j-23",
+        "title": "Finding 23: stale fixture path",
+        "paths": [
+          "proofs/s0_11/result.json",
+          "tests/test_s0_11_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-N5g",
+        "finding_id": "F-N5g-24",
+        "title": "Finding 24: undocumented contract change",
+        "paths": [
+          "proofs/s0_12/result.json",
+          "tests/test_s0_12_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-CK10",
+        "finding_id": "F-K10-25",
+        "title": "Finding 25: missing negative control",
+        "paths": [
+          "proofs/s0_01/result.json",
+          "tests/test_s0_01_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-A5l",
+        "finding_id": "F-A5l-26",
+        "title": "Finding 26: stale fixture path",
+        "paths": [
+          "proofs/s0_02/result.json",
+          "tests/test_s0_02_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-K1d",
+        "finding_id": "F-K1d-27",
+        "title": "Finding 27: undocumented contract change",
+        "paths": [
+          "proofs/s0_03/result.json",
+          "tests/test_s0_03_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-T90",
+        "finding_id": "F-T90-28",
+        "title": "Finding 28: missing negative control",
+        "paths": [
+          "proofs/s0_04/result.json",
+          "tests/test_s0_04_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "BUILD-G1",
+        "finding_id": "F--G1-29",
+        "title": "Finding 29: stale fixture path",
+        "paths": [
+          "proofs/s0_05/result.json",
+          "tests/test_s0_05_check.py"
+        ],
+        "disposition": "blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "v1.finding_class",
+      "state": {
+        "lane": "VERIFY-GOV2c",
+        "finding_id": "F-V2c-30",
+        "title": "Finding 30: undocumented contract change",
+        "paths": [
+          "proofs/s0_06/result.json",
+          "tests/test_s0_06_check.py"
+        ],
+        "disposition": "non-blocking"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this finding represent a blocking defect that must be fixed before merge?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/push_clean.sh",
+        "action_excerpt": "Line 10: performing edit on target",
+        "row_id": "AF-AP-1",
+        "row_title": "bare unshare --net is total isolation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 11: performing command on target",
+        "row_id": "AF-AP-4",
+        "row_title": "sandbox-probe-as-world venue classification"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 12: performing brief on target",
+        "row_id": "AF-AP-12",
+        "row_title": "pre-init every finally local"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 13: performing report on target",
+        "row_id": "AF-AP-36",
+        "row_title": "pre-mint gate on reviewer mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/lane_gate.sh",
+        "action_excerpt": "Line 14: performing edit on target",
+        "row_id": "AF-AP-37",
+        "row_title": "pasted count never typed"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 15: performing command on target",
+        "row_id": "AF-AP-56",
+        "row_title": "attested inputs hash their tooling"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 16: performing brief on target",
+        "row_id": "AF-AP-67",
+        "row_title": "refusal line family missed by grep"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 17: performing report on target",
+        "row_id": "AF-AP-73",
+        "row_title": "pasted count carries its set"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/pc_suite.sh",
+        "action_excerpt": "Line 18: performing edit on target",
+        "row_id": "AF-AP-76",
+        "row_title": "unbounded lint fix loop"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 19: performing command on target",
+        "row_id": "AF-AP-92",
+        "row_title": "non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 20: performing brief on target",
+        "row_id": "AF-AP-1",
+        "row_title": "bare unshare --net is total isolation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 21: performing report on target",
+        "row_id": "AF-AP-4",
+        "row_title": "sandbox-probe-as-world venue classification"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/push_clean.sh",
+        "action_excerpt": "Line 22: performing edit on target",
+        "row_id": "AF-AP-12",
+        "row_title": "pre-init every finally local"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 23: performing command on target",
+        "row_id": "AF-AP-36",
+        "row_title": "pre-mint gate on reviewer mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 24: performing brief on target",
+        "row_id": "AF-AP-37",
+        "row_title": "pasted count never typed"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 25: performing report on target",
+        "row_id": "AF-AP-56",
+        "row_title": "attested inputs hash their tooling"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/lane_gate.sh",
+        "action_excerpt": "Line 26: performing edit on target",
+        "row_id": "AF-AP-67",
+        "row_title": "refusal line family missed by grep"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 27: performing command on target",
+        "row_id": "AF-AP-73",
+        "row_title": "pasted count carries its set"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 28: performing brief on target",
+        "row_id": "AF-AP-76",
+        "row_title": "unbounded lint fix loop"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 29: performing report on target",
+        "row_id": "AF-AP-92",
+        "row_title": "non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/pc_suite.sh",
+        "action_excerpt": "Line 30: performing edit on target",
+        "row_id": "AF-AP-1",
+        "row_title": "bare unshare --net is total isolation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 31: performing command on target",
+        "row_id": "AF-AP-4",
+        "row_title": "sandbox-probe-as-world venue classification"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 32: performing brief on target",
+        "row_id": "AF-AP-12",
+        "row_title": "pre-init every finally local"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 33: performing report on target",
+        "row_id": "AF-AP-36",
+        "row_title": "pre-mint gate on reviewer mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/push_clean.sh",
+        "action_excerpt": "Line 34: performing edit on target",
+        "row_id": "AF-AP-37",
+        "row_title": "pasted count never typed"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 35: performing command on target",
+        "row_id": "AF-AP-56",
+        "row_title": "attested inputs hash their tooling"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "brief",
+        "action_target": "tasks/briefs/pc/BUILD-lane.md",
+        "action_excerpt": "Line 36: performing brief on target",
+        "row_id": "AF-AP-67",
+        "row_title": "refusal line family missed by grep"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "report",
+        "action_target": "tasks/briefs/pc/VERIFY-report.md",
+        "action_excerpt": "Line 37: performing report on target",
+        "row_id": "AF-AP-73",
+        "row_title": "pasted count carries its set"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "edit",
+        "action_target": "scripts/lane_gate.sh",
+        "action_excerpt": "Line 38: performing edit on target",
+        "row_id": "AF-AP-76",
+        "row_title": "unbounded lint fix loop"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "ap.violates_row",
+      "state": {
+        "action_kind": "command",
+        "action_target": "git checkout -- .",
+        "action_excerpt": "Line 39: performing command on target",
+        "row_id": "AF-AP-92",
+        "row_title": "non-idempotent bridge mutation"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does this action violate the referenced anti-pattern registry row?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "verify-seam-first",
+        "expected": "The verify seam first rule requires execution before writing",
+        "observed": "Lane skipped the verify seam first step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "one-increment-code-test-commit",
+        "expected": "The one increment code test commit rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the one increment code test commit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "negative-control",
+        "expected": "The negative control rule requires execution before writing",
+        "observed": "Lane substituted the negative control step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "count-pasted",
+        "expected": "The count pasted rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the count pasted step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "timestamp-pasted",
+        "expected": "The timestamp pasted rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the timestamp pasted step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "commit-before-dispatch",
+        "expected": "The commit before dispatch rule requires verification of the claim",
+        "observed": "Lane skipped the commit before dispatch step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "impact-before-edit",
+        "expected": "The impact before edit rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the impact before edit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "premise-measured",
+        "expected": "The premise measured rule requires verification of the claim",
+        "observed": "Lane substituted the premise measured step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "report-lint-floor",
+        "expected": "The report lint floor rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the report lint floor step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "boundary-respected",
+        "expected": "The boundary respected rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the boundary respected step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "verify-seam-first",
+        "expected": "The verify seam first rule requires execution before writing",
+        "observed": "Lane skipped the verify seam first step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "one-increment-code-test-commit",
+        "expected": "The one increment code test commit rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the one increment code test commit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "negative-control",
+        "expected": "The negative control rule requires execution before writing",
+        "observed": "Lane substituted the negative control step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "count-pasted",
+        "expected": "The count pasted rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the count pasted step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "timestamp-pasted",
+        "expected": "The timestamp pasted rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the timestamp pasted step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "commit-before-dispatch",
+        "expected": "The commit before dispatch rule requires verification of the claim",
+        "observed": "Lane skipped the commit before dispatch step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "impact-before-edit",
+        "expected": "The impact before edit rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the impact before edit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "premise-measured",
+        "expected": "The premise measured rule requires verification of the claim",
+        "observed": "Lane substituted the premise measured step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "report-lint-floor",
+        "expected": "The report lint floor rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the report lint floor step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "boundary-respected",
+        "expected": "The boundary respected rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the boundary respected step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "verify-seam-first",
+        "expected": "The verify seam first rule requires execution before writing",
+        "observed": "Lane skipped the verify seam first step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "one-increment-code-test-commit",
+        "expected": "The one increment code test commit rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the one increment code test commit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "negative-control",
+        "expected": "The negative control rule requires execution before writing",
+        "observed": "Lane substituted the negative control step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "count-pasted",
+        "expected": "The count pasted rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the count pasted step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "timestamp-pasted",
+        "expected": "The timestamp pasted rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the timestamp pasted step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "commit-before-dispatch",
+        "expected": "The commit before dispatch rule requires verification of the claim",
+        "observed": "Lane skipped the commit before dispatch step",
+        "drift_kind": "skipped-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "impact-before-edit",
+        "expected": "The impact before edit rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the impact before edit step",
+        "drift_kind": "out-of-boundary"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "premise-measured",
+        "expected": "The premise measured rule requires verification of the claim",
+        "observed": "Lane substituted the premise measured step",
+        "drift_kind": "substituted-step"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "report-lint-floor",
+        "expected": "The report lint floor rule requires execution before writing",
+        "observed": "Lane claimed without evidence for the report lint floor step",
+        "drift_kind": "mirror-test"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    },
+    {
+      "question_type": "wf.drift",
+      "state": {
+        "step_id": "boundary-respected",
+        "expected": "The boundary respected rule requires verification of the claim",
+        "observed": "Lane claimed without evidence for the boundary respected step",
+        "drift_kind": "prose-claim"
+      },
+      "question": {
+        "type": "noul",
+        "instructions": "Does the observed behavior drift from the expected workflow step?"
+      },
+      "options": [
+        "false",
+        "true"
+      ]
+    }
+  ],
+  "version": "1.0.0",
+  "description": "J0 probe fixture set for FP32 latency and determinism measurement"
+}
