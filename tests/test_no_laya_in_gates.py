@@ -185,3 +185,162 @@ def test_precommit_wired():
     assert not re.search(r"SKIP_.*LAYA", content), (
         "pre-commit contains a SKIP variable for the laya screen"
     )
+
+
+# --- Helper: set up git env for throwaway repos ---
+
+def _git_env():
+    """Return an env dict suitable for git operations in throwaway repos."""
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = "test"
+    env["GIT_AUTHOR_EMAIL"] = "test@test"
+    env["GIT_COMMITTER_NAME"] = "test"
+    env["GIT_COMMITTER_EMAIL"] = "test@test"
+    return env
+
+
+def _init_repo(tmp_path, gate_files_txt, files, env):
+    """Create a fixture tree, git init, add all, commit."""
+    gf = tmp_path / "scripts" / "gate_files.txt"
+    gf.parent.mkdir(parents=True, exist_ok=True)
+    gf.write_text(gate_files_txt)
+    for path, content in files.items():
+        fp = tmp_path / path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content)
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True, env=env)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True, env=env)
+    subprocess.run(
+        ["git", "commit", "-m", "init", "--no-gpg-sign"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+
+# =========================================================================
+# B1/B2 regression tests (J1-0-R1)
+# =========================================================================
+
+
+def test_staged_renamed_gate_file_is_missing_not_clean(tmp_path):
+    """B1: git mv a listed file + plant laya -> rc 4 gate-file-missing, not rc 0."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "# clean\n",
+    }, env)
+
+    # Rename the listed file and plant the vocabulary in the new name
+    subprocess.run(
+        ["git", "mv", "scripts/report_lint.py", "scripts/report_lint_v2.py"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+    (tmp_path / "scripts" / "report_lint_v2.py").write_text("# laya token planted\n")
+    subprocess.run(
+        ["git", "add", "scripts/report_lint_v2.py"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, (
+        f"Expected exit 4 (gate-file-missing), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "gate-file-missing: scripts/report_lint.py" in r.stderr
+
+
+def test_staged_deleted_gate_file_is_missing(tmp_path):
+    """B1: git rm a listed file -> rc 4 gate-file-missing."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "# clean\n",
+    }, env)
+
+    subprocess.run(
+        ["git", "rm", "scripts/report_lint.py"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, (
+        f"Expected exit 4 (gate-file-missing), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "gate-file-missing: scripts/report_lint.py" in r.stderr
+
+
+def test_staged_allowlist_is_read_from_index(tmp_path):
+    """B2: unstaged deletion of allowlist line -> staged still reads the index's list."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "# clean\n",
+    }, env)
+
+    # Stage a violation in scripts/report_lint.py
+    (tmp_path / "scripts" / "report_lint.py").write_text("# laya token planted\n")
+    subprocess.run(
+        ["git", "add", "scripts/report_lint.py"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+    # Remove the report_lint.py line from the allowlist on disk (NOT staged)
+    (tmp_path / "scripts" / "gate_files.txt").write_text("scripts/hooks/pre-commit\n")
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 3, (
+        f"Expected exit 3 (violation from index allowlist), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "scripts/report_lint.py" in r.stdout
+
+
+def test_staged_allowlist_absent_from_index_refused(tmp_path):
+    """Allowlist absent from index (but present on disk) -> exit 64."""
+    env = _git_env()
+    hooks_dir = tmp_path / "scripts" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "pre-commit").write_text("#!/bin/bash\necho ok\n")
+
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True, env=env)
+    subprocess.run(
+        ["git", "add", "scripts/hooks/pre-commit"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init", "--no-gpg-sign"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+    # Create gate_files.txt on disk only (NOT in the index)
+    gf = tmp_path / "scripts" / "gate_files.txt"
+    gf.write_text("scripts/hooks/pre-commit\n")
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 64, (
+        f"Expected exit 64 (allowlist absent from index), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "gate-file-missing:" in r.stderr
+
+
+def test_scanned_count_equals_listed_count(tmp_path):
+    """A listed file absent from the index cannot be silently skipped (count < list length)."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "# clean\n",
+    }, env)
+
+    # Remove one file from the index only (keep it on disk and in the allowlist)
+    subprocess.run(
+        ["git", "rm", "--cached", "scripts/report_lint.py"],
+        cwd=tmp_path, capture_output=True, check=True, env=env,
+    )
+
+    r = _run(["--staged"], cwd=tmp_path)
+    # After fix: rc=4 (gate-file-missing). At the PIN: rc=0 with "1 files scanned, clean".
+    assert r.returncode != 0, (
+        f"Expected non-zero (missing file must not be silently skipped), got rc=0.\n"
+        f"stderr: {r.stderr}"
+    )

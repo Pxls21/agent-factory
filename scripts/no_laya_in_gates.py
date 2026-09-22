@@ -117,15 +117,20 @@ def _read_file(root, path):
 
 # ---------- Allowlist and completeness ----------
 
-def _load_allowlist(list_path):
-    """Load the gate-file allowlist, stripping comments and blanks."""
+def _parse_allowlist(text):
+    """Parse allowlist text, stripping comments and blanks."""
     entries = []
-    for line in list_path.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         entries.append(line)
     return entries
+
+
+def _load_allowlist(list_path):
+    """Load the gate-file allowlist from a file path."""
+    return _parse_allowlist(list_path.read_text())
 
 
 def _glob_structural(root):
@@ -154,6 +159,35 @@ def _glob_structural(root):
     return found
 
 
+def _glob_structural_staged():
+    """Walk the three structural patterns from the git index."""
+    found = set()
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "--cached", "--",
+             "scripts/hooks/*",
+             ".github/workflows/*.yml",
+             "proofs/*/check_*.py"],
+            capture_output=True, text=True, check=True,
+        )
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line:
+                found.add(line)
+    except subprocess.CalledProcessError:
+        pass
+    return found
+
+
+def _exists_staged(path):
+    """Check whether a path exists in the git index."""
+    r = subprocess.run(
+        ["git", "cat-file", "-e", ":%s" % path],
+        capture_output=True,
+    )
+    return r.returncode == 0
+
+
 # ---------- Main ----------
 
 def main():
@@ -180,17 +214,25 @@ def main():
     else:
         root = Path.cwd()
 
-    # Determine allowlist path
+    # Determine allowlist path and load entries
     if args.list is not None:
         list_path = Path(args.list)
+        if not list_path.exists():
+            print("gate-file-missing: %s" % list_path, file=sys.stderr)
+            return 64
+        entries = _load_allowlist(list_path)
+    elif args.staged:
+        allowlist_content = _read_staged("scripts/gate_files.txt")
+        if allowlist_content is None:
+            print("gate-file-missing: scripts/gate_files.txt", file=sys.stderr)
+            return 64
+        entries = _parse_allowlist(allowlist_content)
     else:
         list_path = root / "scripts" / "gate_files.txt"
-
-    if not list_path.exists():
-        print("gate-file-missing: %s" % list_path, file=sys.stderr)
-        return 64
-
-    entries = _load_allowlist(list_path)
+        if not list_path.exists():
+            print("gate-file-missing: %s" % list_path, file=sys.stderr)
+            return 64
+        entries = _load_allowlist(list_path)
 
     # Self-listing check
     for e in entries:
@@ -200,15 +242,21 @@ def main():
 
     # --- Completeness control ---
     completeness_errors = []
-    structural_matches = _glob_structural(root)
+    if args.staged:
+        structural_matches = _glob_structural_staged()
+    else:
+        structural_matches = _glob_structural(root)
     listed_set = set(entries)
     for path in sorted(structural_matches):
         if path not in listed_set:
             completeness_errors.append("gate-file-unlisted: %s" % path)
 
-    # Check listed paths exist (skip in staged mode: files may not be on disk)
-    if not args.staged:
-        for entry in entries:
+    # Check listed paths exist (index-backed in staged, disk-backed otherwise)
+    for entry in entries:
+        if args.staged:
+            if not _exists_staged(entry):
+                completeness_errors.append("gate-file-missing: %s" % entry)
+        else:
             fp = root / entry
             if not fp.exists():
                 completeness_errors.append("gate-file-missing: %s" % entry)
@@ -228,7 +276,8 @@ def main():
         else:
             content = _read_file(root, entry)
         if content is None:
-            continue
+            print("gate-file-unreadable: %s" % entry, file=sys.stderr)
+            return 4
         scanned += 1
         for lineno, line in enumerate(content.splitlines(), 1):
             for token in _check_line(line, is_py):
