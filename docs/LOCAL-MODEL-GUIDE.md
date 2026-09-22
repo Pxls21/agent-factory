@@ -19,8 +19,8 @@ to it. Consumers talk to `:20128` only.
 | OmniRoute endpoint | `http://127.0.0.1:20128/v1` (loopback on the PC) | `~/.omniroute-migrated` |
 | OmniRoute node | `qwen-local` (openai-compatible, → `127.0.0.1:8080`) | `harness-ports/bin/omniroute_local_builder.py` |
 | **Model id** | **`qwen-local/qwen3.8-27b-local`** | `<node prefix>/<served alias>`; listed in OmniRoute `/v1/models` |
-| Build combo | `agentfactory-build-local` (Qwen first, then the cloud chain) | the local-first combo |
-| Verify combo | `agentfactory-verify-local` (Qwen first, then the cloud chain) | the local-first combo |
+| Build combo | `agentfactory-build-local` — **HYBRID** (D-039): Qwen first, then the cloud chain, SILENTLY (measured 2026-09-22: 62 % of the completed build-combo turns in a 3-hour window ran on the cloud step; 43 % of local calls that day were chat-template 400s) | the local-first combo; per-lane provenance UNVERIFIED until T92 |
+| Verify combo | `agentfactory-verify-local` — **HYBRID** (D-039): Qwen first, then the cloud chain, SILENTLY (VERIFY-K1 2026-09-22: 49 of 86 completed turns on the cloud step) | the local-first combo; per-lane provenance UNVERIFIED until T92 |
 | Inference API key | `OMNIROUTE_API_KEY` in `~/.hermes/profiles/agentfactory/.env` | OmniRoute requires auth (task #34) |
 | Container | `qwen` systemd `--user` Quadlet (`deploy/qwen.container`, D-032) | digest-pinned in `upstream.lock.yaml` |
 | Fallback | llama.cpp `qwen-builder` unit — serves the SAME name/port, autostart disabled | D-027 (manual fallback) |
@@ -28,7 +28,7 @@ to it. Consumers talk to `:20128` only.
 **Model id vs combo — pick deliberately:**
 - **`qwen-local/qwen3.8-27b-local`** (the raw model): the request ALWAYS goes to local Qwen. If Qwen is down
   the request errors — visible, and **no silent cloud spend**. Use this for a *cheap local teammate/agent*.
-- **`agentfactory-build-local` / `agentfactory-verify-local`** (the combos): Qwen first, then a cloud
+- **`agentfactory-build-local` / `agentfactory-verify-local`** (the combos — HYBRID, D-039 2026-09-22): Qwen first, then a cloud
   fallback chain. Stays up if Qwen is down, but can **quietly** run up cloud quota. Use this only where
   resilience matters more than cost, and where a silent cloud substitution is acceptable.
 

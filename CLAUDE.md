@@ -287,8 +287,8 @@ build continues; the first pending increment is named in the ledger.
   (`session-start.sh`) and relevance-matched wiki excerpts on every prompt (`wiki-context.py`,
   UserPromptSubmit). Resume order: wiki live-state FIRST for orientation, then the three-clock
   reconcile for VERIFICATION — the wiki is a map, never a substitute for primary-source checks.
-  **Status: `wiki-init` has NOT run yet** (batch E of the setup port) — until `wiki/INDEX.md`
-  exists the ledger is the only continuity source and the wiki hooks are silent by design.
+  **Status: `wiki-init` ran 2026-09-03 (`wiki/INDEX.md` exists) and the hooks are live; `live-state.md` was re-synced
+  2026-09-22 after a week's gap (2026-09-16..21 are in the ledger only) — keep the per-turn delta honest, never narrative.**
 
 ## Environment & Tools (summary)
 
