@@ -34,6 +34,16 @@
 # `--config -` on STDIN — the one channel that is neither the process table nor
 # the filesystem.
 #   export PC_BRIDGE_URL=...   export PC_BRIDGE_TOKEN=...
+#
+# 2026-09-22 (T90): a FIRST launch of a lane is refused (rc 64) when the brief has no
+# MEASURED premise block. The block is a heading line matching
+# ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6 count),
+# then — anywhere later in the file — a fenced block (one line that is EXACTLY three
+# backticks opens it, the next such line closes it) holding at least TWO non-empty lines.
+# The gate proves the block EXISTS and is not empty; the coordinator's discipline supplies
+# the content. A RESUME (an already-launched lane, a live .lanes/<id>/lane.pid on the PC)
+# is exempt — a re-attach never re-measures. There is NO environment escape hatch for a
+# first launch; a legacy brief is amended, not waved through.
 # ---------------------------------------------------------------------------
 # bash reads a script LAZILY: an edit to this file while an instance runs corrupts that run at a byte offset (2026-09-08: the D5l
 # poller died with "syntax error near ')'" at line 123 after the FAILED-handling edit landed mid-poll, and exited 0 without
@@ -147,6 +157,38 @@ server_effort_for_role() { # role [HERMES_MODEL] [HERMES_REASONING] -> the serve
 }
 SERVER_EFFORT="${LANE_SERVER_EFFORT:-$(server_effort_for_role "${ROLE:-}" "${HERMES_MODEL:-}" "${HERMES_REASONING:-}")}"
 if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-<cloud route>}"; exit 0; fi
+
+# --- 0a. premise gate ---
+# _premise_block_ok <brief-file>
+#   0 = the brief carries a MEASURED premise block: a heading line matching
+#   ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6
+#   count), then — anywhere later in the file — a fenced block (one line that is
+#   EXACTLY three backticks opens it, the next such line closes it) holding at
+#   least TWO non-empty lines. 1 = no such block. The gate proves the block
+#   EXISTS and is not empty; the coordinator's discipline supplies the content.
+_premise_block_ok() {
+  awk '
+    BEGIN { s = 0; n = 0; ok = 0 }
+    s == 0 { if (tolower($0) ~ /^#{1,6} .*premise.*measured/) s = 1; next }
+    s == 1 { if ($0 == "```") { s = 2; n = 0 }; next }
+    s == 2 { if ($0 == "```") { if (n >= 2) { ok = 1; exit }; s = 1; next }
+             if (length($0) > 0) n++ }
+    END { exit ok ? 0 : 1 }
+  ' "$1"
+}
+# A FIRST launch of a lane is refused (rc 64) when its brief has no MEASURED premise
+# block. The exemption is measured on the PC, not assumed: one bridge probe for a present
+# .lanes/<id>/lane.pid. RESUME -> the gate is skipped (a re-attach never re-measures);
+# FIRST / empty / a bridge error -> the gate applies (fail closed — an unreachable
+# bridge never exempts). No environment escape hatch exists; a legacy brief is amended,
+# not waved through. The gate runs BEFORE the ship block, so a refusal never issues a
+# bridge write (AF-AP-79: the guard before the write).
+_premise_state="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && echo RESUME || echo FIRST" 2>/dev/null || true)"
+if [ "$_premise_state" = "RESUME" ]; then
+  echo "pc_lane: premise gate skipped — a resume of $LANE_ID" >&2
+elif ! _premise_block_ok "$BRIEF"; then
+  die "brief has no MEASURED premise block — add '## PREMISE — MEASURED at authoring (<date>, <clone>@<pin>)' + a fenced block pasting each premise command with its output (2026-09-22: three stale premises in one window); a resume of an already-launched lane is exempt"
+fi
 
 # --- 0. headroom admission check -----------------------------------------------
 if [ "${PC_LANE_SKIP_ADMIT:-0}" != 1 ]; then
