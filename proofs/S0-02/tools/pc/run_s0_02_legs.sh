@@ -17,8 +17,8 @@
 # times on 2026-09-04.
 set -euo pipefail
 
-DEST=${1:?usage: run_s0_02_legs.sh <evidence-root> [leg ...]}
-shift || true
+# Sourcing this file defines its helpers only. Argument parsing, the pin preflight,
+# evidence-root creation, and the leg loop are all in main().
 REPO=${S0_02_REPO:-/home/rocco/agent-factory}
 PINNED=${S0_02_PINNED:-/home/rocco/s0-01-pinned}
 SEC=$PINNED/.secrets
@@ -35,39 +35,13 @@ TURN_WAIT_S=${S0_02_TURN_WAIT_S:-100}
 POLL_S=5
 
 ALL_LEGS="pos-allowed neg-unauthorized neg-bad-signature neg-replayed neg-stale neg-self-authored neg-not-allowlisted revoked"
-LEGS=${*:-$ALL_LEGS}
-
-# F2: the membership receipt lives OUTSIDE $out so rm -rf "$out" does not wipe it.
-MEMBERSHIP=${S0_02_MEMBERSHIP:-$DEST/revoked-membership.json}
 
 say() { echo; echo "===== [S0-02] $* ====="; }
 
-# --- PREFLIGHT: the buzz-acp-decided legs need RUST_LOG=debug ----------------
-# neg-replayed, neg-self-authored and neg-not-allowlisted are decided INSIDE
-# buzz-acp and their only observables are tracing::debug! lines (relay.rs:2387,
-# lib.rs:3258, lib.rs:550). pc_launch.py builds a CLOSED env key set and refuses
-# any drift from the selected set (proofs/S0-01/pins.py, enforced at
-# pc_launch.py:271). The S0-02 set must pin both the RUST_LOG key and its debug
-# value; otherwise the three legs CANNOT be captured. Fail loud and name it.
-if ! grep -Eq '^PINNED_ENV_KEYS_S0_02 = .*\{"RUST_LOG"\}' "$PINS" ||
-   ! grep -Fqx 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' "$PINS"; then
-  cat >&2 <<'MSG'
-BLOCKER: pins.PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02
-(proofs/S0-01/pins.py) does not pin RUST_LOG=debug, and pc_launch.py refuses
-any env key set that differs from it. buzz-acp would run at INFO, where none
-of its three S0-02 observables is emitted:
-  relay.rs:2387  debug!("dropping duplicate event for channel {channel_id}")
-  lib.rs:3258    tracing::debug!(..., "dropping self-authored event")
-  lib.rs:550     debug!("inbound author gate — dropping event")
-NOT run: neg-replayed, neg-self-authored and neg-not-allowlisted need
-RUST_LOG=debug in the S0-02 launcher environment.
-MSG
-  exit 3
-fi
-
-mkdir -p "$DEST"
-
 launch_leg() {
+  # D3: a previous run owns only these three launcher markers. Preserve the
+  # framedir itself, which also carries the current leg's evidence.
+  rm -f "$FD/launch.ready" "$FD/buzz-acp.exit" "$FD/buzz-acp.pid"
   rm -f "$MARKERS/s0-02.launch.log"
   setsid /usr/bin/python3 "$LAUNCHER" --leg "$HOST_LEG" --model s0-01-pong \
     --env-set s0-02 \
@@ -102,7 +76,9 @@ stop_leg() {
 wait_turn_window() {
   local want=$1 deadline=$((SECONDS + TURN_WAIT_S)) n
   while [ "$SECONDS" -lt "$deadline" ]; do
-    n=$(grep -c '"method":"session/prompt"' "$FD/timeline.jsonl" 2>/dev/null || echo 0)
+    # grep -c emits 0 and returns 1 for a no-match file. Preserve its
+    # output, neutralize only that status, then supply 0 for an absent file.
+    n=$(grep -c '"method":"session/prompt"' "$FD/timeline.jsonl" 2>/dev/null || true); n=${n:-0}
     [ "$n" -ge "$want" ] && [ "$want" -gt 0 ] && return 0
     [ -f "$FD/buzz-acp.exit" ] && { echo "buzz-acp exited during the turn window" >&2; return 6; }
     sleep "$POLL_S"
@@ -110,16 +86,47 @@ wait_turn_window() {
   return 0
 }
 
+# The turn timeline exists before the process stops. It is the only artifact
+# collectable at this stage; the masked log is made by pc_post.sh after exit.
 collect_leg() {
   local out=$1
   mkdir -p "$out"
   cp "$FD/timeline.jsonl" "$out/timeline.jsonl"
-  # buzzacp.log is the MASKED log pc_launch.py writes; buzzacp.raw.log is never copied.
+}
+
+# The masked log is produced by the S0-01 post step (pc_post.sh:107), after the
+# process exit marker. Require both post conditions; never copy buzzacp.raw.log.
+collect_masked() {
+  local out=$1 deadline=$((SECONDS + TURN_WAIT_S))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ -f "$FD/buzz-acp.exit" ] && [ -f "$FD/buzzacp.log" ] && break
+    sleep "$POLL_S"
+  done
+  if [ ! -f "$FD/buzz-acp.exit" ] || [ ! -f "$FD/buzzacp.log" ]; then
+    echo "S0-02: post step incomplete (need buzz-acp.exit + buzzacp.log) in $FD" >&2
+    return 9
+  fi
+  # buzzacp.log is the MASKED log pc_post.sh writes; buzzacp.raw.log is never copied.
   cp "$FD/buzzacp.log" "$out/buzzacp.log"
   if grep -Eq '[0-9a-fA-F]{64}' "$out/buzzacp.log"; then
     echo "REFUSING to keep $out/buzzacp.log: unmasked 64-hex present" >&2
     rm -f "$out/buzzacp.log"; return 7
   fi
+}
+
+# D2: pc_post.sh is the authoritative masked-log producer. The runner invokes
+# it only after stop_leg; then collect_masked waits for BOTH post artifacts.
+post_leg() {
+  local deadline=$((SECONDS + TURN_WAIT_S))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    [ -f "$FD/buzz-acp.exit" ] && break
+    sleep "$POLL_S"
+  done
+  if [ ! -f "$FD/buzz-acp.exit" ]; then
+    echo "S0-02: buzz-acp did not write $FD/buzz-acp.exit before post" >&2
+    return 9
+  fi
+  FD="$FD" S0_01_REPO="$REPO" bash "$REPO/proofs/S0-01/tools/pc/pc_post.sh"
 }
 
 deliver() {  # deliver <fixture> <leg-dir> <role> [extra deliver_event.py args...]
@@ -133,6 +140,38 @@ role_for() {
   /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["signer"]["role"])' \
     "$REPO/proofs/S0-02/fixtures/$1.json"
 }
+
+main() {
+  DEST=${1:?usage: run_s0_02_legs.sh <evidence-root> [leg ...]}
+  shift || true
+  LEGS=${*:-$ALL_LEGS}
+  # F2: the membership receipt lives OUTSIDE $out so rm -rf "$out" does not wipe it.
+  MEMBERSHIP=${S0_02_MEMBERSHIP:-$DEST/revoked-membership.json}
+
+# --- PREFLIGHT: the buzz-acp-decided legs need RUST_LOG=debug ----------------
+# neg-replayed, neg-self-authored and neg-not-allowlisted are decided INSIDE
+# buzz-acp and their only observables are tracing::debug! lines (relay.rs:2387,
+# lib.rs:3258, lib.rs:550). pc_launch.py builds a CLOSED env key set and refuses
+# any drift from the selected set (proofs/S0-01/pins.py, enforced at
+# pc_launch.py:271). The S0-02 set must pin both the RUST_LOG key and its debug
+# value; otherwise the three legs CANNOT be captured. Fail loud and name it.
+if ! grep -Eq '^PINNED_ENV_KEYS_S0_02 = .*\{"RUST_LOG"\}' "$PINS" ||
+   ! grep -Fqx 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' "$PINS"; then
+  cat >&2 <<'MSG'
+BLOCKER: pins.PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02
+(proofs/S0-01/pins.py) does not pin RUST_LOG=debug, and pc_launch.py refuses
+any env key set that differs from it. buzz-acp would run at INFO, where none
+of its three S0-02 observables is emitted:
+  relay.rs:2387  debug!("dropping duplicate event for channel {channel_id}")
+  lib.rs:3258    tracing::debug!(..., "dropping self-authored event")
+  lib.rs:550     debug!("inbound author gate — dropping event")
+NOT run: neg-replayed, neg-self-authored and neg-not-allowlisted need
+RUST_LOG=debug in the S0-02 launcher environment.
+MSG
+  exit 3
+fi
+
+mkdir -p "$DEST"
 
 for leg in $LEGS; do
   say "$leg"
@@ -200,7 +239,15 @@ MSG
       ;;
   esac
   stop_leg
+  post_leg
+  collect_masked "$out"
 done
 
 say "captured into $DEST"
 find "$DEST" -type f | sort
+
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -68,6 +68,15 @@ def _load(name: str, path: Path):
 nv = _load("s0_01_nostr_verify", NOSTR_VERIFY)
 
 
+# D (B8, #15 row 1): 64 hex chars can still be outside the secp256k1
+# scalar range. nv.sign_event rejects zero / >= nv.n, but that consumer would
+# otherwise emit a raw ValueError traceback before any connection.
+SCALAR_REFUSE_TEXT = (
+    "BUZZ_PRIVATE_KEY is outside the secp256k1 scalar range "
+    "1..n-1 (n is the curve order, as nv.sign_event requires)"
+)
+
+
 def _privkey() -> str:
     """Resolve the role key ONCE (AP-1: the environment is not a config channel
     to be re-read on a decision path). The caller threads the value explicitly.
@@ -86,6 +95,10 @@ def _privkey() -> str:
             "BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex "
             "characters, as nv.sign_event requires)"
         )
+    # The scalar bound comes from nv (never retyped here); this guard refuses
+    # before any network action.
+    if int(key, 16) < 1 or int(key, 16) >= nv.n:
+        raise SystemExit(SCALAR_REFUSE_TEXT)
     return key
 
 

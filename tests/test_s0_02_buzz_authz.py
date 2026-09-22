@@ -1833,8 +1833,9 @@ def test_privkey_normalises_then_refuses_before_any_network_action():
 # against an OWNED 127.0.0.1 listener and count connections — a zero that can
 # become a one (item 3 is the positive control that makes the zero meaningful).
 
-# The refusal SystemExit text, verbatim from deliver_event.py:86-87 (D = the
-# production file; this string is the contract the CLI must keep emitting).
+# The shape-refusal SystemExit text, verbatim from deliver_event.py `_privkey`
+# (D = the production file; this string is the contract the CLI must keep
+# emitting).
 REFUSE_TEXT = (
     "BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex "
     "characters, as nv.sign_event requires)"
@@ -1842,6 +1843,10 @@ REFUSE_TEXT = (
 # The source names the exit: both refusals are `raise SystemExit(...)` with a
 # str payload, and Python exits 1 on a str SystemExit — D:80 and D:85.
 REFUSE_RC = 1
+B8_SCALAR_REFUSE_TEXT = (
+    "BUZZ_PRIVATE_KEY is outside the secp256k1 scalar range "
+    "1..n-1 (n is the curve order, as nv.sign_event requires)"
+)
 T0 = 1700000000
 
 
@@ -1902,6 +1907,9 @@ def _run_deliver_cli(tmp_path: Path, listener, env_extra=None):
     """Run the REAL deliver_event.py CLI in a subprocess with a closed
     environment (AF-AP-39: the key travels only via env, never argv)."""
     env = dict(env_extra or {})
+    for name in ("B8_MUTANT_D",):
+        if name in os.environ:
+            env[name] = os.environ[name]
     proc = subprocess.run(
         [
             sys.executable, str(DELIVER),
@@ -1989,3 +1997,441 @@ def test_cli_with_a_valid_key_reaches_the_owned_listener(tmp_path: Path):
         assert "Content-Type: application/json" in req
     finally:
         listener.stop()
+
+# --- B8: runner follow-up + issue #15 behavioural regressions ----------------
+# These tests use only scratch trees, throwaway keys, closed loopback ports, and
+# labelled launcher/post-step doubles. They never start the real launcher or
+# touch the pinned relay, harness, or secrets.
+
+B8_EMPTY_REFUSE_TEXT = (
+    "BUZZ_PRIVATE_KEY is not in the environment — source the role secret "
+    "file before calling (set -a; . <role>.env; set +a)"
+)
+
+
+def _b8_function_source(source: Path, name: str) -> str:
+    """Extract one shell function verbatim by balanced braces."""
+    lines = source.read_text().splitlines(keepends=True)
+    start = next(
+        i for i, line in enumerate(lines)
+        if re.match(rf"^{re.escape(name)}\(\) \{{\s*$", line)
+    )
+    depth = 0
+    for end in range(start, len(lines)):
+        code = lines[end].split("#", 1)[0]
+        depth += code.count("{") - code.count("}")
+        if end > start and depth == 0:
+            return "".join(lines[start:end + 1])
+    raise AssertionError(f"unterminated shell function {name}")
+
+
+def _b8_shell_function(
+    source: Path,
+    name: str,
+    body: str,
+    *,
+    env: dict[str, str],
+    timeout: int = 15,
+):
+    script = "set -euo pipefail\n" + _b8_function_source(source, name) + "\n" + body
+    return subprocess.run(
+        ["bash", "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _b8_runner_env(tmp_path: Path, launcher: Path | None = None) -> dict[str, str]:
+    frame = tmp_path / "frame"
+    frame.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "FD": str(frame),
+        "MARKERS": str(frame),
+        "S0_02_PINNED": str(tmp_path / "pinned"),
+        "HOST_LEG": "run-1",
+        "POLL_S": "0.05",
+        "TURN_WAIT_S": "1",
+    }
+    if launcher is not None:
+        env["LAUNCHER"] = str(launcher)
+    return env
+
+
+def _b8_write_launcher(path: Path, *, ready: bool) -> None:
+    """Create a labelled launcher double for sourced-function tests only."""
+    body = [
+        "#!/usr/bin/env python3",
+        "# B8 labelled launcher double: no service or network access.",
+        "from pathlib import Path",
+        "import os",
+        "frame = Path(os.environ['S0_02_PINNED']) / '.markers' / 'v2-run-1'",
+    ]
+    if ready:
+        body.append("frame.joinpath('launch.ready').write_text('ready\\n')")
+    else:
+        body.append("pass")
+    path.write_text("\n".join(body) + "\n")
+    path.chmod(0o755)
+
+
+def _b8_preflight_tree(
+    tmp_path: Path, pins_text: str
+) -> tuple[Path, Path, Path, dict[str, str]]:
+    repo = tmp_path / "repo"
+    pinned = tmp_path / "pinned"
+    pins = repo / "proofs" / "S0-01" / "pins.py"
+    pins.parent.mkdir(parents=True)
+    pins.write_text(pins_text)
+    fixtures = repo / "proofs" / "S0-02" / "fixtures"
+    fixtures.mkdir(parents=True)
+    (fixtures / "pos-allowed.json").write_text(
+        json.dumps({"signer": {"role": "owner"}}) + "\n"
+    )
+    deliver = repo / "proofs" / "S0-02" / "tools" / "pc" / "deliver_event.py"
+    deliver.parent.mkdir(parents=True)
+    deliver.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['B8_TRACE']).write_text(\n"
+        "    Path(os.environ['B8_TRACE']).read_text() + 'deliver'\n"
+        "    if Path(os.environ['B8_TRACE']).exists() else 'deliver'\n"
+        ")\n"
+        "raise SystemExit('B8_NAMED_DELIVER_REFUSAL: no key in scratch environment')\n"
+    )
+    deliver.chmod(0o755)
+    launcher = repo / "proofs" / "S0-01" / "tools" / "pc" / "pc_launch.py"
+    launcher.parent.mkdir(parents=True)
+    _b8_write_launcher(launcher, ready=True)
+    (pinned / ".markers" / "v2-run-1").mkdir(parents=True)
+    (pinned / ".secrets").mkdir(parents=True)
+    dest = tmp_path / "dest"
+    trace = tmp_path / "trace"
+    post = repo / "proofs" / "S0-01" / "tools" / "pc" / "pc_post.sh"
+    post.parent.mkdir(parents=True, exist_ok=True)
+    post.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'masked log\\n' > \"$FD/buzzacp.log\"\n"
+        "printf post >> \"$B8_POST_TRACE\"\n"
+    )
+    post.chmod(0o755)
+    env = {
+        **os.environ,
+        "B8_TRACE": str(trace),
+        "B8_POST_TRACE": str(trace),
+        "S0_02_REPO": str(repo),
+        "S0_02_PINNED": str(pinned),
+        "S0_02_RELAY_HTTP": "http://127.0.0.1:1",
+        "S0_02_TURN_WAIT_S": "0",
+    }
+    return dest, pinned, trace, env
+
+
+def test_wait_turn_window_handles_absent_zero_and_n_matches(tmp_path):
+    """D1: absent, zero-match, and N-match timelines yield numeric counts."""
+    env = _b8_runner_env(tmp_path)
+    frame = Path(env["FD"])
+    function = _b8_function_source(RUNNER, "wait_turn_window")
+    cases = (
+        ("absent", None, 0),
+        ("zero", '{"method":"session/update"}\n', 0),
+        (
+            "three",
+            ''.join('{"method":"session/prompt"}\n' for _ in range(3)),
+            3,
+        ),
+    )
+    for label, content, expected in cases:
+        timeline = frame / "timeline.jsonl"
+        timeline.unlink(missing_ok=True)
+        if content is not None:
+            timeline.write_text(content)
+        proc = subprocess.run(
+            ["bash", "-c", function + "\nwait_turn_window 0"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        # The exact value is established by the same count expression R uses.
+        count = subprocess.run(
+            ["bash", "-c", (
+                "n=$(grep -c '\"method\":\"session/prompt\"' \"$FD/timeline.jsonl\" "
+                "2>/dev/null || true); n=${n:-0}; printf '%s' \"$n\""
+            )],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert count.stdout == str(expected), (label, count.stdout, count.stderr)
+        assert proc.returncode == 0, (label, proc.stderr)
+        assert "integer expression expected" not in proc.stderr, (label, proc.stderr)
+        # The N-match arm also proves the function takes its immediate-success
+        # branch: a mutated fixed count of zero would exceed this subprocess
+        # timeout rather than return from the count condition.
+        if label == "three":
+            immediate = {**env, "TURN_WAIT_S": "5", "POLL_S": "1"}
+            hit = subprocess.run(
+                ["bash", "-c", function + "\nwait_turn_window 3"],
+                env=immediate,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            assert hit.returncode == 0, hit.stderr
+
+
+def test_collect_leg_succeeds_before_masked_log_exists(tmp_path):
+    """D2: turn-window collection copies timeline before the post-step log."""
+    env = _b8_runner_env(tmp_path)
+    frame = Path(env["FD"])
+    (frame / "timeline.jsonl").write_text('{"method":"session/update"}\n')
+    out = tmp_path / "out"
+    proc = _b8_shell_function(
+        RUNNER,
+        "collect_leg",
+        'collect_leg "$OUT"',
+        env={**env, "OUT": str(out)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (out / "timeline.jsonl").read_text() == '{"method":"session/update"}\n'
+    assert not (out / "buzzacp.log").exists()
+
+
+def test_collect_masked_waits_for_post_step_and_keeps_refusal(tmp_path):
+    """D2: post-stop collection waits for the real producer condition."""
+    env = _b8_runner_env(tmp_path)
+    env["TURN_WAIT_S"] = "2"
+    frame = Path(env["FD"])
+    out = tmp_path / "out"
+    out.mkdir()
+    producer = subprocess.Popen(
+        [sys.executable, "-c", (
+            "import pathlib,time; time.sleep(.2); "
+            f"p=pathlib.Path({str(frame)!r}); "
+            "p.joinpath('buzz-acp.exit').write_text('0\\n'); "
+            "p.joinpath('buzzacp.log').write_text('masked log\\n')"
+        )]
+    )
+    try:
+        proc = _b8_shell_function(
+            RUNNER,
+            "collect_masked",
+            'collect_masked "$OUT"',
+            env={**env, "OUT": str(out), "POLL_S": "0.05"},
+        )
+    finally:
+        producer.wait(timeout=5)
+    assert proc.returncode == 0, proc.stderr
+    assert (out / "buzzacp.log").read_text() == "masked log\n"
+
+    (frame / "buzzacp.log").write_text("0" * 64 + "\n")
+    refusal = _b8_shell_function(
+        RUNNER,
+        "collect_masked",
+        'collect_masked "$OUT"',
+        env={**env, "OUT": str(out), "POLL_S": "0.05"},
+    )
+    assert refusal.returncode == 7, refusal.stderr
+    assert "REFUSING to keep" in refusal.stderr
+    assert not (out / "buzzacp.log").exists()
+
+
+def test_post_leg_invokes_the_scratch_post_after_exit(tmp_path):
+    """D2: actual post_leg calls the post producer after the exit marker."""
+    env = _b8_runner_env(tmp_path)
+    frame = Path(env["FD"])
+    frame.joinpath("buzz-acp.exit").write_text("0\n")
+    repo = tmp_path / "post-repo"
+    post = repo / "proofs" / "S0-01" / "tools" / "pc" / "pc_post.sh"
+    post.parent.mkdir(parents=True)
+    trace = tmp_path / "post.trace"
+    observed_fd = tmp_path / "post.fd"
+    post.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s' \"$FD\" > \"$B8_POST_FD\"\n"
+        "printf post > \"$B8_POST_TRACE\"\n"
+        "printf 'masked log\\n' > \"$FD/buzzacp.log\"\n"
+    )
+    post.chmod(0o755)
+    proc = _b8_shell_function(
+        RUNNER,
+        "post_leg",
+        "post_leg",
+        env={
+            **env,
+            "REPO": str(repo),
+            "B8_POST_TRACE": str(trace),
+            "B8_POST_FD": str(observed_fd),
+        },
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert trace.read_text() == "post"
+    assert observed_fd.read_text() == str(frame)
+    assert (frame / "buzzacp.log").read_text() == "masked log\n"
+
+
+def test_main_orders_stop_post_and_masked_collection(tmp_path):
+    """D2: real R's main loop runs stop, post, then masked collection."""
+    exact = (
+        'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})\n'
+        'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}\n'
+    )
+    dest, _pinned, _trace, env = _b8_preflight_tree(tmp_path, exact)
+    order = tmp_path / "order"
+    script = """
+source "$R"
+launch_leg() { printf L >> "$B8_ORDER"; }
+deliver() { printf D >> "$B8_ORDER"; }
+role_for() { printf owner; }
+wait_turn_window() { printf W >> "$B8_ORDER"; }
+collect_leg() { printf C >> "$B8_ORDER"; }
+stop_leg() { printf S >> "$B8_ORDER"; }
+post_leg() { printf P >> "$B8_ORDER"; }
+collect_masked() { printf M >> "$B8_ORDER"; }
+main "$DEST" pos-allowed
+"""
+    proc = subprocess.run(
+        ["bash", "-c", script],
+        cwd=ROOT,
+        env={
+            **env,
+            "R": str(RUNNER),
+            "DEST": str(dest),
+            "B8_ORDER": str(order),
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert order.read_text() == "LDWCSPM"
+
+
+def test_launch_leg_removes_only_stale_owned_markers_before_launcher(tmp_path):
+    """D3: stale ready/exit/pid markers cannot satisfy a new launch."""
+    launcher = tmp_path / "never-ready.py"
+    _b8_write_launcher(launcher, ready=False)
+    env = _b8_runner_env(tmp_path, launcher)
+    frame = Path(env["FD"])
+    for name in ("launch.ready", "buzz-acp.exit", "buzz-acp.pid"):
+        (frame / name).write_text("stale\n")
+    survivor = frame / "must-survive"
+    survivor.write_text("owned evidence\n")
+    proc = _b8_shell_function(
+        RUNNER,
+        "launch_leg",
+        "launch_leg",
+        env=env,
+        timeout=5,
+    )
+    assert proc.returncode == 4, proc.stderr
+    for name in ("launch.ready", "buzz-acp.exit", "buzz-acp.pid"):
+        assert not (frame / name).exists(), name
+    assert survivor.read_text() == "owned evidence\n"
+
+
+def _b8_load_deliver(source: Path):
+    """Load a named scratch delivery source without executing its CLI entrypoint."""
+    return _load("s0_02_b8_deliver", source)
+
+
+def test_privkey_refuses_scalar_outside_range_before_signing(monkeypatch):
+    """#15 row 1: direct guard has named refusal for both scalar boundaries."""
+    for candidate in ("0" * 64, "f" * 64):
+        monkeypatch.setenv("BUZZ_PRIVATE_KEY", candidate)
+        with pytest.raises(SystemExit) as exc:
+            _b8_load_deliver(DELIVER)._privkey()
+        assert str(exc.value) == B8_SCALAR_REFUSE_TEXT
+
+
+def test_cli_normalises_padded_and_uppercase_keys_before_connecting(tmp_path):
+    """#15 row 2: CLI coverage kills a dropped .strip() or .lower()."""
+    key = _throwaway_secp256k1_key()
+    for label, candidate in (("padded", f"  {key}\n"), ("uppercase", key.upper())):
+        listener = _OwnedListener().start()
+        try:
+            proc = _run_deliver_cli(
+                tmp_path / label,
+                listener,
+                env_extra={"BUZZ_PRIVATE_KEY": candidate},
+            )
+        finally:
+            listener.stop()
+        assert proc.returncode == 0, proc.stderr.decode()
+        assert listener.count == 1
+
+
+def test_cli_refuses_empty_and_out_of_range_keys_before_connecting(tmp_path):
+    """#15 rows 1-2: named refusals replace the consumer traceback."""
+    for label, candidate, text in (
+        ("empty", " \t\n ", B8_EMPTY_REFUSE_TEXT),
+        ("zero", "0" * 64, B8_SCALAR_REFUSE_TEXT),
+        ("above-order", "f" * 64, B8_SCALAR_REFUSE_TEXT),
+    ):
+        listener = _OwnedListener().start()
+        try:
+            proc = _run_deliver_cli(
+                tmp_path / label,
+                listener,
+                env_extra={"BUZZ_PRIVATE_KEY": candidate},
+            )
+        finally:
+            listener.stop()
+        stderr = proc.stderr.decode("utf-8")
+        assert proc.returncode == 1, (label, stderr)
+        assert text in stderr, (label, stderr)
+        assert "Traceback" not in stderr, (label, stderr)
+        assert listener.count == 0, label
+
+
+def test_real_runner_rejects_commented_pin_before_creating_dest(tmp_path):
+    """#15 rows 3-4: exact-line preflight is behavioural and ordered."""
+    commented = (
+        'PINNED_ENV_KEYS_S0_02 = {"RUST_LOG"} # not the pinned expression\n'
+        'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"} # commented suffix\n'
+    )
+    dest, _pinned, _trace, env = _b8_preflight_tree(tmp_path, commented)
+    proc = subprocess.run(
+        ["bash", str(RUNNER), str(dest), "pos-allowed"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 3, proc.stderr
+    assert "BLOCKER: pins.PINNED_ENV_KEYS_S0_02" in proc.stderr
+    assert not dest.exists()
+
+
+def test_real_runner_passes_exact_pins_then_stops_at_labelled_deliver(tmp_path):
+    """#15 row 4 positive arm: preflight passes without a real launch."""
+    exact = (
+        'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})\n'
+        'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}\n'
+    )
+    dest, pinned, trace, env = _b8_preflight_tree(tmp_path, exact)
+    (pinned / ".secrets" / "owner.env").write_text(
+        "# B8 labelled empty secret; no real key material\n"
+    )
+    proc = subprocess.run(
+        ["bash", str(RUNNER), str(dest), "pos-allowed"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert dest.exists(), proc.stderr
+    assert (pinned / ".markers" / "v2-run-1" / "launch.ready").exists()
+    assert proc.returncode == 1, proc.stderr
+    assert "B8_NAMED_DELIVER_REFUSAL" in proc.stderr
+    assert trace.read_text() == "deliver"
+    assert not (dest / "pos-allowed" / "timeline.jsonl").exists()
