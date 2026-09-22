@@ -309,6 +309,13 @@ new killer test file, the harvest cherry-picked both, and the gate set stayed bl
 lane's `--check-anchors --tests` pre-flight said SCOPE_FAIL, which is the instrument working
 but one increment late. Harvest checklist line: `git diff` touching `scripts/mutants/*` ⇒ diff
 the mutant's killer list against the gate file before committing.
+**A lane's REGENERATED attested artifact never lands (2026-09-22, S4H):** a build lane whose boundary holds an
+attested input (AF-AP-56) re-runs the proof-runner on ITS host and ships `proofs/<id>/result.json` carrying that
+host's `env_fingerprint` (`sandbox:fedora` from the PC); the harvest applies the patch with `git apply
+--exclude=proofs/<id>/result.json`, and the coordinator regenerates on the venue the committed fingerprint names
+(`sandbox:vm` = this sandbox), then gates on `validate-ledger integrity` PRESENT + `ledger-gen` +
+`tests/test_proof_status.py` (a short `--basetemp`). The lane's report declares its regenerated artifact NOT for
+landing (S4H did); a harvest that lands a foreign-venue mint is a hollow attestation.
 **A lane's file inventory comes from GIT'S VIEW, never from a directory walk (2026-09-08, AF-AP-62):**
 compute the harvest/gate file list with `git ls-files --others --exclude-standard <lane dirs>` plus
 `git diff --name-only`; a count that disagrees with the lane's report is the tell. Lane B1's two
