@@ -55,6 +55,16 @@ subordinate to, the Anthropic docs.
    the run record's pytest argv — or the brief says "re-collect on the PIN". VERIFY-CK14's item 10 carried the ledger's
    `1556 passed, 9 xfailed` (an 18-file set) as the floor for a 13-file glob that collects 1354: a 215-test "drop" that was
    no drop, and a premise the lane had to bound.
+   **0d′ — EVERY premise is a MEASUREMENT pasted at authoring (2026-09-22; three stale premises in one window).** K1-c stopped
+   CONTRACT-INVALID on a symlink count the coordinator remembered (six links; the tree held one); B7’s "the old preflight exits 3"
+   was READ from the script, never RUN (the pin definitions already held the set — the grep range falsely succeeded); VERIFY-A5q’s
+   "the sweep touched only T" was two commits stale. The general form of 0d: a brief carries a `## PREMISE — MEASURED at authoring
+   (<date>, <clone>@<pin>)` heading + a fenced block that pastes each premise COMMAND with its OUTPUT (identities, hunks, counts
+   with their set ids, the lane’s line map from `grep -n`) — written from the run, never from memory or a report; the lane’s
+   item 1 re-measures and stops CONTRACT-INVALID on a mismatch; the dispatcher refuses a FIRST launch of a brief without the block
+   (task #90, `scripts/pc_lane.sh`; a resume of an already-launched lane is exempt). A premise that cannot be measured is written
+   as a QUESTION for the lane, never as a fact.
+
 
 0e. **A repair brief's premise is checked against ANCESTRY at dispatch, never against a verify
    report alone (2026-09-19, lane B4; audit 2026-09-21 B4-02).** A verify report describes the

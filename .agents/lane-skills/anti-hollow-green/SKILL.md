@@ -106,6 +106,12 @@ expansion.
    `[[ $killed -eq $EXPECTED ]]`, and give the driver a self-test (a copy with one row deleted must exit non-zero). A census or
    sweep named for a GENERAL property observes the whole population or names its subset (AF-AP-85: a framedir-only fd count
    read `CENSUS=0` while an inheritable pipe leaked through the same Popen).
+   **A resource-hygiene census wraps the PRODUCTION call, never the fixture’s own cleanup (AF-AP-110, 2026-09-22):** the review
+   binding’s test fixture killed its throwaway agents (`gpgconf --kill all`), which proved the TESTS clean up — while the production
+   `verify_review` left one orphan `gpg-agent --daemon` per call behind its deleted TemporaryDirectory, unobserved through 16 green
+   tests. The gate for "no process / fd / file / socket is left behind" is a before/after census around ONE production call with the
+   fixture’s cleanup disabled or absent; a fixture that tidies is a fixture, not evidence.
+
 4. **Ban hardcoded expected outputs.** The oracle is spec-authored, independent, un-importable by
    the thing it grades. **4a. DROP an inapplicable assertion, NEVER REWRITE it** (rewriting lets
    the graded artifact choose its own oracle value). Drop ONLY when: (a) change provably scoped,
