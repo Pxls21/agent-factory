@@ -50,14 +50,17 @@ bridge() {
   case "$1" in
     *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
     *'mkdir -p '*'.lanes/'*) echo shipped;;
-    *'.lanes/'*'kill -0 '*)
+    *'kill -0 '*)
       [ "${PC_LANE_TEST_PREMISE_ERROR:-0}" -eq 0 ] || return 5
       if [ "${PC_LANE_TEST_EVAL_PREMISE:-0}" -eq 1 ]; then
         if [ -n "${PC_LANE_TEST_LANE_PID:-}" ]; then
-          eval "readlink() { case \"\$*\" in *'/proc/$PC_LANE_TEST_LANE_PID/cwd'*) printf '%s\\n' \"${PC_LANE_TEST_AF_REPO:-/fake}/.lanes/brief-noblock.md--0000000/work\";; *) command readlink \"\$@\";; esac; }; $1"
+          premise_out="$(eval "readlink() { case \"\$*\" in *'/proc/$PC_LANE_TEST_LANE_PID/cwd'*) printf '%s\\n' \"${PC_LANE_TEST_AF_REPO:-/fake}/.lanes/brief-noblock.md--0000000/work\";; *) command readlink \"\$@\";; esac; }; $1")"; premise_rc=$?
         else
-          eval "$1"
+          premise_out="$(eval "$1")"; premise_rc=$?
         fi
+        [ -z "${PC_LANE_TEST_PREMISE_CAPTURE:-}" ] || printf '%s\n' "$premise_out" > "$PC_LANE_TEST_PREMISE_CAPTURE"
+        printf '%s\n' "$premise_out"
+        return "$premise_rc"
       else
         echo "${PC_LANE_TEST_RESUME:-FIRST}"
       fi;;
@@ -114,6 +117,17 @@ run_copy() { # run_copy <tmpdir> <brief> [ENV=VAL ...] --  (sets COPY_RC; no inh
   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
   : > "$BRIDGE_CALLS"
   env -u PC_LANE_SELF_COPY -u PC_BRIDGE_URL -u PC_BRIDGE_TOKEN PC_LANE_BRIDGE_FN="$BRIDGE_FN" PC_LANE_TEST_CALLS="$BRIDGE_CALLS" \
+    PC_AF_REPO=/fake TMPDIR="$tmpdir" "${envs[@]}" bash "${RUN_COPY_DISPATCHER:-$ROOT/scripts/pc_lane.sh}" "$brief" hermes code-implementer \
+    > "$TMP/out.txt" 2> "$TMP/err.txt"
+  COPY_RC=$?
+}
+run_inherited_copy() { # run_inherited_copy <self-copy-path> <tmpdir> <brief> [ENV=VAL ...] --
+  local self_copy="$1" tmpdir="$2" brief="$3"; shift 3
+  local envs=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  : > "$BRIDGE_CALLS"
+  env PC_LANE_SELF_COPY="$self_copy" PC_LANE_ORIG="$ROOT/scripts/pc_lane.sh" \
+    PC_BRIDGE_URL=http://unused PC_BRIDGE_TOKEN=unused PC_LANE_BRIDGE_FN="$BRIDGE_FN" PC_LANE_TEST_CALLS="$BRIDGE_CALLS" \
     PC_AF_REPO=/fake TMPDIR="$tmpdir" "${envs[@]}" bash "$ROOT/scripts/pc_lane.sh" "$brief" hermes code-implementer \
     > "$TMP/out.txt" 2> "$TMP/err.txt"
   COPY_RC=$?
@@ -147,6 +161,60 @@ run_copy "$TMP/copy-ok" "$TMP/missing-brief.md" PC_LANE_DEBUG_ENV=1 --
 check "a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set" $? \
   "rc=$COPY_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") bridge_calls=$(wc -l < "$BRIDGE_CALLS")"
 
+# T90-R2 self-copy negative controls. An inherited variable never proves that
+# this process is the private copy: only $0 equality does. The trap check runs a
+# scratch copy with a planted inherited-variable trap plus caller-path deletion;
+# the production $0 trap replaces that plant, removes the private copy, and
+# preserves the caller-owned path.
+mkdir -p "$TMP/copy-inherited"
+CALLER_SENTINEL="$TMP/caller-self-copy-sentinel"; : > "$CALLER_SENTINEL"
+run_inherited_copy "$CALLER_SENTINEL" "$TMP/copy-inherited" "$TMP/brief-noblock.md" PC_LANE_DEBUG_ENV=1 --
+PRIVATE_COPY="$(sed -n 's/^pc_lane: private copy active: //p' "$TMP/err.txt" | head -1)"
+[ "$COPY_RC" -eq 64 ] && [ -f "$CALLER_SENTINEL" ] \
+  && [[ "$PRIVATE_COPY" == "$TMP/copy-inherited/pc_lane.sh."?????? ]] \
+  && [ ! -e "$PRIVATE_COPY" ] \
+  && grep -Fq 'no MEASURED premise block' "$TMP/err.txt" \
+  && [ "$(grep -c 'kill -0' "$BRIDGE_CALLS")" -eq 1 ] && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
+check "an inherited PC_LANE_SELF_COPY does not skip the private copy or delete the caller sentinel" $? \
+  "rc=$COPY_RC private_copy=$PRIVATE_COPY private_copy_exists=$([ -e "$PRIVATE_COPY" ] && echo yes || echo no) sentinel_exists=$([ -f "$CALLER_SENTINEL" ] && echo yes || echo no) bridge_calls=$(wc -l < "$BRIDGE_CALLS")"
+
+TRAP_SENTINEL="$TMP/trap-self-copy-sentinel"; : > "$TRAP_SENTINEL"
+TRAP_ORIGINAL="$TMP/copy-inherited/pc_lane-trap-original.sh"
+TRAP_MUTANT="$TMP/copy-inherited/pc_lane-trap-mutant.sh"
+cp "$ROOT/scripts/pc_lane.sh" "$TRAP_ORIGINAL"
+python3 - "$ROOT/scripts/pc_lane.sh" "$TRAP_MUTANT" "$TRAP_SENTINEL" <<'PY'
+from pathlib import Path
+import sys
+source, mutant, sentinel = map(Path, sys.argv[1:])
+text = source.read_text()
+old = 'trap \'rm -f "$0"\' EXIT'
+new = f'trap \'rm -f "${{PC_LANE_SELF_COPY:-}}"; rm -f "{sentinel}"\' EXIT'
+if old in text:
+    text = text.replace(old, new, 1)
+mutant.write_text(text)
+PY
+RUN_COPY_DISPATCHER="$TRAP_ORIGINAL" run_copy "$TMP/copy-inherited" "$TMP/missing-brief.md" PC_LANE_DEBUG_ENV=1 --
+TRAP_PRIVATE_COPY="$(sed -n 's/^pc_lane: private copy active: //p' "$TMP/err.txt" | head -1)"
+TRAP_REASON=no
+[ -f "$TRAP_SENTINEL" ] || TRAP_REASON=other-path-deleted
+[[ "$TRAP_PRIVATE_COPY" == "$TMP/copy-inherited/pc_lane.sh."?????? ]] || TRAP_REASON=not-private-copy
+[ ! -e "$TRAP_PRIVATE_COPY" ] || TRAP_REASON=private-copy-left-behind
+grep -Fq 'pc_lane: brief not found:' "$TMP/err.txt" || TRAP_REASON=wrong-exit-path
+[ "$COPY_RC" -eq 64 ] || TRAP_REASON=wrong-rc
+if [ "$TRAP_REASON" = no ]; then
+  : > "$TRAP_SENTINEL"
+  RUN_COPY_DISPATCHER="$TRAP_MUTANT" run_copy "$TMP/copy-inherited" "$TMP/missing-brief.md" PC_LANE_DEBUG_ENV=1 --
+  TRAP_PRIVATE_COPY="$(sed -n 's/^pc_lane: private copy active: //p' "$TMP/err.txt" | head -1)"
+  [ -e "$TRAP_PRIVATE_COPY" ] && TRAP_REASON=mutant-private-copy-left-behind
+  [ ! -f "$TRAP_SENTINEL" ] && TRAP_REASON=mutant-other-path-deleted
+  grep -Fq 'pc_lane: brief not found:' "$TMP/err.txt" || TRAP_REASON=mutant-wrong-exit-path
+  [ "$COPY_RC" -eq 64 ] || TRAP_REASON=mutant-wrong-rc
+fi
+[ "$TRAP_REASON" = mutant-other-path-deleted ]
+check "the EXIT trap removes only its own private-copy path" $? \
+  "reason=$TRAP_REASON rc=$COPY_RC private_copy=$TRAP_PRIVATE_COPY private_copy_exists=$([ -e "$TRAP_PRIVATE_COPY" ] && echo yes || echo no) other_path_exists=$([ -f "$TRAP_SENTINEL" ] && echo yes || echo no)"
+rm -f "$TRAP_PRIVATE_COPY"
+
 PC_LANE_TEST_TERMINAL=applied run_dispatch; rc=$?
 [ "$rc" -eq 75 ] && grep -q 'restart-when-idle --max-wait 1800' "$BRIDGE_CALLS" && grep -q 'setsid env LANE_ID=' "$BRIDGE_CALLS" && grep -q 'server effort applied' "$TMP/err.txt"
 check "local mismatch waits for applied before launch" $? "rc=$rc calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
@@ -169,7 +237,7 @@ assert_first_refusal() {
   [ "$GATE_RC" -eq 64 ] && grep -q 'no MEASURED premise block' "$TMP/err.txt" \
     && ! grep -q 'mkdir -p' "$BRIDGE_CALLS" \
     && [ "$(grep -c 'kill -0' "$BRIDGE_CALLS")" -eq 1 ] \
-    && grep -q 'brief-noblock.md--0000000' "$BRIDGE_CALLS"
+    && grep -q 'base64 -d' "$BRIDGE_CALLS"
 }
 
 # A stale pidfile is evaluated by the fake bridge against a temp lane directory.
@@ -186,6 +254,52 @@ PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST
 assert_first_refusal
 check "a live pid from another lane is FIRST and refused with no ship write" $? \
   "rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
+
+# T90-R2 structural process binding. Every fixture pid comes from $! (the
+# pidfile-bound process), and cleanup kills only those recorded pids. The
+# sleeper keeps each supplied path as a literal argv token so NUL boundaries in
+# /proc/<pid>/cmdline are the independent oracle.
+PROBE_STATE="$TMP/premise-state"
+PROBE_SLEEPER="$TMP/premise-sleeper.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'while :; do sleep 1; done' > "$PROBE_SLEEPER"; chmod +x "$PROBE_SLEEPER"
+start_probe_process() { # start_probe_process <cwd> <argv-token> [argv-token...]
+  local cwd="$1"; shift
+  (cd "$cwd" && exec setsid bash "$PROBE_SLEEPER" "$@") & PROBE_PID=$!
+  FIXTURE_PIDS+=("$PROBE_PID")
+  sleep 0.1
+}
+
+# The sibling id has this lane id as a strict prefix. It was the motivating F1
+# false bind: substring matching says RESUME; cwd/token equality must say FIRST.
+PROBE_SIBLING="${PROBE_LANE}X"; mkdir -p "$PROBE_SIBLING"
+start_probe_process "$PROBE_SIBLING" "$PROBE_SIBLING"
+printf '%s\n' "$PROBE_PID" > "$PROBE_LANE/lane.pid"
+PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 PC_LANE_TEST_PREMISE_CAPTURE="$PROBE_STATE" --
+assert_first_refusal && [ "$(cat "$PROBE_STATE")" = FIRST ]
+check "a sibling suffix id is FIRST and refused with no ship write" $? \
+  "state=$(cat "$PROBE_STATE") rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") pid=$PROBE_PID"
+
+# A process may mention the lane only inside a longer argv token. That is not an
+# identity binding, even though the old substring pattern accepts it.
+PROBE_ELSEWHERE="$TMP/premise-elsewhere"
+PROBE_REPO_SPACED="$TMP/probe repo"; PROBE_LANE_SPACED="$PROBE_REPO_SPACED/.lanes/brief-noblock.md--0000000"
+mkdir -p "$PROBE_LANE_SPACED" "$PROBE_ELSEWHERE"
+start_probe_process "$PROBE_ELSEWHERE" "${PROBE_LANE}/mentioned-only"
+printf '%s\n' "$PROBE_PID" > "$PROBE_LANE/lane.pid"
+PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 PC_LANE_TEST_PREMISE_CAPTURE="$PROBE_STATE" --
+assert_first_refusal && [ "$(cat "$PROBE_STATE")" = FIRST ]
+check "an argv mention alone is FIRST and refused with no ship write" $? \
+  "state=$(cat "$PROBE_STATE") rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") pid=$PROBE_PID"
+
+# Positive control: one NUL-delimited argv element exactly equals the lane dir,
+# while cwd is elsewhere. Token equality alone must preserve RESUME.
+start_probe_process "$PROBE_ELSEWHERE" "$PROBE_LANE_SPACED"
+printf '%s\n' "$PROBE_PID" > "$PROBE_LANE_SPACED/lane.pid"; touch -d @1790000000 "$PROBE_LANE_SPACED/lane.pid"
+PC_LANE_TEST_AF_REPO="$PROBE_REPO_SPACED" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 PC_LANE_TEST_PREMISE_CAPTURE="$PROBE_STATE" --
+[ "$GATE_RC" -eq 75 ] && [ "$(cat "$PROBE_STATE")" = 'RESUME 1790000000' ] \
+  && grep -q 'premise gate skipped — a resume of' "$TMP/err.txt" && grep -q 'mkdir -p' "$BRIDGE_CALLS"
+check "an argv token equal to the lane dir is RESUME and ships" $? \
+  "state=$(cat "$PROBE_STATE") rc=$GATE_RC ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") pid=$PROBE_PID"
 
 # A live process with cwd inside this lane binds the pid to the lane. Set mtime to
 # the epoch fixture that also drives the re-attach mix-window assertion below.

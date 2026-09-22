@@ -49,8 +49,12 @@
 # bash reads a script LAZILY: an edit to this file while an instance runs corrupts that run at a byte offset (2026-09-08: the D5l
 # poller died with "syntax error near ')'" at line 123 after the FAILED-handling edit landed mid-poll, and exited 0 without
 # bringing the report home). Run from a private copy of these bytes; the file on disk may change underneath a live run.
-PC_LANE_SELF_COPY="${PC_LANE_SELF_COPY:-}"
-if [ -z "$PC_LANE_SELF_COPY" ]; then
+# An inherited PC_LANE_SELF_COPY is untrusted: only $0 naming our copy, paired with PC_LANE_ORIG,
+# proves that the exec completed. This also makes the EXIT trap safe to bind to $0 itself.
+if [ -n "${PC_LANE_SELF_COPY:-}" ] && [ "$0" = "$PC_LANE_SELF_COPY" ] && [ -n "${PC_LANE_ORIG:-}" ]; then
+  : # running from our own private copy
+else
+  unset PC_LANE_SELF_COPY PC_LANE_ORIG
   _copy_error="$(mktemp "${TMPDIR:-/tmp}/pc_lane.sh.XXXXXX" 2>&1)"
   _copy_rc=$?
   if [ "$_copy_rc" -eq 0 ]; then
@@ -71,7 +75,7 @@ if [ -z "$PC_LANE_SELF_COPY" ]; then
   exit 64
 fi
 [ "${PC_LANE_DEBUG_ENV:-0}" = 1 ] && printf 'pc_lane: private copy active: %s\n' "$PC_LANE_SELF_COPY" >&2
-trap 'rm -f "${PC_LANE_SELF_COPY:-}"' EXIT
+trap 'rm -f "$0"' EXIT
 set -uo pipefail
 
 die() { echo "pc_lane: $*" >&2; exit 64; }
@@ -198,11 +202,13 @@ _premise_block_ok() {
 }
 # A FIRST launch is refused (rc 64) when its brief has no MEASURED premise block.
 # One PC-side command reads and validates the lane pid, binds a live process to this
-# lane by cwd or cmdline, and returns the pidfile mtime as the original launch epoch.
+# lane by cwd containment or exact NUL-delimited argv token, and returns the
+# pidfile mtime as the original launch epoch. The base64 assignment preserves
+# spaces and shell metacharacters in the lane path before the PC-side checks run.
 # Any malformed/unreadable/stale/foreign pidfile or bridge failure is FIRST. The gate
 # runs BEFORE the ship block, so a refusal never issues a bridge write (AF-AP-79).
 _PREMISE_LANE_DIR="$PC_AF_REPO/.lanes/$LANE_ID"
-_premise_state="$(bridge "d=$_PREMISE_LANE_DIR; p=\$(cat \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$p\" in ''|*[!0-9]*) echo FIRST; exit 0;; esac; kill -0 \"\$p\" 2>/dev/null || { echo FIRST; exit 0; }; c=\$(readlink -f \"/proc/\$p/cwd\" 2>/dev/null || true); n=\$(tr '\\0' ' ' < \"/proc/\$p/cmdline\" 2>/dev/null || true); case \"\$c\" in \"\$d\"|\"\$d\"/*) b=1;; *) case \"\$n\" in *\"\$d\"*) b=1;; *) b=0;; esac;; esac; [ \"\$b\" = 1 ] || { echo FIRST; exit 0; }; e=\$(stat -c %Y \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$e\" in ''|*[!0-9]*) echo FIRST;; *) echo \"RESUME \$e\";; esac" 2>/dev/null || true)"
+_premise_state="$(printf '%s' "$_PREMISE_LANE_DIR" | base64 -w0 | { IFS= read -r _premise_lane_b64; bridge "d=\$(printf %s '$_premise_lane_b64' | base64 -d); p=\$(cat \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$p\" in ''|*[!0-9]*) echo FIRST; exit 0;; esac; kill -0 \"\$p\" 2>/dev/null || { echo FIRST; exit 0; }; c=\$(readlink -f \"/proc/\$p/cwd\" 2>/dev/null || true); case \"\$c\" in \"\$d\"|\"\$d\"/*) b=1;; *) b=0; while IFS= read -r -d '' t || [ -n \"\$t\" ]; do case \"\$t\" in \"\$d\"|\"\$d/brief.md\") b=1; break;; esac; done < \"/proc/\$p/cmdline\" 2>/dev/null;; esac; [ \"\$b\" = 1 ] || { echo FIRST; exit 0; }; e=\$(stat -c %Y \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$e\" in ''|*[!0-9]*) echo FIRST;; *) echo \"RESUME \$e\";; esac"; } 2>/dev/null || true)"
 case "$_premise_state" in
   RESUME\ [0-9]*)
     _launch_epoch="${_premise_state#RESUME }"
