@@ -5,8 +5,8 @@ remaining proofs. Spine-dependent feature work waits until the proof pack valida
 (Buzz → `buzz-acp` → Hermes → OmniRoute, memory composition, Fubuki seams, policy failure behaviour, gVisor compatibility).
 **Implementation:** branch `claude/soundbox-kit-migration-iz1jwf`. The proof machinery is built. The Wave 0 spikes are all
 positive. Ten of the twelve proofs are minted (three conformance-checked decisions, seven execution proofs — S0-01, S0-03, S0-04,
-S0-06, S0-07, S0-08, S0-11); two are ACCEPTED by the owner's GPG-signed tags: S0-11 (2026-09-04; its tag needs a re-sign after the
-2026-09-14 attested-input regeneration) and S0-01 (2026-09-22, after the v2.4 live capture of 2026-09-21, the golden made order-free
+S0-06, S0-07, S0-08, S0-11); two are ACCEPTED by the owner's GPG-signed tags: S0-11 (2026-09-04; re-signed 2026-09-22 on the
+regenerated result, so both anchors are current) and S0-01 (2026-09-22, after the v2.4 live capture of 2026-09-21, the golden made order-free
 for asynchronous session-metadata notifications (D-035) and two adversarial verify rounds — VERIFY-VB-F12 NOT-READY on one
 test-oracle blocker, repaired by G2, then VERIFY-G2 MERGE-READY-WITH-FOLLOWUPS, issue #10). Two execution proofs are absent:
 S0-02 (the eight-leg capture waits on the leg runner's S0-02 env-set selection, then the owner's one relay-membership command) and
@@ -70,7 +70,7 @@ a distillation and the ledger wins on any disagreement).
 | S0-08 gVisor containment | execution (unblocked by the runsc spike; the old `deferred` marker reads `expired`) | **MINTED 2026-09-18** (PRESENT in `proofs/ledger.json`; the verify-followups are GitHub issues) — history: spec, canaries, checker, marker gate and runner LANDED (lane G1); VERIFY-G1 NOT-READY — the canaries run as root and P6 skips its signature under the runtime user's capability set (a hollow green waiting to happen) → lane G2 LANDED (the canaries as uid 10000, P6 asserted in both branches with PID 1 = s6-svscan derived from the image's own init chain, one main-cmdline source, the identity bound to image + argv, 30/30 mutants; sandbox 197 ×2, PC 197 as uid 1000) → VERIFY-G2; the containment run on the PC after the verdict; nothing minted; round 2 (lane G2, 887f021) landed → VERIFY-G2 NOT-READY 2026-09-08 17:3xZ: a forged dangerous argv passes the token blocklist, the observer uid is typed not read back, a dirty pinned checkout is accepted, image identity is typed not measured; 7 of 42 mutants survived → round 3 LANDED 2026-09-14 12:0xZ (lane G3: the argv grammar closed, the observer uid read back, the image built from git archive of the pin with the provenance baked and measured, the count floor, the exact uid type; sandbox `145 passed` ×2) → VERIFY-G3 brief written 2026-09-14, dispatch pending a verify route; the live runsc leg NOT run; nothing minted |
 | S0-09 Foundry host decision | conformance-checked decision | DONE 2026-09-04 |
 | S0-10 GBrain seam decision | conformance-checked decision | DONE 2026-09-04 |
-| S0-11 evaluation hardening | execution + trust binding | ACCEPTED 2026-09-04 (owner process decision); ANCHORED 2026-09-08: the owner's GPG-signed tag `accepted/S0-11` verifies against the committed public key — the first owner-verifiable acceptance |
+| S0-11 evaluation hardening | execution + trust binding | ACCEPTED 2026-09-04 (owner process decision); ANCHORED 2026-09-08 and RE-SIGNED 2026-09-22 (`docs/governance/tags/accepted-S0-11.tag` on f1632e6, after the 2026-09-14 regeneration; `check-proof-status.py` clean): the owner's GPG-signed tag `accepted/S0-11` verifies against the committed public key — the first owner-verifiable acceptance |
 | S0-12 license / release policy + SBOM pin diff | conformance-checked decision | DONE 2026-09-04 |
 
 The S0-01 repair: the owner's review found five evidence mutations that the checker accepted. Since then each of the four
