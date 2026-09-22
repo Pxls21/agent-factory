@@ -430,3 +430,24 @@ def test_af_ap_80_flags_source_text_pins_and_spares_behavioral_asserts():
     assert not rx.search('    assert observed["stderr"] in expected')
     assert not rx.search('    assert fd_delta == 0')
     assert not rx.search('    assert "x" in received_lines')
+
+
+# ---- AF-AP-115 (AP_SCREEN): a trust-boundary executable resolved from the caller's PATH ----
+
+class TestAFAP115:
+    rx = _AP_BY_ID["AF-AP-115"]
+
+    def test_fires_on_shutil_which(self):
+        assert self.rx.search('    gpg = shutil.which("gpg")')
+
+    def test_fires_on_environ_get_path_forwarded(self):
+        assert self.rx.search('env = {"GNUPGHOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin")}')
+
+    def test_fires_on_environ_subscript_path(self):
+        assert self.rx.search("child_env['PATH'] = os.environ['PATH']")
+
+    def test_no_fire_on_fixed_path(self):
+        assert not self.rx.search('gpg = "/usr/bin/gpg"')
+
+    def test_no_fire_on_other_environ_key(self):
+        assert not self.rx.search('home = os.environ.get("HOME")')

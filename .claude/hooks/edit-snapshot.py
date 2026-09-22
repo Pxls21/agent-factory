@@ -168,6 +168,11 @@ AP_SCREEN = [
     # gpg-agent that OUTLIVES the deleted directory — one orphan daemon per production call (review.py:136 measured +1 per call).
     ("AF-AP-110", re.compile(r"""GNUPGHOME\s*=|["']GNUPGHOME["']\s*:"""),
      "an isolated gpg homedir (GNUPGHOME) — gpg auto-starts `gpg-agent --homedir <it> --daemon` and the agent OUTLIVES the deleted directory, one orphan per call; tear it down with `gpgconf --homedir <home> --kill all` BEFORE removing the directory (or `--no-autostart` on every call that needs no agent), gated by a before/after process census around ONE production call — never the test fixture's own kill (AF-AP-110)"),
+    # AF-AP-115 (2026-09-22, VERIFY-GOV2c-B F1): the executable a verifier TRUSTS resolved from the caller's PATH — a scratch
+    # `gpg` printing a shaped GOODSIG line made the real verify_review accept an unsigned record (review.py:114 / :136).
+    ("AF-AP-115", re.compile(r"""shutil\.which\(|os\.environ(?:\.get\(|\[)\s*["']PATH["']"""),
+     "a trust-boundary executable resolved from the caller's PATH (`shutil.which(...)` / `os.environ[\"PATH\"]` forwarded into the child) — whoever controls the environment supplies the verifier; resolve a FIXED absolute path list once and run the fake-PATH regression through the real consumer (AF-AP-115)"),
+
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its
