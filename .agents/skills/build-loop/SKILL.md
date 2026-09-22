@@ -150,6 +150,15 @@ RECOMMENDATION, never the final gate verdict.
    (every anchor validated unique BEFORE any write, all-or-nothing, rc 2 with the file untouched on a miss; built 2026-09-08 after
    the rule bit twice in one hour: a chained heredoc script whose first anchor was typed from memory, then a redo that died half-way
    on a fixed line index).**
+   **A GENERATED ARTIFACT FOLLOWS ITS INPUTS IN THE SAME INCREMENT (2026-09-22):** anything a tool generates
+   from files it hashes — the attested proof results (AF-AP-56), the vendored-tree manifest
+   (`sandbox-kit/VENDORED-MANIFEST.md`, which hashes `.claude/` and seven kit roots), the context mirrors —
+   is regenerated WITH ITS TOOL and committed beside the input change, never hand-edited; a `.claude/` skill
+   edit shipped without `python3 scripts/vendored_manifest.py --write` turned CI's ordinary suite red for four
+   pushes on that one row. The hooks now gate it (pre-commit on a staged root path, pre-push on the outgoing
+   range; the check is 0.35 s), but the discipline is the coordinator's: regenerate and paste the tool's PASS
+   line in the commit.
+
 3. **An unexpected test failure indicts YOUR assumption first — debugging ladder: telemetry →
    isolation → code.** Read the trace FIRST (a 10-line stage_event spy) — a well-instrumented
    failure NAMES the branch (`abstain_divergent_top` pointed straight at the P5.1 guard). Then
