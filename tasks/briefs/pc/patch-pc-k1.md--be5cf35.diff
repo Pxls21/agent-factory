@@ -1,0 +1,891 @@
+diff --git a/scripts/vendored_manifest.py b/scripts/vendored_manifest.py
+new file mode 100644
+index 0000000..a40c35d
+--- /dev/null
++++ b/scripts/vendored_manifest.py
+@@ -0,0 +1,559 @@
++#!/usr/bin/env python3
++"""Generate and check the repository's vendored-tree manifest."""
++
++from __future__ import annotations
++
++import argparse
++import datetime as dt
++import hashlib
++import os
++from pathlib import Path, PurePosixPath
++import re
++import subprocess
++import sys
++from typing import Iterable, NamedTuple
++
++MANIFEST_PATH = Path("sandbox-kit/VENDORED-MANIFEST.md")
++PROVENANCE_PATH = Path("sandbox-kit/VENDORED-FROM.md")
++LOCK_PATH = Path("upstream.lock.yaml")
++SBOM_PATH = Path("SBOM.yaml")
++EXCLUDED_DIRS = frozenset({".git", "__pycache__", "node_modules"})
++EXCLUDED_SUFFIXES = (".pyc",)
++GENERATED_AT_PREFIX = "Generated at (UTC): "
++
++
++class VendoredRoot(NamedTuple):
++    path: str
++    source: str
++    provenance_line: int
++    pin: str
++    pin_source: str
++    component: str | None = None
++
++
++# Frozen from sandbox-kit/VENDORED-FROM.md. Broad table destinations are
++# expanded only into the vendored trees named by their provenance lines.
++VENDORED_ROOTS = (
++    VendoredRoot(
++        ".claude/",
++        "pxls21/sandbox-kit:dot-claude/",
++        11,
++        "aeb3082",
++        "sandbox-kit/VENDORED-FROM.md:3-5",
++    ),
++    VendoredRoot(
++        "sandbox-kit/aleph/",
++        "https://github.com/Hmbown/aleph",
++        17,
++        "aeb3082",
++        "sandbox-kit/VENDORED-FROM.md:3-5 (kit snapshot)",
++    ),
++    VendoredRoot(
++        "sandbox-kit/codebase-memory-mcp/",
++        "github.com/bosun-ai/codebase-memory-mcp",
++        17,
++        "aeb3082",
++        "sandbox-kit/VENDORED-FROM.md:3-5 (kit snapshot)",
++    ),
++    VendoredRoot(
++        "sandbox-kit/council-of-high-intelligence/",
++        "https://github.com/0xNyk/council-of-high-intelligence",
++        17,
++        "aeb3082",
++        "sandbox-kit/VENDORED-FROM.md:3-5 (kit snapshot)",
++    ),
++    VendoredRoot(
++        "sandbox-kit/llm-wiki-compiler/",
++        "https://github.com/ussumant/llm-wiki-compiler",
++        17,
++        "0f734fd3fba7dbc6a3b58efb4fb5fbaf7ce7565d",
++        "sandbox-kit/llm-wiki-compiler/README.md:3-5",
++    ),
++    VendoredRoot(
++        "sandbox-kit/output-styles/",
++        "https://github.com/alexgreensh/attention-span",
++        17,
++        "unpinned (vendored copy)",
++        "sandbox-kit/output-styles/PROVENANCE.md:3-5",
++    ),
++    VendoredRoot(
++        "sandbox-kit/reference-scripts/",
++        "pxls21/sandbox-kit:scripts/",
++        15,
++        "aeb3082",
++        "sandbox-kit/VENDORED-FROM.md:3-5",
++    ),
++    VendoredRoot(
++        "sandbox-kit/honey-for-devs/",
++        "https://github.com/Green-PT/honey-for-devs",
++        19,
++        "unpinned (vendored copy)",
++        "sandbox-kit/VENDORED-FROM.md:19-21",
++    ),
++)
++
++
++class ManifestError(RuntimeError):
++    """A named, fail-closed manifest validation error."""
++
++
++class TreeRecord(NamedTuple):
++    path: str
++    source: str
++    pin: str
++    pin_source: str
++    license: str
++    license_file: str | None
++    license_sha256: str | None
++    file_count: int
++    tree_sha256: str
++
++
++def sha256_bytes(data: bytes) -> str:
++    return hashlib.sha256(data).hexdigest()
++
++
++def normalize_repo(value: str) -> str:
++    value = value.strip().removesuffix(".git").rstrip("/")
++    value = re.sub(r"^(?:https?://)?(?:www\.)?github\.com/", "github.com/", value)
++    return value.lower()
++
++
++def excluded(relative: PurePosixPath) -> bool:
++    return any(part in EXCLUDED_DIRS for part in relative.parts) or relative.name.endswith(
++        EXCLUDED_SUFFIXES
++    )
++
++
++def walk_tree(root: Path) -> list[tuple[str, bytes]]:
++    if not root.is_dir():
++        raise ManifestError(f"vendored root missing or not a directory: {root.as_posix()}")
++
++    records: list[tuple[str, bytes]] = []
++    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
++        directory_path = Path(directory)
++        kept_dirs: list[str] = []
++        for name in sorted(dirnames):
++            path = directory_path / name
++            relative = PurePosixPath(path.relative_to(root).as_posix())
++            if excluded(relative):
++                continue
++            if path.is_symlink():
++                records.append(symlink_record(root, path))
++            else:
++                kept_dirs.append(name)
++        dirnames[:] = kept_dirs
++
++        for name in sorted(filenames):
++            path = directory_path / name
++            relative = PurePosixPath(path.relative_to(root).as_posix())
++            if excluded(relative):
++                continue
++            if path.is_symlink():
++                records.append(symlink_record(root, path))
++            elif path.is_file():
++                records.append((relative.as_posix(), sha256_bytes(path.read_bytes()).encode()))
++
++    return sorted(records, key=lambda record: record[0].encode("utf-8"))
++
++
++def symlink_record(root: Path, path: Path) -> tuple[str, bytes]:
++    relative = path.relative_to(root).as_posix()
++    target = os.readlink(path)
++    resolved = (path.parent / target).resolve(strict=False)
++    root_resolved = root.resolve()
++    try:
++        resolved.relative_to(root_resolved)
++    except ValueError as error:
++        raise ManifestError(
++            f"escaping symlink refused in {root.as_posix()}: {relative} -> {target}"
++        ) from error
++    return relative, f"symlink:{target}".encode("utf-8")
++
++
++def digest_records(records: Iterable[tuple[str, bytes]]) -> str:
++    digest = hashlib.sha256()
++    for relative, payload in records:
++        digest.update(relative.encode("utf-8"))
++        digest.update(b"\0")
++        digest.update(payload)
++        digest.update(b"\n")
++    return digest.hexdigest()
++
++
++def detect_spdx(text: str) -> str:
++    normalized = " ".join(text.lower().split())
++    if re.search(r"spdx-license-identifier\s*:\s*mit\b", normalized):
++        return "MIT"
++    if re.search(r"spdx-license-identifier\s*:\s*apache-2\.0\b", normalized):
++        return "Apache-2.0"
++    if re.search(r"spdx-license-identifier\s*:\s*agpl-3\.0(?:-only)?\b", normalized):
++        return "AGPL-3.0"
++    if "creative commons zero v1.0 universal" in normalized:
++        return "CC0-1.0"
++    if "gnu affero general public license" in normalized:
++        return "AGPL-3.0"
++    if "apache license" in normalized and "version 2.0" in normalized:
++        return "Apache-2.0"
++    if "mit license" in normalized and "permission is hereby granted" in normalized:
++        return "MIT"
++    return "unknown"
++
++
++def license_for(root: Path, records: list[tuple[str, bytes]]) -> tuple[str, str | None, str | None]:
++    candidates = [
++        relative
++        for relative, _ in records
++        if len(PurePosixPath(relative).parts) == 1
++        and re.fullmatch(r"(?i)(?:license|copying|notice)(?:[._-].*)?", relative)
++    ]
++    if not candidates:
++        return "none found", None, None
++
++    for relative in sorted(candidates, key=lambda value: (not value.lower().startswith("license"), value)):
++        path = root / relative
++        data = path.read_bytes()
++        identifier = detect_spdx(data.decode("utf-8", errors="replace"))
++        if identifier != "unknown":
++            return identifier, relative, sha256_bytes(data)
++
++    relative = sorted(candidates)[0]
++    data = (root / relative).read_bytes()
++    return "unknown", relative, sha256_bytes(data)
++
++
++def markdown_cells(line: str) -> list[str]:
++    return [cell.strip() for cell in line.strip().strip("|").split("|")]
++
++
++def clean_code(cell: str) -> str:
++    return cell.strip().strip("`").strip()
++
++
++def parse_provenance(path: Path) -> tuple[set[str], dict[str, int]]:
++    if not path.is_file():
++        raise ManifestError(f"provenance file missing: {path.as_posix()}")
++    lines = path.read_text(encoding="utf-8").splitlines()
++    header = next(
++        (index for index, line in enumerate(lines) if markdown_cells(line)[:2] == ["Source (pxls21/sandbox-kit)", "Here"]),
++        None,
++    )
++    if header is None:
++        raise ManifestError("provenance table parse failure: Source/Here header not found")
++    if header + 1 >= len(lines) or not re.fullmatch(r"\|?[ :|-]+\|[ :|-]+\|[ :|-]+\|?", lines[header + 1]):
++        raise ManifestError("provenance table parse failure: malformed separator row")
++
++    destinations: set[str] = set()
++    roots: dict[str, int] = {}
++    row_count = 0
++    for offset, line in enumerate(lines[header + 2 :], start=header + 3):
++        if not line.startswith("|"):
++            break
++        cells = markdown_cells(line)
++        if len(cells) != 3 or not all(cells[:2]):
++            raise ManifestError(f"provenance table parse failure at line {offset}: expected 3 cells")
++        source, here, notes = cells
++        here = clean_code(here)
++        destinations.add(here)
++        row_count += 1
++
++        if here == ".claude/":
++            roots[here] = offset
++        elif here == "sandbox-kit/reference-scripts/setup-trading-system.sh":
++            roots["sandbox-kit/reference-scripts/"] = offset
++        elif here == "sandbox-kit/reference-scripts/":
++            roots[here] = offset
++        elif here == "sandbox-kit/":
++            source_notes = f"{source} {notes}"
++            named = set(
++                re.findall(
++                    r"`((?:aleph|codebase-memory-mcp|council-of-high-intelligence|llm-wiki-compiler)/)`",
++                    source_notes,
++                )
++            )
++            expected = {
++                "aleph/",
++                "codebase-memory-mcp/",
++                "council-of-high-intelligence/",
++                "llm-wiki-compiler/",
++            }
++            if named != expected or "output-styles" not in source_notes:
++                found = sorted(
++                    (*named, *(["output-styles/"] if "output-styles" in source_notes else []))
++                )
++                expected_all = sorted((*expected, "output-styles/"))
++                raise ManifestError(
++                    "provenance table parse failure at line "
++                    f"{offset}: sandbox-kit vendored roots were {found}, expected {expected_all}"
++                )
++            named.add("output-styles/")
++            roots.update({f"sandbox-kit/{name}": offset for name in named})
++        elif here not in {".mcp.json", "scripts/"} and not here.startswith("sandbox-kit/"):
++            raise ManifestError(f"provenance table parse failure at line {offset}: unknown Here value {here}")
++
++    if row_count == 0:
++        raise ManifestError("provenance table parse failure: no rows")
++
++    honey_line = next(
++        (
++            index
++            for index, line in enumerate(lines, start=1)
++            if line.startswith("**Added ") and "`sandbox-kit/honey-for-devs/`" in line
++        ),
++        None,
++    )
++    if honey_line is None:
++        raise ManifestError("provenance parse failure: sandbox-kit/honey-for-devs/ declaration missing")
++    roots["sandbox-kit/honey-for-devs/"] = honey_line
++    return destinations, roots
++
++
++def validate_declared_roots(root: Path) -> None:
++    _, provenance_roots = parse_provenance(root / PROVENANCE_PATH)
++    declared = {item.path: item.provenance_line for item in VENDORED_ROOTS}
++    missing = sorted(set(provenance_roots) - set(declared))
++    extra = sorted(set(declared) - set(provenance_roots))
++    wrong_lines = sorted(
++        path
++        for path in set(declared) & set(provenance_roots)
++        if declared[path] != provenance_roots[path]
++    )
++    if missing or extra or wrong_lines:
++        parts = []
++        if missing:
++            parts.append(f"roots missing from declared list: {', '.join(missing)}")
++        if extra:
++            parts.append(f"declared roots absent from provenance: {', '.join(extra)}")
++        if wrong_lines:
++            parts.append(f"declared provenance lines drifted: {', '.join(wrong_lines)}")
++        raise ManifestError("vendored-root declaration mismatch: " + "; ".join(parts))
++
++
++def parse_lock(path: Path) -> dict[str, tuple[str, str]]:
++    if not path.is_file():
++        raise ManifestError(f"upstream lock missing: {path.as_posix()}")
++    section = ""
++    component = ""
++    entries: dict[str, dict[str, str]] = {}
++    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
++        if not line.strip() or line.lstrip().startswith("#"):
++            continue
++        if not line.startswith(" ") and line.endswith(":"):
++            section = line[:-1]
++            component = ""
++            continue
++        match = re.fullmatch(r"  ([a-z0-9][a-z0-9-]*):", line)
++        if match:
++            component = match.group(1)
++            entries.setdefault(component, {})["key"] = f"{section}.{component}"
++            continue
++        match = re.fullmatch(r"    (repository|commit|binary_sha256|asset_sha256):\s*(.+)", line)
++        if match and component:
++            entries[component][match.group(1)] = match.group(2).strip().strip('"')
++        elif line.startswith("    ") and ":" not in line:
++            raise ManifestError(f"upstream lock parse failure at line {line_number}")
++
++    parsed: dict[str, tuple[str, str]] = {}
++    for name, values in entries.items():
++        pin = values.get("commit") or values.get("binary_sha256") or values.get("asset_sha256")
++        repository = values.get("repository")
++        if repository and pin:
++            parsed[normalize_repo(repository)] = (pin, values["key"])
++    return parsed
++
++
++def parse_sbom(path: Path) -> dict[str, tuple[str, str]]:
++    if not path.is_file():
++        raise ManifestError(f"SBOM missing: {path.as_posix()}")
++    current: dict[str, str] = {}
++    entries: dict[str, tuple[str, str]] = {}
++
++    def finish() -> None:
++        repository = current.get("repository")
++        pin = current.get("commit") or current.get("digest")
++        if repository and pin:
++            entries[normalize_repo(repository)] = (pin, current.get("name", "unnamed"))
++
++    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
++        match = re.fullmatch(r"\s*- name:\s*(\S+)\s*", line)
++        if match:
++            finish()
++            current = {"name": match.group(1)}
++            continue
++        match = re.fullmatch(r"\s+(repository|commit|digest):\s*(\S+)\s*", line)
++        if match and current:
++            current[match.group(1)] = match.group(2).strip('"')
++        elif line.lstrip().startswith("-") and current and "name:" not in line:
++            raise ManifestError(f"SBOM parse failure at line {line_number}")
++    finish()
++    return entries
++
++
++def validate_pin_agreement(root: Path) -> None:
++    locked = parse_lock(root / LOCK_PATH)
++    sbom = parse_sbom(root / SBOM_PATH)
++    for repository in sorted(set(locked) & set(sbom)):
++        lock_pin, lock_key = locked[repository]
++        sbom_pin, sbom_name = sbom[repository]
++        if lock_pin != sbom_pin:
++            raise ManifestError(
++                f"pin disagreement for {repository}: upstream.lock.yaml {lock_key}={lock_pin}, "
++                f"SBOM.yaml {sbom_name}={sbom_pin}"
++            )
++
++    for item in VENDORED_ROOTS:
++        repository = normalize_repo(item.source)
++        if repository not in locked:
++            continue
++        lock_pin, lock_key = locked[repository]
++        if item.pin != lock_pin or item.pin_source != f"upstream.lock.yaml:{lock_key}":
++            raise ManifestError(
++                f"manifest pin disagreement for {item.path}: declared {item.pin} ({item.pin_source}), "
++                f"lock has {lock_pin} (upstream.lock.yaml:{lock_key})"
++            )
++        if repository in sbom and sbom[repository][0] != item.pin:
++            raise ManifestError(
++                f"manifest/SBOM pin disagreement for {item.path}: {item.pin} != {sbom[repository][0]}"
++            )
++
++
++def git_revision(root: Path) -> str:
++    try:
++        return subprocess.run(
++            ["git", "rev-parse", "HEAD"],
++            cwd=root,
++            check=True,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.DEVNULL,
++            text=True,
++        ).stdout.strip()
++    except (OSError, subprocess.CalledProcessError):
++        return "unknown"
++
++
++def build_records(root: Path) -> list[TreeRecord]:
++    records: list[TreeRecord] = []
++    for item in VENDORED_ROOTS:
++        tree_root = root / item.path
++        files = walk_tree(tree_root)
++        license_id, license_file, license_sha = license_for(tree_root, files)
++        records.append(
++            TreeRecord(
++                path=item.path,
++                source=item.source,
++                pin=item.pin,
++                pin_source=item.pin_source,
++                license=license_id,
++                license_file=license_file,
++                license_sha256=license_sha,
++                file_count=len(files),
++                tree_sha256=digest_records(files),
++            )
++        )
++    return records
++
++
++def escape_cell(value: str) -> str:
++    return value.replace("|", "\\|")
++
++
++def render(root: Path, generated_at: str | None = None) -> str:
++    validate_declared_roots(root)
++    validate_pin_agreement(root)
++    generated_at = generated_at or dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
++    rows = build_records(root)
++    output = [
++        "# Vendored-tree manifest",
++        "",
++        "Generated by: `scripts/vendored_manifest.py`",
++        f"Generated from commit: `{git_revision(root)}`",
++        f"{GENERATED_AT_PREFIX}{generated_at}",
++        "Excluded from every tree walk: `.git`, `__pycache__`, `*.pyc`, `node_modules`.",
++        "Regenerate with `python3 scripts/vendored_manifest.py --write`; `--check` is the drift gate.",
++        "",
++        "A pin source names the evidence for the pin. `unpinned (vendored copy)` is explicit where no immutable upstream pin is recorded.",
++        "License SHA-256 is over the tree-local license file bytes; `none found` is never inferred from another source.",
++        "",
++        "| Path | Upstream source | Pin | Pin source | License | License file SHA-256 | Regular files + symlinks | Tree SHA-256 |",
++        "|---|---|---|---|---|---|---:|---|",
++    ]
++    for record in rows:
++        license_cell = record.license
++        license_sha_cell = "none found"
++        if record.license_file and record.license_sha256:
++            license_cell = f"{record.license} (`{record.license_file}`)"
++            license_sha_cell = f"`{record.license_sha256}`"
++        output.append(
++            "| "
++            + " | ".join(
++                [
++                    f"`{record.path}`",
++                    escape_cell(record.source),
++                    f"`{record.pin}`",
++                    escape_cell(record.pin_source),
++                    license_cell,
++                    license_sha_cell,
++                    str(record.file_count),
++                    f"`{record.tree_sha256}`",
++                ]
++            )
++            + " |"
++        )
++    output.append("")
++    return "\n".join(output)
++
++
++def normalize_generated_time(text: str) -> str:
++    return re.sub(
++        rf"(?m)^{re.escape(GENERATED_AT_PREFIX)}.*$",
++        GENERATED_AT_PREFIX + "<ignored by drift comparison>",
++        text,
++    )
++
++
++def first_difference(expected: str, actual: str) -> str:
++    expected_lines = expected.splitlines()
++    actual_lines = actual.splitlines()
++    limit = max(len(expected_lines), len(actual_lines))
++    for index in range(limit):
++        left = expected_lines[index] if index < len(expected_lines) else "<missing>"
++        right = actual_lines[index] if index < len(actual_lines) else "<missing>"
++        if left != right:
++            return f"line {index + 1}: committed={left!r}; generated={right!r}"
++    return "byte length differs"
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--root", type=Path, default=Path("."))
++    mode = parser.add_mutually_exclusive_group(required=True)
++    mode.add_argument("--write", action="store_true")
++    mode.add_argument("--check", action="store_true")
++    args = parser.parse_args(argv)
++    root = args.root.resolve()
++
++    try:
++        generated = render(root)
++        manifest = root / MANIFEST_PATH
++        if args.write:
++            manifest.write_text(generated, encoding="utf-8")
++            print(f"WROTE {MANIFEST_PATH.as_posix()} ({len(VENDORED_ROOTS)} roots)")
++            return 0
++        if not manifest.is_file():
++            raise ManifestError(f"committed manifest missing: {MANIFEST_PATH.as_posix()}")
++        committed = manifest.read_text(encoding="utf-8")
++        expected = normalize_generated_time(committed)
++        actual = normalize_generated_time(generated)
++        if expected != actual:
++            raise ManifestError(
++                f"vendored manifest drift: {first_difference(expected, actual)}"
++            )
++        print(f"PASS: {MANIFEST_PATH.as_posix()} matches {len(VENDORED_ROOTS)} vendored roots")
++        return 0
++    except (ManifestError, OSError, UnicodeError) as error:
++        print(f"FAIL: {error}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tests/test_vendored_manifest.py b/tests/test_vendored_manifest.py
+new file mode 100644
+index 0000000..9503768
+--- /dev/null
++++ b/tests/test_vendored_manifest.py
+@@ -0,0 +1,320 @@
++from __future__ import annotations
++
++import dataclasses
++import hashlib
++import importlib.util
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++
++import pytest
++
++REPO = Path(__file__).resolve().parents[1]
++SCRIPT = REPO / "scripts" / "vendored_manifest.py"
++MANIFEST = Path("sandbox-kit/VENDORED-MANIFEST.md")
++
++
++def load_module(path: Path = SCRIPT):
++    spec = importlib.util.spec_from_file_location("vendored_manifest_under_test", path)
++    assert spec and spec.loader
++    module = importlib.util.module_from_spec(spec)
++    sys.modules[spec.name] = module
++    spec.loader.exec_module(module)
++    return module
++
++
++def copy_fixture(tmp_path: Path, module=None) -> Path:
++    module = module or load_module()
++    root = tmp_path / "repo"
++    (root / "scripts").mkdir(parents=True)
++    shutil.copy2(SCRIPT, root / "scripts" / SCRIPT.name)
++    for relative in (module.PROVENANCE_PATH, module.LOCK_PATH, module.SBOM_PATH, module.MANIFEST_PATH):
++        source = REPO / relative
++        if source.exists():
++            destination = root / relative
++            destination.parent.mkdir(parents=True, exist_ok=True)
++            shutil.copy2(source, destination)
++    for item in module.VENDORED_ROOTS:
++        source = REPO / item.path
++        destination = root / item.path
++        shutil.copytree(source, destination, symlinks=True)
++    return root
++
++
++def run_tool(root: Path, mode: str = "--check") -> subprocess.CompletedProcess[str]:
++    return subprocess.run(
++        [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), mode],
++        check=False,
++        text=True,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        timeout=180,
++    )
++
++
++def install_module(root: Path, module) -> None:
++    destination = root / "scripts" / SCRIPT.name
++    source = Path(module.__file__)
++    if source.resolve() != destination.resolve():
++        shutil.copy2(source, destination)
++
++
++def test_committed_manifest_matches_fresh_generation(tmp_path: Path) -> None:
++    root = copy_fixture(tmp_path)
++    result = run_tool(root)
++    assert result.returncode == 0, result.stderr
++    assert result.stdout == "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 8 vendored roots\n"
++
++
++def test_changed_vendored_byte_names_root_and_returns_one(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    changed_root = root / module.VENDORED_ROOTS[0].path
++    changed_file = next(path for path in sorted(changed_root.rglob("*")) if path.is_file())
++    changed_file.write_bytes(changed_file.read_bytes() + b"changed-byte\n")
++
++    result = run_tool(root)
++
++    assert result.returncode == 1
++    assert "vendored manifest drift" in result.stderr
++    assert module.VENDORED_ROOTS[0].path in result.stderr
++
++
++def test_provenance_root_missing_from_declared_list_is_named(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    missing = "sandbox-kit/output-styles/"
++    setattr(
++        module,
++        "VENDORED_ROOTS",
++        tuple(item for item in module.VENDORED_ROOTS if item.path != missing),
++    )
++    install_module(root, module)
++
++    result = run_tool(root)
++
++    assert result.returncode == 1
++    assert "roots missing from declared list" in result.stderr
++    assert missing in result.stderr
++
++
++def test_escaping_symlink_is_refused_by_root_and_link_name(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    tree = root / module.VENDORED_ROOTS[0].path
++    link = tree / "escape-link"
++    link.symlink_to("../../outside")
++
++    result = run_tool(root)
++
++    assert result.returncode == 1
++    assert "escaping symlink refused" in result.stderr
++    assert module.VENDORED_ROOTS[0].path.rstrip("/") in result.stderr
++    assert "escape-link -> ../../outside" in result.stderr
++
++
++def test_license_detection_reports_spdx_and_sha_or_none(tmp_path: Path) -> None:
++    module = load_module()
++    licensed = tmp_path / "licensed"
++    licensed.mkdir()
++    license_bytes = b"MIT License\n\nPermission is hereby granted, free of charge\n"
++    (licensed / "LICENSE").write_bytes(license_bytes)
++    files = module.walk_tree(licensed)
++
++    assert module.license_for(licensed, files) == (
++        "MIT",
++        "LICENSE",
++        hashlib.sha256(license_bytes).hexdigest(),
++    )
++
++    unlicensed = tmp_path / "unlicensed"
++    unlicensed.mkdir()
++    (unlicensed / "README.md").write_text("no license here\n", encoding="utf-8")
++    assert module.license_for(unlicensed, module.walk_tree(unlicensed)) == (
++        "none found",
++        None,
++        None,
++    )
++
++
++def test_generation_is_byte_identical_except_documented_timestamp(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    first = module.render(root, generated_at="2026-09-08T00:00:00Z")
++    second = module.render(root, generated_at="2026-09-08T23:59:59Z")
++
++    assert first != second
++    assert module.normalize_generated_time(first) == module.normalize_generated_time(second)
++    differing_lines = [
++        left
++        for left, right in zip(first.splitlines(), second.splitlines(), strict=True)
++        if left != right
++    ]
++    assert differing_lines == ["Generated at (UTC): 2026-09-08T00:00:00Z"]
++
++
++def test_walk_is_sorted_before_digest(tmp_path: Path) -> None:
++    module = load_module()
++    tree = tmp_path / "tree"
++    tree.mkdir()
++    for name in ("z.txt", "a.txt", "middle.txt"):
++        (tree / name).write_text(name, encoding="utf-8")
++    records = module.walk_tree(tree)
++
++    assert [path for path, _ in records] == ["a.txt", "middle.txt", "z.txt"]
++    assert module.digest_records(records) != module.digest_records(list(reversed(records)))
++
++
++def test_exclusions_do_not_affect_tree_record(tmp_path: Path) -> None:
++    module = load_module()
++    tree = tmp_path / "tree"
++    tree.mkdir()
++    (tree / "kept.txt").write_text("kept", encoding="utf-8")
++    baseline = module.walk_tree(tree)
++    excluded_files = (
++        tree / ".git" / "config",
++        tree / "__pycache__" / "cached.py",
++        tree / "cached.pyc",
++        tree / "node_modules" / "module.js",
++    )
++    for path in excluded_files:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text("excluded mutation", encoding="utf-8")
++
++    assert module.walk_tree(tree) == baseline
++    assert [path for path, _ in baseline] == ["kept.txt"]
++
++
++def test_sbom_pin_disagreement_is_named(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    lock = root / module.LOCK_PATH
++    sbom = root / module.SBOM_PATH
++    lock.write_text(
++        "selected_core:\n"
++        "  example:\n"
++        "    repository: https://github.com/example/component.git\n"
++        "    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
++        encoding="utf-8",
++    )
++    sbom.write_text(
++        "components:\n"
++        "  - name: example\n"
++        "    repository: https://github.com/example/component.git\n"
++        "    commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
++        encoding="utf-8",
++    )
++
++    result = run_tool(root)
++
++    assert result.returncode == 1
++    assert "pin disagreement for github.com/example/component" in result.stderr
++    assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in result.stderr
++    assert "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in result.stderr
++
++
++def test_manifest_root_matching_lock_must_use_lock_pin(tmp_path: Path) -> None:
++    module = load_module()
++    root = copy_fixture(tmp_path, module)
++    first = module.VENDORED_ROOTS[0]
++    repository = "https://github.com/example/vendored.git"
++    setattr(
++        module,
++        "VENDORED_ROOTS",
++        (
++            first._replace(source=repository, pin="wrong", pin_source="invented"),
++            *module.VENDORED_ROOTS[1:],
++        ),
++    )
++    (root / module.LOCK_PATH).write_text(
++        "selected_core:\n"
++        "  vendored:\n"
++        f"    repository: {repository}\n"
++        "    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
++        encoding="utf-8",
++    )
++    (root / module.SBOM_PATH).write_text(
++        "components:\n"
++        "  - name: vendored\n"
++        f"    repository: {repository}\n"
++        "    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
++        encoding="utf-8",
++    )
++    install_module(root, module)
++
++    result = run_tool(root)
++
++    assert result.returncode == 1
++    assert f"manifest pin disagreement for {first.path}" in result.stderr
++    assert "upstream.lock.yaml:selected_core.vendored" in result.stderr
++
++
++@pytest.mark.parametrize(
++    ("mutant_name", "mutate", "killer"),
++    [
++        (
++            "unsorted-tree-digest",
++            lambda text: text.replace(
++                'return sorted(records, key=lambda record: record[0].encode("utf-8"))',
++                "return records",
++            ),
++            "test_walk_is_sorted_before_digest",
++        ),
++        (
++            "empty-exclusions",
++            lambda text: text.replace(
++                'EXCLUDED_DIRS = frozenset({".git", "__pycache__", "node_modules"})',
++                "EXCLUDED_DIRS = frozenset()",
++            ).replace('EXCLUDED_SUFFIXES = (".pyc",)', "EXCLUDED_SUFFIXES = ()"),
++            "test_exclusions_do_not_affect_tree_record",
++        ),
++        (
++            "remove-sbom-agreement",
++            lambda text: text.replace("    validate_pin_agreement(root)\n", ""),
++            "test_sbom_pin_disagreement_is_named",
++        ),
++        (
++            "remove-symlink-refusal",
++            lambda text: text.replace(
++                "        raise ManifestError(\n"
++                "            f\"escaping symlink refused in {root.as_posix()}: {relative} -> {target}\"\n"
++                "        ) from error",
++                "        pass",
++            ),
++            "test_escaping_symlink_is_refused_by_root_and_link_name",
++        ),
++    ],
++)
++def test_required_mutants_are_killed(
++    tmp_path: Path,
++    mutant_name: str,
++    mutate,
++    killer: str,
++) -> None:
++    text = SCRIPT.read_text(encoding="utf-8")
++    mutated = mutate(text)
++    assert mutated != text, f"{mutant_name} mutation did not apply"
++    mutant_script = tmp_path / "scripts" / SCRIPT.name
++    mutant_script.parent.mkdir(parents=True)
++    mutant_script.write_text(mutated, encoding="utf-8")
++    test_copy = tmp_path / "test_vendored_manifest.py"
++    test_copy.write_text(Path(__file__).read_text(encoding="utf-8"), encoding="utf-8")
++    environment = os.environ.copy()
++    environment["PYTHONPATH"] = str(tmp_path)
++
++    result = subprocess.run(
++        [sys.executable, "-m", "pytest", "-q", str(test_copy), "-k", killer],
++        cwd=tmp_path,
++        env=environment,
++        check=False,
++        text=True,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.STDOUT,
++        timeout=240,
++    )
++
++    assert f"scripts/{SCRIPT.name}" in str(mutant_script.relative_to(tmp_path))
++    assert result.returncode == 1, f"{mutant_name} survived:\n{result.stdout}"
++    assert "1 failed" in result.stdout
