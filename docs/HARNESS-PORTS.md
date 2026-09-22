@@ -680,3 +680,20 @@ export HERMES_BIN="hermes"                    # or full path
 | `.codex/config.toml` | ~3 KB |
 | `AGENTS.md` | 32,428 B on 2026-09-15 (budget 32,768 B; 340 B headroom — the GitNexus stats line churns a few bytes) |
 | `.hermes.md` | 43,291 chars / 43,766 B on 2026-09-15 (cap 48,000 chars; `context_file_max_chars: 60000` pinned) |
+
+## 12. Lane runtime pin
+
+The PC build/verify lanes run Hermes at commit `b3399c1` (v0.21.1, python 3.11.15, SQLite
+3.53.1) — recorded in `upstream.lock.yaml` as `lane_runtime.hermes-agent-lane-runtime`
+(D-043, D-048 item 3).
+
+**What this pin covers:** every `scripts/pc_lane.sh` dispatch on the PC, where
+`~/.local/bin/hermes` resolves to the `~/.hermes/hermes-agent/venv/bin/hermes` install at that
+commit.
+
+**What this pin does NOT cover:** the S0-01 proof runtime, which remains the audited
+`selected_core.hermes-agent` at `527da60` (v0.21.0) under `/home/rocco/s0-01-pinned/`. The
+two runtimes are independent — the lane pin does not move the proof pin.
+
+**Drift check (REPIN-b, pending):** `scripts/pc_lane.sh` will read the pinned commit from
+`upstream.lock.yaml` at launch and refuse (rc 64) when the PC's installed HEAD differs.

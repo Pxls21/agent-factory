@@ -158,3 +158,16 @@ local_model_server:
     role: keeper_local_model_server_behind_omniroute
     replaces: "the llama.cpp qwen-builder unit (D-027), retained as the manual fallback (autostart disabled 2026-09-16)"
     adopted: "2026-09-16 (owner; D-032); provenance docs/research/findings/VLLM-MIGRATION.md"
+
+# Lane runtime pin — the Hermes that runs PC build/verify lanes (D-043 -> D-048 item 3).
+# NOT the S0-01 proof runtime (selected_core.hermes-agent @ 527da60, untouched).
+lane_runtime:
+  hermes-agent-lane-runtime:
+    commit: b3399c139624a0081d70397741a5b45f60fbe1f4
+    version: "0.21.1"
+    python: "3.11.15"
+    sqlite: "3.53.1"
+    role: "lane-runtime (scripts/pc_lane.sh -> hermes on the PC); NOT the S0-01 proof runtime"
+    reason: "SQLite >= 3.51.3 for WAL on the shared profile state.db (VERIFY-B5j); owner-run hermes update 2026-09-08"
+    diff_from_proof_pin: "31816 commits, 3939 files"
+    verified: "harness-ports/tests/run-all.sh (sandbox) + 43 PC-lane HOME/LANDED notes since 2026-09-08 14:2xZ"
