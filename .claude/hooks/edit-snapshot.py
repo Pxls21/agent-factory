@@ -164,6 +164,10 @@ AP_SCREEN = [
     # receipt's `accepted`; VERIFY-G2 F5 the observer uid coerced by int()).
     ("AF-AP-72", re.compile(r"""\b(?:bool|int|float)\(\s*\w+(?:\[[^\]\n]+\]|\.get\([^)\n]*\))\s*\)"""),
      "an upstream field COERCED (bool()/int()/float() of a subscript or .get()) — the string \"false\" becomes True; accept only the declared type (`type(v) is bool`) and name the malformed shape in the receipt/error (AF-AP-72)"),
+    # AF-AP-110 (2026-09-22, VERIFY-GOV2c authoring): an isolated gpg homedir (a TemporaryDirectory as GNUPGHOME) auto-starts a
+    # gpg-agent that OUTLIVES the deleted directory — one orphan daemon per production call (review.py:136 measured +1 per call).
+    ("AF-AP-110", re.compile(r"""GNUPGHOME\s*=|["']GNUPGHOME["']\s*:"""),
+     "an isolated gpg homedir (GNUPGHOME) — gpg auto-starts `gpg-agent --homedir <it> --daemon` and the agent OUTLIVES the deleted directory, one orphan per call; tear it down with `gpgconf --homedir <home> --kill all` BEFORE removing the directory (or `--no-autostart` on every call that needs no agent), gated by a before/after process census around ONE production call — never the test fixture's own kill (AF-AP-110)"),
 ]
 
 # V6 (2026-09-02). Test files skip AP_SCREEN (production-only), so AP-66 gets its
