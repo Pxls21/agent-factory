@@ -39,7 +39,8 @@
 # MEASURED premise block. The block is a heading line matching
 # ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6 count),
 # then — anywhere later in the file — a fenced block (one line that is EXACTLY three
-# backticks opens it, the next such line closes it) holding at least TWO non-empty lines.
+# backticks opens it, the next such line closes it) holding at least TWO lines
+# containing a non-space character.
 # The gate proves the block EXISTS and is not empty; the coordinator's discipline supplies
 # the content. A RESUME (an already-launched lane, a live .lanes/<id>/lane.pid on the PC)
 # is exempt — a re-attach never re-measures. There is NO environment escape hatch for a
@@ -48,10 +49,29 @@
 # bash reads a script LAZILY: an edit to this file while an instance runs corrupts that run at a byte offset (2026-09-08: the D5l
 # poller died with "syntax error near ')'" at line 123 after the FAILED-handling edit landed mid-poll, and exited 0 without
 # bringing the report home). Run from a private copy of these bytes; the file on disk may change underneath a live run.
-if [ -z "${PC_LANE_SELF_COPY:-}" ]; then
-  _self="$(mktemp "${TMPDIR:-/tmp}/pc_lane.sh.XXXXXX")" && cp "$0" "$_self" && PC_LANE_SELF_COPY="$_self" PC_LANE_ORIG="$0" exec bash "$_self" "$@"
+PC_LANE_SELF_COPY="${PC_LANE_SELF_COPY:-}"
+if [ -z "$PC_LANE_SELF_COPY" ]; then
+  _copy_error="$(mktemp "${TMPDIR:-/tmp}/pc_lane.sh.XXXXXX" 2>&1)"
+  _copy_rc=$?
+  if [ "$_copy_rc" -eq 0 ]; then
+    _self="$_copy_error"
+    _copy_error="$(cp "$0" "$_self" 2>&1)"
+    _copy_rc=$?
+  fi
+  if [ "$_copy_rc" -ne 0 ]; then
+    [ -z "${_self:-}" ] || rm -f "$_self"
+    _copy_error="${_copy_error//$'\n'/; }"
+    printf 'pc_lane: refusing to run from the lazily-read original — private copy failed (mktemp/cp): %s\n' "${_copy_error:-unknown error}" >&2
+    exit 64
+  fi
+  PC_LANE_SELF_COPY="$_self" PC_LANE_ORIG="$0" exec bash "$_self" "$@"
+  _copy_rc=$?
+  rm -f "$_self"
+  printf 'pc_lane: refusing to run from the lazily-read original — private copy failed (mktemp/cp): exec rc=%s\n' "$_copy_rc" >&2
+  exit 64
 fi
-trap 'rm -f "$PC_LANE_SELF_COPY"' EXIT
+[ "${PC_LANE_DEBUG_ENV:-0}" = 1 ] && printf 'pc_lane: private copy active: %s\n' "$PC_LANE_SELF_COPY" >&2
+trap 'rm -f "${PC_LANE_SELF_COPY:-}"' EXIT
 set -uo pipefail
 
 die() { echo "pc_lane: $*" >&2; exit 64; }
@@ -164,27 +184,33 @@ if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-
 #   ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6
 #   count), then — anywhere later in the file — a fenced block (one line that is
 #   EXACTLY three backticks opens it, the next such line closes it) holding at
-#   least TWO non-empty lines. 1 = no such block. The gate proves the block
-#   EXISTS and is not empty; the coordinator's discipline supplies the content.
+#   least TWO lines containing a non-space character. 1 = no such block. The gate
+#   proves the block EXISTS and is not empty; the coordinator supplies the content.
 _premise_block_ok() {
   awk '
     BEGIN { s = 0; n = 0; ok = 0 }
     s == 0 { if (tolower($0) ~ /^#{1,6} .*premise.*measured/) s = 1; next }
     s == 1 { if ($0 == "```") { s = 2; n = 0 }; next }
     s == 2 { if ($0 == "```") { if (n >= 2) { ok = 1; exit }; s = 1; next }
-             if (length($0) > 0) n++ }
+             if ($0 ~ /[^[:space:]]/) n++ }
     END { exit ok ? 0 : 1 }
   ' "$1"
 }
-# A FIRST launch of a lane is refused (rc 64) when its brief has no MEASURED premise
-# block. The exemption is measured on the PC, not assumed: one bridge probe for a present
-# .lanes/<id>/lane.pid. RESUME -> the gate is skipped (a re-attach never re-measures);
-# FIRST / empty / a bridge error -> the gate applies (fail closed — an unreachable
-# bridge never exempts). No environment escape hatch exists; a legacy brief is amended,
-# not waved through. The gate runs BEFORE the ship block, so a refusal never issues a
-# bridge write (AF-AP-79: the guard before the write).
-_premise_state="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && echo RESUME || echo FIRST" 2>/dev/null || true)"
-if [ "$_premise_state" = "RESUME" ]; then
+# A FIRST launch is refused (rc 64) when its brief has no MEASURED premise block.
+# One PC-side command reads and validates the lane pid, binds a live process to this
+# lane by cwd or cmdline, and returns the pidfile mtime as the original launch epoch.
+# Any malformed/unreadable/stale/foreign pidfile or bridge failure is FIRST. The gate
+# runs BEFORE the ship block, so a refusal never issues a bridge write (AF-AP-79).
+_PREMISE_LANE_DIR="$PC_AF_REPO/.lanes/$LANE_ID"
+_premise_state="$(bridge "d=$_PREMISE_LANE_DIR; p=\$(cat \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$p\" in ''|*[!0-9]*) echo FIRST; exit 0;; esac; kill -0 \"\$p\" 2>/dev/null || { echo FIRST; exit 0; }; c=\$(readlink -f \"/proc/\$p/cwd\" 2>/dev/null || true); n=\$(tr '\\0' ' ' < \"/proc/\$p/cmdline\" 2>/dev/null || true); case \"\$c\" in \"\$d\"|\"\$d\"/*) b=1;; *) case \"\$n\" in *\"\$d\"*) b=1;; *) b=0;; esac;; esac; [ \"\$b\" = 1 ] || { echo FIRST; exit 0; }; e=\$(stat -c %Y \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$e\" in ''|*[!0-9]*) echo FIRST;; *) echo \"RESUME \$e\";; esac" 2>/dev/null || true)"
+case "$_premise_state" in
+  RESUME\ [0-9]*)
+    _launch_epoch="${_premise_state#RESUME }"
+    case "$_launch_epoch" in *[!0-9]*) _launch_epoch="";; esac
+    ;;
+  *) _launch_epoch="";;
+esac
+if [ -n "$_launch_epoch" ]; then
   echo "pc_lane: premise gate skipped — a resume of $LANE_ID" >&2
 elif ! _premise_block_ok "$BRIEF"; then
   die "brief has no MEASURED premise block — add '## PREMISE — MEASURED at authoring (<date>, <clone>@<pin>)' + a fenced block pasting each premise command with its output (2026-09-22: three stale premises in one window); a resume of an already-launched lane is exempt"
@@ -314,9 +340,14 @@ FWD=""
 for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
 done
-LAUNCH_AT="$(date -u +%FT%TZ)"
-# Lane correlation does not exist in call_logs today. A tag whose first row is within one minute of launch is only
-# a candidate for the lane; tags already active at launch and later-starting tags are competing conversations.
+if [ -n "$_launch_epoch" ]; then
+  LAUNCH_AT="$(date -u -d "@$_launch_epoch" +%FT%TZ 2>/dev/null || true)"
+  [ -n "$LAUNCH_AT" ] || die "live lane has an invalid launch epoch: $_launch_epoch"
+else
+  LAUNCH_AT="$(date -u +%FT%TZ)"
+fi
+# Lane correlation does not exist in call_logs today. The result is therefore a
+# combo-window aggregate; the launch time only bounds the read, never attributes rows.
 MIX_CAVEAT="$(date -u -d "$LAUNCH_AT + 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
 LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID$FWD \
   bash harness-ports/bin/pc-lane.sh $REMOTE_BRIEF $HARNESS ${ROLE:-} \
@@ -478,9 +509,9 @@ SQL
     MIX_TAGS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{printf "%s%s(%s-%s,n=%s)", (n++?" ":""), $2, $3, $4, $5}')"
     MIX_TAG_COUNT="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{n++} END{print n+0}')"
     MIX_OTHER="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="other"{print $3; exit}')"; MIX_OTHER="${MIX_OTHER:-0}"
-    echo "pc_lane: provider-mix $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
+    echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
     if [ "$MIX_TAG_COUNT" -gt 1 ]; then
-      echo "pc_lane: provider-mix is per COMBO — $MIX_OTHER other conversation(s) shared it; the lane's own share is the tag(s) starting at launch" >&2
+      echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)" >&2
     fi
   fi
   rm -f "$MIX_ERR"

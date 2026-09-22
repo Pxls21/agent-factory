@@ -1,0 +1,1208 @@
+diff --git a/harness-ports/tests/test_pc_lane_dispatcher.sh b/harness-ports/tests/test_pc_lane_dispatcher.sh
+index 8d6f357..db6faf6 100755
+--- a/harness-ports/tests/test_pc_lane_dispatcher.sh
++++ b/harness-ports/tests/test_pc_lane_dispatcher.sh
+@@ -5,18 +5,26 @@
+ # bridge function keeps every command local and records each bridge call, so a refusal
+ # must show NO mkdir -p (the guard runs before the write, AF-AP-79).
+ set -uo pipefail
+-unset HERMES_MODEL HERMES_REASONING LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE 2>/dev/null || true
++unset HERMES_MODEL HERMES_REASONING LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
+ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
+-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
++TMP="$(mktemp -d)"; FIXTURE_PIDS=()
++cleanup() {
++  local pid
++  for pid in "${FIXTURE_PIDS[@]}"; do kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; done
++  rm -rf "$TMP"
++}
++trap cleanup EXIT
+ 
+ # The fixture briefs. brief.md (the dispatch fixture) carries a measured premise block —
+ # the heading is at ### depth, lowercase, to prove the gate matches case-insensitively
+-# and at that depth. brief-noblock.md has NO block (the legacy form). The two
+-# malformed fixtures carry a heading but a fenced block that is empty / one line.
++# and at that depth. brief-noblock.md has NO block (the legacy form). The malformed
++# fixtures separate empty, one-line, whitespace-only, and mixed-content blocks.
+ printf 'PIN: 0000000\nbrief\n\n### premise — measured at authoring (2026-09-22, c2a0df2)\n```\nsed -n 1p scripts/pc_lane.sh -> line 1\nrc=0\n```\n' > "$TMP/brief.md"
+ printf 'PIN: 0000000\nbrief\n' > "$TMP/brief-noblock.md"
+ printf 'PIN: 0000000\nbrief\n\n## premise — measured at authoring (2026-09-22, c2a0df2)\n```\n```\n' > "$TMP/brief-empty.md"
+ printf 'PIN: 0000000\nbrief\n\n## premise — measured at authoring (2026-09-22, c2a0df2)\n```\nline1\n```\n' > "$TMP/brief-oneline.md"
++printf 'PIN: 0000000\nbrief\n\n## premise — measured at authoring (2026-09-22, c2a0df2)\n```\n  \n\t\n```\n' > "$TMP/brief-whitespace.md"
++printf 'PIN: 0000000\nbrief\n\n## premise — measured at authoring (2026-09-22, c2a0df2)\n```\nreal\n  \n```\n' > "$TMP/brief-mixed.md"
+ printf 'PIN: 0000000\nbrief\n\n## premise at authoring (2026-09-22, c2a0df2)\n```\na\nb\n```\n' > "$TMP/brief-nomeasured.md"
+ pass=0; fail=0
+ check() { if [ "$2" -eq 0 ]; then pass=$((pass+1)); echo "[PASS] $1"; else fail=$((fail+1)); echo "[FAIL] $1"; fi; echo "         because: $3"; }
+@@ -40,8 +48,19 @@ cat > "$BRIDGE_FN" <<'SH'
+ bridge() {
+   printf '%s\n' "$1" >> "$PC_LANE_TEST_CALLS"
+   case "$1" in
++    *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
+     *'mkdir -p '*'.lanes/'*) echo shipped;;
+-    *'lane.pid && echo RESUME'*) echo "${PC_LANE_TEST_RESUME:-FIRST}";;
++    *'.lanes/'*'kill -0 '*)
++      [ "${PC_LANE_TEST_PREMISE_ERROR:-0}" -eq 0 ] || return 5
++      if [ "${PC_LANE_TEST_EVAL_PREMISE:-0}" -eq 1 ]; then
++        if [ -n "${PC_LANE_TEST_LANE_PID:-}" ]; then
++          eval "readlink() { case \"\$*\" in *'/proc/$PC_LANE_TEST_LANE_PID/cwd'*) printf '%s\\n' \"${PC_LANE_TEST_AF_REPO:-/fake}/.lanes/brief-noblock.md--0000000/work\";; *) command readlink \"\$@\";; esac; }; $1"
++        else
++          eval "$1"
++        fi
++      else
++        echo "${PC_LANE_TEST_RESUME:-FIRST}"
++      fi;;
+     *"open('/proc/"*) echo "${PC_LANE_TEST_RUNNING:-mismatch:low}";;
+     *'restart-when-idle --max-wait 1800'*)
+       case "${PC_LANE_TEST_TERMINAL:-applied}" in
+@@ -85,20 +104,49 @@ run_gate() { # run_gate <brief> [ENV=VAL ...] --  (sets GATE_RC; stderr in $TMP/
+   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+   : > "$BRIDGE_CALLS"
+   env -u PC_LANE_SELF_COPY PC_BRIDGE_URL=http://unused PC_BRIDGE_TOKEN=unused PC_LANE_BRIDGE_FN="$BRIDGE_FN" PC_LANE_TEST_CALLS="$BRIDGE_CALLS" \
+-    PC_AF_REPO=/fake LANE_EFFORT_WAIT_SECONDS=0 LANE_EFFORT_WAIT_POLLS=2 MAX_POLLS=0 OUT_DIR="$TMP/out" \
++    PC_AF_REPO="${PC_LANE_TEST_AF_REPO:-/fake}" LANE_EFFORT_WAIT_SECONDS=0 LANE_EFFORT_WAIT_POLLS=2 MAX_POLLS=0 OUT_DIR="$TMP/out" \
+     "${envs[@]}" bash "$ROOT/scripts/pc_lane.sh" "$brief" hermes code-implementer > "$TMP/out.txt" 2> "$TMP/err.txt"
+   GATE_RC=$?
+ }
++run_copy() { # run_copy <tmpdir> <brief> [ENV=VAL ...] --  (sets COPY_RC; no inherited bridge config)
++  local tmpdir="$1" brief="$2"; shift 2
++  local envs=()
++  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
++  : > "$BRIDGE_CALLS"
++  env -u PC_LANE_SELF_COPY -u PC_BRIDGE_URL -u PC_BRIDGE_TOKEN PC_LANE_BRIDGE_FN="$BRIDGE_FN" PC_LANE_TEST_CALLS="$BRIDGE_CALLS" \
++    PC_AF_REPO=/fake TMPDIR="$tmpdir" "${envs[@]}" bash "$ROOT/scripts/pc_lane.sh" "$brief" hermes code-implementer \
++    > "$TMP/out.txt" 2> "$TMP/err.txt"
++  COPY_RC=$?
++}
+ run_poll() { # run_poll [ENV=VAL ...] --  (one poll, no wait; sets POLL_RC)
+   local envs=()
+   while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+   : > "$BRIDGE_CALLS"; rm -rf "$TMP/poll-out"; mkdir -p "$TMP/poll-out"
+   env -u PC_LANE_SELF_COPY PC_BRIDGE_URL=http://unused PC_BRIDGE_TOKEN=unused PC_LANE_BRIDGE_FN="$BRIDGE_FN" PC_LANE_TEST_CALLS="$BRIDGE_CALLS" \
+     PC_AF_REPO=/fake PC_LANE_SKIP_ADMIT=1 LANE_SET_SERVER_EFFORT=0 POLL_SECONDS=0 MAX_POLLS=1 OUT_DIR="$TMP/poll-out" \
++    PC_LANE_TEST_RESUME="${PC_LANE_TEST_RESUME-RESUME 1790000000}" \
+     "${envs[@]}" bash "$ROOT/scripts/pc_lane.sh" "$TMP/brief.md" hermes code-implementer > "$TMP/out.txt" 2> "$TMP/err.txt"
+   POLL_RC=$?
+ }
+ 
++# T90-R1 self-copy — failure is terminal before config or bridge access.
++run_copy /nonexistent "$TMP/brief-noblock.md" --
++[ "$COPY_RC" -eq 64 ] \
++  && grep -Fq 'pc_lane: refusing to run from the lazily-read original — private copy failed (mktemp/cp): ' "$TMP/err.txt" \
++  && [ "$(wc -l < "$TMP/err.txt")" -eq 1 ] \
++  && ! grep -q 'PC_LANE_SELF_COPY\|PC_BRIDGE_URL' "$TMP/err.txt" && [ ! -s "$BRIDGE_CALLS" ]
++check "a private-copy failure refuses the original before any bridge call" $? \
++  "rc=$COPY_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") bridge_calls=$(wc -l < "$BRIDGE_CALLS")"
++
++mkdir -p "$TMP/copy-ok"
++run_copy "$TMP/copy-ok" "$TMP/missing-brief.md" PC_LANE_DEBUG_ENV=1 --
++[ "$COPY_RC" -eq 64 ] \
++  && grep -Fq 'pc_lane: private copy active: ' "$TMP/err.txt" \
++  && grep -Fq 'pc_lane: brief not found:' "$TMP/err.txt" && ! grep -q 'unbound variable' "$TMP/err.txt" \
++  && [ ! -s "$BRIDGE_CALLS" ]
++check "a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set" $? \
++  "rc=$COPY_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") bridge_calls=$(wc -l < "$BRIDGE_CALLS")"
++
+ PC_LANE_TEST_TERMINAL=applied run_dispatch; rc=$?
+ [ "$rc" -eq 75 ] && grep -q 'restart-when-idle --max-wait 1800' "$BRIDGE_CALLS" && grep -q 'setsid env LANE_ID=' "$BRIDGE_CALLS" && grep -q 'server effort applied' "$TMP/err.txt"
+ check "local mismatch waits for applied before launch" $? "rc=$rc calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
+@@ -115,22 +163,60 @@ PC_LANE_TEST_TERMINAL=applied run_dispatch HERMES_MODEL=agentfactory-build; rc=$
+ [ "$rc" -eq 75 ] && ! grep -q 'restart-when-idle' "$BRIDGE_CALLS" && grep -q 'setsid env LANE_ID=' "$BRIDGE_CALLS"
+ check "cloud route skips deferred effort step" $? "rc=$rc calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
+ 
+-# T90 premise gate — first launch (PC_LANE_TEST_RESUME unset -> the probe answers FIRST)
+-run_gate "$TMP/brief-noblock.md"
+-[ "$GATE_RC" -eq 64 ] && grep -q 'no MEASURED premise block' "$TMP/err.txt" && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
+-check "no premise block on a FIRST launch is refused with no ship write" $? "rc=$GATE_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
++# T90-R1 premise gate. Every refusal asserts no ship write; every probe is one
++# command and contains both the liveness check and this lane id.
++assert_first_refusal() {
++  [ "$GATE_RC" -eq 64 ] && grep -q 'no MEASURED premise block' "$TMP/err.txt" \
++    && ! grep -q 'mkdir -p' "$BRIDGE_CALLS" \
++    && [ "$(grep -c 'kill -0' "$BRIDGE_CALLS")" -eq 1 ] \
++    && grep -q 'brief-noblock.md--0000000' "$BRIDGE_CALLS"
++}
++
++# A stale pidfile is evaluated by the fake bridge against a temp lane directory.
++PROBE_REPO="$TMP/probe-repo"; PROBE_LANE="$PROBE_REPO/.lanes/brief-noblock.md--0000000"
++mkdir -p "$PROBE_LANE"; printf '99999999\n' > "$PROBE_LANE/lane.pid"
++PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 --
++assert_first_refusal
++check "a stale pidfile is FIRST and a premise-less brief is refused with no ship write" $? \
++  "rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
++
++# A live pid whose process does not name or run under this lane is also FIRST.
++sleep 30 & OTHER_PID=$!; FIXTURE_PIDS+=("$OTHER_PID"); printf '%s\n' "$OTHER_PID" > "$PROBE_LANE/lane.pid"
++PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 --
++assert_first_refusal
++check "a live pid from another lane is FIRST and refused with no ship write" $? \
++  "rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
++
++# A live process with cwd inside this lane binds the pid to the lane. Set mtime to
++# the epoch fixture that also drives the re-attach mix-window assertion below.
++mkdir -p "$PROBE_LANE/work"; sleep 30 & LANE_PID=$!; FIXTURE_PIDS+=("$LANE_PID")
++printf '%s\n' "$LANE_PID" > "$PROBE_LANE/lane.pid"; touch -d @1790000000 "$PROBE_LANE/lane.pid"
++PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_EVAL_PREMISE=1 PC_LANE_TEST_LANE_PID="$LANE_PID" --
++[ "$GATE_RC" -eq 75 ] && grep -q 'premise gate skipped — a resume of' "$TMP/err.txt" \
++  && grep -q 'mkdir -p' "$BRIDGE_CALLS" && [ "$(grep -c 'kill -0' "$BRIDGE_CALLS")" -eq 1 ]
++check "a live pid bound to this lane returns RESUME with its launch epoch and ships" $? \
++  "rc=$GATE_RC calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
++
++run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_PREMISE_ERROR=1 --
++assert_first_refusal
++check "a premise-probe bridge error is FIRST and refused with no ship write" $? \
++  "rc=$GATE_RC no_ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
+ 
+-# the same no-block brief on a RESUME: the gate is skipped, the ship call IS recorded
+-run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_RESUME=RESUME
+-[ "$GATE_RC" -eq 75 ] && grep -q 'premise gate skipped — a resume of' "$TMP/err.txt" && grep -q 'mkdir -p' "$BRIDGE_CALLS"
+-check "no premise block on a RESUME is exempt and ships" $? "rc=$GATE_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
++# Unit-level premise counter controls through the dispatcher gate.
++run_gate "$TMP/brief-whitespace.md" --
++[ "$GATE_RC" -eq 64 ] && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
++check "two whitespace-only premise lines are refused with no ship write" $? "rc=$GATE_RC"
++
++run_gate "$TMP/brief-mixed.md" --
++[ "$GATE_RC" -eq 64 ] && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
++check "one real and one whitespace premise line are refused with no ship write" $? "rc=$GATE_RC"
+ 
+ # a heading with an EMPTY fenced block is not a block
+ run_gate "$TMP/brief-empty.md"
+ [ "$GATE_RC" -eq 64 ] && grep -q 'no MEASURED premise block' "$TMP/err.txt" && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
+ check "a heading with an empty fenced block is refused" $? "rc=$GATE_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
+ 
+-# a heading with a ONE-line fenced block is not a block (needs at least TWO non-empty lines)
++# a heading with a ONE-line fenced block is not a block (needs at least TWO non-space lines)
+ run_gate "$TMP/brief-oneline.md"
+ [ "$GATE_RC" -eq 64 ] && grep -q 'no MEASURED premise block' "$TMP/err.txt" && ! grep -q 'mkdir -p' "$BRIDGE_CALLS"
+ check "a heading with a one-line fenced block is refused" $? "rc=$GATE_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
+@@ -168,9 +254,9 @@ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_
+ [ "$POLL_RC" -eq 0 ] \
+   && grep -q '^REAL DISPATCH REPORT' "$TMP/poll-out/report-brief.md--0000000.md" \
+   && grep -Fq 'report ->' "$TMP/err.txt" \
+-  && grep -Fq "provider-mix agentfactory-build-local'; DROP TABLE call_logs; -- " "$TMP/err.txt" \
++  && grep -Fq "combo-window provider mix (per-lane provenance UNVERIFIED) agentfactory-build-local'; DROP TABLE call_logs; -- " "$TMP/err.txt" \
+   && grep -Fq 'qwen:200=2 codex:200=1 | tags: conv_abcd(09:15:46-09:16:10,n=3)' "$TMP/err.txt" \
+-  && ! grep -Fq 'provider-mix is per COMBO' "$TMP/err.txt" \
++  && ! grep -Fq 'COMBO-WINDOW aggregate' "$TMP/err.txt" \
+   && ! grep -Fq '/sandbox-should-not-be-used/.omniroute-migrated' "$BRIDGE_CALLS" \
+   && [ -n "$SQL_CAPTURE" ] && grep -Fq "combo_name = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
+   && grep -Fq "api_key_name = 'hermes'" "$SQL_CAPTURE" && grep -Fq "provider LIKE 'openai-compatible-chat-%'" "$SQL_CAPTURE"
+@@ -180,12 +266,14 @@ check "NEGATIVE CONTROL: a READY probe still harvests; one-tag mix has no caveat
+ MIX_TWO=$'MIX\tqwen:200=4 codex:200=2\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:17:10\t4\nTAG\tconv_other\t09:15:50\t09:17:12\t2\nMETA\tdb_missing\t0\t\t\nMETA\tother\t1\t\t'
+ # Restore role-derived combo selection after the hostile explicit-model SQL-escaping control.
+ unset HERMES_MODEL LANE_SERVER_EFFORT
+-run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_TWO" --
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_TWO" "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+ [ "$POLL_RC" -eq 0 ] \
+   && grep -q 'qwen:200=4 codex:200=2 | tags: conv_abcd(09:15:46-09:17:10,n=4) conv_other(09:15:50-09:17:12,n=2)' "$TMP/err.txt" \
+-  && grep -q 'provider-mix is per COMBO — 1 other conversation(s) shared it' "$TMP/err.txt"
+-check "a two-provider window prints the exact mix shape and the query-derived other-conversation caveat" $? \
+-  "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
++  && grep -Fq 'pc_lane: the mix is a COMBO-WINDOW aggregate — 1 conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)' "$TMP/err.txt" \
++  && ! grep -Fq "the lane's own share is the tag(s) starting at launch" "$TMP/err.txt" \
++  && grep -Fq "timestamp >= '2026-09-21T14:12:20Z'" "$SQL_CAPTURE"
++check "a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds" $? \
++  "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
+ 
+ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" $'PC_LANE_TEST_PROVIDER_MIX=META\tdb_missing\t1\t\t\nMETA\tother\t0\t\t' --
+ [ "$POLL_RC" -eq 0 ] && grep -q 'provider-mix: no call_logs rows in the window (db=' "$TMP/err.txt"
+@@ -197,4 +285,19 @@ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" PC_L
+ check "a provider-mix bridge/sqlite failure is loud but does not change harvest rc" $? \
+   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
+ 
++# FIRST uses this poller's current launch time, not a stale or resume epoch.
++FIRST_BEFORE="$(date -u +%s)"
++PC_LANE_TEST_RESUME= run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
++FIRST_AFTER="$(date -u +%s)"
++FIRST_BOUND="$(sed -n "s/.*timestamp >= '\([^']*\)'.*/\1/p" "$SQL_CAPTURE" | head -1)"
++FIRST_BOUND_EPOCH="$(date -u -d "$FIRST_BOUND" +%s 2>/dev/null || printf 0)"
++[ "$POLL_RC" -eq 0 ] && [ "$FIRST_BOUND_EPOCH" -ge "$((FIRST_BEFORE-65))" ] \
++  && [ "$FIRST_BOUND_EPOCH" -le "$((FIRST_AFTER-55))" ]
++check "a FIRST mix window starts within five seconds of now minus 60 seconds" $? \
++  "rc=$POLL_RC before=$FIRST_BEFORE after=$FIRST_AFTER sql_bound=$FIRST_BOUND epoch=$FIRST_BOUND_EPOCH"
++
++OLD_ATTR_COUNT="$(grep -c "the lane's own share is the tag(s) starting at launch" "$ROOT/scripts/pc_lane.sh" || true)"
++[ "$OLD_ATTR_COUNT" -eq 0 ]
++check "the old per-lane attribution sentence is absent from the dispatcher" $? "grep_count=$OLD_ATTR_COUNT"
++
+ echo; echo "pc_lane dispatcher: $pass passed, $fail failed"; [ "$fail" -eq 0 ]
+diff --git a/scripts/pc_lane.sh b/scripts/pc_lane.sh
+index cd55497..05455e6 100755
+--- a/scripts/pc_lane.sh
++++ b/scripts/pc_lane.sh
+@@ -39,7 +39,8 @@
+ # MEASURED premise block. The block is a heading line matching
+ # ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6 count),
+ # then — anywhere later in the file — a fenced block (one line that is EXACTLY three
+-# backticks opens it, the next such line closes it) holding at least TWO non-empty lines.
++# backticks opens it, the next such line closes it) holding at least TWO lines
++# containing a non-space character.
+ # The gate proves the block EXISTS and is not empty; the coordinator's discipline supplies
+ # the content. A RESUME (an already-launched lane, a live .lanes/<id>/lane.pid on the PC)
+ # is exempt — a re-attach never re-measures. There is NO environment escape hatch for a
+@@ -48,10 +49,29 @@
+ # bash reads a script LAZILY: an edit to this file while an instance runs corrupts that run at a byte offset (2026-09-08: the D5l
+ # poller died with "syntax error near ')'" at line 123 after the FAILED-handling edit landed mid-poll, and exited 0 without
+ # bringing the report home). Run from a private copy of these bytes; the file on disk may change underneath a live run.
+-if [ -z "${PC_LANE_SELF_COPY:-}" ]; then
+-  _self="$(mktemp "${TMPDIR:-/tmp}/pc_lane.sh.XXXXXX")" && cp "$0" "$_self" && PC_LANE_SELF_COPY="$_self" PC_LANE_ORIG="$0" exec bash "$_self" "$@"
++PC_LANE_SELF_COPY="${PC_LANE_SELF_COPY:-}"
++if [ -z "$PC_LANE_SELF_COPY" ]; then
++  _copy_error="$(mktemp "${TMPDIR:-/tmp}/pc_lane.sh.XXXXXX" 2>&1)"
++  _copy_rc=$?
++  if [ "$_copy_rc" -eq 0 ]; then
++    _self="$_copy_error"
++    _copy_error="$(cp "$0" "$_self" 2>&1)"
++    _copy_rc=$?
++  fi
++  if [ "$_copy_rc" -ne 0 ]; then
++    [ -z "${_self:-}" ] || rm -f "$_self"
++    _copy_error="${_copy_error//$'\n'/; }"
++    printf 'pc_lane: refusing to run from the lazily-read original — private copy failed (mktemp/cp): %s\n' "${_copy_error:-unknown error}" >&2
++    exit 64
++  fi
++  PC_LANE_SELF_COPY="$_self" PC_LANE_ORIG="$0" exec bash "$_self" "$@"
++  _copy_rc=$?
++  rm -f "$_self"
++  printf 'pc_lane: refusing to run from the lazily-read original — private copy failed (mktemp/cp): exec rc=%s\n' "$_copy_rc" >&2
++  exit 64
+ fi
+-trap 'rm -f "$PC_LANE_SELF_COPY"' EXIT
++[ "${PC_LANE_DEBUG_ENV:-0}" = 1 ] && printf 'pc_lane: private copy active: %s\n' "$PC_LANE_SELF_COPY" >&2
++trap 'rm -f "${PC_LANE_SELF_COPY:-}"' EXIT
+ set -uo pipefail
+ 
+ die() { echo "pc_lane: $*" >&2; exit 64; }
+@@ -164,27 +184,33 @@ if [ "${LANE_PRINT_EFFORT:-0}" = 1 ]; then echo "server-effort=${SERVER_EFFORT:-
+ #   ^#{1,6} .*PREMISE.*MEASURED (case-insensitive; heading depths 1 through 6
+ #   count), then — anywhere later in the file — a fenced block (one line that is
+ #   EXACTLY three backticks opens it, the next such line closes it) holding at
+-#   least TWO non-empty lines. 1 = no such block. The gate proves the block
+-#   EXISTS and is not empty; the coordinator's discipline supplies the content.
++#   least TWO lines containing a non-space character. 1 = no such block. The gate
++#   proves the block EXISTS and is not empty; the coordinator supplies the content.
+ _premise_block_ok() {
+   awk '
+     BEGIN { s = 0; n = 0; ok = 0 }
+     s == 0 { if (tolower($0) ~ /^#{1,6} .*premise.*measured/) s = 1; next }
+     s == 1 { if ($0 == "```") { s = 2; n = 0 }; next }
+     s == 2 { if ($0 == "```") { if (n >= 2) { ok = 1; exit }; s = 1; next }
+-             if (length($0) > 0) n++ }
++             if ($0 ~ /[^[:space:]]/) n++ }
+     END { exit ok ? 0 : 1 }
+   ' "$1"
+ }
+-# A FIRST launch of a lane is refused (rc 64) when its brief has no MEASURED premise
+-# block. The exemption is measured on the PC, not assumed: one bridge probe for a present
+-# .lanes/<id>/lane.pid. RESUME -> the gate is skipped (a re-attach never re-measures);
+-# FIRST / empty / a bridge error -> the gate applies (fail closed — an unreachable
+-# bridge never exempts). No environment escape hatch exists; a legacy brief is amended,
+-# not waved through. The gate runs BEFORE the ship block, so a refusal never issues a
+-# bridge write (AF-AP-79: the guard before the write).
+-_premise_state="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && echo RESUME || echo FIRST" 2>/dev/null || true)"
+-if [ "$_premise_state" = "RESUME" ]; then
++# A FIRST launch is refused (rc 64) when its brief has no MEASURED premise block.
++# One PC-side command reads and validates the lane pid, binds a live process to this
++# lane by cwd or cmdline, and returns the pidfile mtime as the original launch epoch.
++# Any malformed/unreadable/stale/foreign pidfile or bridge failure is FIRST. The gate
++# runs BEFORE the ship block, so a refusal never issues a bridge write (AF-AP-79).
++_PREMISE_LANE_DIR="$PC_AF_REPO/.lanes/$LANE_ID"
++_premise_state="$(bridge "d=$_PREMISE_LANE_DIR; p=\$(cat \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$p\" in ''|*[!0-9]*) echo FIRST; exit 0;; esac; kill -0 \"\$p\" 2>/dev/null || { echo FIRST; exit 0; }; c=\$(readlink -f \"/proc/\$p/cwd\" 2>/dev/null || true); n=\$(tr '\\0' ' ' < \"/proc/\$p/cmdline\" 2>/dev/null || true); case \"\$c\" in \"\$d\"|\"\$d\"/*) b=1;; *) case \"\$n\" in *\"\$d\"*) b=1;; *) b=0;; esac;; esac; [ \"\$b\" = 1 ] || { echo FIRST; exit 0; }; e=\$(stat -c %Y \"\$d/lane.pid\" 2>/dev/null) || { echo FIRST; exit 0; }; case \"\$e\" in ''|*[!0-9]*) echo FIRST;; *) echo \"RESUME \$e\";; esac" 2>/dev/null || true)"
++case "$_premise_state" in
++  RESUME\ [0-9]*)
++    _launch_epoch="${_premise_state#RESUME }"
++    case "$_launch_epoch" in *[!0-9]*) _launch_epoch="";; esac
++    ;;
++  *) _launch_epoch="";;
++esac
++if [ -n "$_launch_epoch" ]; then
+   echo "pc_lane: premise gate skipped — a resume of $LANE_ID" >&2
+ elif ! _premise_block_ok "$BRIEF"; then
+   die "brief has no MEASURED premise block — add '## PREMISE — MEASURED at authoring (<date>, <clone>@<pin>)' + a fenced block pasting each premise command with its output (2026-09-22: three stale premises in one window); a resume of an already-launched lane is exempt"
+@@ -314,9 +340,14 @@ FWD=""
+ for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
+   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
+ done
+-LAUNCH_AT="$(date -u +%FT%TZ)"
+-# Lane correlation does not exist in call_logs today. A tag whose first row is within one minute of launch is only
+-# a candidate for the lane; tags already active at launch and later-starting tags are competing conversations.
++if [ -n "$_launch_epoch" ]; then
++  LAUNCH_AT="$(date -u -d "@$_launch_epoch" +%FT%TZ 2>/dev/null || true)"
++  [ -n "$LAUNCH_AT" ] || die "live lane has an invalid launch epoch: $_launch_epoch"
++else
++  LAUNCH_AT="$(date -u +%FT%TZ)"
++fi
++# Lane correlation does not exist in call_logs today. The result is therefore a
++# combo-window aggregate; the launch time only bounds the read, never attributes rows.
+ MIX_CAVEAT="$(date -u -d "$LAUNCH_AT + 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
+ LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID$FWD \
+   bash harness-ports/bin/pc-lane.sh $REMOTE_BRIEF $HARNESS ${ROLE:-} \
+@@ -478,9 +509,9 @@ SQL
+     MIX_TAGS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{printf "%s%s(%s-%s,n=%s)", (n++?" ":""), $2, $3, $4, $5}')"
+     MIX_TAG_COUNT="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{n++} END{print n+0}')"
+     MIX_OTHER="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="other"{print $3; exit}')"; MIX_OTHER="${MIX_OTHER:-0}"
+-    echo "pc_lane: provider-mix $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
++    echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
+     if [ "$MIX_TAG_COUNT" -gt 1 ]; then
+-      echo "pc_lane: provider-mix is per COMBO — $MIX_OTHER other conversation(s) shared it; the lane's own share is the tag(s) starting at launch" >&2
++      echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)" >&2
+     fi
+   fi
+   rm -f "$MIX_ERR"
+diff --git a/tasks/briefs/pc-t90-support/T90-R1-report.md b/tasks/briefs/pc-t90-support/T90-R1-report.md
+new file mode 100644
+index 0000000..e1a5348
+--- /dev/null
++++ b/tasks/briefs/pc-t90-support/T90-R1-report.md
+@@ -0,0 +1,165 @@
++# T90-R1 implementation report
++
++Route: `agentfactory-build-local`, HYBRID in practice because a cloud step may serve a turn when the local step refuses with the chat-template 400. No claim is made about which model produced the code.
++
++## PREMISE — RE-MEASURED
++
++Verified at 2026-09-22T12:56:51Z on PIN `9ca327930bbc6dd076754f439428cb3a92d5f9c2`.
++
++```
++a5a48539e40313b4  scripts/pc_lane.sh (524 lines)
++2c0b622fa89a88f7  harness-ports/tests/test_pc_lane_dispatcher.sh (200 lines)
++0e000f53ef6d3899  harness-ports/bin/pc-lane.sh (512 lines)
++```
++
++The anchors matched the brief: `PC_LANE_SELF_COPY` at D@PIN:51-54; `_premise_block_ok` at D@PIN:169 and `length($0) > 0` at D@PIN:175; the file-presence RESUME probe at D@PIN:186-190; unconditional `LAUNCH_AT` at D@PIN:317; `MIX_CAVEAT` at D@PIN:320; `MIX_FROM` at D@PIN:415; provider-mix output and the attribution sentence at D@PIN:481-483.
++
++PIN gates:
++
++```
++pc_lane dispatcher: 24 passed, 0 failed
++59 passed, 0 failed
++```
++
++Premise status: VERIFIED. `harness-ports/bin/pc-lane.sh:89` defines `PIDFILE="$LANE_DIR/lane.pid"`; `harness-ports/bin/pc-lane.sh:106` checks `kill -0` only in its read-only replay guard.
++
++## ITEMS 2-6
++
++Red-first suite, with T changed and D still at the PIN:
++
++```
++[FAIL] a private-copy failure refuses the original before any bridge call
++[FAIL] a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set
++[FAIL] a stale pidfile is FIRST and a premise-less brief is refused with no ship write
++[FAIL] a live pid from another lane is FIRST and refused with no ship write
++[FAIL] a live pid bound to this lane returns RESUME with its launch epoch and ships
++[FAIL] a premise-probe bridge error is FIRST and refused with no ship write
++[FAIL] two whitespace-only premise lines are refused with no ship write
++[FAIL] one real and one whitespace premise line are refused with no ship write
++[FAIL] NEGATIVE CONTROL: a READY probe still harvests; one-tag mix has no caveat and the shipped read-only SQL escapes its combo filter
++[FAIL] a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds
++[FAIL] the old per-lane attribution sentence is absent from the dispatcher
++pc_lane dispatcher: 21 passed, 11 failed
++```
++
++Green after D:
++
++```
++[PASS] a private-copy failure refuses the original before any bridge call
++[PASS] a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set
++[PASS] a stale pidfile is FIRST and a premise-less brief is refused with no ship write
++[PASS] a live pid from another lane is FIRST and refused with no ship write
++[PASS] a live pid bound to this lane returns RESUME with its launch epoch and ships
++[PASS] a premise-probe bridge error is FIRST and refused with no ship write
++[PASS] two whitespace-only premise lines are refused with no ship write
++[PASS] one real and one whitespace premise line are refused with no ship write
++[PASS] a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds
++[PASS] a FIRST mix window starts within five seconds of now minus 60 seconds
++[PASS] the old per-lane attribution sentence is absent from the dispatcher
++pc_lane dispatcher: 32 passed, 0 failed
++```
++
++### Item 2 — liveness-bound RESUME
++
++D:199-217 sends one bridge probe containing `kill -0`, the exact lane directory, cwd/cmdline binding, and pidfile `stat -c %Y`. Only `RESUME <epoch>` skips the gate. T:166-203 evaluates stale, foreign-live, bound-live, and bridge-error fixtures. The stale, foreign, and bridge-error controls each assert rc 64 and `no_ship_writes=0`; T:168-172 also pins one probe containing the lane id. Anti-pattern class fixed: stale file presence treated as live state, AF-AP-105.
++
++### Item 3 — fail-closed private copy
++
++D:52-75 defines `PC_LANE_SELF_COPY` before the trap. A failed mktemp/cp emits exactly one refusal line and rc 64 before config or bridge access. T:132-148 asserts zero bridge calls, one stderr line, no unset-variable/config text, and the writable-TMPDIR child debug line. Anti-pattern class fixed: a safety copy whose setup failure continued in the unsafe original.
++
++### Item 4 — non-space premise evidence
++
++D:189-198 makes `_premise_block_ok` count only `/[^[:space:]]/`. T:205-227 begins at `# Unit-level premise counter controls through the dispatcher gate.` and proves empty, one-real-line, two-whitespace-line, and one-real-plus-whitespace blocks fail; the two-real-line fixture passes. Each dispatcher refusal asserts no ship write. Anti-pattern class fixed: whitespace accepted as evidence, AF-AP-64.
++
++### Item 5 — honest combo-window label
++
++D:512-515 labels output `combo-window provider mix (per-lane provenance UNVERIFIED)`. The multi-tag caveat says per-lane provenance is unverified because call_logs has no lane key. T:269-276 pins the exact caveat and rejects the old sentence. Old attribution sentence count in D: `0`.
++
++### Item 6 — lane launch time
++
++D:343-351 sets `LAUNCH_AT` from the validated RESUME epoch or current UTC time on FIRST. D:446 applies the minus-60-second SQL lower bound. T:269-276 pins RESUME epoch `1790000000` and lower bound `2026-09-21T14:12:20Z`; T:288-297 asserts FIRST within five seconds of now minus 60 seconds.
++
++## MUTATION TABLE
++
++| Mutant | Validity | Killing test | Result |
++|---|---|---|---|
++| drop `kill -0` | `bash -n` clean; suite collected | stale pidfile is FIRST | KILLED: 27 passed, 5 failed |
++| drop lane binding | `bash -n` clean; suite collected | live pid from another lane is FIRST | KILLED: 31 passed, 1 failed |
++| drop fail-closed `exit 64` | `bash -n` clean; suite collected | private-copy failure refuses original | KILLED: 31 passed, 1 failed |
++| revert non-space regex to `length($0) > 0` | `bash -n` clean; suite collected | whitespace-only and mixed blocks refused | KILLED: 30 passed, 2 failed |
++| restore old attribution sentence | `bash -n` clean; suite collected | combo-window label and old-sentence absence | KILLED: 30 passed, 2 failed |
++| ignore RESUME epoch | `bash -n` clean; suite collected | RESUME lower SQL bound | KILLED: 31 passed, 1 failed |
++
++Hollow-green rate: `0/6` mutants survived.
++
++## GATES
++
++```
++bash-n rc=0
++pc_lane dispatcher: 32 passed, 0 failed
++pc_lane dispatcher: 32 passed, 0 failed
++59 passed, 0 failed
++59 passed, 0 failed
++test_pc_bridge_exec.py             test_pc_bridge_exec: 8 checks passed
++test_hermes_session_export.py      test_hermes_session_export: 13 checks passed
++test_omniroute_local_builder.py    test_omniroute_local_builder: 24 checks passed
++test_pc_lane.sh                    59 passed, 0 failed
++test_pc_lane_dispatcher.sh         pc_lane dispatcher: 32 passed, 0 failed
++test_pc_lane_admission.sh          22 passed, 0 failed
++test_qwen_server.sh                qwen-server: 101 passed, 0 failed
++test_qwen_matrix.py                test_qwen_matrix: 4 tests passed
++test_qwen_matrix_sh.sh             qwen-matrix-sh: 16 passed, 0 failed
++test_lane_context.sh               5 passed, 0 failed
++test_context_mirrors.sh            11 passed, 0 failed
++test_sync_skills.sh                34 passed, 0 failed
++build-roles --check                OK: 3 role config layers match their sources
++
++ALL SUITES PASSED
++diff-check rc=0
++```
++
++`python3 scripts/ap_screen.py scripts/pc_lane.sh harness-ports/tests/test_pc_lane_dispatcher.sh --tests`:
++
++```
++--- TEST_SCREEN over 2 path(s): 3 hits over 2 files ---
++AF-AP-87: 2
++    scripts/pc_lane.sh:378: probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPOR
++    scripts/pc_lane.sh:378: probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPOR
++AF-AP-59: 1
++    scripts/pc_lane.sh:370: # The no-pidfile fallback is bounded to the LAUNCH WINDOW (launch.log younger than 5 min): the old `
++```
++
++Classification: not findings in this increment. Both patterns are pre-existing in the poll-state probe, outside changed hunks; `run-all.sh` and the 59-test runner suite exercise that code.
++
++Final file identity:
++
++```
++309d5cabe68ab150  scripts/pc_lane.sh (555 lines)
++186601fb81b0a167  harness-ports/tests/test_pc_lane_dispatcher.sh (303 lines)
++```
++
++GitNexus `detect-changes`: `No changes detected.` The index does not map these shell changes, so this is unmapped, not clean. Ripwire `edit-check` likewise returned `symbol not found: scripts/pc_lane.sh`; the lane-context pack completed and is in lane scratch.
++
++Fixture-process census: `ps -C sleep` produced no rows after the tests. Hygiene: `git status --short` lists only D, T, and R; `git diff --check` is rc 0.
++
++## SELF-ATTACK
++
++1. A live foreign pid could be mistaken for this lane. Ruled out by cwd-or-cmdline binding, the foreign-live fixture, and the lane-binding mutant.
++2. A copy failure could continue in the original or hit the unset trap. Ruled out by exact rc 64, exactly one stderr line, zero bridge calls, no config/unset text, and the dropped-exit mutant.
++3. A re-attach could still use poller time or imply per-lane attribution. Ruled out by captured SQL bound from epoch 1790000000, the epoch-ignored mutant, exact UNVERIFIED output, and the restored-attribution mutant.
++
++## DISCREPANCIES
++
++- The brief says epoch `1790000000` equals `2026-09-21T09:33:20Z` and expects lower bound `09:32:20Z`. GNU `date -u -d @1790000000` returns `2026-09-21T14:13:20Z`; the correct lower bound is `2026-09-21T14:12:20Z`. The test uses the measured epoch conversion and preserves the contract intent.
++- The attached pack was absent from the lane worktree. The read-only PC clone copy at `/home/rocco/agent-factory/tasks/briefs/pc-t90-support/T90-R1-pack.md` was read instead.
++- The brief asked `python3 scripts/ap_screen.py D T` without `--tests`; the tool rejects a test file unless `--tests` is supplied. The run used `--tests` and pasted its output.
++- The test suite runs against a fake bridge and no real server, credential, lane directory, OmniRoute state, or bridge env file. No live dispatcher reproduction was run, per AUTHORIZATION.
++- `report_lint` final line: `report_lint: 18 refs — OK 18, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`.
++
++## NOT-DONE
++
++- T92 durable per-request correlation id: NOT built.
++- D-039 routes: NOT changed.
++- `harness-ports/bin/pc-lane.sh`: NOT changed.
++- No commit, push, PR, server action, credential access, or production-tree write.
++- The patch remains a proposal until the separate sandbox adversarial-verifier lane grades it.
+diff --git a/transcripts/pc/pc-t90-r1.md--9ca3279.md b/transcripts/pc/pc-t90-r1.md--9ca3279.md
+new file mode 100644
+index 0000000..1009271
+--- /dev/null
++++ b/transcripts/pc/pc-t90-r1.md--9ca3279.md
+@@ -0,0 +1,680 @@
++# Hermes lane session 20260922_135356_661618
++
++- model: agentfactory-build-local
++- started: 2026-09-22T12:53:57.493117+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-t90-r1.md--9ca3279/tree
++- messages: 186; tool calls: 96
++- tokens in/out/cache_read/reasoning: 431780/49653/7997920/22008
++
++## user @ 12:53:57
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 12:54:48 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 12:54:48 — 487 chars (body not exported)
++
++## tool result (read_file) @ 12:54:48 — 6455 chars (body not exported)
++
++## assistant @ 12:55:12 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:55:12 — 363 chars (body not exported)
++
++## assistant @ 12:55:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:55:17 — 241 chars (body not exported)
++
++## assistant @ 12:55:22 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:55:22 — 6709 chars (body not exported)
++
++## assistant @ 12:56:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:56:51 — 3796 chars (body not exported)
++
++## assistant @ 12:57:25 → tools: terminal
++
++Anchors confirmed at the PIN. Running the two suites and reading the full dispatcher file (524 lines, needed for surgical edits):
++
++## tool result (terminal) @ 12:57:26 — 3880 chars (body not exported)
++
++## assistant @ 12:57:32 → tools: terminal
++
++24 passed at the PIN. Running the PC runner suite:
++
++## tool result (terminal) @ 12:57:43 — 349 chars (body not exported)
++
++## assistant @ 12:57:48 → tools: read_file
++
++Premise verified at the PIN. Now reading the full dispatcher (2 chunks):
++
++## tool result (read_file) @ 12:57:48 — 16277 chars (body not exported)
++
++## assistant @ 12:57:57 → tools: read_file
++
++
++
++## tool result (read_file) @ 12:57:57 — 19554 chars (body not exported)
++
++## assistant @ 12:58:08 → tools: read_file
++
++Full dispatcher read. Now the test file and the PC runner's pidfile/liveness seam:
++
++## tool result (read_file) @ 12:58:08 — 15831 chars (body not exported)
++
++## assistant @ 12:58:19 → tools: terminal
++
++Reading the PC runner's pidfile/liveness seams:
++
++## tool result (terminal) @ 12:58:19 — 171 chars (body not exported)
++
++## assistant @ 12:58:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:58:23 — 3092 chars (body not exported)
++
++## assistant @ 13:00:01 → tools: terminal
++
++Reading how the bridge executes the command string (shell, quoting) to design the probe correctly:
++
++## tool result (terminal) @ 13:00:01 — 1091 chars (body not exported)
++
++## assistant @ 13:02:41 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:02:43 — 453 chars (body not exported)
++
++## tool result (terminal) @ 13:02:43 — 7733 chars (body not exported)
++
++## tool result (terminal) @ 13:02:45 — 500 chars (body not exported)
++
++## tool result (terminal) @ 13:02:45 — 134 chars (body not exported)
++
++## assistant @ 13:02:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:02:59 — 169 chars (body not exported)
++
++## assistant @ 13:04:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:04:52 — 87 chars (body not exported)
++
++## assistant @ 13:05:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 13:05:23 — 317 chars (body not exported)
++
++## assistant @ 13:09:08 → tools: patch
++
++
++
++## tool result (patch) @ 13:09:09 — 3251 chars (body not exported)
++
++## assistant @ 13:09:25 → tools: patch
++
++
++
++## tool result (patch) @ 13:09:27 — 1228 chars (body not exported)
++
++## assistant @ 13:10:05 → tools: patch
++
++
++
++## tool result (patch) @ 13:10:07 — 1968 chars (body not exported)
++
++## assistant @ 13:10:30 → tools: patch
++
++
++
++## tool result (patch) @ 13:10:31 — 1192 chars (body not exported)
++
++## assistant @ 13:10:52 → tools: patch
++
++
++
++## tool result (patch) @ 13:10:54 — 2088 chars (body not exported)
++
++## assistant @ 13:11:46 → tools: patch
++
++
++
++## tool result (patch) @ 13:11:48 — 5027 chars (body not exported)
++
++## assistant @ 13:12:24 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:12:25 — 9329 chars (body not exported)
++
++## assistant @ 13:13:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:13:20 — 736 chars (body not exported)
++
++## assistant @ 13:14:02 → tools: patch
++
++
++
++## tool result (patch) @ 13:14:04 — 1413 chars (body not exported)
++
++## assistant @ 13:14:27 → tools: patch
++
++
++
++## tool result (patch) @ 13:14:29 — 2381 chars (body not exported)
++
++## assistant @ 13:15:25 → tools: patch
++
++
++
++## tool result (patch) @ 13:15:27 — 4120 chars (body not exported)
++
++## assistant @ 13:15:46 → tools: patch
++
++
++
++## tool result (patch) @ 13:15:48 — 1660 chars (body not exported)
++
++## assistant @ 13:15:59 → tools: patch
++
++
++
++## tool result (patch) @ 13:16:01 — 1574 chars (body not exported)
++
++## assistant @ 13:16:38 → tools: patch
++
++
++
++## tool result (patch) @ 13:16:39 — 1616 chars (body not exported)
++
++## assistant @ 13:17:20 → tools: patch
++
++
++
++## tool result (patch) @ 13:17:21 — 2489 chars (body not exported)
++
++## assistant @ 13:17:36 → tools: patch
++
++
++
++## tool result (patch) @ 13:17:37 — 1264 chars (body not exported)
++
++## assistant @ 13:18:55 → tools: patch
++
++
++
++## tool result (patch) @ 13:18:56 — 1263 chars (body not exported)
++
++## assistant @ 13:20:01 → tools: patch
++
++
++
++## tool result (patch) @ 13:20:03 — 1985 chars (body not exported)
++
++## assistant @ 13:20:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:20:21 — 13746 chars (body not exported)
++
++## assistant @ 13:20:51 → tools: patch
++
++
++
++## tool result (patch) @ 13:20:52 — 932 chars (body not exported)
++
++## assistant @ 13:21:26 → tools: patch
++
++
++
++## tool result (patch) @ 13:21:27 — 1616 chars (body not exported)
++
++## assistant @ 13:22:17 → tools: patch
++
++
++
++## tool result (patch) @ 13:22:18 — 1205 chars (body not exported)
++
++## assistant @ 13:22:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:22:31 — 14478 chars (body not exported)
++
++## assistant @ 13:22:44 → tools: patch
++
++
++
++## tool result (patch) @ 13:22:45 — 919 chars (body not exported)
++
++## assistant @ 13:23:10 → tools: patch
++
++
++
++## tool result (patch) @ 13:23:10 — 541 chars (body not exported)
++
++## assistant @ 13:23:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:23:43 — 6571 chars (body not exported)
++
++## assistant @ 13:24:03 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:24:03 — 19287 chars (body not exported)
++
++## tool result (terminal) @ 13:24:06 — 108 chars (body not exported)
++
++## tool result (terminal) @ 13:24:07 — 65 chars (body not exported)
++
++## assistant @ 13:24:31 → tools: patch
++
++
++
++## tool result (patch) @ 13:24:32 — 800 chars (body not exported)
++
++## assistant @ 13:24:57 → tools: patch
++
++
++
++## tool result (patch) @ 13:24:58 — 1494 chars (body not exported)
++
++## assistant @ 13:25:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:25:05 — 295 chars (body not exported)
++
++## assistant @ 13:26:25 → tools: patch
++
++
++
++## tool result (patch) @ 13:26:27 — 1243 chars (body not exported)
++
++## assistant @ 13:26:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:26:56 — 979 chars (body not exported)
++
++## assistant @ 13:27:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:28:03 — 879 chars (body not exported)
++
++## assistant @ 13:29:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:29:54 — 430 chars (body not exported)
++
++## assistant @ 13:30:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:30:38 — 245 chars (body not exported)
++
++## assistant @ 13:32:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:32:36 — 1417 chars (body not exported)
++
++## assistant @ 13:33:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:33:28 — 1394 chars (body not exported)
++
++## assistant @ 13:34:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:34:45 — 176 chars (body not exported)
++
++## assistant @ 13:35:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:35:29 — 45 chars (body not exported)
++
++## assistant @ 13:36:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:36:43 — 121 chars (body not exported)
++
++## assistant @ 13:37:48 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:37:48 — 269 chars (body not exported)
++
++## tool result (terminal) @ 13:37:48 — 520 chars (body not exported)
++
++## tool result (terminal) @ 13:37:49 — 337 chars (body not exported)
++
++## assistant @ 13:38:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:38:27 — 84 chars (body not exported)
++
++## assistant @ 13:40:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:40:05 — 84 chars (body not exported)
++
++## assistant @ 13:41:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:41:43 — 617 chars (body not exported)
++
++## assistant @ 13:44:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:44:42 — 301 chars (body not exported)
++
++## assistant @ 13:45:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:46:15 — 948 chars (body not exported)
++
++## assistant @ 13:46:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:46:38 — 28973 chars (body not exported)
++
++## assistant @ 13:47:14 → tools: patch
++
++
++
++## tool result (patch) @ 13:47:16 — 1208 chars (body not exported)
++
++## assistant @ 13:47:55 → tools: patch
++
++
++
++## tool result (patch) @ 13:47:57 — 1326 chars (body not exported)
++
++## assistant @ 13:50:09 → tools: write_file
++
++
++
++## tool result (write_file) @ 13:50:10 — 385 chars (body not exported)
++
++## assistant @ 13:50:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:50:44 — 244 chars (body not exported)
++
++## assistant @ 13:51:52 → tools: patch
++
++
++
++## tool result (patch) @ 13:51:52 — 1160 chars (body not exported)
++
++## assistant @ 13:52:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:52:54 — 1486 chars (body not exported)
++
++## assistant @ 13:53:42 → tools: patch
++
++
++
++## tool result (patch) @ 13:53:42 — 1020 chars (body not exported)
++
++## assistant @ 13:54:21 → tools: patch
++
++
++
++## tool result (patch) @ 13:54:21 — 1272 chars (body not exported)
++
++## assistant @ 13:54:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:54:41 — 129 chars (body not exported)
++
++## assistant @ 13:56:09 → tools: patch
++
++
++
++## tool result (patch) @ 13:56:09 — 1338 chars (body not exported)
++
++## assistant @ 13:56:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:56:42 — 129 chars (body not exported)
++
++## assistant @ 13:57:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:57:13 — 2236 chars (body not exported)
++
++## assistant @ 13:58:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:58:13 — 1039 chars (body not exported)
++
++## assistant @ 13:58:56 → tools: patch
++
++
++
++## tool result (patch) @ 13:58:56 — 939 chars (body not exported)
++
++## assistant @ 13:59:22 → tools: patch
++
++
++
++## tool result (patch) @ 13:59:22 — 1199 chars (body not exported)
++
++## assistant @ 13:59:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:59:50 — 252 chars (body not exported)
++
++## assistant @ 14:00:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:00:27 — 223 chars (body not exported)
++
++## assistant @ 14:01:15 → tools: patch
++
++
++
++## tool result (patch) @ 14:01:15 — 1406 chars (body not exported)
++
++## assistant @ 14:01:41 → tools: patch
++
++
++
++## tool result (patch) @ 14:01:42 — 1140 chars (body not exported)
++
++## assistant @ 14:02:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:02:13 — 129 chars (body not exported)
++
++## assistant @ 14:03:01 → tools: patch
++
++
++
++## tool result (patch) @ 14:03:02 — 1543 chars (body not exported)
++
++## assistant @ 14:03:19 → tools: patch
++
++
++
++## tool result (patch) @ 14:03:19 — 1330 chars (body not exported)
++
++## assistant @ 14:03:47 → tools: patch
++
++
++
++## tool result (patch) @ 14:03:48 — 1424 chars (body not exported)
++
++## assistant @ 14:04:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 14:04:06 — 129 chars (body not exported)
++
++## assistant @ 14:06:50
++
++PROPOSAL: T90-R1 implementation complete. Independent sandbox verification is still required.
++
++Report: /home/rocco/agent-factory/.lanes/pc-t90-r1.md--9ca3279/tree/tasks/briefs/pc-t90-support/T90-R1-report.md
++
++T90-R1 IMPLEMENTATION REPORT
++
++Route: agentfactory-build-local, HYBRID in practice because a cloud step may serve a turn when the local step refuses with the chat-template 400. No claim is made about which model produced the code.
++
++PREMISE — RE-MEASURED
++
++Verified at 2026-09-22T12:56:51Z on PIN <opaque-redacted>.
++
++    a5a48539e40313b4  scripts/pc_lane.sh (524 lines)
++    2c0b622fa89a88f7  harness-ports/tests/test_pc_lane_dispatcher.sh (200 lines)
++    0e000f53ef6d3899  harness-ports/bin/pc-lane.sh (512 lines)
++
++The anchors matched the brief. The PIN suites returned:
++
++    pc_lane dispatcher: 24 passed, 0 failed
++    59 passed, 0 failed
++
++Premise status: VERIFIED. harness-ports/bin/pc-lane.sh:89 defines the lane pidfile. harness-ports/bin/pc-lane.sh:106 checks only pid liveness in its read-only replay guard.
++
++ITEMS 2–6
++
++Red-first suite, with tests changed and production still at the PIN:
++
++    [FAIL] a private-copy failure refuses the original before any bridge call
++    [FAIL] a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set
++    [FAIL] a stale pidfile is FIRST and a premise-less brief is refused with no ship write
++    [FAIL] a live pid from another lane is FIRST and refused with no ship write
++    [FAIL] a live pid bound to this lane returns RESUME with its launch epoch and ships
++    [FAIL] a premise-probe bridge error is FIRST and refused with no ship write
++    [FAIL] two whitespace-only premise lines are refused with no ship write
++    [FAIL] one real and one whitespace premise line are refused with no ship write
++    [FAIL] NEGATIVE CONTROL: a READY probe still harvests; one-tag mix has no caveat and the shipped read-only SQL escapes its combo filter
++    [FAIL] a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds
++    [FAIL] the old per-lane attribution sentence is absent from the dispatcher
++    pc_lane dispatcher: 21 passed, 11 failed
++
++Green after the dispatcher change:
++
++    [PASS] a private-copy failure refuses the original before any bridge call
++    [PASS] a writable TMPDIR execs the private copy with PC_LANE_SELF_COPY set
++    [PASS] a stale pidfile is FIRST and a premise-less brief is refused with no ship write
++    [PASS] a live pid from another lane is FIRST and refused with no ship write
++    [PASS] a live pid bound to this lane returns RESUME with its launch epoch and ships
++    [PASS] a premise-probe bridge error is FIRST and refused with no ship write
++    [PASS] two whitespace-only premise lines are refused with no ship write
++    [PASS] one real and one whitespace premise line are refused with no ship write
++    [PASS] a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds
++    [PASS] a FIRST mix window starts within five s
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 431780,
++  "output_tokens": 49653,
++  "cache_read_tokens": 7997920,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 22008,
++  "total_tokens": 8479353,
++  "api_calls": 89,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260922_135356_661618",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
