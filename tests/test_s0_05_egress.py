@@ -151,7 +151,9 @@ def test_bare_unshare_bundle_is_red_as_total_isolation():
     ("", "total-isolation: curl mechanism="),
     (["veth-iptables"], "total-isolation: curl mechanism=['veth-iptables']"),
     ("veth-iptables ", "total-isolation: curl mechanism=veth-iptables "),
-], ids=["wrong-mechanism", "empty-mechanism", "list-mechanism", "trailing-space-mechanism"])
+    ("VETH-IPTABLES", "total-isolation: curl mechanism=VETH-IPTABLES"),
+], ids=["wrong-mechanism", "empty-mechanism", "list-mechanism", "trailing-space-mechanism",
+        "case-variant-mechanism"])
 def test_a_mechanism_mutation_is_rejected_by_class(tmp_path, value, expected):
     """MUTANT (the hollow green): the veth-iptables bundle's gate.json relabelled to ANY other
     mechanism is refused in PHASE 1 by class. An exact-equality allow-list of ONE value (never a
@@ -174,6 +176,17 @@ def test_total_isolation_precedes_a_disabled_gate(tmp_path):
     result = run_checker(bundle)
     assert result.returncode == 1
     assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth"
+
+
+def test_a_non_first_unit_mechanism_is_rejected_by_class(tmp_path):
+    """EVERY run unit (the seed's clause): the two-unit synthetic bundle with only its SECOND unit
+    relabelled total-isolation is refused for THAT unit — a guard applied to `units[0]` alone
+    (VERIFY-E1-R1 M11) survives every single-unit test above and dies here."""
+    bundle = copy_bundle(tmp_path, SYNTHETIC)
+    patch_json(bundle / "hermes-acp" / "gate.json", mechanism="netns-no-veth")
+    result = run_checker(bundle, "--units", "curl,hermes-acp")
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "total-isolation: hermes-acp mechanism=netns-no-veth"
 
 
 def test_committed_bundles_carry_the_real_venue_shape():
@@ -820,6 +833,11 @@ def test_the_motivating_instance_is_a_total_isolation_class(tmp_path):
             f'ip -n {ns} address add 192.0.2.1/31 dev ve1a || exit 1',
             f'ip -n {ns} address add 192.0.2.0/31 dev ve1b || exit 1',
             f'ip -n {ns} link set ve1a up && ip -n {ns} link set ve1b up',
+            # A routed, NON-local /24 behind ve1a: C6's target must lie outside the namespace's
+            # own addresses, or its packets go over loopback (`-o lo -j ACCEPT`) and the DROP
+            # counter never advances — VERIFY-E1-R1 F1 measured `0 -> 0` on the first shape of
+            # this test and `0 -> 5` with this route (the counter VERIFY-E1 F1 reported).
+            f'ip -n {ns} route add 198.51.100.0/24 dev ve1a || exit 1',
             f'ip -n {ns} link show',
             f'egress_ns_mechanism {ns}',
             f'egress_ns_gate_state {ns}')
@@ -832,19 +850,27 @@ def test_the_motivating_instance_is_a_total_isolation_class(tmp_path):
         listener = _in_ns_listener(ns, port, tmp_path)
         assert listener.poll() is None, "loopback stand-in did not stay live in the namespace"
         # The REAL collector, unmodified: it records the mechanism it OBSERVES (netns-no-veth),
-        # the gate state (enabled), and the canaries. The stand-in lets C0 pass; C6 targets the
-        # internal peer's on-link address, so the DROP counter advances despite total isolation.
-        # The other canaries fail or are recorded — all of it irrelevant to the PHASE 1 guard.
+        # the gate state (enabled), and the canaries. The stand-in lets C0 pass; C6 targets a
+        # routed address behind ve1a (never a local one), so its packets reach the DROP policy and
+        # the counter advances despite total isolation. The other canaries fail or are recorded —
+        # all of it irrelevant to the PHASE 1 guard.
         run = subprocess.run(
             ["bash", str(PROOF / "run_canaries.sh"), "curl", ns, f"127.0.0.1:{port}",
-             str(root), "192.0.2.0:12801", "sandbox"],
+             str(root), "198.51.100.7:12801", "sandbox"],
             capture_output=True, text=True, timeout=120)
         assert run.returncode == 0, run.stderr
         gate = json.loads((root / "curl" / "gate.json").read_text())
         rows = records(root / "curl")
         c0 = [row for row in rows if row["canary"] == "C0"]
+        c6 = [row for row in rows if row["canary"] == "C6"]
         assert gate["mechanism"] == "netns-no-veth" and gate["gate"] == "enabled"
         assert len(c0) == 1 and c0[0]["rc"] == 0 and 200 <= c0[0]["http_status"] < 300
+        # The gate must have FIRED on this bundle (a timed-out C6, the counter advanced): only then
+        # is the pre-repair checker's verdict the rc-0 PASS the docstring names, and not the
+        # `gate-inert` refusal VERIFY-E1-R1 F1 found behind the first shape of this test.
+        runtime = json.loads((root / "curl" / "runtime.json").read_text())
+        assert runtime["drop_counter_after"] > runtime["drop_counter_before"], runtime
+        assert len(c6) == 1 and c6[0]["rc"] == 28, c6
         # The REAL checker, unmodified, on the bundle the collector wrote.
         result = run_checker(root)
         assert result.returncode == 1, result.stdout
