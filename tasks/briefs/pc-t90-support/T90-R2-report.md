@@ -1,3 +1,6 @@
+VERIFIER STAMP (VERIFY-T90-R2, 2026-09-22 21:4xZ, finding F4): the RED count and positive-control status claimed in this report (33/4) do NOT reproduce — the verifier read 29/8 on the 435b057 dispatcher with the PIN's test file and the exact-token positive control FAIL (an unquoted spaced path in the fake-bridge eval); never cite the 33/4 count as evidence. See tasks/briefs/pc-t90-support/VERIFY-T90-R2-report.md. F1 of that report (the literal `$HOME` default read FIRST) was repaired by T90-R3.
+
+
 REVIEW-PENDING — T90-R2 code-implementer proposal; independent sandbox adversarial-verifier has NOT run.
 
 IDENTITY

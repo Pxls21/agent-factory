@@ -311,6 +311,25 @@ PC_LANE_TEST_AF_REPO="$PROBE_REPO" run_gate "$TMP/brief-noblock.md" PC_LANE_TEST
 check "a live pid bound to this lane returns RESUME with its launch epoch and ships" $? \
   "rc=$GATE_RC calls=$(tr '\n' ';' < "$BRIDGE_CALLS")"
 
+# T90-R3 (VERIFY-T90-R2 F1, AF-AP-119): the production default PC_AF_REPO is the
+# LITERAL `$HOME/agent-factory`, kept for PC-side expansion in bridge commands.
+# The premise probe base64-transfers the lane dir built from it; decoded as DATA
+# on the PC it never expanded, the pidfile read failed and a real re-attach read
+# FIRST. The PC-side probe must normalize a leading literal `$HOME` before the
+# pidfile read. The fixture lives under a HOME this test controls; the pid is
+# bound by an exact argv token (cwd elsewhere), the same oracle as the positive
+# control above.
+PROBE_HOME="$TMP/probe-home"; PROBE_LANE_HOME="$PROBE_HOME/repo/.lanes/brief-noblock.md--0000000"
+mkdir -p "$PROBE_LANE_HOME"
+start_probe_process "$PROBE_ELSEWHERE" "$PROBE_LANE_HOME"
+printf '%s\n' "$PROBE_PID" > "$PROBE_LANE_HOME/lane.pid"; touch -d @1790000000 "$PROBE_LANE_HOME/lane.pid"
+PC_LANE_TEST_AF_REPO='$HOME/repo' run_gate "$TMP/brief-noblock.md" HOME="$PROBE_HOME" PC_LANE_TEST_EVAL_PREMISE=1 PC_LANE_TEST_PREMISE_CAPTURE="$PROBE_STATE" --
+[ "$GATE_RC" -eq 75 ] && [ "$(cat "$PROBE_STATE")" = 'RESUME 1790000000' ] \
+  && grep -q 'premise gate skipped — a resume of' "$TMP/err.txt" && grep -q 'mkdir -p' "$BRIDGE_CALLS" \
+  && grep -q 'base64 -d' "$BRIDGE_CALLS"
+check "the literal default \$HOME lane path is normalized PC-side: a live token-bound pid is RESUME and ships" $? \
+  "state=$(cat "$PROBE_STATE" 2>/dev/null) rc=$GATE_RC ship_writes=$(grep -c 'mkdir -p' "$BRIDGE_CALLS") pid=$PROBE_PID"
+
 run_gate "$TMP/brief-noblock.md" PC_LANE_TEST_PREMISE_ERROR=1 --
 assert_first_refusal
 check "a premise-probe bridge error is FIRST and refused with no ship write" $? \
