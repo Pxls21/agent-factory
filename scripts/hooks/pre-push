@@ -40,5 +40,25 @@ while read -r _lref lsha _rref rsha; do
     echo "PUSH BLOCKED: $HITS model-identifier trailer line(s) in outgoing range — push via scripts/push_clean.sh (strips them), never raw git push." >&2
     exit 1
   fi
+  # VENDORED-MANIFEST GATE (2026-09-22 13:5xZ incident): a .claude/ skill edit reached origin without regenerating
+  # sandbox-kit/VENDORED-MANIFEST.md (its rows hash whole vendored trees) and CI's ordinary suite was red for four pushes.
+  # The check hashes eight vendored trees (measured 0.35 s wall on this tree, 2026-09-22 14:0xZ), and runs ONLY when the outgoing range touches a manifest root; the roots
+  # are read from the committed manifest's first column, never remembered. A drift BLOCKS: regenerate with --write in
+  # the same increment as the vendored change (AF-AP-56's general form: a generated artifact follows its inputs).
+  if [ -f "$REPO_ROOT/scripts/vendored_manifest.py" ] && [ -f "$REPO_ROOT/sandbox-kit/VENDORED-MANIFEST.md" ]; then
+    ROOTS=$(grep -oE '^\| `[^`]+` \|' "$REPO_ROOT/sandbox-kit/VENDORED-MANIFEST.md" | sed -E 's/^\| `//; s/` \|$//')
+    CHANGED=$(git log "$@" --name-only --format= 2>/dev/null | sort -u)
+    TOUCHED=""
+    for r in $ROOTS; do
+      if printf '%s\n' "$CHANGED" | awk -v r="$r" 'index($0, r) == 1 { f = 1 } END { exit !f }'; then TOUCHED="$TOUCHED $r"; fi
+    done
+    if [ -n "$TOUCHED" ]; then
+      echo "pre-push: outgoing range $RANGE touches vendored root(s):$TOUCHED — running the manifest check" >&2
+      if ! (cd "$REPO_ROOT" && python3 scripts/vendored_manifest.py --check >&2); then
+        echo "PUSH BLOCKED: sandbox-kit/VENDORED-MANIFEST.md drifted from the tree — run 'python3 scripts/vendored_manifest.py --write' and commit it in the same increment as the vendored change (AF-AP-56's general form; incident 2026-09-22 13:5xZ)." >&2
+        exit 1
+      fi
+    fi
+  fi
 done
 exit 0

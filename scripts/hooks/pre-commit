@@ -39,6 +39,28 @@ else
     exit 1
   fi
 fi
+# VENDORED-MANIFEST GATE (2026-09-22 13:5xZ incident): a .claude/ skill edit was committed without regenerating
+# sandbox-kit/VENDORED-MANIFEST.md (its rows hash whole vendored trees); CI's ordinary suite was red for four pushes.
+# The check hashes the eight vendored trees (measured 0.35 s wall on this tree, 2026-09-22 14:0xZ) and runs ONLY when a
+# STAGED path lies under a manifest root (the roots read from the committed manifest's first column, never remembered).
+# Fix = 'python3 scripts/vendored_manifest.py --write' and stage the manifest in the same commit. The pre-push hook
+# carries the same gate as the backstop. Bypass (printed, so it shows in review): SKIP_MANIFEST_CHECK=1 git commit ...
+if [ -z "${SKIP_MANIFEST_CHECK:-}" ] && [ -f "$REPO_ROOT/scripts/vendored_manifest.py" ] && [ -f "$REPO_ROOT/sandbox-kit/VENDORED-MANIFEST.md" ]; then
+  _MROOTS=$(grep -oE '^\| `[^`]+` \|' "$REPO_ROOT/sandbox-kit/VENDORED-MANIFEST.md" | sed -E 's/^\| `//; s/` \|$//')
+  _MSTAGED=$(git diff --cached --name-only)
+  _MTOUCHED=""
+  for r in $_MROOTS; do
+    if printf '%s\n' "$_MSTAGED" | awk -v r="$r" 'index($0, r) == 1 { f = 1 } END { exit !f }'; then _MTOUCHED="$_MTOUCHED $r"; fi
+  done
+  if [ -n "$_MTOUCHED" ]; then
+    if ! (cd "$REPO_ROOT" && "$PY" scripts/vendored_manifest.py --check >&2); then
+      echo "COMMIT BLOCKED: a staged path lies under vendored root(s):$_MTOUCHED but sandbox-kit/VENDORED-MANIFEST.md does not match the tree — run 'python3 scripts/vendored_manifest.py --write' and stage the manifest in this commit (AF-AP-56's general form; incident 2026-09-22 13:5xZ)." >&2
+      exit 1
+    fi
+  fi
+elif [ -n "${SKIP_MANIFEST_CHECK:-}" ]; then
+  echo "pre-commit: SKIP_MANIFEST_CHECK set — the vendored-manifest gate bypassed." >&2
+fi
 # SKILL-SYNC GATE (2026-09-03): a lesson baked into .claude/skills/ left its .agents/skills/
 # twin stale until the final sweep caught it. If any .claude/skills/ path is staged, the two
 # trees must agree (harness-ports/bin/sync-skills.sh --check). Fix = run the sync, stage both.
