@@ -314,6 +314,10 @@ FWD=""
 for v in HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_TOOLSETS LANE_BRANCH LANE_CAPACITY_RETRIES LANE_CAPACITY_BACKOFF LANE_CAPACITY_MAX_WAIT; do
   [ -n "${!v:-}" ] && FWD="$FWD $v=$(printf %q "${!v}")"
 done
+LAUNCH_AT="$(date -u +%FT%TZ)"
+# Lane correlation does not exist in call_logs today. A tag whose first row is within one minute of launch is only
+# a candidate for the lane; tags already active at launch and later-starting tags are competing conversations.
+MIX_CAVEAT="$(date -u -d "$LAUNCH_AT + 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
 LAUNCH="cd $PC_AF_REPO && setsid env LANE_ID=$LANE_ID$FWD \
   bash harness-ports/bin/pc-lane.sh $REMOTE_BRIEF $HARNESS ${ROLE:-} \
   > .lanes/$LANE_ID/launch.log 2>&1 < /dev/null & echo launched"
@@ -346,9 +350,28 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
                bridge "head -c 300 $REMOTE_REPORT" >&2 2>/dev/null
                echo "pc_lane: remove .lanes/$LANE_ID/report.md on the PC and re-dispatch (the tree keeps the work)" >&2
                exit 70;;
-    *FAILED*)  echo "pc_lane: LANE FAILED — the PC route refused every attempt (no report to grade). Reason:" >&2
-               bridge "cat $PC_AF_REPO/.lanes/$LANE_ID/FAILED" >&2 2>/dev/null
-               echo "pc_lane: re-dispatch later, or run the lane in the sandbox (code-implementer); the lane dir keeps the refusal" >&2
+    *FAILED*)
+               FAILED_REASON="$(bridge "cat $PC_AF_REPO/.lanes/$LANE_ID/FAILED" 2>/dev/null || true)"
+               case "$FAILED_REASON" in
+                 safety-filter:*)
+                   echo "pc_lane: LANE FAILED — the model provider's safety filter refused the request (a re-dispatch replays the same refusal; split the brief or change the route)" >&2
+                   ;;
+                 *)
+                   echo "pc_lane: LANE FAILED — the PC route refused every attempt (no report to grade). Reason:" >&2
+                   ;;
+               esac
+               printf '%s\n' "$FAILED_REASON" >&2
+               REMOTE_PARTIAL="$PC_AF_REPO/.lanes/$LANE_ID/report.partial.md"
+               LOCAL_PARTIAL="$OUT/report-$LANE_ID.partial.md"
+               mkdir -p "$OUT"
+               bridge "test -s $REMOTE_PARTIAL && base64 -w0 $REMOTE_PARTIAL" > "$LOCAL_PARTIAL.b64" 2>/dev/null || true
+               if [ -s "$LOCAL_PARTIAL.b64" ] && base64 -d < "$LOCAL_PARTIAL.b64" > "$LOCAL_PARTIAL" 2>/dev/null; then
+                 echo "pc_lane: partial -> $LOCAL_PARTIAL" >&2
+               else
+                 rm -f "$LOCAL_PARTIAL"
+               fi
+               rm -f "$LOCAL_PARTIAL.b64"
+               case "$FAILED_REASON" in safety-filter:*) ;; *) echo "pc_lane: re-dispatch later, or run the lane in the sandbox (code-implementer); the lane dir keeps the refusal" >&2;; esac
                exit 70;;
     *READY*)   done_flag=1; break;;
     *RUNNING*) ;;
@@ -371,6 +394,97 @@ bridge "test -s $REMOTE_REPORT && base64 -w0 $REMOTE_REPORT" > "$LOCAL_REPORT.b6
 if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPORT" 2>/dev/null; then
   rm -f "$LOCAL_REPORT.b64"
   echo "pc_lane: report -> $LOCAL_REPORT" >&2
+
+  # Provider mix is observed from OmniRoute's read-only call log, never inferred from the combo name. The window starts
+  # one minute before launch to cover clock/bridge skew. It is intentionally per combo: session_tag is not carried by the
+  # lane launcher, so concurrent conversations are listed and a multi-tag window is called out rather than misattributed.
+  MIX_COMBO="${HERMES_MODEL:-}"
+  case "$MIX_COMBO" in
+    "") case "${ROLE:-}" in
+          code-implementer) MIX_COMBO=agentfactory-build-local;;
+          adversarial-verifier) MIX_COMBO=agentfactory-verify-local;;
+          researcher|evidence-gatherer) MIX_COMBO=agentfactory-research;;
+          curator|echo-sweeper|contract-runner) MIX_COMBO=agentfactory-sweep;;
+          *) MIX_COMBO=agentfactory-build;;
+        esac;;
+  esac
+  MIX_DB="${OMNIROUTE_CALL_LOG_DB:-/home/rocco/.omniroute-migrated/storage.sqlite}"
+  MIX_DB_OK=1
+  case "$MIX_DB" in *[!A-Za-z0-9_./-]*)
+    echo "pc_lane: provider-mix unavailable: unsafe db path" >&2; MIX_DB_OK=0;; esac
+  MIX_FROM="$(date -u -d "$LAUNCH_AT - 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
+  MIX_TO="$(date -u +%FT%TZ)"
+  MIX_COMBO_SQL="$(printf '%s' "$MIX_COMBO" | sed "s/'/''/g")"
+  MIX_FROM_SQL="$(printf '%s' "$MIX_FROM" | sed "s/'/''/g")"
+  MIX_TO_SQL="$(printf '%s' "$MIX_TO" | sed "s/'/''/g")"
+  MIX_LAUNCH_SQL="$(printf '%s' "$LAUNCH_AT" | sed "s/'/''/g")"
+  MIX_CAVEAT_SQL="$(printf '%s' "$MIX_CAVEAT" | sed "s/'/''/g")"
+  MIX_SQL="$(mktemp)"
+  cat > "$MIX_SQL" <<SQL
+.mode tabs
+WITH w AS (
+  SELECT CASE
+           WHEN provider LIKE 'openai-compatible-chat-%' OR provider LIKE '%qwen%' THEN 'qwen'
+           WHEN provider LIKE 'codex%' OR provider = 'codex' THEN 'codex'
+           WHEN provider = '$MIX_COMBO_SQL' THEN '$MIX_COMBO_SQL'
+           ELSE COALESCE(NULLIF(combo_step_id, ''), NULLIF(provider, ''), '$MIX_COMBO_SQL')
+         END AS provider_class,
+         status, session_tag, timestamp
+  FROM call_logs
+  WHERE api_key_name = 'hermes'
+    AND combo_name = '$MIX_COMBO_SQL'
+    AND timestamp >= '$MIX_FROM_SQL'
+    AND timestamp <= '$MIX_TO_SQL'
+)
+SELECT 'MIX', group_concat(metric, ' '), '', '', ''
+FROM (
+  SELECT provider_class || ':' || status || '=' || count(*) AS metric
+  FROM w GROUP BY provider_class, status ORDER BY provider_class, status
+)
+UNION ALL
+SELECT 'TAG', session_tag, substr(min(timestamp), 12, 8), substr(max(timestamp), 12, 8), count(*)
+FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
+GROUP BY session_tag
+UNION ALL
+SELECT 'META', 'db_missing', CASE WHEN EXISTS(SELECT 1 FROM w) THEN 0 ELSE 1 END, '', ''
+UNION ALL
+SELECT 'META', 'other', count(*), '', '' FROM (
+  SELECT session_tag FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
+  GROUP BY session_tag
+  HAVING min(timestamp) < '$MIX_LAUNCH_SQL' OR min(timestamp) > '$MIX_CAVEAT_SQL'
+)
+ORDER BY 1, 3;
+SQL
+  MIX_B64="$(base64 -w0 < "$MIX_SQL")"; rm -f "$MIX_SQL"
+  MIX_REMOTE="/tmp/pc-lane-provider-mix-${LANE_ID//[^A-Za-z0-9_.-]/-}-$$.sql"
+  MIX_ERR="$(mktemp)"
+  if [ "$MIX_DB_OK" -eq 1 ]; then
+    MIX_CMD="printf %s '$MIX_B64' | base64 -d > $MIX_REMOTE && sqlite3 -readonly 'file:$MIX_DB?mode=ro' < $MIX_REMOTE; rc=\$?; rm -f $MIX_REMOTE; exit \$rc"
+    MIX_RAW="$(bridge "$MIX_CMD" 2>"$MIX_ERR")"; MIX_RC=$?
+  else
+    MIX_RAW=""; MIX_RC=64
+  fi
+  if [ "$MIX_RC" -ne 0 ]; then
+    if [ "$MIX_DB_OK" -eq 1 ]; then
+      MIX_REASON="$(tr '\n' ' ' < "$MIX_ERR" | sed 's/[[:space:]]*$//')"
+      echo "pc_lane: provider-mix unavailable: ${MIX_REASON:-bridge/sqlite rc=$MIX_RC}" >&2
+    fi
+  elif [ "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="db_missing"{print $3; exit}')" = 1 ]; then
+    echo "pc_lane: provider-mix: no call_logs rows in the window (db=$MIX_DB)" >&2
+  elif [ -z "$MIX_RAW" ] || [ -z "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="MIX" && $2!=""{print $2; exit}')" ]; then
+    echo "pc_lane: provider-mix unavailable: malformed sqlite output" >&2
+  else
+    MIX_COUNTS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="MIX"{print $2; exit}')"
+    MIX_TAGS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{printf "%s%s(%s-%s,n=%s)", (n++?" ":""), $2, $3, $4, $5}')"
+    MIX_TAG_COUNT="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{n++} END{print n+0}')"
+    MIX_OTHER="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="other"{print $3; exit}')"; MIX_OTHER="${MIX_OTHER:-0}"
+    echo "pc_lane: provider-mix $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
+    if [ "$MIX_TAG_COUNT" -gt 1 ]; then
+      echo "pc_lane: provider-mix is per COMBO — $MIX_OTHER other conversation(s) shared it; the lane's own share is the tag(s) starting at launch" >&2
+    fi
+  fi
+  rm -f "$MIX_ERR"
+
   # Bring the lane's CHANGES home too (the lane never pushes): stage everything in the pinned
   # worktree and ship the cached diff. Apply in the sandbox with `git apply --index <patch>` on
   # a branch at the same PIN, then review/gate/commit here. Added 2026-09-03 after the first

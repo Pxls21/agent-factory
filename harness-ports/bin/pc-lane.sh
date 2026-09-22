@@ -297,6 +297,11 @@ quota_wait_s() {  # $1 = the refusal text; prints the wait for a sub-hour reset,
 # journal_mode=DELETE because the linked SQLite 3.49.1 has the WAL-reset bug — a contended write is classified `disk`);
 # VERIFY-B5j died at item 5 that way and the line stood as report.md. Every `No reply:` line is the HARNESS failing, never
 # a report: retry the attempt like a capacity refusal (the draft resumes it), and never let it stand as report.md.
+# 2026-09-22: a model provider can refuse a lane before it runs with a safety-filter message. The same context is
+# deterministic, so retrying only replays the refusal. Match only the first non-empty line: a real lane report may quote
+# the specimen later without becoming a refusal. Hermes can render two, one, or zero spaces after the warning glyph, or no glyph.
+# This matcher is passed to grep -E; `[[:space:]]*` preserves every glyph-spacing form while the whole glyph group is optional.
+SAFETY_RX="^(⚠️[[:space:]]*)?The model provider's safety filter blocked"
 PERSIST_RX='^(⚠️ )?No reply: '
 # INCREMENTAL REPORT (2026-09-03): a 167-call verify lane died mid-stream with report.md EMPTY —
 # the report was all-or-nothing, so 66 minutes of grading came home only via state.db forensics.
@@ -432,6 +437,19 @@ fi
 
 quota_wait=""
 if grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null; then quota_wait=$(quota_wait_s "$REPORT") || quota_wait=""; fi
+# A provider safety refusal is terminal for this exact context. Classify it before the capacity retry branch so it can
+# never create report.attemptN.md or sleep/back off. Preserve any incremental work under a non-READY filename.
+first_nonempty="$(sed -n '/[^[:space:]]/{p;q;}' "$REPORT" 2>/dev/null)"
+if printf '%s\n' "$first_nonempty" | grep -Eq "$SAFETY_RX"; then
+  { printf 'safety-filter: '; cat "$REPORT"; } > "$LANE_DIR/FAILED"
+  rm -f "$REPORT"
+  if [ -s "$LANE_REPORT_DRAFT" ]; then
+    { echo "PARTIAL REPORT — the model provider's safety filter refused the lane before it wrote its final report; this is the incremental draft it kept. Grade it as PARTIAL evidence, never as a verdict."; echo; cat "$LANE_REPORT_DRAFT"; } > "$LANE_DIR/report.partial.md"
+    echo "pc-lane: safety-filter refusal — preserved report-draft.md as report.partial.md" >&2
+  fi
+  echo "pc-lane: FAILED — the model provider's safety filter refused the request; reason in $LANE_DIR/FAILED" >&2
+  exit 70
+fi
 if [ "$attempt" -le "$LANE_CAPACITY_RETRIES" ] && grep -Eq "$CAPACITY_RX|$PERSIST_RX" "$REPORT" 2>/dev/null \
    && { ! grep -Eq "$QUOTA_RX" "$REPORT" 2>/dev/null || [ -n "$quota_wait" ]; }; then
   wait_s=$((LANE_CAPACITY_BACKOFF * (1 << (attempt - 1))))

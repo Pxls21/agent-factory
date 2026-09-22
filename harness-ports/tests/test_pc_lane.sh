@@ -329,6 +329,88 @@ check "NEGATIVE CONTROL: with no retries the storage-failure line is a FAILED la
   "$([ $rc15 -eq 70 ] && grep -q "No reply" "$LD15/FAILED" && [ ! -f "$LD15/report.md" ] && [ "$(cat "$FLAKY_COUNT_FILE")" = 1 ] && echo 0 || echo 1)" \
   "the sandbox poller read the line as READY and brought it home (VERIFY-B5j, 2026-09-08 13:30Z)"
 
+# --- a model-provider SAFETY refusal is deterministic: FAILED once, never a report or retry ----
+# TEST DOUBLE: emits the measured provider refusal, optionally after preserving one draft item.
+SAFETY="$TMP/safety-harness.sh"
+cat > "$SAFETY" <<'EOF'
+#!/usr/bin/env bash
+# TEST DOUBLE. Emits a safety-filter refusal or a real report that quotes that refusal text.
+COUNT="${SAFETY_COUNT_FILE:?}"
+n=$(( $(cat "$COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNT"
+case "${SAFETY_MODE:-blocked}" in
+  blocked)
+    echo "⚠️  The model provider's safety filter blocked this request (not a Hermes/gateway failure)."
+    echo "Provider message: This content was flagged for possible cybersecurity risk."
+    ;;
+  draft)
+    printf 'item 2 complete\n' >> "${LANE_REPORT_DRAFT:?}"
+    echo "⚠️  The model provider's safety filter blocked this request (not a Hermes/gateway failure)."
+    ;;
+  one_space)
+    echo "⚠️ The model provider's safety filter blocked this request (not a Hermes/gateway failure)."
+    ;;
+  zero_space)
+    echo "⚠️The model provider's safety filter blocked this request (not a Hermes/gateway failure)."
+    ;;
+  plain)
+    echo "The model provider's safety filter blocked this request (not a Hermes/gateway failure)."
+    ;;
+  quoted)
+    printf '\nLane report quotes provider evidence: ⚠️  The model provider\047s safety filter blocked this request.\n'
+    ;;
+esac
+cat >/dev/null
+EOF
+chmod +x "$SAFETY"
+
+BRIEF15a="$TMP/tests/brief-safety.md"; { echo "PIN: $SHA"; echo; echo "classify a safety refusal"; } > "$BRIEF15a"
+SAFETY_COUNT_FILE="$TMP/safety-count-15a" SAFETY_MODE=blocked PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15a" codex >"$TMP/out15a" 2>"$TMP/err15a"; rc15a=$?
+LD15a="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety.md' | head -1)"
+check "a safety-filter refusal is FAILED after exactly one attempt: prefixed reason, rc 70, no report and no retry artifact" \
+  "$([ $rc15a -eq 70 ] && grep -q "^safety-filter: ⚠️  The model provider's safety filter blocked" "$LD15a/FAILED" && [ ! -e "$LD15a/report.md" ] && [ ! -e "$LD15a/report.attempt1.md" ] && [ "$(cat "$TMP/safety-count-15a")" = 1 ] && echo 0 || echo 1)" \
+  "the same context deterministically hits the same filter; replaying it through the retry loop cannot recover"
+
+BRIEF15b="$TMP/tests/brief-safety-draft.md"; { echo "PIN: $SHA"; echo; echo "preserve a draft after a safety refusal"; } > "$BRIEF15b"
+SAFETY_COUNT_FILE="$TMP/safety-count-15b" SAFETY_MODE=draft PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15b" codex >"$TMP/out15b" 2>"$TMP/err15b"; rc15b=$?
+LD15b="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety-draft.md' | head -1)"
+check "a safety-refused lane promotes its draft only to report.partial.md under a PARTIAL header" \
+  "$([ $rc15b -eq 70 ] && head -1 "$LD15b/report.partial.md" | grep -q '^PARTIAL REPORT' && grep -q 'item 2 complete' "$LD15b/report.partial.md" && [ ! -e "$LD15b/report.md" ] && [ ! -e "$LD15b/report.attempt1.md" ] && echo 0 || echo 1)" \
+  "partial work remains available to the coordinator but cannot satisfy the poller's report.md READY state"
+
+BRIEF15c="$TMP/tests/brief-safety-quoted.md"; { echo "PIN: $SHA"; echo; echo "quote a refusal inside a real report"; } > "$BRIEF15c"
+SAFETY_COUNT_FILE="$TMP/safety-count-15c" SAFETY_MODE=quoted PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15c" codex >"$TMP/out15c" 2>"$TMP/err15c"; rc15c=$?
+LD15c="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety-quoted.md' | head -1)"
+check "NEGATIVE CONTROL: safety text quoted inside the first non-empty report line remains a real report" \
+  "$([ $rc15c -eq 0 ] && grep -q '^Lane report quotes provider evidence:' "$LD15c/report.md" && [ ! -e "$LD15c/FAILED" ] && echo 0 || echo 1)" \
+  "the family is anchored at the first non-empty line; mentioning the specimen is not being refused by the provider"
+
+BRIEF15d="$TMP/tests/brief-safety-plain.md"; { echo "PIN: $SHA"; echo; echo "classify the no-glyph form"; } > "$BRIEF15d"
+SAFETY_COUNT_FILE="$TMP/safety-count-15d" SAFETY_MODE=plain PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15d" codex >"$TMP/out15d" 2>"$TMP/err15d"; rc15d=$?
+LD15d="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety-plain.md' | head -1)"
+check "the no-warning-glyph safety refusal is the same FAILED family" \
+  "$([ $rc15d -eq 70 ] && grep -q "^safety-filter: The model provider's safety filter blocked" "$LD15d/FAILED" && [ ! -e "$LD15d/report.md" ] && echo 0 || echo 1)" \
+  "Hermes may render the warning glyph or omit it; both provider-refusal forms are terminal"
+
+BRIEF15e="$TMP/tests/brief-safety-one-space.md"; { echo "PIN: $SHA"; echo; echo "classify the one-space warning form"; } > "$BRIEF15e"
+SAFETY_COUNT_FILE="$TMP/safety-count-15e" SAFETY_MODE=one_space PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15e" codex >"$TMP/out15e" 2>"$TMP/err15e"; rc15e=$?
+LD15e="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety-one-space.md' | head -1)"
+check "the one-space warning-glyph safety refusal is the same FAILED family" \
+  "$([ $rc15e -eq 70 ] && grep -q "^safety-filter: ⚠️ The model provider's safety filter blocked" "$LD15e/FAILED" && [ ! -e "$LD15e/report.md" ] && echo 0 || echo 1)" \
+  "the provider specimen has two spaces, but Hermes renderers may collapse it to one"
+
+BRIEF15f="$TMP/tests/brief-safety-zero-space.md"; { echo "PIN: $SHA"; echo; echo "classify the zero-space warning form"; } > "$BRIEF15f"
+SAFETY_COUNT_FILE="$TMP/safety-count-15f" SAFETY_MODE=zero_space PC_LANE_FAKE_HARNESS="$SAFETY" \
+  bash "$LANE" "$BRIEF15f" codex >"$TMP/out15f" 2>"$TMP/err15f"; rc15f=$?
+LD15f="$REPO/.lanes/$(ls "$REPO/.lanes" | grep '^brief-safety-zero-space.md' | head -1)"
+check "the zero-space warning-glyph safety refusal is the same FAILED family" \
+  "$([ $rc15f -eq 70 ] && grep -q "^safety-filter: ⚠️The model provider's safety filter blocked" "$LD15f/FAILED" && [ ! -e "$LD15f/report.md" ] && echo 0 || echo 1)" \
+  "some renderer paths concatenate the glyph and text; the terminal family must still be caught"
+
 # --- a coordinator's TERM takes the whole lane session with it (2026-09-08, AF-AP-68) --------------------
 # TEST DOUBLE: forks a GRANDCHILD (a subshell that sleeps 300 s), records its pid, then sleeps as the harness would.
 GRANDPA="$TMP/grandchild-harness.sh"
