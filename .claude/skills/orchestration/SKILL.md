@@ -84,6 +84,20 @@ subordinate to, the Anthropic docs.
    at hourly grain that is noise division (healthy tokens scored 9.5/−3.5); the council's own
    measured down-captures (BTC 0.54-0.67) were cumulative episode-return ratios all along.
    One comparison against a known number at brief time beats a build-run-repair round.
+0g. **A discriminator VALUE a brief names is checked against the production filter at authoring
+   (2026-09-21/22, S0-01 lanes G1 + G2).** When a brief tells a lane which key, string, kind or
+   field makes two records differ (a mutant's discriminator, a negative control's payload, a
+   canary), the author resolves that value against the production code that FILTERS it — the
+   volatile-field set, an allowlist, a closed tuple, a normalizer's shape map — at the PIN, and
+   cites the line in the brief. The incident: both golden briefs suggested `title` as record B's
+   extra key; `proofs/S0-01/check_acp_conformance.py:104` lists `title` in
+   `VOLATILE_UPDATE_FIELDS` and `_shape` (`:787`) drops it, so A and B would have normalized
+   identically and the sort under test would have been a no-op — a hollow discriminator handed to
+   the lane. The lane's premise check caught it and used `subtitle` (one DISCREPANCIES row per
+   round); the lane-side catch is the backstop, never the plan. Pair with AF-AP-109: a control
+   is verified to discriminate BEFORE it is asked to.
+
+
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
    derive the how — that is what the reasoning is for. Enumerate steps ONLY where ordering is
    load-bearing (mutation-restore discipline, record-before-side-effect, safety carve-outs).
