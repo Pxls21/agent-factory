@@ -12,11 +12,14 @@ EXACT governance hash (a review for one packet never authorizes another).
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -24,6 +27,7 @@ import pytest
 from agent_factory.governance.packet import Packet, compile_canonical, governance_hash, load_packet
 from agent_factory.governance.pin import GovernanceError, verify_pinned_fubuki
 from agent_factory.governance.review import verify_review
+import agent_factory.governance.review as review
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "upstream.lock.yaml"
@@ -258,10 +262,11 @@ def test_a_non_object_record_raises_a_governance_error(tmp_path: Path, keys) -> 
 
 
 def test_gpg_absent_raises_a_governance_error(tmp_path: Path, keys, monkeypatch) -> None:
-    """F7: gpg missing from PATH raises a stable reason, not FileNotFoundError."""
+    """F7: gpg absent from every fixed _GPG_PATHS entry raises a stable reason, not FileNotFoundError.
+    GOV2d: the resolution is the module's fixed tuple, so the monkeypatch targets it — never PATH."""
     owner = keys("owner")
     _write_review(tmp_path / "reviews", _H, owner)
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(review, "_GPG_PATHS", (str(tmp_path / "no-gpg"),))
     with pytest.raises(GovernanceError, match="^fubuki-review-gpg-unavailable"):
         verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))
 
@@ -277,3 +282,195 @@ def test_a_symlinked_record_is_refused(tmp_path: Path, keys) -> None:
     (reviews / f"{_H}.json").symlink_to(real)
     with pytest.raises(GovernanceError, match="^fubuki-review-record-invalid"):
         verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+
+
+# --- GOV2d: the gpg executable is a FIXED trust decision; a non-regular FD is refused, never a hang ---
+
+
+def _hostile_path(tmp_path: Path, monkeypatch) -> Path:
+    """A scratch gpg FIRST on the caller's PATH — the one that lies about the signature (B item 5).
+    Its sentinel proves whether it was ever executed. It is never installed and lives only in tmp_path."""
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake = fake_bin / "gpg"
+    fake.write_text(
+        "#!/bin/bash\ntouch \"$(dirname \"$0\")/RAN\"\ncase \"$*\" in\n"
+        "*--import*) exit 0 ;;\n"
+        "*--list-keys*) printf 'pub:u:255:22:0123456789ABCDEF:::::::::\\nfpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\\n' ;;\n"
+        "*--verify*) printf '[GNUPG:] GOODSIG 0123456789ABCDEF fake\\n"
+        "[GNUPG:] VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2026-09-22 0 0 0 0 0 0 22 01 0123456789ABCDEF0123456789ABCDEF01234567\\n' ;;\n"
+        "esac\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    return fake_bin
+
+
+def _guard(seconds: int) -> None:
+    """A hard wall-time guard: a hang is a test failure (TimeoutError), never a killed session (F2)."""
+
+    def on_alarm(signum, frame) -> None:
+        raise TimeoutError("hung")
+
+    signal.signal(signal.SIGALRM, on_alarm)
+    signal.alarm(seconds)
+
+
+def _unguard() -> None:
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+
+
+def _swap_to_fifo(path: Path) -> None:
+    """The attacker's move: between the pathname pre-check (t0) and the open (t1), replace a regular
+    file with a mode-0600 FIFO that no writer will ever feed."""
+    os.unlink(path)
+    os.mkfifo(path, 0o600)
+
+
+def test_gpg_is_never_resolved_from_the_callers_path(tmp_path: Path, keys, monkeypatch) -> None:
+    """F1 (B item 5): the caller's PATH never picks the verifier. A hostile gpg FIRST on PATH that lies
+    about the signature must be neither used nor executed; the record is unsigned (8 bytes of garbage)
+    and the fixed real gpg refuses it with fubuki-review-signature-invalid."""
+    owner = keys("owner")
+    fake_bin = _hostile_path(tmp_path, monkeypatch)
+    _write_review(tmp_path / "reviews", _H, owner)
+    (tmp_path / "reviews" / f"{_H}.json.asc").write_bytes(b"XXXXXXXX")  # unsigned: 8 bytes of garbage
+    with pytest.raises(GovernanceError) as excinfo:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))
+    assert excinfo.value.reason == "fubuki-review-signature-invalid"
+    assert not (fake_bin / "RAN").exists(), "the caller's PATH picked the verifier (F1)"
+
+
+def test_a_hostile_path_does_not_break_the_real_gpg(tmp_path: Path, keys, monkeypatch) -> None:
+    """Positive control: with a hostile caller PATH, a genuinely owner-signed record is still accepted —
+    the fixed child PATH suffices for the real gpg. (Green at the PIN too, where the fake was the trusted
+    one — the B item-5 tautology; after the fix /usr/bin/gpg is the only possible executor.)"""
+    owner = keys("owner")
+    _hostile_path(tmp_path, monkeypatch)
+    _write_review(tmp_path / "reviews", _H, owner)
+    verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))  # no raise
+
+
+def test_the_child_path_is_fixed(tmp_path: Path, keys, monkeypatch) -> None:
+    """The child gpg process runs under a FIXED PATH literal (/usr/bin:/bin), never the caller's: an
+    explicitly passed scratch gpg dumps the PATH it sees; even with a hostile caller PATH, the dump
+    must read exactly '/usr/bin:/bin'."""
+    owner = keys("owner")
+    script = tmp_path / "dump-path-gpg"
+    script.write_text(
+        "#!/usr/bin/env python3\nimport os, sys\n"
+        "open(sys.argv[0] + '.dumppath', 'w').write(os.environ.get('PATH', ''))\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _hostile_path(tmp_path, monkeypatch)
+    _write_review(tmp_path / "reviews", _H, owner)
+    with pytest.raises(GovernanceError) as excinfo:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg=script)
+    assert excinfo.value.reason.startswith("fubuki-")
+    assert (tmp_path / "dump-path-gpg.dumppath").read_text(encoding="utf-8") == "/usr/bin:/bin"
+
+
+def test_an_explicit_gpg_must_be_an_absolute_regular_file(tmp_path: Path, keys, monkeypatch) -> None:
+    """The explicit gpg= parameter (tests only) is a code decision: a bare name, a missing path, or a
+    directory is refused with fubuki-review-gpg-unavailable before anything runs. An existing relative
+    file is the discriminator for the is_absolute() half; is_file() alone would accept its shape."""
+    owner = keys("owner")
+    _write_review(tmp_path / "reviews", _H, owner)
+    for bad in ("gpg", tmp_path / "missing", tmp_path):
+        with pytest.raises(GovernanceError) as excinfo:
+            verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg=bad)
+        assert excinfo.value.reason == "fubuki-review-gpg-unavailable"
+
+    # A relative name that exists in cwd passes Path.is_file(); it must still fail is_absolute(). If that
+    # half is removed, subprocess resolves bare "gpg" through the fixed child PATH and the valid review passes.
+    (tmp_path / "gpg").write_text("not executable — its existence is the discriminator\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(GovernanceError) as excinfo:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg="gpg")
+    assert excinfo.value.reason == "fubuki-review-gpg-unavailable"
+
+
+def test_a_fifo_swapped_in_after_the_precheck_is_refused_not_hung(tmp_path: Path, keys, monkeypatch) -> None:
+    """F2 (B item 6): a FIFO swapped in for the record between the pathname pre-check and the open is
+    refused (fubuki-review-record-invalid: 'review record is not a regular file'), never a hang."""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    _write_review(reviews, _H, owner)
+    record = reviews / f"{_H}.json"
+    original = Path.is_file
+    state = {"armed": False}
+
+    def wrapper(self, *a, **kw):
+        ans = original(self, *a, **kw)
+        if not state["armed"] and self == record:
+            state["armed"] = True
+            _swap_to_fifo(record)
+        return ans
+
+    monkeypatch.setattr(Path, "is_file", wrapper)
+    _guard(10)
+    started = time.monotonic()
+    try:
+        with pytest.raises(GovernanceError) as excinfo:
+            verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+    finally:
+        _unguard()
+    assert excinfo.value.reason == "fubuki-review-record-invalid"
+    assert excinfo.value.detail == "review record is not a regular file"
+    assert (time.monotonic() - started) < 5
+
+
+def test_a_fifo_swapped_in_for_the_signature_is_refused_not_hung(tmp_path: Path, keys, monkeypatch) -> None:
+    """F2 (F8 symmetry): the same non-regular-FD refusal applies to the signature file, not just the
+    record — the read primitive proves a regular file on the FD for every one of the three reads."""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    _write_review(reviews, _H, owner)
+    sig = reviews / f"{_H}.json.asc"
+    original = Path.is_file
+    state = {"armed": False}
+
+    def wrapper(self, *a, **kw):
+        ans = original(self, *a, **kw)
+        if not state["armed"] and self == sig:
+            state["armed"] = True
+            _swap_to_fifo(sig)
+        return ans
+
+    monkeypatch.setattr(Path, "is_file", wrapper)
+    _guard(10)
+    started = time.monotonic()
+    try:
+        with pytest.raises(GovernanceError) as excinfo:
+            verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+    finally:
+        _unguard()
+    assert excinfo.value.reason == "fubuki-review-record-invalid"
+    assert excinfo.value.detail == "review record is not a regular file"
+    assert (time.monotonic() - started) < 5
+
+
+def test_a_fifo_at_the_record_path_is_unreviewed(tmp_path: Path, keys) -> None:
+    """Two-level taxonomy: a non-regular NAME at the pre-check (t0) is fubuki-packet-unreviewed; a
+    non-regular FD at the open (t1) is fubuki-review-record-invalid. A plain FIFO at the record path,
+    no race, is the t0 case. (Green at the PIN too — it pins the t0 half.)"""
+    owner = keys("owner")
+    reviews = tmp_path / "reviews"
+    reviews.mkdir()
+    os.mkfifo(reviews / f"{_H}.json", 0o600)  # a FIFO where the record must be; the .asc is absent too
+    with pytest.raises(GovernanceError) as excinfo:
+        verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
+    assert excinfo.value.reason == "fubuki-packet-unreviewed"
+
+
+def test_the_read_primitive_proves_the_fd_not_the_path() -> None:
+    """AF-AP-80 pairing (declared limit, not a behavioral proof): a non-regular file swapped between
+    os.fstat(fd) and the read cannot be forced by these tests, so the source shape is pinned: the
+    regular-file proof must be on the FD (os.fstat(fd)), never on the path (os.stat)."""
+    src = inspect.getsource(review)
+    assert "os.fstat(fd)" in src
+    assert "os.stat(" not in src

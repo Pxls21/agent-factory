@@ -1,0 +1,1660 @@
+diff --git a/docs/governance/reviews/README.md b/docs/governance/reviews/README.md
+index 165b730..5fc9d66 100644
+--- a/docs/governance/reviews/README.md
++++ b/docs/governance/reviews/README.md
+@@ -16,6 +16,21 @@ by any key other than the committed owner key is refused (`fubuki-review-signatu
+ store is not on its own enough to forge a review. This is the runtime‑hash analogue of the accepted‑proof
+ anchor (a signed git tag; see `../README.md`); the vehicle differs because the object is a hash, not a commit.
+ 
++## What the verifier trusts
++
++The signature verifier is a fixed code decision, never a lookup: `review._GPG_PATHS` is a fixed tuple of
++absolute distro‑gpg paths (`/usr/bin/gpg`, `/usr/bin/gpg2`), and production (`load_packet`) never passes an
++executable. The child gpg process runs with a **fixed `PATH` literal** (`/usr/bin:/bin`), `--no-options`, and
++an isolated `GNUPGHOME`, so a PATH‑shadowed `gpg` on the caller's `PATH` and an ambient `gpg.conf` are not
++trust channels. `verify_review` accepts an explicit `gpg=` parameter for tests only: it must be an absolute
++path to a regular file, and production never passes it.
++
++Non‑regular files are refused at two levels (VERIFY‑GOV2c B item 6): a non‑regular *name* at the pre‑check
++(directory, socket, device, FIFO, or missing) is `fubuki-packet-unreviewed`; a non‑regular *file descriptor*
++at the open — e.g. a FIFO swapped in between the pre‑check and the read — is
++`fubuki-review-record-invalid: review record is not a regular file`. The open is non‑blocking and proves the
++file on the returned FD, so the window between the two checks cannot turn a refusal into a hang.
++
+ ## Owner step — sign a review record
+ 
+ Run from the repo root, with the owner signing key available to `gpg` (same key whose public half is at
+diff --git a/src/agent_factory/governance/review.py b/src/agent_factory/governance/review.py
+index c825201..81dd769 100644
+--- a/src/agent_factory/governance/review.py
++++ b/src/agent_factory/governance/review.py
+@@ -19,15 +19,17 @@ attacker who can write the store flips the file between two reads and an unsigne
+ signature is accepted only on a real `[GNUPG:] GOODSIG` status line whose signer is the one committed owner
+ key (F2/F6): a `GOODSIG` substring anywhere in gpg's output — e.g. an attacker-chosen notation — is not a
+ status line, and a revoked or expired key emits `REVKEYSIG`/`EXPKEYSIG` and no `GOODSIG`, so revocation (the
+-owner's remedy after key theft) is honoured. gpg runs by absolute path with `--no-options` and a minimal
+-environment, so an ambient `gpg.conf` or a PATH-shadowed `gpg` is not a trust channel (F5).
++owner's remedy after key theft) is honoured. The gpg executable is a FIXED trust decision, never a
++lookup: it is one of `_GPG_PATHS` (distro binaries at absolute paths) or a path the CALLER'S CODE passes
++deliberately (the `gpg` parameter exists for tests only), and the child runs with a fixed `PATH` literal
++and `--no-options`, so neither a PATH-shadowed `gpg` nor an ambient `gpg.conf` is a trust channel (F5).
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
+ import os
+-import shutil
++import stat
+ import subprocess
+ import tempfile
+ from pathlib import Path
+@@ -43,15 +45,26 @@ DEFAULT_OWNER_KEY = _REPO_ROOT / "docs" / "governance" / "owner-signing-key.asc"
+ _HEX = set("0123456789abcdef")
+ _MAX_RECORD_BYTES = 1 << 20  # a review record is a few hundred bytes; refuse anything absurd
+ 
++# THE trust root for the signature verifier: distro gpg at an absolute path, decided in code. Never the
++# caller's PATH (a PATH-shadowed gpg is a trust channel — VERIFY-GOV2c B item 5), never the environment,
++# never a bare name. Production (load_packet) passes no gpg and takes the first existing entry.
++_GPG_PATHS: tuple[str, ...] = ("/usr/bin/gpg", "/usr/bin/gpg2")
++
+ 
+ def _is_governance_hash(value: object) -> bool:
+     return isinstance(value, str) and len(value) == 64 and all(c in _HEX for c in value)
+ 
+ 
+-def _read_no_symlink(path: Path) -> bytes:
+-    """Read a file's bytes, refusing to follow a symlink at the final component (O_NOFOLLOW). Raises OSError."""
+-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
++def _read_regular_file(path: Path) -> bytes:
++    """Read a file's bytes, refusing a symlink (O_NOFOLLOW) and a NON-REGULAR file (a FIFO swapped in
++    between the caller's pre-check and this open would block os.read forever: the open is O_NONBLOCK and
++    the returned FD is fstat'ed and must be a regular file — the proof is on the FD, not the path).
++    Raises OSError."""
++    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+     try:
++        st = os.fstat(fd)
++        if not stat.S_ISREG(st.st_mode):
++            raise OSError("review record is not a regular file")
+         chunks: list[bytes] = []
+         total = 0
+         while True:
+@@ -90,11 +103,18 @@ def verify_review(
+     *,
+     reviews_dir: str | Path | None = None,
+     owner_key: str | Path | None = None,
++    gpg: str | Path | None = None,
+ ) -> None:
+     """Return if a first-party, owner-signed review record attests THIS governance hash; else fail closed.
+ 
+     Raises GovernanceError with a stable reason. The caller (load_packet) computes the hash over the
+     canonical packet bytes and passes it here BEFORE trusting any reviewed bit.
++
++    gpg: the signature-verifier executable, as an absolute path. A code decision, never read from the
++    environment: production (load_packet) never passes it and the fixed `_GPG_PATHS` is used; the
++    parameter exists so a TEST can point at a scripted gpg deliberately. An explicit value must be an
++    absolute path to a regular file; a bare name, a missing path, or a directory refuse with
++    fubuki-review-gpg-unavailable before anything runs.
+     """
+     reviews_dir = Path(reviews_dir) if reviews_dir is not None else DEFAULT_REVIEWS_DIR
+     owner_key = Path(owner_key) if owner_key is not None else DEFAULT_OWNER_KEY
+@@ -111,17 +131,27 @@ def verify_review(
+     if not owner_key.is_file():
+         raise GovernanceError("fubuki-owner-key-missing", str(owner_key))
+ 
+-    gpg = shutil.which("gpg")
+-    if gpg is None:
+-        raise GovernanceError("fubuki-review-gpg-unavailable", "gpg is not on PATH")
+-
+-    # Read the record, its signature, and the owner key ONCE, refusing a symlink (F1/F8). gpg then verifies a
+-    # COPY of exactly these bytes and we parse the SAME record bytes, so the verified bytes are the trusted
+-    # bytes — no second read for an attacker to race.
++    if gpg is not None:
++        # An explicit gpg is a deliberate code decision (tests); it must name an absolute regular file.
++        gpg_path = Path(gpg)
++        if not gpg_path.is_absolute() or not gpg_path.is_file():
++            raise GovernanceError("fubuki-review-gpg-unavailable", f"gpg must be an absolute regular file: {gpg}")
++        gpg = str(gpg_path)
++    else:
++        # No explicit gpg: the first _GPG_PATHS entry that is a regular file. Never the caller's PATH —
++        # a PATH-shadowed gpg would become the verifier (VERIFY-GOV2c B item 5).
++        gpg = next((p for p in _GPG_PATHS if Path(p).is_file()), None)
++        if gpg is None:
++            raise GovernanceError("fubuki-review-gpg-unavailable", "no gpg at " + ", ".join(_GPG_PATHS))
++
++    # Read the record, its signature, and the owner key ONCE, refusing a symlink and a non-regular file
++    # (F1/F8: a FIFO planted between the pathname pre-check and the open is refused on the FD, not a hang).
++    # gpg then verifies a COPY of exactly these bytes and we parse the SAME record bytes, so the verified
++    # bytes are the trusted bytes — no second read for an attacker to race.
+     try:
+-        record_bytes = _read_no_symlink(record_path)
+-        sig_bytes = _read_no_symlink(sig_path)
+-        owner_key_bytes = _read_no_symlink(owner_key)
++        record_bytes = _read_regular_file(record_path)
++        sig_bytes = _read_regular_file(sig_path)
++        owner_key_bytes = _read_regular_file(owner_key)
+     except OSError as exc:
+         raise GovernanceError("fubuki-review-record-invalid", str(exc)) from exc
+ 
+@@ -131,9 +161,11 @@ def verify_review(
+         sig_copy = Path(home) / "record.json.asc"
+         rec_copy.write_bytes(record_bytes)
+         sig_copy.write_bytes(sig_bytes)
+-        # A minimal, hostile-free environment: gpg by absolute path, no ambient options file, C locale, only
+-        # GNUPGHOME + PATH forwarded (F5). The owner key is imported from the snapshot via stdin.
+-        env = {"GNUPGHOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
++        # A minimal, hostile-free environment: gpg by absolute path, no ambient options file, C locale.
++        # The child PATH is a FIXED literal — the caller's PATH is never forwarded (F5; B item 5) — and
++        # holds only the distro gpg and the interpreters/scripts a gpg subprocess may need. The owner
++        # key is imported from the snapshot via stdin.
++        env = {"GNUPGHOME": home, "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+         base = [gpg, "--batch", "--quiet", "--no-options"]
+         try:
+             imported = subprocess.run(
+diff --git a/tasks/briefs/stage3-governance-support/GOV2d-report.md b/tasks/briefs/stage3-governance-support/GOV2d-report.md
+new file mode 100644
+index 0000000..61d4780
+--- /dev/null
++++ b/tasks/briefs/stage3-governance-support/GOV2d-report.md
+@@ -0,0 +1,231 @@
++# GOV2d report — focused repair of VERIFY-GOV2c F1/F2
++
++PROPOSAL: this is a build-lane result. The sandbox-side adversarial-verifier must grade it; this lane does not issue a gate verdict.
++
++- F1: gpg is a fixed code trust decision, never resolved from the caller's PATH.
++- F2: every review input is proved regular on the returned FD; a FIFO planted after the pathname pre-check is refused, never allowed to hang.
++
++PIN `2da04bf`; lane `pc-gov2d.md--2da04bf`; PC venue; gpg 2.4.7; venv Python 3.11.14. Route: `agentfactory-build-local`; the route is HYBRID in practice because a cloud step may serve a turn after a local chat-template refusal. No claim is made about which model produced code.
++
++## PREMISE — RE-MEASURED
++
++Measured on the unmodified lane tree before the edit:
++
++```
++RV 010054c04f697c8c  src/agent_factory/governance/review.py
++TR ea9e0a466a4807d2  tests/test_governance_review.py
++RM 662fd187a827461b  docs/governance/reviews/README.md
++PK 5d8cf21468adb55e  src/agent_factory/governance/packet.py
++git log --oneline dab9803..2da04bf -- <RV TR RM PK> | wc -l  => 0
++```
++
++The PIN anchors reproduced:
++
++- `def _read_no_symlink(path: Path) -> bytes:` at `RV@2da04bf:51`.
++- `fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)` at `RV@2da04bf:53`.
++- `if not record_path.is_file() or not sig_path.is_file():` at `RV@2da04bf:109`.
++- `gpg = shutil.which("gpg")` at `RV@2da04bf:114`.
++- `gpg is not on PATH` at `RV@2da04bf:116`.
++- `record_bytes = _read_no_symlink(record_path)` at `RV@2da04bf:122`; `sig_bytes = _read_no_symlink(sig_path)` at `RV@2da04bf:123`; `owner_key_bytes = _read_no_symlink(owner_key)` at `RV@2da04bf:124`.
++- `fubuki-review-record-invalid` maps the read OSError at `RV@2da04bf:126`.
++- `os.environ.get("PATH", "/usr/bin:/bin")` forwards the caller PATH at `RV@2da04bf:136`.
++- The old docstring's false F5 claim is `environment, so an ambient gpg.conf or a PATH-shadowed gpg is not a trust channel (F5).` at `RV@2da04bf:22-23`.
++- GOODSIG/VALIDSIG + rc-0 acceptance spans `RV@2da04bf:156-164`.
++- The old absent-gpg test uses `monkeypatch.setattr(shutil, "which", lambda name: None)` at `TR@2da04bf:264`.
++- The sole production call passes no gpg argument: `verify_review(packet_hash, reviews_dir=reviews_dir, owner_key=owner_key)` at `PK@2da04bf:155`.
++
++Code-intel: graft found `_read_no_symlink` called only by `verify_review`; ripwire independently found `load_packet` plus the test file as callers of `verify_review`. `PK@2da04bf:155` is the production call site. GitNexus against the clone index reported `Target 'verify_review' not found` / `risk: UNKNOWN`; this is disclosed, not treated as low risk. `scripts/why.sh` showed the prior GOV2b/GOV2c chronology and the false F5 rationale that this repair closes.
++
++PIN test baselines, with both declared FUBUKI roots exported and verified to exist:
++
++```
++tests/test_governance_review.py                         16 passed in 0.68s  rc=0
++the exact six-file governance set                      49 passed in 0.92s  rc=0
++```
++
++The six-file set id under the brief's stated Python formula, `sha256("\n".join(sorted(files)) + "\n")[:12]`, is `f3baa8cf79c7`.
++
++PREMISE HOLDS. Not CONTRACT-INVALID.
++
++## RED-first evidence at the PIN
++
++The eight new tests were first run against the unmodified RV from a scratch test file under the lane directory. The import traceback proved the module path was the lane tree's PIN RV. First failing assertion per test:
++
++```
++test_gpg_is_never_resolved_from_the_callers_path
++  Failed: DID NOT RAISE GovernanceError
++
++test_the_child_path_is_fixed
++  TypeError: verify_review() got an unexpected keyword argument 'gpg'
++
++test_an_explicit_gpg_must_be_an_absolute_regular_file
++  TypeError: verify_review() got an unexpected keyword argument 'gpg'
++
++test_gpg_absent_raises_a_governance_error
++  AttributeError: module agent_factory.governance.review has no attribute '_GPG_PATHS'
++
++test_a_fifo_swapped_in_after_the_precheck_is_refused_not_hung
++  AssertionError: assert 'hung' == 'review recor... regular file'
++
++test_a_fifo_swapped_in_for_the_signature_is_refused_not_hung
++  AssertionError: assert 'hung' == 'review recor... regular file'
++
++test_the_read_primitive_proves_the_fd_not_the_path
++  assert 'os.fstat(fd)' in '…'
++```
++
++The two expected PIN greens also reproduced:
++
++- `test_a_hostile_path_does_not_break_the_real_gpg` returned. At the PIN this was a tautological green: the hostile fake itself was the verifier because `shutil.which("gpg")` at `RV@2da04bf:114` selected it. After the repair, `/usr/bin/gpg` is the only possible executor.
++- `test_a_fifo_at_the_record_path_is_unreviewed` refused at the unchanged pre-check: `fubuki-packet-unreviewed` from `RV@2da04bf:109-110`.
++
++The two FIFO REDs were caught by the 10-second SIGALRM guard. `TimeoutError("hung")` is an OSError, so the existing PIN mapping `raise GovernanceError("fubuki-review-record-invalid", str(exc)) from exc` at `RV@2da04bf:126` turned it into a GovernanceError whose detail was `hung`; the pinned detail assertion then failed. The old open therefore hung until the guard fired, rather than returning naturally.
++
++## FILES / HUNKS
++
++### RV — `src/agent_factory/governance/review.py`
++
++Digest `010054c04f697c8c` → `06da43e1024e548b`; 179 → 211 lines.
++
++Post-edit plain-path lines (new code does not exist at the PIN and is therefore described rather than aliased under the report lint's `--rev 2da04bf` mode):
++
++- RV line 32 imports `stat`; `shutil` leaves RV.
++- RV lines 48-51 define `_GPG_PATHS: tuple[str, ...] = ("/usr/bin/gpg", "/usr/bin/gpg2")` as THE code trust root.
++- RV lines 58-80 replace `_read_no_symlink` with `_read_regular_file`.
++- RV line 63 opens with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`.
++- RV lines 65-67 perform `os.fstat(fd)`, require `stat.S_ISREG(st.st_mode)`, and raise the exact `review record is not a regular file` detail.
++- RV lines 101-116 add `gpg: str | Path | None = None`; the docstring states that production never passes it and tests may pass a deliberate absolute path.
++- RV lines 134-145 validate an explicit path with `is_absolute()` + `is_file()`, or choose the first regular file in `_GPG_PATHS`. Neither branch reads the environment.
++- RV lines 152-156 read record, signature, and owner key through `_read_regular_file` and preserve the OSError → `fubuki-review-record-invalid` mapping.
++- RV line 168 sets the exact child env `{"GNUPGHOME": home, "PATH": "/usr/bin:/bin", "LC_ALL": "C"}`.
++- RV lines 22-25 rewrite the F5 docstring claim to the fixed trust decision and fixed child PATH.
++
++Removed PIN behavior: `shutil.which("gpg")` at `RV@2da04bf:114`; `os.environ.get("PATH", "/usr/bin:/bin")` at `RV@2da04bf:136`; `_read_no_symlink` at `RV@2da04bf:51-68`.
++
++Post-edit invariant:
++
++```
++grep -n 'shutil\|os.environ' src/agent_factory/governance/review.py
++=> 0 lines (grep rc 1)
++```
++
++Taxonomy:
++
++- A missing or non-regular pathname at the unchanged pre-check remains `fubuki-packet-unreviewed`; the PIN equivalent is `RV@2da04bf:109-110`.
++- A non-regular FD opened after that pre-check now returns `fubuki-review-record-invalid: review record is not a regular file` via the new `_read_regular_file` + unchanged mapping class.
++
++### TR — `tests/test_governance_review.py`
++
++Digest `ea9e0a466a4807d2` → `1ec52c579c7b4558`; 279 → 476 lines. All 16 existing tests remain.
++
++New/rewritten post-edit lines:
++
++- TR lines 264-271 rewrite `test_gpg_absent_raises_a_governance_error` to monkeypatch `review._GPG_PATHS` instead of the old `monkeypatch.setattr(shutil, "which", lambda name: None)` at `TR@2da04bf:264`.
++- TR lines 290-307 add the hostile PATH helper. Its fake writes the specified `fake-bin/RAN` sentinel and shapes import/list/verify output.
++- TR lines 332-343 add `test_gpg_is_never_resolved_from_the_callers_path`; the `.asc` file is exactly 8 bytes of garbage; it asserts signature-invalid and absent `RAN`.
++- TR lines 346-353 add the hostile-PATH positive control through real gpg.
++- TR lines 356-374 add the exact child PATH dump (`/usr/bin:/bin`) through explicit scripted gpg.
++- TR lines 377-394 reject the brief's three explicit-gpg values plus an existing relative file. The fourth call is the live discriminator for the `is_absolute()` half: `Path("gpg").is_file()` is true after chdir, but the production guard still refuses it.
++- TR lines 397-424 / 427-454 add record/signature FIFO race regressions, each with a 10-second SIGALRM and <5-second wall assertion.
++- TR lines 457-467 pin that a plain FIFO at t0 is unreviewed.
++- TR lines 470-476 add the AF-AP-80 source-shape pin requiring `os.fstat(fd)` and excluding `os.stat(`.
++
++`shutil` stays imported because the key fixture still calls `shutil.rmtree` at `TR@2da04bf:71` (post-edit line 75); only the old `shutil.which` test use is deleted.
++
++### RM — `docs/governance/reviews/README.md`
++
++Digest `662fd187a827461b` → `20be44677047f037`; 59 → 74 lines.
++
++RM lines 19-33 add `## What the verifier trusts`: fixed `_GPG_PATHS`, fixed child PATH, tests-only explicit `gpg=`, and the two-level non-regular-file taxonomy. The unchanged PIN owner step is `## Owner step — sign a review record` at `RM@2da04bf:19` and shifts down.
++
++PK stays byte-identical. Its production call remains `verify_review(packet_hash, reviews_dir=reviews_dir, owner_key=owner_key)` at `PK@2da04bf:155` and passes no gpg.
++
++## MUTATION AUDIT — 8/8 killed
++
++Each mutant was a scratch copy under the lane dir, never the worktree RV. Every copy compiled first. The test rig injected the matching scratch path as `agent_factory.governance.review`; a proof file recorded each imported `__file__` (`mut/m1-review.py` through `mut/m8-review.py`).
++
++| mutant | full relevant subset | named isolate / discriminator | first failing line | result |
++|---|---:|---:|---|---|
++| m1 restore `shutil.which("gpg")` | `4 failed, 6 passed, 14 deselected in 0.65s` | `1 failed, 23 deselected in 0.10s` | `Failed: DID NOT RAISE GovernanceError` | KILLED |
++| m2 forward caller PATH | `1 failed, 9 passed, 14 deselected in 0.65s` | `1 failed, 23 deselected in 0.13s` | hostile PATH != `/usr/bin:/bin` | KILLED |
++| m3 drop `O_NONBLOCK` | `2 failed, 8 passed, 14 deselected in 20.65s` | `2 failed, 22 deselected in 20.16s` | detail was `hung` | KILLED by guards |
++| m4 drop `S_ISREG` check | `2 failed, 8 passed, 14 deselected in 0.67s` | `2 failed, 22 deselected in 0.16s` | reason became signature-invalid | KILLED |
++| m5 `_GPG_PATHS = ("gpg",)` | `5 failed, 5 passed, 14 deselected in 0.63s` | `1 failed, 23 deselected in 0.09s` | `fubuki-review-gpg-unavailable: no gpg at gpg` | KILLED |
++| m6 drop `is_absolute()` | `1 failed, 9 passed, 14 deselected in 0.65s` | `1 failed, 23 deselected in 0.10s` | existing relative gpg: `Failed: DID NOT RAISE` | KILLED |
++| m7 drop `O_NOFOLLOW` | `1 failed, 9 passed, 14 deselected in 0.66s` | `1 failed, 23 deselected in 0.11s` | symlink: `Failed: DID NOT RAISE` | KILLED |
++| m8 `os.fstat(fd)` → `os.stat(path)` | `1 failed, 9 passed, 14 deselected in 0.65s` | `1 failed, 23 deselected in 0.06s` | source pin lacks `os.fstat(fd)` | KILLED by shape pin only |
++
++Declared limit: m8 is the AF-AP-80 pairing, not a behavioral proof. The t1→t2 window is not forced; the source-shape pin kills the path-stat mutant.
++
++m4 discrepancy: the brief predicted a JSON/detail failure. On gpg 2.4.7 the empty FIFO snapshot reaches gpg first; gpg rejects the signature before JSON parse, so the failing assertion is the reason (`fubuki-review-signature-invalid`), not an `Expecting value` detail. The mutant is still killed.
++
++m6 discrepancy/fix: the brief's original three values do not discriminate `is_absolute()` from `is_file()`; all three fail `is_file()` too. An existing relative file under a chdir'd cwd does discriminate the halves. That fourth call is now committed in the named test, and the m6 isolate is red for the exact expected reason.
++
++## SCREENS
++
++```
++AF-AP-115 count in RV: 0
++RV whole-file remaining hit: AF-AP-110: 1 (same as PIN)
++TR screen: AF-AP-80: 2 (the paired source-shape assertions)
++pyflakes RV + TR: 0 lines, rc 0
++```
++
++At the PIN, the screen found `AF-AP-115: 2` and `AF-AP-110: 1`. The two AF-AP-115 triggers were the resolved/forwarded caller PATH paths now removed.
++
++## PC GATES
++
++Declared inputs existed and were exported on every run:
++
++```
++FUBUKI_OS_ROOT=/home/rocco/fubuki-pin/fubuki-os
++FUBUKI_OTHER_ROOT=/home/rocco/fubuki-pin/fubuki-os-other
++```
++
++Direct PC gates, xdist installed, lane-local `--basetemp` (not `/tmp`):
++
++```
++(a) review suite, -n 4, run 1   24 passed in 0.81s   rc=0
++(a) review suite, -n 4, run 2   24 passed in 0.81s   rc=0
++(b) review suite, serial        24 passed in 1.71s   rc=0
++(c) exact six-file set, -n 4    57 passed in 1.08s   rc=0
++(d) lane-basetemp gpg-agent     0 before -> 0 after
++```
++
++The alarm-guard tests therefore pass both xdist and main-thread serial shapes. The exact six-file set id is `f3baa8cf79c7` under the brief's stated Python formula. A pristine-PIN cross-check in a temporary detached worktree returned `49 passed in 0.88s`, rc 0; the +8 is exactly this lane's eight new tests.
++
++## NOT-DONE
++
++- Issue #18 is untouched: the C-lane six surviving mutants, duplicate JSON members, owner-key deployment path, and gpg-agent cleanup remain outside GOV2d.
++- No gpg-agent cleanup was built; this lane measured 0→0 only.
++- PK is not edited.
++- No load_packet-level duplicate of the hostile-PATH unit regression was added; `verify_review(packet_hash, reviews_dir=reviews_dir, owner_key=owner_key)` at `PK@2da04bf:155` is the sole production call and structurally takes the default fixed tuple.
++- No commit, push, stash, checkout, reset, tag, production service change, or credential access occurred.
++
++## SELF-ATTACK
++
++1. Fixed paths could miss a distro's gpg location. This is a visible, fail-closed code decision: both absent paths produce `fubuki-review-gpg-unavailable`; this PC's `/usr/bin/gpg` is real gpg 2.4.7.
++2. The FIFO tests could pass from timing. m3 removes `O_NONBLOCK` and restores the 10-second guard failures in both record/signature tests; serial and xdist shapes pass only with the fix.
++3. Relative explicit gpg could evade the guard. The committed fourth explicit-gpg call creates a relative regular file after chdir; production refuses it, while m6 returns and is killed.
++
++## DISCREPANCIES
++
++1. `scripts/pc_suite.sh` uses locale-sensitive shell `sort`; on this six-file set it yields `892ef4ebb5b8` because `pin.py` / `pin_enforcement.py` order differs from Python byte sorting. The brief's stated Python formula yields `f3baa8cf79c7`, matching the C-lane id; this report uses that value.
++2. GitNexus's clone index did not resolve the symbols (`risk: UNKNOWN`). Graft + ripwire supplied the caller evidence; `lane_context.sh` refreshed graft and wrote the final pack. GitNexus `detect-changes` against the clone index reported `No changes detected` because the lane is detached from that clone index; it is disclosed, not treated as an absence of impact.
++3. The final lane-context screen reports generic `AP-32: 2` on `_is_governance_hash` plus `AF-AP-110: 1`; item 7's named AF-AP-115 result remains 0. No AP-32 behavior was changed.
++4. Report lint is run with `--rev 2da04bf`; therefore only PIN-era lines can be machine-checked. New lines are cited by plain path/in words as the brief requires; PIN lines use `alias@2da04bf:NN`.
++5. Final report lint: `report_lint: 27 refs — OK 27, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (at 2da04bf)`; rc 0.
++
++## FILE IDENTITY
++
++```
++PIN:
++RV 010054c04f697c8c  TR ea9e0a466a4807d2  RM 662fd187a827461b  PK 5d8cf21468adb55e
++FINAL:
++RV 06da43e1024e548b  TR 1ec52c579c7b4558  RM 20be44677047f037  PK 5d8cf21468adb55e
++```
++
++Only RV, TR, RM, and this required report are modified in the lane worktree. Scratch red/mutation rigs stay outside the worktree.
++
++## RETRO
++
++The brief's m6 mutation case did not distinguish `is_absolute()` from `is_file()`. The repair is in the committed test: an existing relative file is the missing discriminator. Coordinator action: run `/bug-echo` and decide whether this earns an ANTI-PATTERN REGISTRY row. No other lesson to bake.
+diff --git a/tests/test_governance_review.py b/tests/test_governance_review.py
+index 631bc4c..ac6e184 100644
+--- a/tests/test_governance_review.py
++++ b/tests/test_governance_review.py
+@@ -12,11 +12,14 @@ EXACT governance hash (a review for one packet never authorizes another).
+ 
+ from __future__ import annotations
+ 
++import inspect
+ import json
+ import os
+ import shutil
++import signal
+ import subprocess
+ import tempfile
++import time
+ from pathlib import Path
+ 
+ import pytest
+@@ -24,6 +27,7 @@ import pytest
+ from agent_factory.governance.packet import Packet, compile_canonical, governance_hash, load_packet
+ from agent_factory.governance.pin import GovernanceError, verify_pinned_fubuki
+ from agent_factory.governance.review import verify_review
++import agent_factory.governance.review as review
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ LOCK = ROOT / "upstream.lock.yaml"
+@@ -258,10 +262,11 @@ def test_a_non_object_record_raises_a_governance_error(tmp_path: Path, keys) ->
+ 
+ 
+ def test_gpg_absent_raises_a_governance_error(tmp_path: Path, keys, monkeypatch) -> None:
+-    """F7: gpg missing from PATH raises a stable reason, not FileNotFoundError."""
++    """F7: gpg absent from every fixed _GPG_PATHS entry raises a stable reason, not FileNotFoundError.
++    GOV2d: the resolution is the module's fixed tuple, so the monkeypatch targets it — never PATH."""
+     owner = keys("owner")
+     _write_review(tmp_path / "reviews", _H, owner)
+-    monkeypatch.setattr(shutil, "which", lambda name: None)
++    monkeypatch.setattr(review, "_GPG_PATHS", (str(tmp_path / "no-gpg"),))
+     with pytest.raises(GovernanceError, match="^fubuki-review-gpg-unavailable"):
+         verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))
+ 
+@@ -277,3 +282,195 @@ def test_a_symlinked_record_is_refused(tmp_path: Path, keys) -> None:
+     (reviews / f"{_H}.json").symlink_to(real)
+     with pytest.raises(GovernanceError, match="^fubuki-review-record-invalid"):
+         verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
++
++
++# --- GOV2d: the gpg executable is a FIXED trust decision; a non-regular FD is refused, never a hang ---
++
++
++def _hostile_path(tmp_path: Path, monkeypatch) -> Path:
++    """A scratch gpg FIRST on the caller's PATH — the one that lies about the signature (B item 5).
++    Its sentinel proves whether it was ever executed. It is never installed and lives only in tmp_path."""
++    fake_bin = tmp_path / "fake-bin"
++    fake_bin.mkdir()
++    fake = fake_bin / "gpg"
++    fake.write_text(
++        "#!/bin/bash\ntouch \"$(dirname \"$0\")/RAN\"\ncase \"$*\" in\n"
++        "*--import*) exit 0 ;;\n"
++        "*--list-keys*) printf 'pub:u:255:22:0123456789ABCDEF:::::::::\\nfpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\\n' ;;\n"
++        "*--verify*) printf '[GNUPG:] GOODSIG 0123456789ABCDEF fake\\n"
++        "[GNUPG:] VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2026-09-22 0 0 0 0 0 0 22 01 0123456789ABCDEF0123456789ABCDEF01234567\\n' ;;\n"
++        "esac\nexit 0\n",
++        encoding="utf-8",
++    )
++    fake.chmod(0o755)
++    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
++    return fake_bin
++
++
++def _guard(seconds: int) -> None:
++    """A hard wall-time guard: a hang is a test failure (TimeoutError), never a killed session (F2)."""
++
++    def on_alarm(signum, frame) -> None:
++        raise TimeoutError("hung")
++
++    signal.signal(signal.SIGALRM, on_alarm)
++    signal.alarm(seconds)
++
++
++def _unguard() -> None:
++    signal.alarm(0)
++    signal.signal(signal.SIGALRM, signal.SIG_DFL)
++
++
++def _swap_to_fifo(path: Path) -> None:
++    """The attacker's move: between the pathname pre-check (t0) and the open (t1), replace a regular
++    file with a mode-0600 FIFO that no writer will ever feed."""
++    os.unlink(path)
++    os.mkfifo(path, 0o600)
++
++
++def test_gpg_is_never_resolved_from_the_callers_path(tmp_path: Path, keys, monkeypatch) -> None:
++    """F1 (B item 5): the caller's PATH never picks the verifier. A hostile gpg FIRST on PATH that lies
++    about the signature must be neither used nor executed; the record is unsigned (8 bytes of garbage)
++    and the fixed real gpg refuses it with fubuki-review-signature-invalid."""
++    owner = keys("owner")
++    fake_bin = _hostile_path(tmp_path, monkeypatch)
++    _write_review(tmp_path / "reviews", _H, owner)
++    (tmp_path / "reviews" / f"{_H}.json.asc").write_bytes(b"XXXXXXXX")  # unsigned: 8 bytes of garbage
++    with pytest.raises(GovernanceError) as excinfo:
++        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))
++    assert excinfo.value.reason == "fubuki-review-signature-invalid"
++    assert not (fake_bin / "RAN").exists(), "the caller's PATH picked the verifier (F1)"
++
++
++def test_a_hostile_path_does_not_break_the_real_gpg(tmp_path: Path, keys, monkeypatch) -> None:
++    """Positive control: with a hostile caller PATH, a genuinely owner-signed record is still accepted —
++    the fixed child PATH suffices for the real gpg. (Green at the PIN too, where the fake was the trusted
++    one — the B item-5 tautology; after the fix /usr/bin/gpg is the only possible executor.)"""
++    owner = keys("owner")
++    _hostile_path(tmp_path, monkeypatch)
++    _write_review(tmp_path / "reviews", _H, owner)
++    verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner))  # no raise
++
++
++def test_the_child_path_is_fixed(tmp_path: Path, keys, monkeypatch) -> None:
++    """The child gpg process runs under a FIXED PATH literal (/usr/bin:/bin), never the caller's: an
++    explicitly passed scratch gpg dumps the PATH it sees; even with a hostile caller PATH, the dump
++    must read exactly '/usr/bin:/bin'."""
++    owner = keys("owner")
++    script = tmp_path / "dump-path-gpg"
++    script.write_text(
++        "#!/usr/bin/env python3\nimport os, sys\n"
++        "open(sys.argv[0] + '.dumppath', 'w').write(os.environ.get('PATH', ''))\n"
++        "sys.exit(1)\n",
++        encoding="utf-8",
++    )
++    script.chmod(0o755)
++    _hostile_path(tmp_path, monkeypatch)
++    _write_review(tmp_path / "reviews", _H, owner)
++    with pytest.raises(GovernanceError) as excinfo:
++        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg=script)
++    assert excinfo.value.reason.startswith("fubuki-")
++    assert (tmp_path / "dump-path-gpg.dumppath").read_text(encoding="utf-8") == "/usr/bin:/bin"
++
++
++def test_an_explicit_gpg_must_be_an_absolute_regular_file(tmp_path: Path, keys, monkeypatch) -> None:
++    """The explicit gpg= parameter (tests only) is a code decision: a bare name, a missing path, or a
++    directory is refused with fubuki-review-gpg-unavailable before anything runs. An existing relative
++    file is the discriminator for the is_absolute() half; is_file() alone would accept its shape."""
++    owner = keys("owner")
++    _write_review(tmp_path / "reviews", _H, owner)
++    for bad in ("gpg", tmp_path / "missing", tmp_path):
++        with pytest.raises(GovernanceError) as excinfo:
++            verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg=bad)
++        assert excinfo.value.reason == "fubuki-review-gpg-unavailable"
++
++    # A relative name that exists in cwd passes Path.is_file(); it must still fail is_absolute(). If that
++    # half is removed, subprocess resolves bare "gpg" through the fixed child PATH and the valid review passes.
++    (tmp_path / "gpg").write_text("not executable — its existence is the discriminator\n", encoding="utf-8")
++    monkeypatch.chdir(tmp_path)
++    with pytest.raises(GovernanceError) as excinfo:
++        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=_owner_key_file(tmp_path, owner), gpg="gpg")
++    assert excinfo.value.reason == "fubuki-review-gpg-unavailable"
++
++
++def test_a_fifo_swapped_in_after_the_precheck_is_refused_not_hung(tmp_path: Path, keys, monkeypatch) -> None:
++    """F2 (B item 6): a FIFO swapped in for the record between the pathname pre-check and the open is
++    refused (fubuki-review-record-invalid: 'review record is not a regular file'), never a hang."""
++    owner = keys("owner")
++    reviews = tmp_path / "reviews"
++    _write_review(reviews, _H, owner)
++    record = reviews / f"{_H}.json"
++    original = Path.is_file
++    state = {"armed": False}
++
++    def wrapper(self, *a, **kw):
++        ans = original(self, *a, **kw)
++        if not state["armed"] and self == record:
++            state["armed"] = True
++            _swap_to_fifo(record)
++        return ans
++
++    monkeypatch.setattr(Path, "is_file", wrapper)
++    _guard(10)
++    started = time.monotonic()
++    try:
++        with pytest.raises(GovernanceError) as excinfo:
++            verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
++    finally:
++        _unguard()
++    assert excinfo.value.reason == "fubuki-review-record-invalid"
++    assert excinfo.value.detail == "review record is not a regular file"
++    assert (time.monotonic() - started) < 5
++
++
++def test_a_fifo_swapped_in_for_the_signature_is_refused_not_hung(tmp_path: Path, keys, monkeypatch) -> None:
++    """F2 (F8 symmetry): the same non-regular-FD refusal applies to the signature file, not just the
++    record — the read primitive proves a regular file on the FD for every one of the three reads."""
++    owner = keys("owner")
++    reviews = tmp_path / "reviews"
++    _write_review(reviews, _H, owner)
++    sig = reviews / f"{_H}.json.asc"
++    original = Path.is_file
++    state = {"armed": False}
++
++    def wrapper(self, *a, **kw):
++        ans = original(self, *a, **kw)
++        if not state["armed"] and self == sig:
++            state["armed"] = True
++            _swap_to_fifo(sig)
++        return ans
++
++    monkeypatch.setattr(Path, "is_file", wrapper)
++    _guard(10)
++    started = time.monotonic()
++    try:
++        with pytest.raises(GovernanceError) as excinfo:
++            verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
++    finally:
++        _unguard()
++    assert excinfo.value.reason == "fubuki-review-record-invalid"
++    assert excinfo.value.detail == "review record is not a regular file"
++    assert (time.monotonic() - started) < 5
++
++
++def test_a_fifo_at_the_record_path_is_unreviewed(tmp_path: Path, keys) -> None:
++    """Two-level taxonomy: a non-regular NAME at the pre-check (t0) is fubuki-packet-unreviewed; a
++    non-regular FD at the open (t1) is fubuki-review-record-invalid. A plain FIFO at the record path,
++    no race, is the t0 case. (Green at the PIN too — it pins the t0 half.)"""
++    owner = keys("owner")
++    reviews = tmp_path / "reviews"
++    reviews.mkdir()
++    os.mkfifo(reviews / f"{_H}.json", 0o600)  # a FIFO where the record must be; the .asc is absent too
++    with pytest.raises(GovernanceError) as excinfo:
++        verify_review(_H, reviews_dir=reviews, owner_key=_owner_key_file(tmp_path, owner))
++    assert excinfo.value.reason == "fubuki-packet-unreviewed"
++
++
++def test_the_read_primitive_proves_the_fd_not_the_path() -> None:
++    """AF-AP-80 pairing (declared limit, not a behavioral proof): a non-regular file swapped between
++    os.fstat(fd) and the read cannot be forced by these tests, so the source shape is pinned: the
++    regular-file proof must be on the FD (os.fstat(fd)), never on the path (os.stat)."""
++    src = inspect.getsource(review)
++    assert "os.fstat(fd)" in src
++    assert "os.stat(" not in src
+diff --git a/transcripts/pc/pc-gov2d.md--2da04bf.md b/transcripts/pc/pc-gov2d.md--2da04bf.md
+new file mode 100644
+index 0000000..255dece
+--- /dev/null
++++ b/transcripts/pc/pc-gov2d.md--2da04bf.md
+@@ -0,0 +1,1027 @@
++# Hermes lane session 20260922_115835_44ab6e
++
++- model: agentfactory-build-local
++- started: 2026-09-22T10:58:35.956537+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-gov2d.md--2da04bf/tree
++- messages: 323; tool calls: 187
++- tokens in/out/cache_read/reasoning: 1349058/241790/15597760/173652
++
++## user @ 10:58:35
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 10:59:16 → tools: read_file, terminal, terminal
++
++I'll start by reading the venue map and re-measuring the premise at the PIN (item 1), in parallel with the code-intel passes the brief requires.
++
++## tool result (read_file) @ 10:59:16 — 6455 chars (body not exported)
++
++## tool result (terminal) @ 10:59:17 — 592 chars (body not exported)
++
++## tool result (terminal) @ 10:59:17 — 259 chars (body not exported)
++
++## assistant @ 10:59:33 → tools: terminal, terminal, terminal, terminal
++
++Digests and 0-commit log match the premise. Now the anchor lines, the test baselines, and the code-intel passes:
++
++## tool result (terminal) @ 10:59:33 — 1024 chars (body not exported)
++
++## tool result (terminal) @ 10:59:33 — 2751 chars (body not exported)
++
++## tool result (terminal) @ 10:59:33 — 5990 chars (body not exported)
++
++## tool result (terminal) @ 10:59:33 — 93 chars (body not exported)
++
++## assistant @ 11:01:08 → tools: terminal, terminal, terminal, terminal, terminal
++
++I've verified the anchors match the premise and the FUBUKI roots exist. Now I'll check the fixture and test code, run code-intel, and establish baseline test results.
++
++## tool result (terminal) @ 11:01:08 — 5229 chars (body not exported)
++
++## tool result (terminal) @ 11:01:08 — 1919 chars (body not exported)
++
++## tool result (terminal) @ 11:01:08 — 3564 chars (body not exported)
++
++## tool result (terminal) @ 11:01:08 — 3208 chars (body not exported)
++
++## tool result (terminal) @ 11:01:08 — 1056 chars (body not exported)
++
++## assistant @ 11:01:26 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 11:01:26 — 4704 chars (body not exported)
++
++## tool result (terminal) @ 11:01:26 — 2206 chars (body not exported)
++
++## tool result (terminal) @ 11:01:27 — 474 chars (body not exported)
++
++## tool result (terminal) @ 11:01:28 — 5546 chars (body not exported)
++
++## assistant @ 11:02:14 → tools: terminal, terminal, terminal
++
++I've confirmed that load_packet and its 14 tests are the only callers of ripwire. Now I'll check the call site line in packet.py, run the baseline test sets, and examine the remaining regions of RV.
++
++## tool result (terminal) @ 11:02:14 — 403 chars (body not exported)
++
++## tool result (terminal) @ 11:02:14 — 2891 chars (body not exported)
++
++## tool result (terminal) @ 11:02:14 — 688 chars (body not exported)
++
++## assistant @ 11:02:39 → tools: terminal, terminal
++
++I've captured the full RV. Now I'll run both baseline test sets to verify the premises.
++
++## tool result (terminal) @ 11:02:40 — 196 chars (body not exported)
++
++## tool result (terminal) @ 11:02:41 — 196 chars (body not exported)
++
++## assistant @ 11:05:25 → tools: terminal, terminal, terminal, terminal
++
++Baseline confirmed at 16 and 49 tests. Now I'll check the environment for gpg, pyflakes, the test count, the set-id formula, and the AF-AP-115 screen baseline.
++
++## tool result (terminal) @ 11:05:26 — 119 chars (body not exported)
++
++## tool result (terminal) @ 11:05:26 — 102 chars (body not exported)
++
++## tool result (terminal) @ 11:05:26 — 875 chars (body not exported)
++
++## tool result (terminal) @ 11:05:26 — 25373 chars (body not exported)
++
++## assistant @ 11:12:54 → tools: terminal, terminal, terminal, terminal
++
++Baseline confirmed. Now I'll fill in the remaining unknowns: the RV's gpg-invocation region, the GovernanceError shape, conftest presence, and packet.py's import surface for the mutation-rig package.
++
++## tool result (terminal) @ 11:12:54 — 3409 chars (body not exported)
++
++## tool result (terminal) @ 11:12:54 — 1504 chars (body not exported)
++
++## tool result (terminal) @ 11:12:54 — 1422 chars (body not exported)
++
++## tool result (terminal) @ 11:12:54 — 672 chars (body not exported)
++
++## assistant @ 11:18:06 → tools: terminal
++
++I have the full picture. Now let me check the tests conftest for FUBUKI handling, then start building: the report draft, the RV edits, the TR rewrite, and the RM section.
++
++## tool result (terminal) @ 11:18:07 — 570 chars (body not exported)
++
++## assistant @ 11:23:49 → tools: terminal, terminal
++
++I've confirmed all the details. Now I'll read the remaining TR ranges, then set up the report draft and run the red tests against the unmodified RV.
++
++## tool result (terminal) @ 11:23:49 — 4123 chars (body not exported)
++
++## tool result (terminal) @ 11:23:49 — 2554 chars (body not exported)
++
++## assistant @ 11:28:20 → tools: write_file
++
++I've confirmed all the necessary components are in place. Now I'll set up the red-rig and run the red tests against the unmodified RV.
++
++## tool result (write_file) @ 11:28:21 — 614 chars (body not exported)
++
++## assistant @ 11:29:37 → tools: write_file, terminal
++
++
++
++## tool result (write_file) @ 11:29:37 — 317 chars (body not exported)
++
++## tool result (terminal) @ 11:29:38 — 1042 chars (body not exported)
++
++## assistant @ 11:29:50 → tools: write_file, terminal
++
++I found that the empty ini needs a `sys.path` shim, so I'm adding a local conftest to the red/ directory.
++
++## tool result (write_file) @ 11:29:50 — 285 chars (body not exported)
++
++## tool result (terminal) @ 11:29:51 — 1042 chars (body not exported)
++
++## assistant @ 11:30:15 → tools: terminal
++
++I found that `confcutdir` prevents the conftest from loading when the test directory is outside rootdir, so I'll use `PYTHONPATH` instead as the environment variable control.
++
++## tool result (terminal) @ 11:30:16 — 15268 chars (body not exported)
++
++## assistant @ 11:30:39 → tools: patch, terminal
++
++The `--rootdir .` broke `parents[1]` (it resolved the test file's root as the lane dir). Fix: pin the LOCK path to the tree explicitly.
++
++## tool result (patch) @ 11:30:39 — 840 chars (body not exported)
++
++## tool result (terminal) @ 11:30:50 — 4317 chars (body not exported)
++
++## assistant @ 11:39:35 → tools: patch, patch, terminal
++
++I've captured the red run results and found two key issues: the explicit-gpg test fails at the monkeypatch before the `gpg=` call, and the `not-a-sign` buffer is 10 bytes instead of the specified 8. I'll fix these to align with the brief's expected TypeError at the PIN and verify the remaining details.
++
++## tool result (patch) @ 11:39:36 — 824 chars (body not exported)
++
++## tool result (patch) @ 11:39:36 — 1041 chars (body not exported)
++
++## tool result (terminal) @ 11:39:37 — 556 chars (body not exported)
++
++## assistant @ 11:39:56 → tools: terminal
++
++I've confirmed that shutil is still needed in TR at line 71, and the dump-script interpreter is available on the fixed child PATH. Now I'll re-run the corrected test to verify the TypeError is as expected.
++
++## tool result (terminal) @ 11:39:56 — 862 chars (body not exported)
++
++## assistant @ 11:44:05 → tools: terminal
++
++I've captured all red lines with the discriminator and confirmed the tautological behavior. Now I'll draft the report and apply the RV edits.
++
++## tool result (terminal) @ 11:44:05 — 68 chars (body not exported)
++
++## assistant @ 11:44:39 → tools: patch, patch
++
++I've applied the RV edits covering the docstring, imports, helper function, read primitive, and resolution and environment logic.
++
++## tool result (patch) @ 11:44:40 — 940 chars (body not exported)
++
++## tool result (patch) @ 11:44:41 — 26 chars (body not exported)
++
++## assistant @ 11:46:36 → tools: patch, patch, patch, patch, patch, patch
++
++The second call was malformed (dropped) — no harm done. Continuing with the remaining RV edits:
++
++## tool result (patch) @ 11:46:37 — 1538 chars (body not exported)
++
++## tool result (patch) @ 11:46:37 — 1112 chars (body not exported)
++
++## tool result (patch) @ 11:46:38 — 2025 chars (body not exported)
++
++## tool result (patch) @ 11:46:39 — 1637 chars (body not exported)
++
++## tool result (patch) @ 11:46:40 — 3676 chars (body not exported)
++
++## tool result (patch) @ 11:46:41 — 1586 chars (body not exported)
++
++## assistant @ 11:47:26 → tools: patch
++
++I found that all six RV edits applied successfully, with Pyright catching a real bug where `Path(gpg)` was called before the None-check—I'm moving it inside the branch to fix this.
++
++## tool result (patch) @ 11:47:27 — 1062 chars (body not exported)
++
++## assistant @ 11:51:09 → tools: patch, patch, patch, patch
++
++RV complete. Now the TR: imports, the rewritten `test_gpg_absent`, and the seven new tests appended:
++
++## tool result (patch) @ 11:51:09 — 1127 chars (body not exported)
++
++## tool result (patch) @ 11:51:10 — 1343 chars (body not exported)
++
++## tool result (patch) @ 11:51:11 — 9905 chars (body not exported)
++
++## tool result (patch) @ 11:51:11 — 2080 chars (body not exported)
++
++## assistant @ 11:51:36 → tools: terminal
++
++All three files edited. Quick verification of the RV invariants (the brief's greps) and a green run of the full test file:
++
++## tool result (terminal) @ 11:51:36 — 141 chars (body not exported)
++
++## assistant @ 11:51:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:51:53 — 196 chars (body not exported)
++
++## assistant @ 11:52:05 → tools: terminal, terminal
++
++24 passed (16 existing + 8 new). Now the mutation rig (item 6): scratch copies of the modified RV, one mutant each, with `__file__` proof printed in the run.
++
++## tool result (terminal) @ 11:52:05 — 1320 chars (body not exported)
++
++## tool result (terminal) @ 11:52:05 — 174 chars (body not exported)
++
++## assistant @ 11:54:45 → tools: write_file, write_file
++
++Now I'll write the mutation applier with conftest injection to run the scratch review copy and verify the `__file__` output.
++
++## tool result (write_file) @ 11:54:46 — 1067 chars (body not exported)
++
++## tool result (write_file) @ 11:54:46 — 1586 chars (body not exported)
++
++## assistant @ 11:55:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:55:08 — 361 chars (body not exported)
++
++## assistant @ 11:55:16 → tools: patch, terminal
++
++Path has no `.format()` — fix to an f-string:
++
++## tool result (patch) @ 11:55:16 — 3182 chars (body not exported)
++
++## tool result (terminal) @ 11:55:16 — 119 chars (body not exported)
++
++## assistant @ 11:56:27 → tools: terminal
++
++sed backref was malformed — a Python one-liner instead:
++
++## tool result (terminal) @ 11:56:27 — 1052 chars (body not exported)
++
++## assistant @ 11:56:52 → tools: terminal
++
++The template lost its `m` prefix — restoring:
++
++## tool result (terminal) @ 11:56:52 — 89 chars (body not exported)
++
++## assistant @ 11:57:52 → tools: terminal
++
++All 8 mutants compiled successfully. Now I'll run each mutant against the 10-test subset to compare results.
++
++## tool result (terminal) @ 11:57:54 — 9555 chars (body not exported)
++
++## assistant @ 11:58:08 → tools: terminal
++
++The mut test copy's `ROOT` resolves to the lane dir. Patching the mut copy only (tree file stays pristine):
++
++## tool result (terminal) @ 11:58:08 — 78 chars (body not exported)
++
++## assistant @ 11:58:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 11:59:02 — 3627 chars (body not exported)
++
++## assistant @ 11:59:20 → tools: terminal
++
++The mutation audit is complete with all expected test failures confirmed across the eight test cases. Now I'll run the file proofs to verify the final results.
++
++## tool result (terminal) @ 11:59:48 — 387 chars (body not exported)
++
++## assistant @ 12:01:13 → tools: terminal
++
++m6's result is inconsistent between runs — I need clean, isolated proof for m6/m7/m8. Re-applying each from a pristine RV in a fresh process and running each in its own isolated pytest with the `__file__` proof:
++
++## tool result (terminal) @ 12:01:14 — 163 chars (body not exported)
++
++## assistant @ 12:01:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:01:42 — 1159 chars (body not exported)
++
++## assistant @ 12:03:07 → tools: patch, terminal
++
++I found that m6 doesn't actually kill the test because the specified cases still refuse through other paths, revealing a gap in the brief's expectation. I'll verify this mechanism and demonstrate the kill with a 4-case variant, then add file-write proofs to confirm all 8 tests work correctly.
++
++## tool result (patch) @ 12:03:08 — 674 chars (body not exported)
++
++## tool result (terminal) @ 12:03:08 — 85 chars (body not exported)
++
++## assistant @ 12:03:29 → tools: terminal
++
++The 4th case needs a `monkeypatch` parameter — fixing the function signature in tr-mut4.py:
++
++## tool result (terminal) @ 12:03:30 — 745 chars (body not exported)
++
++## assistant @ 12:04:34 → tools: terminal
++
++m6 is dead on the 4th case with file proof. Now the definitive full batch: all 8 mutants re-applied fresh, each run isolated with the `__file__` proof written to a file:
++
++## tool result (terminal) @ 12:04:36 — 1603 chars (body not exported)
++
++## assistant @ 12:05:42 → tools: terminal
++
++The `rm` deleted the base copies that `apply_mutants` reads from. Re-stage, apply, then run:
++
++## tool result (terminal) @ 12:06:09 — 1246 chars (body not exported)
++
++## assistant @ 12:06:20 → tools: terminal
++
++All 8 mutations confirmed with file proof. I'll now extract the failure details for the report table and re-verify m6 with the 4-case variant.
++
++## tool result (terminal) @ 12:06:20 — 563 chars (body not exported)
++
++## assistant @ 12:06:32 → tools: terminal
++
++The redirect `../m$m.out` resolved relative to `mut/` cwd → landed in the lane dir. Let me locate and read them:
++
++## tool result (terminal) @ 12:06:32 — 2866 chars (body not exported)
++
++## assistant @ 12:07:41 → tools: terminal
++
++All 8 mutants confirmed with file proof. m6 reveals a genuine premise gap: the brief's 3 specified cases are refused by `is_file()` (missing-file/dir), not `is_absolute()`, so the mutant survives that body — my 4th case (existing relative name under a chdir'd cwd) is the true discriminator and kills it. Let me produce clean single-test `1 failed` lines for the rows the brief names one specific test for:
++
++## tool result (terminal) @ 12:08:04 — 544 chars (body not exported)
++
++## assistant @ 12:08:25 → tools: terminal
++
++Mutation table is complete. Now item 7 (screens):
++
++## tool result (terminal) @ 12:08:26 — 310 chars (body not exported)
++
++## assistant @ 12:09:27 → tools: terminal
++
++Screens pass (AF-AP-115: 0, AF-AP-110 unchanged at 1, pyflakes clean). Now the item 8 gates — census + (a) twice + (b) + (c) + set-id, one foreground call each with `${PIPESTATUS[0]}`:
++
++## tool result (terminal) @ 12:09:31 — 669 chars (body not exported)
++
++## assistant @ 12:09:51 → tools: terminal
++
++Gates pass (24/24 both shapes, census 0→0). Now the six-file set (c) plus the set-id computation:
++
++## tool result (terminal) @ 12:09:53 — 374 chars (body not exported)
++
++## assistant @ 12:10:21 → tools: terminal
++
++I've passed all the gates and now I'm running the final set-id variant to resolve the discrepancy with the brief.
++
++## tool result (terminal) @ 12:10:21 — 198 chars (body not exported)
++
++## assistant @ 12:10:40 → tools: terminal
++
++Syntax error in one candidate — fixing:
++
++## tool result (terminal) @ 12:10:40 — 280 chars (body not exported)
++
++## assistant @ 12:11:52 → tools: search_files, terminal
++
++I've identified a mismatch between the set-id values — the brief's formula produces `f3baa8cf79c7` while my baseline used a different method. I'll verify the formula against `scripts/pc_suite.sh` and collect the new line numbers for the report.
++
++## tool result (search_files) @ 12:11:52 — 18 chars (body not exported)
++
++## tool result (terminal) @ 12:11:52 — 1076 chars (body not exported)
++
++## assistant @ 12:12:14 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 12:12:14 — 2156 chars (body not exported)
++
++## tool result (terminal) @ 12:12:14 — 410 chars (body not exported)
++
++## assistant @ 12:12:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:12:41 — 259 chars (body not exported)
++
++## assistant @ 12:15:30 → tools: terminal
++
++All mutation rows are killed. One last detail for the report: m4's exact failing assertion (the brief predicted a detail-line kill; the paste showed a reason-line shape) — one full-traceback run to pin it:
++
++## tool result (terminal) @ 12:15:31 — 2013 chars (body not exported)
++
++## assistant @ 12:19:22 → tools: terminal
++
++One discrepancy to settle before I finalize the report: my premise section computed set-id `892ef4ebb5b8`, but the brief's stated C-lane formula reproduces `f3baa8cf79c7`. Let me pin down exactly which is the C-lane formula's output:
++
++## tool result (terminal) @ 12:19:22 — 462 chars (body not exported)
++
++## assistant @ 12:20:32 → tools: terminal
++
++I found that the set-id is ambiguous, so I'll compare the byte streams directly to identify which encoding differs.
++
++## tool result (terminal) @ 12:20:32 — 416 chars (body not exported)
++
++## assistant @ 12:21:00 → tools: terminal
++
++Let me see exactly what diverges at byte 90 (line 3) between the two streams:
++
++## tool result (terminal) @ 12:21:00 — 703 chars (body not exported)
++
++## assistant @ 12:21:41 → tools: terminal
++
++The divergence is a collation artifact: `pin.py` vs `pin_enforcement.py` order differently under Python `sorted()` (byte order: `.` < `_`) vs the shell `sort` (locale). The brief's stated C formula `sha256("\n".join(sorted(files))+"\n")[:12]` reproduces `f3baa8cf79c7` exactly (verified), so that is the set id to cite; the `scripts/pc_suite.sh` shell spelling diverges on this set. Let me verify the pristine baseline count via a read-only worktree copy of the four PIN files (no stash on my tree):
++
++## tool result (terminal) @ 12:21:43 — 298 chars (body not exported)
++
++## assistant @ 12:22:33 → tools: terminal
++
++The pristine worktree at the PIN confirms 49 passing tests, and with my 8 new tests that brings it to 57. Now I'll clean up the worktree and write the report.
++
++## tool result (terminal) @ 12:22:33 — 158 chars (body not exported)
++
++## assistant @ 12:23:19 → tools: terminal
++
++The worktree is at `.lanes/pincheck` (sibling of the lane dir — the earlier `cd` was the lane dir, not the tree). Removing by absolute path:
++
++## tool result (terminal) @ 12:23:19 — 29205 chars (body not exported)
++
++## assistant @ 12:23:49 → tools: terminal
++
++The pincheck worktree is removed (not in the list). Let me confirm its dir is gone:
++
++## tool result (terminal) @ 12:23:49 — 156 chars (body not exported)
++
++## assistant @ 12:24:42 → tools: terminal
++
++Let me get a clean, unambiguous computation of the set-id using the brief's exact stated formula, to confirm it matches the C lane's `f3baa8cf79c7` (my earlier 892… was a different pipeline I must not paste):
++
++## tool result (terminal) @ 12:24:42 — 178 chars (body not exported)
++
++## assistant @ 12:28:28 → tools: terminal
++
++I've confirmed the set-id matches the C lane's value and identified that my initial `892…` calculation used the wrong pipeline. Now I'll write up the full report.
++
++## tool result (terminal) @ 12:28:30 — 103 chars (body not exported)
++
++## assistant @ 12:29:50 → tools: terminal
++
++I need to move the report to the exact path specified in the brief. I'll copy it to `tasks/briefs/stage3-governance-support/GOV2d-report.md` and verify all the new line citations I referenced.
++
++## tool result (terminal) @ 12:29:51 — 4961 chars (body not exported)
++
++## assistant @ 12:30:09 → tools: terminal
++
++All RV citations check out. Verifying the remaining TR/RM lines, then running the report lint:
++
++## tool result (terminal) @ 12:30:09 — 2207 chars (body not exported)
++
++## assistant @ 12:30:17 → tools: terminal
++
++Two citations are off: the `_hostile_path` helper isn't at TR:287, and TR:71 is not the shutil line. Locating the true lines and correcting the report:
++
++## tool result (terminal) @ 12:30:17 — 1153 chars (body not exported)
++
++## assistant @ 12:30:38 → tools: terminal
++
++I found two citation errors in the report—the `_hostile_path` helper is at TR:290, not TR:287, and `shutil` is at TR:75, not TR:71. I'm fixing those now and re-running the linter.
++
++## tool result (terminal) @ 12:30:38 — 259 chars (body not exported)
++
++## assistant @ 12:30:45 → tools: terminal
++
++I've completed the report and now I'm running it through the linter with the brief's specified flags to check for any issues.
++
++## tool result (terminal) @ 12:30:45 — 16542 chars (body not exported)
++
++## assistant @ 12:31:04 → tools: terminal
++
++The lint's UNRESOLVED rows are the pasted red-rig file lines (they don't exist at the PIN — expected); the two MISS rows and the UNCHECKABLE premise rows are the ones to fix. Let me get the full picture and my report's true line numbers:
++
++## tool result (terminal) @ 12:31:04 — 15328 chars (body not exported)
++
++## assistant @ 12:31:59 → tools: read_file
++
++The lint's UNRESOLVED rows are the pasted red-rig lines (that scratch file doesn't exist at the PIN — expected and acceptable). The real work is the MISS rows and the UNCHECKABLE premise lines. The key fix per the brief's rule: **new lines I added must be cited by plain path, not the `RV:` alias** (the alias is checked against the PIN, where those lines have different content). Let me read the exact report regions to craft the fixes:
++
++## tool result (read_file) @ 12:31:59 — 1006 chars (body not exported)
++
++## assistant @ 12:32:22 → tools: read_file
++
++Now I'll read the current RV file to confirm exact line content before rewriting citations:
++
++## tool result (read_file) @ 12:32:22 — 1450 chars (body not exported)
++
++## assistant @ 12:33:03 → tools: terminal
++
++The lint's UNRESOLVED rows are my red-rig scratch file (not at the PIN — expected). The real fixes: (a) premise lines are UNCHECKABLE because a fenced line has no backticked token; (b) my NEW lines are cited with the `RV:` alias, which the lint checks against the PIN where those lines hold different text. Let me re-verify the exact current RV line numbers before rewriting:
++
++## tool result (terminal) @ 12:33:03 — 2282 chars (body not exported)
++
++## assistant @ 12:33:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:33:31 — 742 chars (body not exported)
++
++## assistant @ 12:34:09 → tools: terminal
++
++I have line-number drift in the report (my edits shifted RV lines; the pre-check is now at RV:129, not RV:119-121, and the reads/except are RV:152-156, not RV:147-154). Let me get exact current line numbers for every RV/TR/RM citation, then rewrite them:
++
++## tool result (terminal) @ 12:34:09 — 2546 chars (body not exported)
++
++## assistant @ 12:35:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:35:09 — 1871 chars (body not exported)
++
++## assistant @ 12:37:08 → tools: terminal
++
++The lint resolves bare `RV:NN` against `--rev 2da04bf` (the PIN), so my new lines can't be cited via the `RV` alias. The brief says to cite new lines by plain path. Let me empirically confirm which citation forms the lint accepts before doing a large rewrite — a small scratch report testing each form:
++
++## tool result (terminal) @ 12:37:08 — 1395 chars (body not exported)
++
++## assistant @ 12:38:42 → tools: terminal
++
++The probe is ambiguous because `/tmp/lint-probe.md` may have resolved the relative path differently. Let me run a decisive test: cite an absolute path to a **new** line (exists on disk, not at PIN) vs the PIN, and confirm which source the lint reads:
++
++## tool result (terminal) @ 12:38:42 — 259 chars (body not exported)
++
++## assistant @ 12:39:06 → tools: terminal
++
++Decisive: the linter checks **plain-path citations against the on-disk (post-edit) file**, and alias citations (`RV:NN`) against the pinned rev. My UNCHECKABLE premise lines and MISS rows stem from (a) fenced lines carrying no backticked token, and (b) alias-citing lines that are new. Let me run one more probe to learn how it handles an alias token that's not on the cited pin line:
++
++## tool result (terminal) @ 12:39:06 — 1272 chars (body not exported)
++
++## assistant @ 12:39:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 12:39:48 — 206 chars (body not exported)
++
++## assistant @ 12:40:28 → tools: execute_code
++
++The heredoc mangled the backticks (ImageMagick's `import` even fired on the `\` token). Let me write the probe via Python to control the exact bytes, then re-lint:
++
++## tool result (execute_code) @ 12:40:28 — 315 chars (body not exported)
++
++## assistant @ 12:40:50 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 12:40:51 — 394 chars (body not exported)
++
++## assistant @ 12:45:07 → tools: execute_code
++
++The probe confirms the lint's model: **alias refs and repo-relative paths are checked against the pinned rev; absolute paths and the lane-local red-rig file are not resolvable refs (they don't produce MISS)**. The fix hint is the rule: for a cited line, add a backticked token that actually appears on it, or correct the number. Let me capture the complete lint output (all row types) to work only the real MISSes:
++
++## tool result (execute_code) @ 12:45:07 — 11199 chars (body not exported)
++
++## assistant @ 12:46:55 → tools: execute_code
++
++The lint resolves **relative** maps to the pinned rev (so a new line cited as `RV:NN` is a MISS, since the PIN holds different text there), but **absolute** paths aren't parsed as refs at all (0 refs). And `refs` = OK+NEAR+MISS+UNCHECKABLE (UNRESOLVED isn't counted). The brief's exact invocation uses relative maps. Let me capture the full lint output under the brief's exact flags so I can count refs and enumerate every MISS precisely:
++
++## tool result (execute_code) @ 12:46:56 — 16793 chars (body not exported)
++
++## assistant @ 12:47:08 → tools: execute_code
++
++I'm capturing the full output and saving it to a file so I can analyze it properly.
++
++## tool result (execute_code) @ 12:47:08 — 2421 chars (body not exported)
++
++## assistant @ 12:47:27 → tools: search_files
++
++The summary is the key: `63 refs — OK 20, MISS 31, UNCHECKABLE 5, UNRESOLVED 7`. 31 MISSes dominate, and they're almost all my **new** lines cited via the `RV:/TR:/RM:` aliases, which the lint checks against the pinned rev (where those lines hold different text). I need to understand the linter's reference-resolution rules precisely rather than guess — this is its documented `fix:` hint behavior, and I should read its source once to get the model right:
++
++## tool result (search_files) @ 12:47:27 — 3020 chars (body not exported)
++
++## assistant @ 12:47:41 → tools: read_file
++
++The lint's behavior is subtle and my probes keep contradicting each other. I need to read the actual resolution logic in `report_lint.py` rather than guess — this determines every fix:
++
++## tool result (read_file) @ 12:47:41 — 5651 chars (body not exported)
++
++## assistant @ 12:50:00 → tools: read_file
++
++I've hit the linter's design wall and I understand it now. Let me read the exact resolution logic to confirm my diagnosis before deciding to stop (I've spent 3+ rounds; the floor is already met).
++
++## tool result (read_file) @ 12:50:00 — 2722 chars (body not exported)
++
++## assistant @ 12:51:50 → tools: execute_code
++
++I now understand the linter's exact model: with `--rev <pin>`, **every** resolvable ref (alias, `alias@sha`, or repo-relative path) is checked against the **pinned** file; my *new* lines don't exist at the pin, so citing them by `RV:/TR:/RM:` line number produces MISS. The fix per the brief's own hint is to write pre-existing lines as `alias@<pin>:NN` and describe new lines in words. Let me map the exact line positions at the pin and on disk to plan the citations:
++
++## tool result (execute_code) @ 12:51:50 — 8768 chars (body not exported)
++
++## assistant @ 12:54:46 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 12:54:46 — 3352 chars (body not exported)
++
++## assistant @ 12:58:18 → tools: read_file
++
++I now have the linter's exact model: with `--rev <pin>`, every resolvable ref is checked **against the pinned file**. My *new* lines don't exist there, so citing them by `RV:/TR:/RM:` line number produces MISS. The brief's own fix hint is the rule: **pre-existing lines → `alias@<pin>:NN` (token must appear on the pin line); new lines → plain path / words.** I've spent 3 rounds on the heuristic alone; the disciplined move is one clean rewrite applying that rule, then a final lint.
++
++Let me read the full report to rewrite it precisely:
++
++## tool result (read_file) @ 12:58:18 — 27300 chars (body not exported)
++
++## assistant @ 13:01:41 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:01:41 — 1172 chars (body not exported)
++
++## assistant @ 13:06:00 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:06:00 — 239 chars (body not exported)
++
++## tool result (terminal) @ 13:06:01 — 319 chars (body not exported)
++
++## tool result (terminal) @ 13:06:02 — 5110 chars (body not exported)
++
++## tool result (terminal) @ 13:06:03 — 5106 chars (body not exported)
++
++## assistant @ 13:10:34 → tools: patch
++
++
++
++## tool result (patch) @ 13:10:36 — 2370 chars (body not exported)
++
++## assistant @ 13:11:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:11:17 — 170 chars (body not exported)
++
++## assistant @ 13:12:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:12:42 — 713 chars (body not exported)
++
++## assistant @ 13:13:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:13:58 — 557 chars (body not exported)
++
++## assistant @ 13:16:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:16:20 — 196 chars (body not exported)
++
++## assistant @ 13:16:51 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 13:16:52 — 65 chars (body not exported)
++
++## tool result (terminal) @ 13:17:00 — 154 chars (body not exported)
++
++## assistant @ 13:17:26 → tools: read_file
++
++
++
++## tool result (read_file) @ 13:17:26 — 10465 chars (body not exported)
++
++## assistant @ 13:18:44 → tools: patch
++
++
++
++## tool result (patch) @ 13:18:45 — 1017 chars (body not exported)
++
++## assistant @ 13:19:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:19:04 — 149 chars (body not exported)
++
++## assistant @ 13:20:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:20:11 — 196 chars (body not exported)
++
++## assistant @ 13:20:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:20:31 — 1234 chars (body not exported)
++
++## assistant @ 13:21:10 → tools: patch
++
++
++
++## tool result (patch) @ 13:21:10 — 1044 chars (body not exported)
++
++## assistant @ 13:22:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:22:36 — 1323 chars (body not exported)
++
++## assistant @ 13:23:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:23:04 — 572 chars (body not exported)
++
++## assistant @ 13:23:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:23:28 — 196 chars (body not exported)
++
++## assistant @ 13:23:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:23:50 — 137 chars (body not exported)
++
++## assistant @ 13:24:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:24:10 — 2986 chars (body not exported)
++
++## assistant @ 13:24:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:25:07 — 408 chars (body not exported)
++
++## assistant @ 13:26:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:26:38 — 1413 chars (body not exported)
++
++## assistant @ 13:29:39 → tools: write_file
++
++
++
++## tool result (write_file) @ 13:29:39 — 404 chars (body not exported)
++
++## assistant @ 13:30:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:30:09 — 11761 chars (body not exported)
++
++## assistant @ 13:30:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:30:31 — 4750 chars (body not exported)
++
++## assistant @ 13:33:07 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 13:33:11 — 337 chars (body not exported)
++
++## assistant @ 13:33:38 → tools: patch
++
++
++
++## tool result (patch) @ 13:33:38 — 1419 chars (body not exported)
++
++## assistant @ 13:34:38 → tools: patch
++
++
++
++## tool result (patch) @ 13:34:38 — 1521 chars (body not exported)
++
++## assistant @ 13:34:53 → tools: patch
++
++
++
++## tool result (patch) @ 13:34:53 — 1756 chars (body not exported)
++
++## assistant @ 13:36:55 → tools: patch
++
++
++
++## tool result (patch) @ 13:36:55 — 1816 chars (body not exported)
++
++## assistant @ 13:37:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:37:58 — 142 chars (body not exported)
++
++## assistant @ 13:39:13 → tools: patch
++
++
++
++## tool result (patch) @ 13:39:13 — 1526 chars (body not exported)
++
++## assistant @ 13:39:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:39:39 — 142 chars (body not exported)
++
++## assistant @ 13:40:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:40:18 — 795 chars (body not exported)
++
++## assistant @ 13:41:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:41:26 — 197 chars (body not exported)
++
++## assistant @ 13:43:49 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:43:49 — 241 chars (body not exported)
++
++## tool result (terminal) @ 13:43:50 — 65 chars (body not exported)
++
++## tool result (terminal) @ 13:43:58 — 156 chars (body not exported)
++
++## tool result (terminal) @ 13:43:58 — 131 chars (body not exported)
++
++## assistant @ 13:44:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:44:36 — 65 chars (body not exported)
++
++## assistant @ 13:46:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:46:20 — 45 chars (body not exported)
++
++## assistant @ 13:46:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:46:56 — 542 chars (body not exported)
++
++## assistant @ 13:47:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:47:33 — 901 chars (body not exported)
++
++## assistant @ 13:48:05 → tools: patch
++
++
++
++## tool result (patch) @ 13:48:05 — 1934 chars (body not exported)
++
++## assistant @ 13:50:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:50:34 — 211 chars (body not exported)
++
++## assistant @ 13:51:42 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:51:43 — 243 chars (body not exported)
++
++## tool result (terminal) @ 13:51:43 — 83 chars (body not exported)
++
++## tool result (terminal) @ 13:51:43 — 259 chars (body not exported)
++
++## assistant @ 13:52:48 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 13:52:48 — 7648 chars (body not exported)
++
++## tool result (terminal) @ 13:52:48 — 12149 chars (body not exported)
++
++## tool result (terminal) @ 13:52:48 — 1867 chars (body not exported)
++
++## assistant @ 13:53:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:53:34 — 360 chars (body not exported)
++
++## assistant @ 13:54:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:54:12 — 449 chars (body not exported)
++
++## assistant @ 13:54:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 13:54:35 — 354 chars (body not exported)
++
++## assistant @ 13:56:07
++
++PROPOSAL: GOV2d F1/F2 repair is implemented and self-validated. Independent sandbox verification is still required.
++
++Changed:
++  - Fixed gpg resolution to trusted absolute paths; caller PATH is no longer a trust channel.
++  - Fixed child PATH to `/usr/bin:/bin`.
++  - Added nonblocking, FD-level regular-file checks for record, signature, and owner key reads.
++  - Added 8 regression tests and verifier-trust documentation.
++  - Added the missing existing-relative-path case that kills the m6 mutant.
++
++Verified:
++  - Review suite: 24 passed twice under xdist; 24 passed serially.
++  - Six-file governance set: 57 passed.
++  - Mutation audit: 8/8 killed, with scratch-module import proofs.
++  - gpg-agent census: 0 → 0.
++  - AF-AP-115: 0.
++  - pyflakes, py_compile, and git diff check: clean.
++  - Report lint: 27 refs, 27 OK, 0 MISS, rc 0.
++
++Files:
++  - `src/agent_factory/governance/review.py`
++  - `tests/test_governance_review.py`
++  - `docs/governance/reviews/README.md`
++  - `tasks/briefs/stage3-governance-support/GOV2d-report.md`
++
++Not done:
++  - Issue #18 items remain out of scope.
++  - No gpg-agent cleanup was added.
++  - No commit, push, or production service change was made.
++
++Report:
++`/home/rocco/agent-factory/.lanes/pc-gov2d.md--2da04bf/tree/tasks/briefs/stage3-governance-support/GOV2d-report.md`
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 1349058,
++  "output_tokens": 241790,
++  "cache_read_tokens": 15597760,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 173652,
++  "total_tokens": 17188608,
++  "api_calls": 135,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260922_115835_44ab6e",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

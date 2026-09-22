@@ -16,6 +16,21 @@ by any key other than the committed owner key is refused (`fubuki-review-signatu
 store is not on its own enough to forge a review. This is the runtime‑hash analogue of the accepted‑proof
 anchor (a signed git tag; see `../README.md`); the vehicle differs because the object is a hash, not a commit.
 
+## What the verifier trusts
+
+The signature verifier is a fixed code decision, never a lookup: `review._GPG_PATHS` is a fixed tuple of
+absolute distro‑gpg paths (`/usr/bin/gpg`, `/usr/bin/gpg2`), and production (`load_packet`) never passes an
+executable. The child gpg process runs with a **fixed `PATH` literal** (`/usr/bin:/bin`), `--no-options`, and
+an isolated `GNUPGHOME`, so a PATH‑shadowed `gpg` on the caller's `PATH` and an ambient `gpg.conf` are not
+trust channels. `verify_review` accepts an explicit `gpg=` parameter for tests only: it must be an absolute
+path to a regular file, and production never passes it.
+
+Non‑regular files are refused at two levels (VERIFY‑GOV2c B item 6): a non‑regular *name* at the pre‑check
+(directory, socket, device, FIFO, or missing) is `fubuki-packet-unreviewed`; a non‑regular *file descriptor*
+at the open — e.g. a FIFO swapped in between the pre‑check and the read — is
+`fubuki-review-record-invalid: review record is not a regular file`. The open is non‑blocking and proves the
+file on the returned FD, so the window between the two checks cannot turn a refusal into a hang.
+
 ## Owner step — sign a review record
 
 Run from the repo root, with the owner signing key available to `gpg` (same key whose public half is at

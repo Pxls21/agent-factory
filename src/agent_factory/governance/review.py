@@ -19,15 +19,17 @@ attacker who can write the store flips the file between two reads and an unsigne
 signature is accepted only on a real `[GNUPG:] GOODSIG` status line whose signer is the one committed owner
 key (F2/F6): a `GOODSIG` substring anywhere in gpg's output — e.g. an attacker-chosen notation — is not a
 status line, and a revoked or expired key emits `REVKEYSIG`/`EXPKEYSIG` and no `GOODSIG`, so revocation (the
-owner's remedy after key theft) is honoured. gpg runs by absolute path with `--no-options` and a minimal
-environment, so an ambient `gpg.conf` or a PATH-shadowed `gpg` is not a trust channel (F5).
+owner's remedy after key theft) is honoured. The gpg executable is a FIXED trust decision, never a
+lookup: it is one of `_GPG_PATHS` (distro binaries at absolute paths) or a path the CALLER'S CODE passes
+deliberately (the `gpg` parameter exists for tests only), and the child runs with a fixed `PATH` literal
+and `--no-options`, so neither a PATH-shadowed `gpg` nor an ambient `gpg.conf` is a trust channel (F5).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -43,15 +45,26 @@ DEFAULT_OWNER_KEY = _REPO_ROOT / "docs" / "governance" / "owner-signing-key.asc"
 _HEX = set("0123456789abcdef")
 _MAX_RECORD_BYTES = 1 << 20  # a review record is a few hundred bytes; refuse anything absurd
 
+# THE trust root for the signature verifier: distro gpg at an absolute path, decided in code. Never the
+# caller's PATH (a PATH-shadowed gpg is a trust channel — VERIFY-GOV2c B item 5), never the environment,
+# never a bare name. Production (load_packet) passes no gpg and takes the first existing entry.
+_GPG_PATHS: tuple[str, ...] = ("/usr/bin/gpg", "/usr/bin/gpg2")
+
 
 def _is_governance_hash(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in _HEX for c in value)
 
 
-def _read_no_symlink(path: Path) -> bytes:
-    """Read a file's bytes, refusing to follow a symlink at the final component (O_NOFOLLOW). Raises OSError."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+def _read_regular_file(path: Path) -> bytes:
+    """Read a file's bytes, refusing a symlink (O_NOFOLLOW) and a NON-REGULAR file (a FIFO swapped in
+    between the caller's pre-check and this open would block os.read forever: the open is O_NONBLOCK and
+    the returned FD is fstat'ed and must be a regular file — the proof is on the FD, not the path).
+    Raises OSError."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("review record is not a regular file")
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -90,11 +103,18 @@ def verify_review(
     *,
     reviews_dir: str | Path | None = None,
     owner_key: str | Path | None = None,
+    gpg: str | Path | None = None,
 ) -> None:
     """Return if a first-party, owner-signed review record attests THIS governance hash; else fail closed.
 
     Raises GovernanceError with a stable reason. The caller (load_packet) computes the hash over the
     canonical packet bytes and passes it here BEFORE trusting any reviewed bit.
+
+    gpg: the signature-verifier executable, as an absolute path. A code decision, never read from the
+    environment: production (load_packet) never passes it and the fixed `_GPG_PATHS` is used; the
+    parameter exists so a TEST can point at a scripted gpg deliberately. An explicit value must be an
+    absolute path to a regular file; a bare name, a missing path, or a directory refuse with
+    fubuki-review-gpg-unavailable before anything runs.
     """
     reviews_dir = Path(reviews_dir) if reviews_dir is not None else DEFAULT_REVIEWS_DIR
     owner_key = Path(owner_key) if owner_key is not None else DEFAULT_OWNER_KEY
@@ -111,17 +131,27 @@ def verify_review(
     if not owner_key.is_file():
         raise GovernanceError("fubuki-owner-key-missing", str(owner_key))
 
-    gpg = shutil.which("gpg")
-    if gpg is None:
-        raise GovernanceError("fubuki-review-gpg-unavailable", "gpg is not on PATH")
+    if gpg is not None:
+        # An explicit gpg is a deliberate code decision (tests); it must name an absolute regular file.
+        gpg_path = Path(gpg)
+        if not gpg_path.is_absolute() or not gpg_path.is_file():
+            raise GovernanceError("fubuki-review-gpg-unavailable", f"gpg must be an absolute regular file: {gpg}")
+        gpg = str(gpg_path)
+    else:
+        # No explicit gpg: the first _GPG_PATHS entry that is a regular file. Never the caller's PATH —
+        # a PATH-shadowed gpg would become the verifier (VERIFY-GOV2c B item 5).
+        gpg = next((p for p in _GPG_PATHS if Path(p).is_file()), None)
+        if gpg is None:
+            raise GovernanceError("fubuki-review-gpg-unavailable", "no gpg at " + ", ".join(_GPG_PATHS))
 
-    # Read the record, its signature, and the owner key ONCE, refusing a symlink (F1/F8). gpg then verifies a
-    # COPY of exactly these bytes and we parse the SAME record bytes, so the verified bytes are the trusted
-    # bytes — no second read for an attacker to race.
+    # Read the record, its signature, and the owner key ONCE, refusing a symlink and a non-regular file
+    # (F1/F8: a FIFO planted between the pathname pre-check and the open is refused on the FD, not a hang).
+    # gpg then verifies a COPY of exactly these bytes and we parse the SAME record bytes, so the verified
+    # bytes are the trusted bytes — no second read for an attacker to race.
     try:
-        record_bytes = _read_no_symlink(record_path)
-        sig_bytes = _read_no_symlink(sig_path)
-        owner_key_bytes = _read_no_symlink(owner_key)
+        record_bytes = _read_regular_file(record_path)
+        sig_bytes = _read_regular_file(sig_path)
+        owner_key_bytes = _read_regular_file(owner_key)
     except OSError as exc:
         raise GovernanceError("fubuki-review-record-invalid", str(exc)) from exc
 
@@ -131,9 +161,11 @@ def verify_review(
         sig_copy = Path(home) / "record.json.asc"
         rec_copy.write_bytes(record_bytes)
         sig_copy.write_bytes(sig_bytes)
-        # A minimal, hostile-free environment: gpg by absolute path, no ambient options file, C locale, only
-        # GNUPGHOME + PATH forwarded (F5). The owner key is imported from the snapshot via stdin.
-        env = {"GNUPGHOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
+        # A minimal, hostile-free environment: gpg by absolute path, no ambient options file, C locale.
+        # The child PATH is a FIXED literal — the caller's PATH is never forwarded (F5; B item 5) — and
+        # holds only the distro gpg and the interpreters/scripts a gpg subprocess may need. The owner
+        # key is imported from the snapshot via stdin.
+        env = {"GNUPGHOME": home, "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
         base = [gpg, "--batch", "--quiet", "--no-options"]
         try:
             imported = subprocess.run(
