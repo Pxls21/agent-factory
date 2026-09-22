@@ -1,6 +1,6 @@
 # T90-R2 — the ONE focused repair of VERIFY-T90's two blockers on the lane dispatcher (D-031)
 
-PIN: PENDING-POST-PUSH
+PIN: 435b057 (the post-push SHA of the VERIFY-T90 harvest commit; `scripts/pc_lane.sh` sha256[:16] 309d5cabe68ab150, byte-identical to c49880c)
 LANE: pc-t90-r2
 ROLE: code-implementer (build) — the STRICT local route: `HERMES_MODEL=qwen-local/qwen3.8-27b-local` (D-039(a) + D-042(2); a raw id routes without a combo, so OmniRoute's universal handoff cannot fire on this lane)
 COMPONENT: `scripts/pc_lane.sh` (D, the sandbox dispatcher) + `harness-ports/tests/test_pc_lane_dispatcher.sh` (its tests) — NOTHING ELSE. The PC-side runner `harness-ports/bin/pc-lane.sh` is OUT of boundary.
@@ -57,17 +57,20 @@ Kill the processes you start BY PID FROM THE PIDFILE (never `pkill -f`/`pgrep -f
 ## Report (`tasks/briefs/pc-t90-support/T90-R2-report.md`)
 DATA, not prose: files:lines changed; the RED→GREEN pairs for tests 1-5 pasted; the five mutant rows; the two gate runs; DISCREPANCIES / NOT-done (F2/F4/F5/F6/F7 are NOT this lane's — say so). No claim without its pasted output. Never touch `harness-ports/bin/pc-lane.sh`, the ledger, the wiki, or any brief.
 
-## PREMISE — MEASURED at authoring (2026-09-22 15:3xZ, sandbox clone @ c49880c; re-verify at the PIN before editing)
+## PREMISE — MEASURED at authoring (2026-09-22 15:3xZ, sandbox clone @ 435b057 — both boundary files byte-identical to c49880c: `git diff --stat c49880c 435b057 -- scripts/pc_lane.sh harness-ports/tests/test_pc_lane_dispatcher.sh` prints nothing; re-verify at the PIN before editing)
 ```
-$ sed -n '205p' scripts/pc_lane.sh | grep -oE 'case "\$c" in "\$d"\|"\$d"/\*\) b=1;; \*\) case "\$n" in \*"\$d"\*\) b=1;; \*\) b=0;; esac;; esac' 
-(the substring binding is present at :205 — one match; the exact text is inside the quoted bridge command, escaped as \$c/\$d/\$n)
+$ grep -oF 'case \"\$n\" in *\"\$d\"*) b=1;;' scripts/pc_lane.sh | head -1
+case \"\$n\" in *\"\$d\"*) b=1;;
+$ grep -cF 'in *\"\$d\"*)' scripts/pc_lane.sh
+1
+(the substring binding is present exactly once, inside the quoted bridge command at :205)
 $ sed -n '52,53p' scripts/pc_lane.sh
 PC_LANE_SELF_COPY="${PC_LANE_SELF_COPY:-}"
 if [ -z "$PC_LANE_SELF_COPY" ]; then
 $ sed -n '74p' scripts/pc_lane.sh
 trap 'rm -f "${PC_LANE_SELF_COPY:-}"' EXIT
 $ grep -c 'check "' harness-ports/tests/test_pc_lane_dispatcher.sh
-(the current check count — paste it at the PIN)
+24
 $ wc -l scripts/pc_lane.sh harness-ports/tests/test_pc_lane_dispatcher.sh
  555 scripts/pc_lane.sh
  303 harness-ports/tests/test_pc_lane_dispatcher.sh
