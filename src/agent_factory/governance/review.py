@@ -113,7 +113,7 @@ def verify_review(
     gpg: the signature-verifier executable, as an absolute path. A code decision, never read from the
     environment: production (load_packet) never passes it and the fixed `_GPG_PATHS` is used; the
     parameter exists so a TEST can point at a scripted gpg deliberately. An explicit value must be an
-    absolute path to a regular file; a bare name, a missing path, or a directory refuse with
+    absolute path to a regular file; a bare name, a missing path, a directory, or a symlink refuse with
     fubuki-review-gpg-unavailable before anything runs.
     """
     reviews_dir = Path(reviews_dir) if reviews_dir is not None else DEFAULT_REVIEWS_DIR
@@ -132,10 +132,14 @@ def verify_review(
         raise GovernanceError("fubuki-owner-key-missing", str(owner_key))
 
     if gpg is not None:
-        # An explicit gpg is a deliberate code decision (tests); it must name an absolute regular file.
+        # An explicit gpg is a deliberate code decision (tests); it must name an absolute REGULAR file.
         gpg_path = Path(gpg)
-        if not gpg_path.is_absolute() or not gpg_path.is_file():
-            raise GovernanceError("fubuki-review-gpg-unavailable", f"gpg must be an absolute regular file: {gpg}")
+        # A symlink is refused on the PATHNAME ITSELF, before any other check: Path.is_file() FOLLOWS
+        # symlinks, so an absolute symlink to a regular executable would pass is_file() and its target
+        # would RUN as the signature verifier (VERIFY-GOV2d F1). A dangling symlink (missing target)
+        # is_symlink() still True; is_file() would say False, but the symlink is named in the detail.
+        if not gpg_path.is_absolute() or gpg_path.is_symlink() or not gpg_path.is_file():
+            raise GovernanceError("fubuki-review-gpg-unavailable", f"gpg must be an absolute regular file, not a symlink: {gpg}")
         gpg = str(gpg_path)
     else:
         # No explicit gpg: the first _GPG_PATHS entry that is a regular file. Never the caller's PATH —

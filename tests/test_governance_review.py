@@ -474,3 +474,63 @@ def test_the_read_primitive_proves_the_fd_not_the_path() -> None:
     src = inspect.getsource(review)
     assert "os.fstat(fd)" in src
     assert "os.stat(" not in src
+
+
+def test_explicit_gpg_symlink_is_refused_before_any_process_runs(tmp_path: Path, keys, monkeypatch) -> None:
+    """VERIFY-GOV2d F1: an absolute SYMLINK to a regular executable passed as gpg= must be refused
+    with fubuki-review-gpg-unavailable BEFORE any process runs. Path.is_file() FOLLOWS symlinks, so
+    at the PIN the two-clause check passed and the symlink's target executed as the signature
+    verifier (the coordinator's reproduction: a sentinel script writing a marker file). The refusal
+    is on the PATHNAME ITSELF (no following): the marker must not exist (zero invocation) and the
+    detail names the pathname. Positive control: the same sentinel passed by its REAL absolute
+    regular path still reaches the subprocess (the marker is written), proving the refusal is about
+    the symlink, not the sentinel. A dangling symlink (missing target) is refused with the same
+    reason, no invocation."""
+    owner = keys("owner")
+    _write_review(tmp_path / "reviews", _H, owner)
+    owner_file = _owner_key_file(tmp_path, owner)
+
+    # The sentinel: a shell script (only shell builtins — no PATH lookup at all under the fixed child
+    # PATH) that writes a marker file and exits 2. Any invocation is provable from the marker; its
+    # non-zero exit would surface as a LATER-stage refusal (fubuki-owner-key-invalid), which is
+    # exactly what distinguishes "the gpg check passed and the process ran" from "refused early".
+    marker = tmp_path / "sentinel-ran"
+    sentinel = tmp_path / "sentinel-gpg"
+    sentinel.write_text(f"#!/bin/sh\necho ran > {marker}\nexit 2\n", encoding="utf-8")
+    sentinel.chmod(0o755)
+    call_count = 0
+    real_run = subprocess.run
+
+    def counted_run(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(review.subprocess, "run", counted_run)
+
+    # (a) an absolute symlink to the sentinel: refused on the pathname, BEFORE any process runs.
+    link = tmp_path / "gpg-link"
+    os.symlink(sentinel, link)
+    with pytest.raises(GovernanceError) as excinfo:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=owner_file, gpg=link)
+    assert excinfo.value.reason == "fubuki-review-gpg-unavailable"
+    assert str(link) in excinfo.value.detail  # the detail names the pathname
+    assert call_count == 0  # zero invocation: no child process was attempted
+    assert not marker.exists()  # target-specific corroboration: the sentinel did not run
+
+    # (b) positive control: the SAME sentinel by its real absolute regular path passes the gpg check
+    # and the subprocess runs it — the marker is written, then its non-zero exit fails a later stage.
+    with pytest.raises(GovernanceError) as excinfo2:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=owner_file, gpg=sentinel)
+    assert excinfo2.value.reason == "fubuki-owner-key-invalid"  # the import step ran the sentinel
+    assert call_count == 1
+    assert marker.exists()  # the refusal in (a) was about the symlink, not the sentinel
+
+    # (c) a dangling symlink (missing target): refused with the same reason, no invocation.
+    dangling = tmp_path / "gpg-dangling"
+    os.symlink(tmp_path / "no-such-target", dangling)
+    with pytest.raises(GovernanceError) as excinfo3:
+        verify_review(_H, reviews_dir=tmp_path / "reviews", owner_key=owner_file, gpg=dangling)
+    assert excinfo3.value.reason == "fubuki-review-gpg-unavailable"
+    assert str(dangling) in excinfo3.value.detail
+    assert call_count == 1  # unchanged from the positive control; dangling path spawned nothing
