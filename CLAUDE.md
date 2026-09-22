@@ -700,7 +700,7 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
   MEANING layers (map, key decisions with SHA anchors, live-state, do-not-trust list); git
   carries the chronology; why.sh joins them.
 - **Before editing any symbol:** GitNexus `impact` (who calls this, what breaks).
-- **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM... -o pack.md FILE...` —
+- **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM -s SYM2… -o pack.md FILE...` —
   the whole quartet + ripwire + the whole-file registry screen in ONE command; every build and verify brief attaches
   its pack; the coordinator runs it before designing and on the lane's diff before the verifier. `scripts/report_lint.py`
   and `scripts/ap_screen.py --s0-01` gate every checkpoint (`report_lint.py --min-refs N`: a report that cites nothing lints clean by construction — B3's `0 refs — MISS 0`, 2026-09-14 — so a checkpoint gates on a FLOOR, never on the MISS count alone; the LANE side is BOUNDED — the lint's own `fix:` hints applied for at most three rounds, then paste and finish, injected into every lane prompt by `pc-lane.sh` since N5k looped 47 minutes on an unbounded `MISS 0` bar, AF-AP-76). An instrument that is not in a script on the path AND in the LANE TREE and its prompt is not in the loop (2026-09-15: no lane had used the quartet — a lane worktree carries no index and the briefs named none; `pc-lane.sh` now builds the graft index at launch, overlays the current lint and injects the CODE INTEL FIRST standing rule). An instrument that is not in a script on the path is not in
