@@ -232,7 +232,7 @@ The PC is the execution host (podman 5.7, gVisor/runsc, `cargo +1.95.0`, OmniRou
 worktree at the PIN plus the lane patch under `.lanes/<brief>--<PIN7>/tree`; the clone `/home/rocco/agent-factory` and the real
 corpus `/home/rocco/s0-01-pinned/realleg/golden` are READ-ONLY (copy a leg before mutating). Scripts on your path: `scripts/test_summary.sh` (the ONLY source of a test count — paste, never type; AF-AP-37) ·
 `scripts/lane_gate.sh -r <PIN> -f "<files>" -t "<tests>" -n 2` · `scripts/report_lint.py … --map alias=path… [--min-refs N]`
-(`fix:` hints for at most THREE rounds) · `scripts/ap_screen.py` · `scripts/lane_context.sh -q … -s SYM -s SYM2 -o pack.md FILE…` ·
+(`fix:` hints for at most THREE rounds) · `scripts/ap_screen.py` · `scripts/lane_context.sh -q … [-s SYM]… -o pack.md FILE…` ·
 `scripts/why.sh` · `scripts/anchor_edit.py` · `python3 -m pyflakes` rc 0. Rules that bit: `pgrep -f
 '[p]attern'` protects only the pattern — kill by pid, never `pkill -f` in a compound command naming the target · one `git
 rev-parse` per call · `${PIPESTATUS[0]}` · FIFO/hang probes standalone under `timeout` · a SHORT `--basetemp` with its parent
@@ -358,7 +358,7 @@ this tree, multi-agent dispatch boundaries, S0-05 egress fixtures, venue classif
 
 **GRAFT FIRST:** every semantic code question → `graft ask "<question>"` / `graft skeleton <file>` BEFORE any `Bash` grep or
 whole-file read; grep is legal ONLY for literal-token sweeps and as the NAMED fallback while `graft/INDEX.md` is absent (`graft
-build`). The pack `scripts/lane_context.sh -q … -s SYM… -o pack.md FILE…` runs the whole quartet in one command — attached to
+build`). The pack `scripts/lane_context.sh -q … [-s SYM]… -o pack.md FILE…` runs the whole quartet in one command — attached to
 your brief, run again on your own diff before you report. GitNexus `node <clone>/.gitnexus/run.cjs impact "<symbol>" --direction
 upstream --repo <clone>` BEFORE editing any symbol and `detect-changes --scope all` after every edit batch (`risk: UNKNOWN` is
 unresolved, never low; never rename by find-and-replace); codebase-memory and code-review-graph (invocations in skill
