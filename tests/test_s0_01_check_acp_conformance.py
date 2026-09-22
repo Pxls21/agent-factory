@@ -3273,13 +3273,28 @@ def _assert_ck16_classifier_operand_contract(checker_path):
     #
     # Covered expression classes: Assign / AnnAssign / AugAssign / NamedExpr,
     # transitive simple-name aliases, module aliases visible at function
-    # definition, lambda/function defaults, and direct calls to helpers whose
-    # explicit return expressions are all derived in this same domain.
+    # definition, positional/positional-only/keyword-only default arguments
+    # (defaults pair with the trailing parameters, per ast.arguments), and
+    # direct calls to helpers whose explicit return expressions are all
+    # derived in this same domain.
+    #
+    # Boolean contexts: a derived value as the whole test expression of
+    # If / While / Assert / IfExp, as the operand of UnaryOp(Not), and the
+    # Compare / BoolOp operand inventory below.
     #
     # Stated limits: container/subscript and attribute hops, nested closures
     # beyond a direct default/walrus use, control-flow path sensitivity, module
     # walrus, and global/nonlocal. A real checker use in a stated limit is a
     # finding; it does not silently widen this frozen test-side model.
+    # Reserved classifier-operand spellings (issue #8, A5P-02): a bare Name
+    # counts as an operand only while its current binding (scope-local first,
+    # then the scope's globals) resolves to that operand. A local or module
+    # rebind to anything else CLEARS the match. The old model matched the
+    # unparse spelling before consulting binding state, so a re-bound `argv`
+    # false-positived. A parameter named `argv` is the intended parameter
+    # operand until a later local binding replaces it.
+    reserved_operand_names = {"argv"}
+
     def target_names(node):
         if isinstance(node, ast.Name):
             return {node.id}
@@ -3292,6 +3307,9 @@ def _assert_ck16_classifier_operand_contract(checker_path):
         return set()
 
     def value_is_derived(node, state, globals_state, helpers):
+        if isinstance(node, ast.Name) and node.id in reserved_operand_names:
+            return (state.get(node.id, globals_state.get(node.id, False))
+                    is True)
         if ast.unparse(node) in classifier_operands:
             return True
         if isinstance(node, ast.Name):
@@ -3302,20 +3320,53 @@ def _assert_ck16_classifier_operand_contract(checker_path):
                 and isinstance(node.func, ast.Name)
                 and node.func.id in helpers)
 
-    def default_seeds(function, globals_state, helpers):
+    # positional/positional-only/keyword-only defaults. Parameter-identity
+    # seeding for the reserved `argv` spelling is separate: a bare Name
+    # parameter named `argv` is the intended classifier operand until a
+    # later local assignment clears it.
+    def parameter_seeds(function):
         args = function.args
         return {
             arg.arg: True
-            for arg, default in zip(args.args[-len(args.defaults):],
+            for arg in args.posonlyargs + args.args + args.kwonlyargs
+            if arg.arg in reserved_operand_names
+        }
+
+    def default_seeds(function, globals_state, helpers):
+        args = function.args
+        # ast.arguments: defaults pair with the TRAILING parameters of
+        # posonlyargs + args (issue #8, A5P-04 — the old model zipped
+        # args.defaults against args.args only, misattributing a
+        # positional-only parameter's default). kwonlyargs pair
+        # separately with kw_defaults; a None kw_default marks a
+        # required keyword-only parameter with no default (issue #8,
+        # A5P-03).
+        positional = args.posonlyargs + args.args
+        seeds = {
+            arg.arg: True
+            for arg, default in zip(positional[-len(args.defaults):],
                                     args.defaults)
             if value_is_derived(default, {}, globals_state, helpers)
         }
+        seeds.update({
+            arg.arg: True
+            for arg, default in zip(args.kwonlyargs, args.kw_defaults)
+            if default is not None
+            and value_is_derived(default, {}, globals_state, helpers)
+        })
+        return seeds
 
     def analyze_body(body, scope_name, globals_state, helpers,
                      collect_uses, initial_state=None):
         state = dict(initial_state or {})
         uses = []
         returns = []
+
+        def record_boolean_context(node):
+            if (collect_uses
+                    and value_is_derived(
+                        node, state, globals_state, helpers)):
+                uses.append((scope_name, node))
 
         def visit(node):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -3345,17 +3396,46 @@ def _assert_ck16_classifier_operand_contract(checker_path):
                 for name in target_names(node.target):
                     state[name] = derived
                 return
+            if isinstance(node, (ast.If, ast.While, ast.Assert)):
+                visit(node.test)
+                record_boolean_context(node.test)
+                if isinstance(node, ast.Assert):
+                    if node.msg is not None:
+                        visit(node.msg)
+                    return
+                for statement in node.body:
+                    visit(statement)
+                for statement in node.orelse:
+                    visit(statement)
+                return
             for child in ast.iter_child_nodes(node):
                 visit(child)
             if isinstance(node, ast.Return) and node.value is not None:
                 returns.append(value_is_derived(
                     node.value, state, globals_state, helpers))
             if collect_uses and isinstance(node, (ast.Compare, ast.BoolOp)):
+                # A5P-05: a derived operand inside BoolOp is a boolean-
+                # context use, so inventory the whole BoolOp whenever ANY
+                # operand is derived (the pre-A5q behaviour for BoolOp).
+                # This sits alongside explicit whole-test handling for
+                # If / While / Assert / IfExp / UnaryOp(Not).
                 operands = (node.values if isinstance(node, ast.BoolOp)
                             else [node.left, *node.comparators])
                 if any(value_is_derived(
                         item, state, globals_state, helpers)
-                       for item in operands):
+                        for item in operands):
+                    uses.append((scope_name, node))
+            if (collect_uses
+                    and isinstance(node, (ast.UnaryOp, ast.IfExp))):
+                operand = (node.operand if isinstance(node, ast.UnaryOp)
+                           else node.test)
+                is_boolean_context = (
+                    isinstance(node, ast.IfExp)
+                    or (isinstance(node, ast.UnaryOp)
+                        and isinstance(node.op, ast.Not)))
+                if (is_boolean_context
+                        and value_is_derived(
+                            operand, state, globals_state, helpers)):
                     uses.append((scope_name, node))
 
         for statement in body:
@@ -3387,10 +3467,12 @@ def _assert_ck16_classifier_operand_contract(checker_path):
         for statement in tree.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 globals_state = dict(module_state)
-                defaults = default_seeds(statement, globals_state, helpers)
+                initial_state = parameter_seeds(statement)
+                initial_state.update(
+                    default_seeds(statement, globals_state, helpers))
                 _state, _uses, returns = analyze_body(
                     statement.body, statement.name, globals_state,
-                    helpers, False, defaults)
+                    helpers, False, initial_state)
                 returns_by_name[statement.name] = returns
             else:
                 module_assign(statement, module_state, helpers)
@@ -3411,22 +3493,26 @@ def _assert_ck16_classifier_operand_contract(checker_path):
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
             globals_state = dict(module_state)
-            defaults = default_seeds(statement, globals_state, helpers)
+            initial_state = parameter_seeds(statement)
+            initial_state.update(
+                default_seeds(statement, globals_state, helpers))
             _state, uses, _returns = analyze_body(
                 statement.body, statement.name, globals_state,
-                helpers, True, defaults)
+                helpers, True, initial_state)
             module_uses.extend(uses)
             for nested in ast.walk(statement):
                 if nested is statement or not isinstance(
                         nested, (ast.FunctionDef, ast.AsyncFunctionDef,
                                  ast.Lambda)):
                     continue
-                defaults = default_seeds(nested, globals_state, helpers)
+                initial_state = parameter_seeds(nested)
+                initial_state.update(
+                    default_seeds(nested, globals_state, helpers))
                 nested_body = (nested.body if isinstance(nested.body, list)
                                else [nested.body])
                 _state, uses, _returns = analyze_body(
                     nested_body, getattr(nested, "name", "<lambda>"),
-                    globals_state, helpers, True, defaults)
+                    globals_state, helpers, True, initial_state)
                 module_uses.extend(uses)
         else:
             _state, uses, _returns = analyze_body(
@@ -3456,9 +3542,13 @@ def _assert_ck16_classifier_operand_contract(checker_path):
 
     # Existing membership and boolean checks consume these pins for other
     # contracts. Pin that finite set so any new classifier-like use is red.
+    # (The two check_config_echo `'--…' not in argv` entries that the A5o
+    # round pinned are REMOVED here: in check_config_echo `argv` is a local
+    # list of argv.txt lines, not the classifier operand, so the old
+    # model's match on the reserved spelling was itself the A5P-02 bug.
+    # Those membership tests are real non-classifier uses and stay
+    # un-inventoried by design.)
     allowed_predicates = {
-        ("check_config_echo", "'--idle-timeout' not in argv"),
-        ("check_config_echo", "'--max-turn-duration' not in argv"),
         ("check_process_evidence", "PINNED_BUZZ_ACP_EXE_REALPATH in cmd"),
         ("check_process_evidence", "PINNED_TEE_PATH in cmd"),
         ("check_process_evidence", "PINNED_AGENT_REALPATH in cmd"),
@@ -3476,6 +3566,27 @@ def _assert_ck16_classifier_operand_contract(checker_path):
         f"classifier-operand BoolOp/membership inventory changed: "
         f"{sorted(actual_predicates ^ allowed_predicates)}")
 
+    # A5P-05: a derived value as the WHOLE test expression of a control-flow
+    # statement (If / While / Assert) or the operand of a boolean expression
+    # (UnaryOp(Not) / IfExp) is a boolean-context use. The production checker
+    # (C) contains NO such use in its current bytes, so this frozen set is
+    # empty. A real use landing here is red — a derived classifier operand
+    # being tested for truthiness.
+    allowed_boolean_tests = set()
+    actual_boolean_tests = set()
+    for scope, node in module_uses:
+        if scope == "_pinned_process_count":
+            continue
+        if isinstance(node, (ast.Name, ast.Call)):
+            actual_boolean_tests.add((scope, ast.unparse(node)))
+        elif isinstance(node, (ast.UnaryOp, ast.IfExp)):
+            operand = (node.operand if isinstance(node, ast.UnaryOp)
+                       else node.test)
+            actual_boolean_tests.add((scope, ast.unparse(operand)))
+    assert actual_boolean_tests == allowed_boolean_tests, (
+        f"classifier-operand boolean-test inventory changed: "
+        f"{sorted(actual_boolean_tests ^ allowed_boolean_tests)}")
+
 
 def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():
     """Inventory every derived use in the STATED domain (D-034, frozen).
@@ -3483,9 +3594,15 @@ def test_ck16_checker_inventories_classifier_operand_predicates_module_wide():
     The scope-sequential model (see _assert_ck16_classifier_operand_contract):
     every top-level and nested function/lambda scope, module-scope bindings
     in source order, and each scope's current last binding of a name.
+    Boolean contexts (issue #8, A5P-05): a derived value as the whole
+    test expression of If / While / Assert, the operand of UnaryOp(Not)
+    or IfExp, a whole-expression BoolOp, and any derived operand of a
+    Compare / BoolOp.
     Stated limits (NOT tracked — an untracked operand may hide there):
-    container/subscript hops, attribute binding or read, closure reads of an
-    enclosing function's locals, global/nonlocal statements.
+    container/subscript hops, attribute binding or read, closure reads of
+    an enclosing function's locals, global/nonlocal statements, and
+    derived values passed to boolean CALLS (bool(), any(), all()) rather
+    than used in the expression shapes above.
     """
     _assert_ck16_classifier_operand_contract(CHECKER)
 
@@ -3717,6 +3834,120 @@ def test_ck17_classifier_operand_attribute_hop_is_stated_limit(tmp_path):
         "def _pinned_process_count(commands):\n",
     )
     _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_a5p01_ordinary_alias_rebind_control_is_not_classifier_operand(
+        tmp_path):
+    """A5P-01 CONTROL (the A5o V1 fix, must keep holding after the
+    A5P-02 reserved-name fix): an ordinary local alias bound to an
+    operand and then reassigned to a non-operand is NOT derived at the
+    later use."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def unrelated(value):\n"
+        "    pin = PINNED_TEE_PATH\n"
+        "    pin = 'literal'\n"
+        "    return value == pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_a5p02_local_rebind_of_reserved_name_clears(tmp_path):
+    """A5P-02: a local rebind of the reserved literal spelling `argv`
+    to a non-operand CLEARS the classifier-operand match. The spelling
+    counts only while the name resolves to the classifier operand
+    (parameter or module-level binding); the old model matched the
+    unparse spelling BEFORE consulting the binding state (false
+    positive: a locally rebound `argv` was flagged)."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def argv_local(value, argv):\n"
+        "    argv = object()\n"
+        "    return value == argv\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_a5p03_kwonly_default_seeds_derived(tmp_path):
+    """A5P-03: a keyword-only parameter with a default bound to a
+    classifier operand seeds the kwonlyarg's derived state. The old
+    model paired only args.args with args.defaults; kwonlyargs and
+    kw_defaults were never processed, so the use was invisible
+    (false negative)."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def kwonly_pin(value, *, pin=PINNED_TEE_PATH):\n"
+        "    return value == pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand comparison inventory changed"):
+        _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_a5p04_posonly_defaults_align_to_trailing_params(tmp_path):
+    """A5P-04 (BOTH discriminators): Python pairs defaults with the
+    TRAILING portion of posonlyargs + args; the old model zipped only
+    args.args, attributing the positional-only `pin`'s operand default
+    to `value` — so `value == 'x'` false-positived while
+    `pin == 'x'` escaped. With the fixed alignment `pin` is derived
+    (RAISE discriminator) and `value` is not (NO_RAISE
+    discriminator)."""
+    for body, expect_raise in (
+            ("    return value == 'x'\n", False),
+            ("    return pin == 'x'\n", True)):
+        checker = _ck16_checker_copy(
+            tmp_path,
+            "def _pinned_process_count(commands):\n",
+            "def posonly_align(pin=PINNED_TEE_PATH, /, value=None):\n"
+            f"{body}\n\n\n"
+            "def _pinned_process_count(commands):\n",
+        )
+        if expect_raise:
+            with pytest.raises(
+                    AssertionError,
+                    match="classifier-operand comparison inventory changed"):
+                _assert_ck16_classifier_operand_contract(checker)
+        else:
+            _assert_ck16_classifier_operand_contract(checker)
+
+
+def test_ck16_a5p05_bare_truth_test_is_a_boolean_context(tmp_path):
+    """A5P-05: each pinned boolean-context node type inventories a
+    derived whole test/operand. The old model saw only Compare/BoolOp, so
+    all five were false negatives: If / While / Assert / IfExp tests and
+    UnaryOp(Not).operand."""
+    checker = _ck16_checker_copy(
+        tmp_path,
+        "def _pinned_process_count(commands):\n",
+        "def truth_contexts(pin=PINNED_TEE_PATH):\n"
+        "    if_pin = pin\n"
+        "    while_pin = pin\n"
+        "    assert_pin = pin\n"
+        "    ifexp_pin = pin\n"
+        "    not_pin = pin\n"
+        "    if if_pin:\n"
+        "        pass\n"
+        "    while while_pin:\n"
+        "        break\n"
+        "    assert assert_pin\n"
+        "    result = ifexp_pin if ifexp_pin else False\n"
+        "    return result, not not_pin\n\n\n"
+        "def _pinned_process_count(commands):\n",
+    )
+    with pytest.raises(
+            AssertionError,
+            match="classifier-operand boolean-test inventory changed") as caught:
+        _assert_ck16_classifier_operand_contract(checker)
+    for operand in (
+            "if_pin", "while_pin", "assert_pin", "ifexp_pin", "not_pin"):
+        assert repr(("truth_contexts", operand)) in str(caught.value)
 
 
 @pytest.mark.parametrize("cmd,expected", [
