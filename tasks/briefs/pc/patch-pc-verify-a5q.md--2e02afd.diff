@@ -1,0 +1,860 @@
+diff --git a/tasks/briefs/s0-01-a5p-support/VERIFY-A5q-report.md b/tasks/briefs/s0-01-a5p-support/VERIFY-A5q-report.md
+new file mode 100644
+index 0000000..a8fc363
+--- /dev/null
++++ b/tasks/briefs/s0-01-a5p-support/VERIFY-A5q-report.md
+@@ -0,0 +1,226 @@
++# VERIFY-A5q — independent adversarial verification of issue #8 (CK16 classifier-operand meta-oracle sweep)
++
++Role: adversarial-verifier (LOCAL Qwen verify route, `agentfactory-verify-local`). PIN: 2e02afd. Base: 236bec7.
++Venue: pc (tasks/briefs/pc/VENUE-MAP.md). This lane VERIFIES; it never fixes. It emits a GATE RECOMMENDATION, never a verdict.
++
++## Item 1 — premise
++
++Commands (all from the lane tree, PIN 2e02afd):
++- `git diff --stat 236bec7 2e02afd -- proofs/ tests/test_s0_01_spec_runner.py scripts/proof-runner scripts/validate-ledger` → **empty** (no output, rc=0). C/P/S/proof-runner/validate-ledger byte-identical.
++- `git diff --stat 236bec7 2e02afd -- tests/` → **names TWO files**: `tests/test_s0_01_check_acp_conformance.py` (+246/−15) and `tests/test_s0_02_buzz_authz.py` (+171/−0).
++- `sha256sum tests/test_s0_01_check_acp_conformance.py` → **75fad3cd77ce3fa41baf2bccfdaa061d1def2472af4587d572b23d14e74a996e** (matches the brief's expected hash exactly).
++- Hunk-boundary check: the diff produced **11 hunk headers**; the first/last and G2 range are named in the command output only, rather than cited as T source coordinates. **No hunk falls inside the G2 region.**
++
++DISCREPANCY (item 1, D2): the brief said `git diff --stat 236bec7 2e02afd -- tests/` "must name only T". Measured output names T PLUS `tests/test_s0_02_buzz_authz.py`. Bounded disambiguation (3 experiments):
++- `git merge-base --is-ancestor 236bec7 2e02afd` → 236bec7 IS an ancestor of 2e02afd.
++- `git log --oneline 236bec7..2e02afd` → 16 commits in the range. The extra test file was added by `c439580 S0-02 B6 LANDED (issue #3)` — a DIFFERENT increment (S0-02, not S0-01) that landed on the shared branch between A5q's base (236bec7) and A5q's parent (78745d3).
++- `git diff --stat c439580 2e02afd -- tests/test_s0_02_buzz_authz.py` → empty (A5q did not touch that file); `git log --oneline 236bec7..78745d3 -- tests/test_s0_01_check_acp_conformance.py` → empty (T untouched by every intervening increment, so A5q's T-diff is identical vs either 236bec7 or 78745d3); `git diff --stat 78745d3 2e02afd -- tests/` → names ONLY T.
++
++Conclusion: the extra file is **shared-branch base drift** (S0-02 B6), not an A5q change to the production surface. A5q's own commit (2e02afd vs its real parent 78745d3) touches ONLY T; C/P/S/proof-runner/validate-ledger and the S0-01 mint are byte-identical to 236bec7 (hashes below). The item-1 premise — "A5q touched T only and left the production spine intact" — is TRUE at the level that matters for this round. I build on the measured truth and log the D2 wording as a DISCREPANCY rather than stopping with CONTRACT-INVALID.
++
++S0-01 mint/production byte-identity (base 236bec7 vs PIN 2e02afd), measured:
++- `proofs/S0-01/result.json`: bb98b1a4… identical
++- `proofs/S0-01/check_acp_conformance.py` (C): 868b8705699b5e78b1468252ecbdec93736d2a7e2f4819424311c31c243db46a (identical)
++- `proofs/S0-01/pins.py` (P): 1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981 (identical)
++
++SOLID. Blocking? No. The premise's SUBSTANTIVE checks (C/P/S/proof-runner/validate-ledger empty vs base; T hash exact; 11 hunks outside G2) all pass. The single D2 wording mismatch is a non-blocking discrepancy (base drift from a sibling S0-02 increment), not an A5q defect — it does not contradict any frozen criterion of THIS increment.
++
++## Item 2 — original issue-#8 cases + named-test collection
++
++I rebuilt an independent scratch driver (`../scratch/a5q_item2_driver.py`) that imports the PIN's real `_assert_ck16_classifier_operand_contract` and `_ck16_checker_copy` from T, injects the original issue shapes ahead of C's exact `def _pinned_process_count(commands):` anchor, and executes each static C-contract analysis. It does not invoke the builder's five tests as its oracle.
++
++Command:
++`python ../scratch/a5q_item2_driver.py`
++
++Exact output:
++```
++ROW        EXPECTED    OBSERVED    VERDICT
++----------------------------------------------------------------
++A5P-01    NO_RAISE    NO_RAISE   MATCHES-CONTRACT
++A5P-02    NO_RAISE    NO_RAISE   MATCHES-CONTRACT
++A5P-03    RAISE       RAISE      MATCHES-CONTRACT
++A5P-04    RAISE       RAISE      MATCHES-CONTRACT
++A5P-04a   NO_RAISE    NO_RAISE   MATCHES-CONTRACT
++A5P-04b   RAISE       RAISE      MATCHES-CONTRACT
++A5P-05    RAISE       RAISE      MATCHES-CONTRACT
++----------------------------------------------------------------
++rows matching contract: 7/7
++```
++
++A5P-01 is the issue's A5o-V1 control: ordinary `pin` starts derived then rebinds to `'literal'`, and the later `value == pin` stays **NO_RAISE**. A5P-02 uses a reserved `argv` parameter then locally rebinds it to `object()` and stays **NO_RAISE**. A5P-03 (derived kwonly default), A5P-04 (`value == pin`), A5P-04b (`pin == 'x'`), and A5P-05 (`if pin:`) each raise the relevant frozen inventory assertion; A5P-04a (`value == 'x'`) stays **NO_RAISE**. All seven observed outcomes match the explicit contract.
++
++Named-test command:
++`python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/a5p tests/test_s0_01_check_acp_conformance.py -k a5p0`
++
++Exact output: `5 passed, 463 deselected in 1.12s`.
++
++SOLID. Blocking? No: all contract rows reproduce against the actual PIN model and exact C-copy path. Predicate: contract mapping yes; canonical model consumer yes; material effect yes (the expected frozen inventory assertion is present/absent per row); concrete discriminator yes; task ownership yes. No finding.
++
++## Item 3 — new hostile shapes, C audit, and inventories
++
++Method: `python ../scratch/a5q_item3_driver.py` injects each NEW shape ahead of C's `_pinned_process_count` anchor, executes the PIN's actual `_assert_ck16_classifier_operand_contract`, and compares its observed `RAISE`/`NO_RAISE` against the expectation written from the comment/docstring before the run. `python ../scratch/a5q_item3_trace.py` then localized the four initially flagged cases. This is a static model (the real C-contract consumer), so each injection has no runtime effect on the checker.
++
++### Shape table
++
++| Shape(s) | Claimed domain | Expected → observed | Grade |
++|---|---|---|---|
++| a1 module `argv = PINNED_TEE_PATH`; `value == argv` | IN: module alias visible at definition | RAISE → RAISE | SOLID |
++| a2 module `argv = []`; `value == argv` | IN: module rebind clears | NO_RAISE → NO_RAISE | SOLID |
++| a3 parameter `argv`; `argv += object()`; compare | IN: AugAssign tracked | RAISE → RAISE. AugAssign preserves derivedness because its pre-binding is derived. | SOLID |
++| a4 parameter `argv`; `argv: int = object()`; compare | IN: AnnAssign tracked and clears | NO_RAISE → NO_RAISE | SOLID |
++| a5 parameter `argv`; `(argv := object())`; compare | IN: NamedExpr tracked and clears | NO_RAISE → NO_RAISE | SOLID |
++| a6 `for argv in ...`, a7 `with ... as argv`, a8 `except ... as argv`, a10 comprehension target | not among listed covered binding forms; not enumerated in stated-limit list | Each keeps the original seeded `argv`: RAISE → RAISE | INFO. The comment declares only Assign/AnnAssign/AugAssign/NamedExpr, so these are untracked/rebinding-blind by design of the finite model; no such C use exists. |
++| a9 `import os as argv` without a parameter | same untracked import-as form | NO_RAISE → NO_RAISE, because `argv` begins unbound; a focused parameter version would retain the parameter seed | INFO, same finite-domain limit. |
++| a11 global/nonlocal | explicit stated limit | Valid global source (`global argv; argv = object()`) COMPILES and gives NO_RAISE; valid nested `nonlocal argv; argv = object()` COMPILES and gives RAISE at the outer comparison. | INFO/UNVERIFIED outside frozen domain. The model tracks the plain assignment syntactically but deliberately lacks global/nonlocal scope semantics; no C use. |
++| a12 nested function rebinds `argv`, outer parameter compared | IN for the outer direct scope; nested closure handling is stated OUT | RAISE → RAISE (outer parameter remains derived; nested scope did not alter outer analysis state) | SOLID for outer inventory; closure propagation intentionally not claimed. |
++| a13 use before later assignment (`return value == argv`; later `argv = object()`) | IN: source-order last binding *at the use* | RAISE → RAISE | SOLID |
++| b1 kwonly `pin=PINNED_TEE_PATH`; b1b `other=None` | IN: kw_defaults paired; None not seeded | pin RAISE → RAISE; other NO_RAISE → NO_RAISE | SOLID |
++| b2 required kwonly `pin` | IN: `kw_default is None` is not seeded | NO_RAISE → NO_RAISE | SOLID |
++| b3 kwonly default module alias; b4 kwonly default helper call | IN: globals/helpers resolve defaults | each RAISE → RAISE | SOLID |
++| b5 **`argv` varkey | parameter seed explicitly excludes `args.kwarg` | focused trace: NO_RAISE → NO_RAISE | SOLID. My initial driver accidentally used required kwonly `argv`, which is intentionally seeded and correctly raised; corrected focused trace distinguishes it. |
++| c1 combined posonly+args+kwonly: `b` and `d` | IN: trailing positional alignment plus kwonly defaults | b RAISE → RAISE; d RAISE → RAISE | SOLID |
++| c1c `a` / c2 `c` / c4 zero defaults | IN: only default-bound params seed; `-0` slicing edge | a NO_RAISE → NO_RAISE; c RAISE → RAISE; zero-default a NO_RAISE → NO_RAISE | SOLID |
++| c3 lambda `a, /, b=PINNED_TEE_PATH` | IN: nested lambda and posonly default | RAISE → RAISE | SOLID |
++| d1 `elif pin`, d2 `while not pin`, d3 `assert pin, msg`, d4 `1 if pin else 2`, d5 `if not (pin)` | IN: If/While/Assert/IfExp/Not whole-test/operand paths | each RAISE → RAISE | SOLID |
++| d6 If inside try / for / with bodies | IN: generic visitor reaches nested bodies | each RAISE → RAISE | SOLID |
++| d7 `if (x := pin):` (also operand constant/local variants) | comment says a derived value as whole `If.test`; function walrus is not in stated OUT list | **RAISE → NO_RAISE** for all three variants | FOLLOW-UP F1 (details below) |
++| d8 `pin` in `IfExp.body`, not its test | IN: only `IfExp.test` claimed | NO_RAISE → NO_RAISE | SOLID |
++| d9 `if bool(pin)`, d10 `if h.pin`, d11 `if p[0]` | explicit OUT: boolean calls, attribute hops, subscript/container hops | each NO_RAISE → NO_RAISE | SOLID and honestly bounded |
++| d12 `pin = helper()` then `if pin` | IN: all-derived-return helper feeds whole If.test | RAISE → RAISE | SOLID |
++| d13 `if pin` inserted in `_pinned_process_count` | special classifier excluded at T:3578 | Injection reached the earlier strict structural guard before boolean inventory. | INFO. T:3205's `ast.unparse(return_node.value.func)` and T:3230's `pins.is_pinned_argv` enforce the one-Return classifier contract, so a direct truth-test body is already red at the tighter structural contract. |
++
++Initial driver summary: 36/40 exact expectation comparisons. The four provisional mismatches were: a11 (my input was invalid Python and outside stated global/nonlocal limit), b5 (my initial source accidentally chose a required kwonly rather than the requested `**argv`; focused trace corrected it), d7 (real F1), and d13 (tighter classifier structural contract fires before the skipped inventory). No mismatch was concealed.
++
++### F1 — walrus `If.test` is a dormant test-model gap
++
++Reproduction (focused trace): a normal derived `if p:` control raises `classifier-operand boolean-test inventory changed: [('f', 'p')]`; each `if (x := PINNED_TEE_PATH):`, `p = PINNED_TEE_PATH; if (x := p):`, and `def f(pin=PINNED_TEE_PATH): if (x := pin):` returns **NO_RAISE**. The mechanism is primary-source visible: `value_is_derived` recognizes `ast.NamedExpr` (T:3317-3318), `record_boolean_context` appends the `If.test` (T:3365-3369, T:3399-3401), but the final boolean inventory filters it out because T:3580-3585 admits only `Name`, `Call`, `UnaryOp`, and `IfExp`, not `NamedExpr`.
++
++Canonical C-path check: `grep -nE ':=' proofs/S0-01/check_acp_conformance.py` printed `(none)`; an AST walk found no `If`/`While`/`Assert` whose test is a `NamedExpr`. Thus F1 **does not reproduce through the exact current production consumer**, has no material effect on C's output/evidence at the PIN, and is not an in-boundary blocker despite contradicting broad wording in the finite test-model comment/docstring. Predicate: contract mapping yes (wording), canonical reproduction **no**, material effect **no**, concrete discriminator yes (the focused injection), task ownership yes. Classification: **FOLLOW-UP**, coordinator should create the required `verify-followup` item under D-034. Suggested fix: either include `ast.NamedExpr` in the downstream boolean inventory with a focused regression or narrow the wording to list supported If.test node shapes.
++
++### Parameter and `argv` audit
++
++Commands: `graft ask "which functions take a parameter named argv" --in proofs/S0-01/check_acp_conformance.py` and `grep -nE 'def .*\\bargv\\b' proofs/S0-01/check_acp_conformance.py`. Graft's lexical summary had false context matches, but grep and AST inspect give one true C parameter: `main(argv)` at C:1879. `main` uses `argv[1:]` at C:1883 only; that is a subscript hop, explicitly OUT. The static model seeds this ordinary parameter as derived but it never becomes an inventoried bare boolean/comparison operand, so there is no current false positive.
++
++Every C binding whose target/parameter is `argv`:
++- C:1185 `argv` is the `Assign` target in `check_config_echo`; it holds argv.txt lines rather than a classifier operand. The model clears it (state false). The `if` at C:1186 is therefore correctly un-inventoried.
++- C:1879 `main(argv)`: function parameter; model seeds it as the reserved operand, but C:1883 consumes only `argv[1:]`, an explicit subscript limit. No classifier inventory contribution.
++- C:1932 `sys.argv`: attribute, not a bare `argv` binding; explicit attribute-hop limit.
++
++### `check_config_echo` and frozen inventory delta
++
++C:1185's `argv` is the local argv.txt line list, not the classifier operand. `python ../scratch/a5q_item3_inventories.py` instrumented each model only in memory and printed:
++
++```
++INVENTORY PIN-2e02afd actual_compares [('check_env', "env.get('S0_01_AGENT') != PINNED_AGENT_REALPATH"), ('check_process_evidence', "cmd.split(' ')[0] == PINNED_BUZZ_ACP_EXE_REALPATH")]
++INVENTORY PIN-2e02afd actual_predicates [('check_process_evidence', 'PINNED_AGENT_REALPATH in cmd'), ('check_process_evidence', 'PINNED_AGENT_REALPATH not in agent_lines[0][3]'), ('check_process_evidence', 'PINNED_BUZZ_ACP_EXE_REALPATH in cmd'), ('check_process_evidence', 'PINNED_TEE_PATH in cmd'), ('check_process_evidence', 'PINNED_TEE_PATH not in tee_lines[0][3]')]
++INVENTORY PIN-2e02afd actual_boolean_tests []
++INVENTORY BASE-236bec7 actual_compares [('check_env', "env.get('S0_01_AGENT') != PINNED_AGENT_REALPATH"), ('check_process_evidence', "cmd.split(' ')[0] == PINNED_BUZZ_ACP_EXE_REALPATH")]
++INVENTORY BASE-236bec7 actual_predicates [('check_config_echo', "'--idle-timeout' not in argv"), ('check_config_echo', "'--max-turn-duration' not in argv"), ('check_process_evidence', 'PINNED_AGENT_REALPATH in cmd'), ('check_process_evidence', 'PINNED_AGENT_REALPATH not in agent_lines[0][3]'), ('check_process_evidence', 'PINNED_BUZZ_ACP_EXE_REALPATH in cmd'), ('check_process_evidence', 'PINNED_TEE_PATH in cmd'), ('check_process_evidence', 'PINNED_TEE_PATH not in tee_lines[0][3]')]
++```
++
++The **only** model-inventory difference is the two `check_config_echo` false rows removed from `actual_predicates`; `actual_compares` is byte-for-byte equal. PIN boolean inventory is the expected empty set. SOLID.
++
++Blocking? F1 no (fails canonical-path and material-effect predicate clauses); other hostile shapes no. All claimed IN cases except F1 behaved as claimed; all declared OUT cases stayed untracked; inventories prove only the intended two C rows moved.
++
++## Item 4 — scratch-only mutation audit
++
++Command: `python ../scratch/a5q_mutation_audit.py` after `git archive 2e02afd` per mutant. Every mutant tree changed T only, then passed `python -m py_compile` (rc=0) and `pytest --collect-only` (rc=0; exactly one selected test collected) before its killer run. Every killer ended `1 failed`; the script removed the tree before continuing and ended `MUTATION AUDIT COMPLETE: 10/10 killed; all mutant trees deleted`. The live tree remained clean (`git status --porcelain` empty).
++
++| Mutant | Named killer | Exact killer assertion/result | Grade |
++|---|---|---|---|
++| M1 complete pre-A5q A5P-02 model: raw reserved spelling before binding state; parameter seeding removed; two old `check_config_echo` predicate rows restored | `test_ck16_a5p02_local_rebind_of_reserved_name_clears` | `AssertionError: classifier-operand comparison inventory changed: [('argv_local', 'value == argv')]`; `1 failed, 467 deselected in 0.38s` | killed |
++| M2 delete kwonly `kw_defaults` pairing | `test_ck16_a5p03_kwonly_default_seeds_derived` | `Failed: DID NOT RAISE AssertionError`; `1 failed, 467 deselected in 0.32s` | killed |
++| M3 `positional = args.args` | `test_ck16_a5p04_posonly_defaults_align_to_trailing_params` | `AssertionError: classifier-operand comparison inventory changed: [('posonly_align', "value == 'x'")]`; `1 failed, 467 deselected in 0.38s` | killed |
++| M4 suppress new If/While/Assert/IfExp/Not inventory and remove final boolean assertion | `test_ck16_a5p05_bare_truth_test_is_a_boolean_context` | `Failed: DID NOT RAISE AssertionError`; `1 failed, 467 deselected in 0.30s` | killed |
++| N1 seed every normal parameter | real C-contract test `test_ck16_checker_inventories_classifier_operand_predicates_module_wide` | comparison inventory assertion lists false positives (for example `('check_bundle', 'timeout_s is not None')`); `1 failed, 467 deselected in 0.40s` | killed |
++| N2 record every boolean context without `value_is_derived` | real C-contract test `test_ck16_checker_inventories_classifier_operand_predicates_module_wide` | comparison inventory assertion reports broad non-derived C comparisons; `1 failed, 467 deselected in 0.36s` | killed |
++| N3 make reserved-name lookup default true when unbound | new scratch killer `test_verify_mutant_reserved_unbound_default` | `AssertionError: classifier-operand comparison inventory changed: [('f', 'value == argv')]`; `1 failed, 471 deselected in 0.32s` | killed |
++| N4 skip `If`/`While` `orelse` | real C-contract test `test_ck16_checker_inventories_classifier_operand_predicates_module_wide` | missing required `('check_process_evidence', "cmd.split(' ')[0] == PINNED_BUZZ_ACP_EXE_REALPATH")`; `1 failed, 467 deselected in 0.35s` | killed |
++| N5 treat every UnaryOp as a boolean context | new scratch killer `test_verify_mutant_all_unary_ops` | `AssertionError: classifier-operand boolean-test inventory changed: [('f', 'pin')]`; `1 failed, 471 deselected in 0.36s` | killed |
++| N6 pair positional defaults to prefix, not trailing parameters | new scratch killer `test_verify_mutant_positional_prefix` | `AssertionError: classifier-operand comparison inventory changed: [('f', "a == 'x'")]`; `1 failed, 471 deselected in 0.32s` | killed |
++
++SOLID. Blocking? No. All requested M1–M4 and all six independent new-code mutants compiled, collected, and died under a concrete deterministic discriminator. None survived. The mutations run only against git-archive scratch copies; the production C was never mutated.
++
++## Item 5 — de-vacuous named-test pass
++
++Command: `python ../scratch/a5q_devacuous.py`. Each scratch archive flipped the named test's own expected outcome, compiled and collected one selected test, then ran it. Exact output: all five produced `compile rc=0; collect rc=0; run rc=1`, `1 failed, 467 deselected`, and `DE-VACUOUS COMPLETE: 5/5 own-expectation flips red; all scratch trees deleted`.
++
++- A5P-01 expected RAISE instead of NO_RAISE → own `pytest.raises` assertion: `Failed: DID NOT RAISE AssertionError` (0.30s).
++- A5P-02 expected RAISE instead of NO_RAISE → own `pytest.raises` assertion: `Failed: DID NOT RAISE AssertionError` (0.30s).
++- A5P-03 expected NO_RAISE instead of RAISE → direct contract call: `classifier-operand comparison inventory changed: [('kwonly_pin', 'value == pin')]` (0.33s).
++- A5P-04 swaps both branch expectations → `Failed: DID NOT RAISE AssertionError` at the changed own branch (0.30s).
++- A5P-05 expected NO_RAISE instead of RAISE → direct contract call: `classifier-operand boolean-test inventory changed: [('truth_contexts', 'assert_pin'), ('truth_contexts', 'if_pin'), ('truth_contexts', 'ifexp_pin'), ('truth_contexts', 'not_pin'), ('truth_contexts', 'while_pin')]` (0.34s).
++
++A5P-01 control power: none of the ten A5q-targeted mutant set is killed **only** by A5P-01; M1–M4 die at their associated regression and N1–N6 die at real-C or independently designed scratch killers. Therefore A5P-01 remains a non-vacuous regression guard for the earlier A5o V1 ordinary-alias-rebind repair (`test_ck16_a5p01_ordinary_alias_rebind_control_is_not_classifier_operand`), not a unique A5q discriminator. SOLID. Blocking? No.
++
++## Item 6 — PIN gates and hygiene
++
++Declared PC environment on every pytest run:
++`S0_01_VENUE=pc S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`, `/home/rocco/venv-agent-factory/bin` first in `PATH`.
++
++Two independent direct xdist gates (same two-file set, separate absolute short basetemps):
++
++```
++python -m pytest -n 4 -q -p no:cacheprovider --basetemp /home/rocco/agent-factory/.lanes/pc-verify-a5q.md--2e02afd/scratch/bt/gate1 tests/test_s0_01_check_acp_conformance.py tests/test_s0_01_spec_runner.py
++483 passed in 114.02s (0:01:54)
++
++python -m pytest -n 4 -q -p no:cacheprovider --basetemp /home/rocco/agent-factory/.lanes/pc-verify-a5q.md--2e02afd/scratch/bt/gate2 tests/test_s0_01_check_acp_conformance.py tests/test_s0_01_spec_runner.py
++483 passed in 107.58s (0:01:47)
++```
++
++Both are deterministic on count: 483/483 passed. `python -m pyflakes tests/test_s0_01_check_acp_conformance.py` → `pyflakes rc=0`.
++
++`python3 scripts/ap_screen.py --tests tests/test_s0_01_check_acp_conformance.py` exact final block:
++
++```
++--- TEST_SCREEN over 1 path(s): 4 hits over 1 files ---
++AP-66: 2
++    tests/test_s0_01_check_acp_conformance.py:88: nv._point_mul = _cached_pm
++    tests/test_s0_01_check_acp_conformance.py:90: nv._point_mul = _orig_pm
++AF-AP-48: 1
++    tests/test_s0_01_check_acp_conformance.py:6378: assert all(site[3] in {"walk", "require_regular_file", "stdin", "consumer"}
++AF-AP-57: 1
++    tests/test_s0_01_check_acp_conformance.py:5821: if call_count[0] == 2:
++```
++
++All four are the known pre-existing hits outside A5q's first/last hunk bounds: AP-66 test monkeypatch/restore at T:88/90 (`nv._point_mul`), AF-AP-57 deterministic second-call fault injection at T:5821 (`call_count`), AF-AP-48 finite call-site category assertion at T:6378 (`site`). New A5q-screen hits: 0. `git diff --check` and `git status --porcelain` both returned clean. Scratch mutation/de-vacuous trees: none remaining.
++
++SOLID. Blocking? No. Gates ran, counts were nonzero and agree, static lint passed, and hygiene is clean.
++
++## Item 7 — exhaustive A5q-hunk review
++
++Reviewed all 11 hunks in `git diff 236bec7 2e02afd -- T`: the finite-model comment/binding state (`reserved_operand_names`); `analyze_body` and helper passes; frozen `allowed_compares`/`allowed_predicates`/`allowed_boolean_tests`; the contract-test docstring; and named A5P regressions. No additional current-C defect found. The only meaningful observation within the revised model's claimed domain is F1 (NamedExpr `If.test`) above; it is a non-blocking FOLLOW-UP because C has no walrus and cannot reproduce the effect at the PIN.
++
++## Finding inventory
++
++1. FOLLOW-UP — **F1, walrus `If.test` escapes downstream boolean inventory.** Evidence: SOLID static injection plus direct T mechanism: `ast.NamedExpr` at T:3317, `record_boolean_context` at T:3365, the `ast.Name`/`ast.Call` downstream filter at T:3580, and the T:3281 boolean-context comment containing `If / While / Assert`. Contract mapping: broad boolean-context wording. Canonical production path: **not reproduced** — C has no `:=`. Material effect: none on C PIN bytes. Discriminator: focused injected `if (x := pin):` returns NO_RAISE where plain `if pin:` raises. Ownership: T/A5q model. Suggested disposition: D-034 `verify-followup` issue; either inventory `NamedExpr` or narrow the language.
++
++2. INFO — **shared-branch base drift changes D2 literal output.** Evidence: SOLID git range checks in item 1. Contract mapping: none to A5q behavior. Canonical path: N/A. Material effect: no A5q production/test surface change. Reproduction: `git diff --stat 236bec7 2e02afd -- tests/`. Suggested fix: future targeted briefs should compare the repair commit to its actual parent or allow an explicitly named shared-branch exception.
++
++3. INFO — **untracked rebind forms are only partially declared.** `for`/`with`/`except`/comprehension/import targets do not clear a seeded reserved `argv`; all retain the seed in the test-side model. Evidence: hostile shapes a6-a10. Contract mapping: no current C instance; finite covered list itself names only four binding forms. Canonical path: not reproduced. Material effect: none at PIN. Suggested fix: document the remainder as stated limits if clarity is required; do not widen this increment.
++
++No BLOCKER. No CONTRACT-DEFECT. All other hostile observations are SOLID as tabulated; a11 is a valid but explicitly OUT global/nonlocal probe and is INFO/UNVERIFIED for the frozen domain, not misreported as a defect.
++
++## DISCREPANCIES
++
++- D2's literal base-range assertion is false because the range includes independent S0-02 B6 commit `c439580`, which adds `tests/test_s0_02_buzz_authz.py`. A5q itself is cleanly T-only versus actual parent `78745d3`; details in item 1.
++- The brief's command said `grep -n 'def .*\bargv\b'`. GNU grep's basic-regex `\b` behavior did not find C:1879 `def main(argv) -> int:`; `grep -nE 'def .*\bargv\b'` did. The conclusion was independently confirmed by AST parsing, and no source/configuration was changed.
++- Item 3 initial a11 used a syntactically invalid `global argv` after parameter form. I excluded that invalid input, then ran valid compiled global and nonlocal forms; their measured static outcomes are in the shape table. They remain outside the stated global/nonlocal domain and are not product proof.
++- Item 3 initial b5 accidentally used a required kwonly `argv`, not the brief's `**argv`; focused rerun measured `**argv` NO_RAISE and the report corrects the row. This is a verifier-driver input correction, not a product finding.
++- Item 4's first M1 reconstruction left `parameter_seeds` calling a removed variable and caused NameError; that was a bad mutant, not a compiled/collected result. I discarded it, reconstructed the complete pre-A5q model (including removing parameter seeding and restoring old entries), then re-ran. The final M1 compiled, collected, and died at the named regression assertion.
++- `graft ask` reports lexical/context hits that include `check_runtime_identity`, `check_config_echo`, and `_pinned_process_count` when asked for argv *parameters*. Exact grep and an AST walk resolve the actual C parameter set; no claim rests on graft's false context lines.
++- `report_lint` final bounded run: `report_lint: 28 refs — OK 23, NEAR 2, MISS 0, UNCHECKABLE 3, UNRESOLVED 0 (worktree)`; floor 12 satisfied. The three UNCHECKABLE rows are verbatim AP-screen evidence lines, and the two NEAR rows are T:3281 `If / While / Assert` comment tokens on adjacent report lines. No third repair round is needed because MISS is 0.
++
++## NOT-done
++
++- Not committed, pushed, tagged, posted, or otherwise acted outward.
++- Not a final gate verdict; coordinator owns that decision.
++- F1 not fixed here (verify lane is read-only) and requires a D-034 follow-up issue if accepted.
++- The stated finite-domain limits remain unfixed: boolean calls, container/subscript/attribute hops, global/nonlocal, path sensitivity, and unlisted rebinding forms. No current C path uses them.
++- The valid global/nonlocal controls were run after the initial invalid a11 input; their different static results are recorded, but both are explicitly outside the frozen domain. No current C path uses `global` or `nonlocal`.
++
++## GATE RECOMMENDATION
++
++**MERGE-READY-WITH-FOLLOWUPS.** No finding meets the complete blocker predicate: all original issue #8 cases match contract; all four repair families survive independent hostile shapes; all 10 compiling/collecting mutants die; all five named tests red when their own expectations flip; and the two PIN gates report `483 passed` twice with pyflakes rc=0. F1 is a real but dormant test-model wording/coverage gap: it is contract-mapped only at the broad static claim, has a deterministic scratch discriminator, but **does not reproduce through current C and has no material PIN effect**. It is a D-034 `verify-followup`, not a NOT-READY blocker.
++
++retro: nothing to bake; no general reusable workflow lesson beyond the already-recorded complete-mutant requirement.
+diff --git a/transcripts/pc/pc-verify-a5q.md--2e02afd.md b/transcripts/pc/pc-verify-a5q.md--2e02afd.md
+new file mode 100644
+index 0000000..0ab3711
+--- /dev/null
++++ b/transcripts/pc/pc-verify-a5q.md--2e02afd.md
+@@ -0,0 +1,622 @@
++# Hermes lane session 20260922_052937_04f85a
++
++- model: agentfactory-verify-local
++- started: 2026-09-22T04:29:38.407048+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-a5q.md--2e02afd/tree
++- messages: 173; tool calls: 89
++- tokens in/out/cache_read/reasoning: 498794/119063/8292704/73789
++
++## user @ 04:29:37
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 04:30:33 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 04:30:34 — 677 chars (body not exported)
++
++## tool result (read_file) @ 04:30:34 — 6455 chars (body not exported)
++
++## assistant @ 04:30:47 → tools: terminal
++
++Venue map read. Starting item 1 (premise checks).
++
++## tool result (terminal) @ 04:30:47 — 1439 chars (body not exported)
++
++## assistant @ 04:31:58 → tools: terminal
++
++I found an extra test file in the diff that doesn't match the expected changes. I'll check the commit range to understand what's actually there.
++
++## tool result (terminal) @ 04:31:58 — 4133 chars (body not exported)
++
++## assistant @ 04:35:09 → tools: terminal
++
++Item 1 has a twist: D2 names a second file (`test_s0_02_buzz_authz.py`) beyond T. Before grading the premise, I'll disambiguate whether that extra file belongs to A5q or to a co-landed independent increment. Running bounded experiments.
++
++## tool result (terminal) @ 04:35:09 — 860 chars (body not exported)
++
++## assistant @ 04:36:50 → tools: terminal
++
++Item 1's literal D2 expectation is off by one file — a classic shared-branch base-drift artifact. Let me confirm the extra file is a separate increment (not A5q's), verify the mint byte-identity, and confirm no intermediate commit touched T.
++
++## tool result (terminal) @ 04:36:50 — 1129 chars (body not exported)
++
++## assistant @ 04:38:11 → tools: terminal, terminal
++
++Item 1's three substantive checks pass (T hash exact; C/P/S/mint all byte-identical to base 236bec7; 11 hunks, all at T:3273+ so none in G2 2010-2152). The literal D2 "name only T" expectation fails by exactly one file — `tests/test_s0_02_buzz_authz.py` (+171). My bounded experiments show that file is a DIFFERENT increment (S0-02 B6, c439580) that landed on the shared branch between A5q's base (236bec7) and A5q's parent (78745d3); A5q's own commit vs its parent touches only T, and T was untouched by every intervening increment. That's shared-branch base drift, not A5q changing the production surface — so I build on the measured truth and log it as a DISCREPANCY rather than stopping with CONTRACT-INVALID.
++
++Let me set up the scratch dir, the report file, and read the A5q region of T to understand the model before I build the item-2 driver.
++
++## tool result (terminal) @ 04:38:12 — 144 chars (body not exported)
++
++## tool result (terminal) @ 04:38:12 — 6590 chars (body not exported)
++
++## assistant @ 04:38:20 → tools: read_file
++
++The skeleton lists the whole file. Let me read the exact A5q region by line range (T:3255-3450) plus the named-tests region and the docstring/comments to ground the model before building the driver.
++
++## tool result (read_file) @ 04:38:20 — 10082 chars (body not exported)
++
++## assistant @ 04:38:28 → tools: read_file
++
++Now the rest of the function — the assertion machinery, the frozen `allowed_boolean_tests`, the `check_config_echo` removals, and how the function assembles and asserts its inventories.
++
++## tool result (read_file) @ 04:38:28 — 11855 chars (body not exported)
++
++## assistant @ 04:38:38 → tools: read_file
++
++Now let me read the A5q named tests (T:3839-3947) and the CHECKER constant + the C-side `check_config_echo`/`_pinned_process_count` structure I need for the driver.
++
++## tool result (read_file) @ 04:38:38 — 6235 chars (body not exported)
++
++## assistant @ 04:39:03 → tools: read_file
++
++Now the A5q named tests themselves (T:3836-3947, the new 120-line block at the end).
++
++## tool result (read_file) @ 04:39:03 — 6466 chars (body not exported)
++
++## assistant @ 04:39:09 → tools: read_file
++
++
++
++## tool result (read_file) @ 04:39:09 — 2027 chars (body not exported)
++
++## assistant @ 04:39:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:39:16 — 777 chars (body not exported)
++
++## assistant @ 04:39:22 → tools: read_file
++
++
++
++## tool result (read_file) @ 04:39:22 — 2732 chars (body not exported)
++
++## assistant @ 04:39:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:39:29 — 5288 chars (body not exported)
++
++## assistant @ 04:40:17 → tools: write_file
++
++I have the full model grounded. Now let me build the item-2 driver — inject the issue #8's original seven rows ahead of `_pinned_process_count` and run each through the real `<opaque-redacted>`.
++
++## tool result (write_file) @ 04:40:18 — 1517 chars (body not exported)
++
++## assistant @ 04:40:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:40:58 — 503 chars (body not exported)
++
++## assistant @ 04:41:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:41:06 — 605 chars (body not exported)
++
++## assistant @ 04:41:29 → tools: terminal
++
++All 7 match. But my A5P-01 "control" was a guess at the issue's original table — I should verify against the primary source rather than reconstruct. Let me check the A5q report and the A5P support briefs for the actual issue #8 reproduction table, and confirm the five named tests pass.
++
++## tool result (terminal) @ 04:41:29 — 279 chars (body not exported)
++
++## assistant @ 04:41:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:41:35 — 19345 chars (body not exported)
++
++## assistant @ 04:42:20 → tools: patch
++
++The A5q report confirms the shapes. My A5P-01 row was a generic no-op; the brief's "A5P-01 control" is the canonical A5o V1 ordinary-alias-rebind (operand → non-operand rebind, must stay NO_RAISE). Let me correct that row to match the issue's actual 7-row table, then re-run.
++
++## tool result (patch) @ 04:42:20 — 1205 chars (body not exported)
++
++## assistant @ 04:42:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:42:30 — 655 chars (body not exported)
++
++## assistant @ 04:43:42 → tools: write_file
++
++All 7 issue rows MATCHES-CONTRACT. Let me start the report draft and the item-3 hostile-shape driver. First, set up the report file and a general item-3 driver.
++
++## tool result (write_file) @ 04:43:42 — 325 chars (body not exported)
++
++## assistant @ 04:46:41 → tools: terminal
++
++Now let me enumerate every function in C with a parameter named `argv` (item 3a's seeding-rule sub-question), then build the item-3 hostile-shape driver.
++
++## tool result (terminal) @ 04:46:42 — 1622 chars (body not exported)
++
++## assistant @ 04:46:56 → tools: terminal
++
++`main(argv)` at C:1879 is the only function in C with an `argv` parameter. This is a key A5P-02 question: is that parameter actually the classifier operand, or the OS command-line list (which would make `parameter_seeds` an over-approximation)? Let me read it and check `is_pinned_argv`.
++
++## tool result (terminal) @ 04:46:56 — 4425 chars (body not exported)
++
++## assistant @ 04:47:23 → tools: terminal
++
++`main(argv)` at C:1879 is the only function in C with an `argv` parameter. Its uses are `argv[1:]` (C:1882) — subscript, a stated OUT limit. And `is_pinned_argv(argv)` in pins.py uses only `argv[0]`/`argv[1]` subscripts. Let me check for any BARE-Name `argv` uses in C that would make the seeded parameter matter, plus confirm the model's inventory.
++
++## tool result (terminal) @ 04:47:23 — 1439 chars (body not exported)
++
++## assistant @ 04:54:14 → tools: write_file
++
++`main(argv)` is the only `argv`-parameter function in C; its only uses are `argv[1:]` (subscript → a stated OUT) and `len(argv)` (a non-boolean call) — no bare-Name `argv` in a Compare/BoolOp/If/While/Assert/IfExp/Not, so the seeded parameter is inert (no false positive). That's an item-3a data point. Now the item-3 hostile-shape driver — I design each shape, write my expected from the claims, and run through the real (purely static) `<opaque-redacted>`.
++
++## tool result (write_file) @ 04:54:16 — 1013 chars (body not exported)
++
++## assistant @ 04:55:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:55:27 — 4032 chars (body not exported)
++
++## assistant @ 04:58:26 → tools: write_file
++
++40 shapes ran; 4 flagged mismatches. Three are my own expectation errors or a structural block, but **d7 (walrus in an `If` test) is a genuine claim-vs-behavior question** — the comment (T:3281-3283) claims "a derived value as the whole test expression of If", and a walrus `(x := pin)` IS such a test, yet it did NOT raise. Let me localize it and re-grade the other three (a11 is not a defect — the trailing plain-assign clears `argv`; b5 I mis-translated — the brief asked for a varkey `**argv`, and a *required kwonly* `argv` correctly RAISEs because `parameter_seeds` seeds any `argv`-named param; d13 tripped a separate pre-existing "one Return" assert, so the skip can't be exercised by mutating that body).
++
++Let me run a focused trace to settle d7 and the varkey/kwonly-argv question.
++
++## tool result (write_file) @ 04:58:26 — 1010 chars (body not exported)
++
++## assistant @ 04:59:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 04:59:44 — 1648 chars (body not exported)
++
++## assistant @ 05:03:58 → tools: terminal
++
++Now the decisive question for **d7 (walrus as an `If` test)**: the comment (T:3281-3283) and docstring (T:3597-3600) claim "a derived value as the whole test expression of If" is inventoried, but my trace shows a walrus-as-whole-test is recorded into `uses` then **dropped by the downstream `actual_boolean_tests` loop** (T:3580-3585 only keeps `Name`/`Call`/`UnaryOp`/`IfExp` node types — a `NamedExpr` falls through). Whether that's a live false-negative on the real artifact or a latent model gap depends entirely on whether C actually uses such a construct. Let me check C for walrus-in-test and confirm the loop's node-type filter.
++
++## tool result (terminal) @ 05:03:58 — 213 chars (body not exported)
++
++## assistant @ 05:16:06 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 05:16:08 — 274 chars (body not exported)
++
++## tool result (terminal) @ 05:16:08 — 2291 chars (body not exported)
++
++## assistant @ 05:17:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 05:17:04 — 330 chars (body not exported)
++
++## assistant @ 05:17:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:17:10 — 1335 chars (body not exported)
++
++## assistant @ 05:18:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:18:29 — 45 chars (body not exported)
++
++## assistant @ 05:19:13 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 05:19:13 — 3248 chars (body not exported)
++
++## tool result (terminal) @ 05:19:13 — 156 chars (body not exported)
++
++## assistant @ 05:21:42 → tools: write_file
++
++
++
++## tool result (write_file) @ 05:21:42 — 1069 chars (body not exported)
++
++## assistant @ 05:21:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:22:18 — 51581 chars (body not exported)
++
++## assistant @ 05:22:37 → tools: patch
++
++
++
++## tool result (patch) @ 05:22:37 — 1279 chars (body not exported)
++
++## assistant @ 05:22:44 → tools: patch
++
++
++
++## tool result (patch) @ 05:22:44 — 1469 chars (body not exported)
++
++## assistant @ 05:23:00 → tools: patch
++
++
++
++## tool result (patch) @ 05:23:00 — 1727 chars (body not exported)
++
++## assistant @ 05:23:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:23:48 — 22995 chars (body not exported)
++
++## assistant @ 05:24:32 → tools: patch
++
++
++
++## tool result (patch) @ 05:24:33 — 1257 chars (body not exported)
++
++## assistant @ 05:24:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:24:48 — 7052 chars (body not exported)
++
++## assistant @ 05:25:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:25:54 — 15096 chars (body not exported)
++
++## assistant @ 05:27:10 → tools: patch
++
++
++
++## tool result (patch) @ 05:27:11 — 3217 chars (body not exported)
++
++## assistant @ 05:27:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:28:02 — 14978 chars (body not exported)
++
++## assistant @ 05:28:54 → tools: write_file
++
++
++
++## tool result (write_file) @ 05:28:54 — 314 chars (body not exported)
++
++## assistant @ 05:28:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:29:20 — 2501 chars (body not exported)
++
++## assistant @ 05:30:51 → tools: patch
++
++
++
++## tool result (patch) @ 05:30:51 — 11548 chars (body not exported)
++
++## assistant @ 05:31:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:32:58 — 804 chars (body not exported)
++
++## assistant @ 05:33:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:34:53 — 804 chars (body not exported)
++
++## assistant @ 05:35:02 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 05:35:02 — 58 chars (body not exported)
++
++## tool result (terminal) @ 05:35:02 — 503 chars (body not exported)
++
++## tool result (terminal) @ 05:35:03 — 97 chars (body not exported)
++
++## assistant @ 05:35:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:35:10 — 363 chars (body not exported)
++
++## assistant @ 05:35:36 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 05:35:36 — 16495 chars (body not exported)
++
++## tool result (terminal) @ 05:35:36 — 13122 chars (body not exported)
++
++## assistant @ 05:37:05 → tools: patch
++
++
++
++## tool result (patch) @ 05:37:05 — 13499 chars (body not exported)
++
++## assistant @ 05:37:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:37:27 — 189 chars (body not exported)
++
++## assistant @ 05:37:43 → tools: read_file
++
++
++
++## tool result (read_file) @ 05:37:43 — 13460 chars (body not exported)
++
++## assistant @ 05:37:50 → tools: patch
++
++
++
++## tool result (patch) @ 05:37:51 — 2791 chars (body not exported)
++
++## assistant @ 05:37:56 → tools: patch
++
++
++
++## tool result (patch) @ 05:37:56 — 1455 chars (body not exported)
++
++## assistant @ 05:38:01 → tools: patch
++
++
++
++## tool result (patch) @ 05:38:02 — 2435 chars (body not exported)
++
++## assistant @ 05:40:07 → tools: patch
++
++
++
++## tool result (patch) @ 05:40:08 — 1269 chars (body not exported)
++
++## assistant @ 05:40:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:40:16 — 19041 chars (body not exported)
++
++## assistant @ 05:40:54 → tools: patch
++
++
++
++## tool result (patch) @ 05:40:54 — 1905 chars (body not exported)
++
++## assistant @ 05:41:01 → tools: patch
++
++
++
++## tool result (patch) @ 05:41:01 — 2189 chars (body not exported)
++
++## assistant @ 05:41:12 → tools: patch
++
++
++
++## tool result (patch) @ 05:41:12 — 1811 chars (body not exported)
++
++## assistant @ 05:43:17 → tools: patch
++
++
++
++## tool result (patch) @ 05:43:17 — 1138 chars (body not exported)
++
++## assistant @ 05:43:34 → tools: patch
++
++
++
++## tool result (patch) @ 05:43:34 — 3431 chars (body not exported)
++
++## assistant @ 05:43:43 → tools: patch
++
++
++
++## tool result (patch) @ 05:43:43 — 1751 chars (body not exported)
++
++## assistant @ 05:43:52 → tools: patch
++
++
++
++## tool result (patch) @ 05:43:53 — 1504 chars (body not exported)
++
++## assistant @ 05:44:03 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:03 — 1591 chars (body not exported)
++
++## assistant @ 05:44:13 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:13 — 2200 chars (body not exported)
++
++## assistant @ 05:44:20 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:21 — 2185 chars (body not exported)
++
++## assistant @ 05:44:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:44:26 — 3819 chars (body not exported)
++
++## assistant @ 05:44:33 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:33 — 1828 chars (body not exported)
++
++## assistant @ 05:44:42 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:42 — 1489 chars (body not exported)
++
++## assistant @ 05:44:53 → tools: patch
++
++
++
++## tool result (patch) @ 05:44:53 — 2323 chars (body not exported)
++
++## assistant @ 05:45:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:45:30 — 566 chars (body not exported)
++
++## assistant @ 05:45:42 → tools: patch
++
++
++
++## tool result (patch) @ 05:45:43 — 1745 chars (body not exported)
++
++## assistant @ 05:45:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:45:51 — 1147 chars (body not exported)
++
++## assistant @ 05:46:04 → tools: read_file
++
++
++
++## tool result (read_file) @ 05:46:04 — 30032 chars (body not exported)
++
++## assistant @ 05:46:20 → tools: patch
++
++
++
++## tool result (patch) @ 05:46:20 — 2103 chars (body not exported)
++
++## assistant @ 05:46:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 05:46:30 — 1070 chars (body not exported)
++
++## assistant @ 05:48:42
++
++# VERIFY-A5q — independent adversarial verification of issue #8 (CK16 classifier-operand meta-oracle sweep)
++
++Role: adversarial-verifier (LOCAL Qwen verify route, `agentfactory-verify-local`). PIN: 2e02afd. Base: 236bec7.
++Venue: pc (tasks/briefs/pc/VENUE-MAP.md). This lane VERIFIES; it never fixes. It emits a GATE RECOMMENDATION, never a verdict.
++
++## Item 1 — premise
++
++Commands (all from the lane tree, PIN 2e02afd):
++- `git diff --stat 236bec7 2e02afd -- proofs/ tests/test_s0_01_spec_runner.py scripts/proof-runner scripts/validate-ledger` → **empty** (no output, rc=0). C/P/S/proof-runner/validate-ledger byte-identical.
++- `git diff --stat 236bec7 2e02afd -- tests/` → **names TWO files**: `tests/test_s0_01_check_acp_conformance.py` (+246/−15) and `tests/test_s0_02_buzz_authz.py` (+171/−0).
++- `sha256sum tests/test_s0_01_check_acp_conformance.py` → **<opaque-redacted>** (matches the brief's expected hash exactly).
++- Hunk-boundary check: the diff produced **11 hunk headers**; the first/last and G2 range are named in the command output only, rather than cited as T source coordinates. **No hunk falls inside the G2 region.**
++
++DISCREPANCY (item 1, D2): the brief said `git diff --stat 236bec7 2e02afd -- tests/` “must name only T”. Measured output names T PLUS `tests/test_s0_02_buzz_authz.py`. Bounded disambiguation (3 experiments):
++- `git merge-base --is-ancestor 236bec7 2e02afd` → 236bec7 IS an ancestor of 2e02afd.
++- `git log --oneline 236bec7..2e02afd` → 16 commits in the range. The extra test file was added by `c439580 S0-02 B6 LANDED (issue #3)` — a DIFFERENT increment (S0-02, not S0-01) that landed on the shared branch between A5q’s base (236bec7) and A5q’s parent (78745d3).
++- `git diff --stat c439580 2e02afd -- tests/test_s0_02_buzz_authz.py` → empty (A5q did not touch that file); `git log --oneline 236bec7..78745d3 -- tests/test_s0_01_check_acp_conformance.py` → empty (T untouched by every intervening increment, so A5q’s T-diff is identical vs either 236bec7 or 78745d3); `git diff --stat 78745d3 2e02afd -- tests/` → names ONLY T.
++
++Conclusion: the extra file is **shared-branch base drift** (S0-02 B6), not an A5q change to the production surface. A5q’s own commit (2e02afd vs its real parent 78745d3) touches ONLY T; C/P/S/proof-runner/validate-ledger and the S0-01 mint are byte-identical to 236bec7. The item-1 premise — “A5q touched T only and left the production spine intact” — is TRUE at the level that matters for this round. I build on the measured truth and log the D2 wording as a DISCREPANCY rather than stopping with CONTRACT-INVALID.
++
++S0-01 mint/production byte-identity (base 236bec7 vs PIN 2e02afd), measured:
++- `proofs/S0-01/result.json`: bb98b1a4… identical
++- `proofs/S0-01/check_acp_conformance.py` (C): `<opaque-redacted>` (identical)
++- `proofs/S0-01/pins.py` (P): `<opaque-redacted>` (identical)
++
++SOLID. Block
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 498794,
++  "output_tokens": 119063,
++  "cache_read_tokens": 8292704,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 73789,
++  "total_tokens": 8910561,
++  "api_calls": 83,
++  "model": "agentfactory-verify-local",
++  "provider": "custom",
++  "session_id": "20260922_052937_04f85a",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
