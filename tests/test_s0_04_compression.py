@@ -298,6 +298,39 @@ def test_response_state_on_fails_at_value_before_source(tmp_path):
     assert "compression-header-value" in out, out
 
 
+def test_response_status_must_be_2xx(tmp_path):
+    """A2 accepts successful responses only; the cases independently exercise both bounds."""
+    cases = (
+        (200, 0, PASS_LINE),
+        (299, 0, PASS_LINE),
+        (503, 1, "failure_reason: off: response-status-not-2xx: 503"),
+        (199, 1, "failure_reason: off: response-status-not-2xx: 199"),
+        (300, 1, "failure_reason: off: response-status-not-2xx: 300"),
+    )
+    for index, (status, expected_code, expected_text) in enumerate(cases):
+        b = bundle(tmp_path, f"status-{index}")
+        path = b / "off" / "response.json"
+        obj = load(path)
+        obj["status"] = status
+        store(path, obj)
+        code, out = run_checker(b)
+        assert code == expected_code, (status, out)
+        assert expected_text in out, (status, out)
+
+
+def test_response_status_requires_an_integer(tmp_path):
+    """M17: values that merely look numeric must take the named type-failure path."""
+    for index, status in enumerate(("200", True)):
+        b = bundle(tmp_path, f"non-int-status-{index}")
+        path = b / "off" / "response.json"
+        obj = load(path)
+        obj["status"] = status
+        store(path, obj)
+        code, out = run_checker(b)
+        assert code == 1, out
+        assert "failure_reason: off: response-status-absent" in out, out
+
+
 def test_mutant_fifo_hang(tmp_path):
     """FIFO-HANG — a FIFO in the bundle is named and refused, never read."""
     b = bundle(tmp_path)
@@ -389,6 +422,21 @@ def test_config_header_key_case_is_also_insensitive(tmp_path):
     assert code == 0, out
 
 
+def test_duplicated_config_header_is_refused(tmp_path):
+    """M15: case-insensitive duplicate spellings cannot make a last-wins config pass."""
+    b = bundle(tmp_path)
+    path = b / "config" / "hermes-provider.json"
+    obj = load(path)
+    obj["extra_headers"] = {
+        "x-omniroute-compression": "off",
+        "X-OmniRoute-Compression": "off",
+    }
+    store(path, obj)
+    code, out = run_checker(b)
+    assert code == 1, out
+    assert "failure_reason: config: config-header-duplicated: 2 keys" in out, out
+
+
 def test_duplicated_response_header_is_refused(tmp_path):
     """AF-AP-41 — a duplicated header must not collapse to a last-wins pass."""
     b = bundle(tmp_path)
@@ -470,6 +518,37 @@ def test_request_json_must_equal_the_committed_fixture(tmp_path):
         code, out = run_checker(b)
         assert code == 1, (field, out)
         assert f"request-fixture-mismatch: {field}" in out, (field, out)
+
+
+def test_request_argv_is_required(tmp_path):
+    """M4: request identity includes the capture argv, not merely request wire fields."""
+    b = bundle(tmp_path)
+    path = b / "off" / "request.json"
+    obj = load(path)
+    obj.pop("argv")
+    store(path, obj)
+    code, out = run_checker(b)
+    assert code == 1, out
+    assert "failure_reason: off: request-argv-absent" in out, out
+
+
+def test_fixture_compression_header_is_pinned_after_request_equivalence(tmp_path):
+    """M5: a self-consistent private fixture cannot change the compression directive."""
+    fixtures = tmp_path / "fx"
+    shutil.copytree(FIXTURES, fixtures)
+    fixture = fixtures / "request-baseline.json"
+    fixture_obj = load(fixture)
+    fixture_obj["headers"]["x-omniroute-compression"] = "on"
+    store(fixture, fixture_obj)
+
+    b = bundle(tmp_path)
+    request = b / "off" / "request.json"
+    request_obj = load(request)
+    request_obj["headers"]["x-omniroute-compression"] = "on"
+    store(request, request_obj)
+    code, out = run_checker(b, fixtures_dir=fixtures)
+    assert code == 1, out
+    assert "failure_reason: off: sent-compression-header-value: on" in out, out
 
 
 @pytest.mark.parametrize("url", [

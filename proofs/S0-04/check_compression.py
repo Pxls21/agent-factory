@@ -249,6 +249,8 @@ def check_request_leg(leg: str, leg_dir: Path, fixtures_dir: Path, observations:
         raise Failure(f"{leg}: request-url-unexpected: {_short(url)}")
     if not isinstance(request.get("argv"), list) or not request["argv"]:
         raise Failure(f"{leg}: request-argv-absent")
+    # A1 compares request and fixture, but `--fixtures-dir` can supply a self-consistent alternate
+    # pair; pin the fixture directive here so it cannot change from compression-off.
     sent = {k.lower(): v for k, v in fixture["headers"].items()}
     if sent.get(COMPRESSION_HEADER) != COMPRESSION_VALUE:
         raise Failure(f"{leg}: sent-compression-header-value: "
@@ -260,8 +262,11 @@ def check_request_leg(leg: str, leg_dir: Path, fixtures_dir: Path, observations:
     # structural signature that the OFF came from our directive, not an OmniRoute default —
     # anti-hollow-green #7). Parameters are `;`-separated and stripped; the state is the first.
     response = _read_json(leg_dir / "response.json", leg, "response.json")
-    if not isinstance(response.get("status"), int):
+    status = response.get("status")
+    if type(status) is not int:
         raise Failure(f"{leg}: response-status-absent")
+    if not 200 <= status < 300:
+        raise Failure(f"{leg}: response-status-not-2xx: {status}")
     values = [v for name, v in _header_values(response.get("headers"), leg, "response.json")
               if name.lower() == COMPRESSION_HEADER]
     if not values:
