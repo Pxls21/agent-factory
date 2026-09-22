@@ -14,12 +14,12 @@ required, positive controls 1/1` rc 0, and the repaired checker at the PIN print
 mechanism=netns-no-veth` rc 1. The guard fires for EVERY run unit before any canary is read (three instruments agree),
 refuses every hostile `gate.json` shape I could build (17 shapes, 0 fail-open), and 9 of my 13 fresh mutants died.
 
-What blocks is the ONE test that claims to be that proof. `tests/test_s0_05_egress.py:795-862` (`@NEEDS_NETNS`) builds a topology whose
+What blocks is the ONE test that claims to be that proof. `tests/test_s0_05_egress.py@860ab9e:795-862` (`@NEEDS_NETNS`) builds a topology whose
 OUTPUT DROP counter never advances — `0 -> 0` on 4 of 4 runs — so the bundle it produces was ALREADY refused before the
 repair, by `proofs/S0-05/check_egress.py:280` `gate-inert: {unit} OUTPUT DROP counter did not advance`. Its docstring at
-`tests/test_s0_05_egress.py:806-807` states `On the PIN's checker this bundle` PASSES (rc 0); measured, the PIN's checker
+`tests/test_s0_05_egress.py@860ab9e:806-807` states `On the PIN's checker this bundle` PASSES (rc 0); measured, the PIN's checker
 returns rc 1 `gate-inert: curl OUTPUT DROP counter did not advance (0 -> 0)`. Its comment at
-`tests/test_s0_05_egress.py:836` states `the DROP counter advances despite total isolation`; it does not. So the
+`tests/test_s0_05_egress.py@860ab9e:836` states `the DROP counter advances despite total isolation`; it does not. So the
 increment ships a committed artifact whose load-bearing factual claim is false, and the F1 hollow green has no committed
 regression lock. The lane predicted exactly this in its own §7.1 ("Most likely wrong: the root-only live topology does
 not reproduce F1 … Sandbox execution is mandatory before acceptance") and left it NOT-done — this run is that check, and
@@ -107,23 +107,23 @@ egress still works ([C] above): a FALSE RED, never a false green. Not library-re
 
 ### Item 3 — kill-switch on the live test. It kills, but it does not prove what it claims.
 
-**F1 — BLOCKER — `tests/test_s0_05_egress.py:795-862` (`@NEEDS_NETNS`) does not reproduce F1; its docstring and its comment are false.**
+**F1 — BLOCKER — `tests/test_s0_05_egress.py@860ab9e:795-862` (`@NEEDS_NETNS`) does not reproduce F1; its docstring and its comment are false.**
 
 * **Evidence level:** reproduced, four times, through the REAL `proofs/S0-05/run_canaries.sh`, the REAL checker at the
   PIN and the REAL pre-repair checker. SOLID.
 * **Contract:** the brief's item 3 ("Does it prove what it claims?"); the PREMISE line "the PIN's checker prints PASS
   rc 0 on the live isolated topology — F1 reproduced live"; CLAUDE.md's #1 rule ("the hollow green lives in PROSE too");
   AF-AP-36 (a reviewer-reported mutation of a proof's evidence becomes a committed FAILING regression test).
-* **file:line vs observed.** `tests/test_s0_05_egress.py:836` asserts in prose `the DROP counter advances despite total
-  isolation`; `tests/test_s0_05_egress.py:806-807` asserts `On the PIN's checker this bundle` PASSES (rc 0). Measured,
+* **file:line vs observed.** `tests/test_s0_05_egress.py@860ab9e:836` asserts in prose `the DROP counter advances despite total
+  isolation`; `tests/test_s0_05_egress.py@860ab9e:806-807` asserts `On the PIN's checker this bundle` PASSES (rc 0). Measured,
   the bundle the test writes carries `drop_counter_before=0, drop_counter_after=0` on 4 of 4 runs (deterministic):
 
   ```
   run1: drop 0 -> 0     run2: drop 0 -> 0     run3: drop 0 -> 0     (+ the first, retained, bundle)
   ```
 
-  Mechanism: the internal pair's two addresses (`tests/test_s0_05_egress.py:819` `ip -n {ns} link add ve1a type veth peer name ve1b`, then `192.0.2.1/31` and `192.0.2.0/31`) are BOTH local to the namespace, so C6's target
-  (`tests/test_s0_05_egress.py:840` `192.0.2.0:12801`) is delivered over loopback and matched by the gate's
+  Mechanism: the internal pair's two addresses (`tests/test_s0_05_egress.py@860ab9e:819` `ip -n {ns} link add ve1a type veth peer name ve1b`, then `192.0.2.1/31` and `192.0.2.0/31`) are BOTH local to the namespace, so C6's target
+  (`tests/test_s0_05_egress.py@860ab9e:840` `192.0.2.0:12801`) is delivered over loopback and matched by the gate's
   `-A OUTPUT -o lo -j ACCEPT`. Nothing is ever dropped. The recorded C6 is
   `curl: (7) Failed to connect to 192.0.2.0 port 12801 after 0 ms: Couldn't connect to server` — an on-link refusal,
   not a gate denial.
@@ -144,12 +144,12 @@ egress still works ([C] above): a FALSE RED, never a false green. Not library-re
   E   AssertionError: gate-inert: curl OUTPUT DROP counter did not advance (0 -> 0)
     - total-isolation: curl mechanism=netns-no-veth
     + gate-inert: curl OUTPUT DROP counter did not advance (0 -> 0)
-  <scratch>/REDFIRST-953ccfe/tests/test_s0_05_egress.py:851: AssertionError
+  <scratch>/REDFIRST-953ccfe/tests/test_s0_05_egress.py@860ab9e:851: AssertionError
   2 failed, 102 deselected in 1.43s
   ```
 
   (item 3b, answered literally: the red state is a `gate-inert` refusal, not the promised rc-0 PASS. The assertion that
-  fires is the right one — `tests/test_s0_05_egress.py:851` `total-isolation: curl mechanism=netns-no-veth` — so the test IS a guard discriminator; it is not a
+  fires is the right one — `tests/test_s0_05_egress.py@860ab9e:851` `total-isolation: curl mechanism=netns-no-veth` — so the test IS a guard discriminator; it is not a
   reproduction of F1.)
 * **Material effect.** The delivered increment states a checkable fact about the production path that the production
   path falsifies, and the only committed test that claims to lock the motivating hollow green does not exercise it. The
@@ -186,18 +186,18 @@ egress still works ([C] above): a FALSE RED, never a false green. Not library-re
 * **What this finding does NOT say:** the guard is wrong. It is right, and I proved it against the real instance above.
 
 **F4 — INFO — item 3a: the stand-in genuinely serves INSIDE the namespace; the test is not a tautology.** Scratch edit
-of `tests/test_s0_05_egress.py:776` `["ip", "netns", "exec", ns, sys.executable, str(script), str(port)],` to launch on
+of `tests/test_s0_05_egress.py@860ab9e:776` `["ip", "netns", "exec", ns, sys.executable, str(script), str(port)],` to launch on
 the HOST loopback → `AssertionError: loopback stand-in did not become ready inside the namespace`
-(`tests/test_s0_05_egress.py:792` `loopback stand-in did not become ready inside the namespace`), `1 failed, 103 deselected in 5.31s`. The readiness probe, which also runs
+(`tests/test_s0_05_egress.py@860ab9e:792` `loopback stand-in did not become ready inside the namespace`), `1 failed, 103 deselected in 5.31s`. The readiness probe, which also runs
 `ip netns exec`, is load-bearing.
 
 **F5 — INFO — item 3c: teardown is sound on the failing path and does NOT widen VERIFY-E1 F7.** A scratch copy with
 `assert False, "deliberate teardown probe"` inserted right after the collector assertion fails at
-the inserted line (anchor `tests/test_s0_05_egress.py:842` `assert run.returncode == 0, run.stderr`) and the census is still clean — `ip netns list` empty, `ip -o link show type veth`
-empty, `pgrep -af '[l]oopback_standin'` none. `tests/test_s0_05_egress.py:855` `listener.terminate()` runs BEFORE
-`tests/test_s0_05_egress.py:861` `_lib(f'egress_ns_destroy {ns}')`, so no process is left inside the namespace at
+the inserted line (anchor `tests/test_s0_05_egress.py@860ab9e:842` `assert run.returncode == 0, run.stderr`) and the census is still clean — `ip netns list` empty, `ip -o link show type veth`
+empty, `pgrep -af '[l]oopback_standin'` none. `tests/test_s0_05_egress.py@860ab9e:855` `listener.terminate()` runs BEFORE
+`tests/test_s0_05_egress.py@860ab9e:861` `_lib(f'egress_ns_destroy {ns}')`, so no process is left inside the namespace at
 destroy time — F7's invisible-residue class is not enlarged. The census assertion at
-`tests/test_s0_05_egress.py:862` `assert ns not in subprocess.run` is outside the `finally` and is skipped on a failing path; the destroy is not.
+`tests/test_s0_05_egress.py@860ab9e:862` `assert ns not in subprocess.run` is outside the `finally` and is skipped on a failing path; the destroy is not.
 
 **F6 — INFO — item 3d: nothing reaches outside this container.** Every connect runs inside the namespace, which after
 `egress_ns_create_isolated` has no link off itself: in the retained live bundle C2/C3/C4/C5 are all
@@ -208,7 +208,7 @@ design). No listener of mine bound anything but `127.0.0.1` inside a namespace. 
 
 ### Item 4 — the exact-reason contract. It holds on the FIRST line by EQUALITY, and mutants prove it.
 
-`tests/test_s0_05_egress.py:650` `assert result.stdout.splitlines()[0] == leg["expect"]["failure_reason"]` binds
+`tests/test_s0_05_egress.py@860ab9e:650` `assert result.stdout.splitlines()[0] == leg["expect"]["failure_reason"]` binds
 `proofs/S0-05/spec.json:39` `"failure_reason": "total-isolation: curl mechanism=netns-no-veth"`. Attacks:
 
 * **reason with a suffix** (`M18`, VERIFY-E1's own suggested wording `… is not selective egress`): killed by 8 tests —
@@ -224,7 +224,7 @@ design). No listener of mine bound anything but `127.0.0.1` inside a namespace. 
 **F7 — INFO — the PRODUCTION runner is weaker than the test, by design of the runner, not of this repair.**
 `scripts/proof-runner:195` matches the declared reason with `if expected_reason in line` over ANY line of stdout+stderr,
 so a suffixed or second-line reason would satisfy the minting path. The equality binding lives only in
-`tests/test_s0_05_egress.py:650` `leg["expect"]["failure_reason"]` (AF-AP-29 held by the test). Out of this increment's boundary; S0-05 is not minted.
+`tests/test_s0_05_egress.py@860ab9e:650` `leg["expect"]["failure_reason"]` (AF-AP-29 held by the test). Out of this increment's boundary; S0-05 is not minted.
 Worth stating the positive: because `proofs/S0-05/spec.json:39` now names the class reason `total-isolation: curl mechanism=netns-no-veth`, the runner itself
 discriminates the guard — with the guard deleted the bare-unshare leg yields `positive-control-failed: curl`, which
 contains the declared reason nowhere, so the leg would fail `negative-control-unmet`.
@@ -255,7 +255,7 @@ curl gate.json -> committed original   rc=1  lines=2    bytes=75        first='e
 
 Symlinks die at `proofs/S0-05/check_egress.py:131` `if not stat.S_ISREG(path.lstat().st_mode):` — `lstat`, so even a
 symlink to the legitimate committed file is refused. Non-strings are rendered by `str` with no normalisation, exactly as
-the four committed parametrised rows declare (`tests/test_s0_05_egress.py:154` `"trailing-space-mechanism"`).
+the four committed parametrised rows declare (`tests/test_s0_05_egress.py@860ab9e:154` `"trailing-space-mechanism"`).
 
 **F8 — INFO — an embedded newline splits the reason across lines but never flips the verdict.** `splitlines()[0]`
 still discriminates in every consumer I exercised, and a forged `PASS:` line on line 2 leaves rc 1. The one reachable
@@ -288,7 +288,7 @@ both units flipped                     rc=1  first='total-isolation: curl mechan
 No canary of `curl` is read before `hermes-acp`'s gate is asserted (rows 4 and 5 are the discriminators: deleting unit
 1's canaries or making one of them succeed changes nothing).
 
-**F11 — INFO — the ORDER claim is per-unit, not global.** `tests/test_s0_05_egress.py:176` `total-isolation: curl mechanism=netns-no-veth` proves the mechanism guard
+**F11 — INFO — the ORDER claim is per-unit, not global.** `tests/test_s0_05_egress.py@860ab9e:176` `total-isolation: curl mechanism=netns-no-veth` proves the mechanism guard
 precedes the gate-state check WITHIN one unit. Across units the PHASE-1 loop body is read-gate → mechanism → gate-state
 per unit, so unit 1's gate-state check precedes unit 2's mechanism check (last row). Both outcomes are refusals and the
 frozen contract fixes no cross-unit precedence, so this is a documented property, not a defect.
@@ -308,13 +308,13 @@ canary unit binding: `evidence-invalid: curl canaries.jsonl line 1 names unit 'h
 `check_positive_control` (`proofs/S0-05/check_egress.py:217`) IS still red-controlled through committed evidence and the
 real CLI: `test_positive_control_is_mandatory` runs its six mutations over `evidence-mechanism-sandbox`, a genuine
 `veth-iptables` bundle, so every case must now clear the new PHASE-1 guard before reaching the positive control, and
-`tests/test_s0_05_egress.py:243` still pins `positive-control-failed: curl` as the complete first line. Confirmed by
+`tests/test_s0_05_egress.py@860ab9e:243` still pins `positive-control-failed: curl` as the complete first line. Confirmed by
 mutation: `M13` (constant inverted to `netns-no-veth`) turns the suite to `65 failed, 39 passed`, those rows included.
 
 **F13 — INFO — one assertion was lost: no test now drives the positive control with REAL collected failing evidence.**
 `evidence-bare-unshare` is the only committed bundle whose C0 genuinely failed (`positive-control-failed: curl` under
 the pre-repair checker, measured), and PHASE 1 now short-circuits it. What survives is a data assertion on the fixture's
-records (`tests/test_s0_05_egress.py:145-146` `c0[0]["rc"] == 7`), not a checker path. Acceptable — the guard SHOULD win by class
+records (`tests/test_s0_05_egress.py@860ab9e:145-146` `c0[0]["rc"] == 7`), not a checker path. Acceptable — the guard SHOULD win by class
 — but worth recording that the positive control's only real-evidence exercise is gone.
 
 ### Item 8 — mutation table. 13 fresh mutants, none overlapping M1–M5. All compiled and collected (AF-AP-78).
@@ -346,7 +346,7 @@ first line is `total-isolation: hermes-acp mechanism=netns-no-veth` — one para
 **F15 — FOLLOW-UP — M16 survives: case-sensitivity is unpinned.** The shipped exact-equality check rejects
 `"VETH-IPTABLES"` (the coordinator measured it), but no committed row locks that, so a future `casefold()` would pass
 the suite. **Fix:** add `("VETH-IPTABLES", "total-isolation: curl mechanism=VETH-IPTABLES")` to
-`tests/test_s0_05_egress.py:149-154` (`trailing-space-mechanism`). Defence-in-depth; does not qualify on its own.
+`tests/test_s0_05_egress.py@860ab9e:149-154` (`trailing-space-mechanism`). Defence-in-depth; does not qualify on its own.
 
 ### Item 9 — the lane's report. All 7 lint MISSes are convention; no unsupported claim in §OUTCOME or §7.
 
@@ -481,12 +481,118 @@ other than `127.0.0.1` inside a namespace and the namespaces' own on-link `/31`s
 
 ```
 $ python3 scripts/report_lint.py --min-refs 15 tasks/briefs/s0-05-support/VERIFY-E1-R1-report.md
-report_lint: 41 refs — OK 40, NEAR 0, MISS 0, UNCHECKABLE 1, UNRESOLVED 0 (worktree)
+report_lint: 52 refs — OK 50, NEAR 0, MISS 0, UNCHECKABLE 2, UNRESOLVED 0 (worktree)
 ```
 
-Round 1 of at most three applied; floor met (40 OK against a bar of 15), MISS 0. The one UNCHECKABLE is a
-path:line inside a pasted `ap_screen.py` output block, not a claim of mine.
+Two rounds of at most three applied (round 1 on the E1-R1 body, round 2 after the E1-R2 addendum); floor met
+(50 OK against a bar of 15), MISS 0. The E1-R1 body's `tests/test_s0_05_egress.py` references are pinned
+`@860ab9e` because E1-R2 moved those lines — they are PIN-era claims and are checked at the PIN. The two
+UNCHECKABLEs are path:line strings inside pasted tool output, not claims of mine.
 
 ```text
 (end)
 ```
+
+---
+
+# ADDENDUM — E1-R2 re-check (2026-09-22, sandbox as root)
+
+Scope: ONLY the coordinator's touch to `tests/test_s0_05_egress.py` (now sha256 `3a630a624cf9a518`).
+`proofs/S0-05/check_egress.py` is still `5b766582a9a03f91` and `proofs/S0-05/spec.json` still `ed6edbd1c408ad83` — the
+production guard is byte-unchanged from the PIN, so nothing in ITEMS 1-10 above is invalidated; only F1, F14 and F15
+are answered. `git status --porcelain -- proofs/S0-05` is empty.
+
+**(a) The live test, 3× on the tree — `0 -> 5` is STABLE, and the test does not pin it.**
+
+```
+1 passed, 105 deselected in 6.56s   run1: drop 0 -> 5 | C6 rc=28 target=198.51.100.7:12801 | curl: (28) … after 5002 ms
+1 passed, 105 deselected in 6.36s   run2: drop 0 -> 5 | C6 rc=28 target=198.51.100.7:12801 | curl: (28) … after 5002 ms
+1 passed, 105 deselected in 6.37s   run3: drop 0 -> 5 | C6 rc=28 target=198.51.100.7:12801 | curl: (28) … after 5002 ms
+```
+
+Four of four counts (these three plus my own F1 discriminator run) are exactly 5, and
+`tests/test_s0_05_egress.py:872` `assert runtime["drop_counter_after"] > runtime["drop_counter_before"], runtime`
+asserts an INEQUALITY, not the value — SYN-retransmission count can vary without a false red. Correct choice.
+
+**(b) Red-first, reproduced independently on my `REDFIRST-953ccfe` scratch with the NEW test.** Every earlier assertion
+passed, including both new ones, and the failure is the returncode assertion
+(`tests/test_s0_05_egress.py:876` `assert result.returncode == 1, result.stdout`):
+
+```
+>           assert result.returncode == 1, result.stdout
+E           AssertionError: recorded: curl C4 example.com:443 denied rc=7 — OSError [Errno 101] Network is unreachable
+E             gate-fired: curl OUTPUT policy DROP 0 -> 5 packets
+E             PASS: S0-05 no-direct-egress - 1 units, 11 canaries failed as required, positive controls 1/1
+```
+
+**F1 IS RESOLVED.** The test now reproduces the F1 hollow green on the pre-repair checker, so its docstring's
+`On the PIN's checker this bundle` PASSES (rc 0) claim is TRUE as written, and the corrected comment at
+`tests/test_s0_05_egress.py:853-856` (`routed address behind ve1a`) matches the measured mechanism.
+
+**(c) Attack on the two new assertions.**
+
+* *Can `gate-inert` still satisfy the test on any path?* **No — structurally closed, and proved.** Both new assertions
+  sit BEFORE the checker call (`tests/test_s0_05_egress.py:872-873` precede `:875` `result = run_checker(root)`), so a
+  `0 -> 0` bundle never reaches the checker's verdict. Measured by re-introducing exactly the F1-shaped regression —
+  one scratch copy of the NEW test with the line `tests/test_s0_05_egress.py:840`
+  `ip -n {ns} route add 198.51.100.0/24 dev ve1a` deleted:
+
+  ```
+  >           assert runtime["drop_counter_after"] > runtime["drop_counter_before"], runtime
+  E           AssertionError: {'drop_counter_after': 0, 'drop_counter_before': 0, …}
+  E           assert 0 > 0
+  1 failed, 105 deselected in 1.57s
+  ```
+
+  The counter assertion fires first and names the defect. It is a live regression lock on F1, not decoration.
+* *Can C6's rc be something other than 28 on a slow box?* **Measured 28 on 4 of 4 runs, at `after 5002 ms`, and the
+  mechanism makes 28 the only reachable value here.** The gate is policy DROP only
+  (`proofs/S0-05/netns_lib.sh:105` `ip netns exec "$ns" iptables -P "$chain" DROP`; `expected_rules` derives DROP +
+  ACCEPT and never REJECT), and a DROP surfaces no errno to the local socket, so curl always exhausts
+  `proofs/S0-05/canaries/_emit.sh:35` `EGRESS_CONNECT_TIMEOUT=5` and returns 28. A slower box makes a timeout MORE
+  likely, not less. `198.51.100.7` is RFC 5737 TEST-NET-3 routed on-link into a peer inside the same namespace, so rc 0
+  needs a listener that cannot exist; rc 7 needs ENETUNREACH or EPERM, and a missing route fails louder and earlier at
+  `|| exit 1`. Residual (INFO, not a finding): `tests/test_s0_05_egress.py:873` `c6[0]["rc"] == 28`
+  `assert len(c6) == 1 and c6[0]["rc"] == 28, c6` pins an EXACT rc where `:872` pins an inequality; if this library
+  ever moved to `-j REJECT` the rc would become 7 and this row would be a false red. Acceptable — a REJECT rule would
+  also break the pinned rule digest, so the two would go red together.
+
+**(d) M11 and M16 re-run on scratch copies of the current tree — both now KILLED, each by exactly its new lock.**
+
+| mutant | compiles | suite | killed-by |
+|---|---|---|---|
+| M11 guard only `units[0]` | yes | `1 failed, 105 passed in 10.81s` | `test_a_non_first_unit_mechanism_is_rejected_by_class` (`tests/test_s0_05_egress.py:181`) |
+| M16 `casefold()` normalisation | yes | `1 failed, 105 passed in 10.64s` | `test_a_mechanism_mutation_is_rejected_by_class[case-variant-mechanism]` (`tests/test_s0_05_egress.py:154`, the row `VETH-IPTABLES`) |
+| M15 `strip()` normalisation (control) | yes | `1 failed, 105 passed in 10.63s` | `…[trailing-space-mechanism]` |
+| M1 guard deleted (control) | yes | `10 failed, 96 passed in 10.88s` | the 8 of E1-R1 plus the two new locks |
+
+Mutation totals across both rounds: **15 mutants run · 13 killed · 1 survived (M8 `os.environ`, caught by the AP-1
+screen, not by a test) · 1 equivalent (M6 `.get`) · 0 invalid.**
+
+**(e) Gates and census.**
+
+```
+$ bash scripts/test_summary.sh tests/test_s0_05_egress.py     -> 106 passed in 10.73s   (pytest-exit: 0)
+$ bash scripts/test_summary.sh tests/test_s0_05_egress.py     -> 106 passed in 10.66s   (pytest-exit: 0)
+$ ip netns list            -> (no output)
+$ ip -o link show type veth -> (no output)
+```
+
+Censused after every live run in this addendum; all clean. The tree still carries the concurrent pc-t90 lane's dirt
+(`CLAUDE.md`, `scripts/pc_lane.sh`, `harness-ports/tests/test_pc_lane_dispatcher.sh`, `tasks/briefs/pc-t90-support/`),
+untouched by me; the only files I wrote are this report and its addendum.
+
+**Not re-done:** ITEMS 1-10 above (the guard is byte-identical, so their evidence stands) · the wider repo suite ·
+`proof-runner` · the PC venue. **Still open as FOLLOW-UPS, unchanged:** F2 (detector reads link existence, not
+function), F12 (`gate["unit"]` unbound), F13, F9, F16, and the C6-rc note above.
+
+## GATE RECOMMENDATION (E1-R1 + E1-R2 together): MERGE-READY-WITH-FOLLOWUPS
+
+F1 is resolved and independently re-measured through the real production path; F14 and F15 are closed by tests that I
+confirmed discriminate by mutation. No finding now satisfies the complete blocking predicate. The follow-ups above are
+real but none is contract-mapped-and-material-and-in-boundary for this increment; F2 in particular belongs to the
+collector's seam (issue #13), not to `proofs/S0-05/check_egress.py:330` `gates[unit]["mechanism"] != MECHANISM`. This recommendation rests on measurements I
+reproduced myself, and the byte assumption is now closed: the coordinator committed E1-R2 as `56d2c78` while I was
+re-checking, and `git show 56d2c78:tests/test_s0_05_egress.py` hashes to `3a630a624cf9a518` — exactly the bytes I
+graded — with `proofs/S0-05/check_egress.py` still `5b766582a9a03f91` and `proofs/S0-05/spec.json` still
+`ed6edbd1c408ad83` at that commit. Nothing I relied on is unverified.
