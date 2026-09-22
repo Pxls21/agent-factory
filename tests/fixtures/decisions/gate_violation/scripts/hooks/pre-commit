@@ -1,0 +1,3 @@
+#!/bin/bash
+# fixture pre-commit hook for testing the never-a-gate screen
+echo "this line mentions laya for testing"

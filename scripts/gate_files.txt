@@ -1,0 +1,42 @@
+# Gate-defining files scanned by scripts/no_laya_in_gates.py (KC-J1).
+# One repo-relative path per line. No globs at scan time.
+# Completeness is enforced by the structural-pattern walk.
+#
+# hooks
+scripts/hooks/pre-commit
+scripts/hooks/pre-push
+scripts/hooks/post-commit
+# CI workflows
+.github/workflows/planning-checks.yml
+.github/workflows/stage0-ci.yml
+# gate / lint / validator scripts
+scripts/report_lint.py
+scripts/ap_screen.py
+scripts/lane_gate.sh
+scripts/test_summary.sh
+scripts/lint_delta.py
+scripts/validate-ledger
+scripts/proof-runner
+scripts/ledger-gen
+scripts/push_clean.sh
+scripts/safe_commit.sh
+scripts/vendored_manifest.py
+scripts/pc_lane.sh
+scripts/pc_suite.sh
+scripts/check-proof-status.py
+# harness-ports gate scripts
+harness-ports/bin/pc-lane.sh
+# proof checkers
+proofs/S0-01/check_acp_conformance.py
+proofs/S0-01/check_initialize.py
+proofs/S0-02/check_buzz_authz.py
+proofs/S0-03/check_omniroute_roundtrip.py
+proofs/S0-04/check_compression.py
+proofs/S0-05/check_egress.py
+proofs/S0-06/check_four_scope.py
+proofs/S0-07/check_fubuki_corrections.py
+proofs/S0-08/check_containment.py
+proofs/S0-09/check_conformance.py
+proofs/S0-10/check_conformance.py
+proofs/S0-11/check_eval_hardening.py
+proofs/S0-12/check_pin_diff.py

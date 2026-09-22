@@ -1,0 +1,2 @@
+# Fixture allowlist for the planted-violation test
+scripts/hooks/pre-commit

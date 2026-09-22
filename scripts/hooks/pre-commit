@@ -108,4 +108,12 @@ for F in $(git diff --cached --name-only --diff-filter=ACMR); do
     exit 1
   fi
 done
+# ADVISORY-EXCLUSION SCREEN (KC-J1): forbidden vocabulary must never appear
+# in any gate-defining file. No bypass — this is an absorbing barrier.
+"$PY" "$REPO_ROOT/scripts/no_laya_in_gates.py" --staged
+RC=$?
+if [ "$RC" != "0" ]; then
+  echo "COMMIT BLOCKED by the never-a-gate screen (rc=$RC)" >&2
+  exit 1
+fi
 exit 0
