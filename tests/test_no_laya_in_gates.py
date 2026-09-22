@@ -344,3 +344,72 @@ def test_scanned_count_equals_listed_count(tmp_path):
         f"Expected non-zero (missing file must not be silently skipped), got rc=0.\n"
         f"stderr: {r.stderr}"
     )
+
+
+# =========================================================================
+# R3 regression tests (J1-0-R2, contract AMENDMENT 1): a listed path must be a
+# REGULAR file. `git show :<path>` returns a symlink's LINK TEXT, so a listed
+# gate file replaced by a symlink to an unlisted laya-carrying file screened
+# "clean" and committed (VERIFY-J1-0-R1 R3).
+# =========================================================================
+
+
+def test_staged_symlinked_gate_file_is_not_regular(tmp_path):
+    """--staged: a listed path whose index entry is a symlink (120000) -> rc 4 by name."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "# clean\n",
+        "scripts/report_lint_impl.py": "# laya token planted\n",
+    }, env)
+    # Replace the listed file by a symlink to the unlisted, violating file and stage it.
+    target = tmp_path / "scripts" / "report_lint.py"
+    target.unlink()
+    target.symlink_to("report_lint_impl.py")
+    subprocess.run(["git", "add", "scripts/report_lint.py"], cwd=tmp_path, capture_output=True, check=True, env=env)
+    mode = subprocess.run(["git", "ls-files", "--stage", "--", "scripts/report_lint.py"],
+                          cwd=tmp_path, capture_output=True, text=True, check=True, env=env).stdout.split()[0]
+    assert mode == "120000", mode  # the fixture really staged a symlink
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, (
+        f"Expected exit 4 (gate-file-not-regular), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "gate-file-not-regular: scripts/report_lint.py mode=120000" in r.stderr
+    assert "files scanned, clean" not in r.stderr
+
+
+def test_worktree_symlinked_gate_file_is_not_regular(tmp_path):
+    """--root: a listed path that is a symlink on disk -> rc 4 by name, even when its target is clean."""
+    root = tmp_path / "tree"
+    (root / "scripts" / "hooks").mkdir(parents=True)
+    (root / "scripts" / "gate_files.txt").write_text("scripts/hooks/pre-commit\nscripts/report_lint.py\n")
+    (root / "scripts" / "hooks" / "pre-commit").write_text("#!/bin/bash\necho ok\n")
+    (root / "scripts" / "report_lint_impl.py").write_text("# clean target\n")
+    (root / "scripts" / "report_lint.py").symlink_to("report_lint_impl.py")
+
+    r = _run(["--root", str(root)])
+    assert r.returncode == 4, (
+        f"Expected exit 4 (gate-file-not-regular), got {r.returncode}.\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "gate-file-not-regular: scripts/report_lint.py symlink" in r.stderr
+
+
+def test_executable_regular_gate_file_stays_clean(tmp_path):
+    """Positive control: a listed file at index mode 100755 is a regular file and screens clean."""
+    env = _git_env()
+    _init_repo(tmp_path, "scripts/hooks/pre-commit\nscripts/report_lint.py\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\necho ok\n",
+        "scripts/report_lint.py": "#!/usr/bin/env python3\n# clean\n",
+    }, env)
+    (tmp_path / "scripts" / "report_lint.py").chmod(0o755)
+    subprocess.run(["git", "add", "scripts/report_lint.py"], cwd=tmp_path, capture_output=True, check=True, env=env)
+    mode = subprocess.run(["git", "ls-files", "--stage", "--", "scripts/report_lint.py"],
+                          cwd=tmp_path, capture_output=True, text=True, check=True, env=env).stdout.split()[0]
+    assert mode == "100755", mode
+
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert "2 files scanned, clean" in r.stderr

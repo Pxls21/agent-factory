@@ -4,15 +4,23 @@
 KC-J1 mechanism -- an absorbing barrier with no bypass.  Exit codes:
   0   clean
   3   violation (one line per hit: <path>:<line>:<token>)
-  4   completeness control (gate-file-unlisted or gate-file-missing)
+  4   completeness control (gate-file-unlisted, gate-file-missing, gate-file-not-regular
+      or gate-file-unreadable)
   64  usage error
 """
 
 import argparse
+import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
+
+# A listed gate file must be a REGULAR file (contract AMENDMENT 1, VERIFY-J1-0-R1 R3):
+# `git show :<path>` returns a symlink's LINK TEXT, so a listed path replaced by a symlink
+# to an unlisted file screened clean. Only these index modes are accepted in --staged.
+REGULAR_INDEX_MODES = frozenset(["100644", "100755"])
 
 # ---------- Closed vocabulary ----------
 
@@ -188,6 +196,16 @@ def _exists_staged(path):
     return r.returncode == 0
 
 
+def _index_mode(path):
+    """The index mode of a path (`git ls-files --stage`), or None when it is not staged."""
+    r = subprocess.run(
+        ["git", "ls-files", "--stage", "--", path],
+        capture_output=True, text=True,
+    )
+    parts = r.stdout.split()
+    return parts[0] if r.returncode == 0 and parts else None
+
+
 # ---------- Main ----------
 
 def main():
@@ -251,15 +269,25 @@ def main():
         if path not in listed_set:
             completeness_errors.append("gate-file-unlisted: %s" % path)
 
-    # Check listed paths exist (index-backed in staged, disk-backed otherwise)
+    # Check listed paths exist AND are regular files (index-backed in staged,
+    # lstat-backed otherwise). A symlink is refused by name: reading it would
+    # screen its link text (staged) or its target (worktree), not the gate file.
     for entry in entries:
         if args.staged:
             if not _exists_staged(entry):
                 completeness_errors.append("gate-file-missing: %s" % entry)
+                continue
+            mode = _index_mode(entry)
+            if mode not in REGULAR_INDEX_MODES:
+                completeness_errors.append("gate-file-not-regular: %s mode=%s" % (entry, mode))
         else:
             fp = root / entry
-            if not fp.exists():
+            if fp.is_symlink():
+                completeness_errors.append("gate-file-not-regular: %s symlink" % entry)
+            elif not fp.exists():
                 completeness_errors.append("gate-file-missing: %s" % entry)
+            elif not stat.S_ISREG(os.lstat(fp).st_mode):
+                completeness_errors.append("gate-file-not-regular: %s not-a-regular-file" % entry)
 
     if completeness_errors:
         for err in completeness_errors:
