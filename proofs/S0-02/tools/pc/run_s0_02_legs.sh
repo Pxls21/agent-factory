@@ -46,21 +46,21 @@ say() { echo; echo "===== [S0-02] $* ====="; }
 # neg-replayed, neg-self-authored and neg-not-allowlisted are decided INSIDE
 # buzz-acp and their only observables are tracing::debug! lines (relay.rs:2387,
 # lib.rs:3258, lib.rs:550). pc_launch.py builds a CLOSED env key set and refuses
-# any drift from pins.PINNED_ENV_KEYS (proofs/S0-01/pins.py, enforced at
-# pc_launch.py:167), and RUST_LOG is not in it. Until that set carries RUST_LOG
-# the three legs CANNOT be captured. Fail loud and name it.
-# F9b (tightened): grep the PINNED_ENV_KEYS block, not the whole file text.
-if ! sed -n '/PINNED_ENV_KEYS/,/}/p' "$PINS" | grep -q '"RUST_LOG"'; then
+# any drift from the selected set (proofs/S0-01/pins.py, enforced at
+# pc_launch.py:271). The S0-02 set must pin both the RUST_LOG key and its debug
+# value; otherwise the three legs CANNOT be captured. Fail loud and name it.
+if ! grep -Eq '^PINNED_ENV_KEYS_S0_02 = .*\{"RUST_LOG"\}' "$PINS" ||
+   ! grep -Fqx 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' "$PINS"; then
   cat >&2 <<'MSG'
-BLOCKER: pins.PINNED_ENV_KEYS (proofs/S0-01/pins.py) does not carry RUST_LOG,
-and pc_launch.py refuses any env key set that differs from it. buzz-acp
-would run at INFO, where none of its three S0-02 observables is emitted:
+BLOCKER: pins.PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02
+(proofs/S0-01/pins.py) does not pin RUST_LOG=debug, and pc_launch.py refuses
+any env key set that differs from it. buzz-acp would run at INFO, where none
+of its three S0-02 observables is emitted:
   relay.rs:2387  debug!("dropping duplicate event for channel {channel_id}")
   lib.rs:3258    tracing::debug!(..., "dropping self-authored event")
   lib.rs:550     debug!("inbound author gate — dropping event")
 NOT run: neg-replayed, neg-self-authored and neg-not-allowlisted need
-RUST_LOG=debug in the launcher. This is the coordinator's call (it touches
-proofs/S0-01/, outside this lane).
+RUST_LOG=debug in the S0-02 launcher environment.
 MSG
   exit 3
 fi
@@ -70,6 +70,7 @@ mkdir -p "$DEST"
 launch_leg() {
   rm -f "$MARKERS/s0-02.launch.log"
   setsid /usr/bin/python3 "$LAUNCHER" --leg "$HOST_LEG" --model s0-01-pong \
+    --env-set s0-02 \
     </dev/null >"$MARKERS/s0-02.launch.log" 2>&1 &
   for _ in $(seq 1 24); do
     [ -f "$FD/launch.ready" ] && return 0

@@ -804,12 +804,16 @@ def test_deferred_when_the_evidence_root_is_absent(tmp_path):
     assert proc.stdout.strip() == "deferred: S0-02 evidence not captured"
 
 
-def test_real_evidence_root_defers_today():
-    """The state this lane actually ships: spec.json's positive leg defers."""
+def test_real_evidence_root_is_not_a_passing_bundle_today():
+    """A partial live capture fails; an absent capture defers; neither passes."""
     proc = subprocess.run([sys.executable, str(CHECKER), "proofs/S0-02/evidence"],
                           cwd=ROOT, capture_output=True, text=True)
-    assert proc.returncode == 2
-    assert "deferred: S0-02 evidence not captured" in proc.stdout
+    assert proc.returncode in (1, 2)
+    assert "PASS:" not in proc.stdout
+    if proc.returncode == 1:
+        assert "leg directory absent" in proc.stdout
+    else:
+        assert "deferred: S0-02 evidence not captured" in proc.stdout
 
 
 def test_all_timelines_removed_defers_and_never_passes(tmp_path):
@@ -1718,20 +1722,24 @@ def test_pc_runner_names_user2_for_the_not_allowlisted_leg():
     assert 'role_for "$leg"' in text
 
 
-def test_pc_runner_fails_loud_when_rust_log_debug_is_unavailable():
-    """The blocker is surfaced by the runner, not routed around."""
+def test_pc_runner_preflights_and_selects_the_s0_02_env_set():
+    """The runner proves and selects the pinned RUST_LOG=debug extension."""
     text = RUNNER.read_text()
-    assert "exit 3" in text and "RUST_LOG" in text
-    preflight = text[text.index("if ! sed -n"):text.index("mkdir -p \"$DEST\"")]
-    assert "PINNED_ENV_KEYS" in preflight
-    assert "sed -n '/PINNED_ENV_KEYS/,/}/p'" in preflight
+    preflight = text[
+        text.index("if ! grep -Eq"):text.index("mkdir -p \"$DEST\"")
+    ]
+    assert "exit 3" in preflight and "RUST_LOG=debug" in preflight
+    assert "PINNED_ENV_KEYS_S0_02" in preflight
+    assert "PINNED_ENV_VALUES_S0_02" in preflight
+    assert "grep -Eq '^PINNED_ENV_KEYS_S0_02" in preflight
+    assert "grep -Fqx 'PINNED_ENV_VALUES_S0_02" in preflight
+
     pins = (ROOT / "proofs" / "S0-01" / "pins.py").read_text()
-    block = pins[pins.index("PINNED_ENV_KEYS"):]
-    block = block[:block.index("}") + 1]
-    assert '"RUST_LOG"' not in block, (
-        "pins.PINNED_ENV_KEYS now carries RUST_LOG — re-check the runner's preflight "
-        "and capture the three buzz-acp-decided legs"
-    )
+    assert 'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})' in pins
+    assert 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' in pins
+
+    launch = text[text.index("launch_leg() {"):text.index("stop_leg() {")]
+    assert '--env-set s0-02' in launch
 
 
 def test_deliver_event_never_puts_a_secret_in_argv():
