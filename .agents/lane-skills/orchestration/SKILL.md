@@ -64,6 +64,13 @@ subordinate to, the Anthropic docs.
    item 1 re-measures and stops CONTRACT-INVALID on a mismatch; the dispatcher refuses a FIRST launch of a brief without the block
    (task #90, `scripts/pc_lane.sh`; a resume of an already-launched lane is exempt). A premise that cannot be measured is written
    as a QUESTION for the lane, never as a fact.
+   **0d″ — a flip or mutant the brief DEMANDS a result of is RUN at authoring (2026-09-22, VERIFY-B67 item 6).** The first brief with a
+   measured premise block still shipped an unmeasured EXPECTATION: "widen the real-root test’s rc-set, it must red" — at the PIN the real
+   root was absent (rc 2 stayed in the widened set) and an independent `PASS:` assertion already caught rc 0, so the flip could not red
+   and the lane stopped CONTRACT-INVALID as told. The premise block covers three things, each pasted from a run on the PIN: identities and
+   hunks; every count with its set; and every flip/mutant whose outcome the brief asserts. An expectation that was not run is written as a
+   question for the lane ("does this flip red? if not, say why"), never as a contract line.
+
 
 
 0e. **A repair brief's premise is checked against ANCESTRY at dispatch, never against a verify

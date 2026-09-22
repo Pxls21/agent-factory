@@ -1,0 +1,1567 @@
+diff --git a/report-draft.md b/report-draft.md
+new file mode 100644
+index 0000000..4302072
+--- /dev/null
++++ b/report-draft.md
+@@ -0,0 +1,267 @@
++# VERIFY-B67 — adversarial verification report
++
++PIN: `22bd6f5f85a6bf992363c80b6cd71e81ac2bc3ff`
++
++CONTRACT-INVALID: frozen item 6 requires the individual real-root rc-set mutant to fail at its own line. The checker’s independent `PASS:` assertion prevents that condition. Coordinator amendment is required before re-verification.
++
++## Scope and evidence discipline
++
++Verified only B6 (`T2:1813-1991` — `_privkey`) and B7 (`R:46-76` — `RUST_LOG=debug`; `T2:804-819` — `deferred`; `T2:1722-1745` — `PINNED_ENV_KEYS_S0_02`) on immutable production bytes at PIN. Scratch-only probes and archive mutations live under `../scratch`; no runner leg, relay, harness, secret, service, git mutation, or external action was run. `report-draft.md` and `tasks/briefs/s0-02-support/VERIFY-B67-report.md` are the only untracked worktree files.
++
++Evidence levels: SOLID means directly reproduced through the named real CLI/checker/runner path; UNSURE means static-only or bounded by venue safety. The current production `proofs/S0-02/evidence` root is absent at this PIN, so its real-root check returns deferred (`rc=2`); historic partial-root behavior was not represented as current bytes.
++
++## Item 1 — PREMISE
++
++SOLID. Re-measured at the verifier worktree:
++
++```text
++$ git log --format='%h %s' 236bec7..22bd6f5 -- proofs/S0-02 tests/test_s0_02_buzz_authz.py
++22bd6f5 S0-02 runner: B7 LANDS the env-set selection + the exact-pin preflight (items 2-3; the live capture stays NOT-READY — the partial evidence is recorded in the harvest patch, not landed)
++c439580 S0-02 B6 LANDED (issue #3): the F3 pre-network key refusal EXECUTED through the real deliver_event.py against an owned loopback listener (connections == 0), paired with the connecting positive control; the shape-guard mutant that survived the old source-shape test now dies at the exact refusal text
++
++$ git diff c439580^ c439580 -- tests/test_s0_02_buzz_authz.py | grep '^@@'
++@@ -11,13 +11,16 @@ skip; only an unset venue (CI) skips, and it skips by declaration.
++@@ -1810,3 +1813,171 @@ def test_privkey_normalises_then_refuses_before_any_network_action():
++
++$ git diff 22bd6f5^ 22bd6f5 -- proofs/S0-02/tools/pc/run_s0_02_legs.sh tests/test_s0_02_buzz_authz.py | grep -E '^diff|^@@'
++diff --git a/proofs/S0-02/tools/pc/run_s0_02_legs.sh b/proofs/S0-02/tools/pc/run_s0_02_legs.sh
++@@ -46,21 +46,21 @@ say() { echo; echo "===== [S0-02] $* ====="; }
++@@ -70,6 +70,7 @@ mkdir -p "$DEST"
++diff --git a/tests/test_s0_02_buzz_authz.py b/tests/test_s0_02_buzz_authz.py
++@@ -804,12 +804,16 @@ def test_deferred_when_the_evidence_root_is_absent(tmp_path):
++@@ -1718,20 +1722,24 @@ def test_pc_runner_names_user2_for_the_not_allowlisted_leg():
++
++$ sha256sum tests/test_s0_02_buzz_authz.py proofs/S0-02/tools/pc/run_s0_02_legs.sh proofs/S0-02/tools/pc/deliver_event.py
++4444842b886ac7debf3bccceaba8cb55eae83e577ebbfb491bc0b3f147426dc6  tests/test_s0_02_buzz_authz.py
++c092e8797ee7c42b06e578a2887b3905555fff65472c913effd039e4ff7123cb  proofs/S0-02/tools/pc/run_s0_02_legs.sh
++a14c027b0da2f341cce8b37dfcce4efbd947fe49b1bc2bec5831f1cd5e00cf8a  proofs/S0-02/tools/pc/deliver_event.py
++```
++
++`git status --short` was empty before the report. All range, hunk, and identity premises match. Focused frozen-contract command, with the PC venue pair exported:
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/pre tests/test_s0_02_buzz_authz.py -k "cli_refuses or cli_with_a_valid_key or preflights_and_selects or not_a_passing_bundle_today"
++....                                                                     [100%]
++4 passed in 1.15s
++RC=0
++```
++
++Blocking predicate: no finding. The premise is neither contradictory nor unmeasurable.
++
++## Code-intelligence record
++
++`graft skeleton` maps D `_privkey` at `D:71-89`, `_nip98_header` at `D:92-103`, `_post` at `D:106-115`, `_normalise` at `D:118-162`, and `main` at `D:165-217`; it maps B6 helpers/tests at `T2:1848-1991` and B7 test at `T2:1725-1742`. `scripts/lane_context.sh` wrote `../scratch/B67-pack.md` (201 lines). Ripwire maps `_privkey` to `main` at `D:182`; subprocess test reachability is structurally outside its in-process graph. Graft maps `pc_launch.launch_env` at `proofs/S0-01/tools/pc/pc_launch.py:242-278`; its real `--help` exposes `--env-set {s0-01,s0-02}`. GitNexus resolves D `main` and `_privkey` but reports an index 439 commits behind HEAD; it cannot resolve shell `launch_leg` (`risk: UNKNOWN`). No tool output is treated as proof of shell reachability.
++
++## Item 2 — B6 through an independent owned listener
++
++SOLID. I wrote a scratch listener, separate from T2’s helper. It bound `127.0.0.1:0`, counted accepts, retained request bytes, supplied only HTTP 200 `{}`, and invoked the real `D` CLI with the T2 argv shape and `env={BUZZ_PRIVATE_KEY, PATH}`. The key was never placed in argv. Every refusal row had `connections=0` and `bytes=0`; the valid rows demonstrated listener power with one accepted 1,360-byte request.
++
++| key case | rc | stderr first line | connections | bytes |
++|---|---:|---|---:|---:|
++| valid throwaway scalar | 0 | empty | 1 | 1360 |
++| 63 hex | 1 | valid key shape | 0 | 0 |
++| 65 hex | 1 | valid key shape | 0 | 0 |
++| 64 chars, one `g` | 1 | valid key shape | 0 | 0 |
++| `0x` + 62 hex | 1 | valid key shape | 0 | 0 |
++| empty | 1 | not in the environment | 0 | 0 |
++| whitespace only | 1 | not in the environment | 0 | 0 |
++| valid uppercase | 0 | empty | 1 | 1360 |
++| valid padded with spaces/newline | 0 | empty | 1 | 1360 |
++| `0` ×64 | 1 | `Traceback (most recent call last):` | 0 | 0 |
++| `f` ×64 | 1 | `Traceback (most recent call last):` | 0 | 0 |
++
++Exact production command class: `/home/rocco/venv-agent-factory/bin/python proofs/S0-02/tools/pc/deliver_event.py --fixture pos-allowed --leg-dir <scratch>/leg --secret role.env --relay-http http://127.0.0.1:<owned-port> --t0 1700000000`, closed environment as above.
++
++The malformed classes reject through D’s exact `SystemExit` at `D:78` (`os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()`) and `D:84-88` (`if len(key) != 64`); empty/whitespace reject through `D:79-83`; valid uppercase/padded values prove `D:78` normalizes. Both scalar-out-of-range shapes pass D’s format check then produce a raw traceback from the `nv.sign_event` consumer at `nostr_verify.py:230-235` before `_post`; direct real-CLI probes identify the exception as `ValueError: invalid private key`, exit 1, zero connections. This is a meaningful robustness observation, but does not contradict B6’s frozen shape-only contract or its no-connection claim.
++
++Blocking predicate for scalar traceback: contract mapping = none (D documents the consumer’s 64-lowercase-hex format only); canonical = yes; material = clean error quality only; discriminator = yes; task ownership = D, but all five clauses are not met. Classification: FOLLOW-UP, not blocker.
++
++## Item 3 — side-effect ordering and evidence effect
++
++SOLID. `D:179-182` creates `leg_dir` before calling `_privkey`; each malformed independent-listener run left the directory present with `files=[]`. I drove the frozen checker over a scratch normal-anchor evidence root (the real CLI check path, not a test helper) in two states; the final normal-anchor control returned the exact outputs below.
++
++```text
++$ check_buzz_authz.py <scratch>/evidence
++# present but empty neg-unauthorized
++failure_reason: neg-unauthorized: missing ['buzzacp.log', 'delivered-event.json', 'delivery.json', 'fixture.json', 't0.json', 'timeline.jsonl']
++PRESENT_EMPTY_RC=1
++
++# neg-unauthorized directory absent
++failure_reason: neg-unauthorized: neg-unauthorized leg directory absent
++ABSENT_RC=1
++```
++
++The checker distinguishes an empty created leg from an absent leg through `_leg_closure` at `check_buzz_authz.py:155-167` and `_check_leg` at `:457-464`. R’s `deliver()` at `R:125-130` invokes `exec /usr/bin/python3 "$DELIVER"` with the target leg directory; `set -euo pipefail` at `R:18` means D’s rc 1 stops the runner before `collect_leg()` at `R:113-123`. Thus a refused key can leave a half-made leg that fails differently from an absent one. The actual current PIN has no `proofs/S0-02/evidence` root: `check_buzz_authz.py proofs/S0-02/evidence` prints `deferred: S0-02 evidence not captured`, `rc=2`, so the historic partial-root message cannot be asserted as current repository state.
++
++Classification: INFO. Contract mapping for B6 is only pre-network refusal; this side effect does not change `listener.count == 0`, and B7’s `test_real_evidence_root_is_not_a_passing_bundle_today` at `T2:807-816` admits either non-pass outcome. No qualifying blocker.
++
++## Item 4 — positive-control binding strength
++
++SOLID. Decoding the captured NIP-98 header from the independent listener gave:
++
++| binding | independent capture | B6 T2 asserts? |
++|---|---|---|
++| request | `POST /events HTTP/1.1` | yes, `T2:1987` |
++| URL `u` tag | `http://127.0.0.1:45499/events` | no |
++| `method` tag | `POST` | no |
++| `payload` tag | equals SHA-256 of exact request body: `c5fde7…2a94` | no |
++| NIP-98 signature | `nv.verify_event(event) == (True, "valid")` | no |
++| pubkey identity | `d63c0f10122673118b6b30b23d36ee4a55e7602769f85ec208db55c40acabb81` equals the derived throwaway-key pubkey | no |
++| headers | Authorization Nostr and JSON Content-Type | yes, `T2:1988-1989` |
++
++The CLI receipt written after the listener’s `{}` response was `{"accepted": false, "event_id": "6f456ab78abd760a21671d5b88c3fbe7744f900528832f12d3883ee4f9877c70", "event_id_echoed": false, "http_status": 200, "message": "{}"}`. `accepted` is bool and `event_id_echoed` is bool/false, consistent with the B3 producer type contract at `D:134-162`; `T2:1756-1775` and `T2:1779-1809` directly cover the normalizer’s typed behavior.
++
++Classification: INFO. Suggested one-line hardening: decode the captured Authorization event and assert `u`, `method`, `payload`, signature validity, and derived-pubkey equality. It is not a frozen B6 criterion; the real CLI, request bytes, and positive connection were reproduced.
++
++## Item 5 — mutation audit
++
++SOLID for m1–m3, m5–m7. Each mutant was created from `git archive 22bd6f5` in a separate scratch tree, compiled (`py_compile` for D mutants) or syntax-checked (`bash -n` for R mutants), then collect-checked: m1/m2/m3/m5/m6/m7 each selected `1/151`, m4 selected `2/151`, all `--collect-only` rc 0. No production guard was mutated. m4 exposes a pairing gap, detailed below.
++
++The unmutated production R preflight was also driven on two `S0_02_REPO=<scratch>` trees: one removed the `PINNED_ENV_KEYS_S0_02` `RUST_LOG` extension, and one commented the exact `PINNED_ENV_VALUES_S0_02` line. Both returned `rc=3`, printed `BLOCKER: pins.PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02`, and left DEST absent. This is the canonical failed-preflight path in `R:52-68`; no launcher ran.
++
++| mutant | result / killer | assertion or behavioral discriminator | classification |
++|---|---|---|---|
++| m1 D length-only shape check | KILLED, `1 failed` | exact `REFUSE_TEXT` at `T2:1940`; signer traceback differs | SOLID |
++| m2 scratch calls `_privkey` after POST (temporary valid signing key) | KILLED, `1 failed` | `assert listener.count == 0` at `T2:1942` sees `count=1` | SOLID behavioral kill |
++| m3 return empty instead of `SystemExit` | KILLED, `1 failed` | `REFUSE_TEXT` equality at `T2:1940`; downstream traceback | SOLID |
++| m4 remove `.strip()` | B6 CLI tests SURVIVE: `2 passed`; old in-process source scan dies at `T2:1823` (`strip().lower()`) | independent mutated-CLI probe: whitespace changes from empty-refusal to shape-refusal; padded valid changes from POST to shape-refusal | FOLLOW-UP AF-AP-80 pairing gap |
++| m5 R `grep -Fqx` → `grep -Fq`, pins only commented line | static source pin KILLED, `T2:1735` (`grep -Fqx`); behavioral scratch run wrongly passes preflight (`rc=99` safe stop, no DEST) | text mirror only; no behavioral preflight test owns this | FOLLOW-UP AF-AP-80 pairing gap |
++| m6 move preflight below `mkdir -p` | static source pin KILLED, `T2:1731` (`exit 3`); behavioral mutated pins run has `rc=3`, `dest=True` | no test asserts no DEST on refused pins | FOLLOW-UP AF-AP-80 pairing gap |
++| m7 drop `--env-set s0-02` | KILLED, `1 failed` | `assert '--env-set s0-02' in launch` at `T2:1742` | SOLID source pin |
++
++Verifier output summary:
++
++```text
++m1: 1 failed, 150 deselected in 0.46s — `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` at T2:1940
++m2: 1 failed, 150 deselected in 0.82s — `assert listener.count == 0` at T2:1942 sees count=1
++m3: 1 failed, 150 deselected in 0.47s — `REFUSE_TEXT` at T2:1940
++m4: 2 passed, 149 deselected in 0.96s (CLI-only); source test 1 failed at T2:1823 (`strip().lower()`)
++m5: 1 failed, 150 deselected in 0.22s — `grep -Fqx` at T2:1735; behavioral safe-stop rc=99, DEST=false
++m6: 1 failed, 150 deselected in 0.22s — `exit 3` at T2:1731; behavioral rc=3, DEST=true
++m7: 1 failed, 150 deselected in 0.21s — `--env-set s0-02` at T2:1742
++```
++
++m4 canonical distinction is real, not inferred: the mutation leaves malformed-shape B6 coverage green but changes whitespace-only stderr from `not in the environment` to `valid key shape`, and padded valid from a connecting POST to refusal. This behavior lies in B6’s actual CLI input domain. m5/m6 were safety-tested only with a failed preflight / safe stop; no runner leg was launched.
++
++Blocking predicate for m4/m5/m6 gaps: contract mapping = no explicit frozen requirement for those exact behavioral controls; canonical = yes; material = test-strength, not current production output; discriminator = yes; ownership = current test/runner component. They do not satisfy the full predicate. FOLLOW-UPs, not blockers.
++
++## Item 6 — de-vacuous controls
++
++CONTRACT-INVALID finding. I ran a final function-bounded scratch audit: every mutation compiled, collected exactly `1/151`, and changed one assertion only inside its owning test. The B6 assertions and B7 source/branch assertions red at their owning lines. The frozen literal requirement for the B7 `rc-set` mutation cannot red at its own line on the unmodified current checker path: it survives on absent/partial failure states (`rc=2`/`rc=1`), and a real checker success (`rc=0`) is caught instead by the independent retained `PASS:` assertion at `T2:812`. The test remains fail-closed, but the brief explicitly requires this mutation to red at its own line; that requirement is unmeasurable as stated.
++
++```text
++$ /home/rocco/venv-agent-factory/bin/python ../scratch/b67_exact_assertion_audit.py
++EXACT_ASSERTION_AUDIT_RC=0
++b6-refusal-rc: collect=1/151 rc=1; `assert proc.returncode == REFUSE_RC` T2:1938 AssertionError; 1 failed
++b6-refusal-text: collect=1/151 rc=1; `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` T2:1940 AssertionError; 1 failed
++b6-refusal-count: collect=1/151 rc=1; `assert listener.count == 0` T2:1942 AssertionError; 1 failed
++b6-key-shape: collect=1/151 rc=1; `assert len(privkey) == 64` T2:1970 AssertionError; 1 failed
++b6-positive-rc: collect=1/151 rc=1; `assert proc.returncode == 0` T2:1979 AssertionError; 1 failed
++b6-positive-count: collect=1/151 rc=1; `assert listener.count == 1` T2:1981 AssertionError; 1 failed
++b6-request-count: collect=1/151 rc=1; `assert len(listener.requests) == 1` T2:1985 AssertionError; 1 failed
++b6-post-line: collect=1/151 rc=1; `assert req.startswith("POST /events HTTP/1.1")` T2:1987 AssertionError; 1 failed
++b6-authorization: collect=1/151 rc=1; `assert "Authorization:" in req` T2:1988 AssertionError; 1 failed
++b6-content-type: collect=1/151 rc=1; `assert "Content-Type: application/json" in req` T2:1989 AssertionError; 1 failed
++b7-real-rc-strict: collect=1/151 rc=1; `assert proc.returncode in (1, 2)` T2:811 AssertionError; 1 failed
++b7-real-pass-text: collect=1/151 rc=1; `assert "PASS:" not in proc.stdout` T2:812 AssertionError; 1 failed
++b7-real-absent-text: collect=1/151 rc=1; `assert "deferred: S0-02 evidence not captured" in proc.stdout` T2:816 AssertionError; 1 failed
++b7-real-partial-text: collect=1/151 rc=1; `assert "leg directory absent" in proc.stdout` T2:814 AssertionError; 1 failed
++b7-preflight-blocker: collect=1/151 rc=1; `assert "exit 3" in preflight` T2:1731 AssertionError; 1 failed
++b7-preflight-key-name: collect=1/151 rc=1; `assert "PINNED_ENV_KEYS_S0_02" in preflight` T2:1732 AssertionError; 1 failed
++b7-preflight-value-name: collect=1/151 rc=1; `assert "PINNED_ENV_VALUES_S0_02" in preflight` T2:1733 AssertionError; 1 failed
++b7-preflight-grep-e: collect=1/151 rc=1; `assert "grep -Eq '^PINNED_ENV_KEYS_S0_02" in preflight` T2:1734 AssertionError; 1 failed
++b7-preflight-grep-fx: collect=1/151 rc=1; `assert "grep -Fqx 'PINNED_ENV_VALUES_S0_02" in preflight` T2:1735 AssertionError; 1 failed
++b7-pins-key-definition: collect=1/151 rc=1; `assert 'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})' in pins` T2:1738 AssertionError; 1 failed
++b7-pins-value-definition: collect=1/151 rc=1; `assert 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' in pins` T2:1739 AssertionError; 1 failed
++b7-launch-env-set: collect=1/151 rc=1; `assert '--env-set s0-02' in launch` T2:1742 AssertionError; 1 failed
++rc-set-broadened-absent: collect=1/151 pytest_rc=0; checker_rc=2; deferred: S0-02 evidence not captured
++rc-set-broadened-partial: collect=1/151 pytest_rc=0; checker_rc=1; neg-unauthorized leg directory absent
++rc-set-broadened-pass: collect=1/151 pytest_rc=1; checker_rc=0; `assert "PASS:" not in proc.stdout` T2:812 AssertionError; 1 failed
++```
++
++The brief-named literal controls were also executed exactly as stated:
++
++```text
++REFUSE_TEXT altered by one character: rc=1; `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` T2:1940 AssertionError; 1 failed
++REFUSE_RC 1→0: rc=1; `assert proc.returncode == REFUSE_RC` T2:1938 AssertionError; 1 failed
++refusal count 0→1: rc=1; `assert listener.count == 0` T2:1942 AssertionError; 1 failed
++positive count 1→0: rc=1; `assert listener.count == 1` T2:1981 AssertionError; 1 failed
++launch-string pin altered: rc=1; `assert '--env-set s0-02' in launch` T2:1742 AssertionError; 1 failed
++rc-set (1,2)→(0,1,2), absent root: rc=0; 1 passed, 150 deselected
++```
++
++The `rc-set` mutant remains green on all valid failure states because it still accepts `rc=1` and `rc=2`, and output has no `PASS:`. On a successful current checker, the separate output assertion kills first. This is `CONTRACT-INVALID`, not a code defect or a repair order. Contract mapping = literal item 6; checker CLI semantics = reproduced through unmodified checker bytes on a scratch normal-anchor input, not live evidence; material production effect = none; discriminator = yes; task ownership = coordinator contract amendment. Do not weaken `PASS:` or invent a fake checker response. A new contract can ask for the AND gate to red on a successful root, or can isolate the return-code arm by an approved deterministic seam.
++
++## Item 7 — gates on PIN bytes
++
++SOLID.
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/v1 tests/test_s0_02_buzz_authz.py
++151 passed in 11.36s
++
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/v2 tests/test_s0_02_buzz_authz.py
++151 passed in 11.16s
++
++$ scripts/test_summary.sh tests/test_s0_02_buzz_authz.py
++151 passed in 40.19s
++pytest-exit: 0
++pytest-summary: 151 passed in 40.19s
++
++$ python -m pyflakes tests/test_s0_02_buzz_authz.py proofs/S0-02/tools/pc/deliver_event.py
++PYFLAKES_RC=0
++
++$ bash -n proofs/S0-02/tools/pc/run_s0_02_legs.sh
++BASH_N_RC=0
++
++$ python3 scripts/ap_screen.py proofs/S0-02/tools/pc/run_s0_02_legs.sh
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++$ python3 scripts/ap_screen.py --tests tests/test_s0_02_buzz_authz.py
++--- TEST_SCREEN over 1 path(s): 11 hits over 1 files ---
++AF-AP-80: 7
++AF-AP-34: 4
++```
++
++The 11 test-screen hits are exactly pre-existing: AF-AP-80 at `T2:720-721` (`removal_line`), `T2:1038` (`DEBUG_LEVEL_CANARY`), `T2:1612-1613` (`_load_timeline_raw = s0_01._load_timeline_raw`), `T2:1645` (`_load_timeline_raw(leg_dir, leg)`), `T2:1668` (`os.environ`); AF-AP-34 at `T2:1676` (`pkill/killall/name match`) and `T2:1680` (`for word in ("pkill", "killall", "pgrep")`) (duplicated screen rows). None is within the B6/B7 hunks. `git diff --check` returned 0. No selected test skipped in the two direct xdist module runs.
++
++## Item 8 — bounded hunk sweep and finding inventory
++
++1. FOLLOW-UP — D scalar range failures are raw tracebacks. SOLID at `D:84-89` (`if len(key) != 64`), `D:194` (`nv.sign_event(privkey`), and consumer `nostr_verify.py:230-235`; canonical real CLI with `0`×64 and `f`×64 exits 1 before connection but emits traceback. No exact B6 range-contract mapping, so not blocker. Suggested fix: turn the consumer’s `ValueError("invalid private key")` into a named clean CLI refusal while retaining zero network action.
++
++2. FOLLOW-UP — B6 normalization is only source-tested, not CLI-tested. SOLID: m4 causes whitespace/padded inputs to change actual CLI behavior while `test_cli_refuses...` and `test_cli_with...` remain green; only `T2:1823` (`strip().lower()`) source string detects it. Suggested fix: add whitespace-only and padded-valid rows to the B6 subprocess listener test.
++
++3. FOLLOW-UP — B7 exact-values preflight test is a source mirror. SOLID: m5 accepts a scratch pins file containing only the commented exact values line; `T2:1735` (`grep -Fqx`) catches source text, but no behavioral test drives `S0_02_REPO=<scratch>` failed preflight. Suggested fix: scratch-only behavioral negative that asserts `rc=3`, BLOCKER text, and no DEST.
++
++4. FOLLOW-UP — B7 preflight ordering is only source-tested. SOLID: m6 creates DEST before failing mutated pins; test fails only because its source extraction no longer sees the preflight at `T2:1731` (`exit 3`). Suggested fix: same behavioral negative asserts DEST absent.
++
++5. CONTRACT-INVALID — B7 real-root rc-set requirement cannot be satisfied literally on the exact frozen path. SOLID at `T2:807-816` (`test_real_evidence_root_is_not_a_passing_bundle_today`): broadening the rc set survives all permitted failure states and is killed only by the separate `PASS:` assertion on success. The code is fail-closed; the criterion that this individual mutation red is unmeasurable without an approved isolated seam. No code repair is authorized.
++
++6. INFO — current repository state differs from B7 author report’s partial-root observation. SOLID: current `proofs/S0-02/evidence` is absent and real checker exits 2. The historic partial capture is only in tracked diagnostic patch `tasks/briefs/pc/patch-pc-b7.md--c439580.diff`, not active proof input. No claim in the landed code is false.
++
++No BLOCKER. No CONTRACT-DEFECT. No stale comment in the examined B6/B7 hunks contradicted their current behavior.
++
++## DISCREPANCIES
++
++- Brief says B7 checker output on the partial root was `neg-unauthorized leg directory absent`; current PIN lacks `proofs/S0-02/evidence`, so direct checker output is `deferred: S0-02 evidence not captured`, `rc=2`. The historic partial data is diagnostic patch content, not current input.
++- The brief’s item-6 required the real-root rc-set `(1,2) → (0,1,2)` mutation to red. It survives every failure state the original assertion permits and, on success, reds only at independent `T2:812` (`PASS:`). This makes the literal individual-mutation requirement CONTRACT-INVALID; no test or checker was weakened.
++- `graft` has no shell definitions indexed for R; GitNexus index is 439 commits stale and does not resolve `launch_leg`. This is tooling coverage, not a code claim.
++- Terminal output rendered the authorization-row collection fragment as literal `***` (`b6-authorization: *** rc=1`). The scratch audit itself asserts collection `1/151`; no private key is printed. This safeguard-shaped artifact is reported verbatim.
++- Final artifact lint: `report_lint: 85 refs — OK 85, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`; the bounded report-lint floor is met.
++- Final tree hygiene: `git diff --name-only 22bd6f5` was empty; `git status --short` showed only the two untracked verifier-report copies; the three contract SHA-256 identities still match item 1.
++
++## NOT-done
++
++- No live S0-02 capture, proof mint, runner positive preflight/launch, or relay delivery. These are expressly out of scope and a positive preflight would launch the isolated harness.
++- No behavioral B7 positive arm repeated; B7 report is cited only as predecessor evidence, not independently adopted.
++- No production code, test, ledger, secret, or production artifact was changed; only the two untracked verifier-report copies were written.
++- FOLLOW-UP issues 1–4 should be filed as `verify-followup` under D-034; they do not authorize an unbounded repair wave.
++- Item 6 is CONTRACT-INVALID and requires coordinator contract amendment before a new verification round; no repair was attempted.
++
++## GATE RECOMMENDATION
++
++`CONTRACT-INVALID` — the frozen item-6 requirement that the individual real-root `rc-set` mutant `(1,2) → (0,1,2)` red is unmeasurable on the exact current checker path. It survives every original permitted failure state and is caught only by the separate `PASS:` assertion on success. Direct deterministic evidence otherwise verifies the premise, B6 real-CLI negative/positive network behavior, B6 behavioral m1/m2/m3 kills, B7 corrected-byte failed-preflight-before-DEST behavior, both full T2 xdist gates (151 passed twice), and static/screen gates. Coordinator must amend the criterion before re-verification; it owns the final decision. The three source-to-behavior test-strength follow-ups and scalar clean-error follow-up remain non-blocking.
++
++Retro: observed AF-AP-80 pairings (source mirror without canonical behavioral negative) in m4/m5/m6. Coordinator should record these as follow-ups; no shared skill was changed by this lane.
++
++Graft token savings this turn: approximately 39,695.
+diff --git a/tasks/briefs/s0-02-support/VERIFY-B67-report.md b/tasks/briefs/s0-02-support/VERIFY-B67-report.md
+new file mode 100644
+index 0000000..4302072
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/VERIFY-B67-report.md
+@@ -0,0 +1,267 @@
++# VERIFY-B67 — adversarial verification report
++
++PIN: `22bd6f5f85a6bf992363c80b6cd71e81ac2bc3ff`
++
++CONTRACT-INVALID: frozen item 6 requires the individual real-root rc-set mutant to fail at its own line. The checker’s independent `PASS:` assertion prevents that condition. Coordinator amendment is required before re-verification.
++
++## Scope and evidence discipline
++
++Verified only B6 (`T2:1813-1991` — `_privkey`) and B7 (`R:46-76` — `RUST_LOG=debug`; `T2:804-819` — `deferred`; `T2:1722-1745` — `PINNED_ENV_KEYS_S0_02`) on immutable production bytes at PIN. Scratch-only probes and archive mutations live under `../scratch`; no runner leg, relay, harness, secret, service, git mutation, or external action was run. `report-draft.md` and `tasks/briefs/s0-02-support/VERIFY-B67-report.md` are the only untracked worktree files.
++
++Evidence levels: SOLID means directly reproduced through the named real CLI/checker/runner path; UNSURE means static-only or bounded by venue safety. The current production `proofs/S0-02/evidence` root is absent at this PIN, so its real-root check returns deferred (`rc=2`); historic partial-root behavior was not represented as current bytes.
++
++## Item 1 — PREMISE
++
++SOLID. Re-measured at the verifier worktree:
++
++```text
++$ git log --format='%h %s' 236bec7..22bd6f5 -- proofs/S0-02 tests/test_s0_02_buzz_authz.py
++22bd6f5 S0-02 runner: B7 LANDS the env-set selection + the exact-pin preflight (items 2-3; the live capture stays NOT-READY — the partial evidence is recorded in the harvest patch, not landed)
++c439580 S0-02 B6 LANDED (issue #3): the F3 pre-network key refusal EXECUTED through the real deliver_event.py against an owned loopback listener (connections == 0), paired with the connecting positive control; the shape-guard mutant that survived the old source-shape test now dies at the exact refusal text
++
++$ git diff c439580^ c439580 -- tests/test_s0_02_buzz_authz.py | grep '^@@'
++@@ -11,13 +11,16 @@ skip; only an unset venue (CI) skips, and it skips by declaration.
++@@ -1810,3 +1813,171 @@ def test_privkey_normalises_then_refuses_before_any_network_action():
++
++$ git diff 22bd6f5^ 22bd6f5 -- proofs/S0-02/tools/pc/run_s0_02_legs.sh tests/test_s0_02_buzz_authz.py | grep -E '^diff|^@@'
++diff --git a/proofs/S0-02/tools/pc/run_s0_02_legs.sh b/proofs/S0-02/tools/pc/run_s0_02_legs.sh
++@@ -46,21 +46,21 @@ say() { echo; echo "===== [S0-02] $* ====="; }
++@@ -70,6 +70,7 @@ mkdir -p "$DEST"
++diff --git a/tests/test_s0_02_buzz_authz.py b/tests/test_s0_02_buzz_authz.py
++@@ -804,12 +804,16 @@ def test_deferred_when_the_evidence_root_is_absent(tmp_path):
++@@ -1718,20 +1722,24 @@ def test_pc_runner_names_user2_for_the_not_allowlisted_leg():
++
++$ sha256sum tests/test_s0_02_buzz_authz.py proofs/S0-02/tools/pc/run_s0_02_legs.sh proofs/S0-02/tools/pc/deliver_event.py
++4444842b886ac7debf3bccceaba8cb55eae83e577ebbfb491bc0b3f147426dc6  tests/test_s0_02_buzz_authz.py
++c092e8797ee7c42b06e578a2887b3905555fff65472c913effd039e4ff7123cb  proofs/S0-02/tools/pc/run_s0_02_legs.sh
++a14c027b0da2f341cce8b37dfcce4efbd947fe49b1bc2bec5831f1cd5e00cf8a  proofs/S0-02/tools/pc/deliver_event.py
++```
++
++`git status --short` was empty before the report. All range, hunk, and identity premises match. Focused frozen-contract command, with the PC venue pair exported:
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/pre tests/test_s0_02_buzz_authz.py -k "cli_refuses or cli_with_a_valid_key or preflights_and_selects or not_a_passing_bundle_today"
++....                                                                     [100%]
++4 passed in 1.15s
++RC=0
++```
++
++Blocking predicate: no finding. The premise is neither contradictory nor unmeasurable.
++
++## Code-intelligence record
++
++`graft skeleton` maps D `_privkey` at `D:71-89`, `_nip98_header` at `D:92-103`, `_post` at `D:106-115`, `_normalise` at `D:118-162`, and `main` at `D:165-217`; it maps B6 helpers/tests at `T2:1848-1991` and B7 test at `T2:1725-1742`. `scripts/lane_context.sh` wrote `../scratch/B67-pack.md` (201 lines). Ripwire maps `_privkey` to `main` at `D:182`; subprocess test reachability is structurally outside its in-process graph. Graft maps `pc_launch.launch_env` at `proofs/S0-01/tools/pc/pc_launch.py:242-278`; its real `--help` exposes `--env-set {s0-01,s0-02}`. GitNexus resolves D `main` and `_privkey` but reports an index 439 commits behind HEAD; it cannot resolve shell `launch_leg` (`risk: UNKNOWN`). No tool output is treated as proof of shell reachability.
++
++## Item 2 — B6 through an independent owned listener
++
++SOLID. I wrote a scratch listener, separate from T2’s helper. It bound `127.0.0.1:0`, counted accepts, retained request bytes, supplied only HTTP 200 `{}`, and invoked the real `D` CLI with the T2 argv shape and `env={BUZZ_PRIVATE_KEY, PATH}`. The key was never placed in argv. Every refusal row had `connections=0` and `bytes=0`; the valid rows demonstrated listener power with one accepted 1,360-byte request.
++
++| key case | rc | stderr first line | connections | bytes |
++|---|---:|---|---:|---:|
++| valid throwaway scalar | 0 | empty | 1 | 1360 |
++| 63 hex | 1 | valid key shape | 0 | 0 |
++| 65 hex | 1 | valid key shape | 0 | 0 |
++| 64 chars, one `g` | 1 | valid key shape | 0 | 0 |
++| `0x` + 62 hex | 1 | valid key shape | 0 | 0 |
++| empty | 1 | not in the environment | 0 | 0 |
++| whitespace only | 1 | not in the environment | 0 | 0 |
++| valid uppercase | 0 | empty | 1 | 1360 |
++| valid padded with spaces/newline | 0 | empty | 1 | 1360 |
++| `0` ×64 | 1 | `Traceback (most recent call last):` | 0 | 0 |
++| `f` ×64 | 1 | `Traceback (most recent call last):` | 0 | 0 |
++
++Exact production command class: `/home/rocco/venv-agent-factory/bin/python proofs/S0-02/tools/pc/deliver_event.py --fixture pos-allowed --leg-dir <scratch>/leg --secret role.env --relay-http http://127.0.0.1:<owned-port> --t0 1700000000`, closed environment as above.
++
++The malformed classes reject through D’s exact `SystemExit` at `D:78` (`os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()`) and `D:84-88` (`if len(key) != 64`); empty/whitespace reject through `D:79-83`; valid uppercase/padded values prove `D:78` normalizes. Both scalar-out-of-range shapes pass D’s format check then produce a raw traceback from the `nv.sign_event` consumer at `nostr_verify.py:230-235` before `_post`; direct real-CLI probes identify the exception as `ValueError: invalid private key`, exit 1, zero connections. This is a meaningful robustness observation, but does not contradict B6’s frozen shape-only contract or its no-connection claim.
++
++Blocking predicate for scalar traceback: contract mapping = none (D documents the consumer’s 64-lowercase-hex format only); canonical = yes; material = clean error quality only; discriminator = yes; task ownership = D, but all five clauses are not met. Classification: FOLLOW-UP, not blocker.
++
++## Item 3 — side-effect ordering and evidence effect
++
++SOLID. `D:179-182` creates `leg_dir` before calling `_privkey`; each malformed independent-listener run left the directory present with `files=[]`. I drove the frozen checker over a scratch normal-anchor evidence root (the real CLI check path, not a test helper) in two states; the final normal-anchor control returned the exact outputs below.
++
++```text
++$ check_buzz_authz.py <scratch>/evidence
++# present but empty neg-unauthorized
++failure_reason: neg-unauthorized: missing ['buzzacp.log', 'delivered-event.json', 'delivery.json', 'fixture.json', 't0.json', 'timeline.jsonl']
++PRESENT_EMPTY_RC=1
++
++# neg-unauthorized directory absent
++failure_reason: neg-unauthorized: neg-unauthorized leg directory absent
++ABSENT_RC=1
++```
++
++The checker distinguishes an empty created leg from an absent leg through `_leg_closure` at `check_buzz_authz.py:155-167` and `_check_leg` at `:457-464`. R’s `deliver()` at `R:125-130` invokes `exec /usr/bin/python3 "$DELIVER"` with the target leg directory; `set -euo pipefail` at `R:18` means D’s rc 1 stops the runner before `collect_leg()` at `R:113-123`. Thus a refused key can leave a half-made leg that fails differently from an absent one. The actual current PIN has no `proofs/S0-02/evidence` root: `check_buzz_authz.py proofs/S0-02/evidence` prints `deferred: S0-02 evidence not captured`, `rc=2`, so the historic partial-root message cannot be asserted as current repository state.
++
++Classification: INFO. Contract mapping for B6 is only pre-network refusal; this side effect does not change `listener.count == 0`, and B7’s `test_real_evidence_root_is_not_a_passing_bundle_today` at `T2:807-816` admits either non-pass outcome. No qualifying blocker.
++
++## Item 4 — positive-control binding strength
++
++SOLID. Decoding the captured NIP-98 header from the independent listener gave:
++
++| binding | independent capture | B6 T2 asserts? |
++|---|---|---|
++| request | `POST /events HTTP/1.1` | yes, `T2:1987` |
++| URL `u` tag | `http://127.0.0.1:45499/events` | no |
++| `method` tag | `POST` | no |
++| `payload` tag | equals SHA-256 of exact request body: `c5fde7…2a94` | no |
++| NIP-98 signature | `nv.verify_event(event) == (True, "valid")` | no |
++| pubkey identity | `d63c0f10122673118b6b30b23d36ee4a55e7602769f85ec208db55c40acabb81` equals the derived throwaway-key pubkey | no |
++| headers | Authorization Nostr and JSON Content-Type | yes, `T2:1988-1989` |
++
++The CLI receipt written after the listener’s `{}` response was `{"accepted": false, "event_id": "6f456ab78abd760a21671d5b88c3fbe7744f900528832f12d3883ee4f9877c70", "event_id_echoed": false, "http_status": 200, "message": "{}"}`. `accepted` is bool and `event_id_echoed` is bool/false, consistent with the B3 producer type contract at `D:134-162`; `T2:1756-1775` and `T2:1779-1809` directly cover the normalizer’s typed behavior.
++
++Classification: INFO. Suggested one-line hardening: decode the captured Authorization event and assert `u`, `method`, `payload`, signature validity, and derived-pubkey equality. It is not a frozen B6 criterion; the real CLI, request bytes, and positive connection were reproduced.
++
++## Item 5 — mutation audit
++
++SOLID for m1–m3, m5–m7. Each mutant was created from `git archive 22bd6f5` in a separate scratch tree, compiled (`py_compile` for D mutants) or syntax-checked (`bash -n` for R mutants), then collect-checked: m1/m2/m3/m5/m6/m7 each selected `1/151`, m4 selected `2/151`, all `--collect-only` rc 0. No production guard was mutated. m4 exposes a pairing gap, detailed below.
++
++The unmutated production R preflight was also driven on two `S0_02_REPO=<scratch>` trees: one removed the `PINNED_ENV_KEYS_S0_02` `RUST_LOG` extension, and one commented the exact `PINNED_ENV_VALUES_S0_02` line. Both returned `rc=3`, printed `BLOCKER: pins.PINNED_ENV_KEYS_S0_02 / PINNED_ENV_VALUES_S0_02`, and left DEST absent. This is the canonical failed-preflight path in `R:52-68`; no launcher ran.
++
++| mutant | result / killer | assertion or behavioral discriminator | classification |
++|---|---|---|---|
++| m1 D length-only shape check | KILLED, `1 failed` | exact `REFUSE_TEXT` at `T2:1940`; signer traceback differs | SOLID |
++| m2 scratch calls `_privkey` after POST (temporary valid signing key) | KILLED, `1 failed` | `assert listener.count == 0` at `T2:1942` sees `count=1` | SOLID behavioral kill |
++| m3 return empty instead of `SystemExit` | KILLED, `1 failed` | `REFUSE_TEXT` equality at `T2:1940`; downstream traceback | SOLID |
++| m4 remove `.strip()` | B6 CLI tests SURVIVE: `2 passed`; old in-process source scan dies at `T2:1823` (`strip().lower()`) | independent mutated-CLI probe: whitespace changes from empty-refusal to shape-refusal; padded valid changes from POST to shape-refusal | FOLLOW-UP AF-AP-80 pairing gap |
++| m5 R `grep -Fqx` → `grep -Fq`, pins only commented line | static source pin KILLED, `T2:1735` (`grep -Fqx`); behavioral scratch run wrongly passes preflight (`rc=99` safe stop, no DEST) | text mirror only; no behavioral preflight test owns this | FOLLOW-UP AF-AP-80 pairing gap |
++| m6 move preflight below `mkdir -p` | static source pin KILLED, `T2:1731` (`exit 3`); behavioral mutated pins run has `rc=3`, `dest=True` | no test asserts no DEST on refused pins | FOLLOW-UP AF-AP-80 pairing gap |
++| m7 drop `--env-set s0-02` | KILLED, `1 failed` | `assert '--env-set s0-02' in launch` at `T2:1742` | SOLID source pin |
++
++Verifier output summary:
++
++```text
++m1: 1 failed, 150 deselected in 0.46s — `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` at T2:1940
++m2: 1 failed, 150 deselected in 0.82s — `assert listener.count == 0` at T2:1942 sees count=1
++m3: 1 failed, 150 deselected in 0.47s — `REFUSE_TEXT` at T2:1940
++m4: 2 passed, 149 deselected in 0.96s (CLI-only); source test 1 failed at T2:1823 (`strip().lower()`)
++m5: 1 failed, 150 deselected in 0.22s — `grep -Fqx` at T2:1735; behavioral safe-stop rc=99, DEST=false
++m6: 1 failed, 150 deselected in 0.22s — `exit 3` at T2:1731; behavioral rc=3, DEST=true
++m7: 1 failed, 150 deselected in 0.21s — `--env-set s0-02` at T2:1742
++```
++
++m4 canonical distinction is real, not inferred: the mutation leaves malformed-shape B6 coverage green but changes whitespace-only stderr from `not in the environment` to `valid key shape`, and padded valid from a connecting POST to refusal. This behavior lies in B6’s actual CLI input domain. m5/m6 were safety-tested only with a failed preflight / safe stop; no runner leg was launched.
++
++Blocking predicate for m4/m5/m6 gaps: contract mapping = no explicit frozen requirement for those exact behavioral controls; canonical = yes; material = test-strength, not current production output; discriminator = yes; ownership = current test/runner component. They do not satisfy the full predicate. FOLLOW-UPs, not blockers.
++
++## Item 6 — de-vacuous controls
++
++CONTRACT-INVALID finding. I ran a final function-bounded scratch audit: every mutation compiled, collected exactly `1/151`, and changed one assertion only inside its owning test. The B6 assertions and B7 source/branch assertions red at their owning lines. The frozen literal requirement for the B7 `rc-set` mutation cannot red at its own line on the unmodified current checker path: it survives on absent/partial failure states (`rc=2`/`rc=1`), and a real checker success (`rc=0`) is caught instead by the independent retained `PASS:` assertion at `T2:812`. The test remains fail-closed, but the brief explicitly requires this mutation to red at its own line; that requirement is unmeasurable as stated.
++
++```text
++$ /home/rocco/venv-agent-factory/bin/python ../scratch/b67_exact_assertion_audit.py
++EXACT_ASSERTION_AUDIT_RC=0
++b6-refusal-rc: collect=1/151 rc=1; `assert proc.returncode == REFUSE_RC` T2:1938 AssertionError; 1 failed
++b6-refusal-text: collect=1/151 rc=1; `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` T2:1940 AssertionError; 1 failed
++b6-refusal-count: collect=1/151 rc=1; `assert listener.count == 0` T2:1942 AssertionError; 1 failed
++b6-key-shape: collect=1/151 rc=1; `assert len(privkey) == 64` T2:1970 AssertionError; 1 failed
++b6-positive-rc: collect=1/151 rc=1; `assert proc.returncode == 0` T2:1979 AssertionError; 1 failed
++b6-positive-count: collect=1/151 rc=1; `assert listener.count == 1` T2:1981 AssertionError; 1 failed
++b6-request-count: collect=1/151 rc=1; `assert len(listener.requests) == 1` T2:1985 AssertionError; 1 failed
++b6-post-line: collect=1/151 rc=1; `assert req.startswith("POST /events HTTP/1.1")` T2:1987 AssertionError; 1 failed
++b6-authorization: collect=1/151 rc=1; `assert "Authorization:" in req` T2:1988 AssertionError; 1 failed
++b6-content-type: collect=1/151 rc=1; `assert "Content-Type: application/json" in req` T2:1989 AssertionError; 1 failed
++b7-real-rc-strict: collect=1/151 rc=1; `assert proc.returncode in (1, 2)` T2:811 AssertionError; 1 failed
++b7-real-pass-text: collect=1/151 rc=1; `assert "PASS:" not in proc.stdout` T2:812 AssertionError; 1 failed
++b7-real-absent-text: collect=1/151 rc=1; `assert "deferred: S0-02 evidence not captured" in proc.stdout` T2:816 AssertionError; 1 failed
++b7-real-partial-text: collect=1/151 rc=1; `assert "leg directory absent" in proc.stdout` T2:814 AssertionError; 1 failed
++b7-preflight-blocker: collect=1/151 rc=1; `assert "exit 3" in preflight` T2:1731 AssertionError; 1 failed
++b7-preflight-key-name: collect=1/151 rc=1; `assert "PINNED_ENV_KEYS_S0_02" in preflight` T2:1732 AssertionError; 1 failed
++b7-preflight-value-name: collect=1/151 rc=1; `assert "PINNED_ENV_VALUES_S0_02" in preflight` T2:1733 AssertionError; 1 failed
++b7-preflight-grep-e: collect=1/151 rc=1; `assert "grep -Eq '^PINNED_ENV_KEYS_S0_02" in preflight` T2:1734 AssertionError; 1 failed
++b7-preflight-grep-fx: collect=1/151 rc=1; `assert "grep -Fqx 'PINNED_ENV_VALUES_S0_02" in preflight` T2:1735 AssertionError; 1 failed
++b7-pins-key-definition: collect=1/151 rc=1; `assert 'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})' in pins` T2:1738 AssertionError; 1 failed
++b7-pins-value-definition: collect=1/151 rc=1; `assert 'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}' in pins` T2:1739 AssertionError; 1 failed
++b7-launch-env-set: collect=1/151 rc=1; `assert '--env-set s0-02' in launch` T2:1742 AssertionError; 1 failed
++rc-set-broadened-absent: collect=1/151 pytest_rc=0; checker_rc=2; deferred: S0-02 evidence not captured
++rc-set-broadened-partial: collect=1/151 pytest_rc=0; checker_rc=1; neg-unauthorized leg directory absent
++rc-set-broadened-pass: collect=1/151 pytest_rc=1; checker_rc=0; `assert "PASS:" not in proc.stdout` T2:812 AssertionError; 1 failed
++```
++
++The brief-named literal controls were also executed exactly as stated:
++
++```text
++REFUSE_TEXT altered by one character: rc=1; `assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT` T2:1940 AssertionError; 1 failed
++REFUSE_RC 1→0: rc=1; `assert proc.returncode == REFUSE_RC` T2:1938 AssertionError; 1 failed
++refusal count 0→1: rc=1; `assert listener.count == 0` T2:1942 AssertionError; 1 failed
++positive count 1→0: rc=1; `assert listener.count == 1` T2:1981 AssertionError; 1 failed
++launch-string pin altered: rc=1; `assert '--env-set s0-02' in launch` T2:1742 AssertionError; 1 failed
++rc-set (1,2)→(0,1,2), absent root: rc=0; 1 passed, 150 deselected
++```
++
++The `rc-set` mutant remains green on all valid failure states because it still accepts `rc=1` and `rc=2`, and output has no `PASS:`. On a successful current checker, the separate output assertion kills first. This is `CONTRACT-INVALID`, not a code defect or a repair order. Contract mapping = literal item 6; checker CLI semantics = reproduced through unmodified checker bytes on a scratch normal-anchor input, not live evidence; material production effect = none; discriminator = yes; task ownership = coordinator contract amendment. Do not weaken `PASS:` or invent a fake checker response. A new contract can ask for the AND gate to red on a successful root, or can isolate the return-code arm by an approved deterministic seam.
++
++## Item 7 — gates on PIN bytes
++
++SOLID.
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/v1 tests/test_s0_02_buzz_authz.py
++151 passed in 11.36s
++
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/v2 tests/test_s0_02_buzz_authz.py
++151 passed in 11.16s
++
++$ scripts/test_summary.sh tests/test_s0_02_buzz_authz.py
++151 passed in 40.19s
++pytest-exit: 0
++pytest-summary: 151 passed in 40.19s
++
++$ python -m pyflakes tests/test_s0_02_buzz_authz.py proofs/S0-02/tools/pc/deliver_event.py
++PYFLAKES_RC=0
++
++$ bash -n proofs/S0-02/tools/pc/run_s0_02_legs.sh
++BASH_N_RC=0
++
++$ python3 scripts/ap_screen.py proofs/S0-02/tools/pc/run_s0_02_legs.sh
++--- AP_SCREEN over 1 path(s): 0 hits over 1 files ---
++
++$ python3 scripts/ap_screen.py --tests tests/test_s0_02_buzz_authz.py
++--- TEST_SCREEN over 1 path(s): 11 hits over 1 files ---
++AF-AP-80: 7
++AF-AP-34: 4
++```
++
++The 11 test-screen hits are exactly pre-existing: AF-AP-80 at `T2:720-721` (`removal_line`), `T2:1038` (`DEBUG_LEVEL_CANARY`), `T2:1612-1613` (`_load_timeline_raw = s0_01._load_timeline_raw`), `T2:1645` (`_load_timeline_raw(leg_dir, leg)`), `T2:1668` (`os.environ`); AF-AP-34 at `T2:1676` (`pkill/killall/name match`) and `T2:1680` (`for word in ("pkill", "killall", "pgrep")`) (duplicated screen rows). None is within the B6/B7 hunks. `git diff --check` returned 0. No selected test skipped in the two direct xdist module runs.
++
++## Item 8 — bounded hunk sweep and finding inventory
++
++1. FOLLOW-UP — D scalar range failures are raw tracebacks. SOLID at `D:84-89` (`if len(key) != 64`), `D:194` (`nv.sign_event(privkey`), and consumer `nostr_verify.py:230-235`; canonical real CLI with `0`×64 and `f`×64 exits 1 before connection but emits traceback. No exact B6 range-contract mapping, so not blocker. Suggested fix: turn the consumer’s `ValueError("invalid private key")` into a named clean CLI refusal while retaining zero network action.
++
++2. FOLLOW-UP — B6 normalization is only source-tested, not CLI-tested. SOLID: m4 causes whitespace/padded inputs to change actual CLI behavior while `test_cli_refuses...` and `test_cli_with...` remain green; only `T2:1823` (`strip().lower()`) source string detects it. Suggested fix: add whitespace-only and padded-valid rows to the B6 subprocess listener test.
++
++3. FOLLOW-UP — B7 exact-values preflight test is a source mirror. SOLID: m5 accepts a scratch pins file containing only the commented exact values line; `T2:1735` (`grep -Fqx`) catches source text, but no behavioral test drives `S0_02_REPO=<scratch>` failed preflight. Suggested fix: scratch-only behavioral negative that asserts `rc=3`, BLOCKER text, and no DEST.
++
++4. FOLLOW-UP — B7 preflight ordering is only source-tested. SOLID: m6 creates DEST before failing mutated pins; test fails only because its source extraction no longer sees the preflight at `T2:1731` (`exit 3`). Suggested fix: same behavioral negative asserts DEST absent.
++
++5. CONTRACT-INVALID — B7 real-root rc-set requirement cannot be satisfied literally on the exact frozen path. SOLID at `T2:807-816` (`test_real_evidence_root_is_not_a_passing_bundle_today`): broadening the rc set survives all permitted failure states and is killed only by the separate `PASS:` assertion on success. The code is fail-closed; the criterion that this individual mutation red is unmeasurable without an approved isolated seam. No code repair is authorized.
++
++6. INFO — current repository state differs from B7 author report’s partial-root observation. SOLID: current `proofs/S0-02/evidence` is absent and real checker exits 2. The historic partial capture is only in tracked diagnostic patch `tasks/briefs/pc/patch-pc-b7.md--c439580.diff`, not active proof input. No claim in the landed code is false.
++
++No BLOCKER. No CONTRACT-DEFECT. No stale comment in the examined B6/B7 hunks contradicted their current behavior.
++
++## DISCREPANCIES
++
++- Brief says B7 checker output on the partial root was `neg-unauthorized leg directory absent`; current PIN lacks `proofs/S0-02/evidence`, so direct checker output is `deferred: S0-02 evidence not captured`, `rc=2`. The historic partial data is diagnostic patch content, not current input.
++- The brief’s item-6 required the real-root rc-set `(1,2) → (0,1,2)` mutation to red. It survives every failure state the original assertion permits and, on success, reds only at independent `T2:812` (`PASS:`). This makes the literal individual-mutation requirement CONTRACT-INVALID; no test or checker was weakened.
++- `graft` has no shell definitions indexed for R; GitNexus index is 439 commits stale and does not resolve `launch_leg`. This is tooling coverage, not a code claim.
++- Terminal output rendered the authorization-row collection fragment as literal `***` (`b6-authorization: *** rc=1`). The scratch audit itself asserts collection `1/151`; no private key is printed. This safeguard-shaped artifact is reported verbatim.
++- Final artifact lint: `report_lint: 85 refs — OK 85, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`; the bounded report-lint floor is met.
++- Final tree hygiene: `git diff --name-only 22bd6f5` was empty; `git status --short` showed only the two untracked verifier-report copies; the three contract SHA-256 identities still match item 1.
++
++## NOT-done
++
++- No live S0-02 capture, proof mint, runner positive preflight/launch, or relay delivery. These are expressly out of scope and a positive preflight would launch the isolated harness.
++- No behavioral B7 positive arm repeated; B7 report is cited only as predecessor evidence, not independently adopted.
++- No production code, test, ledger, secret, or production artifact was changed; only the two untracked verifier-report copies were written.
++- FOLLOW-UP issues 1–4 should be filed as `verify-followup` under D-034; they do not authorize an unbounded repair wave.
++- Item 6 is CONTRACT-INVALID and requires coordinator contract amendment before a new verification round; no repair was attempted.
++
++## GATE RECOMMENDATION
++
++`CONTRACT-INVALID` — the frozen item-6 requirement that the individual real-root `rc-set` mutant `(1,2) → (0,1,2)` red is unmeasurable on the exact current checker path. It survives every original permitted failure state and is caught only by the separate `PASS:` assertion on success. Direct deterministic evidence otherwise verifies the premise, B6 real-CLI negative/positive network behavior, B6 behavioral m1/m2/m3 kills, B7 corrected-byte failed-preflight-before-DEST behavior, both full T2 xdist gates (151 passed twice), and static/screen gates. Coordinator must amend the criterion before re-verification; it owns the final decision. The three source-to-behavior test-strength follow-ups and scalar clean-error follow-up remain non-blocking.
++
++Retro: observed AF-AP-80 pairings (source mirror without canonical behavioral negative) in m4/m5/m6. Coordinator should record these as follow-ups; no shared skill was changed by this lane.
++
++Graft token savings this turn: approximately 39,695.
+diff --git a/transcripts/pc/pc-verify-b67.md--22bd6f5.md b/transcripts/pc/pc-verify-b67.md--22bd6f5.md
+new file mode 100644
+index 0000000..eedc037
+--- /dev/null
++++ b/transcripts/pc/pc-verify-b67.md--22bd6f5.md
+@@ -0,0 +1,1015 @@
++# Hermes lane session 20260922_065659_2d9a82
++
++- model: agentfactory-verify-local
++- started: 2026-09-22T05:57:00.291406+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-verify-b67.md--22bd6f5/tree
++- messages: 322; tool calls: 194
++- tokens in/out/cache_read/reasoning: 678692/228669/21469184/147006
++
++## user @ 05:56:59
++
++<!-- HARNESS PORT of .claude/agents/adversarial-verifier.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept; the lane emits a GATE RECOMMENDATION, never a final gate verdict
++     — the coordinator owns the gate.
++
++     Codex loads this as `developer_instructions` via .codex/agents/adversarial-verifier.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: adversarial-verifier
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5
++     verify discipline. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md. Disposition policy —
++     exhaustive findings, bounded blockers: docs/08_DECISION_LOG.md D-031, skill contract-gate. -->
++
++Your job is to determine whether the frozen contract survives a serious attempt at falsification.
++Search aggressively, report every meaningful observation, and apply the blocking predicate exactly.
++You have no stake in either acceptance or rejection. The author's report is a list of claims;
++reproduce every claim you rely on through the real production path.
++
++**No severity filter applies to discovery. A strict eligibility filter applies to readiness.** Put
++every meaningful observation in the inventory; only findings that satisfy the WHOLE blocking
++predicate may hold the increment back. You do not search indefinitely for any reason to reject.
++
++## Attack set — bounded by the CHANGE CLASS, not an unbounded universal sweep
++
++Run the pieces that bear on THIS increment; do not manufacture work the change does not touch.
++- Execute every FROZEN CONTRACT item with its literal command; run the pre-registered negative controls.
++- Make ONE bounded exploratory pass over the production interfaces the diff changed — hostile values
++  only where they are meaningful for the actual input type.
++- Do NOT recursively verify tests, mutation drivers, inventories, or report tooling unless that
++  machinery itself changed or the readiness claim directly depends on it. Do NOT expand into
++  neighbouring components. A newly imagined improvement is a FOLLOW-UP unless it meets the full
++  blocking predicate. Report/format defects block only when they make required evidence false,
++  missing, or uninterpretable.
++
++The techniques, applied within that boundary:
++
++1. **Contract, not self-declared cases.** Grade against the increment's full contract (the
++   negotiated assertion list / seed acceptance criteria / brief evidence demands) — t
++
++## assistant @ 06:02:09 → tools: terminal, read_file, read_file, read_file
++
++Starting VERIFY-B67 as adversarial-verifier. Item 1 first: premise re-measurement on my worktree, plus the four named tests, plus the venue map and both landing reports.
++
++## tool result (terminal) @ 06:02:10 — 1680 chars (body not exported)
++
++## tool result (read_file) @ 06:02:10 — 6455 chars (body not exported)
++
++## tool result (read_file) @ 06:02:10 — 13183 chars (body not exported)
++
++## tool result (read_file) @ 06:02:10 — 12377 chars (body not exported)
++
++## assistant @ 06:03:24 → tools: terminal
++
++Premise verified — all 4 measured commands reproduce exactly at my PIN (hunk sets, all three SHA-256s match; worktree clean at 22bd6f5). Now item 1's test selection + the full-suite gates (item 7's first two runs) in one bounded call.
++
++## tool result (terminal) @ 06:03:48 — 970 chars (body not exported)
++
++## assistant @ 06:05:29 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:05:30 — 21059 chars (body not exported)
++
++## tool result (terminal) @ 06:05:32 — 1532 chars (body not exported)
++
++## tool result (terminal) @ 06:05:36 — 8077 chars (body not exported)
++
++## tool result (terminal) @ 06:05:38 — 2861 chars (body not exported)
++
++## assistant @ 06:05:57 → tools: read_file, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 06:05:57 — 8117 chars (body not exported)
++
++## tool result (read_file) @ 06:05:57 — 6120 chars (body not exported)
++
++## tool result (read_file) @ 06:05:57 — 2893 chars (body not exported)
++
++## tool result (read_file) @ 06:05:57 — 1593 chars (body not exported)
++
++## tool result (read_file) @ 06:05:57 — 14288 chars (body not exported)
++
++## tool result (terminal) @ 06:06:00 — 2562 chars (body not exported)
++
++## assistant @ 06:06:26 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:06:27 — 2262 chars (body not exported)
++
++## tool result (terminal) @ 06:06:28 — 4467 chars (body not exported)
++
++## tool result (terminal) @ 06:06:28 — 1313 chars (body not exported)
++
++## tool result (terminal) @ 06:06:29 — 10242 chars (body not exported)
++
++## assistant @ 06:07:14 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:07:14 — 335 chars (body not exported)
++
++## assistant @ 06:09:06 → tools: read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 06:09:06 — 3699 chars (body not exported)
++
++## tool result (read_file) @ 06:09:06 — 1734 chars (body not exported)
++
++## tool result (read_file) @ 06:09:06 — 4338 chars (body not exported)
++
++## tool result (terminal) @ 06:09:07 — 152 chars (body not exported)
++
++## assistant @ 06:11:01 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:11:03 — 326 chars (body not exported)
++
++## assistant @ 06:11:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:11:34 — 5724 chars (body not exported)
++
++## assistant @ 06:13:32 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:13:33 — 1774 chars (body not exported)
++
++## tool result (terminal) @ 06:13:33 — 1011 chars (body not exported)
++
++## tool result (terminal) @ 06:13:33 — 11117 chars (body not exported)
++
++## assistant @ 06:15:17 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:15:17 — 324 chars (body not exported)
++
++## assistant @ 06:16:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:17:03 — 2891 chars (body not exported)
++
++## assistant @ 06:19:47 → tools: read_file, read_file, read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 06:19:47 — 3923 chars (body not exported)
++
++## tool result (read_file) @ 06:19:47 — 6366 chars (body not exported)
++
++## tool result (read_file) @ 06:19:47 — 5520 chars (body not exported)
++
++## tool result (terminal) @ 06:19:49 — 1909 chars (body not exported)
++
++## tool result (terminal) @ 06:19:49 — 45 chars (body not exported)
++
++## assistant @ 06:27:07 → tools: patch
++
++
++
++## tool result (patch) @ 06:27:09 — 867 chars (body not exported)
++
++## assistant @ 06:29:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:29:05 — 1370 chars (body not exported)
++
++## assistant @ 06:30:32 → tools: read_file, search_files, terminal
++
++
++
++## tool result (read_file) @ 06:30:32 — 1413 chars (body not exported)
++
++## tool result (search_files) @ 06:30:32 — 4224 chars (body not exported)
++
++## tool result (terminal) @ 06:30:32 — 1398 chars (body not exported)
++
++## assistant @ 06:33:19 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:33:20 — 345 chars (body not exported)
++
++## tool result (terminal) @ 06:33:21 — 694 chars (body not exported)
++
++## tool result (terminal) @ 06:33:21 — 196 chars (body not exported)
++
++## assistant @ 06:33:45 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:33:45 — 326 chars (body not exported)
++
++## assistant @ 06:33:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:34:05 — 1212 chars (body not exported)
++
++## assistant @ 06:34:54 → tools: skill_view, skill_view, skill_view, search_files, terminal
++
++
++
++## tool result (skill_view) @ 06:34:54 — 5297 chars (body not exported)
++
++## tool result (skill_view) @ 06:34:54 — 24569 chars (body not exported)
++
++## tool result (skill_view) @ 06:34:54 — 12490 chars (body not exported)
++
++## tool result (search_files) @ 06:34:54 — 141 chars (body not exported)
++
++## tool result (terminal) @ 06:34:55 — 267 chars (body not exported)
++
++## assistant @ 06:37:46 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:37:47 — 3466 chars (body not exported)
++
++## tool result (terminal) @ 06:37:47 — 143 chars (body not exported)
++
++## tool result (terminal) @ 06:38:28 — 381 chars (body not exported)
++
++## tool result (terminal) @ 06:38:29 — 115 chars (body not exported)
++
++## assistant @ 06:40:18 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:40:18 — 336 chars (body not exported)
++
++## assistant @ 06:42:06 → tools: patch
++
++
++
++## tool result (patch) @ 06:42:07 — 876 chars (body not exported)
++
++## assistant @ 06:42:31 → tools: patch
++
++
++
++## tool result (patch) @ 06:42:32 — 2673 chars (body not exported)
++
++## assistant @ 06:42:41 → tools: patch
++
++
++
++## tool result (patch) @ 06:42:42 — 1955 chars (body not exported)
++
++## assistant @ 06:42:58 → tools: patch
++
++
++
++## tool result (patch) @ 06:42:59 — 1378 chars (body not exported)
++
++## assistant @ 06:43:09 → tools: patch
++
++
++
++## tool result (patch) @ 06:43:10 — 2020 chars (body not exported)
++
++## assistant @ 06:45:59 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:46:00 — 334 chars (body not exported)
++
++## assistant @ 06:46:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:46:16 — 1831 chars (body not exported)
++
++## assistant @ 06:46:58 → tools: patch
++
++
++
++## tool result (patch) @ 06:46:59 — 894 chars (body not exported)
++
++## assistant @ 06:47:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:48:46 — 4129 chars (body not exported)
++
++## assistant @ 06:50:50 → tools: terminal, read_file, read_file, terminal
++
++
++
++## tool result (terminal) @ 06:50:50 — 2539 chars (body not exported)
++
++## tool result (read_file) @ 06:50:51 — 3353 chars (body not exported)
++
++## tool result (read_file) @ 06:50:51 — 250 chars (body not exported)
++
++## tool result (terminal) @ 06:50:51 — 858 chars (body not exported)
++
++## assistant @ 06:52:05 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 06:52:07 — 4495 chars (body not exported)
++
++## tool result (terminal) @ 06:52:08 — 3531 chars (body not exported)
++
++## tool result (terminal) @ 06:52:08 — 10772 chars (body not exported)
++
++## assistant @ 06:53:10 → tools: read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 06:53:10 — 1535 chars (body not exported)
++
++## tool result (read_file) @ 06:53:10 — 9853 chars (body not exported)
++
++## tool result (read_file) @ 06:53:10 — 6984 chars (body not exported)
++
++## tool result (read_file) @ 06:53:10 — 1428 chars (body not exported)
++
++## assistant @ 06:55:35 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:55:35 — 330 chars (body not exported)
++
++## assistant @ 06:55:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 06:56:19 — 694 chars (body not exported)
++
++## assistant @ 06:59:28 → tools: write_file
++
++
++
++## tool result (write_file) @ 06:59:28 — 775 chars (body not exported)
++
++## assistant @ 07:01:06 → tools: patch
++
++
++
++## tool result (patch) @ 07:01:06 — 797 chars (body not exported)
++
++## assistant @ 07:01:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:01:57 — 928 chars (body not exported)
++
++## assistant @ 07:02:21 → tools: patch
++
++
++
++## tool result (patch) @ 07:02:21 — 1287 chars (body not exported)
++
++## assistant @ 07:03:13 → tools: patch
++
++
++
++## tool result (patch) @ 07:03:14 — 2757 chars (body not exported)
++
++## assistant @ 07:03:41 → tools: patch
++
++
++
++## tool result (patch) @ 07:03:41 — 1843 chars (body not exported)
++
++## assistant @ 07:04:33 → tools: patch
++
++
++
++## tool result (patch) @ 07:04:33 — 1074 chars (body not exported)
++
++## assistant @ 07:04:49 → tools: patch
++
++
++
++## tool result (patch) @ 07:04:50 — 2128 chars (body not exported)
++
++## assistant @ 07:07:56 → tools: terminal, terminal, terminal, search_files
++
++
++
++## tool result (terminal) @ 07:07:57 — 3180 chars (body not exported)
++
++## tool result (terminal) @ 07:07:58 — 678 chars (body not exported)
++
++## tool result (terminal) @ 07:08:00 — 498 chars (body not exported)
++
++## tool result (search_files) @ 07:08:00 — 18 chars (body not exported)
++
++## assistant @ 07:08:37 → tools: patch
++
++
++
++## tool result (patch) @ 07:08:37 — 1311 chars (body not exported)
++
++## assistant @ 07:09:08 → tools: patch
++
++
++
++## tool result (patch) @ 07:09:08 — 1143 chars (body not exported)
++
++## assistant @ 07:09:35 → tools: patch
++
++
++
++## tool result (patch) @ 07:09:35 — 1102 chars (body not exported)
++
++## assistant @ 07:10:44 → tools: patch
++
++
++
++## tool result (patch) @ 07:10:45 — 460 chars (body not exported)
++
++## assistant @ 07:10:56 → tools: patch
++
++
++
++## tool result (patch) @ 07:10:57 — 1985 chars (body not exported)
++
++## assistant @ 07:11:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:11:02 — 10167 chars (body not exported)
++
++## assistant @ 07:11:07 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:11:07 — 20905 chars (body not exported)
++
++## assistant @ 07:11:15 → tools: patch
++
++
++
++## tool result (patch) @ 07:11:15 — 1626 chars (body not exported)
++
++## assistant @ 07:11:24 → tools: patch
++
++
++
++## tool result (patch) @ 07:11:24 — 2235 chars (body not exported)
++
++## assistant @ 07:11:30 → tools: patch
++
++
++
++## tool result (patch) @ 07:11:30 — 1587 chars (body not exported)
++
++## assistant @ 07:11:48 → tools: patch
++
++
++
++## tool result (patch) @ 07:11:49 — 3208 chars (body not exported)
++
++## assistant @ 07:12:01 → tools: patch
++
++
++
++## tool result (patch) @ 07:12:01 — 2044 chars (body not exported)
++
++## assistant @ 07:12:15 → tools: patch
++
++
++
++## tool result (patch) @ 07:12:15 — 1842 chars (body not exported)
++
++## assistant @ 07:12:25 → tools: patch
++
++
++
++## tool result (patch) @ 07:12:25 — 2221 chars (body not exported)
++
++## assistant @ 07:12:33 → tools: patch
++
++
++
++## tool result (patch) @ 07:12:33 — 1244 chars (body not exported)
++
++## assistant @ 07:12:56 → tools: patch
++
++
++
++## tool result (patch) @ 07:12:56 — 4388 chars (body not exported)
++
++## assistant @ 07:13:02 → tools: patch
++
++
++
++## tool result (patch) @ 07:13:02 — 1762 chars (body not exported)
++
++## assistant @ 07:13:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:13:08 — 3097 chars (body not exported)
++
++## assistant @ 07:13:18 → tools: patch
++
++
++
++## tool result (patch) @ 07:13:18 — 2358 chars (body not exported)
++
++## assistant @ 07:13:27 → tools: patch
++
++
++
++## tool result (patch) @ 07:13:28 — 1500 chars (body not exported)
++
++## assistant @ 07:13:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:13:33 — 154 chars (body not exported)
++
++## assistant @ 07:13:45 → tools: patch
++
++
++
++## tool result (patch) @ 07:13:45 — 1705 chars (body not exported)
++
++## assistant @ 07:13:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:13:52 — 569 chars (body not exported)
++
++## assistant @ 07:13:58 → tools: patch
++
++
++
++## tool result (patch) @ 07:13:58 — 1598 chars (body not exported)
++
++## assistant @ 07:14:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:14:04 — 180 chars (body not exported)
++
++## assistant @ 07:14:12 → tools: patch
++
++
++
++## tool result (patch) @ 07:14:13 — 1598 chars (body not exported)
++
++## assistant @ 07:14:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:14:26 — 172 chars (body not exported)
++
++## assistant @ 07:16:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:16:09 — 330 chars (body not exported)
++
++## assistant @ 07:16:17 → tools: patch
++
++
++
++## tool result (patch) @ 07:16:17 — 460 chars (body not exported)
++
++## assistant @ 07:16:29 → tools: patch
++
++
++
++## tool result (patch) @ 07:16:29 — 1237 chars (body not exported)
++
++## assistant @ 07:16:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:16:35 — 200 chars (body not exported)
++
++## assistant @ 07:16:53 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:16:53 — 22173 chars (body not exported)
++
++## assistant @ 07:18:48 → tools: patch
++
++
++
++## tool result (patch) @ 07:18:49 — 1857 chars (body not exported)
++
++## assistant @ 07:19:02 → tools: patch
++
++
++
++## tool result (patch) @ 07:19:02 — 2925 chars (body not exported)
++
++## assistant @ 07:19:12 → tools: patch
++
++
++
++## tool result (patch) @ 07:19:12 — 1943 chars (body not exported)
++
++## assistant @ 07:19:19 → tools: patch
++
++
++
++## tool result (patch) @ 07:19:19 — 1922 chars (body not exported)
++
++## assistant @ 07:19:25 → tools: patch
++
++
++
++## tool result (patch) @ 07:19:25 — 1045 chars (body not exported)
++
++## assistant @ 07:19:36 → tools: patch
++
++
++
++## tool result (patch) @ 07:19:36 — 2136 chars (body not exported)
++
++## assistant @ 07:19:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:19:42 — 207 chars (body not exported)
++
++## assistant @ 07:21:30 → tools: patch
++
++
++
++## tool result (patch) @ 07:21:31 — 7249 chars (body not exported)
++
++## assistant @ 07:23:53 → tools: write_file
++
++
++
++## tool result (write_file) @ 07:23:54 — 339 chars (body not exported)
++
++## assistant @ 07:24:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:25:33 — 4730 chars (body not exported)
++
++## assistant @ 07:27:37 → tools: patch
++
++
++
++## tool result (patch) @ 07:27:38 — 8811 chars (body not exported)
++
++## assistant @ 07:27:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:27:47 — 2548 chars (body not exported)
++
++## assistant @ 07:28:23 → tools: patch
++
++
++
++## tool result (patch) @ 07:28:23 — 5986 chars (body not exported)
++
++## assistant @ 07:28:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:28:30 — 1638 chars (body not exported)
++
++## assistant @ 07:28:39 → tools: patch
++
++
++
++## tool result (patch) @ 07:28:40 — 2156 chars (body not exported)
++
++## assistant @ 07:29:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:29:31 — 200 chars (body not exported)
++
++## assistant @ 07:29:53 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:29:53 — 12842 chars (body not exported)
++
++## assistant @ 07:30:04 → tools: patch
++
++
++
++## tool result (patch) @ 07:30:04 — 2098 chars (body not exported)
++
++## assistant @ 07:30:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:30:11 — 523 chars (body not exported)
++
++## assistant @ 07:31:28 → tools: search_files, terminal
++
++
++
++## tool result (search_files) @ 07:31:28 — 18 chars (body not exported)
++
++## tool result (terminal) @ 07:31:28 — 176 chars (body not exported)
++
++## assistant @ 07:32:10 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:32:10 — 25218 chars (body not exported)
++
++## assistant @ 07:34:24 → tools: write_file
++
++
++
++## tool result (write_file) @ 07:34:25 — 400 chars (body not exported)
++
++## assistant @ 07:36:13 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:36:13 — 1753 chars (body not exported)
++
++## tool result (patch) @ 07:36:13 — 1881 chars (body not exported)
++
++## assistant @ 07:36:25 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 07:36:26 — 272 chars (body not exported)
++
++## tool result (read_file) @ 07:36:26 — 1571 chars (body not exported)
++
++## assistant @ 07:38:12 → tools: patch, patch, patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 07:38:12 — 1422 chars (body not exported)
++
++## tool result (patch) @ 07:38:12 — 1782 chars (body not exported)
++
++## tool result (patch) @ 07:38:12 — 1347 chars (body not exported)
++
++## tool result (patch) @ 07:38:12 — 1475 chars (body not exported)
++
++## tool result (patch) @ 07:38:13 — 804 chars (body not exported)
++
++## tool result (patch) @ 07:38:13 — 932 chars (body not exported)
++
++## assistant @ 07:38:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:38:25 — 600 chars (body not exported)
++
++## assistant @ 07:38:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:38:45 — 25689 chars (body not exported)
++
++## assistant @ 07:39:19 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:39:20 — 2100 chars (body not exported)
++
++## tool result (patch) @ 07:39:20 — 2228 chars (body not exported)
++
++## assistant @ 07:39:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:39:31 — 305 chars (body not exported)
++
++## assistant @ 07:40:51 → tools: patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 07:40:51 — 872 chars (body not exported)
++
++## tool result (patch) @ 07:40:51 — 1000 chars (body not exported)
++
++## tool result (patch) @ 07:40:52 — 2055 chars (body not exported)
++
++## tool result (patch) @ 07:40:52 — 2183 chars (body not exported)
++
++## assistant @ 07:41:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:41:08 — 275 chars (body not exported)
++
++## assistant @ 07:42:18 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:42:18 — 1898 chars (body not exported)
++
++## tool result (patch) @ 07:42:18 — 2026 chars (body not exported)
++
++## assistant @ 07:42:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:42:26 — 599 chars (body not exported)
++
++## assistant @ 07:42:40 → tools: patch
++
++
++
++## tool result (patch) @ 07:42:40 — 1504 chars (body not exported)
++
++## assistant @ 07:42:58 → tools: patch
++
++
++
++## tool result (patch) @ 07:42:58 — 1632 chars (body not exported)
++
++## assistant @ 07:43:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:43:06 — 272 chars (body not exported)
++
++## assistant @ 07:43:49 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:43:49 — 1792 chars (body not exported)
++
++## tool result (patch) @ 07:43:49 — 1920 chars (body not exported)
++
++## assistant @ 07:44:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:44:01 — 287 chars (body not exported)
++
++## assistant @ 07:45:50 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:45:50 — 1805 chars (body not exported)
++
++## tool result (patch) @ 07:45:50 — 1933 chars (body not exported)
++
++## assistant @ 07:46:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:46:05 — 287 chars (body not exported)
++
++## assistant @ 07:47:52 → tools: patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 07:47:52 — 1772 chars (body not exported)
++
++## tool result (patch) @ 07:47:52 — 1900 chars (body not exported)
++
++## tool result (patch) @ 07:47:52 — 2215 chars (body not exported)
++
++## tool result (patch) @ 07:47:52 — 2343 chars (body not exported)
++
++## assistant @ 07:48:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 07:48:40 — 26731 chars (body not exported)
++
++## assistant @ 07:49:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:49:14 — 607 chars (body not exported)
++
++## assistant @ 07:50:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:50:44 — 414 chars (body not exported)
++
++## assistant @ 07:52:48 → tools: patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 07:52:48 — 2035 chars (body not exported)
++
++## tool result (patch) @ 07:52:48 — 2163 chars (body not exported)
++
++## tool result (patch) @ 07:52:48 — 1880 chars (body not exported)
++
++## tool result (patch) @ 07:52:48 — 2008 chars (body not exported)
++
++## assistant @ 07:55:17 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:55:17 — 1703 chars (body not exported)
++
++## tool result (patch) @ 07:55:17 — 1831 chars (body not exported)
++
++## assistant @ 07:56:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:56:54 — 604 chars (body not exported)
++
++## assistant @ 07:57:20 → tools: patch, patch
++
++
++
++## tool result (patch) @ 07:57:21 — 1753 chars (body not exported)
++
++## tool result (patch) @ 07:57:21 — 1881 chars (body not exported)
++
++## assistant @ 07:58:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:58:55 — 275 chars (body not exported)
++
++## assistant @ 08:03:34
++
++# VERIFY-B67 — adversarial verification report
++
++PIN: `<opaque-redacted>`
++
++CONTRACT-INVALID: frozen item 6 requires the individual real-root rc-set mutant to fail at its own line. The checker’s independent `PASS:` assertion prevents that condition. Coordinator amendment is required before re-verification.
++
++## Scope and evidence discipline
++
++Verified only B6 (`T2:1813-1991` — `_privkey`) and B7 (`R:46-76` — `RUST_LOG=debug`; `T2:804-819` — `deferred`; `T2:1722-1745` — `PINNED_ENV_KEYS_S0_02`) on immutable production bytes at PIN. Scratch-only probes and archive mutations live under `../scratch`; no runner leg, relay, harness, secret, service, git mutation, or external action was run. `report-draft.md` and `tasks/briefs/s0-02-support/VERIFY-B67-report.md` are the only untracked worktree files.
++
++Evidence levels: SOLID means directly reproduced through the named real CLI/checker/runner path; UNSURE means static-only or bounded by venue safety. The current production `proofs/S0-02/evidence` root is absent at this PIN, so its real-root check returns deferred (`rc=2`); historic partial-root behavior was not represented as current bytes.
++
++## Item 1 — PREMISE
++
++SOLID. Re-measured at the verifier worktree:
++
++```text
++$ git log --format='%h %s' 236bec7..22bd6f5 -- proofs/S0-02 tests/test_s0_02_buzz_authz.py
++22bd6f5 S0-02 runner: B7 LANDS the env-set selection + the exact-pin preflight (items 2-3; the live capture stays NOT-READY — the partial evidence is recorded in the harvest patch, not landed)
++c439580 S0-02 B6 LANDED (issue #3): the F3 pre-network key refusal EXECUTED through the real deliver_event.py against an owned loopback listener (connections == 0), paired with the connecting positive control; the shape-guard mutant that survived the old source-shape test now dies at the exact refusal text
++
++$ git diff c439580^ c439580 -- tests/test_s0_02_buzz_authz.py | grep '^@@'
++@@ -11,13 +11,16 @@ skip; only an unset venue (CI) skips, and it skips by declaration.
++@@ -1810,3 +1813,171 @@ def <opaque-redacted>():
++
++$ git diff 22bd6f5^ 22bd6f5 -- proofs/S0-02/tools/pc/run_s0_02_legs.sh tests/test_s0_02_buzz_authz.py | grep -E '^diff|^@@'
++diff --git a/proofs/S0-02/tools/pc/run_s0_02_legs.sh b/proofs/S0-02/tools/pc/run_s0_02_legs.sh
++@@ -46,21 +46,21 @@ say() { echo; echo "===== [S0-02] $* ====="; }
++@@ -70,6 +70,7 @@ mkdir -p "$DEST"
++diff --git a/tests/test_s0_02_buzz_authz.py b/tests/test_s0_02_buzz_authz.py
++@@ -804,12 +804,16 @@ def <opaque-redacted>(tmp_path):
++@@ -1718,20 +1722,24 @@ def <opaque-redacted>():
++
++$ sha256sum tests/test_s0_02_buzz_authz.py proofs/S0-02/tools/pc/run_s0_02_legs.sh proofs/S0-02/tools/pc/deliver_event.py
++<opaque-redacted>  tests/test_s0_02_buzz_authz.py
++<opaque-redacted>  proofs/S0-02/tools/pc/run_s0_02_legs.sh
++a14c027b0da
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 678692,
++  "output_tokens": 228669,
++  "cache_read_tokens": 21469184,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 147006,
++  "total_tokens": 22376545,
++  "api_calls": 127,
++  "model": "codex/gpt-5.6-terra-ultra",
++  "provider": "custom",
++  "session_id": "20260922_065659_2d9a82",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
