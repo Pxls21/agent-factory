@@ -88,6 +88,15 @@ for Jev" (found: TypeSafe's official skill, vendored).
   123.3 MB of 137.0 MB = 90.0 % (37,858 messages), assistant 3.96 MB = 2.9 % (24,936), user 9.63 MB = 7.0 % (706);
   the coordinator's own sandbox transcript (35.3 MB): tool results 16.5 MB = 46.9 % (9,842), tool-call inputs
   13.6 MB = 38.5 %, user 10.2 %, assistant 4.0 %.
+- **By tool and by size (the same stores, 2026-09-22 12:2xZ):** PC lanes — `read_file` 10,589 results / 61.1 MB =
+  49.5 % of tool bytes (avg 5.8 KB, max 107 KB), `terminal` 13,558 / 29.9 MB = 24.2 %, `skill_view` 1,231 / 13.5 MB
+  = 11.0 % (avg 11 KB), `patch` 6.4 %, `search_files` 5.5 %, `execute_code` 2.0 %; size buckets of the 37,858
+  results: < 1k chars 22,268 / 5.3 MB, 1-4k 8,475 / 16.8 MB, 4-10k 3,897 / 25.2 MB, 10-40k 3,244 / 57.6 MB, ≥ 40k
+  320 / 18.5 MB (≥ 4k = 19.7 % of results, 82.2 % of bytes; ≥ 10k = 9.4 % / 61.7 %). Sandbox — `Bash` 7,220 /
+  12.5 MB = 75.4 % (avg 1.7 KB), `Read` 461 / 2.3 MB = 14.1 %; ≥ 4k = 11 % of results / 59.4 % of bytes; ≥ 10k =
+  3.2 % / 31.3 %. Consequence for the design: a chars floor near 4k covers most bytes on both venues; jev-pruner's
+  10,000-token floor would touch 15 % (PC) / 1.3 % (sandbox) of bytes.
+
 
 
 ### 5.1 Spike results

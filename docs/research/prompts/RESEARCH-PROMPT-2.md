@@ -28,9 +28,21 @@
   137.0 MB = 90.0 %** (37,858 tool messages), assistant text 3.96 MB = 2.9 % (24,936 messages), user/prompt
   text 9.63 MB = 7.0 % (706 messages). Every one of those tool-result bytes re-enters the local model's context
   on every following turn until compaction.
+  **By tool (PC lanes):** `read_file` 10,589 results, 61.1 MB = 49.5 % of tool bytes (avg 5.8 KB, max 107 KB);
+  `terminal` 13,558 / 29.9 MB = 24.2 % (avg 2.2 KB); `skill_view` 1,231 / 13.5 MB = 11.0 % (avg 11 KB — skill files
+  re-read although a lane rule says not to reload them); `patch` 6,865 / 7.9 MB = 6.4 %; `search_files` 3,212 /
+  6.8 MB = 5.5 %; `execute_code` 870 / 2.4 MB. **Size distribution** of the 37,858 results: < 1k chars 22,268
+  results / 5.3 MB (4.3 %); 1-4k 8,475 / 16.8 MB (13.6 %); 4-10k 3,897 / 25.2 MB (20.4 %); 10-40k 3,244 / 57.6 MB
+  (46.7 %); ≥ 40k 320 / 18.5 MB (15.0 %) — results ≥ 4k chars are 19.7 % of results and 82.2 % of bytes; ≥ 10k are
+  9.4 % and 61.7 %.
+
 - The coordinator's own session transcript (one sandbox session, 35.3 MB): **tool results 16.5 MB = 46.9 %**
   (9,842 results), tool-call inputs 13.6 MB = 38.5 % (the coordinator's own file writes and scripts), user
   text 10.2 %, assistant text 4.0 %.
+  **By tool (sandbox):** `Bash` 7,220 results / 12.5 MB = 75.4 % (avg 1.7 KB — the coordinator already trims with
+  head/tail by habit), `Read` 461 / 2.3 MB = 14.1 % (avg 5.1 KB), GitHub CI-log tools 5.0 %; results ≥ 4k chars are
+  11 % of results and 59.4 % of bytes; ≥ 10k are 3.2 % and 31.3 %.
+
 - **Nothing prunes tool output in either venue.** Inventory (19 sinks audited): the Claude Code Bash tool feeds
   the coordinator's context unbounded (no PostToolUse hook registered for Bash; the only compressor is the
   vendored "honey" plugin's log-compress hook, which is INERT here — its `~/.claude/.honey-active` gate file does
@@ -315,7 +327,8 @@ unbuilt and the report says so.
 
 **Q9 — The evaluation harness and the labeled-set recipe.** Settled: the metrics (ECE, Brier, needle retention,
 regret, byte reduction, added latency), labels from the record (F9), shadow mode, the single lane A/B graded by
-the existing verify lane. Open: the exact label extraction (what counts as "cited": a file:line, a quoted line,
+the existing verify lane; the researcher SPECIFIES the extraction (fields, rules, a runnable script) and the
+coordinator RUNS it on our stores — the researcher never needs our data. Open: the exact label extraction (what counts as "cited": a file:line, a quoted line,
 a pasted value, a symbol name?), the minimum set size per integration, the shadow-mode duration, and the A/B's
 acceptance numbers. Decision rule: as §3.7 — equal-or-better grade and ≥ 30 % fewer input tokens on the sieve
 arm, or the integration stays in shadow.
@@ -328,12 +341,20 @@ the dispatcher reads before admitting a sieved lane, log rotation, and what happ
 service restarts (fail-open by §3.5, proven by a test). Decision rule: one config file, one unit, one health
 endpoint; a lane never blocks on the service.
 
-**Q11 — The "menial steps" question, bounded.** Settled: Laya judges, it does not execute. Open: from the lane
-record, WHICH lane steps are dominated by reading long tool output (the candidates: reading pytest logs to find
-the failing test, reading a 400-line graft pack, reading a whole file to find a symbol, reading `git log`/`diff`
-output) and what share of a lane's input tokens and turns they hold — quantify from the 37,858 tool results and
-name the top five by bytes and by count. Decision rule: the sieve's first target is the step with the largest
-(bytes × frequency); a step whose output is a gate's pasted count is exempt.
+**Q11 — The "menial steps" question, bounded — MEASURED by the coordinator (the researcher has no access to our
+stores; design from these numbers, do not ask for more).** Settled: Laya judges, it does not execute. The lane
+record's tool results by tool (§1): `read_file` 49.5 % of the bytes (10,589 reads, avg 5.8 KB — whole files read
+to find a symbol or a line range), `terminal` 24.2 % (13,558 calls, avg 2.2 KB — pytest runs, git log/diff, grep,
+the pack), `skill_view` 11.0 % (1,231 re-reads of skill files at avg 11 KB — a lane rule already says not to
+reload skills; a sieve is the wrong tool for that one, a cache is), `patch` 6.4 %, `search_files` 5.5 %. Open:
+the per-tool sieve policy — for `read_file` a symbol/range-aware judge (which blocks of a file does the task
+need?) vs an instruction to the lane to read by range; for `terminal` the per-block relevance sieve; for
+`search_files` a ranked filter; whether the floor is by chars or tokens and where it sits (our distribution:
+results ≥ 4k chars are 19.7 % of results and 82.2 % of bytes on the PC lanes, 11 % / 59.4 % in the sandbox;
+jev-pruner's 10,000-token floor would touch only the ≥ 40k-char tail = 15.0 % / 1.3 % of bytes). Decision rule:
+the first target is `read_file` on the PC lanes and `Bash` in the sandbox (the largest bytes × frequency); the
+floor is set where ≥ 80 % of bytes are above it on the venue's own distribution; a step whose output is a gate's
+pasted count is exempt.
 
 ## 6. PRIMARY DELIVERABLE (one)
 
