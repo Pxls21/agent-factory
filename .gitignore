@@ -56,3 +56,6 @@ vendor/
 
 # Ouroboros MCP server state written into the project cwd (artifacts.db + WAL) by scripts/ooo_mcp.py runs — tool state, never project content (2026-09-22)
 .ouroboros/
+
+# setuptools metadata from an editable install of src/ (build artifact, never content)
+*.egg-info/
