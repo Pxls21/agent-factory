@@ -1,0 +1,790 @@
+diff --git a/tasks/briefs/s0-01-vb-f12-support/G2-report.md b/tasks/briefs/s0-01-vb-f12-support/G2-report.md
+new file mode 100644
+index 0000000..71240c6
+--- /dev/null
++++ b/tasks/briefs/s0-01-vb-f12-support/G2-report.md
+@@ -0,0 +1,131 @@
++# VB-F12-G2 report — repair round for VERIFY-VB-F12 F1
++
++PIN: 85836a5 · lane: pc-vb-f12-g2.md--85836a5 · role: code-implementer (local Qwen build route)
++Scope: T only. C/P/golden/S and all other files byte-identical to the PIN. This is a proposal; the coordinator and targeted adversarial re-verify own the verdict.
++
++## FILE IDENTITY
++
++- T = `tests/test_s0_01_check_acp_conformance.py`: `a71f6c44fc9d9c050448c1223d0bbfbd4143a4951a011f307d2288ba2d8401d1` (PIN: `a09e96ad4ab7741891ab5c28bf17ae01989a09c9de2c521e75416098e4670935`).
++- C = `proofs/S0-01/check_acp_conformance.py`: `868b8705699b5e78b1468252ecbdec93736d2a7e2f4819424311c31c243db46a`, byte-identical to PIN.
++- P = `proofs/S0-01/pins.py`: `1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981`, byte-identical to PIN.
++- Golden = `proofs/S0-01/evidence/golden/golden.jsonl`: `6225adb8ecc21a24d578696e2b9c25c81ebd5a82068c4411f780930c2fa54221`, byte-identical to PIN.
++- S = `tests/test_s0_01_spec_runner.py`: `9e1dfc609d8f42454d49aa64ae131966ddf8ee627ceef9e420303b9d3e3fa627`, byte-identical to PIN.
++- `git status --porcelain`: ` M tests/test_s0_01_check_acp_conformance.py` and `?? tasks/briefs/s0-01-vb-f12-support/G2-report.md`; exactly T plus this report.
++
++## CHANGE
++
++- T:2010-2038 repairs the synchronous control to a true adjacent swap ending at `entries[chunk_idx + 2:]`, then self-verifies length, multiset, and changed order before asserting the normalized effect.
++- T:2042-2068 applies the same repair and three self-verifying assertions to the closed-async-set `tool_call` control.
++- T:2071-2118 adds `_golden_async_pair` and `test_golden_two_async_records_in_opposite_raw_orders_normalize_identically`. The test first proves records A/B have distinct normalized lines, then proves A,B and B,A normalize identically, and finally builds two fixture legs, re-syncs timeline/split files plus tee status, pins regenerated run-1 bytes, and requires `check_golden` to return the canonical 12-line result.
++- T:2121-2152 adds `test_golden_non_async_kind_order_binds_through_check_golden`. Both fixture legs convert the first `usage_update` to `tool_call`; run-2 alone true-swaps it with its neighbor; regenerated run-1 golden bytes are pinned; `check_golden` must raise exactly `golden mismatch between run-1 and run-2 at normalized line 7`.
++
++## RED-FIRST
++
++### Item 1: duplicated-neighbor controls
++
++Command: `python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/red-length T::test_golden_synchronous_frame_order_still_binds T::test_golden_async_set_is_closed`, after adding length assertions but before fixing either final slice.
++
++- T:2027 `len(moved)`: `E       AssertionError: adjacent swap changed entry count: 12 != 11`
++- T:2058 `len(moved)`: `E       AssertionError: adjacent swap changed entry count: 12 != 11`
++- Summary: `2 failed in 0.67s` / rc 1.
++
++The new assertion rejected the duplicated neighbor before either normalized-output assertion ran.
++
++### Item 2: M8 sort deletion
++
++Scratch mutation only: removed C:880 `async_lines.sort(key=lambda item: item[1])`.
++
++Named test: `test_golden_two_async_records_in_opposite_raw_orders_normalize_identically`.
++
++- `E       AssertionError: opposite raw orders changed the normalized async multiset`
++- First difference: normalized index 4.
++- Summary: `1 failed in 1.94s` / rc 1.
++
++### Item 3: M4 widened set
++
++Scratch mutation only: widened P:138 to `ASYNC_SESSION_UPDATES = ("session_info_update", "tool_call")`.
++
++Named test: `test_golden_non_async_kind_order_binds_through_check_golden`.
++
++- `E               Failed: DID NOT RAISE Failure`
++- Summary: `1 failed in 1.87s` / rc 1.
++
++Correct tree after the tests landed: `4 passed in 1.90s` for both repaired controls and both new checker-path tests.
++
++## M1-M8 MUTATION AUDIT
++
++Every mutant was made in a fresh scratch archive of PIN 85836a5 with final T copied in. The tracked tree, real corpus, verifier tree, and servers were not mutated.
++
++| mutant | named killer | failing assertion line | result |
++|---|---|---|---|
++| M1 — widen P:138 `ASYNC_SESSION_UPDATES` with `agent_message_chunk` | `test_golden_synchronous_frame_order_still_binds` | `E       AssertionError: moving the SYNCHRONOUS agent_message_chunk did not change the output — the control is a tautology.` | `1 failed in 0.55s` |
++| M2 — C:879 `async_lines.append` slots every async line at end | `test_golden_async_notification_is_order_free` | `E       AssertionError: last normalized line is not the end_turn terminal: {..."session_info_update"...}` | `1 failed in 0.55s` |
++| M3 — C:868 `sync` includes async records in pass 1 | `test_golden_async_placement_is_independent_of_the_session_new_response` | `E       AssertionError: async notification before the session/new response changed the output` | `1 failed in 0.51s` |
++| M4 — widen P:138 `ASYNC_SESSION_UPDATES` with `tool_call` | `test_golden_non_async_kind_order_binds_through_check_golden` | `E               Failed: DID NOT RAISE Failure` | `1 failed in 1.79s` |
++| M5 — skip C:1570 `PINNED_GOLDEN_SHA256` guard | `test_golden_regen` | `E       assert 0 == 1` | `1 failed in 4.72s` |
++| M6 — force C:1694 `check_bundle` to raise | `test_committed_bundle_runner_mints_a_result` | `E       AssertionError: expected exit 0, got 1: stdout='' stderr='leg-exit-mismatch: S0-01 positive expected 0 got 1\n'` | `1 failed in 0.47s` |
++| M7 — delete `golden/negative` | `test_committed_negative_leg_cmd_reports_the_protocol_violation` | `E       AssertionError: expected exit 1, got 2: 'deferred: negative probe not captured\n'` | `1 failed in 0.29s` |
++| M8 — remove C:880 `async_lines.sort` | `test_golden_two_async_records_in_opposite_raw_orders_normalize_identically` | `E       AssertionError: opposite raw orders changed the normalized async multiset` | `1 failed in 1.90s` |
++
++M4 and M8 are killed by the new focused tests, not by `test_real_bundle_passes_every_check`.
++
++## DE-VACUOUS ASSERTION MUTATIONS
++
++All mutations below ran on scratch copies and were restored.
++
++- Item 1 length: changed expected `len(entries)` by one to `len(entries) - 1` while restoring the original malformed slice. Own line failed: `E       AssertionError: adjacent swap changed entry count: 12 != 11`; `1 failed in 0.55s`.
++- Item 1 multiset: changed expected source to `entries[:-1]`. Own line failed: `E       AssertionError: adjacent swap changed the entry multiset`; `1 failed in 0.53s`.
++- Item 1 ordering: changed `moved != entries` to `moved == entries`. Own line failed: `E       AssertionError: adjacent swap did not change the entry order`; `1 failed in 0.52s`.
++- Item 2 distinctness: changed `normalized_a != normalized_b` to `==`. Own line failed: `E       AssertionError: the two async records do not have distinct normalized lines`; `1 failed in 1.97s`.
++- Item 2 checker result: changed expected list to `expected[:-1]`. Own line failed: `E       AssertionError: check_golden did not return the canonical two-async timeline`; `1 failed in 1.83s`.
++- Item 3 diagnostic: changed expected normalized line `7` to `8`. The own `pytest.raises(match=...)` assertion failed, showing actual `ized line 7` versus expected `ized line 8`; `1 failed in 1.98s`.
++
++## FINAL GATES
++
++Environment for pytest: `PATH=/home/rocco/venv-agent-factory/bin:$PATH`, `S0_01_VENUE=pc`, `S0_01_REAL_LEG_DIR=/home/rocco/s0-01-pinned/realleg/golden`, `S0_02_BUZZ_SRC=/home/rocco/s0-01-pinned/buzz`.
++
++Run 1:
++
++`478 passed in 77.38s (0:01:17)`
++
++Run 2, identical final T bytes:
++
++`478 passed in 78.41s (0:01:18)`
++
++Other gates:
++
++- `pyflakes rc=0`
++- `git diff --check rc=0`
++- `git diff --quiet 85836a5 -- proofs/S0-01/ rc=0`
++- `a71f6c44fc9d9c050448c1223d0bbfbd4143a4951a011f307d2288ba2d8401d1  tests/test_s0_01_check_acp_conformance.py`
++- AP screen final line (`call_count`), verbatim: `    tests/test_s0_01_check_acp_conformance.py:5590: if call_count[0] == 2:`
++- Full AP screen summary: `--- TEST_SCREEN over 1 path(s): 4 hits over 1 files ---`; AP-66 at T:88 `nv._point_mul`, T:90 `nv._point_mul`; AF-AP-48 at T:6147 `assert all`; AF-AP-57 at T:5590 `call_count`. All are pre-existing, outside the changed hunks, and unchanged from the PIN.
++- Final code-intel pack: `../scratch/g2-pack.md`, 300 lines. Its ripwire test-gate line reports `changed="1" impacted="0" tests="0" untested="0"`; it maps each new test symbol. GitNexus and code-review-graph were unmapped inside the pack; the direct clone GitNexus `detect-changes` result was `Changes: 1 files, 8 symbols`, `Affected processes: 0`, `Risk level: low`.
++
++## SELF-ATTACK
++
++1. Risk: A/B differ only in values, so the shape normalizer makes sort a no-op. Ruled out at T:2090-2092 by `normalized_b`: the test compares their normalized lines directly. The `subtitle` key exists only in B, so the key sets differ and M8 dies at normalized index 4.
++2. Risk: the checker-path tests only exercise `normalize_timeline`, not `check_golden`. Ruled out at T:2117-2118 and T:2148-2152: the M8 path asserts `check_golden` returns the regenerated canonical list; the M4 path requires its exact line-7 `Failure`.
++3. Risk: timeline edits fail earlier due to stale seq/split/tee artifacts. Ruled out by the green `check_golden` call for M8, the exact golden mismatch from M4, and the two final 478-test runs. Both new fixture tests renumber seq and call `_write_timeline` plus `_write_tee_status`.
++
++## DISCREPANCIES
++
++- The brief suggested adding `title` as B's extra key. C:104-105 defines `title` as volatile; `_shape` removes it, so A/B would normalize identically and sorting would be a no-op. T:2076 uses `subtitle`, a non-volatile extra key, preserving the brief's different-key-set requirement. Direct probe: `title` produced the original normalized line; `subtitle` produced `"subtitle":"str"`.
++- The brief calls for M4's exact checker message with normalized line `N`; measured N is **7** on the fixture. The previous canonical real-evidence report measured line 6 on a different construction. This test pins the fixture's exact zero-based diagnostic.
++- Initial final pack command passed multiple symbols after one `-s`; `lane_context.sh` treated later symbols as file paths and returned rc 64. Re-run with one `-s` per symbol succeeded: `lane_context: pack written to ../scratch/g2-pack.md (300 lines)`.
++- Direct `ripwire edit-check` by file path was ambiguous because old report packs define the same path contract; the final lane pack supplied per-symbol ripwire callers and the test-gate instead.
++- `report_lint` final bounded result: `report_lint: 25 refs — OK 25, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`.
++
++## NOT-done
++
++- No production checker, pins, evidence, spec-runner, corpus, model, relay, service, ledger, wiki, or incident-log changes were made.
++- No git write, commit, push, checkout, reset, stash, or outward-facing action was performed.
++- This build lane did not self-accept. The coordinator must run the targeted adversarial re-verify and grade this proposal.
++
++## GATE RECOMMENDATION
++
++`MERGE-READY` proposal for the focused F1 repair: true swap controls are self-verifying, all M1-M8 mutants are killed by named tests, M4/M8 die through the new focused paths, and the two required final suites passed with 478 tests each. Coordinator and targeted verifier own the verdict.
++
++retro: the brief's `title` discriminator conflicted with the production volatile-field set; recorded above as a concrete discrepancy. No general skill update is needed. The hollow-green class was already registered as AF-AP-109.
++
++🌱 graft saved ~89,803 tokens this turn.
+diff --git a/tests/test_s0_01_check_acp_conformance.py b/tests/test_s0_01_check_acp_conformance.py
+index 9012dd8..6c34bb6 100644
+--- a/tests/test_s0_01_check_acp_conformance.py
++++ b/tests/test_s0_01_check_acp_conformance.py
+@@ -2023,7 +2023,13 @@ def test_golden_synchronous_frame_order_still_binds():
+     moved = (entries[:chunk_idx]
+              + entries[chunk_idx + 1:chunk_idx + 2]
+              + entries[chunk_idx:chunk_idx + 1]
+-             + entries[chunk_idx + 1:])
++             + entries[chunk_idx + 2:])
++    assert len(moved) == len(entries), \
++        f"adjacent swap changed entry count: {len(moved)} != {len(entries)}"
++    assert sorted(json.dumps(e, sort_keys=True) for e in moved) == sorted(
++        json.dumps(e, sort_keys=True) for e in entries
++    ), "adjacent swap changed the entry multiset"
++    assert moved != entries, "adjacent swap did not change the entry order"
+     n_orig = cc.normalize_timeline(entries)
+     n_moved = cc.normalize_timeline(moved)
+     assert n_orig != n_moved, \
+@@ -2048,7 +2054,13 @@ def test_golden_async_set_is_closed():
+                 and (e["frame"].get("params", {}).get("update") or {}).get("sessionUpdate") == "usage_update")
+     tc[idx9]["frame"]["params"]["update"]["sessionUpdate"] = "tool_call"
+     # Move it one position.
+-    moved = tc[:idx9] + tc[idx9 + 1:idx9 + 2] + tc[idx9:idx9 + 1] + tc[idx9 + 1:]
++    moved = tc[:idx9] + tc[idx9 + 1:idx9 + 2] + tc[idx9:idx9 + 1] + tc[idx9 + 2:]
++    assert len(moved) == len(tc), \
++        f"adjacent swap changed entry count: {len(moved)} != {len(tc)}"
++    assert sorted(json.dumps(e, sort_keys=True) for e in moved) == sorted(
++        json.dumps(e, sort_keys=True) for e in tc
++    ), "adjacent swap changed the entry multiset"
++    assert moved != tc, "adjacent swap did not change the entry order"
+     n_orig = cc.normalize_timeline(tc)
+     n_moved = cc.normalize_timeline(moved)
+     assert n_orig != n_moved, \
+@@ -2056,6 +2068,90 @@ def test_golden_async_set_is_closed():
+         f"  orig: {n_orig}\n  moved: {n_moved}"
+ 
+ 
++def _golden_async_pair(entries):
++    """Add a second async record whose normalized shape differs from the first."""
++    async_idx = next(i for i, entry in enumerate(entries) if _is_async_frame(entry))
++    record_a = copy.deepcopy(entries[async_idx])
++    record_b = copy.deepcopy(record_a)
++    record_b["frame"]["params"]["update"]["subtitle"] = "second async record"
++    return async_idx, record_a, record_b
++
++
++def test_golden_two_async_records_in_opposite_raw_orders_normalize_identically(
++        bundle, monkeypatch):
++    """M8: sorted async normalized lines must ignore the two records' raw order."""
++    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
++    async_idx, record_a, record_b = _golden_async_pair(entries)
++    base = entries[:async_idx] + entries[async_idx + 1:]
++    raw_ab = base[:async_idx] + [record_a, record_b] + base[async_idx:]
++    raw_ba = base[:async_idx] + [record_b, record_a] + base[async_idx:]
++
++    normalized_a = cc.normalize_timeline([record_a])[0]
++    normalized_b = cc.normalize_timeline([record_b])[0]
++    assert normalized_a != normalized_b, \
++        "the two async records do not have distinct normalized lines"
++    expected = cc.normalize_timeline(raw_ab)
++    assert expected == cc.normalize_timeline(raw_ba), \
++        "opposite raw orders changed the normalized async multiset"
++
++    rewritten_timelines = {}
++    for leg, order in (("run-1", "ab"), ("run-2", "ba")):
++        leg_dir = bundle / "golden" / leg
++        original = cc._load_timeline_raw(leg_dir, leg)
++        leg_async_idx, leg_record_a, leg_record_b = _golden_async_pair(original)
++        leg_base = original[:leg_async_idx] + original[leg_async_idx + 1:]
++        pair = [leg_record_a, leg_record_b] if order == "ab" else [leg_record_b, leg_record_a]
++        rewritten = leg_base[:leg_async_idx] + pair + leg_base[leg_async_idx:]
++        for seq, entry in enumerate(rewritten, 1):
++            entry["seq"] = seq
++        _write_timeline(leg_dir, rewritten)
++        _write_tee_status(leg_dir, rewritten)
++        rewritten_timelines[leg] = rewritten
++    expected = cc.normalize_timeline(rewritten_timelines["run-1"])
++    assert expected == cc.normalize_timeline(rewritten_timelines["run-2"]), \
++        "the two synthetic legs do not normalize identically"
++    golden_text = "\n".join(expected) + "\n"
++    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
++    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256",
++                        _sha256(golden_text.encode()))
++    assert cc.check_golden(bundle / "golden") == expected, \
++        "check_golden did not return the canonical two-async timeline"
++
++
++def test_golden_non_async_kind_order_binds_through_check_golden(bundle, monkeypatch):
++    """M4: a non-async session/update adjacent swap must reach and fail check_golden."""
++    timelines = {}
++    for leg in ("run-1", "run-2"):
++        leg_dir = bundle / "golden" / leg
++        entries = cc._load_timeline_raw(leg_dir, leg)
++        tool_idx = next(
++            i for i, entry in enumerate(entries)
++            if entry["frame"].get("method") == "session/update"
++            and ((entry["frame"].get("params") or {}).get("update") or {}).get(
++                "sessionUpdate") == "usage_update"
++        )
++        entries[tool_idx]["frame"]["params"]["update"]["sessionUpdate"] = "tool_call"
++        if leg == "run-2":
++            entries = (entries[:tool_idx]
++                       + entries[tool_idx + 1:tool_idx + 2]
++                       + entries[tool_idx:tool_idx + 1]
++                       + entries[tool_idx + 2:])
++        for seq, entry in enumerate(entries, 1):
++            entry["seq"] = seq
++        _write_timeline(leg_dir, entries)
++        _write_tee_status(leg_dir, entries)
++        timelines[leg] = entries
++
++    golden_text = "\n".join(cc.normalize_timeline(timelines["run-1"])) + "\n"
++    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
++    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256",
++                        _sha256(golden_text.encode()))
++    with pytest.raises(
++            cc.Failure,
++            match=r"^golden: golden mismatch between run-1 and run-2 at normalized line 7$"):
++        cc.check_golden(bundle / "golden")
++
++
+ def test_golden_distinctness_all(bundle, monkeypatch):
+     """m69: run-2 copied from run-1 — the mention replay check fires because
+     the event ids are duplicated across legs."""
+diff --git a/transcripts/pc/pc-vb-f12-g2.md--85836a5.md b/transcripts/pc/pc-vb-f12-g2.md--85836a5.md
+new file mode 100644
+index 0000000..a2bdff0
+--- /dev/null
++++ b/transcripts/pc/pc-vb-f12-g2.md--85836a5.md
+@@ -0,0 +1,522 @@
++# Hermes lane session 20260921_233014_179986
++
++- model: agentfactory-build-local
++- started: 2026-09-21T22:30:16.232963+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-vb-f12-g2.md--85836a5/tree
++- messages: 153; tool calls: 101
++- tokens in/out/cache_read/reasoning: 274487/100271/6713184/68744
++
++## user @ 22:30:15
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 22:36:23 → tools: terminal, read_file
++
++
++
++## tool result (terminal) @ 22:36:23 — 1333 chars (body not exported)
++
++## tool result (read_file) @ 22:36:23 — 23659 chars (body not exported)
++
++## assistant @ 22:37:21 → tools: terminal, terminal
++
++Tree is at PIN 85836a5, clean. I've read the VERIFY-VB-F12 report and now I'm gathering the code seams to verify the premise by checking the affected tests, normalizer, checker, pins, and the verifier's mutant runner.
++
++## tool result (terminal) @ 22:37:22 — 14668 chars (body not exported)
++
++## tool result (terminal) @ 22:37:22 — 22843 chars (body not exported)
++
++## assistant @ 22:39:35 → tools: terminal, terminal
++
++I've confirmed the normalizer at C:868-885, the async set configuration, and the two broken tests. Now I'll map out the test file's mechanics including imports, the `GOLDEN` constant, and the `bundle` fixture, then verify the verifier's canonical-mutants run.py and exact line numbers.
++
++## tool result (terminal) @ 22:39:35 — 4240 chars (body not exported)
++
++## tool result (terminal) @ 22:39:35 — 14305 chars (body not exported)
++
++## assistant @ 22:42:51 → tools: terminal, terminal, terminal
++
++I've confirmed the slice bug at lines 2010–2056 and the normalizer logic, and I'm now gathering the full normalizer implementation, fixture helpers, and run data to complete the test design.
++
++## tool result (terminal) @ 22:42:52 — 7903 chars (body not exported)
++
++## tool result (terminal) @ 22:42:52 — 14905 chars (body not exported)
++
++## tool result (terminal) @ 22:42:52 — 9113 chars (body not exported)
++
++## assistant @ 22:44:35 → tools: terminal, terminal, terminal
++
++I've confirmed the slice defect and timeline structure. Now I'll check the check_bundle ordering, volatile fields, tee-status keys, and async frame shapes to ensure my mutations survive the per-leg checks.
++
++## tool result (terminal) @ 22:44:35 — 8478 chars (body not exported)
++
++## tool result (terminal) @ 22:44:35 — 10642 chars (body not exported)
++
++## tool result (terminal) @ 22:44:35 — 3172 chars (body not exported)
++
++## assistant @ 22:47:12 → tools: terminal, execute_code
++
++I've confirmed the slice defect at T:2023-2026 and T:2051, verified the normalizer and async-set locations, and checked the timeline structure. Now I'll identify the exact C mutation sites, test-runner locations, and run an environment probe to verify the new tests' discriminators.
++
++## tool result (terminal) @ 22:47:12 — 6860 chars (body not exported)
++
++## tool result (execute_code) @ 22:47:12 — 1360 chars (body not exported)
++
++## assistant @ 22:56:41 → tools: terminal, terminal
++
++The mechanics check out. Now I'll verify the remaining details before writing the patch: the `check_golden` function, C's imports and volatile-field definition, the C:1570 site, S's runner tests, and pins' async-related content.
++
++## tool result (terminal) @ 22:56:42 — 6317 chars (body not exported)
++
++## tool result (terminal) @ 22:56:42 — 5345 chars (body not exported)
++
++## assistant @ 23:27:43 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:27:45 — 47619 chars (body not exported)
++
++## tool result (terminal) @ 23:27:46 — 10034 chars (body not exported)
++
++## tool result (terminal) @ 23:27:50 — 4744 chars (body not exported)
++
++## tool result (terminal) @ 23:27:52 — 27792 chars (body not exported)
++
++## assistant @ 23:28:46 → tools: write_file, patch, patch
++
++
++
++## tool result (write_file) @ 23:28:50 — 322 chars (body not exported)
++
++## tool result (patch) @ 23:28:50 — 1235 chars (body not exported)
++
++## tool result (patch) @ 23:28:52 — 1263 chars (body not exported)
++
++## assistant @ 23:29:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:29:14 — 4789 chars (body not exported)
++
++## assistant @ 23:29:43 → tools: patch, patch, patch
++
++
++
++## tool result (patch) @ 23:29:45 — 994 chars (body not exported)
++
++## tool result (patch) @ 23:29:47 — 1167 chars (body not exported)
++
++## tool result (patch) @ 23:29:47 — 763 chars (body not exported)
++
++## assistant @ 23:30:03 → tools: patch
++
++
++
++## tool result (patch) @ 23:30:03 — 1510 chars (body not exported)
++
++## assistant @ 23:30:39 → tools: terminal, execute_code
++
++
++
++## tool result (terminal) @ 23:30:39 — 1359 chars (body not exported)
++
++## tool result (execute_code) @ 23:30:39 — 1070 chars (body not exported)
++
++## assistant @ 23:31:26 → tools: patch
++
++
++
++## tool result (patch) @ 23:31:28 — 4597 chars (body not exported)
++
++## assistant @ 23:31:44 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:31:46 — 11229 chars (body not exported)
++
++## tool result (terminal) @ 23:31:47 — 45 chars (body not exported)
++
++## assistant @ 23:32:59 → tools: patch, patch
++
++
++
++## tool result (patch) @ 23:33:01 — 1998 chars (body not exported)
++
++## tool result (patch) @ 23:33:03 — 927 chars (body not exported)
++
++## assistant @ 23:33:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:33:22 — 258 chars (body not exported)
++
++## assistant @ 23:34:26 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:34:32 — 5260 chars (body not exported)
++
++## assistant @ 23:35:16 → tools: patch, patch
++
++
++
++## tool result (patch) @ 23:35:17 — 1147 chars (body not exported)
++
++## tool result (patch) @ 23:35:17 — 1500 chars (body not exported)
++
++## assistant @ 23:35:54 → tools: search_files, terminal, terminal
++
++
++
++## tool result (search_files) @ 23:35:55 — 12862 chars (body not exported)
++
++## tool result (terminal) @ 23:35:55 — 7314 chars (body not exported)
++
++## tool result (terminal) @ 23:35:55 — 45 chars (body not exported)
++
++## assistant @ 23:36:15 → tools: search_files, search_files, search_files, search_files, terminal
++
++
++
++## tool result (search_files) @ 23:36:16 — 805 chars (body not exported)
++
++## tool result (search_files) @ 23:36:16 — 4268 chars (body not exported)
++
++## tool result (search_files) @ 23:36:16 — 18 chars (body not exported)
++
++## tool result (search_files) @ 23:36:16 — 18 chars (body not exported)
++
++## tool result (terminal) @ 23:36:17 — 4068 chars (body not exported)
++
++## assistant @ 23:36:43 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 23:36:43 — 6019 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 215 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 3090 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 7641 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 215 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 1936 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 2217 chars (body not exported)
++
++## tool result (read_file) @ 23:36:43 — 2023 chars (body not exported)
++
++## assistant @ 23:37:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:38:03 — 14773 chars (body not exported)
++
++## assistant @ 23:38:31 → tools: patch
++
++
++
++## tool result (patch) @ 23:38:31 — 2765 chars (body not exported)
++
++## assistant @ 23:39:51 → tools: patch, patch
++
++
++
++## tool result (patch) @ 23:39:51 — 230 chars (body not exported)
++
++## tool result (patch) @ 23:39:51 — 1878 chars (body not exported)
++
++## assistant @ 23:40:02 → tools: patch
++
++
++
++## tool result (patch) @ 23:40:04 — 1046 chars (body not exported)
++
++## assistant @ 23:40:59 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 23:41:14 — 4107 chars (body not exported)
++
++## assistant @ 23:41:37 → tools: patch
++
++
++
++## tool result (patch) @ 23:41:37 — 2256 chars (body not exported)
++
++## assistant @ 23:41:57 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:41:57 — 206 chars (body not exported)
++
++## tool result (terminal) @ 23:41:58 — 870 chars (body not exported)
++
++## tool result (terminal) @ 23:41:59 — 4586 chars (body not exported)
++
++## tool result (terminal) @ 23:41:59 — 503 chars (body not exported)
++
++## assistant @ 23:43:10 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:43:10 — 1413 chars (body not exported)
++
++## tool result (terminal) @ 23:43:10 — 137 chars (body not exported)
++
++## tool result (terminal) @ 23:43:12 — 258 chars (body not exported)
++
++## assistant @ 23:43:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:43:28 — 108 chars (body not exported)
++
++## assistant @ 23:43:34 → tools: read_file
++
++
++
++## tool result (read_file) @ 23:43:34 — 24228 chars (body not exported)
++
++## assistant @ 23:43:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:45:01 — 803 chars (body not exported)
++
++## assistant @ 23:45:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:46:29 — 803 chars (body not exported)
++
++## assistant @ 23:46:44 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:46:45 — 58 chars (body not exported)
++
++## tool result (terminal) @ 23:46:45 — 503 chars (body not exported)
++
++## tool result (terminal) @ 23:46:45 — 246 chars (body not exported)
++
++## tool result (terminal) @ 23:46:45 — 66 chars (body not exported)
++
++## assistant @ 23:47:08 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:47:08 — 7278 chars (body not exported)
++
++## tool result (terminal) @ 23:47:08 — 224 chars (body not exported)
++
++## tool result (terminal) @ 23:47:08 — 789 chars (body not exported)
++
++## assistant @ 23:49:13 → tools: write_file
++
++
++
++## tool result (write_file) @ 23:49:14 — 396 chars (body not exported)
++
++## assistant @ 23:49:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:49:21 — 6603 chars (body not exported)
++
++## assistant @ 23:50:20 → tools: patch, patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 23:50:20 — 1363 chars (body not exported)
++
++## tool result (patch) @ 23:50:21 — 3492 chars (body not exported)
++
++## tool result (patch) @ 23:50:21 — 1752 chars (body not exported)
++
++## tool result (patch) @ 23:50:22 — 1788 chars (body not exported)
++
++## tool result (patch) @ 23:50:22 — 1709 chars (body not exported)
++
++## assistant @ 23:50:30 → tools: patch
++
++
++
++## tool result (patch) @ 23:50:31 — 1702 chars (body not exported)
++
++## assistant @ 23:50:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:50:40 — 129 chars (body not exported)
++
++## assistant @ 23:50:47 → tools: patch
++
++
++
++## tool result (patch) @ 23:50:48 — 1571 chars (body not exported)
++
++## assistant @ 23:51:06 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:51:06 — 129 chars (body not exported)
++
++## tool result (terminal) @ 23:51:06 — 320 chars (body not exported)
++
++## tool result (terminal) @ 23:51:07 — 870 chars (body not exported)
++
++## assistant @ 23:51:25 → tools: patch, write_file
++
++
++
++## tool result (patch) @ 23:51:25 — 1347 chars (body not exported)
++
++## tool result (write_file) @ 23:51:25 — 322 chars (body not exported)
++
++## assistant @ 23:51:32 → tools: read_file
++
++
++
++## tool result (read_file) @ 23:51:32 — 12144 chars (body not exported)
++
++## assistant @ 23:51:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:51:53 — 129 chars (body not exported)
++
++## assistant @ 23:52:20 → tools: patch
++
++
++
++## tool result (patch) @ 23:52:20 — 1728 chars (body not exported)
++
++## assistant @ 23:52:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:52:28 — 129 chars (body not exported)
++
++## assistant @ 23:52:38 → tools: patch
++
++
++
++## tool result (patch) @ 23:52:38 — 1605 chars (body not exported)
++
++## assistant @ 23:52:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:52:45 — 129 chars (body not exported)
++
++## assistant @ 23:54:52
++
++# VB-F12-G2 report — repair round for VERIFY-VB-F12 F1
++
++PIN: 85836a5 · lane: pc-vb-f12-g2.md--85836a5 · role: code-implementer (local Qwen build route)
++Scope: T only. C/P/golden/S and all other files byte-identical to the PIN. This is a proposal; the coordinator and targeted adversarial re-verify own the verdict.
++
++## FILE IDENTITY
++
++- T = `tests/test_s0_01_check_acp_conformance.py`: `<opaque-redacted>` (PIN: `<opaque-redacted>`).
++- C = `proofs/S0-01/check_acp_conformance.py`: `<opaque-redacted>`, byte-identical to PIN.
++- P = `proofs/S0-01/pins.py`: `<opaque-redacted>`, byte-identical to PIN.
++- Golden = `proofs/S0-01/evidence/golden/golden.jsonl`: `<opaque-redacted>`, byte-identical to PIN.
++- S = `tests/test_s0_01_spec_runner.py`: `<opaque-redacted>`, byte-identical to PIN.
++- `git status --porcelain`: ` M tests/test_s0_01_check_acp_conformance.py` and `?? tasks/briefs/s0-01-vb-f12-support/G2-report.md`; exactly T plus this report.
++
++## CHANGE
++
++- T:2010-2038 repairs the synchronous control to a true adjacent swap ending at `entries[chunk_idx + 2:]`, then self-verifies length, multiset, and changed order before asserting the normalized effect.
++- T:2042-2068 applies the same repair and three self-verifying assertions to the closed-async-set `tool_call` control.
++- T:2071-2118 adds `_golden_async_pair` and `<opaque-redacted>`. The test first proves records A/B have distinct normalized lines, then proves A,B and B,A normalize identically, and finally builds two fixture legs, re-syncs timeline/split files plus tee status, pins regenerated run-1 bytes, and requires `check_golden` to return the canonical 12-line result.
++- T:2121-2152 adds `<opaque-redacted>`. Both fixture legs convert the first `usage_update` to `tool_call`; run-2 alone true-swaps it with its neighbor; regenerated run-1 golden bytes are pinned; `check_golden` must raise exactly `golden mismatch between run-1 and run-2 at normalized line 7`.
++
++## RED-FIRST
++
++### Item 1: duplicated-neighbor controls
++
++Command: `python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/red-length T::<opaque-redacted> T::test_golden_async_set_is_closed`, after adding length assertions but before fixing either final slice.
++
++- T:2027 `len(moved)`: `E       AssertionError: adjacent swap changed entry count: 12 != 11`
++- T:2058 `len(moved)`: `E       AssertionError: adjacent swap changed entry count: 12 != 11`
++- Summary: `2 failed in 0.67s` / rc 1.
++
++The new assertion rejected the duplicated neighbor before either normalized-output assertion ran.
++
++### Item 2: M8 sort deletion
++
++Scratch mutation only: removed C:8
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 274487,
++  "output_tokens": 100271,
++  "cache_read_tokens": 6713184,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 68744,
++  "total_tokens": 7087942,
++  "api_calls": 51,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260921_233014_179986",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

@@ -2023,7 +2023,13 @@ def test_golden_synchronous_frame_order_still_binds():
     moved = (entries[:chunk_idx]
              + entries[chunk_idx + 1:chunk_idx + 2]
              + entries[chunk_idx:chunk_idx + 1]
-             + entries[chunk_idx + 1:])
+             + entries[chunk_idx + 2:])
+    assert len(moved) == len(entries), \
+        f"adjacent swap changed entry count: {len(moved)} != {len(entries)}"
+    assert sorted(json.dumps(e, sort_keys=True) for e in moved) == sorted(
+        json.dumps(e, sort_keys=True) for e in entries
+    ), "adjacent swap changed the entry multiset"
+    assert moved != entries, "adjacent swap did not change the entry order"
     n_orig = cc.normalize_timeline(entries)
     n_moved = cc.normalize_timeline(moved)
     assert n_orig != n_moved, \
@@ -2048,12 +2054,102 @@ def test_golden_async_set_is_closed():
                 and (e["frame"].get("params", {}).get("update") or {}).get("sessionUpdate") == "usage_update")
     tc[idx9]["frame"]["params"]["update"]["sessionUpdate"] = "tool_call"
     # Move it one position.
-    moved = tc[:idx9] + tc[idx9 + 1:idx9 + 2] + tc[idx9:idx9 + 1] + tc[idx9 + 1:]
+    moved = tc[:idx9] + tc[idx9 + 1:idx9 + 2] + tc[idx9:idx9 + 1] + tc[idx9 + 2:]
+    assert len(moved) == len(tc), \
+        f"adjacent swap changed entry count: {len(moved)} != {len(tc)}"
+    assert sorted(json.dumps(e, sort_keys=True) for e in moved) == sorted(
+        json.dumps(e, sort_keys=True) for e in tc
+    ), "adjacent swap changed the entry multiset"
+    assert moved != tc, "adjacent swap did not change the entry order"
     n_orig = cc.normalize_timeline(tc)
     n_moved = cc.normalize_timeline(moved)
     assert n_orig != n_moved, \
         f"moving a NON-async (tool_call) session/update did not change the output — the async set is not closed.\n" \
         f"  orig: {n_orig}\n  moved: {n_moved}"
+
+
+def _golden_async_pair(entries):
+    """Add a second async record whose normalized shape differs from the first."""
+    async_idx = next(i for i, entry in enumerate(entries) if _is_async_frame(entry))
+    record_a = copy.deepcopy(entries[async_idx])
+    record_b = copy.deepcopy(record_a)
+    record_b["frame"]["params"]["update"]["subtitle"] = "second async record"
+    return async_idx, record_a, record_b
+
+
+def test_golden_two_async_records_in_opposite_raw_orders_normalize_identically(
+        bundle, monkeypatch):
+    """M8: sorted async normalized lines must ignore the two records' raw order."""
+    entries = cc._load_timeline_raw(GOLDEN / "run-1", "run-1")
+    async_idx, record_a, record_b = _golden_async_pair(entries)
+    base = entries[:async_idx] + entries[async_idx + 1:]
+    raw_ab = base[:async_idx] + [record_a, record_b] + base[async_idx:]
+    raw_ba = base[:async_idx] + [record_b, record_a] + base[async_idx:]
+
+    normalized_a = cc.normalize_timeline([record_a])[0]
+    normalized_b = cc.normalize_timeline([record_b])[0]
+    assert normalized_a != normalized_b, \
+        "the two async records do not have distinct normalized lines"
+    expected = cc.normalize_timeline(raw_ab)
+    assert expected == cc.normalize_timeline(raw_ba), \
+        "opposite raw orders changed the normalized async multiset"
+
+    rewritten_timelines = {}
+    for leg, order in (("run-1", "ab"), ("run-2", "ba")):
+        leg_dir = bundle / "golden" / leg
+        original = cc._load_timeline_raw(leg_dir, leg)
+        leg_async_idx, leg_record_a, leg_record_b = _golden_async_pair(original)
+        leg_base = original[:leg_async_idx] + original[leg_async_idx + 1:]
+        pair = [leg_record_a, leg_record_b] if order == "ab" else [leg_record_b, leg_record_a]
+        rewritten = leg_base[:leg_async_idx] + pair + leg_base[leg_async_idx:]
+        for seq, entry in enumerate(rewritten, 1):
+            entry["seq"] = seq
+        _write_timeline(leg_dir, rewritten)
+        _write_tee_status(leg_dir, rewritten)
+        rewritten_timelines[leg] = rewritten
+    expected = cc.normalize_timeline(rewritten_timelines["run-1"])
+    assert expected == cc.normalize_timeline(rewritten_timelines["run-2"]), \
+        "the two synthetic legs do not normalize identically"
+    golden_text = "\n".join(expected) + "\n"
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
+    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256",
+                        _sha256(golden_text.encode()))
+    assert cc.check_golden(bundle / "golden") == expected, \
+        "check_golden did not return the canonical two-async timeline"
+
+
+def test_golden_non_async_kind_order_binds_through_check_golden(bundle, monkeypatch):
+    """M4: a non-async session/update adjacent swap must reach and fail check_golden."""
+    timelines = {}
+    for leg in ("run-1", "run-2"):
+        leg_dir = bundle / "golden" / leg
+        entries = cc._load_timeline_raw(leg_dir, leg)
+        tool_idx = next(
+            i for i, entry in enumerate(entries)
+            if entry["frame"].get("method") == "session/update"
+            and ((entry["frame"].get("params") or {}).get("update") or {}).get(
+                "sessionUpdate") == "usage_update"
+        )
+        entries[tool_idx]["frame"]["params"]["update"]["sessionUpdate"] = "tool_call"
+        if leg == "run-2":
+            entries = (entries[:tool_idx]
+                       + entries[tool_idx + 1:tool_idx + 2]
+                       + entries[tool_idx:tool_idx + 1]
+                       + entries[tool_idx + 2:])
+        for seq, entry in enumerate(entries, 1):
+            entry["seq"] = seq
+        _write_timeline(leg_dir, entries)
+        _write_tee_status(leg_dir, entries)
+        timelines[leg] = entries
+
+    golden_text = "\n".join(cc.normalize_timeline(timelines["run-1"])) + "\n"
+    _rewrite(bundle / "golden" / "golden.jsonl", golden_text)
+    monkeypatch.setattr("check_acp_conformance.PINNED_GOLDEN_SHA256",
+                        _sha256(golden_text.encode()))
+    with pytest.raises(
+            cc.Failure,
+            match=r"^golden: golden mismatch between run-1 and run-2 at normalized line 7$"):
+        cc.check_golden(bundle / "golden")
 
 
 def test_golden_distinctness_all(bundle, monkeypatch):
