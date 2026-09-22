@@ -172,6 +172,11 @@ AP_SCREEN = [
     # `gpg` printing a shaped GOODSIG line made the real verify_review accept an unsigned record (review.py:114 / :136).
     ("AF-AP-115", re.compile(r"""shutil\.which\(|os\.environ(?:\.get\(|\[)\s*["']PATH["']"""),
      "a trust-boundary executable resolved from the caller's PATH (`shutil.which(...)` / `os.environ[\"PATH\"]` forwarded into the child) — whoever controls the environment supplies the verifier; resolve a FIXED absolute path list once and run the fake-PATH regression through the real consumer (AF-AP-115)"),
+    # AF-AP-117 (2026-09-22, VERIFY-J1-0-R1 §0): a fixture step changed the mode of a SHARED system path it did not create —
+    # `chmod 755 /tmp /tmp/vj10r1` stripped the sandbox's sticky world-writable /tmp for two hours; make only the scratch root
+    # you created traversable, never a system directory.
+    ("AF-AP-117", re.compile(r"""\bchmod\b(?:\s+-[A-Za-z]+)*(?:\s+(?:[0-7]{3,4}|[ugoa]*[+-=][rwxstXugo]+))?\s+(?:/tmp|/|/home|/root|/var/tmp)(?=\s|$)"""),
+     "a fixture changes the mode of a shared system path it did not create (`chmod … /tmp`, `/`, `/home`, `/root`, `/var/tmp`) — make only the scratch root you created traversable (mkdir -p + chmod on that root), never a system directory (AF-AP-117)"),
 
 ]
 
