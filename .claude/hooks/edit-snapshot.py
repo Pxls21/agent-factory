@@ -177,6 +177,12 @@ AP_SCREEN = [
     # you created traversable, never a system directory.
     ("AF-AP-117", re.compile(r"""\bchmod\b(?:\s+-[A-Za-z]+)*(?:\s+(?:[0-7]{3,4}|[ugoa]*[+-=][rwxstXugo]+))?\s+(?:/tmp|/|/home|/root|/var/tmp)(?=\s|$)"""),
      "a fixture changes the mode of a shared system path it did not create (`chmod … /tmp`, `/`, `/home`, `/root`, `/var/tmp`) — make only the scratch root you created traversable (mkdir -p + chmod on that root), never a system directory (AF-AP-117)"),
+    # AF-AP-118 (2026-09-22, VERIFY-K1-g's route measurement): a harness-level fallback chain (Hermes `fallback_providers`)
+    # silently re-routed "strict raw id" lanes to cloud models after local errors; a lane's route label is a call_logs
+    # measurement (`requested_model`), never the dispatch parameter — any production file that writes the key is reviewed.
+    ("AF-AP-118", re.compile(r"""\bfallback_providers\b"""),
+     "a harness fallback chain (`fallback_providers`) written into a lane/profile config — the chain IS a route: a lane on it is HYBRID until its calls are measured (call_logs `requested_model`), and the harvest line must read the served model (AF-AP-118)"),
+
 
 ]
 
