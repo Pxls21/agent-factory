@@ -289,6 +289,11 @@ costs more than doing it in the main loop.
   spot-checks ONE artifact. Coordinator-priced work is only: designs, briefs, dry-run plan
   reviews, security/spine hunk reads, and the kill-switch question on every green.
 
+### A lane's route is a MEASUREMENT, never its dispatch parameter (baked 2026-09-22; AF-AP-111 + AF-AP-118)
+
+The model a lane ran on is read from the egress log (OmniRoute `call_logs`: the `requested_model` column = what the harness asked for, `model`/`provider` = what served it), never from the `HERMES_MODEL` the dispatcher exported, the combo name, or the lane's own claim. Two silent re-routers sit between the dispatch and the wire: OmniRoute's combo fallback (a combo's cloud member takes the turn when the local step refuses — D-039's strict combo removes it) and the harness's OWN fallback chain (Hermes `fallback_providers` in the profile config — a "strict raw id" lane still lands on the chain's cloud models after a local 504/499/400; the signature is a `499 Request aborted` on the fallback model seconds after the session's `ended_at`, measured on three lanes 2026-09-22). A combo-keyed mix line is blind to raw-id lanes (`combo_name` empty). So: the harvest line names the served model from `usage.json` plus the call_logs rows of the lane's window; a lane whose profile carries a fallback chain is labelled HYBRID until its rows are measured; the ledger never writes "the local route" from the dispatch parameter alone. Admission refusals (`HTTP 503 … Chat admission capacity`) leave NO call_logs row — only the PC runner's `report.attemptN.md` shows them; size the parallel lane count by the measured admission ceiling, not by the ruling's number.
+
+
 ## The ORCHESTRATOR protocol (proven over a full MVP sprint)
 
 Delegate the bulk to well-briefed agents, keep review + the hardest seams yourself.
