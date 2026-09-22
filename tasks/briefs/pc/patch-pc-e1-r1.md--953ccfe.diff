@@ -1,0 +1,1130 @@
+diff --git a/proofs/S0-05/check_egress.py b/proofs/S0-05/check_egress.py
+index 218ed6f..20c52bc 100755
+--- a/proofs/S0-05/check_egress.py
++++ b/proofs/S0-05/check_egress.py
+@@ -76,6 +76,9 @@ DENIAL_DETAILS = {
+ }
+ 
+ GATE_KEYS = ("gate", "mechanism", "netns", "unit", "allowed", "rules_sha256")
++# The one mechanism this proof accepts: netns_lib.sh:151 emits veth-iptables for selective
++# egress; netns-no-veth (netns_lib.sh:153) is the AF-AP-1 total-isolation class.
++MECHANISM = "veth-iptables"
+ RUNTIME_KEYS = ("venue", "unit", "kernel", "iptables_version", "rules",
+                 "drop_counter_before", "drop_counter_after")
+ RECORD_KEYS = ("canary", "unit", "target", "kind", "rc", "status", "detail")
+@@ -324,6 +327,8 @@ def check(root, required_units):
+     gates = {}
+     for unit in units:
+         gates[unit] = read_gate(root / unit, unit)
++        if gates[unit]["mechanism"] != MECHANISM:
++            raise Failure(f"total-isolation: {unit} mechanism={gates[unit]['mechanism']}")
+         if gates[unit]["gate"] != "enabled":
+             raise Failure("egress-permitted: gate-disabled")
+ 
+diff --git a/proofs/S0-05/spec.json b/proofs/S0-05/spec.json
+index 75b4dae..576b8c4 100644
+--- a/proofs/S0-05/spec.json
++++ b/proofs/S0-05/spec.json
+@@ -36,7 +36,7 @@
+       "timeout_s": 60,
+       "expect": {
+         "exit_code": 1,
+-        "failure_reason": "positive-control-failed: curl"
++        "failure_reason": "total-isolation: curl mechanism=netns-no-veth"
+       }
+     }
+   ]
+diff --git a/tasks/briefs/s0-05-support/E1-R1-report.md b/tasks/briefs/s0-05-support/E1-R1-report.md
+new file mode 100644
+index 0000000..bc319a2
+--- /dev/null
++++ b/tasks/briefs/s0-05-support/E1-R1-report.md
+@@ -0,0 +1,215 @@
++# E1-R1 — S0-05 mechanism guard repair
++
++PIN: `953ccfe` · venue: PC, uid 1000 (no root/netns capability) · role: code-implementer · 2026-09-22.
++
++**PROPOSAL ONLY.** The sandbox-side adversarial-verifier must grade this repair. I issue no gate verdict.
++
++## OUTCOME
++
++**Mechanically gated on this PC:** the checker now accepts exactly `veth-iptables` and rejects every other `gate.json` mechanism in PHASE 1, before gate state and before any canary is read (`C:78` `GATE_KEYS`, then working-tree lines 79-81 `MECHANISM`; `C:323-330` `# PHASE 1` / `read_gate` at the PIN, with the guard added immediately after it). The bare-unshare spec leg now names the class, `total-isolation: curl mechanism=netns-no-veth` (`S:33` `"leg": "negative"`, with the working-tree `failure_reason` at line 39). Six executable red-first controls became green; M1-M5 were compile-checked and killed.
++
++**NOT run here:** the new root-only motivating-instance test through the REAL collector and checker (working-tree `T:795-862` `test_the_motivating_instance_is_a_total_isolation_class`; this range is beyond the 730-line PIN). The PC is uid 1000 and `ip netns add` fails `mkdir /var/run/netns failed: Permission denied`. The test is `NEEDS_NETNS`-skipped here. The sandbox harvest must run its red-on-PIN and green-on-repair legs.
++
++**NOT done:** F2-F24 from VERIFY-E1 issue #13; live production units; minting/regenerating S0-05; any change to `L`, `R`, fixtures, provenance, PC runner, schemas, or attested outputs.
++
++## 1. PREMISE — VERIFIED
++
++### Identity before edits
++
++| alias | file | PIN SHA-256 first 16 | lines |
++|---|---|---:|---:|
++| C | `proofs/S0-05/check_egress.py` | `59b884c6e60fa784` | 370 |
++| T | `tests/test_s0_05_egress.py` | `6c96693ad4063c35` | 730 |
++| S | `proofs/S0-05/spec.json` | `0751bf678f50349e` | 43 |
++| L | `proofs/S0-05/netns_lib.sh` | `1b2bd911d54262d3` | 209 |
++| R | `proofs/S0-05/run_canaries.sh` | `6f7298077aa39819` | 131 |
++
++`git log --oneline 24e80e6..953ccfe -- proofs/S0-05 tests/test_s0_05_egress.py` was empty. HEAD was `953ccfedcaa54b2a8088d359f3d5342e91854989`; the worktree was clean.
++
++The seed says bare unshare is total-block and not acceptable evidence (the seed's lines 434-435, including the literal `and is NOT acceptable evidence`). The library truthfully emits `veth-iptables` or `netns-no-veth` (`L:147-154`), and the collector records the observed value (`R:108-117`). At the PIN, `GATE_KEYS` required `mechanism`, but neither `read_gate` nor `check` asserted its value.
++
++### Hollow green reproduced on the PIN
++
++A copy of `evidence-mechanism-sandbox` with only `curl/gate.json` changed to `mechanism=netns-no-veth`:
++
++```text
++patched mechanism -> netns-no-veth
++NOT run: buzz-acp — live unit runs on the PC (proofs/S0-05/tools/pc/run_s0_05_units.sh); NOT run in the sandbox
++NOT run: hermes-acp — live unit runs on the PC (proofs/S0-05/tools/pc/run_s0_05_units.sh); NOT run in the sandbox
++NOT run: memory-adapter — unit does not exist
++NOT run: ai-memory — unit does not exist
++NOT run: dream-foundry — unit does not exist
++recorded: curl C4 example.com port 443 denied rc=7 — OSError [Errno 101] Network is unreachable
++gate-fired: curl OUTPUT policy DROP 0 -> 10 packets
++PASS: S0-05 no-direct-egress - 1 units, 11 canaries failed as required, positive controls 1/1
++rc=0
++Tue Sep 22 07:26:34 AM UTC 2026
++```
++
++Baseline on this PC: `98 tests collected in 0.10s`; `94 passed, 4 skipped in 2.60s`.
++
++## 2. CHANGE
++
++### Production guard
++
++`MECHANISM = "veth-iptables"` is a one-value allow-list, tied to the producer's observed vocabulary (`C:78-81`, `L:147-154`). `check()` reads each gate, compares exact equality, and raises the class reason before testing `gate` state (`C:326-333`). PHASE 2 remains after it; `check_positive_control` and all later evidence checks are untouched (`C:335-340`). A non-string mechanism uses Python's string form in the reason.
++
++Rejected alternative: a blacklist of only `netns-no-veth`. It would accept unknown or padded values and violate AF-AP-47. Ordering rationale: PHASE 1 must reject the inadmissible mechanism before the `gate-disabled` verdict and before PHASE 2 can report a downstream symptom.
++
++### Tests and canonical spec
++
++- Bare-unshare now fails by class while retaining the committed C0 rc-7 shape assertion (working-tree `T:138-146` `test_bare_unshare_bundle_is_red_as_total_isolation`; at the PIN this symbol had its old name).
++- Fixture-mutation controls cover wrong, empty, list, and trailing-space values; exact equality and string rendering are pinned (working-tree T lines 149-165, `test_a_mechanism_mutation_is_rejected_by_class`; new after the PIN).
++- The ORDER control combines wrong mechanism plus disabled gate and pins total-isolation first (working-tree `T:168-176` `test_total_isolation_precedes_a_disabled_gate`; new after the PIN).
++- The canonical bare-unshare leg pins the new complete first line (`S:33` `"leg": "negative"`, with the working-tree `failure_reason` at line 39), consumed by `test_every_spec_leg_behaves_exactly_as_declared` (working-tree T lines 637-650; the same symbol is at PIN `T:605-618` `test_every_spec_leg_behaves_exactly_as_declared`).
++- The live motivating-instance test creates the exact F1 class: isolated namespace, one internal addressed veth pair, loopback stand-in inside the namespace, REAL collector, REAL checker, PID-scoped listener cleanup, namespace destroy-by-name and final census (working-tree `T:754-862` `_in_ns_listener` / `test_the_motivating_instance_is_a_total_isolation_class`; new after the PIN). It asserts the collector observed `netns-no-veth`, gate enabled, and a successful C0 before asking the checker for the class reason (working-tree `T:838-852` `run_canaries.sh` / `run_checker`; new after the PIN).
++
++## 3. RED-FIRST EVIDENCE
++
++The new (a)/(b) controls were run against the unmodified PIN checker:
++
++```text
++FAILED tests/test_s0_05_egress.py::test_bare_unshare_bundle_is_red_as_total_isolation
++  observed positive-control-failed: curl
++FAILED tests/test_s0_05_egress.py::test_a_mechanism_mutation_is_rejected_by_class[wrong-mechanism]
++FAILED tests/test_s0_05_egress.py::test_a_mechanism_mutation_is_rejected_by_class[empty-mechanism]
++FAILED tests/test_s0_05_egress.py::test_a_mechanism_mutation_is_rejected_by_class[list-mechanism]
++FAILED tests/test_s0_05_egress.py::test_a_mechanism_mutation_is_rejected_by_class[trailing-space-mechanism]
++  observed rc 0 PASS
++FAILED tests/test_s0_05_egress.py::test_total_isolation_precedes_a_disabled_gate
++  observed egress-permitted: gate-disabled
++6 failed, 98 deselected in 0.50s
++PYTEST_RC=1
++Tue Sep 22 08:08:06 AM UTC 2026
++```
++
++After the C guard:
++
++```text
++......                                                                   [100%]
++6 passed, 98 deselected in 0.24s
++PYTEST_RC=0
++Tue Sep 22 08:11:00 AM UTC 2026
++```
++
++Spec-leg targeted run after the working-tree `failure_reason` change (S line 39):
++
++```text
++2 passed, 102 deselected in 0.22s
++PYTEST_RC=0
++Tue Sep 22 08:12:11 AM UTC 2026
++```
++
++The live (c) test cannot run on this host:
++
++```text
++SKIPPED [1] the new live test: network-namespace legs need root + iproute2 + iptables; NOT run here — they run on a capable venue (this sandbox has them; CI does not)
++1 skipped, 103 deselected in 0.11s
++PYTEST_RC=0
++Tue Sep 22 08:15:09 AM UTC 2026
++```
++
++## 4. MUTATION AUDIT — scratch copy only
++
++Scratch root: `/tmp/e1r1/mutant/repo`. Each mutant compiled with `python3 -m py_compile` before its named tests. Source checker SHA before and after the matrix: `5b766582a9a03f916201102d8b1f46dec4ce9bb294981bf17cb33be1eaaed0e6` — byte-identical restored.
++
++| mutant | compile | killer output |
++|---|---:|---|
++| M1 delete guard | rc 0 | `6 failed, 98 deselected in 0.36s`; bare-unshare, four mechanism mutations, ORDER all red |
++| M2 widen tuple to include `netns-no-veth` + `not in` | rc 0 | `2 failed, 3 passed, 99 deselected in 0.28s`; bare-unshare + wrong-mechanism red |
++| M3 move guard after `check_positive_control` | rc 0 | `2 failed, 102 deselected in 0.19s`; bare-unshare regressed to `positive-control-failed`, ORDER regressed to `gate-disabled` |
++| M4 rename reason to `mechanism-invalid` | rc 0 | `6 failed, 98 deselected in 0.50s`; (a), four (b) values and spec-leg consumer red |
++| M5 `!=` → `is not` | rc 0 | **Killed**, not survived: `2 failed, 4 passed, 98 deselected in 0.32s`; both committed positive bundles falsely rejected as `total-isolation: curl mechanism=veth-iptables` |
++
++M5 note: the brief allowed that it might survive, but this interpreter materialized distinct equal strings across module/JSON boundaries. The positive bundle tests killed it.
++
++## 5. GATES ON FINAL BYTES
++
++Set: `tests/test_s0_05_egress.py`; order-blind one-file set id equivalent: `9f0502080347`; collection: `104 tests collected in 0.05s`.
++
++Run 1:
++
++```text
++Tue Sep 22 08:19:14 AM UTC 2026
++99 passed, 5 skipped in 2.81s
++Tue Sep 22 08:19:17 AM UTC 2026
++PYTEST_RC=0
++```
++
++Run 2:
++
++```text
++Tue Sep 22 08:19:36 AM UTC 2026
++99 passed, 5 skipped in 2.76s
++Tue Sep 22 08:19:39 AM UTC 2026
++PYTEST_RC=0
++```
++
++Mechanical count from `scripts/test_summary.sh`:
++
++```text
++Tue Sep 22 08:19:53 AM UTC 2026
++pytest-exit: 0
++pytest-summary: 99 passed, 5 skipped in 2.73s
++Tue Sep 22 08:19:56 AM UTC 2026
++TEST_SUMMARY_RC=0
++```
++
++The five skips are the four pre-existing root-gated namespace tests plus the new motivating instance. Other gates:
++
++```text
++PY_COMPILE_RC=0
++PYFLAKES_RC=0
++DIFF_CHECK_RC=0
++
++python3 scripts/ap_screen.py proofs/S0-05
++--- AP_SCREEN over 1 path(s): 1 hits over 1 files ---
++AP-32: 1
++    working-tree C line 174: `return hashlib.sha256` over the canonical rule lines
++
++python3 scripts/ap_screen.py proofs/S0-05 proofs/S0-05/canaries
++--- AP_SCREEN over 2 path(s): 3 hits over 2 files ---
++AF-AP-72: 2  canaries/connect_probe.py line 48
++AP-32: 1     working-tree C line 174
++
++python3 scripts/ap_screen.py --tests tests/test_s0_05_egress.py
++--- TEST_SCREEN over 1 path(s): 0 hits over 1 files ---
++```
++
++Classification by RUN: AP-32 is the pre-existing rules digest contract; the three-way digest behavior remains covered by the unchanged suite. AF-AP-72 is two pre-existing scanner matches on the one connect_probe.py line 48 numeric parse line; the file is untouched. No new screen hit.
++
++Code-intel after the batch: GitNexus `detect-changes` reports 3 files, 7 symbols, risk medium, 2 affected processes. The lane context pack is `/tmp/e1r1/context-pack.md` (222 lines); GitNexus/CRG inside the lane wrapper were unmapped in this lane tree, while graft and ripwire ran. The pre-edit targeted GitNexus query for `Function:proofs/S0-05/check_egress.py:check` reported 2 upstream impacts, risk LOW, exact; the clone index was 439 commits stale, so that risk is advisory only.
++
++## 6. FILE IDENTITY AFTER EDITS
++
++| alias | file | final SHA-256 first 16 | lines |
++|---|---|---:|---:|
++| C | `proofs/S0-05/check_egress.py` | `5b766582a9a03f91` | 375 |
++| T | `tests/test_s0_05_egress.py` | `7545714460183c94` | 873 |
++| S | `proofs/S0-05/spec.json` | `ed6edbd1c408ad83` | 43 |
++| L | `proofs/S0-05/netns_lib.sh` | `1b2bd911d54262d3` | 209 |
++| R | `proofs/S0-05/run_canaries.sh` | `6f7298077aa39819` | 131 |
++
++`git diff --exit-code 953ccfe -- proofs/S0-05/netns_lib.sh proofs/S0-05/run_canaries.sh proofs/S0-05/fixtures proofs/S0-05/fixtures/PROVENANCE.md proofs/S0-05/tools proofs/schemas` → rc 0. Only C, S, and T are modified. No fixture bytes, L, R, PC runner, provenance, schema, or attested output changed.
++
++## 7. SELF-ATTACK
++
++1. **Most likely wrong: the root-only live topology does not reproduce F1.** Ruled out only structurally here: it uses the verifier's observed link names (`ve1a`/`ve1b`), both ends inside one namespace with an on-link `/31`, the stand-in inside the namespace, and the REAL collector/checker. Not empirically ruled out on this PC. Sandbox execution is mandatory before acceptance.
++2. **Mechanism rejection happens too late and another reason wins.** Ruled out by the combined wrong-mechanism + disabled-gate ORDER control, M3, and the source ordering at working-tree `C:326-335` `# PHASE 1` / `# PHASE 2` (at the PIN the same region starts at C:323).
++3. **A malformed or merely padded mechanism slips through.** Ruled out by exact equality to one scalar and executable empty/list/trailing-space controls at working-tree `T:149-165` `test_a_mechanism_mutation_is_rejected_by_class`; M2 proves widening to `netns-no-veth` is detected.
++
++## 8. DISCREPANCIES
++
++- The brief names `tasks/briefs/s0-05-support/VERIFY-E1-report.md`; that file is not present at PIN 953ccfe. It exists in git commit `df04e61` (a later coordinator commit). I read that immutable object only to recover the exact F1 topology; I did not modify or copy it into the lane tree.
++- The brief says the PIN baseline was `98 passed` with four root tests running in the sandbox. This PC baseline is `94 passed, 4 skipped`; after adding six collected controls (the four-value parameterization counts as four, plus ORDER, plus live (c)), final collection is 104 and this PC result is `99 passed, 5 skipped`.
++- `scripts/pc_suite.sh set-id` is a sandbox bridge command and is forbidden on this PC by VENUE-MAP. I report the one-file list and its equivalent order-blind SHA first 12 (`9f0502080347`) instead.
++- The brief expected `python3 scripts/ap_screen.py proofs/S0-05` to show all three known hits. The exact command scans one file and prints only AP-32. Passing both `proofs/S0-05` and `proofs/S0-05/canaries` reproduces the three known hits. No new hit exists.
++- First `lane_context.sh` invocation used repeated symbols after one `-s`; its parser treated later symbols as FILE paths and refused rc 64. Corrected invocation repeated `-s` and wrote the 222-line pack. This is a command-shape discrepancy only.
++- M5 did not survive; it was killed by both positive-bundle tests as above.
++- `report_lint.py` final summary (bounded to two rounds): 19 refs — OK 13, NEAR 0, MISS 6, UNCHECKABLE 0, UNRESOLVED 0 (at 953ccfe). The six MISS are working-tree-only T ranges/symbols checked against the required PIN revision: `T:795-862` twice, `T:754-862`, `T:838-852`, and renamed/new symbols at `T:138-146`, `T:168-176`, `T:149-165`. The min-ref floor 12 passed (OK 13); rc remains 1 because the PIN cannot contain new working-tree lines. Per AF-AP-76, no third round.
++
++## 9. HYGIENE / NOT-DONE
++
++Final census on this PC: `ip netns list` produced no output, rc 0; `pgrep -af '[l]oopback_standin.py'` found none, rc 1. No root namespace was created by this lane. No server, container, owner process, bridge, secret, main clone, or other lane tree was touched. No commit, stage, push, reset, checkout, stash, tag, issue, comment, or proof-runner operation occurred.
++
++NOT-done first-class: sandbox execution of the live test on both PIN and repaired checker; independent adversarial grade; F2-F24; live-unit legs; minting. Retro: the lane-context CLI quirk is already captured in DISCREPANCIES; no general project lesson to bake from this bounded repair.
+diff --git a/tests/test_s0_05_egress.py b/tests/test_s0_05_egress.py
+index 081199c..8563e00 100644
+--- a/tests/test_s0_05_egress.py
++++ b/tests/test_s0_05_egress.py
+@@ -4,8 +4,8 @@ The oracle is `proofs/S0-05/check_egress.py`; these tests attack it. Three bundl
+ evidence collected in this sandbox on a REAL network namespace (`proofs/S0-05/fixtures/`):
+ `evidence-mechanism-sandbox` (gate on -> PASS), `evidence-gate-off` (the seed's mutation ->
+ `egress-permitted: gate-disabled`), `evidence-bare-unshare` (total isolation ->
+-`positive-control-failed: curl`, the AF-AP-1 class). Every mutation below is applied to a COPY
+-under the test's tmp_path; the committed bundles are never edited.
++`total-isolation: curl mechanism=netns-no-veth`, the AF-AP-1 class). Every mutation below is
++applied to a COPY under the test's tmp_path; the committed bundles are never edited.
+ 
+ Venue facts these tests pin, both measured on 2026-09-08 in this sandbox:
+   * `HTTPS_PROXY=http://127.0.0.1:40173` is exported here, and curl inside the namespace then
+@@ -26,6 +26,7 @@ import re
+ import shutil
+ import subprocess
+ import sys
++import time
+ import uuid
+ from pathlib import Path
+ 
+@@ -134,16 +135,47 @@ def test_gate_off_bundle_really_did_flip_a_canary():
+         json.loads((GATE_OFF / "curl" / "gate.json").read_text())["rules_sha256"]
+ 
+ 
+-def test_bare_unshare_bundle_is_red_on_the_positive_control():
+-    """BARE-UNSHARE-ACCEPTED / AF-AP-1: total isolation blocks the positive control too, so the
+-    bundle can never be S0-05 evidence."""
++def test_bare_unshare_bundle_is_red_as_total_isolation():
++    """BARE-UNSHARE-ACCEPTED / AF-AP-1: a namespace with no selective-egress veth is the
++    total-isolation class the seed declares inadmissible. The guard rejects it by CLASS in
++    PHASE 1 — the class-naming reason, not the positive control's downstream symptom."""
+     result = run_checker(BARE)
+     assert result.returncode == 1
+-    assert result.stdout.splitlines()[0] == "positive-control-failed: curl"
++    assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth"
+     c0 = [r for r in records(BARE / "curl") if r["canary"] == "C0"]
+     assert len(c0) == 1 and c0[0]["rc"] == 7
+ 
+ 
++@pytest.mark.parametrize("value, expected", [
++    ("netns-no-veth", "total-isolation: curl mechanism=netns-no-veth"),
++    ("", "total-isolation: curl mechanism="),
++    (["veth-iptables"], "total-isolation: curl mechanism=['veth-iptables']"),
++    ("veth-iptables ", "total-isolation: curl mechanism=veth-iptables "),
++], ids=["wrong-mechanism", "empty-mechanism", "list-mechanism", "trailing-space-mechanism"])
++def test_a_mechanism_mutation_is_rejected_by_class(tmp_path, value, expected):
++    """MUTANT (the hollow green): the veth-iptables bundle's gate.json relabelled to ANY other
++    mechanism is refused in PHASE 1 by class. An exact-equality allow-list of ONE value (never a
++    blacklist), so a wrong value, an empty value, a non-string value and a whitespace-padded
++    value are each named in the reason's `mechanism=` tail in its own str form — no
++    normalisation."""
++    bundle = copy_bundle(tmp_path)
++    patch_json(bundle / "curl" / "gate.json", mechanism=value)
++    result = run_checker(bundle)
++    assert result.returncode == 1
++    assert result.stdout.splitlines()[0] == expected
++
++
++def test_total_isolation_precedes_a_disabled_gate(tmp_path):
++    """ORDER: the mechanism guard runs in PHASE 1 BEFORE the gate-state check — a bundle that is
++    BOTH total-isolation and gate-disabled is refused for the mechanism, not the gate, so the
++    class verdict cannot be masked by the gate verdict's later position."""
++    bundle = copy_bundle(tmp_path)
++    patch_json(bundle / "curl" / "gate.json", mechanism="netns-no-veth", gate="disabled")
++    result = run_checker(bundle)
++    assert result.returncode == 1
++    assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth"
++
++
+ def test_committed_bundles_carry_the_real_venue_shape():
+     """The mechanism bundle must be a veth namespace with the gate on — not a relabelled copy."""
+     gate = json.loads((MECHANISM / "curl" / "gate.json").read_text())
+@@ -719,6 +751,117 @@ def test_the_isolated_control_has_no_veth_and_fails_its_positive_control():
+     assert ns not in subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
+ 
+ 
++def _in_ns_listener(ns, port, tmp_path):
++    """Start a loopback-only HTTP stand-in INSIDE the namespace and return its Popen handle.
++    The readiness probe also runs inside the namespace; the caller owns PID-scoped cleanup."""
++    script = tmp_path / "loopback_standin.py"
++    script.write_text("""\
++import http.server
++import socketserver
++import sys
++
++class Handler(http.server.BaseHTTPRequestHandler):
++    def do_GET(self):
++        self.send_response(200)
++        self.send_header("Content-Type", "application/json")
++        self.end_headers()
++        self.wfile.write(b'{"ok":true}')
++
++    def log_message(self, *args):
++        pass
++
++socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
++""")
++    process = subprocess.Popen(
++        ["ip", "netns", "exec", ns, sys.executable, str(script), str(port)],
++        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
++    deadline = time.monotonic() + 5
++    while time.monotonic() < deadline:
++        if process.poll() is not None:
++            stderr = process.stderr.read() if process.stderr is not None else ""
++            raise AssertionError(f"loopback stand-in exited: {stderr}")
++        probe = subprocess.run(
++            ["ip", "netns", "exec", ns, "curl", "-fsS", "--max-time", "1",
++             f"http://127.0.0.1:{port}/v1/models"],
++            capture_output=True, text=True, timeout=3)
++        if probe.returncode == 0:
++            return process
++        time.sleep(0.1)
++    process.terminate()
++    process.wait(timeout=5)
++    raise AssertionError("loopback stand-in did not become ready inside the namespace")
++
++
++@NEEDS_NETNS
++def test_the_motivating_instance_is_a_total_isolation_class(tmp_path):
++    """The motivating instance (anti-hollow-green tactic 11): the verifier's exact topology,
++    re-derived live through the REAL collector (`run_canaries.sh`) and the REAL checker.
++
++    An isolated namespace (same DROP gate, no selective-egress veth) with ONE internal veth pair
++    (both ends inside the namespace; not the derived name, so the detector still reads
++    netns-no-veth) and a loopback stand-in on the allowed port INSIDE the namespace: the positive
++    control CAN pass (the listener is reachable over the namespace's own loopback), so the old
++    downstream symptom (the positive-control failure) never fires — yet the bundle is
++    total-isolation and must be refused by its class. That is exactly the hollow green F1: a
++    mechanism the checker emits and records but never asserts. On the PIN's checker this bundle
++    PASSES (rc 0); after the guard it fails with the class reason, first line."""
++    ns = f"s0-05-e1-{uuid.uuid4().hex[:8]}"
++    port = 12800
++    root = tmp_path / "evidence"
++    listener = None
++    try:
++        # The internal veth pair lives entirely inside the namespace: both ends have their own
++        # on-link address in the same netns, creating the traffic that advances the DROP counter.
++        # Neither end has the derived `en…` name the detector probes for, so egress_ns_mechanism
++        # still reads netns-no-veth (total isolation) even though a veth exists.
++        result = _lib(
++            f'egress_ns_create_isolated {ns} 127.0.0.1:{port} || exit 1',
++            f'ip -n {ns} link add ve1a type veth peer name ve1b || exit 1',
++            f'ip -n {ns} address add 192.0.2.1/31 dev ve1a || exit 1',
++            f'ip -n {ns} address add 192.0.2.0/31 dev ve1b || exit 1',
++            f'ip -n {ns} link set ve1a up && ip -n {ns} link set ve1b up',
++            f'ip -n {ns} link show',
++            f'egress_ns_mechanism {ns}',
++            f'egress_ns_gate_state {ns}')
++        assert result.returncode == 0, result.stderr
++        assert result.stdout.splitlines()[-2] == "netns-no-veth", result.stdout
++        assert result.stdout.splitlines()[-1] == "enabled", result.stdout
++        # The loopback stand-in runs INSIDE the namespace on its own loopback (reachable by the
++        # canaries, which also run in the ns, under the gate's lo-ACCEPT rules). It makes C0 pass
++        # even though the namespace has no route out — the downstream symptom never fires.
++        listener = _in_ns_listener(ns, port, tmp_path)
++        assert listener.poll() is None, "loopback stand-in did not stay live in the namespace"
++        # The REAL collector, unmodified: it records the mechanism it OBSERVES (netns-no-veth),
++        # the gate state (enabled), and the canaries. The stand-in lets C0 pass; C6 targets the
++        # internal peer's on-link address, so the DROP counter advances despite total isolation.
++        # The other canaries fail or are recorded — all of it irrelevant to the PHASE 1 guard.
++        run = subprocess.run(
++            ["bash", str(PROOF / "run_canaries.sh"), "curl", ns, f"127.0.0.1:{port}",
++             str(root), "192.0.2.0:12801", "sandbox"],
++            capture_output=True, text=True, timeout=120)
++        assert run.returncode == 0, run.stderr
++        gate = json.loads((root / "curl" / "gate.json").read_text())
++        rows = records(root / "curl")
++        c0 = [row for row in rows if row["canary"] == "C0"]
++        assert gate["mechanism"] == "netns-no-veth" and gate["gate"] == "enabled"
++        assert len(c0) == 1 and c0[0]["rc"] == 0 and 200 <= c0[0]["http_status"] < 300
++        # The REAL checker, unmodified, on the bundle the collector wrote.
++        result = run_checker(root)
++        assert result.returncode == 1, result.stdout
++        assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth", \
++            result.stdout
++    finally:
++        if listener is not None:
++            listener.terminate()
++            try:
++                listener.wait(timeout=5)
++            except subprocess.TimeoutExpired:
++                listener.kill()
++                listener.wait(timeout=5)
++        _lib(f'egress_ns_destroy {ns}')
++    assert ns not in subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
++
++
+ @NEEDS_NETNS
+ def test_the_canary_emitter_scrubs_the_proxy_environment():
+     """The scrub is the first defence against the venue's ambient proxy. Proven by running a
+diff --git a/transcripts/pc/pc-e1-r1.md--953ccfe.md b/transcripts/pc/pc-e1-r1.md--953ccfe.md
+new file mode 100644
+index 0000000..5272802
+--- /dev/null
++++ b/transcripts/pc/pc-e1-r1.md--953ccfe.md
+@@ -0,0 +1,674 @@
++# Hermes lane session 20260922_081329_b81764
++
++- model: agentfactory-build-local
++- started: 2026-09-22T07:13:31.246363+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-e1-r1.md--953ccfe/tree
++- messages: 181; tool calls: 105
++- tokens in/out/cache_read/reasoning: 472689/128008/7766656/95060
++
++## user @ 07:13:30
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 07:15:06 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 07:15:07 — 6455 chars (body not exported)
++
++## tool result (terminal) @ 07:15:07 — 683 chars (body not exported)
++
++## assistant @ 07:15:42 → tools: read_file, read_file, read_file, read_file
++
++Identity verified: all three hashed files match the brief (C/T/S), boundary log is empty, tree is clean at 953ccfe. Loading the seams now.
++
++## tool result (read_file) @ 07:15:42 — 20056 chars (body not exported)
++
++## tool result (read_file) @ 07:15:42 — 1453 chars (body not exported)
++
++## tool result (read_file) @ 07:15:42 — 11904 chars (body not exported)
++
++## tool result (read_file) @ 07:15:42 — 6846 chars (body not exported)
++
++## assistant @ 07:16:05 → tools: read_file, terminal
++
++C/S/L/R all match the brief's seams (drift: check() at 311 vs brief's 321 — brief line numbers are off by 10 for C; content matches exactly). Now the test file and the seed clause.
++
++## tool result (read_file) @ 07:16:05 — 5667 chars (body not exported)
++
++## tool result (terminal) @ 07:16:06 — 1075 chars (body not exported)
++
++## assistant @ 07:16:22 → tools: read_file, read_file
++
++Seed clause verified at 434-435 verbatim. Reading the rest of the test file.
++
++## tool result (read_file) @ 07:16:22 — 6501 chars (body not exported)
++
++## tool result (read_file) @ 07:16:22 — 5949 chars (body not exported)
++
++## assistant @ 07:16:44 → tools: terminal
++
++I've confirmed the test file matches the brief and located the test boundaries. Now I'll find the spec-leg tests and verify the fixture shapes and canary scripts.
++
++## tool result (terminal) @ 07:16:44 — 1691 chars (body not exported)
++
++## assistant @ 07:17:03 → tools: read_file, terminal
++
++All fixture shapes verified: bare-unshare has `netns-no-veth`/`enabled`, drop counters 0→0. The mechanism check in PHASE 1 will fire before PHASE 2's positive-control check, so the new reason is exactly `total-isolation: curl mechanism=netns-no-veth`. Reading the spec-leg test and the canary scripts.
++
++## tool result (read_file) @ 07:17:03 — 2301 chars (body not exported)
++
++## tool result (terminal) @ 07:17:03 — 4415 chars (body not exported)
++
++## assistant @ 07:21:13 → tools: terminal
++
++The contract is precise and bounded. I now have the full picture of C, S, L, R, and the test file. Before writing the (c) live test, I need the verifier's exact topology (the internal-veth recipe + C0 shape) from the VERIFY-E1 report §F1. Reading it.
++
++## tool result (terminal) @ 07:21:13 — 163 chars (body not exported)
++
++## assistant @ 07:21:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:21:22 — 3004 chars (body not exported)
++
++## assistant @ 07:21:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:21:28 — 4913 chars (body not exported)
++
++## assistant @ 07:21:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 07:21:41 — 3002 chars (body not exported)
++
++## assistant @ 07:26:34 → tools: terminal
++
++Now I have the full picture. The E1-report confirms the topology (D1/D7: a fresh netns has its own empty loopback; the isolated form has the same gate with no derived veth, so the detector reads `netns-no-veth`). The brief's (c) topology is: isolated namespace + loopback stand-in (so C0 passes at the collector) + one internal veth pair (both ends inside, not the derived name, so the detector still reads netns-no-veth). Let me set up the venue env and reproduce the hollow green (item 1).
++
++## tool result (terminal) @ 07:26:34 — 883 chars (body not exported)
++
++## assistant @ 07:30:28 → tools: terminal
++
++Hollow green reproduced on the PIN: mechanism=netns-no-veth → rc 0 PASS (the F1 finding). Now I need the exact (c) topology recipe from the VERIFY-E1 report §F1. The file path in the brief (`VERIFY-E1-report.md`) doesn't exist in the tree — let me find where the finding actually lives.
++
++## tool result (terminal) @ 07:30:29 — 35451 chars (body not exported)
++
++## assistant @ 07:32:12 → tools: terminal
++
++This is a well-scoped, high-confidence repair. The core insight: the guard fires in PHASE 1 (before any canary is read), so it's the FIRST failure to be emitted — which is exactly why it's the right fix and why it defeats the hollow green regardless of canary outcomes. Let me read the remaining canary scripts to design the (c) live test to be deterministic (no network flake).
++
++## tool result (terminal) @ 07:32:12 — 3651 chars (body not exported)
++
++## assistant @ 07:35:35 → tools: terminal, terminal
++
++Let me check the exact internal-veth recipe from the spike and the host's actual netns capability, so my (c) test matches the committed shape and I know what will run here.
++
++## tool result (terminal) @ 07:35:35 — 1726 chars (body not exported)
++
++## tool result (terminal) @ 07:35:35 — 328 chars (body not exported)
++
++## assistant @ 07:39:03 → tools: terminal
++
++This is a clean, well-specified repair. I have the full picture: the guard fires in PHASE 1 (before any canary is read), so it is the *first* failure emitted — which is precisely why it defeats the hollow green regardless of canary outcomes, and why it must sit before the `gate-disabled` check (that's the ORDER control). Let me confirm baseline test count and the exact anchors before editing.
++
++## tool result (terminal) @ 07:39:07 — 1218 chars (body not exported)
++
++## assistant @ 07:47:25 → tools: patch, patch
++
++Baseline on the PC: 98 collected, 94 passed, 4 skipped (the 4 NEEDS_NETNS tests). I have the full design. The key ordering insight: the guard fires in **PHASE 1, before any canary is read and before the `gate-disabled` check** — which is exactly why it defeats the hollow green (it's the first thing emitted, so a wrong class can never fall through to a lucky PASS) and why the ORDER control passes.
++
++Let me make the T-side edits first (red-first requires (a)/(b) to exist before the C guard). Starting with the import and the docstring.
++
++## tool result (patch) @ 07:47:28 — 802 chars (body not exported)
++
++## tool result (patch) @ 07:47:28 — 1279 chars (body not exported)
++
++## assistant @ 07:54:57 → tools: patch
++
++Design is sound: the guard fires in **PHASE 1 before any canary is read and before the `gate-disabled` check**, so it's always the first failure emitted — that's what makes it the hollow-green killer and what the ORDER control pins. Now I'll write the T-side tests (a)+(b) as a red-first block (they use committed bundles, no netns needed → runnable here).
++
++## tool result (patch) @ 07:54:58 — 3404 chars (body not exported)
++
++## assistant @ 07:57:11 → tools: patch
++
++Now the (c) live test — the motivating instance — placed beside the existing isolated-control test. I add a small helper for the loopback stand-in and the live collection:
++
++## tool result (patch) @ 07:57:12 — 5922 chars (body not exported)
++
++## assistant @ 07:59:30 → tools: patch
++
++I need to correct (c): a *host* loopback listener is unreachable from inside a fresh netns (its own loopback is isolated) — that's the Chairman probe from E1-report D1. The brief's "stand-in listener INSIDE the namespace" means the listener runs *in* the netns, so C0 genuinely passes (defeating the downstream symptom). Let me rewrite (c) to launch the listener in-namespace.
++
++## tool result (patch) @ 07:59:31 — 10097 chars (body not exported)
++
++## assistant @ 07:59:43 → tools: read_file
++
++I introduced a duplicate `_lib`. Let me look at the actual file state around that region and clean it up properly.
++
++## tool result (read_file) @ 07:59:43 — 8699 chars (body not exported)
++
++## assistant @ 08:03:48 → tools: patch
++
++
++
++## tool result (patch) @ 08:03:49 — 6315 chars (body not exported)
++
++## assistant @ 08:04:38 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:04:38 — 5204 chars (body not exported)
++
++## assistant @ 08:05:38 → tools: patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 08:05:39 — 1250 chars (body not exported)
++
++## tool result (patch) @ 08:05:40 — 1202 chars (body not exported)
++
++## tool result (patch) @ 08:05:41 — 1712 chars (body not exported)
++
++## tool result (patch) @ 08:05:41 — 1218 chars (body not exported)
++
++## assistant @ 08:06:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:08:06 — 9996 chars (body not exported)
++
++## assistant @ 08:08:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:08:40 — 425 chars (body not exported)
++
++## assistant @ 08:09:20 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 08:09:23 — 2230 chars (body not exported)
++
++## tool result (terminal) @ 08:09:24 — 3528 chars (body not exported)
++
++## tool result (terminal) @ 08:09:25 — 4708 chars (body not exported)
++
++## tool result (terminal) @ 08:09:26 — 7840 chars (body not exported)
++
++## assistant @ 08:10:18 → tools: terminal, search_files, search_files
++
++
++
++## tool result (terminal) @ 08:10:19 — 1452 chars (body not exported)
++
++## tool result (search_files) @ 08:10:19 — 104 chars (body not exported)
++
++## tool result (search_files) @ 08:10:19 — 988 chars (body not exported)
++
++## assistant @ 08:10:46 → tools: patch, patch
++
++
++
++## tool result (patch) @ 08:10:47 — 1048 chars (body not exported)
++
++## tool result (patch) @ 08:10:48 — 862 chars (body not exported)
++
++## assistant @ 08:10:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:11:00 — 204 chars (body not exported)
++
++## assistant @ 08:11:13 → tools: patch, patch
++
++
++
++## tool result (patch) @ 08:11:13 — 718 chars (body not exported)
++
++## tool result (patch) @ 08:11:13 — 478 chars (body not exported)
++
++## assistant @ 08:11:47 → tools: patch
++
++
++
++## tool result (patch) @ 08:11:48 — 1271 chars (body not exported)
++
++## assistant @ 08:12:11 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 08:12:12 — 205 chars (body not exported)
++
++## tool result (terminal) @ 08:12:12 — 469 chars (body not exported)
++
++## tool result (terminal) @ 08:12:12 — 75 chars (body not exported)
++
++## assistant @ 08:13:09 → tools: terminal, search_files, search_files
++
++
++
++## tool result (terminal) @ 08:13:09 — 602 chars (body not exported)
++
++## tool result (search_files) @ 08:13:39 — 273 chars (body not exported)
++
++## tool result (search_files) @ 08:13:39 — 1418 chars (body not exported)
++
++## assistant @ 08:13:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:13:54 — 12008 chars (body not exported)
++
++## assistant @ 08:14:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:14:04 — 4513 chars (body not exported)
++
++## assistant @ 08:14:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:14:10 — 4140 chars (body not exported)
++
++## assistant @ 08:14:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:14:22 — 450 chars (body not exported)
++
++## assistant @ 08:14:41 → tools: patch
++
++
++
++## tool result (patch) @ 08:14:42 — 1276 chars (body not exported)
++
++## assistant @ 08:14:53 → tools: patch
++
++
++
++## tool result (patch) @ 08:14:54 — 1386 chars (body not exported)
++
++## assistant @ 08:15:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:15:09 — 492 chars (body not exported)
++
++## assistant @ 08:15:51 → tools: write_file
++
++
++
++## tool result (write_file) @ 08:15:52 — 315 chars (body not exported)
++
++## assistant @ 08:16:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:16:44 — 279 chars (body not exported)
++
++## assistant @ 08:17:29 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 08:17:32 — 3949 chars (body not exported)
++
++## assistant @ 08:18:06 → tools: read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 08:18:06 — 1615 chars (body not exported)
++
++## tool result (terminal) @ 08:18:07 — 796 chars (body not exported)
++
++## tool result (terminal) @ 08:18:08 — 12484 chars (body not exported)
++
++## assistant @ 08:18:20 → tools: patch
++
++
++
++## tool result (patch) @ 08:18:21 — 1011 chars (body not exported)
++
++## assistant @ 08:18:36 → tools: patch
++
++
++
++## tool result (patch) @ 08:18:37 — 1400 chars (body not exported)
++
++## assistant @ 08:18:58 → tools: patch
++
++
++
++## tool result (patch) @ 08:18:58 — 1198 chars (body not exported)
++
++## assistant @ 08:19:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:19:17 — 1302 chars (body not exported)
++
++## assistant @ 08:19:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:19:39 — 1302 chars (body not exported)
++
++## assistant @ 08:19:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:19:56 — 1371 chars (body not exported)
++
++## assistant @ 08:20:18 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 08:20:18 — 92 chars (body not exported)
++
++## tool result (terminal) @ 08:20:18 — 314 chars (body not exported)
++
++## tool result (terminal) @ 08:20:19 — 628 chars (body not exported)
++
++## assistant @ 08:20:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:20:34 — 331 chars (body not exported)
++
++## assistant @ 08:20:40 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:20:40 — 7818 chars (body not exported)
++
++## assistant @ 08:20:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:21:01 — 2479 chars (body not exported)
++
++## assistant @ 08:21:05 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:21:06 — 8160 chars (body not exported)
++
++## assistant @ 08:21:09 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:21:09 — 5168 chars (body not exported)
++
++## assistant @ 08:21:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:21:22 — 16306 chars (body not exported)
++
++## assistant @ 08:21:34 → tools: patch
++
++
++
++## tool result (patch) @ 08:21:34 — 466 chars (body not exported)
++
++## assistant @ 08:22:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:22:04 — 766 chars (body not exported)
++
++## assistant @ 08:22:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:22:13 — 169 chars (body not exported)
++
++## assistant @ 08:22:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:22:24 — 1268 chars (body not exported)
++
++## assistant @ 08:22:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:22:36 — 449 chars (body not exported)
++
++## assistant @ 08:23:52 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 08:23:52 — 902 chars (body not exported)
++
++## tool result (terminal) @ 08:23:52 — 60 chars (body not exported)
++
++## tool result (terminal) @ 08:23:52 — 54 chars (body not exported)
++
++## assistant @ 08:26:16 → tools: write_file
++
++
++
++## tool result (write_file) @ 08:26:16 — 380 chars (body not exported)
++
++## assistant @ 08:26:26 → tools: write_file
++
++
++
++## tool result (write_file) @ 08:26:26 — 314 chars (body not exported)
++
++## assistant @ 08:26:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:26:35 — 7136 chars (body not exported)
++
++## assistant @ 08:26:52 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:26:52 — 14500 chars (body not exported)
++
++## assistant @ 08:27:31 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 08:27:31 — 414 chars (body not exported)
++
++## assistant @ 08:27:37 → tools: read_file
++
++
++
++## tool result (read_file) @ 08:27:37 — 6440 chars (body not exported)
++
++## assistant @ 08:27:48 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 08:27:48 — 318 chars (body not exported)
++
++## assistant @ 08:28:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 08:28:00 — 3112 chars (body not exported)
++
++## assistant @ 08:28:12 → tools: patch
++
++
++
++## tool result (patch) @ 08:28:13 — 2007 chars (body not exported)
++
++## assistant @ 08:28:25 → tools: write_file
++
++
++
++## tool result (write_file) @ 08:28:25 — 314 chars (body not exported)
++
++## assistant @ 08:29:18 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 08:29:18 — 601 chars (body not exported)
++
++## tool result (terminal) @ 08:29:18 — 82 chars (body not exported)
++
++## tool result (terminal) @ 08:29:18 — 193 chars (body not exported)
++
++## assistant @ 08:31:18
++
++Mechanically gated: the S0-05 checker now rejects every mechanism except exact `veth-iptables` before gate-state or canary evaluation. This is a proposal until the sandbox adversarial-verifier grades it.
++
++NOT DONE
++
++- The root-only motivating-instance test was not executed on this uid-1000 PC.
++- The sandbox must run that test against both the PIN checker and repaired checker.
++- VERIFY-E1 F2-F24, live production-unit legs, proof regeneration, and minting remain out of scope.
++- No commit, stage, push, proof-runner invocation, or outward-facing action occurred.
++
++FILES
++
++- `proofs/S0-05/check_egress.py:78-81,326-340`
++  - Added `MECHANISM = "veth-iptables"`.
++  - Added exact-equality validation immediately after `read_gate`.
++  - Invalid mechanisms fail with `total-isolation: <unit> mechanism=<value>`.
++  - The mechanism check precedes `gate-disabled` and all PHASE 2 checks.
++
++- `proofs/S0-05/spec.json:33-40`
++  - Re-pinned bare-unshare to `total-isolation: curl mechanism=netns-no-veth`.
++
++- `tests/test_s0_05_egress.py:138-176,637-650,754-862`
++  - Renamed the bare-unshare test and pinned the class reason.
++  - Added wrong, empty, list, and trailing-space mechanism controls.
++  - Added the mechanism-before-gate ORDER control.
++  - Added the root-only live topology test using the real library, collector, and checker.
++  - The live test uses an internal addressed veth pair, an in-namespace loopback listener, PID-scoped cleanup, namespace destroy-by-name, and a final namespace census.
++
++- `tasks/briefs/s0-05-support/E1-R1-report.md`
++  - Full evidence report.
++
++PREMISE
++
++Verified at PIN `953ccfe`:
++
++- C SHA first 16: `59b884c6e60fa784`
++- T SHA first 16: `6c96693ad4063c35`
++- S SHA first 16: `0751bf678f50349e`
++- `git log --oneline 24e80e6..953ccfe -- proofs/S0-05 tests/test_s0_05_egress.py` was empty.
++- The seed says bare unshare is total-block and not acceptable evidence.
++- `netns_lib.sh` emits `veth-iptables` or `netns-no-veth`.
++- `run_canaries.sh` records that observed value.
++- The PIN checker required the `mechanism` key but did not assert its value.
++
++HOLLOW GREEN REPRODUCTION
++
++A copy of `evidence-mechanism-sandbox` with only `mechanism=netns-no-veth` produced:
++
++    PASS: S0-05 no-direct-egress - 1 units, 11 canaries failed as required, positive controls 1/1
++    rc=0
++    Tue Sep 22 07:26:34 AM UTC 2026
++
++RED-FIRST
++
++Before the checker change:
++
++    6 failed, 98 deselected in 0.50s
++    PYTEST_RC=1
++    Tue Sep 22 08:08:06 AM UTC 2026
++
++Failures covered:
++
++- Bare-unshare still emitted `positive-control-failed`.
++- Four mechanism mutations returned rc 0 PASS.
++- Wrong mechanism plus disabled gate emitted `egress-permitted: gate-disabled`.
++
++After the checker change:
++
++    6 passed, 98 deselected in 0.24s
++    PYTEST_RC=0
++    Tue Sep 22 08:11:00 AM UTC 2026
++
++Spec-leg targeted run:
++
++    2 passed, 102 deselected in 0.22s
++    PYTEST_RC=0
++    Tue Sep 22 08:12:11 AM UTC 2026
++
++LIVE TEST STATUS
++
++The new live test skipped as required on this host:
++
++    SKIPPED: network-namespace legs need roo
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 472689,
++  "output_tokens": 128008,
++  "cache_read_tokens": 7766656,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 95060,
++  "total_tokens": 8367353,
++  "api_calls": 75,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260922_081329_b81764",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

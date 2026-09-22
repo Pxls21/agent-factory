@@ -4,8 +4,8 @@ The oracle is `proofs/S0-05/check_egress.py`; these tests attack it. Three bundl
 evidence collected in this sandbox on a REAL network namespace (`proofs/S0-05/fixtures/`):
 `evidence-mechanism-sandbox` (gate on -> PASS), `evidence-gate-off` (the seed's mutation ->
 `egress-permitted: gate-disabled`), `evidence-bare-unshare` (total isolation ->
-`positive-control-failed: curl`, the AF-AP-1 class). Every mutation below is applied to a COPY
-under the test's tmp_path; the committed bundles are never edited.
+`total-isolation: curl mechanism=netns-no-veth`, the AF-AP-1 class). Every mutation below is
+applied to a COPY under the test's tmp_path; the committed bundles are never edited.
 
 Venue facts these tests pin, both measured on 2026-09-08 in this sandbox:
   * `HTTPS_PROXY=http://127.0.0.1:40173` is exported here, and curl inside the namespace then
@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -134,14 +135,45 @@ def test_gate_off_bundle_really_did_flip_a_canary():
         json.loads((GATE_OFF / "curl" / "gate.json").read_text())["rules_sha256"]
 
 
-def test_bare_unshare_bundle_is_red_on_the_positive_control():
-    """BARE-UNSHARE-ACCEPTED / AF-AP-1: total isolation blocks the positive control too, so the
-    bundle can never be S0-05 evidence."""
+def test_bare_unshare_bundle_is_red_as_total_isolation():
+    """BARE-UNSHARE-ACCEPTED / AF-AP-1: a namespace with no selective-egress veth is the
+    total-isolation class the seed declares inadmissible. The guard rejects it by CLASS in
+    PHASE 1 — the class-naming reason, not the positive control's downstream symptom."""
     result = run_checker(BARE)
     assert result.returncode == 1
-    assert result.stdout.splitlines()[0] == "positive-control-failed: curl"
+    assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth"
     c0 = [r for r in records(BARE / "curl") if r["canary"] == "C0"]
     assert len(c0) == 1 and c0[0]["rc"] == 7
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("netns-no-veth", "total-isolation: curl mechanism=netns-no-veth"),
+    ("", "total-isolation: curl mechanism="),
+    (["veth-iptables"], "total-isolation: curl mechanism=['veth-iptables']"),
+    ("veth-iptables ", "total-isolation: curl mechanism=veth-iptables "),
+], ids=["wrong-mechanism", "empty-mechanism", "list-mechanism", "trailing-space-mechanism"])
+def test_a_mechanism_mutation_is_rejected_by_class(tmp_path, value, expected):
+    """MUTANT (the hollow green): the veth-iptables bundle's gate.json relabelled to ANY other
+    mechanism is refused in PHASE 1 by class. An exact-equality allow-list of ONE value (never a
+    blacklist), so a wrong value, an empty value, a non-string value and a whitespace-padded
+    value are each named in the reason's `mechanism=` tail in its own str form — no
+    normalisation."""
+    bundle = copy_bundle(tmp_path)
+    patch_json(bundle / "curl" / "gate.json", mechanism=value)
+    result = run_checker(bundle)
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == expected
+
+
+def test_total_isolation_precedes_a_disabled_gate(tmp_path):
+    """ORDER: the mechanism guard runs in PHASE 1 BEFORE the gate-state check — a bundle that is
+    BOTH total-isolation and gate-disabled is refused for the mechanism, not the gate, so the
+    class verdict cannot be masked by the gate verdict's later position."""
+    bundle = copy_bundle(tmp_path)
+    patch_json(bundle / "curl" / "gate.json", mechanism="netns-no-veth", gate="disabled")
+    result = run_checker(bundle)
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth"
 
 
 def test_committed_bundles_carry_the_real_venue_shape():
@@ -715,6 +747,117 @@ def test_the_isolated_control_has_no_veth_and_fails_its_positive_control():
         assert result.stdout.splitlines()[1] == "enabled"
         assert result.stdout.splitlines()[-1] == "c0-rc=7"
     finally:
+        _lib(f'egress_ns_destroy {ns}')
+    assert ns not in subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
+
+
+def _in_ns_listener(ns, port, tmp_path):
+    """Start a loopback-only HTTP stand-in INSIDE the namespace and return its Popen handle.
+    The readiness probe also runs inside the namespace; the caller owns PID-scoped cleanup."""
+    script = tmp_path / "loopback_standin.py"
+    script.write_text("""\
+import http.server
+import socketserver
+import sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"ok":true}')
+
+    def log_message(self, *args):
+        pass
+
+socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+""")
+    process = subprocess.Popen(
+        ["ip", "netns", "exec", ns, sys.executable, str(script), str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            raise AssertionError(f"loopback stand-in exited: {stderr}")
+        probe = subprocess.run(
+            ["ip", "netns", "exec", ns, "curl", "-fsS", "--max-time", "1",
+             f"http://127.0.0.1:{port}/v1/models"],
+            capture_output=True, text=True, timeout=3)
+        if probe.returncode == 0:
+            return process
+        time.sleep(0.1)
+    process.terminate()
+    process.wait(timeout=5)
+    raise AssertionError("loopback stand-in did not become ready inside the namespace")
+
+
+@NEEDS_NETNS
+def test_the_motivating_instance_is_a_total_isolation_class(tmp_path):
+    """The motivating instance (anti-hollow-green tactic 11): the verifier's exact topology,
+    re-derived live through the REAL collector (`run_canaries.sh`) and the REAL checker.
+
+    An isolated namespace (same DROP gate, no selective-egress veth) with ONE internal veth pair
+    (both ends inside the namespace; not the derived name, so the detector still reads
+    netns-no-veth) and a loopback stand-in on the allowed port INSIDE the namespace: the positive
+    control CAN pass (the listener is reachable over the namespace's own loopback), so the old
+    downstream symptom (the positive-control failure) never fires — yet the bundle is
+    total-isolation and must be refused by its class. That is exactly the hollow green F1: a
+    mechanism the checker emits and records but never asserts. On the PIN's checker this bundle
+    PASSES (rc 0); after the guard it fails with the class reason, first line."""
+    ns = f"s0-05-e1-{uuid.uuid4().hex[:8]}"
+    port = 12800
+    root = tmp_path / "evidence"
+    listener = None
+    try:
+        # The internal veth pair lives entirely inside the namespace: both ends have their own
+        # on-link address in the same netns, creating the traffic that advances the DROP counter.
+        # Neither end has the derived `en…` name the detector probes for, so egress_ns_mechanism
+        # still reads netns-no-veth (total isolation) even though a veth exists.
+        result = _lib(
+            f'egress_ns_create_isolated {ns} 127.0.0.1:{port} || exit 1',
+            f'ip -n {ns} link add ve1a type veth peer name ve1b || exit 1',
+            f'ip -n {ns} address add 192.0.2.1/31 dev ve1a || exit 1',
+            f'ip -n {ns} address add 192.0.2.0/31 dev ve1b || exit 1',
+            f'ip -n {ns} link set ve1a up && ip -n {ns} link set ve1b up',
+            f'ip -n {ns} link show',
+            f'egress_ns_mechanism {ns}',
+            f'egress_ns_gate_state {ns}')
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines()[-2] == "netns-no-veth", result.stdout
+        assert result.stdout.splitlines()[-1] == "enabled", result.stdout
+        # The loopback stand-in runs INSIDE the namespace on its own loopback (reachable by the
+        # canaries, which also run in the ns, under the gate's lo-ACCEPT rules). It makes C0 pass
+        # even though the namespace has no route out — the downstream symptom never fires.
+        listener = _in_ns_listener(ns, port, tmp_path)
+        assert listener.poll() is None, "loopback stand-in did not stay live in the namespace"
+        # The REAL collector, unmodified: it records the mechanism it OBSERVES (netns-no-veth),
+        # the gate state (enabled), and the canaries. The stand-in lets C0 pass; C6 targets the
+        # internal peer's on-link address, so the DROP counter advances despite total isolation.
+        # The other canaries fail or are recorded — all of it irrelevant to the PHASE 1 guard.
+        run = subprocess.run(
+            ["bash", str(PROOF / "run_canaries.sh"), "curl", ns, f"127.0.0.1:{port}",
+             str(root), "192.0.2.0:12801", "sandbox"],
+            capture_output=True, text=True, timeout=120)
+        assert run.returncode == 0, run.stderr
+        gate = json.loads((root / "curl" / "gate.json").read_text())
+        rows = records(root / "curl")
+        c0 = [row for row in rows if row["canary"] == "C0"]
+        assert gate["mechanism"] == "netns-no-veth" and gate["gate"] == "enabled"
+        assert len(c0) == 1 and c0[0]["rc"] == 0 and 200 <= c0[0]["http_status"] < 300
+        # The REAL checker, unmodified, on the bundle the collector wrote.
+        result = run_checker(root)
+        assert result.returncode == 1, result.stdout
+        assert result.stdout.splitlines()[0] == "total-isolation: curl mechanism=netns-no-veth", \
+            result.stdout
+    finally:
+        if listener is not None:
+            listener.terminate()
+            try:
+                listener.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                listener.kill()
+                listener.wait(timeout=5)
         _lib(f'egress_ns_destroy {ns}')
     assert ns not in subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
 

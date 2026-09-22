@@ -76,6 +76,9 @@ DENIAL_DETAILS = {
 }
 
 GATE_KEYS = ("gate", "mechanism", "netns", "unit", "allowed", "rules_sha256")
+# The one mechanism this proof accepts: netns_lib.sh:151 emits veth-iptables for selective
+# egress; netns-no-veth (netns_lib.sh:153) is the AF-AP-1 total-isolation class.
+MECHANISM = "veth-iptables"
 RUNTIME_KEYS = ("venue", "unit", "kernel", "iptables_version", "rules",
                 "drop_counter_before", "drop_counter_after")
 RECORD_KEYS = ("canary", "unit", "target", "kind", "rc", "status", "detail")
@@ -324,6 +327,8 @@ def check(root, required_units):
     gates = {}
     for unit in units:
         gates[unit] = read_gate(root / unit, unit)
+        if gates[unit]["mechanism"] != MECHANISM:
+            raise Failure(f"total-isolation: {unit} mechanism={gates[unit]['mechanism']}")
         if gates[unit]["gate"] != "enabled":
             raise Failure("egress-permitted: gate-disabled")
 

@@ -36,7 +36,7 @@
       "timeout_s": 60,
       "expect": {
         "exit_code": 1,
-        "failure_reason": "positive-control-failed: curl"
+        "failure_reason": "total-isolation: curl mechanism=netns-no-veth"
       }
     }
   ]
