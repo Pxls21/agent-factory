@@ -11,13 +11,16 @@ skip; only an unset venue (CI) skips, and it skips by declaration.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -1810,3 +1813,171 @@ def test_privkey_normalises_then_refuses_before_any_network_action():
     assert "exactly 64 lowercase hex" in before_post
     authed = DELIVER.read_text().split("def _privkey", 1)[1].split("def _nip98_header", 1)[0]
     assert 'os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()' in authed
+
+
+# --- B6 (issue #3, VERIFY-B4 F3 / B4-05): the refusal EXECUTED, not scanned ---
+# The F3 test above proves the source shape (the guard sits before _post in the
+# file). A shape-guard bypass mutant (the hex check weakened to a length-only
+# check, the refusal message kept) SURVIVES it, because nothing there runs the
+# CLI: the real downstream then refuses a 64-char non-hex key at the signer
+# (nv.sign_event) before _post, and the behaviour is still correct but
+# untested at the boundary. These tests close that gap: they run the REAL CLI
+# against an OWNED 127.0.0.1 listener and count connections — a zero that can
+# become a one (item 3 is the positive control that makes the zero meaningful).
+
+# The refusal SystemExit text, verbatim from deliver_event.py:86-87 (D = the
+# production file; this string is the contract the CLI must keep emitting).
+REFUSE_TEXT = (
+    "BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex "
+    "characters, as nv.sign_event requires)"
+)
+# The source names the exit: both refusals are `raise SystemExit(...)` with a
+# str payload, and Python exits 1 on a str SystemExit — D:80 and D:85.
+REFUSE_RC = 1
+T0 = 1700000000
+
+
+class _OwnedListener:
+    """A 127.0.0.1-only HTTP endpoint that counts every accepted connection
+    and returns a minimal 200 so a connecting client completes its exchange.
+    The test process owns both ends; the listener is stopped at test exit."""
+
+    def __init__(self):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(8)
+        self.port = self.server.getsockname()[1]
+        self.count = 0
+        self.requests = []
+        self._stop = False
+        self._thread = threading.Thread(
+            target=self._serve, name="b6-owned-listener", daemon=True)
+
+    def _serve(self):
+        # Accept with a timeout so the thread exits when the test stops it.
+        self.server.settimeout(0.25)
+        while not self._stop:
+            try:
+                conn, _addr = self.server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            self.count += 1
+            try:
+                conn.settimeout(10)
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+                self.requests.append(data)
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop = True
+        self.server.close()
+        self._thread.join(timeout=1)
+
+
+def _run_deliver_cli(tmp_path: Path, listener, env_extra=None):
+    """Run the REAL deliver_event.py CLI in a subprocess with a closed
+    environment (AF-AP-39: the key travels only via env, never argv)."""
+    env = dict(env_extra or {})
+    proc = subprocess.run(
+        [
+            sys.executable, str(DELIVER),
+            "--fixture", "pos-allowed",
+            "--leg-dir", str(tmp_path / "leg"),
+            "--secret", "role.env",
+            "--relay-http", f"http://127.0.0.1:{listener.port}",
+            "--t0", str(T0),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    return proc
+
+
+def test_cli_refuses_a_malformed_key_before_any_connection(tmp_path: Path):
+    """B6 item 2 — the F3 refusal EXECUTED through the real CLI. A 64-char
+    NON-hex key (64 x 'z') must die in _privkey BEFORE any network action:
+    the CLI exits with the source-named SystemExit rc (1), prints the
+    exact refusal text on stderr, and the owned listener sees ZERO
+    connections. (The F3-KEY-SHAPE-BYPASS mutant of item 1 passes the old
+    source-shape test but is killed here: with the hex check weakened the CLI
+    reaches the signer, which refuses with a different rc (traceback, rc 1 but
+    a different stderr) — and if the signer were absent the connection count
+    would be 1, which this assert forbids.)"""
+    listener = _OwnedListener().start()
+    try:
+        proc = _run_deliver_cli(
+            tmp_path, listener,
+            env_extra={"BUZZ_PRIVATE_KEY": "z" * 64},
+        )
+        assert proc.returncode == REFUSE_RC, (
+            f"rc={proc.returncode} stderr={proc.stderr.decode()[:400]!r}")
+        assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT, (
+            f"wrong refusal text: {proc.stderr.decode('utf-8')[:400]!r}")
+        assert listener.count == 0, (
+            f"refusal attempted a connection (count={listener.count}) — "
+            "a pre-network refusal must never touch the relay")
+    finally:
+        listener.stop()
+
+
+def _throwaway_secp256k1_key() -> str:
+    """Return a deterministic well-formed test-only scalar for secp256k1.
+
+    Hashing a public label keeps the test reproducible and avoids any real key
+    material. Reduce into 1..n-1, where n is the curve order consumed by the
+    real signer.
+    """
+    curve_n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+    candidate = int.from_bytes(hashlib.sha256(b"S0-02-B6-test-only-key").digest(), "big")
+    return f"{candidate % (curve_n - 1) + 1:064x}"
+
+
+def test_cli_with_a_valid_key_reaches_the_owned_listener(tmp_path: Path):
+    """B6 item 3 — the PAIRED POSITIVE CONTROL. The same CLI, same listener,
+    but with a WELL-FORMED throwaway key (a deterministic test-only SHA-256
+    derivation reduced into secp256k1's 1..n-1 scalar range, never a real key):
+    the CLI must sign and POST, so the owned listener must see exactly ONE
+    connection and the request must arrive. This is what makes the item-2
+    zero meaningful: a listener that could never observe a connection would
+    make the zero tautological."""
+    privkey = _throwaway_secp256k1_key()
+    assert len(privkey) == 64 and all(c in "0123456789abcdef" for c in privkey)
+    listener = _OwnedListener().start()
+    try:
+        proc = _run_deliver_cli(
+            tmp_path, listener,
+            env_extra={"BUZZ_PRIVATE_KEY": privkey},
+        )
+        # The CLI completes the exchange (200 from our listener) and writes
+        # its leg files — it is a full delivery, not an error path.
+        assert proc.returncode == 0, (
+            f"rc={proc.returncode} stderr={proc.stderr.decode()[:400]!r}")
+        assert listener.count == 1, (
+            f"expected exactly one connection, saw {listener.count}")
+        # The request actually reached the listener: an HTTP POST to /events
+        # with a NIP-98 Authorization header.
+        assert len(listener.requests) == 1
+        req = listener.requests[0].decode("latin-1")
+        assert req.startswith("POST /events HTTP/1.1"), req[:80]
+        assert "Authorization:" in req and "Nostr " in req
+        assert "Content-Type: application/json" in req
+    finally:
+        listener.stop()

@@ -1,0 +1,1288 @@
+diff --git a/tasks/briefs/s0-02-support/B6-report.md b/tasks/briefs/s0-02-support/B6-report.md
+new file mode 100644
+index 0000000..e01d1df
+--- /dev/null
++++ b/tasks/briefs/s0-02-support/B6-report.md
+@@ -0,0 +1,222 @@
++# B6 report — issue #3: S0-02's F3 pre-network key refusal EXECUTED through the real CLI
++
++PIN 236bec7 · lane pc-b6.md · route agentfactory-build-local
++
++## FILE IDENTITY
++
++- `tests/test_s0_02_buzz_authz.py` — extended (new tests appended + 3 imports + 3 module helpers and 1 listener class).
++- `tasks/briefs/s0-02-support/B6-report.md` — this report.
++- Read-only contracts checked: `proofs/S0-02/spec.json` names the real checker legs; the S0-02
++  seed block classifies this as an execution proof and requires distinct negative reasons.
++- Scratch only: `../scratch/b6/mirror/proofs/S0-02/tools/pc/deliver_event.py` (F3-KEY-SHAPE-BYPASS mutant copy).
++
++## Item 1 — PREMISE: the F3-KEY-SHAPE-BYPASS mutant survives the current F3 test (reproduced on the PIN)
++
++Mutant (scratch copy of the production file, `D:78` at PIN): the shape check
++`if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):` weakened to
++`if len(key) != 64:  # F3-KEY-SHAPE-BYPASS (B6 scratch mutant): hex check weakened, message kept`
++— refusal source weakened, refusal MESSAGE kept (so the source-shape assertions still find their strings).
++Run in a scratch mirror tree (`cp -a proofs` + `cp -a tests`, only `DELIVER` repointed to the mutant file):
++
++```text
++$ python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/mutantF3 \
++    ../scratch/b6/mirror/tests/test_s0_02_buzz_authz.py::test_privkey_normalises_then_refuses_before_any_network_action
++.                                                                        [100%]
++1 passed in 0.16s
++```
++
++`1 passed` on the mutant — the current F3 test at `T@236bec7:1801` (`test_privkey_normalises_then_refuses_before_any_network_action`) is
++source-shape-only: `T@236bec7:1809-1812` asserts `BUZZ_PRIVATE_KEY` source text; nothing executes the CLI.
++PREMISE REPRODUCED; proceed to the behavioural test. (Sanity, production file, same test: `1 passed in 0.07s`.)
++
++## Items 2–5 — behavioural test, positive control, mutant kill, de-vacuous controls
++
++### Behavioural test: production bytes green
++
++The new `test_cli_refuses_a_malformed_key_before_any_connection` runs the real
++`deliver_event.py` subprocess through its real `main` (`D:165`) with a closed environment,
++`BUZZ_PRIVATE_KEY="z" * 64`, and `--relay-http` aimed at an owned `127.0.0.1:0` listener.
++It asserts the source-named `SystemExit` rc (`1`) and exact stderr `BUZZ_PRIVATE_KEY` refusal from `D:85-88`.
++The `listener.count == 0` assertion is at `T:1934-1936`.
++
++Paired with `test_cli_with_a_valid_key_reaches_the_owned_listener`: the same CLI receives a
++scalar from `_throwaway_secp256k1_key` at `T:1941-1950`, signs through the real
++consumer, POSTs `/events`, gets the owned listener's minimal HTTP 200, exits 0, and proves
++one accepted connection plus one observed `POST /events` with NIP-98 Authorization and JSON content
++at `T:1971-1981`. The listener's zero can therefore become one.
++
++Focused production-byte run:
++
++```text
++$ python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/focused2 \
++    tests/test_s0_02_buzz_authz.py::test_privkey_normalises_then_refuses_before_any_network_action \
++    tests/test_s0_02_buzz_authz.py::test_cli_refuses_a_malformed_key_before_any_connection \
++    tests/test_s0_02_buzz_authz.py::test_cli_with_a_valid_key_reaches_the_owned_listener
++...                                                                      [100%]
++3 passed in 1.86s
++```
++
++Earlier initial new-test-only green before deterministic-key tightening: `2 passed in 0.67s`.
++
++### Mutant kill
++
++Final new refusal test against the same item-1 F3-KEY-SHAPE-BYPASS mutant:
++
++```text
++F                                                                        [100%]
++>           assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT, (
++E               AssertionError: wrong refusal text: 'Traceback (most recent call last):\n  File "/home/rocco/agent-factory/.lanes/pc-b6.md--236bec7/scratch/b6/mirror/proofs/S0-02/tools/pc/deliver_event.py", line 221, in <module> ... File ".../deliver_event.py", line 194, in main\n    event = nv.sign_event(privke'
++E                 - BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex characters, as nv.sign_event requires)
++E                 + Traceback (most recent call last):
++FAILED ../scratch/b6/mirror/tests/test_s0_02_buzz_authz.py::test_cli_refuses_a_malformed_key_before_any_connection
++1 failed in 0.48s
++```
++
++The mutant is killed at `T:1932` by the exact `REFUSE_TEXT` assertion. It reaches the downstream
++`nv.sign_event` call at `D:194`, which raises a traceback rather than the clean `_privkey`
++`SystemExit` emitted at `D:85-88`. Exit code alone is intentionally insufficient because
++both paths return 1; stderr discriminates the refusal source. No production file changed.
++
++### De-vacuous assertion flips (scratch copies only; every flip restored by construction)
++
++Each row was a separate one-assert mutation over a scratch copy backed by the production
++`deliver_event.py`; each run selected only the owning test. Every run was red at its own
++assert, `rc=1`, exactly `1 failed`:
++
++```text
++flip refusal rc 1 -> 2:       AssertionError: rc=1 ...                 1 failed in 0.49s
++flip exact stderr + "!":      AssertionError: wrong refusal text ...  1 failed in 0.46s
++flip refusal count 0 -> 1:    AssertionError: count=0 ...              1 failed in 0.47s
++flip positive rc 0 -> 1:      AssertionError: rc=0 stderr=''          1 failed in 0.79s
++flip positive count 1 -> 0:   AssertionError: expected zero, saw 1    1 failed in 0.80s
++flip request count 1 -> 2:    flip_preq.py:1977 AssertionError        1 failed in 0.90s
++flip POST /events -> /WRONG:  AssertionError: POST /events HTTP/1.1   1 failed in 0.90s
++flip Authorization present:   flip_pauth.py:1980 AssertionError       1 failed in 0.81s
++flip Content-Type present:    flip_pctype.py:1981 AssertionError      1 failed in 0.80s
++```
++
++Evidence tier: VERIFIED by this session's real subprocess/listener executions. No inference
++is used for the connection claim; the paired control observed the request bytes.
++
++## Final gates — final bytes
++
++Timestamp: `2026-09-22T02:18:08Z`.
++
++Two complete module runs on the final test-file bytes (SHA-256 below), xdist 4:
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/final5 tests/test_s0_02_buzz_authz.py
++bringing up nodes...
++bringing up nodes...
++
++........................................................................ [ 47%]
++........................................................................ [ 95%]
++.......                                                                  [100%]
++151 passed in 11.69s
++```
++
++```text
++$ python -m pytest -n 4 -q -p no:cacheprovider --basetemp ../scratch/bt/final6 tests/test_s0_02_buzz_authz.py
++bringing up nodes...
++bringing up nodes...
++
++........................................................................ [ 47%]
++........................................................................ [ 95%]
++.......                                                                  [100%]
++151 passed in 11.65s
++```
++
++Static/screen/hash:
++
++```text
++$ python -m pyflakes tests/test_s0_02_buzz_authz.py
++PYFLAKES_RC=0
++
++$ python3 scripts/ap_screen.py --tests tests/test_s0_02_buzz_authz.py
++--- TEST_SCREEN over 1 path(s): 11 hits over 1 files ---
++AF-AP-80: 7
++AF-AP-34: 4
++    tests/test_s0_02_buzz_authz.py:1676: for word in ("pkill", "killall", "pgrep"):
++
++$ sha256sum tests/test_s0_02_buzz_authz.py
++1458321a186d7b63ab878118a94520174431438c179ee1e00c8a83bab4f7a962  tests/test_s0_02_buzz_authz.py
++```
++
++Screen classification: all 11 hits pre-exist this lane's hunk. The seven AF-AP-80 hits are
++older source-shape controls: `removal_line` at `T:720-721`, `DEBUG_LEVEL_CANARY` at `T:1034`,
++`_load_timeline_raw` at `T:1608-1641`, and `os.environ` at `T:1664`.
++The four AF-AP-34 hits are the existing `pkill` process-safety test/docstring at `T:1672-1676`.
++The B6 hunk starts with `B6` at `T:1818`; none of the 11 screen hits occurs in it.
++RUN: PRE-EXISTING / NOT INTRODUCED.
++
++Code-intel pack: `../scratch/b6/B6-pack.md` (211 lines). Graft mapped the two new tests and
++helpers at `T:1840-1983`; ripwire found `_OwnedListener` reached by exactly those two tests.
++GitNexus and code-review-graph were unmapped for new uncommitted symbols because their clone
++indexes do not contain the lane diff. Ripwire `test-gate` over this large historical test module
++reported broad name-resolution spill (`impacted=82`, `tests=8`, `untested=7`, rc 4); it is
++advisory and does not override the brief's explicit module gate, which passed twice.
++
++## Boundary
++
++```text
++$ git status --porcelain
++ M tests/test_s0_02_buzz_authz.py
++?? tasks/briefs/s0-02-support/B6-report.md
++
++$ git diff --quiet 236bec7 -- proofs/
++PROOFS_DIFF_QUIET_RC=0
++```
++
++Exactly the two allowed files are present. `proofs/S0-02/**` remains byte-identical to PIN.
++No relay delivery, no network beyond the owned loopback listener, no git write, no outward
++action.
++
++## DISCREPANCIES
++
++- The brief says a well-formed key “generated in-test.” I used a deterministic SHA-256-derived,
++  range-reduced test-only secp256k1 scalar instead of runtime randomness. This preserves the
++  throwaway/no-real-key property while making the test bitwise deterministic; the producer is
++  `_throwaway_secp256k1_key` at `T:1941-1950`.
++- The initial `lane_context.sh` call passed multiple symbols after one `-s`; it treated trailing
++  symbols as files and returned rc 64. Correct repeated `-s` invocation wrote the 211-line pack.
++- GitNexus `impact` / `detect-changes` against the clone index cannot see this detached lane's
++  uncommitted symbols/diff (`risk: UNKNOWN` / `No changes detected`). The required lane pack
++  records this explicitly; graft + ripwire map the live working-tree hunk.
++- Item 4's mutant failure discriminates on exact stderr, not exit code: the clean `_privkey`
++  `SystemExit(str)` and the downstream `ValueError` traceback both exit 1. This is why the test
++  asserts all three dimensions but the named mutant dies at `T:1932` on `REFUSE_TEXT`.
++- Final `report_lint --min-refs 10`: `report_lint: 28 refs — OK 24, NEAR 0, MISS 0, UNCHECKABLE 4, UNRESOLVED 0 (worktree)` (round 2; floor met).
++
++## NOT-done
++
++- No production change. The existing production behavior was correct; this increment hardens
++  its behavioral proof only.
++- No real relay, real key, external network, proof mint, ledger edit, commit, push, or acceptance.
++- Independent adversarial verification is NOT done by this build lane. This report is a proposal
++  until the sandbox-side adversarial-verifier grades it.
++
++## Self-attack
++
++1. The zero could be tautological because the listener cannot observe connections. Ruled out:
++   `test_cli_with_a_valid_key_reaches_the_owned_listener` at `T:1953` records one `POST /events`
++   at `T:1973-1981`; count flip red at its own assert.
++2. The test could import a helper instead of executing the real CLI. Ruled out: `_run_deliver_cli`
++   at `T:1893` invokes `sys.executable` and `DELIVER` at `T:1899`, full production argv, and
++   `env=env` at `T:1906`. The mutant traceback reaches `nv.sign_event(privkey` at `D:194`.
++3. A downstream signer refusal could masquerade as the requested `_privkey` refusal. Ruled out:
++   `REFUSE_TEXT` equality at `T:1932-1933` kills the weakened guard even though both paths exit 1;
++   item 1 proves the old shape-only test did not distinguish them.
++
++## GATE RECOMMENDATION
++
++MERGE-READY as a build-lane proposal: premise reproduced; behavioral negative + paired positive
++control execute the real CLI; named shape-guard mutant killed; every new assertion de-vacuoused;
++151 tests pass twice on identical final bytes; pyflakes rc 0; boundary exact; production untouched.
++The coordinator and sandbox adversarial-verifier retain the verdict.
++
++Retro: nothing to bake. The only tooling discrepancy (repeat `-s` for each lane-context symbol)
++is already explicit in this report; no project defect was found or fixed beyond the brief's known
++test-strength gap, so no new bug-echo or incident row is warranted.
++
++Graft token savings this turn: approximately 4,338 tokens.
++
+diff --git a/tests/test_s0_02_buzz_authz.py b/tests/test_s0_02_buzz_authz.py
+index 5e266e9..cc86e1e 100644
+--- a/tests/test_s0_02_buzz_authz.py
++++ b/tests/test_s0_02_buzz_authz.py
+@@ -11,13 +11,16 @@ skip; only an unset venue (CI) skips, and it skips by declaration.
+ """
+ from __future__ import annotations
+ 
++import hashlib
+ import importlib.util
+ import json
+ import os
+ import re
+ import shutil
++import socket
+ import subprocess
+ import sys
++import threading
+ from pathlib import Path
+ 
+ import pytest
+@@ -1810,3 +1813,171 @@ def test_privkey_normalises_then_refuses_before_any_network_action():
+     assert "exactly 64 lowercase hex" in before_post
+     authed = DELIVER.read_text().split("def _privkey", 1)[1].split("def _nip98_header", 1)[0]
+     assert 'os.environ.get("BUZZ_PRIVATE_KEY", "").strip().lower()' in authed
++
++
++# --- B6 (issue #3, VERIFY-B4 F3 / B4-05): the refusal EXECUTED, not scanned ---
++# The F3 test above proves the source shape (the guard sits before _post in the
++# file). A shape-guard bypass mutant (the hex check weakened to a length-only
++# check, the refusal message kept) SURVIVES it, because nothing there runs the
++# CLI: the real downstream then refuses a 64-char non-hex key at the signer
++# (nv.sign_event) before _post, and the behaviour is still correct but
++# untested at the boundary. These tests close that gap: they run the REAL CLI
++# against an OWNED 127.0.0.1 listener and count connections — a zero that can
++# become a one (item 3 is the positive control that makes the zero meaningful).
++
++# The refusal SystemExit text, verbatim from deliver_event.py:86-87 (D = the
++# production file; this string is the contract the CLI must keep emitting).
++REFUSE_TEXT = (
++    "BUZZ_PRIVATE_KEY is not a valid key shape (exactly 64 lowercase hex "
++    "characters, as nv.sign_event requires)"
++)
++# The source names the exit: both refusals are `raise SystemExit(...)` with a
++# str payload, and Python exits 1 on a str SystemExit — D:80 and D:85.
++REFUSE_RC = 1
++T0 = 1700000000
++
++
++class _OwnedListener:
++    """A 127.0.0.1-only HTTP endpoint that counts every accepted connection
++    and returns a minimal 200 so a connecting client completes its exchange.
++    The test process owns both ends; the listener is stopped at test exit."""
++
++    def __init__(self):
++        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        self.server.bind(("127.0.0.1", 0))
++        self.server.listen(8)
++        self.port = self.server.getsockname()[1]
++        self.count = 0
++        self.requests = []
++        self._stop = False
++        self._thread = threading.Thread(
++            target=self._serve, name="b6-owned-listener", daemon=True)
++
++    def _serve(self):
++        # Accept with a timeout so the thread exits when the test stops it.
++        self.server.settimeout(0.25)
++        while not self._stop:
++            try:
++                conn, _addr = self.server.accept()
++            except socket.timeout:
++                continue
++            except OSError:
++                break
++            self.count += 1
++            try:
++                conn.settimeout(10)
++                data = b""
++                while b"\r\n\r\n" not in data:
++                    chunk = conn.recv(65536)
++                    if not chunk:
++                        break
++                    data += chunk
++                self.requests.append(data)
++                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
++            except OSError:
++                pass
++            finally:
++                conn.close()
++
++    def start(self):
++        self._thread.start()
++        return self
++
++    def stop(self):
++        self._stop = True
++        self.server.close()
++        self._thread.join(timeout=1)
++
++
++def _run_deliver_cli(tmp_path: Path, listener, env_extra=None):
++    """Run the REAL deliver_event.py CLI in a subprocess with a closed
++    environment (AF-AP-39: the key travels only via env, never argv)."""
++    env = dict(env_extra or {})
++    proc = subprocess.run(
++        [
++            sys.executable, str(DELIVER),
++            "--fixture", "pos-allowed",
++            "--leg-dir", str(tmp_path / "leg"),
++            "--secret", "role.env",
++            "--relay-http", f"http://127.0.0.1:{listener.port}",
++            "--t0", str(T0),
++        ],
++        env=env,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        timeout=120,
++    )
++    return proc
++
++
++def test_cli_refuses_a_malformed_key_before_any_connection(tmp_path: Path):
++    """B6 item 2 — the F3 refusal EXECUTED through the real CLI. A 64-char
++    NON-hex key (64 x 'z') must die in _privkey BEFORE any network action:
++    the CLI exits with the source-named SystemExit rc (1), prints the
++    exact refusal text on stderr, and the owned listener sees ZERO
++    connections. (The F3-KEY-SHAPE-BYPASS mutant of item 1 passes the old
++    source-shape test but is killed here: with the hex check weakened the CLI
++    reaches the signer, which refuses with a different rc (traceback, rc 1 but
++    a different stderr) — and if the signer were absent the connection count
++    would be 1, which this assert forbids.)"""
++    listener = _OwnedListener().start()
++    try:
++        proc = _run_deliver_cli(
++            tmp_path, listener,
++            env_extra={"BUZZ_PRIVATE_KEY": "z" * 64},
++        )
++        assert proc.returncode == REFUSE_RC, (
++            f"rc={proc.returncode} stderr={proc.stderr.decode()[:400]!r}")
++        assert proc.stderr.decode("utf-8").strip() == REFUSE_TEXT, (
++            f"wrong refusal text: {proc.stderr.decode('utf-8')[:400]!r}")
++        assert listener.count == 0, (
++            f"refusal attempted a connection (count={listener.count}) — "
++            "a pre-network refusal must never touch the relay")
++    finally:
++        listener.stop()
++
++
++def _throwaway_secp256k1_key() -> str:
++    """Return a deterministic well-formed test-only scalar for secp256k1.
++
++    Hashing a public label keeps the test reproducible and avoids any real key
++    material. Reduce into 1..n-1, where n is the curve order consumed by the
++    real signer.
++    """
++    curve_n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
++    candidate = int.from_bytes(hashlib.sha256(b"S0-02-B6-test-only-key").digest(), "big")
++    return f"{candidate % (curve_n - 1) + 1:064x}"
++
++
++def test_cli_with_a_valid_key_reaches_the_owned_listener(tmp_path: Path):
++    """B6 item 3 — the PAIRED POSITIVE CONTROL. The same CLI, same listener,
++    but with a WELL-FORMED throwaway key (a deterministic test-only SHA-256
++    derivation reduced into secp256k1's 1..n-1 scalar range, never a real key):
++    the CLI must sign and POST, so the owned listener must see exactly ONE
++    connection and the request must arrive. This is what makes the item-2
++    zero meaningful: a listener that could never observe a connection would
++    make the zero tautological."""
++    privkey = _throwaway_secp256k1_key()
++    assert len(privkey) == 64 and all(c in "0123456789abcdef" for c in privkey)
++    listener = _OwnedListener().start()
++    try:
++        proc = _run_deliver_cli(
++            tmp_path, listener,
++            env_extra={"BUZZ_PRIVATE_KEY": privkey},
++        )
++        # The CLI completes the exchange (200 from our listener) and writes
++        # its leg files — it is a full delivery, not an error path.
++        assert proc.returncode == 0, (
++            f"rc={proc.returncode} stderr={proc.stderr.decode()[:400]!r}")
++        assert listener.count == 1, (
++            f"expected exactly one connection, saw {listener.count}")
++        # The request actually reached the listener: an HTTP POST to /events
++        # with a NIP-98 Authorization header.
++        assert len(listener.requests) == 1
++        req = listener.requests[0].decode("latin-1")
++        assert req.startswith("POST /events HTTP/1.1"), req[:80]
++        assert "Authorization:" in req and "Nostr " in req
++        assert "Content-Type: application/json" in req
++    finally:
++        listener.stop()
+diff --git a/transcripts/pc/pc-b6.md--236bec7.md b/transcripts/pc/pc-b6.md--236bec7.md
+new file mode 100644
+index 0000000..acc244c
+--- /dev/null
++++ b/transcripts/pc/pc-b6.md--236bec7.md
+@@ -0,0 +1,861 @@
++# Hermes lane session 20260922_022425_032902
++
++- model: agentfactory-build-local
++- started: 2026-09-22T01:24:28.377413+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-b6.md--236bec7/tree
++- messages: 256; tool calls: 146
++- tokens in/out/cache_read/reasoning: 677560/89683/8995552/57661
++
++## user @ 01:24:27
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 01:24:55 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 01:24:55 — 5079 chars (body not exported)
++
++## tool result (terminal) @ 01:24:57 — 2144 chars (body not exported)
++
++## assistant @ 01:25:08 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 01:25:08 — 5716 chars (body not exported)
++
++## tool result (terminal) @ 01:25:08 — 4092 chars (body not exported)
++
++## assistant @ 01:27:56 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 01:27:56 — 2267 chars (body not exported)
++
++## tool result (terminal) @ 01:27:56 — 3366 chars (body not exported)
++
++## assistant @ 01:28:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:28:54 — 4298 chars (body not exported)
++
++## assistant @ 01:32:48 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 01:32:48 — 4956 chars (body not exported)
++
++## tool result (terminal) @ 01:32:48 — 1357 chars (body not exported)
++
++## assistant @ 01:33:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:33:19 — 6391 chars (body not exported)
++
++## assistant @ 01:37:03 → tools: terminal, terminal
++
++Premise sources located. Now let me pin the F3 test region's exact lines and check the lane environment before building.
++
++## tool result (terminal) @ 01:37:03 — 1448 chars (body not exported)
++
++## tool result (terminal) @ 01:37:03 — 962 chars (body not exported)
++
++## assistant @ 01:44:10 → tools: terminal, terminal
++
++I've confirmed the key function locations and the F3 test position. Now I'll set up the scratch mirror to run a baseline test.
++
++## tool result (terminal) @ 01:44:11 — 192 chars (body not exported)
++
++## tool result (terminal) @ 01:44:11 — 1210 chars (body not exported)
++
++## assistant @ 01:45:06 → tools: terminal, terminal
++
++Baseline passes and the mutant is in scratch. Now I'll run the F3 test against the mutant and check the fixture for the subprocess test.
++
++## tool result (terminal) @ 01:45:06 — 275 chars (body not exported)
++
++## tool result (terminal) @ 01:45:06 — 312 chars (body not exported)
++
++## assistant @ 01:46:38 → tools: terminal
++
++I found that the test file I ran was from the tree's original, not my mutated version, so I'll re-run it with the correct file.
++
++## tool result (terminal) @ 01:46:38 — 322 chars (body not exported)
++
++## assistant @ 01:47:54 → tools: terminal
++
++I found a path resolution bug where the relative path was being resolved against the test file's directory. I'll fix it by using an absolute path instead.
++
++## tool result (terminal) @ 01:47:55 — 370 chars (body not exported)
++
++## assistant @ 01:48:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:48:07 — 280 chars (body not exported)
++
++## assistant @ 01:48:59 → tools: terminal
++
++I found the test file references paths relative to its own location, so I need to place it in a mirror of the tests directory to resolve the path mismatch.
++
++## tool result (terminal) @ 01:48:59 — 287 chars (body not exported)
++
++## assistant @ 01:49:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:49:42 — 382 chars (body not exported)
++
++## assistant @ 01:51:35 → tools: write_file
++
++I've confirmed item 1's premise and found that F3 passes with a weakened shape check, leaving the hex validation to a downstream consumer. Now I'll draft a report on item 1 and build the behavioral tests.
++
++## tool result (write_file) @ 01:51:35 — 309 chars (body not exported)
++
++## assistant @ 01:54:41 → tools: patch
++
++I've confirmed the issue: the F3 test passes on the mutant because the hex validation was bypassed. Now I'll add the behavioral tests to verify the fix.
++
++## tool result (patch) @ 01:54:43 — 679 chars (body not exported)
++
++## assistant @ 01:56:10 → tools: patch
++
++
++
++## tool result (patch) @ 01:56:12 — 8176 chars (body not exported)
++
++## assistant @ 01:56:22 → tools: patch
++
++I'm adding the `tmp_path` fixture parameter to both test signatures so Pyright can recognize it.
++
++## tool result (patch) @ 01:56:23 — 902 chars (body not exported)
++
++## assistant @ 01:56:28 → tools: patch
++
++
++
++## tool result (patch) @ 01:56:30 — 900 chars (body not exported)
++
++## assistant @ 01:56:40 → tools: terminal
++
++Now run the two new tests against the production CLI (green pass):
++
++## tool result (terminal) @ 01:56:41 — 192 chars (body not exported)
++
++## assistant @ 01:56:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:56:59 — 4308 chars (body not exported)
++
++## assistant @ 01:59:30 → tools: terminal, read_file
++
++The mutant is **killed**: the new refusal test fails at the refusal-text assert (`1 failed, 1 passed in 0.73s`) — with the hex check weakened the CLI reaches `nv.sign_event`, which raises a *traceback* (`ValueError: private key must be exactly 64 lowercase hex characters` at `deliver_event.py:194`) instead of the clean `SystemExit` refusal, so the exact-text assert discriminates. The positive control still passes (as expected — valid keys are unaffected by that mutant).
++
++Now item 5 (de-vacuous). Let me set up a scratch tree with the production (unmutated) CLI so each flipped expected-value fails red *at its own* assert.
++
++## tool result (terminal) @ 01:59:30 — 402 chars (body not exported)
++
++## tool result (read_file) @ 01:59:30 — 5958 chars (body not exported)
++
++## assistant @ 02:00:29 → tools: terminal
++
++The devac tree is set up with production deliver_event.py, so I'll now run the de-vacuous flips by modifying one expected value at a time to verify each assertion fails independently.
++
++## tool result (terminal) @ 02:00:30 — 257 chars (body not exported)
++
++## assistant @ 02:02:59 → tools: read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 02:02:59 — 2715 chars (body not exported)
++
++## tool result (terminal) @ 02:03:00 — 830 chars (body not exported)
++
++## tool result (terminal) @ 02:03:01 — 4808 chars (body not exported)
++
++## assistant @ 02:05:14 → tools: patch
++
++
++
++## tool result (patch) @ 02:05:15 — 1169 chars (body not exported)
++
++## assistant @ 02:05:40 → tools: patch
++
++
++
++## tool result (patch) @ 02:05:42 — 2297 chars (body not exported)
++
++## assistant @ 02:06:23 → tools: read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 02:06:23 — 5169 chars (body not exported)
++
++## tool result (terminal) @ 02:06:24 — 1237 chars (body not exported)
++
++## tool result (terminal) @ 02:06:25 — 245 chars (body not exported)
++
++## assistant @ 02:07:34 → tools: patch
++
++
++
++## tool result (patch) @ 02:07:35 — 1317 chars (body not exported)
++
++## assistant @ 02:07:45 → tools: patch
++
++
++
++## tool result (patch) @ 02:07:46 — 883 chars (body not exported)
++
++## assistant @ 02:08:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:08:53 — 8550 chars (body not exported)
++
++## tool result (terminal) @ 02:08:56 — 65 chars (body not exported)
++
++## tool result (terminal) @ 02:08:59 — 258 chars (body not exported)
++
++## assistant @ 02:10:27 → tools: patch
++
++
++
++## tool result (patch) @ 02:10:30 — 1191 chars (body not exported)
++
++## assistant @ 02:11:48 → tools: patch
++
++
++
++## tool result (patch) @ 02:11:49 — 1119 chars (body not exported)
++
++## assistant @ 02:12:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:12:19 — 224 chars (body not exported)
++
++## assistant @ 02:13:04 → tools: write_file
++
++
++
++## tool result (write_file) @ 02:13:05 — 296 chars (body not exported)
++
++## assistant @ 02:13:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:13:24 — 2518 chars (body not exported)
++
++## assistant @ 02:14:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:14:24 — 3281 chars (body not exported)
++
++## assistant @ 02:15:14 → tools: write_file
++
++
++
++## tool result (write_file) @ 02:15:14 — 330 chars (body not exported)
++
++## assistant @ 02:15:22 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:15:22 — 613 chars (body not exported)
++
++## assistant @ 02:15:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:15:46 — 469 chars (body not exported)
++
++## assistant @ 02:15:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:16:05 — 469 chars (body not exported)
++
++## assistant @ 02:16:22 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:16:22 — 58 chars (body not exported)
++
++## tool result (terminal) @ 02:16:22 — 1237 chars (body not exported)
++
++## tool result (terminal) @ 02:16:22 — 200 chars (body not exported)
++
++## tool result (terminal) @ 02:16:22 — 175 chars (body not exported)
++
++## assistant @ 02:17:14 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:17:14 — 1413 chars (body not exported)
++
++## tool result (terminal) @ 02:17:14 — 902 chars (body not exported)
++
++## tool result (terminal) @ 02:17:14 — 257 chars (body not exported)
++
++## assistant @ 02:17:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:17:29 — 111 chars (body not exported)
++
++## assistant @ 02:18:08 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 02:18:08 — 20043 chars (body not exported)
++
++## tool result (terminal) @ 02:18:08 — 105 chars (body not exported)
++
++## assistant @ 02:18:21 → tools: patch
++
++
++
++## tool result (patch) @ 02:18:22 — 813 chars (body not exported)
++
++## assistant @ 02:18:29 → tools: patch
++
++
++
++## tool result (patch) @ 02:18:30 — 995 chars (body not exported)
++
++## assistant @ 02:18:36 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:18:36 — 477 chars (body not exported)
++
++## assistant @ 02:18:46 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:18:46 — 669 chars (body not exported)
++
++## assistant @ 02:19:03 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:19:03 — 9293 chars (body not exported)
++
++## tool result (terminal) @ 02:19:03 — 5727 chars (body not exported)
++
++## tool result (terminal) @ 02:19:03 — 243 chars (body not exported)
++
++## assistant @ 02:19:15 → tools: patch
++
++
++
++## tool result (patch) @ 02:19:16 — 995 chars (body not exported)
++
++## assistant @ 02:19:30 → tools: patch
++
++
++
++## tool result (patch) @ 02:19:31 — 813 chars (body not exported)
++
++## assistant @ 02:19:43 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:19:44 — 9226 chars (body not exported)
++
++## tool result (terminal) @ 02:19:46 — 1838 chars (body not exported)
++
++## tool result (terminal) @ 02:19:47 — 4041 chars (body not exported)
++
++## assistant @ 02:19:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:19:56 — 350 chars (body not exported)
++
++## assistant @ 02:20:09 → tools: patch
++
++
++
++## tool result (patch) @ 02:20:10 — 1646 chars (body not exported)
++
++## assistant @ 02:20:33 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:20:33 — 6612 chars (body not exported)
++
++## assistant @ 02:21:25 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:21:25 — 1753 chars (body not exported)
++
++## assistant @ 02:21:42 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:21:42 — 1536 chars (body not exported)
++
++## assistant @ 02:22:23 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:22:24 — 981 chars (body not exported)
++
++## assistant @ 02:22:34 → tools: patch
++
++
++
++## tool result (patch) @ 02:22:35 — 1082 chars (body not exported)
++
++## assistant @ 02:22:43 → tools: patch
++
++
++
++## tool result (patch) @ 02:22:44 — 1112 chars (body not exported)
++
++## assistant @ 02:23:48 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:23:49 — 670 chars (body not exported)
++
++## assistant @ 02:24:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:24:05 — 4442 chars (body not exported)
++
++## assistant @ 02:24:21 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:24:21 — 12760 chars (body not exported)
++
++## assistant @ 02:24:32 → tools: patch
++
++
++
++## tool result (patch) @ 02:24:33 — 1237 chars (body not exported)
++
++## assistant @ 02:24:46 → tools: patch
++
++
++
++## tool result (patch) @ 02:24:46 — 1327 chars (body not exported)
++
++## assistant @ 02:25:04 → tools: patch
++
++
++
++## tool result (patch) @ 02:25:04 — 1346 chars (body not exported)
++
++## assistant @ 02:25:19 → tools: patch
++
++
++
++## tool result (patch) @ 02:25:19 — 1147 chars (body not exported)
++
++## assistant @ 02:25:50 → tools: patch
++
++
++
++## tool result (patch) @ 02:25:50 — 1510 chars (body not exported)
++
++## assistant @ 02:26:13 → tools: patch
++
++
++
++## tool result (patch) @ 02:26:13 — 1493 chars (body not exported)
++
++## assistant @ 02:26:33 → tools: patch
++
++
++
++## tool result (patch) @ 02:26:34 — 1307 chars (body not exported)
++
++## assistant @ 02:27:20 → tools: patch
++
++
++
++## tool result (patch) @ 02:27:20 — 1138 chars (body not exported)
++
++## assistant @ 02:27:38 → tools: patch
++
++
++
++## tool result (patch) @ 02:27:38 — 1333 chars (body not exported)
++
++## assistant @ 02:28:11 → tools: patch
++
++
++
++## tool result (patch) @ 02:28:11 — 1115 chars (body not exported)
++
++## assistant @ 02:28:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:28:33 — 1389 chars (body not exported)
++
++## assistant @ 02:28:50 → tools: patch
++
++
++
++## tool result (patch) @ 02:28:50 — 1456 chars (body not exported)
++
++## assistant @ 02:29:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:29:31 — 537 chars (body not exported)
++
++## assistant @ 02:29:39 → tools: patch
++
++
++
++## tool result (patch) @ 02:29:40 — 1104 chars (body not exported)
++
++## assistant @ 02:29:58 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:29:58 — 173 chars (body not exported)
++
++## tool result (terminal) @ 02:29:58 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:29:59 — 243 chars (body not exported)
++
++## tool result (terminal) @ 02:30:00 — 65 chars (body not exported)
++
++## assistant @ 02:30:11 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:30:11 — 612 chars (body not exported)
++
++## assistant @ 02:30:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:30:35 — 469 chars (body not exported)
++
++## assistant @ 02:30:41 → tools: patch
++
++
++
++## tool result (patch) @ 02:30:41 — 940 chars (body not exported)
++
++## assistant @ 02:30:56 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:30:56 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:30:57 — 243 chars (body not exported)
++
++## tool result (terminal) @ 02:30:57 — 1252 chars (body not exported)
++
++## assistant @ 02:31:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:31:03 — 612 chars (body not exported)
++
++## assistant @ 02:31:13 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:31:13 — 13092 chars (body not exported)
++
++## assistant @ 02:31:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:31:49 — 469 chars (body not exported)
++
++## assistant @ 02:31:57 → tools: patch
++
++
++
++## tool result (patch) @ 02:31:57 — 1012 chars (body not exported)
++
++## assistant @ 02:32:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:32:03 — 613 chars (body not exported)
++
++## assistant @ 02:32:20 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:32:20 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:32:20 — 275 chars (body not exported)
++
++## tool result (terminal) @ 02:32:21 — 178 chars (body not exported)
++
++## assistant @ 02:32:40 → tools: patch
++
++
++
++## tool result (patch) @ 02:32:40 — 797 chars (body not exported)
++
++## assistant @ 02:32:47 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:32:47 — 613 chars (body not exported)
++
++## assistant @ 02:33:00 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:33:00 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:33:01 — 163 chars (body not exported)
++
++## tool result (terminal) @ 02:33:01 — 1237 chars (body not exported)
++
++## assistant @ 02:35:16 → tools: patch
++
++
++
++## tool result (patch) @ 02:35:16 — 2048 chars (body not exported)
++
++## assistant @ 02:35:23 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:35:23 — 613 chars (body not exported)
++
++## assistant @ 02:36:05 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 02:36:05 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:36:06 — 180 chars (body not exported)
++
++## assistant @ 02:36:51 → tools: patch
++
++
++
++## tool result (patch) @ 02:36:53 — 945 chars (body not exported)
++
++## assistant @ 02:37:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:37:19 — 469 chars (body not exported)
++
++## assistant @ 02:37:35 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:37:47 — 469 chars (body not exported)
++
++## assistant @ 02:37:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:37:56 — 276 chars (body not exported)
++
++## assistant @ 02:38:13 → tools: patch
++
++
++
++## tool result (patch) @ 02:38:14 — 1856 chars (body not exported)
++
++## assistant @ 02:38:22 → tools: patch
++
++
++
++## tool result (patch) @ 02:38:23 — 1000 chars (body not exported)
++
++## assistant @ 02:38:29 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:38:29 — 613 chars (body not exported)
++
++## assistant @ 02:38:46 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:38:46 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:38:47 — 293 chars (body not exported)
++
++## tool result (terminal) @ 02:38:47 — 1237 chars (body not exported)
++
++## assistant @ 02:39:03 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:39:03 — 13093 chars (body not exported)
++
++## assistant @ 02:39:20 → tools: read_file, search_files
++
++
++
++## tool result (read_file) @ 02:39:20 — 1327 chars (body not exported)
++
++## tool result (search_files) @ 02:39:20 — 1806 chars (body not exported)
++
++## assistant @ 02:39:29 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:39:29 — 3836 chars (body not exported)
++
++## assistant @ 02:39:40 → tools: patch
++
++
++
++## tool result (patch) @ 02:39:40 — 1260 chars (body not exported)
++
++## assistant @ 02:39:47 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:39:47 — 613 chars (body not exported)
++
++## assistant @ 02:39:59 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 02:39:59 — 537 chars (body not exported)
++
++## tool result (terminal) @ 02:39:59 — 261 chars (body not exported)
++
++## assistant @ 02:42:35
++
++# B6 report — issue #3: S0-02's F3 pre-network key refusal EXECUTED through the real CLI
++
++PIN 236bec7 · lane pc-b6.md · route agentfactory-build-local
++
++## FILE IDENTITY
++
++- `tests/test_s0_02_buzz_authz.py` — extended (new tests appended + 3 imports + 3 module helpers and 1 listener class).
++- `tasks/briefs/s0-02-support/B6-report.md` — this report.
++- Read-only contracts checked: `proofs/S0-02/spec.json` names the real checker legs; the S0-02 seed block classifies this as an execution proof and requires distinct negative reasons.
++- Scratch only: `../scratch/b6/mirror/proofs/S0-02/tools/pc/deliver_event.py` (F3-KEY-SHAPE-BYPASS mutant copy).
++
++## Item 1 — PREMISE: the F3-KEY-SHAPE-BYPASS mutant survives the current F3 test (reproduced on the PIN)
++
++Mutant (scratch copy of the production file, `D:78` at PIN): the shape check
++
++`if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):`
++
++weakened to
++
++`if len(key) != 64:  # F3-KEY-SHAPE-BYPASS (B6 scratch mutant): hex check weakened, message kept`
++
++Refusal source weakened, refusal MESSAGE kept, so the source-shape assertions still find their strings.
++
++Run in a scratch mirror tree (`cp -a proofs` + `cp -a tests`, only `DELIVER` repointed to the mutant file):
++
++```text
++$ python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/mutantF3 \
++    ../scratch/b6/mirror/tests/test_s0_02_buzz_authz.py::<opaque-redacted>
++.                                                                        [100%]
++1 passed in 0.16s
++```
++
++`1 passed` on the mutant. The current F3 test at `T@236bec7:1801` (`<opaque-redacted>`) is source-shape-only: `T@236bec7:1809-1812` asserts `BUZZ_PRIVATE_KEY` source text; nothing executes the CLI.
++
++PREMISE REPRODUCED; proceed to the behavioural test. Sanity, production file, same test: `1 passed in 0.07s`.
++
++## Items 2–5 — behavioural test, positive control, mutant kill, de-vacuous controls
++
++### Behavioural test: production bytes green
++
++The new `<opaque-redacted>` runs the real `deliver_event.py` subprocess through its real `main` (`D:165`) with a closed environment, `BUZZ_PRIVATE_KEY="z" * 64`, and `--relay-http` aimed at an owned `127.0.0.1:0` listener.
++
++It asserts the source-named `SystemExit` rc (`1`) and exact stderr `BUZZ_PRIVATE_KEY` refusal from `D:85-88`. The `listener.count == 0` assertion is at `T:1934-1936`.
++
++Paired with `<opaque-redacted>`: the same CLI receives a scalar from `_throwaway_secp256k1_key` at `T:1941-1950`, signs through the real consumer, POSTs `/events`, gets the owned listener's minimal HTTP 200, exits 0, and proves one accepted connection plus one observed `POST /events` with NIP-98 Authorization and JSON content at `T:1971-1981`. The listener's zero can therefore become one.
++
++Focused production-byte run:
++
++```text
++$ python -m pytest -q -p no:cacheprovider --basetemp ../scratch/bt/focused2 \
++    
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 677560,
++  "output_tokens": 89683,
++  "cache_read_tokens": 8995552,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 57661,
++  "total_tokens": 9762795,
++  "api_calls": 109,
++  "model": "agentfactory-build-local",
++  "provider": "custom",
++  "session_id": "20260922_022425_032902",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
