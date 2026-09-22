@@ -138,6 +138,14 @@ subordinate to, the Anthropic docs.
    the stated file:line, the defect reproduces) and HALT LOUD on contradiction — never build on
    a premise the tree refutes. This is the delegate-side mirror of "reproduce before believing
    any recorded diagnosis."
+   **A reproduction never targets LIVE state (2026-09-22):** a tool that finds its own credentials
+   (the dispatcher sources `.pc-bridge.env` itself, `scripts/pc_lane.sh:96`) cannot be neutralized
+   by withholding the environment — neutralize its TARGET: reproduce through the test harness's
+   fake seam (`harness-ports/tests/test_pc_lane_dispatcher.sh:40`, `PC_AF_REPO=/fake`) or a lane
+   id that exists nowhere, never a real brief. The N2 reproduction that named the live K1-g brief
+   re-attached as a second poller from the original bytes (benign, killed by pid; the incident-log
+   entry of 2026-09-22 12:5xZ).
+
 4. **Adversarial-evaluator-over-self-evaluation** (the webinar's core claim, 39:00) is already
    law here (deep-work Phase 5, SUCCESSION rule 1: never self-accept) — no change; noted so
    nobody re-imports it as new. The SPECIFIC loop shape (negotiate contract → build →
