@@ -15,6 +15,8 @@ What was installed where in this repo:
 | other `scripts/*` | `sandbox-kit/reference-scripts/` | Trading-repo worked examples — see the README there. |
 | `CLAUDE.template.md` | `sandbox-kit/` + filled as root `CLAUDE.md` | Verbatim protocol text kept; placeholders filled for agent-factory. |
 | portable docs, vendored tools, `output-styles/` | `sandbox-kit/` | `OPERATING-GUIDE`, `RESEARCH-PROMPT-GUIDE`, examples, `aleph/`, `codebase-memory-mcp/`, `council-of-high-intelligence/`, `llm-wiki-compiler/`, `docs/THIRD-PARTY-AGENT-TOOLS.md`. |
+| `docs/` | `sandbox-kit/docs/` | Portable kit documentation; separately bound as a vendored root. |
+| portable top-level files | `sandbox-kit/ (kit-portable files)` | The top-level files classified as `kit-portable-files` by `scripts/vendored_manifest.py`; one manifest digest row. |
 
 **Added 2026-09-03 (not in the kit snapshot):** `sandbox-kit/honey-for-devs/` — Green-PT/honey-for-devs
 (shallow clone, main, 2026-09-03), vendored because the kit's curl-installer URL is blocked here;

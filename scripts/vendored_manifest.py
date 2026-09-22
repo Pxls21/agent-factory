@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate and check the repository's vendored-tree manifest."""
+"""Generate and check the repository's vendored-tree manifest.
+
+`.claude/` classification compares each file's git blob sha1 with the committed
+kit index. Mode differences such as 100644 vs 100755 are ignored for class;
+mode 120000 is used only to identify kit symlink paths.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,9 @@ MANIFEST_PATH = Path("sandbox-kit/VENDORED-MANIFEST.md")
 PROVENANCE_PATH = Path("sandbox-kit/VENDORED-FROM.md")
 LOCK_PATH = Path("upstream.lock.yaml")
 SBOM_PATH = Path("SBOM.yaml")
+CLASSES_PATH = Path("sandbox-kit/VENDORED-CLAUDE-CLASSES.tsv")
+KIT_INDEX_PATH = Path("sandbox-kit/dot-claude.aeb3082.index.tsv")
+KIT_INDEX_SHA256 = "5d266a2bbd7c84d1cf59ffde52eb0c596bb96ab930982dd74778541425ddf02c"
 EXCLUDED_DIRS = frozenset({".git", "__pycache__", "node_modules"})
 EXCLUDED_SUFFIXES = (".pyc",)
 GENERATED_AT_PREFIX = "Generated at (UTC): "
@@ -86,11 +94,54 @@ VENDORED_ROOTS = (
     VendoredRoot(
         "sandbox-kit/honey-for-devs/",
         "https://github.com/Green-PT/honey-for-devs",
-        19,
+        21,
         "unpinned (vendored copy)",
-        "sandbox-kit/VENDORED-FROM.md:19-21",
+        "sandbox-kit/VENDORED-FROM.md:21-23",
+    ),
+    VendoredRoot(
+        "sandbox-kit/docs/",
+        "pxls21/sandbox-kit:docs/",
+        18,
+        "aeb3082",
+        "sandbox-kit/VENDORED-FROM.md:18",
     ),
 )
+
+# CLOSED classification of every top-level entry under `sandbox-kit/`
+# (K1-g / VERIFY-K1 F1). Classes: `vendored-root` (a VENDORED_ROOTS tree),
+# `kit-portable-files` (regular files taken from the kit snapshot, carried by
+# ONE digest row), `first-party` (this repository's own files; no digest for
+# the manifest itself, the kit index is verified by its own sha256).
+# `--check` and `--write` refuse, before any digest work, an entry under
+# `sandbox-kit/` that is not here and any entry here that is missing from the
+# tree.
+SANDBOX_KIT_ENTRIES: dict[str, str] = {
+    "aleph": "vendored-root",
+    "codebase-memory-mcp": "vendored-root",
+    "council-of-high-intelligence": "vendored-root",
+    "docs": "vendored-root",
+    "honey-for-devs": "vendored-root",
+    "llm-wiki-compiler": "vendored-root",
+    "output-styles": "vendored-root",
+    "reference-scripts": "vendored-root",
+    "BEHAVIORAL-GUIDELINES.md": "kit-portable-files",
+    "CLAUDE.template.md": "kit-portable-files",
+    "EXAMPLE-RESEARCH-PROMPT-EXPLORATORY.md": "kit-portable-files",
+    "EXAMPLE-RESEARCH-PROMPT-SETTLED-SPEC.md": "kit-portable-files",
+    "GITNEXUS-CLI.md": "kit-portable-files",
+    "OPERATING-GUIDE.md": "kit-portable-files",
+    "OUROBOROS-SETUP.md": "kit-portable-files",
+    "README.md": "kit-portable-files",
+    "REFERENCE-setup-agent-distiller.sh": "kit-portable-files",
+    "RESEARCH-PROMPT-GUIDE.md": "kit-portable-files",
+    "TELEMETRY-REFERENCE.md": "kit-portable-files",
+    "example.mcp.json": "kit-portable-files",
+    "VENDORED-FROM.md": "first-party",
+    "VENDORED-MANIFEST.md": "first-party",
+    "VENDORED-CLAUDE-CLASSES.tsv": "first-party",
+    "dot-claude.aeb3082.index.tsv": "first-party",
+}
+KIT_PORTABLE_ROW = "sandbox-kit/ (kit-portable files)"
 
 
 class ManifestError(RuntimeError):
@@ -110,6 +161,12 @@ class TreeRecord(NamedTuple):
     tree_sha256: str
 
 
+class ManifestData(NamedTuple):
+    records: list[TreeRecord]
+    claude_classes: dict[str, str]
+    kit_only_count: int
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -127,10 +184,16 @@ def excluded(relative: PurePosixPath) -> bool:
 
 
 def walk_tree(root: Path, repo_root: Path | None) -> list[tuple[str, bytes]]:
+    if root.is_symlink():
+        raise ManifestError(
+            f"declared root is a symlink: {root.as_posix()} -> {os.readlink(root)}"
+        )
     if not root.is_dir():
         raise ManifestError(f"vendored root missing or not a directory: {root.as_posix()}")
 
-    records: list[tuple[str, bytes]] = []
+    # The declared root's own type is part of the digest domain. Child records
+    # retain the existing regular-file / `symlink:<target>` encoding.
+    records: list[tuple[str, bytes]] = [("", b"dir")]
     for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         kept_dirs: list[str] = []
@@ -210,6 +273,168 @@ def digest_records(records: Iterable[tuple[str, bytes]]) -> str:
         digest.update(payload)
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def record_counts(records: list[tuple[str, bytes]]) -> tuple[int, int]:
+    payloads = [(path, payload) for path, payload in records if path]
+    symlink_count = sum(payload.startswith(b"symlink:") for _, payload in payloads)
+    return len(payloads) - symlink_count, symlink_count
+
+
+def validate_sandbox_kit_entries(root: Path) -> None:
+    kit_root = root / "sandbox-kit"
+    if not kit_root.is_dir():
+        raise ManifestError("sandbox-kit/ missing")
+    present = {path.name for path in kit_root.iterdir()}
+    missing = sorted(set(SANDBOX_KIT_ENTRIES) - present)
+    if missing:
+        raise ManifestError(f"declared sandbox-kit entry missing: {missing[0]}")
+    for name, klass in sorted(SANDBOX_KIT_ENTRIES.items()):
+        path = kit_root / name
+        if klass == "vendored-root" and path.is_symlink():
+            raise ManifestError(
+                f"declared root is a symlink: {path.as_posix()} -> {os.readlink(path)}"
+            )
+    unknown = sorted(present - set(SANDBOX_KIT_ENTRIES))
+    if unknown:
+        raise ManifestError(f"undeclared entry under sandbox-kit/: {unknown[0]}")
+
+
+def kit_portable_records(root: Path, repo_root: Path | None) -> list[tuple[str, bytes]]:
+    kit_root = root / "sandbox-kit"
+    records: list[tuple[str, bytes]] = [("", b"dir")]
+    for name, klass in sorted(SANDBOX_KIT_ENTRIES.items()):
+        if klass != "kit-portable-files":
+            continue
+        path = kit_root / name
+        if path.is_symlink():
+            records.append(symlink_record(kit_root, path, repo_root))
+        elif path.is_file():
+            records.append((name, sha256_bytes(path.read_bytes()).encode()))
+        else:
+            raise ManifestError(f"kit-portable entry is not a file: sandbox-kit/{name}")
+    return records
+
+
+def git_blob_sha1(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def load_kit_index(root: Path) -> dict[str, tuple[str, str]]:
+    index_path = root / KIT_INDEX_PATH
+    if not index_path.is_file():
+        raise ManifestError("kit index missing")
+    data = index_path.read_bytes()
+
+    entries: dict[str, tuple[str, str]] = {}
+    lines = data.decode("utf-8").splitlines()
+    for line_number, line in enumerate(lines[1:], start=2):
+        cells = line.split("\t")
+        if len(cells) != 3 or not cells[0] or not re.fullmatch(r"[0-9a-f]{40}", cells[2]):
+            raise ManifestError(
+                f"kit index parse failure at line {line_number}: expected path<TAB>mode<TAB>git-blob-sha1"
+            )
+        path, mode, sha1 = cells
+        if path in entries:
+            raise ManifestError(f"kit index parse failure at line {line_number}: duplicate path {path}")
+        entries[path] = (mode, sha1)
+    if sha256_bytes(data) != KIT_INDEX_SHA256:
+        raise ManifestError("kit index sha256 mismatch")
+    return entries
+
+
+def claude_records(
+    root: Path, repo_root: Path | None, index: dict[str, tuple[str, str]]
+) -> tuple[dict[str, list[tuple[str, bytes]]], dict[str, str], int]:
+    claude_root = root / ".claude"
+    if claude_root.is_symlink():
+        raise ManifestError(
+            f"declared root is a symlink: {claude_root.as_posix()} -> {os.readlink(claude_root)}"
+        )
+    if not claude_root.is_dir():
+        raise ManifestError(f"vendored root missing or not a directory: {claude_root.as_posix()}")
+
+    by_class: dict[str, list[tuple[str, bytes]]] = {
+        "kit-verbatim": [],
+        "kit-adapted": [],
+        "first-party": [],
+    }
+    classes: dict[str, str] = {}
+    for directory, dirnames, filenames in os.walk(claude_root, topdown=True, followlinks=False):
+        directory_path = Path(directory)
+        kept_dirs: list[str] = []
+        for name in sorted(dirnames):
+            path = directory_path / name
+            relative = PurePosixPath(path.relative_to(claude_root).as_posix())
+            if excluded(relative):
+                continue
+            if path.is_symlink():
+                rel = relative.as_posix()
+                record = symlink_record(claude_root, path, repo_root)
+                klass = "kit-verbatim" if index.get(rel, ("", ""))[0] == "120000" else "first-party"
+                classes[rel] = klass
+                by_class[klass].append(record)
+            else:
+                kept_dirs.append(name)
+        dirnames[:] = kept_dirs
+
+        for name in sorted(filenames):
+            path = directory_path / name
+            relative = PurePosixPath(path.relative_to(claude_root).as_posix())
+            if excluded(relative):
+                continue
+            rel = relative.as_posix()
+            if path.is_symlink():
+                record = symlink_record(claude_root, path, repo_root)
+                klass = "kit-verbatim" if index.get(rel, ("", ""))[0] == "120000" else "first-party"
+            elif path.is_file():
+                data = path.read_bytes()
+                record = (rel, sha256_bytes(data).encode())
+                if rel not in index:
+                    klass = "first-party"
+                elif index[rel][1] == git_blob_sha1(data):
+                    klass = "kit-verbatim"
+                else:
+                    klass = "kit-adapted"
+            else:
+                continue
+            classes[rel] = klass
+            by_class[klass].append(record)
+
+    for klass in by_class:
+        by_class[klass] = sorted(by_class[klass], key=lambda record: record[0].encode("utf-8"))
+    kit_only_count = len(set(index) - set(classes))
+    return by_class, classes, kit_only_count
+
+
+def render_classes(classes: dict[str, str]) -> str:
+    rows = ["path\tclass"]
+    rows.extend(f"{path}\t{classes[path]}" for path in sorted(classes))
+    return "\n".join(rows) + "\n"
+
+
+def parse_classes(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    if not lines or lines[0] != "path\tclass":
+        raise ManifestError(".claude class file parse failure at line 1")
+    classes: dict[str, str] = {}
+    for line_number, line in enumerate(lines[1:], start=2):
+        cells = line.split("\t")
+        if len(cells) != 2 or cells[1] not in {"kit-verbatim", "kit-adapted", "first-party"}:
+            raise ManifestError(f".claude class file parse failure at line {line_number}")
+        classes[cells[0]] = cells[1]
+    return classes
+
+
+def class_difference(committed: str, generated: str) -> str:
+    committed_classes = parse_classes(committed)
+    generated_classes = parse_classes(generated)
+    for path in sorted(set(committed_classes) | set(generated_classes)):
+        committed_class = committed_classes.get(path, "<missing>")
+        generated_class = generated_classes.get(path, "<missing>")
+        if committed_class != generated_class:
+            return f"{path}: committed={committed_class} generated={generated_class}"
+    return "byte length differs"
 
 
 def detect_spdx(text: str) -> str:
@@ -319,6 +544,10 @@ def parse_provenance(path: Path) -> tuple[set[str], dict[str, int]]:
                 )
             named.add("output-styles/")
             roots.update({f"sandbox-kit/{name}": offset for name in named})
+        elif here == "sandbox-kit/docs/":
+            roots[here] = offset
+        elif here == KIT_PORTABLE_ROW:
+            pass
         elif here not in {".mcp.json", "scripts/"} and not here.startswith("sandbox-kit/"):
             raise ManifestError(f"provenance table parse failure at line {offset}: unknown Here value {here}")
 
@@ -462,13 +691,59 @@ def git_revision(root: Path) -> str:
         return "unknown"
 
 
-def build_records(root: Path, repo_root: Path | None) -> list[TreeRecord]:
+def build_manifest_data(root: Path, repo_root: Path | None) -> ManifestData:
+    index = load_kit_index(root)
+    validate_sandbox_kit_entries(root)
+    claude_by_class, claude_classes, kit_only_count = claude_records(root, repo_root, index)
+
     records: list[TreeRecord] = []
     for item in VENDORED_ROOTS:
+        if item.path == ".claude/":
+            claude_rows = (
+                (
+                    ".claude/ (kit-verbatim)",
+                    "pxls21/sandbox-kit:dot-claude/",
+                    "aeb3082",
+                    KIT_INDEX_PATH.as_posix(),
+                    claude_by_class["kit-verbatim"],
+                ),
+                (
+                    ".claude/ (kit-adapted)",
+                    "pxls21/sandbox-kit:dot-claude/",
+                    "aeb3082 (adapted here)",
+                    KIT_INDEX_PATH.as_posix(),
+                    claude_by_class["kit-adapted"],
+                ),
+                (
+                    ".claude/ (first-party)",
+                    "first-party (this repository)",
+                    "n/a",
+                    "n/a",
+                    claude_by_class["first-party"],
+                ),
+            )
+            for path, source, pin, pin_source, files in claude_rows:
+                regular_count, symlink_count = record_counts(files)
+                records.append(
+                    TreeRecord(
+                        path=path,
+                        source=source,
+                        pin=pin,
+                        pin_source=pin_source,
+                        license="none found",
+                        license_file=None,
+                        license_sha256=None,
+                        regular_file_count=regular_count,
+                        symlink_count=symlink_count,
+                        tree_sha256=digest_records(files),
+                    )
+                )
+            continue
+
         tree_root = root / item.path
         files = walk_tree(tree_root, repo_root)
         license_id, license_file, license_sha = license_for(tree_root, files)
-        symlink_count = sum(payload.startswith(b"symlink:") for _, payload in files)
+        regular_count, symlink_count = record_counts(files)
         records.append(
             TreeRecord(
                 path=item.path,
@@ -478,12 +753,36 @@ def build_records(root: Path, repo_root: Path | None) -> list[TreeRecord]:
                 license=license_id,
                 license_file=license_file,
                 license_sha256=license_sha,
-                regular_file_count=len(files) - symlink_count,
+                regular_file_count=regular_count,
                 symlink_count=symlink_count,
                 tree_sha256=digest_records(files),
             )
         )
-    return records
+
+    portable = kit_portable_records(root, repo_root)
+    portable_license, portable_license_file, portable_license_sha = license_for(
+        root / "sandbox-kit", portable
+    )
+    portable_regular_count, portable_symlink_count = record_counts(portable)
+    records.append(
+        TreeRecord(
+            path=KIT_PORTABLE_ROW,
+            source="pxls21/sandbox-kit:portable top-level files",
+            pin="aeb3082",
+            pin_source="sandbox-kit/VENDORED-FROM.md:19",
+            license=portable_license,
+            license_file=portable_license_file,
+            license_sha256=portable_license_sha,
+            regular_file_count=portable_regular_count,
+            symlink_count=portable_symlink_count,
+            tree_sha256=digest_records(portable),
+        )
+    )
+    return ManifestData(records, claude_classes, kit_only_count)
+
+
+def build_records(root: Path, repo_root: Path | None) -> list[TreeRecord]:
+    return build_manifest_data(root, repo_root).records
 
 
 def escape_cell(value: str) -> str:
@@ -508,7 +807,8 @@ def render(root: Path, revision: str | None = None) -> str:
     validate_declared_roots(root)
     validate_pin_agreement(root)
     revision = revision or git_revision(root)
-    rows = build_records(root, repo_root)
+    manifest_data = build_manifest_data(root, repo_root)
+    rows = manifest_data.records
     output = [
         "# Vendored-tree manifest",
         "",
@@ -518,6 +818,10 @@ def render(root: Path, revision: str | None = None) -> str:
         "Excluded from every tree walk: `.git`, `__pycache__`, `*.pyc`, `node_modules`.",
         "Regenerate with `python3 scripts/vendored_manifest.py --write`; `--check` is the drift gate.",
         "Symlinks under a vendored root are digested by their target string; a link is allowed when its resolved target lies inside the repository root (AMENDMENT 1) and is refused by name when it dangles or resolves outside it.",
+        "Declared roots are refused when the root itself is a symlink; the root type `dir` is included in each tree digest.",
+        "Mode differences in `.claude/` are ignored for class; git blob sha1 bytes decide `kit-verbatim` vs `kit-adapted`.",
+        f"Kit index: {KIT_INDEX_PATH.as_posix()} sha256 {KIT_INDEX_SHA256}; kit-only paths in index absent here: {manifest_data.kit_only_count}.",
+        "First-party sandbox-kit entries: `VENDORED-FROM.md`, `VENDORED-MANIFEST.md`, `VENDORED-CLAUDE-CLASSES.tsv`, `dot-claude.aeb3082.index.tsv`.",
         "",
         "A pin source names the evidence for the pin. `unpinned (vendored copy)` is explicit where no immutable upstream pin is recorded.",
         "License SHA-256 is over the tree-local license file bytes; `none found` is never inferred from another source.",
@@ -594,9 +898,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.write:
         try:
             generated = render(root)
+            generated_classes = render_classes(
+                build_manifest_data(root, repo_root_of(root)).claude_classes
+            )
             manifest = root / MANIFEST_PATH
             manifest.write_text(generated, encoding="utf-8")
+            classes = root / CLASSES_PATH
+            classes.write_text(generated_classes, encoding="utf-8")
             print(f"WROTE {MANIFEST_PATH.as_posix()} ({len(VENDORED_ROOTS)} roots)")
+            print(f"WROTE {CLASSES_PATH.as_posix()} ({len(parse_classes(generated_classes))} paths)")
             return 0
         except (ManifestError, OSError, UnicodeError) as error:
             print(f"FAIL: {error}", file=sys.stderr)
@@ -612,6 +922,11 @@ def main(argv: list[str] | None = None) -> int:
             manifest = root / MANIFEST_PATH
             committed = manifest.read_text(encoding="utf-8")
             generated = render(root, revision=start_revision)
+            classes = root / CLASSES_PATH
+            committed_classes = classes.read_text(encoding="utf-8")
+            generated_classes = render_classes(
+                build_manifest_data(root, repo_root_of(root)).claude_classes
+            )
             end_revision = git_revision(root)
             if start_revision != end_revision:
                 if attempt == 0:
@@ -621,10 +936,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
             expected = normalize_generated_time(committed)
             actual = normalize_generated_time(generated)
+            problems = []
             if expected != actual:
-                raise ManifestError(
-                    f"vendored manifest drift: {first_difference(expected, actual)}"
+                problems.append(f"vendored manifest drift: {first_difference(expected, actual)}")
+            if committed_classes != generated_classes:
+                problems.append(
+                    f".claude class drift: {class_difference(committed_classes, generated_classes)}"
                 )
+            if problems:
+                raise ManifestError("; ".join(problems))
             print(f"PASS: {MANIFEST_PATH.as_posix()} matches {len(VENDORED_ROOTS)} vendored roots")
             return 0
         except (ManifestError, OSError, UnicodeError) as error:

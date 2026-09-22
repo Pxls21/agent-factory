@@ -13,6 +13,25 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "vendored_manifest.py"
 MANIFEST_PATH = Path("sandbox-kit/VENDORED-MANIFEST.md")
+EXPECTED_PASS = "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 9 vendored roots\n"
+
+
+ADAPTED_PATHS = [
+    "agents/adversarial-verifier.md",
+    "hooks/edit-snapshot.py",
+    "hooks/graft-first-nag.py",
+    "hooks/session-start.sh",
+    "hooks/turn-retro-gate.sh",
+    "settings.json",
+    "skills/adversarial-review/SKILL.md",
+    "skills/anti-hollow-green/SKILL.md",
+    "skills/build-loop/SKILL.md",
+    "skills/code-intel-trio/SKILL.md",
+    "skills/contract-gate/SKILL.md",
+    "skills/deep-work/SKILL.md",
+    "skills/orchestration/SKILL.md",
+    "skills/session-continuity/SKILL.md",
+]
 
 
 def load_module(path: Path = SCRIPT):
@@ -31,8 +50,15 @@ def copy_fixture(tmp_path: Path, module=None) -> Path:
     module = module or load_module()
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
-    shutil.copy2(SCRIPT, root / "scripts" / SCRIPT.name)
-    for relative in (module.PROVENANCE_PATH, module.LOCK_PATH, module.SBOM_PATH, module.MANIFEST_PATH):
+    shutil.copy2(Path(module.__file__), root / "scripts" / SCRIPT.name)
+    for relative in (
+        module.PROVENANCE_PATH,
+        module.LOCK_PATH,
+        module.SBOM_PATH,
+        module.MANIFEST_PATH,
+        module.CLASSES_PATH,
+        module.KIT_INDEX_PATH,
+    ):
         source = REPO / relative
         if source.exists():
             destination = root / relative
@@ -40,6 +66,16 @@ def copy_fixture(tmp_path: Path, module=None) -> Path:
             shutil.copy2(source, destination)
     for item in module.VENDORED_ROOTS:
         shutil.copytree(REPO / item.path, root / item.path, symlinks=True)
+    for name, klass in module.SANDBOX_KIT_ENTRIES.items():
+        source = REPO / "sandbox-kit" / name
+        destination = root / "sandbox-kit" / name
+        if destination.exists() or destination.is_symlink():
+            continue
+        if klass == "kit-portable-files":
+            shutil.copy2(source, destination)
+        elif klass == "first-party":
+            if source.exists():
+                shutil.copy2(source, destination)
     # AMENDMENT 2(d)'s cross-root fixture source. It is not a vendored root and
     # does not affect any row until a link under .claude points at it.
     agent_skill = Path(".agents/skills/anti-hollow-green")
@@ -84,6 +120,39 @@ def manifest_row(text: str, path: str) -> str:
     return match.group(0)
 
 
+def manifest_row_sha(row: str) -> str:
+    return row.rsplit("`", 2)[1]
+
+
+def class_rows(path: Path) -> dict[str, str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "path\tclass"
+    return dict(line.split("\t") for line in lines[1:])
+
+
+def replace_manifest_hash(root: Path, path: str, sha: str = "0" * 64) -> None:
+    manifest = root / MANIFEST_PATH
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(f"| `{path}`"):
+            lines[index] = re.sub(r"`[0-9a-f]{64}`(?= \|$)", f"`{sha}`", line)
+            manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+    raise AssertionError(f"manifest row missing: {path}")
+
+
+def classify_fixture(root: Path, module) -> None:
+    classes = module.render_classes(
+        module.build_manifest_data(root, module.repo_root_of(root)).claude_classes
+    )
+    (root / module.CLASSES_PATH).write_text(classes, encoding="utf-8")
+
+
+def rewrite_manifest_and_classes(root: Path, module) -> None:
+    (root / module.MANIFEST_PATH).write_text(module.render(root), encoding="utf-8")
+    classify_fixture(root, module)
+
+
 def test_real_link_passes_and_changes_digest_when_target_string_changes(tmp_path: Path) -> None:
     # AMENDMENT 2(a): the ONE real link passes. Its target STRING (not target
     # contents) is digest input, proved by changing only that string to another
@@ -122,7 +191,7 @@ def test_committed_manifest_matches_fresh_generation(tmp_path: Path) -> None:
     root = copy_fixture(tmp_path)
     result = run_tool(root)
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 8 vendored roots\n"
+    assert result.stdout == EXPECTED_PASS
 
 
 def test_two_write_runs_are_byte_identical(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,7 +231,7 @@ def test_generation_time_is_only_normalized_drift_line(
     result = run_tool(root)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 8 vendored roots\n"
+    assert result.stdout == EXPECTED_PASS
 
 
 def test_invalid_source_date_epoch_is_named(
@@ -192,10 +261,10 @@ def test_committed_manifest_passes_check_at_a_later_head(tmp_path: Path) -> None
     result = run_tool(root)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 8 vendored roots\n"
+    assert result.stdout == EXPECTED_PASS
 
-    changed_root = root / module.VENDORED_ROOTS[0].path
-    changed_file = next(path for path in sorted(changed_root.rglob("*")) if path.is_file())
+    changed_root = root / "sandbox-kit/docs"
+    changed_file = changed_root / "THIRD-PARTY-AGENT-TOOLS.md"
     changed_file.write_bytes(changed_file.read_bytes() + b"changed-byte\n")
 
     control = run_tool(root)
@@ -204,21 +273,193 @@ def test_committed_manifest_passes_check_at_a_later_head(tmp_path: Path) -> None
     assert "vendored manifest drift" in control.stderr
     assert "line 4" not in control.stderr
     assert "Generated from commit" not in control.stderr
-    assert module.VENDORED_ROOTS[0].path in control.stderr
+    assert "sandbox-kit/docs/" in control.stderr
 
 
 def test_changed_vendored_byte_names_root_and_returns_one(tmp_path: Path) -> None:
     module = load_module()
     root = copy_fixture(tmp_path, module)
-    changed_root = root / module.VENDORED_ROOTS[0].path
-    changed_file = next(path for path in sorted(changed_root.rglob("*")) if path.is_file())
+    changed_root = root / "sandbox-kit/docs"
+    changed_file = changed_root / "THIRD-PARTY-AGENT-TOOLS.md"
     changed_file.write_bytes(changed_file.read_bytes() + b"changed-byte\n")
 
     result = run_tool(root)
 
     assert result.returncode == 1
     assert "vendored manifest drift" in result.stderr
-    assert module.VENDORED_ROOTS[0].path in result.stderr
+    assert "sandbox-kit/docs/" in result.stderr
+
+
+def test_undeclared_sandbox_kit_entry_is_named(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    undeclared = root / "sandbox-kit/newtool"
+    undeclared.mkdir()
+    (undeclared / "file.txt").write_text("new vendored-looking tool\n", encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "FAIL: undeclared entry under sandbox-kit/: newtool" in result.stderr
+
+
+def test_docs_byte_change_names_docs_row(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    changed = root / "sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md"
+    changed.write_bytes(changed.read_bytes() + b"changed-byte\n")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "vendored manifest drift" in result.stderr
+    assert "sandbox-kit/docs/" in result.stderr
+
+
+def test_docs_table_entry_is_required_for_docs_drift(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    before = module.render(root)
+    changed = root / "sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md"
+    changed.write_bytes(changed.read_bytes() + b"changed-byte\n")
+    after = module.render(root)
+
+    assert manifest_row(before, "sandbox-kit/docs/") != manifest_row(after, "sandbox-kit/docs/")
+
+
+def test_declared_sandbox_kit_entry_missing_is_named(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    (root / "sandbox-kit/README.md").unlink()
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "FAIL: declared sandbox-kit entry missing: README.md" in result.stderr
+
+
+def test_vendored_root_table_entry_missing_is_named(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    shutil.rmtree(root / "sandbox-kit/docs")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "FAIL: declared sandbox-kit entry missing: docs" in result.stderr
+
+
+def test_kit_portable_row_changes_when_portable_file_changes(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    before = manifest_row(module.render(root), module.KIT_PORTABLE_ROW)
+    portable = root / "sandbox-kit/README.md"
+    portable.write_bytes(portable.read_bytes() + b"portable change\n")
+    after = manifest_row(module.render(root), module.KIT_PORTABLE_ROW)
+
+    assert before != after
+    assert manifest_row_sha(before) != manifest_row_sha(after)
+
+
+def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    manifest = (root / module.MANIFEST_PATH).read_text(encoding="utf-8")
+    classes = class_rows(root / module.CLASSES_PATH)
+
+    assert "Kit index: sandbox-kit/dot-claude.aeb3082.index.tsv sha256" in manifest
+    assert "kit-only paths in index absent here: 19" in manifest
+    assert "| `.claude/ (kit-verbatim)`" in manifest
+    assert "| `.claude/ (kit-adapted)`" in manifest
+    assert "| `.claude/ (first-party)`" in manifest
+    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2958", "0"]
+    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["14", "0"]
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["81", "0"]
+    assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
+    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2958
+    assert sum(klass == "kit-adapted" for klass in classes.values()) == 14
+    assert sum(klass == "first-party" for klass in classes.values()) == 81
+
+
+def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    target = root / ".claude/agents/code-implementer.md"
+    target.write_bytes(target.read_bytes() + b"adapted now\n")
+    replace_manifest_hash(root, ".claude/ (kit-verbatim)", module.build_manifest_data(root, module.repo_root_of(root)).records[0].tree_sha256)
+    replace_manifest_hash(root, ".claude/ (kit-adapted)", module.build_manifest_data(root, module.repo_root_of(root)).records[1].tree_sha256)
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert ".claude class drift: agents/code-implementer.md: committed=kit-verbatim generated=kit-adapted" in result.stderr
+
+
+def test_new_first_party_claude_file_names_manifest_and_class_drift(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    added = root / ".claude/first-party-new.md"
+    added.write_text("new first-party content\n", encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "vendored manifest drift" in result.stderr
+    assert ".claude/ (first-party)" in result.stderr
+    assert ".claude class drift: first-party-new.md: committed=<missing> generated=first-party" in result.stderr
+
+
+def test_kit_index_sha256_mismatch_is_named(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    index = root / module.KIT_INDEX_PATH
+    lines = index.read_text(encoding="utf-8").splitlines()
+    lines[0] += " tampered"
+    index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "FAIL: kit index sha256 mismatch" in result.stderr
+
+
+def test_malformed_kit_index_row_names_line(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    index = root / module.KIT_INDEX_PATH
+    lines = index.read_text(encoding="utf-8").splitlines()
+    lines[3] = "malformed"
+    index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "kit index parse failure at line 4" in result.stderr
+
+
+def test_missing_kit_index_is_named(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    (root / module.KIT_INDEX_PATH).unlink()
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "FAIL: kit index missing" in result.stderr
+
+
+def test_real_tree_write_then_check_regenerates_claude_rows(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    written = run_tool(root, "--write")
+    checked = run_tool(root)
+    manifest = (root / MANIFEST_PATH).read_text(encoding="utf-8")
+
+    assert written.returncode == 0, written.stderr
+    assert checked.returncode == 0, checked.stderr
+    assert checked.stdout == EXPECTED_PASS
+    assert "| `.claude/ (kit-verbatim)`" in manifest
+    assert "| `.claude/ (kit-adapted)`" in manifest
+    assert "| `.claude/ (first-party)`" in manifest
 
 
 def test_provenance_root_missing_from_declared_list_is_named(tmp_path: Path) -> None:
@@ -230,10 +471,11 @@ def test_provenance_root_missing_from_declared_list_is_named(tmp_path: Path) -> 
         "VENDORED_ROOTS",
         tuple(item for item in module.VENDORED_ROOTS if item.path != missing),
     )
-    # Materialize the in-memory tuple change into a fixture-local script.
+    # Materialize the in-memory tuple change into a fixture-local script while
+    # keeping the rest of the module-scope constants intact.
     text = SCRIPT.read_text(encoding="utf-8")
     start = text.index("VENDORED_ROOTS = (")
-    end = text.index("\n\n\nclass ManifestError", start)
+    end = text.index(")\n\n# CLOSED classification", start) + 1
     declared = repr(tuple(module.VENDORED_ROOTS))
     mutated = text[:start] + f"VENDORED_ROOTS = {declared}" + text[end:]
     (root / "scripts" / SCRIPT.name).write_text(mutated, encoding="utf-8")
@@ -284,12 +526,12 @@ def test_cross_root_link_inside_repository_is_allowed_and_digested(tmp_path: Pat
     link = root / ".claude/x"
     link.symlink_to("../.agents/skills/anti-hollow-green")
     first = module.render(root)
-    first_row = manifest_row(first, ".claude/")
+    first_row = manifest_row(first, ".claude/ (first-party)")
 
     link.unlink()
     link.symlink_to("../.agents/skills/../skills/anti-hollow-green")
     second = module.render(root)
-    second_row = manifest_row(second, ".claude/")
+    second_row = manifest_row(second, ".claude/ (first-party)")
 
     assert first_row != second_row
 
@@ -324,6 +566,48 @@ def test_moving_real_link_target_outside_repo_flips_to_refused(tmp_path: Path) -
     assert "escaping symlink refused" in result.stderr
     assert "Formula -> ../../../outside-target" in result.stderr
     assert str(outside) in result.stderr
+
+
+def test_declared_root_symlink_is_refused_by_name(tmp_path: Path) -> None:
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    plain_control = run_tool(root)
+    assert plain_control.returncode == 0, plain_control.stderr
+
+    declared = root / "sandbox-kit/aleph"
+    real = root / "sandbox-kit/aleph-real"
+    declared.rename(real)
+    declared.symlink_to("aleph-real")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert f"declared root is a symlink: {(root / 'sandbox-kit/aleph').as_posix()} -> aleph-real" in result.stderr
+
+
+def test_declared_root_symlink_target_outside_sandbox_kit_is_refused_by_name(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    declared = root / "sandbox-kit/aleph"
+    real = root / "aleph-real"
+    declared.rename(real)
+    declared.symlink_to("../aleph-real")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert f"declared root is a symlink: {declared.as_posix()} -> ../aleph-real" in result.stderr
+
+
+def test_declared_root_dangling_symlink_is_refused_by_type(tmp_path: Path) -> None:
+    root = copy_fixture(tmp_path)
+    declared = root / "sandbox-kit/aleph"
+    shutil.rmtree(declared)
+    declared.symlink_to("aleph-missing")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert f"declared root is a symlink: {declared.as_posix()} -> aleph-missing" in result.stderr
 
 
 def test_license_detection_reports_spdx_and_sha_or_none(tmp_path: Path) -> None:
@@ -363,7 +647,8 @@ def test_walk_is_sorted_before_digest(tmp_path: Path) -> None:
     (tree / "zzz/d.txt").write_text("d", encoding="utf-8")
     records = module.walk_tree(tree, tmp_path)
 
-    assert [path for path, _ in records] == ["aaa/c.txt", "b.txt", "zzz/d.txt"]
+    assert [path for path, _ in records] == ["", "aaa/c.txt", "b.txt", "zzz/d.txt"]
+    assert records[0] == ("", b"dir")
     assert module.digest_records(records) != module.digest_records(list(reversed(records)))
 
 
@@ -384,7 +669,8 @@ def test_exclusions_do_not_affect_tree_record(tmp_path: Path) -> None:
         path.write_text("excluded mutation", encoding="utf-8")
 
     assert module.walk_tree(tree, tmp_path) == baseline
-    assert [path for path, _ in baseline] == ["kept.txt"]
+    assert [path for path, _ in baseline] == ["", "kept.txt"]
+    assert baseline[0] == ("", b"dir")
 
 
 def test_sbom_pin_disagreement_is_named(tmp_path: Path) -> None:
@@ -489,6 +775,84 @@ MUTANTS = (
         ),
         "test_escaping_symlink_is_refused_by_name",
     ),
+    (
+        "remove-declared-root-symlink-refusal",
+        lambda text: text.replace(
+            "    if root.is_symlink():\n"
+            "        raise ManifestError(\n"
+            "            f\"declared root is a symlink: {root.as_posix()} -> {os.readlink(root)}\"\n"
+            "        )\n",
+            "    if root.is_symlink():\n        pass\n",
+            1,
+        ).replace(
+            "        if klass == \"vendored-root\" and path.is_symlink():\n"
+            "            raise ManifestError(\n"
+            "                f\"declared root is a symlink: {path.as_posix()} -> {os.readlink(path)}\"\n"
+            "            )\n",
+            "        if klass == \"vendored-root\" and path.is_symlink():\n            pass\n",
+        ),
+        "test_declared_root_symlink_target_outside_sandbox_kit_is_refused_by_name",
+    ),
+    (
+        "remove-undeclared-entry-refusal",
+        lambda text: text.replace(
+            '    if unknown:\n        raise ManifestError(f"undeclared entry under sandbox-kit/: {unknown[0]}")\n',
+            '    if unknown:\n        pass\n',
+        ),
+        "test_undeclared_sandbox_kit_entry_is_named",
+    ),
+    (
+        "remove-missing-entry-refusal",
+        lambda text: text.replace(
+            '    if not root.is_dir():\n'
+            '        raise ManifestError(f"vendored root missing or not a directory: {root.as_posix()}")\n',
+            '    if not root.is_dir():\n'
+            '        pass\n',
+        ).replace(
+            '    missing = sorted(set(SANDBOX_KIT_ENTRIES) - present)\n'
+            '    if missing:\n'
+            '        raise ManifestError(f"declared sandbox-kit entry missing: {missing[0]}")\n',
+            '    missing = []\n'
+            '    if missing:\n'
+            '        pass\n',
+        ),
+        "test_vendored_root_table_entry_missing_is_named",
+    ),
+    (
+        "blob-sha-without-git-header",
+        lambda text: text.replace(
+            'return hashlib.sha1(b"blob %d\\0" % len(data) + data).hexdigest()',
+            "return hashlib.sha1(data).hexdigest()",
+        ),
+        "test_real_claude_split_counts_and_class_file",
+    ),
+    (
+        "remove-kit-index-sha256-check",
+        lambda text: text.replace(
+            '    if sha256_bytes(data) != KIT_INDEX_SHA256:\n        raise ManifestError("kit index sha256 mismatch")\n',
+            '    if sha256_bytes(data) != KIT_INDEX_SHA256:\n        pass\n',
+        ),
+        "test_kit_index_sha256_mismatch_is_named",
+    ),
+    (
+        "remove-claude-class-comparison",
+        lambda text: text.replace(
+            "            if committed_classes != generated_classes:\n"
+            "                problems.append(\n"
+            "                    f\".claude class drift: {class_difference(committed_classes, generated_classes)}\"\n"
+            "                )\n",
+            "            if False:\n                pass\n",
+        ),
+        "test_claude_class_drift_names_changed_path",
+    ),
+    (
+        "drop-docs-root-from-manifest-table",
+        lambda text: text.replace(
+            '    for item in VENDORED_ROOTS:\n        if item.path == ".claude/":\n',
+            '    for item in VENDORED_ROOTS:\n        if item.path == "sandbox-kit/docs/":\n            continue\n        if item.path == ".claude/":\n',
+        ),
+        "test_docs_byte_change_names_docs_row",
+    ),
 )
 
 
@@ -564,5 +928,80 @@ def test_required_mutants_are_killed(
             except mutant.ManifestError:
                 detected = True
             assert detected, mutant_name
+        elif killer == "test_declared_root_symlink_target_outside_sandbox_kit_is_refused_by_name":
+            root = copy_fixture(tmp_path, mutant)
+            declared = root / "sandbox-kit/aleph"
+            real = root / "aleph-real"
+            declared.rename(real)
+            declared.symlink_to("../aleph-real")
+            detected = False
+            try:
+                mutant.render(root)
+            except mutant.ManifestError:
+                detected = True
+            assert detected, mutant_name
+        elif killer == "test_undeclared_sandbox_kit_entry_is_named":
+            root = copy_fixture(tmp_path, mutant)
+            undeclared = root / "sandbox-kit/newtool"
+            undeclared.mkdir()
+            (undeclared / "file.txt").write_text("new\n", encoding="utf-8")
+            detected = False
+            try:
+                mutant.render(root)
+            except mutant.ManifestError:
+                detected = True
+            assert detected, mutant_name
+        elif killer == "test_vendored_root_table_entry_missing_is_named":
+            root = copy_fixture(tmp_path, mutant)
+            shutil.rmtree(root / "sandbox-kit/docs")
+            detected = False
+            try:
+                mutant.render(root)
+            except mutant.ManifestError:
+                detected = True
+            assert detected, mutant_name
+        elif killer == "test_real_claude_split_counts_and_class_file":
+            root = copy_fixture(tmp_path, mutant)
+            data = mutant.build_manifest_data(root, mutant.repo_root_of(root))
+            counts = {record.path: record.regular_file_count for record in data.records}
+            assert counts[".claude/ (kit-verbatim)"] == 2958, mutant_name
+            assert counts[".claude/ (kit-adapted)"] == 14, mutant_name
+        elif killer == "test_kit_index_sha256_mismatch_is_named":
+            root = copy_fixture(tmp_path, mutant)
+            index = root / mutant.KIT_INDEX_PATH
+            lines = index.read_text(encoding="utf-8").splitlines()
+            lines[0] += " tampered"
+            index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            detected = False
+            try:
+                mutant.render(root)
+            except mutant.ManifestError:
+                detected = True
+            assert detected, mutant_name
+        elif killer == "test_claude_class_drift_names_changed_path":
+            root = copy_fixture(tmp_path, mutant)
+            rewrite_manifest_and_classes(root, mutant)
+            target = root / ".claude/agents/code-implementer.md"
+            target.write_bytes(target.read_bytes() + b"adapted now\n")
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), "--check"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=180,
+            )
+            assert ".claude class drift" in result.stderr, mutant_name
+        elif killer == "test_docs_byte_change_names_docs_row":
+            root = copy_fixture(tmp_path, mutant)
+            before = mutant.render(root)
+            before_match = re.search(r"^\| `sandbox-kit/docs/`.*$", before, re.M)
+            assert before_match, mutant_name
+            changed = root / "sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md"
+            changed.write_bytes(changed.read_bytes() + b"changed-byte\n")
+            after = mutant.render(root)
+            after_match = re.search(r"^\| `sandbox-kit/docs/`.*$", after, re.M)
+            assert after_match, mutant_name
+            assert before_match.group(0) != after_match.group(0), mutant_name
         else:
             pytest.fail(f"no killer implementation for {killer}")
