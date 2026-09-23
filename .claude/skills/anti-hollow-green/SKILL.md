@@ -133,6 +133,13 @@ expansion.
    cross-engine artifacts (x58 tsl 3e-05: the whole fitness summit was a vbt fill artifact; the
    paper layer caught it on day one).
 
+   **The same blindness hits a CONTAINMENT claim read through one instrument (agent-factory 2026-09-23, AF-AP-128).**
+   A claim about a namespace rests on two instruments whose view is scoped to that namespace. sysfs keeps the view of the
+   netns that mounted it: under `unshare -n` or `nsenter --net` with no sysfs remount, `/sys/class/net` lists the HOST's
+   interfaces (`ip netns exec` and container runtimes remount it). Read netns facts from `/proc/self/net/dev` and
+   `ip -o link`. The CD1 probe first read a no-network user namespace as networked through sysfs; the second instrument
+   caught it before any conclusion.
+
 9. **Verify input ownership at MINT time, not launch time.** A launch-time existence check on a
    shared append-only artifact is NOT a race guard: a concurrent writer (a test suite calling the
    real machinery through a CWD-derived path) can append between check and mint, and a verdict
