@@ -1,0 +1,7 @@
+{
+ "accepted": false,
+ "event_id": "932b44e82371f689308541bef154cb101036ea83af679842dfde48e78d31635c",
+ "event_id_echoed": false,
+ "http_status": 400,
+ "message": "{\"error\":\"restricted: not a channel member\"}"
+}

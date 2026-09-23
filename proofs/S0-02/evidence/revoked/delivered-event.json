@@ -1,0 +1,18 @@
+{
+ "content": "S0-02 revoked: reply with exactly the single word: pong",
+ "created_at": 1790199251,
+ "id": "932b44e82371f689308541bef154cb101036ea83af679842dfde48e78d31635c",
+ "kind": 9,
+ "pubkey": "82f440d16985a59efd88ffcbbf186fe27ecde5db2a39773f50c354a08e8cd2b2",
+ "sig": "5e297ae1f5a59b92f101f08fa3b8e07b2f4d7b5dfa16d2d7a1d35ef931946d10502243d365398ce37f8e358163981d41c56d9cf13d4892f4aae6d4e5c4e33b9c",
+ "tags": [
+  [
+   "h",
+   "73701f66-6e12-42ff-b561-7d36db1ad91b"
+  ],
+  [
+   "p",
+   "ff4d48deaa326bcae60687e64cca48dd7f70099933fbda0ae40d2561485f4ce1"
+  ]
+ ]
+}

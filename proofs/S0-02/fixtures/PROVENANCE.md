@@ -79,3 +79,34 @@ membership through the relay's query surface (measured 2026-09-22: four rows
 after the add — `owner`, `owner2` as owners; `agent`, `user2` as members), so a
 post-removal membership listing IS an independent observation a future revoked
 leg can capture.
+
+## Production evidence root (`proofs/S0-02/evidence`) — the live eight-leg capture, 2026-09-23
+
+ONE coherent run on the PC over the bridge, never assembled across runs. Command:
+`S0_02_MEMBERSHIP=<the receipt below> bash proofs/S0-02/tools/pc/run_s0_02_legs.sh <legs dir>`.
+It ran from a clone at `e8db82c2f96634ef1322dcec9ecc170a3488525a`, started `2026-09-23T21:20:43Z`,
+finished `21:35:56Z`, rc 0, with all eight legs. The harness is S0-01's pinned one: the relay on
+`127.0.0.1:3999`, the pinned buzz-acp and hermes-acp, `pc_launch.py --env-set s0-02`. S0-02 grades
+authorization and freshness, never model content. The legs came home as one tar.gz (sha256
+`783fdd0fa2a6d4add62da0cc69a16b08200deee4fa8e9e73c532280d08859411`, 55 files). Every file's sha256
+was checked against the PC's manifest before the copy.
+
+The revoked leg's removal was OWNER-RUN, at 21:16:26Z. The fixture owner ran
+`buzz channels remove-member --channel 73701f66-6e12-42ff-b561-7d36db1ad91b --pubkey <owner2>`
+against the isolated relay. The CLI answered
+`{"accepted":true,"event_id":"03fd24c31cf11abf93ae96ac17ca1f17111457871fe0666093bda958590e8dc1","message":""}`,
+rc 0, `at=1790198186`. The relay's own log shows the same event: `membership notification emitted`
+(21:16:26.935588Z), `Event ingested via pipeline` with that event id (21:16:26.935645Z), then
+`HTTP bridge request` with status 200 (21:16:26.936083Z). The channel's member listing after the
+removal held 3 rows, with owner2 absent. The coordinator built the receipt
+(`{"removed": true, "removed_pubkey": owner2, "channel": …, "at_epoch_s": 1790198186, "http_status": 200}`)
+from those observations. The checker verifies its fields and its ordering (before the leg's t0).
+The spec's limit still holds: the receipt is unauthenticated and is not an end-to-end revocation
+proof. The raw records (the CLI output, the relay log lines, the receipt, the run log and its
+rc/started/finished markers, the clone head) are kept, unattested, under
+`tasks/briefs/s0-02-support/live-capture-2026-09-23/`.
+
+What this capture showed live, where earlier notes could only infer it: the replay leg's second
+delivery drew the relay's `duplicate:` receipt with the first delivery's id echoed, and one
+buzz-acp process ran one prompt (the D-036 shape). owner2 stays removed after the capture. The
+next capture re-adds it by hand first (the note above).

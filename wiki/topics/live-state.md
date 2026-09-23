@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 21:4xZ — WHAT IS LIVE NOW (this block supersedes the 21:2xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **MINTED 21:4xZ: S0-02**, from the live eight-leg capture (clone e8db82c2, 21:20:43Z to 21:35:56Z, rc 0). The checker PASSES with 1 positive leg, 6 negative legs (6 distinct reasons) and the revocation leg, and each of the 4 spec denial legs gives its exact reason. Execution proofs stand at 8 of 9; S0-05 is the one still ABSENT. MINTED is not ACCEPTED: VERIFY-S0-02 is next, then the owner's signed `accepted/S0-02` tag.
+- **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194; 130 messages, item 4, no draft file yet) and VERIFY-J1-0-R6 (#201; draft about 30 KB). Monitor b0o1kfwz6.
+- **CI:** run for 8ca812a in progress. One local commit (the transcript sync) plus the mint wait for its verdict.
+- **QUEUED for local slots:** VERIFY-S0-02, VERIFY-J1-3 (its premise regenerated at the next PIN with `scripts/premise_block.sh`), J1-1-R3 (#202).
+
 **2026-09-23 21:2xZ — WHAT IS LIVE NOW (this block supersedes the 20:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201). Monitor b0o1kfwz6.
 - **LIVE, PC capture:** the S0-02 eight-leg capture (`/home/rocco/s0-02-capture/c2/`, clone e8db82c2, started 21:20:43Z). The revoked leg carries the owner's removal receipt (the relay log reads HTTP 200; the member list has 3 rows and owner2 is absent).
@@ -442,6 +448,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 21:4xZ — S0-02 MINTED from the live eight-leg capture (8 of 9 execution proofs); VERIFY-S0-02 next.
 2026-09-23 21:2xZ — VERIFY-T94-R1 graded (T94 accepted, issue #55); VERIFY-C2 graded weak (C2 still gated, issue #56); S0-02 eight-leg capture running.
 2026-09-23 21:1xZ — VERIFY-J1-3 and VERIFY-C2 dispatched (PIN e8db82c).
 2026-09-23 21:0xZ — C2 landed (the lane done-gate, switched off, GATED-PENDING-VERIFY).

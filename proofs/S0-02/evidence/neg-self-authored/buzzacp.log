@@ -1,0 +1,51 @@
+2026-09-23T21:29:44.863613Z  INFO buzz_acp: buzz-acp starting: relay=ws://127.0.0.1:3999 pubkey=<HEX> agent_cmd=/home/rocco/agent-factory/proofs/S0-01/tools/frame_tee.py  mcp_cmd= idle_timeout=900s max_turn=3600s agents=1 heartbeat=0s subscribe=Mentions dedup=Queue session_policy=thread meh=Steer ignore_self=true context_limit=12 max_turns_per_session=0 presence=true typing=true memory=true model=(agent default) permission_mode=bypassPermissions respond_to=owner-only
+2026-09-23T21:29:44.863824Z DEBUG acp::wire: → {"id":0,"jsonrpc":"2.0","method":"initialize","params":{"clientCapabilities":{"_meta":{"goose":{"customNotifications":true},"terminal-auth":true},"auth":{"terminal":true}},"clientInfo":{"name":"buzz-acp","version":"0.1.0"},"protocolVersion":2}}
+2026-09-23 22:29:45 [INFO] acp_adapter.entry: No .env found at /home/rocco/s0-01-pinned/.hermes-home/.env, using system env
+2026-09-23 22:29:45 [INFO] acp_adapter.entry: Starting hermes-agent ACP adapter
+2026-09-23 22:29:45 [INFO] acp_adapter.server: ACP client connected
+2026-09-23 22:29:45 [INFO] acp_adapter.server: Initialize from buzz-acp (protocol v2)
+2026-09-23T21:29:45.512658Z DEBUG acp::wire: ← {"jsonrpc":"2.0","id":0,"result":{"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true},"sessionCapabilities":{"fork":{},"list":{},"resume":{}}},"agentInfo":{"name":"hermes-agent","version":"0.21.0"},"authMethods":[{"description":"Authenticate Hermes using the currently configured custom runtime credentials.","id":"custom","name":"custom runtime credentials"},{"args":["--setup"],"description":"Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.","id":"hermes-setup","name":"Configure Hermes provider","type":"terminal"}],"protocolVersion":1}}
+2026-09-23T21:29:45.512714Z DEBUG acp::init: initialize response: {"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true},"sessionCapabilities":{"fork":{},"list":{},"resume":{}}},"agentInfo":{"name":"hermes-agent","version":"0.21.0"},"authMethods":[{"description":"Authenticate Hermes using the currently configured custom runtime credentials.","id":"custom","name":"custom runtime credentials"},{"args":["--setup"],"description":"Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.","id":"hermes-setup","name":"Configure Hermes provider","type":"terminal"}],"protocolVersion":1}
+2026-09-23T21:29:45.512729Z  INFO buzz_acp: agent initialized: {"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true},"sessionCapabilities":{"fork":{},"list":{},"resume":{}}},"agentInfo":{"name":"hermes-agent","version":"0.21.0"},"authMethods":[{"description":"Authenticate Hermes using the currently configured custom runtime credentials.","id":"custom","name":"custom runtime credentials"},{"args":["--setup"],"description":"Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.","id":"hermes-setup","name":"Configure Hermes provider","type":"terminal"}],"protocolVersion":1} agent=0
+2026-09-23T21:29:45.512740Z  INFO buzz_acp: agent initialized agent=0 name="hermes-agent" steering_supported=false
+2026-09-23T21:29:45.512763Z  INFO buzz_acp: agent_pool_ready agents=1
+2026-09-23T21:29:45.513716Z DEBUG tungstenite::handshake::client: Client handshake done.
+2026-09-23T21:29:45.513740Z DEBUG buzz_acp::relay: connected to relay at ws://127.0.0.1:3999
+2026-09-23T21:29:45.514179Z DEBUG buzz_acp::relay: sent AUTH response for challenge
+2026-09-23T21:29:45.515565Z DEBUG buzz_acp::relay: NIP-42 authentication successful (event <HEX>)
+2026-09-23T21:29:45.516766Z DEBUG buzz_acp::relay: sent ping to relay
+2026-09-23T21:29:45.530883Z DEBUG rustls_platform_verifier::verification::others: Loaded 146 CA root certificates from the system
+2026-09-23T21:29:45.530920Z  INFO buzz_acp: connected to relay at ws://127.0.0.1:3999
+2026-09-23T21:29:45.530936Z DEBUG buzz_acp::relay: startup watermark set to 1790198985
+2026-09-23T21:29:45.530959Z DEBUG reqwest::connect: starting new connection 'Some("127.0.0.1")'
+2026-09-23T21:29:45.530976Z DEBUG hyper_util::client::legacy::connect::http: connecting to 127.0.0.1:3999
+2026-09-23T21:29:45.531067Z DEBUG hyper_util::client::legacy::connect::http: connected to 127.0.0.1:3999
+2026-09-23T21:29:45.531976Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("http", 127.0.0.1:3999)
+2026-09-23T21:29:45.531992Z  INFO buzz_acp: subscribed to membership notifications
+2026-09-23T21:29:45.532002Z  INFO buzz_acp: agent owner: <HEX>
+2026-09-23T21:29:45.532045Z DEBUG buzz_acp::relay: subscribed to membership notifications (since=1790198980)
+2026-09-23T21:29:45.532080Z DEBUG hyper_util::client::legacy::pool: reuse idle connection for ("http", 127.0.0.1:3999)
+2026-09-23T21:29:45.535965Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("http", 127.0.0.1:3999)
+2026-09-23T21:29:45.536058Z DEBUG hyper_util::client::legacy::pool: reuse idle connection for ("http", 127.0.0.1:3999)
+2026-09-23T21:29:45.538410Z DEBUG hyper_util::client::legacy::pool: pooling idle connection for ("http", 127.0.0.1:3999)
+2026-09-23T21:29:45.538449Z DEBUG buzz_acp::relay: discovered 1 channel(s)
+2026-09-23T21:29:45.538464Z  INFO buzz_acp: discovered 1 channel(s)
+2026-09-23T21:29:45.538475Z DEBUG buzz_acp::relay: queued subscribe for channel 73701f66-6e12-42ff-b561-7d36db1ad91b
+2026-09-23T21:29:45.538481Z  INFO buzz_acp: subscribed to channel 73701f66-6e12-42ff-b561-7d36db1ad91b
+2026-09-23T21:29:45.538523Z  INFO buzz_acp: presence set to online
+2026-09-23T21:29:45.538537Z DEBUG buzz_acp::relay: subscribed to channel 73701f66-6e12-42ff-b561-7d36db1ad91b (with since filter)
+2026-09-23T21:29:45.538568Z DEBUG buzz_acp::relay: EOSE for subscription membership-notif
+2026-09-23T21:29:45.539503Z DEBUG buzz_acp::relay: EOSE for subscription ch-73701f66-6e12-42ff-b561-7d36db1ad91b
+2026-09-23T21:29:45.580524Z DEBUG buzz_acp::relay: OK for event <HEX>: accepted=true message=
+2026-09-23T21:30:01.941910Z DEBUG buzz_acp: dropping self-authored event channel_id=73701f66-6e12-42ff-b561-7d36db1ad91b
+2026-09-23T21:30:15.516371Z DEBUG buzz_acp::relay: sent ping to relay
+2026-09-23T21:30:45.516699Z DEBUG buzz_acp::relay: sent ping to relay
+2026-09-23T21:30:45.516723Z DEBUG buzz_acp::relay: connection stable for >60s — backoff ladder reset
+2026-09-23T21:30:45.597516Z DEBUG buzz_acp::relay: OK for event <HEX>: accepted=true message=
+2026-09-23T21:31:15.516477Z DEBUG buzz_acp::relay: sent ping to relay
+2026-09-23T21:31:42.025826Z  INFO buzz_acp: shutting down
+2026-09-23T21:31:42.025847Z  INFO buzz_acp: shutdown: waiting for in-flight prompts
+2026-09-23T21:31:42.027622Z DEBUG buzz_acp: reaped idle agent on shutdown agent=0
+2026-09-23T21:31:42.027703Z  INFO buzz_acp: presence set to offline
+2026-09-23T21:31:42.027767Z DEBUG buzz_acp::relay: background task shutting down — sending close frame
+2026-09-23T21:31:42.027818Z  INFO buzz_acp: buzz-acp stopped

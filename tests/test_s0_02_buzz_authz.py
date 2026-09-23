@@ -1000,16 +1000,26 @@ def test_deferred_when_the_evidence_root_is_absent(tmp_path):
     assert proc.stdout.strip() == "deferred: S0-02 evidence not captured"
 
 
-def test_real_evidence_root_is_not_a_passing_bundle_today():
-    """A partial live capture fails; an absent capture defers; neither passes."""
+def test_real_evidence_root_is_the_minted_live_capture():
+    """The state the mint ships (2026-09-23, one coherent eight-leg run on the PC; the
+    "not a passing bundle today" pin it replaces expired with the capture): the committed
+    root passes the frozen checker, and each spec denial leg names its oracle row."""
     proc = subprocess.run([sys.executable, str(CHECKER), "proofs/S0-02/evidence"],
                           cwd=ROOT, capture_output=True, text=True)
-    assert proc.returncode in (1, 2)
-    assert "PASS:" not in proc.stdout
-    if proc.returncode == 1:
-        assert "leg directory absent" in proc.stdout
-    else:
-        assert "deferred: S0-02 evidence not captured" in proc.stdout
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.startswith(
+        "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons;"), proc.stdout
+    assert "+1 revocation leg (assertion 2)" in proc.stdout
+    assert "removal evidence: coordinator-supplied receipt" in proc.stdout
+    for fixture, reason in (("neg-unauthorized", "sender-not-in-allowlist"),
+                            ("neg-bad-signature", "signature-invalid"),
+                            ("neg-replayed", "event-replayed"),
+                            ("neg-stale", "event-stale")):
+        denial = subprocess.run([sys.executable, str(CHECKER), "--denial", fixture,
+                                 "proofs/S0-02/evidence"],
+                                cwd=ROOT, capture_output=True, text=True)
+        assert denial.returncode == 1, (fixture, denial.stdout, denial.stderr)
+        assert denial.stdout.strip() == f"failure_reason: denied: {reason}", (fixture, denial.stdout)
 
 
 def test_all_timelines_removed_defers_and_never_passes(tmp_path):

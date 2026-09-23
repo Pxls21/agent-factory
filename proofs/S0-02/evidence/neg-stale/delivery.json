@@ -1,0 +1,7 @@
+{
+ "accepted": false,
+ "event_id": "e14636254fc922a78dabed0a9ca71a7f85661e9c089e847606880aa4ebf330ba",
+ "event_id_echoed": false,
+ "http_status": 400,
+ "message": "{\"error\":\"invalid: event timestamp too far from server time\"}"
+}

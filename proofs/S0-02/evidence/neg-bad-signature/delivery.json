@@ -1,0 +1,7 @@
+{
+ "accepted": false,
+ "event_id": "a6d80b7a6798c5d87150f853cdf03f7d6ab4cce250077fffb7ae946287f0257d",
+ "event_id_echoed": false,
+ "http_status": 400,
+ "message": "{\"error\":\"invalid: invalid schnorr signature\"}"
+}

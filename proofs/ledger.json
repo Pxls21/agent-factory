@@ -8,8 +8,9 @@
     },
     {
       "classification": "execution_proof",
+      "normalized_digest": "33bc63f3564e24c52d6c08bb81dccb9fad5ac1da214aee83811ae452d78ba8fc",
       "proof_id": "S0-02",
-      "state": "ABSENT"
+      "state": "PRESENT"
     },
     {
       "classification": "execution_proof",
