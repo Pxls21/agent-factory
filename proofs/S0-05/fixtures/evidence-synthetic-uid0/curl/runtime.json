@@ -22,6 +22,6 @@
     "-P INPUT DROP",
     "-P OUTPUT DROP"
   ],
-  "unit": "hermes-acp",
-  "venue": "pc"
+  "unit": "curl",
+  "venue": "synthetic"
 }

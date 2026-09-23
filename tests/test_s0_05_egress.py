@@ -19,16 +19,21 @@ Venue facts these tests pin, both measured on 2026-09-08 in this sandbox:
 Namespace tests need root (`ip netns`); on a venue without it they SKIP with a declared reason,
 never fail silently.
 """
+import hashlib
 import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import jsonschema
 import pytest
@@ -1063,51 +1068,33 @@ def test_destroy_kills_all_namespace_processes():
 
 
 @NEEDS_NETNS
-def test_runner_live_leg(tmp_path):
-    """Runner-level live test: run_s0_05_units.sh <tmp> hermes-acp with a test-local stand-in
-    launcher and a local listener on the unit's veth host address.
+def test_runner_live_leg(e3dir):
+    """Runner-level live test: run_s0_05_units.sh <root> hermes-acp with a local listener on the
+    unit's veth host address. E3: the unit is replaced by a stand-in ONLY through the runner's
+    RECORDED override (A1) — the E2 form (an S0_01_TOOLS pc_launch.py stand-in) is retired with the
+    S0-01 tool rows it stood in for.
     F14: the stand-in records its pid and argv; the test asserts the record exists, that the
-    argv equals the LAUNCH row as given (kills M16), and that the stand-in is dead after its
-    unit's leg and before the next unit's leg (kills M17).
+    argv is the unit row as given (A1: the pinned realpath run directly, so argv[0] is that path
+    under the kernel's shebang; kills M16), and that the stand-in is dead after its unit's leg
+    (kills M17).
     Also asserts: no stand-in process remains, no namespace remains, units.json carries the
-    F10 row, hermes-acp row is 'run', and a concurrent invocation is refused."""
+    F10 row, hermes-acp row is 'run', and a concurrent invocation is refused.
+    E3, each asserted on this ONE real run: the override recorded on the unit row and refused by the
+    checker as a live claim (A1); no row names an S0-01 tool, .markers or .secrets (A1); the unit's
+    scratch tree and the census record (A2); stdin and stdout are pipes and the unit stopped on
+    stdin EOF (A3); it ran as uid 65534 (A4); its environment is exactly the declared set, with no
+    planted secret (A5); unit-identity.json names what ran, and the checker grades that REAL record
+    against the real pins (A7); the allow entry was derived and the planted address ignored (A8)."""
     ns = "s0-05-hermes-acp"
     port = 18080
-    # F14: the stand-in records its pid, argv and net namespace inode to a file.
-    record_file = tmp_path / "standin_record.json"
-    tools_dir = tmp_path / "tools" / "pc"
-    tools_dir.mkdir(parents=True)
-    (tools_dir / "pc_launch.py").write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, os, sys, time\n"
-        f"record = {{'pid': os.getpid(), 'argv': sys.argv, "
-        f"'net_ino': os.stat('/proc/self/ns/net').st_ino}}\n"
-        f"with open({str(record_file)!r}, 'w') as f:\n"
-        f"    json.dump(record, f)\n"
-        "time.sleep(300)\n")
-    (tools_dir / "pc_launch.py").chmod(0o755)
-    # start a listener on all interfaces for the preflight check
-    listener_script = tmp_path / "listener.py"
-    listener_script.write_text(
-        "import http.server,socketserver as s,sys\n"
-        "class H(http.server.BaseHTTPRequestHandler):\n"
-        "  def do_GET(self):\n"
-        "    self.send_response(200);self.end_headers();self.wfile.write(b'{}')\n"
-        "  def log_message(self,*a):pass\n"
-        "s.TCPServer.allow_reuse_address = True\n"
-        "s.TCPServer(('0.0.0.0',int(sys.argv[1])),H).serve_forever()\n")
-    listener = subprocess.Popen(
-        [sys.executable, str(listener_script), str(port)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    evidence = tmp_path / "evidence"
+    listener = None
+    evidence = e3dir / "evidence"
+    env = _runner_env(e3dir, port)
+    override = json.loads((e3dir / "override.json").read_text())
+    standin = override["PINNED_AGENT_REALPATH"]
     try:
-        time.sleep(0.5)
-        env = {**os.environ, "S0_01_TOOLS": str(tools_dir),
-               "ALLOWED_HERMES": f"10.201.107.1:{port}"}
-        # Run the runner in a subprocess; it will create the namespace, launch the stand-in,
-        # run canaries, and destroy. We also test F23 concurrency by checking the owner file
-        # during the run.
-        # First: run a quick concurrent test. Create the namespace, hold it, try a second runner.
+        listener = _listener(e3dir, port)
+        # Before the leg: a concurrent create of the same name is refused while its owner lives.
         r = subprocess.run(
             ["bash", "-c",
              f'. {LIB}\n'
@@ -1124,92 +1111,124 @@ def test_runner_live_leg(tmp_path):
         # Now run the actual runner
         runner = subprocess.run(
             ["bash", str(RUNNER), str(evidence), "hermes-acp"],
-            capture_output=True, text=True, timeout=120, env=env)
+            capture_output=True, text=True, timeout=240, env=env)
         # The runner body is top-level code: a bash error line (e.g. `local` outside a
         # function, coordinator touch at the E2 landing) must never reach its stderr.
         assert "can only be used in a function" not in runner.stderr, runner.stderr
         # No file of ours may sit in /etc/netns/<ns>/: `ip netns exec` bind-mounts every file there
         # over /etc inside the namespace (coordinator touch at the E2 landing: the F23 owner file).
         assert "Bind /etc/netns/" not in runner.stderr, runner.stderr
+        # A1: the override is announced, and the retired inputs are named as ignored.
+        assert "PIN OVERRIDE ACTIVE" in runner.stderr, runner.stderr
+        assert "ALLOWED_HERMES, ALLOWED_BUZZACP and S0_01_TOOLS are retired" in runner.stderr
         # F14: assert the stand-in actually ran (kills M16: a bash-wrapped launch never runs it).
-        assert record_file.exists(), "stand-in record not found: the stand-in never ran"
-        record = json.loads(record_file.read_text())
+        records = _standin_records(e3dir)
+        assert len(records) == 1, "stand-in record not found: the stand-in never ran"
+        record = records[0]
         assert "pid" in record, record
         assert "argv" in record, record
-        # F14: assert argv matches the LAUNCH row as given — the stand-in was run directly,
-        # not wrapped in bash.
-        expected_script = str(tools_dir / "pc_launch.py")
-        assert record["argv"][0] == expected_script, \
-            f"argv[0] should be the script path, got {record['argv']}"
+        # F14 + A1 (a changed expectation: the E2 row was `python3 <S0-01 tool>`; the A1 row is the
+        # pinned realpath itself): argv is exactly the unit row as launched.
+        assert record["argv"] == [standin], record["argv"]
+        assert not any(f in a for a in record["argv"] for f in ("proofs/S0-01/tools", ".markers", ".secrets"))
         # F14: assert the stand-in is dead after its leg (kills M17: kill-only leaves it alive).
         standin_pid = record["pid"]
-        try:
-            os.kill(standin_pid, 0)
-            raise AssertionError(
-                f"stand-in pid {standin_pid} still alive after its unit's leg")
-        except OSError:
-            pass  # dead — good
+        assert not _pid_alive(standin_pid), f"stand-in pid {standin_pid} still alive after its unit's leg"
         # verify no stand-in process remains with the stand-in's path
-        standin_procs = subprocess.run(
-            ["pgrep", "-f", str(tools_dir / "pc_launch.py")],
-            capture_output=True, text=True)
+        standin_procs = subprocess.run(["pgrep", "-f", standin], capture_output=True, text=True)
         assert standin_procs.returncode != 0, \
             f"stand-in still running: {standin_procs.stdout.strip()}"
-        # verify no namespace remains
-        census = subprocess.run(
-            ["ip", "netns", "list"], capture_output=True, text=True).stdout
-        assert ns not in census, census
+        # verify no namespace remains (and nothing else of the leg: E3 census)
+        assert ns not in _netns_names()
+        assert _census(ns) == CLEAN, _census(ns)
         # verify units.json carries the F10 row and the hermes-acp row is 'run'
-        units_json = json.loads((evidence / "units.json").read_text())
-        units_list = units_json["units"]
+        units_list = json.loads((evidence / "units.json").read_text())["units"]
         backend_row = [u for u in units_list if u["unit"] == "s0-01-backend"]
         assert len(backend_row) == 1, units_list
         assert backend_row[0]["status"] == "not-run"
         assert "not a docs/05" in backend_row[0]["reason"]
-        # F14: assert hermes-acp row is 'run' (not 'not-run')
+        assert "override" not in backend_row[0], backend_row      # absent units launch nothing
         hermes_row = [u for u in units_list if u["unit"] == "hermes-acp"]
         assert len(hermes_row) == 1, units_list
         assert hermes_row[0]["status"] == "run", hermes_row[0]
+        # A1: the override is RECORDED on the unit row, naming exactly what was replaced ...
+        assert hermes_row[0]["override"] == override, hermes_row[0]
+        # ... and the checker refuses this REAL runner output as a live claim.
+        checker_out = runner.stdout.split("=== checker ===\n", 1)[1]
+        assert checker_out.splitlines()[0] == "units-manifest-invalid: hermes-acp override present", checker_out
+        assert runner.returncode == 1, runner.returncode
+        # A3: stdin and stdout were pipes, and the unit stopped on stdin EOF — before the backstop.
+        assert (record["stdin"], record["stdout"], record["stop"]) == ("fifo", "fifo", "eof"), record
+        assert "=== hermes-acp: exited 0 on stdin EOF ===" in runner.stdout, runner.stdout
+        log = evidence / "hermes-acp.launch.log"
+        assert stat.S_ISREG(log.lstat().st_mode) and "stand-in: serving" in log.read_text()
+        # A4: the unit ran as the unit user, never root.
+        assert (record["uid"], record["gid"]) == UNIT_USER, record
+        # A5: the unit's environment is exactly the declared set — nothing inherited, no secret.
+        scratch = evidence / "hermes-acp" / "scratch"
+        assert record["env_keys"] == UNIT_ENV_KEYS, record["env_keys"]
+        assert record["env"] == {"PATH": PINS.PINNED_PATH, "HOME": str(scratch / "home"),
+                                 "HERMES_HOME": str(scratch / "hermes-home"), "LANG": "C.UTF-8",
+                                 "PYTHONDONTWRITEBYTECODE": "1"}, record["env"]
+        assert not [k for k in record["env_keys"] if REDACTED.search(k)], record["env_keys"]
+        assert record["key_sha256"] is None and record["cwd"] == str(scratch / "home")
+        # A2: the unit's own scratch tree, owned by the unit user; the S0-01 census recorded.
+        for sub in ("home", "hermes-home"):
+            st = (scratch / sub).stat()
+            assert (st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)) == (*UNIT_USER, 0o700), sub
+        census = json.loads((evidence / "s0-01-census.json").read_text())
+        assert census["base"] == os.path.dirname(PINS.PINNED_HERMES_HOME), census
+        assert census["changed"] == [] and census["tree"].startswith("absent on this venue"), census
+        # A7: unit-identity.json names the process that ran ...
+        identity = json.loads((evidence / "hermes-acp" / "unit-identity.json").read_text())
+        assert identity == {"unit": "hermes-acp", "pid": standin_pid, "exe_realpath": _agent_interpreter(),
+                            "entrypoint_realpath": standin, "entrypoint_sha256": _sha256(standin),
+                            "uid": [UNIT_USER[0]] * 4, "argv": [_agent_interpreter(), standin]}, identity
+        # ... and the checker grades that REAL record against the REAL pins once the override row is
+        # gone: the stand-in is not the pinned unit.
+        graded = e3dir / "graded"
+        shutil.copytree(evidence, graded, ignore=shutil.ignore_patterns("scratch"))
+        units = json.loads((graded / "units.json").read_text())
+        for row in units["units"]:
+            row.pop("override", None)
+        (graded / "units.json").write_text(json.dumps(units))
+        verdict = run_checker(graded, "--units", "hermes-acp")
+        assert verdict.stdout.splitlines()[0] == \
+            f"unit-identity-invalid: hermes-acp entrypoint_realpath {standin} is not the pin", verdict.stdout
+        # A8: the allow entry was formed from the namespace's host address and the port input; the
+        # planted operator-typed ALLOWED_HERMES (port 1) was ignored.
+        gate = json.loads((evidence / "hermes-acp" / "gate.json").read_text())
+        assert gate["allowed"] == [f"10.201.107.1:{port}"], gate
+        assert f"=== hermes-acp: namespace {ns}, allowed 10.201.107.1:{port} ===" in runner.stdout
+        seen = (e3dir / "listener.log").read_text().split()
+        assert "10.201.107.2" in seen, seen          # the preflight and C0 came from inside the namespace
     finally:
-        listener.terminate()
-        try:
-            listener.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            listener.kill()
-            listener.wait(timeout=5)
+        _stop(listener)
         _lib(f'egress_ns_destroy {ns}')
     assert ns not in subprocess.run(
         ["ip", "netns", "list"], capture_output=True, text=True).stdout
 
 
 def test_shebang_matches_launch_interpreter():
-    """F8: every LAUNCH row's interpreter agrees with its target script's shebang. A bash
-    script can never again be handed to python3."""
-    # Parse the LAUNCH rows from the runner
+    """F8: every unit row's interpreter agrees with its target's shebang, so a bash script can never
+    again be handed to python3. Re-targeted by E3 A1, and STRICTER (a changed expectation: the E2
+    rows were `/usr/bin/python3 $S0_01_TOOLS/pc_launch.py`, which A1 retires): a unit row now NAMES
+    the pin of its executable and nothing else — no interpreter token exists to disagree with the
+    shebang, because the kernel reads the unit's OWN shebang (the dynamic half: the live leg's A7
+    record shows the pinned interpreter as /proc/<pid>/exe). A1: no row names proofs/S0-01/tools,
+    .markers or .secrets, and no S0-01 tool is named anywhere in the runner. That the pinned file
+    exists and carries its digest is checked at run time (A1's sha check, test_a1_*)."""
     runner_text = RUNNER.read_text()
-    launch_lines = re.findall(r'LAUNCH\[[\w-]+\]="([^"]+)"', runner_text)
-    assert launch_lines, "no LAUNCH rows found"
-    for row in launch_lines:
-        parts = row.split()
-        interpreter = parts[0]  # e.g. /usr/bin/python3
-        # find the target script in the row (the first non-flag argument after the interpreter)
-        target = None
-        for part in parts[1:]:
-            if not part.startswith("-"):
-                # resolve $S0_01_TOOLS
-                target = part.replace("$S0_01_TOOLS", str(PROOF.parent / "S0-01" / "tools" / "pc"))
-                break
-        assert target is not None, f"no target script in LAUNCH row: {row}"
-        target_path = Path(target)
-        assert target_path.is_file(), f"target script not found: {target_path}"
-        shebang = target_path.read_text().split('\n')[0]
-        # interpreter /usr/bin/python3 requires a python shebang
-        if "python" in interpreter:
-            assert "python" in shebang, \
-                f"LAUNCH row uses {interpreter} but shebang is {shebang!r}: {target_path}"
-        elif "bash" in interpreter:
-            assert "bash" in shebang or "sh" in shebang, \
-                f"LAUNCH row uses {interpreter} but shebang is {shebang!r}: {target_path}"
+    rows = re.findall(r"^UNIT_EXE\[([\w-]+)\]=(\S+)", runner_text, re.M)
+    assert sorted(unit for unit, _ in rows) == ["buzz-acp", "hermes-acp"], "no unit rows found"
+    for unit, pin in rows:
+        assert re.fullmatch(r"PINNED_[A-Z_]+", pin), f"row {unit} names {pin!r}, not a pin"
+        value = getattr(PINS, pin)
+        assert os.path.isabs(value) and value == os.path.normpath(value), (unit, value)
+        for forbidden in ("proofs/S0-01/tools", ".markers", ".secrets"):
+            assert forbidden not in value, (unit, value)
+    for forbidden in ("LAUNCH[", "pc_launch.py", "proofs/S0-01/tools", "tools/pc/pc_"):
+        assert forbidden not in runner_text, forbidden
 
 
 @pytest.mark.skipif(shutil.which("ip") is None, reason="iproute2 absent; NOT run here")
@@ -1397,40 +1416,38 @@ def test_cleanup_does_not_destroy_sibling_namespace():
 
 
 @NEEDS_NETNS
-def test_units_json_quotes_in_reason(tmp_path):
+def test_units_json_quotes_in_reason(e3dir):
     """F4: a reason carrying double quote, backslash and newline is encoded correctly in
-    units.json. check_egress.py parses units.json and the reason equals the input exactly."""
-    evidence = tmp_path / "evidence"
-    tools_dir = tmp_path / "tools" / "pc"
-    tools_dir.mkdir(parents=True)
-    (tools_dir / "pc_launch.py").write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n")
+    units.json. check_egress.py parses units.json and the reason equals the input exactly.
+    E3 A8 (a changed expectation): the operator no longer types an address, so the special
+    characters ride the OmniRoute PORT input; the runner forms `<host ip>:<port>` whole (never
+    word-split) and egress_ns_create refuses it by name, carrying the input into the reason."""
+    evidence = e3dir / "evidence"
     reason_value = 'test "quote\\ and\nnewline'
-    # Use a ALLOWED_HERMES that will be rejected by validation (triggers the reason path).
-    env = {**os.environ, "S0_01_TOOLS": str(tools_dir),
-           "ALLOWED_HERMES": reason_value}
+    env = _runner_env(e3dir, reason_value)
     subprocess.run(
         ["bash", str(RUNNER), str(evidence), "hermes-acp"],
-        capture_output=True, text=True, timeout=30, env=env)
+        capture_output=True, text=True, timeout=60, env=env)
     units_data = json.loads((evidence / "units.json").read_text())
     hermes_row = [u for u in units_data["units"] if u["unit"] == "hermes-acp"]
     assert len(hermes_row) == 1, units_data
     assert hermes_row[0]["status"] == "not-run"
-    # The reason must contain the original value (the validation error includes the input).
+    # The reason must contain the original value (the validation error includes the input) — the
+    # exact contract line, E3: the whole formed entry.
     assert reason_value in hermes_row[0]["reason"], hermes_row[0]["reason"]
+    assert hermes_row[0]["reason"] == \
+        f"egress: allow entry must be <ip>:<port>, got '10.201.107.1:{reason_value}'", hermes_row[0]
 
 
 @NEEDS_NETNS
-def test_runner_refusal_does_not_destroy_sibling(tmp_path):
+def test_runner_refusal_does_not_destroy_sibling(e3dir):
     """F3/M20: when runner B's create is refused (runner A holds the namespace via a LIVE pid),
     B must not destroy A's namespace. The runner path: B's create returns 65 (namespace-live),
-    B records not-run and continues. A's namespace, canary and owner record survive."""
+    B records not-run and continues. A's namespace, canary and owner record survive.
+    E3: B's inputs are the recorded-override form (A1); STRICTER: A's veth, /etc/netns entry and
+    owner record are asserted intact too (with X2's early reap entry this test also kills M14)."""
     ns = "s0-05-hermes-acp"
     port = 18081
-    tools_dir = tmp_path / "tools" / "pc"
-    tools_dir.mkdir(parents=True)
-    (tools_dir / "pc_launch.py").write_text(
-        "#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n")
-    (tools_dir / "pc_launch.py").chmod(0o755)
     # Runner A: a bash that creates the namespace and sleeps (keeping its PID alive).
     holder = subprocess.Popen(
         ["bash", "-c",
@@ -1451,13 +1468,13 @@ def test_runner_refusal_does_not_destroy_sibling(tmp_path):
                 if b"READY" in ready:
                     break
         assert b"READY" in ready, f"holder did not become ready: {ready}"
+        before = _census(ns)
         # Runner B: the real runner, which will fail to create the namespace.
-        env = {**os.environ, "S0_01_TOOLS": str(tools_dir),
-               "ALLOWED_HERMES": f"10.201.107.1:{port}"}
-        evidence_b = tmp_path / "evidence_b"
+        env = _runner_env(e3dir, port)
+        evidence_b = e3dir / "evidence_b"
         subprocess.run(
             ["bash", str(RUNNER), str(evidence_b), "hermes-acp"],
-            capture_output=True, text=True, timeout=30, env=env)
+            capture_output=True, text=True, timeout=60, env=env)
         # B's units.json should say "not-run" for hermes-acp.
         units_b = json.loads((evidence_b / "units.json").read_text())
         hermes_row = [u for u in units_b["units"] if u["unit"] == "hermes-acp"]
@@ -1467,8 +1484,10 @@ def test_runner_refusal_does_not_destroy_sibling(tmp_path):
         census = subprocess.run(
             ["ip", "netns", "list"], capture_output=True, text=True).stdout
         assert ns in census, f"A's namespace destroyed by B: {census}"
+        assert _census(ns) == before, (_census(ns), before)
         # holder is still alive (its PID is in the owner file).
         assert holder.poll() is None, "holder died unexpectedly"
+        assert (OWNER_DIR / f"{ns}.owner").read_text().strip() == str(holder.pid)
     finally:
         holder.terminate()
         try:
@@ -1505,3 +1524,1027 @@ def test_allow_entry_must_be_ipv4_literal(entry):
         assert host_if not in veth, f"veth leaked after refusal: {veth}"
         owner_file = f"/run/s0-05-egress/{ns}.owner"
         assert not os.path.exists(owner_file), f"owner record leaked: {owner_file}"
+
+
+# ===================================================================== E3 — Part X
+# tasks/briefs/s0-05-support/E3-brief.md Part X: VERIFY-E2-R1 F1 (X1), the partial-state class
+# (X2), F4 (X3) and F8 (X4). Faults are injected from the TEST side only: a bash function defined
+# after sourcing the library, a PATH shim that refuses one exact argv and runs the real binary
+# otherwise, or a paused child. The library and the runner carry no test hook.
+
+OWNER_DIR = Path("/run/s0-05-egress")   # netns_lib.sh's default EGRESS_OWNER_DIR
+CLEAN = {"netns": False, "veth": False, "etc_netns": False, "owner_dir": []}
+IP_REAL = shutil.which("ip") or "/usr/sbin/ip"
+
+
+def _netns_names():
+    out = subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
+    return {line.split()[0] for line in out.splitlines() if line.strip()}
+
+
+def _census(ns):
+    """Everything a create of <ns> can leave on the host, read from the host itself: the namespace,
+    either end of its veth pair still in the host, /etc/netns/<ns>, and every owner-dir entry that
+    names <ns> (the owner record, the E2-R1 claim dir, any claim temp or tombstone)."""
+    names = _lib(f'egress_ns_host_if {ns}', f'egress_ns_if {ns}').stdout.split()
+    veth = subprocess.run(["ip", "-o", "link", "show", "type", "veth"],
+                          capture_output=True, text=True).stdout
+    owner = sorted(p.name for p in OWNER_DIR.iterdir() if ns in p.name) if OWNER_DIR.is_dir() else []
+    return {"netns": ns in _netns_names(),
+            "veth": any(f" {name}@" in veth or f" {name}:" in veth for name in names),
+            "etc_netns": os.path.exists(f"/etc/netns/{ns}"), "owner_dir": owner}
+
+
+@pytest.fixture
+def e3dir():
+    """A world-traversable scratch dir OF OUR OWN under /tmp (pytest's tmp_path is 0700, and from
+    A4 on the unit runs as a non-root user that must reach its stand-in and its scratch tree).
+    Removed at teardown; /tmp itself is never touched."""
+    path = Path(tempfile.mkdtemp(prefix="e3-", dir="/tmp"))
+    path.chmod(0o755)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _listener(workdir, port, host="0.0.0.0", name="listener"):
+    """A host HTTP stand-in answering 200 on every GET and logging each client address (one line
+    per request) to <workdir>/<name>.log. Returns the Popen; the caller kills it BY PID."""
+    script = workdir / f"{name}.py"
+    log = workdir / f"{name}.log"
+    script.write_text(
+        "import http.server, socketserver, sys\n"
+        "LOG = sys.argv[3]\n"
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        with open(LOG, 'a') as fh:\n"
+        "            fh.write(self.client_address[0] + ' ' + self.path + '\\n')\n"
+        "        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
+        "    def log_message(self, *a): pass\n"
+        "socketserver.TCPServer.allow_reuse_address = True\n"
+        "socketserver.TCPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()\n")
+    process = subprocess.Popen([sys.executable, str(script), host, str(port), str(log)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "127.0.0.1") else host
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if subprocess.run(["curl", "-fsS", "--noproxy", "*", "--max-time", "1", "-o", "/dev/null",
+                           f"http://{probe_host}:{port}/ready"], capture_output=True).returncode == 0:
+            log.write_text("")          # readiness probes are not evidence
+            return process
+        time.sleep(0.1)
+    process.kill()
+    process.wait(timeout=5)
+    raise AssertionError(f"{name} on {host}:{port} did not become ready")
+
+
+def _stop(process):
+    if process is not None and process.poll() is None:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def _secret_free_environ():
+    """os.environ without any key the pins' redaction rule names (the sandbox exports real tokens):
+    a runner under test never needs them, and a leak into a unit must be proven with PLANTED fakes."""
+    rx = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)")
+    return {k: v for k, v in os.environ.items() if not rx.search(k)}
+
+
+# The pinned values the runner and the checker read, loaded the way the checker loads them (by path).
+_pins_spec = importlib.util.spec_from_file_location("s0_01_pins_for_tests", REPO / "proofs" / "S0-01" / "pins.py")
+PINS = importlib.util.module_from_spec(_pins_spec)
+_pins_spec.loader.exec_module(PINS)
+REDACTED = re.compile(PINS.REDACTED_ENV_KEY_RE)
+UNIT_USER = (65534, 65534)                  # the sandbox's `nobody`: the non-root unit user (A4)
+UNIT_ENV_KEYS = ["HERMES_HOME", "HOME", "LANG", "PATH", "PYTHONDONTWRITEBYTECODE"]
+PLANTED = {"E3_PLANTED_SECRET_TOKEN": "planted", "OMNIROUTE_API_KEY": "planted",
+           "BUZZ_PRIVATE_KEY": "planted-in-the-runner-env", "ALLOWED_HERMES": "10.201.107.1:1"}
+
+
+def _agent_interpreter():
+    """The stand-in's shebang: the PINNED agent interpreter when this venue has it — then the A7
+    exe check runs against the real pin — else this venue's python, recorded as an override."""
+    pinned = PINS.PINNED_AGENT_INTERPRETER_REALPATH
+    return pinned if os.access(pinned, os.X_OK) else os.path.realpath(sys.executable)
+
+
+# The hermes-acp stand-in (A1: installed ONLY through the runner's recorded override). It records
+# what it was given — env KEY NAMES only (values for the closed non-secret set, a digest for the
+# pair's key), never a value that could be a credential — then does what the real adapter does at
+# startup: registers its stdio with epoll, which fails with EPERM on /dev/null or a regular file
+# (CD1 probe 2), and serves until stdin reaches EOF (CD1 probe 3).
+AGENT_STANDIN = """#!@@INTERP@@
+import hashlib, json, os, selectors, stat, sys
+REC = "@@REC@@"
+SHOWN = ("PATH", "HOME", "HERMES_HOME", "LANG", "PYTHONDONTWRITEBYTECODE")
+def fd_kind(fd):
+    mode = os.fstat(fd).st_mode
+    for name, test in (("fifo", stat.S_ISFIFO), ("chr", stat.S_ISCHR), ("reg", stat.S_ISREG), ("sock", stat.S_ISSOCK)):
+        if test(mode):
+            return name
+    return "other"
+key = os.environ.get("BUZZ_PRIVATE_KEY")
+record = {"pid": os.getpid(), "ppid": os.getppid(), "argv": sys.argv, "uid": os.getuid(), "gid": os.getgid(),
+          "net_ino": os.stat("/proc/self/ns/net").st_ino, "cwd": os.getcwd(), "env_keys": sorted(os.environ),
+          "env": {k: os.environ[k] for k in SHOWN if k in os.environ},
+          "key_sha256": hashlib.sha256(key.encode()).hexdigest() if key is not None else None,
+          "stdin": fd_kind(0), "stdout": fd_kind(1), "stop": None}
+path = os.path.join(REC, "agent-%d.json" % os.getpid())
+def dump():
+    with open(path + ".tmp", "w") as fh:
+        json.dump(record, fh)
+    os.replace(path + ".tmp", path)
+dump()
+selector = selectors.EpollSelector()
+try:
+    selector.register(0, selectors.EVENT_READ)
+    selector.register(1, selectors.EVENT_WRITE)
+except PermissionError as exc:
+    record["stop"] = "crash: %r" % (exc,)
+    dump()
+    print("PermissionError: %s" % (exc,), file=sys.stderr)
+    sys.exit(1)
+@@EXTRA@@
+print("stand-in: serving", flush=True)
+while os.read(0, 65536):
+    pass
+record["stop"] = "eof"
+dump()
+"""
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _rec_dir(workdir):
+    rec = workdir / "rec"
+    rec.mkdir(exist_ok=True)
+    os.chown(rec, *UNIT_USER)          # the unit (uid 65534) writes its record here
+    return rec
+
+
+def _agent_standin(workdir, extra="", name="hermes-acp-standin"):
+    path = workdir / name
+    path.write_text(AGENT_STANDIN.replace("@@INTERP@@", _agent_interpreter())
+                    .replace("@@REC@@", str(_rec_dir(workdir))).replace("@@EXTRA@@", extra))
+    path.chmod(0o755)
+    return path
+
+
+def _runner_env(workdir, port, path_prefix=None, override=None, unit_user="65534:65534", extra=""):
+    """The runner's inputs for one sandbox leg (E3). The pinned hermes-acp is replaced by the
+    stand-in ONLY through the runner's recorded override (A1); the OmniRoute port is an input (A8);
+    the unit user is 65534 (A4). PLANTED secret-shaped variables and a planted operator-typed
+    address sit in the runner's own environment: none may reach a unit (A5), and the address must
+    be ignored (A8). The sandbox's real tokens are removed first (never exposed to the runner)."""
+    standin = _agent_standin(workdir, extra)
+    pin_override = {"PINNED_AGENT_REALPATH": str(standin),
+                    "PINNED_AGENT_ENTRYPOINT_SHA256": _sha256(standin)}
+    if _agent_interpreter() != PINS.PINNED_AGENT_INTERPRETER_REALPATH:
+        pin_override["PINNED_AGENT_INTERPRETER_REALPATH"] = _agent_interpreter()
+    pin_override.update(override or {})
+    (workdir / "override.json").write_text(json.dumps(pin_override))
+    env = {**_secret_free_environ(), **PLANTED, "S0_05_PIN_OVERRIDE": str(workdir / "override.json"),
+           "S0_05_OMNIROUTE_PORT": str(port)}
+    if unit_user is not None:
+        env["S0_05_UNIT_USER"] = unit_user
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env['PATH']}"
+    return env
+
+
+def _standin_records(workdir, prefix="agent"):
+    rec = workdir / "rec"
+    return [json.loads(p.read_text()) for p in sorted(rec.glob(f"{prefix}-*.json"))] if rec.is_dir() else []
+
+
+def _wait_for(predicate, timeout, what):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _dead_pid():
+    """A pid that WAS a real process and is now reaped: the stale owner of a planted claim."""
+    process = subprocess.Popen(["true"])
+    process.wait(timeout=10)
+    assert not _pid_alive(process.pid)
+    return process.pid
+
+
+@pytest.mark.parametrize("entry", [
+    "10.9.9.9:99999999999999999999", "10.9.9.9:9223372036854775808", "10.9.9.9:65536",
+    "10.9.9.9:0", "10.9.9.9:00080",
+], ids=["overflow-20-digits", "overflow-2^63", "port-65536", "port-zero", "port-leading-zeros"])
+def test_x1_port_is_digit_bounded_before_any_arithmetic(entry):
+    """X1 (VERIFY-E2-R1 F1, AF-AP-129): the port is `^[1-9][0-9]{0,4}$` and at most 65535, bounded
+    by DIGIT COUNT before any arithmetic, so a digit string past bash's intmax can no longer make a
+    `[ -gt ]` exit 2 and slip through as 'false'. Each entry returns 64 with the exact contract line
+    and nothing else on stderr; on a root venue it also creates NOTHING (census)."""
+    ns = f"s0-05-e3-{uuid.uuid4().hex[:8]}"
+    try:
+        result = _lib(f'egress_ns_create {ns} "{entry}"')
+        assert result.returncode == 64, (result.returncode, result.stderr)
+        assert result.stderr == f"egress: allow entry must be <ip>:<port>, got '{entry}'\n", result.stderr
+        if netns_capable():
+            assert _census(ns) == CLEAN, _census(ns)
+    finally:
+        if netns_capable():
+            _lib(f'egress_ns_destroy {ns}')
+
+
+# One exact step refused per fault; `command ip` runs the real binary for every other call. Before
+# refusing, the fault writes what already exists, so the test proves the rollback had work to do.
+_X2_FAULTS = {
+    "veth": ('[ "$1" = link ] && [ "$2" = add ]', "E3-injected: veth add refused", 2),
+    "gate-rule": ('[ "$1 $2" = "netns exec" ] && [ "$4 $5 $6 $7" = "iptables -A OUTPUT -d" ]',
+                  "E3-injected: gate rule refused", 4),
+}
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("step", ["veth", "gate-rule"])
+def test_x2_create_rolls_back_a_failed_step(tmp_path, step):
+    """X2 (the partial-state class VERIFY-E2-R1 F1 exposed): a create that fails at a step AFTER
+    its first mutation rolls back everything it made — namespace, veth, /etc/netns/<ns>, the claim
+    and the owner record — and returns its failure code with the failing step's message on stderr.
+    Two fault points: one early (the veth add) and one late (the first allow-entry gate rule, after
+    the policies, the addresses, the links and /etc/netns exist)."""
+    ns = f"s0-05-e3-{uuid.uuid4().hex[:8]}"
+    condition, message, rc = _X2_FAULTS[step]
+    snapshot = tmp_path / "at-fault.txt"
+    fault = (f'ip() {{ if {condition}; then '
+             f'{{ echo "netns=$(command ip netns list | grep -c "^{ns}\\b")"; '
+             f'echo "etc=$([ -d /etc/netns/{ns} ] && echo yes || echo no)"; '
+             f'echo "owner=$(cat /run/s0-05-egress/{ns}.owner 2>/dev/null)"; }} > {snapshot}; '
+             f'echo "{message}" >&2; return {rc}; fi; command ip "$@"; }}')
+    try:
+        result = subprocess.run(
+            ["bash", "-c", f'. {LIB}\n{fault}\negress_ns_create {ns} 10.201.1.1:1\necho "rc=$?"'],
+            capture_output=True, text=True, timeout=60)
+        assert result.stdout.splitlines()[-1] == "rc=1", (result.stdout, result.stderr)
+        assert message in result.stderr, result.stderr
+        at_fault = snapshot.read_text().split()
+        assert "netns=1" in at_fault and not any(v == "owner=" for v in at_fault), at_fault
+        if step == "gate-rule":
+            assert "etc=yes" in at_fault, at_fault
+        assert _census(ns) == CLEAN, _census(ns)
+    finally:
+        _lib(f'egress_ns_destroy {ns}')
+
+
+@NEEDS_NETNS
+def test_x2_runner_reaps_a_create_killed_midway(e3dir):
+    """X2 + E3: the runner puts the name into its reap set BEFORE it calls create, so a leftover
+    create could NOT roll back (its shell killed mid-way) is reaped by `cleanup` at exit under the
+    ownership check (the owner record names the runner). The fault: a PATH `ip` shim that, on the
+    veth add, records what exists and SIGKILLs its parent — the subshell running egress_ns_create
+    inside the runner's command substitution."""
+    ns = "s0-05-hermes-acp"
+    shim = e3dir / "shim"
+    shim.mkdir()
+    marker = e3dir / "killed-at.txt"
+    (shim / "ip").write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = link ] && [ "$2" = add ]; then\n'
+        f'  {{ echo "netns=$({IP_REAL} netns list | grep -c "^{ns}\\b")"; '
+        f'echo "owner=$(cat /run/s0-05-egress/{ns}.owner 2>/dev/null)"; }} > {marker}\n'
+        '  kill -KILL "$PPID"; exit 1\n'
+        "fi\n"
+        f'exec {IP_REAL} "$@"\n')
+    (shim / "ip").chmod(0o755)
+    env = _runner_env(e3dir, 18091, path_prefix=shim)
+    evidence = e3dir / "evidence"
+    try:
+        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        out, err = runner.communicate(timeout=180)
+        # the instrument fired, and the state it left was REAL and owned by the runner
+        at_kill = marker.read_text().split()
+        assert at_kill == ["netns=1", f"owner={runner.pid}"], (at_kill, err)
+        assert _census(ns) == CLEAN, (_census(ns), out, err)
+        rows = json.loads((evidence / "units.json").read_text())["units"]
+        assert [r["status"] for r in rows if r["unit"] == "hermes-acp"] == ["not-run"], rows
+    finally:
+        _lib(f'egress_ns_destroy {ns}')
+
+
+@NEEDS_NETNS
+def test_x3_stale_takeover_is_atomic(tmp_path):
+    """X3 (VERIFY-E2-R1 F4): two creators find the SAME stale claim (its owner pid is dead).
+    Deterministic: the loser is paused (SIGSTOP, from a `cat` function defined after sourcing the
+    library) right after it READ the stale owner and before its takeover; the winner then takes
+    the claim and builds its namespace; the loser resumes. Exactly one proceeds: the loser refuses
+    `namespace-live: <ns> owned by pid <winner>` (65) and creates nothing — the winner's namespace
+    is the same inode before and after — and the owner record names the winner."""
+    ns = f"s0-05-e3-{uuid.uuid4().hex[:8]}"
+    owner_file = OWNER_DIR / f"{ns}.owner"
+    signal_file = tmp_path / "loser-paused"
+    stale = _dead_pid()
+    OWNER_DIR.mkdir(parents=True, exist_ok=True)
+    (OWNER_DIR / f"{ns}.claim").mkdir()          # the E2-R1 claim shape, left by a dead creator
+    owner_file.write_text(f"{stale}\n")
+    pause = (f'cat() {{ command cat "$@"; local rc=$?; '
+             f'if [ "$1" = "{owner_file}" ] && [ ! -e {signal_file} ]; then '
+             f'echo $BASHPID > {signal_file}.tmp; mv {signal_file}.tmp {signal_file}; '
+             f'kill -STOP $BASHPID; fi; return $rc; }}')
+    loser = winner = None
+    try:
+        loser = subprocess.Popen(
+            ["bash", "-c", f'. {LIB}\n{pause}\negress_ns_create {ns} 10.201.1.1:1\necho "loser_rc=$?"'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        _wait_for(signal_file.exists, 20, "the loser to pause after its stale read")
+        paused = int(signal_file.read_text())
+        winner = subprocess.Popen(
+            ["bash", "-c", f'. {LIB}\negress_ns_create {ns} 10.201.1.1:1\necho "winner_rc=$?"\n'
+                           'echo READY\nsleep 300'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        first = winner.stdout.readline().strip()
+        assert first == "winner_rc=0", (first, winner.stderr.read() if winner.poll() is not None else "")
+        assert winner.stdout.readline().strip() == "READY"
+        inode_before = os.stat(f"/run/netns/{ns}").st_ino
+        os.kill(paused, signal.SIGCONT)
+        out, err = loser.communicate(timeout=60)
+        assert out.splitlines()[-1] == "loser_rc=65", (out, err)
+        assert f"namespace-live: {ns} owned by pid {winner.pid}\n" in err, err
+        assert owner_file.read_text().strip() == str(winner.pid)
+        assert os.stat(f"/run/netns/{ns}").st_ino == inode_before, "the loser recreated the namespace"
+        assert _lib(f'egress_ns_mechanism {ns}').stdout.strip() == "veth-iptables"
+    finally:
+        for process in (loser, winner):
+            _stop(process)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _census(ns) == CLEAN, _census(ns)
+
+
+@NEEDS_NETNS
+def test_x4_runner_cleanup_reaps_its_own_namespace_at_exit(e3dir):
+    """X4 (VERIFY-E2-R1 F8), case 1, through the runner's REAL `cleanup` (its EXIT/INT/TERM trap,
+    never a copy of its logic): the runner is interrupted with SIGTERM while its unit is live in the
+    namespace it owns; after the runner exits, that namespace, its veth, /etc/netns/<ns> and the
+    owner record are gone and the stand-in unit is dead."""
+    ns = "s0-05-hermes-acp"
+    port = 18092
+    env = _runner_env(e3dir, port)
+    evidence = e3dir / "evidence"
+    listener = runner = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
+        standin = _standin_records(e3dir)[0]["pid"]
+        assert ns in _netns_names()
+        assert (OWNER_DIR / f"{ns}.owner").read_text().strip() == str(runner.pid)
+        runner.send_signal(signal.SIGTERM)
+        out, err = runner.communicate(timeout=180)
+        assert _census(ns) == CLEAN, (_census(ns), out, err)
+        assert not _pid_alive(standin), f"stand-in {standin} outlived its runner"
+    finally:
+        _stop(runner)
+        _stop(listener)
+        _lib(f'egress_ns_destroy {ns}')
+
+
+@NEEDS_NETNS
+def test_x4_runner_cleanup_leaves_a_live_owners_namespace(e3dir):
+    """X4 (VERIFY-E2-R1 F8), case 2 — kills M14 (the owner check in `cleanup` dropped). A holder
+    process owns `s0-05-hermes-acp`; the REAL runner for hermes-acp puts the name in its reap set
+    (X2's early entry), its create is refused `namespace-live`, and at exit its `cleanup` must leave
+    the holder's namespace, veth, /etc/netns entry and owner record untouched."""
+    ns = "s0-05-hermes-acp"
+    port = 18093
+    holder = None
+    try:
+        holder = subprocess.Popen(
+            ["bash", "-c", f'. {LIB}\negress_ns_create {ns} 10.201.107.1:{port} || exit 10\n'
+                           'echo READY\nsleep 300'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert holder.stdout.readline().strip() == "READY", holder.stderr.read()
+        before = _census(ns)
+        assert before["netns"] and before["veth"] and before["etc_netns"], before
+        evidence = e3dir / "evidence"
+        runner = subprocess.run(["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                capture_output=True, text=True, timeout=180,
+                                env=_runner_env(e3dir, port))
+        rows = json.loads((evidence / "units.json").read_text())["units"]
+        hermes = [r for r in rows if r["unit"] == "hermes-acp"]
+        override = json.loads((e3dir / "override.json").read_text())   # A1: recorded on the row
+        assert hermes == [{"unit": "hermes-acp", "status": "not-run", "override": override,
+                           "reason": f"namespace-live: {ns} owned by pid {holder.pid}"}], hermes
+        assert _census(ns) == before, (_census(ns), runner.stderr)
+        assert (OWNER_DIR / f"{ns}.owner").read_text().strip() == str(holder.pid)
+        assert holder.poll() is None
+    finally:
+        _stop(holder)
+        _lib(f'egress_ns_destroy {ns}')
+
+
+# ===================================================================== E3 — Part A (CD1 A1-A8)
+# The contract text is tasks/briefs/s0-05-support/CD1-AMENDMENT.md; E3's brief adds the refusal
+# texts. In the sandbox the pinned binaries are absent, so every leg below replaces a unit ONLY
+# through the runner's recorded override (A1), and asserts what the override cannot hide.
+
+UID0 = FIXTURES / "evidence-synthetic-uid0"
+PAIR_KEY = "e3-test-identity-not-a-real-key-0123456789"
+
+
+def _run_runner(env, evidence, *units, timeout=120):
+    return subprocess.run(["bash", str(RUNNER), str(evidence), *units],
+                          capture_output=True, text=True, timeout=timeout, env=env)
+
+
+def _unit_row(evidence, unit):
+    rows = [r for r in json.loads((evidence / "units.json").read_text())["units"] if r["unit"] == unit]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def _pair_override(workdir):
+    """A regular file standing in for the pinned buzz-acp binary (its bytes never run in the refusal
+    legs below; the launching leg in Part D uses a compiled stand-in)."""
+    buzz = workdir / "buzz-acp-standin"
+    buzz.write_bytes(b"\x7fELF e3 stand-in bytes\n")
+    buzz.chmod(0o755)
+    return {"PINNED_BUZZ_ACP_EXE_REALPATH": str(buzz), "PINNED_BUZZ_ACP_SHA256": _sha256(buzz)}
+
+
+def _identity_file(path, mode=0o600, owner=UNIT_USER, body=f"BUZZ_PRIVATE_KEY={PAIR_KEY}\n"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    os.chown(path, *owner)
+    path.chmod(mode)
+    return path
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("case", ["wrong-sha", "symlinked-path", "absent", "real-pins", "pair-wrong-sha"])
+def test_a1_unit_identity_mismatch_is_refused(e3dir, case):
+    """A1: before anything is created, the runner checks that the file at the pinned path IS its own
+    realpath and carries the pinned sha256 (for the pair: buzz-acp, then the agent it launches);
+    otherwise `not-run|unit identity mismatch: <path>`. `real-pins` is the sandbox run with NO
+    override: the pinned paths from proofs/S0-01/pins.py do not exist here — refused by name, and
+    no override is recorded because none was used."""
+    evidence = e3dir / "evidence"
+    unit = "buzz-acp" if case.startswith("pair") else "hermes-acp"
+    env = _runner_env(e3dir, 18094, override=_pair_override(e3dir))
+    override = json.loads((e3dir / "override.json").read_text())
+    if case == "wrong-sha":
+        override["PINNED_AGENT_ENTRYPOINT_SHA256"] = "0" * 64
+        expected = override["PINNED_AGENT_REALPATH"]
+    elif case == "symlinked-path":
+        link = e3dir / "linked-standin"
+        link.symlink_to(override["PINNED_AGENT_REALPATH"])
+        override["PINNED_AGENT_REALPATH"] = expected = str(link)
+    elif case == "absent":
+        override["PINNED_AGENT_REALPATH"] = expected = str(e3dir / "no-such-unit")
+    elif case == "pair-wrong-sha":
+        override["PINNED_BUZZ_ACP_SHA256"] = "f" * 64
+        expected = override["PINNED_BUZZ_ACP_EXE_REALPATH"]
+    if case == "real-pins":
+        del env["S0_05_PIN_OVERRIDE"]
+        expected, override = PINS.PINNED_AGENT_REALPATH, None
+    else:
+        (e3dir / "override.json").write_text(json.dumps(override))
+    runner = _run_runner(env, evidence, unit)
+    row = _unit_row(evidence, unit)
+    assert row.pop("override", None) == override, row
+    assert row == {"unit": unit, "status": "not-run", "reason": f"unit identity mismatch: {expected}"}, runner.stderr
+    assert _census(f"s0-05-{unit}") == CLEAN
+
+
+def test_a1_checker_refuses_an_override_on_a_live_claim(tmp_path):
+    """A1, the checker half: a units.json row that records a pin override, for a run unit whose
+    bundle says venue pc, is `units-manifest-invalid: <unit> override present` — before its identity
+    is graded (a stand-in run can never pass as the live leg). The same override on a non-pc bundle
+    (the synthetic curl unit) is not a live claim and is not refused."""
+    bundle = copy_bundle(tmp_path, SYNTHETIC)
+    units = json.loads((bundle / "units.json").read_text())
+    for row in units["units"]:
+        if row["unit"] == "curl":
+            row["override"] = {"PINNED_AGENT_REALPATH": "/tmp/stand-in"}
+    (bundle / "units.json").write_text(json.dumps(units))
+    result = run_checker(bundle, "--units", "curl,hermes-acp")
+    assert result.returncode == 0, result.stdout                  # curl's venue is not pc
+    for row in units["units"]:
+        if row["unit"] == "hermes-acp":
+            row["override"] = {"PINNED_AGENT_REALPATH": "/tmp/stand-in"}
+    (bundle / "units.json").write_text(json.dumps(units))
+    patch_json(bundle / "hermes-acp" / "unit-identity.json", uid=[0, 0, 0, 0])   # a second defect
+    result = run_checker(bundle, "--units", "curl,hermes-acp")
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "units-manifest-invalid: hermes-acp override present"
+
+
+@NEEDS_NETNS
+def test_a2_s0_01_tree_change_fails_the_leg(e3dir):
+    """A2: the runner takes a stat census of <pinned base>/.markers and every v2-* directory before
+    the first unit and after the last; anything changed fails the leg with `s0-01-tree-changed:
+    <path>` and a non-zero exit, and the checker is not run. The base comes from pins.py (the
+    directory of PINNED_HERMES_HOME), here moved through the recorded override to a scratch tree the
+    stand-in unit changes (one chmod of v2-run-1). Also A4's DEFAULT user: no S0_05_UNIT_USER, so the
+    unit runs as the owner of the (overridden) agent realpath — uid 65534."""
+    base = e3dir / "s0-01-pinned"
+    v2 = base / ".markers" / "v2-run-1"
+    v2.mkdir(parents=True)
+    os.chown(v2, *UNIT_USER)
+    (base / ".markers" / "v2-negative").mkdir()          # present and untouched: must not be named
+    port = 18095
+    env = _runner_env(e3dir, port, unit_user=None, override={"PINNED_HERMES_HOME": str(base / ".hermes-home")},
+                      extra=f"os.chmod({str(v2)!r}, 0o700)")
+    override = json.loads((e3dir / "override.json").read_text())
+    os.chown(override["PINNED_AGENT_REALPATH"], *UNIT_USER)
+    evidence = e3dir / "evidence"
+    listener = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+        assert runner.returncode == 1, (runner.returncode, runner.stderr)
+        changed = [l for l in runner.stderr.splitlines() if l.startswith("s0-01-tree-changed:")]
+        assert changed == [f"s0-01-tree-changed: {v2}"], runner.stderr
+        assert "=== checker ===" not in runner.stdout, runner.stdout
+        census = json.loads((evidence / "s0-01-census.json").read_text())
+        assert census["changed"] == [str(v2)] and census["tree"] == "present", census
+        assert str(base / ".markers" / "v2-negative") in census["after"], census
+        assert _unit_row(evidence, "hermes-acp")["status"] == "run"
+        record = _standin_records(e3dir)[0]
+        assert (record["uid"], record["gid"]) == UNIT_USER, record          # the A4 default
+    finally:
+        _stop(listener)
+        _lib('egress_ns_destroy s0-05-hermes-acp')
+    assert _census("s0-05-hermes-acp") == CLEAN
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("how", ["explicit", "default-owner"])
+def test_a4_a_root_unit_user_is_refused(e3dir, how):
+    """A4: the unit user is resolved once — the operator input, or the owner of the pinned agent
+    realpath — and a resolved uid 0 is `not-run|unit would run as root`, before anything is made.
+    `default-owner`: the (overridden) agent realpath is owned by root and no input is given."""
+    evidence = e3dir / "evidence"
+    env = _runner_env(e3dir, 18096, unit_user="0:0" if how == "explicit" else None)
+    _run_runner(env, evidence, "hermes-acp")
+    row = _unit_row(evidence, "hermes-acp")
+    assert (row["status"], row["reason"]) == ("not-run", "unit would run as root"), row
+    assert _census("s0-05-hermes-acp") == CLEAN
+
+
+@NEEDS_NETNS
+def test_a4_a_malformed_unit_user_is_a_usage_error(e3dir):
+    """A4: a unit user that is not <uid>:<gid> in plain decimal (`00:0` would be root) is a usage
+    error before anything is written."""
+    evidence = e3dir / "evidence"
+    runner = _run_runner(_runner_env(e3dir, 18096, unit_user="00:0"), evidence, "hermes-acp")
+    assert runner.returncode == 64
+    assert "run_s0_05_units: S0_05_UNIT_USER must be <uid>:<gid>, got '00:0'" in runner.stderr
+    assert not evidence.exists()
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("case", ["unset", "absent", "mode", "owner", "shape", "s0-01-path", "s0-01-real-path"])
+def test_a6_identity_file_refusals(e3dir, case):
+    """A6: the pair's S0-05 identity is an operator input (a file path) the runner reads without
+    printing: absent -> `absent`; group/other bits -> `mode <octal>`; not owned by the unit user ->
+    `owner uid <n>`; no `BUZZ_PRIVATE_KEY=` line -> `shape`; and NEVER S0-01's .secrets, refused by
+    PATH before the file is opened — both under an overridden base and at the REAL pinned base by
+    name (/home/rocco/s0-01-pinned/.secrets/agent.env). Each is `not-run|identity file refused:
+    <detail>`, nothing is created, and the key's value is printed nowhere."""
+    evidence = e3dir / "evidence"
+    base = e3dir / "s0-01-pinned"
+    extra = {**_pair_override(e3dir)}
+    if case == "s0-01-path":
+        extra["PINNED_HERMES_HOME"] = str(base / ".hermes-home")
+    env = _runner_env(e3dir, 18097, override=extra)
+    identity, detail = None, None
+    if case == "absent":
+        identity, detail = e3dir / "no-identity", "absent"
+    elif case == "unset":
+        detail = "absent"
+    elif case == "mode":
+        identity, detail = _identity_file(e3dir / "id" / "pair.env", mode=0o644), "mode 644"
+    elif case == "owner":
+        identity, detail = _identity_file(e3dir / "id" / "pair.env", owner=(0, 0)), "owner uid 0"
+    elif case == "shape":
+        identity, detail = _identity_file(e3dir / "id" / "pair.env", body="NOT_THE_KEY=x\n"), "shape"
+    elif case == "s0-01-path":
+        identity = _identity_file(base / ".secrets" / "agent.env")
+        detail = f"S0-01 path {identity}"
+    elif case == "s0-01-real-path":
+        identity = Path(os.path.dirname(PINS.PINNED_HERMES_HOME)) / ".secrets" / "agent.env"
+        detail = f"S0-01 path {identity}"
+    if identity is not None:
+        env["S0_05_PAIR_IDENTITY"] = str(identity)
+    runner = _run_runner(env, evidence, "buzz-acp")
+    row = _unit_row(evidence, "buzz-acp")
+    assert (row["status"], row["reason"]) == ("not-run", f"identity file refused: {detail}"), row
+    assert _census("s0-05-buzz-acp") == CLEAN
+    for text in (runner.stdout, runner.stderr, (evidence / "units.json").read_text()):
+        assert PAIR_KEY not in text
+
+
+@NEEDS_NETNS
+def test_a7_a_unit_not_matching_the_pins_is_not_observed(e3dir):
+    """A7, the runner half: at canary time the runner records which process runs in the namespace
+    (<unit>/unit-identity.json: pid, /proc/<pid>/exe realpath, entrypoint realpath and sha256, the
+    Uid line, argv) and runs the canaries ONLY if it matches the pins — else `not-run|unit identity
+    not observed: <detail>`, every mismatch named. Two faults from the test side: the interpreter pin
+    is overridden to another path (exe mismatch), and a PATH `setpriv` shim runs the unit WITHOUT
+    dropping privileges (uid 0 — the runner-side uid check, E6)."""
+    port = 18098
+    shim = e3dir / "shim"
+    shim.mkdir()
+    (shim / "setpriv").write_text(
+        "#!/bin/bash\n# E3 test fault: a setpriv that does NOT drop privileges\n"
+        'while [ $# -gt 0 ]; do case $1 in --) shift; break;; --*) shift;; *) break;; esac; done\n'
+        'exec "$@"\n')
+    (shim / "setpriv").chmod(0o755)
+    wrong_exe = "/usr/bin/e3-not-the-interpreter"
+    env = _runner_env(e3dir, port, path_prefix=shim, override={"PINNED_AGENT_INTERPRETER_REALPATH": wrong_exe})
+    evidence = e3dir / "evidence"
+    listener = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+        row = _unit_row(evidence, "hermes-acp")
+        assert (row["status"], row["reason"]) == (
+            "not-run", f"unit identity not observed: exe {_agent_interpreter()} is not {wrong_exe}; uid 0"), row
+        identity = json.loads((evidence / "hermes-acp" / "unit-identity.json").read_text())
+        assert identity["uid"] == [0, 0, 0, 0] and identity["exe_realpath"] == _agent_interpreter(), identity
+        assert not (evidence / "hermes-acp" / "canaries.jsonl").exists(), "the canaries ran for an unobserved unit"
+        standin = _standin_records(e3dir)[0]["pid"]
+        assert not _pid_alive(standin)
+    finally:
+        _stop(listener)
+        _lib('egress_ns_destroy s0-05-hermes-acp')
+    assert _census("s0-05-hermes-acp") == CLEAN, runner.stderr
+
+
+def test_a7_the_synthetic_pass_fixture_grades_its_identity():
+    """A7, the checker half, positive: the synthetic-pass fixture's hermes-acp bundle says venue pc
+    and carries the unit-identity record that matches proofs/S0-01/pins.py; the checker GRADES it
+    (the line below is printed only by that check) and passes."""
+    result = run_checker(SYNTHETIC, "--units", "curl,hermes-acp")
+    assert result.returncode == 0, result.stdout
+    assert (f"unit-identity: hermes-acp pid 424242 runs {PINS.PINNED_AGENT_REALPATH} "
+            f"(sha256 {PINS.PINNED_AGENT_ENTRYPOINT_SHA256[:12]}) as uid 1000") in result.stdout.splitlines()
+
+
+def test_a7_the_uid0_fixture_is_refused():
+    """A7: the committed negative fixture differs from synthetic-pass in ONE field — the record's
+    Uid line is root — and is refused by exactly that."""
+    pos = json.loads((SYNTHETIC / "hermes-acp" / "unit-identity.json").read_text())
+    neg = json.loads((UID0 / "hermes-acp" / "unit-identity.json").read_text())
+    assert {k for k in pos if pos[k] != neg[k]} == {"uid"} and neg["uid"] == [0, 0, 0, 0]
+    result = run_checker(UID0, "--units", "curl,hermes-acp")
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "unit-identity-invalid: hermes-acp uid 0"
+
+
+@pytest.mark.parametrize("mutate, detail", [
+    ("delete", "unit-identity.json absent"),
+    ({"entrypoint_sha256": "0" * 64}, f"entrypoint_sha256 {'0' * 64} is not the pin"),
+    ({"exe_realpath": "/usr/bin/python3.12"}, "exe_realpath /usr/bin/python3.12 is not the pin"),
+    ({"entrypoint_realpath": "/tmp/stand-in"}, "entrypoint_realpath /tmp/stand-in is not the pin"),
+    ({"uid": [1000, 0, 1000, 1000]}, "uid 0"),
+    ({"uid": 1000}, "uid 1000 is not the four uids of the Uid line"),
+    ({"uid": [True, 1000, 1000, 1000]}, "uid [True, 1000, 1000, 1000] is not the four uids of the Uid line"),
+    ("not-json", "unit-identity.json is not JSON"),
+    ("drop-key", "unit-identity.json lacks one of unit, pid, exe_realpath, entrypoint_realpath, "
+                 "entrypoint_sha256, uid, argv"),
+], ids=["missing", "digest", "exe-path", "entrypoint-path", "effective-uid-0", "uid-not-a-list",
+        "uid-bool", "not-json", "missing-key"])
+def test_a7_the_checker_refuses_an_identity_that_is_not_the_pin(tmp_path, mutate, detail):
+    """A7: for a run unit whose bundle says venue pc, `unit-identity-invalid: <unit> <detail>` on a
+    missing record, a digest or path that is not the pin, or any uid 0 (the record carries all four
+    Uid-line uids: a setuid-root unit is root too)."""
+    bundle = copy_bundle(tmp_path, SYNTHETIC)
+    record = bundle / "hermes-acp" / "unit-identity.json"
+    if mutate == "delete":
+        record.unlink()
+    elif mutate == "not-json":
+        record.write_text("{not json")
+    elif mutate == "drop-key":
+        payload = json.loads(record.read_text())
+        del payload["argv"]
+        record.write_text(json.dumps(payload))
+    else:
+        patch_json(record, **mutate)
+    result = run_checker(bundle, "--units", "curl,hermes-acp")
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == f"unit-identity-invalid: hermes-acp {detail}"
+
+
+def test_a7_the_identity_is_graded_only_for_a_live_claim(tmp_path):
+    """A7 scope: the record is required for a run unit whose bundle says venue pc. A curl bundle
+    relabelled pc has no pinned identity and is refused; the sandbox mechanism bundle (venue sandbox)
+    needs none and passes."""
+    assert run_checker(MECHANISM).returncode == 0
+    bundle = copy_bundle(tmp_path)
+    patch_json(bundle / "curl" / "runtime.json", venue="pc")
+    assert run_checker(bundle).stdout.splitlines()[0] == "unit-identity-invalid: curl unit-identity.json absent"
+    shutil.copy(SYNTHETIC / "hermes-acp" / "unit-identity.json", bundle / "curl" / "unit-identity.json")
+    assert run_checker(bundle).stdout.splitlines()[0] == "unit-identity-invalid: curl no pinned identity for this unit"
+
+
+@NEEDS_NETNS
+def test_a8_every_allow_entry_is_formed_by_the_runner(e3dir):
+    """A8: the allow entry is `$(egress_ns_host_ip <ns>):<port input>`, formed by the runner; the
+    planted operator-typed ALLOWED_HERMES (port 1) is ignored. With nothing listening on the port,
+    the preflight names exactly that derived entry: `not-run|positive control unreachable:
+    10.201.107.1:<port> not reachable from s0-05-hermes-acp`, and the namespace is gone after."""
+    port = 18099
+    evidence = e3dir / "evidence"
+    runner = _run_runner(_runner_env(e3dir, port), evidence, "hermes-acp")
+    row = _unit_row(evidence, "hermes-acp")
+    assert row["reason"] == f"positive control unreachable: 10.201.107.1:{port} not reachable from s0-05-hermes-acp", row
+    assert f"positive-control-unreachable: hermes-acp 10.201.107.1:{port}" in runner.stderr
+    assert _census("s0-05-hermes-acp") == CLEAN
+
+
+# ===================================================================== E3 — Part D (D-051)
+# The pair (buzz-acp + the hermes-acp it spawns) reaches the pinned relay on the host's 127.0.0.1
+# through ONE leg-scoped DNAT on its veth host end. The sandbox proof: a relay stand-in bound to
+# 127.0.0.1 ONLY — unreachable from a namespace by any other path — reached through <host ip>:<port>.
+
+RELAY_PORT = urlsplit(PINS.PINNED_RELAY_URL).port
+IPTABLES_REAL = shutil.which("iptables") or "/usr/sbin/iptables"
+
+# The buzz-acp stand-in: a compiled binary, because A7 grades /proc/<pid>/exe and the real unit is
+# an ELF. THIS process is the unit; its worker records what the unit was given, opens the unit's
+# own socket to its relay URL, spawns the agent command as its child (as buzz-acp does, CD1 probe
+# 2), and serves until stdin reaches EOF.
+PAIR_WRAPPER_C = r"""
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    char **wargv = calloc((size_t)argc + 3, sizeof *wargv);
+    if (wargv == NULL) return 1;
+    wargv[0] = INTERP; wargv[1] = WORKER;
+    for (int i = 0; i < argc; i++) wargv[i + 2] = argv[i];
+    pid_t child = fork();
+    if (child == 0) { execv(INTERP, wargv); _exit(127); }
+    int status = 0;
+    if (child < 0 || waitpid(child, &status, 0) < 0) return 1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+"""
+PAIR_WORKER = """
+import hashlib, json, os, selectors, socket, stat, subprocess, sys
+from urllib.parse import urlsplit
+REC = "@@REC@@"
+SHOWN = ("PATH", "HOME", "HERMES_HOME", "LANG", "PYTHONDONTWRITEBYTECODE")
+def fd_kind(fd):
+    mode = os.fstat(fd).st_mode
+    for name, test in (("fifo", stat.S_ISFIFO), ("chr", stat.S_ISCHR), ("reg", stat.S_ISREG), ("sock", stat.S_ISSOCK)):
+        if test(mode):
+            return name
+    return "other"
+argv = sys.argv[1:]
+key = os.environ.get("BUZZ_PRIVATE_KEY")
+record = {"pid": os.getpid(), "unit_pid": os.getppid(), "pair_argv": argv, "uid": os.getuid(), "gid": os.getgid(),
+          "net_ino": os.stat("/proc/self/ns/net").st_ino, "env_keys": sorted(os.environ),
+          "env": {k: os.environ[k] for k in SHOWN if k in os.environ},
+          "key_sha256": hashlib.sha256(key.encode()).hexdigest() if key is not None else None,
+          "stdin": fd_kind(0), "stdout": fd_kind(1), "stop": None}
+path = os.path.join(REC, "pair-%d.json" % os.getpid())
+def dump():
+    with open(path + ".tmp", "w") as fh:
+        json.dump(record, fh)
+    os.replace(path + ".tmp", path)
+selector = selectors.EpollSelector()
+try:
+    selector.register(0, selectors.EVENT_READ)
+    selector.register(1, selectors.EVENT_WRITE)
+except PermissionError as exc:
+    record["stop"] = "crash: %r" % (exc,)
+    dump()
+    sys.exit(1)
+relay = urlsplit(argv[argv.index("--relay-url") + 1])
+try:
+    with socket.create_connection((relay.hostname, relay.port), timeout=5) as conn:
+        conn.sendall(b"GET /pair-own-socket HTTP/1.0\\r\\n\\r\\n")
+        record["relay_reply"] = conn.recv(12).decode(errors="replace")
+except OSError as exc:
+    record["relay_reply"] = "error: %r" % (exc,)
+agent = subprocess.Popen([argv[argv.index("--agent-command") + 1]], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+record["agent_pid"] = agent.pid
+dump()
+print("pair stand-in: serving", flush=True)
+while os.read(0, 65536):
+    pass
+agent.stdin.close()
+agent.wait(timeout=20)
+record["stop"] = "eof"
+dump()
+"""
+
+
+def _pair_standin(workdir):
+    worker = workdir / "pair_worker.py"
+    worker.write_text(PAIR_WORKER.replace("@@REC@@", str(_rec_dir(workdir))))
+    source = workdir / "pair_standin.c"
+    source.write_text(PAIR_WRAPPER_C)
+    binary = workdir / "buzz-acp-standin"
+    subprocess.run(["gcc", "-O0", f'-DINTERP="{_agent_interpreter()}"', f'-DWORKER="{worker}"',
+                    "-o", str(binary), str(source)], check=True, capture_output=True, text=True)
+    binary.chmod(0o755)
+    return binary
+
+
+def _nat_rules_naming(host_if):
+    rules = subprocess.run(["iptables", "-t", "nat", "-S", "PREROUTING"], capture_output=True, text=True).stdout
+    return [line for line in rules.splitlines() if f" -i {host_if} " in line]
+
+
+def _route_localnet(host_if):
+    path = Path(f"/proc/sys/net/ipv4/conf/{host_if}/route_localnet")
+    return path.read_text().strip() if path.exists() else None
+
+
+def _iptables_shim(workdir, action):
+    """A PATH `iptables` that intercepts ONE exact argv — the relay reach's nat add — and runs the real
+    binary for everything else (the namespace gates run through it too)."""
+    shim = workdir / "shim"
+    shim.mkdir()
+    (shim / "iptables").write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1 $2 $3 $4" = "-t nat -A PREROUTING" ]; then {action}; fi\n'
+        f'exec {IPTABLES_REAL} "$@"\n')
+    (shim / "iptables").chmod(0o755)
+    return shim
+
+
+def _curl_from(ns, url):
+    return _lib(f'egress_ns_run {ns} curl -sS --noproxy "*" --connect-timeout 3 -o /dev/null -w "%{{http_code}}" {url}')
+
+
+@NEEDS_NETNS
+def test_d_relay_reach_add_and_del(e3dir):
+    """D-051, the library: a relay stand-in bound to the host's 127.0.0.1:<relay port> ONLY is
+    unreachable from the namespace until egress_relay_reach_add installs the one DNAT on the pair's
+    veth host end; then it is reached through <host ip>:<port>, and the stand-in sees the
+    namespace's own address (a loopback listener receiving a non-loopback source: only the DNAT
+    path produces that). route_localnet is load-bearing (off -> unreachable again). egress_relay_
+    reach_del removes the rule and puts route_localnet back to 0 while the interface still lives;
+    destroy leaves nothing (census)."""
+    ns = f"s0-05-e3-{uuid.uuid4().hex[:8]}"
+    host_ip = _lib(f'egress_ns_host_ip {ns}').stdout.strip()
+    host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
+    ns_ip = _lib(f'egress_ns_ip {ns}').stdout.strip()
+    url = f"http://{host_ip}:{RELAY_PORT}"
+    relay = None
+    try:
+        assert _lib(f'egress_ns_create {ns} {host_ip}:{RELAY_PORT}').returncode == 0
+        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay")
+        assert _curl_from(ns, f"{url}/before").stdout == "000"                 # no path without the rule
+        added = _lib(f'egress_relay_reach_add {ns} {RELAY_PORT} 127.0.0.1:{RELAY_PORT}')
+        assert added.returncode == 0, added.stderr
+        assert _nat_rules_naming(host_if) == [
+            f"-A PREROUTING -d {host_ip}/32 -i {host_if} -p tcp -m tcp --dport {RELAY_PORT} "
+            f"-j DNAT --to-destination 127.0.0.1:{RELAY_PORT}"]
+        assert _route_localnet(host_if) == "1"
+        assert _curl_from(ns, f"{url}/through-dnat").stdout == "200"
+        assert (e3dir / "relay.log").read_text().splitlines() == [f"{ns_ip} /through-dnat"]
+        subprocess.run(["sysctl", "-q", "-w", f"net.ipv4.conf.{host_if}.route_localnet=0"], check=True)
+        assert _curl_from(ns, f"{url}/no-localnet").stdout == "000"            # the sysctl is load-bearing
+        subprocess.run(["sysctl", "-q", "-w", f"net.ipv4.conf.{host_if}.route_localnet=1"], check=True)
+        deleted = _lib(f'egress_relay_reach_del {ns}')
+        assert deleted.returncode == 0, deleted.stderr
+        assert _nat_rules_naming(host_if) == [] and _route_localnet(host_if) == "0"
+        assert _curl_from(ns, f"{url}/after").stdout == "000"
+    finally:
+        _stop(relay)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _census(ns) == CLEAN and _nat_rules_naming(host_if) == [] and _route_localnet(host_if) is None
+
+
+@NEEDS_NETNS
+@pytest.mark.skipif(shutil.which("gcc") is None,
+                    reason="the buzz-acp stand-in is compiled (A7 grades /proc/<pid>/exe); no C compiler — NOT run here")
+def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
+    """D-051 + A5/A6/A7 for the pair, one real run of the runner for buzz-acp: the relay stand-in is
+    bound to the host's 127.0.0.1:<relay port> ONLY; the runner adds the leg's DNAT, preflights BOTH
+    allowed destinations (relay, OmniRoute), launches the pair from the pinned argv shape with three
+    substitutions (A6), and the pair's OWN socket reaches the relay through the DNAT. The pair's
+    identity reaches its environment (and its agent child's) from the identity file, never an argv
+    or the runner's environment (A5/A6). unit-identity.json names the compiled stand-in (A7). After
+    the runner exits, no PREROUTING rule names the pair's interface and the interface is gone."""
+    ns = "s0-05-buzz-acp"
+    host_ip = _lib(f'egress_ns_host_ip {ns}').stdout.strip()
+    host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
+    ns_ip = _lib(f'egress_ns_ip {ns}').stdout.strip()
+    omni_port = 18100
+    base = e3dir / "s0-01-pinned"
+    (base / ".markers" / "v2-run-1").mkdir(parents=True)       # A2: present and untouched
+    buzz = _pair_standin(e3dir)
+    env = _runner_env(e3dir, omni_port, override={
+        "PINNED_BUZZ_ACP_EXE_REALPATH": str(buzz), "PINNED_BUZZ_ACP_SHA256": _sha256(buzz),
+        "PINNED_HERMES_HOME": str(base / ".hermes-home")})
+    override = json.loads((e3dir / "override.json").read_text())
+    agent = override["PINNED_AGENT_REALPATH"]
+    env["S0_05_PAIR_IDENTITY"] = str(_identity_file(e3dir / "id" / "pair.env"))
+    evidence = e3dir / "evidence"
+    relay = omni = None
+    try:
+        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay")
+        omni = _listener(e3dir, omni_port, name="omniroute")
+        runner = _run_runner(env, evidence, "buzz-acp", timeout=300)
+        assert PAIR_KEY not in runner.stdout + runner.stderr + (evidence / "units.json").read_text()
+        row = _unit_row(evidence, "buzz-acp")
+        assert (row["status"], row["override"]) == ("run", override), (row, runner.stderr[-2000:])
+        pair = _standin_records(e3dir, "pair")
+        assert len(pair) == 1, pair
+        pair = pair[0]
+        # A6: the pinned shape (pins.py PINNED_LAUNCH_ARGV) with three substitutions only.
+        assert pair["pair_argv"] == [str(buzz), "--relay-url", f"ws://{host_ip}:{RELAY_PORT}",
+                                     "--agent-command", agent, "--agent-args", "",
+                                     "--idle-timeout", PINS.PINNED_IDLE_TIMEOUT_ARG,
+                                     "--max-turn-duration", PINS.PINNED_MAX_TURN_DURATION_ARG], pair["pair_argv"]
+        assert not any(f in a for a in pair["pair_argv"] for f in ("proofs/S0-01/tools", ".markers", ".secrets"))
+        # D-051: the pair's OWN socket reached the loopback-only relay through the DNAT, and so did the
+        # preflight; the relay saw the namespace's address.
+        assert pair["relay_reply"].startswith("HTTP/1.0 200"), pair["relay_reply"]
+        seen = (e3dir / "relay.log").read_text().splitlines()
+        assert f"{ns_ip} /v1/models" in seen and f"{ns_ip} /pair-own-socket" in seen, seen
+        # A5 + A6: the environment is the declared set plus the pair's identity key — its value from
+        # the identity file, not the planted runner variable — and nothing else secret-shaped.
+        assert pair["env_keys"] == sorted(UNIT_ENV_KEYS + ["BUZZ_PRIVATE_KEY"]), pair["env_keys"]
+        assert pair["key_sha256"] == hashlib.sha256(PAIR_KEY.encode()).hexdigest()
+        assert [k for k in pair["env_keys"] if REDACTED.search(k)] == ["BUZZ_PRIVATE_KEY"]
+        assert (pair["uid"], pair["gid"], pair["stdin"], pair["stop"]) == (*UNIT_USER, "fifo", "eof"), pair
+        # the agent is the pair's child, in the pair's namespace, with the pair's environment
+        child = [r for r in _standin_records(e3dir) if r["pid"] == pair["agent_pid"]]
+        assert len(child) == 1, _standin_records(e3dir)
+        assert (child[0]["ppid"], child[0]["net_ino"], child[0]["key_sha256"], child[0]["stop"]) == \
+            (pair["pid"], pair["net_ino"], pair["key_sha256"], "eof"), child
+        # A7: the record names the compiled unit that ran.
+        identity = json.loads((evidence / "buzz-acp" / "unit-identity.json").read_text())
+        assert (identity["pid"], identity["exe_realpath"], identity["entrypoint_realpath"],
+                identity["entrypoint_sha256"], identity["uid"]) == \
+            (pair["unit_pid"], str(buzz), str(buzz), _sha256(buzz), [UNIT_USER[0]] * 4), identity
+        # D-051: the pair's namespace allowed exactly {relay, OmniRoute} (observed rules).
+        rules = json.loads((evidence / "buzz-acp" / "runtime.json").read_text())["rules"]
+        assert sorted(r for r in rules if " -j ACCEPT" in r and "-i lo" not in r and "-o lo" not in r) == sorted([
+            f"-A INPUT -s {host_ip}/32 -p tcp -m tcp --sport {RELAY_PORT} -j ACCEPT",
+            f"-A INPUT -s {host_ip}/32 -p tcp -m tcp --sport {omni_port} -j ACCEPT",
+            f"-A OUTPUT -d {host_ip}/32 -p tcp -m tcp --dport {RELAY_PORT} -j ACCEPT",
+            f"-A OUTPUT -d {host_ip}/32 -p tcp -m tcp --dport {omni_port} -j ACCEPT"]), rules
+        assert "=== buzz-acp: exited 0 on stdin EOF ===" in runner.stdout
+        checker_out = runner.stdout.split("=== checker ===\n", 1)[1]
+        assert checker_out.splitlines()[0] == "units-manifest-invalid: buzz-acp override present"
+        census = json.loads((evidence / "s0-01-census.json").read_text())
+        assert census["tree"] == "present" and census["changed"] == [], census
+    finally:
+        _stop(relay)
+        _stop(omni)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _nat_rules_naming(host_if) == [] and _route_localnet(host_if) is None
+    assert _census(ns) == CLEAN
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("fault", ["rule-absent", "rule-refused"])
+def test_d_without_the_relay_reach_the_pair_is_not_run(e3dir, fault):
+    """D-051, the negative controls, through the REAL runner with the relay stand-in UP on the host's
+    127.0.0.1: `rule-absent` — a PATH iptables swallows the nat add (exit 0, nothing added), so the
+    preflight's C0 to the relay fails with the existing reason `positive control unreachable`;
+    `rule-refused` — the nat add fails, `not-run|relay reach not established: <detail>`. Either way
+    the relay saw nothing, and nothing is left (no nat rule, no interface, census)."""
+    ns = "s0-05-buzz-acp"
+    host_ip = _lib(f'egress_ns_host_ip {ns}').stdout.strip()
+    host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
+    action = "exit 0" if fault == "rule-absent" else 'echo "E3-injected: nat rule refused" >&2; exit 1'
+    shim = _iptables_shim(e3dir, action)
+    env = _runner_env(e3dir, 18101, path_prefix=shim, override=_pair_override(e3dir))
+    env["S0_05_PAIR_IDENTITY"] = str(_identity_file(e3dir / "id" / "pair.env"))
+    evidence = e3dir / "evidence"
+    relay = None
+    try:
+        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay")
+        _run_runner(env, evidence, "buzz-acp")
+        reason = _unit_row(evidence, "buzz-acp")["reason"]
+        if fault == "rule-absent":
+            assert reason == f"positive control unreachable: {host_ip}:{RELAY_PORT} not reachable from {ns}"
+        else:
+            assert reason == "relay reach not established: E3-injected: nat rule refused"
+        assert (e3dir / "relay.log").read_text() == ""
+    finally:
+        _stop(relay)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _nat_rules_naming(host_if) == [] and _route_localnet(host_if) is None
+    assert _census(ns) == CLEAN

@@ -15,9 +15,13 @@
 # is the committed control for that class.
 #
 # API
-#   egress_ns_create <ns> <ip:port>...   idempotent; creates the ns, the veth pair, the rules
+#   egress_ns_create <ns> <ip:port>...   idempotent; claims the name, creates the ns, the veth
+#                                        pair, the rules; a failed step rolls all of it back (X2)
 #   egress_ns_run <ns> <cmd...>          run a command as the contained unit
-#   egress_ns_destroy <ns>               remove ns, veth and the per-ns resolv.conf
+#   egress_ns_destroy <ns>               remove the relay reach, every process in the ns, the veth,
+#                                        the ns, the per-ns resolv.conf and the owner record
+#   egress_relay_reach_add <ns> <port> <ip:port> / egress_relay_reach_del <ns>
+#                                        D-051: the pair's one DNAT to the loopback relay
 #   egress_gate_off <ns> [gate.json]     THE negative control: flush the DROP rules and stamp
 #                                        "gate": "disabled" into the run's gate.json
 #   egress_ns_create_isolated <ns> <ip:port>...
@@ -70,11 +74,13 @@ egress_ns_create() {
 
   # F11/F12: validate EVERY allow entry up front, before any namespace/veth/rule/record work.
   # A dotted quad of four decimal octets 0-255 with no leading zero (a lone 0 is fine), port 1-65535.
+  # X1 (VERIFY-E2-R1 F1, AF-AP-129): the port's DIGIT COUNT is bounded before the arithmetic: five
+  # digits cannot overflow, while a longer string made `[ -gt ]` exit 2, which `||` read as false.
   local entry ip port octet_pat='(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])'
   local ip_pat="^${octet_pat}\\.${octet_pat}\\.${octet_pat}\\.${octet_pat}$"
   for entry in "$@"; do
     ip=${entry%:*}; port=${entry##*:}
-    if ! [[ "$port" =~ ^[1-9][0-9]*$ ]] || [ "$port" -gt 65535 ]; then
+    if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$port" -gt 65535 ]; then
       echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64
     fi
     if ! [[ "$ip" =~ $ip_pat ]]; then
@@ -87,22 +93,9 @@ egress_ns_create() {
   host_ip=$(egress_ns_host_ip "$ns"); ns_ip=$(egress_ns_ip "$ns")
   resolver=$(egress_ns_resolver "$ns")
 
-  # F2: claim the name atomically BEFORE destroy-first and creation. A claim held by a live pid
-  # other than $$ is refused; a stale claim (dead pid) is taken over atomically.
-  mkdir -p "$EGRESS_OWNER_DIR"
-  local claim_dir="$EGRESS_OWNER_DIR/${ns}.claim"
-  if mkdir "$claim_dir" 2>/dev/null; then
-    printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
-  else
-    # claim exists: check who holds it
-    local owner_pid
-    owner_pid=$(cat "$(egress_ns_owner_file "$ns")" 2>/dev/null)
-    if [ -n "$owner_pid" ] && [ "$owner_pid" != "$$" ] && kill -0 "$owner_pid" 2>/dev/null; then
-      echo "namespace-live: $ns owned by pid $owner_pid" >&2; return 65
-    fi
-    # stale: take over atomically
-    printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
-  fi
+  # F2 + X3: claim the name BEFORE destroy-first and creation (_egress_ns_claim, below). A claim
+  # held by a live pid other than $$ is refused (65); a stale one (dead pid) is taken over atomically.
+  _egress_ns_claim "$ns" || return $?
 
   # idempotent (probe.sh:36-37): remove any remains of a previous run of THIS namespace.
   # F2: use _egress_ns_teardown (not egress_ns_destroy) so our fresh claim is preserved.
@@ -115,29 +108,83 @@ egress_ns_create() {
   collision_if=$(ip -o -4 addr show 2>/dev/null \
     | awk -v pfx="10.201.${octet}." 'index($4, pfx) == 1 {print $2; exit}')
   if [ -n "$collision_if" ]; then
-    rm -rf "$claim_dir"
-    rm -f "$(egress_ns_owner_file "$ns")"
+    _egress_ns_release "$ns"
     echo "address-plan-collision: $ns $subnet on $collision_if" >&2; return 65
   fi
 
-  ip netns add "$ns" || return 1
-  ip link add "$host_if" type veth peer name "$ns_if" || return 1
-  ip link set "$ns_if" netns "$ns" || return 1
-  ip addr add "${host_ip}/24" dev "$host_if" || return 1
-  ip link set "$host_if" up || return 1
-  ip netns exec "$ns" ip addr add "${ns_ip}/24" dev "$ns_if" || return 1
-  ip netns exec "$ns" ip link set "$ns_if" up || return 1
-  ip netns exec "$ns" ip link set lo up || return 1
+  # X2: from the first namespace mutation on, a step that fails rolls back EVERYTHING this create
+  # made (namespace, veth, /etc/netns/<ns>, gate) and then the claim, and returns 1; the failing
+  # command's own message is already on stderr.
+  ip netns add "$ns" || { _egress_ns_rollback "$ns"; return 1; }
+  ip link add "$host_if" type veth peer name "$ns_if" || { _egress_ns_rollback "$ns"; return 1; }
+  ip link set "$ns_if" netns "$ns" || { _egress_ns_rollback "$ns"; return 1; }
+  ip addr add "${host_ip}/24" dev "$host_if" || { _egress_ns_rollback "$ns"; return 1; }
+  ip link set "$host_if" up || { _egress_ns_rollback "$ns"; return 1; }
+  ip netns exec "$ns" ip addr add "${ns_ip}/24" dev "$ns_if" || { _egress_ns_rollback "$ns"; return 1; }
+  ip netns exec "$ns" ip link set "$ns_if" up || { _egress_ns_rollback "$ns"; return 1; }
+  ip netns exec "$ns" ip link set lo up || { _egress_ns_rollback "$ns"; return 1; }
 
   # No default route is added: the namespace reaches its own /24 and nothing else. Targets off
   # that /24 therefore fail on ROUTING (ENETUNREACH), targets on it fail on the GATE. Both are
   # recorded per canary; the report says which barrier each canary hit.
 
   # DNS blocked (docs/05_SECURITY.md:21 "DNS/connection canaries"): a resolver the gate drops.
-  mkdir -p "/etc/netns/$ns"
-  printf 'nameserver %s\noptions timeout:1 attempts:1\n' "$resolver" > "/etc/netns/$ns/resolv.conf"
+  mkdir -p "/etc/netns/$ns" || { _egress_ns_rollback "$ns"; return 1; }
+  printf 'nameserver %s\noptions timeout:1 attempts:1\n' "$resolver" > "/etc/netns/$ns/resolv.conf" \
+    || { _egress_ns_rollback "$ns"; return 1; }
 
-  _egress_apply_gate "$ns" "$@"
+  _egress_apply_gate "$ns" "$@" || { _egress_ns_rollback "$ns"; return 1; }
+}
+
+# --- the claim (X3, VERIFY-E2-R1 F4) ---------------------------------------------------------
+# The claim IS the owner record `<ns>.owner`, installed atomically WITH its content: link(2) of a
+# fully written temp file fails when a record exists and never shows a half-written one, so there
+# is no window in which a claim exists with no owner, or with a stale owner (E2-R1's mkdir of a
+# claim dir, then a write of the record, had both). A record whose pid is dead is taken over by an
+# atomic rename of THAT record to a unique tombstone, then the normal link claim. Of two creators
+# that read the same stale record, only one rename can move it; a later rename that finds a live
+# record instead (the winner's, installed after the stale read) moves it straight back with a
+# link, which never overwrites, and that creator is then refused naming the winner. State guards
+# only: no lock is held, least of all across destroy-and-recreate. Declared limit: a THIRD
+# creator that links a fresh claim inside the microseconds between such a rename and its move
+# back can orphan the winner's record; three creators on one name at once is out of this model.
+# Returns 0 holding the claim; 65 with the `namespace-live` line when a live pid other than $$
+# holds it; 1 when the record cannot be written at all.
+_egress_ns_claim() {
+  local ns=$1 owner_file tmp tomb owner_pid moved attempt
+  owner_file=$(egress_ns_owner_file "$ns")
+  mkdir -p "$EGRESS_OWNER_DIR" || return 1
+  tmp="$EGRESS_OWNER_DIR/.$ns.owner.$$.$RANDOM"
+  printf '%s\n' "$$" > "$tmp" || { rm -f "$tmp"; return 1; }
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if ln "$tmp" "$owner_file" 2>/dev/null; then rm -f "$tmp"; return 0; fi
+    owner_pid=$(cat "$owner_file" 2>/dev/null)
+    if [ "$owner_pid" = "$$" ]; then rm -f "$tmp"; return 0; fi   # the same shell re-creating
+    if [[ "$owner_pid" =~ ^[1-9][0-9]{0,9}$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+      rm -f "$tmp"; echo "namespace-live: $ns owned by pid $owner_pid" >&2; return 65
+    fi
+    # stale (a dead or unreadable pid): move exactly the record that was read, never overwrite it
+    tomb="$EGRESS_OWNER_DIR/.$ns.tomb.$$.$RANDOM"
+    if mv -T "$owner_file" "$tomb" 2>/dev/null; then
+      moved=$(cat "$tomb" 2>/dev/null)
+      [ "$moved" = "$owner_pid" ] || ln "$tomb" "$owner_file" 2>/dev/null
+      rm -f "$tomb"
+    fi
+  done
+  rm -f "$tmp"
+  echo "namespace-live: $ns owned by pid $(cat "$owner_file" 2>/dev/null) (claim churn after $attempt attempts)" >&2
+  return 65
+}
+
+# X2: undo a failed create. The claim goes only when the teardown left nothing alive behind, so
+# a leftover the rollback could not remove stays owned by $$: the runner's cleanup reaps a name
+# only while its owner record is the runner's pid (E2-R1 F3), and that record is still here.
+_egress_ns_rollback() { _egress_ns_teardown "$1" && _egress_ns_release "$1"; }
+
+# Drop the claim: the owner record, and the E2-R1 claim dir a pre-X3 library may have left.
+_egress_ns_release() {
+  rm -f "$(egress_ns_owner_file "$1")"
+  rm -rf "$EGRESS_OWNER_DIR/${1}.claim"
 }
 
 # probe.sh:50-58: policy DROP on the three chains, one ACCEPT pair per allowed ip:port, loopback
@@ -247,17 +294,51 @@ PY
 EGRESS_OWNER_DIR=${EGRESS_OWNER_DIR:-/run/s0-05-egress}
 egress_ns_owner_file() { printf '%s/%s.owner\n' "$EGRESS_OWNER_DIR" "$1"; }
 
+# --- D-051: the relay reach (the buzz-acp pair's leg only) ------------------------------------
+# The pinned relay listens on 127.0.0.1 only, and a namespace has its own loopback. For the pair's
+# leg the ROOT runner adds ONE host nat rule on the pair's veth host end — tcp to <host ip>:<port>
+# is DNAT-ed to the relay — and sets route_localnet=1 on that ONE interface (the kernel will not
+# route a loopback destination arriving on any other interface). No service is touched, rebound or
+# restarted. Every teardown removes the reach while the interface still exists: a nat rule naming a
+# deleted interface outlives it.
+#   egress_relay_reach_add <ns> <port> <dest ip:port>
+#   egress_relay_reach_del <ns>      every nat PREROUTING rule naming <ns>'s host interface, and
+#                                    route_localnet back to 0 while the interface exists
+egress_relay_reach_add() {
+  local ns=$1 port=$2 dest=$3 host_if host_ip
+  host_if=$(egress_ns_host_if "$ns"); host_ip=$(egress_ns_host_ip "$ns")
+  sysctl -q -w "net.ipv4.conf.${host_if}.route_localnet=1" || return 1
+  iptables -t nat -A PREROUTING -i "$host_if" -p tcp -d "$host_ip" --dport "$port" \
+    -j DNAT --to-destination "$dest" || { egress_relay_reach_del "$ns"; return 1; }
+}
+
+egress_relay_reach_del() {
+  local ns=$1 host_if rule spec removed=0
+  host_if=$(egress_ns_host_if "$ns")
+  # by the rule's own spec, one at a time, bounded (a rule that will not delete fails loud)
+  while rule=$(iptables -t nat -S PREROUTING 2>/dev/null | grep -m1 -F -- " -i $host_if "); [ -n "$rule" ]; do
+    read -r -a spec <<< "${rule#-A }"
+    iptables -t nat -D "${spec[@]}" || return 1
+    removed=$((removed + 1)); [ "$removed" -lt 16 ] || return 1
+  done
+  if [ -e "/proc/sys/net/ipv4/conf/$host_if" ]; then
+    sysctl -q -w "net.ipv4.conf.${host_if}.route_localnet=0" || return 1
+  fi
+}
+
 # --- destroy ---------------------------------------------------------------------------------
 # probe.sh:26-32 (the trap body), by name, never by pattern.
 # F7: kill every process in the namespace BEFORE deleting the veth and the netns.
 # F1: SIGTERM first, then SIGKILL survivors; fail loud if any remain.
 #
-# _egress_ns_teardown: the resource cleanup (processes, veth, netns, /etc/netns) without
-# touching the ownership claim. Used by create's destroy-first step so it doesn't wipe its
+# _egress_ns_teardown: the resource cleanup (relay reach, processes, veth, netns, /etc/netns)
+# without touching the ownership claim. Used by create's destroy-first step so it doesn't wipe its
 # own fresh claim.
 _egress_ns_teardown() {
-  local ns=$1 host_if pid
+  local ns=$1 host_if pid rc=0
   host_if=$(egress_ns_host_if "$ns")
+  # D-051: the relay reach goes first, explicitly, while its interface still exists.
+  egress_relay_reach_del "$ns" || { echo "egress: relay reach of $ns not removed" >&2; rc=1; }
   # SIGTERM every process still inside the namespace.
   for pid in $(ip netns pids "$ns" 2>/dev/null); do
     kill "$pid" 2>/dev/null
@@ -309,12 +390,12 @@ _egress_ns_teardown() {
   ip link del "$host_if" 2>/dev/null || true
   ip netns del "$ns" 2>/dev/null || true
   rm -rf "/etc/netns/$ns"
+  return $rc
 }
 
 egress_ns_destroy() {
   _egress_ns_teardown "$1"
   local rc=$?
-  rm -f "$(egress_ns_owner_file "$1")"
-  rm -rf "$EGRESS_OWNER_DIR/${1}.claim"
+  _egress_ns_release "$1"
   return $rc
 }

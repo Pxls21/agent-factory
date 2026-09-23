@@ -38,6 +38,14 @@ Order is part of the contract, and it runs in this order for a reason:
   7. UNIT SET: at least one run unit, and every unit in `--units` present. Units declared absent
      in `units.json` are NOT counted and can never pass — `NOT run: unit does not exist` is a
      recorded gap, not a green.
+  8. A LIVE CLAIM IS THE REAL UNIT (E3, CD1 A1 + A7), after the gate verdicts of step 1 and before
+     any canary: for every run unit whose runtime.json says venue `pc`, a pin override recorded
+     for it in units.json (the runner's stand-in input) is `units-manifest-invalid: <unit>
+     override present` — a stand-in run can never pass as the live leg — and
+     `<unit>/unit-identity.json` must exist and match the pinned identity in proofs/S0-01/pins.py
+     (exe realpath, entrypoint realpath and sha256) with no uid 0, else
+     `unit-identity-invalid: <unit> <detail>`. The record is unkeyed: it binds the unit that ran
+     to the pins, not against a forger with root on the PC.
 
 Deferral (exit 2), never a pass: the evidence root does not exist (the live units run on the
 PC), or a canary is recorded `status: not-run` — a discriminator that could not run is a DEFER
@@ -50,6 +58,7 @@ Exit 0 + PASS; 1 + reason; 2 + `deferred: ...`; 64 + usage error.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import stat
@@ -86,6 +95,45 @@ IPV4_PORT = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$"
 # The two places a curl diagnostic names the endpoint it failed on.
 CURL_CONNECT = re.compile(r"Failed to connect to (\S+) port (\d+)")
 CURL_RESOLVE = re.compile(r"Could not resolve host: (\S+?)\.?$")
+# A7: the record run_s0_05_units.sh writes for each live unit (its pid, what /proc says it runs,
+# and the Uid line's real/effective/saved/fs uids).
+IDENTITY_KEYS = ("unit", "pid", "exe_realpath", "entrypoint_realpath", "entrypoint_sha256", "uid", "argv")
+LIVE_VENUE = "pc"
+
+# The pinned unit identities come from proofs/S0-01/pins.py — the ONE source of every pinned value,
+# never a local copy — imported by path, as S0-03's checker imports S0-01's reader; pins.py is itself
+# a listed gate file (scripts/gate_files.txt). Loaded only when a live (pc-venue) bundle is graded.
+_PINS_FILE = Path(__file__).resolve().parents[1] / "S0-01" / "pins.py"
+_PINS_MODULE = "s0_01_pins_for_s0_05"
+
+
+def _load_pins():
+    cached = sys.modules.get(_PINS_MODULE)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(_PINS_MODULE, _PINS_FILE)
+    if spec is None or spec.loader is None:  # pragma: no cover - packaging accident only
+        raise Failure(f"unit-identity-invalid: cannot import the pins at {_PINS_FILE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_PINS_MODULE] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(_PINS_MODULE, None)
+        raise
+    return module
+
+
+def pinned_identity(unit):
+    """(exe realpath, entrypoint realpath, entrypoint sha256) of a live unit, or None. The Python
+    unit runs under its pinned interpreter with the agent script as argv[1]; buzz-acp IS its exe."""
+    pins = _load_pins()
+    return {
+        "hermes-acp": (pins.PINNED_AGENT_INTERPRETER_REALPATH, pins.PINNED_AGENT_REALPATH,
+                       pins.PINNED_AGENT_ENTRYPOINT_SHA256),
+        "buzz-acp": (pins.PINNED_BUZZ_ACP_EXE_REALPATH, pins.PINNED_BUZZ_ACP_EXE_REALPATH,
+                     pins.PINNED_BUZZ_ACP_SHA256),
+    }.get(unit)
 
 
 class Failure(Exception):
@@ -288,16 +336,61 @@ def check_runtime_and_rules(unit_dir, unit, gate):
     return f"gate-fired: {unit} OUTPUT policy DROP {before} -> {after} packets"
 
 
+def bundle_venue(unit_dir, unit):
+    """The venue a unit's bundle claims (runtime.json `venue`), or None when it is not an object —
+    PHASE 2 then refuses that runtime.json by name."""
+    runtime = _load_json(unit_dir / "runtime.json", f"{unit} runtime.json")
+    return runtime.get("venue") if isinstance(runtime, dict) else None
+
+
+def check_unit_identity(unit_dir, unit):
+    """A7: the live unit that ran is the pinned one, as a non-root user. Returns the line that
+    names what was graded; every refusal is `unit-identity-invalid: <unit> <detail>`."""
+    def refuse(detail):
+        raise Failure(f"unit-identity-invalid: {unit} {detail}")
+
+    path = unit_dir / "unit-identity.json"
+    if not path.exists():
+        refuse("unit-identity.json absent")
+    if not stat.S_ISREG(path.lstat().st_mode):
+        refuse("unit-identity.json is not a regular file")
+    try:
+        record = json.loads(path.read_text(), parse_constant=lambda constant: refuse(f"unit-identity.json contains {constant}"))
+    except Failure:
+        raise
+    except Exception:
+        refuse("unit-identity.json is not JSON")
+    if not isinstance(record, dict) or any(key not in record for key in IDENTITY_KEYS):
+        refuse(f"unit-identity.json lacks one of {', '.join(IDENTITY_KEYS)}")
+    pinned = pinned_identity(unit)
+    if pinned is None:
+        refuse("no pinned identity for this unit")
+    exe, entrypoint, sha256 = pinned
+    if record["exe_realpath"] != exe:
+        refuse(f"exe_realpath {record['exe_realpath']} is not the pin")
+    if record["entrypoint_realpath"] != entrypoint:
+        refuse(f"entrypoint_realpath {record['entrypoint_realpath']} is not the pin")
+    if record["entrypoint_sha256"] != sha256:
+        refuse(f"entrypoint_sha256 {record['entrypoint_sha256']} is not the pin")
+    uid = record["uid"]
+    if not isinstance(uid, list) or len(uid) != 4 or not all(_is_int(u) and u >= 0 for u in uid):
+        refuse(f"uid {uid!r} is not the four uids of the Uid line")
+    if 0 in uid:
+        refuse("uid 0")
+    return f"unit-identity: {unit} pid {record['pid']} runs {entrypoint} (sha256 {sha256[:12]}) as uid {uid[0]}"
+
+
 def read_units_manifest(root):
     """units.json declares the unit set, including units that DO NOT EXIST yet. A declared-absent
-    unit is never counted as passed — the gap is recorded, not greened."""
+    unit is never counted as passed — the gap is recorded, not greened. Also returns the units that
+    carry a recorded pin override (A1)."""
     path = root / "units.json"
     if not path.exists():
-        return {}, []
+        return {}, [], set()
     manifest = _load_json(path, "units.json")
     if not isinstance(manifest, dict) or not isinstance(manifest.get("units"), list):
         raise Failure("units-manifest-invalid: units.json must be {\"units\": [...]}")
-    declared, absent = {}, []
+    declared, absent, overridden = {}, [], set()
     for entry in manifest["units"]:
         if not isinstance(entry, dict) or "unit" not in entry or "status" not in entry:
             raise Failure("units-manifest-invalid: each entry needs unit and status")
@@ -306,15 +399,17 @@ def read_units_manifest(root):
         if entry["status"] == "not-run" and not entry.get("reason"):
             raise Failure(f"units-manifest-invalid: {entry['unit']} declared not-run without a reason")
         declared[entry["unit"]] = entry["status"]
+        if "override" in entry:
+            overridden.add(entry["unit"])
         if entry["status"] == "not-run":
             absent.append(f"NOT run: {entry['unit']} — {entry['reason']}")
-    return declared, absent
+    return declared, absent, overridden
 
 
 def check(root, required_units):
     if not root.is_dir():
         raise Deferred(f"deferred: evidence-root-absent: {root}")
-    declared, absent_lines = read_units_manifest(root)
+    declared, absent_lines, overridden = read_units_manifest(root)
     present = sorted(child.name for child in root.iterdir() if child.is_dir())
     for unit, status in sorted(declared.items()):
         if status == "not-run" and unit in present:
@@ -332,8 +427,18 @@ def check(root, required_units):
         if gates[unit]["gate"] != "enabled":
             raise Failure("egress-permitted: gate-disabled")
 
+    # PHASE 1b — a live (pc-venue) claim is the REAL unit: no recorded override (A1) and a
+    # unit-identity record that matches the pins (A7). Still before any canary is read.
+    identity_lines = []
+    for unit in units:
+        if bundle_venue(root / unit, unit) != LIVE_VENUE:
+            continue
+        if unit in overridden:
+            raise Failure(f"units-manifest-invalid: {unit} override present")
+        identity_lines.append(check_unit_identity(root / unit, unit))
+
     # PHASE 2 — the evidence itself.
-    lines, denied, positives = list(absent_lines), 0, 0
+    lines, denied, positives = list(absent_lines) + identity_lines, 0, 0
     for unit in units:
         records = read_records(root / unit, unit)
         positives += check_positive_control(records, unit)
