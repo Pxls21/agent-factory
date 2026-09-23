@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 16:2xZ — WHAT IS LIVE NOW (this block supersedes the 15:5xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC:** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201, PIN c6dcd61): two long-context local lanes, alive at the 16:13Z heartbeat.
+- **LIVE, sandbox:** S198A (task #198 increment A), VERIFY-J1-1-R2 (task #197) and T94 (tasks #200 + #167: a failed lane session never becomes a report; a relaunched lane never inherits a dead loop's FAILED).
+- **LANDED (GATED-PENDING-VERIFY):** B12 (375ea55): the bad-signature leg delivers ONE corrupted event; the bundle grades revoked's relay text (A1); AF-AP-156 fixed; AF-AP-160 registered (a leg exempted from one gate is exempted from all). Follow-ups: issue #52.
+- **READY TO DISPATCH:** J1-3 (task #120; brief 60dd650): the decide-harvest lane, sandbox, when a slot frees. Its measured premise: the expected yield is below KC-J7's 200 labels for every question type.
+- **NEXT:** push (CI #992 passed); ff-sync the PC clone; the S0-02 eight-leg recapture after the owner's revoked-leg removal, then the checker, the mint and the VERIFY-S0-02 brief (B10 + B11 + B12).
+
 **2026-09-23 15:5xZ — WHAT IS LIVE NOW (this block supersedes the 15:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC:** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201, PIN c6dcd61): two long-context local lanes, the KV ceiling.
 - **LIVE, sandbox:** S198A (task #198 increment A), VERIFY-J1-1-R2 (task #197) and B12 (task #196).
@@ -399,6 +406,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 16:2xZ — B12 landed (375ea55) with AF-AP-160; the J1-3 brief committed (60dd650); T94 dispatched in the sandbox; issue #52 filed.
 2026-09-23 15:5xZ — J1-0-R6 landed (96c2cff) and AF-AP-159 registered (c6dcd61); pushed 0dfd28e..c6dcd61; VERIFY-J1-0-R6 dispatched on the PC.
 
 2026-09-23 15:3xZ — B12 dispatched; VERIFY-J1-0-R5 ruled NOT-READY (J1-0-R6 under AMENDMENT 5, issue #50); VERIFY-T92 recovered from its lane directory and accepted (issue #51); AF-AP-67's sixth family (task #200).
