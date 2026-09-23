@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 19:1xZ — WHAT IS LIVE NOW (this block supersedes the 18:4xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (six lanes):** VERIFY-K1-h (task #194; poller re-attached 18:51Z, 622 messages, mutation battery done) and VERIFY-J1-0-R6 (task #201) on the local route; J1-3 (task #120), J1-1-R3 (task #202), VERIFY-T94 (tasks #200 + #167; since 18:54Z) and C2 (task #148, the lane done-gate; since 19:05Z) on the cloud routes. Monitor br5w1c570 (C2 joins at the next re-arm).
+- **LANDED (GATED-PENDING-VERIFY):** T94 (1a94bbb) with the coordinator's probe amendment; the amended probe returned RUNNING live on the PC (18:52Z). S0-02 B12 as before.
+- **NEXT:** harvest as lanes come home (VERIFY-T94 first to land; then VERIFY-K1-h opens task #150, now items a-l); forward `LANE_DONE_GATE` in the dispatcher after VERIFY-T94; task #183 as a lane after this wave; the S0-02 eight-leg recapture after the owner's revoked-leg removal.
+
 **2026-09-23 18:4xZ — WHAT IS LIVE NOW (this block supersedes the 17:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (four lanes):** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201) on the local route; J1-3 (task #120) and J1-1-R3 (task #202) on the cloud build route. Monitor bnas82gr7 over them.
 - **LANDED (GATED-PENDING-VERIFY):** T94 (tasks #200 + #167), with a coordinator amendment: the lane's poll probe had a doubled escape (the PC lookups ran in the sandbox; a syntax error on the PC) and an inverted FAILED predicate, hidden by a test double that never ran the probe. AF-AP-162 registered, AF-AP-89 recurrence, issue #54. S198A is VERIFIED (18:2xZ).
@@ -418,6 +423,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 19:1xZ — VERIFY-T94 and C2 dispatched (six PC lanes); VERIFY-K1-h re-attached; task #150 gains items k and l.
 2026-09-23 18:4xZ — T94 landed (GATED-PENDING-VERIFY) with a coordinator amendment to the poll probe (AF-AP-162; issue #54); VERIFY-T94 next.
 2026-09-23 18:2xZ — VERIFY-S198A home: MERGE-READY-WITH-FOLLOWUPS; S198A verified; F1/F2 filed on issue #53 (A10, A11).
 2026-09-23 17:2xZ — pushed feb26d7..750699a; VERIFY-S198A dispatched (six PC lanes); no AF-AP-157 leak in any committed transcript (task #204, issue #53).
