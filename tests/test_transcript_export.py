@@ -145,6 +145,46 @@ def test_key_block_after_a_credential_keyword_is_scrubbed_whole(tmp_path):
     assert "after the key" in blob, blob
 
 
+# O-3 (J1-1-R1's hand-back, task #187; AF-AP-149's third site): the rule wanted `:`/`=` straight
+# after the name, so a quoted key (JSON, quoted YAML) and a compound `*_key` / `*-key` name passed
+# it and the value reached disk. Every value here is fake.
+QUOTED_OR_COMPOUND = (
+    ('"api_key": "Fk1eJsonApiKey0001"', "Fk1eJsonApiKey0001"),
+    ('"password":"Fk1eJsonPasswd0002"', "Fk1eJsonPasswd0002"),
+    ("'token': 'Fk1eQuotedTok0003'", "Fk1eQuotedTok0003"),
+    ("SECRET_KEY: Fk1eSecretKey0004", "Fk1eSecretKey0004"),
+    ("AWS_SECRET_ACCESS_KEY=Fk1eAwsAccess0005", "Fk1eAwsAccess0005"),
+    ('DJANGO_SECRET_KEY = "Fk1eDjangoKey0006"', "Fk1eDjangoKey0006"),
+    ("private_key: Fk1ePrivateKey0007", "Fk1ePrivateKey0007"),
+    ("X-Secret-Key: Fk1eHeaderKey0008", "Fk1eHeaderKey0008"),
+)
+
+
+@pytest.mark.parametrize("line,value", QUOTED_OR_COMPOUND)
+def test_quoted_and_compound_key_names_are_scrubbed(tmp_path, line, value):
+    blob = _export_one(tmp_path, "config follows " + line + " end", 4000)
+    assert value not in blob, blob
+    assert "<redacted>" in blob and "config follows" in blob and " end" in blob, blob
+
+
+def test_prose_beside_a_key_name_survives(tmp_path):
+    # the name must be followed by its separator, and the value must reach 8 characters
+    text = "tokenizer: whitespace, keyboard_key_map: qwertyuiop, sort_key: name, \"api_key\": short"
+    blob = _export_one(tmp_path, text, 4000)
+    assert text in blob and "<redacted>" not in blob, blob
+
+
+def test_compound_key_rule_stays_linear_on_a_long_run(tmp_path):
+    # The compound-name class starts only where a name can start (after a non-alphanumeric). Without
+    # that anchor every position of a long base64 run re-scans the run: 40k characters took 17 s
+    # (measured 2026-09-23), against 0.005 s anchored.
+    import time
+    t0 = time.monotonic()
+    blob = _export_one(tmp_path, "blob " + "Ab1" * 14000 + " done", 60000)
+    assert time.monotonic() - t0 < 3, "the scrub is not linear on a long alphanumeric run"
+    assert "done" in blob
+
+
 def test_missing_transcript_exits_3(tmp_path):
     r = subprocess.run([sys.executable, str(TOOL), "--transcript", str(tmp_path / "nope.jsonl"), "--out", str(tmp_path / "o")],
                        capture_output=True, text=True, timeout=60)

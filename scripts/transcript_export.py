@@ -29,8 +29,9 @@ SECRET_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"
                 r"(?:-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----|\Z)", re.S),
      "<private-key-redacted>"),
-    # explicit credential assignments / headers (value part replaced)
-    (re.compile(r"((?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|api[_-]?key|token|secret|password|passwd|Authorization)\s*[:=]\s*[\"']?)([^\s\"'&,;]{8,})", re.I), r"\1<redacted>"),
+    # explicit credential assignments / headers (value part replaced); a quoted name and a compound *_key name count (#187)
+    (re.compile(r"((?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]key|api[_-]?key|token|secret|password|passwd|Authorization)[\"']?\s*[:=]\s*[\"']?)([^\s\"'&,;]{8,})", re.I), r"\1<redacted>"),
+    # (the compound class starts only after a non-alphanumeric: unanchored, a long run re-scans itself, quadratic)
     (re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]{8,}"), r"\1<redacted>"),
     # provider-shaped keys
     (re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b"), "sk-<redacted>"),
