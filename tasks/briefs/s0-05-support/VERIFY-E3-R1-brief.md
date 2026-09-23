@@ -3,7 +3,10 @@
 PIN: the post-push SHA of the local landing commit "E3-R1 landed (task #175; GATED-PENDING-VERIFY): …"; the dispatch prompt names
 it. Read it with `git log --format='%h %s' origin/claude/soundbox-kit-migration-iz1jwf -8` and match the subject.
 COMPONENT: `proofs/S0-05/tools/pc/run_s0_05_units.sh` (PC, the runner) and `tests/test_s0_05_egress.py` (T). The builder's report
-`tasks/briefs/s0-05-support/E3-R1-report.md` is an INPUT TO ATTACK, not a truth.
+`tasks/briefs/s0-05-support/E3-R1-report.md` is an INPUT TO ATTACK, not a truth. BATCHED (item 10): the coordinator's fix of the
+same class in the Qwen matrix runner, `harness-ports/bin/qwen-matrix.sh` (M) and `harness-ports/tests/test_qwen_matrix_sh.sh` (MT),
+landed as local 2fd0a7d ("qwen-matrix.sh: a second signal cannot abort the baseline restore (task #176, …)"); the dispatch prompt
+names its post-push SHA.
 LANE: verify-e3-r1 (sandbox, uid 0: the root-only tests need netns, veth and iptables; agent `adversarial-verifier` on the D-054 pin,
 in the SHARED tree, no worktree isolation). Honey `full`: line-bounded findings, evidence anchors, SOLID/UNSURE. Do NOT spawn
 subagents.
@@ -52,13 +55,23 @@ whether they match the brief's older words. KNOWN, filed as issue #39: F1, F4-F1
 9. MUTANTS (new; never the builder's M1-M10): in scratch copies under `/tmp/ve3r1/mut/` only. At least one per contract line, each on a
    line the builder's rows did not touch. Each compiles (`bash -n`, and the census heredoc compiles) and the suite collects
    (AF-AP-78); before you count a kill, run the killing test on the UNMUTATED copy and paste that it passes (AF-AP-138).
-10. GATES: T as root twice and as nobody once, each command with its output and the set id (`bash scripts/pc_suite.sh set-id --
+10. THE MATRIX RUNNER (task #176, the coordinator's own fix, never self-accepted). M's cleanup began with `trap - EXIT INT TERM`
+   (INT/TERM back to the DEFAULT action), so a second signal during cleanup killed bash before the restore and left the owner's
+   model-server unit in a matrix cell's configuration. The fix uses E3-R1's two ignores. MT's three new cases send a second TERM
+   0.3 s after the first signal (TERM, INT) or after the run's own failure, while cleanup reads a padded baseline env. Attack it
+   the same way as R1 (new shapes, never MT's three), through the REAL `harness-ports/bin/qwen-matrix.sh` with MT's fakes: a second
+   signal during the GPU sampler's kill and wait, during the restore install itself, during the post-restore sha check; a double
+   INT; SIGHUP. Is the 0.3 s delay against a padded env a sound discriminator, or can it pass for the wrong reason (say how you
+   would know)? Does the ignore make a hung restore install unstoppable, and what then? Run `harness-ports/tests/run-all.sh` once.
+   Report M's findings under their own heading; the gate recommendation covers PC/T and M/MT separately.
+11. GATES: T as root twice and as nobody once, each command with its output and the set id (`bash scripts/pc_suite.sh set-id --
    tests/test_s0_05_egress.py`); `bash -n` on PC; the final host census (no netns, no veth, the nat PREROUTING chain empty,
    `/etc/netns` empty, `/run/s0-05-egress` empty, `route_localnet` 0 everywhere) pasted at the end.
 
 ## Boundary
 
 CREATE `tasks/briefs/s0-05-support/VERIFY-E3-R1-report.md` (write it incrementally from the start); nothing else in the repository.
+M and MT are read and run only; every mutant of them lives under `/tmp/ve3r1/mut/` like the rest.
 Every mutant, shim and scratch tree lives under `/tmp/ve3r1/` and is removed at the end, and every namespace, veth, rule and
 `route_localnet` change you make is undone before you finish (paste the final census). The sandbox had about 1.4 GB free at
 authoring. pytest: `-p no:cacheprovider --basetemp=/tmp/ve3r1/bt<n>` (create the parent first), removed after each run. Other
@@ -74,7 +87,7 @@ CODE INTEL FIRST: `graft ask` before any grep for code questions (graft indexes 
 "unmapped — graft ask unavailable" and read by line range); the pack:
 `scripts/lane_context.sh -q 'how does the S0-05 runner stop, clean up and census S0-01' -s cleanup -s _s0_01_census -o /tmp/ve3r1/pack.md proofs/S0-05/tools/pc/run_s0_05_units.sh tests/test_s0_05_egress.py`.
 
-PREDICATE: a finding blocks only if it is contract-mapped (R1-R3, A2', or D2 as built), reproduced through the real runner, materially
+PREDICATE: a finding blocks only if it is contract-mapped (R1-R3, A2', or D2 as built; for M, the commit 2fd0a7d's stated claims), reproduced through the real runner, materially
 effective (host state left after a stop the contract covers, or a changed S0-01 tree that passes, or a stated claim false as stated),
 with a concrete discriminator, and in-boundary (PC, T). Everything else is a follow-up. Emit ONE GATE RECOMMENDATION:
 `MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`. The coordinator owns the final gate.
@@ -130,6 +143,22 @@ $ host census after the gate: ip netns list | wc -l; veth count; iptables -t nat
 /usr/bin/strace
 /usr/bin/gdb
 /dev/vda        252G   36G  1.4G  97% /
+```
+Item 10's component, measured at local 2fd0a7d:
+```
+2026-09-23T11:51:34Z
+$ blob[:12] lines (at 2fd0a7d)
+e42d72236c02   195 harness-ports/bin/qwen-matrix.sh
+75ca7c341681   263 harness-ports/tests/test_qwen_matrix_sh.sh
+$ grep -n "trap " harness-ports/bin/qwen-matrix.sh
+96:  trap '' INT TERM
+97:  trap - EXIT
+143:# EXIT trap before cleanup began (measured on the S0-05 runner, E3-R1 report section 2). Not covered:
+145:trap cleanup EXIT
+146:trap 'trap "" INT TERM; exit 130' INT
+147:trap 'trap "" INT TERM; exit 143' TERM
+$ bash harness-ports/tests/test_qwen_matrix_sh.sh | tail -1 (the coordinator, 11:4xZ; and inside run-all.sh: ALL SUITES PASSED)
+qwen-matrix-sh: 19 passed, 0 failed
 ```
 The sandbox has `strace` and `gdb` (last two paths above), which item 3 may use. Not measured at authoring, and so written as
 questions above: whether a double INT or SIGHUP leaves state, whether a hung child makes the run unstoppable without SIGKILL, and
