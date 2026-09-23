@@ -11,13 +11,15 @@ is re-verified against that tree by ``tests/test_s0_02_buzz_authz.py`` (env
 TWO upstream components decide S0-02's negative classes, and that split is
 the proof's central finding, not an implementation detail:
 
-  * ``buzz-acp`` (the component S0-02 names) decides REPLAY, SELF-AUTHORED and
-    NOT-ALLOWLISTED for an ordinary kind-9 channel event.  All three emit a
-    ``tracing::debug!`` line, so all are visible only at ``RUST_LOG=debug``.
+  * ``buzz-acp`` (the component S0-02 names) decides SELF-AUTHORED and
+    NOT-ALLOWLISTED for an ordinary kind-9 channel event.  Both emit a
+    ``tracing::debug!`` line, so both are visible only at ``RUST_LOG=debug``.
   * ``buzz-relay`` decides SIGNATURE, MEMBERSHIP and FRESHNESS at publish
     (ingest) time.  Those events never reach ``buzz-acp`` at all, so no
     buzz-acp log line can exist for them; the observable is the relay's
-    rejection text in the delivery receipt.
+    rejection text in the delivery receipt.  Since D-036 the relay also
+    decides REPLAY: its ``duplicate:`` receipt is the observable, and
+    buzz-acp's own drop line is optional defense-in-depth.
 
 ``buzz-acp`` at the pinned commit performs NO signature check and NO per-event
 freshness check on a channel event.  See DISCREPANCIES below.
@@ -122,25 +124,49 @@ ROWS = (
         ),
     },
     {
+        # D-036 (owner 2026-09-22): the live replay oracle is RELAY-level dedup.
+        # The buzz-acp drop line is kept as defense-in-depth, never the oracle.
         "fixture": "neg-replayed",
         "reason": "denied: event-replayed",
         "leg": "negative",
-        "decided_by": "buzz-acp",
-        "src": "crates/buzz-acp/src/relay.rs",
-        "line": 2387,
-        "src_pattern": 'debug!("dropping duplicate event for channel {channel_id}");',
-        "evidence": EV_BUZZACP_LOG,
-        "observable": "dropping duplicate event for channel",
+        "decided_by": "buzz-relay",
+        "src": "crates/buzz-relay/src/handlers/ingest.rs",
+        "line": 3196,
+        "src_pattern": 'message: "duplicate:".into(),',
+        "evidence": EV_DELIVERY,
+        "observable": "duplicate:",
         "buzz_acp_observable": "dropping duplicate event for channel",
-        "discrepancy": None,
-        "note": (
-            "The drop DECISION is silent at its own site: BgState::record_event "
-            "(relay.rs:1258) returns false at relay.rs:1262 with no log. The "
-            "CALL SITE logs: relay.rs:2344 branches on record_event and its "
-            "else arm at relay.rs:2387 emits the debug line. The brief's "
-            "hypothesis that the dedup is silent is therefore CORRECT at :1262 "
-            "and WRONG for the observable - an observable exists at :2387."
+        "discrepancy": (
+            "buzz-acp HAS its own dedup (BgState::record_event, relay.rs:1258, "
+            "returns false at relay.rs:1262; the call site relay.rs:2344 logs "
+            "the drop at relay.rs:2387), but it can only fire for an event the "
+            "RELAY forwarded. The relay refuses a stored event id first: a "
+            "kind-9 insert that finds the id already stored returns "
+            "{accepted: true, message: 'duplicate:'} at ingest.rs:3192, BEFORE "
+            "dispatch_persistent_event at ingest.rs:3258, and the bridge "
+            "answers it as a 200 (bridge.rs:963). So the deciding component "
+            "for this fixture is buzz-relay, and the buzz-acp line is the "
+            "defense-in-depth D-036 keeps: recorded when present, never "
+            "required, never a substitute for the receipt."
         ),
+        "note": (
+            "The observable is the receipt, BOUND to the second delivery: HTTP "
+            "200, accepted=true, the echoed event id equal to the first "
+            "delivery's id, and the message EXACTLY 'duplicate:'. Other kinds "
+            "get a suffixed text ('duplicate: reaction already exists' at "
+            "ingest.rs:3080, 'duplicate: channel already exists' at "
+            "ingest.rs:2883); a kind-9 event gets the bare prefix. Inside "
+            "buzz-acp the drop DECISION is silent at record_event "
+            "(relay.rs:1262); only its call site logs (relay.rs:2387)."
+        ),
+        "defense_in_depth": {
+            "decided_by": "buzz-acp",
+            "src": "crates/buzz-acp/src/relay.rs",
+            "line": 2387,
+            "src_pattern": 'debug!("dropping duplicate event for channel {channel_id}");',
+            "evidence": EV_BUZZACP_LOG,
+            "observable": "dropping duplicate event for channel",
+        },
     },
     {
         "fixture": "neg-stale",

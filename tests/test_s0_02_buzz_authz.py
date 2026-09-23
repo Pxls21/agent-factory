@@ -342,6 +342,40 @@ def test_oracle_secondary_silent_drop_row_is_pinned_too():
     assert row["src_pattern"] in line
 
 
+def test_oracle_replay_defense_in_depth_line_is_pinned_too():
+    """D-036 keeps buzz-acp's own drop line as the replay row's defense-in-depth
+    field, pinned to its upstream line the same way the rows are."""
+    src = _buzz_src()
+    row = oracle.row("neg-replayed")["defense_in_depth"]
+    line = (src / row["src"]).read_text().splitlines()[row["line"] - 1]
+    assert row["src_pattern"] in line, line
+    assert row["observable"] in row["src_pattern"]
+    assert (row["decided_by"], row["evidence"]) == ("buzz-acp", oracle.EV_BUZZACP_LOG)
+
+
+def test_replay_row_is_the_relay_duplicate_receipt():
+    """D-036 clause 2 at its source: the replay row names the relay, and the
+    pinned kind-9 duplicate branch returns exactly the receipt the row names
+    (ingest.rs:3192-3197); the bridge answers it as {event_id, accepted,
+    message} (bridge.rs:963-968), the body deliver_event._normalise reads."""
+    src = _buzz_src()
+    row = oracle.row("neg-replayed")
+    assert (row["decided_by"], row["evidence"], row["observable"]) == (
+        "buzz-relay", oracle.EV_DELIVERY, "duplicate:")
+    assert f'"{row["observable"]}"' in row["src_pattern"]
+    lines = (src / row["src"]).read_text().splitlines()
+    block = [ln.strip() for ln in lines[row["line"] - 5:row["line"] + 1]]
+    assert block == [
+        "if !was_inserted {", "return Ok(IngestResult {", "event_id: event_id_hex,",
+        "accepted: true,", 'message: "duplicate:".into(),', "});",
+    ], block
+    bridge = (src / "crates/buzz-relay/src/api/bridge.rs").read_text().splitlines()
+    assert [ln.strip() for ln in bridge[964:967]] == [
+        '"event_id": result.event_id,', '"accepted": result.accepted,',
+        '"message": result.message,',
+    ], bridge[962:968]
+
+
 def test_oracle_prose_file_line_references_exist():
     src = _buzz_src()
     fields = ("discrepancy", "note")
@@ -679,6 +713,19 @@ def test_debug_canary_line_exists_in_the_pinned_source():
     assert line.strip().startswith("debug!("), line
 
 
+def test_process_start_banner_is_buzz_acp_s_single_entry_point_line():
+    """D-036 clause 3 counts this banner in the replay leg's ONE log, so it must
+    be buzz-acp's once-per-process INFO line: the crate emits it at exactly one
+    site, lib.rs:2454, in its entry point."""
+    crate = _buzz_src() / "crates" / "buzz-acp" / "src"
+    hits = []
+    for path in sorted(crate.rglob("*.rs")):
+        for i, ln in enumerate(path.read_text().splitlines(), 1):
+            if checker.PROCESS_START_BANNER in ln:
+                hits.append((str(path.relative_to(crate)), i, ln.strip()))
+    assert hits == [("lib.rs", 2454, 'tracing::info!("buzz-acp starting: {}", config.summary());')], hits
+
+
 def test_every_negative_row_has_a_distinct_observable_key():
     keys = [oracle.observable_key(f) for f in oracle.DISTINCT_FIXTURES]
     assert len(set(keys)) == len(keys) == 6, keys
@@ -706,6 +753,8 @@ def test_pass_bundle_passes():
     line = _run_checker(PASS_BUNDLE)
     assert line == (
         "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
+        "replay refused by the relay's duplicate: receipt (buzz-acp drop line absent, "
+        "defense-in-depth only); "
         "+1 revocation leg (assertion 2); removal evidence: coordinator-supplied receipt "
         "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
     ), line
@@ -1086,6 +1135,231 @@ def test_replay_with_two_different_event_ids_fails(tmp_path):
         _run_checker(bundle)
     assert ("this is not a replay" in str(exc.value)
             or "delivered content does not match" in str(exc.value)), str(exc.value)
+
+
+# --- B9-R1: D-036 clauses 1-3 in the checker (VERIFY-B9 F-1, F-2, F-6, F-13) ---
+_ONE_PROCESS = "not ONE continuous buzz-acp process (D-036 clause 3)"
+
+
+def _replay(bundle: Path, sub: str) -> Path:
+    return _leg(bundle, "neg-replayed") / sub
+
+
+def _checker_text(bundle: Path) -> str:
+    with pytest.raises(checker.Failure) as exc:
+        _run_checker(bundle)
+    return str(exc.value)
+
+
+def _first_records() -> list[dict]:
+    """The committed first sub-leg: initialize, result, session/new, result,
+    session/prompt, session/update, result (seq 1..7)."""
+    return [json.loads(ln) for ln in
+            (_replay(PASS_BUNDLE, "first") / "timeline.jsonl").read_text().splitlines()]
+
+
+def _write_records(path: Path, records: list[dict]) -> None:
+    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
+
+
+def _drop_line(bundle: Path) -> str:
+    """buzz-acp's own dedup line (relay.rs:2387), the replay row's defense-in-depth."""
+    chan = json.loads((bundle / "identities.json").read_text())["channel"]
+    return f"2026-09-08T00:00:05.000000Z DEBUG buzz_acp::relay: dropping duplicate event for channel {chan}\n"
+
+
+def _append_to_both_logs(bundle: Path, line: str) -> None:
+    """ONE process leaves ONE masked log, copied into both sub-legs (R:305-306)."""
+    for sub in ("first", "second"):
+        log = _replay(bundle, sub) / "buzzacp.log"
+        log.write_text(log.read_text() + line)
+
+
+def test_replay_same_content_new_event_id_fails_on_the_id_check(tmp_path):
+    """D-036 clause 1 (VERIFY-B9 F-6, cm1): the same content under a NEW event id,
+    signed by the bundle's labelled pass owner key, passes every earlier check
+    and is refused by the id check itself — never earlier at the content check."""
+    bundle = _bundle(tmp_path)
+    first = json.loads((_replay(bundle, "first") / "delivered-event.json").read_text())
+    ev = nv.sign_event(builder._bundle_privkey("pass", "owner"), {
+        "created_at": first["created_at"] + 1, "kind": first["kind"],
+        "tags": first["tags"], "content": first["content"],
+    })
+    assert ev["id"] != first["id"] and ev["pubkey"] == first["pubkey"], "control: a new id, the same signer"
+    second = _replay(bundle, "second")
+    (second / "delivered-event.json").write_text(json.dumps(ev, indent=1, sort_keys=True) + "\n")
+    _rewrite(second / "delivery.json", lambda b: b.__setitem__("event_id", ev["id"]))
+    assert _checker_text(bundle) == (
+        f"neg-replayed: the two deliveries carry different event ids "
+        f"({first['id'][:12]} vs {ev['id'][:12]}) — this is not a replay"
+    )
+
+
+_RECEIPT_CASES = (
+    ("http_status", 400, "the relay answers a duplicate with HTTP 200, got http_status 400"),
+    ("http_status", True, "the relay answers a duplicate with HTTP 200, got http_status True"),
+    ("accepted", False, "the relay's duplicate receipt must carry accepted=true (a bool), got False"),
+    ("accepted", "true", "the relay's duplicate receipt must carry accepted=true (a bool), got 'true'"),
+    ("event_id_echoed", False,
+     "the relay's duplicate receipt must echo the event id (event_id_echoed=true), got False"),
+    ("message", "duplicate: already processed",
+     "the relay receipt message is 'duplicate: already processed', expected exactly 'duplicate:' "
+     "— the relay did not refuse the second delivery as a duplicate (a forwarded duplicate "
+     "fails even when buzz-acp dropped it)"),
+)
+
+
+@pytest.mark.parametrize("field,value,text", _RECEIPT_CASES,
+                         ids=[f"{c[0]}={c[1]!r}" for c in _RECEIPT_CASES])
+def test_replay_duplicate_receipt_fields_each_have_a_named_refusal(tmp_path, field, value, text):
+    """D-036 clause 2 (VERIFY-B9 F-1): the relay's duplicate receipt is bound to
+    the second delivery field by field. The committed receipt passes (control:
+    test_pass_bundle_passes); each single-field violation is its own refusal. A
+    'duplicate: …' text with a suffix is another kind's answer (ingest.rs:3080),
+    not the kind-9 duplicate (ingest.rs:3196)."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_replay(bundle, "second") / "delivery.json", lambda b: b.__setitem__(field, value))
+    assert _checker_text(bundle) == f"neg-replayed/second: {text}"
+
+
+def test_replay_duplicate_receipt_must_name_the_first_delivery(tmp_path):
+    bundle = _bundle(tmp_path)
+    first_id = json.loads((_replay(bundle, "first") / "delivered-event.json").read_text())["id"]
+    _rewrite(_replay(bundle, "second") / "delivery.json",
+             lambda b: b.__setitem__("event_id", "f" * 64))
+    assert _checker_text(bundle) == (
+        f"neg-replayed/second: the duplicate receipt names event ffffffffffff, not the first "
+        f"delivery's {first_id[:12]} — the receipt is not bound to this replay"
+    )
+
+
+def test_replay_forwarded_duplicate_fails_even_when_buzz_acp_dropped_it(tmp_path):
+    """The OLD synthetic shape (VERIFY-B9 F-1/F-7): buzz-acp's drop line is in the
+    log but the relay's receipt is a NEW acceptance (message ''). The drop line
+    never substitutes for the receipt."""
+    bundle = _bundle(tmp_path)
+    _append_to_both_logs(bundle, _drop_line(bundle))
+    _rewrite(_replay(bundle, "second") / "delivery.json", lambda b: b.__setitem__("message", ""))
+    assert _checker_text(bundle) == (
+        "neg-replayed/second: the relay receipt message is '', expected exactly 'duplicate:' "
+        "— the relay did not refuse the second delivery as a duplicate (a forwarded duplicate "
+        "fails even when buzz-acp dropped it)"
+    )
+
+
+def test_replay_drop_line_is_recorded_when_present_and_never_required(tmp_path):
+    """D-036 keeps buzz-acp's drop line as defense-in-depth: present, the PASS
+    line records it; absent (the committed bundle), the leg still passes."""
+    bundle = _bundle(tmp_path)
+    _append_to_both_logs(bundle, _drop_line(bundle))
+    line = _run_checker(bundle)
+    assert "(buzz-acp drop line present, defense-in-depth only)" in line, line
+    assert "(buzz-acp drop line absent, defense-in-depth only)" in _run_checker(PASS_BUNDLE)
+
+
+def test_replay_other_denial_observables_beside_the_receipt_fail(tmp_path):
+    bundle = _bundle(tmp_path)
+    _append_to_both_logs(bundle, "2026-09-08T00:00:06.000000Z DEBUG buzz_acp::relay: "
+                                 "inbound author gate — dropping event\n")
+    assert _checker_text(bundle) == (
+        "neg-replayed/second: evidence carries denial observables "
+        "['buzzacp_log::inbound author gate'] beside the relay's duplicate receipt"
+    )
+
+
+def _restart_cases():
+    r = _first_records()
+    return (
+        ("initialize-continuing-seq", [{**r[0], "seq": 8}],
+         f"neg-replayed/second: the delta holds an ACP initialize frame (seq 8) — the agent "
+         f"restarted: a second process, {_ONE_PROCESS}"),
+        ("b9-case-A-restart", r[0:2],
+         f"neg-replayed/second: the delta holds an ACP initialize frame (seq 1) — the agent "
+         f"restarted: a second process, {_ONE_PROCESS}"),
+        ("h1a-restart-with-session", r[0:4],
+         f"neg-replayed/second: the delta holds an ACP initialize frame (seq 1) — the agent "
+         f"restarted: a second process, {_ONE_PROCESS}"),
+        ("seq-restart-without-initialize", [{**r[2], "seq": 1}, {**r[3], "seq": 2}],
+         f"neg-replayed/second: delta record seq 1 does not continue the preceding seq 7 — the "
+         f"frame tee restarted: a second process, {_ONE_PROCESS}"),
+        ("seq-gap", [{**r[5], "seq": 9}],
+         f"neg-replayed/second: delta record seq 9 does not continue the preceding seq 7 — the "
+         f"frame tee restarted: a second process, {_ONE_PROCESS}"),
+        ("seq-not-an-int", [{**r[5], "seq": "8"}],
+         f"neg-replayed/second: delta record seq '8' does not continue the preceding seq 7 — the "
+         f"frame tee restarted: a second process, {_ONE_PROCESS}"),
+    )
+
+
+@pytest.mark.parametrize("name,records,text", _restart_cases(),
+                         ids=[c[0] for c in _restart_cases()])
+def test_replay_second_delta_from_a_restarted_process_fails(tmp_path, name, records, text):
+    """D-036 clause 3 (VERIFY-B9 F-2, H1): a delta that restarts the agent or the
+    frame tee is a second process. Prompt-free on purpose, so only clause 3 can
+    refuse it."""
+    bundle = _bundle(tmp_path)
+    _write_records(_replay(bundle, "second") / "timeline.jsonl", records)
+    assert _checker_text(bundle) == text
+
+
+def test_replay_continuing_delta_passes(tmp_path):
+    """The positive control for clause 3: the first turn's terminal frames land
+    in the delta (VERIFY-B9 h2a) with seq continuing 5 -> 6, 7 and no initialize."""
+    bundle = _bundle(tmp_path)
+    r = _first_records()
+    _write_records(_replay(bundle, "first") / "timeline.jsonl", r[:5])
+    _write_records(_replay(bundle, "second") / "timeline.jsonl", r[5:])
+    assert _run_checker(bundle).startswith("PASS: S0-02 buzz-authz")
+
+
+def test_replay_two_masked_logs_are_a_second_process(tmp_path):
+    bundle = _bundle(tmp_path)
+    log = _replay(bundle, "second") / "buzzacp.log"
+    log.write_text(log.read_text() + "2026-09-08T00:00:06.000000Z  INFO buzz_acp: a second log\n")
+    assert _checker_text(bundle) == (
+        "neg-replayed: the first and second sub-legs carry different buzzacp.log bytes — two "
+        f"masked logs: a second process, {_ONE_PROCESS}"
+    )
+
+
+@pytest.mark.parametrize("starts", [0, 2])
+def test_replay_log_must_show_exactly_one_buzz_acp_start(tmp_path, starts):
+    bundle = _bundle(tmp_path)
+    for sub in ("first", "second"):
+        log = _replay(bundle, sub) / "buzzacp.log"
+        text = log.read_text()
+        banner = next(ln for ln in text.splitlines(keepends=True) if checker.PROCESS_START_BANNER in ln)
+        log.write_text(text.replace(banner, "") if starts == 0 else text + banner)
+    assert _checker_text(bundle) == (
+        f"neg-replayed: buzzacp.log shows {starts} buzz-acp start line(s) ('buzz-acp starting:'), "
+        f"expected exactly 1 — {_ONE_PROCESS}"
+    )
+
+
+_TORN_JSON = b'{"dir":"a2c","frame":{"jsonrpc":"2.0","method":"session/update","params":{"text":"po'
+_TORN_UTF8 = b'{"dir":"a2c","frame":{"text":"' + "—".encode()[:1]
+
+
+@pytest.mark.parametrize("where,label,torn", [
+    (("neg-replayed", "second"), "neg-replayed/second", _TORN_JSON),
+    (("neg-replayed", "second"), "neg-replayed/second", _TORN_UTF8),
+    (("pos-allowed",), "pos-allowed", _TORN_JSON),
+], ids=["replay-second-json", "replay-second-utf8", "pos-allowed-json"])
+def test_a_torn_timeline_record_is_a_named_cli_failure(tmp_path, where, label, torn):
+    """F-13: a torn record (the live writer mid-line at the final read) must be
+    the CLI's failure_reason line (exit contract), never a traceback."""
+    bundle = _bundle(tmp_path)
+    tl = bundle.joinpath("legs", *where, "timeline.jsonl")
+    tl.write_bytes(tl.read_bytes() + torn)
+    proc = subprocess.run(
+        [sys.executable, str(CHECKER), "--synthetic-root", str(bundle), str(bundle / "legs")],
+        capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "Traceback" not in proc.stderr, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert len(lines) == 1 and lines[0].startswith(
+        f"failure_reason: {label}: a timeline record is not valid JSON or UTF-8 — a torn or "
+        f"partial line ("), proc.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -2502,18 +2776,37 @@ def test_real_runner_passes_exact_pins_then_stops_at_labelled_deliver(tmp_path):
 # B9 (issue #17 / D-036) -- the per-delivery DELTA model in the runner, the
 # masked log into BOTH sub-legs, and the producer->consumer integration.
 # The sourced replay portion runs with a FAKE process (launcher/post) and a
-# FAKE deliver (the relay's wire append only); the REAL stop_leg,
-# wait_turn_window, snapshot_timeline, delta_timeline, collect_masked and main
-# are unchanged. The no-space timeline is the real producer's wire format
-# (what buzz-acp writes); the committed fixture/delivered-event/delivery/t0
-# sub-leg files stay byte-for-byte the same.
+# FAKE deliver (the deliver CLI's leg files + what the live process appends);
+# the REAL stop_leg, wait_turn_window, snapshot_timeline, delta_timeline,
+# collect_masked and main are unchanged. The no-space timeline is the real
+# producer's wire format (frame_tee.py:369). B9-R1 (VERIFY-B9 F-7): each
+# delivery's receipt is deliver_event's REAL _normalise over the pinned relay's
+# 200 body for it, and the masked log is ONE process's, built here -- neither is
+# copied from the synthetic fixture's second sub-leg.
 # ---------------------------------------------------------------------------
 B9_SUB_FIRST = PASS_BUNDLE / "legs" / "neg-replayed" / "first"
-B9_SUB_SECOND = PASS_BUNDLE / "legs" / "neg-replayed" / "second"
 B9_PASS_LINE = (
     "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
+    "replay refused by the relay's duplicate: receipt (buzz-acp drop line absent, "
+    "defense-in-depth only); "
     "+1 revocation leg (assertion 2); removal evidence: coordinator-supplied receipt "
     "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
+)
+# A labelled double of ONE buzz-acp process's masked log (pc_post.sh:107): one
+# start banner (lib.rs:2454), the DEBUG canary (relay.rs:1716), the pool line.
+B9_ONE_PROCESS_LOG = (
+    "2026-09-23T00:00:00.100000Z  INFO buzz_acp: buzz-acp starting: relay=ws://127.0.0.1:1 "
+    "pubkey=<HEX> agents=1 ignore_self=true respond_to=owner-only (B9-R1 test double)\n"
+    "2026-09-23T00:00:00.200000Z DEBUG buzz_acp::relay: startup watermark set to 1788800000\n"
+    "2026-09-23T00:00:00.300000Z  INFO buzz_acp: agent_pool_ready agents=1\n"
+)
+# Two prompt-free records that continue the committed first timeline (seq 8, 9)
+# on the builder's own clock.
+B9_DELTA = "".join(
+    json.dumps({"dir": "a2c", "frame": {"jsonrpc": "2.0", "method": "session/update", "params": {}},
+                "seq": s, "t_mono_ns": 4689461162919584 + s * 100_000_000,
+                "t_utc": builder._iso(s * 100)}, separators=(",", ":")) + "\n"
+    for s in (8, 9)
 )
 
 
@@ -2548,7 +2841,11 @@ def _b9_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
     return repo, pinned, frame
 
 
-def _b9_env(tmp_path: Path, runner: Path) -> dict[str, str]:
+def _b9_env(tmp_path: Path, runner: Path, turn_wait: str = "0") -> dict[str, str]:
+    """The sourced runner's environment. TURN_WAIT_S is read when R is sourced
+    (R:34); POLL_S and FD are NOT (R:35 and R:33 overwrite them, VERIFY-B9 I-4):
+    FD here only names the frame dir R computes, and the driver sets POLL_S from
+    B9_POLL_S after the source."""
     repo, pinned, frame = _b9_tree(tmp_path)
     return {
         **os.environ,
@@ -2556,40 +2853,78 @@ def _b9_env(tmp_path: Path, runner: Path) -> dict[str, str]:
         "S0_02_REPO": str(repo),
         "S0_02_PINNED": str(pinned),
         "S0_02_RELAY_HTTP": "http://127.0.0.1:1",
-        "S0_02_TURN_WAIT_S": "0",
-        "POLL_S": "0.05",
+        "S0_02_TURN_WAIT_S": turn_wait,
         "FD": str(frame),
         "MARKERS": str(pinned / ".markers"),
         "B9_R": str(runner),
         "B9_DEST": str(tmp_path / "dest"),
-        "B9_FIRST_NS": str(tmp_path / "first_ns.jsonl"),
-        "B9_SECOND_NS": str(tmp_path / "second_ns.jsonl"),
-        "B9_SUB_FIRST": str(B9_SUB_FIRST),
-        "B9_SUB_SECOND": str(B9_SUB_SECOND),
-        "B9_SECOND_LOG": str(B9_SUB_SECOND / "buzzacp.log"),
+        "B9_POLL_S": "0.01",
     }
 
 
-def _b9_run(tmp_path: Path, runner: Path, case: str, append: str,
-            extra: str = "") -> tuple[subprocess.CompletedProcess, Path]:
+def _b9_records() -> list[str]:
+    """The committed first sub-leg's seven records in the producer's no-space
+    wire format: initialize, result, session/new, result, session/prompt,
+    session/update, result (seq 1..7)."""
+    return _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text()).splitlines(keepends=True)
+
+
+def _b9_record(line: str, **changes) -> str:
+    rec = json.loads(line)
+    rec.update(changes)
+    return json.dumps(rec, separators=(",", ":")) + "\n"
+
+
+def _b9_receipt(event_id: str, message: str) -> str:
+    """deliver_event's REAL _normalise (the producer module, loaded by path)
+    over the pinned relay's 200 body {event_id, accepted, message}
+    (bridge.rs:963-968), serialised as deliver_event.main writes delivery.json.
+    message '' = a NEW kind-9 event (ingest.rs:3270-3274); 'duplicate:' = an
+    id the relay already stored (ingest.rs:3192-3197)."""
+    raw = json.dumps({"event_id": event_id, "accepted": True, "message": message})
+    receipt = builder.deliver_event._normalise(200, raw, event_id)
+    return json.dumps(receipt, indent=1, sort_keys=True) + "\n"
+
+
+def _b9_run(tmp_path: Path, runner: Path, *, first: str, second: str = "",
+            first_late: str = "", second_late: str = "",
+            second_message: str = "duplicate:", log: str = B9_ONE_PROCESS_LOG,
+            turn_wait: str = "0", extra: str = "",
+            ) -> tuple[subprocess.CompletedProcess, Path, list[str]]:
     """Drive the runner's real main for neg-replayed. launch_leg/deliver/post
-    are labelled fakes; the real stop_leg sees no fake pidfile, takes R:63, and
-    returns 0. The sourced R defines every other function; `extra` (if any) is
-    inserted after the source and before main so it overrides the production
-    definition (mutants)."""
-    env = _b9_env(tmp_path, runner)
-    env.update({"B9_CASE": case, "B9_APPEND": append})
-    (tmp_path / "first_ns.jsonl").write_text(
-        _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text()))
-    (tmp_path / "second_ns.jsonl").write_text(
-        _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text()))
+    are labelled fakes; the real stop_leg sees no fake pidfile, takes its
+    no-pidfile path, and returns 0. Each delivery appends `first`/`second` to the
+    live timeline at once and ARMS `*_late`, which the next sleep appends (the
+    live window's latency, deterministic). The first receipt is the relay's
+    new-event answer, the second's message is `second_message`; the post step
+    leaves `log` as the ONE masked log. `extra` (if any) is inserted after the
+    source and before main so it overrides a production definition. Returns
+    (proc, the leg, the trace of delivers and late appends)."""
+    env = _b9_env(tmp_path, runner, turn_wait)
+    work = tmp_path / "b9"
+    work.mkdir(parents=True, exist_ok=True)
+    event = B9_SUB_FIRST / "delivered-event.json"
+    event_id = json.loads(event.read_text())["id"]
+    for name, text in (("append-first", first), ("late-first", first_late),
+                       ("append-second", second), ("late-second", second_late),
+                       ("buzzacp.log", log), ("armed", ""), ("trace", ""),
+                       ("receipt-first.json", _b9_receipt(event_id, "")),
+                       ("receipt-second.json", _b9_receipt(event_id, second_message))):
+        (work / name).write_text(text)
+    env.update({
+        "B9_DIR": str(work),
+        "B9_FIXTURES": str(PASS_BUNDLE / "fixtures"),
+        "B9_EVENT": str(event),
+        "B9_T0": str(json.loads((B9_SUB_FIRST / "t0.json").read_text())["t0_epoch_s"]),
+    })
     script = _B9_DRIVER.replace(
         'main "$B9_DEST" neg-replayed',
         (extra + "\n" if extra else "") + 'main "$B9_DEST" neg-replayed',
     )
     proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=60)
-    return proc, Path(env["B9_DEST"]) / "neg-replayed"
+    trace = (work / "trace").read_text().splitlines()
+    return proc, Path(env["B9_DEST"]) / "neg-replayed", trace
 
 
 def _b9_check(bundle_root: Path, leg: Path) -> str:
@@ -2614,38 +2949,46 @@ def _b9_pin_runner(tmp_path: Path) -> Path:
 
 _B9_DRIVER = r'''
 # B9 driver: source the ENTIRE runner (real main, wait_turn_window,
-# snapshot_timeline, delta_timeline, collect_masked) and override ONLY the
-# process side (launch/stop/post) and the delivery side (deliver). This is the
+# snapshot_timeline, delta_timeline, collect_masked, stop_leg) and override ONLY
+# the process side (launch/post) and the delivery side (deliver). This is the
 # exact replay portion of the runner, per issue #17's required test.
 source "$B9_R"
+# Sourcing set POLL_S=5 (R:35) and FD (R:33) over the caller's env (VERIFY-B9
+# I-4), so the test's poll interval is applied here, AFTER the source.
+POLL_S=$B9_POLL_S
+# Latency without a race: a delivery ARMS bytes; the first sleep after that (a
+# poll inside a live window, or R's NIP-98 spacing sleep) appends them.
+sleep() {
+  if [ -s "$B9_DIR/armed" ]; then
+    cat "$B9_DIR/armed" >> "$FD/timeline.jsonl"; : > "$B9_DIR/armed"; echo late >> "$B9_DIR/trace"
+  fi
+  command sleep "$@"
+}
 launch_leg() { touch "$FD/launch.ready"; }
 # stop_leg stays the production function. The fake process writes no pidfile, so
-# the real R:63 path prints "no pidfile — nothing of ours to stop" and returns 0.
-# The fake's post step writes the process's exit marker + the masked log
-# (pc_post.sh's role, never the real PP). The committed second/buzzacp.log
-# carries the DEBUG canary + the duplicate-drop observable.
-post_leg() { touch "$FD/buzz-acp.exit"; cp "$B9_SECOND_LOG" "$FD/buzzacp.log"; }
+# the real stop_leg prints "no pidfile — nothing of ours to stop" and returns 0.
+# The fake post step writes the exit marker and the ONE masked log of the one
+# process (pc_post.sh's role; the real pc_post.sh never runs).
+post_leg() { touch "$FD/buzz-acp.exit"; cp "$B9_DIR/buzzacp.log" "$FD/buzzacp.log"; }
+# deliver <fixture> <leg-dir> <role> [--reuse <event.json>] [--t0 <epoch>]: the
+# deliver CLI's leg files (fixture, the posted event -- the --reuse file verbatim
+# for the second delivery --, t0, and the receipt the test built with the REAL
+# _normalise), then what the live process appends to the timeline.
 deliver() {
-  local fixture=$1 legdir=$2; shift 2
+  local fixture=$1 legdir=$2 role=$3 which reuse="" t0=$B9_T0; shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in --reuse) reuse=$2; shift 2 ;; --t0) t0=$2; shift 2 ;; *) shift ;; esac
+  done
+  if [ "$fixture" = "pos-allowed" ]; then which=first; else which=second; fi
+  echo "deliver $which" >> "$B9_DIR/trace"
   mkdir -p "$legdir"
-  local SRC
-  if [ "$fixture" = "pos-allowed" ]; then SRC="$B9_SUB_FIRST"; else SRC="$B9_SUB_SECOND"; fi
-  cp "$SRC/fixture.json" "$legdir/fixture.json"
-  cp "$SRC/delivered-event.json" "$legdir/delivered-event.json"
-  cp "$SRC/delivery.json" "$legdir/delivery.json"
-  cp "$SRC/t0.json" "$legdir/t0.json"
-  if [ "$B9_APPEND" = "cumulative" ]; then
-    # M-A / case C: each delivery appends its own committed shape to the same
-    # live file, so the second snapshot carries the cumulative 9-line timeline.
-    if [ "$fixture" = "pos-allowed" ]; then cat "$B9_FIRST_NS" >> "$FD/timeline.jsonl"
-    else cat "$B9_SECOND_NS" >> "$FD/timeline.jsonl"; fi
-  else
-    # the DELTA model (cases A/B): the first delivery appends the 7-line first
-    # snapshot; the second delivery appends only the 2-line second delta (A) or
-    # nothing (B, the empty delta).
-    if [ "$fixture" = "pos-allowed" ]; then cat "$B9_FIRST_NS" >> "$FD/timeline.jsonl"
-    elif [ "$B9_CASE" = "A" ]; then cat "$B9_SECOND_NS" >> "$FD/timeline.jsonl"; fi
-  fi
+  cp "$B9_FIXTURES/$fixture.json" "$legdir/fixture.json"
+  cp "${reuse:-$B9_EVENT}" "$legdir/delivered-event.json"
+  printf '{\n "leg": "%s",\n "signed_by_secret_file": "%s.env",\n "t0_epoch_s": %s\n}\n' \
+    "$fixture" "$role" "$t0" > "$legdir/t0.json"
+  cp "$B9_DIR/receipt-$which.json" "$legdir/delivery.json"
+  cat "$B9_DIR/append-$which" >> "$FD/timeline.jsonl"
+  cp "$B9_DIR/late-$which" "$B9_DIR/armed"
   return 0
 }
 main "$B9_DEST" neg-replayed
@@ -2658,12 +3001,19 @@ def test_replay_integration_runner_producer_into_real_checker(tmp_path):
     """ITEM 5 case A -- the issue #17 producer->consumer integration. The
     sourced replay portion (real main + real wait_turn_window +
     snapshot_timeline + delta_timeline + collect_masked, a fake process and a
-    fake deliver) runs end-to-end for neg-replayed; its leg (no-space producer
-    timelines, committed sub-leg files copied exactly, buzzacp.log in BOTH
-    sub-legs, nothing at the leg root) is swapped into a full copy of the
-    evidence-pass bundle and the REAL checker must pass."""
-    proc, leg = _b9_run(tmp_path, RUNNER, "A", "delta")
+    fake deliver) runs end-to-end for neg-replayed; its leg is swapped into a
+    full copy of the evidence-pass bundle and the REAL checker must pass.
+    B9-R1 (F-7): D-036's shape end to end -- the second receipt is the REAL
+    _normalise over the relay's duplicate answer, ONE process, ONE log, and a
+    NON-empty delta: the first turn's terminal frames (seq 6, 7) land after the
+    boundary, at R's NIP-98 spacing sleep, continuing the snapshot's seq 5."""
+    recs = _b9_records()
+    # A live window (2 s): wait_turn_window 1 returns on the prompt count at
+    # once (R:86), before any sleep, so the late frames arrive at R:236's sleep.
+    proc, leg, trace = _b9_run(tmp_path, RUNNER, first="".join(recs[:5]),
+                               first_late="".join(recs[5:]), turn_wait="2")
     assert proc.returncode == 0, proc.stderr
+    assert trace == ["deliver first", "late", "deliver second"], trace
     assert "no pidfile" in proc.stdout, "the real stop_leg no-pidfile path must run"
     # the leg shape the checker requires (C:569-574, C:143-149):
     assert sorted(p.name for p in leg.iterdir()) == ["first", "second"]
@@ -2676,29 +3026,34 @@ def test_replay_integration_runner_producer_into_real_checker(tmp_path):
     # the DELTA model: first = 1-prompt snapshot, second = the post-boundary
     # delta (0 prompts); one continuous process -> one masked log, byte-
     # identical in both sub-legs (masking runs only after exit, pc_post.sh:107).
-    first = (leg / "first" / "timeline.jsonl").read_bytes()
-    second = (leg / "second" / "timeline.jsonl").read_bytes()
-    assert first.count(b'"method":"session/prompt"') == 1, "first must carry 1 prompt"
-    assert second.count(b'"method":"session/prompt"') == 0, "second delta must carry 0 prompts"
-    assert (leg / "first" / "buzzacp.log").read_bytes() == (
-        leg / "second" / "buzzacp.log").read_bytes(), "one masked log in both sub-legs"
-    assert (leg / "second" / "buzzacp.log").read_bytes() == (
-        B9_SUB_SECOND / "buzzacp.log").read_bytes(), "the committed canary/drop log must be copied"
+    first = (leg / "first" / "timeline.jsonl").read_text()
+    second = (leg / "second" / "timeline.jsonl").read_text()
+    assert first == "".join(recs[:5]) and second == "".join(recs[5:]), "first + delta split at seq 5"
+    assert first.count('"method":"session/prompt"') == 1, "first must carry 1 prompt"
+    assert second.count('"method":"session/prompt"') == 0, "second delta must carry 0 prompts"
+    assert (leg / "first" / "buzzacp.log").read_text() == (
+        leg / "second" / "buzzacp.log").read_text() == B9_ONE_PROCESS_LOG, "one masked log in both sub-legs"
+    event_id = json.loads((leg / "second" / "delivered-event.json").read_text())["id"]
+    assert json.loads((leg / "second" / "delivery.json").read_text()) == {
+        "http_status": 200, "event_id": event_id, "accepted": True,
+        "message": "duplicate:", "event_id_echoed": True}, "the relay's duplicate receipt"
     bundle = _bundle(tmp_path)
     line = _b9_check(bundle, leg)
     assert line == B9_PASS_LINE, line
 
 
 def test_replay_integration_empty_delta_second_timeline_passes(tmp_path):
-    """ITEM 5 case B -- the relay dropped the duplicate, so the final timeline
-    is the first snapshot: the post-boundary delta is EMPTY. The runner writes a
-    zero-byte second timeline (it never fabricates lines, item 2); the real
-    checker must accept it (0 prompts, no observable required for an empty
-    second sub-leg)."""
-    proc, leg = _b9_run(tmp_path, RUNNER, "B", "delta")
+    """ITEM 5 case B -- D-036's core live shape: the relay refused the duplicate
+    before dispatch, so the final timeline is the first snapshot and the
+    post-boundary delta is EMPTY. The runner writes a zero-byte second timeline
+    (it never fabricates lines); the real checker accepts it on the relay's
+    duplicate receipt alone, with no buzz-acp drop line in the ONE log."""
+    proc, leg, trace = _b9_run(tmp_path, RUNNER, first="".join(_b9_records()))
     assert proc.returncode == 0, proc.stderr
+    assert trace == ["deliver first", "deliver second"], trace
     second = leg / "second" / "timeline.jsonl"
     assert second.exists() and second.stat().st_size == 0, "empty delta is a valid runner output"
+    assert (leg / "second" / "buzzacp.log").read_text() == B9_ONE_PROCESS_LOG, "no drop line"
     bundle = _bundle(tmp_path)
     line = _b9_check(bundle, leg)
     assert line == B9_PASS_LINE, line
@@ -2709,9 +3064,11 @@ def test_replay_integration_pin_runner_reproduces_the_failure(tmp_path):
     PIN's runner bytes (git show 71463f3:...) must be REFUSED by the real
     checker: the PIN's root-level masked log trips the replay closure first
     (M-B, C:569-574); with M-B alone repaired the cumulative second timeline
-    trips the turn count (M-A, C:621-624). Both exact texts are asserted."""
+    trips the turn count (M-A, C:621-624). Both exact texts are asserted. The
+    live timeline is the one-process D-036 shape (the whole first turn, nothing
+    for the duplicate), so the PIN's cumulative second copy IS the first turn."""
     pin = _b9_pin_runner(tmp_path)
-    proc, leg = _b9_run(tmp_path, pin, "C", "cumulative")
+    proc, leg, _trace = _b9_run(tmp_path, pin, first="".join(_b9_records()))
     assert proc.returncode == 0, proc.stderr
     # M-B: the PIN wrote the masked log at the leg root (nothing in the sub-legs)
     assert (leg / "buzzacp.log").exists(), "PIN M-B: root-level masked log"
@@ -2735,7 +3092,7 @@ def test_replay_integration_pin_runner_reproduces_the_failure(tmp_path):
     assert mbsrc != pin.read_text(), "the M-B fix did not apply to the PIN bytes"
     mb = tmp_path / "pin_mb_runner.sh"
     mb.write_text(mbsrc)
-    proc2, leg2 = _b9_run(tmp_path / "mb", mb, "C", "cumulative")
+    proc2, leg2, _trace2 = _b9_run(tmp_path / "mb", mb, first="".join(_b9_records()))
     assert proc2.returncode == 0, proc2.stderr
     assert not (leg2 / "buzzacp.log").exists(), "M-B fixed: no root log"
     assert (leg2 / "second" / "buzzacp.log").exists(), "M-B fixed: sub-leg log"
@@ -2776,6 +3133,8 @@ def _b9_boundary(tmp_path: Path, case: str, live: str) -> str:
         '    ;;\n'
         '  b)\n'
         '    first_bytes=$(snapshot_timeline "$B9_OUT")\n'
+        '    last=$(tail -c 1 "$B9_OUT/first/timeline.jsonl" | od -An -tu1 | tr -d " \\n")\n'
+        '    echo "first_last_byte=$last first_size=$(wc -c < "$B9_OUT/first/timeline.jsonl")"\n'
         '    printf %s "-DONE" >> "$FD/timeline.jsonl"\n'
         '    set +e; delta_timeline "$B9_OUT" "$first_bytes"; rc=$?; set -e\n'
         '    echo "rc=$rc first=$first_bytes"\n'
@@ -2811,11 +3170,16 @@ def test_replay_prefix_proof_refuses_a_non_extension(tmp_path):
 def test_replay_mid_line_snapshot_first_plus_delta_equals_final(tmp_path):
     """ITEM 6b -- the live file ends MID-LINE at snapshot time: the first
     snapshot ends at the last newline (the partial line never enters it), and
-    first + delta == the final live timeline byte-for-byte."""
+    first + delta == the final live timeline byte-for-byte. B9-R1 (VERIFY-B9
+    B-2): the concatenation holds for ANY cut, so the cut itself is asserted --
+    the snapshot ends with a newline and is exactly the complete lines' bytes."""
     f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
     live = f + "PARTIAL-WRITER-BYTES"
     out = _b9_boundary(tmp_path, "b", live)
     assert "rc=0" in out, out
+    complete = len(f.encode())
+    assert f"first_last_byte=10 first_size={complete}\n" in out, out
+    assert f"rc=0 first={complete}\n" in out, out
     assert "concat_ok=yes" in out, "first (cut at last nl) + delta must equal the final timeline byte-for-byte"
 
 
@@ -2838,7 +3202,7 @@ def test_replay_mutant_cumulative_second_is_rejected(tmp_path):
     snapshot_timeline stay production bytes."""
     override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
                 'cp "$FD/timeline.jsonl" "$out/second/timeline.jsonl"; }\n')
-    _, leg = _b9_run(tmp_path, RUNNER, "A", "cumulative", extra=override)
+    _, leg, _trace = _b9_run(tmp_path, RUNNER, first="".join(_b9_records()), extra=override)
     bundle = _bundle(tmp_path)
     err = None
     try:
@@ -2858,7 +3222,7 @@ def test_replay_mutant_no_prefix_proof_still_writes_second(tmp_path):
     second exists), while the REAL delta (the 6a boundary, proof ON) refuses the
     same input. The kill is 6a; this proves the proof is what refuses."""
     f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
-    s = _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text())
+    s = B9_DELTA
     live = f + s
     override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
                 'tail -c +$((first_bytes + 1)) "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"; }\n')
@@ -2885,7 +3249,7 @@ def test_replay_mutant_off_by_one_delta_breaks_concatenation(tmp_path):
     byte too early, so first + delta has a duplicated boundary byte and is not
     byte-for-byte the same as final. The real (correct) delta makes them equal."""
     f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
-    s = _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text())
+    s = B9_DELTA
     live = f + s
     override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
                 'tail -c +$first_bytes "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"; }\n')
@@ -2909,7 +3273,7 @@ def test_replay_mutant_root_only_masked_log_is_rejected(tmp_path):
     PIN runner's unchanged main tail (`collect_masked "$out"`), exercised by the
     same process/delivery doubles as case C."""
     pin = _b9_pin_runner(tmp_path)
-    _, leg = _b9_run(tmp_path, pin, "C", "cumulative")
+    _, leg, _trace = _b9_run(tmp_path, pin, first="".join(_b9_records()))
     assert (leg / "buzzacp.log").exists(), "m4: the log is at the leg root"
     bundle = _bundle(tmp_path)
     err = None
@@ -2928,7 +3292,7 @@ def test_replay_mutant_masked_log_first_only_fails_second_closure(tmp_path):
     sub-leg's closure is missing buzzacp.log."""
     override = ('collect_masked() { if [ "$1" = "$B9_DEST/neg-replayed/first" ]; then '
                 'cp "$FD/buzzacp.log" "$1/buzzacp.log"; fi; }\n')
-    _, leg = _b9_run(tmp_path, RUNNER, "A", "delta", extra=override)
+    _, leg, _trace = _b9_run(tmp_path, RUNNER, first="".join(_b9_records()), extra=override)
     assert not (leg / "second" / "buzzacp.log").exists(), "m5: no log in the second sub-leg"
     bundle = _bundle(tmp_path)
     err = None
@@ -2963,17 +3327,90 @@ def test_replay_mutant_snapshot_not_cut_at_newline(tmp_path):
     assert "first_ends_nl=NO" in proc.stdout, "m6: the snapshot is not cut at a newline"
 
 
-def test_replay_mutant_wait_removed_case_a_still_passes(tmp_path):
-    """ITEM 7 m7 -- wait_turn_window is removed before the final read (the
-    window is not honored). With the fake's zero-latency relay and
-    S0_02_TURN_WAIT_S=0, the second delivery is already in the timeline by the
-    final read, so case A is EQUIVALENT (still passes). A declared equivalence,
-    not a silent survivor: in production the relay has latency, so removing the
-    window would read a pre-duplicate final timeline and case A would go red at
-    C:621-624 -- this is why the window stays."""
-    override = 'wait_turn_window() { :; }\n'
-    proc, leg = _b9_run(tmp_path, RUNNER, "A", "delta", extra=override)
+# --- B9-R1: the live windows through the sourced main (VERIFY-B9 B-1, F-5, F-12) ---
+
+def _b9_verdict(tmp_path: Path, leg: Path) -> str:
+    """The real checker's verdict on a runner-produced leg: the PASS line or the
+    Failure text."""
+    try:
+        return _b9_check(_bundle(tmp_path / "verdict"), leg)
+    except checker.Failure as exc:
+        return str(exc)
+
+
+def test_replay_observation_window_catches_a_late_second_turn(tmp_path):
+    """B-1 (replaces B9's m7 'EQUIVALENT' row): the observation window after the
+    duplicate (R:241 `wait_turn_window 0`) is live -- S0_02_TURN_WAIT_S=2 and
+    POLL_S small after the source -- and the duplicate's turn prompt lands INSIDE
+    it, on the window's first poll. The runner must put that prompt in the delta
+    and the real checker must refuse it. Deleting the window (m7) or making it
+    `wait_turn_window 1` (M13) reads the delta before the prompt lands: an empty
+    delta, and the checker's hollow PASS."""
+    recs = _b9_records()
+    proc, leg, trace = _b9_run(tmp_path, RUNNER, first="".join(recs),
+                               second_late=_b9_record(recs[4], seq=8), turn_wait="2")
     assert proc.returncode == 0, proc.stderr
-    bundle = _bundle(tmp_path)
-    line = _b9_check(bundle, leg)
-    assert line == B9_PASS_LINE, line
+    assert trace == ["deliver first", "deliver second", "late"], trace
+    assert (leg / "second" / "timeline.jsonl").read_text() == _b9_record(recs[4], seq=8)
+    assert _b9_verdict(tmp_path, leg) == (
+        "neg-replayed/second: 1 ACP turn(s), expected 0 — the duplicate delivery "
+        "produced a second turn"
+    )
+
+
+def test_replay_first_delivery_that_turns_only_after_the_duplicate_fails(tmp_path):
+    """F-5 (M11): the first delivery opened a session but produced no prompt
+    inside its window; the turn came after the second delivery. The first
+    snapshot must be taken BEFORE the second delivery, so the leg is refused."""
+    recs = _b9_records()
+    proc, leg, trace = _b9_run(tmp_path, RUNNER, first="".join(recs[:4]),
+                               second="".join(recs[4:]), turn_wait="2")
+    assert proc.returncode == 0, proc.stderr
+    assert trace == ["deliver first", "deliver second"], trace
+    assert _b9_verdict(tmp_path, leg) == (
+        "neg-replayed/first: 0 ACP turn(s), expected exactly 1 — a replay leg proves "
+        "nothing unless the first delivery produced a turn"
+    )
+
+
+def test_replay_slow_first_turn_is_waited_for_before_the_snapshot(tmp_path):
+    """F-12 (M14): the first turn's prompt arrives on the first poll of the
+    first delivery's window (R:227 `wait_turn_window 1`). The runner waits for
+    it, so the snapshot holds the whole turn and the real checker passes."""
+    recs = _b9_records()
+    proc, leg, trace = _b9_run(tmp_path, RUNNER, first="".join(recs[:4]),
+                               first_late="".join(recs[4:]), turn_wait="2")
+    assert proc.returncode == 0, proc.stderr
+    assert trace == ["deliver first", "late", "deliver second"], trace
+    assert (leg / "first" / "timeline.jsonl").read_text() == "".join(recs)
+    assert _b9_verdict(tmp_path, leg) == B9_PASS_LINE
+
+
+def test_replay_runner_forwarded_duplicate_is_refused_on_the_receipt(tmp_path):
+    """R6's negative (F-7): the old synthetic shape through the real runner --
+    the relay accepted the second delivery as NEW (message '', the real
+    _normalise over the relay's new-event answer) and buzz-acp's own drop line
+    is in the ONE log. The drop line never substitutes for the receipt."""
+    chan = json.loads((PASS_BUNDLE / "identities.json").read_text())["channel"]
+    log = B9_ONE_PROCESS_LOG + (
+        f"2026-09-23T00:00:05.000000Z DEBUG buzz_acp::relay: dropping duplicate event for channel {chan}\n")
+    proc, leg, _trace = _b9_run(tmp_path, RUNNER, first="".join(_b9_records()),
+                                second_message="", log=log)
+    assert proc.returncode == 0, proc.stderr
+    assert _b9_verdict(tmp_path, leg) == (
+        "neg-replayed/second: the relay receipt message is '', expected exactly 'duplicate:' "
+        "— the relay did not refuse the second delivery as a duplicate (a forwarded duplicate "
+        "fails even when buzz-acp dropped it)"
+    )
+
+
+def test_replay_runner_restarted_process_is_refused(tmp_path):
+    """F-2 (H1a) through the real runner: the second delivery reaches a
+    restarted agent (initialize at seq 1, then session/new) -- a second process."""
+    recs = _b9_records()
+    proc, leg, _trace = _b9_run(tmp_path, RUNNER, first="".join(recs), second="".join(recs[:4]))
+    assert proc.returncode == 0, proc.stderr
+    assert _b9_verdict(tmp_path, leg) == (
+        "neg-replayed/second: the delta holds an ACP initialize frame (seq 1) — the agent "
+        "restarted: a second process, not ONE continuous buzz-acp process (D-036 clause 3)"
+    )

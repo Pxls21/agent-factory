@@ -19,11 +19,12 @@
   ]
  },
  "expected": {
-  "decided_by": "buzz-acp",
-  "evidence": "buzzacp_log",
+  "decided_by": "buzz-relay",
+  "discrepancy": "buzz-acp HAS its own dedup (BgState::record_event, relay.rs:1258, returns false at relay.rs:1262; the call site relay.rs:2344 logs the drop at relay.rs:2387), but it can only fire for an event the RELAY forwarded. The relay refuses a stored event id first: a kind-9 insert that finds the id already stored returns {accepted: true, message: 'duplicate:'} at ingest.rs:3192, BEFORE dispatch_persistent_event at ingest.rs:3258, and the bridge answers it as a 200 (bridge.rs:963). So the deciding component for this fixture is buzz-relay, and the buzz-acp line is the defense-in-depth D-036 keeps: recorded when present, never required, never a substitute for the receipt.",
+  "evidence": "delivery",
   "failure_reason": "denied: event-replayed",
-  "mechanism": "crates/buzz-acp/src/relay.rs:2387",
-  "observable": "dropping duplicate event for channel",
+  "mechanism": "crates/buzz-relay/src/handlers/ingest.rs:3196",
+  "observable": "duplicate:",
   "replay_of_event_id": "8fbb4f8416fa2cff071d5d92622422a5a43de7214fdc4ac86138e1c506ad535b",
   "turns": 0
  },

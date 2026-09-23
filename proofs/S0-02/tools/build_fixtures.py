@@ -435,10 +435,6 @@ def build_bundle(bundle: str, root: Path) -> None:
         (root / "fixtures" / f"{name}.json").write_text(_serialise(fixture))
     legs = root / "legs"
     chan = ids[CHANNEL_UUID_KEY]
-    dup_line = (
-        "2026-09-08T00:00:05.000000Z DEBUG buzz_acp::relay: "
-        f"dropping duplicate event for channel {chan}"
-    )
     self_line = (
         "2026-09-08T00:00:05.000000Z DEBUG buzz_acp: "
         f"dropping self-authored event channel_id={chan}"
@@ -462,10 +458,15 @@ def build_bundle(bundle: str, root: Path) -> None:
     _tamper(leg("neg-bad-signature"), pos_delivered)
     _write_leg(leg("neg-replayed") / "first", fixtures["pos-allowed"], ids, bundle,
                accepted=True, message="", with_turn=True, log_extra=[])
+    # D-036: the relay refuses a stored kind-9 event id BEFORE dispatch with
+    # {accepted: true, message: "duplicate:"} (crates/buzz-relay/src/handlers/
+    # ingest.rs:3192-3197), built here through the real producer normaliser. The
+    # blanket bundle's replay shows the shared relay text instead, so all six
+    # negative legs collapse to one observable.
     _write_leg(leg("neg-replayed") / "second", fixtures["neg-replayed"], ids, bundle,
                accepted=True,
-               message=BLANKET_MESSAGE if blanket else "",
-               with_turn=False, log_extra=[] if blanket else [dup_line])
+               message=BLANKET_MESSAGE if blanket else "duplicate:",
+               with_turn=False, log_extra=[])
     _write_leg(leg("neg-stale"), fixtures["neg-stale"], ids, bundle,
                accepted=False,
                message=BLANKET_MESSAGE if blanket
@@ -504,6 +505,15 @@ def build_bundle(bundle: str, root: Path) -> None:
     delivery["event_id"] = first["id"]
     (second_dir / "delivery.json").write_text(
         json.dumps(delivery, indent=1, sort_keys=True) + "\n")
+    # ONE continuous buzz-acp process spans both deliveries (D-036 clause 3). The
+    # relay never dispatched the duplicate, so the second delivery's timeline
+    # DELTA is empty (zero prompts, no restart), and the one masked log the post
+    # step writes after exit lands in BOTH sub-legs, as the PC runner copies it
+    # (run_s0_02_legs.sh:305-306). buzz-acp's drop line (relay.rs:2387) is
+    # optional defense-in-depth, absent here: buzz-acp never received the event.
+    (second_dir / "timeline.jsonl").write_text("")
+    (second_dir / "buzzacp.log").write_bytes(
+        (leg("neg-replayed") / "first" / "buzzacp.log").read_bytes())
 
 
 def main(argv) -> int:

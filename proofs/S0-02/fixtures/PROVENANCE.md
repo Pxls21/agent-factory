@@ -13,6 +13,21 @@ before any live capture. What they do NOT prove: an end-to-end live run of the
 Buzz relay + buzz-acp path — that is the production evidence root
 (`proofs/S0-02/evidence`, the coordinator's live legs).
 
+The replay leg (`legs/neg-replayed/`, rebuilt by B9-R1 on 2026-09-23 to D-036's
+shape) models relay-level dedup with ONE continuous buzz-acp process. The first
+sub-leg carries the whole first turn (seven records, one `session/prompt`). The
+second sub-leg's receipt is the pinned relay's answer to an event id it already
+stored, `{"accepted": true, "message": "duplicate:"}` with HTTP 200 and the first
+delivery's id echoed (`crates/buzz-relay/src/handlers/ingest.rs:3192-3197`),
+built through `_normalise`. Its timeline DELTA is empty: zero prompts and no
+restart. Both sub-legs carry the same one-process masked log, with one
+`buzz-acp starting:` line. buzz-acp's own drop line (`relay.rs:2387`) is absent,
+because the relay never dispatched the duplicate; the checker records that line
+when present and never requires it. In the blanket bundle the replay leg has the
+same one-process shape, but its second receipt shows the shared relay text, so
+all six negative legs collapse to one observable. This shape is inferred from the
+pinned relay source; no live capture has shown it yet.
+
 Revoked-leg removal evidence is a coordinator-supplied receipt
 (unauthenticated; ordering and fields verified; not an end-to-end revocation proof).
 The pinned relay exposes no membership READ route

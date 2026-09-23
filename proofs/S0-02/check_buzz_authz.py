@@ -131,6 +131,12 @@ REPLAY_CLOCK_TOLERANCE_S = 150
 # The canary is LEVEL-AWARE (F9): only a line carrying a DEBUG level token
 # satisfies the claim "captured at RUST_LOG=debug".
 DEBUG_LEVEL_CANARY = "startup watermark set to"
+# buzz-acp logs this at INFO once per process, in its entry point
+# (crates/buzz-acp/src/lib.rs:2454); the S0-01 launcher keys its start line on
+# the same text (proofs/S0-01/tools/pc/pc_launch.py:401). Measured 2026-09-23 on
+# the S0-01 real-leg corpus: exactly one per masked log (run-1, run-2,
+# two-users, cancel, shutdown). D-036 clause 3 counts it in the replay leg's log.
+PROCESS_START_BANNER = "buzz-acp starting:"
 
 LEG_NAMES = ("pos-allowed",) + oracle.NEGATIVE_FIXTURES
 REPLAY_SUBLEGS = ("first", "second")
@@ -295,13 +301,10 @@ def _check_freshness(leg_dir: Path, leg: str, fixture: dict, delivered: dict):
             )
 
 
-def _check_delivery(
-    leg_dir: Path,
-    leg: str,
-    delivered: dict,
-    fixture: dict,
-    expected_accepted: "bool | None" = None,
-) -> dict:
+def _read_receipt(leg_dir: Path, leg: str) -> dict:
+    """delivery.json in the producer's exact key set (deliver_event._normalise).
+    Shared by _check_delivery and by the replay's second sub-leg, whose outcome
+    fields D-036 clause 2 grades separately (_check_duplicate_receipt)."""
     delivery = _read_json(leg_dir / "delivery.json", leg, "delivery.json")
     expected_keys = {"http_status", "event_id", "accepted", "message", "event_id_echoed"}
     if set(delivery) != expected_keys:
@@ -311,6 +314,17 @@ def _check_delivery(
             f"{leg}: delivery.json has the wrong producer shape "
             f"(missing={missing}, extra={extra})"
         )
+    return delivery
+
+
+def _check_delivery(
+    leg_dir: Path,
+    leg: str,
+    delivered: dict,
+    fixture: dict,
+    expected_accepted: "bool | None" = None,
+) -> dict:
+    delivery = _read_receipt(leg_dir, leg)
     if delivery["event_id"] != delivered["id"]:
         raise Failure(
             f"{leg}: delivery.json event_id {str(delivery['event_id'])[:12]} != the "
@@ -362,7 +376,13 @@ def _check_delivery(
 
 # Every observable any row names, searched in BOTH channels. The scan reports
 # what a leg ACTUALLY shows; it never assumes the leg shows its own reason.
-ALL_OBSERVABLES = tuple(sorted({r["observable"] for r in oracle.ROWS if r["leg"] == "negative"}))
+# It also sees a row's defense-in-depth text (the replay row's buzz-acp drop
+# line, D-036), so that line's presence is RECORDED; it is never required and
+# never substitutes for the row's own observable (_check_duplicate_receipt).
+ALL_OBSERVABLES = tuple(sorted(
+    {r["observable"] for r in oracle.ROWS if r["leg"] == "negative"}
+    | {r["defense_in_depth"]["observable"] for r in oracle.ROWS if "defense_in_depth" in r}
+))
 
 
 def _observe_all(leg_dir: Path, leg: str, delivery: dict, fixture_name: str) -> frozenset:
@@ -448,8 +468,24 @@ def _check_named_observable(leg: str, fixture_name: str, found: frozenset, deliv
             )
 
 
+def _load_timeline(leg_dir: Path, leg: str):
+    """F-13 (VERIFY-B9): S0-01's reader parses each line with a bare json.loads
+    (s0_01._reject_nan), so a torn record escapes as JSONDecodeError (or as
+    UnicodeDecodeError when the cut splits a UTF-8 sequence) and the CLI dies
+    with a traceback and no ``failure_reason:`` line, which breaks the exit
+    contract in the module docstring. Name it here; S0-01's attested reader
+    stays untouched."""
+    try:
+        return _load_timeline_raw(leg_dir, leg)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise Failure(
+            f"{leg}: a timeline record is not valid JSON or UTF-8 — a torn or "
+            f"partial line ({exc})"
+        ) from None
+
+
 def _turns(leg_dir: Path, leg: str):
-    entries = _load_timeline_raw(leg_dir, leg)
+    entries = _load_timeline(leg_dir, leg)
     prompts, news = _prompt_frames(entries, leg)
     return entries, prompts, news
 
@@ -558,11 +594,76 @@ def _check_leg(leg_dir: Path, leg: str, fixture_name: str, identities: dict, anc
     return found, delivery, removal_note
 
 
+def _check_one_process(leg_dir: Path, first: list, second: list):
+    """D-036 clause 3: ONE continuous buzz-acp process spans both deliveries.
+
+    The mechanism follows what the real producers write (measured 2026-09-23):
+      * the frame tee numbers every record from ONE per-process counter
+        (proofs/S0-01/tools/frame_tee.py:178, :363-364) and appends to one file
+        (:337), so a restarted agent restarts at seq 1 with `initialize`. Every
+        real S0-01 timeline is consecutive from seq 1, with `initialize` only at
+        seq 1. A second `session/new` inside ONE process is normal (two-users,
+        seq 12), so it is not a restart signal;
+      * the launcher wipes the frame dir and opens a fresh raw log per launch
+        (pc_launch.py:308, :354); pc_post.sh:107 masks it once after exit, and
+        the runner copies that ONE masked log into both sub-legs
+        (run_s0_02_legs.sh:305-306). buzz-acp logs PROCESS_START_BANNER once
+        per process.
+    So the second delta holds no `initialize` and continues the first
+    snapshot's seq, both sub-legs carry the same log bytes, and that log shows
+    exactly one start. An empty delta (the relay dropped the duplicate) passes
+    the timeline half trivially; the log half still applies."""
+    for rec in second:
+        if rec.get("dir") == "c2a" and (rec.get("frame") or {}).get("method") == "initialize":
+            raise Failure(
+                f"neg-replayed/second: the delta holds an ACP initialize frame (seq "
+                f"{rec.get('seq')!r}) — the agent restarted: a second process, not ONE "
+                f"continuous buzz-acp process (D-036 clause 3)"
+            )
+    prev = first[-1].get("seq")
+    for rec in second:
+        seq = rec.get("seq")
+        if type(prev) is not int or type(seq) is not int or seq != prev + 1:
+            raise Failure(
+                f"neg-replayed/second: delta record seq {seq!r} does not continue the "
+                f"preceding seq {prev!r} — the frame tee restarted: a second process, "
+                f"not ONE continuous buzz-acp process (D-036 clause 3)"
+            )
+        prev = seq
+    logs = [
+        _require_file(leg_dir / sub / "buzzacp.log", f"neg-replayed/{sub}", "buzzacp.log").read_bytes()
+        for sub in REPLAY_SUBLEGS
+    ]
+    if logs[0] != logs[1]:
+        raise Failure(
+            "neg-replayed: the first and second sub-legs carry different buzzacp.log "
+            "bytes — two masked logs: a second process, not ONE continuous buzz-acp "
+            "process (D-036 clause 3)"
+        )
+    banner = PROCESS_START_BANNER.encode()
+    starts = sum(1 for ln in logs[1].splitlines() if banner in ln)
+    if starts != 1:
+        raise Failure(
+            f"neg-replayed: buzzacp.log shows {starts} buzz-acp start line(s) "
+            f"({PROCESS_START_BANNER!r}), expected exactly 1 — not ONE continuous "
+            f"buzz-acp process (D-036 clause 3)"
+        )
+
+
 def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
     """The replayed leg is two deliveries of ONE event id in one directory.
 
     The proof is comparative: the FIRST delivery produced a turn and the SECOND
     produced none. A leg where neither produced a turn proves nothing.
+
+    D-036 clause by clause: 1 the same event id, 4 one prompt in total and 5
+    zero prompts in the second delta (below); 3 ONE continuous buzz-acp process
+    (_check_one_process, after the turn counts so a restarted delta that ALSO
+    carries a turn keeps its turn-count text); 2 the relay's `duplicate:`
+    receipt bound to the second delivery (_check_duplicate_receipt, graded
+    AFTER the distinctness gate because that receipt IS this leg's observable:
+    a blanket-rejection bundle must reach the gate first, spec.json's negative
+    leg). Returns (found, the second receipt, the first delivery's event id).
     """
     leg_dir = root / "neg-replayed"
     _require_real_dir(leg_dir, "neg-replayed", "neg-replayed leg directory")
@@ -574,7 +675,8 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
         )
     ids = []
     turns = []
-    key = None
+    entries = []
+    found = delivery = None
     for sub in REPLAY_SUBLEGS:
         sub_dir = leg_dir / sub
         leg = f"neg-replayed/{sub}"
@@ -596,18 +698,24 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
             )
         delivered = _check_delivered_event(sub_dir, leg, fixture, identities)
         _check_freshness(sub_dir, leg, fixture, delivered)
-        delivery = _check_delivery(
-            sub_dir,
-            leg,
-            delivered,
-            fixture,
-            expected_accepted=True,
-        )
+        if sub == "first":
+            delivery = _check_delivery(
+                sub_dir,
+                leg,
+                delivered,
+                fixture,
+                expected_accepted=True,
+            )
+        else:
+            # Only the producer shape here: D-036 clause 2 grades this
+            # receipt's outcome (_check_duplicate_receipt, after the gate).
+            delivery = _read_receipt(sub_dir, leg)
         ids.append(delivered["id"])
-        _entries, prompts, _news = _turns(sub_dir, leg)
+        sub_entries, prompts, _news = _turns(sub_dir, leg)
+        entries.append(sub_entries)
         turns.append(len(prompts))
         if sub == "second":
-            key = (_observe_all(sub_dir, leg, delivery, fixture_name), delivery)
+            found = _observe_all(sub_dir, leg, delivery, fixture_name)
     if ids[0] != ids[1]:
         raise Failure(
             "neg-replayed: the two deliveries carry different event ids "
@@ -623,7 +731,59 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
             f"neg-replayed/second: {turns[1]} ACP turn(s), expected 0 — the duplicate "
             "delivery produced a second turn"
         )
-    return key
+    _check_one_process(leg_dir, entries[0], entries[1])
+    return found, delivery, ids[0]
+
+
+def _check_duplicate_receipt(found: frozenset, delivery: dict, first_id: str) -> bool:
+    """D-036 clause 2: the relay's `duplicate:` receipt, BOUND to the second
+    delivery. The pinned relay answers a kind-9 event id it already stored
+    BEFORE dispatch (crates/buzz-relay/src/handlers/ingest.rs:3192-3197) with
+    {event_id, accepted: true, message: "duplicate:"}; the bridge returns it as
+    a 200 (crates/buzz-relay/src/api/bridge.rs:963-968), and
+    deliver_event._normalise turns that into the receipt graded here. Each
+    field is its own refusal. Returns whether the buzz-acp drop line (the
+    row's defense-in-depth, relay.rs:2387) was ALSO seen: recorded in the
+    summary, never required, never a substitute for this receipt."""
+    leg = "neg-replayed/second"
+    row = oracle.row("neg-replayed")
+    status = delivery["http_status"]
+    if type(status) is not int or status != 200:
+        raise Failure(
+            f"{leg}: the relay answers a duplicate with HTTP 200, got http_status {status!r}"
+        )
+    if delivery["accepted"] is not True:
+        raise Failure(
+            f"{leg}: the relay's duplicate receipt must carry accepted=true (a bool), "
+            f"got {delivery['accepted']!r}"
+        )
+    if delivery["event_id_echoed"] is not True:
+        raise Failure(
+            f"{leg}: the relay's duplicate receipt must echo the event id "
+            f"(event_id_echoed=true), got {delivery['event_id_echoed']!r}"
+        )
+    if delivery["event_id"] != first_id:
+        raise Failure(
+            f"{leg}: the duplicate receipt names event {str(delivery['event_id'])[:12]}, "
+            f"not the first delivery's {first_id[:12]} — the receipt is not bound to "
+            f"this replay"
+        )
+    if delivery["message"] != row["observable"]:
+        raise Failure(
+            f"{leg}: the relay receipt message is {delivery['message']!r}, expected "
+            f"exactly {row['observable']!r} — the relay did not refuse the second "
+            f"delivery as a duplicate (a forwarded duplicate fails even when buzz-acp "
+            f"dropped it)"
+        )
+    dind = row["defense_in_depth"]
+    dind_key = f"{dind['evidence']}::{dind['observable']}"
+    extra = found - {f"{row['evidence']}::{row['observable']}", dind_key}
+    if extra:
+        raise Failure(
+            f"{leg}: evidence carries denial observables {sorted(extra)} beside the "
+            f"relay's duplicate receipt"
+        )
+    return dind_key in found
 
 
 def _has_any_timeline(root: Path) -> bool:
@@ -674,9 +834,11 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
 
     observed: dict = {}
     removal_note = None
+    replay_first_id = None
     for leg in LEG_NAMES:
         if leg == "neg-replayed":
-            observed[leg] = _check_replay(root, identities, anchors)
+            found, delivery, replay_first_id = _check_replay(root, identities, anchors)
+            observed[leg] = (found, delivery)
             continue
         result = _check_leg(root / leg, leg, leg, identities, anchors)
         found, delivery, note = result
@@ -700,6 +862,7 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
             f"blanket-rejection: reasons {collapsed} not distinct — "
             f"{len(distinct_legs)} negative legs collapsed to {len(set(keys))} observable(s)"
         )
+    replay_dind = None
     for fixture_name in oracle.NEGATIVE_FIXTURES:
         if fixture_name == "revoked":
             # The revoked leg is the SEVENTH, structurally-separate leg; its
@@ -707,18 +870,29 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
             # its removal receipt is coordinator-supplied (F5).
             continue
         found, delivery = observed[fixture_name]
-        leg = "neg-replayed/second" if fixture_name == "neg-replayed" else fixture_name
-        _check_named_observable(leg, fixture_name, found, delivery)
+        if fixture_name == "neg-replayed":
+            # D-036 clause 2: the relay decides this leg with an accepted=true
+            # receipt, so the generic relay rule (accepted must be false) does not
+            # apply; the receipt is graded field by field instead.
+            replay_dind = _check_duplicate_receipt(found, delivery, replay_first_id)
+            continue
+        _check_named_observable(fixture_name, fixture_name, found, delivery)
     # The brief pins this line's prefix. The revocation leg (assertion 2) is a
     # SEVENTH negative leg that is separated structurally rather than by a
     # distinct observable, so it is counted separately instead of being folded
     # into "6 negative legs" — the count stays true to what the gate measured.
+    # The replay segment records whether buzz-acp's own drop line (optional
+    # defense-in-depth, D-036) was seen beside the relay's receipt.
     n_extra = len(oracle.NEGATIVE_FIXTURES) - len(distinct_legs)
     removal_line = removal_note
+    replay_line = (
+        "replay refused by the relay's duplicate: receipt (buzz-acp drop line "
+        f"{'present' if replay_dind else 'absent'}, defense-in-depth only)"
+    )
     return (
         f"PASS: S0-02 buzz-authz - 1 positive, {len(distinct_legs)} negative legs, "
-        f"{len(set(keys))} distinct reasons; +{n_extra} revocation leg (assertion 2); "
-        f"{removal_line}"
+        f"{len(set(keys))} distinct reasons; {replay_line}; "
+        f"+{n_extra} revocation leg (assertion 2); {removal_line}"
     )
 
 
