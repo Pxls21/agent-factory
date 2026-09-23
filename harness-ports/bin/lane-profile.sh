@@ -29,18 +29,21 @@ verify_lane() {
   [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
   [ -f "$SOURCE/.env" ] || fail "source env missing"
 
-  verdict="$(python3 - "$target/config.yaml" "$lane" <<'PY'
+  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY'
+import copy
 import sys
 import yaml
 
-path, lane = sys.argv[1:]
+path, lane, source_path, root = sys.argv[1:]
 try:
     with open(path, encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
+    with open(source_path, encoding="utf-8") as stream:
+        source = yaml.safe_load(stream)
 except Exception:
     print("config unreadable")
     raise SystemExit(3)
-if not isinstance(config, dict):
+if not isinstance(config, dict) or not isinstance(source, dict):
     print("config unreadable")
     raise SystemExit(3)
 if "fallback_providers" in config:
@@ -52,6 +55,23 @@ got = headers.get("x-omniroute-session-id") if isinstance(headers, dict) else No
 if got != lane:
     print("header missing or wrong: " + ("<missing>" if got is None else str(got)))
     raise SystemExit(2)
+
+expected = copy.deepcopy(source)
+expected.pop("fallback_providers", None)
+expected.setdefault("model", {}).setdefault("default_headers", {})["x-omniroute-session-id"] = lane
+helper = f"{root}/harness-ports/bin/lane-done-gate.py"
+record = {
+    "matcher": "terminal|patch|write_file",
+    "command": f"python3 {helper} record",
+    "timeout": 20,
+}
+gate = {"command": f"python3 {helper} gate", "timeout": 20}
+expected_gate = copy.deepcopy(expected)
+expected_gate.setdefault("hooks", {}).setdefault("post_tool_call", []).append(record)
+expected_gate["hooks"]["pre_verify"] = [gate]
+if config not in (expected, expected_gate):
+    print("unexpected semantic config delta")
+    raise SystemExit(3)
 PY
 )"; rc=$?
   case "$rc" in
@@ -91,8 +111,9 @@ create_lane() {
   done
 
   # Preserve every untouched byte in config.yaml. Parse before and after, and refuse
-  # unless the semantic delta is exactly chain removal plus this lane's request header.
-  python3 - "$target/config.yaml" "$lane" <<'PY' || fail "config rewrite failed"
+  # unless the semantic delta is exactly chain removal, this lane's request header,
+  # and, when enabled, the two lane done-gate hooks.
+  python3 - "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY' || fail "config rewrite failed"
 import copy
 import os
 from pathlib import Path
@@ -103,6 +124,8 @@ import yaml
 
 path = Path(sys.argv[1])
 lane = sys.argv[2]
+gate_enabled = sys.argv[3] == "1"
+root = Path(sys.argv[4])
 text = path.read_text(encoding="utf-8")
 before = yaml.safe_load(text)
 if not isinstance(before, dict) or not isinstance(before.get("model"), dict):
@@ -116,6 +139,25 @@ if headers is None:
 if not isinstance(headers, dict):
     raise SystemExit("model.default_headers must be a mapping")
 headers["x-omniroute-session-id"] = lane
+if gate_enabled:
+    helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
+    hooks = expected.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SystemExit("hooks must be a mapping")
+    post = hooks.setdefault("post_tool_call", [])
+    if not isinstance(post, list):
+        raise SystemExit("hooks.post_tool_call must be a list")
+    if "pre_verify" in hooks:
+        raise SystemExit("source profile already has hooks.pre_verify")
+    post.append({
+        "matcher": "terminal|patch|write_file",
+        "command": f"python3 {helper} record",
+        "timeout": 20,
+    })
+    hooks["pre_verify"] = [{
+        "command": f"python3 {helper} gate",
+        "timeout": 20,
+    }]
 
 lines = text.splitlines(keepends=True)
 top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
@@ -162,13 +204,60 @@ else:
     else:
         lines[existing] = header_line
 
+if gate_enabled:
+    helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
+    # The source profile has no pre_verify today. Appending at EOF preserves all
+    # existing bytes and puts the recorder after existing post_tool_call entries.
+    hook_block = yaml.safe_dump(
+        {
+            "hooks": {
+                "post_tool_call": [{
+                    "matcher": "terminal|patch|write_file",
+                    "command": f"python3 {helper} record",
+                    "timeout": 20,
+                }],
+                "pre_verify": [{
+                    "command": f"python3 {helper} gate",
+                    "timeout": 20,
+                }],
+            }
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    current = yaml.safe_load("".join(lines))
+    current_hooks = current.get("hooks") if isinstance(current, dict) else None
+    if current_hooks is None:
+        lines.append(hook_block)
+    else:
+        # Preserve the existing hooks mapping through a targeted block rewrite;
+        # the semantic equality guard below rejects any collateral change.
+        hook_span = top_block("hooks")
+        if hook_span is None or not isinstance(current_hooks, dict):
+            raise SystemExit("hooks block unreadable")
+        current_hooks.setdefault("post_tool_call", []).append({
+            "matcher": "terminal|patch|write_file",
+            "command": f"python3 {helper} record",
+            "timeout": 20,
+        })
+        current_hooks["pre_verify"] = [{
+            "command": f"python3 {helper} gate",
+            "timeout": 20,
+        }]
+        replacement = yaml.safe_dump(
+            {"hooks": current_hooks}, sort_keys=False, allow_unicode=True
+        )
+        lines[hook_span[0]:hook_span[1]] = [replacement]
+
 updated = "".join(lines)
 after = yaml.safe_load(updated)
 if after != expected:
     raise SystemExit("unexpected semantic config delta")
-if set(before) - set(after) != ({"fallback_providers"} if "fallback_providers" in before else set()):
+removed = {"fallback_providers"} if "fallback_providers" in before else set()
+added = {"hooks"} if gate_enabled and "hooks" not in before else set()
+if set(before) - set(after) != removed:
     raise SystemExit("unexpected removed top-level key")
-if set(after) - set(before):
+if set(after) - set(before) != added:
     raise SystemExit("unexpected added top-level key")
 
 mode = path.stat().st_mode

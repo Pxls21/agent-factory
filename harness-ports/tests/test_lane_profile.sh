@@ -4,7 +4,7 @@
 set -uo pipefail
 
 # Hermetic: a caller's runtime/test overrides cannot redirect this suite to real profiles.
-unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS 2>/dev/null || true
+unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS LANE_DONE_GATE 2>/dev/null || true
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$HERE/../bin/lane-profile.sh"
 TMP="$(mktemp -d)" || exit 1
@@ -63,6 +63,9 @@ check() {
 }
 run_verify() {
   VERIFY_OUT="$(bash "$HELPER" verify "$1" 2>&1)"; VERIFY_RC=$?
+}
+reset_lane() {
+  rm -rf "$PROFILES/aflane$1"
 }
 
 # Name normalization is observed through create output, not a duplicate test implementation.
@@ -148,5 +151,91 @@ REMOVE_OUT="$(bash "$HELPER" remove "$NAME1" 2>&1)"; REMOVE_RC=$?
 [ "$REMOVE_RC" -eq 0 ] && [ ! -e "$TARGET" ] && grep -Fq "profile delete $NAME1" "$FAKE_HERMES_CALLS"
 check "remove confirms and deletes an aflane profile" $? \
   "rc=$REMOVE_RC target_exists=$([ -e "$TARGET" ] && echo yes || echo no)"
+
+# The disabled switch must preserve today's exact output bytes.
+reset_lane gateoff
+LANE_DONE_GATE=0 bash "$HELPER" create gateoff >/dev/null; GATE_OFF_RC=$?
+GATE_OFF="$PROFILES/aflanegateoff/config.yaml"
+python3 - "$TMP/source-config.yaml" "$GATE_OFF" gateoff <<'PY'
+from pathlib import Path
+import re, sys
+source, target, lane = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+text = source.read_text()
+lines = text.splitlines(keepends=True)
+top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
+def block(key):
+    start = next((i for i, line in enumerate(lines) if line.startswith(key + ":")), None)
+    if start is None: return None
+    end = start + 1
+    while end < len(lines) and not top.match(lines[end]): end += 1
+    return start, end
+span = block("fallback_providers")
+if span: del lines[span[0]:span[1]]
+model = block("model"); assert model
+_, end = model
+lines[end:end] = ["  default_headers:\n", f"    x-omniroute-session-id: {lane}\n"]
+assert target.read_bytes() == "".join(lines).encode()
+PY
+GATE_OFF_BYTES_RC=$?
+[ "$GATE_OFF_RC" -eq 0 ] && [ "$GATE_OFF_BYTES_RC" -eq 0 ]
+check "switch OFF leaves the clone byte-identical to today's rewrite" $? \
+  "create_rc=$GATE_OFF_RC byte_compare_rc=$GATE_OFF_BYTES_RC"
+
+# Enabled creation adds exactly one recorder and one pre_verify directive.
+reset_lane gateon
+LANE_DONE_GATE=1 bash "$HELPER" create gateon >/dev/null; GATE_ON_RC=$?
+GATE_ON="$PROFILES/aflanegateon/config.yaml"
+python3 - "$TMP/source-config.yaml" "$GATE_ON" "$(cd "$HERE/../../.." && pwd)" gateon <<'PY'
+import copy, sys, yaml
+source, target, root, lane = sys.argv[1:]
+with open(source, encoding="utf-8") as f: before = yaml.safe_load(f)
+with open(target, encoding="utf-8") as f: after = yaml.safe_load(f)
+expected = copy.deepcopy(before)
+expected.pop("fallback_providers", None)
+expected["model"].setdefault("default_headers", {})["x-omniroute-session-id"] = lane
+helper = f"{root}/harness-ports/bin/lane-done-gate.py"
+expected.setdefault("hooks", {}).setdefault("post_tool_call", []).append({
+    "matcher": "terminal|patch|write_file", "command": f"python3 {helper} record", "timeout": 20,
+})
+expected["hooks"]["pre_verify"] = [{"command": f"python3 {helper} gate", "timeout": 20}]
+assert after == expected, (after, expected)
+PY
+GATE_ON_SEM_RC=$?
+# Verification accepts either the ordinary clone or exactly the two gate hooks,
+# independent of the creation switch.
+LANE_DONE_GATE=0 run_verify gateon
+GATE_ON_VERIFY_OFF_RC=$VERIFY_RC; GATE_ON_VERIFY_OFF_OUT=$VERIFY_OUT
+LANE_DONE_GATE=1 run_verify gateon
+[ "$GATE_ON_RC" -eq 0 ] && [ "$GATE_ON_SEM_RC" -eq 0 ] \
+  && [ "$GATE_ON_VERIFY_OFF_RC" -eq 0 ] && [ -z "$GATE_ON_VERIFY_OFF_OUT" ] \
+  && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
+check "switch ON adds exactly the recorder and pre_verify entries and verify accepts them" $? \
+  "create_rc=$GATE_ON_RC semantic_rc=$GATE_ON_SEM_RC verify_off_rc=$GATE_ON_VERIFY_OFF_RC verify_on_rc=$VERIFY_RC"
+
+cp "$GATE_ON" "$TMP/gate-good.yaml"
+python3 - "$GATE_ON" <<'PY'
+import sys, yaml
+p = sys.argv[1]
+with open(p, encoding="utf-8") as f: data = yaml.safe_load(f)
+data["hooks"]["post_tool_call"].append({"command": "true", "timeout": 20})
+with open(p, "w", encoding="utf-8") as f: yaml.safe_dump(data, f, sort_keys=False)
+PY
+LANE_DONE_GATE=1 run_verify gateon
+[ "$VERIFY_RC" -eq 64 ] && [ "$VERIFY_OUT" = 'lane-profile: unexpected semantic config delta' ]
+check "verify refuses a third hook entry" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
+cp "$TMP/gate-good.yaml" "$GATE_ON"
+
+python3 - "$GATE_ON" <<'PY'
+import sys, yaml
+p = sys.argv[1]
+with open(p, encoding="utf-8") as f: data = yaml.safe_load(f)
+data["hooks"]["pre_verify"][0]["command"] = data["hooks"]["pre_verify"][0]["command"].replace(
+    "lane-done-gate.py gate", "lane-done-gate.py changed"
+)
+with open(p, "w", encoding="utf-8") as f: yaml.safe_dump(data, f, sort_keys=False)
+PY
+LANE_DONE_GATE=1 run_verify gateon
+[ "$VERIFY_RC" -eq 64 ] && [ "$VERIFY_OUT" = 'lane-profile: unexpected semantic config delta' ]
+check "verify refuses a changed done-gate command" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
 
 echo; echo "lane profile: $pass passed, $fail failed"; [ "$fail" -eq 0 ]

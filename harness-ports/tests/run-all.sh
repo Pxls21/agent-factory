@@ -10,7 +10,7 @@ cd "$ROOT" || exit 1
 
 fail=0
 for t in test_codex_hook_adapter.py test_hermes_hook_adapter.py \
-         test_hermes_spool.py test_bridge_token_handling.py test_pc_bridge_exec.py \
+         test_hermes_spool.py test_lane_done_gate.py test_bridge_token_handling.py test_pc_bridge_exec.py \
          test_hermes_session_export.py test_omniroute_local_builder.py; do
   printf '%-34s ' "$t"
   out="$(python3 "$HERE/$t" 2>&1)"; rc=$?

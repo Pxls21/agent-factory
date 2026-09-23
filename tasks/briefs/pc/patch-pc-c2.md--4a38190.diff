@@ -1,0 +1,2365 @@
+diff --git a/harness-ports/bin/lane-done-gate.py b/harness-ports/bin/lane-done-gate.py
+new file mode 100644
+index 00000000..41861026
+--- /dev/null
++++ b/harness-ports/bin/lane-done-gate.py
+@@ -0,0 +1,314 @@
++#!/usr/bin/env python3
++"""Record Hermes lane facts and nudge when code changed after the last check.
++
++This is a deterministic hook helper. ``record`` handles the ``post_tool_call``
++observer; ``gate`` handles the bounded ``pre_verify`` directive. Ledgers live in
++the OS temporary directory, outside the repository.
++"""
++from __future__ import annotations
++
++import hashlib
++import importlib.util
++import json
++import os
++import re
++import sys
++import tempfile
++from pathlib import Path, PurePosixPath
++from typing import Any
++
++ROOT = Path(__file__).resolve().parents[2]
++VERIFY_COMMAND = ROOT / "scripts" / "verify_command.py"
++CODE_SUFFIXES = {
++    ".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".rs", ".go",
++    ".toml", ".yaml", ".yml", ".json", ".sql", ".c", ".h",
++}
++PROJECT_PATTERNS = [
++    r"^bash\s+harness-ports/tests/[A-Za-z0-9_.-]+\.sh(?:\s|$)",
++    r"^python3\s+harness-ports/tests/test_[A-Za-z0-9_.-]+\.py(?:\s|$)",
++    r"^bash\s+scripts/lane_gate\.sh(?:\s|$)",
++    r"^bash\s+scripts/test_summary\.sh(?:\s|$)",
++]
++PATCH_PATH = re.compile(
++    r"^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$",
++    re.MULTILINE,
++)
++RC_WRAPPER = re.compile(
++    r"^\s*set\s+-o\s+pipefail\s*;\s*"
++    r"(?P<check>.+?)\s*\|\s*tee\s+[^;|&\n]+\s*;\s*"
++    r"rc=\$\{PIPESTATUS\[0\]\}\s*;\s*"
++    r"(?:(?:printf|echo)\b[^;\n]*;\s*)?"
++    r"exit\s+['\"]?\$rc['\"]?\s*$",
++    re.DOTALL,
++)
++
++
++def _warn(message: str) -> None:
++    print(f"lane-done-gate: {message}", file=sys.stderr)
++
++
++def _repo_root(_cwd: Any) -> Path:
++    return ROOT.resolve()
++
++
++def ledger_file(root: Path, session_id: Any) -> Path:
++    tag = hashlib.sha256(str(root).encode()).hexdigest()[:12]
++    raw = session_id if isinstance(session_id, str) else ""
++    sid = "".join(c for c in raw if c.isalnum() or c in "-_")[:64] or "default"
++    return Path(tempfile.gettempdir()) / f"lane-done-gate-{tag}-{sid}.jsonl"
++
++
++def _classifier():
++    spec = importlib.util.spec_from_file_location("lane_done_verify_command", VERIFY_COMMAND)
++    if spec is None or spec.loader is None:
++        raise RuntimeError("cannot load scripts/verify_command.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def _is_direct_check(command: str, module: Any, patterns: list[str]) -> bool:
++    """Keep project runners closed even though C1 patterns use ``search``."""
++    stripped = command.strip()
++    for pattern in PROJECT_PATTERNS:
++        match = re.match(pattern, stripped, re.ASCII)
++        if match:
++            remainder = stripped[match.end():].lstrip()
++            if remainder.startswith("&&") or remainder.startswith("||"):
++                return False
++            return module.is_verify(stripped, patterns)
++    if any(re.search(pattern.pattern, stripped, re.ASCII) for pattern in module.VERIFY):
++        return module.is_verify(stripped, patterns)
++    return False
++
++
++def counts_as_check(command: str) -> tuple[bool, str]:
++    """Classify only the closed project set plus C1's existing checks."""
++    try:
++        module = _classifier()
++        patterns = [pattern.pattern for pattern in module.VERIFY] + PROJECT_PATTERNS
++        if _is_direct_check(command, module, patterns):
++            return True, "recognized check"
++        wrapper = RC_WRAPPER.fullmatch(command)
++        if wrapper and _is_direct_check(wrapper.group("check"), module, patterns):
++            return True, "recognized pipefail/tee check"
++        return False, "command does not count as a check"
++    except Exception as exc:
++        return False, f"classifier error: {type(exc).__name__}: {exc}"
++
++
++def _append(path: Path, fact: dict[str, Any]) -> None:
++    line = json.dumps(fact, ensure_ascii=False, separators=(",", ":")) + "\n"
++    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
++    fd = os.open(path, flags, 0o600)
++    try:
++        os.write(fd, line.encode())
++    finally:
++        os.close(fd)
++
++
++def _result_exit_code(extra: Any) -> tuple[int | None, str]:
++    if not isinstance(extra, dict):
++        return None, "extra is not an object"
++    raw = extra.get("result")
++    if not isinstance(raw, str):
++        return None, "extra.result is not a JSON string"
++    try:
++        result = json.loads(raw)
++    except Exception as exc:
++        return None, f"extra.result is not JSON: {type(exc).__name__}"
++    if not isinstance(result, dict):
++        return None, "extra.result JSON is not an object"
++    value = result.get("exit_code")
++    if type(value) is not int:
++        return None, "exit_code is not an int"
++    return value, "exit_code parsed"
++
++
++def _edit_paths(tool: str, tool_input: Any) -> list[str]:
++    if not isinstance(tool_input, dict):
++        return []
++    if tool == "write_file":
++        path = tool_input.get("path")
++        return [path] if isinstance(path, str) and path else []
++    if tool != "patch":
++        return []
++    if tool_input.get("mode") == "patch":
++        text = tool_input.get("patch")
++        if not isinstance(text, str):
++            return []
++        return list(dict.fromkeys(m.group(1) for m in PATCH_PATH.finditer(text)))
++    path = tool_input.get("path")
++    return [path] if isinstance(path, str) and path else []
++
++
++def record(payload: dict[str, Any]) -> None:
++    root = _repo_root(payload.get("cwd"))
++    ledger = ledger_file(root, payload.get("session_id"))
++    tool = payload.get("tool_name")
++    tool_input = payload.get("tool_input")
++    if tool in {"write_file", "patch"}:
++        paths = _edit_paths(str(tool), tool_input)
++        if not paths:
++            _warn(f"{tool} payload has no path")
++            return
++        for path in paths:
++            _append(ledger, {"kind": "edit", "path": path})
++        return
++    if tool == "terminal":
++        command = tool_input.get("command") if isinstance(tool_input, dict) else None
++        if not isinstance(command, str):
++            _append(ledger, {"kind": "check", "command": "", "exit_code": None,
++                             "passing": False, "reason": "terminal command missing"})
++            _warn("terminal payload has no command")
++            return
++        counts, reason = counts_as_check(command)
++        exit_code, exit_reason = _result_exit_code(payload.get("extra"))
++        passing = counts and exit_code == 0
++        if exit_code is None:
++            reason = exit_reason
++            _warn(exit_reason)
++        elif not counts:
++            reason = "command does not count as a check"
++        elif exit_code != 0:
++            reason = f"check exited {exit_code}"
++        _append(
++            ledger,
++            {"kind": "check", "command": command, "exit_code": exit_code,
++             "passing": passing, "reason": reason},
++        )
++
++
++def _facts(path: Path) -> list[dict[str, Any]]:
++    if not path.is_file():
++        return []
++    facts = []
++    for line in path.read_text(encoding="utf-8").splitlines():
++        try:
++            fact = json.loads(line)
++        except Exception:
++            _warn("ledger contains malformed JSON; ignored one line")
++            continue
++        if isinstance(fact, dict):
++            facts.append(fact)
++    return facts
++
++
++def _relative(path: str, root: Path) -> str:
++    candidate = Path(path)
++    if candidate.is_absolute():
++        try:
++            return candidate.resolve().relative_to(root).as_posix()
++        except ValueError:
++            return candidate.as_posix()
++    return PurePosixPath(path).as_posix()
++
++
++def _is_code(path: str, root: Path) -> bool:
++    rel = _relative(path, root)
++    parts = PurePosixPath(rel).parts
++    if "transcripts" in parts:
++        return False
++    suffix = PurePosixPath(rel).suffix.lower()
++    if suffix in {".md", ".txt"}:
++        return False
++    if suffix in CODE_SUFFIXES:
++        return True
++    if suffix:
++        return False
++    candidate = Path(path)
++    if not candidate.is_absolute():
++        candidate = root / candidate
++    try:
++        with candidate.open("rb") as stream:
++            return stream.read(2) == b"#!"
++    except OSError:
++        return False
++
++
++def gate(payload: dict[str, Any]) -> None:
++    root = _repo_root(payload.get("cwd"))
++    facts = _facts(ledger_file(root, payload.get("session_id")))
++    changed = payload.get("extra", {}).get("changed_paths", [])
++    if not isinstance(changed, list):
++        changed = []
++    changed_code = sorted({
++        _relative(path, root) for path in changed
++        if isinstance(path, str) and _is_code(path, root)
++    })
++    if not changed_code:
++        return
++
++    last_pass = -1
++    last_command = "none"
++    edit_positions: dict[str, int] = {}
++    for index, fact in enumerate(facts):
++        if fact.get("kind") == "check" and fact.get("passing") is True:
++            last_pass = index
++            last_command = str(fact.get("command") or "none")
++        elif fact.get("kind") == "edit" and isinstance(fact.get("path"), str):
++            edit_positions[_relative(fact["path"], root)] = index
++
++    known_stale = [path for path in changed_code if edit_positions.get(path, -1) > last_pass]
++    unknown = [path for path in changed_code if path not in edit_positions]
++    if unknown and last_pass >= 0:
++        shown = ", ".join(unknown[:5])
++        suffix = f" and {len(unknown) - 5} more" if len(unknown) > 5 else ""
++        _warn(f"unknown edit order for {shown}{suffix}; a passing check exists")
++    stale = known_stale + (unknown if last_pass < 0 else [])
++    stale = list(dict.fromkeys(stale))
++    if not stale:
++        return
++
++    shown = ", ".join(stale[:5])
++    suffix = f" and {len(stale) - 5} more" if len(stale) > 5 else ""
++    command = last_command.replace("\n", " ")
++    if len(command) > 300:
++        command = command[:297] + "..."
++    reason = (
++        f"Code changed after the last passing check: {shown}{suffix}. "
++        f"Last passing check: {command}. Re-run the checks that cover those files, "
++        "then print the COMPLETE final report again, because the harness keeps only "
++        "the last message."
++    )
++    encoded = json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
++    if len(encoded.encode()) > 1500:
++        suffix_text = "... Re-run checks, then print the COMPLETE final report again."
++        low, high = 0, len(reason)
++        while low < high:
++            midpoint = (low + high + 1) // 2
++            candidate = reason[:midpoint] + suffix_text
++            candidate_encoded = json.dumps(
++                {"decision": "block", "reason": candidate}, ensure_ascii=False
++            )
++            if len(candidate_encoded.encode()) <= 1500:
++                low = midpoint
++            else:
++                high = midpoint - 1
++        encoded = json.dumps(
++            {"decision": "block", "reason": reason[:low] + suffix_text},
++            ensure_ascii=False,
++        )
++    print(encoded)
++
++
++def main() -> int:
++    try:
++        if len(sys.argv) != 2 or sys.argv[1] not in {"record", "gate"}:
++            _warn("usage: lane-done-gate.py record|gate")
++            return 0
++        raw = sys.stdin.read()
++        payload = json.loads(raw)
++        if not isinstance(payload, dict):
++            raise ValueError("payload is not an object")
++        if sys.argv[1] == "record":
++            record(payload)
++        else:
++            gate(payload)
++    except Exception as exc:
++        _warn(f"{type(exc).__name__}: {exc}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/harness-ports/bin/lane-profile.sh b/harness-ports/bin/lane-profile.sh
+index 145d8c40..f3219814 100755
+--- a/harness-ports/bin/lane-profile.sh
++++ b/harness-ports/bin/lane-profile.sh
+@@ -29,18 +29,21 @@ verify_lane() {
+   [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
+   [ -f "$SOURCE/.env" ] || fail "source env missing"
+ 
+-  verdict="$(python3 - "$target/config.yaml" "$lane" <<'PY'
++  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY'
++import copy
+ import sys
+ import yaml
+ 
+-path, lane = sys.argv[1:]
++path, lane, source_path, root = sys.argv[1:]
+ try:
+     with open(path, encoding="utf-8") as stream:
+         config = yaml.safe_load(stream)
++    with open(source_path, encoding="utf-8") as stream:
++        source = yaml.safe_load(stream)
+ except Exception:
+     print("config unreadable")
+     raise SystemExit(3)
+-if not isinstance(config, dict):
++if not isinstance(config, dict) or not isinstance(source, dict):
+     print("config unreadable")
+     raise SystemExit(3)
+ if "fallback_providers" in config:
+@@ -52,6 +55,23 @@ got = headers.get("x-omniroute-session-id") if isinstance(headers, dict) else No
+ if got != lane:
+     print("header missing or wrong: " + ("<missing>" if got is None else str(got)))
+     raise SystemExit(2)
++
++expected = copy.deepcopy(source)
++expected.pop("fallback_providers", None)
++expected.setdefault("model", {}).setdefault("default_headers", {})["x-omniroute-session-id"] = lane
++helper = f"{root}/harness-ports/bin/lane-done-gate.py"
++record = {
++    "matcher": "terminal|patch|write_file",
++    "command": f"python3 {helper} record",
++    "timeout": 20,
++}
++gate = {"command": f"python3 {helper} gate", "timeout": 20}
++expected_gate = copy.deepcopy(expected)
++expected_gate.setdefault("hooks", {}).setdefault("post_tool_call", []).append(record)
++expected_gate["hooks"]["pre_verify"] = [gate]
++if config not in (expected, expected_gate):
++    print("unexpected semantic config delta")
++    raise SystemExit(3)
+ PY
+ )"; rc=$?
+   case "$rc" in
+@@ -91,8 +111,9 @@ create_lane() {
+   done
+ 
+   # Preserve every untouched byte in config.yaml. Parse before and after, and refuse
+-  # unless the semantic delta is exactly chain removal plus this lane's request header.
+-  python3 - "$target/config.yaml" "$lane" <<'PY' || fail "config rewrite failed"
++  # unless the semantic delta is exactly chain removal, this lane's request header,
++  # and, when enabled, the two lane done-gate hooks.
++  python3 - "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY' || fail "config rewrite failed"
+ import copy
+ import os
+ from pathlib import Path
+@@ -103,6 +124,8 @@ import yaml
+ 
+ path = Path(sys.argv[1])
+ lane = sys.argv[2]
++gate_enabled = sys.argv[3] == "1"
++root = Path(sys.argv[4])
+ text = path.read_text(encoding="utf-8")
+ before = yaml.safe_load(text)
+ if not isinstance(before, dict) or not isinstance(before.get("model"), dict):
+@@ -116,6 +139,25 @@ if headers is None:
+ if not isinstance(headers, dict):
+     raise SystemExit("model.default_headers must be a mapping")
+ headers["x-omniroute-session-id"] = lane
++if gate_enabled:
++    helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
++    hooks = expected.setdefault("hooks", {})
++    if not isinstance(hooks, dict):
++        raise SystemExit("hooks must be a mapping")
++    post = hooks.setdefault("post_tool_call", [])
++    if not isinstance(post, list):
++        raise SystemExit("hooks.post_tool_call must be a list")
++    if "pre_verify" in hooks:
++        raise SystemExit("source profile already has hooks.pre_verify")
++    post.append({
++        "matcher": "terminal|patch|write_file",
++        "command": f"python3 {helper} record",
++        "timeout": 20,
++    })
++    hooks["pre_verify"] = [{
++        "command": f"python3 {helper} gate",
++        "timeout": 20,
++    }]
+ 
+ lines = text.splitlines(keepends=True)
+ top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
+@@ -162,13 +204,60 @@ else:
+     else:
+         lines[existing] = header_line
+ 
++if gate_enabled:
++    helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
++    # The source profile has no pre_verify today. Appending at EOF preserves all
++    # existing bytes and puts the recorder after existing post_tool_call entries.
++    hook_block = yaml.safe_dump(
++        {
++            "hooks": {
++                "post_tool_call": [{
++                    "matcher": "terminal|patch|write_file",
++                    "command": f"python3 {helper} record",
++                    "timeout": 20,
++                }],
++                "pre_verify": [{
++                    "command": f"python3 {helper} gate",
++                    "timeout": 20,
++                }],
++            }
++        },
++        sort_keys=False,
++        allow_unicode=True,
++    )
++    current = yaml.safe_load("".join(lines))
++    current_hooks = current.get("hooks") if isinstance(current, dict) else None
++    if current_hooks is None:
++        lines.append(hook_block)
++    else:
++        # Preserve the existing hooks mapping through a targeted block rewrite;
++        # the semantic equality guard below rejects any collateral change.
++        hook_span = top_block("hooks")
++        if hook_span is None or not isinstance(current_hooks, dict):
++            raise SystemExit("hooks block unreadable")
++        current_hooks.setdefault("post_tool_call", []).append({
++            "matcher": "terminal|patch|write_file",
++            "command": f"python3 {helper} record",
++            "timeout": 20,
++        })
++        current_hooks["pre_verify"] = [{
++            "command": f"python3 {helper} gate",
++            "timeout": 20,
++        }]
++        replacement = yaml.safe_dump(
++            {"hooks": current_hooks}, sort_keys=False, allow_unicode=True
++        )
++        lines[hook_span[0]:hook_span[1]] = [replacement]
++
+ updated = "".join(lines)
+ after = yaml.safe_load(updated)
+ if after != expected:
+     raise SystemExit("unexpected semantic config delta")
+-if set(before) - set(after) != ({"fallback_providers"} if "fallback_providers" in before else set()):
++removed = {"fallback_providers"} if "fallback_providers" in before else set()
++added = {"hooks"} if gate_enabled and "hooks" not in before else set()
++if set(before) - set(after) != removed:
+     raise SystemExit("unexpected removed top-level key")
+-if set(after) - set(before):
++if set(after) - set(before) != added:
+     raise SystemExit("unexpected added top-level key")
+ 
+ mode = path.stat().st_mode
+diff --git a/harness-ports/tests/run-all.sh b/harness-ports/tests/run-all.sh
+index 6c45009c..5af4f54f 100755
+--- a/harness-ports/tests/run-all.sh
++++ b/harness-ports/tests/run-all.sh
+@@ -10,7 +10,7 @@ cd "$ROOT" || exit 1
+ 
+ fail=0
+ for t in test_codex_hook_adapter.py test_hermes_hook_adapter.py \
+-         test_hermes_spool.py test_bridge_token_handling.py test_pc_bridge_exec.py \
++         test_hermes_spool.py test_lane_done_gate.py test_bridge_token_handling.py test_pc_bridge_exec.py \
+          test_hermes_session_export.py test_omniroute_local_builder.py; do
+   printf '%-34s ' "$t"
+   out="$(python3 "$HERE/$t" 2>&1)"; rc=$?
+diff --git a/harness-ports/tests/test_lane_done_gate.py b/harness-ports/tests/test_lane_done_gate.py
+new file mode 100644
+index 00000000..58b72468
+--- /dev/null
++++ b/harness-ports/tests/test_lane_done_gate.py
+@@ -0,0 +1,404 @@
++#!/usr/bin/env python3
++"""Deterministic contract tests for the Hermes lane done gate."""
++from __future__ import annotations
++
++import hashlib
++import importlib.util
++import json
++import os
++import re
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[2]
++GATE = ROOT / "harness-ports" / "bin" / "lane-done-gate.py"
++_spec = importlib.util.spec_from_file_location("lane_done_gate", GATE)
++assert _spec is not None and _spec.loader is not None
++_mod = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(_mod)
++
++PASS = 0
++FAIL = 0
++
++
++def check(label: str, condition: bool, why: str) -> None:
++    global PASS, FAIL
++    if condition:
++        PASS += 1
++    else:
++        FAIL += 1
++    print(f"[{'PASS' if condition else 'FAIL'}] {label}\n         because: {why}")
++
++
++def run(mode: str, payload, *, raw: bool = False):
++    data = payload if raw else json.dumps(payload)
++    return subprocess.run(
++        [sys.executable, str(GATE), mode],
++        input=data,
++        capture_output=True,
++        text=True,
++        cwd=ROOT,
++        timeout=30,
++    )
++
++
++def ledger(session: str) -> Path:
++    tag = hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
++    sid = "".join(c for c in session if c.isalnum() or c in "-_")[:64] or "default"
++    return Path(tempfile.gettempdir()) / f"lane-done-gate-{tag}-{sid}.jsonl"
++
++
++def clear(*sessions: str) -> None:
++    for session in sessions:
++        ledger(session).unlink(missing_ok=True)
++
++
++def edit(session: str, path: str, tool: str = "write_file", tool_input=None):
++    args = tool_input if tool_input is not None else {"path": path, "content": "x"}
++    return run("record", {
++        "hook_event_name": "post_tool_call", "tool_name": tool,
++        "tool_input": args, "session_id": session, "cwd": str(ROOT), "extra": {},
++    })
++
++
++def terminal(session: str, command: str, exit_code=0, *, result_marker=True):
++    result = {"output": "", "error": None}
++    if result_marker:
++        result["exit_code"] = exit_code
++    return run("record", {
++        "hook_event_name": "post_tool_call", "tool_name": "terminal",
++        "tool_input": {"command": command}, "session_id": session, "cwd": str(ROOT),
++        "extra": {"result": json.dumps(result), "status": "ok", "tool_call_id": "fake"},
++    })
++
++
++def gate(session: str, paths):
++    return run("gate", {
++        "hook_event_name": "pre_verify", "tool_name": None, "tool_input": None,
++        "session_id": session, "cwd": str(ROOT),
++        "extra": {"changed_paths": paths, "attempt": 0, "final_response": "SECRET REPORT", "coding": True},
++    })
++
++
++def one_stderr_line(proc) -> bool:
++    return proc.stderr.count("\n") == 1 and bool(proc.stderr.strip())
++
++
++def fact(session: str):
++    return json.loads(ledger(session).read_text().splitlines()[-1])
++
++
++def test_order_and_gate() -> None:
++    clear("order-a", "order-b", "noncheck")
++    edit("order-a", "src/covered.py")
++    terminal("order-a", "pytest -q tests/test_x.py", 0)
++    result = gate("order-a", ["src/covered.py"])
++    check("edit then passing check leaves the gate silent",
++          result.returncode == 0 and result.stdout == "" and result.stderr == "",
++          f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
++
++    terminal("order-b", "bash harness-ports/tests/test_pc_lane.sh", 0)
++    edit("order-b", "harness-ports/bin/changed.sh")
++    result = gate("order-b", ["harness-ports/bin/changed.sh"])
++    data = json.loads(result.stdout)
++    check("passing check then edit nudges with path and last check",
++          data.get("decision") == "block"
++          and "harness-ports/bin/changed.sh" in data.get("reason", "")
++          and "bash harness-ports/tests/test_pc_lane.sh" in data.get("reason", "")
++          and "COMPLETE final report" in data.get("reason", "")
++          and "SECRET REPORT" not in result.stdout
++          and len(result.stdout.encode()) <= 1500,
++          f"stdout={result.stdout.strip()!r}")
++
++    terminal("noncheck", "echo ok", 0)
++    terminal("noncheck", "pytest -q | tail -1", 0)
++    edit("noncheck", "src/noncheck.py")
++    result = gate("noncheck", ["src/noncheck.py"])
++    check("zero-exit non-checks do not silence the gate",
++          json.loads(result.stdout).get("decision") == "block"
++          and fact("noncheck")["kind"] == "edit",
++          "echo and a pipe without pipefail both preceded the edit; gate blocked")
++
++
++def test_exit_codes_and_bad_result() -> None:
++    cases = [(1, True, "exit 1"), (0, False, "missing"), ("0", True, "string"), (True, True, "bool")]
++    outcomes = []
++    for index, (value, present, label) in enumerate(cases):
++        session = f"exit-{index}"
++        clear(session)
++        proc = terminal(session, "pytest -q tests/test_x.py", value, result_marker=present)
++        outcomes.append((label, fact(session), proc))
++    check("nonzero, missing, string and bool exit codes are never passing",
++          all(row[1]["passing"] is False for row in outcomes)
++          and outcomes[0][1]["exit_code"] == 1
++          and all(row[1]["exit_code"] is None for row in outcomes[1:]),
++          ", ".join(f"{label}:{item['reason']}" for label, item, _ in outcomes))
++
++    clear("bad-json", "result-missing")
++    proc = run("record", {
++        "hook_event_name": "post_tool_call", "tool_name": "terminal",
++        "tool_input": {"command": "pytest -q"}, "session_id": "bad-json",
++        "cwd": str(ROOT), "extra": {"result": "not json"},
++    })
++    check("unparseable extra.result records not-passing and one stderr line",
++          proc.returncode == 0 and proc.stdout == "" and one_stderr_line(proc)
++          and fact("bad-json")["passing"] is False
++          and "not JSON" in fact("bad-json")["reason"],
++          f"rc={proc.returncode} stderr={proc.stderr.strip()!r} fact={fact('bad-json')}")
++
++    missing = run("record", {
++        "hook_event_name": "post_tool_call", "tool_name": "terminal",
++        "tool_input": {"command": "pytest -q"}, "session_id": "result-missing",
++        "cwd": str(ROOT), "extra": {},
++    })
++    check("missing extra.result records not-passing and one stderr line",
++          missing.returncode == 0 and missing.stdout == "" and one_stderr_line(missing)
++          and fact("result-missing")["passing"] is False,
++          f"stderr={missing.stderr.strip()!r} fact={fact('result-missing')}")
++
++
++def test_code_paths_and_patch() -> None:
++    clear("paths-md", "paths-text", "paths-transcript", "paths-shebang", "v4a")
++    terminal("paths-md", "pytest -q", 0)
++    edit("paths-md", "notes/report.md")
++    result = gate("paths-md", ["notes/report.md"])
++    check("Markdown edits never trigger the gate", result.stdout == "", f"stdout={result.stdout!r}")
++
++    edit("paths-text", "notes/report.txt")
++    edit("paths-transcript", "transcripts/tool.py")
++    text_result = gate("paths-text", ["notes/report.txt"])
++    transcript_result = gate("paths-transcript", ["transcripts/tool.py"])
++    check("text and transcript edits never trigger the gate",
++          text_result.stdout == "" and transcript_result.stdout == "",
++          f"text={text_result.stdout!r} transcript={transcript_result.stdout!r}")
++
++    with tempfile.TemporaryDirectory(prefix="done-gate-code-", dir=ROOT.parent) as td:
++        script = Path(td) / "runner"
++        script.write_bytes(b"#!/bin/sh\nexit 0\n")
++        rel = os.path.relpath(script, ROOT)
++        edit("paths-shebang", rel)
++        result = gate("paths-shebang", [rel])
++        check("an extensionless shebang file counts as code",
++              json.loads(result.stdout).get("decision") == "block",
++              f"path={rel} stdout={result.stdout.strip()!r}")
++
++    patch_text = """*** Begin Patch
++*** Add File: src/a.py
+++x
++*** Update File: scripts/b.sh
++@@
++-old
+++new
++*** Delete File: src/c.ts
++*** Move to: src/d.ts
++*** Update File: src/a.py
++*** End Patch
++"""
++    result = edit("v4a", "unused", "patch", {"mode": "patch", "patch": patch_text})
++    rows = [json.loads(line) for line in ledger("v4a").read_text().splitlines()]
++    paths = [row.get("path") for row in rows if row.get("kind") == "edit"]
++    check("V4A multi-file patch records every named path once",
++          result.stdout == "" and paths
++          == ["src/a.py", "scripts/b.sh", "src/c.ts", "src/d.ts"],
++          f"paths={paths}")
++
++
++def test_sessions_location_and_malformed() -> None:
++    clear("session-a", "session-b")
++    edit("session-a", "src/a.py")
++    edit("session-b", "src/b.py")
++    a, b = ledger("session-a"), ledger("session-b")
++    a_rows = [json.loads(line) for line in a.read_text().splitlines()]
++    b_rows = [json.loads(line) for line in b.read_text().splitlines()]
++    a_paths = [row.get("path") for row in a_rows]
++    b_paths = [row.get("path") for row in b_rows]
++    foreign_cwd = run("record", {
++        "hook_event_name": "post_tool_call", "tool_name": "write_file",
++        "tool_input": {"path": "src/c.py", "content": "x"},
++        "session_id": "session-a", "cwd": str(ROOT.parent), "extra": {},
++    })
++    check("sessions use separate ledgers outside the repository",
++          a != b and a.is_file() and b.is_file()
++          and a_paths == ["src/a.py"]
++          and b_paths == ["src/b.py"]
++          and foreign_cwd.returncode == 0
++          and not a.resolve().is_relative_to(ROOT.resolve())
++          and not b.resolve().is_relative_to(ROOT.resolve()),
++          f"a={a} b={b}")
++
++    result = run("record", "{bad", raw=True)
++    check("malformed stdin is fail-soft with empty stdout and one stderr line",
++          result.returncode == 0 and result.stdout == "" and one_stderr_line(result),
++          f"rc={result.returncode} stderr={result.stderr.strip()!r}")
++
++
++def test_terminal_only_edit_rule() -> None:
++    clear("unknown-none", "unknown-pass")
++    result = gate("unknown-none", ["src/terminal-only.py"])
++    check("terminal-only code edit nudges when no passing check exists",
++          json.loads(result.stdout).get("decision") == "block"
++          and "src/terminal-only.py" in result.stdout,
++          f"stdout={result.stdout.strip()!r}")
++
++    terminal("unknown-pass", "pytest -q", 0)
++    result = gate("unknown-pass", ["src/terminal-only.py"])
++    check("terminal-only code edit is reported but does not nudge after a passing check",
++          result.stdout == "" and one_stderr_line(result)
++          and "unknown edit order" in result.stderr,
++          f"stdout={result.stdout!r} stderr={result.stderr.strip()!r}")
++
++
++def test_nudge_path_limit() -> None:
++    session = "path-limit"
++    clear(session)
++    paths = [f"src/file-{index}.py" for index in range(8)]
++    for path in paths:
++        edit(session, path)
++    result = gate(session, paths)
++    data = json.loads(result.stdout)
++    reason = data["reason"]
++    check("nudge names at most five paths and summarizes the remainder",
++          data.get("decision") == "block"
++          and all(path in reason for path in paths[:5])
++          and all(path not in reason for path in paths[5:])
++          and "and 3 more" in reason
++          and len(result.stdout.encode()) <= 1500,
++          f"bytes={len(result.stdout.encode())} reason={reason!r}")
++
++
++DIRECT_ACCEPTED = [
++    "pytest -q tests/test_x.py",
++    "python -m pytest -q tests/test_x.py",
++    "python3 -m pytest -n 8 -q tests/test_x.py",
++    "/opt/venv/bin/python -m pytest -q tests/test_x.py",
++    "timeout 180 python -m pytest -q tests/test_x.py",
++    "S0_01_VENUE=pc python -m pytest -q tests/test_x.py",
++    "bash harness-ports/tests/test_pc_lane.sh",
++    "python3 harness-ports/tests/test_hermes_spool.py",
++    "bash scripts/lane_gate.sh -r abc -f x -t y",
++    "bash scripts/test_summary.sh tests/test_x.py",
++    "cargo test",
++    "ruff check .",
++]
++WRAPPED_ACCEPTED = [
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out.log; rc=${PIPESTATUS[0]}; exit \"$rc\"",
++    "set -o pipefail; python3 harness-ports/tests/test_hermes_spool.py | tee out.log; rc=${PIPESTATUS[0]}; printf 'RC=%s\\n' \"$rc\"; exit \"$rc\"",
++    "set -o pipefail; bash scripts/lane_gate.sh -r abc -f x -t y | tee out.log; rc=${PIPESTATUS[0]}; echo rc=$rc; exit $rc",
++    "set -o pipefail; bash scripts/test_summary.sh tests/test_x.py | tee out.log; rc=${PIPESTATUS[0]}; exit $rc",
++]
++REJECTED = [
++    "bash -n harness-ports/bin/pc-lane.sh",
++    "python -m pyflakes scripts/x.py",
++    "echo ok",
++    "pytest -q | tail -1",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[1]}; exit \"$rc\"",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; exit 0",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; true; exit \"$rc\"",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; exit \"$rc\" || true",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; exit \"$rc\" &",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; exit \"$rc\"; echo done",
++    "printf x; bash harness-ports/tests/test_pc_lane.sh",
++    "bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; exit \"$rc\"",
++    "set -o pipefail; bash harness-ports/tests/not_a_test | tee out; rc=${PIPESTATUS[0]}; exit \"$rc\"",
++    "set -o pipefail; bash harness-ports/tests/test_pc_lane.sh | tee out; rc=${PIPESTATUS[0]}; printf x; exit 0",
++    "bash harness-ports/tests/test_pc_lane.sh && true",
++    "printf x; bash harness-ports/tests/test_pc_lane.sh",
++]
++
++
++def _grade_command(command: str, stub_exit: int, scratch: Path) -> int:
++    replacements = [
++        r"/opt/venv/bin/python -m pytest -q tests/test_x\.py",
++        r"timeout 180 python -m pytest -q tests/test_x\.py",
++        r"S0_01_VENUE=pc python -m pytest -q tests/test_x\.py",
++        r"python3 -m pytest -n 8 -q tests/test_x\.py",
++        r"python -m pytest -q tests/test_x\.py",
++        r"pytest -q tests/test_x\.py",
++        r"python3 harness-ports/tests/test_hermes_spool\.py",
++        r"bash harness-ports/tests/test_pc_lane\.sh",
++        r"bash scripts/lane_gate\.sh -r abc -f x -t y",
++        r"bash scripts/test_summary\.sh tests/test_x\.py",
++        r"cargo test",
++        r"ruff check \." ,
++    ]
++    rendered = command
++    for pattern in replacements:
++        rendered, count = re.subn(pattern, f"./check-stub {stub_exit}", rendered, count=1)
++        if count:
++            break
++    else:
++        raise AssertionError(f"accepted shape had no grade replacement: {command}")
++    result = subprocess.run(["bash", "-c", rendered], cwd=scratch, capture_output=True, text=True)
++    return result.returncode
++
++
++def test_classifier_and_bash_grade() -> None:
++    decisions = [(cmd, *_mod.counts_as_check(cmd)) for cmd in DIRECT_ACCEPTED + WRAPPED_ACCEPTED + REJECTED]
++    accepted_ok = all(counts for _, counts, _ in decisions[:len(DIRECT_ACCEPTED) + len(WRAPPED_ACCEPTED)])
++    rejected_ok = all(not counts for _, counts, _ in decisions[len(DIRECT_ACCEPTED) + len(WRAPPED_ACCEPTED):])
++    check("closed classifier accepts all intended shapes and rejects 16 near misses",
++          accepted_ok and rejected_ok,
++          f"intended_accepted={len(DIRECT_ACCEPTED) + len(WRAPPED_ACCEPTED)} "
++          f"near_misses_rejected={sum(1 for _, value, _ in decisions[len(DIRECT_ACCEPTED) + len(WRAPPED_ACCEPTED):] if not value)}")
++
++    with tempfile.TemporaryDirectory(prefix="done-gate-grade-") as td:
++        scratch = Path(td)
++        stub = scratch / "check-stub"
++        stub.write_text("#!/usr/bin/env bash\nexit \"$1\"\n")
++        stub.chmod(0o755)
++        grades = [(cmd, _grade_command(cmd, 1, scratch), _grade_command(cmd, 0, scratch))
++                  for cmd in DIRECT_ACCEPTED + WRAPPED_ACCEPTED]
++    check("every accepted shape propagates a failing and passing stub through bash",
++          all(fail_rc != 0 and pass_rc == 0 for _, fail_rc, pass_rc in grades),
++          f"graded={len(grades)} failures={[(c, f, p) for c, f, p in grades if f == 0 or p != 0]}")
++    check("bash -n is rejected because syntax is not behavioral verification",
++          _mod.counts_as_check("bash -n harness-ports/bin/pc-lane.sh")[0] is False,
++          "classifier=False; syntax-only commands do not cover changed behavior")
++
++
++def test_corpus_reclassification() -> None:
++    # The full 109-command corpus is a coordinator read-only measurement. These
++    # supplied representative rows cover each distinct command class in it.
++    corpus = [
++        "bash harness-ports/tests/test_pc_lane.sh",
++        "bash harness-ports/tests/test_pc_lane.sh > out 2>&1; rc=$?; tail -40 out; echo rc=$rc",
++        WRAPPED_ACCEPTED[0],
++        "set -o pipefail; bash harness-ports/tests/run-all.sh | tee out.log; rc=${PIPESTATUS[0]}; printf 'RUN_ALL_RC=%s\\n' \"$rc\"; exit \"$rc\"",
++        WRAPPED_ACCEPTED[2],
++        "bash -n harness-ports/bin/pc-lane.sh scripts/pc_lane.sh && echo syntax-ok",
++        "python3 harness-ports/tests/test_hermes_session_export.py && python3 harness-ports/tests/test_qwen_matrix.py",
++        "bash scripts/test_summary.sh tests/test_x.py",
++        "timeout 180 /opt/venv/bin/python -m pytest -q tests/test_x.py",
++        "mkdir -p bt && S0_01_VENUE=pc python -m pytest -q tests/test_x.py",
++        "python -m pyflakes scripts/x.py; python3 scripts/ap_screen.py scripts/x.py",
++        "git status --short",
++    ]
++    after = [cmd for cmd in corpus if _mod.counts_as_check(cmd)[0]]
++    check("supplied corpus classes reclassify from C1's 0/109 to the closed project set",
++          len(after) == 7
++          and corpus[1] not in after and corpus[5] not in after and corpus[10] not in after,
++          f"representative_before=0/12 representative_after={len(after)}/12; full baseline supplied=0/109")
++
++
++def main() -> int:
++    try:
++        test_order_and_gate()
++        test_exit_codes_and_bad_result()
++        test_code_paths_and_patch()
++        test_sessions_location_and_malformed()
++        test_terminal_only_edit_rule()
++        test_nudge_path_limit()
++        test_classifier_and_bash_grade()
++        test_corpus_reclassification()
++    finally:
++        tag = hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]
++        for path in Path(tempfile.gettempdir()).glob(f"lane-done-gate-{tag}-*"):
++            path.unlink(missing_ok=True)
++    print(f"\nlane done gate: {PASS} passed, {FAIL} failed")
++    return 0 if FAIL == 0 else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/harness-ports/tests/test_lane_profile.sh b/harness-ports/tests/test_lane_profile.sh
+index 02bc9731..dd60fbd7 100755
+--- a/harness-ports/tests/test_lane_profile.sh
++++ b/harness-ports/tests/test_lane_profile.sh
+@@ -4,7 +4,7 @@
+ set -uo pipefail
+ 
+ # Hermetic: a caller's runtime/test overrides cannot redirect this suite to real profiles.
+-unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS 2>/dev/null || true
++unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS LANE_DONE_GATE 2>/dev/null || true
+ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ HELPER="$HERE/../bin/lane-profile.sh"
+ TMP="$(mktemp -d)" || exit 1
+@@ -64,6 +64,9 @@ check() {
+ run_verify() {
+   VERIFY_OUT="$(bash "$HELPER" verify "$1" 2>&1)"; VERIFY_RC=$?
+ }
++reset_lane() {
++  rm -rf "$PROFILES/aflane$1"
++}
+ 
+ # Name normalization is observed through create output, not a duplicate test implementation.
+ NAME1="$(bash "$HELPER" create 'pc-t92')"; RC1=$?
+@@ -149,4 +152,90 @@ REMOVE_OUT="$(bash "$HELPER" remove "$NAME1" 2>&1)"; REMOVE_RC=$?
+ check "remove confirms and deletes an aflane profile" $? \
+   "rc=$REMOVE_RC target_exists=$([ -e "$TARGET" ] && echo yes || echo no)"
+ 
++# The disabled switch must preserve today's exact output bytes.
++reset_lane gateoff
++LANE_DONE_GATE=0 bash "$HELPER" create gateoff >/dev/null; GATE_OFF_RC=$?
++GATE_OFF="$PROFILES/aflanegateoff/config.yaml"
++python3 - "$TMP/source-config.yaml" "$GATE_OFF" gateoff <<'PY'
++from pathlib import Path
++import re, sys
++source, target, lane = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
++text = source.read_text()
++lines = text.splitlines(keepends=True)
++top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
++def block(key):
++    start = next((i for i, line in enumerate(lines) if line.startswith(key + ":")), None)
++    if start is None: return None
++    end = start + 1
++    while end < len(lines) and not top.match(lines[end]): end += 1
++    return start, end
++span = block("fallback_providers")
++if span: del lines[span[0]:span[1]]
++model = block("model"); assert model
++_, end = model
++lines[end:end] = ["  default_headers:\n", f"    x-omniroute-session-id: {lane}\n"]
++assert target.read_bytes() == "".join(lines).encode()
++PY
++GATE_OFF_BYTES_RC=$?
++[ "$GATE_OFF_RC" -eq 0 ] && [ "$GATE_OFF_BYTES_RC" -eq 0 ]
++check "switch OFF leaves the clone byte-identical to today's rewrite" $? \
++  "create_rc=$GATE_OFF_RC byte_compare_rc=$GATE_OFF_BYTES_RC"
++
++# Enabled creation adds exactly one recorder and one pre_verify directive.
++reset_lane gateon
++LANE_DONE_GATE=1 bash "$HELPER" create gateon >/dev/null; GATE_ON_RC=$?
++GATE_ON="$PROFILES/aflanegateon/config.yaml"
++python3 - "$TMP/source-config.yaml" "$GATE_ON" "$(cd "$HERE/../../.." && pwd)" gateon <<'PY'
++import copy, sys, yaml
++source, target, root, lane = sys.argv[1:]
++with open(source, encoding="utf-8") as f: before = yaml.safe_load(f)
++with open(target, encoding="utf-8") as f: after = yaml.safe_load(f)
++expected = copy.deepcopy(before)
++expected.pop("fallback_providers", None)
++expected["model"].setdefault("default_headers", {})["x-omniroute-session-id"] = lane
++helper = f"{root}/harness-ports/bin/lane-done-gate.py"
++expected.setdefault("hooks", {}).setdefault("post_tool_call", []).append({
++    "matcher": "terminal|patch|write_file", "command": f"python3 {helper} record", "timeout": 20,
++})
++expected["hooks"]["pre_verify"] = [{"command": f"python3 {helper} gate", "timeout": 20}]
++assert after == expected, (after, expected)
++PY
++GATE_ON_SEM_RC=$?
++# Verification accepts either the ordinary clone or exactly the two gate hooks,
++# independent of the creation switch.
++LANE_DONE_GATE=0 run_verify gateon
++GATE_ON_VERIFY_OFF_RC=$VERIFY_RC; GATE_ON_VERIFY_OFF_OUT=$VERIFY_OUT
++LANE_DONE_GATE=1 run_verify gateon
++[ "$GATE_ON_RC" -eq 0 ] && [ "$GATE_ON_SEM_RC" -eq 0 ] \
++  && [ "$GATE_ON_VERIFY_OFF_RC" -eq 0 ] && [ -z "$GATE_ON_VERIFY_OFF_OUT" ] \
++  && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
++check "switch ON adds exactly the recorder and pre_verify entries and verify accepts them" $? \
++  "create_rc=$GATE_ON_RC semantic_rc=$GATE_ON_SEM_RC verify_off_rc=$GATE_ON_VERIFY_OFF_RC verify_on_rc=$VERIFY_RC"
++
++cp "$GATE_ON" "$TMP/gate-good.yaml"
++python3 - "$GATE_ON" <<'PY'
++import sys, yaml
++p = sys.argv[1]
++with open(p, encoding="utf-8") as f: data = yaml.safe_load(f)
++data["hooks"]["post_tool_call"].append({"command": "true", "timeout": 20})
++with open(p, "w", encoding="utf-8") as f: yaml.safe_dump(data, f, sort_keys=False)
++PY
++LANE_DONE_GATE=1 run_verify gateon
++[ "$VERIFY_RC" -eq 64 ] && [ "$VERIFY_OUT" = 'lane-profile: unexpected semantic config delta' ]
++check "verify refuses a third hook entry" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
++cp "$TMP/gate-good.yaml" "$GATE_ON"
++
++python3 - "$GATE_ON" <<'PY'
++import sys, yaml
++p = sys.argv[1]
++with open(p, encoding="utf-8") as f: data = yaml.safe_load(f)
++data["hooks"]["pre_verify"][0]["command"] = data["hooks"]["pre_verify"][0]["command"].replace(
++    "lane-done-gate.py gate", "lane-done-gate.py changed"
++)
++with open(p, "w", encoding="utf-8") as f: yaml.safe_dump(data, f, sort_keys=False)
++PY
++LANE_DONE_GATE=1 run_verify gateon
++[ "$VERIFY_RC" -eq 64 ] && [ "$VERIFY_OUT" = 'lane-profile: unexpected semantic config delta' ]
++check "verify refuses a changed done-gate command" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
++
+ echo; echo "lane profile: $pass passed, $fail failed"; [ "$fail" -eq 0 ]
+diff --git a/tasks/briefs/canny/C2-report.md b/tasks/briefs/canny/C2-report.md
+new file mode 100644
+index 00000000..dd6f28bd
+--- /dev/null
++++ b/tasks/briefs/canny/C2-report.md
+@@ -0,0 +1,149 @@
++C2 BUILD REPORT — REVIEW-PENDING
++
++STATUS
++
++REVIEW-PENDING: C2 is implemented and self-validated. This build lane cannot issue a gate verdict. Independent adversarial verification and a real Hermes-lane smoke run remain NOT done.
++
++NOT DONE / BLOCKERS
++
++- NOT live-tested through Hermes. The boundary forbids reading `~/.hermes/` or running Hermes. The coordinator must test the installed hook after landing.
++- NOT enabled by the dispatcher. Forwarding `LANE_DONE_GATE` from `scripts/pc_lane.sh` is explicitly outside C2.
++- Full `harness-ports/tests/run-all.sh` is red on an unrelated read-only suite: `test_qwen_matrix_sh.sh` reports `qwen-matrix-sh: 18 passed, 1 failed`, with `FileNotFoundError` for `SECOND_SIGINT/result.json`. It reproduced twice. C2 suites inside run-all remain green. Boundary rules prohibit fixing the qwen matrix files here.
++- The full raw 109-command corpus was not present in the lane tree and the boundary forbids reading its source profiles. The coordinator supplied the 0/109 baseline and representative command classes. The committed test reclassifies all 12 supplied classes, not 109 raw rows.
++
++PREMISE — VERIFIED 2026-09-23T19:11:58Z
++
++- PIN: HEAD and `origin/claude/soundbox-kit-migration-iz1jwf` were `4a381906c89f` at premise check.
++- `git log --format='%h %s' -2 4a38190` returned `4a381906 transcripts: scrubbed sandbox chat digests (2026-09-23)` and `4f56130a ledger plane 18:4xZ: T94 LANDED ...`.
++- Blob/line identities matched the brief: lane-profile `145d8c40abcb`/209; test_lane_profile `02bc97314c56`/152; run-all `6c45009c3486`/78; verify_command `daf605f480a0`/351; test_verify_command `6af9a516adf5`/490.
++- All three create targets were absent. The existing profile baseline was `lane profile: 9 passed, 0 failed`.
++- C1 had three `VERIFY` patterns. It accepted the six supplied pytest interpreter forms and the stock cargo/npm/make/ruff checks. It rejected all supplied project runner and pipefail-wrapper forms. This matched the brief.
++- The Hermes payload excerpts and 109-command corpus are coordinator read-only measurements. I did not read `~/.hermes/`. Fixtures use the supplied shapes.
++- `canny:39-50` (option 1 `Port the deterministic core as first-party code`, item 2 `done-gate predicate`): the selected stale-check predicate — "code changed since the last passing check".
++
++IMPLEMENTATION
++
++- `gate:24-44` (`CODE_SUFFIXES`, `PROJECT_PATTERNS`, `PATCH_PATH`, `RC_WRAPPER`): closed code-suffix list, project command patterns, V4A path matcher, and the exact pipefail/tee wrapper grammar.
++- `gate:54-58` (`ledger_file`): ledger names use the repository-root SHA-256 prefix plus sanitized session id under the OS temp directory.
++- `gate:85-97` (`counts_as_check`): passes C1's three pattern strings plus project patterns to `is_verify`; a separate narrow recognizer handles the rc wrapper.
++- `gate:110-179` (`_result_exit_code`, `record`): the recorder validates integer-not-bool exit codes, records not-passing reasons, expands V4A paths, keeps stdout empty, and reports one-line errors on stderr.
++- `gate:207-292` (`_is_code`, `gate`): the gate enforces the closed code-file rule, compares edit/check sequence order, handles unknown terminal-only ordering, names at most five paths, omits `final_response`, and bounds the JSON directive to 1,500 bytes.
++- `profile:25-85` (`verify_lane`): verify accepts either the ordinary semantic clone or exactly the two done-gate hooks and refuses all other semantic deltas.
++- `profile:89-277` (`create_lane`): create keeps switch-OFF bytes unchanged; switch ON appends the recorder after existing post-tool hooks and installs one pre_verify directive. Hook commands resolve from the helper's main repository root, not a lane tree.
++- `gatetest:93-382` (`test_order_and_gate`, `test_classifier_and_bash_grade`, `test_corpus_reclassification`): deterministic recorder, gate, classifier, bash-grade, corpus-class, location, ordering, truncation, malformed-input, and negative-control tests.
++- `profiletest:155-240` (`GATE_OFF`, `GATE_ON`): switch-OFF byte identity, exact switch-ON hooks, verify-with-either-form, third-entry rejection, and changed-command rejection.
++- `runall:12-13` (`test_lane_done_gate.py`): registers the new Python test.
++- `gate:46-58` (`_warn`, `ledger_file`) keeps observer diagnostics on stderr and per-session ledgers under the OS temp directory.
++- `gate:61-82` (`_classifier`, `_is_direct_check`) loads C1 unchanged and rejects status-hiding suffixes on project runners.
++- `gate:128-142` (`_edit_paths`) records replace-mode paths and deduplicates every V4A add/update/delete/move path.
++- `gate:182-204` (`_facts`, `_relative`) reads ordered facts and normalizes absolute or relative paths against the pinned repository root.
++- `gatetest:125-159` (`test_exit_codes_and_bad_result`) pins nonzero, missing, string, bool, malformed-JSON, and absent-result failure behavior.
++
++PROJECT CHECK LIST AND BASH GRADE
++
++Accepted direct shapes:
++
++1. C1 checks, including pytest in the supplied interpreter, timeout, and environment-prefix forms; cargo/npm/make and supported lint/build checks remain accepted.
++2. `bash harness-ports/tests/<name>.sh`.
++3. `python3 harness-ports/tests/test_<name>.py`.
++4. `bash scripts/lane_gate.sh ...`.
++5. `bash scripts/test_summary.sh ...`.
++6. The exact wrapper `set -o pipefail; <accepted check> | tee <file>; rc=${PIPESTATUS[0]}; [one printf/echo;] exit "$rc"`.
++
++Rejected shapes include `bash -n`, pyflakes-only commands, plain output commands, unguarded pipelines, `PIPESTATUS[1]`, fixed `exit 0`, extra `true`, `|| true`, backgrounding, trailing commands, missing pipefail, a non-test path, and a leading command before a project runner.
++
++`bash -n` is rejected because it proves parseability, not changed behavior. It cannot cover an implementation by itself.
++
++Bash grade: 16/16 accepted shapes exited nonzero with the failing stub and zero with the passing stub. Classifier negative control: 16/16 near misses rejected.
++
++Corpus classification:
++
++- Before: coordinator-supplied `0/109` under C1.
++- After, available data: `7/12` supplied representative command classes count. The counted classes are direct project shell/Python runners, exact rc wrappers, test_summary, and C1 pytest forms. The rejected classes are post-processed commands whose final status does not prove the check, `bash -n`, pyflakes/screen chains, and reads.
++- Exact full after-count for all 109 raw commands is NOT claimed because those raw commands are not in this lane's allowed inputs.
++
++RED / GREEN
++
++- First resumed run of `python3 harness-ports/tests/test_lane_done_gate.py`: `lane done gate: 14 passed, 2 failed`. It exposed one widened `&& true` shape and one representative-table expectation error.
++- First resumed run of `bash harness-ports/tests/test_lane_profile.sh`: `lane profile: 11 passed, 2 failed`. It exposed an incorrect repository-root calculation and a test mutation bug.
++- Final run 1: `lane done gate: 19 passed, 0 failed`.
++- Final run 2: `lane done gate: 19 passed, 0 failed`.
++- Final profile run 1: `lane profile: 13 passed, 0 failed`.
++- Final profile run 2: `lane profile: 13 passed, 0 failed`.
++
++MUTATION GRADE — 9/9 RED, SCRATCH ONLY
++
++| Mutant | Named killer | Result |
++|---|---|---|
++| Any passing check ignores order | `passing check then edit nudges with path and last check` | RED, rc 1 |
++| Passing ignores exit-code validity/value | `nonzero, missing, string and bool exit codes are never passing` | RED, rc 1 |
++| Bool accepted as integer exit code | `nonzero, missing, string and bool exit codes are never passing` | RED, rc 1 |
++| `.md` counted as code | `Markdown edits never trigger the gate` | RED, rc 1 |
++| Ledger keyed only by repository | `sessions use separate ledgers outside the repository` | RED, rc 1 |
++| Ledger written under repository | `sessions use separate ledgers outside the repository` | RED, rc 1 |
++| Hooks added with switch OFF | `switch OFF leaves the clone byte-identical to today's rewrite` | RED, rc 1 |
++| Semantic guard accepts extra/changed hook | `verify refuses a third hook entry`; `verify refuses a changed done-gate command` | RED, rc 1 |
++| Project pattern widened before bash grade | `closed classifier accepts all intended shapes and rejects 16 near misses` | RED, rc 1 |
++
++GATES
++
++- `python3 harness-ports/tests/test_lane_done_gate.py` twice: `lane done gate: 19 passed, 0 failed` both runs.
++- `bash harness-ports/tests/test_lane_profile.sh` twice: `lane profile: 13 passed, 0 failed` both runs. The brief's baseline was 9; four C2 checks were added.
++- C1 regression: `65 passed, 8 xfailed in 1.23s`.
++- `python -m pyflakes` on both Python files: rc 0.
++- `bash -n` on all changed shell files: rc 0.
++- `git diff --check`: rc 0.
++- Archive gate A: `RESULT: rev=4a381906c89f files=5 deleted=0 runs=1 tests=1b6f2517d707 identical=yes rc=0 summary="8 passed in 9.66s"`.
++- Archive gate B: `RESULT: rev=4a381906c89f files=5 deleted=0 runs=1 tests=1b6f2517d707 identical=yes rc=0 summary="8 passed in 10.04s"`.
++- `harness-ports/tests/run-all.sh` twice: C2 rows were green (`lane done gate: 19 passed, 0 failed`; `lane profile: 13 passed, 0 failed`), but the script ended `1 SUITE(S) FAILED` because the read-only qwen matrix suite was `18 passed, 1 failed` both times.
++
++FILE IDENTITY — 2026-09-23T20:50:30Z
++
++- `6ffe061625d22a47e99ddfbfa9f10a4fb612435b45d926790717f19e76230e25`  `harness-ports/bin/lane-done-gate.py`  314 lines.
++- `74456d3213a15aa65d83470e86291cc993d039206ba2868a8dea211c166c28a0`  `harness-ports/bin/lane-profile.sh`  298 lines.
++- `6fa6177d428f30cbc79b60a80005702cd52db1fd0dcd693764dca6087bcfe2fa`  `harness-ports/tests/test_lane_done_gate.py`  404 lines.
++- `35ed2bd01e16b281e3160027e57d46b6bc94bfa126f331cdda1bccb3636f2f77`  `harness-ports/tests/test_lane_profile.sh`  241 lines.
++- `a1637708edfc3d49ab99387f610587204c8f3b10115616107daad08e032ad1b9`  `harness-ports/tests/run-all.sh`  78 lines.
++- Report identity before this self-reference line: `fba1d58a9771b10e0f7c8ac4c3cc58574e00f53557b15117e4d323a269761d8f`, `tasks/briefs/canny/C2-report.md`, 148 lines.
++
++SCREENS / CODE INTELLIGENCE
++
++- Final lane context pack: `../scratch/c2-final-pack.md`.
++- Graft mapped the new Python symbols. Ripwire reported `counts_as_check` and the production `gate` as new symbols with zero incompatible callers; `verify_lane` and `create_lane` contracts are unchanged with zero incompatible callers.
++- GitNexus clone index is 839 commits stale and cannot map the shell symbols/new file. Final `detect-changes` returned `No changes detected.` because it examines the indexed main clone, not this detached lane. Risk remains UNKNOWN; this is not evidence of no blast radius.
++- AP screen: production helper has one AP-32 hash-prefix hit. This is the contract-required repository SHA-256 prefix, not weak credential hashing. Lane-profile's seven AF-AP-118 hits are the existing deliberate fallback-chain removal contract. Test screens are clean after narrowing temp-ledger cleanup to this repository hash.
++
++SELF-ATTACK
++
++1. Wrong command accepted as proof. Ruled down by a closed project runner grammar, 16 bash fail/pass grades, 16 near misses, and the widened-pattern mutant. Residual: the unavailable 109 raw rows need coordinator reclassification after landing.
++2. A late edit can be hidden by an earlier pass. Ruled out by ordered JSONL facts, the pass-then-edit test, unknown-order branches, and the order-ignoring mutant.
++3. A lane can edit its own gate or profile semantics can drift. The installed command resolves to the main clone, switch-OFF output is byte-identical, verify permits only the exact ordinary or exact gated semantic forms, and extra-entry/changed-command mutants die. Residual: dispatcher forwarding and a real Hermes launch are outside C2.
++
++DISCREPANCIES
++
++- The brief asks for a full 109-command before/after count, but only a coordinator summary and representative rows were supplied; exact raw after-count is unavailable under the no-`~/.hermes/` boundary.
++- The brief says the profile baseline is 9. The extended suite correctly reports 13 after adding four C2 checks.
++- `lane_gate.sh` cannot combine the Python script and shell script as test targets through `test_summary.sh`; the mixed attempt returned `no match in any of [<Dir tests>]`. The archive gate therefore ran the Python suite twice, while the shell suite ran directly twice.
++- Ripwire `edit-check` takes a symbol, not file paths. The initial file-form call failed; symbol-qualified reruns succeeded.
++- Full run-all is blocked by the unrelated qwen matrix failure described above.
++- `report_lint`: `report_lint: 16 refs — OK 16, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`; floor 12 satisfied.
++
++REASONING RECORD
++
++- Rejected alternative: count `bash -n` as a check. It is syntax-only and can yield a hollow green after semantic edits.
++- Rejected alternative: add broad regexes directly to C1. C2 reuses C1 unchanged and narrows project-specific forms around it.
++- Ordering rationale: append facts atomically; derive the last passing check and last path edit by sequence; nudge only known edits after the pass, or unknown edits when no pass exists.
++- Primary sources: current C1 implementation/tests, current lane-profile implementation/tests, the supplied Hermes runtime excerpts, and the Canny finding cited in the premise.
++- Disjoint hunks: deterministic hook helper; optional profile wiring/semantic guard; direct tests; run-all registration.
++
++HYGIENE
++
++- Worktree contains only the five boundary implementation/test paths plus this report. No commit, add, reset, checkout, stash, push, bridge call, Hermes call, profile read, credential read, or server action occurred.
++- Scratch mutants and archive gates are under this lane's `../scratch/` only.
++- `--accept-hooks` already exists in the lane launcher per the supplied premise, so no allowlist edit is needed.
++- Proposal only until the sandbox adversarial-verifier grades it.
++
++RETRO
++
++- Real defect found and fixed during self-validation: the first profile-hook command resolved two levels up to `harness-ports/`, not the repository root. Class: wrong-root path derivation. The exact semantic hook test caught it before report. Coordinator should run `/bug-echo` and decide whether this warrants an incident row.
++- Real defect found and fixed during self-validation: a project runner followed by `&& true` initially counted because C1 searches each `&&` segment. Class: accepted check whose final status can be forced green. The near-miss test and widened-shape mutant now pin rejection. Coordinator should run `/bug-echo` and register the reusable anti-hollow-green lesson if not already covered.
+diff --git a/transcripts/pc/pc-c2.md--4a38190.md b/transcripts/pc/pc-c2.md--4a38190.md
+new file mode 100644
+index 00000000..6e46fbf5
+--- /dev/null
++++ b/transcripts/pc/pc-c2.md--4a38190.md
+@@ -0,0 +1,1184 @@
++# Hermes lane session 20260923_203222_2648b3
++
++- model: agentfactory-build
++- started: 2026-09-23T19:32:23.849846+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-c2.md--4a38190/tree
++- messages: 102; tool calls: 51
++- tokens in/out/cache_read/reasoning: 351231/43396/10935615/13992
++
++## user @ 19:32:22
++
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-c2.md--4a38190/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasib
++
++## assistant @ 19:32:44 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:32:45 — 2431 chars (body not exported)
++
++## assistant @ 19:33:06 → tools: terminal, terminal, read_file, read_file
++
++
++
++## tool result (terminal) @ 19:33:06 — 742 chars (body not exported)
++
++## tool result (terminal) @ 19:33:10 — 3509 chars (body not exported)
++
++## tool result (read_file) @ 19:33:10 — 6149 chars (body not exported)
++
++## tool result (read_file) @ 19:33:10 — 6455 chars (body not exported)
++
++## assistant @ 19:33:39 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:33:40 — 42596 chars (body not exported)
++
++## tool result (terminal) @ 19:33:52 — 11840 chars (body not exported)
++
++## tool result (terminal) @ 19:33:59 — 3026 chars (body not exported)
++
++## tool result (terminal) @ 19:34:01 — 5739 chars (body not exported)
++
++## assistant @ 19:34:35 → tools: read_file, read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 19:34:35 — 12735 chars (body not exported)
++
++## tool result (read_file) @ 19:34:35 — 12415 chars (body not exported)
++
++## tool result (terminal) @ 19:34:41 — 3417 chars (body not exported)
++
++## tool result (terminal) @ 19:34:41 — 580 chars (body not exported)
++
++## tool result (terminal) @ 19:34:42 — 1096 chars (body not exported)
++
++## assistant @ 19:35:15 → tools: read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 19:35:15 — 7323 chars (body not exported)
++
++## tool result (terminal) @ 19:35:15 — 197 chars (body not exported)
++
++## tool result (terminal) @ 19:35:15 — 282 chars (body not exported)
++
++## tool result (terminal) @ 19:35:15 — 45 chars (body not exported)
++
++## assistant @ 19:39:32 → tools: terminal, search_files, terminal
++
++
++
++## tool result (terminal) @ 19:39:37 — 1368 chars (body not exported)
++
++## tool result (search_files) @ 19:39:38 — 1337 chars (body not exported)
++
++## tool result (terminal) @ 19:39:44 — 3548 chars (body not exported)
++
++## assistant @ 19:39:55 → tools: patch
++
++
++
++## tool result (patch) @ 19:39:58 — 1203 chars (body not exported)
++
++## assistant @ 19:40:27 → tools: patch
++
++
++
++## tool result (patch) @ 19:40:29 — 1168 chars (body not exported)
++
++## assistant @ 19:40:41 → tools: patch
++
++
++
++## tool result (patch) @ 19:40:44 — 1037 chars (body not exported)
++
++## assistant @ 19:40:57 → tools: patch
++
++
++
++## tool result (patch) @ 19:40:58 — 1096 chars (body not exported)
++
++## assistant @ 19:41:29 → tools: patch
++
++
++
++## tool result (patch) @ 19:41:33 — 644 chars (body not exported)
++
++## assistant @ 19:44:26 → tools: patch
++
++
++
++## tool result (patch) @ 19:44:28 — 1853 chars (body not exported)
++
++## assistant @ 19:45:07 → tools: patch
++
++
++
++## tool result (patch) @ 19:45:08 — 1312 chars (body not exported)
++
++## assistant @ 19:47:15 → tools: patch
++
++
++
++## tool result (patch) @ 19:47:16 — 1234 chars (body not exported)
++
++## assistant @ 19:49:05 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:49:09 — 3417 chars (body not exported)
++
++## tool result (terminal) @ 19:49:12 — 1937 chars (body not exported)
++
++## tool result (terminal) @ 19:49:13 — 45 chars (body not exported)
++
++## assistant @ 19:49:34 → tools: patch
++
++
++
++## tool result (patch) @ 19:49:35 — 906 chars (body not exported)
++
++## assistant @ 19:50:15 → tools: patch
++
++
++
++## tool result (patch) @ 19:50:17 — 1354 chars (body not exported)
++
++## assistant @ 19:50:38 → tools: patch
++
++
++
++## tool result (patch) @ 19:50:40 — 917 chars (body not exported)
++
++## assistant @ 19:51:03 → tools: patch
++
++
++
++## tool result (patch) @ 19:51:04 — 981 chars (body not exported)
++
++## assistant @ 19:52:01 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:52:06 — 3417 chars (body not exported)
++
++## tool result (terminal) @ 19:52:11 — 1891 chars (body not exported)
++
++## tool result (terminal) @ 19:52:11 — 45 chars (body not exported)
++
++## assistant @ 19:52:28 → tools: patch
++
++
++
++## tool result (patch) @ 19:52:29 — 1248 chars (body not exported)
++
++## assistant @ 19:53:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:53:14 — 131 chars (body not exported)
++
++## assistant @ 19:53:37 → tools: patch
++
++
++
++## tool result (patch) @ 19:53:39 — 1357 chars (body not exported)
++
++## assistant @ 19:54:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:54:09 — 3438 chars (body not exported)
++
++## assistant @ 19:54:20 → tools: patch
++
++
++
++## tool result (patch) @ 19:54:22 — 1317 chars (body not exported)
++
++## assistant @ 19:54:28 → tools: patch
++
++
++
++## tool result (patch) @ 19:54:30 — 981 chars (body not exported)
++
++## assistant @ 19:54:39 → tools: patch
++
++
++
++## tool result (patch) @ 19:54:39 — 517 chars (body not exported)
++
++## assistant @ 19:54:52 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:55:00 — 3438 chars (body not exported)
++
++## tool result (terminal) @ 19:55:05 — 1891 chars (body not exported)
++
++## tool result (terminal) @ 19:55:05 — 45 chars (body not exported)
++
++## assistant @ 19:55:19 → tools: patch
++
++
++
++## tool result (patch) @ 19:55:21 — 789 chars (body not exported)
++
++## assistant @ 19:55:38 → tools: patch
++
++
++
++## tool result (patch) @ 19:55:40 — 852 chars (body not exported)
++
++## assistant @ 19:55:57 → tools: patch
++
++
++
++## tool result (patch) @ 19:55:59 — 1194 chars (body not exported)
++
++## assistant @ 19:56:09 → tools: patch
++
++
++
++## tool result (patch) @ 19:56:11 — 894 chars (body not exported)
++
++## assistant @ 19:56:23 → tools: patch
++
++
++
++## tool result (patch) @ 19:56:24 — 976 chars (body not exported)
++
++## assistant @ 19:56:52 → tools: patch
++
++
++
++## tool result (patch) @ 19:56:54 — 1005 chars (body not exported)
++
++## assistant @ 19:57:50 → tools: patch
++
++
++
++## tool result (patch) @ 19:57:52 — 1602 chars (body not exported)
++
++## assistant @ 19:58:13 → tools: patch
++
++
++
++## tool result (patch) @ 19:58:15 — 809 chars (body not exported)
++
++## assistant @ 19:58:30 → tools: patch
++
++
++
++## tool result (patch) @ 19:58:33 — 983 chars (body not exported)
++
++## assistant @ 19:59:05 → tools: patch
++
++
++
++## tool result (patch) @ 19:59:09 — 1568 chars (body not exported)
++
++## assistant @ 19:59:58 → tools: patch
++
++
++
++## tool result (patch) @ 19:59:59 — 753 chars (body not exported)
++
++## assistant @ 20:00:09 → tools: patch
++
++
++
++## tool result (patch) @ 20:00:10 — 517 chars (body not exported)
++
++## assistant @ 20:00:29 → tools: patch
++
++
++
++## tool result (patch) @ 20:00:32 — 1500 chars (body not exported)
++
++## assistant @ 20:00:40 → tools: patch
++
++
++
++## tool result (patch) @ 20:00:43 — 804 chars (body not exported)
++
++## assistant @ 20:01:07 → tools: patch
++
++
++
++## tool result (patch) @ 20:01:09 — 1618 chars (body not exported)
++
++## assistant @ 20:01:20 → tools: patch
++
++
++
++## tool result (patch) @ 20:01:23 — 978 chars (body not exported)
++
++## assistant @ 20:01:58 → tools: patch
++
++
++
++## tool result (patch) @ 20:02:03 — 1387 chars (body not exported)
++
++## assistant @ 20:02:20 → tools: patch
++
++
++
++## tool result (patch) @ 20:02:24 — 1346 chars (body not exported)
++
++## assistant @ 20:02:37 → tools: patch
++
++
++
++## tool result (patch) @ 20:02:40 — 644 chars (body not exported)
++
++## assistant @ 20:03:10 → tools: patch
++
++
++
++## tool result (patch) @ 20:03:13 — 898 chars (body not exported)
++
++## assistant @ 20:03:35 → tools: patch
++
++
++
++## tool result (patch) @ 20:03:38 — 1019 chars (body not exported)
++
++## assistant @ 20:04:17 → tools: patch
++
++
++
++## tool result (patch) @ 20:04:19 — 1288 chars (body not exported)
++
++## assistant @ 20:04:42 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 20:04:52 — 4210 chars (body not exported)
++
++## tool result (terminal) @ 20:04:58 — 1910 chars (body not exported)
++
++## tool result (terminal) @ 20:04:59 — 45 chars (body not exported)
++
++## assistant @ 20:05:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:05:37 — 4210 chars (body not exported)
++
++## assistant @ 20:06:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:06:14 — 1910 chars (body not exported)
++
++## assistant @ 20:06:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:09:48 — 3477 chars (body not exported)
++
++## assistant @ 20:10:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:07 — 3690 chars (body not exported)
++
++## assistant @ 20:13:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:31 — 236 chars (body not exported)
++
++## assistant @ 20:13:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:54 — 376 chars (body not exported)
++
++## assistant @ 20:14:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:14:14 — 63 chars (body not exported)
++
++## assistant @ 20:15:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:16:16 — 2259 chars (body not exported)
++
++## assistant @ 20:16:49 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:17:51 — 3361 chars (body not exported)
++
++## assistant @ 20:18:02 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:18:04 — 2220 chars (body not exported)
++
++## assistant @ 20:18:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:18:26 — 3898 chars (body not exported)
++
++## assistant @ 20:18:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:18:41 — 88 chars (body not exported)
++
++## assistant @ 20:19:18 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:19:29 — 822 chars (body not exported)
++
++## assistant @ 20:21:52 → tools: patch
++
++
++
++## tool result (patch) @ 20:21:55 — 1019 chars (body not exported)
++
++## assistant @ 20:23:39 → tools: patch
++
++
++
++## tool result (patch) @ 20:23:41 — 980 chars (body not exported)
++
++## assistant @ 20:24:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:24:47 — 4210 chars (body not exported)
++
++## assistant @ 20:25:53 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:26:42 — 3447 chars (body not exported)
++
++## assistant @ 20:27:50 → tools: patch
++
++
++
++## tool result (patch) @ 20:27:51 — 1047 chars (body not exported)
++
++## assistant @ 20:28:19 → tools: patch
++
++
++
++## tool result (patch) @ 20:28:24 — 1064 chars (body not exported)
++
++## assistant @ 20:28:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:28:59 — 86 chars (body not exported)
++
++## assistant @ 20:29:27 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:29:31 — 371 chars (body not exported)
++
++## assistant @ 20:30:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:30:09 — 2846 chars (body not exported)
++
++## assistant @ 20:30:38 → tools: patch
++
++
++
++## tool result (patch) @ 20:30:40 — 1227 chars (body not exported)
++
++## assistant @ 20:31:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:31:14 — 80 chars (body not exported)
++
++## assistant @ 20:32:00 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:32:06 — 791 chars (body not exported)
++
++## assistant @ 20:33:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:33:09 — 45 chars (body not exported)
++
++## assistant @ 20:33:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:34:01 — 114 chars (body not exported)
++
++## assistant @ 20:34:18 → tools: read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 20:34:18 — 12427 chars (body not exported)
++
++## tool result (terminal) @ 20:34:22 — 65 chars (body not exported)
++
++## tool result (terminal) @ 20:34:24 — 120 chars (body not exported)
++
++## tool result (terminal) @ 20:34:25 — 1153 chars (body not exported)
++
++## assistant @ 20:34:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:35:03 — 7617 chars (body not exported)
++
++## assistant @ 20:35:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:35:47 — 18938 chars (body not exported)
++
++## assistant @ 20:36:00 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:02 — 689 chars (body not exported)
++
++## assistant @ 20:36:21 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:23 — 689 chars (body not exported)
++
++## assistant @ 20:36:30 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:32 — 1148 chars (body not exported)
++
++## assistant @ 20:36:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:00 — 137 chars (body not exported)
++
++## assistant @ 20:37:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:33 — 1312 chars (body not exported)
++
++## assistant @ 20:37:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:38:14 — 1168 chars (body not exported)
++
++## assistant @ 20:39:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:40:10 — 1170 chars (body not exported)
++
++## assistant @ 20:40:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:40:54 — 1023 chars (body not exported)
++
++## assistant @ 20:43:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 20:43:04 — 352 chars (body not exported)
++
++## assistant @ 20:43:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:43:30 — 1167 chars (body not exported)
++
++## assistant @ 20:44:13 → tools: patch
++
++
++
++## tool result (patch) @ 20:44:14 — 1208 chars (body not exported)
++
++## assistant @ 20:44:59 → tools: patch
++
++
++
++## tool result (patch) @ 20:45:00 — 4466 chars (body not exported)
++
++## assistant @ 20:45:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:45:41 — 317 chars (body not exported)
++
++## assistant @ 20:45:56 → tools: patch
++
++
++
++## tool result (patch) @ 20:45:56 — 1831 chars (body not exported)
++
++## assistant @ 20:46:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:46:07 — 231 chars (body not exported)
++
++## assistant @ 20:46:20 → tools: patch
++
++
++
++## tool result (patch) @ 20:46:21 — 1281 chars (body not exported)
++
++## assistant @ 20:47:00 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:47:00 — 3148 chars (body not exported)
++
++## assistant @ 20:48:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:48:57 — 283 chars (body not exported)
++
++## assistant @ 20:50:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:50:15 — 6077 chars (body not exported)
++
++## assistant @ 20:50:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:50:30 — 956 chars (body not exported)
++
++## assistant @ 20:50:44 → tools: patch
++
++
++
++## tool result (patch) @ 20:50:44 — 1254 chars (body not exported)
++
++## assistant @ 20:51:02 → tools: patch
++
++
++
++## tool result (patch) @ 20:51:02 — 1103 chars (body not exported)
++
++## assistant @ 20:53:56 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:53:56 — 2447 chars (body not exported)
++
++## user @ 19:32:22
++
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-c2.md--4a38190/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasib
++
++## assistant @ 19:32:44 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:32:45 — 109 chars (body not exported)
++
++## assistant @ 21:00:40
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User asked: “RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its in…” — resume and complete the inherited C2 lane work without discarding the previous attempt’s edits. The work remains unfinished: the latest test-strengthening patch has not been rerun, mutation validation is incomplete, `harness-ports/tests/run-all.sh` still exits 1, and no final report or commit was produced.
++
++## Goal
++Complete the PC C2 lane’s optional “done gate” implementation:
++
++- Add a Hermes hook recorder/gate that tracks checks and edits in per-session ledgers.
++- Block final completion when code was edited after the latest passing qualifying check.
++- Integrate the gate into lane profile creation behind `LANE_DONE_GATE=1`.
++- Let lane verification recognize either a normal profile or exactly the intended two gate hooks.
++- Add stro
++
++## assistant @ 20:23:39 → tools: patch
++
++
++
++## tool result (patch) @ 20:23:41 — 80 chars (body not exported)
++
++## assistant @ 20:24:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:24:47 — 93 chars (body not exported)
++
++## assistant @ 20:25:53 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:26:42 — 97 chars (body not exported)
++
++## assistant @ 20:27:50 → tools: patch
++
++
++
++## tool result (patch) @ 20:27:51 — 82 chars (body not exported)
++
++## assistant @ 20:28:19 → tools: patch
++
++
++
++## tool result (patch) @ 20:28:24 — 82 chars (body not exported)
++
++## assistant @ 20:28:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:28:59 — 86 chars (body not exported)
++
++## assistant @ 20:29:27 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:29:31 — 97 chars (body not exported)
++
++## assistant @ 20:30:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:30:09 — 123 chars (body not exported)
++
++## assistant @ 20:30:38 → tools: patch
++
++
++
++## tool result (patch) @ 20:30:40 — 82 chars (body not exported)
++
++## assistant @ 20:31:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:31:14 — 80 chars (body not exported)
++
++## assistant @ 20:32:00 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 20:32:06 — 97 chars (body not exported)
++
++## assistant @ 20:33:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:33:09 — 45 chars (body not exported)
++
++## assistant @ 20:33:32 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:34:01 — 114 chars (body not exported)
++
++## assistant @ 20:34:18 → tools: read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 20:34:18 — 119 chars (body not exported)
++
++## tool result (terminal) @ 20:34:22 — 65 chars (body not exported)
++
++## tool result (terminal) @ 20:34:24 — 120 chars (body not exported)
++
++## tool result (terminal) @ 20:34:25 — 123 chars (body not exported)
++
++## assistant @ 20:34:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:35:03 — 123 chars (body not exported)
++
++## assistant @ 20:35:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:35:47 — 123 chars (body not exported)
++
++## assistant @ 20:36:00 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:02 — 80 chars (body not exported)
++
++## assistant @ 20:36:21 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:23 — 80 chars (body not exported)
++
++## assistant @ 20:36:30 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:32 — 82 chars (body not exported)
++
++## assistant @ 20:36:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:00 — 137 chars (body not exported)
++
++## assistant @ 20:37:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:33 — 123 chars (body not exported)
++
++## assistant @ 20:37:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:38:14 — 123 chars (body not exported)
++
++## assistant @ 20:39:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:40:10 — 123 chars (body not exported)
++
++## assistant @ 20:40:53 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:40:54 — 123 chars (body not exported)
++
++## assistant @ 20:43:03 → tools: write_file
++
++
++
++## tool result (write_file) @ 20:43:04 — 65 chars (body not exported)
++
++## assistant @ 20:43:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:43:30 — 1167 chars (body not exported)
++
++## assistant @ 20:44:13 → tools: patch
++
++
++
++## tool result (patch) @ 20:44:14 — 1208 chars (body not exported)
++
++## assistant @ 20:44:59 → tools: patch
++
++
++
++## tool result (patch) @ 20:45:00 — 156 chars (body not exported)
++
++## assistant @ 20:45:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:45:41 — 317 chars (body not exported)
++
++## assistant @ 20:45:56 → tools: patch
++
++
++
++## tool result (patch) @ 20:45:56 — 156 chars (body not exported)
++
++## assistant @ 20:46:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:46:07 — 231 chars (body not exported)
++
++## assistant @ 20:46:20 → tools: patch
++
++
++
++## tool result (patch) @ 20:46:21 — 1281 chars (body not exported)
++
++## assistant @ 20:47:00 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:47:00 — 160 chars (body not exported)
++
++## assistant @ 20:48:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:48:57 — 283 chars (body not exported)
++
++## assistant @ 20:50:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:50:15 — 6077 chars (body not exported)
++
++## assistant @ 20:50:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:50:30 — 956 chars (body not exported)
++
++## assistant @ 20:50:44 → tools: patch
++
++
++
++## tool result (patch) @ 20:50:44 — 1254 chars (body not exported)
++
++## assistant @ 20:51:02 → tools: patch
++
++
++
++## tool result (patch) @ 20:51:02 — 1103 chars (body not exported)
++
++## assistant @ 20:53:56 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:53:56 — 2447 chars (body not exported)
++
++## user @ 19:32:22
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-c2.md--4a38190/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a 
++
++## assistant @ 21:00:50 → tools: terminal, terminal
++
++Resuming after compaction. The implementation, tests, mutation matrix, gates, and report lint are all done. Final step: re-run the lint after the last report edits, sync the draft, and close out.
++
++## tool result (terminal) @ 21:00:51 — 231 chars (body not exported)
++
++## tool result (terminal) @ 21:01:01 — 146 chars (body not exported)
++
++## assistant @ 21:01:08 → tools: read_file
++
++All gates green except the one pre-existing run-all blocker (qwen matrix, read-only). Fixing the one uncheckable lint row by adding a claim token from that Canny line.
++
++## tool result (read_file) @ 21:01:08 — 2297 chars (body not exported)
++
++## assistant @ 21:01:13 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:01:13 — 1721 chars (body not exported)
++
++## assistant @ 21:01:17 → tools: patch
++
++
++
++## tool result (patch) @ 21:01:18 — 1506 chars (body not exported)
++
++## assistant @ 21:01:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:01:22 — 129 chars (body not exported)
++
++## assistant @ 21:01:26 → tools: patch
++
++Lint clean. Updating the report's DISCREPANCIES line with the final lint result and syncing the draft.
++
++## tool result (patch) @ 21:01:27 — 1342 chars (body not exported)
++
++## assistant @ 21:01:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:01:31 — 469 chars (body not exported)
++
++## assistant @ 21:02:04
++
++Work is complete. Final report follows.
++
++---
++
++## C2 BUILD REPORT — REVIEW-PENDING
++
++**STATUS: REVIEW-PENDING.** C2 is implemented and self-validated. This build lane cannot issue a gate verdict; independent adversarial verification and a real Hermes-lane test are the coordinator's, after landing.
++
++### PREMISE (verified live)
++
++- Blob/line identities matched the brief: lane-profile `145d8c40abcb`/209; test_lane_profile `02bc97314c56`/152; run-all `6c45009c3486`/78; verify_command `daf605f480a0`/351; test_verify_command `6af9a516adf5`/490.
++- All three create targets were absent. Profile baseline before change: `lane profile: 9 passed, 0 failed`.
++- C1 has three `VERIFY` patterns; accepted the six supplied pytest interpreter forms plus cargo/npm/make/ruff; rejected all project runner and pipefail-wrapper forms.
++- The Hermes payload excerpts and the 109-command corpus are the coordinator's read-only measurements; I did not read `~/.hermes/`. Fixtures use the supplied shapes.
++- `canny:39-50`: the selected predicate is "code changed since the last passing check".
++
++### IMPLEMENTATION
++
++- `gate:24-44` (`CODE_SUFFIXES`, `PROJECT_PATTERNS`, `PATCH_PATH`, `RC_WRAPPER`): closed code-suffix list, project check patterns, V4A path matcher, and the exact pipefail/tee wrapper grammar.
++- `gate:54-58` (`ledger_file`): ledger names keyed by SHA-256 of the repository root (first 12 hex) plus the sanitized session id, under the OS temp directory — the `spool_file` scheme reimplemented, not imported.
++- `gate:85-97` (`counts_as_check`): C1's three pattern strings plus the project patterns passed to `is_verify` (replaces the default list); a separate narrow recognizer handles the rc-wrapper idiom.
++- `gate:110-179` (`_result_exit_code`, `record`): the recorder validates integer-not-bool exit codes, records not-passing reasons, expands V4A paths, keeps stdout empty, exit code always 0, one stderr line per error.
++- `gate:207-292` (`_is_code`, `gate`): closed code-file rule (`*.md`/`*.txt`/`transcripts/` never count; extensionless `#!` counts), edit/check sequence-order comparison, terminal-only unknown-order rule, at most 5 paths named plus "and N more", `final_response` never echoed, directive bounded to 1,500 bytes.
++- `profile:25-85` (`verify_lane`): verify accepts a clone with or without exactly the two done-gate hook entries and refuses any other hooks delta.
++- `profile:89-277` (`create_lane`): switch OFF leaves `config.yaml` byte-identical to today's output (byte-compare regression test); switch ON appends the recorder after the existing post_tool_call entries and installs one pre_verify directive. Hook commands resolve from the helper's own repository root (main clone), never a lane tree (AF-AP-148).
++- `gatetest:93-382`: deterministic LLM-free tests, all brief cases (a)–(l), negative controls failing for the exact expected reasons.
++- `profiletest:155-240`: switch-OFF byte identity, switch-ON exact entries, verify refuses a third entry and a changed command.
++- `runall:12-1
++
++
++---
++profile: aflanepcc2md4a38190
++
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 351231,
++  "output_tokens": 43396,
++  "cache_read_tokens": 10935615,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 13992,
++  "total_tokens": 11330242,
++  "api_calls": 112,
++  "model": "agentfactory-build",
++  "provider": "custom",
++  "session_id": "20260923_203222_2648b3",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```
