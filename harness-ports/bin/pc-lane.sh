@@ -126,6 +126,20 @@ stop_session() {
 }
 trap 'stop_session; cleanup; trap - EXIT; exit 143' TERM INT
 
+# --- a dead loop's FAILED is not this loop's verdict (AF-AP-140, task #167) ------------------------------------------------
+# A relaunch reuses this directory, and FAILED is written by a loop right before it exits 70. On 2026-09-23 07:14Z the poller
+# read VERIFY-T92's dead first loop's FAILED as the relaunched loop's verdict and printed LANE FAILED while the new loop ran.
+# So the marker is renamed HERE, at loop start and before any slow step: kept as evidence (never deleted), named for the time
+# the dead loop wrote it. A left-over marker would also hide a relaunched loop that succeeds (the poller tests FAILED before
+# READY). The poller binds FAILED to its own dispatch too (scripts/pc_lane.sh), which covers the window before this line runs.
+if [ -e "$LANE_DIR/FAILED" ]; then
+  STALE_FAILED="$LANE_DIR/FAILED.stale-$(date -u -r "$LANE_DIR/FAILED" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
+  [ -e "$STALE_FAILED" ] && STALE_FAILED="$STALE_FAILED.$$"   # never overwrite an older stale marker
+  mv "$LANE_DIR/FAILED" "$STALE_FAILED" \
+    || die "cannot set aside the previous loop's FAILED marker ($LANE_DIR/FAILED) — refusing to run under a verdict that is not this loop's"
+  echo "pc-lane: the previous loop's FAILED is not this loop's verdict — kept as $(basename "$STALE_FAILED") (AF-AP-140)" >&2
+fi
+
 # --- the no-push shim -------------------------------------------------------
 # Earlier on PATH than the real binaries. This is the enforcement point for
 # "a lane never pushes"; the prose in the role file is the explanation.
@@ -489,11 +503,49 @@ fi
 break
 done
 
+# --- the RUNTIME's verdict decides first (2026-09-23, task #200; AF-AP-67, sixth family) ------------------------------------
+# VERIFY-T92-T90R3-PCJ1 wrote its 55 KB report into the lane dir, then its final turn failed: Hermes printed `HTTP 400: [400]:
+# No user query found in messages.` and wrote usage.json with "completed": false, "failed": true. The line matched none of the
+# text screens below, so it stood as report.md and the poller brought 50 bytes home as the report. A denylist of failure texts
+# grows one family per incident (rejected: add `^HTTP [0-9]{3}: `); the runtime's own flags are the structural signal. So,
+# after the loop (its capacity and session-storage retries have run; the safety family has already exited 70) and BEFORE the
+# text screens: a Hermes session whose usage.json says "failed": true or "completed": false produced no report, whatever its
+# last output says. That output is kept in report.failed-output.md (never deleted). A non-empty draft is promoted under a
+# FAILED-session header whose first line is the runner's DRAFT REPORT header (the poller's exemption keys on it; the 200 bytes
+# go on ONE line, so no pasted `API call failed`/`No reply:` line can start a line the poller greps); no draft = FAILED, rc 70.
+# Never retried here: the same context fails the same way. usage.json absent, unparsable or carrying neither flag: the text
+# screens decide as before, and ONE warning line says the runtime's verdict was not read.
+usage_verdict=""
+if [ "$HARNESS" = "hermes" ]; then
+  usage_verdict="$(python3 -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+if not isinstance(d, dict) or not any(isinstance(d.get(k), bool) for k in ("failed", "completed")):
+    sys.exit(4)
+flag = lambda k: json.dumps(d[k]) if k in d else "absent"
+bad = d.get("failed") is True or d.get("completed") is False
+print(("failed" if bad else "ok") + " \"failed\": " + flag("failed") + ", \"completed\": " + flag("completed"))' "$LANE_DIR/usage.json" 2>/dev/null)" \
+    || { usage_verdict=""; echo "pc-lane: WARNING usage-verdict-unread — $LANE_DIR/usage.json is absent, does not parse or carries neither flag; the runtime's own verdict was not read, so the text screens alone decide this lane (AF-AP-67)" >&2; }
+fi
+if [ "${usage_verdict%% *}" = failed ]; then
+  usage_flags="${usage_verdict#failed }"
+  cp -f "$REPORT" "$LANE_DIR/report.failed-output.md"
+  failed_head="$(head -c 200 "$LANE_DIR/report.failed-output.md" | sed -z 's/\n/\\n/g')"
+  if [ -s "$LANE_REPORT_DRAFT" ]; then
+    { echo "DRAFT REPORT — the Hermes session FAILED (usage.json $usage_flags; harness rc=$rc) before writing its final report; its last output is not a report and is kept in report.failed-output.md. This is the incremental draft the lane kept. Grade it as PARTIAL evidence, never as a verdict."
+      printf 'FAILED SESSION OUTPUT (first 200 bytes, newlines shown as \\n): %s\n' "$failed_head"
+      echo; cat "$LANE_REPORT_DRAFT"; } > "$REPORT"
+    echo "pc-lane: the Hermes session FAILED (usage.json $usage_flags) — its last output kept as report.failed-output.md; promoted report-draft.md (PARTIAL)" >&2
+  else
+    { echo "failed-session: the Hermes runtime reported this session failed (usage.json $usage_flags; harness rc=$rc) and the lane kept no draft to promote. Its last output (also kept in report.failed-output.md):"; cat "$LANE_DIR/report.failed-output.md"; } > "$LANE_DIR/FAILED"
+    rm -f "$REPORT"
+    echo "pc-lane: FAILED — the Hermes session failed (usage.json $usage_flags) and left no draft; reason in $LANE_DIR/FAILED: $failed_head" >&2
+    exit 70
+  fi
 # 2026-09-07: with the retries exhausted (or disabled) the refusal line used to STAND as report.md — the sandbox
 # poller printed "report -> …" and exited 0 for a lane that never ran (B5i, HTTP 503 on every call while the owner's
 # own Hermes sessions held the route's admission slots). A refusal is a FAILED lane: the line goes to $LANE_DIR/FAILED,
 # report.md is removed so nothing downstream can grade it, and the script exits 70. The poller reads FAILED.
-if grep -Eq "$CAPACITY_RX|$QUOTA_RX|$PERSIST_RX|^API call failed" "$REPORT" 2>/dev/null; then
+elif grep -Eq "$CAPACITY_RX|$QUOTA_RX|$PERSIST_RX|^API call failed" "$REPORT" 2>/dev/null; then
   cp "$REPORT" "$LANE_DIR/FAILED"; rm -f "$REPORT"
   echo "pc-lane: FAILED — the route or the harness refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
   exit 70

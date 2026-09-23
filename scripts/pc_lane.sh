@@ -381,7 +381,14 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
   # READY also needs the lane LOOP gone (its pidfile is removed by pc-lane.sh's exit trap): report.md is complete the moment the
   # harness exits, but the transcript export into the tree runs AFTER that, and a fetch in between ships the stale staged
   # transcript (2026-09-08 15:20Z, VERIFY-B5j: the resumed session's 631-line transcript came home as the dead attempt's 990).
-  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && [ -n \"\$(find $PC_AF_REPO/.lanes/$LANE_ID/launch.log -mmin -5 2>/dev/null)\" ] && echo RUNNING || echo GONE)))")"
+  # A FAILED marker ends THIS dispatch only when it is at least as new as the brief
+  # shipped above (AF-AP-140): a relaunched runner renames an older marker at loop
+  # start (harness-ports/bin/pc-lane.sh), and this mtime binding covers the window
+  # before that rename runs and a runner that predates it. The command is expanded
+  # ON THE PC: each \$( in it is escaped ONCE. Escaped twice (\\$() it expands HERE,
+  # in the sandbox, and the PC gets a syntax error: an empty probe matches no state
+  # and the poller spins to MAX_POLLS (AF-AP-162, the T94 landing, 2026-09-23).
+  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && test ! $PC_AF_REPO/.lanes/$LANE_ID/FAILED -ot $REMOTE_BRIEF && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && [ -n \"\$(find $PC_AF_REPO/.lanes/$LANE_ID/launch.log -mmin -5 2>/dev/null)\" ] && echo RUNNING || echo GONE)))")"
   case "$probe" in
     *FAILED-UNRETRIED*) echo "pc_lane: LANE FAILED — the harness died on an API failure the PC side did not retry (the line stands as report.md; not a report). Reason:" >&2
                bridge "head -c 300 $REMOTE_REPORT" >&2 2>/dev/null
@@ -436,6 +443,17 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   # the actually served model (not the requested combo/raw id) and the lane profile.
   USAGE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/usage.json"
   USAGE_B64="$(bridge "test -s $USAGE_REMOTE && base64 -w0 $USAGE_REMOTE" 2>/dev/null || true)"
+  USAGE_VERDICT="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json, sys
+d = json.load(sys.stdin)
+failed = d.get("failed") is True or d.get("completed") is False
+print("failed" if failed else "ok")' 2>/dev/null || true)"
+  REPORT_FIRST_LINE="$(sed -n '1p' "$LOCAL_REPORT")"
+  if [ "$USAGE_VERDICT" = failed ] && [[ "$REPORT_FIRST_LINE" != "DRAFT REPORT — the Hermes session FAILED"* ]]; then
+    FAILED_OUTPUT="$OUT/failed-output-$LANE_ID.md"
+    mv "$LOCAL_REPORT" "$FAILED_OUTPUT"
+    echo "pc_lane: LANE FAILED — usage.json says the session failed and report.md holds the session's last output, not a report; kept -> $FAILED_OUTPUT" >&2
+    exit 70
+  fi
   SERVED_MODEL="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("model", ""))' 2>/dev/null || true)"
   LANE_PROFILE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/profile.txt"
   LANE_PROFILE_USED="$(bridge "test -s $LANE_PROFILE_REMOTE && sed -n '1p' $LANE_PROFILE_REMOTE" 2>/dev/null || true)"

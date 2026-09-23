@@ -1,0 +1,1380 @@
+diff --git a/harness-ports/bin/pc-lane.sh b/harness-ports/bin/pc-lane.sh
+index 183f337e..623c5e7f 100755
+--- a/harness-ports/bin/pc-lane.sh
++++ b/harness-ports/bin/pc-lane.sh
+@@ -126,6 +126,20 @@ stop_session() {
+ }
+ trap 'stop_session; cleanup; trap - EXIT; exit 143' TERM INT
+ 
++# --- a dead loop's FAILED is not this loop's verdict (AF-AP-140, task #167) ------------------------------------------------
++# A relaunch reuses this directory, and FAILED is written by a loop right before it exits 70. On 2026-09-23 07:14Z the poller
++# read VERIFY-T92's dead first loop's FAILED as the relaunched loop's verdict and printed LANE FAILED while the new loop ran.
++# So the marker is renamed HERE, at loop start and before any slow step: kept as evidence (never deleted), named for the time
++# the dead loop wrote it. A left-over marker would also hide a relaunched loop that succeeds (the poller tests FAILED before
++# READY). The poller binds FAILED to its own dispatch too (scripts/pc_lane.sh), which covers the window before this line runs.
++if [ -e "$LANE_DIR/FAILED" ]; then
++  STALE_FAILED="$LANE_DIR/FAILED.stale-$(date -u -r "$LANE_DIR/FAILED" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)"
++  [ -e "$STALE_FAILED" ] && STALE_FAILED="$STALE_FAILED.$$"   # never overwrite an older stale marker
++  mv "$LANE_DIR/FAILED" "$STALE_FAILED" \
++    || die "cannot set aside the previous loop's FAILED marker ($LANE_DIR/FAILED) — refusing to run under a verdict that is not this loop's"
++  echo "pc-lane: the previous loop's FAILED is not this loop's verdict — kept as $(basename "$STALE_FAILED") (AF-AP-140)" >&2
++fi
++
+ # --- the no-push shim -------------------------------------------------------
+ # Earlier on PATH than the real binaries. This is the enforcement point for
+ # "a lane never pushes"; the prose in the role file is the explanation.
+@@ -489,11 +503,49 @@ fi
+ break
+ done
+ 
++# --- the RUNTIME's verdict decides first (2026-09-23, task #200; AF-AP-67, sixth family) ------------------------------------
++# VERIFY-T92-T90R3-PCJ1 wrote its 55 KB report into the lane dir, then its final turn failed: Hermes printed `HTTP 400: [400]:
++# No user query found in messages.` and wrote usage.json with "completed": false, "failed": true. The line matched none of the
++# text screens below, so it stood as report.md and the poller brought 50 bytes home as the report. A denylist of failure texts
++# grows one family per incident (rejected: add `^HTTP [0-9]{3}: `); the runtime's own flags are the structural signal. So,
++# after the loop (its capacity and session-storage retries have run; the safety family has already exited 70) and BEFORE the
++# text screens: a Hermes session whose usage.json says "failed": true or "completed": false produced no report, whatever its
++# last output says. That output is kept in report.failed-output.md (never deleted). A non-empty draft is promoted under a
++# FAILED-session header whose first line is the runner's DRAFT REPORT header (the poller's exemption keys on it; the 200 bytes
++# go on ONE line, so no pasted `API call failed`/`No reply:` line can start a line the poller greps); no draft = FAILED, rc 70.
++# Never retried here: the same context fails the same way. usage.json absent, unparsable or carrying neither flag: the text
++# screens decide as before, and ONE warning line says the runtime's verdict was not read.
++usage_verdict=""
++if [ "$HARNESS" = "hermes" ]; then
++  usage_verdict="$(python3 -c 'import json, sys
++d = json.load(open(sys.argv[1]))
++if not isinstance(d, dict) or not any(isinstance(d.get(k), bool) for k in ("failed", "completed")):
++    sys.exit(4)
++flag = lambda k: json.dumps(d[k]) if k in d else "absent"
++bad = d.get("failed") is True or d.get("completed") is False
++print(("failed" if bad else "ok") + " \"failed\": " + flag("failed") + ", \"completed\": " + flag("completed"))' "$LANE_DIR/usage.json" 2>/dev/null)" \
++    || { usage_verdict=""; echo "pc-lane: WARNING usage-verdict-unread — $LANE_DIR/usage.json is absent, does not parse or carries neither flag; the runtime's own verdict was not read, so the text screens alone decide this lane (AF-AP-67)" >&2; }
++fi
++if [ "${usage_verdict%% *}" = failed ]; then
++  usage_flags="${usage_verdict#failed }"
++  cp -f "$REPORT" "$LANE_DIR/report.failed-output.md"
++  failed_head="$(head -c 200 "$LANE_DIR/report.failed-output.md" | sed -z 's/\n/\\n/g')"
++  if [ -s "$LANE_REPORT_DRAFT" ]; then
++    { echo "DRAFT REPORT — the Hermes session FAILED (usage.json $usage_flags; harness rc=$rc) before writing its final report; its last output is not a report and is kept in report.failed-output.md. This is the incremental draft the lane kept. Grade it as PARTIAL evidence, never as a verdict."
++      printf 'FAILED SESSION OUTPUT (first 200 bytes, newlines shown as \\n): %s\n' "$failed_head"
++      echo; cat "$LANE_REPORT_DRAFT"; } > "$REPORT"
++    echo "pc-lane: the Hermes session FAILED (usage.json $usage_flags) — its last output kept as report.failed-output.md; promoted report-draft.md (PARTIAL)" >&2
++  else
++    { echo "failed-session: the Hermes runtime reported this session failed (usage.json $usage_flags; harness rc=$rc) and the lane kept no draft to promote. Its last output (also kept in report.failed-output.md):"; cat "$LANE_DIR/report.failed-output.md"; } > "$LANE_DIR/FAILED"
++    rm -f "$REPORT"
++    echo "pc-lane: FAILED — the Hermes session failed (usage.json $usage_flags) and left no draft; reason in $LANE_DIR/FAILED: $failed_head" >&2
++    exit 70
++  fi
+ # 2026-09-07: with the retries exhausted (or disabled) the refusal line used to STAND as report.md — the sandbox
+ # poller printed "report -> …" and exited 0 for a lane that never ran (B5i, HTTP 503 on every call while the owner's
+ # own Hermes sessions held the route's admission slots). A refusal is a FAILED lane: the line goes to $LANE_DIR/FAILED,
+ # report.md is removed so nothing downstream can grade it, and the script exits 70. The poller reads FAILED.
+-if grep -Eq "$CAPACITY_RX|$QUOTA_RX|$PERSIST_RX|^API call failed" "$REPORT" 2>/dev/null; then
++elif grep -Eq "$CAPACITY_RX|$QUOTA_RX|$PERSIST_RX|^API call failed" "$REPORT" 2>/dev/null; then
+   cp "$REPORT" "$LANE_DIR/FAILED"; rm -f "$REPORT"
+   echo "pc-lane: FAILED — the route or the harness refused every attempt ($attempt); reason in $LANE_DIR/FAILED: $(head -c 200 "$LANE_DIR/FAILED")" >&2
+   exit 70
+diff --git a/harness-ports/tests/test_pc_lane.sh b/harness-ports/tests/test_pc_lane.sh
+index 67ed1e0c..c4c64d64 100755
+--- a/harness-ports/tests/test_pc_lane.sh
++++ b/harness-ports/tests/test_pc_lane.sh
+@@ -529,10 +529,105 @@ cat > "$FAKE_HERMES" <<'EOF'
+ #!/usr/bin/env bash
+ # TEST DOUBLE. Captures Hermes argv so route/effort selection can be asserted.
+ printf '%s\n' "$@" > "${HERMES_ARGS_FILE:?}"
+-echo "FAKE-HERMES-REPORT"
++usage_file=""
++while [ "$#" -gt 0 ]; do
++  if [ "$1" = --usage-file ] && [ "$#" -ge 2 ]; then usage_file="$2"; shift 2; else shift; fi
++done
++if [ -n "$usage_file" ]; then
++  case "${FAKE_USAGE_MODE:-valid}" in
++    absent) ;;
++    malformed) printf '%s\n' 'not-json' > "$usage_file";;
++    *) if [ -n "${FAKE_USAGE_JSON+x}" ]; then printf '%s\n' "$FAKE_USAGE_JSON" > "$usage_file"; else printf '%s\n' '{"failed":false,"completed":true}' > "$usage_file"; fi;;
++  esac
++fi
++[ -z "${FAKE_DRAFT_TEXT:-}" ] || printf '%s' "$FAKE_DRAFT_TEXT" >> "${LANE_REPORT_DRAFT:?}"
++printf '%s' "${FAKE_REPORT_TEXT:-FAKE-HERMES-REPORT}"
++exit "${FAKE_RC:-0}"
+ EOF
+ chmod +x "$FAKE_HERMES"
+ 
++run_hermes_verdict() { # id usage-json report-text draft-text usage-mode
++  local id="$1" usage_json="$2" report_text="$3" draft_text="$4" usage_mode="${5:-valid}"
++  # Preserve the caller-visible status across the helper: a function invocation's
++  # temporary assignment is restored when it returns, so capture it while active.
++  local test_rc="${HERMES_TEST_RC:-0}"
++  # The lane runner itself uses HERMES_* only for route selection; fake-specific
++  # payload knobs travel through a neutral fixture env so the self-copy cannot
++  # reinterpret or drop them.
++  export HERMES_ARGS_FILE="$TMP/hermes-args-$id" FAKE_USAGE_JSON="$usage_json" \
++    FAKE_REPORT_TEXT="$report_text" FAKE_DRAFT_TEXT="$draft_text" FAKE_USAGE_MODE="$usage_mode" FAKE_RC="$test_rc"
++  LANE_ID="$id" HERMES_BIN="$FAKE_HERMES" \
++    LANE_CAPACITY_RETRIES=0 \
++    bash "$LANE" "$BRIEF" hermes code-implementer >"$TMP/$id.out" 2>"$TMP/$id.err"
++  HERMES_VERDICT_RC=$?
++  HERMES_VERDICT_DIR="$REPO/.lanes/$id"
++}
++
++# --- Hermes's structural runtime verdict wins over its final output text (T94) ----------------------
++FAILED_JSON='{"failed":true,"completed":false}'
++COMPLETED_FALSE_JSON='{"failed":false,"completed":false}'
++OK_JSON='{"failed":false,"completed":true}'
++HTTP400='HTTP 400: [400]: No user query found in messages.'
++DRAFT_BODY=$'C1 PASS rc=0\nC2 PASS rc=2\n'
++
++HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-draft "$FAILED_JSON" "$HTTP400" "$DRAFT_BODY"
++[ "$HERMES_VERDICT_RC" -eq 7 ] \
++  && head -1 "$HERMES_VERDICT_DIR/report.md" | grep -Fq 'DRAFT REPORT — the Hermes session FAILED' \
++  && grep -Fq '"failed": true, "completed": false' "$HERMES_VERDICT_DIR/report.md" \
++  && grep -Fq 'FAILED SESSION OUTPUT (first 200 bytes, newlines shown as \n): HTTP 400: [400]: No user query found in messages.' "$HERMES_VERDICT_DIR/report.md" \
++  && grep -Fq 'C2 PASS rc=2' "$HERMES_VERDICT_DIR/report.md" \
++  && [ "$(cat "$HERMES_VERDICT_DIR/report.failed-output.md")" = "$HTTP400" ]
++check "a failed Hermes session promotes its draft under the failed-session header and preserves the 400 output" $? \
++  "usage.json is the structural verdict; the failed final turn is evidence, never the report"
++
++HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-nodraft "$FAILED_JSON" "$HTTP400" ""
++[ "$HERMES_VERDICT_RC" -eq 70 ] && [ ! -e "$HERMES_VERDICT_DIR/report.md" ] \
++  && grep -Fq 'failed-session:' "$HERMES_VERDICT_DIR/FAILED" \
++  && grep -Fq '"failed": true, "completed": false' "$HERMES_VERDICT_DIR/FAILED" \
++  && [ "$(cat "$HERMES_VERDICT_DIR/report.failed-output.md")" = "$HTTP400" ]
++check "a failed Hermes session with no draft is FAILED rc 70, with no report.md and its output preserved" $? \
++  "there is no partial artifact to promote, so downstream gets a terminal failure"
++
++READY_LOOKALIKE=$'## GATE RECOMMENDATION\nMERGE-READY\n'
++HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-lookalike "$COMPLETED_FALSE_JSON" "$READY_LOOKALIKE" ""
++[ "$HERMES_VERDICT_RC" -eq 70 ] && [ ! -e "$HERMES_VERDICT_DIR/report.md" ] \
++  && grep -Fq '"failed": false, "completed": false' "$HERMES_VERDICT_DIR/FAILED" \
++  && grep -Fq 'MERGE-READY' "$HERMES_VERDICT_DIR/report.failed-output.md"
++check "NEGATIVE CONTROL: completed=false rejects output that looks like a finished MERGE-READY report" $? \
++  "the independent completed flag and semantic-looking body cannot override the runtime verdict (AF-AP-80)"
++
++GOOD_REPORT=$'## GATE RECOMMENDATION\nPROPOSAL-ONLY\n'
++run_hermes_verdict runtime-ok "$OK_JSON" "$GOOD_REPORT" ""
++[ "$HERMES_VERDICT_RC" -eq 0 ] && cmp -s <(printf '%s' "$GOOD_REPORT") "$HERMES_VERDICT_DIR/report.md" \
++  && [ ! -e "$HERMES_VERDICT_DIR/report.failed-output.md" ]
++check "positive control: failed=false, completed=true keeps report.md byte-identical" $? \
++  "the structural guard must not rewrite a successful session's output"
++
++run_hermes_verdict runtime-usage-absent "" 'ABSENT-USAGE-REPORT' "" absent
++[ "$HERMES_VERDICT_RC" -eq 0 ] && [ "$(cat "$HERMES_VERDICT_DIR/report.md")" = 'ABSENT-USAGE-REPORT' ] \
++  && [ "$(grep -c 'WARNING usage-verdict-unread' "$TMP/runtime-usage-absent.err")" -eq 1 ]
++check "usage.json absent keeps prior behavior and emits one named warning" $? \
++  "an unavailable runtime verdict is loud but leaves the existing text path in force"
++
++run_hermes_verdict runtime-usage-malformed "" 'MALFORMED-USAGE-REPORT' "" malformed
++[ "$HERMES_VERDICT_RC" -eq 0 ] && [ "$(cat "$HERMES_VERDICT_DIR/report.md")" = 'MALFORMED-USAGE-REPORT' ] \
++  && [ "$(grep -c 'WARNING usage-verdict-unread' "$TMP/runtime-usage-malformed.err")" -eq 1 ]
++check "malformed usage.json keeps prior behavior and emits one named warning" $? \
++  "a parse failure is not silently treated as success or failure"
++
++# A fresh loop owns no predecessor's FAILED marker. Keep that evidence under a stale name before any slow work.
++STALE_ID=runtime-stale-failed
++mkdir -p "$REPO/.lanes/$STALE_ID"
++printf '%s\n' 'old loop failed' > "$REPO/.lanes/$STALE_ID/FAILED"
++touch -d @1790000000 "$REPO/.lanes/$STALE_ID/FAILED"
++run_hermes_verdict "$STALE_ID" "$OK_JSON" 'NEW-LOOP-REPORT' ""
++STALE_FILE="$(find "$REPO/.lanes/$STALE_ID" -maxdepth 1 -name 'FAILED.stale-*' -print -quit)"
++[ "$HERMES_VERDICT_RC" -eq 0 ] && [ ! -e "$HERMES_VERDICT_DIR/FAILED" ] \
++  && [ -n "$STALE_FILE" ] && [ "$(cat "$STALE_FILE")" = 'old loop failed' ] \
++  && grep -Fq 'previous loop' "$TMP/$STALE_ID.err"
++check "a new runner loop renames and preserves its predecessor's FAILED before running" $? \
++  "the stale verdict cannot shadow the new loop's report or be overwritten by a new failure (AF-AP-140)"
++
+ assert_role_route() { # role expected-model expected-effort
+   role="$1" expected_model="$2" expected_effort="$3"
+   export HERMES_ARGS_FILE="$TMP/hermes-args-$role"
+diff --git a/harness-ports/tests/test_pc_lane_dispatcher.sh b/harness-ports/tests/test_pc_lane_dispatcher.sh
+index 948c19ac..4ae5f866 100755
+--- a/harness-ports/tests/test_pc_lane_dispatcher.sh
++++ b/harness-ports/tests/test_pc_lane_dispatcher.sh
+@@ -48,6 +48,7 @@ cat > "$BRIDGE_FN" <<'SH'
+ bridge() {
+   printf '%s\n' "$1" >> "$PC_LANE_TEST_CALLS"
+   case "$1" in
++    *'(! test -f '*'/FAILED -o '*'/FAILED -ot '*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
+     *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
+     *'mkdir -p '*'.lanes/'*) echo shipped;;
+     *'kill -0 '*)
+@@ -77,6 +78,7 @@ bridge() {
+         expired) echo 'expired 2026-09-15T00:00:00Z env-sha=abcdef123456 blocked-by=busy';;
+         failed) echo 'failed 2026-09-15T00:00:00Z env-sha=abcdef123456 rc=5';;
+       esac;;
++    *'(! test -f '*'/FAILED -o '*'/FAILED -ot '*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
+     *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
+     *'cat '*'/FAILED'*) printf '%s\n' "${PC_LANE_TEST_FAILED_TEXT:-route-capacity: exhausted}";;
+     *'test -s '*'/report.partial.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_PARTIAL_B64:-}";;
+@@ -381,9 +383,39 @@ run_poll PC_LANE_TEST_POLL_STATE=FAILED \
+ check "a safety-filter FAILED probe prints its terminal message and brings report.partial.md home" $? \
+   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
+ 
++# T94 defense-in-depth: a pre-fix runner can expose report.md as READY even though usage.json says the session failed.
++PREFX_REPORT='HTTP 400: [400]: No user query found in messages.'
++PREFX_B64="$(printf '%s' "$PREFX_REPORT" | base64 -w0)"
++FAILED_USAGE_B64="$(printf '%s\n' '{"model":"fixture","failed":true,"completed":false}' | base64 -w0)"
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$PREFX_B64" "PC_LANE_TEST_USAGE_B64=$FAILED_USAGE_B64" --
++FAILED_LOCAL="$TMP/poll-out/failed-output-brief.md--0000000.md"
++[ "$POLL_RC" -eq 70 ] \
++  && grep -Fq 'LANE FAILED — usage.json says the session failed and report.md holds the session' "$TMP/err.txt" \
++  && [ ! -e "$TMP/poll-out/report-brief.md--0000000.md" ] \
++  && [ "$(cat "$FAILED_LOCAL")" = "$PREFX_REPORT" ]
++check "a pre-fix runner's failed usage verdict keeps last output under a non-report name and exits 70" $? \
++  "the dispatcher independently refuses to harvest a failed session's output as report-<lane>.md"
++
++PROMOTED_TEXT=$'DRAFT REPORT — the Hermes session FAILED (usage.json "failed": true, "completed": false; harness rc=1)\nkept draft\n'
++PROMOTED_B64="$(printf '%s' "$PROMOTED_TEXT" | base64 -w0)"
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$PROMOTED_B64" "PC_LANE_TEST_USAGE_B64=$FAILED_USAGE_B64" PC_LANE_TEST_PROVIDER_MIX_RC=5 --
++[ "$POLL_RC" -eq 0 ] \
++  && head -1 "$TMP/poll-out/report-brief.md--0000000.md" | grep -Fq 'DRAFT REPORT — the Hermes session FAILED' \
++  && [ ! -e "$TMP/poll-out/failed-output-brief.md--0000000.md" ]
++check "a failed session's promoted DRAFT REPORT is harvestable as partial evidence" $? \
++  "the defense exempts only the runner's exact first-line header"
++
++# AF-AP-140: the real probe command binds FAILED to this dispatch's shipped brief.
++run_poll PC_LANE_TEST_POLL_STATE=RUNNING --
++PROBE_COMMAND="$(grep 'FAILED -ot ' "$BRIDGE_CALLS" | head -1)"
++if printf '%s\n' "$PROBE_COMMAND" | grep -Fq '/FAILED -ot /fake/.lanes/brief.md--0000000/brief.md'; then probe_bound_rc=0; else probe_bound_rc=$?; fi
++check "a stale FAILED and a live relaunched loop poll as RUNNING because FAILED is bound to brief.md mtime" \
++  "$([ "$POLL_RC" -eq 75 ] && [ "$probe_bound_rc" -eq 0 ] && echo 0 || echo 1)" \
++  "the stale marker is ignored during the runner's rename window instead of ending the new dispatch"
++
+ READY_TEXT='REAL DISPATCH REPORT'
+ READY_B64="$(printf '%s\n' "$READY_TEXT" | base64 -w0)"
+-USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local"}' | base64 -w0)"
++USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local","failed":false,"completed":true}' | base64 -w0)"
+ SQL_CAPTURE="$TMP/provider-mix.sql"
+ MIX_ONE=$'MIX\tagentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t0\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t0\t\t'
+ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+diff --git a/scripts/pc_lane.sh b/scripts/pc_lane.sh
+index 6d602413..227ce05c 100755
+--- a/scripts/pc_lane.sh
++++ b/scripts/pc_lane.sh
+@@ -381,7 +381,11 @@ while [ "$i" -lt "$MAX_POLLS" ]; do
+   # READY also needs the lane LOOP gone (its pidfile is removed by pc-lane.sh's exit trap): report.md is complete the moment the
+   # harness exits, but the transcript export into the tree runs AFTER that, and a fetch in between ships the stale staged
+   # transcript (2026-09-08 15:20Z, VERIFY-B5j: the resumed session's 631-line transcript came home as the dead attempt's 990).
+-  probe="$(bridge "test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo READY || (kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && [ -n \"\$(find $PC_AF_REPO/.lanes/$LANE_ID/launch.log -mmin -5 2>/dev/null)\" ] && echo RUNNING || echo GONE)))")"
++  # A FAILED marker belongs to this dispatch only when it is at least as new as
++  # the brief shipped above. A relaunched loop renames an older marker at start,
++  # but this mtime binding closes the launch window before that rename executes
++  # and protects dispatchers talking to an older runner (AF-AP-140).
++  probe="$(bridge "(! test -f $PC_AF_REPO/.lanes/$LANE_ID/FAILED -o $PC_AF_REPO/.lanes/$LANE_ID/FAILED -ot $REMOTE_BRIEF) && echo FAILED || (test -s $REMOTE_REPORT && grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \\$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo FAILED-UNRETRIED) || (test -s $REMOTE_REPORT && ! grep -Eq '^API call failed|^(⚠️ )?No reply: ' $REMOTE_REPORT && ! kill -0 \\$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo READY || (kill -0 \\$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo RUNNING || (test ! -f $PC_AF_REPO/.lanes/$LANE_ID/lane.pid && [ -n \\\"\\$(find $PC_AF_REPO/.lanes/$LANE_ID/launch.log -mmin -5 2>/dev/null)\\\" ] && echo RUNNING || echo GONE)))")"
+   case "$probe" in
+     *FAILED-UNRETRIED*) echo "pc_lane: LANE FAILED — the harness died on an API failure the PC side did not retry (the line stands as report.md; not a report). Reason:" >&2
+                bridge "head -c 300 $REMOTE_REPORT" >&2 2>/dev/null
+@@ -436,6 +440,17 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
+   # the actually served model (not the requested combo/raw id) and the lane profile.
+   USAGE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/usage.json"
+   USAGE_B64="$(bridge "test -s $USAGE_REMOTE && base64 -w0 $USAGE_REMOTE" 2>/dev/null || true)"
++  USAGE_VERDICT="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json, sys
++d = json.load(sys.stdin)
++failed = d.get("failed") is True or d.get("completed") is False
++print("failed" if failed else "ok")' 2>/dev/null || true)"
++  REPORT_FIRST_LINE="$(sed -n '1p' "$LOCAL_REPORT")"
++  if [ "$USAGE_VERDICT" = failed ] && [[ "$REPORT_FIRST_LINE" != "DRAFT REPORT — the Hermes session FAILED"* ]]; then
++    FAILED_OUTPUT="$OUT/failed-output-$LANE_ID.md"
++    mv "$LOCAL_REPORT" "$FAILED_OUTPUT"
++    echo "pc_lane: LANE FAILED — usage.json says the session failed and report.md holds the session's last output, not a report; kept -> $FAILED_OUTPUT" >&2
++    exit 70
++  fi
+   SERVED_MODEL="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("model", ""))' 2>/dev/null || true)"
+   LANE_PROFILE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/profile.txt"
+   LANE_PROFILE_USED="$(bridge "test -s $LANE_PROFILE_REMOTE && sed -n '1p' $LANE_PROFILE_REMOTE" 2>/dev/null || true)"
+diff --git a/tasks/briefs/pc-t90-support/T94-report.md b/tasks/briefs/pc-t90-support/T94-report.md
+new file mode 100644
+index 00000000..0501939e
+--- /dev/null
++++ b/tasks/briefs/pc-t90-support/T94-report.md
+@@ -0,0 +1,224 @@
++# T94 report — failed Hermes session never becomes a report (task #200) + relaunch never inherits a dead loop's FAILED (task #167)
++
++LANE: t94 (PC continuation, code-implementer, private PIN copy). STATUS: PROPOSAL COMPLETE; independent adversarial verification NOT run.
++
++## 1. Premise re-measure (contract item 1) — HOLDS
++
++```
++$ date -u +%Y-%m-%dT%H:%MZ; git rev-parse --short origin/...; git rev-parse --short HEAD
++2026-09-23T16:15Z
++c6dcd61            (origin)
++be848a1            (local HEAD; the brief says the four files are byte-identical at both — verified below)
++$ origin-blob  worktree-blob  HEAD-blob  lines  file
++183f337eff91 183f337eff91 183f337eff91 529 harness-ports/bin/pc-lane.sh
++6d6024139163 6d6024139163 6d6024139163 609 scripts/pc_lane.sh
++67ed1e0c3c56 67ed1e0c3c56 67ed1e0c3c56 641 harness-ports/tests/test_pc_lane.sh
++948c19ac580c 948c19ac580c 948c19ac580c 452 harness-ports/tests/test_pc_lane_dispatcher.sh
++$ grep anchors on R: 269 CAPACITY_RX · 270 QUOTA_RX · 304 SAFETY_RX · 305 PERSIST_RX · 450 --usage-file · 496 refusal grep ·
++  503 DRAFT REPORT · 509 usage.json block                                  (all identical to the brief)
++$ grep anchors on D: 384 probe · 386 *FAILED-UNRETRIED*) · 390 *FAILED*) · 413 *READY*) · 433 report ->   (identical)
++$ grep -c 'pc-lane.sh\|pc_lane.sh' scripts/gate_files.txt
++2
++$ bash harness-ports/tests/test_pc_lane.sh | tail -1            (rc=0)
++60 passed, 0 failed
++$ bash harness-ports/tests/test_pc_lane_dispatcher.sh | tail -1 (rc=0)
++pc_lane dispatcher: 39 passed, 0 failed
++$ od -c <scratchpad>/evidence/report-pc-verify-t92-t90r3-pcj1.md--433d15e.md   (50 bytes, 15:33)
++0000000   H   T   T   P       4   0   0   :       [   4   0   0   ]   :
++0000020       N   o       u   s   e   r       q   u   e   r   y       f
++0000040   o   u   n   d       i   n       m   e   s   s   a   g   e   s
++0000060   .  \n
++```
++NOT re-measured (by rule): the premise's `scripts/pc.sh` usage.json read — this lane makes no bridge call.
++
++## 2. Seams verified before code (build-loop step 1)
++
++- R's post-loop order at the PIN: loop `done` at `R@feb26d7c:490` -> refusal grep at `R@feb26d7c:496` -> empty-report
++  draft promotion at `R@feb26d7c:502-505` -> transcript export at `R@feb26d7c:509-519` -> final rc at
++  `R@feb26d7c:521-529`. The safety family exits 70 inside the PIN loop at `R@feb26d7c:459-468`; capacity/persist retries continue
++  inside it. Therefore the new post-loop rule cannot pre-empt those paths.
++- Hermes writes usage.json through `--usage-file "$LANE_DIR/usage.json"` at R:464. T1's new fake Hermes reads that exact argv flag,
++  so the tests bind to the runner's real seam, not to a path the test chooses.
++- D's poll `probe=` at D:389 tests the current-dispatch FAILED condition first; D ships `brief.md` on every dispatch at D:249-252,
++  FIRST and RESUME alike. D fetches `USAGE_B64` after its `report ->` line at D:443-447.
++- The never-a-gate screen (`scripts/no_laya_in_gates.py`) parses R and D as shell text and allows exactly D's two `.` sources
++  (`no_laya_in_gates.py:95-96`); this lane adds no source edge. R's verdict parser is inline `python3 -c` at R:510.
++- Other readers of the lane markers: none. Literal sweep for `/FAILED|FAILED.stale|usage.json|report-draft.md|.lanes/` over
++  scripts/, harness-ports/, .claude/hooks: only R, D, T1, T2 and pc-setup.sh (its own `.lanes/*.log` files). GitNexus impact:
++  `pc-lane.sh` "not found", `pc_lane.sh` risk UNKNOWN (no callers resolved; exec edges are invisible to the index) — confirmed by text
++  search: D:359 launches R; run-all.sh:27 runs T1 (and runs T2 and test_pc_lane_admission.sh, which does not touch the probe/fetch).
++  PC continuation recheck: graft returned no indexed shell definitions or semantic hits; GitNexus's clone index was 832 commits stale,
++  so `risk: UNKNOWN` remains unresolved rather than being treated as low risk. `scripts/why.sh` and the generated lane-context pack
++  independently recovered the runner/dispatcher history and test entry points.
++- Primitives re-measured on the PC (Fedora 42, bash 5.2.37): `test A -ot B` resolves sub-second mtimes (two files 52 ms apart);
++  a missing A is older than an existing B; an existing A is not older than a missing B; `date -u -r` printed
++  `20260923T172927.946783327Z`. This confirms the predecessor's design premise on the execution host.
++
++## 3. Design decisions (contract items 2-4)
++
++- Item 2 (R): one new block between the loop's `done` and the refusal block; the refusal block's `if` becomes `elif`, so a
++  runtime verdict of "failed" DECIDES and no text screen re-reads the promoted draft (without the `elif`, a draft or a failed output
++  that contains `exhausted their quota` — QUOTA_RX is unanchored — would be turned into FAILED and report.md deleted).
++  The promoted header's FIRST line starts `DRAFT REPORT — ` (so item 3's poller exemption recognizes it); the 200 bytes of the
++  failed output go on ONE prefixed line with newlines shown as `\n` (a raw paste could put `API call failed …` or `No reply: …`
++  at a line start, which D's probe greps anywhere in report.md and would misread as FAILED-UNRETRIED).
++- Item 4 (AF-AP-140): BOTH, for two different windows.
++  R at loop start (after the pidfile and traps, before any slow step): a FAILED left by a dead loop is renamed to
++  `FAILED.stale-<its own mtime, UTC>` (a `.<pid>` suffix on a name collision, so an older stale marker is never overwritten).
++  Why R: only the loop knows it is a new loop; without the rename the stale file would also shadow a relaunched loop that SUCCEEDS
++  (D reads FAILED before READY), and a later FAILED from the new loop would overwrite the evidence.
++  D in the probe: FAILED is terminal only when it is NOT OLDER than this dispatch's `brief.md` (both PC-clock mtimes, no skew).
++  Why D too: between D's launch call and R's rename there is a window (setsid start, self-copy exec) in which D's first probe can
++  read the stale file — a race R alone cannot close; the binding also covers a runner that predates the rename.
++  Rejected: a pure reorder (liveness before FAILED). In the launch window there is no pidfile yet, so a reorder still reads the stale
++  FAILED; moving the launch-window RUNNING rule above FAILED would also delay a live loop's fail-fast verdict.
++- Test seam: `run_hermes_verdict` drives the real R script with a fake Hermes bound through its actual `--usage-file` argv;
++  its fixture controls use neutral `FAKE_*` environment names, so R cannot reinterpret them as route settings. The first PC run
++  exposed a predecessor test bug (fixture exported `FAKE_*` but read `HERMES_*`: 61 passed, 6 failed); fixing that test seam and
++  making default JSON an explicit branch produced 67/67. T2 drives the real D private-copy/poll/harvest path through its fake bridge.
++
++## 4. Contract tests (item 5)
++
++| Item | Named executable assertion | Final result |
++|---|---|---|
++| (a) failed 400 + draft | `a failed Hermes session promotes its draft under the failed-session header and preserves the 400 output` | PASS |
++| (b) failed 400, no draft | `a failed Hermes session with no draft is FAILED rc 70, with no report.md and its output preserved` | PASS |
++| (c) finished-looking output | `NEGATIVE CONTROL: completed=false rejects output that looks like a finished MERGE-READY report` | PASS |
++| (d) successful verdict | `positive control: failed=false, completed=true keeps report.md byte-identical` | PASS |
++| (e) absent / malformed metadata | two named warning assertions | PASS / PASS |
++| (f) pre-fix runner defense | `a pre-fix runner's failed usage verdict keeps last output under a non-report name and exits 70` | PASS |
++| promoted-draft boundary | `a failed session's promoted DRAFT REPORT is harvestable as partial evidence` | PASS |
++| (g) stale FAILED | R preserves/renames the marker; D's probe binds it to the shipped `brief.md` mtime and polls RUNNING | PASS / PASS |
++
++RED BEFORE FIX (measured in this continuation): the first T1 run was `61 passed, 6 failed`, specifically all six new runtime-verdict
++fixtures. That red indicted the new fixture seam, not production: helper exports and fake-Hermes reads used different names. After
++that repair, the final focused suites were deterministic across two consecutive runs:
++
++```
++67 passed, 0 failed
++67 passed, 0 failed
++pc_lane dispatcher: 42 passed, 0 failed
++pc_lane dispatcher: 42 passed, 0 failed
++```
++
++## 5. Mutation audit (item 6; scratch copies only)
++
++Every mutant was syntax-checked, then run from its own full `git archive feb26d7` copy overlaid with final R/D/T1/T2. Production
++bytes were never mutated. The exact killer and final summary follow.
++
++| Mutant | Mutation | Named killer | Result |
++|---|---|---|---|
++| m1 | remove R's runtime-failed branch | failed-draft / no-draft / completed-false controls | KILLED: `64 passed, 3 failed` |
++| m2 | R reads `failed` but ignores `completed` | `NEGATIVE CONTROL: completed=false rejects output that looks like a finished MERGE-READY report` | KILLED: `66 passed, 1 failed` |
++| m3 | truncate instead of preserve failed output | failed-draft / no-draft / completed-false preservation controls | KILLED: `64 passed, 3 failed` |
++| m4 | promote draft without exact `DRAFT REPORT` header | failed-draft header assertion | KILLED: `66 passed, 1 failed` |
++| m5 | remove D's failed-usage defense | pre-fix-runner defense assertion | KILLED: `pc_lane dispatcher: 41 passed, 1 failed` |
++| m6 | revert D's AF-AP-140 mtime binding | stale-FAILED RUNNING assertion | KILLED: `pc_lane dispatcher: 41 passed, 1 failed` |
++
++The m2 control was sharpened during the audit to carry `failed:false, completed:false`; a fixture with both failure indicators set
++could not independently kill removal of the completed check. This is the required anti-hollow-green branch control.
++
++## 6. Gates and screens (item 7)
++
++```
++bash-n-final rc=0
++67 passed, 0 failed
++67 passed, 0 failed
++pc_lane dispatcher: 42 passed, 0 failed
++pc_lane dispatcher: 42 passed, 0 failed
++```
++
++`git diff --check` returned rc 0. AP screen classification over whole files:
++
++- R: two pre-existing hits only. AF-AP-45 at R:122 is the existing `pids=` census in `stop_session`; AF-AP-118 at R:444 is the
++  existing `fallback_providers` explanatory comment. Neither intersects this diff.
++- D: 0 hits.
++- T1 test screen: one pre-existing AF-AP-87 hit at T1:448, the established `kill -0` process-control assertion. It does not intersect
++  this diff.
++- T2 test screen: 0 hits.
++
++Full harness gate on final bytes:
++
++```
++test_pc_lane.sh                    67 passed, 0 failed
++test_pc_lane_dispatcher.sh         pc_lane dispatcher: 42 passed, 0 failed
++test_qwen_matrix_sh.sh             qwen-matrix-sh: 18 passed, 1 failed
++1 SUITE(S) FAILED
++RUN_ALL_RC=1
++```
++
++The same `SECOND_SIGINT` failure reproduced unchanged on the PIN archive (`qwen-matrix-sh: 18 passed, 1 failed`; PIN full run also
++had unrelated stale hook-spool failures, so `2 SUITE(S) FAILED`). A focused rerun on final bytes again produced exactly
++`qwen-matrix-sh: 18 passed, 1 failed`, where expected rc 130 was rc 7 after missing `SECOND_SIGINT/result.json`. This is pre-existing
++and outside the T94 boundary; it remains visible and unfixed.
++
++`lane_gate.sh` was attempted once with the brief's two shell scripts as `-t`; that tool invokes pytest and rejected them with
++`(no match in any of [<Dir tests>])`, RESULT rc 1. This is an instrument mismatch, not a product result. The brief's mandated shell
++gates above were run directly twice, as specified by the PC continuation venue notes.
++
++## 7. File identity and changed surfaces
++
++Identity captured by the attempted static-copy gate at 2026-09-23T18:02:24Z (report was then extended, so its final identity follows
++at close):
++
++- R: sha256 `fd281439ea3b5aafa8fbf5cdd519383304ac1db2cff7d065b9e64a1d22d4efe3`, 581 lines.
++- D: sha256 `ac4df5df7cd08f53138f79f72cdbb3084674e000272211cb72cd949e9b073d65`, 624 lines.
++- T1: sha256 `bce3c4ff9bf83979a7b075ebf706324ee4809f6cc700f80d1de7ff54ccb88968`, 736 lines.
++- T2: sha256 `53b9fd42b46598a5da92d3e1020524ace9b4363c924c0851c4f64c2327189384`, 484 lines.
++
++Changed behavior is confined to R's stale-marker and runtime-verdict blocks, D's dispatch-bound marker probe and usage defense, and
++the matching T1/T2 fixtures. No bridge, real lane, server, credential, or owner process was touched.
++
++- Current implementation anchors: R renames a predecessor marker at `if [ -e "$LANE_DIR/FAILED" ]` (R:137), parses
++  `usage_verdict=` at R:516, and branches on `[ "${usage_verdict%% *}" = failed ]` at R:528. The failed output is copied by
++  `cp -f "$REPORT"` at R:530; the exact promoted `DRAFT REPORT` header is at R:533; the no-draft path writes FAILED at R:539-543.
++- D's mtime-bound probe starts with `(! test -f ... -o ... -ot ...)` at D:389. Its defense parses `USAGE_VERDICT=` at D:444,
++  excludes only the exact `DRAFT REPORT` first line at D:449, then moves bad output to `FAILED_OUTPUT=` at D:450-453.
++- T1's fake reads the real `--usage-file` argument at T1:536-539; the independent `COMPLETED_FALSE_JSON=` fixture is T1:574;
++  T1's runtime-failed draft, no-draft, negative, success, warning, and stale-marker assertions span T1:579-633.
++- T2's failed-usage defense fixture begins at T2:387, its promoted-draft boundary at T2:399, and its stale-marker probe assertion
++  at T2:408-414.
++
++## 8. Evidence tiers, self-attack, discrepancies, NOT done
++
++VERIFIED:
++
++- R/D parse; T1/T2 each run twice with identical final counts; all six named mutants die for their intended reasons.
++- The full harness failure is pre-existing for the same qwen-matrix `SECOND_SIGINT` assertion on the PIN and final bytes.
++- PC mtime semantics, stale-marker preservation, exact promoted header, output retention, rc 70 failure paths, byte-identical success,
++  warning count, and the dispatcher non-report filename are executable assertions.
++
++INFERRED:
++
++- Shell-script call edges remain only partly mapped because graft indexed no definitions and GitNexus's clone graph was stale and
++  does not resolve R; this report does not turn that absence into a reachability claim.
++
++ASSUMED: none for the changed runtime behavior.
++
++SELF-ATTACK:
++
++1. R could key on only one runtime flag. Ruled out by m2 and the `failed:false, completed:false` control.
++2. A failed output could still become a semantic-looking report. Ruled out in R by the MERGE-READY control and in D by the pre-fix
++   runner control; m1 and m5 independently remove those defenses and go red.
++3. A relaunch could still lose or inherit its predecessor's marker in the launch window. R asserts the old content survives under a
++   stale name; D's command assertion requires the dispatch brief mtime binding; m6 removes it and goes red. A separate verifier must
++   still attack real shell race timing; this builder does not self-accept that concurrency claim.
++
++DISCREPANCIES:
++
++- Resume instruction named `report-draft.md`, but it did not exist. `report.attempt1.md` held only the 503 refusal. The substantive
++  predecessor draft was this tracked report; it was used and independently re-run before reliance.
++- Original brief baselines were 60 and 39; final counts are 67 and 42 because T94 adds seven R assertions and three D assertions.
++- `lane_gate.sh` is pytest-only despite the PC continuation asking to gate these shell suites through it; direct brief-prescribed shell
++  runs are the real test instrument.
++- Full `run-all.sh` is red on a pre-existing qwen-matrix signal test. This proposal does not claim full-suite green.
++- GitNexus `detect-changes` against the stale clone graph reported no changes for this detached private worktree; diff/status and the
++  generated lane context are the usable local change instruments.
++- Final report lint: `report_lint: 31 refs — OK 12, NEAR 3, MISS 7, UNCHECKABLE 9, UNRESOLVED 0 (worktree)`; the
++  `--min-refs 12` floor passed. This was bounded to three rounds as required; surviving heuristic misses are reported, not chased.
++
++NOT DONE:
++
++- No live PC lane, bridge call, real Hermes request, server action, commit, push, or outward-facing action.
++- No fix to the unrelated qwen-matrix failure.
++- No independent adversarial-verifier run and no final gate verdict. This is a self-validated build proposal for the sandbox verifier.
+diff --git a/transcripts/pc/pc-t94.md--feb26d7.md b/transcripts/pc/pc-t94.md--feb26d7.md
+new file mode 100644
+index 00000000..e475f7fd
+--- /dev/null
++++ b/transcripts/pc/pc-t94.md--feb26d7.md
+@@ -0,0 +1,861 @@
++# Hermes lane session 20260923_182533_83f6de
++
++- model: agentfactory-build
++- started: 2026-09-23T17:25:35.160071+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-t94.md--feb26d7/tree
++- messages: 105; tool calls: 60
++- tokens in/out/cache_read/reasoning: 200270/24031/5350144/4987
++
++## user @ 17:25:34
++
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-t94.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasi
++
++## assistant @ 17:25:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:25:45 — 565 chars (body not exported)
++
++## assistant @ 17:26:12 → tools: read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 17:26:12 — 225 chars (body not exported)
++
++## tool result (read_file) @ 17:26:12 — 6455 chars (body not exported)
++
++## tool result (read_file) @ 17:26:13 — 10372 chars (body not exported)
++
++## tool result (terminal) @ 17:26:13 — 270 chars (body not exported)
++
++## assistant @ 17:26:41 → tools: read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 17:26:41 — 6511 chars (body not exported)
++
++## tool result (terminal) @ 17:26:47 — 855 chars (body not exported)
++
++## tool result (terminal) @ 17:26:49 — 987 chars (body not exported)
++
++## tool result (terminal) @ 17:26:49 — 1847 chars (body not exported)
++
++## assistant @ 17:27:29 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 17:27:40 — 1650 chars (body not exported)
++
++## tool result (terminal) @ 17:27:40 — 23960 chars (body not exported)
++
++## tool result (terminal) @ 17:27:52 — 116 chars (body not exported)
++
++## tool result (terminal) @ 17:27:52 — 22851 chars (body not exported)
++
++## assistant @ 17:28:19 → tools: skill_view, skill_view, skill_view, read_file, read_file, read_file, read_file, read_file
++
++
++
++## tool result (skill_view) @ 17:28:19 — 27682 chars (body not exported)
++
++## tool result (skill_view) @ 17:28:19 — 26561 chars (body not exported)
++
++## tool result (skill_view) @ 17:28:19 — 12490 chars (body not exported)
++
++## tool result (read_file) @ 17:28:19 — 9282 chars (body not exported)
++
++## tool result (read_file) @ 17:28:19 — 9829 chars (body not exported)
++
++## tool result (read_file) @ 17:28:19 — 8846 chars (body not exported)
++
++## tool result (read_file) @ 17:28:19 — 11814 chars (body not exported)
++
++## tool result (read_file) @ 17:28:19 — 11722 chars (body not exported)
++
++## assistant @ 17:29:27 → tools: search_files, terminal, terminal, terminal, terminal
++
++
++
++## tool result (search_files) @ 17:29:27 — 1520 chars (body not exported)
++
++## tool result (terminal) @ 17:29:27 — 56 chars (body not exported)
++
++## tool result (terminal) @ 17:29:28 — 312 chars (body not exported)
++
++## tool result (terminal) @ 17:29:49 — 14439 chars (body not exported)
++
++## tool result (terminal) @ 17:29:58 — 20464 chars (body not exported)
++
++## assistant @ 17:30:29 → tools: search_files, read_file, read_file, search_files
++
++
++
++## tool result (search_files) @ 17:30:30 — 4400 chars (body not exported)
++
++## tool result (read_file) @ 17:30:30 — 12504 chars (body not exported)
++
++## tool result (read_file) @ 17:30:30 — 4434 chars (body not exported)
++
++## tool result (search_files) @ 17:30:30 — 2433 chars (body not exported)
++
++## assistant @ 17:30:53 → tools: patch
++
++
++
++## tool result (patch) @ 17:30:56 — 1727 chars (body not exported)
++
++## assistant @ 17:31:53 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 17:32:29 — 14693 chars (body not exported)
++
++## tool result (terminal) @ 17:32:30 — 66 chars (body not exported)
++
++## tool result (terminal) @ 17:32:37 — 65 chars (body not exported)
++
++## assistant @ 17:32:58 → tools: patch
++
++
++
++## tool result (patch) @ 17:32:59 — 499 chars (body not exported)
++
++## assistant @ 17:34:25 → tools: patch
++
++
++
++## tool result (patch) @ 17:34:27 — 1087 chars (body not exported)
++
++## assistant @ 17:34:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:35:18 — 14439 chars (body not exported)
++
++## assistant @ 17:36:28 → tools: write_file
++
++
++
++## tool result (write_file) @ 17:36:29 — 311 chars (body not exported)
++
++## assistant @ 17:37:36 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 17:38:09 — 632 chars (body not exported)
++
++## tool result (terminal) @ 17:38:23 — 101 chars (body not exported)
++
++## tool result (terminal) @ 17:38:24 — 764 chars (body not exported)
++
++## tool result (terminal) @ 17:38:25 — 64 chars (body not exported)
++
++## assistant @ 17:39:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:39:03 — 1987 chars (body not exported)
++
++## assistant @ 17:41:13 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 17:41:43 — 632 chars (body not exported)
++
++## tool result (terminal) @ 17:41:55 — 101 chars (body not exported)
++
++## tool result (terminal) @ 17:41:55 — 62 chars (body not exported)
++
++## assistant @ 17:42:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:45:05 — 3418 chars (body not exported)
++
++## assistant @ 17:45:48 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:48:46 — 5095 chars (body not exported)
++
++## assistant @ 17:50:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:51:03 — 6682 chars (body not exported)
++
++## assistant @ 17:51:20 → tools: search_files, search_files, terminal
++
++
++
++## tool result (search_files) @ 17:51:21 — 18 chars (body not exported)
++
++## tool result (search_files) @ 17:51:21 — 2789 chars (body not exported)
++
++## tool result (terminal) @ 17:51:21 — 1013 chars (body not exported)
++
++## assistant @ 17:51:26 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:51:26 — 6699 chars (body not exported)
++
++## assistant @ 17:51:52 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:52:23 — 365 chars (body not exported)
++
++## assistant @ 17:53:12 → tools: patch, patch, patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 17:53:20 — 1265 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 1283 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 1206 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 1693 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 1122 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 2609 chars (body not exported)
++
++## assistant @ 17:53:45 → tools: patch, patch
++
++
++
++## tool result (patch) @ 17:53:49 — 933 chars (body not exported)
++
++## tool result (patch) @ 17:53:52 — 1725 chars (body not exported)
++
++## assistant @ 17:54:24 → tools: patch
++
++
++
++## tool result (patch) @ 17:54:32 — 973 chars (body not exported)
++
++## assistant @ 17:55:02 → tools: patch
++
++
++
++## tool result (patch) @ 17:55:08 — 1765 chars (body not exported)
++
++## assistant @ 17:55:45 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:00:43 — 1651 chars (body not exported)
++
++## assistant @ 18:01:14 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 18:01:44 — 634 chars (body not exported)
++
++## tool result (terminal) @ 18:01:58 — 103 chars (body not exported)
++
++## tool result (terminal) @ 18:01:58 — 64 chars (body not exported)
++
++## assistant @ 18:02:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:02:44 — 1313 chars (body not exported)
++
++## assistant @ 18:02:48 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:02:48 — 7507 chars (body not exported)
++
++## assistant @ 18:03:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:03:03 — 385 chars (body not exported)
++
++## assistant @ 18:03:30 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:05:55 — 1611 chars (body not exported)
++
++## assistant @ 18:06:20 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 18:06:47 — 634 chars (body not exported)
++
++## tool result (terminal) @ 18:06:56 — 103 chars (body not exported)
++
++## assistant @ 18:07:27 → tools: patch
++
++
++
++## tool result (patch) @ 18:07:28 — 1002 chars (body not exported)
++
++## assistant @ 18:08:06 → tools: patch
++
++
++
++## tool result (patch) @ 18:08:08 — 1700 chars (body not exported)
++
++## assistant @ 18:08:30 → tools: patch
++
++
++
++## tool result (patch) @ 18:08:31 — 1803 chars (body not exported)
++
++## assistant @ 18:08:52 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:08:52 — 6900 chars (body not exported)
++
++## assistant @ 18:10:29 → tools: patch
++
++
++
++## tool result (patch) @ 18:10:32 — 10173 chars (body not exported)
++
++## user @ 17:25:34
++
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-t94.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasi
++
++## assistant @ 17:25:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:25:45 — 108 chars (body not exported)
++
++## assistant @ 18:16:23
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User asked: “RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its in…” (the available source text is truncated) — finish the resumed T94 lane from the inherited edits, validate the implementation, and provide the final substantive delivery/report. Implementation review and validation were largely completed on 2026-09-23, but no final user-facing response was sent.
++
++## Goal
++Complete T94’s PC-side Hermes failure-handling work: ensure the runner and sandbox dispatcher correctly classify Hermes success/failure, retain or expose promoted incremental drafts on failure, avoid treating stale `FAILED` markers as current failures, and cover those contracts with shell regression tests and a lane report.
++
++## Constraints & Preferences
++- Resume and preserve the previous attempt’s worktree edits rather than restartin
++
++## assistant @ 17:39:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:39:03 — 97 chars (body not exported)
++
++## assistant @ 17:41:13 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 17:41:43 — 123 chars (body not exported)
++
++## tool result (terminal) @ 17:41:55 — 101 chars (body not exported)
++
++## tool result (terminal) @ 17:41:55 — 62 chars (body not exported)
++
++## assistant @ 17:42:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:45:05 — 123 chars (body not exported)
++
++## assistant @ 17:45:48 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:48:46 — 97 chars (body not exported)
++
++## assistant @ 17:50:09 → tools: terminal
++
++
++
++## tool result (terminal) @ 17:51:03 — 123 chars (body not exported)
++
++## assistant @ 17:51:20 → tools: search_files, search_files, terminal
++
++
++
++## tool result (search_files) @ 17:51:21 — 18 chars (body not exported)
++
++## tool result (search_files) @ 17:51:21 — 118 chars (body not exported)
++
++## tool result (terminal) @ 17:51:21 — 123 chars (body not exported)
++
++## assistant @ 17:51:26 → tools: read_file
++
++
++
++## tool result (read_file) @ 17:51:26 — 65 chars (body not exported)
++
++## assistant @ 17:51:52 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 17:52:23 — 97 chars (body not exported)
++
++## assistant @ 17:53:12 → tools: patch, patch, patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 17:53:20 — 135 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 135 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 135 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 135 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 125 chars (body not exported)
++
++## tool result (patch) @ 17:53:20 — 125 chars (body not exported)
++
++## assistant @ 17:53:45 → tools: patch, patch
++
++
++
++## tool result (patch) @ 17:53:49 — 73 chars (body not exported)
++
++## tool result (patch) @ 17:53:52 — 75 chars (body not exported)
++
++## assistant @ 17:54:24 → tools: patch
++
++
++
++## tool result (patch) @ 17:54:32 — 140 chars (body not exported)
++
++## assistant @ 17:55:02 → tools: patch
++
++
++
++## tool result (patch) @ 17:55:08 — 142 chars (body not exported)
++
++## assistant @ 17:55:45 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:00:43 — 97 chars (body not exported)
++
++## assistant @ 18:01:14 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 18:01:44 — 123 chars (body not exported)
++
++## tool result (terminal) @ 18:01:58 — 103 chars (body not exported)
++
++## tool result (terminal) @ 18:01:58 — 64 chars (body not exported)
++
++## assistant @ 18:02:21 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:02:44 — 123 chars (body not exported)
++
++## assistant @ 18:02:48 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:02:48 — 63 chars (body not exported)
++
++## assistant @ 18:03:03 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:03:03 — 97 chars (body not exported)
++
++## assistant @ 18:03:30 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 18:05:55 — 163 chars (body not exported)
++
++## assistant @ 18:06:20 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 18:06:47 — 634 chars (body not exported)
++
++## tool result (terminal) @ 18:06:56 — 103 chars (body not exported)
++
++## assistant @ 18:07:27 → tools: patch
++
++
++
++## tool result (patch) @ 18:07:28 — 1002 chars (body not exported)
++
++## assistant @ 18:08:06 → tools: patch
++
++
++
++## tool result (patch) @ 18:08:08 — 1700 chars (body not exported)
++
++## assistant @ 18:08:30 → tools: patch
++
++
++
++## tool result (patch) @ 18:08:31 — 1803 chars (body not exported)
++
++## assistant @ 18:08:52 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:08:52 — 6900 chars (body not exported)
++
++## assistant @ 18:10:29 → tools: patch
++
++
++
++## tool result (patch) @ 18:10:32 — 10173 chars (body not exported)
++
++## user @ 17:25:34
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++RESUME (attempt 2 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-t94.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a
++
++## assistant @ 18:16:35 → tools: read_file
++
++
++
++## tool result (read_file) @ 18:16:35 — 2297 chars (body not exported)
++
++## assistant @ 18:17:04 → tools: read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 18:17:04 — 10372 chars (body not exported)
++
++## tool result (read_file) @ 18:17:04 — 15849 chars (body not exported)
++
++## tool result (terminal) @ 18:17:04 — 525 chars (body not exported)
++
++## assistant @ 18:18:15 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 18:18:15 — 619 chars (body not exported)
++
++## tool result (terminal) @ 18:18:15 — 21836 chars (body not exported)
++
++## tool result (terminal) @ 18:18:17 — 748 chars (body not exported)
++
++## assistant @ 18:18:57 → tools: patch
++
++
++
++## tool result (patch) @ 18:18:58 — 1847 chars (body not exported)
++
++## assistant @ 18:19:18 → tools: patch
++
++
++
++## tool result (patch) @ 18:19:20 — 988 chars (body not exported)
++
++## assistant @ 18:19:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:19:39 — 4025 chars (body not exported)
++
++## assistant @ 18:20:21 → tools: patch
++
++
++
++## tool result (patch) @ 18:20:22 — 1940 chars (body not exported)
++
++## assistant @ 18:20:56 → tools: patch
++
++
++
++## tool result (patch) @ 18:20:57 — 2059 chars (body not exported)
++
++## assistant @ 18:22:57 → tools: patch
++
++
++
++## tool result (patch) @ 18:22:57 — 1550 chars (body not exported)
++
++## assistant @ 18:24:33 → tools: patch
++
++
++
++## tool result (patch) @ 18:24:34 — 1247 chars (body not exported)
++
++## assistant @ 18:26:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:26:28 — 2222 chars (body not exported)
++
++## assistant @ 18:28:10 → tools: patch
++
++
++
++## tool result (patch) @ 18:28:11 — 1912 chars (body not exported)
++
++## assistant @ 18:28:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 18:28:29 — 4714 chars (body not exported)
++
++## assistant @ 18:28:38 → tools: patch
++
++
++
++## tool result (patch) @ 18:28:39 — 1236 chars (body not exported)
++
++## assistant @ 18:29:16 → tools: write_file
++
++
++
++## tool result (write_file) @ 18:29:18 — 311 chars (body not exported)
++
++## assistant @ 18:29:45 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 18:29:46 — 79 chars (body not exported)
++
++## tool result (terminal) @ 18:29:46 — 564 chars (body not exported)
++
++## tool result (terminal) @ 18:29:53 — 65 chars (body not exported)
++
++## assistant @ 18:30:42
++
++PROPOSAL COMPLETE: T94 is self-validated. Independent adversarial verification is still required.
++
++FILES
++
++- harness-ports/bin/pc-lane.sh:137,516-543
++  - Renames and preserves stale FAILED markers.
++  - Uses Hermes usage.json as the structural verdict.
++  - Preserves failed output separately.
++  - Promotes an incremental draft only under the failed-session header.
++  - Exits 70 with no report when no draft exists.
++
++- scripts/pc_lane.sh:389,444-453
++  - Binds FAILED to the current dispatch using brief mtime.
++  - Rejects failed-session output from pre-fix runners.
++  - Stores it under a non-report filename.
++
++- harness-ports/tests/test_pc_lane.sh:536-633
++  - Adds runtime-verdict, warning, preservation, success, and stale-marker controls.
++
++- harness-ports/tests/test_pc_lane_dispatcher.sh:387-414
++  - Adds dispatcher defense, promoted-draft, and stale-marker controls.
++
++- tasks/briefs/pc-t90-support/T94-report.md
++  - Full 224-line evidence report.
++  - SHA-256: <opaque-redacted>
++
++VERIFIED
++
++- Shell syntax: rc 0.
++- Diff check: rc 0.
++- Runner suite, twice:
++  - 67 passed, 0 failed
++  - 67 passed, 0 failed
++- Dispatcher suite, twice:
++  - 42 passed, 0 failed
++  - 42 passed, 0 failed
++- Six scratch-copy mutants were killed:
++  - m1: 64 passed, 3 failed
++  - m2: 66 passed, 1 failed
++  - m3: 64 passed, 3 failed
++  - m4: 66 passed, 1 failed
++  - m5: 41 passed, 1 failed
++  - m6: 41 passed, 1 failed
++- Report lint:
++  - 31 refs
++  - OK 12
++  - NEAR 3
++  - MISS 7
++  - UNCHECKABLE 9
++  - UNRESOLVED 0
++  - Minimum-reference floor passed.
++
++FULL HARNESS
++
++run-all.sh remains red:
++
++- test_pc_lane.sh: 67 passed, 0 failed
++- test_pc_lane_dispatcher.sh: 42 passed, 0 failed
++- test_qwen_matrix_sh.sh: 18 passed, 1 failed
++- RUN_ALL_RC=1
++
++The same qwen-matrix SECOND_SIGINT failure reproduced on the feb26d7 PIN. It is pre-existing, outside the T94 boundary, and was not changed.
++
++DISCREPANCIES
++
++- The requested report-draft.md was initially absent; report.attempt1.md contained only the route refusal. The substantive predecessor report was recovered and revalidated.
++- lane_gate.sh invokes pytest and cannot run these shell suites. The brief-prescribed shell gates were run directly.
++- GitNexus used a stale clone index and reported no detached-worktree changes. This was not treated as evidence of low risk.
++- Original suite baselines were 60 and 39; T94’s added assertions raise them to 67 and 42.
++
++NOT DONE
++
++- No independent adversarial-verifier run.
++- No final gate verdict.
++- No live lane, bridge, real Hermes request, or server action.
++- No commit, push, or outward-facing action.
++- No fix to the unrelated qwen-matrix failure.
++
++Full report:
++tasks/briefs/pc-t90-support/T94-report.md
++
++
++---
++profile: aflanepct94mdfeb26d7
++
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 200270,
++  "output_tokens": 24031,
++  "cache_read_tokens": 5350144,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 4987,
++  "total_tokens": 5574445,
++  "api_calls": 55,
++  "model": "agentfactory-build",
++  "provider": "custom",
++  "session_id": "20260923_182533_83f6de",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

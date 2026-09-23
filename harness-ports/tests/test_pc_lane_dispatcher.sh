@@ -48,6 +48,7 @@ cat > "$BRIDGE_FN" <<'SH'
 bridge() {
   printf '%s\n' "$1" >> "$PC_LANE_TEST_CALLS"
   case "$1" in
+    *'test ! '*'/FAILED -ot '*'&& echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
     *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
     *'mkdir -p '*'.lanes/'*) echo shipped;;
     *'kill -0 '*)
@@ -77,6 +78,7 @@ bridge() {
         expired) echo 'expired 2026-09-15T00:00:00Z env-sha=abcdef123456 blocked-by=busy';;
         failed) echo 'failed 2026-09-15T00:00:00Z env-sha=abcdef123456 rc=5';;
       esac;;
+    *'test ! '*'/FAILED -ot '*'&& echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
     *'test -f '*'/FAILED && echo FAILED'*) echo "${PC_LANE_TEST_POLL_STATE:-GONE}";;
     *'cat '*'/FAILED'*) printf '%s\n' "${PC_LANE_TEST_FAILED_TEXT:-route-capacity: exhausted}";;
     *'test -s '*'/report.partial.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_PARTIAL_B64:-}";;
@@ -381,9 +383,111 @@ run_poll PC_LANE_TEST_POLL_STATE=FAILED \
 check "a safety-filter FAILED probe prints its terminal message and brings report.partial.md home" $? \
   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
 
+# T94 defense-in-depth: a pre-fix runner can expose report.md as READY even though usage.json says the session failed.
+PREFX_REPORT='HTTP 400: [400]: No user query found in messages.'
+PREFX_B64="$(printf '%s' "$PREFX_REPORT" | base64 -w0)"
+FAILED_USAGE_B64="$(printf '%s\n' '{"model":"fixture","failed":true,"completed":false}' | base64 -w0)"
+run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$PREFX_B64" "PC_LANE_TEST_USAGE_B64=$FAILED_USAGE_B64" --
+FAILED_LOCAL="$TMP/poll-out/failed-output-brief.md--0000000.md"
+[ "$POLL_RC" -eq 70 ] \
+  && grep -Fq 'LANE FAILED — usage.json says the session failed and report.md holds the session' "$TMP/err.txt" \
+  && [ ! -e "$TMP/poll-out/report-brief.md--0000000.md" ] \
+  && [ "$(cat "$FAILED_LOCAL")" = "$PREFX_REPORT" ]
+check "a pre-fix runner's failed usage verdict keeps last output under a non-report name and exits 70" $? \
+  "the dispatcher independently refuses to harvest a failed session's output as report-<lane>.md"
+
+PROMOTED_TEXT=$'DRAFT REPORT — the Hermes session FAILED (usage.json "failed": true, "completed": false; harness rc=1)\nkept draft\n'
+PROMOTED_B64="$(printf '%s' "$PROMOTED_TEXT" | base64 -w0)"
+run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$PROMOTED_B64" "PC_LANE_TEST_USAGE_B64=$FAILED_USAGE_B64" PC_LANE_TEST_PROVIDER_MIX_RC=5 --
+[ "$POLL_RC" -eq 0 ] \
+  && head -1 "$TMP/poll-out/report-brief.md--0000000.md" | grep -Fq 'DRAFT REPORT — the Hermes session FAILED' \
+  && [ ! -e "$TMP/poll-out/failed-output-brief.md--0000000.md" ]
+check "a failed session's promoted DRAFT REPORT is harvestable as partial evidence" $? \
+  "the defense exempts only the runner's exact first-line header"
+
+# AF-AP-140: the real probe command binds FAILED to this dispatch's shipped brief.
+run_poll PC_LANE_TEST_POLL_STATE=RUNNING --
+PROBE_COMMAND="$(grep 'FAILED -ot ' "$BRIDGE_CALLS" | head -1)"
+if printf '%s\n' "$PROBE_COMMAND" | grep -Fq '/FAILED -ot /fake/.lanes/brief.md--0000000/brief.md'; then probe_bound_rc=0; else probe_bound_rc=$?; fi
+check "a stale FAILED and a live relaunched loop poll as RUNNING because FAILED is bound to brief.md mtime" \
+  "$([ "$POLL_RC" -eq 75 ] && [ "$probe_bound_rc" -eq 0 ] && echo 0 || echo 1)" \
+  "the stale marker is ignored during the runner's rename window instead of ending the new dispatch"
+
+# AF-AP-162 (the T94 landing, 2026-09-23): the canned bridge above answers the poll probe from a case arm, so no test had
+# ever EXECUTED the probe. T94's first probe escaped its PC-side lookups twice (\\$(cat …/lane.pid), \\$(find …/launch.log)):
+# they expanded in the sandbox, the PC got a syntax error, and an empty probe matches no state, so every poll would have
+# spun to MAX_POLLS; its FAILED predicate was also inverted (never FAILED for a fresh marker). Both passed every test.
+# This bridge RUNS the probe the dispatcher sends, against a fake PC tree: /fake is rewritten to it only INSIDE the
+# bridge, and /fake exists nowhere locally, so a lookup expanded on the wrong side reads nothing and the probe's own
+# output shows it. Every other call goes to the canned bridge.
+EXEC_BRIDGE_FN="$TMP/bridge-exec.sh"; PCROOT="$TMP/pcroot"; PCLANE="$PCROOT/.lanes/brief.md--0000000"
+cat > "$EXEC_BRIDGE_FN" <<'SH'
+. "$PC_LANE_TEST_CANNED_FN"
+eval "canned_$(declare -f bridge)"
+bridge() {
+  case "$1" in
+    *'echo RUNNING'*'echo GONE'*)
+      printf '%s\n' "$1" >> "$PC_LANE_TEST_CALLS"
+      bash -c "${1//\/fake\//$PC_LANE_TEST_PCROOT/}" 2> "$PC_LANE_TEST_PROBE_ERR" | tee "$PC_LANE_TEST_PROBE_OUT";;
+    *) canned_bridge "$@";;
+  esac
+}
+SH
+exec_lane() { # exec_lane <brief-mtime> [FAILED-mtime|-] [live|dead|-] [report-text|-] [launch.log-mtime|-]  (a fresh fake PC lane dir)
+  rm -rf "$PCROOT"; mkdir -p "$PCLANE"
+  printf 'PIN: 0000000\nbrief\n' > "$PCLANE/brief.md"; touch -d "$1" "$PCLANE/brief.md"
+  [ "${2:--}" = - ] || { echo 'route-capacity: exhausted' > "$PCLANE/FAILED"; touch -d "$2" "$PCLANE/FAILED"; }
+  case "${3:--}" in
+    live) sleep 60 & FIXTURE_PIDS+=("$!"); printf '%s\n' "$!" > "$PCLANE/lane.pid";;
+    dead) sleep 0 & wait "$!"; printf '%s\n' "$!" > "$PCLANE/lane.pid";;
+  esac
+  [ "${4:--}" = - ] || printf '%s\n' "$4" > "$PCLANE/report.md"
+  [ "${5:--}" = - ] || { : > "$PCLANE/launch.log"; touch -d "$5" "$PCLANE/launch.log"; }
+}
+run_exec_poll() { # run_exec_poll [ENV=VAL ...] --  (the real probe executed; sets POLL_RC, PROBE_OUT, PROBE_ERR)
+  local envs=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  : > "$TMP/probe.out"; : > "$TMP/probe.err"
+  run_poll PC_LANE_BRIDGE_FN="$EXEC_BRIDGE_FN" PC_LANE_TEST_CANNED_FN="$BRIDGE_FN" PC_LANE_TEST_PCROOT="$PCROOT" \
+    PC_LANE_TEST_PROBE_OUT="$TMP/probe.out" PC_LANE_TEST_PROBE_ERR="$TMP/probe.err" "${envs[@]}" --
+  PROBE_OUT="$(cat "$TMP/probe.out")"; PROBE_ERR="$(cat "$TMP/probe.err")"
+}
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; OLD='2020-01-01T00:00:00Z'
+exec_lane "$NOW" "$OLD" live
+run_exec_poll --
+[ "$PROBE_OUT" = RUNNING ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 75 ] && [ -f "$PCLANE/FAILED" ]
+check "EXECUTED probe: a stale FAILED (older than this dispatch's brief) with a live loop polls RUNNING; the marker is untouched" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" "$NOW" dead
+run_exec_poll --
+[ "$PROBE_OUT" = FAILED ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 70 ] && grep -Fq 'pc_lane: LANE FAILED' "$TMP/err.txt"
+check "EXECUTED probe: this dispatch's own FAILED (not older than the brief) ends the poll with LANE FAILED, rc 70" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - live 'REAL DISPATCH REPORT'
+run_exec_poll --
+[ "$PROBE_OUT" = RUNNING ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 75 ]
+check "EXECUTED probe: report.md present while the lane loop is alive polls RUNNING, never READY (the pid is read on the PC)" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - dead 'REAL DISPATCH REPORT'
+run_exec_poll "PC_LANE_TEST_REPORT_B64=$(printf 'REAL DISPATCH REPORT\n' | base64 -w0)" \
+  "PC_LANE_TEST_USAGE_B64=$(printf '%s\n' '{"model":"fixture","failed":false,"completed":true}' | base64 -w0)" PC_LANE_TEST_PROVIDER_MIX_RC=5 --
+[ "$PROBE_OUT" = READY ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 0 ]
+check "EXECUTED probe: report.md present with the lane loop gone polls READY" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - - - "$NOW"
+run_exec_poll --
+[ "$PROBE_OUT" = RUNNING ] && [ -z "$PROBE_ERR" ]
+check "EXECUTED probe: no pidfile yet and a fresh launch.log (the launch window) polls RUNNING (the find runs on the PC)" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - - - "$OLD"
+run_exec_poll --
+[ "$PROBE_OUT" = GONE ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 70 ]
+check "EXECUTED probe: no pidfile, no report and a stale launch.log polls GONE" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+
 READY_TEXT='REAL DISPATCH REPORT'
 READY_B64="$(printf '%s\n' "$READY_TEXT" | base64 -w0)"
-USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local"}' | base64 -w0)"
+USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local","failed":false,"completed":true}' | base64 -w0)"
 SQL_CAPTURE="$TMP/provider-mix.sql"
 MIX_ONE=$'MIX\tagentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t0\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t0\t\t'
 run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --

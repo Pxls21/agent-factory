@@ -529,9 +529,104 @@ cat > "$FAKE_HERMES" <<'EOF'
 #!/usr/bin/env bash
 # TEST DOUBLE. Captures Hermes argv so route/effort selection can be asserted.
 printf '%s\n' "$@" > "${HERMES_ARGS_FILE:?}"
-echo "FAKE-HERMES-REPORT"
+usage_file=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --usage-file ] && [ "$#" -ge 2 ]; then usage_file="$2"; shift 2; else shift; fi
+done
+if [ -n "$usage_file" ]; then
+  case "${FAKE_USAGE_MODE:-valid}" in
+    absent) ;;
+    malformed) printf '%s\n' 'not-json' > "$usage_file";;
+    *) if [ -n "${FAKE_USAGE_JSON+x}" ]; then printf '%s\n' "$FAKE_USAGE_JSON" > "$usage_file"; else printf '%s\n' '{"failed":false,"completed":true}' > "$usage_file"; fi;;
+  esac
+fi
+[ -z "${FAKE_DRAFT_TEXT:-}" ] || printf '%s' "$FAKE_DRAFT_TEXT" >> "${LANE_REPORT_DRAFT:?}"
+printf '%s' "${FAKE_REPORT_TEXT:-FAKE-HERMES-REPORT}"
+exit "${FAKE_RC:-0}"
 EOF
 chmod +x "$FAKE_HERMES"
+
+run_hermes_verdict() { # id usage-json report-text draft-text usage-mode
+  local id="$1" usage_json="$2" report_text="$3" draft_text="$4" usage_mode="${5:-valid}"
+  # Preserve the caller-visible status across the helper: a function invocation's
+  # temporary assignment is restored when it returns, so capture it while active.
+  local test_rc="${HERMES_TEST_RC:-0}"
+  # The lane runner itself uses HERMES_* only for route selection; fake-specific
+  # payload knobs travel through a neutral fixture env so the self-copy cannot
+  # reinterpret or drop them.
+  export HERMES_ARGS_FILE="$TMP/hermes-args-$id" FAKE_USAGE_JSON="$usage_json" \
+    FAKE_REPORT_TEXT="$report_text" FAKE_DRAFT_TEXT="$draft_text" FAKE_USAGE_MODE="$usage_mode" FAKE_RC="$test_rc"
+  LANE_ID="$id" HERMES_BIN="$FAKE_HERMES" \
+    LANE_CAPACITY_RETRIES=0 \
+    bash "$LANE" "$BRIEF" hermes code-implementer >"$TMP/$id.out" 2>"$TMP/$id.err"
+  HERMES_VERDICT_RC=$?
+  HERMES_VERDICT_DIR="$REPO/.lanes/$id"
+}
+
+# --- Hermes's structural runtime verdict wins over its final output text (T94) ----------------------
+FAILED_JSON='{"failed":true,"completed":false}'
+COMPLETED_FALSE_JSON='{"failed":false,"completed":false}'
+OK_JSON='{"failed":false,"completed":true}'
+HTTP400='HTTP 400: [400]: No user query found in messages.'
+DRAFT_BODY=$'C1 PASS rc=0\nC2 PASS rc=2\n'
+
+HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-draft "$FAILED_JSON" "$HTTP400" "$DRAFT_BODY"
+[ "$HERMES_VERDICT_RC" -eq 7 ] \
+  && head -1 "$HERMES_VERDICT_DIR/report.md" | grep -Fq 'DRAFT REPORT — the Hermes session FAILED' \
+  && grep -Fq '"failed": true, "completed": false' "$HERMES_VERDICT_DIR/report.md" \
+  && grep -Fq 'FAILED SESSION OUTPUT (first 200 bytes, newlines shown as \n): HTTP 400: [400]: No user query found in messages.' "$HERMES_VERDICT_DIR/report.md" \
+  && grep -Fq 'C2 PASS rc=2' "$HERMES_VERDICT_DIR/report.md" \
+  && [ "$(cat "$HERMES_VERDICT_DIR/report.failed-output.md")" = "$HTTP400" ]
+check "a failed Hermes session promotes its draft under the failed-session header and preserves the 400 output" $? \
+  "usage.json is the structural verdict; the failed final turn is evidence, never the report"
+
+HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-nodraft "$FAILED_JSON" "$HTTP400" ""
+[ "$HERMES_VERDICT_RC" -eq 70 ] && [ ! -e "$HERMES_VERDICT_DIR/report.md" ] \
+  && grep -Fq 'failed-session:' "$HERMES_VERDICT_DIR/FAILED" \
+  && grep -Fq '"failed": true, "completed": false' "$HERMES_VERDICT_DIR/FAILED" \
+  && [ "$(cat "$HERMES_VERDICT_DIR/report.failed-output.md")" = "$HTTP400" ]
+check "a failed Hermes session with no draft is FAILED rc 70, with no report.md and its output preserved" $? \
+  "there is no partial artifact to promote, so downstream gets a terminal failure"
+
+READY_LOOKALIKE=$'## GATE RECOMMENDATION\nMERGE-READY\n'
+HERMES_TEST_RC=7 run_hermes_verdict runtime-failed-lookalike "$COMPLETED_FALSE_JSON" "$READY_LOOKALIKE" ""
+[ "$HERMES_VERDICT_RC" -eq 70 ] && [ ! -e "$HERMES_VERDICT_DIR/report.md" ] \
+  && grep -Fq '"failed": false, "completed": false' "$HERMES_VERDICT_DIR/FAILED" \
+  && grep -Fq 'MERGE-READY' "$HERMES_VERDICT_DIR/report.failed-output.md"
+check "NEGATIVE CONTROL: completed=false rejects output that looks like a finished MERGE-READY report" $? \
+  "the independent completed flag and semantic-looking body cannot override the runtime verdict (AF-AP-80)"
+
+GOOD_REPORT=$'## GATE RECOMMENDATION\nPROPOSAL-ONLY\n'
+run_hermes_verdict runtime-ok "$OK_JSON" "$GOOD_REPORT" ""
+[ "$HERMES_VERDICT_RC" -eq 0 ] && cmp -s <(printf '%s' "$GOOD_REPORT") "$HERMES_VERDICT_DIR/report.md" \
+  && [ ! -e "$HERMES_VERDICT_DIR/report.failed-output.md" ]
+check "positive control: failed=false, completed=true keeps report.md byte-identical" $? \
+  "the structural guard must not rewrite a successful session's output"
+
+run_hermes_verdict runtime-usage-absent "" 'ABSENT-USAGE-REPORT' "" absent
+[ "$HERMES_VERDICT_RC" -eq 0 ] && [ "$(cat "$HERMES_VERDICT_DIR/report.md")" = 'ABSENT-USAGE-REPORT' ] \
+  && [ "$(grep -c 'WARNING usage-verdict-unread' "$TMP/runtime-usage-absent.err")" -eq 1 ]
+check "usage.json absent keeps prior behavior and emits one named warning" $? \
+  "an unavailable runtime verdict is loud but leaves the existing text path in force"
+
+run_hermes_verdict runtime-usage-malformed "" 'MALFORMED-USAGE-REPORT' "" malformed
+[ "$HERMES_VERDICT_RC" -eq 0 ] && [ "$(cat "$HERMES_VERDICT_DIR/report.md")" = 'MALFORMED-USAGE-REPORT' ] \
+  && [ "$(grep -c 'WARNING usage-verdict-unread' "$TMP/runtime-usage-malformed.err")" -eq 1 ]
+check "malformed usage.json keeps prior behavior and emits one named warning" $? \
+  "a parse failure is not silently treated as success or failure"
+
+# A fresh loop owns no predecessor's FAILED marker. Keep that evidence under a stale name before any slow work.
+STALE_ID=runtime-stale-failed
+mkdir -p "$REPO/.lanes/$STALE_ID"
+printf '%s\n' 'old loop failed' > "$REPO/.lanes/$STALE_ID/FAILED"
+touch -d @1790000000 "$REPO/.lanes/$STALE_ID/FAILED"
+run_hermes_verdict "$STALE_ID" "$OK_JSON" 'NEW-LOOP-REPORT' ""
+STALE_FILE="$(find "$REPO/.lanes/$STALE_ID" -maxdepth 1 -name 'FAILED.stale-*' -print -quit)"
+[ "$HERMES_VERDICT_RC" -eq 0 ] && [ ! -e "$HERMES_VERDICT_DIR/FAILED" ] \
+  && [ -n "$STALE_FILE" ] && [ "$(cat "$STALE_FILE")" = 'old loop failed' ] \
+  && grep -Fq 'previous loop' "$TMP/$STALE_ID.err"
+check "a new runner loop renames and preserves its predecessor's FAILED before running" $? \
+  "the stale verdict cannot shadow the new loop's report or be overwritten by a new failure (AF-AP-140)"
 
 assert_role_route() { # role expected-model expected-effort
   role="$1" expected_model="$2" expected_effort="$3"
