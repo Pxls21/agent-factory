@@ -92,16 +92,21 @@ errors when left to build-and-fix alone; a builder executes reliably once pointe
 | Model / lane | Use for | Honey |
 |---|---|---|
 | **Fable 5** (main loop) | orchestration, plans, root-cause calls, design, final verdicts | `lite` — reasoning IS the deliverable |
-| **Opus 5.5** — sandbox VERIFY (agent `adversarial-verifier`, pinned `claude-opus-5-5` — owner ruling 2026-09-23, D-054) · **Opus 5** — EXPLORE (`opus` tier, agent `evidence-gatherer`) | forensics, evidence tables, audits, premortems/roasts, adversarial review, every workflow verify stage | `full`: line-bounded findings, evidence anchors, SOLID/UNSURE |
+| **Opus 5.5** — sandbox VERIFY (agent `adversarial-verifier`, pinned `claude-opus-5-5` — owner ruling 2026-09-23, D-054) · **Opus 5** — EXPLORE (agent `evidence-gatherer`, pinned `claude-opus-5`; the bare `opus` tier resolves to `claude-opus-5-5` since 2026-09-23, measured) | forensics, evidence tables, audits, premortems/roasts, adversarial review, every workflow verify stage | `full`: line-bounded findings, evidence anchors, SOLID/UNSURE |
 | **Hermes on the PC** — BUILD (owner ruling 2026-09-03; `scripts/pc_lane.sh <brief> hermes code-implementer`, role bodies in `harness-ports/roles/`) | fire-and-forget implementation lanes on the PC (code + deterministic test + its own contract-gate pass), fixing, debugging, long runs — DEFAULT ROUTE since 2026-09-14: the LOCAL Qwen3.8-27B (`agentfactory-build-local`, `medium`; unit `qwen-builder`, `harness-ports/bin/qwen-server.sh` + `omniroute_local_builder.py`, PC-BRIDGE.md); cloud = `HERMES_MODEL=agentfactory-build` | `ultra` Lever-2: report is DATA — files:lines, verbatim test counts, discrepancies, NOT-done |
 | **Opus 5.5** — sandbox BUILD (agent `code-implementer`, pinned `claude-opus-5-5` by the agent definition's literal model id — owner ruling 2026-09-23, D-054; was Opus 4.6) | sandbox-only tooling lanes, root-only lanes, or any build lane while the bridge is down | same |
 | **Sonnet 4.6** (prefer over Sonnet 5 — owner assessment) | rare mid-complexity/mechanical follow-ups; `hive-builder` (≤2 files) | `full` |
 | **Haiku 4.5** | `hive-scout`/`hive-reviewer` (read-only), locate/triage/classify, mechanical sweeps | `ultra`; returns = Lever-3 id-keyed JSON |
 
-- The Agent tool exposes TIERS (`fable`/`opus`/`sonnet`/`haiku`); pinned versions (Opus 5.5 for
-  `code-implementer` and `adversarial-verifier`, Sonnet 4.6) are reachable ONLY through `.claude/agents/*.md` frontmatter model ids — dispatch
+- The Agent tool exposes TIERS (`fable`/`opus`/`sonnet`/`haiku`); the `opus` tier resolves to `claude-opus-5-5` (measured
+  2026-09-23 from the E3 transcript); other pinned versions (Opus 5 for `evidence-gatherer`, Sonnet 4.6) are reachable ONLY through
+  `.claude/agents/*.md` frontmatter model ids — dispatch
   builds as `subagent_type: code-implementer` (Agent) / `opts.agentType: 'code-implementer'`
   (Workflow). The honey plugin's SubagentStart hook injects the honey mode into dispatches.
+  **The harness reads `.claude/agents/*.md` ONCE per session: an edited `model:` line reaches no dispatch until the next session
+  (bit 2026-09-23, AF-AP-131: E3's first dispatch after D-054 ran on `claude-opus-4-6`; stopped, re-dispatched with `model: "opus"`) —
+  after a mid-session definition change pass the model on the dispatch, and read the served model from the transcript
+  (`grep -o '"model":"[^"]*"' <tasks-dir>/<agentId>.output | sort | uniq -c`), never assume it.**
 - **Installed delegation tooling (audited third-party — provenance
   `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`):** agents `code-implementer` ·
   `evidence-gatherer` · `adversarial-verifier`. Skills `contract-gate` (USE for every serious
