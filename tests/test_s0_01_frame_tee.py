@@ -2195,6 +2195,20 @@ class TestRunningStatus:
                 sys.stdout.flush()
             sys.exit(0)
         """)
+        def _c2a_seen(fd):
+            # c2a entries in the timeline so far; a torn last line is not counted
+            try:
+                data = (fd / "timeline.jsonl").read_bytes()
+            except FileNotFoundError:
+                return 0
+            n = 0
+            for raw in data.split(b"\n"):
+                try:
+                    n += json.loads(raw).get("dir") == "c2a"
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    pass
+            return n
+
         results = []
         for trial in range(12):
             framedir = tmp_path / ("frames_%d" % trial)
@@ -2240,7 +2254,11 @@ class TestRunningStatus:
                     if status_path.exists():
                         try:
                             s = json.loads(status_path.read_text())
-                            if s.get("updated_seq", 0) >= 100:
+                            # updated_seq counts BOTH directions, but F15 below needs >= 100
+                            # client-to-agent frames: wait for those in the append-only
+                            # timeline too (CI run #981: a loaded runner killed two trials at
+                            # 84 and 94 c2a frames after updated_seq had passed 100).
+                            if s.get("updated_seq", 0) >= 100 and _c2a_seen(framedir) >= 100:
                                 time.sleep(kill_delay)
                                 break
                         except (json.JSONDecodeError, ValueError):
