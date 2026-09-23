@@ -1,6 +1,6 @@
 # PC lane — K1-h: the vendored skill sets and the byte-identical copies leave the `.claude/ (first-party)` row (task #137)
 
-PIN: the origin commit that carries this brief (`git log -1 --format=%h origin/claude/soundbox-kit-migration-iz1jwf -- tasks/briefs/pc/pc-k1-h.md`).
+PIN: 74aa8c5 (the post-push origin commit that first carried this brief; the premise below was measured at f949974, and `git diff --stat f949974 74aa8c5 -- .claude sandbox-kit scripts/vendored_manifest.py tests/test_vendored_manifest.py harness-ports` is empty; this line was corrected after the dispatcher refused a PIN written in words).
 
 Role: code-implementer. Route: the LOCAL build route (the vLLM server default effort; the route is HYBRID in practice: a cloud step
 serves a turn when the local step refuses with the chat-template 400; say so in the report header and claim nothing about which model
