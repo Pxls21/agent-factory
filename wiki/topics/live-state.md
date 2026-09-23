@@ -14,6 +14,29 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 13:0xZ — WHAT IS LIVE NOW (this block supersedes the 12:3xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
+- **LIVE, PC:**
+  - K1-h (task #137, PC pid 3467866) and VERIFY-T92 (task #132, PC pid 3965057).
+  - Their sandbox pollers were re-attached twice: after the new bridge banner, then after the worker restart moved the agent proxy port. The live logs are `lane-*-3.log`.
+  - Four stale pollers loop until their ceiling (AF-AP-131's instances).
+- **LIVE, sandbox:** VERIFY-E3-R1 (task #185), resumed after the restart.
+  - Its lane ran on Opus 5.5 until a refusal at 12:34:49Z, then on Opus 4.8, with no notice (AF-AP-154).
+  - Its report must state the mix.
+- **LANDED, GATED-PENDING-VERIFY:**
+  - #187, the transcript scrubber's quoted and compound names (a318b8a, local).
+  - J1-1-R1 (5718ea0, local).
+  - Both verify in VERIFY-J1-1-R1 (task #189).
+- **RULED:** VERIFY-J1-0-R4 is NOT-READY on V-01, V-05 and V-06 (V-01 is an R4 regression, AF-AP-153).
+  - The repair is J1-0-R5 (task #188) under AMENDMENT 4, brief `tasks/briefs/laya/J1-0-R5-brief.md`.
+  - It is dispatched after the push.
+- **CI:** run #985 on 5ee416f passed.
+- **Issues filed:** #46 (J1-0-R4 follow-ups) and #47 (J1-1-R1 follow-ups; O-1's over-redaction is a J1-3 premise).
+- **NEXT:**
+  1. Push.
+  2. Dispatch J1-0-R5 and VERIFY-J1-1-R1.
+  3. Grade VERIFY-E3-R1 when it is home.
+  4. The S0-02 live capture.
+
 **2026-09-23 12:3xZ — WHAT IS LIVE NOW (this block supersedes the 12:1xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).** HOME: VERIFY-B9-R1 — B9-R1 (the S0-02 replay leg graded by the relay's `duplicate:` receipt, one buzz-acp process) GOOD-STATE, MERGE-READY-WITH-FOLLOWUPS; the coordinator reproduced T2 ("206 passed in 121.29s (0:02:01)", set a5de0beef100), the report lint and ledger integrity; follow-ups issue #45, more AF-AP-144 sites on #38. NEXT for S0-02: the live eight-leg capture over the bridge; its revoked leg is the owner-run removal of the second fixture owner (D-037). SANDBOX, three agents: J1-1-R1 (#139), VERIFY-J1-0-R4 (#184), VERIFY-E3-R1 (#185, dispatched 12:1xZ). PC: K1-h (#137, poller re-attached 12:2xZ after its 240-min limit; the lane never stopped) and VERIFY-T92 (#132). CI: the run on 9b55f6b (the CI #983 fix) in progress.
 
 **2026-09-23 12:1xZ — WHAT IS LIVE NOW (this block supersedes the 11:5xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).** CI: run #983 (dd9f76f) went red on one test, the pre-commit fixture in `tests/test_shell_syntax.py`, which lacked the edit-snapshot hook that J1-0-R4 listed in `scripts/gate_files.txt`; fixed in the fixture (task #186; its list is now derived from the real one) and AF-AP-151 registered. The push that carries the fix names CI_FIX=35855920613, and its run is read to a verdict before the next push. HOME: VERIFY-182 — AF-AP-127-R1 and REPIN-a-R2 both GOOD-STATE (MERGE-READY-WITH-FOLLOWUPS, gates reproduced; issue #44). SANDBOX, three agents on the D-054 pin: VERIFY-B9-R1 (#174), J1-1-R1 (#139), VERIFY-J1-0-R4 (#184). QUEUED: VERIFY-E3-R1 (#185), into the freed slot after the push. PC, two local lanes: K1-h (#137) and VERIFY-T92 (#132). SANDBOX DISK: 1.4 GB free; the refused cleanup is the owner's call.
@@ -306,6 +329,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 13:0xZ — J1-1-R1 landed (5718ea0; issue #47) and #187 (a318b8a), both GATED-PENDING-VERIFY; VERIFY-J1-0-R4 ruled NOT-READY → J1-0-R5 under AMENDMENT 4 (issue #46; AF-AP-152/153); a new bridge banner and a worker restart re-attached the PC pollers twice (AF-AP-131); VERIFY-E3-R1 resumed after a silent Opus 5.5 → 4.8 fallback (AF-AP-154).
 
 2026-09-23 12:3xZ — VERIFY-B9-R1 home: B9-R1 GOOD-STATE (T2 206 passed reproduced; issue #45); VERIFY-E3-R1 dispatched; K1-h's poller re-attached.
 
