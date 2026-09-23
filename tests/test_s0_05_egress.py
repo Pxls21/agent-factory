@@ -345,6 +345,44 @@ def test_a_real_remote_ip_alias_is_still_accepted(tmp_path):
     assert run_checker(bundle).returncode == 0
 
 
+# curl 8.10 and later (the PC's 8.11.1) spell curl 8.5's generic connect failure "Could not connect to
+# server". The first live bundle (2026-09-23 23:43Z) carried it on every C1 of both units, and the
+# checker, which knew only the older spelling, failed it `denial-detail-unrecognized` (fail closed).
+NEW_SPELLING_PROXY_DETAIL = ("curl: (7) Failed to connect to 127.0.0.1 port 40173 after 0 ms: "
+                             "Could not connect to server")
+
+
+def test_the_newer_curl_spelling_is_a_denial_when_it_names_its_own_target(tmp_path):
+    """Every C1 record rewritten to the live PC text: rc 7 and curl 8.11.1's "Could not connect to
+    server", naming the record's own target. The bundle passes, exactly as with 8.5's spelling."""
+    bundle = copy_bundle(tmp_path)
+    rows = records(bundle / "curl")
+    rewritten = 0
+    for row in rows:
+        if row["canary"] == "C1":
+            row.update(rc=7, detail=f"curl: (7) Failed to connect to {row['target']} port 443 after 3 ms: "
+                                    "Could not connect to server")
+            rewritten += 1
+    assert rewritten >= 1
+    write_records(bundle / "curl", rows)
+    result = run_checker(bundle)
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.splitlines()[-1].startswith("PASS: S0-05 no-direct-egress"), result.stdout
+
+
+def test_the_newer_curl_spelling_behind_a_proxy_is_still_rejected(tmp_path):
+    """The widening keeps the discriminator: the proxy-shaped denial in the NEW spelling names
+    127.0.0.1, not the canary's target, and is rejected by the foreign-target rule."""
+    bundle = copy_bundle(tmp_path)
+    rows = [{**r, "rc": 7, "detail": NEW_SPELLING_PROXY_DETAIL} if r["canary"] == "C6" else r
+            for r in records(bundle / "curl")]
+    write_records(bundle / "curl", rows)
+    result = run_checker(bundle)
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0].startswith("denial-detail-foreign-target: curl C6"), result.stdout
+    assert "127.0.0.1" in result.stdout.splitlines()[0]
+
+
 def test_resolve_denial_naming_another_host_is_rejected(tmp_path):
     bundle = copy_bundle(tmp_path)
     rows = [{**r, "rc": 6, "detail": "curl: (6) Could not resolve host: example.invalid"}

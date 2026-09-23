@@ -79,10 +79,13 @@ DENIAL_DETAILS = {
         "Temporary failure in name resolution"),
     # curl 8.5 renders EVERY connect errno as the generic "Couldn't connect to server", so the
     # fragment alone cannot say WHICH endpoint refused. That is why every curl-shaped detail is
-    # additionally bound to the canary's own target below.
+    # additionally bound to the canary's own target below. curl 8.10 and later spell the same
+    # generic text "Could not connect to server": the PC's curl 8.11.1 (curl-8.11.1-6.fc42) printed
+    # it for every C1 of the first live bundle (2026-09-23 23:43Z), where the sandbox's 8.5.0 prints
+    # the older spelling. One message, two spellings; the target binding applies to both.
     7: ("Network is unreachable", "Host is unreachable", "No route to host",
         "Connection refused", "Operation not permitted", "Network is down",
-        "Couldn't connect to server"),
+        "Couldn't connect to server", "Could not connect to server"),
     28: ("Timeout was reached", "timed out", "Connection timed out"),
 }
 
