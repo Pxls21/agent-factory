@@ -16,8 +16,9 @@ INTO ITS OWN PROCESS.
   (file, target) pair is in the closed ALLOWED_SOURCES set (two today, neither loads repo code).
   The scan follows bash's quoting, expansion, arithmetic, case and heredoc rules; a workflow file
   is parsed (PyYAML) and each `run:` value is scanned as its own shell text. A text the scan
-  cannot finish in sync (a quote, heredoc, $(, ${, $(( or backtick still open at its end) and a
-  workflow that does not parse are refused (gate-file-unparseable), never skipped.
+  cannot finish in sync (a quote, heredoc, $(, ${, $(( or backtick still open at its end, or a
+  heredoc word holding $' and a backslash, whose escape bash translates and the scan does not)
+  and a workflow that does not parse are refused (gate-file-unparseable), never skipped.
 - Python: every static import resolves to the standard library, the closed EXTERNAL_MODULES set,
   or a LISTED repo file (then screened like any other listed file). Every dynamic load into the
   gate's process (spec_from_file_location, SourceFileLoader, runpy.run_path, import_module,
@@ -109,7 +110,8 @@ def _is_python_gate(entry, content):
 
 
 class _Open(Exception):
-    """The scanned text ends with a construct still open (R4-1): the line it began on, and what it is."""
+    """The scan cannot finish in sync: a construct is still open at the end of the text (R4-1), or a heredoc word
+    holds an escape the scan does not translate (R5-1). The line it began on, and what it is."""
 
     def __init__(self, line, what):
         super().__init__(line, what)
@@ -124,7 +126,8 @@ _WORD_END = " \t\n;&|()<>"
 
 
 def _unquote(word):
-    """A heredoc word after quote removal (a delimiter is never expanded)."""
+    """A heredoc word after quote removal (a delimiter is never expanded). A $'…' part is read as '…', which is
+    right only without a backslash: heredoc() refuses a word holding $' and a backslash first (R5-1)."""
     out, quote, i = [], None, 0
     while i < len(word):
         c = word[i]
@@ -152,7 +155,8 @@ class _ShellScan:
     heredoc delimiter is a shell word (<<\\EOF, <<'EOF', <<-EOF, END-X); the body is data, except that an
     unquoted body expands $(…) and `…`, whose commands run. `segments` holds (lineno, raw, masked) per
     command, nested commands included; masked replaces quoted and expanded text with 'Q', so a word inside
-    them never starts a command. A construct left open at the end of the text raises _Open (R4-1)."""
+    them never starts a command. A construct left open at the end of the text (R4-1), and a heredoc word
+    holding $' and a backslash (R5-1), raise _Open."""
 
     def __init__(self, text, first_line=1):
         self.s = text
@@ -161,6 +165,8 @@ class _ShellScan:
         self.newlines = [k for k, c in enumerate(text) if c == "\n"]
         self.segments = []
         self.heredocs = []          # opened, body not read yet: (strip_tabs, delimiter, expands, line)
+        self.not_arith = {}         # start of each (( or $(( attempt that failed -> None, or the heredocs it read (R5-2)
+        self.bodies_read = 0        # read_bodies calls; an attempt that makes none reads no pending heredoc
 
     def line(self, pos):
         return self.first_line + bisect.bisect_left(self.newlines, pos)
@@ -331,9 +337,22 @@ class _ShellScan:
 
     def arith(self, start, skip, what):
         """(( … )) or $(( … )), where << is a shift. False, with nothing consumed, when a ')' that does not
-        close the pair shows the text is a subshell after all (bash reads `$( (a) | b )` that way)."""
+        close the pair shows the text is a subshell after all (bash reads `$( (a) | b )` that way).
+        The decision is made once per start (R5-2). The caller re-scans a failed attempt's text as commands, and
+        without a memo each enclosing failed attempt re-ran this one: `$(( $(( … ) ) ) )` nested k deep cost 2^k.
+        Besides the text, the pending heredocs are the only state an attempt reads, and only through read_bodies
+        (a newline inside a nested $( … )). So a remembered failure that read no heredoc body holds under any
+        pending heredocs; one that read some holds under the same ones, and under others it is refused (fail
+        closed), never re-run: a re-run per state was 2^k again (a <<W in each level is a shift in the attempt
+        and a heredoc in the re-scan). A success is not remembered: its re-scan re-adds the segments that the
+        enclosing failure deleted."""
         s = self.s
-        kept = len(self.segments), list(self.heredocs)
+        pending = tuple(self.heredocs)
+        if start in self.not_arith:
+            if self.not_arith[start] in (None, pending):
+                return False
+            raise _Open(self.line(start), what + " re-read with other heredocs pending")
+        kept, reads = (len(self.segments), list(self.heredocs)), self.bodies_read
         self.i = start + skip
         depth = 0
         while self.i < len(s):
@@ -345,6 +364,7 @@ class _ShellScan:
                 del self.segments[kept[0]:]
                 self.heredocs[:] = kept[1]
                 self.i = start
+                self.not_arith[start] = None if self.bodies_read == reads else pending
                 return False
             if c in "()":
                 depth += 1 if c == "(" else -1
@@ -413,7 +433,10 @@ class _ShellScan:
 
     def heredoc(self, start):
         """<<[-]WORD: the delimiter is WORD after quote removal, and a quoted WORD keeps the body from
-        expanding. The body is read at the next newline (read_bodies)."""
+        expanding. The body is read at the next newline (read_bodies). A WORD holding $' and a backslash is
+        refused (R5-1, V-01): bash translates the ANSI-C escape ($'echo \\x41' ends the body at `echo A`) and
+        _unquote does not, so the scan and bash would end the body at different lines, and a command bash runs
+        could be read as data."""
         s = self.s
         self.i = start + 2
         strip = s.startswith("-", self.i)
@@ -427,12 +450,16 @@ class _ShellScan:
         word = s[begin:self.i]
         if not word:
             raise _Open(self.line(start), "heredoc << without a delimiter")
+        if "$'" in word and "\\" in word:
+            raise _Open(self.line(start), "heredoc <<%s: $'...' escape not translated" % word)
         quoted = any(q in word for q in "'\"\\")
         self.heredocs.append((strip, _unquote(word), not quoted, self.line(start)))
 
     def read_bodies(self):
-        """Read the bodies of the heredocs opened on the line that just ended (self.i is past its newline)."""
+        """Read the bodies of the heredocs opened on the line that just ended (self.i is past its newline). Every
+        call is counted, even one with nothing pending: the same newline reached with a heredoc pending reads it."""
         s = self.s
+        self.bodies_read += 1
         while self.heredocs:
             strip, delim, expands, line = self.heredocs.pop(0)
             body = self.i
@@ -454,8 +481,8 @@ class _ShellScan:
 
 def _command_segments(content, first_line=1):
     """(segments, opened) for one shell text: segments = [(lineno, raw, masked)] in line order, commands
-    nested in $( ), ` `, <( ) and unquoted heredoc bodies included; opened = (line, what) when the text
-    ends inside a construct (R4-1), else None."""
+    nested in $( ), ` `, <( ) and unquoted heredoc bodies included; opened = (line, what) when the scan
+    cannot finish in sync (_Open: R4-1, R5-1; or nesting too deep), else None."""
     scan = _ShellScan(content, first_line)
     opened = None
     try:
@@ -468,9 +495,11 @@ def _command_segments(content, first_line=1):
 
 
 def _workflow_runs(content):
-    """(first line, text) of every scalar `run:` value in a workflow file, in line order; None when the file
-    does not parse (R4-3). A literal block maps line for line; any other style maps to the line the value
-    starts on (a folded or flow value has no line of its own after the first)."""
+    """(first line, text, literal) of every scalar `run:` value in a workflow file, in line order; None when the
+    file does not parse (R4-3). The first line is where the value starts: the line after the indicator of a block
+    (| or >), else the start mark's line. Only a literal block (|) keeps its lines, so a refusal in it names its
+    own line; any other style (plain, quoted, folded) folds or escapes its line breaks, so every refusal in it
+    names the first line (R5-4)."""
     try:
         import yaml
     except ImportError:
@@ -489,7 +518,8 @@ def _workflow_runs(content):
         if isinstance(node, yaml.MappingNode):
             for key, value in node.value:
                 if isinstance(key, yaml.ScalarNode) and key.value == "run" and isinstance(value, yaml.ScalarNode):
-                    runs.append((value.start_mark.line + (2 if value.style in ("|", ">") else 1), value.value))
+                    runs.append((value.start_mark.line + (2 if value.style in ("|", ">") else 1), value.value,
+                                 value.style == "|"))
                 stack += [key, value]
         elif isinstance(node, yaml.SequenceNode):
             stack += node.value
@@ -499,15 +529,16 @@ def _workflow_runs(content):
 def _source_errors(entry, content):
     """`gate-file-sources` lines for every command that sources a file, unless the exact (file, target)
     pair is in ALLOWED_SOURCES; `gate-file-unparseable` when the scan cannot reach the end of a text in
-    sync (R4-1) or a workflow file does not parse (R4-3). A workflow's run: values are scanned one by one."""
+    sync (R4-1, R5-1) or a workflow file does not parse (R4-3). A workflow's run: values are scanned one by
+    one, each refusal at the line _workflow_runs maps it to (R5-4)."""
     if entry.endswith((".yml", ".yaml")):
         texts = _workflow_runs(content)
         if texts is None:
             return ["gate-file-unparseable: %s" % entry]
     else:
-        texts = [(1, content)]
+        texts = [(1, content, True)]
     errors = []
-    for first_line, text in texts:
+    for first_line, text, by_line in texts:
         segments, opened = _command_segments(text, first_line)
         for lineno, raw, masked in segments:
             cut = 0
@@ -522,9 +553,9 @@ def _source_errors(entry, content):
             target = raw[cut + m.start(1):].strip()
             if (entry, target) in ALLOWED_SOURCES:
                 continue
-            errors.append("gate-file-sources: %s:%d: %s" % (entry, lineno, target))
+            errors.append("gate-file-sources: %s:%d: %s" % (entry, lineno if by_line else first_line, target))
         if opened:
-            errors.append("gate-file-unparseable: %s:%d: %s" % (entry, opened[0], opened[1]))
+            errors.append("gate-file-unparseable: %s:%d: %s" % (entry, opened[0] if by_line else first_line, opened[1]))
     return errors
 
 
@@ -692,10 +723,12 @@ _LOADERS = {
     "compile": (0, "source", "text"),
 }
 
-# Dynamic loads whose target static resolution cannot prove: (gate file, the listed file the load is
-# reviewed to reach) -> how many such loads the gate file may hold, never more. A load is covered only
-# when it is an unresolved base directory joined to exactly this literal repo path, so an entry cannot be
-# re-pointed at another file (the F-B5 class). Closed: a new entry is a reviewed change here.
+# Dynamic loads whose target static resolution cannot prove: (gate file, literal repo path) -> how many load
+# sites in that gate file may name that path joined to an unresolved base directory. More such sites than the
+# count are all refused, and the path must itself be listed. An entry binds only the gate file, the literal
+# path and the site count. The base directory is not bound: a site whose base is re-pointed (an environment
+# value, another directory) still matches, and a wrapper that runs one site twice makes a second load that
+# counts once. Both are outside this check (F-B5's class, issue #37). Closed: a new entry is a reviewed change here.
 ALLOWED_DYNAMIC_LOADS = {
     ("scripts/lint_delta.py", ".claude/hooks/edit-snapshot.py"): 1,   # base: git rev-parse --show-toplevel
     ("scripts/proof-runner", "scripts/validate-ledger"): 1,          # base: the --root argument

@@ -1095,3 +1095,160 @@ def test_path_modelling_edges_are_refused(tmp_path, shape, body, line):
     r = _run(["--root", str(tmp_path)])
     assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
     assert _err_lines(r) == [line], r.stderr
+
+
+# =========================================================================
+# AMENDMENT 4 (J1-0-R5; VERIFY-J1-0-R4 V-01, V-04, V-06; AF-AP-153)
+# =========================================================================
+
+# V-01, an R4 regression: bash translates the ANSI-C escape of a $'…' heredoc word and ends the body at the
+# translation (line 4); R4 kept the escape, ended the body at line 6 (the untranslated word), read the source edge
+# on line 5 as body text and printed CLEAN, where R3 refused. R5-1 (b): such a word is refused at its own line.
+_ANSI_C_WORDS = [
+    # (shape, the heredoc word, the line where bash ends the body, the line where R4 ended it)
+    ("AQ1", "$'echo \\x41'", "echo A", "echo \\x41"),
+    ("AQ2", "$'E\\x4fF'", "EOF", "E\\x4fF"),
+    ("AQ3", "$'E\\\\F'", "E\\F", "E\\\\F"),
+    ("AQ4", "$'E\\'F'", "E'F", "E\\F"),
+    ("PQ5b", "$'E\\tF'", "E\tF", "E\\tF"),
+    ("mid-word", "E$'\\x4f'F", "EOF", "E\\x4fF"),
+]
+
+
+@pytest.mark.parametrize("shape,word,bash_end,r4_end", _ANSI_C_WORDS, ids=[m[0] for m in _ANSI_C_WORDS])
+def test_heredoc_word_with_an_ansi_c_escape_is_refused(tmp_path, shape, word, bash_end, r4_end):
+    """R5-1: bash ends the body on line 4 and runs the source edge on line 5; the word is refused on line 2."""
+    gate = "#!/bin/bash\ncat <<%s >/dev/null\nbody\n%s\n. scripts/helper.sh\n%s\n" % (word, bash_end, r4_end)
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: gate}))
+    assert _bash_runs_helper(tmp_path, _GATE), shape
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    want = "gate-file-unparseable: scripts/g.sh:2: heredoc <<%s: $'...' escape not translated" % word
+    assert _err_lines(r) == [want], r.stderr
+
+
+def test_heredoc_word_in_ansi_c_quotes_without_an_escape_still_reads(tmp_path):
+    """R5-1 keeps <<$'EOF' (PQ7's class): with no backslash the word is EOF to bash and to the scan, the `.` line is
+    body text to both, and the text reads clean."""
+    gate = "#!/bin/bash\ncat <<$'EOF' >/dev/null\n. scripts/helper.sh\nEOF\necho done\n"
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: gate}))
+    ran = subprocess.run(["bash", _GATE], cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    assert ran.stdout == "done\n", ran   # bash reaches the end and never runs the helper
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert "1 files scanned, clean" in r.stderr
+
+
+# V-04, introduced by R4: a $(( that fails as arithmetic is re-scanned as commands, and R4 re-ran every inner attempt
+# for each enclosing one, so k nested levels doubled k times (27.62 s at k=22 in the verify lane; the hook runs the
+# screen on every commit). R5-2: the decision is made once per start.
+_NESTED_ATTEMPTS = [
+    ("V-04", "v=" + "$(( " * 22 + "x" + " ) )" * 22 + "\n. scripts/helper.sh\n", 3),
+    # a <<W in each level is a shift in the attempt and a heredoc in the re-scan: a memo keyed by the pending
+    # heredocs as well as the start would re-run every level once per state, 2^k again
+    ("heredoc-per-level", "v=" + "".join("$(( <<W%d " % j for j in range(22)) + "x" + " ) )" * 22 + "\n"
+     + "".join("W%d\n" % j for j in range(22)) + ". scripts/helper.sh\n", 25),
+]
+
+
+@pytest.mark.parametrize("shape,body,line", _NESTED_ATTEMPTS, ids=[m[0] for m in _NESTED_ATTEMPTS])
+def test_nested_arithmetic_attempts_scan_in_bounded_time(tmp_path, shape, body, line):
+    """R5-2: 22 nested failed attempts scan in under 5 s (R4: about 28 s), and the source edge after them is found."""
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: "#!/bin/bash\n" + body}))
+    assert _bash_runs_helper(tmp_path, _GATE), shape
+    try:
+        r = subprocess.run([PY, SCREEN, "--root", str(tmp_path)], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        pytest.fail("%s: the scan of 22 nested $(( attempts took more than 5 s" % shape)
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: scripts/g.sh:%d: scripts/helper.sh" % line], r.stderr
+
+
+# R5-2 changes no decision: an R4 arithmetic case and an R4 subshell case, each inside an enclosing attempt that
+# fails, so the inner text is scanned twice and the memo is read on the second pass. The lines are R4's.
+_MEMO_DECISIONS = [
+    # `1 << 2` is a shift: no heredoc swallows line 3
+    ("shift-in-subshell", "v=$(( $(( 1 << 2 )) ) )\n. scripts/helper.sh\n", 3),
+    # an attempt that succeeds is re-scanned, so its $( … ) re-adds the edge the failed outer attempt deleted
+    ("arith-in-subshell", "v=$(( $(( $(. scripts/helper.sh) + 1 )) ) )\n", 2),
+    # a subshell: its body is commands in both passes
+    ("subshell-in-subshell", "v=$(( $(( . scripts/helper.sh ) ) ) )\n", 2),
+]
+
+
+@pytest.mark.parametrize("shape,body,line", _MEMO_DECISIONS, ids=[m[0] for m in _MEMO_DECISIONS])
+def test_arithmetic_memo_keeps_every_decision(tmp_path, shape, body, line):
+    """R5-2: the memo keeps R4's verdict; bash sources the helper in each (a marker: $( … ) captures its output)."""
+    helper = {"scripts/helper.sh": "echo HELPER-RAN laya\n: > helper.ran\n"}
+    _make_tree(tmp_path, _GATE + "\n", dict(helper, **{_GATE: "#!/bin/bash\n" + body}))
+    subprocess.run(["bash", _GATE], cwd=tmp_path, capture_output=True, timeout=60)
+    assert (tmp_path / "helper.ran").exists(), shape
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: scripts/g.sh:%d: scripts/helper.sh" % line], r.stderr
+
+
+# A failed attempt that read a heredoc body (a newline inside a nested $( … )) holds only under the heredocs it read.
+# Revisited with others pending (<<A is a shift in the enclosing attempt and a heredoc in its re-scan), it is
+# refused, never trusted and never re-run.
+_MEMO_REFUSALS = [
+    # bash runs the helper here; R4 named line 5
+    ("bash-valid", "x=$(( <<A $(( $(:\nA\n) ) ) ) )\n. scripts/helper.sh\n", True),
+    # bash rejects this one (a syntax error before line 6); R4 refused it at line 6, and a memo trusted under other
+    # heredocs reads it CLEAN
+    ("trusted-memo-reads-clean", "x=$(( <<A $(( $(:\n) ) ))\nA\n) <<B )) ) )\n. scripts/helper.sh\nB\n", False),
+]
+
+
+@pytest.mark.parametrize("shape,body,bash_runs", _MEMO_REFUSALS, ids=[m[0] for m in _MEMO_REFUSALS])
+def test_arithmetic_memo_refuses_a_revisit_it_cannot_prove(tmp_path, shape, body, bash_runs):
+    """R5-2 fails closed: the inner $(( on line 2 is refused there."""
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: "#!/bin/bash\n" + body}))
+    assert _bash_runs_helper(tmp_path, _GATE) == bash_runs, shape
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-unparseable: scripts/g.sh:2: $(( re-read with other heredocs pending"], r.stderr
+
+
+# V-06: a folded or quoted run: value folds or escapes its line breaks, so its own newlines are not lines of the
+# file; R4 counted them from the value's first line (Y13 named the next step's line). R5-4: every refusal in such a
+# value names the line the value starts on. Line 6 is the first step.
+_WF_HEAD = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+_NON_LITERAL_RUNS = [
+    # (shape, steps, the refusal line: the value's first line; R4 named 8, 8, 7, 7)
+    ("Y2b", "      - run: >\n          echo a\n          echo b\n            . scripts/helper.sh\n", 7),
+    ("Y2c", "      - run: >\n          echo a\n\n          . scripts/helper.sh\n", 7),
+    ("Y13", '      - run: "echo a\\n. scripts/helper.sh"\n      - run: echo ok\n', 6),
+    ("Y14", "      - run: 'echo a\n\n          . scripts/helper.sh'\n", 6),
+]
+
+
+@pytest.mark.parametrize("shape,steps,line", _NON_LITERAL_RUNS, ids=[m[0] for m in _NON_LITERAL_RUNS])
+def test_folded_or_quoted_run_refusal_names_its_first_line(tmp_path, shape, steps, line):
+    """R5-4: the refusal names a line inside the value (its first), never the next step's."""
+    _make_tree(tmp_path, _WF + "\n", dict(_HELPER, **{_WF: _WF_HEAD + steps}))
+    runs = _workflow_runs(tmp_path, _WF)
+    assert _bash_runs_helper(tmp_path, "-c", runs[0]), runs   # the value a YAML consumer runs sources the helper
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:%d: scripts/helper.sh" % (_WF, line)], r.stderr
+
+
+def test_quoted_run_that_ends_open_names_its_first_line(tmp_path):
+    """R5-4 for R4-1's refusal: a double-quoted value whose second line opens a quote is refused at the value's
+    first line (R4 named line 7, the next step's)."""
+    _make_tree(tmp_path, _WF + "\n", {_WF: _WF_HEAD + '      - run: "echo a\\necho \\"open"\n      - run: echo ok\n'})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ['gate-file-unparseable: .github/workflows/w.yml:6: quote " open'], r.stderr
+
+
+def test_literal_run_block_keeps_its_line_map(tmp_path):
+    """R5-4 keeps a literal block (|) line for line (Y1): the source edge after a heredoc inside the block is refused
+    at the YAML line that holds it."""
+    steps = "      - run: |\n          cat <<EOF\n          body\n          EOF\n          . scripts/helper.sh\n"
+    _make_tree(tmp_path, _WF + "\n", dict(_HELPER, **{_WF: _WF_HEAD + steps}))
+    assert _bash_runs_helper(tmp_path, "-c", _workflow_runs(tmp_path, _WF)[0])
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:10: scripts/helper.sh" % _WF], r.stderr
