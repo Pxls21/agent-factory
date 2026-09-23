@@ -27,8 +27,9 @@ engine. Hermes `pre_tool_call` hook with `fail_closed: true`.
 a broker. Research/evaluation workers also use isolated gVisor profiles. Container starts as root
 for s6/UID setup, then drops to `hermes` user -- test this lifecycle under runsc.
 
-**Egress enforcement**: no upstream model/embedding keys outside OmniRoute. Network canaries
-fail from every non-OmniRoute unit (S0-05). OmniRoute is sole model API egress, not
+**Egress enforcement**: no upstream model/embedding keys outside OmniRoute. Each contained unit
+reaches exactly its allow-listed destinations and network canaries fail from every
+non-OmniRoute unit (S0-05, a containment claim per D-055; no per-provider firewall claim). OmniRoute is sole model API egress, not
 automatically sole web/tool egress -- tool/web needs its own proxy and policy.
 
 **Egress mechanism**: bare `unshare --net` is proven TOTAL isolation (blocks host-local

@@ -10,7 +10,7 @@ Implementation is staged so the full plan survives while authority is added only
 | S0-02 | Buzz authorization/freshness | Allowed event succeeds; unauthorized/replayed/stale events fail |
 | S0-03 | Hermes→OmniRoute | Text and real tool-call round trip over the live transport (`chat_completions`; `codex_responses` permitted per route — ADR 0002 amended 2026-09-08) |
 | S0-04 | Compression contract | Response header plus deterministic stub request preservation |
-| S0-05 | No direct model egress | Network canaries fail from every non-OmniRoute unit |
+| S0-05 | No direct model egress | Containment (D-055): each unit reaches exactly its allow-listed destinations; network canaries fail from every non-OmniRoute unit (no per-provider firewall claim) |
 | S0-06 | Four-scope adapter design | Auth tuple, precedence, write-target, and leak fixtures |
 | S0-07 | Fubuki corrections | Lint ordering and BoundDecision join tests |
 | S0-08 | gVisor compatibility | Hermes root-init/drop and required tools work; escape canaries fail |

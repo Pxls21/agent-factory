@@ -433,8 +433,8 @@ stage0_proofs:
     netns lets the unit reach the OmniRoute endpoint (positive leg) while a model endpoint
     fails with the exact denial reason (negative leg) — bare unshare is proven total-block
     and is NOT acceptable evidence'
-  - 'full proof (live units): network canaries FAIL from every non-OmniRoute unit, and each
-    canary first proves its positive control (the unit CAN reach its allowed target)'
+  - 'full proof (live units), a CONTAINMENT property (D-055): each unit reaches exactly its allow-listed
+    destinations (each positive control first) and every canary FAILS; no per-provider firewall claim'
   negative_control:
     mutation: switch the egress gate off -> the canary suite goes RED
     expected_failure_reason: 'egress-permitted: gate-disabled'
