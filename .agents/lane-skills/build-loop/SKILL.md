@@ -266,6 +266,11 @@ the test count in the report was hand-typed rather than machine-pasted. Two rule
    from `date -u +%H:%MZ` or the commit clock (`git log -1 --date=format:%H:%MZ --format=%cd`), never
    typed from a running mental clock (2026-09-07: the day's stamps drifted up to 2.8 h ahead of the
    commits and the task DB copied the drift; every stamp was re-derived from the commit clock).
+   The FUTURE half is a pre-commit gate since 2026-09-23 (four date-prefixed stamps
+   committed 3.3 to 9.7 min ahead of their own commits, the second bite): `scripts/stamp_check.py` refuses a NEW date-prefixed stamp in a staged ledger-plane
+   file (the ledger, the incident log, wiki live-state, the decision log) that names an instant later
+   than the clock. It cannot see a stamp typed in the PAST, a bare `HH:MxZ` with no date, or a stamp
+   in any other file: those stay yours to paste.
    `file:line` references are the same rule with a TOOL: a report runs `scripts/report_lint.py REPORT --map
    ALIAS=path ... --rev <PIN>` and pastes its summary line with MISS 0 (or each MISS explained) before it
    returns; a verifier runs it first (2026-09-07: four consecutive verdicts spent a blocker each on typed

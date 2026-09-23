@@ -24,6 +24,7 @@ scripts/vendored_manifest.py
 scripts/pc_lane.sh
 scripts/pc_suite.sh
 scripts/check-proof-status.py
+scripts/stamp_check.py
 # harness-ports gate scripts
 harness-ports/bin/pc-lane.sh
 # proof checkers

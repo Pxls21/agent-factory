@@ -108,6 +108,20 @@ for F in $(git diff --cached --name-only --diff-filter=ACMR); do
     exit 1
   fi
 done
+# FUTURE-STAMP GATE (2026-09-23, AF-AP-37's timestamp half, second bite): a NEW date-prefixed
+# stamp in a staged ledger-plane file (the ledger, the incident log, wiki live-state, the decision
+# log) must not name an instant later than the clock; stamps are pasted from date -u or the commit
+# clock, never typed. Bypass (printed, so it shows in review): SKIP_STAMP_CHECK=1 git commit ...
+if [ -n "${SKIP_STAMP_CHECK:-}" ]; then
+  echo "pre-commit: SKIP_STAMP_CHECK set — the future-stamp gate bypassed." >&2
+else
+  "$PY" "$REPO_ROOT/scripts/stamp_check.py" --staged
+  RC=$?
+  if [ "$RC" != "0" ]; then
+    echo "COMMIT BLOCKED by the future-stamp gate (rc=$RC) — paste the stamp from date -u or the commit clock." >&2
+    exit 1
+  fi
+fi
 # ADVISORY-EXCLUSION SCREEN (KC-J1): forbidden vocabulary must never appear
 # in any gate-defining file. No bypass — this is an absorbing barrier.
 "$PY" "$REPO_ROOT/scripts/no_laya_in_gates.py" --staged
