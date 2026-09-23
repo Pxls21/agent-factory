@@ -384,6 +384,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 15:0xZ — J1-1-R2 landed (9ad0e66, GATED-PENDING-VERIFY); AF-AP-157 registered (the name-swallowing redaction gap in both redactors, task #198); pushed fa4532e..9801fb5.
+
 2026-09-23 14:5xZ — the seven-leg S0-02 capture came home; the checker caught the bad-signature leg's probe turn (AF-AP-156); B12 queued behind B11.
 
 2026-09-23 14:3xZ — pushed 98e2efc..fd2aa30; B11, VERIFY-J1-0-R5 and VERIFY-K1-h dispatched; the S0-02 seven-leg capture started on the PC.
