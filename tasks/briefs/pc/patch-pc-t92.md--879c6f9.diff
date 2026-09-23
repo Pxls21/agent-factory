@@ -1,0 +1,2212 @@
+diff --git a/docs/HARNESS-PORTS.md b/docs/HARNESS-PORTS.md
+index e2a1d31e..b33d1767 100644
+--- a/docs/HARNESS-PORTS.md
++++ b/docs/HARNESS-PORTS.md
+@@ -361,10 +361,21 @@ own git worktree, and leaves the final message in `report.md`.
+      Approval defaults to `never` in headless mode (`exec/src/lib.rs:413`).
+      `--dangerously-bypass-hook-trust` is REQUIRED for ported hooks to run without interactive
+      trust granting (proven by `codex-rs/exec/tests/suite/hooks.rs`).
+-   - **Hermes:** `hermes -z "<prompt>" --usage-file usage.json > report.md`
+-     `-z` is the purest one-shot: single prompt in, final response out.
+-5. **Report capture.** The harness's final message → `.lanes/<lane-id>/report.md`.
+-6. **Exit code passthrough.** The lane exits with the harness's exit code.
++   - **Hermes:** before launch, `harness-ports/bin/lane-profile.sh create <lane-id>` clones the
++     read-only `agentfactory` profile as `aflane<lowercase-alphanumeric-lane-id[:40]>`, removes
++     top-level `fallback_providers`, and adds `model.default_headers.x-omniroute-session-id` with
++     the exact lane id. `verify` fails closed on a chain, wrong header, or `.env` SHA drift.
++     The selected profile is recorded in `profile.txt`, passed as `hermes -p <profile>`, and appended
++     to the transcript footer. An explicit `HERMES_PROFILE` is the logged operator escape hatch.
++     The launch itself is `hermes -z "<prompt>" --usage-file usage.json > report.md`; `-z` is the
++     purest one-shot: single prompt in, final response out.
++5. **Measured harvest.** `scripts/pc_lane.sh` reads OmniRoute `call_logs` by exact
++   `session_tag = <lane-id>` first and reports `requested_model × provider × status × count`.
++   Legacy raw-id rows without a tag remain visible as `untagged-raw-rows=N`, keyed by
++   `requested_model`; combo lanes retain the explicitly unverified combo-window fallback.
++   The harvest line reads the served model from `usage.json` and the profile from `profile.txt`.
++6. **Report capture.** The harness's final message → `.lanes/<lane-id>/report.md`.
++7. **Exit code passthrough.** The lane exits with the harness's exit code.
+ 
+ **Hard limits, enforced not just documented:**
+ 
+@@ -384,6 +395,7 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
+ | `AF_VENV` | `$HOME/venv-agent-factory` | python venv root |
+ | `CODEX_BIN` | `codex` (from PATH) | codex binary |
+ | `HERMES_BIN` | `hermes` (from PATH) | hermes binary |
++| `HERMES_PROFILE` | per-lane `aflane…` clone | explicit logged profile override |
+ | `LANE_BRANCH` | `claude/soundbox-kit-migration-iz1jwf` | branch to fetch |
+ | `LANE_ID` | derived from the brief | lane directory name |
+ 
+diff --git a/harness-ports/bin/lane-profile.sh b/harness-ports/bin/lane-profile.sh
+new file mode 100755
+index 00000000..145d8c40
+--- /dev/null
++++ b/harness-ports/bin/lane-profile.sh
+@@ -0,0 +1,209 @@
++#!/usr/bin/env bash
++# Create, verify, or remove the isolated Hermes profile used by one PC lane.
++# The source interactive profile is read-only: lane profiles are disposable clones.
++set -uo pipefail
++
++fail() { printf 'lane-profile: %s\n' "$*" >&2; exit 64; }
++
++ACTION="${1:-}"; VALUE="${2:-}"
++[ -n "$ACTION" ] && [ -n "$VALUE" ] || fail "usage: lane-profile.sh create|verify|remove <lane-id-or-profile>"
++[ "$#" -eq 2 ] || fail "usage: lane-profile.sh create|verify|remove <lane-id-or-profile>"
++
++: "${HERMES_BIN:=hermes}"
++: "${HERMES_PROFILES_DIR:=$HOME/.hermes/profiles}"
++: "${HERMES_SOURCE_PROFILE:=agentfactory}"
++SOURCE="$HERMES_PROFILES_DIR/$HERMES_SOURCE_PROFILE"
++
++profile_name() {
++  local lane clean
++  lane="$1"
++  clean="$(printf '%s' "$lane" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)"
++  [ -n "$clean" ] || fail "lane id has no alphanumeric characters"
++  printf 'aflane%s\n' "$clean"
++}
++
++verify_lane() {
++  local lane="$1" name target source_sha target_sha verdict rc
++  name="$(profile_name "$lane")" || exit $?
++  target="$HERMES_PROFILES_DIR/$name"
++  [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
++  [ -f "$SOURCE/.env" ] || fail "source env missing"
++
++  verdict="$(python3 - "$target/config.yaml" "$lane" <<'PY'
++import sys
++import yaml
++
++path, lane = sys.argv[1:]
++try:
++    with open(path, encoding="utf-8") as stream:
++        config = yaml.safe_load(stream)
++except Exception:
++    print("config unreadable")
++    raise SystemExit(3)
++if not isinstance(config, dict):
++    print("config unreadable")
++    raise SystemExit(3)
++if "fallback_providers" in config:
++    print("chain present")
++    raise SystemExit(1)
++model = config.get("model")
++headers = model.get("default_headers") if isinstance(model, dict) else None
++got = headers.get("x-omniroute-session-id") if isinstance(headers, dict) else None
++if got != lane:
++    print("header missing or wrong: " + ("<missing>" if got is None else str(got)))
++    raise SystemExit(2)
++PY
++)"; rc=$?
++  case "$rc" in
++    0) ;;
++    1) fail "chain present";;
++    2) fail "$verdict";;
++    *) fail "${verdict:-config unreadable}";;
++  esac
++
++  source_sha="$(sha256sum "$SOURCE/.env" 2>/dev/null | awk '{print $1}')"
++  target_sha="$(sha256sum "$target/.env" 2>/dev/null | awk '{print $1}')"
++  [ -n "$source_sha" ] && [ "$source_sha" = "$target_sha" ] || fail "env drift"
++}
++
++create_lane() {
++  local lane="$1" name target component
++  name="$(profile_name "$lane")" || exit $?
++  target="$HERMES_PROFILES_DIR/$name"
++  [ -f "$SOURCE/config.yaml" ] && [ -f "$SOURCE/.env" ] || fail "source profile missing $HERMES_SOURCE_PROFILE"
++
++  if [ -e "$target" ]; then
++    verify_lane "$lane"
++    printf '%s\n' "$name"
++    return 0
++  fi
++
++  "$HERMES_BIN" profile create --clone-from "$HERMES_SOURCE_PROFILE" --no-alias "$name" >/dev/null \
++    || fail "clone failed $name"
++  [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "clone incomplete $name"
++
++  # `--clone-from` omits some profile-local directories on Hermes releases that
++  # otherwise copy config/.env. Add only source components that are actually absent.
++  for component in hooks cron; do
++    if [ -e "$SOURCE/$component" ] && [ ! -e "$target/$component" ]; then
++      cp -a "$SOURCE/$component" "$target/$component" || fail "copy failed $component"
++    fi
++  done
++
++  # Preserve every untouched byte in config.yaml. Parse before and after, and refuse
++  # unless the semantic delta is exactly chain removal plus this lane's request header.
++  python3 - "$target/config.yaml" "$lane" <<'PY' || fail "config rewrite failed"
++import copy
++import os
++from pathlib import Path
++import re
++import sys
++import tempfile
++import yaml
++
++path = Path(sys.argv[1])
++lane = sys.argv[2]
++text = path.read_text(encoding="utf-8")
++before = yaml.safe_load(text)
++if not isinstance(before, dict) or not isinstance(before.get("model"), dict):
++    raise SystemExit("config must contain a model mapping")
++expected = copy.deepcopy(before)
++expected.pop("fallback_providers", None)
++headers = expected["model"].get("default_headers")
++if headers is None:
++    headers = {}
++    expected["model"]["default_headers"] = headers
++if not isinstance(headers, dict):
++    raise SystemExit("model.default_headers must be a mapping")
++headers["x-omniroute-session-id"] = lane
++
++lines = text.splitlines(keepends=True)
++top = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
++
++def top_block(key):
++    start = next((i for i, line in enumerate(lines) if line.startswith(key + ":")), None)
++    if start is None:
++        return None
++    end = start + 1
++    while end < len(lines) and not top.match(lines[end]):
++        end += 1
++    return start, end
++
++fallback = top_block("fallback_providers")
++if fallback is not None:
++    del lines[fallback[0]:fallback[1]]
++
++# Recompute block locations after deletion; stale indices can insert outside the
++# model mapping when fallback_providers originally followed it.
++model = top_block("model")
++if model is None:
++    raise SystemExit("model block missing")
++model_start, model_end = model
++header_scalar = yaml.safe_dump(lane, default_flow_style=True).strip()
++if header_scalar.endswith("\n..."):
++    header_scalar = header_scalar[:-4]
++header_line = f"    x-omniroute-session-id: {header_scalar}\n"
++default_start = next(
++    (i for i in range(model_start + 1, model_end) if re.match(r"^  default_headers:\s*(?:#.*)?$", lines[i].rstrip("\n"))),
++    None,
++)
++if default_start is None:
++    lines[model_end:model_end] = ["  default_headers:\n", header_line]
++else:
++    default_end = default_start + 1
++    while default_end < model_end and not re.match(r"^  [A-Za-z_][A-Za-z0-9_-]*:", lines[default_end]):
++        default_end += 1
++    existing = next(
++        (i for i in range(default_start + 1, default_end) if re.match(r"^    x-omniroute-session-id:", lines[i])),
++        None,
++    )
++    if existing is None:
++        lines[default_end:default_end] = [header_line]
++    else:
++        lines[existing] = header_line
++
++updated = "".join(lines)
++after = yaml.safe_load(updated)
++if after != expected:
++    raise SystemExit("unexpected semantic config delta")
++if set(before) - set(after) != ({"fallback_providers"} if "fallback_providers" in before else set()):
++    raise SystemExit("unexpected removed top-level key")
++if set(after) - set(before):
++    raise SystemExit("unexpected added top-level key")
++
++mode = path.stat().st_mode
++fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
++try:
++    with os.fdopen(fd, "w", encoding="utf-8") as stream:
++        stream.write(updated)
++        stream.flush()
++        os.fsync(stream.fileno())
++    os.chmod(tmp_name, mode)
++    os.replace(tmp_name, path)
++finally:
++    if os.path.exists(tmp_name):
++        os.unlink(tmp_name)
++PY
++
++  verify_lane "$lane"
++  printf '%s\n' "$name"
++}
++
++remove_profile() {
++  local name="$1"
++  case "$name" in
++    aflane*[!a-z0-9]*|aflane) fail "refusing to delete non-lane profile $name";;
++    aflane*) ;;
++    *) fail "refusing to delete non-lane profile $name";;
++  esac
++  printf '%s\n' "$name" | "$HERMES_BIN" profile delete "$name" >/dev/null \
++    || fail "delete failed $name"
++  [ ! -e "$HERMES_PROFILES_DIR/$name" ] || fail "delete left profile $name"
++}
++
++case "$ACTION" in
++  create) create_lane "$VALUE";;
++  verify) verify_lane "$VALUE";;
++  remove) remove_profile "$VALUE";;
++  *) fail "unknown action $ACTION";;
++esac
+diff --git a/harness-ports/bin/pc-lane.sh b/harness-ports/bin/pc-lane.sh
+index 03fde859..183f337e 100755
+--- a/harness-ports/bin/pc-lane.sh
++++ b/harness-ports/bin/pc-lane.sh
+@@ -426,8 +426,24 @@ else
+     agentfactory-*-local|qwen-local/*)
+       case "$RUN_EFFORT" in ultra|max|high) echo "pc-lane: effort '$RUN_EFFORT' clamped to xhigh on the local route ($RUN_MODEL)" >&2; RUN_EFFORT=xhigh;; esac;;
+   esac
++  # The default is a disposable per-lane clone of the interactive agentfactory profile:
++  # it preserves the approved config/env while removing fallback_providers and adding the
++  # lane id as OmniRoute's request correlation header. An explicit HERMES_PROFILE is the
++  # operator escape hatch and is logged instead of cloned.
++  LANE_PROFILE_HELPER="$AF_REPO/harness-ports/bin/lane-profile.sh"
++  if [ -n "${HERMES_PROFILE:-}" ]; then
++    LANE_PROFILE="$HERMES_PROFILE"
++    echo "pc-lane: profile override $LANE_PROFILE" >&2
++  else
++    [ -x "$LANE_PROFILE_HELPER" ] || die "lane profile helper missing: $LANE_PROFILE_HELPER"
++    LANE_PROFILE="$("$LANE_PROFILE_HELPER" create "$LANE_ID")" || die "lane profile create failed"
++    "$LANE_PROFILE_HELPER" verify "$LANE_ID" || die "lane profile verify failed"
++  fi
++  printf '%s\n' "$LANE_PROFILE" > "$LANE_DIR/profile.txt" || die "cannot record lane profile"
++  export HERMES_PROFILE="$LANE_PROFILE"
++
+   TERMINAL_CWD="$TREE" \
+-  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
++  "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
+       -m "$RUN_MODEL" \
+       --reasoning "$RUN_EFFORT" \
+       --accept-hooks \
+@@ -492,11 +508,12 @@ fi
+ # so it travels with the patch; the curator lane reads transcripts/pc/*.md later.
+ if [ "$HARNESS" = "hermes" ] && [ -s "$LANE_DIR/usage.json" ]; then
+   SID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('session_id',''))" "$LANE_DIR/usage.json" 2>/dev/null)"
+-  HDB="${HERMES_STATE_DB:-$HOME/.hermes/profiles/${HERMES_PROFILE:-agentfactory}/state.db}"
++  LANE_PROFILE="$(cat "$LANE_DIR/profile.txt" 2>/dev/null)"
++  HDB="${HERMES_STATE_DB:-$HOME/.hermes/profiles/${LANE_PROFILE:-${HERMES_PROFILE:-agentfactory}}/state.db}"
+   if [ -n "$SID" ] && [ -f "$HDB" ]; then
+     python3 "$AF_REPO/harness-ports/bin/hermes-session-export.py" --db "$HDB" --session "$SID" \
+       --out "$TREE/transcripts/pc/$LANE_ID.md" >/dev/null 2>>"$LOG" \
+-      && { printf '\n---\nusage.json:\n\n```json\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; cat "$LANE_DIR/usage.json" >> "$TREE/transcripts/pc/$LANE_ID.md"; printf '\n```\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; echo "pc-lane: transcript -> transcripts/pc/$LANE_ID.md (in the lane tree)" >&2; } \
++      && { printf '\n---\nprofile: %s\n\nusage.json:\n\n```json\n' "${LANE_PROFILE:-unknown}" >> "$TREE/transcripts/pc/$LANE_ID.md"; cat "$LANE_DIR/usage.json" >> "$TREE/transcripts/pc/$LANE_ID.md"; printf '\n```\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; echo "pc-lane: transcript -> transcripts/pc/$LANE_ID.md (in the lane tree)" >&2; } \
+       || echo "pc-lane: session export FAILED (see lane.log) — report still stands" >&2
+   fi
+ fi
+diff --git a/harness-ports/tests/run-all.sh b/harness-ports/tests/run-all.sh
+index 5f400996..6c45009c 100755
+--- a/harness-ports/tests/run-all.sh
++++ b/harness-ports/tests/run-all.sh
+@@ -18,6 +18,11 @@ for t in test_codex_hook_adapter.py test_hermes_hook_adapter.py \
+   [ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
+ done
+ 
++printf '%-34s ' "test_lane_profile.sh"
++out="$(bash "$HERE/test_lane_profile.sh" 2>&1)"; rc=$?
++printf '%s\n' "$(printf '%s' "$out" | tail -1)"
++[ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
++
+ printf '%-34s ' "test_pc_lane.sh"
+ out="$(bash "$HERE/test_pc_lane.sh" 2>&1)"; rc=$?
+ printf '%s\n' "$(printf '%s' "$out" | tail -1)"
+diff --git a/harness-ports/tests/test_lane_profile.sh b/harness-ports/tests/test_lane_profile.sh
+new file mode 100755
+index 00000000..02bc9731
+--- /dev/null
++++ b/harness-ports/tests/test_lane_profile.sh
+@@ -0,0 +1,152 @@
++#!/usr/bin/env bash
++# Deterministic contract tests for the per-lane Hermes profile helper.
++# Uses a labelled fake Hermes CLI and throwaway profile root; no real profile is read or changed.
++set -uo pipefail
++
++# Hermetic: a caller's runtime/test overrides cannot redirect this suite to real profiles.
++unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS 2>/dev/null || true
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++HELPER="$HERE/../bin/lane-profile.sh"
++TMP="$(mktemp -d)" || exit 1
++trap 'rm -rf "$TMP"' EXIT
++PROFILES="$TMP/profiles"; SOURCE="$PROFILES/agentfactory"; BIN="$TMP/bin"
++mkdir -p "$SOURCE/hooks" "$SOURCE/cron" "$BIN"
++printf 'hook-marker\n' > "$SOURCE/hooks/marker"
++printf 'cron-marker\n' > "$SOURCE/cron/marker"
++printf 'OMNIROUTE_API_KEY=test-only\n' > "$SOURCE/.env"
++cat > "$SOURCE/config.yaml" <<'YAML'
++model:
++  default: auto/best-coding-fast
++  provider: custom:omniroute-fedora
++  base_url: http://127.0.0.1:20128/v1
++  api_mode: chat_completions
++fallback_providers:
++- provider: custom
++  model: codex/example
++  base_url: http://127.0.0.1:20128/v1
++  key_env: OMNIROUTE_API_KEY
++agent:
++  max_turns: 60
++providers:
++  omniroute-fedora:
++    api: http://127.0.0.1:20128/v1
++    key_env: OMNIROUTE_API_KEY
++YAML
++cp "$SOURCE/config.yaml" "$TMP/source-config.yaml"
++
++cat > "$BIN/hermes" <<'SH'
++#!/usr/bin/env bash
++set -u
++printf '%s\n' "$*" >> "${FAKE_HERMES_CALLS:?}"
++case "${1:-} ${2:-}" in
++  'profile create')
++    name="${!#}"; mkdir -p "$HERMES_PROFILES_DIR/$name"
++    cp "$HERMES_PROFILES_DIR/$HERMES_SOURCE_PROFILE/config.yaml" "$HERMES_PROFILES_DIR/$name/config.yaml"
++    cp "$HERMES_PROFILES_DIR/$HERMES_SOURCE_PROFILE/.env" "$HERMES_PROFILES_DIR/$name/.env"
++    ;;
++  'profile delete')
++    name="${3:-}"; IFS= read -r answer || true
++    [ "$answer" = "$name" ] || exit 3
++    rm -rf "$HERMES_PROFILES_DIR/$name"
++    ;;
++  *) exit 2;;
++esac
++SH
++chmod +x "$BIN/hermes"
++export HERMES_BIN="$BIN/hermes" HERMES_PROFILES_DIR="$PROFILES" HERMES_SOURCE_PROFILE=agentfactory
++export FAKE_HERMES_CALLS="$TMP/hermes.calls"; : > "$FAKE_HERMES_CALLS"
++
++pass=0; fail=0
++check() {
++  if [ "$2" -eq 0 ]; then pass=$((pass+1)); printf '[PASS] %s\n' "$1"; else fail=$((fail+1)); printf '[FAIL] %s\n' "$1"; fi
++  printf '         because: %s\n' "$3"
++}
++run_verify() {
++  VERIFY_OUT="$(bash "$HELPER" verify "$1" 2>&1)"; VERIFY_RC=$?
++}
++
++# Name normalization is observed through create output, not a duplicate test implementation.
++NAME1="$(bash "$HELPER" create 'pc-t92')"; RC1=$?
++NAME2="$(bash "$HELPER" create 'PC_T92.R2')"; RC2=$?
++LONG_ID='ABCDEFGHIJKLMNOPQRSTUVWXYZ-1234567890-abcdefghijk'
++NAME3="$(bash "$HELPER" create "$LONG_ID")"; RC3=$?
++[ "$RC1" -eq 0 ] && [ "$NAME1" = aflanepct92 ] \
++  && [ "$RC2" -eq 0 ] && [ "$NAME2" = aflanepct92r2 ] \
++  && [ "$RC3" -eq 0 ] && [ "$NAME3" = aflaneabcdefghijklmnopqrstuvwxyz1234567890abcd ]
++check "the name rule lowercases, drops non-alphanumerics, and truncates the lane portion to 40" $? \
++  "pc-t92=$NAME1 PC_T92.R2=$NAME2 long=$NAME3"
++
++TARGET="$PROFILES/$NAME1"
++python3 - "$TMP/source-config.yaml" "$TARGET/config.yaml" pc-t92 <<'PY'
++import copy, sys, yaml
++source, target, lane = sys.argv[1:]
++with open(source, encoding="utf-8") as f: before = yaml.safe_load(f)
++with open(target, encoding="utf-8") as f: after = yaml.safe_load(f)
++expected = copy.deepcopy(before)
++expected.pop("fallback_providers", None)
++expected["model"].setdefault("default_headers", {})["x-omniroute-session-id"] = lane
++assert after == expected, (after, expected)
++assert set(before) - set(after) == {"fallback_providers"}
++assert set(after) - set(before) == set()
++PY
++CONFIG_RC=$?
++SOURCE_SHA="$(sha256sum "$SOURCE/.env" | awk '{print $1}')"
++TARGET_SHA="$(sha256sum "$TARGET/.env" | awk '{print $1}')"
++[ "$CONFIG_RC" -eq 0 ] && [ "$SOURCE_SHA" = "$TARGET_SHA" ] \
++  && [ "$(cat "$TARGET/hooks/marker")" = hook-marker ] \
++  && [ "$(cat "$TARGET/cron/marker")" = cron-marker ]
++check "create strips only the chain, adds the exact lane header, preserves .env, and copies hooks/cron" $? \
++  "semantic-diff-rc=$CONFIG_RC env_equal=$([ "$SOURCE_SHA" = "$TARGET_SHA" ] && echo yes || echo no)"
++
++BEFORE_SHA="$(sha256sum "$TARGET/config.yaml" | awk '{print $1}')"
++BEFORE_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
++REUSED="$(bash "$HELPER" create pc-t92)"; REUSE_RC=$?
++AFTER_SHA="$(sha256sum "$TARGET/config.yaml" | awk '{print $1}')"
++AFTER_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
++[ "$REUSE_RC" -eq 0 ] && [ "$REUSED" = "$NAME1" ] && [ "$BEFORE_SHA" = "$AFTER_SHA" ] && [ "$BEFORE_CREATES" = "$AFTER_CREATES" ]
++check "create reuses an existing verified profile without cloning or rewriting it" $? \
++  "rc=$REUSE_RC create_calls=$BEFORE_CREATES->$AFTER_CREATES config_sha_equal=$([ "$BEFORE_SHA" = "$AFTER_SHA" ] && echo yes || echo no)"
++
++cp "$TARGET/config.yaml" "$TMP/good-config.yaml"; cp "$TARGET/.env" "$TMP/good-env"
++printf '\nfallback_providers:\n- provider: custom\n  model: codex/mutant\n' >> "$TARGET/config.yaml"
++run_verify pc-t92
++[ "$VERIFY_RC" -ne 0 ] && [ "$VERIFY_OUT" = 'lane-profile: chain present' ]
++check "verify rejects a restored fallback chain with the exact reason" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
++cp "$TMP/good-config.yaml" "$TARGET/config.yaml"
++
++python3 - "$TARGET/config.yaml" <<'PY'
++from pathlib import Path
++import re
++import sys
++p = Path(sys.argv[1]); s = p.read_text()
++s, count = re.subn(r'(x-omniroute-session-id:\s*)[^\n]+', r'\1wrong-lane', s, count=1)
++assert count == 1
++p.write_text(s)
++PY
++run_verify pc-t92
++[ "$VERIFY_RC" -ne 0 ] && [ "$VERIFY_OUT" = 'lane-profile: header missing or wrong: wrong-lane' ]
++check "verify rejects a wrong lane header with the exact reason" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
++cp "$TMP/good-config.yaml" "$TARGET/config.yaml"
++
++printf 'DRIFT=1\n' >> "$TARGET/.env"
++run_verify pc-t92
++[ "$VERIFY_RC" -ne 0 ] && [ "$VERIFY_OUT" = 'lane-profile: env drift' ]
++check "verify rejects changed environment bytes with the exact reason" $? "rc=$VERIFY_RC output=$VERIFY_OUT"
++cp "$TMP/good-env" "$TARGET/.env"
++
++run_verify pc-t92
++[ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
++check "verify accepts the restored exact clone" $? "rc=$VERIFY_RC output=${VERIFY_OUT:-<empty>}"
++
++REFUSE_OUT="$(bash "$HELPER" remove agentfactory 2>&1)"; REFUSE_RC=$?
++[ "$REFUSE_RC" -eq 64 ] && [ "$REFUSE_OUT" = 'lane-profile: refusing to delete non-lane profile agentfactory' ] \
++  && [ -d "$SOURCE" ] && ! grep -Fq 'profile delete agentfactory' "$FAKE_HERMES_CALLS"
++check "remove refuses a profile without the aflane prefix before the Hermes CLI" $? \
++  "rc=$REFUSE_RC output=$REFUSE_OUT source_exists=$([ -d "$SOURCE" ] && echo yes || echo no)"
++
++REMOVE_OUT="$(bash "$HELPER" remove "$NAME1" 2>&1)"; REMOVE_RC=$?
++[ "$REMOVE_RC" -eq 0 ] && [ ! -e "$TARGET" ] && grep -Fq "profile delete $NAME1" "$FAKE_HERMES_CALLS"
++check "remove confirms and deletes an aflane profile" $? \
++  "rc=$REMOVE_RC target_exists=$([ -e "$TARGET" ] && echo yes || echo no)"
++
++echo; echo "lane profile: $pass passed, $fail failed"; [ "$fail" -eq 0 ]
+diff --git a/harness-ports/tests/test_pc_lane.sh b/harness-ports/tests/test_pc_lane.sh
+index 49c4563a..67ed1e0c 100755
+--- a/harness-ports/tests/test_pc_lane.sh
++++ b/harness-ports/tests/test_pc_lane.sh
+@@ -15,7 +15,7 @@ set -uo pipefail
+ 
+ # Hermetic: clear env vars that a parent lane or caller might export, so the
+ # suite's own values are never shadowed by the caller's environment.
+-unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING 2>/dev/null || true
++unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE 2>/dev/null || true
+ 
+ # Self-test mode: the hermetic-cleanup test below spawns THIS SCRIPT from a
+ # poisoned parent.  If the unset above worked, LANE_ID is gone; if the unset
+@@ -41,7 +41,7 @@ REPO="$TMP/agent-factory"
+ mkdir -p "$REPO"
+ git -C "$REPO" init -q
+ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
+-mkdir -p "$REPO/harness-ports/roles"
++mkdir -p "$REPO/harness-ports/roles" "$REPO/harness-ports/bin"
+ cat > "$REPO/harness-ports/roles/code-implementer.md" <<'EOF'
+ ROLE-MARKER: this is the code-implementer role body.
+ EOF
+@@ -52,6 +52,17 @@ EOF
+ done
+ mkdir -p "$REPO/scripts"; echo "LINT-AT-PIN" > "$REPO/scripts/report_lint.py"   # the PIN's copy of the report tooling
+ echo hello > "$REPO/file.txt"
++# A labelled fake lane-profile helper for this plumbing suite. Its own config/env
++# transformation contract is exercised by test_lane_profile.sh; here we isolate argv/profile wiring.
++cat > "$REPO/harness-ports/bin/lane-profile.sh" <<'EOF'
++#!/usr/bin/env bash
++case "${1:-}" in
++  create) printf 'aflane%s\n' "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)";;
++  verify) exit 0;;
++  *) exit 64;;
++esac
++EOF
++chmod +x "$REPO/harness-ports/bin/lane-profile.sh"
+ git -C "$REPO" add -A >/dev/null
+ git -C "$REPO" commit -qm base
+ SHA="$(git -C "$REPO" rev-parse HEAD)"
+@@ -527,14 +538,16 @@ assert_role_route() { # role expected-model expected-effort
+   export HERMES_ARGS_FILE="$TMP/hermes-args-$role"
+   LANE_ID="route-$role" HERMES_BIN="$FAKE_HERMES" \
+     bash "$LANE" "$BRIEF" hermes "$role" >/dev/null 2>"$TMP/route-$role.err"
+-  awk -v m="$expected_model" -v e="$expected_effort" '
++  awk -v m="$expected_model" -v e="$expected_effort" -v p="aflaneroute$(printf '%s' "$role" | tr -cd '[:alnum:]')" '
+     prev=="-m" && $0==m { found_model=1 }
+     prev=="--reasoning" && $0==e { found_effort=1 }
++    prev=="-p" && $0==p { found_profile=1 }
+     { prev=$0 }
+-    END { exit !(found_model && found_effort) }
++    END { exit !(found_model && found_effort && found_profile) }
+   ' "$HERMES_ARGS_FILE"
+-  check "$role selects $expected_model at $expected_effort" $? \
+-    "role intent is stable while OmniRoute owns paid-first/free-last failover"
++  profile_file="$REPO/.lanes/route-$role/profile.txt"
++  check "$role selects $expected_model at $expected_effort through its lane profile" $? \
++    "profile=$(cat "$profile_file" 2>/dev/null) role intent is stable while OmniRoute owns paid-first/free-last failover"
+ }
+ assert_role_route code-implementer agentfactory-build-local medium
+ assert_role_route adversarial-verifier agentfactory-verify-local xhigh
+@@ -563,6 +576,15 @@ check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
+   "$([ $override_model_rc -eq 0 ] && [ $override_effort_rc -eq 0 ] && echo 0 || echo 1)" \
+   "a hard-wired role route would block measured per-lane experiments and emergency step-downs"
+ 
++export HERMES_ARGS_FILE="$TMP/hermes-args-profile-override"
++LANE_ID="profile-override" HERMES_PROFILE="operatorprofile" HERMES_BIN="$FAKE_HERMES" \
++  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/profile-override.err"
++awk 'prev=="-p" && $0=="operatorprofile" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE" \
++  && grep -Fqx operatorprofile "$REPO/.lanes/profile-override/profile.txt" \
++  && grep -Fq 'pc-lane: profile override operatorprofile' "$TMP/profile-override.err"
++check "an explicit HERMES_PROFILE bypasses cloning, is logged, recorded, and passed to Hermes" $? \
++  "stderr=$(tr '\n' ';' < "$TMP/profile-override.err") profile=$(cat "$REPO/.lanes/profile-override/profile.txt" 2>/dev/null)"
++
+ # --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
+ # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).
+ # These tests launch pc-lane.sh under real subprocess environments using `env`,
+diff --git a/harness-ports/tests/test_pc_lane_dispatcher.sh b/harness-ports/tests/test_pc_lane_dispatcher.sh
+index 584ddfd0..948c19ac 100755
+--- a/harness-ports/tests/test_pc_lane_dispatcher.sh
++++ b/harness-ports/tests/test_pc_lane_dispatcher.sh
+@@ -5,7 +5,7 @@
+ # bridge function keeps every command local and records each bridge call, so a refusal
+ # must show NO mkdir -p (the guard runs before the write, AF-AP-79).
+ set -uo pipefail
+-unset HERMES_MODEL HERMES_REASONING LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
++unset HERMES_MODEL HERMES_REASONING HERMES_PROFILE LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
+ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
+ TMP="$(mktemp -d)"; FIXTURE_PIDS=()
+ cleanup() {
+@@ -81,6 +81,8 @@ bridge() {
+     *'cat '*'/FAILED'*) printf '%s\n' "${PC_LANE_TEST_FAILED_TEXT:-route-capacity: exhausted}";;
+     *'test -s '*'/report.partial.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_PARTIAL_B64:-}";;
+     *'test -s '*'/report.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_REPORT_B64:-}";;
++    *'test -s '*'/usage.json && base64 -w0'*) printf '%s' "${PC_LANE_TEST_USAGE_B64:-}";;
++    *'test -s '*'/profile.txt && sed -n'*) printf '%s\n' "${PC_LANE_TEST_PROFILE:-}";;
+     *'sqlite3 -readonly '*)
+       sql_path="$(printf '%s\n' "$1" | sed -n 's/.*base64 -d > \([^ ]*\).*/\1/p')"
+       sql_b64="${1#*printf %s \' }"; sql_b64="${sql_b64#*printf %s \'}"; sql_b64="${sql_b64%%\'*}"
+@@ -381,36 +383,50 @@ check "a safety-filter FAILED probe prints its terminal message and brings repor
+ 
+ READY_TEXT='REAL DISPATCH REPORT'
+ READY_B64="$(printf '%s\n' "$READY_TEXT" | base64 -w0)"
++USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local"}' | base64 -w0)"
+ SQL_CAPTURE="$TMP/provider-mix.sql"
+-MIX_ONE=$'MIX\tqwen:200=2 codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tother\t0\t\t'
+-run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
++MIX_ONE=$'MIX\tagentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t0\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t0\t\t'
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+ [ "$POLL_RC" -eq 0 ] \
+   && grep -q '^REAL DISPATCH REPORT' "$TMP/poll-out/report-brief.md--0000000.md" \
+   && grep -Fq 'report ->' "$TMP/err.txt" \
+-  && grep -Fq "combo-window provider mix (per-lane provenance UNVERIFIED) agentfactory-build-local'; DROP TABLE call_logs; -- " "$TMP/err.txt" \
+-  && grep -Fq 'qwen:200=2 codex:200=1 | tags: conv_abcd(09:15:46-09:16:10,n=3)' "$TMP/err.txt" \
++  && grep -Fq "combo-window provider mix (per-lane provenance UNVERIFIED) agentfactory-build-local'; DROP TABLE call_logs; -- served=qwen-local/qwen3.8-27b-local profile=aflanebriefmd0000000 " "$TMP/err.txt" \
++  && grep -Fq "agentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1 | tags: conv_abcd(09:15:46-09:16:10,n=3) | untagged-raw-rows=0" "$TMP/err.txt" \
+   && ! grep -Fq 'COMBO-WINDOW aggregate' "$TMP/err.txt" \
+   && ! grep -Fq '/sandbox-should-not-be-used/.omniroute-migrated' "$BRIDGE_CALLS" \
+-  && [ -n "$SQL_CAPTURE" ] && grep -Fq "combo_name = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
++  && [ -n "$SQL_CAPTURE" ] && grep -Fq "session_tag = 'brief.md--0000000'" "$SQL_CAPTURE" \
++  && grep -Fq "requested_model = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
++  && ! grep -Fq "FROM call_logs WHERE api_key_name = 'hermes' AND combo_name = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
+   && grep -Fq "api_key_name = 'hermes'" "$SQL_CAPTURE" && grep -Fq "provider LIKE 'openai-compatible-chat-%'" "$SQL_CAPTURE"
+-check "NEGATIVE CONTROL: a READY probe still harvests; one-tag mix has no caveat and the shipped read-only SQL escapes its combo filter" $? \
++check "NEGATIVE CONTROL: a READY raw-id harvest keys first on the escaped lane tag, counts untagged raw rows by requested_model, and reports served/profile" $? \
+   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
+ 
+-MIX_TWO=$'MIX\tqwen:200=4 codex:200=2\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:17:10\t4\nTAG\tconv_other\t09:15:50\t09:17:12\t2\nMETA\tdb_missing\t0\t\t\nMETA\tother\t1\t\t'
++MIX_TAGGED=$'MIX\tqwen-local/qwen3.8-27b-local x openai-compatible-chat-fixture:200=2\t\t\t\nTAG\tbrief.md--0000000\t09:15:46\t09:16:10\t2\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t7\t\t\nMETA\ttagged_lane\t1\t\t\nMETA\tother\t0\t\t'
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_TAGGED" "HERMES_MODEL=qwen-local/qwen3.8-27b-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
++[ "$POLL_RC" -eq 0 ] \
++  && grep -Fq 'pc_lane: lane provider mix lane=brief.md--0000000 served=qwen-local/qwen3.8-27b-local profile=aflanebriefmd0000000 qwen-local/qwen3.8-27b-local x openai-compatible-chat-fixture:200=2 | untagged-raw-rows=7' "$TMP/err.txt" \
++  && ! grep -Fq 'combo-window provider mix' "$TMP/err.txt" \
++  && grep -Fq "session_tag = 'brief.md--0000000'" "$SQL_CAPTURE" \
++  && grep -Fq "requested_model = 'qwen-local/qwen3.8-27b-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
++  && grep -Fq 'AND 0 = 1' "$SQL_CAPTURE"
++check "a tagged raw-id lane keys only on session_tag, reports requested_model x provider x status, and keeps untagged rows visible" $? \
++  "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
++
++MIX_TWO=$'MIX\tagentfactory-build-local x qwen:200=4 agentfactory-build-local x codex:200=2\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:17:10\t4\nTAG\tconv_other\t09:15:50\t09:17:12\t2\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t3\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t1\t\t'
+ # Restore role-derived combo selection after the hostile explicit-model SQL-escaping control.
+ unset HERMES_MODEL LANE_SERVER_EFFORT
+ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_TWO" "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+ [ "$POLL_RC" -eq 0 ] \
+-  && grep -q 'qwen:200=4 codex:200=2 | tags: conv_abcd(09:15:46-09:17:10,n=4) conv_other(09:15:50-09:17:12,n=2)' "$TMP/err.txt" \
+-  && grep -Fq 'pc_lane: the mix is a COMBO-WINDOW aggregate — 1 conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)' "$TMP/err.txt" \
++  && grep -q 'agentfactory-build-local x qwen:200=4 agentfactory-build-local x codex:200=2 | tags: conv_abcd(09:15:46-09:17:10,n=4) conv_other(09:15:50-09:17:12,n=2) | untagged-raw-rows=3' "$TMP/err.txt" \
++  && grep -Fq 'pc_lane: the mix is a COMBO-WINDOW aggregate — 1 conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no matching lane tag in call_logs)' "$TMP/err.txt" \
+   && ! grep -Fq "the lane's own share is the tag(s) starting at launch" "$TMP/err.txt" \
+   && grep -Fq "timestamp >= '2026-09-21T14:12:20Z'" "$SQL_CAPTURE"
+ check "a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds" $? \
+   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
+ 
+-run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" $'PC_LANE_TEST_PROVIDER_MIX=META\tdb_missing\t1\t\t\nMETA\tother\t0\t\t' --
+-[ "$POLL_RC" -eq 0 ] && grep -q 'provider-mix: no call_logs rows in the window (db=' "$TMP/err.txt"
+-check "an empty call-log result is reported, never silent, and harvest remains successful" $? \
++run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" $'PC_LANE_TEST_PROVIDER_MIX=META\tdb_missing\t1\t\t\nMETA\tuntagged_raw\t5\t\t\nMETA\tother\t0\t\t' --
++[ "$POLL_RC" -eq 0 ] && grep -q 'provider-mix: no tagged/combo call_logs rows in the window (db=.* | untagged-raw-rows=5' "$TMP/err.txt"
++check "an untagged-only raw-id result stays visible even without tagged/combo rows" $? \
+   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
+ 
+ run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" PC_LANE_TEST_PROVIDER_MIX_RC=5 "PC_LANE_TEST_PROVIDER_MIX_ERROR=database unavailable" --
+diff --git a/scripts/pc_lane.sh b/scripts/pc_lane.sh
+index d38f92ac..6d602413 100755
+--- a/scripts/pc_lane.sh
++++ b/scripts/pc_lane.sh
+@@ -432,9 +432,17 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
+   rm -f "$LOCAL_REPORT.b64"
+   echo "pc_lane: report -> $LOCAL_REPORT" >&2
+ 
+-  # Provider mix is observed from OmniRoute's read-only call log, never inferred from the combo name. The window starts
+-  # one minute before launch to cover clock/bridge skew. It is intentionally per combo: session_tag is not carried by the
+-  # lane launcher, so concurrent conversations are listed and a multi-tag window is called out rather than misattributed.
++  # Bring the immutable usage metadata home with the report so the harvest can name
++  # the actually served model (not the requested combo/raw id) and the lane profile.
++  USAGE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/usage.json"
++  USAGE_B64="$(bridge "test -s $USAGE_REMOTE && base64 -w0 $USAGE_REMOTE" 2>/dev/null || true)"
++  SERVED_MODEL="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("model", ""))' 2>/dev/null || true)"
++  LANE_PROFILE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/profile.txt"
++  LANE_PROFILE_USED="$(bridge "test -s $LANE_PROFILE_REMOTE && sed -n '1p' $LANE_PROFILE_REMOTE" 2>/dev/null || true)"
++
++  # Provider mix is observed from OmniRoute's read-only call log, never inferred from the requested model.
++  # T92 lanes are keyed by their exact session_tag. The requested_model aggregate is a separately labelled
++  # visibility counter for legacy raw-id rows that predate that tag. Combo lanes keep the window caveat.
+   MIX_COMBO="${HERMES_MODEL:-}"
+   case "$MIX_COMBO" in
+     "") case "${ROLE:-}" in
+@@ -445,6 +453,7 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
+           *) MIX_COMBO=agentfactory-build;;
+         esac;;
+   esac
++  case "$MIX_COMBO" in agentfactory-*) MIX_IS_COMBO=1;; *) MIX_IS_COMBO=0;; esac
+   MIX_DB="${OMNIROUTE_CALL_LOG_DB:-/home/rocco/.omniroute-migrated/storage.sqlite}"
+   MIX_DB_OK=1
+   case "$MIX_DB" in *[!A-Za-z0-9_./-]*)
+@@ -452,6 +461,12 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
+   MIX_FROM="$(date -u -d "$LAUNCH_AT - 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
+   MIX_TO="$(date -u +%FT%TZ)"
+   MIX_COMBO_SQL="$(printf '%s' "$MIX_COMBO" | sed "s/'/''/g")"
++  if [ "$MIX_IS_COMBO" -eq 1 ]; then
++    MIX_COMBO_FILTER="AND combo_name = '$MIX_COMBO_SQL'"
++  else
++    MIX_COMBO_FILTER="AND 0 = 1"
++  fi
++  MIX_LANE_SQL="$(printf '%s' "$LANE_ID" | sed "s/'/''/g")"
+   MIX_FROM_SQL="$(printf '%s' "$MIX_FROM" | sed "s/'/''/g")"
+   MIX_TO_SQL="$(printf '%s' "$MIX_TO" | sed "s/'/''/g")"
+   MIX_LAUNCH_SQL="$(printf '%s' "$LAUNCH_AT" | sed "s/'/''/g")"
+@@ -459,7 +474,24 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
+   MIX_SQL="$(mktemp)"
+   cat > "$MIX_SQL" <<SQL
+ .mode tabs
+-WITH w AS (
++WITH lane_rows AS (
++  SELECT requested_model,
++         COALESCE(NULLIF(provider, ''), '<unknown>') AS provider_class,
++         status, session_tag, timestamp
++  FROM call_logs
++  WHERE api_key_name = 'hermes'
++    AND session_tag = '$MIX_LANE_SQL'
++    AND timestamp >= '$MIX_FROM_SQL'
++    AND timestamp <= '$MIX_TO_SQL'
++), untagged_raw AS (
++  SELECT count(*) AS n
++  FROM call_logs
++  WHERE api_key_name = 'hermes'
++    AND requested_model = '$MIX_COMBO_SQL'
++    AND (session_tag IS NULL OR session_tag = '')
++    AND timestamp >= '$MIX_FROM_SQL'
++    AND timestamp <= '$MIX_TO_SQL'
++), combo_rows AS (
+   SELECT CASE
+            WHEN provider LIKE 'openai-compatible-chat-%' OR provider LIKE '%qwen%' THEN 'qwen'
+            WHEN provider LIKE 'codex%' OR provider = 'codex' THEN 'codex'
+@@ -469,24 +501,34 @@ WITH w AS (
+          status, session_tag, timestamp
+   FROM call_logs
+   WHERE api_key_name = 'hermes'
+-    AND combo_name = '$MIX_COMBO_SQL'
++    $MIX_COMBO_FILTER
+     AND timestamp >= '$MIX_FROM_SQL'
+     AND timestamp <= '$MIX_TO_SQL'
++), chosen AS (
++  SELECT requested_model, provider_class, status, session_tag, timestamp FROM lane_rows
++  UNION ALL
++  SELECT '$MIX_COMBO_SQL', provider_class, status, session_tag, timestamp FROM combo_rows
++  WHERE NOT EXISTS(SELECT 1 FROM lane_rows)
+ )
+ SELECT 'MIX', group_concat(metric, ' '), '', '', ''
+ FROM (
+-  SELECT provider_class || ':' || status || '=' || count(*) AS metric
+-  FROM w GROUP BY provider_class, status ORDER BY provider_class, status
++  SELECT requested_model || ' x ' || provider_class || ':' || status || '=' || count(*) AS metric
++  FROM chosen GROUP BY requested_model, provider_class, status ORDER BY requested_model, provider_class, status
+ )
+ UNION ALL
+ SELECT 'TAG', session_tag, substr(min(timestamp), 12, 8), substr(max(timestamp), 12, 8), count(*)
+-FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
++FROM chosen WHERE session_tag IS NOT NULL AND session_tag <> ''
+ GROUP BY session_tag
+ UNION ALL
+-SELECT 'META', 'db_missing', CASE WHEN EXISTS(SELECT 1 FROM w) THEN 0 ELSE 1 END, '', ''
++SELECT 'META', 'db_missing', CASE WHEN EXISTS(SELECT 1 FROM chosen) THEN 0 ELSE 1 END, '', ''
++UNION ALL
++SELECT 'META', 'untagged_raw', n, '', '' FROM untagged_raw
++UNION ALL
++SELECT 'META', 'tagged_lane', CASE WHEN EXISTS(SELECT 1 FROM lane_rows) THEN 1 ELSE 0 END, '', ''
+ UNION ALL
+ SELECT 'META', 'other', count(*), '', '' FROM (
+-  SELECT session_tag FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
++  SELECT session_tag FROM combo_rows
++  WHERE NOT EXISTS(SELECT 1 FROM lane_rows) AND session_tag IS NOT NULL AND session_tag <> ''
+   GROUP BY session_tag
+   HAVING min(timestamp) < '$MIX_LAUNCH_SQL' OR min(timestamp) > '$MIX_CAVEAT_SQL'
+ )
+@@ -501,13 +543,14 @@ SQL
+   else
+     MIX_RAW=""; MIX_RC=64
+   fi
++  MIX_UNTAGGED="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="untagged_raw"{print $3; exit}')"; MIX_UNTAGGED="${MIX_UNTAGGED:-0}"
+   if [ "$MIX_RC" -ne 0 ]; then
+     if [ "$MIX_DB_OK" -eq 1 ]; then
+       MIX_REASON="$(tr '\n' ' ' < "$MIX_ERR" | sed 's/[[:space:]]*$//')"
+       echo "pc_lane: provider-mix unavailable: ${MIX_REASON:-bridge/sqlite rc=$MIX_RC}" >&2
+     fi
+   elif [ "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="db_missing"{print $3; exit}')" = 1 ]; then
+-    echo "pc_lane: provider-mix: no call_logs rows in the window (db=$MIX_DB)" >&2
++    echo "pc_lane: provider-mix: no tagged/combo call_logs rows in the window (db=$MIX_DB) | untagged-raw-rows=$MIX_UNTAGGED" >&2
+   elif [ -z "$MIX_RAW" ] || [ -z "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="MIX" && $2!=""{print $2; exit}')" ]; then
+     echo "pc_lane: provider-mix unavailable: malformed sqlite output" >&2
+   else
+@@ -515,9 +558,14 @@ SQL
+     MIX_TAGS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{printf "%s%s(%s-%s,n=%s)", (n++?" ":""), $2, $3, $4, $5}')"
+     MIX_TAG_COUNT="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{n++} END{print n+0}')"
+     MIX_OTHER="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="other"{print $3; exit}')"; MIX_OTHER="${MIX_OTHER:-0}"
+-    echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
+-    if [ "$MIX_TAG_COUNT" -gt 1 ]; then
+-      echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)" >&2
++    MIX_TAGGED="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="tagged_lane"{print $3; exit}')"; MIX_TAGGED="${MIX_TAGGED:-0}"
++    if [ "$MIX_TAGGED" -eq 1 ]; then
++      echo "pc_lane: lane provider mix lane=$LANE_ID served=${SERVED_MODEL:-unknown} profile=${LANE_PROFILE_USED:-unknown} $MIX_COUNTS | untagged-raw-rows=$MIX_UNTAGGED" >&2
++    else
++      echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO served=${SERVED_MODEL:-unknown} profile=${LANE_PROFILE_USED:-unknown} $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none} | untagged-raw-rows=$MIX_UNTAGGED" >&2
++      if [ "$MIX_TAG_COUNT" -gt 1 ]; then
++        echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no matching lane tag in call_logs)" >&2
++      fi
+     fi
+   fi
+   rm -f "$MIX_ERR"
+diff --git a/tasks/briefs/pc-t90-support/T92-report.md b/tasks/briefs/pc-t90-support/T92-report.md
+new file mode 100644
+index 00000000..e4f12eab
+--- /dev/null
++++ b/tasks/briefs/pc-t90-support/T92-report.md
+@@ -0,0 +1,222 @@
++# T92 build report
++
++DATA STATUS
++
++- Build proposal complete. Independent sandbox adversarial verification is NOT done; this lane does not issue a gate verdict.
++- NOT-done: no commit, push, owner profile mutation, server restart, or live-lane profile mutation.
++- DISCREPANCY: real live proof produced one successful status `200` row and one later `499 Request aborted` row under the same exact tag after stdout had returned `PONG`. The required tagged success exists; the extra row is reported, not hidden.
++- DISCREPANCY: the installed source profile has no `hooks/` directory. `hermes profile create --clone-from` carried `.env`, config, skills, and `cron`, but no source `hooks/` existed to copy.
++- DISCREPANCY: `scripts/test_summary.sh` is pytest-only; passing shell suite paths returned `pytest-exit: 4` / “no match”. Counts below are pasted from each shell suite producer instead.
++- Report lint: `report_lint: 16 refs — OK 16, NEAR 0, MISS 0, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`.
++- DISCREPANCY: the system Python has no pyflakes. The project venv’s pyflakes treats shell files and embedded Python heredocs as Python and reports shell syntax. `bash -n` is the applicable syntax gate.
++
++## Premise checks
++
++### 0a — Hermes request-header support: VERIFIED
++
++Installed runtime: `Hermes Agent v0.21.1 (2026.9.7) · upstream b3399c13`.
++
++The wrapper is `/home/rocco/.local/bin/hermes`; it execs `/home/rocco/.hermes/hermes-agent/venv/bin/hermes`. The editable package maps to `/home/rocco/.hermes/hermes-agent`.
++
++Primary-source chain:
++
++- `/home/rocco/.hermes/hermes-agent/agent/agent_init.py:893-916`: `_apply_openai_header_policy` applies model default headers, then custom-provider headers, to OpenAI client kwargs.
++- `/home/rocco/.hermes/hermes-agent/agent/auxiliary_client.py:825-842`: `_apply_user_default_headers` reads `model.default_headers` and the `model.extra_headers` alias from config and merges string-coerced values.
++- `/home/rocco/.hermes/hermes-agent/hermes_cli/config_providers.py:442-478`: `extra_headers` normalization and per-provider merge into OpenAI `default_headers`.
++
++The implemented config form is `model.default_headers.x-omniroute-session-id`, because the installed runtime applies it to primary and auxiliary OpenAI-compatible calls.
++
++### 0b — OmniRoute header to `call_logs.session_tag`: VERIFIED
++
++Primary-source chain:
++
++- `/home/rocco/.omniroute-migration-npm/node_modules/omniroute/src/sse/handlers/chat.ts:744-752`: reads `request.headers.get("x-omniroute-session-id")` and passes it as `clientSessionIdHeader`.
++- `/home/rocco/.omniroute-migration-npm/node_modules/omniroute/open-sse/services/conversationTracker.ts:459-469`: the trimmed header value is used directly as `conversationId`, capped at 128 characters.
++- `/home/rocco/.omniroute-migration-npm/node_modules/omniroute/src/sse/handlers/chat.ts:1200-1209`: records `sessionTag: conversationId`.
++- `/home/rocco/.omniroute-migration-npm/node_modules/omniroute/src/lib/usage/callLogs.ts:547-567`: inserts `@sessionTag` into `call_logs.session_tag`.
++
++### 0c — profile clone semantics: VERIFIED
++
++Command:
++
++    hermes profile create --clone-from agentfactory --no-alias t92probe
++
++Observed clone files/directories: `config.yaml`, `.env`, `SOUL.md`, `skills/`, `cron/`, `home/`, `logs/`, `memories/`, `plans/`, `sessions/`, `skins/`, `workspace/`. The clone retained top-level `fallback_providers`.
++
++`.env` SHA-256, source and clone:
++
++    ebe5da3161fd3f71ab3210cf73ee3692851c5848fb474d7d956eee7fde1de6a5
++    ebe5da3161fd3f71ab3210cf73ee3692851c5848fb474d7d956eee7fde1de6a5
++
++`cron/` came along. `hooks/` did not, because neither the source nor clone had that directory. The probe was removed with typed confirmation; its path is absent.
++
++## Implementation evidence
++
++### Files and lines
++
++- `harness-ports/bin/lane-profile.sh:17-23`: `profile_name` implements exact profile-name normalization.
++- `harness-ports/bin/lane-profile.sh:25-67`: fail-closed verification of no chain, exact lane header, and `.env` SHA equality.
++- `harness-ports/bin/lane-profile.sh:69-190`: clone/reuse, conditional `hooks`/`cron` copy, byte-preserving targeted YAML edit, semantic key-set assertion, atomic replace.
++- `harness-ports/bin/lane-profile.sh:192-201`: `aflane` deletion boundary and read-back absence assertion.
++- `harness-ports/bin/pc-lane.sh:429-450`: default create+verify, explicit profile override, `profile.txt`, `-p <lane-profile>`.
++- `harness-ports/bin/pc-lane.sh:509-517`: `LANE_DIR/usage.json` gates export, `HDB` selects the profile-specific state DB, and the transcript footer includes `profile:`.
++- `scripts/pc_lane.sh:435-441`: read served model from `usage.json` and profile from `profile.txt`.
++- `scripts/pc_lane.sh:443-535`: session-tag-first SQL; raw-id `requested_model` visibility; combo-only fallback.
++- `scripts/pc_lane.sh:546-568`: tagged-lane/combo-window harvest lines, `served=`, profile, and `untagged-raw-rows=N`.
++- `harness-ports/tests/test_lane_profile.sh:68-150`: checks `NAME1`, `fallback_providers`, `VERIFY_OUT`, and removal controls.
++- `harness-ports/tests/test_pc_lane_dispatcher.sh:384-429`: checks `SQL_CAPTURE`, `MIX_TAGGED`, `served=`, and `untagged-raw-rows`.
++- `harness-ports/tests/test_pc_lane.sh:525-587`: `assert_role_route` checks generated `-p`; `profile-override` checks the explicit escape hatch.
++- `harness-ports/tests/run-all.sh:21-24`: registers `test_lane_profile.sh`.
++- `docs/HARNESS-PORTS.md:364-376`: the updated section names `lane-profile.sh`, `fallback_providers`, `session_tag`, and `untagged-raw-rows=N`.
++
++Name examples produced by the implementation:
++
++    pc-t92 -> aflanepct92
++    PC_T92.R2 -> aflanepct92r2
++    ABCDEFGHIJKLMNOPQRSTUVWXYZ-1234567890-abcdefghijk -> aflaneabcdefghijklmnopqrstuvwxyz1234567890abcd
++
++### RED to GREEN
++
++Initial test before the helper existed:
++
++    0 passed, 9 failed
++
++Final focused result:
++
++    lane profile: 9 passed, 0 failed
++
++Dispatcher final focused result:
++
++    pc_lane dispatcher: 39 passed, 0 failed
++
++PC lane integration final result:
++
++    60 passed, 0 failed
++
++## Mutants
++
++| Mutant | Killing test | Result |
++|---|---|---|
++| m1: drop chain stripping | `create strips only the chain...` / chain verification | killed, rc 1; `lane profile: 2 passed, 7 failed` |
++| m2: write profile name instead of lane id | exact header checks | killed, rc 1; `lane profile: 2 passed, 7 failed` |
++| m3: allow arbitrary delete target | `remove refuses a profile without the aflane prefix...` | killed, rc 1; `lane profile: 8 passed, 1 failed` |
++| m4: change `lane_rows` from `session_tag` to `combo_name` | raw-id SQL/session-tag checks | killed, rc 1; `pc_lane dispatcher: 37 passed, 2 failed` |
++
++## Live proof
++
++Live ID/profile:
++
++    lane-id=t92live879c6f9
++    profile=aflanet92live879c6f9
++    verify_rc=0
++
++Redacted semantic config diff:
++
++    removed-top-level: ['fallback_providers']
++    added-header: model.default_headers.x-omniroute-session-id = t92live879c6f9
++    all-other-semantics-equal: True
++    top-level-key-diff: ['fallback_providers'] []
++
++Redacted byte diff from an additional real clone (`t92diff879c6f9`, removed after the diff):
++
++    --- agentfactory/config.yaml
++    +++ aflanet92diff879c6f9/config.yaml
++    @@ -4,19 +4,8 @@
++       base_url: http://127.0.0.1:20128/v1
++       api_key: <redacted>
++       api_mode: chat_completions
++    -fallback_providers:
++    -- provider: custom
++    -  model: codex/gpt-5.6-sol-xhigh
++    -  base_url: http://127.0.0.1:20128/v1
++    -  key_env: <redacted>
++    -- provider: custom
++    -  model: codex/gpt-5.6-terra-ultra
++    -  base_url: http://127.0.0.1:20128/v1
++    -  key_env: <redacted>
++    -- provider: custom
++    -  model: codex/gpt-5.5-xhigh
++    -  base_url: http://127.0.0.1:20128/v1
++    -  key_env: <redacted>
++    +  default_headers:
++    +    x-omniroute-session-id: t92diff879c6f9
++     agent:
++
++Source and clone `.env` SHA-256:
++
++    ebe5da3161fd3f71ab3210cf73ee3692851c5848fb474d7d956eee7fde1de6a5
++    ebe5da3161fd3f71ab3210cf73ee3692851c5848fb474d7d956eee7fde1de6a5
++
++One-shot command result:
++
++    hermes -p aflanet92live879c6f9 -z 'reply with the single word PONG' -m qwen-local/qwen3.8-27b-local --usage-file <temp>
++    rc=0
++    stdout=PONG
++    usage_model=qwen-local/qwen3.8-27b-local
++    session_id=20260923_014651_d9d158
++
++Read-only `call_logs` rows:
++
++    session_tag     requested_model               provider                                                     status
++    t92live879c6f9  qwen-local/qwen3.8-27b-local  openai-compatible-chat-98fcb302-795d-4db5-baee-2754a5723a39  200
++    t92live879c6f9  qwen-local/qwen3.8-27b-local  openai-compatible-chat-98fcb302-795d-4db5-baee-2754a5723a39  499
++
++The `499` row’s stored error was `Request aborted`; it followed the successful tagged row. The profile was then removed:
++
++    remove_rc=0
++    profile_absent_rc=0
++
++## Gates
++
++Focused suites, twice:
++
++    lane profile: 9 passed, 0 failed
++    lane profile: 9 passed, 0 failed
++    pc_lane dispatcher: 39 passed, 0 failed
++    pc_lane dispatcher: 39 passed, 0 failed
++
++`test_lane_profile.sh` output was byte-identical. Dispatcher output includes expected random temp paths, PIDs, and current timestamps; after normalizing only those fields, substantive output was byte-identical.
++
++Full suite:
++
++    test_lane_profile.sh               lane profile: 9 passed, 0 failed
++    test_pc_lane.sh                    60 passed, 0 failed
++    test_pc_lane_dispatcher.sh         pc_lane dispatcher: 39 passed, 0 failed
++    ALL SUITES PASSED
++
++Other gates:
++
++    bash-n-ok
++    no_laya_in_gates: 33 files scanned, clean
++    no_laya_rc=0
++
++AP screen:
++
++    --- TEST_SCREEN over 4 path(s): 3 hits over 4 files ---
++    AF-AP-87: 2 at scripts/pc_lane.sh:384 (`probe=`)
++    AF-AP-59: 1 at scripts/pc_lane.sh:376 (`no-pidfile fallback`)
++
++All three are pre-existing lines outside the T92 hunks. No new T92 screen hit.
++
++Code intelligence:
++
++    lane_context: pack written to /tmp/t92-pack.md (112 lines)
++    GitNexus detect-changes: Changes: 6 files, 5 symbols; Risk level: low
++
++GitNexus mapped Markdown sections but not shell symbols. This is an instrument limitation, not proof that shell changes have no callers.
++
++## Self-attack
++
++1. The header might only affect the main OpenAI client, not real requests. Ruled out by the installed primary/auxiliary header paths and the live exact `call_logs.session_tag=t92live879c6f9` rows.
++2. The config rewrite might alter unrelated source config. Ruled out by byte-preserving block edits plus parsed semantic equality after removing only `fallback_providers` and the new header; live `all-other-semantics-equal=True`.
++3. Harvest might silently use combo attribution for raw IDs. Ruled out by the raw-id SQL fixture requiring `AND 0 = 1` for combo rows, the exact lane-tag predicate, the `requested_model` untagged aggregate, and mutant m4.
++
++## Reasoning record
++
++Rejected alternative: mutate the owner’s interactive `agentfactory` profile in place. That would alter concurrent sessions and preserve cross-lane state contention.
++
++Ordering: clone and verify before `hermes -p`; record profile before launch; query exact `session_tag` before any combo fallback; retain untagged raw rows as a separately labelled count.
++
++Primary sources: installed Hermes v0.21.1 header loaders and client policy; installed OmniRoute v16.3.1 request, conversation, and call-log writers; live one-shot and SQLite rows.
++
++Retro: nothing to bake. No new general defect class was found; the one implementation bug (stale line indices after deleting the fallback YAML block) is already guarded by semantic parse-after-write and the create test.
+diff --git a/transcripts/pc/pc-t92.md--879c6f9.md b/transcripts/pc/pc-t92.md--879c6f9.md
+new file mode 100644
+index 00000000..d3205177
+--- /dev/null
++++ b/transcripts/pc/pc-t92.md--879c6f9.md
+@@ -0,0 +1,1197 @@
++# Hermes lane session 20260923_001201_18d78a
++
++- model: qwen-local/qwen3.8-27b-local
++- started: 2026-09-22T23:12:01.655874+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-t92.md--879c6f9/tree
++- messages: 366; tool calls: 204
++- tokens in/out/cache_read/reasoning: 788305/112453/21608736/69059
++
++## user @ 23:12:01
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 23:13:12 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:13:12 — 429 chars (body not exported)
++
++## tool result (terminal) @ 23:13:12 — 197 chars (body not exported)
++
++## tool result (terminal) @ 23:13:17 — 3288 chars (body not exported)
++
++## tool result (terminal) @ 23:13:17 — 3509 chars (body not exported)
++
++## assistant @ 23:13:37 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:13:37 — 49 chars (body not exported)
++
++## tool result (terminal) @ 23:13:37 — 956 chars (body not exported)
++
++## assistant @ 23:13:44 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:13:44 — 858 chars (body not exported)
++
++## tool result (terminal) @ 23:13:44 — 177 chars (body not exported)
++
++## assistant @ 23:14:35 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:14:35 — 397 chars (body not exported)
++
++## tool result (terminal) @ 23:14:35 — 135 chars (body not exported)
++
++## assistant @ 23:15:01 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:15:01 — 800 chars (body not exported)
++
++## tool result (terminal) @ 23:15:01 — 1035 chars (body not exported)
++
++## assistant @ 23:15:08 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 23:15:08 — 208 chars (body not exported)
++
++## tool result (read_file) @ 23:15:08 — 7761 chars (body not exported)
++
++## assistant @ 23:15:19 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:15:19 — 6777 chars (body not exported)
++
++## tool result (terminal) @ 23:15:24 — 2231 chars (body not exported)
++
++## assistant @ 23:15:39 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:15:40 — 904 chars (body not exported)
++
++## tool result (terminal) @ 23:15:40 — 1511 chars (body not exported)
++
++## assistant @ 23:15:48 → tools: read_file, read_file
++
++
++
++## tool result (read_file) @ 23:15:48 — 3074 chars (body not exported)
++
++## tool result (read_file) @ 23:15:48 — 2606 chars (body not exported)
++
++## assistant @ 23:16:59 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:16:59 — 2095 chars (body not exported)
++
++## tool result (terminal) @ 23:16:59 — 397 chars (body not exported)
++
++## tool result (terminal) @ 23:16:59 — 283 chars (body not exported)
++
++## assistant @ 23:18:17 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 23:18:17 — 1429 chars (body not exported)
++
++## tool result (terminal) @ 23:18:17 — 267 chars (body not exported)
++
++## tool result (terminal) @ 23:18:17 — 1265 chars (body not exported)
++
++## assistant @ 23:18:45 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:18:45 — 1724 chars (body not exported)
++
++## tool result (terminal) @ 23:18:46 — 1150 chars (body not exported)
++
++## assistant @ 23:19:47 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:19:47 — 731 chars (body not exported)
++
++## tool result (terminal) @ 23:19:47 — 1338 chars (body not exported)
++
++## assistant @ 23:20:29 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:20:29 — 1866 chars (body not exported)
++
++## tool result (terminal) @ 23:20:29 — 1113 chars (body not exported)
++
++## assistant @ 23:21:11 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 23:21:11 — 45 chars (body not exported)
++
++## tool result (terminal) @ 23:21:11 — 2952 chars (body not exported)
++
++## assistant @ 23:22:15 → tools: terminal
++
++Premise 0a and 0b are confirmed. Now I'm checking 0c for the throwaway clone.
++
++## tool result (terminal) @ 23:22:15 — 557 chars (body not exported)
++
++## assistant @ 23:23:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:23:00 — 987 chars (body not exported)
++
++## assistant @ 23:23:41 → tools: terminal, terminal
++
++The clone is missing the `hooks/` directory, so I'll add that to the copy step and verify the config's `hooks:` key next.
++
++## tool result (terminal) @ 23:23:41 — 842 chars (body not exported)
++
++## tool result (terminal) @ 23:23:41 — 258 chars (body not exported)
++
++## assistant @ 23:26:05 → tools: terminal, terminal
++
++0a and 0b confirmed; 0c's clone captured. Let me trace the header→`session_tag` chain (need to prove the header becomes `session_tag` verbatim, not a `conv_`), then delete the probe.
++
++## tool result (terminal) @ 23:26:05 — 345 chars (body not exported)
++
++## tool result (terminal) @ 23:26:05 — 1406 chars (body not exported)
++
++## assistant @ 23:26:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:26:51 — 1960 chars (body not exported)
++
++## assistant @ 23:26:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:26:58 — 105 chars (body not exported)
++
++## assistant @ 23:27:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:27:03 — 453 chars (body not exported)
++
++## assistant @ 23:27:55 → tools: read_file
++
++
++
++## tool result (read_file) @ 23:27:55 — 3447 chars (body not exported)
++
++## assistant @ 23:28:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:28:43 — 459 chars (body not exported)
++
++## assistant @ 23:29:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:29:10 — 544 chars (body not exported)
++
++## assistant @ 23:30:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:30:20 — 367 chars (body not exported)
++
++## assistant @ 23:30:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:30:27 — 1731 chars (body not exported)
++
++## assistant @ 23:30:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:30:34 — 82 chars (body not exported)
++
++## assistant @ 23:30:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:30:40 — 310 chars (body not exported)
++
++## assistant @ 23:30:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 23:30:46 — 2116 chars (body not exported)
++
++## assistant @ 23:31:48 → tools: terminal, terminal
++
++Chain confirmed. Now I'll review the full `resolveConversationId` header branch and clean up the probe.
++
++## tool result (terminal) @ 23:31:48 — 1606 chars (body not exported)
++
++## tool result (terminal) @ 23:31:48 — 332 chars (body not exported)
++
++## assistant @ 23:32:42 → tools: terminal
++
++The delete needs typed confirmation — pipe it.
++
++## tool result (terminal) @ 23:32:43 — 404 chars (body not exported)
++
++## assistant @ 23:39:13 → tools: terminal, terminal
++
++I've confirmed all three premises—the header mechanism works through `_apply_user_default_headers`, the header-to-session-tag mapping is exact (capped at 128 chars), and the probe clone shows `.env` and `cron` carried through but `hooks/` isn't in the source profile. Now I'll map the seams in both scripts before making edits.
++
++## tool result (terminal) @ 23:39:14 — 4583 chars (body not exported)
++
++## tool result (terminal) @ 23:39:14 — 3877 chars (body not exported)
++
++## assistant @ 23:40:09 → tools: read_file
++
++Let me read the full context of both scripts around the mix + usage + footer regions.
++
++## tool result (read_file) @ 23:40:09 — 6835 chars (body not exported)
++
++## assistant @ 23:40:15 → tools: read_file
++
++
++
++## tool result (read_file) @ 23:40:15 — 4444 chars (body not exported)
++
++## assistant @ 23:40:22 → tools: read_file
++
++
++
++## tool result (read_file) @ 23:40:22 — 4299 chars (body not exported)
++
++## assistant @ 23:40:35 → tools: read_file, read_file
++
++Now the pc-lane.sh regions: launch context, usage.json handling, transcript footer.
++
++## tool result (read_file) @ 23:40:35 — 6838 chars (body not exported)
++
++## tool result (read_file) @ 23:40:35 — 2651 chars (body not exported)
++
++## assistant @ 23:40:44 → tools: read_file, read_file
++
++Now the test file and run-all.sh:
++
++## tool result (read_file) @ 23:40:45 — 32932 chars (body not exported)
++
++## tool result (read_file) @ 23:40:45 — 3550 chars (body not exported)
++
++## assistant @ 23:46:12 → tools: read_file, terminal, terminal
++
++Good — I have the full dispatcher test and both scripts' mix regions. Now let me read the top of pc-lane.sh for the var definitions (AF_REPO/TREE/LANE_DIR), and probe the real call_logs shape for raw-id vs combo lanes, plus hermes's profile-name max length.
++
++## tool result (read_file) @ 23:46:12 — 7082 chars (body not exported)
++
++## tool result (terminal) @ 23:46:13 — 1263 chars (body not exported)
++
++## tool result (terminal) @ 23:46:13 — 3080 chars (body not exported)
++
++## assistant @ 00:04:11 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 00:04:13 — 778 chars (body not exported)
++
++## tool result (terminal) @ 00:04:13 — 12564 chars (body not exported)
++
++## tool result (terminal) @ 00:04:15 — 1221 chars (body not exported)
++
++## assistant @ 00:04:43 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:04:43 — 92 chars (body not exported)
++
++## tool result (terminal) @ 00:04:43 — 2259 chars (body not exported)
++
++## assistant @ 00:06:01 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:06:01 — 7746 chars (body not exported)
++
++## assistant @ 00:06:15 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:06:15 — 2098 chars (body not exported)
++
++## assistant @ 00:07:37 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:07:37 — 3409 chars (body not exported)
++
++## tool result (terminal) @ 00:07:37 — 3523 chars (body not exported)
++
++## assistant @ 00:07:43 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:07:43 — 7428 chars (body not exported)
++
++## assistant @ 00:08:01 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:08:01 — 3408 chars (body not exported)
++
++## assistant @ 00:10:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:10:23 — 1664 chars (body not exported)
++
++## assistant @ 00:12:01 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:12:01 — 4226 chars (body not exported)
++
++## assistant @ 00:14:36 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:14:36 — 10929 chars (body not exported)
++
++## assistant @ 00:14:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:14:48 — 45 chars (body not exported)
++
++## assistant @ 00:23:17 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:23:17 — 9904 chars (body not exported)
++
++## assistant @ 00:24:23 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:24:23 — 4064 chars (body not exported)
++
++## assistant @ 00:28:01 → tools: write_file
++
++
++
++## tool result (write_file) @ 00:28:02 — 371 chars (body not exported)
++
++## assistant @ 00:28:08 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:28:08 — 3170 chars (body not exported)
++
++## assistant @ 00:30:06 → tools: write_file
++
++
++
++## tool result (write_file) @ 00:30:07 — 357 chars (body not exported)
++
++## assistant @ 00:30:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:30:34 — 6078 chars (body not exported)
++
++## assistant @ 00:30:43 → tools: patch
++
++
++
++## tool result (patch) @ 00:30:44 — 859 chars (body not exported)
++
++## assistant @ 00:30:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:30:50 — 6078 chars (body not exported)
++
++## assistant @ 00:31:04 → tools: patch
++
++
++
++## tool result (patch) @ 00:31:05 — 1137 chars (body not exported)
++
++## assistant @ 00:31:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:31:11 — 1328 chars (body not exported)
++
++## assistant @ 00:31:22 → tools: patch
++
++
++
++## tool result (patch) @ 00:31:23 — 1117 chars (body not exported)
++
++## assistant @ 00:31:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:31:31 — 1378 chars (body not exported)
++
++## assistant @ 00:31:40 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:31:41 — 279 chars (body not exported)
++
++## tool result (terminal) @ 00:31:41 — 27050 chars (body not exported)
++
++## assistant @ 00:32:24 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:32:24 — 582 chars (body not exported)
++
++## tool result (terminal) @ 00:32:24 — 45 chars (body not exported)
++
++## assistant @ 00:32:41 → tools: patch
++
++
++
++## tool result (patch) @ 00:32:42 — 2308 chars (body not exported)
++
++## assistant @ 00:33:07 → tools: patch
++
++
++
++## tool result (patch) @ 00:33:09 — 2115 chars (body not exported)
++
++## assistant @ 00:33:26 → tools: patch
++
++
++
++## tool result (patch) @ 00:33:27 — 2261 chars (body not exported)
++
++## assistant @ 00:33:57 → tools: patch
++
++
++
++## tool result (patch) @ 00:33:58 — 968 chars (body not exported)
++
++## assistant @ 00:34:38 → tools: patch
++
++
++
++## tool result (patch) @ 00:34:40 — 3250 chars (body not exported)
++
++## assistant @ 00:35:15 → tools: patch
++
++
++
++## tool result (patch) @ 00:35:17 — 2353 chars (body not exported)
++
++## assistant @ 00:35:25 → tools: patch
++
++
++
++## tool result (patch) @ 00:35:27 — 1308 chars (body not exported)
++
++## assistant @ 00:36:21 → tools: patch
++
++
++
++## tool result (patch) @ 00:36:23 — 4051 chars (body not exported)
++
++## assistant @ 00:36:51 → tools: patch
++
++
++
++## tool result (patch) @ 00:36:52 — 1648 chars (body not exported)
++
++## assistant @ 00:37:06 → tools: patch
++
++
++
++## tool result (patch) @ 00:37:08 — 1845 chars (body not exported)
++
++## assistant @ 00:37:15 → tools: patch
++
++
++
++## tool result (patch) @ 00:37:17 — 2482 chars (body not exported)
++
++## assistant @ 00:37:43 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:37:43 — 54 chars (body not exported)
++
++## tool result (terminal) @ 00:37:46 — 19808 chars (body not exported)
++
++## assistant @ 00:38:01 → tools: patch
++
++
++
++## tool result (patch) @ 00:38:03 — 1500 chars (body not exported)
++
++## assistant @ 00:38:11 → tools: patch
++
++
++
++## tool result (patch) @ 00:38:13 — 1006 chars (body not exported)
++
++## assistant @ 00:38:40 → tools: patch
++
++
++
++## tool result (patch) @ 00:38:41 — 2691 chars (body not exported)
++
++## assistant @ 00:38:50 → tools: patch
++
++
++
++## tool result (patch) @ 00:38:50 — 899 chars (body not exported)
++
++## assistant @ 00:38:59 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:39:02 — 109 chars (body not exported)
++
++## assistant @ 00:39:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:39:18 — 971 chars (body not exported)
++
++## assistant @ 00:39:35 → tools: patch
++
++
++
++## tool result (patch) @ 00:39:36 — 1549 chars (body not exported)
++
++## assistant @ 00:39:56 → tools: read_file
++
++
++
++## tool result (read_file) @ 00:39:56 — 3924 chars (body not exported)
++
++## assistant @ 00:40:24 → tools: patch
++
++
++
++## tool result (patch) @ 00:40:26 — 981 chars (body not exported)
++
++## assistant @ 00:40:34 → tools: patch
++
++
++
++## tool result (patch) @ 00:40:36 — 935 chars (body not exported)
++
++## assistant @ 00:40:41 → tools: patch
++
++
++
++## tool result (patch) @ 00:40:43 — 723 chars (body not exported)
++
++## assistant @ 00:41:27 → tools: patch
++
++
++
++## tool result (patch) @ 00:41:29 — 2964 chars (body not exported)
++
++## assistant @ 00:41:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:41:38 — 825 chars (body not exported)
++
++## assistant @ 00:41:49 → tools: patch
++
++
++
++## tool result (patch) @ 00:41:51 — 1229 chars (body not exported)
++
++## assistant @ 00:41:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:41:59 — 90 chars (body not exported)
++
++## assistant @ 00:42:09 → tools: patch
++
++
++
++## tool result (patch) @ 00:42:10 — 1323 chars (body not exported)
++
++## assistant @ 00:42:21 → tools: patch
++
++
++
++## tool result (patch) @ 00:42:23 — 1352 chars (body not exported)
++
++## assistant @ 00:42:30 → tools: patch
++
++
++
++## tool result (patch) @ 00:42:32 — 909 chars (body not exported)
++
++## assistant @ 00:42:38 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:42:49 — 623 chars (body not exported)
++
++## assistant @ 00:42:58 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:42:58 — 507 chars (body not exported)
++
++## tool result (terminal) @ 00:42:58 — 54 chars (body not exported)
++
++## assistant @ 00:43:39 → tools: patch
++
++
++
++## tool result (patch) @ 00:43:41 — 895 chars (body not exported)
++
++## assistant @ 00:43:51 → tools: patch
++
++
++
++## tool result (patch) @ 00:43:52 — 895 chars (body not exported)
++
++## assistant @ 00:44:02 → tools: patch
++
++
++
++## tool result (patch) @ 00:44:04 — 1091 chars (body not exported)
++
++## assistant @ 00:44:11 → tools: patch
++
++
++
++## tool result (patch) @ 00:44:12 — 764 chars (body not exported)
++
++## assistant @ 00:44:18 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:44:21 — 90 chars (body not exported)
++
++## assistant @ 00:44:29 → tools: patch
++
++
++
++## tool result (patch) @ 00:44:31 — 784 chars (body not exported)
++
++## assistant @ 00:44:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:44:37 — 83 chars (body not exported)
++
++## assistant @ 00:44:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:45:57 — 1247 chars (body not exported)
++
++## assistant @ 00:46:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:46:20 — 91 chars (body not exported)
++
++## assistant @ 00:46:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:46:37 — 375 chars (body not exported)
++
++## assistant @ 00:46:48 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:47:13 — 140 chars (body not exported)
++
++## assistant @ 00:47:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:47:45 — 558 chars (body not exported)
++
++## assistant @ 00:47:56 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:47:57 — 144 chars (body not exported)
++
++## assistant @ 00:48:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:48:06 — 845 chars (body not exported)
++
++## assistant @ 00:48:13 → tools: patch
++
++
++
++## tool result (patch) @ 00:48:14 — 1014 chars (body not exported)
++
++## assistant @ 00:48:27 → tools: patch
++
++
++
++## tool result (patch) @ 00:48:29 — 1540 chars (body not exported)
++
++## assistant @ 00:50:07 → tools: patch
++
++
++
++## tool result (patch) @ 00:50:08 — 1832 chars (body not exported)
++
++## assistant @ 00:50:26 → tools: patch
++
++
++
++## tool result (patch) @ 00:50:28 — 1773 chars (body not exported)
++
++## assistant @ 00:50:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:50:45 — 690 chars (body not exported)
++
++## assistant @ 00:51:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:51:01 — 45 chars (body not exported)
++
++## assistant @ 00:51:14 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:51:15 — 182 chars (body not exported)
++
++## assistant @ 00:51:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:51:36 — 306 chars (body not exported)
++
++## assistant @ 00:51:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:51:55 — 250 chars (body not exported)
++
++## assistant @ 00:52:32 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 00:52:34 — 91 chars (body not exported)
++
++## tool result (terminal) @ 00:52:39 — 98 chars (body not exported)
++
++## tool result (terminal) @ 00:52:40 — 111 chars (body not exported)
++
++## tool result (terminal) @ 00:52:40 — 520 chars (body not exported)
++
++## assistant @ 00:52:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:52:44 — 25846 chars (body not exported)
++
++## assistant @ 00:52:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:53:03 — 109 chars (body not exported)
++
++## assistant @ 00:53:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:53:07 — 11227 chars (body not exported)
++
++## assistant @ 00:53:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:53:22 — 68 chars (body not exported)
++
++## assistant @ 00:53:34 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:53:35 — 519 chars (body not exported)
++
++## tool result (terminal) @ 00:53:39 — 125 chars (body not exported)
++
++## assistant @ 00:53:51 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 00:53:52 — 11872 chars (body not exported)
++
++## tool result (terminal) @ 00:53:52 — 586 chars (body not exported)
++
++## assistant @ 00:54:34 → tools: patch
++
++
++
++## tool result (patch) @ 00:54:35 — 1518 chars (body not exported)
++
++## assistant @ 00:54:50 → tools: patch
++
++
++
++## tool result (patch) @ 00:54:52 — 1405 chars (body not exported)
++
++## assistant @ 00:54:59 → tools: patch
++
++
++
++## tool result (patch) @ 00:55:01 — 1254 chars (body not exported)
++
++## assistant @ 00:55:15 → tools: patch
++
++
++
++## tool result (patch) @ 00:55:17 — 1867 chars (body not exported)
++
++## assistant @ 00:55:30 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 00:55:32 — 90 chars (body not exported)
++
++## tool result (terminal) @ 00:55:33 — 83 chars (body not exported)
++
++## tool result (terminal) @ 00:55:33 — 54 chars (body not exported)
++
++## assistant @ 00:55:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:55:39 — 93 chars (body not exported)
++
++## assistant @ 00:55:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:55:44 — 759 chars (body not exported)
++
++## assistant @ 00:55:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:55:51 — 77 chars (body not exported)
++
++## assistant @ 00:55:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:55:57 — 366 chars (body not exported)
++
++## assistant @ 00:56:03 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:56:11 — 199 chars (body not exported)
++
++## assistant @ 00:56:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:57:31 — 1247 chars (body not exported)
++
++## assistant @ 00:57:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:57:43 — 822 chars (body not exported)
++
++## assistant @ 00:58:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:58:00 — 45 chars (body not exported)
++
++## assistant @ 00:58:17 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 00:58:17 — 9467 chars (body not exported)
++
++## tool result (terminal) @ 00:58:17 — 12967 chars (body not exported)
++
++## tool result (terminal) @ 00:58:17 — 20457 chars (body not exported)
++
++## assistant @ 00:58:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:58:23 — 333 chars (body not exported)
++
++## assistant @ 01:00:04 → tools: write_file
++
++
++
++## tool result (write_file) @ 01:00:04 — 374 chars (body not exported)
++
++## assistant @ 01:00:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:00:11 — 1053 chars (body not exported)
++
++## assistant @ 01:00:30 → tools: patch
++
++
++
++## tool result (patch) @ 01:00:30 — 1198 chars (body not exported)
++
++## assistant @ 01:00:39 → tools: patch
++
++
++
++## tool result (patch) @ 01:00:39 — 1558 chars (body not exported)
++
++## assistant @ 01:00:51 → tools: patch
++
++
++
++## tool result (patch) @ 01:00:51 — 1939 chars (body not exported)
++
++## assistant @ 01:00:59 → tools: patch
++
++
++
++## tool result (patch) @ 01:01:00 — 1250 chars (body not exported)
++
++## assistant @ 01:01:07 → tools: patch
++
++
++
++## tool result (patch) @ 01:01:08 — 948 chars (body not exported)
++
++## assistant @ 01:01:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:01:13 — 653 chars (body not exported)
++
++## assistant @ 01:01:23 → tools: patch
++
++
++
++## tool result (patch) @ 01:01:23 — 1629 chars (body not exported)
++
++## assistant @ 01:01:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:01:30 — 129 chars (body not exported)
++
++## assistant @ 01:01:40 → tools: patch
++
++
++
++## tool result (patch) @ 01:01:40 — 1532 chars (body not exported)
++
++## assistant @ 01:01:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:01:46 — 129 chars (body not exported)
++
++## assistant @ 01:01:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:01:55 — 586 chars (body not exported)
++
++## assistant @ 01:02:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:02:04 — 1313 chars (body not exported)
++
++## assistant @ 01:02:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:02:12 — 519 chars (body not exported)
++
++## assistant @ 01:02:39 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:02:41 — 716 chars (body not exported)
++
++## assistant @ 01:02:56 → tools: patch
++
++
++
++## tool result (patch) @ 01:02:57 — 1622 chars (body not exported)
++
++## assistant @ 01:03:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:03:04 — 129 chars (body not exported)
++
++## assistant @ 01:03:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:03:10 — 411 chars (body not exported)
++
++## assistant @ 01:03:55
++
++Build proposal complete. Independent sandbox adversarial verification is pending; this lane does not issue a gate verdict.
++
++ARTIFACT
++
++/home/rocco/agent-factory/.lanes/pc-t92.md--879c6f9/tree/tasks/briefs/pc-t90-support/T92-report.md
++
++IMPLEMENTED
++
++- Added `harness-ports/bin/lane-profile.sh`.
++  - Creates `aflane<normalized-lane-id>`.
++  - Clones the read-only `agentfactory` profile.
++  - Removes `fallback_providers`.
++  - Adds the exact lane ID as `x-omniroute-session-id`.
++  - Verifies the chain is absent, the header is exact, and `.env` hashes match.
++  - Refuses non-`aflane` deletion targets.
++- Updated `pc-lane.sh` to create and verify the profile before launch, pass `-p <profile>`, write `profile.txt`, and add the profile to transcript metadata.
++- Updated provider-mix harvesting to query exact `session_tag` first and report `requested_model × provider × status × count`.
++- Preserved legacy raw-ID visibility as `untagged-raw-rows=N`.
++- Added served model and profile to harvest output.
++- Added deterministic tests and registered them in `run-all.sh`.
++- Updated the spawn-path section in `docs/HARNESS-PORTS.md`.
++
++PREMISES
++
++- Hermes v0.21.1 supports `model.default_headers` for OpenAI-compatible requests.
++- OmniRoute maps `x-omniroute-session-id` directly to `call_logs.session_tag`.
++- A real clone preserved `.env` exactly and included `cron/`; the source had no `hooks/` directory to copy.
++
++LIVE PROOF
++
++- Profile: `aflanet92live879c6f9`
++- Profile verification: rc 0
++- All unrelated config semantics remained equal.
++- Source and clone `.env` SHA-256:
++
++  <opaque-redacted>
++
++- Real Hermes one-shot:
++  - rc 0
++  - stdout: `PONG`
++  - served model: `qwen-local/qwen3.8-27b-local`
++- OmniRoute recorded the exact `session_tag=t92live879c6f9`.
++- The tagged request had a successful status 200 row. A later status 499 `Request aborted` row appeared after `PONG`; this discrepancy is recorded in the report.
++- The throwaway profile was removed and confirmed absent.
++
++TESTS
++
++- RED before helper existed: `0 passed, 9 failed`
++- `lane profile: 9 passed, 0 failed` twice
++- `pc_lane dispatcher: 39 passed, 0 failed` twice
++- `test_pc_lane.sh: 60 passed, 0 failed`
++- Full gate producer output: `ALL SUITES PASSED`
++- `no_laya_in_gates: 33 files scanned, clean`
++- Report lint: `16 refs — OK 16, MISS 0`
++- All four required mutants were killed.
++
++NOT DONE
++
++- No commit or push.
++- No server was stopped, restarted, or reconfigured.
++- The owner’s interactive profile was not modified.
++- No live lane profile was touched.
++- Independent adversarial verification remains required before acceptance.
++
++Retro: nothing to bake.
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 788305,
++  "output_tokens": 112453,
++  "cache_read_tokens": 21608736,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 69059,
++  "total_tokens": 22509494,
++  "api_calls": 161,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260923_001201_18d78a",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

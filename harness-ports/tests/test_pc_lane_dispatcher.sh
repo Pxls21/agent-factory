@@ -5,7 +5,7 @@
 # bridge function keeps every command local and records each bridge call, so a refusal
 # must show NO mkdir -p (the guard runs before the write, AF-AP-79).
 set -uo pipefail
-unset HERMES_MODEL HERMES_REASONING LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
+unset HERMES_MODEL HERMES_REASONING HERMES_PROFILE LANE_SERVER_EFFORT ROLE PC_LANE_TEST_POLL_STATE PC_LANE_TEST_PROVIDER_MIX PC_LANE_TEST_PROVIDER_MIX_RC PC_LANE_TEST_SQL_CAPTURE PC_LANE_TEST_RESUME PC_LANE_TEST_EVAL_PREMISE PC_LANE_TEST_PREMISE_ERROR PC_LANE_TEST_LANE_PID PC_LANE_TEST_AF_REPO 2>/dev/null || true
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"
 TMP="$(mktemp -d)"; FIXTURE_PIDS=()
 cleanup() {
@@ -81,6 +81,8 @@ bridge() {
     *'cat '*'/FAILED'*) printf '%s\n' "${PC_LANE_TEST_FAILED_TEXT:-route-capacity: exhausted}";;
     *'test -s '*'/report.partial.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_PARTIAL_B64:-}";;
     *'test -s '*'/report.md && base64 -w0'*) printf '%s' "${PC_LANE_TEST_REPORT_B64:-}";;
+    *'test -s '*'/usage.json && base64 -w0'*) printf '%s' "${PC_LANE_TEST_USAGE_B64:-}";;
+    *'test -s '*'/profile.txt && sed -n'*) printf '%s\n' "${PC_LANE_TEST_PROFILE:-}";;
     *'sqlite3 -readonly '*)
       sql_path="$(printf '%s\n' "$1" | sed -n 's/.*base64 -d > \([^ ]*\).*/\1/p')"
       sql_b64="${1#*printf %s \' }"; sql_b64="${sql_b64#*printf %s \'}"; sql_b64="${sql_b64%%\'*}"
@@ -381,36 +383,50 @@ check "a safety-filter FAILED probe prints its terminal message and brings repor
 
 READY_TEXT='REAL DISPATCH REPORT'
 READY_B64="$(printf '%s\n' "$READY_TEXT" | base64 -w0)"
+USAGE_B64="$(printf '%s\n' '{"model":"qwen-local/qwen3.8-27b-local"}' | base64 -w0)"
 SQL_CAPTURE="$TMP/provider-mix.sql"
-MIX_ONE=$'MIX\tqwen:200=2 codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tother\t0\t\t'
-run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+MIX_ONE=$'MIX\tagentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:16:10\t3\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t0\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t0\t\t'
+run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_ONE" HERMES_MODEL="agentfactory-build-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= HOME=/sandbox-should-not-be-used "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
 [ "$POLL_RC" -eq 0 ] \
   && grep -q '^REAL DISPATCH REPORT' "$TMP/poll-out/report-brief.md--0000000.md" \
   && grep -Fq 'report ->' "$TMP/err.txt" \
-  && grep -Fq "combo-window provider mix (per-lane provenance UNVERIFIED) agentfactory-build-local'; DROP TABLE call_logs; -- " "$TMP/err.txt" \
-  && grep -Fq 'qwen:200=2 codex:200=1 | tags: conv_abcd(09:15:46-09:16:10,n=3)' "$TMP/err.txt" \
+  && grep -Fq "combo-window provider mix (per-lane provenance UNVERIFIED) agentfactory-build-local'; DROP TABLE call_logs; -- served=qwen-local/qwen3.8-27b-local profile=aflanebriefmd0000000 " "$TMP/err.txt" \
+  && grep -Fq "agentfactory-build-local x qwen:200=2 agentfactory-build-local x codex:200=1 | tags: conv_abcd(09:15:46-09:16:10,n=3) | untagged-raw-rows=0" "$TMP/err.txt" \
   && ! grep -Fq 'COMBO-WINDOW aggregate' "$TMP/err.txt" \
   && ! grep -Fq '/sandbox-should-not-be-used/.omniroute-migrated' "$BRIDGE_CALLS" \
-  && [ -n "$SQL_CAPTURE" ] && grep -Fq "combo_name = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
+  && [ -n "$SQL_CAPTURE" ] && grep -Fq "session_tag = 'brief.md--0000000'" "$SQL_CAPTURE" \
+  && grep -Fq "requested_model = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
+  && ! grep -Fq "FROM call_logs WHERE api_key_name = 'hermes' AND combo_name = 'agentfactory-build-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
   && grep -Fq "api_key_name = 'hermes'" "$SQL_CAPTURE" && grep -Fq "provider LIKE 'openai-compatible-chat-%'" "$SQL_CAPTURE"
-check "NEGATIVE CONTROL: a READY probe still harvests; one-tag mix has no caveat and the shipped read-only SQL escapes its combo filter" $? \
+check "NEGATIVE CONTROL: a READY raw-id harvest keys first on the escaped lane tag, counts untagged raw rows by requested_model, and reports served/profile" $? \
   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
 
-MIX_TWO=$'MIX\tqwen:200=4 codex:200=2\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:17:10\t4\nTAG\tconv_other\t09:15:50\t09:17:12\t2\nMETA\tdb_missing\t0\t\t\nMETA\tother\t1\t\t'
+MIX_TAGGED=$'MIX\tqwen-local/qwen3.8-27b-local x openai-compatible-chat-fixture:200=2\t\t\t\nTAG\tbrief.md--0000000\t09:15:46\t09:16:10\t2\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t7\t\t\nMETA\ttagged_lane\t1\t\t\nMETA\tother\t0\t\t'
+run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_USAGE_B64=$USAGE_B64" PC_LANE_TEST_PROFILE=aflanebriefmd0000000 "PC_LANE_TEST_PROVIDER_MIX=$MIX_TAGGED" "HERMES_MODEL=qwen-local/qwen3.8-27b-local'; DROP TABLE call_logs; --" LANE_SERVER_EFFORT= "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
+[ "$POLL_RC" -eq 0 ] \
+  && grep -Fq 'pc_lane: lane provider mix lane=brief.md--0000000 served=qwen-local/qwen3.8-27b-local profile=aflanebriefmd0000000 qwen-local/qwen3.8-27b-local x openai-compatible-chat-fixture:200=2 | untagged-raw-rows=7' "$TMP/err.txt" \
+  && ! grep -Fq 'combo-window provider mix' "$TMP/err.txt" \
+  && grep -Fq "session_tag = 'brief.md--0000000'" "$SQL_CAPTURE" \
+  && grep -Fq "requested_model = 'qwen-local/qwen3.8-27b-local''; DROP TABLE call_logs; --'" "$SQL_CAPTURE" \
+  && grep -Fq 'AND 0 = 1' "$SQL_CAPTURE"
+check "a tagged raw-id lane keys only on session_tag, reports requested_model x provider x status, and keeps untagged rows visible" $? \
+  "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
+
+MIX_TWO=$'MIX\tagentfactory-build-local x qwen:200=4 agentfactory-build-local x codex:200=2\t\t\t\nTAG\tconv_abcd\t09:15:46\t09:17:10\t4\nTAG\tconv_other\t09:15:50\t09:17:12\t2\nMETA\tdb_missing\t0\t\t\nMETA\tuntagged_raw\t3\t\t\nMETA\ttagged_lane\t0\t\t\nMETA\tother\t1\t\t'
 # Restore role-derived combo selection after the hostile explicit-model SQL-escaping control.
 unset HERMES_MODEL LANE_SERVER_EFFORT
 run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" "PC_LANE_TEST_PROVIDER_MIX=$MIX_TWO" "PC_LANE_TEST_SQL_CAPTURE=$SQL_CAPTURE" --
 [ "$POLL_RC" -eq 0 ] \
-  && grep -q 'qwen:200=4 codex:200=2 | tags: conv_abcd(09:15:46-09:17:10,n=4) conv_other(09:15:50-09:17:12,n=2)' "$TMP/err.txt" \
-  && grep -Fq 'pc_lane: the mix is a COMBO-WINDOW aggregate — 1 conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)' "$TMP/err.txt" \
+  && grep -q 'agentfactory-build-local x qwen:200=4 agentfactory-build-local x codex:200=2 | tags: conv_abcd(09:15:46-09:17:10,n=4) conv_other(09:15:50-09:17:12,n=2) | untagged-raw-rows=3' "$TMP/err.txt" \
+  && grep -Fq 'pc_lane: the mix is a COMBO-WINDOW aggregate — 1 conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no matching lane tag in call_logs)' "$TMP/err.txt" \
   && ! grep -Fq "the lane's own share is the tag(s) starting at launch" "$TMP/err.txt" \
   && grep -Fq "timestamp >= '2026-09-21T14:12:20Z'" "$SQL_CAPTURE"
 check "a RESUME mix is labelled as a combo-window aggregate and starts at lane launch minus 60 seconds" $? \
   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt") sql=$SQL_CAPTURE"
 
-run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" $'PC_LANE_TEST_PROVIDER_MIX=META\tdb_missing\t1\t\t\nMETA\tother\t0\t\t' --
-[ "$POLL_RC" -eq 0 ] && grep -q 'provider-mix: no call_logs rows in the window (db=' "$TMP/err.txt"
-check "an empty call-log result is reported, never silent, and harvest remains successful" $? \
+run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" $'PC_LANE_TEST_PROVIDER_MIX=META\tdb_missing\t1\t\t\nMETA\tuntagged_raw\t5\t\t\nMETA\tother\t0\t\t' --
+[ "$POLL_RC" -eq 0 ] && grep -q 'provider-mix: no tagged/combo call_logs rows in the window (db=.* | untagged-raw-rows=5' "$TMP/err.txt"
+check "an untagged-only raw-id result stays visible even without tagged/combo rows" $? \
   "rc=$POLL_RC stderr=$(tr '\n' ';' < "$TMP/err.txt")"
 
 run_poll PC_LANE_TEST_POLL_STATE=READY "PC_LANE_TEST_REPORT_B64=$READY_B64" PC_LANE_TEST_PROVIDER_MIX_RC=5 "PC_LANE_TEST_PROVIDER_MIX_ERROR=database unavailable" --

@@ -15,7 +15,7 @@ set -uo pipefail
 
 # Hermetic: clear env vars that a parent lane or caller might export, so the
 # suite's own values are never shadowed by the caller's environment.
-unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING 2>/dev/null || true
+unset LANE_ID LANE_REPORT_DRAFT TERMINAL_CWD HERMES_MODEL HERMES_REASONING HERMES_PROFILE HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE 2>/dev/null || true
 
 # Self-test mode: the hermetic-cleanup test below spawns THIS SCRIPT from a
 # poisoned parent.  If the unset above worked, LANE_ID is gone; if the unset
@@ -41,7 +41,7 @@ REPO="$TMP/agent-factory"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
-mkdir -p "$REPO/harness-ports/roles"
+mkdir -p "$REPO/harness-ports/roles" "$REPO/harness-ports/bin"
 cat > "$REPO/harness-ports/roles/code-implementer.md" <<'EOF'
 ROLE-MARKER: this is the code-implementer role body.
 EOF
@@ -52,6 +52,17 @@ EOF
 done
 mkdir -p "$REPO/scripts"; echo "LINT-AT-PIN" > "$REPO/scripts/report_lint.py"   # the PIN's copy of the report tooling
 echo hello > "$REPO/file.txt"
+# A labelled fake lane-profile helper for this plumbing suite. Its own config/env
+# transformation contract is exercised by test_lane_profile.sh; here we isolate argv/profile wiring.
+cat > "$REPO/harness-ports/bin/lane-profile.sh" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  create) printf 'aflane%s\n' "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]' | cut -c1-40)";;
+  verify) exit 0;;
+  *) exit 64;;
+esac
+EOF
+chmod +x "$REPO/harness-ports/bin/lane-profile.sh"
 git -C "$REPO" add -A >/dev/null
 git -C "$REPO" commit -qm base
 SHA="$(git -C "$REPO" rev-parse HEAD)"
@@ -527,14 +538,16 @@ assert_role_route() { # role expected-model expected-effort
   export HERMES_ARGS_FILE="$TMP/hermes-args-$role"
   LANE_ID="route-$role" HERMES_BIN="$FAKE_HERMES" \
     bash "$LANE" "$BRIEF" hermes "$role" >/dev/null 2>"$TMP/route-$role.err"
-  awk -v m="$expected_model" -v e="$expected_effort" '
+  awk -v m="$expected_model" -v e="$expected_effort" -v p="aflaneroute$(printf '%s' "$role" | tr -cd '[:alnum:]')" '
     prev=="-m" && $0==m { found_model=1 }
     prev=="--reasoning" && $0==e { found_effort=1 }
+    prev=="-p" && $0==p { found_profile=1 }
     { prev=$0 }
-    END { exit !(found_model && found_effort) }
+    END { exit !(found_model && found_effort && found_profile) }
   ' "$HERMES_ARGS_FILE"
-  check "$role selects $expected_model at $expected_effort" $? \
-    "role intent is stable while OmniRoute owns paid-first/free-last failover"
+  profile_file="$REPO/.lanes/route-$role/profile.txt"
+  check "$role selects $expected_model at $expected_effort through its lane profile" $? \
+    "profile=$(cat "$profile_file" 2>/dev/null) role intent is stable while OmniRoute owns paid-first/free-last failover"
 }
 assert_role_route code-implementer agentfactory-build-local medium
 assert_role_route adversarial-verifier agentfactory-verify-local xhigh
@@ -562,6 +575,15 @@ grep -Fxq "low" "$HERMES_ARGS_FILE"; override_effort_rc=$?
 check "NEGATIVE CONTROL: explicit model and effort override the role combo" \
   "$([ $override_model_rc -eq 0 ] && [ $override_effort_rc -eq 0 ] && echo 0 || echo 1)" \
   "a hard-wired role route would block measured per-lane experiments and emergency step-downs"
+
+export HERMES_ARGS_FILE="$TMP/hermes-args-profile-override"
+LANE_ID="profile-override" HERMES_PROFILE="operatorprofile" HERMES_BIN="$FAKE_HERMES" \
+  bash "$LANE" "$BRIEF" hermes code-implementer >/dev/null 2>"$TMP/profile-override.err"
+awk 'prev=="-p" && $0=="operatorprofile" {f=1} {prev=$0} END {exit f?0:1}' "$HERMES_ARGS_FILE" \
+  && grep -Fqx operatorprofile "$REPO/.lanes/profile-override/profile.txt" \
+  && grep -Fq 'pc-lane: profile override operatorprofile' "$TMP/profile-override.err"
+check "an explicit HERMES_PROFILE bypasses cloning, is logged, recorded, and passed to Hermes" $? \
+  "stderr=$(tr '\n' ';' < "$TMP/profile-override.err") profile=$(cat "$REPO/.lanes/profile-override/profile.txt" 2>/dev/null)"
 
 # --- MUTATION-KILLING: parent-environment poison for LANE_ID -----------------
 # pc-lane.sh adopts inherited LANE_ID by design (the sandbox launcher sets it).

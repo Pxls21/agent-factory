@@ -361,10 +361,21 @@ own git worktree, and leaves the final message in `report.md`.
      Approval defaults to `never` in headless mode (`exec/src/lib.rs:413`).
      `--dangerously-bypass-hook-trust` is REQUIRED for ported hooks to run without interactive
      trust granting (proven by `codex-rs/exec/tests/suite/hooks.rs`).
-   - **Hermes:** `hermes -z "<prompt>" --usage-file usage.json > report.md`
-     `-z` is the purest one-shot: single prompt in, final response out.
-5. **Report capture.** The harness's final message → `.lanes/<lane-id>/report.md`.
-6. **Exit code passthrough.** The lane exits with the harness's exit code.
+   - **Hermes:** before launch, `harness-ports/bin/lane-profile.sh create <lane-id>` clones the
+     read-only `agentfactory` profile as `aflane<lowercase-alphanumeric-lane-id[:40]>`, removes
+     top-level `fallback_providers`, and adds `model.default_headers.x-omniroute-session-id` with
+     the exact lane id. `verify` fails closed on a chain, wrong header, or `.env` SHA drift.
+     The selected profile is recorded in `profile.txt`, passed as `hermes -p <profile>`, and appended
+     to the transcript footer. An explicit `HERMES_PROFILE` is the logged operator escape hatch.
+     The launch itself is `hermes -z "<prompt>" --usage-file usage.json > report.md`; `-z` is the
+     purest one-shot: single prompt in, final response out.
+5. **Measured harvest.** `scripts/pc_lane.sh` reads OmniRoute `call_logs` by exact
+   `session_tag = <lane-id>` first and reports `requested_model × provider × status × count`.
+   Legacy raw-id rows without a tag remain visible as `untagged-raw-rows=N`, keyed by
+   `requested_model`; combo lanes retain the explicitly unverified combo-window fallback.
+   The harvest line reads the served model from `usage.json` and the profile from `profile.txt`.
+6. **Report capture.** The harness's final message → `.lanes/<lane-id>/report.md`.
+7. **Exit code passthrough.** The lane exits with the harness's exit code.
 
 **Hard limits, enforced not just documented:**
 
@@ -384,6 +395,7 @@ starting a second one. Keyed on the STATE it intends to create, not on mutual ex
 | `AF_VENV` | `$HOME/venv-agent-factory` | python venv root |
 | `CODEX_BIN` | `codex` (from PATH) | codex binary |
 | `HERMES_BIN` | `hermes` (from PATH) | hermes binary |
+| `HERMES_PROFILE` | per-lane `aflane…` clone | explicit logged profile override |
 | `LANE_BRANCH` | `claude/soundbox-kit-migration-iz1jwf` | branch to fetch |
 | `LANE_ID` | derived from the brief | lane directory name |
 

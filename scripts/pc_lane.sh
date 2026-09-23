@@ -432,9 +432,17 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   rm -f "$LOCAL_REPORT.b64"
   echo "pc_lane: report -> $LOCAL_REPORT" >&2
 
-  # Provider mix is observed from OmniRoute's read-only call log, never inferred from the combo name. The window starts
-  # one minute before launch to cover clock/bridge skew. It is intentionally per combo: session_tag is not carried by the
-  # lane launcher, so concurrent conversations are listed and a multi-tag window is called out rather than misattributed.
+  # Bring the immutable usage metadata home with the report so the harvest can name
+  # the actually served model (not the requested combo/raw id) and the lane profile.
+  USAGE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/usage.json"
+  USAGE_B64="$(bridge "test -s $USAGE_REMOTE && base64 -w0 $USAGE_REMOTE" 2>/dev/null || true)"
+  SERVED_MODEL="$(printf '%s' "$USAGE_B64" | base64 -d 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("model", ""))' 2>/dev/null || true)"
+  LANE_PROFILE_REMOTE="$PC_AF_REPO/.lanes/$LANE_ID/profile.txt"
+  LANE_PROFILE_USED="$(bridge "test -s $LANE_PROFILE_REMOTE && sed -n '1p' $LANE_PROFILE_REMOTE" 2>/dev/null || true)"
+
+  # Provider mix is observed from OmniRoute's read-only call log, never inferred from the requested model.
+  # T92 lanes are keyed by their exact session_tag. The requested_model aggregate is a separately labelled
+  # visibility counter for legacy raw-id rows that predate that tag. Combo lanes keep the window caveat.
   MIX_COMBO="${HERMES_MODEL:-}"
   case "$MIX_COMBO" in
     "") case "${ROLE:-}" in
@@ -445,6 +453,7 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
           *) MIX_COMBO=agentfactory-build;;
         esac;;
   esac
+  case "$MIX_COMBO" in agentfactory-*) MIX_IS_COMBO=1;; *) MIX_IS_COMBO=0;; esac
   MIX_DB="${OMNIROUTE_CALL_LOG_DB:-/home/rocco/.omniroute-migrated/storage.sqlite}"
   MIX_DB_OK=1
   case "$MIX_DB" in *[!A-Za-z0-9_./-]*)
@@ -452,6 +461,12 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   MIX_FROM="$(date -u -d "$LAUNCH_AT - 60 seconds" +%FT%TZ 2>/dev/null || printf '%s' "$LAUNCH_AT")"
   MIX_TO="$(date -u +%FT%TZ)"
   MIX_COMBO_SQL="$(printf '%s' "$MIX_COMBO" | sed "s/'/''/g")"
+  if [ "$MIX_IS_COMBO" -eq 1 ]; then
+    MIX_COMBO_FILTER="AND combo_name = '$MIX_COMBO_SQL'"
+  else
+    MIX_COMBO_FILTER="AND 0 = 1"
+  fi
+  MIX_LANE_SQL="$(printf '%s' "$LANE_ID" | sed "s/'/''/g")"
   MIX_FROM_SQL="$(printf '%s' "$MIX_FROM" | sed "s/'/''/g")"
   MIX_TO_SQL="$(printf '%s' "$MIX_TO" | sed "s/'/''/g")"
   MIX_LAUNCH_SQL="$(printf '%s' "$LAUNCH_AT" | sed "s/'/''/g")"
@@ -459,7 +474,24 @@ if [ -s "$LOCAL_REPORT.b64" ] && base64 -d < "$LOCAL_REPORT.b64" > "$LOCAL_REPOR
   MIX_SQL="$(mktemp)"
   cat > "$MIX_SQL" <<SQL
 .mode tabs
-WITH w AS (
+WITH lane_rows AS (
+  SELECT requested_model,
+         COALESCE(NULLIF(provider, ''), '<unknown>') AS provider_class,
+         status, session_tag, timestamp
+  FROM call_logs
+  WHERE api_key_name = 'hermes'
+    AND session_tag = '$MIX_LANE_SQL'
+    AND timestamp >= '$MIX_FROM_SQL'
+    AND timestamp <= '$MIX_TO_SQL'
+), untagged_raw AS (
+  SELECT count(*) AS n
+  FROM call_logs
+  WHERE api_key_name = 'hermes'
+    AND requested_model = '$MIX_COMBO_SQL'
+    AND (session_tag IS NULL OR session_tag = '')
+    AND timestamp >= '$MIX_FROM_SQL'
+    AND timestamp <= '$MIX_TO_SQL'
+), combo_rows AS (
   SELECT CASE
            WHEN provider LIKE 'openai-compatible-chat-%' OR provider LIKE '%qwen%' THEN 'qwen'
            WHEN provider LIKE 'codex%' OR provider = 'codex' THEN 'codex'
@@ -469,24 +501,34 @@ WITH w AS (
          status, session_tag, timestamp
   FROM call_logs
   WHERE api_key_name = 'hermes'
-    AND combo_name = '$MIX_COMBO_SQL'
+    $MIX_COMBO_FILTER
     AND timestamp >= '$MIX_FROM_SQL'
     AND timestamp <= '$MIX_TO_SQL'
+), chosen AS (
+  SELECT requested_model, provider_class, status, session_tag, timestamp FROM lane_rows
+  UNION ALL
+  SELECT '$MIX_COMBO_SQL', provider_class, status, session_tag, timestamp FROM combo_rows
+  WHERE NOT EXISTS(SELECT 1 FROM lane_rows)
 )
 SELECT 'MIX', group_concat(metric, ' '), '', '', ''
 FROM (
-  SELECT provider_class || ':' || status || '=' || count(*) AS metric
-  FROM w GROUP BY provider_class, status ORDER BY provider_class, status
+  SELECT requested_model || ' x ' || provider_class || ':' || status || '=' || count(*) AS metric
+  FROM chosen GROUP BY requested_model, provider_class, status ORDER BY requested_model, provider_class, status
 )
 UNION ALL
 SELECT 'TAG', session_tag, substr(min(timestamp), 12, 8), substr(max(timestamp), 12, 8), count(*)
-FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
+FROM chosen WHERE session_tag IS NOT NULL AND session_tag <> ''
 GROUP BY session_tag
 UNION ALL
-SELECT 'META', 'db_missing', CASE WHEN EXISTS(SELECT 1 FROM w) THEN 0 ELSE 1 END, '', ''
+SELECT 'META', 'db_missing', CASE WHEN EXISTS(SELECT 1 FROM chosen) THEN 0 ELSE 1 END, '', ''
+UNION ALL
+SELECT 'META', 'untagged_raw', n, '', '' FROM untagged_raw
+UNION ALL
+SELECT 'META', 'tagged_lane', CASE WHEN EXISTS(SELECT 1 FROM lane_rows) THEN 1 ELSE 0 END, '', ''
 UNION ALL
 SELECT 'META', 'other', count(*), '', '' FROM (
-  SELECT session_tag FROM w WHERE session_tag IS NOT NULL AND session_tag <> ''
+  SELECT session_tag FROM combo_rows
+  WHERE NOT EXISTS(SELECT 1 FROM lane_rows) AND session_tag IS NOT NULL AND session_tag <> ''
   GROUP BY session_tag
   HAVING min(timestamp) < '$MIX_LAUNCH_SQL' OR min(timestamp) > '$MIX_CAVEAT_SQL'
 )
@@ -501,13 +543,14 @@ SQL
   else
     MIX_RAW=""; MIX_RC=64
   fi
+  MIX_UNTAGGED="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="untagged_raw"{print $3; exit}')"; MIX_UNTAGGED="${MIX_UNTAGGED:-0}"
   if [ "$MIX_RC" -ne 0 ]; then
     if [ "$MIX_DB_OK" -eq 1 ]; then
       MIX_REASON="$(tr '\n' ' ' < "$MIX_ERR" | sed 's/[[:space:]]*$//')"
       echo "pc_lane: provider-mix unavailable: ${MIX_REASON:-bridge/sqlite rc=$MIX_RC}" >&2
     fi
   elif [ "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="db_missing"{print $3; exit}')" = 1 ]; then
-    echo "pc_lane: provider-mix: no call_logs rows in the window (db=$MIX_DB)" >&2
+    echo "pc_lane: provider-mix: no tagged/combo call_logs rows in the window (db=$MIX_DB) | untagged-raw-rows=$MIX_UNTAGGED" >&2
   elif [ -z "$MIX_RAW" ] || [ -z "$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="MIX" && $2!=""{print $2; exit}')" ]; then
     echo "pc_lane: provider-mix unavailable: malformed sqlite output" >&2
   else
@@ -515,9 +558,14 @@ SQL
     MIX_TAGS="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{printf "%s%s(%s-%s,n=%s)", (n++?" ":""), $2, $3, $4, $5}')"
     MIX_TAG_COUNT="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="TAG"{n++} END{print n+0}')"
     MIX_OTHER="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="other"{print $3; exit}')"; MIX_OTHER="${MIX_OTHER:-0}"
-    echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none}" >&2
-    if [ "$MIX_TAG_COUNT" -gt 1 ]; then
-      echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no lane key in call_logs; T92)" >&2
+    MIX_TAGGED="$(printf '%s\n' "$MIX_RAW" | awk -F '\t' '$1=="META" && $2=="tagged_lane"{print $3; exit}')"; MIX_TAGGED="${MIX_TAGGED:-0}"
+    if [ "$MIX_TAGGED" -eq 1 ]; then
+      echo "pc_lane: lane provider mix lane=$LANE_ID served=${SERVED_MODEL:-unknown} profile=${LANE_PROFILE_USED:-unknown} $MIX_COUNTS | untagged-raw-rows=$MIX_UNTAGGED" >&2
+    else
+      echo "pc_lane: combo-window provider mix (per-lane provenance UNVERIFIED) $MIX_COMBO served=${SERVED_MODEL:-unknown} profile=${LANE_PROFILE_USED:-unknown} $MIX_FROM..$MIX_TO: $MIX_COUNTS | tags: ${MIX_TAGS:-none} | untagged-raw-rows=$MIX_UNTAGGED" >&2
+      if [ "$MIX_TAG_COUNT" -gt 1 ]; then
+        echo "pc_lane: the mix is a COMBO-WINDOW aggregate — $MIX_OTHER conversation tag(s) shared it; per-lane execution provenance is UNVERIFIED (no matching lane tag in call_logs)" >&2
+      fi
     fi
   fi
   rm -f "$MIX_ERR"

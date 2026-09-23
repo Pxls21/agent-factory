@@ -18,6 +18,11 @@ for t in test_codex_hook_adapter.py test_hermes_hook_adapter.py \
   [ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
 done
 
+printf '%-34s ' "test_lane_profile.sh"
+out="$(bash "$HERE/test_lane_profile.sh" 2>&1)"; rc=$?
+printf '%s\n' "$(printf '%s' "$out" | tail -1)"
+[ $rc -ne 0 ] && { fail=$((fail+1)); printf '%s\n' "$out" | tail -20; }
+
 printf '%-34s ' "test_pc_lane.sh"
 out="$(bash "$HERE/test_pc_lane.sh" 2>&1)"; rc=$?
 printf '%s\n' "$(printf '%s' "$out" | tail -1)"

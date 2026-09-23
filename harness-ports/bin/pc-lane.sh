@@ -426,8 +426,24 @@ else
     agentfactory-*-local|qwen-local/*)
       case "$RUN_EFFORT" in ultra|max|high) echo "pc-lane: effort '$RUN_EFFORT' clamped to xhigh on the local route ($RUN_MODEL)" >&2; RUN_EFFORT=xhigh;; esac;;
   esac
+  # The default is a disposable per-lane clone of the interactive agentfactory profile:
+  # it preserves the approved config/env while removing fallback_providers and adding the
+  # lane id as OmniRoute's request correlation header. An explicit HERMES_PROFILE is the
+  # operator escape hatch and is logged instead of cloned.
+  LANE_PROFILE_HELPER="$AF_REPO/harness-ports/bin/lane-profile.sh"
+  if [ -n "${HERMES_PROFILE:-}" ]; then
+    LANE_PROFILE="$HERMES_PROFILE"
+    echo "pc-lane: profile override $LANE_PROFILE" >&2
+  else
+    [ -x "$LANE_PROFILE_HELPER" ] || die "lane profile helper missing: $LANE_PROFILE_HELPER"
+    LANE_PROFILE="$("$LANE_PROFILE_HELPER" create "$LANE_ID")" || die "lane profile create failed"
+    "$LANE_PROFILE_HELPER" verify "$LANE_ID" || die "lane profile verify failed"
+  fi
+  printf '%s\n' "$LANE_PROFILE" > "$LANE_DIR/profile.txt" || die "cannot record lane profile"
+  export HERMES_PROFILE="$LANE_PROFILE"
+
   TERMINAL_CWD="$TREE" \
-  "$HERMES_BIN" -p "${HERMES_PROFILE:-agentfactory}" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
+  "$HERMES_BIN" -p "$LANE_PROFILE" --in "$TREE" --no-restore-cwd -z "$(cat "$PROMPT_RUN")" \
       -m "$RUN_MODEL" \
       --reasoning "$RUN_EFFORT" \
       --accept-hooks \
@@ -492,11 +508,12 @@ fi
 # so it travels with the patch; the curator lane reads transcripts/pc/*.md later.
 if [ "$HARNESS" = "hermes" ] && [ -s "$LANE_DIR/usage.json" ]; then
   SID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('session_id',''))" "$LANE_DIR/usage.json" 2>/dev/null)"
-  HDB="${HERMES_STATE_DB:-$HOME/.hermes/profiles/${HERMES_PROFILE:-agentfactory}/state.db}"
+  LANE_PROFILE="$(cat "$LANE_DIR/profile.txt" 2>/dev/null)"
+  HDB="${HERMES_STATE_DB:-$HOME/.hermes/profiles/${LANE_PROFILE:-${HERMES_PROFILE:-agentfactory}}/state.db}"
   if [ -n "$SID" ] && [ -f "$HDB" ]; then
     python3 "$AF_REPO/harness-ports/bin/hermes-session-export.py" --db "$HDB" --session "$SID" \
       --out "$TREE/transcripts/pc/$LANE_ID.md" >/dev/null 2>>"$LOG" \
-      && { printf '\n---\nusage.json:\n\n```json\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; cat "$LANE_DIR/usage.json" >> "$TREE/transcripts/pc/$LANE_ID.md"; printf '\n```\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; echo "pc-lane: transcript -> transcripts/pc/$LANE_ID.md (in the lane tree)" >&2; } \
+      && { printf '\n---\nprofile: %s\n\nusage.json:\n\n```json\n' "${LANE_PROFILE:-unknown}" >> "$TREE/transcripts/pc/$LANE_ID.md"; cat "$LANE_DIR/usage.json" >> "$TREE/transcripts/pc/$LANE_ID.md"; printf '\n```\n' >> "$TREE/transcripts/pc/$LANE_ID.md"; echo "pc-lane: transcript -> transcripts/pc/$LANE_ID.md (in the lane tree)" >&2; } \
       || echo "pc-lane: session export FAILED (see lane.log) — report still stands" >&2
   fi
 fi
