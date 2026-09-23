@@ -41,7 +41,8 @@
 #     is D-051's relay reach: for the buzz-acp leg only, ONE nat PREROUTING rule on the pair's veth
 #     host end forwards <host ip>:<relay port> to the pinned relay on 127.0.0.1, and route_localnet=1
 #     lets that ONE interface route to loopback for the leg. egress_ns_destroy removes both, at the
-#     leg's teardown and in `cleanup`.
+#     leg's teardown and in `cleanup`, which a second SIGINT or SIGTERM cannot cut short (E3-R1: the
+#     comment above the traps says what a second signal does, and what is left open).
 #  3. A wrong pair identity file only fails the pair's C0 / relay handshake: this script checks its
 #     place, mode, owner and shape, never whether the relay accepts the key.
 #  4. unit-identity.json is unkeyed: it binds the process that ran to the pins, not against a forger
@@ -52,6 +53,9 @@
 #  6. A 2xx from a health path proves that the unit's namespace reaches that ip:port; it does not
 #     prove the model API behind it would serve the unit (that is S0-03), nor which instance answers
 #     (the AF-AP-33 class: health-200 is not the right instance).
+#  7. The S0-01 census (A2') compares each entry's type, mode, uid, gid and size, a regular file's
+#     sha256 and a symbolic link's target. It does not compare times, inode numbers, link counts or
+#     extended attributes, and it never reads what a symbolic link points to.
 #
 # PREFLIGHT, not a workaround: a service bound only to 127.0.0.1 is unreachable from a namespace (a
 # fresh namespace has its own empty loopback — findings §6a, docs/research/FINDINGS-STAGE0-v1.md:98-108).
@@ -204,27 +208,80 @@ _pair_identity() {
   [ -n "$PAIR_KEY" ] || { ID_REFUSED=shape; return 1; }
 }
 
-# A2: a stat census of S0-01's tree — <pinned base>/.markers and every v2-* directory in it — taken
-# before the first unit and after the last. The base is pins.py's (the directory holding
-# PINNED_HERMES_HOME), never a literal; a tree absent on this venue is recorded, not failed.
-_s0_01_census() {
-  python3 -B - "${PIN[BASE]}" <<'PY'
-import json, os, stat, sys
-markers = os.path.join(sys.argv[1], ".markers")
-def snap(path):
+# A2' (E3-R1, the coordinator's amendment of A2 after VERIFY-E3 F2 showed a stat census of the
+# directories blind to an in-place write): a census of EVERY entry under <pinned base>/.markers,
+# recursively, never following a symbolic link, taken before the first unit and after the last. An
+# entry is its path relative to .markers ("." is .markers itself) with its type, mode, uid, gid and
+# size, plus a regular file's sha256 or a symbolic link's target; times and inode numbers are not
+# compared (declared limit 7). `snap` prints the whole census, which the runner holds in memory only
+# (the PC tree has 33,864 entries). `compare <file>` reads that census on fd 3, takes the census
+# after, and writes <file>: each side's entry count and one sha256 over its sorted entry records (the
+# verdict: the tree changed exactly when the two sides differ), the changed paths, and the before and
+# after records of the CHANGED entries only. It prints each changed entry's path on disk. The base is
+# pins.py's (the directory holding PINNED_HERMES_HOME), never a literal; a tree absent on this venue
+# is recorded, not failed. Any other error exits non-zero, and that fails the leg.
+_s0_01_census() {  # snap | compare <census file>
+  python3 -B - "${PIN[BASE]}" "$@" <<'PY'
+import hashlib, json, os, stat, sys
+base, mode = sys.argv[1], sys.argv[2]
+markers = os.path.join(base, ".markers")
+KIND = {stat.S_IFDIR: "dir", stat.S_IFREG: "file", stat.S_IFLNK: "link", stat.S_IFIFO: "fifo",
+        stat.S_IFSOCK: "socket", stat.S_IFCHR: "char", stat.S_IFBLK: "block"}
+def record(path):
     st = os.lstat(path)
-    return [st.st_ino, st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode), st.st_mtime_ns, st.st_ctime_ns]
-entries = {}
-try:
-    entries[markers] = snap(markers)
-    if stat.S_ISDIR(os.lstat(markers).st_mode):
-        for name in sorted(os.listdir(markers)):
-            path = os.path.join(markers, name)
-            if name.startswith("v2-") and stat.S_ISDIR(os.lstat(path).st_mode):
-                entries[path] = snap(path)
-except FileNotFoundError:
-    pass
-print(json.dumps({"base": sys.argv[1], "entries": entries}, sort_keys=True))
+    rec = {"type": KIND.get(stat.S_IFMT(st.st_mode), "other"), "mode": "%04o" % stat.S_IMODE(st.st_mode),
+           "uid": st.st_uid, "gid": st.st_gid, "size": st.st_size}
+    if rec["type"] == "link":
+        rec["target"] = os.readlink(path)
+    elif rec["type"] == "file":
+        # O_NOFOLLOW + O_NONBLOCK: an entry swapped for a link or a FIFO mid-census fails, never blocks
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(f"{path}: no longer a regular file")
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: os.read(fd, 1 << 20), b""):
+                digest.update(chunk)
+        finally:
+            os.close(fd)
+        rec["sha256"] = digest.hexdigest()
+    return rec
+def census():
+    try:
+        entries = {".": record(markers)}
+    except FileNotFoundError:
+        return {}                              # absent on this venue: recorded, not failed
+    todo = ["."] if entries["."]["type"] == "dir" else []
+    while todo:
+        top = todo.pop()
+        for name in os.listdir(os.path.join(markers, top)):
+            rel = name if top == "." else f"{top}/{name}"
+            entries[rel] = record(os.path.join(markers, rel))
+            if entries[rel]["type"] == "dir":
+                todo.append(rel)
+    return entries
+if mode == "snap":
+    sys.stdout.write(json.dumps(census(), sort_keys=True))   # one write (the C encoder; json.dump to a pipe took 3 s)
+    sys.exit(0)
+def side(entries):
+    lines = "".join(json.dumps([rel, entries[rel]], sort_keys=True) + "\n" for rel in sorted(entries))
+    return {"entries": len(entries), "sha256": hashlib.sha256(lines.encode()).hexdigest()}
+with os.fdopen(3) as fh:
+    before = json.load(fh)
+after = census()
+sides = {"before": side(before), "after": side(after)}
+# The verdict is the two sides' count and digest; the names come from the entries. A difference that no
+# entry explains still fails the leg, named "." (.markers itself).
+changed = [] if sides["before"] == sides["after"] else \
+    sorted(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel)) or ["."]
+with open(sys.argv[3], "w") as fh:
+    json.dump({"base": base, "tree": "present" if before or after else "absent on this venue (recorded, not failed)",
+               **sides, "changed": changed,
+               "changed_records": {rel: {"before": before.get(rel), "after": after.get(rel)} for rel in changed}},
+              fh, indent=2, sort_keys=True)
+    fh.write("\n")
+for rel in changed:
+    sys.stdout.buffer.write(os.fsencode(markers if rel == "." else os.path.join(markers, rel)) + b"\n")
 PY
 }
 
@@ -319,7 +376,11 @@ declare -A RESULT
 NS_LIVE=""; LOG_PIDS=""; FIFO_DIRS=""
 # F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$);
 # destroy also removes a relay reach (D-051). Then any log reader left, by pid, and the pipes.
+# E3-R1: its first command ignores SIGINT and SIGTERM, so no later stop cuts a teardown step short,
+# and every command it starts inherits the ignore (a signal to the whole process group cannot kill
+# the `iptables -D` that removes the relay reach).
 cleanup() {
+  trap '' INT TERM
   local ns owner_pid pid dir
   for ns in $NS_LIVE; do
     owner_pid=$(cat "$(egress_ns_owner_file "$ns")" 2>/dev/null)
@@ -331,11 +392,19 @@ cleanup() {
 # R4 (E3-b): a stop stops. `cleanup` runs ONCE, on EXIT; SIGINT and SIGTERM exit 130 / 143 through it,
 # so no further unit leg starts, no units.json is written, and neither the census comparison nor the
 # checker runs. (`trap cleanup EXIT INT TERM` ran cleanup on the signal and then CONTINUED, E3.)
+# E3-R1 (VERIFY-E3 F3): a SECOND SIGINT or SIGTERM, to this pid or to the process group, changes
+# nothing. Each handler below ignores both signals before its `exit`, and `cleanup` ignores them as its
+# first command (for a run that ends on its own), so every later INT/TERM is dropped: each teardown
+# step runs to its end, and the status stays the first signal's. The handlers need their own ignore: a
+# signal that lands microseconds after the first runs its handler at bash's next command, and that
+# `exit` would end the EXIT trap before `cleanup` began (E3-R1 report, section 2). Not covered: a stop
+# that lands in the microseconds between the run's own end and `cleanup`'s first command, and a
+# SIGKILL, which runs no trap.
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'trap "" INT TERM; exit 130' INT
+trap 'trap "" INT TERM; exit 143' TERM
 
-CENSUS_BEFORE=$(_s0_01_census)
+CENSUS_BEFORE=$(_s0_01_census snap)
 
 for unit in "${UNITS[@]}"; do
   exe_pin=${UNIT_EXE[$unit]:-}
@@ -519,21 +588,11 @@ for unit in "${UNITS[@]}"; do
   _leg_teardown
 done
 
-# A2: the census after the last unit; anything changed in S0-01's tree fails the leg.
-census_changed=$(python3 -B - "$CENSUS_BEFORE" "$(_s0_01_census)" "$EVIDENCE_ROOT/s0-01-census.json" <<'PY'
-import json, sys
-before, after = json.loads(sys.argv[1]), json.loads(sys.argv[2])
-b, a = before["entries"], after["entries"]
-changed = sorted(p for p in set(b) | set(a) if b.get(p) != a.get(p))
-with open(sys.argv[3], "w") as fh:
-    json.dump({"base": before["base"], "before": b, "after": a, "changed": changed,
-               "tree": "present" if (b or a) else "absent on this venue (recorded, not failed)"},
-              fh, indent=2, sort_keys=True)
-    fh.write("\n")
-for path in changed:
-    print(path)
-PY
-)
+# A2': the census after the last unit. A change in S0-01's tree fails the leg, and so does a census that
+# could not be taken: it certifies nothing (at the PIN a crashed census let the run go on to its checker).
+census_failed=""
+census_changed=$(_s0_01_census compare "$EVIDENCE_ROOT/s0-01-census.json" 3<<<"$CENSUS_BEFORE") \
+  || census_failed=$?
 
 # F4: units.json encoded through python3 json.dumps, never printf with raw strings.
 # Every unit the plan names, run or NOT, with its reason; A1: the recorded override on every unit row.
@@ -569,6 +628,10 @@ print()
 rm -f "$_json_tmp"
 
 echo "=== units.json ==="; cat "$EVIDENCE_ROOT/units.json"
+if [ -n "$census_failed" ]; then
+  echo "=== S0-01's tree census failed (exit $census_failed): the leg FAILS ===" >&2
+  exit 1
+fi
 if [ -n "$census_changed" ]; then
   while IFS= read -r path; do echo "s0-01-tree-changed: $path" >&2; done <<< "$census_changed"
   echo "=== S0-01's tree changed during the leg: the leg FAILS (census: $EVIDENCE_ROOT/s0-01-census.json) ===" >&2

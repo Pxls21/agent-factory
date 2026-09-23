@@ -2091,6 +2091,7 @@ def test_a2_s0_01_tree_change_fails_the_leg(e3dir):
     v2.mkdir(parents=True)
     os.chown(v2, *UNIT_USER)
     (base / ".markers" / "v2-negative").mkdir()          # present and untouched: must not be named
+    v2_mode = "%04o" % stat.S_IMODE(v2.stat().st_mode)
     port = 18095
     env = _runner_env(e3dir, port, unit_user=None, override={"PINNED_HERMES_HOME": str(base / ".hermes-home")},
                       extra=f"os.chmod({str(v2)!r}, 0o700)")
@@ -2106,8 +2107,15 @@ def test_a2_s0_01_tree_change_fails_the_leg(e3dir):
         assert changed == [f"s0-01-tree-changed: {v2}"], runner.stderr
         assert "=== checker ===" not in runner.stdout, runner.stdout
         census = json.loads((evidence / "s0-01-census.json").read_text())
-        assert census["changed"] == [str(v2)] and census["tree"] == "present", census
-        assert str(base / ".markers" / "v2-negative") in census["after"], census
+        # A2' (E3-R1, a changed expectation): the census file names an entry by its path RELATIVE to
+        # .markers and holds each side's entry count and digest plus the CHANGED entries' records, never
+        # the whole list (at the PIN, `after` held every snapped entry by its absolute path). The count
+        # still proves v2-negative was censused: ".", v2-run-1 and v2-negative.
+        assert census["changed"] == ["v2-run-1"] and census["tree"] == "present", census
+        assert census["before"]["entries"] == census["after"]["entries"] == 3, census
+        assert "v2-negative" not in json.dumps(census), census
+        assert [census["changed_records"]["v2-run-1"][side]["mode"] for side in ("before", "after")] == \
+            [v2_mode, "0700"], census
         assert _unit_row(evidence, "hermes-acp")["status"] == "run"
         record = _standin_records(e3dir)[0]
         assert (record["uid"], record["gid"]) == UNIT_USER, record          # the A4 default
@@ -2404,14 +2412,15 @@ def _route_localnet(host_if):
     return path.read_text().strip() if path.exists() else None
 
 
-def _iptables_shim(workdir, action):
-    """A PATH `iptables` that intercepts ONE exact argv — the relay reach's nat add — and runs the real
-    binary for everything else (the namespace gates run through it too)."""
+def _iptables_shim(workdir, action, match="-t nat -A PREROUTING"):
+    """A PATH `iptables` that intercepts ONE exact argv — the relay reach's nat add, or the argv `match`
+    names (E3-R1: the teardown's `-t nat -D PREROUTING`) — and runs the real binary for everything else
+    (the namespace gates run through it too)."""
     shim = workdir / "shim"
     shim.mkdir()
     (shim / "iptables").write_text(
         "#!/bin/bash\n"
-        f'if [ "$1 $2 $3 $4" = "-t nat -A PREROUTING" ]; then {action}; fi\n'
+        f'if [ "$1 $2 $3 $4" = "{match}" ]; then {action}; fi\n'
         f'exec {IPTABLES_REAL} "$@"\n')
     (shim / "iptables").chmod(0o755)
     return shim
@@ -2997,3 +3006,362 @@ def test_e3b_r4_a_stop_in_the_first_leg_starts_no_second_leg(e3dir):
         _lib('egress_ns_destroy s0-05-buzz-acp')
     assert _census("s0-05-hermes-acp") == CLEAN and _census("s0-05-buzz-acp") == CLEAN
     assert _nat_rules_naming(_lib('egress_ns_host_if s0-05-buzz-acp').stdout.strip()) == []
+
+
+# ===================================================================== E3-R1 — R1 (VERIFY-E3 F3) + R2 (A2')
+# tasks/briefs/s0-05-support/E3-R1-brief.md. R1: `cleanup` cannot be aborted by a second INT or TERM,
+# PID-directed or group-directed, and every command it starts inherits that protection. Each runner
+# below runs in its OWN session (pgid = its pid), so a group-directed signal reaches the runner, its
+# units and whatever `cleanup` started, and nothing of pytest's. R2: A2 as the coordinator amended it
+# (A2'): the census covers every entry under <base>/.markers, recursively, never following a symbolic
+# link; its file holds counts, digests and the CHANGED entries only.
+
+STOP_RC = {"INT": 130, "TERM": 143}
+
+# The hermes-acp stand-in's SIGTERM handler takes 3 s (a unit slow to shut down), and first writes a
+# marker the test waits for: the proof that `cleanup`'s own SIGTERM reached the unit.
+SLOW_STOP = """
+import signal, time
+def _slow_stop(signum, frame):
+    with open(os.path.join(REC, "term-%d" % os.getpid()), "a") as fh:
+        fh.write("TERM\\n")
+    time.sleep(3)
+    os._exit(0)
+signal.signal(signal.SIGTERM, _slow_stop)
+"""
+
+
+def _runner_session(env, evidence, *units):
+    """The REAL runner in its own session: its pgid is its pid, the group a group-directed signal names."""
+    return subprocess.Popen(["bash", str(RUNNER), str(evidence), *units], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+
+
+def _send(runner, name, target):
+    sig = {"INT": signal.SIGINT, "TERM": signal.SIGTERM}[name]
+    if target == "group":
+        os.killpg(runner.pid, sig)
+    else:
+        runner.send_signal(sig)
+
+
+def _route_localnet_state(host_if):
+    """route_localnet of all, default and <host_if> (None while that interface does not exist)."""
+    return {name: _route_localnet(name) for name in ("all", "default", host_if)}
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("first,second,target", [
+    ("TERM", "TERM", "pid"), ("TERM", "INT", "pid"), ("INT", "TERM", "group")],
+    ids=["term-then-term-to-the-pid", "term-then-int-to-the-pid", "int-then-term-to-the-group"])
+def test_e3r1_r1_b_a_second_signal_while_cleanup_waits_for_a_slow_unit(e3dir, first, second, target):
+    """R1, VERIFY-E3's shape (b): a unit whose SIGTERM handler takes 3 s. The first signal goes to the
+    runner's pid in the launch window; the second fires once the unit has received `cleanup`'s SIGTERM
+    (its marker), i.e. while `cleanup` waits for the unit. Afterwards nothing of the leg is left — no
+    namespace, veth, /etc/netns/<ns>, owner record or relay-reach rule, route_localnet as before the run —
+    and the exit status is the FIRST signal's. On the PIN the second signal's `exit` abandoned the EXIT
+    trap: the namespace outlived the run (VERIFY-E3 section 10), and a second INT turned 143 into 130."""
+    ns = "s0-05-hermes-acp"
+    host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
+    port = 18144
+    env = _runner_env(e3dir, port, extra=SLOW_STOP)
+    evidence = e3dir / "evidence"
+    before = _route_localnet_state(host_if)
+    listener = runner = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _runner_session(env, evidence, "hermes-acp")
+        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
+        unit = _standin_records(e3dir)[0]["pid"]
+        _send(runner, first, "pid")
+        _wait_for(lambda: list((e3dir / "rec").glob("term-*")), 60, "cleanup's SIGTERM to reach the unit")
+        assert runner.poll() is None, "the runner ended before the second signal"
+        _send(runner, second, target)
+        out, err = runner.communicate(timeout=120)
+        assert _census(ns) == CLEAN, (_census(ns), runner.returncode, out, err)
+        assert _nat_rules_naming(host_if) == [] and _route_localnet_state(host_if) == before
+        assert runner.returncode == STOP_RC[first], (runner.returncode, out, err)
+        assert not _pid_alive(unit), f"unit {unit} outlived its runner"
+        assert "=== checker ===" not in out, out
+        assert not (evidence / "units.json").exists() and not (evidence / "s0-01-census.json").exists()
+    finally:
+        _stop(runner)
+        _stop(listener)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _census(ns) == CLEAN
+
+
+@NEEDS_NETNS
+@pytest.mark.skipif(shutil.which("gcc") is None,
+                    reason="the buzz-acp stand-in is compiled (A7 grades /proc/<pid>/exe); no C compiler — NOT run here")
+@pytest.mark.parametrize("second,target", [("TERM", "pid"), ("TERM", "group"), ("INT", "group")],
+                         ids=["term-to-the-pid", "term-to-the-group", "int-to-the-group"])
+def test_e3r1_r1_c_a_second_signal_inside_the_relay_reach_removal(e3dir, second, target):
+    """R1, VERIFY-E3's shape (c): the pair's leg with a PATH `iptables` that holds the teardown's `-t nat -D`
+    for 2 s (timing only; then it runs the real binary with the same argv). SIGTERM goes to the runner's pid
+    while the pair runs; the second signal fires inside that hold. Afterwards: exit 143 (the first signal's),
+    no nat rule names the pair's interface, route_localnet is as before the run, nothing of the namespace is
+    left. A signal to the whole group also reaches the held `iptables`, a command `cleanup` started, which
+    must inherit the protection. On the PIN: route_localnet=1 outlived the run (pid), and so did D-051's
+    DNAT itself (group: the held removal was killed)."""
+    ns = "s0-05-buzz-acp"
+    host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
+    omni_port = 18145
+    held = e3dir / "nat-del-held"
+    shim = _iptables_shim(e3dir, f"echo held >> {held}; sleep 2", match="-t nat -D PREROUTING")
+    buzz = _pair_standin(e3dir)
+    env = _runner_env(e3dir, omni_port, path_prefix=shim, override={
+        "PINNED_BUZZ_ACP_EXE_REALPATH": str(buzz), "PINNED_BUZZ_ACP_SHA256": _sha256(buzz)})
+    env["S0_05_PAIR_IDENTITY"] = str(_identity_file(e3dir / "id" / "pair.env"))
+    evidence = e3dir / "evidence"
+    before = _route_localnet_state(host_if)
+    relay = omni = runner = None
+    try:
+        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay")
+        omni = _listener(e3dir, omni_port, name="omniroute")
+        runner = _runner_session(env, evidence, "buzz-acp")
+        _wait_for(lambda: _standin_records(e3dir, "pair"), 60, "the pair to start inside its namespace")
+        assert len(_nat_rules_naming(host_if)) == 1 and _route_localnet(host_if) == "1"   # the reach is live
+        _send(runner, "TERM", "pid")
+        _wait_for(held.exists, 60, "cleanup to enter the relay reach's nat removal")
+        assert runner.poll() is None, "the runner ended before the second signal"
+        _send(runner, second, target)
+        out, err = runner.communicate(timeout=120)
+        assert _nat_rules_naming(host_if) == [], (_nat_rules_naming(host_if), runner.returncode, err)
+        assert _route_localnet_state(host_if) == before, (_route_localnet_state(host_if), before, err)
+        assert _census(ns) == CLEAN, (_census(ns), runner.returncode, out, err)
+        assert runner.returncode == 143, (runner.returncode, out, err)
+        assert held.read_text() == "held\n"                      # one removal, held once
+        assert "=== checker ===" not in out and not (evidence / "units.json").exists()
+    finally:
+        _stop(runner)
+        _stop(relay)
+        _stop(omni)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _nat_rules_naming(host_if) == [] and _route_localnet(host_if) is None
+    assert _census(ns) == CLEAN
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("target", ["pid", "group"])
+def test_e3r1_r1_a_signal_while_cleanup_reaps_at_the_runs_own_end_changes_nothing(e3dir, target):
+    """R1 on the path where the run ENDS ON ITS OWN, so no stop handler ran and only `cleanup`'s own ignore
+    protects it. X2's fault (a PATH `ip` that SIGKILLs create's subshell at the veth add) leaves a namespace
+    this runner owns; the run goes on to its end (a not-run row, units.json, the census, the checker), and
+    `cleanup` then reaps that leftover; the same `ip` holds the reap's `netns del` for 2 s (timing only). A
+    SIGTERM fired inside that hold changes nothing: the status is the run's own (the checker's `exit 1 per
+    contract`) and nothing of the leftover remains. On the PIN the TERM's `exit 143` cut the reap short."""
+    ns = "s0-05-hermes-acp"
+    shim = e3dir / "shim"
+    shim.mkdir()
+    killed, held = e3dir / "killed-at-link-add", e3dir / "netns-del-held"
+    (shim / "ip").write_text(
+        "#!/bin/bash\n"
+        f'if [ "$1 $2" = "link add" ]; then touch {killed}; kill -KILL "$PPID"; exit 1; fi\n'
+        f'if [ "$1 $2 $3" = "netns del {ns}" ] && [ -e {killed} ]; then echo held >> {held}; sleep 2; fi\n'
+        f'exec {IP_REAL} "$@"\n')
+    (shim / "ip").chmod(0o755)
+    env = _runner_env(e3dir, 18146, path_prefix=shim)
+    evidence = e3dir / "evidence"
+    runner = None
+    try:
+        runner = _runner_session(env, evidence, "hermes-acp")
+        _wait_for(held.exists, 120, "cleanup to reap the leftover at the run's own end")
+        assert runner.poll() is None, "the runner ended before the signal"
+        _send(runner, "TERM", target)
+        out, err = runner.communicate(timeout=120)
+        assert _census(ns) == CLEAN, (_census(ns), runner.returncode, out, err)
+        assert out.rstrip().endswith("exit 1 per contract"), out     # the run reached its own end first
+        assert runner.returncode == 1, (runner.returncode, out, err)
+        assert held.read_text() == "held\n"
+    finally:
+        _stop(runner)
+        _lib(f'egress_ns_destroy {ns}')
+    assert _census(ns) == CLEAN
+
+
+def _s0_01_tree(e3dir, files, links=None, dirs=()):
+    """<e3dir>/s0-01-pinned/.markers holding <dirs>, <files> ({relative path: bytes}, mode 0644) and <links>
+    ({relative path: target}). Every entry is owned by the unit user: on the PC rocco owns S0-01's tree and
+    is the default unit user, so the stand-in unit can write where a real unit could. Returns .markers."""
+    markers = e3dir / "s0-01-pinned" / ".markers"
+    markers.mkdir(parents=True)
+    for rel in dirs:
+        (markers / rel).mkdir()
+    for rel, data in files.items():
+        (markers / rel).write_bytes(data)
+        (markers / rel).chmod(0o644)
+    for rel, target in (links or {}).items():
+        (markers / rel).symlink_to(target)
+    os.lchown(markers, *UNIT_USER)
+    for root, dirnames, filenames in os.walk(markers):
+        for name in dirnames + filenames:
+            os.lchown(os.path.join(root, name), *UNIT_USER)
+    return markers
+
+
+def _entries_under(markers):
+    """The census's entry count, measured independently: .markers itself and everything below it, never
+    descending through a symbolic link (os.walk's default)."""
+    return 1 + sum(len(dirnames) + len(filenames) for _, dirnames, filenames in os.walk(markers))
+
+
+def _changed_lines(stderr):
+    prefix = "s0-01-tree-changed: "
+    return [line[len(prefix):] for line in stderr.splitlines() if line.startswith(prefix)]
+
+
+def _sha_of(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _census_leg(e3dir, port, unit_code):
+    """ONE real runner leg for A2': the pinned base moved (the recorded override) to <e3dir>/s0-01-pinned;
+    the hermes-acp stand-in runs <unit_code> as the unit user inside its namespace and then exits, so its
+    row reads `launch exited within the settle window` while the census after the last unit still runs.
+    Returns the finished runner, the census file's content (None when absent) and its path."""
+    env = _runner_env(e3dir, port, override={"PINNED_HERMES_HOME": str(e3dir / "s0-01-pinned" / ".hermes-home")},
+                      extra=unit_code + "sys.exit(0)\n")
+    evidence = e3dir / "evidence"
+    listener = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+    finally:
+        _stop(listener)
+        _lib('egress_ns_destroy s0-05-hermes-acp')
+    assert _census("s0-05-hermes-acp") == CLEAN
+    reason = _unit_row(evidence, "hermes-acp")["reason"]
+    assert reason.startswith("launch exited within the settle window"), (reason, runner.stderr)
+    census_file = evidence / "s0-01-census.json"
+    return runner, json.loads(census_file.read_text()) if census_file.exists() else None, census_file
+
+
+# VERIFY-E3 F2's four writes (section 3), each blind to the PIN's directory-stat census.
+UNIT_WRITES = """
+M = @@M@@
+with open(os.path.join(M, "buzz-acp.pid"), "r+") as fh:          # in place, the same size: only a digest sees it
+    fh.write("9999\\n")
+os.truncate(os.path.join(M, "current-framedir"), 0)
+with open(os.path.join(M, "v2-run-1", "frames.jsonl"), "a") as fh:
+    fh.write('{"frame": 2}\\n')
+with open(os.path.join(M, "logs", "s0-05-new-file"), "w") as fh:  # one directory down, not a v2-* directory
+    fh.write("S0-05 new file one directory down\\n")
+"""
+
+
+@NEEDS_NETNS
+def test_e3r1_r2_each_in_place_write_fails_the_leg_by_name(e3dir):
+    """R2 (A2'): VERIFY-E3 F2's four writes — an in-place rewrite of .markers/buzz-acp.pid (the SAME size, so
+    only the sha256 sees it), a truncation of .markers/current-framedir, an append to a frames file, a new
+    file one directory down (in `logs`, a directory the PIN never looked inside) — are each named
+    (`s0-01-tree-changed: <path on disk>`), and the leg fails before the checker. The census file names them
+    relative to .markers with their full before and after records; forty untouched entries are counted on
+    both sides and never listed (the file never holds the whole entry list)."""
+    markers = _s0_01_tree(e3dir, dirs=["v2-run-1", "logs"], files={
+        "buzz-acp.pid": b"4242\n", "current-framedir": b"v2-run-1\n", "v2-run-1/frames.jsonl": b'{"frame": 1}\n',
+        "logs/leg.log": b"S0-01 leg\n", **{f"v2-run-1/untouched-{n:02d}.jsonl": b"frame %d\n" % n for n in range(40)}})
+    count = _entries_under(markers)
+    runner, census, census_file = _census_leg(e3dir, 18140, UNIT_WRITES.replace("@@M@@", repr(str(markers))))
+    named = {str(Path(p).relative_to(markers)) for p in _changed_lines(runner.stderr)}
+    writes = {"buzz-acp.pid", "current-framedir", "v2-run-1/frames.jsonl", "logs/s0-05-new-file"}
+    # `logs` may be named as well: a directory's size can count its entries (btrfs on the PC; ext4 here keeps 4096)
+    assert writes <= named and named - writes <= {"logs"}, runner.stderr
+    assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
+    assert f"=== S0-01's tree changed during the leg: the leg FAILS (census: {census_file}) ===" in runner.stderr
+    assert census["changed"] == sorted(named) and sorted(census["changed_records"]) == census["changed"], census
+    assert sorted(census) == ["after", "base", "before", "changed", "changed_records", "tree"], census
+    assert (census["before"]["entries"], census["after"]["entries"]) == (count, count + 1), census
+    assert census["before"]["sha256"] != census["after"]["sha256"], census
+    records = census["changed_records"]
+    file_record = {"type": "file", "mode": "0644", "uid": UNIT_USER[0], "gid": UNIT_USER[1]}
+    assert records["buzz-acp.pid"] == {"before": {**file_record, "size": 5, "sha256": _sha_of(b"4242\n")},
+                                       "after": {**file_record, "size": 5, "sha256": _sha_of(b"9999\n")}}, records
+    assert records["current-framedir"]["after"] == {**file_record, "size": 0, "sha256": _sha_of(b"")}, records
+    assert records["v2-run-1/frames.jsonl"]["after"]["sha256"] == _sha_of(b'{"frame": 1}\n{"frame": 2}\n'), records
+    new = records["logs/s0-05-new-file"]
+    assert new["before"] is None and new["after"]["sha256"] == _sha_of(b"S0-05 new file one directory down\n"), new
+    assert "untouched" not in census_file.read_text()                 # counted on both sides, never listed
+
+
+UNIT_LINKS = """
+M, OUT = @@M@@, @@OUT@@
+os.remove(os.path.join(M, "link-retargeted"))
+os.symlink("v2-run-1/frames.jsonl", os.path.join(M, "link-retargeted"))
+with open(os.path.join(OUT, "target.txt"), "w") as fh:            # the bytes BEHIND a link are not the tree's
+    fh.write("rewritten behind the link, and longer than before\\n")
+with open(os.path.join(OUT, "dir", "new-file"), "w") as fh:        # nor is a directory behind a link
+    fh.write("new behind the link\\n")
+"""
+
+
+@NEEDS_NETNS
+def test_e3r1_r2_a_symbolic_link_is_recorded_by_its_target_never_followed(e3dir):
+    """R2 (A2'): a symbolic link inside the tree is an entry recorded by its TARGET, never followed. The unit
+    retargets one link (named, with its old and new target), rewrites the bytes of an outside file a second
+    link points to, and adds a file inside an outside directory a third link points to: neither of those is
+    named, and nothing behind a link is ever counted."""
+    outside = e3dir / "outside"
+    (outside / "dir").mkdir(parents=True)
+    (outside / "target.txt").write_text("outside bytes\n")
+    for path in (outside, outside / "dir", outside / "target.txt"):
+        os.chown(path, *UNIT_USER)
+    markers = _s0_01_tree(
+        e3dir, dirs=["v2-run-1"], files={"buzz-acp.pid": b"4242\n", "v2-run-1/frames.jsonl": b"{}\n"},
+        links={"link-retargeted": "buzz-acp.pid", "link-to-outside-file": str(outside / "target.txt"),
+               "link-to-outside-dir": str(outside / "dir")})
+    count = _entries_under(markers)
+    runner, census, _ = _census_leg(e3dir, 18141, UNIT_LINKS.replace("@@M@@", repr(str(markers)))
+                                    .replace("@@OUT@@", repr(str(outside))))
+    assert (outside / "dir" / "new-file").exists() and "longer" in (outside / "target.txt").read_text()  # it ran
+    named = [str(Path(p).relative_to(markers)) for p in _changed_lines(runner.stderr)]
+    assert named == ["link-retargeted"], runner.stderr
+    assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
+    link = {"type": "link", "mode": "0777", "uid": UNIT_USER[0], "gid": UNIT_USER[1]}
+    assert census["changed_records"] == {"link-retargeted": {
+        "before": {**link, "size": len("buzz-acp.pid"), "target": "buzz-acp.pid"},
+        "after": {**link, "size": len("v2-run-1/frames.jsonl"), "target": "v2-run-1/frames.jsonl"}}}, census
+    assert census["before"]["entries"] == census["after"]["entries"] == count, census
+
+
+UNIT_NO_CHANGE = """
+M = @@M@@
+os.utime(os.path.join(M, "touched"), (1, 1))                       # new times: not compared
+tmp = os.path.join(M, ".replaced.tmp")                              # the same bytes under a new inode: not compared
+with open(tmp, "wb") as fh:
+    fh.write(b"same bytes\\n")
+os.chmod(tmp, 0o644)
+os.replace(tmp, os.path.join(M, "replaced"))
+"""
+
+
+@NEEDS_NETNS
+def test_e3r1_r2_an_unchanged_tree_passes(e3dir):
+    """R2 (A2'): a tree whose compared attributes do not change passes the census, and the leg goes on to its
+    checker. The unit does only what A2' does NOT compare: new times on one file, and a byte-identical
+    replacement of another (a new inode; the same type, mode, owner and bytes). Both sides carry the same
+    entry count and digest, and the census file names no entry. (The PIN compared times: it named .markers.)"""
+    markers = _s0_01_tree(e3dir, dirs=["v2-run-1"], links={"link": "buzz-acp.pid"}, files={
+        "buzz-acp.pid": b"4242\n", "touched": b"same bytes\n", "replaced": b"same bytes\n",
+        "v2-run-1/frames.jsonl": b"{}\n"})
+    count = _entries_under(markers)
+    inode = os.lstat(markers / "replaced").st_ino
+    runner, census, _ = _census_leg(e3dir, 18142, UNIT_NO_CHANGE.replace("@@M@@", repr(str(markers))))
+    assert os.lstat(markers / "replaced").st_ino != inode and os.lstat(markers / "touched").st_mtime == 1  # it ran
+    assert _changed_lines(runner.stderr) == [], runner.stderr
+    assert "=== checker ===" in runner.stdout, runner.stdout            # the census let the leg go on
+    assert census["changed"] == [] and census["changed_records"] == {} and census["tree"] == "present", census
+    assert census["before"] == census["after"] and census["before"]["entries"] == count, census
+
+
+@NEEDS_NETNS
+def test_e3r1_r2_a_census_that_cannot_be_taken_fails_the_leg(e3dir):
+    """R2, fail closed (this lane's addition to A2', flagged in its report): a census that cannot be taken
+    certifies nothing. The pinned base is a regular FILE, so <base>/.markers cannot be read (ENOTDIR, which is
+    not "absent"): the leg fails before the checker with the census failure named, and no census file is
+    written. At the PIN a crashed census left `census_changed` empty and the run went on to its checker."""
+    (e3dir / "s0-01-pinned").write_text("not a directory\n")
+    runner, census, _ = _census_leg(e3dir, 18143, "")
+    assert "=== S0-01's tree census failed (exit 1): the leg FAILS ===" in runner.stderr.splitlines(), runner.stderr
+    assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
+    assert census is None
