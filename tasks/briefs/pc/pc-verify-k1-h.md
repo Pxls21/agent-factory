@@ -1,7 +1,7 @@
 # VERIFY-K1-h — the targeted independent adversarial verify of K1-h: the vendored skill sets and the kit-root copies under `.claude/` as manifest rows (task #194)
 
-PIN: the post-push SHA of local efb4518 ("K1-h landed (task #137; GATED-PENDING-VERIFY; …)"), named in the dispatch prompt; read it
-with `git log --format='%h %s' origin/claude/soundbox-kit-migration-iz1jwf -8` and match the subject. Your worktree is at the PIN;
+PIN: 5276976 (the post-push SHA of local efb4518, "K1-h landed (task #137; GATED-PENDING-VERIFY; …)"; confirm it
+with `git log --format='%h %s' origin/claude/soundbox-kit-migration-iz1jwf -8` and match the subject). Your worktree is at the PIN;
 later heads may regenerate V and C for unrelated `.claude/` edits (task #150), which is not a finding against K1-h.
 LANE: pc-verify-k1-h
 ROLE: adversarial-verifier on the local route. The contract-gate predicate (D-031): a finding BLOCKS only if it is contract-mapped,

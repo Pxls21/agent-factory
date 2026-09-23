@@ -1,6 +1,6 @@
 # B11 — S0-02's four seed negative legs, so the proof can mint under the F16 floor (task #191)
 
-PIN: the post-push SHA of local c63a3a9 (B10's landing), named in the dispatch prompt; the boundary is byte-identical at local efb4518 (the boundary's blob ids are in the premise block; re-measure them first).
+PIN: 8d8c97e (the post-push SHA of local c63a3a9, B10's landing); the boundary is byte-identical at local efb4518 and at the origin head fa4532e (the boundary's blob ids are in the premise block; re-measure them first).
 LANE: s0-02-b11 (sandbox; agent `code-implementer`, in the SHARED tree, no worktree isolation). Honey `ultra` Lever-2: your report is
 DATA: files:lines, pasted counts, discrepancies, NOT-done. Do NOT spawn subagents.
 
