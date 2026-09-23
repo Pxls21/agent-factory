@@ -1,7 +1,7 @@
 # CD1: the S0-05 live-leg launch recipe, a contract amendment (coordinator, 2026-09-23)
 
-STATUS: DECIDED from measurements, except OD-1 (the relay bind), which is the owner's. This amendment feeds the E3 brief.
-E3 is written after E2-R1 lands, because both touch `proofs/S0-05/tools/pc/run_s0_05_units.sh`. Task #142.
+STATUS: DECIDED from measurements; OD-1 (the relay reach) DECIDED by the owner 2026-09-23 03:3xZ as D-051 (option 1; the owner delegated the choice). This amendment feeds the E3 brief.
+E2-R1 landed first (6f2589d), because both touch `proofs/S0-05/tools/pc/run_s0_05_units.sh`; E3 builds on it. Task #142.
 
 ## The defect (mine, returned by VERIFY-E2 as CD1)
 
@@ -127,7 +127,7 @@ and failing on it, with no relay error logged), and a child inherits its parent'
 local/private `hermes-acp` endpoint/process"). Rejected: one namespace per process. buzz-acp spawns the agent through
 `--agent-command` in its own namespace, and splitting them would need root inside buzz-acp. BLOCKED: the relay listens on
 `127.0.0.1:3999` only (probe 1), so C0 fails from every namespace. The runner records `not-run|positive control unreachable:
-relay bound to 127.0.0.1:3999` until OD-1 is decided.
+relay bound to 127.0.0.1:3999` until E3 builds OD-1's option 1 (D-051).
 
 **A7. The runner proves the unit ran.** At canary time it records the unit's pid from `ip netns pids <ns>`, the realpath of
 `/proc/<pid>/exe`, the sha256 of the entrypoint (argv[1] for the Python unit), and the Uid. The canaries run only if the record
@@ -148,7 +148,7 @@ derived value removes the chance.
 - The seed's wording question for the second assertion (containment property versus a routed variant). It stays the owner's, as
   E2 said.
 
-## OD-1, the owner's decision: how a namespace reaches the relay
+## OD-1, the owner's decision: how a namespace reaches the relay (DECIDED: option 1, D-051)
 
 The relay the pinned buzz-acp uses listens on `127.0.0.1:3999`, and a namespace has its own loopback. Options:
 

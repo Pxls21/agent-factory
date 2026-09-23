@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 04:0xZ — owner decisions recorded: D-051 (S0-05 relay reach = a leg-scoped DNAT, CD1 option 1), D-052 (Canny: port the deterministic core, C1 + C2), D-053 (jev-pruner stays parked in lanes); K1-h dispatched on the PC (PIN 74aa8c5).
+
 2026-09-23 03:5xZ — B9 landed GATED-PENDING-VERIFY (S0-02 replay leg: the second delivery gets only the post-boundary timeline bytes, proven an exact extension of the first; PC 175 passed twice, sandbox 154 passed / 21 PC-only skipped twice).
 
 2026-09-23 03:4xZ — J1-2 landed GATED-PENDING-VERIFY (the decision ledger: append-only canonical JSONL, row_id without source_digest, named refusals; 27 passed twice with J1-1's tests).
