@@ -1,0 +1,2978 @@
+diff --git a/scripts/decide-harvest b/scripts/decide-harvest
+new file mode 100755
+index 00000000..22b63bc4
+--- /dev/null
++++ b/scripts/decide-harvest
+@@ -0,0 +1,849 @@
++#!/usr/bin/env python3
++"""Build the passive decision ledger from committed report sources."""
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++from pathlib import Path, PurePosixPath
++import re
++import subprocess
++import sys
++from dataclasses import dataclass
++
++SCRIPT_ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(SCRIPT_ROOT / "src"))
++
++from agent_factory.decisions import DecisionStateError  # noqa: E402
++from agent_factory.decisions.ledger import append, make_row  # noqa: E402
++
++
++QUESTION_IDS = (
++    "ap.violates_row",
++    "b1.finding_kind",
++    "b1.finding_sev",
++    "b2.hit_role",
++    "d1.bug_echo_scores",
++    "v1.finding_class",
++    "wf.drift",
++)
++SOURCE_KINDS = ("incident_log", "lane_report", "transcript_jsonl", "verify_report")
++FINDING_CLASSES = frozenset(
++    {"BLOCKER", "FOLLOW-UP", "INFO", "UNVERIFIED", "CONTRACT-DEFECT", "KNOWN"}
++)
++BLOCKING_CLASSES = frozenset({"BLOCKER", "CONTRACT-DEFECT"})
++ROLE_ANSWERS = frozenset({"def", "caller", "config", "test", "other"})
++SEVERITY_ANSWERS = frozenset({"H", "M", "L"})
++KIND_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
++FINDING_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
++AP_RE = re.compile(r"\bAF-AP-\d+\b")
++INCIDENT_ANCHOR_RE = re.compile(r"^(?:- )?\*\*\d{4}-\d{2}-\d{2}\b")
++BULLET_FINDING_RE = re.compile(
++    r"^- \*\*(?P<id>[A-Za-z0-9][A-Za-z0-9._-]*) "
++    r"(?P<class>BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)\b"
++)
++BOUNDARY_RE = re.compile(
++    r"^(?:- \*\*BOUNDARY DEVIATION\*\*|\d+\. BOUNDARY DEVIATION)"
++    r"\s*(?:—|:|\*\*)(?P<tail>.*)$",
++    re.IGNORECASE,
++)
++MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+(?P<text>.+?)\s*$")
++BACKTICK_RE = re.compile(r"`([^`]+)`")
++PC_VERIFY_REPORT_RE = re.compile(r"^report-pc-verify-.+\.md$")
++BUG_ECHO_HEADERS = (
++    ("#", "Finding", "Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Blast Radius", "Fix Effort", "Status"),
++    ("#", "Finding", "Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Blast", "Effort", "Status"),
++)
++RATINGS = {
++    "Urgency": frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"}),
++    "Risk: Fix": frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"}),
++    "Risk: No Fix": frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"}),
++    "ROI": frozenset({"EXCELLENT", "GOOD", "MARGINAL", "POOR"}),
++    "Effort": frozenset({"TRIVIAL", "SMALL", "MEDIUM", "LARGE"}),
++}
++
++
++class UsageParser(argparse.ArgumentParser):
++    def error(self, message: str) -> None:
++        self.exit(64, f"decide-harvest: {message}\n")
++
++
++@dataclass(frozen=True)
++class Source:
++    path: str
++    kind: str
++    data: bytes
++    text: str
++    digest: str
++
++
++@dataclass(frozen=True)
++class Candidate:
++    line: int
++    question_id: str
++    producer: str
++    answer: str
++    state: dict
++    locator: str
++    reason: str | None = None
++
++
++@dataclass(frozen=True)
++class Refusal:
++    path: str
++    line: int
++    reason: str
++
++
++def _git(root: Path, *args: str, input_data: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
++    return subprocess.run(
++        ["git", "-C", str(root), *args],
++        input=input_data,
++        capture_output=True,
++        check=False,
++    )
++
++
++def _repo_root(raw_root: str) -> Path | None:
++    root = Path(raw_root).resolve()
++    probe = _git(root, "rev-parse", "--show-toplevel")
++    if probe.returncode != 0:
++        return None
++    try:
++        top = Path(probe.stdout.decode("utf-8", "strict").strip()).resolve()
++    except UnicodeDecodeError:
++        return None
++    return root if top == root else None
++
++
++def _kind(path: str) -> str | None:
++    if path == "docs/INCIDENT-LOG.md":
++        return "incident_log"
++    parts = PurePosixPath(path).parts
++    if len(parts) == 3 and parts[0] == "transcripts" and path.endswith(".jsonl"):
++        return "transcript_jsonl"
++    if len(parts) != 4 or parts[:2] != ("tasks", "briefs"):
++        return None
++    name = parts[-1]
++    if name.startswith("VERIFY-") and name.endswith("-report.md"):
++        return "verify_report"
++    if name.startswith("report-pc-verify-") and PC_VERIFY_REPORT_RE.fullmatch(name):
++        return "verify_report"
++    if not name.startswith("VERIFY-") and name.endswith("-report.md"):
++        return "lane_report"
++    if name.startswith("report-pc-") and not name.startswith("report-pc-verify-") and name.endswith(".md"):
++        return "lane_report"
++    return None
++
++
++def _tree_paths(root: Path) -> list[str] | None:
++    result = _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD")
++    if result.returncode != 0:
++        return None
++    try:
++        paths = [p.decode("utf-8", "strict") for p in result.stdout.split(b"\0") if p]
++    except UnicodeDecodeError:
++        return None
++    return sorted(paths, key=lambda p: p.encode("utf-8"))
++
++
++def _head_blob(root: Path, path: str) -> bytes | None:
++    result = _git(root, "cat-file", "blob", f"HEAD:{path}")
++    return result.stdout if result.returncode == 0 else None
++
++
++def _regular_worktree_bytes(root: Path, path: str) -> bytes | None:
++    target = root / path
++    try:
++        if not target.is_file() or target.is_symlink():
++            return None
++        return target.read_bytes()
++    except OSError:
++        return None
++
++
++def _admit(root: Path, requested: list[str]) -> tuple[list[Source] | None, tuple[int, str] | None]:
++    tree_paths = _tree_paths(root)
++    if tree_paths is None:
++        return None, (64, "decide-harvest: --root is not a git work tree")
++    if requested:
++        unknown = sorted((p for p in requested if _kind(p) is None), key=lambda p: p.encode("utf-8"))
++        if unknown:
++            return None, (5, f"harvest-source-unknown: {unknown[0]}")
++        paths = sorted(set(requested), key=lambda p: p.encode("utf-8"))
++    else:
++        paths = [p for p in tree_paths if _kind(p) is not None]
++
++    admitted: list[Source] = []
++    for path in paths:
++        data = _head_blob(root, path)
++        if data is None or _regular_worktree_bytes(root, path) != data:
++            return None, (4, f"harvest-source-uncommitted: {path}")
++        try:
++            text = data.decode("utf-8", "strict")
++        except UnicodeDecodeError:
++            return None, (3, f"harvest-source-unparseable: {path}:1 (bad-utf8)")
++        admitted.append(
++            Source(
++                path=path,
++                kind=_kind(path) or "",
++                data=data,
++                text=text,
++                digest=hashlib.sha256(data).hexdigest(),
++            )
++        )
++    return admitted, None
++
++
++def _split_table_row(line: str) -> list[str] | None:
++    stripped = line.strip()
++    if not stripped.startswith("|") or not stripped.endswith("|"):
++        return None
++    cells: list[str] = []
++    current: list[str] = []
++    escaped = False
++    for char in stripped[1:-1]:
++        if escaped:
++            current.append(char)
++            escaped = False
++        elif char == "\\":
++            current.append(char)
++            escaped = True
++        elif char == "|":
++            cells.append("".join(current).strip())
++            current = []
++        else:
++            current.append(char)
++    cells.append("".join(current).strip())
++    return cells
++
++
++def _is_separator(cells: list[str] | None) -> bool:
++    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
++
++
++def _collapse(text: str) -> str:
++    return re.sub(r"\s+", " ", text).strip()
++
++
++def _heading_text(lines: list[str], start: int) -> tuple[str | None, str | None]:
++    joined: list[str] = []
++    first = lines[start]
++    opening = first.find("**")
++    if opening < 0:
++        return None, "unterminated-heading"
++    joined.append(first[opening + 2 :])
++    for offset in range(10):
++        index = start + offset
++        if index >= len(lines):
++            break
++        piece = joined[0] if offset == 0 else lines[index]
++        close = piece.find("**")
++        if close >= 0:
++            prefix = joined[:-1] if offset else []
++            return _collapse(" ".join(prefix + [piece[:close]])), None
++        if offset:
++            joined.append(piece)
++    return None, "unterminated-heading"
++
++
++def _nearest_heading(lines: list[str], before: int) -> str:
++    for index in range(before - 1, -1, -1):
++        match = MARKDOWN_HEADING_RE.match(lines[index])
++        if match:
++            return _collapse(match.group("text"))
++    return "document"
++
++
++def _registry(text: str) -> dict[str, str]:
++    lines = text.splitlines()
++    heading = next((i for i, line in enumerate(lines) if line.startswith("## ANTI-PATTERN REGISTRY")), -1)
++    if heading < 0:
++        return {}
++    header_cells = _split_table_row("| id | mechanism | greppable signature | proven instance | status |")
++    for index in range(heading + 1, len(lines) - 1):
++        if _split_table_row(lines[index]) != header_cells or not _is_separator(_split_table_row(lines[index + 1])):
++            continue
++        rows: dict[str, str] = {}
++        for line in lines[index + 2 :]:
++            cells = _split_table_row(line)
++            if cells is None:
++                break
++            if len(cells) >= 2 and AP_RE.fullmatch(cells[0]):
++                rows[cells[0]] = cells[1]
++        return rows
++    return {}
++
++
++def _unique_ap_ids(text: str) -> list[str]:
++    return list(dict.fromkeys(AP_RE.findall(text)))
++
++
++def _ap_candidate(
++    *, line: int, path: str, title: str, row_id: str, row_title: str, producer: str
++) -> Candidate:
++    return Candidate(
++        line=line,
++        question_id="ap.violates_row",
++        producer=producer,
++        answer="yes",
++        state={
++            "action_kind": "report",
++            "action_target": path,
++            "action_excerpt": title,
++            "row_id": row_id,
++            "row_title": row_title,
++        },
++        locator=title[:200],
++    )
++
++
++def _parse_incident(source: Source, registry: dict[str, str]) -> list[Candidate]:
++    lines = source.text.splitlines()
++    candidates: list[Candidate] = []
++    for index, line in enumerate(lines):
++        if not INCIDENT_ANCHOR_RE.match(line):
++            continue
++        heading, reason = _heading_text(lines, index)
++        if reason:
++            candidates.append(Candidate(index + 1, "", "", "", {}, "", reason))
++            continue
++        assert heading is not None
++        for row_id in _unique_ap_ids(heading):
++            title = registry.get(row_id)
++            if title is None:
++                candidates.append(Candidate(index + 1, "", "", "", {}, "", "no-registry-row"))
++                continue
++            candidates.append(
++                _ap_candidate(
++                    line=index + 1,
++                    path=source.path,
++                    title=heading,
++                    row_id=row_id,
++                    row_title=title,
++                    producer="coordinator",
++                )
++            )
++    return candidates
++
++
++def _report_lane(path: str) -> str:
++    name = PurePosixPath(path).name
++    if name.startswith("VERIFY-") and name.endswith("-report.md"):
++        return name[: -len("-report.md")]
++    if name.startswith("report-"):
++        lane = name[len("report-") :]
++        if lane.endswith(".md"):
++            lane = lane[:-3]
++        return lane
++    raise ValueError(path)
++
++
++def _title_column(headers: list[str]) -> int | None:
++    for index, header in enumerate(headers):
++        lowered = header.strip().lower()
++        if lowered.startswith("finding") or lowered == "what":
++            return index
++    return None
++
++
++def _parse_class(cell: str) -> str | None:
++    raw = cell.strip().strip("*").strip()
++    match = re.fullmatch(
++        r"(BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)"
++        r"(?:, (?:SOLID|UNSURE)| \([^\r\n()]+\))?",
++        raw,
++    )
++    return match.group(1) if match else None
++
++
++def _report_paths(text: str, root: Path, tree: set[str]) -> list[str]:
++    found: set[str] = set()
++    for token in BACKTICK_RE.findall(text):
++        candidate = re.sub(r":\d+(?:(?:-|–)\d+)?(?:[,:].*)?$", "", token)
++        if candidate.startswith(str(root) + os.sep):
++            candidate = os.path.relpath(candidate, root).replace(os.sep, "/")
++        if candidate in tree:
++            found.add(candidate)
++    return sorted(found)
++
++
++def _finding_candidates(
++    *, source: Source, root: Path, tree: set[str], registry: dict[str, str]
++) -> list[Candidate]:
++    lines = source.text.splitlines()
++    records: list[tuple[int, str, str, str, str]] = []
++    anchors: list[int] = [i for i, line in enumerate(lines) if BULLET_FINDING_RE.match(line)]
++    for index in anchors:
++        match = BULLET_FINDING_RE.match(lines[index])
++        assert match is not None
++        heading, reason = _heading_text(lines, index)
++        if reason:
++            records.append((index, "", "", "", reason))
++            continue
++        assert heading is not None
++        prefix = f"{match.group('id')} {match.group('class')} — "
++        if prefix not in heading:
++            records.append((index, "", "", "", "bad-title"))
++            continue
++        title = heading.split(prefix, 1)[1]
++        end = len(lines)
++        for later in range(index + 1, len(lines)):
++            if BULLET_FINDING_RE.match(lines[later]) or MARKDOWN_HEADING_RE.match(lines[later]):
++                end = later
++                break
++        records.append(
++            (index, match.group("id"), match.group("class"), title, "\n".join(lines[index:end]))
++        )
++
++    index = 0
++    while index + 1 < len(lines):
++        headers = _split_table_row(lines[index])
++        if (
++            headers
++            and len(headers) >= 2
++            and headers[0].strip().lower() in {"#", "id"}
++            and headers[1].strip().lower() == "class"
++            and _is_separator(_split_table_row(lines[index + 1]))
++        ):
++            title_index = _title_column(headers)
++            row_index = index + 2
++            while row_index < len(lines):
++                cells = _split_table_row(lines[row_index])
++                if cells is None:
++                    break
++                if len(cells) < len(headers):
++                    records.append((row_index, "", "", "", "bad-table-row"))
++                elif title_index is None:
++                    records.append((row_index, "", "", "", "no-title-column"))
++                else:
++                    finding_id = cells[0].strip()
++                    finding_class = _parse_class(cells[1])
++                    if not FINDING_ID_RE.fullmatch(finding_id):
++                        records.append((row_index, "", "", "", "bad-finding-id"))
++                    elif finding_class is None:
++                        records.append((row_index, "", "", "", "bad-class"))
++                    else:
++                        records.append(
++                            (row_index, finding_id, finding_class, cells[title_index], lines[row_index])
++                        )
++                row_index += 1
++            index = row_index
++        else:
++            index += 1
++
++    candidates: list[Candidate] = []
++    lane = _report_lane(source.path)
++    for line_index, finding_id, finding_class, title, text_or_reason in sorted(records):
++        if not finding_id:
++            candidates.append(Candidate(line_index + 1, "", "", "", {}, "", text_or_reason))
++            continue
++        locator = f"{finding_id} @ {_nearest_heading(lines, line_index)}"
++        candidates.append(
++            Candidate(
++                line=line_index + 1,
++                question_id="v1.finding_class",
++                producer="adversarial-verifier",
++                answer=finding_class,
++                state={
++                    "lane": lane,
++                    "finding_id": finding_id,
++                    "title": title,
++                    "paths": _report_paths(text_or_reason, root, tree),
++                    "disposition": "BLOCKING" if finding_class in BLOCKING_CLASSES else "NON-BLOCKING",
++                },
++                locator=locator,
++            )
++        )
++        for row_id in _unique_ap_ids(title if BULLET_FINDING_RE.match(lines[line_index]) else text_or_reason):
++            row_title = registry.get(row_id)
++            if row_title is None:
++                candidates.append(Candidate(line_index + 1, "", "", "", {}, "", "no-registry-row"))
++                continue
++            candidates.append(
++                Candidate(
++                    line=line_index + 1,
++                    question_id="ap.violates_row",
++                    producer="adversarial-verifier",
++                    answer="yes",
++                    state={
++                        "action_kind": "report",
++                        "action_target": source.path,
++                        "action_excerpt": title,
++                        "row_id": row_id,
++                        "row_title": row_title,
++                    },
++                    locator=locator,
++                )
++            )
++    return candidates
++
++
++def _strip_rating(value: str) -> str:
++    value = value.strip().strip("*").strip()
++    value = re.sub(r"^[^A-Za-z0-9]+\s*", "", value)
++    return value.upper()
++
++
++def _rating_answer(headers: tuple[str, ...], cells: list[str]) -> str | None:
++    values = dict(zip(headers, cells))
++    parsed: dict[str, str] = {}
++    for key in ("Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Effort"):
++        value = _strip_rating(values[key])
++        if value not in RATINGS[key]:
++            return None
++        parsed[key] = value.lower()
++    blast = _strip_rating(values["Blast"] if "Blast" in values else values["Blast Radius"])
++    blast_match = re.fullmatch(r"(1 FILE|[1-9]\d* FILES|[1-9]\d*\+ FILES)", blast)
++    if not blast_match:
++        return None
++    if blast == "1 FILE":
++        blast_answer = "1-file"
++    elif blast.endswith("+ FILES"):
++        blast_answer = blast.split("+", 1)[0] + "-plus-files"
++    else:
++        blast_answer = blast.split(" ", 1)[0] + "-files"
++    return (
++        f"urgency={parsed['Urgency']};risk_fix={parsed['Risk: Fix']};"
++        f"risk_no_fix={parsed['Risk: No Fix']};roi={parsed['ROI']};"
++        f"blast={blast_answer};effort={parsed['Effort']}"
++    )
++
++
++def _parse_lane_report(source: Source) -> list[Candidate]:
++    lines = source.text.splitlines()
++    candidates: list[Candidate] = []
++    for index, line in enumerate(lines):
++        match = BOUNDARY_RE.match(line)
++        if match:
++            observed_parts = [match.group("tail").lstrip(" —:*")]
++            later = index + 1
++            while later < len(lines):
++                if not lines[later].strip() or MARKDOWN_HEADING_RE.match(lines[later]) or re.match(r"^(?:[-*+] |\d+\. )", lines[later]):
++                    break
++                observed_parts.append(lines[later])
++                later += 1
++            candidates.append(
++                Candidate(
++                    line=index + 1,
++                    question_id="wf.drift",
++                    producer="code-implementer",
++                    answer="yes",
++                    state={
++                        "step_id": "boundary-respected",
++                        "drift_kind": "out-of-boundary",
++                        "expected": "touch only the files the brief names",
++                        "observed": _collapse(" ".join(observed_parts)),
++                    },
++                    locator=f"BOUNDARY DEVIATION @ {_nearest_heading(lines, index)}",
++                )
++            )
++
++    index = 0
++    while index + 1 < len(lines):
++        headers_list = _split_table_row(lines[index])
++        headers = tuple(headers_list or ())
++        if headers in BUG_ECHO_HEADERS and _is_separator(_split_table_row(lines[index + 1])):
++            heading = _nearest_heading(lines, index)
++            ids = _unique_ap_ids(heading)
++            row_index = index + 2
++            while row_index < len(lines):
++                cells = _split_table_row(lines[row_index])
++                if cells is None:
++                    break
++                locator_id = cells[0] if cells else "?"
++                if not ids:
++                    candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "no-class-slug"))
++                elif len(cells) != len(headers):
++                    candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "bad-rating"))
++                else:
++                    answer = _rating_answer(headers, cells)
++                    if answer is None:
++                        candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "bad-rating"))
++                    else:
++                        candidates.append(
++                            Candidate(
++                                line=row_index + 1,
++                                question_id="d1.bug_echo_scores",
++                                producer="bug-echo",
++                                answer=answer,
++                                state={"class_slug": ids[0], "finding_title": cells[1]},
++                                locator=f"{locator_id} @ {heading}",
++                            )
++                        )
++                row_index += 1
++            index = row_index
++        else:
++            index += 1
++    return candidates
++
++
++def _content_blocks(record: dict) -> list[dict]:
++    message = record.get("message")
++    return message.get("content", []) if isinstance(message, dict) and isinstance(message.get("content"), list) else []
++
++
++def _tool_result_payload(block: dict) -> str | None:
++    content = block.get("content")
++    if isinstance(content, str):
++        return content
++    if not isinstance(content, list):
++        return None
++    text_blocks = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)]
++    if text_blocks and text_blocks[-1].startswith("agentId:"):
++        text_blocks.pop()
++    return "".join(text_blocks)
++
++
++def _reviewer_rows(payload: object) -> tuple[list[list[object]] | None, str | None]:
++    if not isinstance(payload, dict) or set(payload) != {"c", "r", "n"}:
++        return None, "bad-payload"
++    if payload["c"] != ["id", "sev", "file", "line", "kind", "msg"] or not isinstance(payload["r"], list) or type(payload["n"]) is not int:
++        return None, "bad-payload"
++    if payload["n"] != len(payload["r"]):
++        return None, "n-mismatch"
++    rows = payload["r"]
++    if any(
++        not isinstance(row, list)
++        or len(row) != 6
++        or not all(isinstance(row[index], str) and row[index] for index in (0, 1, 2, 4, 5))
++        or type(row[3]) is not int
++        for row in rows
++    ):
++        return None, "bad-payload"
++    return rows, None
++
++
++def _scout_rows(payload: object) -> tuple[list[dict] | None, str | None]:
++    if not isinstance(payload, dict) or set(payload) != {"hits", "n"}:
++        return None, "bad-payload"
++    if not isinstance(payload["hits"], list) or type(payload["n"]) is not int:
++        return None, "bad-payload"
++    if payload["n"] != len(payload["hits"]):
++        return None, "n-mismatch"
++    required = {"id", "sym", "file", "line", "role"}
++    for hit in payload["hits"]:
++        if (
++            not isinstance(hit, dict)
++            or not required.issubset(hit)
++            or set(hit) - (required | {"note"})
++            or not all(isinstance(hit[key], str) and hit[key] for key in ("id", "sym", "file", "role"))
++            or type(hit["line"]) is not int
++            or ("note" in hit and not isinstance(hit["note"], str))
++        ):
++            return None, "bad-payload"
++    return payload["hits"], None
++
++
++def _parse_transcript(source: Source) -> list[Candidate]:
++    records: list[dict | None] = []
++    candidates: list[Candidate] = []
++    for line_number, raw in enumerate(source.text.splitlines(), 1):
++        try:
++            value = json.loads(raw)
++        except json.JSONDecodeError:
++            records.append(None)
++            candidates.append(Candidate(line_number, "", "", "", {}, "", "bad-json"))
++            continue
++        records.append(value if isinstance(value, dict) else None)
++        if not isinstance(value, dict):
++            candidates.append(Candidate(line_number, "", "", "", {}, "", "bad-json"))
++
++    dispatches: list[tuple[int, str, str]] = []
++    for index, record in enumerate(records):
++        if record is None or record.get("type") != "assistant":
++            continue
++        for block in _content_blocks(record):
++            if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") not in {"Agent", "Task"}:
++                continue
++            inputs = block.get("input")
++            role = inputs.get("subagent_type") if isinstance(inputs, dict) else None
++            tool_id = block.get("id")
++            if role in {"hive-scout", "hive-reviewer"}:
++                if not isinstance(tool_id, str) or not tool_id:
++                    candidates.append(Candidate(index + 1, "", "", "", {}, "", "bad-payload"))
++                    continue
++                dispatches.append((index, tool_id, role))
++
++    for anchor, tool_id, role in dispatches:
++        result: tuple[int, dict, dict] | None = None
++        for later in range(anchor + 1, len(records)):
++            record = records[later]
++            if record is None or record.get("type") != "user":
++                continue
++            for block in _content_blocks(record):
++                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == tool_id:
++                    result = (later, record, block)
++                    break
++            if result:
++                break
++        if result is None:
++            candidates.append(Candidate(anchor + 1, "", "", "", {}, "", "no-result"))
++            continue
++        result_index, record, block = result
++        payload_text = _tool_result_payload(block)
++        try:
++            payload = json.loads(payload_text) if payload_text is not None else None
++        except json.JSONDecodeError:
++            payload = None
++        if payload is None:
++            candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-payload"))
++            continue
++        uuid = record.get("uuid")
++        if not isinstance(uuid, str) or not uuid:
++            candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-payload"))
++            continue
++        if role == "hive-scout":
++            rows, reason = _scout_rows(payload)
++            if reason:
++                candidates.append(Candidate(result_index + 1, "", "", "", {}, "", reason))
++                continue
++            assert rows is not None
++            for hit in rows:
++                if hit["role"] not in ROLE_ANSWERS:
++                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "unknown-role"))
++                    continue
++                candidates.append(
++                    Candidate(
++                        line=result_index + 1,
++                        question_id="b2.hit_role",
++                        producer="hive-scout",
++                        answer=hit["role"],
++                        state={"sym": hit["sym"], "file": hit["file"], "snippet": hit.get("note", "")},
++                        locator=f"{uuid}#{hit['id']}",
++                    )
++                )
++        else:
++            rows, reason = _reviewer_rows(payload)
++            if reason:
++                candidates.append(Candidate(result_index + 1, "", "", "", {}, "", reason))
++                continue
++            assert rows is not None
++            for finding_id, severity, file_path, _line, finding_kind, message in rows:
++                if severity not in SEVERITY_ANSWERS:
++                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "unknown-sev"))
++                    continue
++                if not isinstance(finding_kind, str) or not KIND_RE.fullmatch(finding_kind):
++                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-kind"))
++                    continue
++                state = {"file": file_path, "kind": finding_kind, "msg": message}
++                locator = f"{uuid}#{finding_id}"
++                candidates.extend(
++                    [
++                        Candidate(result_index + 1, "b1.finding_sev", "hive-reviewer", severity, state, locator),
++                        Candidate(result_index + 1, "b1.finding_kind", "hive-reviewer", finding_kind, state, locator),
++                    ]
++                )
++    return candidates
++
++
++def _candidates(source: Source, *, root: Path, tree: set[str], registry: dict[str, str]) -> list[Candidate]:
++    if source.kind == "incident_log":
++        return _parse_incident(source, registry)
++    if source.kind == "verify_report":
++        return _finding_candidates(source=source, root=root, tree=tree, registry=registry)
++    if source.kind == "lane_report":
++        return _parse_lane_report(source)
++    return _parse_transcript(source)
++
++
++def _source_ref(source: Source, locator: str) -> dict:
++    return {
++        "kind": source.kind,
++        "path": source.path,
++        "source_digest": source.digest,
++        "locator": locator,
++    }
++
++
++def _parse_args(argv: list[str]) -> argparse.Namespace:
++    parser = UsageParser(add_help=True)
++    parser.add_argument("--out", required=True)
++    parser.add_argument("--root", default=str(SCRIPT_ROOT))
++    parser.add_argument("sources", nargs="*")
++    return parser.parse_args(argv)
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = _parse_args(sys.argv[1:] if argv is None else argv)
++    root = _repo_root(args.root)
++    if root is None:
++        print("decide-harvest: --root is not a git work tree", file=sys.stderr)
++        return 64
++    output_path = Path(args.out).resolve()
++    if output_path == root or root in output_path.parents:
++        relative_output = output_path.relative_to(root).as_posix()
++        if relative_output and _head_blob(root, relative_output) is not None:
++            print(f"harvest-output-source-conflict: {relative_output}", file=sys.stderr)
++            return 4
++    sources, error = _admit(root, args.sources)
++    if error:
++        code, message = error
++        print(message, file=sys.stderr)
++        return code
++    assert sources is not None
++
++    tree_paths = _tree_paths(root)
++    assert tree_paths is not None
++    tree = set(tree_paths)
++    incident_data = _head_blob(root, "docs/INCIDENT-LOG.md")
++    registry = _registry(incident_data.decode("utf-8", "strict")) if incident_data is not None else {}
++
++    counts = {question_id: 0 for question_id in QUESTION_IDS}
++    kinds = {kind: 0 for kind in SOURCE_KINDS}
++    no_records = 0
++    refused: list[Refusal] = []
++    skipped = 0
++
++    for source in sources:
++        kinds[source.kind] += 1
++        parsed = _candidates(source, root=root, tree=tree, registry=registry)
++        if not parsed:
++            no_records += 1
++        for candidate in parsed:
++            if candidate.reason:
++                refusal = Refusal(source.path, candidate.line, candidate.reason)
++                refused.append(refusal)
++                print(
++                    f"harvest-source-unparseable: {refusal.path}:{refusal.line} ({refusal.reason})",
++                    file=sys.stderr,
++                )
++                continue
++            try:
++                row = make_row(
++                    producer=candidate.producer,
++                    question_id=candidate.question_id,
++                    raw_state=candidate.state,
++                    incumbent_answer=candidate.answer,
++                    source_ref=_source_ref(source, candidate.locator),
++                    root=root,
++                )
++                append(args.out, row)
++            except DecisionStateError as exc:
++                if exc.reason == "decision-row-duplicate":
++                    skipped += 1
++                    print(str(exc), file=sys.stderr)
++                    continue
++                reason = f"state:{exc.reason}"
++                refused.append(Refusal(source.path, candidate.line, reason))
++                print(
++                    f"harvest-source-unparseable: {source.path}:{candidate.line} ({reason})",
++                    file=sys.stderr,
++                )
++                continue
++            counts[candidate.question_id] += 1
++
++    per_type = ", ".join(f"{question_id}={counts[question_id]}" for question_id in QUESTION_IDS)
++    print(f"harvest: {sum(counts.values())} rows, per question type: {per_type}")
++    print("negatives: 0 (hand-labeled in J2)")
++    by_kind = ", ".join(f"{kind}={kinds[kind]}" for kind in SOURCE_KINDS)
++    print(
++        f"sources: {len(sources)} read ({by_kind}), {no_records} with no records; "
++        f"refused: {len(refused)} records; skipped: {skipped} duplicates"
++    )
++    return 3 if refused else 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/tasks/briefs/laya/J1-3-report.md b/tasks/briefs/laya/J1-3-report.md
+new file mode 100644
+index 00000000..e3ea9607
+--- /dev/null
++++ b/tasks/briefs/laya/J1-3-report.md
+@@ -0,0 +1,228 @@
++# J1-3 report — `scripts/decide-harvest` (task #120, PC continuation, `code-implementer`)
++
++STATUS: PROPOSAL COMPLETE; sandbox-side adversarial verification is NOT done. The real run produced 207 rows, but every question type is below KC-J7's 200-label floor. Stop at the ledger.
++
++EVIDENCE TIERS: VERIFIED = file bytes/modes, subprocess tests, mutation reds, gate output, and pinned-corpus harvest output from this session. INFERRED = whether each refused corpus shape is legitimate prose outside the frozen grammar. ASSUMED = none.
++
++## 1. Premise re-measure (step 1)
++
++```
++$ date -u +%Y-%m-%dT%H:%MZ; git rev-parse --short origin/claude/soundbox-kit-migration-iz1jwf; git rev-parse --short HEAD
++2026-09-23T16:26Z
++0e60603
++0e60603
++$ ls scripts/decide-harvest tests/test_decide_harvest.py tests/fixtures/decisions/sources
++ls: cannot access 'scripts/decide-harvest': No such file or directory
++ls: cannot access 'tests/test_decide_harvest.py': No such file or directory
++ls: cannot access 'tests/fixtures/decisions/sources': No such file or directory
++$ (origin blob | worktree blob | lines | path)
++377ccd53da0c 377ccd53da0c 24 src/agent_factory/decisions/__init__.py
++607b65b613e2 607b65b613e2 78 src/agent_factory/decisions/canonical.py
++bf04415d72c1 bf04415d72c1 395 src/agent_factory/decisions/volatile.py
++71fc398a5340 71fc398a5340 616 src/agent_factory/decisions/ledger.py
++```
++File identities: MATCH the premise block (all four blob ids and line counts). No CONTRACT-INVALID stop.
++Origin moved c6dcd61 -> 0e60603 (6 commits: B12, T94 brief, J1-3 brief, VERIFY-J1-0-R6 brief, two ledger-plane commits); the
++decisions package is untouched by them. `docs/INCIDENT-LOG.md` changed (+3/-1) and `tasks/briefs/s0-02-support/B12-report.md` is new,
++so the corpus counts at the real run can differ from the premise block by those files.
++
++## DISCREPANCIES (found during the build; each reported, none fixed or self-accepted)
++
++**D-1 — predecessor discrepancy, resolved by AMENDMENT A1.**
++The predecessor correctly measured that `_strip_pin_suffix` (`src/agent_factory/decisions/volatile.py:142-148`) strips `--<7..40 hex>` only at the END of the value. AMENDMENT A1 changes the harvester input to the filename without `report-` and without the final `.md`; J1-1 remains the only PIN stripper. The implementation does that at `scripts/decide-harvest:331-340`. The two-pin fixture proves one normalized state lane and two distinct `source_ref.path` values (`tests/test_decide_harvest.py:359-379`). The real corpus's only PC finding table has no declared title column and is refused before it can yield a PC finding row, so the real run contains 0 PC `v1.finding_class` rows; this does not weaken the fixture proof.
++
++**D-2 — one lane-gate invocation exposed a relative `LANE_GATE_DIR` wrapper defect.** The gate itself returned rc 0 and a RESULT line, but its wrapper also printed `/tmp/lane_gate...: No such file or directory` because the relative log path was resolved after the script changed directory. I reran with an absolute `LANE_GATE_DIR`; both final RESULT lines are clean. This is tooling only; no project file was changed.
++
++**D-3 — code-intelligence blind spots.** GitNexus's clone index is 839 commits stale and cannot resolve this new untracked script; its post-edit `detect_changes` reports one changed file but zero changed symbols. Ripwire likewise cannot resolve `scripts/decide-harvest` as a symbol, while its independent `exercises tests/test_decide_harvest.py` maps 39 test symbols to 25 decision-package symbols. The subprocess suite and lane-gate results are the load-bearing evidence.
++
++**D-4 — final context pack screen.** `scripts/lane_context.sh` reports AP-32 at `scripts/decide-harvest:193`, the `hashlib.sha256` digest required by the ledger `source_digest` contract. RUN classification: intentional cryptographic identity, not an insecure password hash or hardcoded digest. The test-file screen has 0 hits.
++
++**D-5 — bounded report lint.** Final line after the report's verbatim stderr expansion: `report_lint: 60 refs — OK 11, NEAR 0, MISS 3, UNCHECKABLE 46, UNRESOLVED 0 (worktree)`. The three MISS rows cite one source file at several exact refusal lines or an exact range whose first line has no report prose token in common; the floor passes (`OK 11 >= --min-refs 10`). I stopped under the bounded rule.
++
++## 2. Implementation and strict grammars
++
++- CLI, git-root validation, admission, output/source conflict guard: `scripts/decide-harvest:65-196`, `scripts/decide-harvest:760-849`.
++- Closed source-kind table: `scripts/decide-harvest:120-137`.
++- Incident registry and entry grammar: `scripts/decide-harvest:199-328`.
++- Verify finding grammar, A1 lane derivation, path extraction: `scripts/decide-harvest:331-480`.
++- Lane drift and bug-echo grammar: `scripts/decide-harvest:483-579`.
++- Transcript dispatch/result grammar: `scripts/decide-harvest:582-738`.
++- Every accepted record passes through `make_row`; every write passes through `append`: `scripts/decide-harvest:797-839`.
++
++Closed refusal reasons implemented: `bad-utf8`, `unterminated-heading`, `no-registry-row`, `bad-title`, `bad-table-row`, `no-title-column`, `bad-finding-id`, `bad-class`, `no-class-slug`, `bad-rating`, `bad-json`, `bad-payload`, `n-mismatch`, `no-result`, `unknown-role`, `unknown-sev`, `bad-kind`, and `state:<DecisionStateError reason>`.
++
++Admission whole-run errors are exact and pre-write: `harvest-source-unknown` rc 5, `harvest-source-uncommitted` rc 4, `harvest-output-source-conflict` rc 4, and usage/root errors rc 64. Record refusals emit `harvest-source-unparseable` and preserve all other accepted rows before exit 3.
++
++## 3. Fixture and RED -> GREEN evidence
++
++Hand-computed fixture: 10 rows: `ap.violates_row=3`, `b1.finding_kind=1`, `b1.finding_sev=1`, `b2.hit_role=1`, `d1.bug_echo_scores=1`, `v1.finding_class=2`, `wf.drift=1`. Four sources, zero no-record sources, zero refusals, zero duplicates. The exact stdout and one replayed provenance row per type are asserted by `test_fixture_harvest_exact_rows_and_provenance` at `tests/test_decide_harvest.py:101-133`.
++
++The final suite covers fixture output, re-landing identity, duplicate re-run, six required malformed records, all-source admission before write, all seven zero slots, redaction, committed HEAD bytes after an admission-time worktree swap, A1 two-PIN normalization, path suffixes, payload field types, blast vocabulary, both scout and reviewer `n`, suffix admission, strict drift delimiter, class-table IDs, missing tool IDs, output/source conflict, append-only writing, usage, and two exact negative controls (`tests/test_decide_harvest.py:101-581`).
++
++RED evidence was produced against scratch copies; no production file was mutated:
++
++| control | mutant | named test | observed RED |
++|---|---|---|---|
++| dirty source | remove worktree/HEAD byte comparison | `test_admission_untracked_modified_unknown_and_existing_out_untouched` | expected rc 4/uncommitted, got record parse path |
++| committed bytes | reread worktree after admission | `test_source_bytes_come_from_head_after_admission` | probe rc 99 vs 0 |
++| reviewer count | disable reviewer `n` check | `test_reviewer_n_mismatch_is_refused` | expected rc 3, got 0 |
++| A1 lane | omit final `.md` removal | `test_pc_report_lane_pin_is_normalized_only_by_decision_state` | state retained `--1234abc.md` |
++| strict drift | accept text after bold anchor without delimiter | `test_boundary_deviation_requires_the_declared_delimiter` | unexpected `wf.drift` row |
++| table ID | disable ID regex | `test_class_table_rejects_invalid_finding_id` | expected rc 3, got 0 |
++| dispatch ID | ignore missing tool-use id | `test_hive_anchor_with_missing_tool_id_is_refused` | `no-result` replaced exact `bad-payload` |
++| output conflict | disable committed-output guard | `test_committed_output_path_is_refused_before_harvest` | expected rc 4, got 3 |
++| exact negative | invalid disposition | `test_fixture_negative_control_rejects_mutated_state` | exact `decision-state-bad-enum` |
++| exact negative | unknown source | `test_fixture_negative_control_exact_error_for_unknown_source` | exact rc 5 and exact stderr |
++
++Final GREEN, twice, same set `87e28761f102`:
++```
++33 passed in 8.32s
++33 passed in 8.77s
++```
++
++## 4. Mutant table (scratch copies only)
++
++| mutant | diff line | killer | observed reason |
++|---|---|---|---|
++| m1 | replace unparseable stderr print with `pass` | malformed-record parameter set | exact stderr full-match failed (`None is not None`) |
++| m2 | admit without comparing worktree bytes | admission test | rc/error mismatch |
++| m3 | add an undeclared type to the printed type set | exact fixture stdout test | exit/stdout assertion failed |
++| m4 | remove duplicate stderr print | duplicate re-run test | expected 10 duplicate lines, got 0 |
++| m5 | replace admitted HEAD bytes with a later worktree read | HEAD-after-admission test | probe rc 99 vs 0 |
++| m6 | disable reviewer `n` equality | reviewer mismatch test | expected rc 3, got 0 |
++| m7 | synthesize `row_title="unknown"` | missing-registry malformed test | expected rc 3, got 0 |
++| m8 | replace `append` with direct `open().write()` | append-only AST test | expected one `append` call, got 0 |
++| m9 | omit final `.md` removal | A1 two-PIN test | lane retained PIN suffix |
++
++All 9/9 mutants were killed. Hollow-green rate: 0/9 = 0%.
++
++## 5. Gates
++
++New suite, set `87e28761f102`, direct xdist runs:
++```
++33 passed in 8.32s
++33 passed in 8.77s
++```
++The seed AC 4 command is the same test file; `scripts/test_summary.sh` pasted:
++```
++pytest-summary: 33 passed in 27.07s
++```
++
++Unchanged J1 suites, set `70db5efe1e9b`:
++```
++239 passed, 1 skipped in 21.71s
++pytest-summary: 239 passed, 1 skipped in 55.24s
++SKIPPED [1] tests/test_decisions_ledger.py:707: `pytest.skip`("test_short_write_real_tmpfs: not root, cannot mount tmpfs")
++```
++
++Static and boundary screens:
++```
++python -m pyflakes scripts/decide-harvest tests/test_decide_harvest.py  # rc 0, no output
++no_laya_in_gates: 40 files scanned, clean
++--- TEST_SCREEN over 2 path(s): 0 hits over 2 files ---
++```
++
++Archived PIN gate, two independent one-run invocations, same bytes and count:
++```
++RESULT: rev=feb26d7c930d files=8 deleted=0 runs=1 tests=87e28761f102 identical=yes rc=0 summary="33 passed in 31.52s"
++RESULT: rev=feb26d7c930d files=8 deleted=0 runs=1 tests=87e28761f102 identical=yes rc=0 summary="33 passed in 20.83s"
++```
++
++## 6. Real run: KC-J7 measurement
++
++Private clone SHA:
++```
++feb26d7c930d059fbe5c364273163f571a63d31b
++```
++First run exit 3; exact stdout:
++```
++harvest: 207 rows, per question type: ap.violates_row=108, b1.finding_kind=0, b1.finding_sev=0, b2.hit_role=0, d1.bug_echo_scores=0, v1.finding_class=97, wf.drift=2
++negatives: 0 (hand-labeled in J2)
++sources: 235 read (incident_log=1, lane_report=141, transcript_jsonl=0, verify_report=93), 224 with no records; refused: 39 records; skipped: 0 duplicates
++```
++Second fresh-output run returned the same exit 3, stdout, and 39 stderr lines. `cmp ../scratch/j13/real.jsonl ../scratch/j13/real2.jsonl` returned 0. The private clone was removed.
++
++Every type is below 200. KC-J7 therefore stops at the ledger. The committed corpus has no transcript JSONL, no hive returns, and no bug-echo rating table accepted by the grammar.
++
++Refusals, all 39 stderr lines, verbatim:
++
++```
++harvest-source-unparseable: tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md:725 (bad-class)
++harvest-source-unparseable: tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md:743 (bad-class)
++harvest-source-unparseable: tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md:550 (bad-class)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:749 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:751 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:760 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:762 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:764 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R4-report.md:765 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R5-report.md:466 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R5-report.md:505 (bad-title)
++harvest-source-unparseable: tasks/briefs/laya/VERIFY-J1-0-R5-report.md:525 (bad-title)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:209 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:210 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:211 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:212 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:213 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:214 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:215 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:216 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:217 (no-title-column)
++harvest-source-unparseable: tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:218 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:428 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:429 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:430 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:431 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:432 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:433 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:434 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:435 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:436 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:437 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:438 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:439 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:440 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:441 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:442 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:443 (no-title-column)
++harvest-source-unparseable: tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:444 (no-title-column)
++```
++
++Classification:
++- `bad-class` (3): `tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md:725`, `:743`; `tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md:550`. These are legitimate compound class spellings (`FOLLOW-UP / UNVERIFIED`, bold `CONTRACT-DEFECT`) outside the frozen grammar. The grammar is intentionally narrower; it was not widened.
++- `bad-title` (9): `tasks/briefs/laya/VERIFY-J1-0-R4-report.md:749`, `:751`, `:760`, `:762`, `:764`, `:765`; `tasks/briefs/laya/VERIFY-J1-0-R5-report.md:466`, `:505`, `:525`. These anchors use parenthetical qualifiers between CLASS and the required ` — ` separator. They are legitimate report prose but malformed for the frozen record grammar. The grammar was not widened.
++- `no-title-column` (27): `tasks/briefs/pc/report-pc-verify-m3.md--e776dd0.md:209-218` (10); `tasks/briefs/s0-01-a5k-support/VERIFY-CK12-report.md:428-444` (17). Both tables have class as column two but no header starting with `finding` or equal to `what`; each row is correctly refused under the frozen grammar.
++
++Duplicate same-output control: first and second runs both exited 3 because the 39 malformed records remain; the second run printed `harvest: 0 rows`, `skipped: 207 duplicates`, 207 duplicate stderr lines plus the 39 refusal lines, and left the ledger bytes unchanged by test and implementation contract.
++
++## 7. File identity
++
++```
++befe924d3656  scripts/decide-harvest  849 lines  mode 755
++ebee1158ce7f  tests/test_decide_harvest.py  581 lines
++8ad8a1734113  tests/fixtures/decisions/sources/docs/INCIDENT-LOG.md  18 lines
++d8229b8ef80d  tests/fixtures/decisions/sources/tasks/briefs/x/VERIFY-X-report.md  8 lines
++f006b55cca8c  tests/fixtures/decisions/sources/tasks/briefs/x/X-report.md  10 lines
++a185177a8006  tests/fixtures/decisions/sources/transcripts/x/t.jsonl  4 lines
++fea8a8f62686  tests/fixtures/decisions/sources/src/existing.py  2 lines
++```
++Only boundary files changed. `src/agent_factory/decisions/*` and gate files remain unchanged.
++
++## 8. Self-attack
++
++1. The harvester could accidentally read mutable worktree bytes. Ruled out by admission equality plus the controlled post-admission swap: rows retain the original HEAD digest; m5 fails with rc 99.
++2. The broad markdown patterns could mint rows from prose that only resembles a record. Ruled out by root-anchored kind classification, exact anchors, closed IDs/classes/ratings, exact headings/delimiters, and the real-run refusals rather than silent widening.
++3. A PC report PIN could leak into normalized state. Ruled out by A1's pre-normalization final `.md` removal and two source paths at different PINs producing the same `state.lane` with no 7+ hex run.
++
++## 9. Known limits / NOT done
++
++- NOT independently accepted. This build-lane output is a proposal for the sandbox adversarial-verifier lane.
++- NOT production-runnable or minted as data. The real JSONL stays in scratch and is not committed.
++- `b1.finding_kind.state.kind` duplicates its answer; `v1.finding_class.state.disposition` derives from its answer. J1-1 follow-up only.
++- `b2.hit_role.state.snippet` is empty unless the scout supplies `note`.
++- Incident rows model the report action (`action_kind=report`, target `docs/INCIDENT-LOG.md`), not the hawk's original triggering action.
++- No transcript JSONL exists in the pinned committed corpus, so the real run cannot exercise hive returns; fixture subprocess tests exercise the real script and real decision pipeline instead.
++- One existing J1 ledger test skips because this non-root host cannot mount tmpfs. No sudo was requested.
++- No process was left running; the private clone was removed. Git status contains only the staged predecessor report plus the untracked boundary files for coordinator harvest.
++
++Reasoning record for coordinator commit: rejected widening source grammars to increase label yield because strict refusal is the contract; admission completes for every source before rows; HEAD blobs are captured once and parsed after admission; `make_row` then `append` is the only accepted write path. Retro: no new general anti-pattern beyond the already reported relative `LANE_GATE_DIR` discrepancy; nothing to bake in this lane.
+diff --git a/tests/fixtures/decisions/sources/docs/INCIDENT-LOG.md b/tests/fixtures/decisions/sources/docs/INCIDENT-LOG.md
+new file mode 100644
+index 00000000..fd49ef92
+--- /dev/null
++++ b/tests/fixtures/decisions/sources/docs/INCIDENT-LOG.md
+@@ -0,0 +1,18 @@
++# Incident log
++
++## ANTI-PATTERN REGISTRY
++
++| id | mechanism | greppable signature | proven instance | status |
++|---|---|---|---|---|
++| AF-AP-1 | uncommitted source accepted | dirty report | fixture | OPEN |
++| AF-AP-2 | malformed record silently dropped | bad class | fixture | OPEN |
++
++**2026-01-01 — AF-AP-1 happened**
++
++Body mentions AF-AP-2 but does not attribute it.
++
++- **2026-01-02 — AF-AP-2 happened** — one line.
++
++**2026-01-03 — entry without an id**
++
++No decision row here.
+diff --git a/tests/fixtures/decisions/sources/src/existing.py b/tests/fixtures/decisions/sources/src/existing.py
+new file mode 100644
+index 00000000..00c5b965
+--- /dev/null
++++ b/tests/fixtures/decisions/sources/src/existing.py
+@@ -0,0 +1,2 @@
++def thing():
++    return 1
+diff --git a/tests/fixtures/decisions/sources/tasks/briefs/x/VERIFY-X-report.md b/tests/fixtures/decisions/sources/tasks/briefs/x/VERIFY-X-report.md
+new file mode 100644
+index 00000000..84534293
+--- /dev/null
++++ b/tests/fixtures/decisions/sources/tasks/briefs/x/VERIFY-X-report.md
+@@ -0,0 +1,8 @@
++# Findings
++
++- **F-1 BLOCKER — the blocker in `src/existing.py:7`**
++  Evidence in `src/existing.py:7`; ignore `src/missing.py:9`.
++
++| id | class | what | evidence |
++|---|---|---|---|
++| F-2 | INFO, SOLID | AF-AP-2 follow-up | `src/existing.py:8` |
+diff --git a/tests/fixtures/decisions/sources/tasks/briefs/x/X-report.md b/tests/fixtures/decisions/sources/tasks/briefs/x/X-report.md
+new file mode 100644
+index 00000000..3ad1434c
+--- /dev/null
++++ b/tests/fixtures/decisions/sources/tasks/briefs/x/X-report.md
+@@ -0,0 +1,10 @@
++# Build
++
++- **BOUNDARY DEVIATION** — touched an extra fixture
++  because the contract required it
++
++# AF-AP-1 bug echo
++
++| # | Finding | Urgency | Risk: Fix | Risk: No Fix | ROI | Blast | Effort | Status |
++|---|---|---|---|---|---|---|---|---|
++| 1 | repeated source admission | HIGH | LOW | HIGH | EXCELLENT | 2 files | SMALL | Open |
+diff --git a/tests/fixtures/decisions/sources/transcripts/x/t.jsonl b/tests/fixtures/decisions/sources/transcripts/x/t.jsonl
+new file mode 100644
+index 00000000..5b5ddb0c
+--- /dev/null
++++ b/tests/fixtures/decisions/sources/transcripts/x/t.jsonl
+@@ -0,0 +1,4 @@
++{"message":{"content":[{"id":"tool-scout","input":{"subagent_type":"hive-scout"},"name":"Agent","type":"tool_use"}]},"type":"assistant","uuid":"dispatch-scout"}
++{"message":{"content":[{"content":[{"text":"{\"hits\":[{\"id\":\"H1\",\"sym\":\"thing\",\"file\":\"src/existing.py\",\"line\":7,\"role\":\"def\"}],\"n\":1}","type":"text"},{"text":"agentId: scout-1","type":"text"}],"tool_use_id":"tool-scout","type":"tool_result"}]},"type":"user","uuid":"result-scout"}
++{"message":{"content":[{"id":"tool-review","input":{"subagent_type":"hive-reviewer"},"name":"Task","type":"tool_use"}]},"type":"assistant","uuid":"dispatch-review"}
++{"message":{"content":[{"content":[{"text":"{\"c\":[\"id\",\"sev\",\"file\",\"line\",\"kind\",\"msg\"],\"r\":[[\"R1\",\"H\",\"src/existing.py\",7,\"logic-bug\",\"review finding\"]],\"n\":1}","type":"text"}],"tool_use_id":"tool-review","type":"tool_result"}]},"type":"user","uuid":"result-review"}
+diff --git a/tests/test_decide_harvest.py b/tests/test_decide_harvest.py
+new file mode 100644
+index 00000000..2cace474
+--- /dev/null
++++ b/tests/test_decide_harvest.py
+@@ -0,0 +1,581 @@
++from __future__ import annotations
++
++import ast
++import os
++from pathlib import Path
++import re
++import shutil
++import subprocess
++import sys
++
++import pytest
++
++from agent_factory.decisions import DecisionStateError, decision_state
++from agent_factory.decisions.ledger import replay
++
++
++ROOT = Path(os.environ.get("DECIDE_HARVEST_TEST_ROOT", Path(__file__).resolve().parents[1]))
++SCRIPT = ROOT / "scripts" / "decide-harvest"
++FIXTURE = ROOT / "tests" / "fixtures" / "decisions" / "sources"
++GIT_ENV = {
++    **os.environ,
++    "GIT_AUTHOR_NAME": "J1 fixture",
++    "GIT_AUTHOR_EMAIL": "j1@example.invalid",
++    "GIT_COMMITTER_NAME": "J1 fixture",
++    "GIT_COMMITTER_EMAIL": "j1@example.invalid",
++    "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
++    "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
++}
++TYPE_COUNTS = {
++    "ap.violates_row": 3,
++    "b1.finding_kind": 1,
++    "b1.finding_sev": 1,
++    "b2.hit_role": 1,
++    "d1.bug_echo_scores": 1,
++    "v1.finding_class": 2,
++    "wf.drift": 1,
++}
++SUMMARY = (
++    "harvest: 10 rows, per question type: ap.violates_row=3, "
++    "b1.finding_kind=1, b1.finding_sev=1, b2.hit_role=1, "
++    "d1.bug_echo_scores=1, v1.finding_class=2, wf.drift=1"
++)
++SOURCES = (
++    "sources: 4 read (incident_log=1, lane_report=1, transcript_jsonl=1, "
++    "verify_report=1), 0 with no records; refused: 0 records; skipped: 0 duplicates"
++)
++
++
++def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
++    return subprocess.run(
++        ["git", "-C", str(repo), *args],
++        check=check,
++        capture_output=True,
++        text=True,
++        env=GIT_ENV,
++    )
++
++
++def _commit(repo: Path, message: str) -> None:
++    _git(repo, "add", ".")
++    _git(repo, "commit", "-q", "-m", message)
++
++
++def _make_repo(tmp_path: Path) -> Path:
++    repo = tmp_path / "repo"
++    shutil.copytree(FIXTURE, repo)
++    (repo / "scripts").mkdir(exist_ok=True)
++    shutil.copy2(SCRIPT, repo / "scripts" / "decide-harvest")
++    shutil.copytree(ROOT / "src", repo / "src", dirs_exist_ok=True)
++    _git(repo, "init", "-q")
++    _commit(repo, "fixture")
++    return repo
++
++
++def _run(repo: Path, out: Path, *sources: str) -> subprocess.CompletedProcess[str]:
++    return subprocess.run(
++        [sys.executable, str(SCRIPT), "--root", str(repo), "--out", str(out), *sources],
++        check=False,
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++
++
++def _mutate_and_commit(repo: Path, path: str, old: str, new: str) -> None:
++    target = repo / path
++    text = target.read_text(encoding="utf-8")
++    assert old in text
++    target.write_text(text.replace(old, new, 1), encoding="utf-8")
++    _commit(repo, f"mutate {path}")
++
++
++def _rows_by_question(path: Path) -> dict[str, list[dict]]:
++    rows = replay(path)
++    grouped = {question_id: [] for question_id in TYPE_COUNTS}
++    for row in rows:
++        grouped[row["question_id"]].append(row)
++    return grouped
++
++
++def test_fixture_harvest_exact_rows_and_provenance(tmp_path):
++    repo = _make_repo(tmp_path)
++    out = tmp_path / "ledger.jsonl"
++    result = _run(repo, out)
++
++    assert result.returncode == 0
++    assert result.stderr == ""
++    assert result.stdout.splitlines() == [
++        SUMMARY,
++        "negatives: 0 (hand-labeled in J2)",
++        SOURCES,
++    ]
++    grouped = _rows_by_question(out)
++    assert {key: len(rows) for key, rows in grouped.items()} == TYPE_COUNTS
++    expected = {
++        "ap.violates_row": ("yes", "incident_log", "docs/INCIDENT-LOG.md", "2026-01-01 — AF-AP-1 happened"),
++        "b1.finding_kind": ("logic-bug", "transcript_jsonl", "transcripts/x/t.jsonl", "result-review#R1"),
++        "b1.finding_sev": ("H", "transcript_jsonl", "transcripts/x/t.jsonl", "result-review#R1"),
++        "b2.hit_role": ("def", "transcript_jsonl", "transcripts/x/t.jsonl", "result-scout#H1"),
++        "d1.bug_echo_scores": ("urgency=high;risk_fix=low;risk_no_fix=high;roi=excellent;blast=2-files;effort=small", "lane_report", "tasks/briefs/x/X-report.md", "1 @ AF-AP-1 bug echo"),
++        "v1.finding_class": ("BLOCKER", "verify_report", "tasks/briefs/x/VERIFY-X-report.md", "F-1 @ Findings"),
++        "wf.drift": ("yes", "lane_report", "tasks/briefs/x/X-report.md", "BOUNDARY DEVIATION @ Build"),
++    }
++    for question_id, want in expected.items():
++        row = grouped[question_id][0]
++        got = (
++            row["incumbent_answer"],
++            row["source_ref"]["kind"],
++            row["source_ref"]["path"],
++            row["source_ref"]["locator"],
++        )
++        assert got == want
++    assert grouped["ap.violates_row"][0]["state"]["row_title"] == "uncommitted source accepted"
++
++
++def test_registry_heading_accepts_the_committed_qualified_form(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(
++        repo,
++        "docs/INCIDENT-LOG.md",
++        "## ANTI-PATTERN REGISTRY",
++        "## ANTI-PATTERN REGISTRY (owner mandate)",
++    )
++    out = tmp_path / "qualified-registry.jsonl"
++    result = _run(repo, out, "docs/INCIDENT-LOG.md")
++    assert result.returncode == 0
++    assert result.stderr == ""
++    assert len(replay(out)) == 2
++
++
++def test_determinism_and_relanding_stability(tmp_path):
++    repo = _make_repo(tmp_path)
++    first = tmp_path / "first.jsonl"
++    second = tmp_path / "second.jsonl"
++    assert _run(repo, first).returncode == 0
++    assert _run(repo, second).returncode == 0
++    assert first.read_bytes() == second.read_bytes()
++    before = {(row["row_id"], row["state_digest"]) for row in replay(first)}
++    before_source_digests = {row["source_ref"]["source_digest"] for row in replay(first)}
++
++    for path in (
++        "docs/INCIDENT-LOG.md",
++        "tasks/briefs/x/VERIFY-X-report.md",
++        "tasks/briefs/x/X-report.md",
++        "transcripts/x/t.jsonl",
++    ):
++        target = repo / path
++        if path.endswith(".jsonl"):
++            target.write_text(target.read_text(encoding="utf-8").replace('"dispatch-scout"', '"dispatch-scout-v2"'), encoding="utf-8")
++        else:
++            target.write_text("\n" + target.read_text(encoding="utf-8"), encoding="utf-8")
++    _commit(repo, "reland")
++    relanded = tmp_path / "relanded.jsonl"
++    assert _run(repo, relanded).returncode == 0
++    after = {(row["row_id"], row["state_digest"]) for row in replay(relanded)}
++    after_source_digests = {row["source_ref"]["source_digest"] for row in replay(relanded)}
++    assert after == before
++    assert after_source_digests.isdisjoint(before_source_digests)
++
++
++def test_duplicate_rerun_prints_every_skip_and_preserves_bytes(tmp_path):
++    repo = _make_repo(tmp_path)
++    out = tmp_path / "ledger.jsonl"
++    assert _run(repo, out).returncode == 0
++    before = out.read_bytes()
++    result = _run(repo, out)
++    assert result.returncode == 0
++    assert out.read_bytes() == before
++    assert result.stdout.splitlines()[0].startswith("harvest: 0 rows, per question type:")
++    assert result.stdout.splitlines()[-1].endswith("refused: 0 records; skipped: 10 duplicates")
++    assert len(result.stderr.splitlines()) == 10
++    assert all(line.startswith("decision-row-duplicate: ") for line in result.stderr.splitlines())
++
++
++@pytest.mark.parametrize(
++    ("path", "old", "new", "reason"),
++    [
++        (
++            "docs/INCIDENT-LOG.md",
++            "**2026-01-01 — AF-AP-1 happened**\n\nBody mentions AF-AP-2 but does not attribute it.\n\n- **2026-01-02",
++            "**2026-01-01 — AF-AP-1 happened\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\n\n- **2026-01-02",
++            "unterminated-heading",
++        ),
++        ("tasks/briefs/x/VERIFY-X-report.md", "| F-2 | INFO, SOLID |", "| F-2 | FOLLOW-UP / UNVERIFIED |", "bad-class"),
++        ("docs/INCIDENT-LOG.md", "AF-AP-1 happened", "AF-AP-9 happened", "no-registry-row"),
++        ("transcripts/x/t.jsonl", '\\\"n\\\":1}', '\\\"n\\\":2}', "n-mismatch"),
++        ("transcripts/x/t.jsonl", '\\\"role\\\":\\\"def\\\"', '\\\"role\\\":\\\"helper\\\"', "unknown-role"),
++        ("tasks/briefs/x/X-report.md", "| HIGH | LOW | HIGH | EXCELLENT |", "| HIGH | LOW | HIGH | AMAZING |", "bad-rating"),
++    ],
++)
++def test_malformed_record_refused_by_name_and_other_rows_survive(tmp_path, path, old, new, reason):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(repo, path, old, new)
++    out = tmp_path / "ledger.jsonl"
++    result = _run(repo, out)
++    assert result.returncode == 3
++    expected_lines = {
++        "docs/INCIDENT-LOG.md": {10},
++        "tasks/briefs/x/VERIFY-X-report.md": {8},
++        "transcripts/x/t.jsonl": {2},
++        "tasks/briefs/x/X-report.md": {10},
++    }
++    match = re.fullmatch(
++        rf"harvest-source-unparseable: {re.escape(path)}:(\d+) \({re.escape(reason)}\)\n",
++        result.stderr,
++    )
++    assert match is not None
++    assert int(match.group(1)) in expected_lines[path]
++    assert "refused: 1 records" in result.stdout
++    assert replay(out)
++
++
++def test_admission_untracked_modified_unknown_and_existing_out_untouched(tmp_path):
++    repo = _make_repo(tmp_path)
++    out = tmp_path / "ledger.jsonl"
++    untracked = "tasks/briefs/x/NEW-report.md"
++    (repo / untracked).write_text("# new\n", encoding="utf-8")
++    result = _run(repo, out, untracked)
++    assert (result.returncode, result.stderr) == (4, f"harvest-source-uncommitted: {untracked}\n")
++    assert not out.exists()
++
++    tracked = "tasks/briefs/x/X-report.md"
++    original = (repo / tracked).read_text(encoding="utf-8")
++    (repo / tracked).write_text(original.replace("# Build", "# Changed", 1), encoding="utf-8")
++    out.write_bytes(b"keep\n")
++    result = _run(repo, out, tracked)
++    assert (result.returncode, result.stderr) == (4, f"harvest-source-uncommitted: {tracked}\n")
++    assert out.read_bytes() == b"keep\n"
++
++    result = _run(repo, out, "README.md")
++    assert (result.returncode, result.stderr) == (5, "harvest-source-unknown: README.md\n")
++    assert out.read_bytes() == b"keep\n"
++
++
++def test_all_requested_sources_are_admitted_before_any_rows_are_written(tmp_path):
++    repo = _make_repo(tmp_path)
++    out = tmp_path / "out.jsonl"
++    dirty = "tasks/briefs/x/X-report.md"
++    target = repo / dirty
++    target.write_text(
++        target.read_text(encoding="utf-8").replace("# Build", "# Dirty", 1),
++        encoding="utf-8",
++    )
++    result = _run(repo, out, "docs/INCIDENT-LOG.md", dirty)
++    assert (result.returncode, result.stderr) == (4, f"harvest-source-uncommitted: {dirty}\n")
++    assert not out.exists()
++
++
++def test_subset_prints_all_seven_types_with_zeros(tmp_path):
++    repo = _make_repo(tmp_path)
++    result = _run(repo, tmp_path / "subset.jsonl", "docs/INCIDENT-LOG.md")
++    assert result.returncode == 0
++    assert result.stdout.splitlines()[0] == (
++        "harvest: 2 rows, per question type: ap.violates_row=2, "
++        "b1.finding_kind=0, b1.finding_sev=0, b2.hit_role=0, "
++        "d1.bug_echo_scores=0, v1.finding_class=0, wf.drift=0"
++    )
++
++
++def test_secret_text_is_redacted_through_make_row(tmp_path):
++    repo = _make_repo(tmp_path)
++    secret = "sk-1234567890abcdef"
++    _mutate_and_commit(repo, "tasks/briefs/x/VERIFY-X-report.md", "the blocker", f"the blocker {secret}")
++    _mutate_and_commit(repo, "transcripts/x/t.jsonl", "review finding", f"review finding {secret}")
++    out = tmp_path / "ledger.jsonl"
++    assert _run(repo, out).returncode == 0
++    assert secret.encode() not in out.read_bytes()
++    assert b"<redacted:sk>" in out.read_bytes()
++
++
++def test_clean_tree_harvests_head_bytes(tmp_path):
++    repo = _make_repo(tmp_path)
++    out = tmp_path / "ledger.jsonl"
++    result = _run(repo, out, "tasks/briefs/x/X-report.md")
++    assert result.returncode == 0
++    assert len(replay(out)) == 2
++    assert _git(repo, "status", "--porcelain").stdout == ""
++
++
++def test_source_bytes_come_from_head_after_admission(tmp_path):
++    repo = _make_repo(tmp_path)
++    source = "tasks/briefs/x/X-report.md"
++    original = (repo / source).read_bytes()
++    replacement = original.replace(b"# Build", b"# Changed", 1)
++    probe = repo / "probe.py"
++    probe.write_text(
++        """
++import hashlib
++import os
++from pathlib import Path
++import runpy
++
++source = Path(os.environ["SOURCE"])
++original = source.read_bytes()
++replacement = original.replace(b"# Build", b"# Changed", 1)
++module = runpy.run_path(os.environ["SCRIPT"], run_name="decide_harvest_probe")
++real = module["_regular_worktree_bytes"]
++armed = iter((True, False))
++
++def swap(root, path):
++    data = real(root, path)
++    if next(armed, False):
++        source.write_bytes(replacement)
++    return data
++
++module["_regular_worktree_bytes"].__globals__["_regular_worktree_bytes"] = swap
++ledger = __import__("agent_factory.decisions.ledger", fromlist=["replay"])
++code = module["main"]([
++    "--root", os.environ["ROOT"], "--out", os.environ["OUT"], os.environ["REL"]
++])
++rows = ledger.replay(os.environ["OUT"])
++expected = hashlib.sha256(original).hexdigest()
++if any(row["source_ref"]["source_digest"] != expected for row in rows):
++    raise SystemExit(99)
++raise SystemExit(code)
++""".lstrip(),
++        encoding="utf-8",
++    )
++    out = tmp_path / "head-only.jsonl"
++    result = subprocess.run(
++        [sys.executable, str(probe)],
++        check=False,
++        capture_output=True,
++        text=True,
++        env={
++            **os.environ,
++            "ROOT": str(repo),
++            "SCRIPT": str(SCRIPT),
++            "SOURCE": str(repo / source),
++            "REL": source,
++            "OUT": str(out),
++        },
++    )
++    assert result.returncode == 0
++    assert len(replay(out)) == 2
++    assert (repo / source).read_bytes() == replacement
++
++
++def test_pc_report_lane_pin_is_normalized_only_by_decision_state(tmp_path):
++    repo = _make_repo(tmp_path)
++    source = repo / "tasks/briefs/x/report-pc-verify-k1.md--1234abc.md"
++    source.write_text((repo / "tasks/briefs/x/VERIFY-X-report.md").read_text(encoding="utf-8"), encoding="utf-8")
++    _commit(repo, "first pin")
++    first = tmp_path / "first.jsonl"
++    result = _run(repo, first, source.relative_to(repo).as_posix())
++    assert result.returncode == 0
++    rows = [row for row in replay(first) if row["question_id"] == "v1.finding_class"]
++    assert {row["state"]["lane"] for row in rows} == {"pc-verify-k1.md"}
++    assert all(not re.search(r"[0-9a-f]{7,}", row["state"]["lane"]) for row in rows)
++
++    second_source = repo / "tasks/briefs/x/report-pc-verify-k1.md--7654def.md"
++    second_source.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
++    _commit(repo, "second pin")
++    second = tmp_path / "second.jsonl"
++    result = _run(repo, second, second_source.relative_to(repo).as_posix())
++    assert result.returncode == 0
++    second_rows = [row for row in replay(second) if row["question_id"] == "v1.finding_class"]
++    assert {row["state"]["lane"] for row in second_rows} == {"pc-verify-k1.md"}
++    assert {row["source_ref"]["path"] for row in rows} != {row["source_ref"]["path"] for row in second_rows}
++
++
++def test_report_path_suffixes_are_canonicalized_and_sorted(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(
++        repo,
++        "tasks/briefs/x/VERIFY-X-report.md",
++        "Evidence in `src/existing.py:7`; ignore `src/missing.py:9`.",
++        "Evidence in `src/existing.py:8-10`, `src/existing.py:7`; ignore `src/missing.py:9`.",
++    )
++    out = tmp_path / "paths.jsonl"
++    assert _run(repo, out, "tasks/briefs/x/VERIFY-X-report.md").returncode == 0
++    row = next(row for row in replay(out) if row["question_id"] == "v1.finding_class" and row["state"]["finding_id"] == "F-1")
++    assert row["state"]["paths"] == ["src/existing.py"]
++
++
++def test_transcript_payload_field_types_fail_closed(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(repo, "transcripts/x/t.jsonl", '\\\"line\\\":7', '\\\"line\\\":true')
++    out = tmp_path / "out.jsonl"
++    result = _run(repo, out, "transcripts/x/t.jsonl")
++    assert result.returncode == 3
++    assert result.stderr == "harvest-source-unparseable: transcripts/x/t.jsonl:2 (bad-payload)\n"
++    assert len(replay(out)) == 2
++
++
++@pytest.mark.parametrize(
++    ("text", "expected"),
++    [
++        ("1 file", "blast=1-file"),
++        ("2 files", "blast=2-files"),
++        ("3+ files", "blast=3-plus-files"),
++    ],
++)
++def test_bug_echo_blast_vocabulary(tmp_path, text, expected):
++    repo = _make_repo(tmp_path)
++    if text != "2 files":
++        _mutate_and_commit(repo, "tasks/briefs/x/X-report.md", "2 files", text)
++    out = tmp_path / "ratings.jsonl"
++    assert _run(repo, out, "tasks/briefs/x/X-report.md").returncode == 0
++    row = next(row for row in replay(out) if row["question_id"] == "d1.bug_echo_scores")
++    assert expected in row["incumbent_answer"]
++
++
++def test_reviewer_n_mismatch_is_refused(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(
++        repo,
++        "transcripts/x/t.jsonl",
++        '\\\"review finding\\\"]],\\\"n\\\":1}',
++        '\\\"review finding\\\"]],\\\"n\\\":2}',
++    )
++    out = tmp_path / "reviewer-n.jsonl"
++    result = _run(repo, out, "transcripts/x/t.jsonl")
++    assert result.returncode == 3
++    assert result.stderr == "harvest-source-unparseable: transcripts/x/t.jsonl:4 (n-mismatch)\n"
++    assert len(replay(out)) == 1
++
++
++def test_unknown_report_suffix_is_rejected(tmp_path):
++    repo = _make_repo(tmp_path)
++    source = repo / "tasks/briefs/x/report-pc-verify-x.md.bak"
++    source.write_text("# not a declared report shape\n", encoding="utf-8")
++    _commit(repo, "unknown shape")
++    result = _run(repo, tmp_path / "out.jsonl", source.relative_to(repo).as_posix())
++    assert (result.returncode, result.stderr) == (
++        5,
++        "harvest-source-unknown: tasks/briefs/x/report-pc-verify-x.md.bak\n",
++    )
++
++
++def test_non_pin_pc_verify_report_shape_is_harvested(tmp_path):
++    repo = _make_repo(tmp_path)
++    source = repo / "tasks/briefs/x/report-pc-verify-k1-h.md"
++    source.write_text(
++        (repo / "tasks/briefs/x/VERIFY-X-report.md").read_text(encoding="utf-8"),
++        encoding="utf-8",
++    )
++    _commit(repo, "pc report")
++    out = tmp_path / "pc.jsonl"
++    result = _run(repo, out, source.relative_to(repo).as_posix())
++    assert result.returncode == 0
++    rows = [row for row in replay(out) if row["question_id"] == "v1.finding_class"]
++    assert {row["state"]["lane"] for row in rows} == {"pc-verify-k1-h"}
++
++
++def test_boundary_deviation_requires_the_declared_delimiter(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(
++        repo,
++        "tasks/briefs/x/X-report.md",
++        "- **BOUNDARY DEVIATION** — touched an extra fixture",
++        "- **BOUNDARY DEVIATION** touched an extra fixture",
++    )
++    out = tmp_path / "boundary.jsonl"
++    result = _run(repo, out, "tasks/briefs/x/X-report.md")
++    assert result.returncode == 0
++    assert all(row["question_id"] != "wf.drift" for row in replay(out))
++
++
++def test_class_table_rejects_invalid_finding_id(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(
++        repo,
++        "tasks/briefs/x/VERIFY-X-report.md",
++        "| F-2 | INFO, SOLID |",
++        "| bad id | INFO, SOLID |",
++    )
++    out = tmp_path / "bad-id.jsonl"
++    result = _run(repo, out, "tasks/briefs/x/VERIFY-X-report.md")
++    assert result.returncode == 3
++    assert result.stderr == (
++        "harvest-source-unparseable: tasks/briefs/x/VERIFY-X-report.md:8 "
++        "(bad-finding-id)\n"
++    )
++    assert len(replay(out)) == 1
++
++
++def test_hive_anchor_with_missing_tool_id_is_refused(tmp_path):
++    repo = _make_repo(tmp_path)
++    _mutate_and_commit(repo, "transcripts/x/t.jsonl", '"id":"tool-scout",', "")
++    out = tmp_path / "missing-id.jsonl"
++    result = _run(repo, out, "transcripts/x/t.jsonl")
++    assert result.returncode == 3
++    assert result.stderr == "harvest-source-unparseable: transcripts/x/t.jsonl:1 (bad-payload)\n"
++    assert "refused: 1 records" in result.stdout
++    assert len(replay(out)) == 2
++
++
++def test_committed_output_path_is_refused_before_harvest(tmp_path):
++    repo = _make_repo(tmp_path)
++    output = repo / "tasks/briefs/x/X-report.md"
++    before = output.read_bytes()
++    result = _run(repo, output)
++    assert result.returncode == 4
++    assert result.stderr == "harvest-output-source-conflict: tasks/briefs/x/X-report.md\n"
++    assert output.read_bytes() == before
++
++
++def test_script_delegates_every_write_to_ledger_append():
++    source = SCRIPT.read_text(encoding="utf-8")
++    tree = ast.parse(source)
++    ledger_import = next(
++        node
++        for node in tree.body
++        if isinstance(node, ast.ImportFrom)
++        and node.module == "agent_factory.decisions.ledger"
++    )
++    assert {alias.name for alias in ledger_import.names} == {"append", "make_row"}
++    write_calls = []
++    append_calls = []
++    for node in ast.walk(tree):
++        if not isinstance(node, ast.Call):
++            continue
++        if isinstance(node.func, ast.Name) and node.func.id == "append":
++            append_calls.append(node)
++        if isinstance(node.func, ast.Name) and node.func.id in {"open", "os.open", "os.write"}:
++            write_calls.append(node)
++        elif isinstance(node.func, ast.Attribute) and node.func.attr in {
++            "open",
++            "write",
++            "write_text",
++            "write_bytes",
++        }:
++            write_calls.append(node)
++    assert len(append_calls) == 1
++    assert write_calls == []
++
++
++def test_usage_errors_exit_64_with_one_stderr_line():
++    result = subprocess.run(
++        [sys.executable, str(SCRIPT)],
++        check=False,
++        capture_output=True,
++        text=True,
++        timeout=60,
++    )
++    assert result.returncode == 64
++    assert result.stdout == ""
++    assert len(result.stderr.splitlines()) == 1
++
++
++def test_fixture_negative_control_rejects_mutated_state():
++    state = {
++        "lane": "pc-verify-k1.md--1234abc",
++        "finding_id": "F-1",
++        "title": "title",
++        "paths": [],
++        "disposition": "UNKNOWN",
++    }
++    with pytest.raises(DecisionStateError) as exc:
++        decision_state("v1.finding_class", state, ROOT)
++    assert exc.value.reason == "decision-state-bad-enum"
++
++
++def test_fixture_negative_control_exact_error_for_unknown_source(tmp_path):
++    repo = _make_repo(tmp_path)
++    result = _run(repo, tmp_path / "negative.jsonl", "not/a/source.txt")
++    assert result.returncode == 5
++    assert result.stdout == ""
++    assert result.stderr == "harvest-source-unknown: not/a/source.txt\n"
++    assert not (tmp_path / "negative.jsonl").exists()
+diff --git a/transcripts/pc/pc-j1-3.md--feb26d7.md b/transcripts/pc/pc-j1-3.md--feb26d7.md
+new file mode 100644
+index 00000000..de1a63f4
+--- /dev/null
++++ b/transcripts/pc/pc-j1-3.md--feb26d7.md
+@@ -0,0 +1,1224 @@
++# Hermes lane session 20260923_200452_5cf920
++
++- model: agentfactory-build
++- started: 2026-09-23T19:04:54.567259+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-j1-3.md--feb26d7/tree
++- messages: 119; tool calls: 60
++- tokens in/out/cache_read/reasoning: 283341/74822/11578624/27879
++
++## user @ 19:04:54
++
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-j1-3.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feas
++
++## assistant @ 19:05:08 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:05:08 — 3101 chars (body not exported)
++
++## assistant @ 19:05:26 → tools: read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 19:05:26 — 6455 chars (body not exported)
++
++## tool result (read_file) @ 19:05:26 — 28813 chars (body not exported)
++
++## tool result (read_file) @ 19:05:26 — 3101 chars (body not exported)
++
++## tool result (terminal) @ 19:05:26 — 343 chars (body not exported)
++
++## assistant @ 19:05:48 → tools: terminal, terminal, terminal, search_files
++
++
++
++## tool result (terminal) @ 19:05:52 — 289 chars (body not exported)
++
++## tool result (terminal) @ 19:05:53 — 3609 chars (body not exported)
++
++## tool result (terminal) @ 19:05:55 — 292 chars (body not exported)
++
++## tool result (search_files) @ 19:05:55 — 329 chars (body not exported)
++
++## assistant @ 19:06:22 → tools: read_file, read_file, read_file, read_file, read_file, read_file, read_file, terminal
++
++
++
++## tool result (read_file) @ 19:06:22 — 15791 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 10063 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 9012 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 655 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 381 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 476 chars (body not exported)
++
++## tool result (read_file) @ 19:06:22 — 1278 chars (body not exported)
++
++## tool result (terminal) @ 19:06:28 — 190 chars (body not exported)
++
++## assistant @ 19:06:43 → tools: read_file, terminal, terminal, terminal
++
++
++
++## tool result (read_file) @ 19:06:43 — 21357 chars (body not exported)
++
++## tool result (terminal) @ 19:06:44 — 95 chars (body not exported)
++
++## tool result (terminal) @ 19:06:46 — 241 chars (body not exported)
++
++## tool result (terminal) @ 19:06:46 — 871 chars (body not exported)
++
++## assistant @ 19:11:07 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 19:11:07 — 100 chars (body not exported)
++
++## tool result (terminal) @ 19:11:07 — 127 chars (body not exported)
++
++## assistant @ 19:12:46 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:12:48 — 10216 chars (body not exported)
++
++## tool result (terminal) @ 19:12:49 — 11637 chars (body not exported)
++
++## tool result (terminal) @ 19:12:51 — 229 chars (body not exported)
++
++## tool result (terminal) @ 19:12:53 — 9761 chars (body not exported)
++
++## assistant @ 19:13:30 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 19:13:32 — 3996 chars (body not exported)
++
++## tool result (terminal) @ 19:13:40 — 117 chars (body not exported)
++
++## assistant @ 19:17:49 → tools: patch
++
++
++
++## tool result (patch) @ 19:17:49 — 2047 chars (body not exported)
++
++## assistant @ 19:18:49 → tools: patch
++
++
++
++## tool result (patch) @ 19:18:49 — 1004 chars (body not exported)
++
++## assistant @ 19:19:27 → tools: patch
++
++
++
++## tool result (patch) @ 19:19:27 — 1495 chars (body not exported)
++
++## assistant @ 19:19:59 → tools: patch
++
++
++
++## tool result (patch) @ 19:19:59 — 1140 chars (body not exported)
++
++## assistant @ 19:20:31 → tools: patch
++
++
++
++## tool result (patch) @ 19:20:31 — 1179 chars (body not exported)
++
++## assistant @ 19:21:31 → tools: patch
++
++
++
++## tool result (patch) @ 19:21:31 — 1043 chars (body not exported)
++
++## assistant @ 19:24:02 → tools: patch
++
++
++
++## tool result (patch) @ 19:24:05 — 4172 chars (body not exported)
++
++## assistant @ 19:24:36 → tools: patch
++
++
++
++## tool result (patch) @ 19:24:38 — 1826 chars (body not exported)
++
++## assistant @ 19:25:36 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 19:25:40 — 190 chars (body not exported)
++
++## tool result (terminal) @ 19:25:40 — 139 chars (body not exported)
++
++## assistant @ 19:26:43 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:26:43 — 62 chars (body not exported)
++
++## assistant @ 19:27:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:27:46 — 446 chars (body not exported)
++
++## assistant @ 19:28:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:28:48 — 577 chars (body not exported)
++
++## assistant @ 19:31:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:31:46 — 380 chars (body not exported)
++
++## assistant @ 19:32:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:32:13 — 148 chars (body not exported)
++
++## assistant @ 19:32:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:32:21 — 290 chars (body not exported)
++
++## assistant @ 19:32:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:32:49 — 118 chars (body not exported)
++
++## assistant @ 19:33:40 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:33:44 — 118 chars (body not exported)
++
++## assistant @ 19:33:59 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:33:59 — 6222 chars (body not exported)
++
++## assistant @ 19:34:13 → tools: search_files
++
++
++
++## tool result (search_files) @ 19:34:13 — 1292 chars (body not exported)
++
++## assistant @ 19:34:34 → tools: patch
++
++
++
++## tool result (patch) @ 19:34:37 — 866 chars (body not exported)
++
++## assistant @ 19:35:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:35:32 — 141 chars (body not exported)
++
++## assistant @ 19:38:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:38:36 — 1561 chars (body not exported)
++
++## assistant @ 19:38:52 → tools: patch
++
++
++
++## tool result (patch) @ 19:38:53 — 911 chars (body not exported)
++
++## assistant @ 19:39:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:39:45 — 190 chars (body not exported)
++
++## assistant @ 19:40:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:40:19 — 85 chars (body not exported)
++
++## assistant @ 19:40:42 → tools: patch
++
++
++
++## tool result (patch) @ 19:40:46 — 786 chars (body not exported)
++
++## assistant @ 19:41:11 → tools: patch
++
++
++
++## tool result (patch) @ 19:41:14 — 1074 chars (body not exported)
++
++## assistant @ 19:41:35 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 19:41:38 — 2642 chars (body not exported)
++
++## tool result (terminal) @ 19:41:40 — 4110 chars (body not exported)
++
++## tool result (terminal) @ 19:41:41 — 100 chars (body not exported)
++
++## assistant @ 19:44:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:44:42 — 373 chars (body not exported)
++
++## assistant @ 19:48:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:48:00 — 316 chars (body not exported)
++
++## assistant @ 19:48:41 → tools: patch
++
++
++
++## tool result (patch) @ 19:48:43 — 1185 chars (body not exported)
++
++## assistant @ 19:49:17 → tools: patch
++
++
++
++## tool result (patch) @ 19:49:20 — 1090 chars (body not exported)
++
++## assistant @ 19:49:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:49:51 — 2166 chars (body not exported)
++
++## assistant @ 19:50:21 → tools: patch
++
++
++
++## tool result (patch) @ 19:50:25 — 990 chars (body not exported)
++
++## assistant @ 19:50:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:50:54 — 190 chars (body not exported)
++
++## assistant @ 19:51:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:51:54 — 277 chars (body not exported)
++
++## assistant @ 19:52:08 → tools: patch
++
++
++
++## tool result (patch) @ 19:52:10 — 990 chars (body not exported)
++
++## assistant @ 19:52:19 → tools: patch
++
++
++
++## tool result (patch) @ 19:52:21 — 1048 chars (body not exported)
++
++## assistant @ 19:53:00 → tools: patch
++
++
++
++## tool result (patch) @ 19:53:03 — 1277 chars (body not exported)
++
++## assistant @ 19:53:23 → tools: patch
++
++
++
++## tool result (patch) @ 19:53:25 — 481 chars (body not exported)
++
++## assistant @ 19:53:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:53:54 — 190 chars (body not exported)
++
++## assistant @ 19:54:34 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:54:47 — 403 chars (body not exported)
++
++## assistant @ 19:55:17 → tools: patch
++
++
++
++## tool result (patch) @ 19:55:19 — 2420 chars (body not exported)
++
++## assistant @ 19:55:30 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:55:39 — 2804 chars (body not exported)
++
++## assistant @ 19:55:47 → tools: patch
++
++
++
++## tool result (patch) @ 19:55:50 — 825 chars (body not exported)
++
++## assistant @ 19:56:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:56:12 — 190 chars (body not exported)
++
++## assistant @ 19:56:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:56:45 — 188 chars (body not exported)
++
++## assistant @ 19:57:12 → tools: terminal
++
++
++
++## tool result (terminal) @ 19:57:14 — 71 chars (body not exported)
++
++## assistant @ 19:58:16 → tools: patch
++
++
++
++## tool result (patch) @ 19:58:19 — 1225 chars (body not exported)
++
++## assistant @ 19:58:50 → tools: patch
++
++
++
++## tool result (patch) @ 19:58:53 — 859 chars (body not exported)
++
++## assistant @ 19:59:15 → tools: patch
++
++
++
++## tool result (patch) @ 19:59:19 — 940 chars (body not exported)
++
++## assistant @ 19:59:55 → tools: patch
++
++
++
++## tool result (patch) @ 20:00:00 — 868 chars (body not exported)
++
++## assistant @ 20:00:27 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:00:29 — 143 chars (body not exported)
++
++## assistant @ 20:00:51 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:00:55 — 92 chars (body not exported)
++
++## assistant @ 20:01:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:02:21 — 484 chars (body not exported)
++
++## assistant @ 20:02:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:03:03 — 125 chars (body not exported)
++
++## assistant @ 20:03:20 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:03:29 — 190 chars (body not exported)
++
++## assistant @ 20:04:06 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:04:14 — 190 chars (body not exported)
++
++## assistant @ 20:04:25 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:05:06 — 446 chars (body not exported)
++
++## assistant @ 20:05:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:05:55 — 446 chars (body not exported)
++
++## assistant @ 20:06:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:07:23 — 1165 chars (body not exported)
++
++## assistant @ 20:07:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:07:47 — 210 chars (body not exported)
++
++## assistant @ 20:08:12 → tools: patch
++
++
++
++## tool result (patch) @ 20:08:15 — 941 chars (body not exported)
++
++## assistant @ 20:08:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:08:31 — 200 chars (body not exported)
++
++## assistant @ 20:09:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:10:21 — 8719 chars (body not exported)
++
++## assistant @ 20:10:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:11:56 — 531 chars (body not exported)
++
++## assistant @ 20:12:26 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 20:12:27 — 3157 chars (body not exported)
++
++## tool result (terminal) @ 20:12:27 — 1017 chars (body not exported)
++
++## tool result (terminal) @ 20:12:28 — 119 chars (body not exported)
++
++## tool result (terminal) @ 20:12:28 — 116 chars (body not exported)
++
++## assistant @ 20:12:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:12:38 — 4156 chars (body not exported)
++
++## assistant @ 20:12:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:12:53 — 4176 chars (body not exported)
++
++## assistant @ 20:13:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:05 — 301 chars (body not exported)
++
++## assistant @ 20:13:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:16 — 293 chars (body not exported)
++
++## assistant @ 20:13:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:30 — 4777 chars (body not exported)
++
++## assistant @ 20:14:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:14:03 — 503 chars (body not exported)
++
++## assistant @ 20:14:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:15:00 — 1627 chars (body not exported)
++
++## assistant @ 20:15:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:16:15 — 1561 chars (body not exported)
++
++## assistant @ 20:16:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:10 — 1561 chars (body not exported)
++
++## assistant @ 20:17:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:20 — 2094 chars (body not exported)
++
++## assistant @ 20:17:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:33 — 3578 chars (body not exported)
++
++## assistant @ 20:17:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:18:09 — 123 chars (body not exported)
++
++## assistant @ 20:18:21 → tools: tool_describe
++
++
++
++## tool result (tool_describe) @ 20:18:21 — 2768 chars (body not exported)
++
++## assistant @ 20:18:33 → tools: tool_call
++
++
++
++## tool result (mcp__gitnexus__detect_changes) @ 20:18:35 — 742 chars (body not exported)
++
++## assistant @ 20:18:51 → tools: patch
++
++
++
++## tool result (patch) @ 20:18:52 — 1039 chars (body not exported)
++
++## assistant @ 20:19:17 → tools: patch
++
++
++
++## tool result (patch) @ 20:19:18 — 2727 chars (body not exported)
++
++## assistant @ 20:21:30 → tools: patch
++
++
++
++## tool result (patch) @ 20:21:30 — 13560 chars (body not exported)
++
++## assistant @ 20:21:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:21:45 — 9488 chars (body not exported)
++
++## assistant @ 20:23:01 → tools: patch
++
++
++
++## tool result (patch) @ 20:23:02 — 1812 chars (body not exported)
++
++## assistant @ 20:23:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:23:47 — 68 chars (body not exported)
++
++## user @ 19:04:54
++
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-j1-3.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feas
++
++## assistant @ 19:05:08 → tools: read_file
++
++
++
++## tool result (read_file) @ 19:05:08 — 60 chars (body not exported)
++
++## assistant @ 20:29:03
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++User asked: “RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its in…” — lane J1-3 implementation and verification were resumed, but the final worktree review, report update, and completion response remain outstanding.
++
++## Goal
++Complete lane J1-3 by finishing the inherited `scripts/decide-harvest` implementation and its tests: strictly classify and parse supported committed decision sources, reject dirty or malformed input deterministically, emit validated ledger rows only through the decisions ledger API, prove the behavior with robust and mutation-sensitive tests, and record final evidence in `tasks/briefs/laya/J1-3-report.md`.
++
++## Constraints & Preferences
++- Preserve the inherited attempt rather than resetting it: “Its edits are already in your worktree (`git status --porcelain` lists them beside th
++
++## assistant @ 20:07:45 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:07:47 — 123 chars (body not exported)
++
++## assistant @ 20:08:12 → tools: patch
++
++
++
++## tool result (patch) @ 20:08:15 — 66 chars (body not exported)
++
++## assistant @ 20:08:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:08:31 — 200 chars (body not exported)
++
++## assistant @ 20:09:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:10:21 — 123 chars (body not exported)
++
++## assistant @ 20:10:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:11:56 — 123 chars (body not exported)
++
++## assistant @ 20:12:26 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 20:12:27 — 123 chars (body not exported)
++
++## tool result (terminal) @ 20:12:27 — 123 chars (body not exported)
++
++## tool result (terminal) @ 20:12:28 — 119 chars (body not exported)
++
++## tool result (terminal) @ 20:12:28 — 116 chars (body not exported)
++
++## assistant @ 20:12:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:12:38 — 123 chars (body not exported)
++
++## assistant @ 20:12:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:12:53 — 123 chars (body not exported)
++
++## assistant @ 20:13:04 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:05 — 123 chars (body not exported)
++
++## assistant @ 20:13:15 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:16 — 123 chars (body not exported)
++
++## assistant @ 20:13:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:13:30 — 123 chars (body not exported)
++
++## assistant @ 20:14:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:14:03 — 124 chars (body not exported)
++
++## assistant @ 20:14:16 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:15:00 — 123 chars (body not exported)
++
++## assistant @ 20:15:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:16:15 — 123 chars (body not exported)
++
++## assistant @ 20:16:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:10 — 123 chars (body not exported)
++
++## assistant @ 20:17:17 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:20 — 123 chars (body not exported)
++
++## assistant @ 20:17:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:17:33 — 123 chars (body not exported)
++
++## assistant @ 20:17:42 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:18:09 — 123 chars (body not exported)
++
++## assistant @ 20:18:21 → tools: tool_describe
++
++
++
++## tool result (tool_describe) @ 20:18:21 — 76 chars (body not exported)
++
++## assistant @ 20:18:33 → tools: tool_call
++
++
++
++## tool result (mcp__gitnexus__detect_changes) @ 20:18:35 — 116 chars (body not exported)
++
++## assistant @ 20:18:51 → tools: patch
++
++
++
++## tool result (patch) @ 20:18:52 — 72 chars (body not exported)
++
++## assistant @ 20:19:17 → tools: patch
++
++
++
++## tool result (patch) @ 20:19:18 — 72 chars (body not exported)
++
++## assistant @ 20:21:30 → tools: patch
++
++
++
++## tool result (patch) @ 20:21:30 — 13560 chars (body not exported)
++
++## assistant @ 20:21:45 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:21:45 — 9488 chars (body not exported)
++
++## assistant @ 20:23:01 → tools: patch
++
++
++
++## tool result (patch) @ 20:23:02 — 1812 chars (body not exported)
++
++## assistant @ 20:23:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:23:47 — 68 chars (body not exported)
++
++## user @ 19:04:54
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++RESUME (attempt 3 of this lane): a previous attempt of THIS lane ended on a route refusal or was stopped by the coordinator, not on its own decision. Its edits are already in your worktree (`git status --porcelain` lists them beside the lane patch) and its incremental report draft is at /home/rocco/agent-factory/.lanes/pc-j1-3.md--feb26d7/report-draft.md — read that draft FIRST and continue from its last finished section; do not redo a finished section, but verify its claims by run before relying on them.
++
++---
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend 
++
++## assistant @ 20:29:17 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:29:18 — 15610 chars (body not exported)
++
++## assistant @ 20:29:39 → tools: search_files, terminal, terminal
++
++
++
++## tool result (search_files) @ 20:29:40 — 2562 chars (body not exported)
++
++## tool result (terminal) @ 20:29:40 — 428 chars (body not exported)
++
++## tool result (terminal) @ 20:29:41 — 63 chars (body not exported)
++
++## assistant @ 20:29:46 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:29:47 — 3821 chars (body not exported)
++
++## assistant @ 20:29:56 → tools: patch
++
++
++
++## tool result (patch) @ 20:29:57 — 1721 chars (body not exported)
++
++## assistant @ 20:30:09 → tools: patch
++
++
++
++## tool result (patch) @ 20:30:10 — 1910 chars (body not exported)
++
++## assistant @ 20:30:16 → tools: patch
++
++
++
++## tool result (patch) @ 20:30:16 — 905 chars (body not exported)
++
++## assistant @ 20:30:23 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:30:23 — 2326 chars (body not exported)
++
++## assistant @ 20:30:35 → tools: patch
++
++
++
++## tool result (patch) @ 20:30:36 — 1770 chars (body not exported)
++
++## assistant @ 20:30:49 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:30:49 — 687 chars (body not exported)
++
++## assistant @ 20:31:30 → tools: read_file
++
++
++
++## tool result (read_file) @ 20:31:30 — 4122 chars (body not exported)
++
++## assistant @ 20:33:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:34:03 — 792 chars (body not exported)
++
++## assistant @ 20:34:12 → tools: patch
++
++
++
++## tool result (patch) @ 20:34:12 — 730 chars (body not exported)
++
++## assistant @ 20:34:28 → tools: patch
++
++
++
++## tool result (patch) @ 20:34:29 — 906 chars (body not exported)
++
++## assistant @ 20:34:50 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:36:26 — 1590 chars (body not exported)
++
++## assistant @ 20:36:41 → tools: patch
++
++
++
++## tool result (patch) @ 20:36:42 — 896 chars (body not exported)
++
++## assistant @ 20:36:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:00 — 143 chars (body not exported)
++
++## assistant @ 20:37:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:06 — 2344 chars (body not exported)
++
++## assistant @ 20:37:28 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:37:29 — 14921 chars (body not exported)
++
++## assistant @ 20:38:07 → tools: tool_call
++
++
++
++## tool result (mcp__gitnexus__detect_changes) @ 20:38:07 — 742 chars (body not exported)
++
++## assistant @ 20:39:25 → tools: patch
++
++
++
++## tool result (patch) @ 20:39:26 — 5843 chars (body not exported)
++
++## assistant @ 20:39:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:39:47 — 78 chars (body not exported)
++
++## assistant @ 20:41:02 → tools: patch
++
++
++
++## tool result (patch) @ 20:41:03 — 1120 chars (body not exported)
++
++## assistant @ 20:43:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:43:13 — 202 chars (body not exported)
++
++## assistant @ 20:44:07 → tools: patch
++
++
++
++## tool result (patch) @ 20:44:08 — 1676 chars (body not exported)
++
++## assistant @ 20:44:24 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:44:24 — 64 chars (body not exported)
++
++## assistant @ 20:45:58 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:45:58 — 6862 chars (body not exported)
++
++## assistant @ 20:46:20 → tools: patch
++
++
++
++## tool result (patch) @ 20:46:20 — 1705 chars (body not exported)
++
++## assistant @ 20:46:55 → tools: terminal
++
++
++
++## tool result (terminal) @ 20:46:55 — 199 chars (body not exported)
++
++## assistant @ 20:50:15
++
++PROPOSAL COMPLETE; sandbox-side adversarial verification is NOT done.
++
++J1-3 report: scripts/decide-harvest
++Task #120, PC continuation, code-implementer
++
++STATUS
++
++The real run produced 207 rows, but every question type is below KC-J7’s 200-label floor. Stop at the ledger.
++
++Evidence tiers:
++- VERIFIED: file bytes and modes, subprocess tests, mutation REDs, gate output, and pinned-corpus harvest output from this session.
++- INFERRED: whether each refused corpus shape is legitimate prose outside the frozen grammar.
++- ASSUMED: none.
++
++1. PREMISE RE-MEASURE
++
++    2026-09-23T16:26Z
++    origin: 0e60603
++    HEAD:   0e60603
++
++The boundary was absent before this increment:
++
++    scripts/decide-harvest: absent
++    tests/test_decide_harvest.py: absent
++    tests/fixtures/decisions/sources: absent
++
++Decision package identities matched the premise:
++
++    377ccd53da0c  24 lines   src/agent_factory/decisions/__init__.py
++    607b65b613e2  78 lines   src/agent_factory/decisions/canonical.py
++    bf04415d72c1  395 lines  src/agent_factory/decisions/volatile.py
++    71fc398a5340  616 lines  src/agent_factory/decisions/ledger.py
++
++No CONTRACT-INVALID stop.
++
++2. DISCREPANCIES
++
++D-1: Predecessor discrepancy resolved by AMENDMENT A1.
++
++src/agent_factory/decisions/volatile.py:142-148 strips a --<7..40 hex> suffix only at the end of a value. The harvester therefore removes the leading report- and final .md, but does not parse or remove the PIN. J1-1 remains the only PIN normalizer.
++
++Implementation: scripts/decide-harvest:331-340.
++
++The two-PIN fixture proves:
++- Both source paths normalize to the same state lane.
++- The normalized lane contains no run of seven or more hexadecimal characters.
++- The source_ref paths remain distinct.
++
++Test: tests/test_decide_harvest.py:359-379.
++
++The real corpus’s PC finding table lacks a declared title column and is refused before yielding a PC finding row. The real run therefore contains zero PC v1.finding_class rows. This does not weaken the fixture proof.
++
++D-2: Relative LANE_GATE_DIR wrapper defect.
++
++One lane-gate invocation returned rc 0 and a valid RESULT line but also printed:
++
++    /tmp/lane_gate...: No such file or directory
++
++The relative log path was resolved after the script changed directory. Two reruns with an absolute LANE_GATE_DIR produced clean RESULT lines. No project file was changed for this tooling defect.
++
++D-3: Code-intelligence blind spots.
++
++GitNexus’s clone index is 839 commits stale and cannot resolve the new untracked script. Its final detect_changes result reports one changed file but zero changed symbols.
++
++Ripwire also cannot resolve scripts/decide-harvest as a symbol. Its independent exercises query maps 39 test symbols to 25 decision-package symbols.
++
++Subprocess tests and the archived-PIN lane gates are the load-bearing evidence.
++
++D-4: Final context-pack screen.
++
++scripts/lane_context.sh reports AP-32 at scripts/decide-harvest:193. The flagged hashlib.sha256 call produces the source digest required by the ledger source-ref contract.
++
++R
++
++
++---
++profile: aflanepcj13mdfeb26d7
++
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 283341,
++  "output_tokens": 74822,
++  "cache_read_tokens": 11578624,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 27879,
++  "total_tokens": 11936787,
++  "api_calls": 124,
++  "model": "agentfactory-build",
++  "provider": "custom",
++  "session_id": "20260923_200452_5cf920",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

@@ -1,0 +1,849 @@
+#!/usr/bin/env python3
+"""Build the passive decision ledger from committed report sources."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPT_ROOT / "src"))
+
+from agent_factory.decisions import DecisionStateError  # noqa: E402
+from agent_factory.decisions.ledger import append, make_row  # noqa: E402
+
+
+QUESTION_IDS = (
+    "ap.violates_row",
+    "b1.finding_kind",
+    "b1.finding_sev",
+    "b2.hit_role",
+    "d1.bug_echo_scores",
+    "v1.finding_class",
+    "wf.drift",
+)
+SOURCE_KINDS = ("incident_log", "lane_report", "transcript_jsonl", "verify_report")
+FINDING_CLASSES = frozenset(
+    {"BLOCKER", "FOLLOW-UP", "INFO", "UNVERIFIED", "CONTRACT-DEFECT", "KNOWN"}
+)
+BLOCKING_CLASSES = frozenset({"BLOCKER", "CONTRACT-DEFECT"})
+ROLE_ANSWERS = frozenset({"def", "caller", "config", "test", "other"})
+SEVERITY_ANSWERS = frozenset({"H", "M", "L"})
+KIND_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+FINDING_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+AP_RE = re.compile(r"\bAF-AP-\d+\b")
+INCIDENT_ANCHOR_RE = re.compile(r"^(?:- )?\*\*\d{4}-\d{2}-\d{2}\b")
+BULLET_FINDING_RE = re.compile(
+    r"^- \*\*(?P<id>[A-Za-z0-9][A-Za-z0-9._-]*) "
+    r"(?P<class>BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)\b"
+)
+BOUNDARY_RE = re.compile(
+    r"^(?:- \*\*BOUNDARY DEVIATION\*\*|\d+\. BOUNDARY DEVIATION)"
+    r"\s*(?:—|:|\*\*)(?P<tail>.*)$",
+    re.IGNORECASE,
+)
+MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+(?P<text>.+?)\s*$")
+BACKTICK_RE = re.compile(r"`([^`]+)`")
+PC_VERIFY_REPORT_RE = re.compile(r"^report-pc-verify-.+\.md$")
+BUG_ECHO_HEADERS = (
+    ("#", "Finding", "Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Blast Radius", "Fix Effort", "Status"),
+    ("#", "Finding", "Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Blast", "Effort", "Status"),
+)
+RATINGS = {
+    "Urgency": frozenset({"CRITICAL", "HIGH", "MEDIUM", "LOW"}),
+    "Risk: Fix": frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"}),
+    "Risk: No Fix": frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"}),
+    "ROI": frozenset({"EXCELLENT", "GOOD", "MARGINAL", "POOR"}),
+    "Effort": frozenset({"TRIVIAL", "SMALL", "MEDIUM", "LARGE"}),
+}
+
+
+class UsageParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.exit(64, f"decide-harvest: {message}\n")
+
+
+@dataclass(frozen=True)
+class Source:
+    path: str
+    kind: str
+    data: bytes
+    text: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class Candidate:
+    line: int
+    question_id: str
+    producer: str
+    answer: str
+    state: dict
+    locator: str
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class Refusal:
+    path: str
+    line: int
+    reason: str
+
+
+def _git(root: Path, *args: str, input_data: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        input=input_data,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _repo_root(raw_root: str) -> Path | None:
+    root = Path(raw_root).resolve()
+    probe = _git(root, "rev-parse", "--show-toplevel")
+    if probe.returncode != 0:
+        return None
+    try:
+        top = Path(probe.stdout.decode("utf-8", "strict").strip()).resolve()
+    except UnicodeDecodeError:
+        return None
+    return root if top == root else None
+
+
+def _kind(path: str) -> str | None:
+    if path == "docs/INCIDENT-LOG.md":
+        return "incident_log"
+    parts = PurePosixPath(path).parts
+    if len(parts) == 3 and parts[0] == "transcripts" and path.endswith(".jsonl"):
+        return "transcript_jsonl"
+    if len(parts) != 4 or parts[:2] != ("tasks", "briefs"):
+        return None
+    name = parts[-1]
+    if name.startswith("VERIFY-") and name.endswith("-report.md"):
+        return "verify_report"
+    if name.startswith("report-pc-verify-") and PC_VERIFY_REPORT_RE.fullmatch(name):
+        return "verify_report"
+    if not name.startswith("VERIFY-") and name.endswith("-report.md"):
+        return "lane_report"
+    if name.startswith("report-pc-") and not name.startswith("report-pc-verify-") and name.endswith(".md"):
+        return "lane_report"
+    return None
+
+
+def _tree_paths(root: Path) -> list[str] | None:
+    result = _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD")
+    if result.returncode != 0:
+        return None
+    try:
+        paths = [p.decode("utf-8", "strict") for p in result.stdout.split(b"\0") if p]
+    except UnicodeDecodeError:
+        return None
+    return sorted(paths, key=lambda p: p.encode("utf-8"))
+
+
+def _head_blob(root: Path, path: str) -> bytes | None:
+    result = _git(root, "cat-file", "blob", f"HEAD:{path}")
+    return result.stdout if result.returncode == 0 else None
+
+
+def _regular_worktree_bytes(root: Path, path: str) -> bytes | None:
+    target = root / path
+    try:
+        if not target.is_file() or target.is_symlink():
+            return None
+        return target.read_bytes()
+    except OSError:
+        return None
+
+
+def _admit(root: Path, requested: list[str]) -> tuple[list[Source] | None, tuple[int, str] | None]:
+    tree_paths = _tree_paths(root)
+    if tree_paths is None:
+        return None, (64, "decide-harvest: --root is not a git work tree")
+    if requested:
+        unknown = sorted((p for p in requested if _kind(p) is None), key=lambda p: p.encode("utf-8"))
+        if unknown:
+            return None, (5, f"harvest-source-unknown: {unknown[0]}")
+        paths = sorted(set(requested), key=lambda p: p.encode("utf-8"))
+    else:
+        paths = [p for p in tree_paths if _kind(p) is not None]
+
+    admitted: list[Source] = []
+    for path in paths:
+        data = _head_blob(root, path)
+        if data is None or _regular_worktree_bytes(root, path) != data:
+            return None, (4, f"harvest-source-uncommitted: {path}")
+        try:
+            text = data.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            return None, (3, f"harvest-source-unparseable: {path}:1 (bad-utf8)")
+        admitted.append(
+            Source(
+                path=path,
+                kind=_kind(path) or "",
+                data=data,
+                text=text,
+                digest=hashlib.sha256(data).hexdigest(),
+            )
+        )
+    return admitted, None
+
+
+def _split_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    cells: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for char in stripped[1:-1]:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            current.append(char)
+            escaped = True
+        elif char == "|":
+            cells.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _is_separator(cells: list[str] | None) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def _collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _heading_text(lines: list[str], start: int) -> tuple[str | None, str | None]:
+    joined: list[str] = []
+    first = lines[start]
+    opening = first.find("**")
+    if opening < 0:
+        return None, "unterminated-heading"
+    joined.append(first[opening + 2 :])
+    for offset in range(10):
+        index = start + offset
+        if index >= len(lines):
+            break
+        piece = joined[0] if offset == 0 else lines[index]
+        close = piece.find("**")
+        if close >= 0:
+            prefix = joined[:-1] if offset else []
+            return _collapse(" ".join(prefix + [piece[:close]])), None
+        if offset:
+            joined.append(piece)
+    return None, "unterminated-heading"
+
+
+def _nearest_heading(lines: list[str], before: int) -> str:
+    for index in range(before - 1, -1, -1):
+        match = MARKDOWN_HEADING_RE.match(lines[index])
+        if match:
+            return _collapse(match.group("text"))
+    return "document"
+
+
+def _registry(text: str) -> dict[str, str]:
+    lines = text.splitlines()
+    heading = next((i for i, line in enumerate(lines) if line.startswith("## ANTI-PATTERN REGISTRY")), -1)
+    if heading < 0:
+        return {}
+    header_cells = _split_table_row("| id | mechanism | greppable signature | proven instance | status |")
+    for index in range(heading + 1, len(lines) - 1):
+        if _split_table_row(lines[index]) != header_cells or not _is_separator(_split_table_row(lines[index + 1])):
+            continue
+        rows: dict[str, str] = {}
+        for line in lines[index + 2 :]:
+            cells = _split_table_row(line)
+            if cells is None:
+                break
+            if len(cells) >= 2 and AP_RE.fullmatch(cells[0]):
+                rows[cells[0]] = cells[1]
+        return rows
+    return {}
+
+
+def _unique_ap_ids(text: str) -> list[str]:
+    return list(dict.fromkeys(AP_RE.findall(text)))
+
+
+def _ap_candidate(
+    *, line: int, path: str, title: str, row_id: str, row_title: str, producer: str
+) -> Candidate:
+    return Candidate(
+        line=line,
+        question_id="ap.violates_row",
+        producer=producer,
+        answer="yes",
+        state={
+            "action_kind": "report",
+            "action_target": path,
+            "action_excerpt": title,
+            "row_id": row_id,
+            "row_title": row_title,
+        },
+        locator=title[:200],
+    )
+
+
+def _parse_incident(source: Source, registry: dict[str, str]) -> list[Candidate]:
+    lines = source.text.splitlines()
+    candidates: list[Candidate] = []
+    for index, line in enumerate(lines):
+        if not INCIDENT_ANCHOR_RE.match(line):
+            continue
+        heading, reason = _heading_text(lines, index)
+        if reason:
+            candidates.append(Candidate(index + 1, "", "", "", {}, "", reason))
+            continue
+        assert heading is not None
+        for row_id in _unique_ap_ids(heading):
+            title = registry.get(row_id)
+            if title is None:
+                candidates.append(Candidate(index + 1, "", "", "", {}, "", "no-registry-row"))
+                continue
+            candidates.append(
+                _ap_candidate(
+                    line=index + 1,
+                    path=source.path,
+                    title=heading,
+                    row_id=row_id,
+                    row_title=title,
+                    producer="coordinator",
+                )
+            )
+    return candidates
+
+
+def _report_lane(path: str) -> str:
+    name = PurePosixPath(path).name
+    if name.startswith("VERIFY-") and name.endswith("-report.md"):
+        return name[: -len("-report.md")]
+    if name.startswith("report-"):
+        lane = name[len("report-") :]
+        if lane.endswith(".md"):
+            lane = lane[:-3]
+        return lane
+    raise ValueError(path)
+
+
+def _title_column(headers: list[str]) -> int | None:
+    for index, header in enumerate(headers):
+        lowered = header.strip().lower()
+        if lowered.startswith("finding") or lowered == "what":
+            return index
+    return None
+
+
+def _parse_class(cell: str) -> str | None:
+    raw = cell.strip().strip("*").strip()
+    match = re.fullmatch(
+        r"(BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)"
+        r"(?:, (?:SOLID|UNSURE)| \([^\r\n()]+\))?",
+        raw,
+    )
+    return match.group(1) if match else None
+
+
+def _report_paths(text: str, root: Path, tree: set[str]) -> list[str]:
+    found: set[str] = set()
+    for token in BACKTICK_RE.findall(text):
+        candidate = re.sub(r":\d+(?:(?:-|–)\d+)?(?:[,:].*)?$", "", token)
+        if candidate.startswith(str(root) + os.sep):
+            candidate = os.path.relpath(candidate, root).replace(os.sep, "/")
+        if candidate in tree:
+            found.add(candidate)
+    return sorted(found)
+
+
+def _finding_candidates(
+    *, source: Source, root: Path, tree: set[str], registry: dict[str, str]
+) -> list[Candidate]:
+    lines = source.text.splitlines()
+    records: list[tuple[int, str, str, str, str]] = []
+    anchors: list[int] = [i for i, line in enumerate(lines) if BULLET_FINDING_RE.match(line)]
+    for index in anchors:
+        match = BULLET_FINDING_RE.match(lines[index])
+        assert match is not None
+        heading, reason = _heading_text(lines, index)
+        if reason:
+            records.append((index, "", "", "", reason))
+            continue
+        assert heading is not None
+        prefix = f"{match.group('id')} {match.group('class')} — "
+        if prefix not in heading:
+            records.append((index, "", "", "", "bad-title"))
+            continue
+        title = heading.split(prefix, 1)[1]
+        end = len(lines)
+        for later in range(index + 1, len(lines)):
+            if BULLET_FINDING_RE.match(lines[later]) or MARKDOWN_HEADING_RE.match(lines[later]):
+                end = later
+                break
+        records.append(
+            (index, match.group("id"), match.group("class"), title, "\n".join(lines[index:end]))
+        )
+
+    index = 0
+    while index + 1 < len(lines):
+        headers = _split_table_row(lines[index])
+        if (
+            headers
+            and len(headers) >= 2
+            and headers[0].strip().lower() in {"#", "id"}
+            and headers[1].strip().lower() == "class"
+            and _is_separator(_split_table_row(lines[index + 1]))
+        ):
+            title_index = _title_column(headers)
+            row_index = index + 2
+            while row_index < len(lines):
+                cells = _split_table_row(lines[row_index])
+                if cells is None:
+                    break
+                if len(cells) < len(headers):
+                    records.append((row_index, "", "", "", "bad-table-row"))
+                elif title_index is None:
+                    records.append((row_index, "", "", "", "no-title-column"))
+                else:
+                    finding_id = cells[0].strip()
+                    finding_class = _parse_class(cells[1])
+                    if not FINDING_ID_RE.fullmatch(finding_id):
+                        records.append((row_index, "", "", "", "bad-finding-id"))
+                    elif finding_class is None:
+                        records.append((row_index, "", "", "", "bad-class"))
+                    else:
+                        records.append(
+                            (row_index, finding_id, finding_class, cells[title_index], lines[row_index])
+                        )
+                row_index += 1
+            index = row_index
+        else:
+            index += 1
+
+    candidates: list[Candidate] = []
+    lane = _report_lane(source.path)
+    for line_index, finding_id, finding_class, title, text_or_reason in sorted(records):
+        if not finding_id:
+            candidates.append(Candidate(line_index + 1, "", "", "", {}, "", text_or_reason))
+            continue
+        locator = f"{finding_id} @ {_nearest_heading(lines, line_index)}"
+        candidates.append(
+            Candidate(
+                line=line_index + 1,
+                question_id="v1.finding_class",
+                producer="adversarial-verifier",
+                answer=finding_class,
+                state={
+                    "lane": lane,
+                    "finding_id": finding_id,
+                    "title": title,
+                    "paths": _report_paths(text_or_reason, root, tree),
+                    "disposition": "BLOCKING" if finding_class in BLOCKING_CLASSES else "NON-BLOCKING",
+                },
+                locator=locator,
+            )
+        )
+        for row_id in _unique_ap_ids(title if BULLET_FINDING_RE.match(lines[line_index]) else text_or_reason):
+            row_title = registry.get(row_id)
+            if row_title is None:
+                candidates.append(Candidate(line_index + 1, "", "", "", {}, "", "no-registry-row"))
+                continue
+            candidates.append(
+                Candidate(
+                    line=line_index + 1,
+                    question_id="ap.violates_row",
+                    producer="adversarial-verifier",
+                    answer="yes",
+                    state={
+                        "action_kind": "report",
+                        "action_target": source.path,
+                        "action_excerpt": title,
+                        "row_id": row_id,
+                        "row_title": row_title,
+                    },
+                    locator=locator,
+                )
+            )
+    return candidates
+
+
+def _strip_rating(value: str) -> str:
+    value = value.strip().strip("*").strip()
+    value = re.sub(r"^[^A-Za-z0-9]+\s*", "", value)
+    return value.upper()
+
+
+def _rating_answer(headers: tuple[str, ...], cells: list[str]) -> str | None:
+    values = dict(zip(headers, cells))
+    parsed: dict[str, str] = {}
+    for key in ("Urgency", "Risk: Fix", "Risk: No Fix", "ROI", "Effort"):
+        value = _strip_rating(values[key])
+        if value not in RATINGS[key]:
+            return None
+        parsed[key] = value.lower()
+    blast = _strip_rating(values["Blast"] if "Blast" in values else values["Blast Radius"])
+    blast_match = re.fullmatch(r"(1 FILE|[1-9]\d* FILES|[1-9]\d*\+ FILES)", blast)
+    if not blast_match:
+        return None
+    if blast == "1 FILE":
+        blast_answer = "1-file"
+    elif blast.endswith("+ FILES"):
+        blast_answer = blast.split("+", 1)[0] + "-plus-files"
+    else:
+        blast_answer = blast.split(" ", 1)[0] + "-files"
+    return (
+        f"urgency={parsed['Urgency']};risk_fix={parsed['Risk: Fix']};"
+        f"risk_no_fix={parsed['Risk: No Fix']};roi={parsed['ROI']};"
+        f"blast={blast_answer};effort={parsed['Effort']}"
+    )
+
+
+def _parse_lane_report(source: Source) -> list[Candidate]:
+    lines = source.text.splitlines()
+    candidates: list[Candidate] = []
+    for index, line in enumerate(lines):
+        match = BOUNDARY_RE.match(line)
+        if match:
+            observed_parts = [match.group("tail").lstrip(" —:*")]
+            later = index + 1
+            while later < len(lines):
+                if not lines[later].strip() or MARKDOWN_HEADING_RE.match(lines[later]) or re.match(r"^(?:[-*+] |\d+\. )", lines[later]):
+                    break
+                observed_parts.append(lines[later])
+                later += 1
+            candidates.append(
+                Candidate(
+                    line=index + 1,
+                    question_id="wf.drift",
+                    producer="code-implementer",
+                    answer="yes",
+                    state={
+                        "step_id": "boundary-respected",
+                        "drift_kind": "out-of-boundary",
+                        "expected": "touch only the files the brief names",
+                        "observed": _collapse(" ".join(observed_parts)),
+                    },
+                    locator=f"BOUNDARY DEVIATION @ {_nearest_heading(lines, index)}",
+                )
+            )
+
+    index = 0
+    while index + 1 < len(lines):
+        headers_list = _split_table_row(lines[index])
+        headers = tuple(headers_list or ())
+        if headers in BUG_ECHO_HEADERS and _is_separator(_split_table_row(lines[index + 1])):
+            heading = _nearest_heading(lines, index)
+            ids = _unique_ap_ids(heading)
+            row_index = index + 2
+            while row_index < len(lines):
+                cells = _split_table_row(lines[row_index])
+                if cells is None:
+                    break
+                locator_id = cells[0] if cells else "?"
+                if not ids:
+                    candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "no-class-slug"))
+                elif len(cells) != len(headers):
+                    candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "bad-rating"))
+                else:
+                    answer = _rating_answer(headers, cells)
+                    if answer is None:
+                        candidates.append(Candidate(row_index + 1, "", "", "", {}, "", "bad-rating"))
+                    else:
+                        candidates.append(
+                            Candidate(
+                                line=row_index + 1,
+                                question_id="d1.bug_echo_scores",
+                                producer="bug-echo",
+                                answer=answer,
+                                state={"class_slug": ids[0], "finding_title": cells[1]},
+                                locator=f"{locator_id} @ {heading}",
+                            )
+                        )
+                row_index += 1
+            index = row_index
+        else:
+            index += 1
+    return candidates
+
+
+def _content_blocks(record: dict) -> list[dict]:
+    message = record.get("message")
+    return message.get("content", []) if isinstance(message, dict) and isinstance(message.get("content"), list) else []
+
+
+def _tool_result_payload(block: dict) -> str | None:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    text_blocks = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)]
+    if text_blocks and text_blocks[-1].startswith("agentId:"):
+        text_blocks.pop()
+    return "".join(text_blocks)
+
+
+def _reviewer_rows(payload: object) -> tuple[list[list[object]] | None, str | None]:
+    if not isinstance(payload, dict) or set(payload) != {"c", "r", "n"}:
+        return None, "bad-payload"
+    if payload["c"] != ["id", "sev", "file", "line", "kind", "msg"] or not isinstance(payload["r"], list) or type(payload["n"]) is not int:
+        return None, "bad-payload"
+    if payload["n"] != len(payload["r"]):
+        return None, "n-mismatch"
+    rows = payload["r"]
+    if any(
+        not isinstance(row, list)
+        or len(row) != 6
+        or not all(isinstance(row[index], str) and row[index] for index in (0, 1, 2, 4, 5))
+        or type(row[3]) is not int
+        for row in rows
+    ):
+        return None, "bad-payload"
+    return rows, None
+
+
+def _scout_rows(payload: object) -> tuple[list[dict] | None, str | None]:
+    if not isinstance(payload, dict) or set(payload) != {"hits", "n"}:
+        return None, "bad-payload"
+    if not isinstance(payload["hits"], list) or type(payload["n"]) is not int:
+        return None, "bad-payload"
+    if payload["n"] != len(payload["hits"]):
+        return None, "n-mismatch"
+    required = {"id", "sym", "file", "line", "role"}
+    for hit in payload["hits"]:
+        if (
+            not isinstance(hit, dict)
+            or not required.issubset(hit)
+            or set(hit) - (required | {"note"})
+            or not all(isinstance(hit[key], str) and hit[key] for key in ("id", "sym", "file", "role"))
+            or type(hit["line"]) is not int
+            or ("note" in hit and not isinstance(hit["note"], str))
+        ):
+            return None, "bad-payload"
+    return payload["hits"], None
+
+
+def _parse_transcript(source: Source) -> list[Candidate]:
+    records: list[dict | None] = []
+    candidates: list[Candidate] = []
+    for line_number, raw in enumerate(source.text.splitlines(), 1):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            records.append(None)
+            candidates.append(Candidate(line_number, "", "", "", {}, "", "bad-json"))
+            continue
+        records.append(value if isinstance(value, dict) else None)
+        if not isinstance(value, dict):
+            candidates.append(Candidate(line_number, "", "", "", {}, "", "bad-json"))
+
+    dispatches: list[tuple[int, str, str]] = []
+    for index, record in enumerate(records):
+        if record is None or record.get("type") != "assistant":
+            continue
+        for block in _content_blocks(record):
+            if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") not in {"Agent", "Task"}:
+                continue
+            inputs = block.get("input")
+            role = inputs.get("subagent_type") if isinstance(inputs, dict) else None
+            tool_id = block.get("id")
+            if role in {"hive-scout", "hive-reviewer"}:
+                if not isinstance(tool_id, str) or not tool_id:
+                    candidates.append(Candidate(index + 1, "", "", "", {}, "", "bad-payload"))
+                    continue
+                dispatches.append((index, tool_id, role))
+
+    for anchor, tool_id, role in dispatches:
+        result: tuple[int, dict, dict] | None = None
+        for later in range(anchor + 1, len(records)):
+            record = records[later]
+            if record is None or record.get("type") != "user":
+                continue
+            for block in _content_blocks(record):
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == tool_id:
+                    result = (later, record, block)
+                    break
+            if result:
+                break
+        if result is None:
+            candidates.append(Candidate(anchor + 1, "", "", "", {}, "", "no-result"))
+            continue
+        result_index, record, block = result
+        payload_text = _tool_result_payload(block)
+        try:
+            payload = json.loads(payload_text) if payload_text is not None else None
+        except json.JSONDecodeError:
+            payload = None
+        if payload is None:
+            candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-payload"))
+            continue
+        uuid = record.get("uuid")
+        if not isinstance(uuid, str) or not uuid:
+            candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-payload"))
+            continue
+        if role == "hive-scout":
+            rows, reason = _scout_rows(payload)
+            if reason:
+                candidates.append(Candidate(result_index + 1, "", "", "", {}, "", reason))
+                continue
+            assert rows is not None
+            for hit in rows:
+                if hit["role"] not in ROLE_ANSWERS:
+                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "unknown-role"))
+                    continue
+                candidates.append(
+                    Candidate(
+                        line=result_index + 1,
+                        question_id="b2.hit_role",
+                        producer="hive-scout",
+                        answer=hit["role"],
+                        state={"sym": hit["sym"], "file": hit["file"], "snippet": hit.get("note", "")},
+                        locator=f"{uuid}#{hit['id']}",
+                    )
+                )
+        else:
+            rows, reason = _reviewer_rows(payload)
+            if reason:
+                candidates.append(Candidate(result_index + 1, "", "", "", {}, "", reason))
+                continue
+            assert rows is not None
+            for finding_id, severity, file_path, _line, finding_kind, message in rows:
+                if severity not in SEVERITY_ANSWERS:
+                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "unknown-sev"))
+                    continue
+                if not isinstance(finding_kind, str) or not KIND_RE.fullmatch(finding_kind):
+                    candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-kind"))
+                    continue
+                state = {"file": file_path, "kind": finding_kind, "msg": message}
+                locator = f"{uuid}#{finding_id}"
+                candidates.extend(
+                    [
+                        Candidate(result_index + 1, "b1.finding_sev", "hive-reviewer", severity, state, locator),
+                        Candidate(result_index + 1, "b1.finding_kind", "hive-reviewer", finding_kind, state, locator),
+                    ]
+                )
+    return candidates
+
+
+def _candidates(source: Source, *, root: Path, tree: set[str], registry: dict[str, str]) -> list[Candidate]:
+    if source.kind == "incident_log":
+        return _parse_incident(source, registry)
+    if source.kind == "verify_report":
+        return _finding_candidates(source=source, root=root, tree=tree, registry=registry)
+    if source.kind == "lane_report":
+        return _parse_lane_report(source)
+    return _parse_transcript(source)
+
+
+def _source_ref(source: Source, locator: str) -> dict:
+    return {
+        "kind": source.kind,
+        "path": source.path,
+        "source_digest": source.digest,
+        "locator": locator,
+    }
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = UsageParser(add_help=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--root", default=str(SCRIPT_ROOT))
+    parser.add_argument("sources", nargs="*")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    root = _repo_root(args.root)
+    if root is None:
+        print("decide-harvest: --root is not a git work tree", file=sys.stderr)
+        return 64
+    output_path = Path(args.out).resolve()
+    if output_path == root or root in output_path.parents:
+        relative_output = output_path.relative_to(root).as_posix()
+        if relative_output and _head_blob(root, relative_output) is not None:
+            print(f"harvest-output-source-conflict: {relative_output}", file=sys.stderr)
+            return 4
+    sources, error = _admit(root, args.sources)
+    if error:
+        code, message = error
+        print(message, file=sys.stderr)
+        return code
+    assert sources is not None
+
+    tree_paths = _tree_paths(root)
+    assert tree_paths is not None
+    tree = set(tree_paths)
+    incident_data = _head_blob(root, "docs/INCIDENT-LOG.md")
+    registry = _registry(incident_data.decode("utf-8", "strict")) if incident_data is not None else {}
+
+    counts = {question_id: 0 for question_id in QUESTION_IDS}
+    kinds = {kind: 0 for kind in SOURCE_KINDS}
+    no_records = 0
+    refused: list[Refusal] = []
+    skipped = 0
+
+    for source in sources:
+        kinds[source.kind] += 1
+        parsed = _candidates(source, root=root, tree=tree, registry=registry)
+        if not parsed:
+            no_records += 1
+        for candidate in parsed:
+            if candidate.reason:
+                refusal = Refusal(source.path, candidate.line, candidate.reason)
+                refused.append(refusal)
+                print(
+                    f"harvest-source-unparseable: {refusal.path}:{refusal.line} ({refusal.reason})",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                row = make_row(
+                    producer=candidate.producer,
+                    question_id=candidate.question_id,
+                    raw_state=candidate.state,
+                    incumbent_answer=candidate.answer,
+                    source_ref=_source_ref(source, candidate.locator),
+                    root=root,
+                )
+                append(args.out, row)
+            except DecisionStateError as exc:
+                if exc.reason == "decision-row-duplicate":
+                    skipped += 1
+                    print(str(exc), file=sys.stderr)
+                    continue
+                reason = f"state:{exc.reason}"
+                refused.append(Refusal(source.path, candidate.line, reason))
+                print(
+                    f"harvest-source-unparseable: {source.path}:{candidate.line} ({reason})",
+                    file=sys.stderr,
+                )
+                continue
+            counts[candidate.question_id] += 1
+
+    per_type = ", ".join(f"{question_id}={counts[question_id]}" for question_id in QUESTION_IDS)
+    print(f"harvest: {sum(counts.values())} rows, per question type: {per_type}")
+    print("negatives: 0 (hand-labeled in J2)")
+    by_kind = ", ".join(f"{kind}={kinds[kind]}" for kind in SOURCE_KINDS)
+    print(
+        f"sources: {len(sources)} read ({by_kind}), {no_records} with no records; "
+        f"refused: {len(refused)} records; skipped: {skipped} duplicates"
+    )
+    return 3 if refused else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

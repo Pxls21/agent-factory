@@ -1,0 +1,4 @@
+{"message":{"content":[{"id":"tool-scout","input":{"subagent_type":"hive-scout"},"name":"Agent","type":"tool_use"}]},"type":"assistant","uuid":"dispatch-scout"}
+{"message":{"content":[{"content":[{"text":"{\"hits\":[{\"id\":\"H1\",\"sym\":\"thing\",\"file\":\"src/existing.py\",\"line\":7,\"role\":\"def\"}],\"n\":1}","type":"text"},{"text":"agentId: scout-1","type":"text"}],"tool_use_id":"tool-scout","type":"tool_result"}]},"type":"user","uuid":"result-scout"}
+{"message":{"content":[{"id":"tool-review","input":{"subagent_type":"hive-reviewer"},"name":"Task","type":"tool_use"}]},"type":"assistant","uuid":"dispatch-review"}
+{"message":{"content":[{"content":[{"text":"{\"c\":[\"id\",\"sev\",\"file\",\"line\",\"kind\",\"msg\"],\"r\":[[\"R1\",\"H\",\"src/existing.py\",7,\"logic-bug\",\"review finding\"]],\"n\":1}","type":"text"}],"tool_use_id":"tool-review","type":"tool_result"}]},"type":"user","uuid":"result-review"}
