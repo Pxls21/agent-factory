@@ -125,6 +125,7 @@ expansion.
 7. **The tell:** if a green was produced without the part it claims to need actually running (kill
    the model mid-graft and it still "succeeds"; disable the store and cost is unchanged), the
    capability does not exist — that is a falsification to REPORT, never a number to tune past.
+   **Ported-tool corollary (2026-09-23, AF-AP-121):** when a third-party tool is carried from its native harness into ours, the smoke runs OUR production invocation with none of the tool's native-harness state planted, and it reads the tool's own effect instrument (an endpoint counter, an archive, a log line). jev-pruner, a Codex plugin, engages only after its Codex hook writes a transcript pointer. PCJ1's setup smoke planted that pointer under a temporary HOME and went green, while a Hermes lane never has one: through the lane path, 108,894 bytes came back whole, the endpoint's call counter did not move, and no archive was written. A fail-open wrapper's "ON" banner is an availability claim, not a measured effect.
 8. **A GENE/PARAMETER DOMAIN is part of the attack surface:** any searchable value profitable
    ONLY inside one engine's fill/semantics model is a latent exploit the optimizer WILL find —
    bound domains with ECONOMIC-REALISM floors (fees+slippage-derived), lock them with tests, and

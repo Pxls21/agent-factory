@@ -442,6 +442,38 @@ restart-when-idle --max-wait 1800`, then polls the deferred log for the exact pe
 The per-request `chat_template_kwargs` path is forwarded by OmniRoute and honoured by the server (proven by an invalid value's
 HTTP 400 both ways) but Hermes does not send it — the refinement for concurrent mixed efforts, not wired.
 
+### Laya endpoint + jev-pruner on the PC (2026-09-22, graded 2026-09-23)
+
+`harness-ports/bin/laya-server.sh` installs a user-scope Laya System One endpoint under `~/venv-laya`,
+`~/hf-laya`, and the systemd --user unit `laya-systemone` on loopback `127.0.0.1:47411`. The server
+loads HF `convaiinnovations/laya` at revision `1c5edc17a7acd8701df6fc341c0d179f1c62c982`, subfolder
+`typed-decisions`, defaults to `--device auto`, and refuses explicit CUDA unless `torch.cuda.mem_get_info()`
+shows at least 3 GiB free. `/health` reports `device`, `device_reason`, `revision`, `snapshot`, and `calls`.
+Live on the PC 2026-09-23: `ok` true, device `cpu`, the pinned revision.
+
+`harness-ports/bin/jev-pruner-setup.sh` clones `tamaratran/jev-pruner` at `47d017c` under
+`~/jev-plugins/jev-pruner`, applies the anchored Codex-client base URL patch, runs `npm install` and
+`npm run build`, and smokes the build against the local endpoint. The smoke plants a synthetic Codex transcript and
+its pointer (`~/.cache/jev-pruner/codex/<id>.json`) under a temporary HOME, because the pruner engages only when that
+pointer exists. Its "timed out at the upstream 30-second deadline" label is inferred from an unchanged `calls`
+counter, not measured.
+
+NOT wired into lanes (graded 2026-09-23). The pruner is Codex-bound: it prunes only after it reads the task goal from
+a Codex transcript, found through a pointer that only its own Codex PreToolUse hook writes (`dist/codex/context.js`).
+Hermes lanes never write that pointer, and the PC has no Codex install. Measured on the PC on 2026-09-23 through a
+model-invoked wrapper: a 20,000-line output (108,894 bytes) came back whole, the endpoint's `calls` counter stayed at
+10, and no `.jev-pruner` archive directory appeared. The pruner returned before it reached the endpoint, so its ON
+state behaved exactly like OFF (AF-AP-121). A second blocker stands behind the first: the pruner's per-request
+deadline is a fixed 30 s, and one request carries up to 25,000 tokens of state, against J0's measured p50 of about
+260 ms on states of about 107 tokens (an extrapolation, not a measurement). The wrapper and its test are parked under
+`tasks/briefs/jev-laya/parked/`. No role body, gate file or lane runner names the pruner. It is kept out of
+`pc-lane.sh` for a second reason: the runner is a listed gate file (`scripts/gate_files.txt`), the never-a-gate screen
+(KC-J1) refused PCJ1's first wiring there, and a sourced helper would have slipped that lexical screen (AF-AP-120).
+
+Owner decision pending: a Hermes adapter (the pruner's own trimming core, fed the lane's goal from its brief, plus a
+GPU or smaller-state answer to the 30 s deadline), or lane pruning parked while the endpoint serves the
+decision-ledger consumers.
+
 
 ### Sandbox-side: `scripts/pc_lane.sh`
 
