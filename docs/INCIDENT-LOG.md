@@ -20,6 +20,7 @@
   - A brief that needs a command held or faked prefers an injection seam the code under test already exposes (an override for the binary's path) over shims that shadow system binaries, and it states the authorization inline.
   - When only shims will do, expect the fallback, and make the report state its served-model mix.
   - The lane was resumed at 12:5xZ with both facts; its report must correct its header.
+- **Addendum 13:5xZ (measured at harvest, one count per assistant record).** Two more refusals on Opus 5.5: one at 12:34:00Z (before the one above), and one at 13:00:16Z on the first turn after the 12:5xZ resume, with the item-4 PATH `ip` shim driver in context. Every later turn (13:01Z-13:46Z) ran on Opus 4.8: 71 Opus 5.5 records and 188 Opus 4.8 records in all. The trigger class held three times: a test driver that PATH-shims `ip` or `rm` in a netns/egress cleanup test. The lane could not know the third refusal; the coordinator's note in the report states the mix, and the gates it rests on were reproduced (issue #48).
 
 **2026-09-23 12:5xZ — A NEW BRIDGE BANNER, THEN A WORKER RESTART, EACH LEFT THE SURVIVING POLLERS ON A DEAD ENDPOINT (AF-AP-131's second and third instances; the 2026-09-22 18:3xZ entry's mechanism, measured).**
 - **What happened.**
