@@ -62,6 +62,7 @@ subordinate to, the Anthropic docs.
    and the lane stopped CONTRACT-INVALID as told. The premise block covers three things, each pasted from a run on the PIN: identities and
    hunks; every count with its set; and every flip/mutant whose outcome the brief asserts. An expectation that was not run is written as a
    question for the lane ("does this flip red? if not, say why"), never as a contract line.
+   **0d‴ — a premise that grounds a NEW RULE is measured by the rule itself (2026-09-23, J1-0-R3).** The J1-0-R3 brief stated "zero source lines in the listed gate files" from a line-start grep; the rule it grounded splits command segments, and its first run on the real tree flagged seven: two real mid-line sources (`&& . "$ROOT/.pc-bridge.env"`, `|| . "$PC_LANE_BRIDGE_FN"`) and five false positives inside quoted strings. Before a brief states what a new check will find on the real tree, run the check (or its exact pattern) over the real tree and paste that output; a narrower grep is a different instrument and predicts nothing.
 
 
 

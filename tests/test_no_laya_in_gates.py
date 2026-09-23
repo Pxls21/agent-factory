@@ -413,3 +413,243 @@ def test_executable_regular_gate_file_stays_clean(tmp_path):
     r = _run(["--staged"], cwd=tmp_path)
     assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
     assert "2 files scanned, clean" in r.stderr
+
+
+# =========================================================================
+# AMENDMENT 2 (J1-0-R3, AF-AP-120): the in-process include edges are closed
+# =========================================================================
+
+import importlib.util  # noqa: E402
+
+_CHECKER = "proofs/x/check_y.py"
+
+
+def _screen_module():
+    spec = importlib.util.spec_from_file_location("no_laya_in_gates_mod", SCREEN)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _err_lines(r):
+    return [line for line in r.stderr.splitlines() if line.startswith("gate-file-")]
+
+
+def test_sourced_helper_refused(tmp_path):
+    """A listed shell gate file that sources a file (line start, or mid-line after &&) -> exit 4,
+    even though the sourced helper itself is not listed and carries banned vocabulary."""
+    _make_tree(tmp_path, "scripts/hooks/pre-commit\n", {
+        "scripts/hooks/pre-commit": (
+            "#!/bin/bash\n"
+            ". scripts/helper.sh\n"
+            "[ -f x ] && source \"$ROOT/scripts/helper.sh\"\n"
+        ),
+        "scripts/helper.sh": "echo laya\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-sources: scripts/hooks/pre-commit:2: scripts/helper.sh",
+        'gate-file-sources: scripts/hooks/pre-commit:3: "$ROOT/scripts/helper.sh"',
+    ], r.stderr
+
+
+def test_source_words_in_strings_comments_heredocs_not_flagged(tmp_path):
+    """A '. word' inside a quoted string, a comment, a heredoc body or ${#var} is not a source."""
+    _make_tree(tmp_path, "scripts/hooks/pre-commit\n", {
+        "scripts/hooks/pre-commit": (
+            "#!/bin/bash\n"
+            "echo \"run setup (sandbox). Then retry\" >&2\n"
+            "printf '(see docs). Next\\n'\n"
+            "# . scripts/helper.sh would be refused\n"
+            "n=${#ARR[@]}; echo \"$n\"\n"
+            "cat <<'EOF'\n"
+            ". scripts/helper.sh\n"
+            "EOF\n"
+            "echo done\n"
+        ),
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+
+
+def test_allowed_source_pair_passes_only_for_its_file(tmp_path):
+    """An ALLOWED_SOURCES pair passes in its own gate file and is refused in any other."""
+    line = '[ -f "$ROOT/.pc-bridge.env" ] && . "$ROOT/.pc-bridge.env"\n'
+    _make_tree(tmp_path, "scripts/pc_lane.sh\nscripts/hooks/pre-commit\n", {
+        "scripts/pc_lane.sh": "#!/usr/bin/env bash\n" + line,
+        "scripts/hooks/pre-commit": "#!/bin/bash\n" + line,
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        'gate-file-sources: scripts/hooks/pre-commit:2: "$ROOT/.pc-bridge.env"',
+    ], r.stderr
+
+
+def test_yaml_parentheses_do_not_split_but_run_sources_are_refused(tmp_path):
+    """YAML prose with '(x). Word' is not a source; a run step that sources a file is."""
+    wf = ".github/workflows/ci.yml"
+    _make_tree(tmp_path, wf + "\n", {
+        wf: "name: ci\njobs:\n  t:\n    steps:\n      - name: Run tests (fast). Then report\n        run: echo ok\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    (tmp_path / wf).write_text("name: ci\njobs:\n  t:\n    steps:\n      - run: . scripts/helper.sh\n")
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:5: scripts/helper.sh" % wf], r.stderr
+
+
+def test_unlisted_import_refused(tmp_path):
+    """A listed checker importing an UNLISTED first-party helper -> exit 4 naming the helper."""
+    _make_tree(tmp_path, _CHECKER + "\n", {
+        _CHECKER: "import os\nimport helper\n",
+        "proofs/x/helper.py": "X = 1\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unlisted: proofs/x/check_y.py:2 imports helper -> proofs/x/helper.py",
+    ], r.stderr
+
+
+def test_listed_import_screened(tmp_path):
+    """Once listed, the helper is screened: its vocabulary is an exit-3 violation."""
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/helper.py\n", {
+        _CHECKER: "import helper\n",
+        "proofs/x/helper.py": "X = 1\n# a laya call would live here\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 3, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert r.stdout.splitlines() == ["proofs/x/helper.py:2:laya"], r.stdout
+
+
+def test_subdir_import_resolved(tmp_path):
+    """A helper two levels deep is found (the checkers put tools/ and oracle/ on sys.path)."""
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/tools/deep/helper2.py\n", {
+        _CHECKER: "from helper2 import X\n",
+        "proofs/x/tools/deep/helper2.py": "X = 1\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert "2 files scanned, clean" in r.stderr
+
+
+def test_unresolved_import_refused(tmp_path):
+    """A non-stdlib, non-external name with no repo file -> exit 4 unresolved."""
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: "import json\nimport not_a_module_anywhere\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unresolved: proofs/x/check_y.py:2 imports not_a_module_anywhere",
+    ], r.stderr
+
+
+def test_ambiguous_import_refused(tmp_path):
+    """Two repo files answer the same name -> exit 4 ambiguous, never the first match."""
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/helper.py\nscripts/helper.py\n", {
+        _CHECKER: "import helper\n",
+        "proofs/x/helper.py": "X = 1\n",
+        "scripts/helper.py": "X = 2\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-ambiguous: proofs/x/check_y.py:1 imports helper -> proofs/x/helper.py,scripts/helper.py",
+    ], r.stderr
+
+
+def test_stdlib_and_external_allowed(tmp_path):
+    """Standard-library and EXTERNAL_MODULES imports need no repo file."""
+    _make_tree(tmp_path, _CHECKER + "\n", {
+        _CHECKER: "import os, json\nimport yaml\nfrom jsonschema import validate\nfrom __future__ import annotations\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+
+
+def test_relative_import(tmp_path):
+    """`from . import sibling` resolves against the importing file's own directory."""
+    gate = "scripts/gatepkg/check.py"
+    _make_tree(tmp_path, gate + "\n", {
+        gate: "from . import sibling\n",
+        "scripts/gatepkg/__init__.py": "",
+        "scripts/gatepkg/sibling.py": "X = 1\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unlisted: scripts/gatepkg/check.py:1 imports .sibling -> scripts/gatepkg/sibling.py",
+    ], r.stderr
+
+
+def test_python_shebang_gate_imports_checked(tmp_path):
+    """An extensionless gate with a python shebang is a Python gate: its imports are closed too."""
+    gate = "scripts/validate-thing"
+    _make_tree(tmp_path, gate + "\n", {
+        gate: "#!/usr/bin/env python3\nimport helper\n",
+        "scripts/helper.py": "X = 1\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unlisted: scripts/validate-thing:2 imports helper -> scripts/helper.py",
+    ], r.stderr
+
+
+def test_unparseable_python_gate(tmp_path):
+    """A listed Python gate that does not parse -> exit 4, never a silent pass."""
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: "def (\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-unparseable: proofs/x/check_y.py"], r.stderr
+
+
+def test_staged_import_closure(tmp_path):
+    """--staged resolves imports against the INDEX: a helper present only in the worktree is
+    unresolved (not 'unlisted'), and an unlisting staged in the index is what counts."""
+    env = _git_env()
+    _init_repo(tmp_path, _CHECKER + "\nproofs/x/helper.py\n", {
+        _CHECKER: "import helper\n",
+        "proofs/x/helper.py": "X = 1\n",
+    }, env)
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    # The index unlists the helper; the worktree list still has it -> the index wins.
+    gf = tmp_path / "scripts" / "gate_files.txt"
+    gf.write_text(_CHECKER + "\n")
+    subprocess.run(["git", "add", "scripts/gate_files.txt"], cwd=tmp_path, check=True, env=env)
+    gf.write_text(_CHECKER + "\nproofs/x/helper.py\n")
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unlisted: proofs/x/check_y.py:1 imports helper -> proofs/x/helper.py",
+    ], r.stderr
+    # A new import of a helper that exists only in the worktree is unresolved in the index.
+    (tmp_path / _CHECKER).write_text("import helper\nimport wt_only\n")
+    (tmp_path / "proofs" / "x" / "wt_only.py").write_text("Y = 2\n")
+    subprocess.run(["git", "add", "scripts/gate_files.txt", _CHECKER], cwd=tmp_path, check=True, env=env)
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unresolved: proofs/x/check_y.py:2 imports wt_only",
+    ], r.stderr
+
+
+def test_closed_sets_locked():
+    """EXTERNAL_MODULES and ALLOWED_SOURCES are closed; widening either is a reviewed change."""
+    mod = _screen_module()
+    assert mod.EXTERNAL_MODULES == frozenset(["fubuki_os", "jsonschema", "lint", "pyflakes", "yaml"])
+    assert mod.ALLOWED_SOURCES == frozenset([
+        ("scripts/pc_lane.sh", '"$ROOT/.pc-bridge.env"'),
+        ("scripts/pc_lane.sh", '"$PC_LANE_BRIDGE_FN"'),
+    ])
+
+
+def test_real_tree_lists_every_checker_helper():
+    """The four first-party helpers the checkers import are listed (the real-tree closure)."""
+    listed = set((REPO_ROOT / "scripts" / "gate_files.txt").read_text().split())
+    for helper in ("proofs/S0-01/pins.py", "proofs/S0-01/negative_contract.py",
+                   "proofs/S0-01/tools/nostr_verify.py", "proofs/S0-02/oracle/denial_table.py"):
+        assert helper in listed, helper

@@ -40,3 +40,9 @@ proofs/S0-09/check_conformance.py
 proofs/S0-10/check_conformance.py
 proofs/S0-11/check_eval_hardening.py
 proofs/S0-12/check_pin_diff.py
+# first-party modules the listed checkers import (AMENDMENT 2: every import of a Python
+# gate resolves to the standard library, EXTERNAL_MODULES, or a file listed here)
+proofs/S0-01/pins.py
+proofs/S0-01/negative_contract.py
+proofs/S0-01/tools/nostr_verify.py
+proofs/S0-02/oracle/denial_table.py

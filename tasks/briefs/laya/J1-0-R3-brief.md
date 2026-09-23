@@ -1,5 +1,23 @@
 # J1-0-R3 — the never-a-gate screen follows its in-process include edges (AMENDMENT 2; AF-AP-120)
 
+**STATUS 2026-09-23 00:4xZ — BUILT by the coordinator in the main loop; GATED-PENDING-VERIFY.** The worktree-isolated
+`code-implementer` did no work: its Bash tool refused every command ("the working-directory isolation context for this agent
+was lost") and its worktree was a partial checkout without the boundary files. COORDINATOR NOTES (they override the text
+below where they differ):
+- **Premise corrected.** The "zero source lines" premise came from a line-start grep. The rule itself, run on the real tree,
+  found 7 source command segments in its first, quote-blind draft: 2 real ones in `scripts/pc_lane.sh` (lines 120 and 160:
+  the untracked bridge link file and the dispatcher tests' fake-bridge seam, neither loads repo code) and 5 false positives
+  inside quoted strings (`scripts/hooks/pre-commit:24`, `scripts/pc_lane.sh:386` and `:397`,
+  `harness-ports/bin/pc-lane.sh:242` and `:245`, each a `). ` inside an echo or printf text). So rule 1 is NOT "refused
+  outright": the scan is quote-, comment- and heredoc-aware, and a source edge passes only when its exact (file, target) pair
+  is in the closed `ALLOWED_SOURCES` set (two pairs today). The message is `gate-file-sources: <path>:<lineno>: <target>`.
+  YAML `run:` lines are scanned after their key prefix is stripped.
+- **Imports resolve on the full dotted name**, not only the top-level name, and every import error carries `:<lineno>`
+  (`gate-file-import-unlisted|unresolved|ambiguous: <gate>:<lineno> imports <name> -> <path>`).
+- **Gates, pasted:** `33 passed in 2.11s` then `33 passed in 2.22s`; `no_laya_in_gates: 37 files scanned, clean` on the real
+  tree (33 before); 12 of 12 mutants killed by named tests; the AP screen reads 7 AF-AP-40 hits, all present at HEAD.
+- No `J1-0-R3-report.md` exists: the coordinator's record is this note, the commit message and the ledger line.
+
 PIN: the origin head that carries this brief (read it with `git log -1 --format=%h origin/claude/soundbox-kit-migration-iz1jwf`; the brief commit is the only change since 9097ab3).
 ROLE: a sandbox BUILD lane (`code-implementer`). You work in your own worktree. You do NOT commit, push, open PRs or comment anywhere. Leave every change uncommitted in the worktree and end with the report.
 BOUNDARY (exact; nothing else): MODIFIED `scripts/no_laya_in_gates.py`, MODIFIED `scripts/gate_files.txt`, MODIFIED `tests/test_no_laya_in_gates.py`, NEW fixture trees under `tests/fixtures/decisions/` (only new directories; do not edit existing fixtures), NEW `tasks/briefs/laya/J1-0-R3-report.md`. Read anything; write nothing else.
