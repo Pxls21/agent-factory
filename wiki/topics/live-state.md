@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 21:2xZ — WHAT IS LIVE NOW (this block supersedes the 20:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201). Monitor b0o1kfwz6.
+- **LIVE, PC capture:** the S0-02 eight-leg capture (`/home/rocco/s0-02-capture/c2/`, clone e8db82c2, started 21:20:43Z). The revoked leg carries the owner's removal receipt (the relay log reads HTTP 200; the member list has 3 rows and owner2 is absent).
+- **ACCEPTED 21:2xZ:** T94 (#167 + #200). VERIFY-T94-R1 returned MERGE-READY-WITH-FOLLOWUPS; follow-ups are in issue #55. CLAUDE.md's manual stale-FAILED rename is retired except for a dangling symlink.
+- **STILL GATED-PENDING-VERIFY:** C2. VERIFY-C2 ran entirely on gemini-3.1-pro-low and reasoned its mutants instead of running them; issue #56 records the `exit 0; pytest` shape the coordinator found. The re-grade is batched with the `LANE_DONE_GATE` forwarding increment. J1-3 is also still gated: VERIFY-J1-3 must be re-dispatched with a premise from `scripts/premise_block.sh` at the next pushed PIN.
+- **HELD:** J1-1-R3 (#202). The cloud build combo fell back to OpenCode free models that refuse (403/400). It waits for a free local slot.
+
 **2026-09-23 20:3xZ — WHAT IS LIVE NOW (this block supersedes the 20:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (six lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201) on the local route; J1-1-R3 (#202), VERIFY-T94-R1 (#200 + #167; PIN 6963f00), VERIFY-J1-3 (#120) and VERIFY-C2 (#148) (both PIN e8db82c, since 21:1xZ) on the cloud routes. Monitor b0o1kfwz6.
 - **HOME:** VERIFY-T94 NOT-READY (F-1: the FAILED-UNRETRIED branch had no executed case) → T94-R1 landed test-only (T2 51/0 ×2; four doubled-escape mutants red). VERIFY-T94-R1 next.
@@ -435,6 +442,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 21:2xZ — VERIFY-T94-R1 graded (T94 accepted, issue #55); VERIFY-C2 graded weak (C2 still gated, issue #56); S0-02 eight-leg capture running.
 2026-09-23 21:1xZ — VERIFY-J1-3 and VERIFY-C2 dispatched (PIN e8db82c).
 2026-09-23 21:0xZ — C2 landed (the lane done-gate, switched off, GATED-PENDING-VERIFY).
 2026-09-23 20:5xZ — J1-3 landed (decide-harvest, GATED-PENDING-VERIFY); lane_gate.sh relative-dir fix (AF-AP-163).
