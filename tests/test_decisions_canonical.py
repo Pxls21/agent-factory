@@ -14,7 +14,8 @@ never redacts, redact never normalizes, normalize never cuts).
 
 Contract: tasks/briefs/laya/J1-1-brief.md (seeds/seed-laya-j1-v1.yaml AC 1 +
 AC 3; the verdict's J1 acceptance test 1 + the KC-J6 field list), amended by
-tasks/briefs/laya/J1-1-R1-brief.md (A1-A5).
+tasks/briefs/laya/J1-1-R1-brief.md (A1-A5) and
+tasks/briefs/laya/J1-1-R2-brief.md (B1-B5).
 """
 from __future__ import annotations
 
@@ -846,3 +847,214 @@ def test_token_run_keeps_the_token_placeholder_and_no_placeholder_is_relabelled(
             for end in range(8, len(placeholder) + 1):
                 text = lead + placeholder[:end]
                 assert redact({"msg": text})["msg"] == text, text
+
+
+# ===========================================================================
+# J1-1-R2 -- AMENDMENT 2 to J1-1 (D-057; tasks/briefs/laya/J1-1-R2-brief.md,
+# B1-B5): a secret NAME that the sk or bearer class would swallow never frees
+# its value (VERIFY-J1-1-R1 V-1: "task-password: v" gave "ta<redacted:sk>: v"
+# and v reached the ledger). sk and bearer still fire where their PIN forms
+# fire; the run they replace ends before a secret assignment that a later
+# class redacts, unless that value holds another assignment head (then the
+# PIN's output stays, byte for byte).
+#
+# The rows are the brief's appendix driver, each as b1.finding_sev's msg.
+# FAKE bodies only: "QZJ8" runs. No other byte of these states is a Q, Z, J
+# or 8, so "no byte of the value" is checked one character at a time.
+# ===========================================================================
+
+_V = "QZJ8" * 5  # the driver's 20-character FAKE value body
+_RUN = "QZJ8" * 10  # the driver's 40-character FAKE token run
+_DRIVER_BODY = frozenset("QZJ8")
+
+# (id, raw text, the redacted text). Each leaks at the PIN.
+_V1_ROWS = [
+    ("V1-a", f"task-password: {_V}", "ta<redacted:sk>password: <redacted:envval>"),
+    ("V1-b", f"ask-password={_V}", "a<redacted:sk>password=<redacted:envval>"),
+    ("V1-c", f'"task-password": "{_V}"', '"ta<redacted:sk>password": "<redacted:envval>"'),
+    ("V1-d", f"desk-secret_key: {_V}", "de<redacted:sk>key: <redacted:envval>"),
+    ("V1-e", f"flask-access_token={_RUN}", "fla<redacted:sk>token=<redacted:token>"),
+    ("V1-f", "disk-PASSWORD=QZJ8QZ", "di<redacted:sk>PASSWORD=<redacted:envval>"),
+    ("V1-g", f"bearer my-service-password: {_V}", "<redacted:bearer>password: <redacted:envval>"),
+    ("V1-h", f"sk-abcdefgh-password={_V}", "<redacted:sk>password=<redacted:envval>"),
+]
+# The driver's controls keep the PIN's redaction byte for byte. C-4 is the
+# row the verifier's option B leaks: a bearer token followed by a colon.
+_V1_CONTROLS = [
+    ("C-1", f"mask-token: {_RUN}", "mask-token: <redacted:token>"),
+    ("C-2", f"task-api_key: {_V}", "task-api_key: <redacted:envval>"),
+    ("C-3", f"db_password={_V}", "db_password=<redacted:envval>"),
+    ("C-4", f"Authorization: Bearer {_V}: rejected", "Authorization: <redacted:bearer>: rejected"),
+    ("C-5", f"key sk-{_V} used", "key <redacted:sk> used"),
+    ("C-6", f'"sk-{_V}"', '"<redacted:sk>"'),
+]
+# The same class beyond the driver. The first ten leak at the PIN: each other
+# secret name (after a prefix with ":" or "=", and as an upper-case NAME= with
+# a short value, V1-f's form), and the token class's space form. The last
+# nine keep the PIN's own output: a value that holds a second assignment head
+# (each assignment form; an upper-case NAME='s value runs past ";" and the
+# token class's space head counts too: the value would swallow that name and
+# free its value), a token whose tail spells a name but no value follows, a
+# lower-case "=" (the upper-case NAME= form is case-sensitive), base64 "="
+# padding, and "token" with a space but no 32+ run.
+_V1_CLASS_ROWS = [
+    ("name-secret", f"desk-client_secret: {_V}", "de<redacted:sk>secret: <redacted:envval>"),
+    ("name-passwd", f"desk-db_passwd={_V}", "de<redacted:sk>passwd=<redacted:envval>"),
+    ("name-api_key", f"desk-my_api_key: {_V}", "de<redacted:sk>api_key: <redacted:envval>"),
+    ("upper-key-short", "desk-SERVICE_KEY=QZJ8QZ", "de<redacted:sk>KEY=<redacted:envval>"),
+    ("upper-token-short", "desk-SERVICE_TOKEN=QZJ8QZ", "de<redacted:sk>TOKEN=<redacted:envval>"),
+    ("upper-secret-short", "desk-SERVICE_SECRET=QZJ8QZ", "de<redacted:sk>SECRET=<redacted:envval>"),
+    ("upper-passwd-short", "desk-SERVICE_PASSWD=QZJ8QZ", "de<redacted:sk>PASSWD=<redacted:envval>"),
+    ("upper-api_key-short", "desk-SERVICE_API_KEY=QZJ8QZ", "de<redacted:sk>API_KEY=<redacted:envval>"),
+    ("token-space-sk", f"desk-access-token {_RUN}", "de<redacted:sk>token <redacted:token>"),
+    ("token-space-bearer", f"bearer my-service-access-token {_RUN}", "<redacted:bearer>token <redacted:token>"),
+    ("chain-widened", f"flask-tapasswd=aAPI_KEY : {_V}", "fla<redacted:sk>=aAPI_KEY : <redacted:envval>"),
+    ("chain-upper", f"mask-PASSWORD=xtoken: {_V}", "ma<redacted:sk>=xtoken: <redacted:envval>"),
+    ("chain-upper-past-a-stop", f"mask-PASSWORD=plainvalue;token: {_V}", "ma<redacted:sk>=plainvalue;token: <redacted:envval>"),
+    ("chain-upper-token-space", f"mask-PASSWORD=abc_token {_RUN}", "ma<redacted:sk>=abc_token <redacted:token>"),
+    (
+        "chain-token-run",
+        f"bearer my-service-access-token {'ab' * 16}key: {_V}",
+        f"<redacted:bearer> {'ab' * 16}key: <redacted:envval>",
+    ),
+    ("no-value", f"Authorization: Bearer {_V[:13]}key: ok", "Authorization: <redacted:bearer>: ok"),
+    ("lower-equals", f"Authorization: Bearer {_V[:13]}key=ok", "Authorization: <redacted:bearer>ok"),
+    ("padding", f"Authorization: Bearer {_V}KEY==", "Authorization: <redacted:bearer>"),
+    ("token-space-no-run", "bearer QZJ8-service-access-token ok", "<redacted:bearer> ok"),
+]
+
+
+def _assert_driver_row(raw, want):
+    state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+    out = _decision_state("b1.finding_sev", state)
+    text = canonical(out)
+    leaked = sorted(set(text) & _DRIVER_BODY)
+    assert not leaked, f"{raw!r}: value body bytes {leaked} in {text!r}"
+    assert "abcdefgh" not in text, f"{raw!r}: the sk value left its placeholder: {text!r}"
+    assert out["msg"] == "set " + want + " now", f"{raw!r} -> {out['msg']!r}"
+    assert _decision_state("b1.finding_sev", out) == out, f"{raw!r}: not a fixed point"
+    # Two different FAKE values hash the same: the value is not state.
+    other = dict(state, msg=state["msg"].replace("QZJ8", "Q8JZ"))
+    assert other != state
+    assert state_digest("b1.finding_sev", other) == state_digest("b1.finding_sev", state), raw
+
+
+@pytest.mark.parametrize(
+    "raw, want", [(raw, want) for _, raw, want in _V1_ROWS], ids=[row_id for row_id, _, _ in _V1_ROWS]
+)
+def test_v1_name_swallowed_by_sk_or_bearer_frees_no_value(raw, want):
+    # B1 + B4 at decision_state: no byte of the value body in the output or in
+    # canonical() of it, the exact redacted text, a fixed point of itself.
+    _assert_driver_row(raw, want)
+
+
+@pytest.mark.parametrize(
+    "raw, want", [(raw, want) for _, raw, want in _V1_CONTROLS], ids=[row_id for row_id, _, _ in _V1_CONTROLS]
+)
+def test_v1_control_keeps_its_pin_redaction(raw, want):
+    # B2: every control is redacted exactly as at the PIN (green at both; the
+    # negative control is a mutant: the verifier's option B leaks C-4).
+    _assert_driver_row(raw, want)
+
+
+@pytest.mark.parametrize(
+    "raw, want",
+    [(raw, want) for _, raw, want in _V1_CLASS_ROWS],
+    ids=[row_id for row_id, _, _ in _V1_CLASS_ROWS],
+)
+def test_v1_class_beyond_the_driver(raw, want):
+    # B1 for the other names and the token space form; B2 for the guards
+    # that keep the PIN's output where a yield would free or split nothing
+    # new (each guard's negative control is a mutant that drops it).
+    _assert_driver_row(raw, want)
+
+
+def _v1_forms():
+    """(id, a V-1 text, the same text with the value's placeholder in its
+    place). The bodies are FAKE, over the Q Z X J body alphabet."""
+    b, r = _body(20), _body(40)
+    return [
+        ("V1-a", "task-password: " + b, "task-password: <redacted:envval>"),
+        ("V1-b", "ask-password=" + b, "ask-password=<redacted:envval>"),
+        ("V1-c", '"task-password": "' + b + '"', '"task-password": "<redacted:envval>"'),
+        ("V1-d", "desk-secret_key: " + b, "desk-secret_key: <redacted:envval>"),
+        ("V1-e", "flask-access_token=" + r, "flask-access_token=<redacted:token>"),
+        ("V1-f", "disk-PASSWORD=" + b[:6], "disk-PASSWORD=<redacted:envval>"),
+        ("V1-g", "bearer my-service-password: " + b, "bearer my-service-password: <redacted:envval>"),
+        ("V1-h", "sk-abcdefgh-password=" + b, "sk-abcdefgh-password=<redacted:envval>"),
+    ]
+
+
+def test_v1_rows_straddle_every_bounded_key_and_stay_fixed_points():
+    # B1 + B4 under the bound: each V-1 text straddles every bounded key's
+    # limit at every cut position. No body byte survives, the digest equals
+    # the value-placeholder form's, every field is within its limit, and
+    # decision_state is a fixed point of itself -- also when the cut lands
+    # right after the name (a form that stayed silent there would redact the
+    # bare "sk-password" on the second pass).
+    cases = 0
+    for (qid, key), limit in _BOUNDED.items():
+        for row_id, secret, clean_text in _v1_forms():
+            for k in range(1, min(len(secret), limit - 1)):
+                prefix = "a" * (limit - k - 1) + " "
+                state = dict(_BASE[qid], **{key: prefix + secret + " tail"})
+                clean = dict(_BASE[qid], **{key: prefix + clean_text + " tail"})
+                context = f"{qid}.{key} {row_id} k={k}"
+                assert state_digest(qid, state) == state_digest(qid, clean), (
+                    f"{context}: the straddling value does not hash as its placeholder form"
+                )
+                out = _decision_state(qid, state)
+                _assert_bounded_and_clean(qid, out, context)
+                assert "abcdefgh" not in canonical(out), context
+                assert _decision_state(qid, out) == out, f"{context}: not idempotent"
+                cases += 1
+    assert cases > 3000, cases
+
+
+# The verifier's 43 shapes (VERIFY-J1-1-R1 report, section 2), rebuilt from
+# its table: the 35 that are body-free after this repair -- the 27 the PIN
+# redacts and the 8 V-1 rows. The other 8 still leak and are filed
+# follow-ups (V-6: full-width and zero-width separators; V-7: SK-/Sk-, a
+# 7-character mixed-case value, a lower-case PEM label).
+_VERIFIER_SHAPES = [
+    f"password: sk-{_V}",
+    f"KEY=sk-{_V}",
+    f"token = {_RUN}-QZJ8QZJ8",
+    f"password: Bearer {_V}",
+    f"PASSWORD=Bearer {_V}",
+    f'api_key="Bearer {_V}"',
+    f"TOKEN: Bearer {_V}",
+    "the <redacted:token> is here",
+    "password: <redacted:token>",
+    "KEY=<redacted:token>",
+    f"password: {_V} token: {_RUN}",
+    f"sk-{_V} Bearer {_V}",
+    f"API_KEY={_V} password: {_V}",
+    f"password={_V},token={_RUN}",
+    f"password:\t{_V}",
+    f"password:\u00a0{_V}",
+    f"password\u00a0: {_V}",
+    f"password:\u3000{_V}",
+    f"password:  {_V}",
+    f"BEARER {_V}",
+    f"bEaReR {_V}",
+    f"ToKeN: {_RUN}",
+    f"Password={_V}",
+    f"Api_Key: {_V}",
+    f"mask-token: {_RUN}",
+    f"task-api_key: {_V}",
+    f"db_password={_V}",
+] + [raw for _, raw, _ in _V1_ROWS]
+
+
+def test_verifier_shapes_keep_every_pin_redaction():
+    # B2's differential as a test: no shape the PIN redacts leaks, every V-1
+    # row is closed, and each output is a fixed point of decision_state.
+    assert len(_VERIFIER_SHAPES) == 35
+    for raw in _VERIFIER_SHAPES:
+        state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+        out = _decision_state("b1.finding_sev", state)
+        text = canonical(out)
+        leaked = sorted(set(text) & _DRIVER_BODY)
+        assert not leaked, f"{raw!r}: value body bytes {leaked} in {text!r}"
+        assert _decision_state("b1.finding_sev", out) == out, f"{raw!r}: not a fixed point"

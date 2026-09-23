@@ -1,7 +1,8 @@
 """Closed per-question-type state schemas and the normalize / redact / bound transforms.
 
 J1 contract (seeds/seed-laya-j1-v1.yaml; the pinned decisions in
-tasks/laya-j1-breakdown.md; AMENDMENT 1, D-056): state is a BOUNDED, CLOSED,
+tasks/laya-j1-breakdown.md; AMENDMENT 1, D-056; AMENDMENT 2, D-057 -- the sk
+and bearer class forms): state is a BOUNDED, CLOSED,
 per-question-type extraction -- never verbatim bytes. Line numbers, timestamps,
 absolute paths, run ids and PIN SHAs are never state keys; they belong to
 source_ref.locator (J1-2's).
@@ -41,8 +42,39 @@ PLACEHOLDERS = {
     "privkey": "<redacted:privkey>",
 }
 
-_BEARER = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/-]{16,}=*")
-_SK = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
+# sk and bearer (AMENDMENT 2, D-057; VERIFY-J1-1-R1 V-1): each fires where its
+# PIN form fires -- "sk-" then 8+ run characters; "bearer", whitespace, 16+ --
+# so its prefix is always replaced and a second pass finds nothing to redact
+# there, even after bound's cut. The run it replaces ends before a secret
+# assignment that a later class redacts (_YIELD): the name stays for that
+# class and its value is redacted. At the PIN "task-password: v" gave
+# "ta<redacted:sk>: v" and v reached the ledger. The run does not yield when
+# that value holds another assignment head: the value would swallow the second
+# name and free ITS value (the widened value's chain gap, which the PIN's
+# swallow hid), so the run keeps its PIN form. A run holds at most one name
+# that a separator follows (a separator ends the run), and the value checks
+# stop at the value's end or at the first head, so the cost stays linear.
+_SECRET_NAME = r"(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)"
+# The start of an assignment a later class could take: a name, an optional
+# quote and "=" or ":" (the widened form; the upper-case NAME= is one of them),
+# or "token" and a quote or whitespace (the token class's other separators).
+_ASSIGNMENT_HEAD = _SECRET_NAME + r"[\"']?\s?[:=]|(?i:(?:\b|(?<=_))token)[\"'\s]"
+_ENVVAL_HEAD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)="
+# The assignments sk and bearer yield to, each with the value its class takes:
+# _ENVVAL (upper-case NAME=, any value but base64 "=" padding), _ENVVAL_WIDE
+# (8+ value characters; an upper-case NAME= is _ENVVAL's, whose \S+ value runs
+# further) and _TOKEN (a quote or one space, then a 32+ run).
+_YIELD = (
+    _ENVVAL_HEAD + r"(?=[^\s=])(?!\S*?(?:" + _ASSIGNMENT_HEAD + r"))"
+    r"|(?!" + _ENVVAL_HEAD + r")" + _SECRET_NAME + r"[\"']?\s?[:=]\s?[\"']?"
+    r"(?=[^\s\"'&,;]{8})(?![^\s\"'&,;]*?(?:" + _ASSIGNMENT_HEAD + r"))"
+    r"|(?i:(?:\b|(?<=_))token)(?=[\"' ])[\"']? ?[\"']?"
+    r"(?=[A-Za-z0-9+/]{32})(?![A-Za-z0-9+/]*?(?:" + _ASSIGNMENT_HEAD + r"))"
+)
+_BEARER = re.compile(
+    r"(?i:bearer)\s+(?=[A-Za-z0-9._~+/-]{16})(?:(?!" + _YIELD + r")[A-Za-z0-9._~+/-])*=*"
+)
+_SK = re.compile(r"sk-(?=[A-Za-z0-9_-]{8})(?:(?!" + _YIELD + r")[A-Za-z0-9_-])*")
 # A 32+ hex/base64 run after "token", "*_token" or "*_TOKEN" (C-F3a): an
 # optional quote after the name, then ONE space, or ":" / "=" with at most one
 # space on each side, then an optional quote ("token = <run>",

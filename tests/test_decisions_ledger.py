@@ -1532,3 +1532,81 @@ def test_over_limit_straddling_secret_appends_and_replays(tmp_path):
         assert len(row["state"]["action_excerpt"]) <= limit, name
         rows.append(row)
     assert replay(ledger) == rows
+
+
+# ---------------------------------------------------------------------------
+# J1-1-R2 (D-057, B1 + B2): the brief's appendix driver as tests
+# (tasks/briefs/laya/J1-1-R2-brief.md). Each shape is b1.finding_sev's msg
+# and goes through the REAL make_row -> append -> the JSONL line on disk ->
+# replay. The bodies are FAKE "QZJ8" runs; the digests are lower-case hex and
+# no other field holds an upper-case Q, Z or J, so the file is searched for
+# those letters one character at a time.
+# ---------------------------------------------------------------------------
+
+_V = "QZJ8" * 5  # the driver's 20-character FAKE value body
+_RUN = "QZJ8" * 10  # the driver's 40-character FAKE token run
+
+# A secret NAME that the sk or bearer class swallowed freed its value at the
+# PIN (VERIFY-J1-1-R1 V-1). Each row leaks at the PIN.
+_V1_ROWS = [
+    ("V1-a", f"task-password: {_V}"),
+    ("V1-b", f"ask-password={_V}"),
+    ("V1-c", f'"task-password": "{_V}"'),
+    ("V1-d", f"desk-secret_key: {_V}"),
+    ("V1-e", f"flask-access_token={_RUN}"),
+    ("V1-f", "disk-PASSWORD=QZJ8QZ"),
+    ("V1-g", f"bearer my-service-password: {_V}"),
+    ("V1-h", f"sk-abcdefgh-password={_V}"),
+]
+# The controls the PIN redacts, C-4 included (the verifier's option B leaks it).
+_V1_CONTROLS = [
+    ("C-1", f"mask-token: {_RUN}"),
+    ("C-2", f"task-api_key: {_V}"),
+    ("C-3", f"db_password={_V}"),
+    ("C-4", f"Authorization: Bearer {_V}: rejected"),
+    ("C-5", f"key sk-{_V} used"),
+    ("C-6", f'"sk-{_V}"'),
+]
+
+
+def _append_driver_row(tmp_path, shape):
+    """make_row -> append for one driver shape; the row, the file's text and
+    replay's rows."""
+    from agent_factory.decisions.ledger import append, make_row, replay
+
+    fixture = _load("b1.finding_sev")
+    row = make_row(
+        producer="decide-harvest/incident-log",
+        question_id="b1.finding_sev",
+        raw_state=dict(fixture["state"], msg=f"set {shape} now"),
+        incumbent_answer="accepted",
+        source_ref=dict(_fake_source_ref(), locator="the V-1 driver"),  # no Q, Z or J here
+        root=fixture.get("root"),
+    )
+    ledger = tmp_path / "ledger.jsonl"
+    assert append(ledger, row) == row["row_id"]
+    return row, ledger.read_text(encoding="utf-8"), replay(ledger)
+
+
+def _assert_no_value_byte_on_disk(tmp_path, shape):
+    row, text, replayed = _append_driver_row(tmp_path, shape)
+    leaked = sorted(set(text) & set("QZJ"))
+    assert not leaked, f"{shape!r}: value body bytes {leaked} reached the ledger file: {text!r}"
+    assert "abcdefgh" not in text, f"{shape!r}: the sk value left its placeholder: {text!r}"
+    assert replayed == [row], shape
+
+
+@pytest.mark.parametrize("shape", [shape for _, shape in _V1_ROWS], ids=[row_id for row_id, _ in _V1_ROWS])
+def test_v1_row_no_value_byte_reaches_the_ledger_file(tmp_path, shape):
+    # B1: no byte of the value body is in the appended line on disk, and
+    # replay accepts the row (its fixed-point check included).
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@pytest.mark.parametrize(
+    "shape", [shape for _, shape in _V1_CONTROLS], ids=[row_id for row_id, _ in _V1_CONTROLS]
+)
+def test_v1_control_keeps_its_redaction_in_the_ledger_file(tmp_path, shape):
+    # B2: green at the PIN and after; the negative control is a mutant (the
+    # verifier's option-B bearer form leaks C-4's token into the file).
+    _assert_no_value_byte_on_disk(tmp_path, shape)
