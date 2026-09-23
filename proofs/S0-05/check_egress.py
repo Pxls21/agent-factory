@@ -7,8 +7,8 @@ deterministically and without any LLM, whether the seed's two assertions hold
 
   * mechanism — a veth/iptables namespace lets the unit reach the OmniRoute endpoint while a
     model endpoint fails with the exact denial reason;
-  * full proof — every non-OmniRoute unit's canaries FAIL, and each unit first proves its
-    positive control (it CAN reach its allowed target).
+  * full proof, a CONTAINMENT property (D-055) — each unit reaches exactly its allow-listed
+    destinations (each positive control first), every canary FAILS; no per-provider firewall claim.
 
 Order is part of the contract, and it runs in this order for a reason:
 
