@@ -880,12 +880,23 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
         )
     replay_dind = None
     for fixture_name in oracle.NEGATIVE_FIXTURES:
+        found, delivery = observed[fixture_name]
         if fixture_name == "revoked":
             # The revoked leg is the SEVENTH, structurally-separate leg; its
-            # observable (membership.json) is asserted inside _check_leg, and
-            # its removal receipt is coordinator-supplied (F5).
+            # removal receipt (membership.json) is asserted inside _check_leg,
+            # and it is coordinator-supplied (F5). Its relay text shares
+            # neg-unauthorized's key, so it stays out of the distinctness gate,
+            # but the leg must still show the REVOKED row's observable, read
+            # from the observation exactly as `--denial revoked` reads it
+            # (B12, B11's A1: SOME known observable let another class's text pass).
+            row = _observed_row(fixture_name, found,
+                                os.path.lexists(root / fixture_name / "membership.json"))
+            if row["fixture"] != fixture_name:
+                raise Failure(
+                    f"{fixture_name}: the observed denial matches the oracle's "
+                    f"{row['fixture']} row, not {fixture_name}'s"
+                )
             continue
-        found, delivery = observed[fixture_name]
         if fixture_name == "neg-replayed":
             # D-036 clause 2: the relay decides this leg with an accepted=true
             # receipt, so the generic relay rule (accepted must be false) does not

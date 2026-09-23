@@ -2081,8 +2081,17 @@ def test_leg_file_table_matches_the_runner_writes():
     removed_nested = set(re.findall(
         r'^\s*rm -rf "\$out/([^"/]+)"', text, re.MULTILINE
     ))
-    assert removed_nested == {".probe"}
-    assert nested_writers - removed_nested == set(checker.REPLAY_SUBLEGS)
+    # B12 (AF-AP-156): the bad-signature branch makes no setup delivery into a
+    # nested `.probe`, so nothing nested is removed and the replay sub-legs are
+    # the only nested directories. The branch calls deliver ONCE, into $out; its
+    # behavioural control (AF-AP-80) is
+    # test_pc_runner_bad_signature_leg_makes_one_flipped_delivery.
+    assert removed_nested == set()
+    assert nested_writers == set(checker.REPLAY_SUBLEGS)
+    branch = text[text.index("neg-bad-signature)"):]
+    branch = branch[:branch.index(";;")]
+    assert len(re.findall(r"^\s*deliver\b", branch, re.MULTILINE)) == 1, branch
+    assert '"$out/' not in branch, branch
 
     # Keep the producer and cp shape checks: the set equality above is the
     # closure gate; these assertions preserve a precise failure for a moved seam.
@@ -2387,6 +2396,7 @@ T0 = 1700000000
 class _OwnedListener:
     """A 127.0.0.1-only HTTP endpoint that counts every accepted connection
     and returns a minimal 200 so a connecting client completes its exchange.
+    Each request is kept whole: the head and its Content-Length body (B12).
     The test process owns both ends; the listener is stopped at test exit."""
 
     def __init__(self):
@@ -2420,7 +2430,16 @@ class _OwnedListener:
                     if not chunk:
                         break
                     data += chunk
-                self.requests.append(data)
+                # B12: read the body too, so a test grades the exact bytes
+                # that left the process, not only the headers.
+                head, sep, body = data.partition(b"\r\n\r\n")
+                length = re.search(rb"(?im)^content-length:\s*(\d+)\s*$", head)
+                while length and len(body) < int(length.group(1)):
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    body += chunk
+                self.requests.append(head + sep + body)
                 conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
             except OSError:
                 pass
@@ -2437,9 +2456,11 @@ class _OwnedListener:
         self._thread.join(timeout=1)
 
 
-def _run_deliver_cli(tmp_path: Path, listener, env_extra=None):
+def _run_deliver_cli(tmp_path: Path, listener, env_extra=None,
+                     fixture="pos-allowed", extra=()):
     """Run the REAL deliver_event.py CLI in a subprocess with a closed
-    environment (AF-AP-39: the key travels only via env, never argv)."""
+    environment (AF-AP-39: the key travels only via env, never argv).
+    `extra` is appended to argv (B12: --flip-signature, --reuse)."""
     env = dict(env_extra or {})
     for name in ("B8_MUTANT_D",):
         if name in os.environ:
@@ -2447,11 +2468,12 @@ def _run_deliver_cli(tmp_path: Path, listener, env_extra=None):
     proc = subprocess.run(
         [
             sys.executable, str(DELIVER),
-            "--fixture", "pos-allowed",
+            "--fixture", fixture,
             "--leg-dir", str(tmp_path / "leg"),
             "--secret", "role.env",
             "--relay-http", f"http://127.0.0.1:{listener.port}",
             "--t0", str(T0),
+            *extra,
         ],
         env=env,
         stdout=subprocess.PIPE,
@@ -3704,9 +3726,10 @@ def test_denial_mode_refuses_another_classes_observable(tmp_path, capsys, fixtur
 
 
 def test_revoked_denial_is_read_from_the_observation(tmp_path, capsys):
-    """Item 4, black-box. The bundle grades the revoked leg structurally and never
-    reads its relay text (check_buzz_authz.py's revoked skip), so a revoked leg
-    whose receipt carries the STALE text still passes _check_leg. The denial mode
+    """Item 4, black-box. _check_leg grades the revoked leg structurally and never
+    reads its relay text, so a revoked leg whose receipt carries the STALE text
+    still passes _check_leg (the bundle mode refuses it after that since B12, A1:
+    test_bundle_refuses_a_revoked_receipt_carrying_another_classes_text). The denial mode
     reads the reason from what the leg shows: it names the neg-stale row and
     never prints the revoked reason chosen by the argument."""
     bundle = _bundle(tmp_path)
@@ -3872,3 +3895,213 @@ def test_spec_denial_legs_run_verbatim_and_reach_the_checker():
         assert proc.returncode in (1, 2) and proc.stderr == "", proc.stderr
         if proc.returncode == 2:
             assert proc.stdout == "deferred: S0-02 evidence not captured\n", proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# 9. B12 (task #196, AF-AP-156): the bad-signature leg delivers ONE corrupted
+# event, and the bundle grades the revoked leg's relay text (B11's A1)
+# ---------------------------------------------------------------------------
+# deliver_event.py's refusals, verbatim (the contract the CLI must keep
+# emitting); a str SystemExit exits 1.
+B12_REUSE_FLIP_REFUSE_TEXT = (
+    "--flip-signature is refused with --reuse: it signs the fixture template and "
+    "corrupts it in this call, so no valid event is delivered first (AF-AP-156)"
+)
+B12_STILL_VERIFIES_TEXT = "flipped event still verifies — refusing to deliver it"
+B12_TURN_REASON = "neg-bad-signature: 1 ACP session/prompt turn(s), expected 0"
+# REAL producer bytes: line 7 (seq 7, the only c2a session/prompt record) of the
+# live neg-bad-signature timeline.jsonl of the first S0-02 capture (PC,
+# 2026-09-23 14:37:08Z-14:50:16Z, runner head fa4532e; legs7.tar.gz sha256
+# aa4dde4b76386f79d174c3f90414ae56d5fa56f5c00c4c9aa1c188e0f6f63475, the timeline
+# 926,754 bytes, sha256 5ad855ce8c629e62aa15c0b2ef87047a7a6e6665b89f4a43141b656c53c9f2e8).
+# It is the probe's turn: the old runner POSTed a valid pos-allowed event into the
+# same buzz-acp process before the flipped one. The turn count reads only c2a
+# session/prompt records, and the live leg holds exactly this one, so this record
+# alone carries the live verdict (the B12 report, section 4).
+B12_PROBE_PROMPT = FIXTURES / "regression-neg-bad-signature-live-probe-prompt.jsonl"
+B12_PROBE_PROMPT_SHA256 = "239591ed1c15b378688eac94534605d7cc2232dbd197b861a21a08b4c35e87ea"
+
+
+def _b12_bodies(listener) -> list:
+    """Every event body the owned listener received, parsed."""
+    return [json.loads(req.partition(b"\r\n\r\n")[2]) for req in listener.requests]
+
+
+_B12_DRIVER = r'''
+# B12 driver: source the ENTIRE runner (real main, role_for, wait_turn_window,
+# collect_leg, stop_leg, collect_masked) and fake only the process side and
+# deliver, which records its whole argv, one call per line.
+source "$B9_R"
+POLL_S=$B9_POLL_S
+launch_leg() { touch "$FD/launch.ready"; }
+post_leg() { touch "$FD/buzz-acp.exit"; printf 'masked log\n' > "$FD/buzzacp.log"; }
+deliver() {
+  printf '%s\n' "$*" >> "$B12_TRACE"
+  mkdir -p "$2"
+  : >> "$FD/timeline.jsonl"
+}
+main "$B9_DEST" neg-bad-signature
+'''
+
+
+def test_pc_runner_bad_signature_leg_makes_one_flipped_delivery(tmp_path):
+    """Item 4a, the behavioural control (AF-AP-80) for the source pin in
+    test_leg_file_table_matches_the_runner_writes. The REAL main runs the
+    neg-bad-signature leg against a fake deliver that records its argv: exactly
+    ONE call, the leg's own fixture into $out itself, the role the committed
+    fixture names, --flip-signature and no --reuse; no nested directory."""
+    env = _b9_env(tmp_path, RUNNER)
+    shutil.copy(FIXTURES / "neg-bad-signature.json",
+                Path(env["S0_02_REPO"]) / "proofs" / "S0-02" / "fixtures")
+    trace = tmp_path / "deliver.trace"
+    proc = subprocess.run(["bash", "-c", _B12_DRIVER], cwd=ROOT,
+                          env={**env, "B12_TRACE": str(trace)},
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    leg = Path(env["B9_DEST"]) / "neg-bad-signature"
+    role = json.loads((FIXTURES / "neg-bad-signature.json").read_text())["signer"]["role"]
+    assert trace.read_text().splitlines() == [
+        f"neg-bad-signature {leg} {role} --flip-signature"], trace.read_text()
+    assert sorted(p.name for p in leg.iterdir()) == ["buzzacp.log", "timeline.jsonl"]
+
+
+def test_cli_flip_signature_posts_one_corrupted_template_event(tmp_path):
+    """Item 4b (item 2's contract), through the REAL CLI and an owned listener.
+    --flip-signature without --reuse signs the fixture's template, flips one
+    signature byte and POSTs only the corrupted event: exactly ONE request, and
+    the posted event fails verification. Paired with the unflipped path (same
+    fixture, key and t0): the corrupted event with its byte flipped back verifies
+    and IS the unflipped path's event, field for field — the valid event exists
+    only inside the process. The leg files keep their shapes."""
+    key = _throwaway_secp256k1_key()
+    posted = {}
+    for label, extra in (("flipped", ("--flip-signature",)), ("unflipped", ())):
+        listener = _OwnedListener().start()
+        try:
+            proc = _run_deliver_cli(tmp_path / label, listener,
+                                    env_extra={"BUZZ_PRIVATE_KEY": key},
+                                    fixture="neg-bad-signature", extra=extra)
+        finally:
+            listener.stop()
+        assert proc.returncode == 0, (label, proc.stderr.decode()[:400])
+        assert listener.count == 1, (label, listener.count)
+        (posted[label],) = _b12_bodies(listener)
+        record = tmp_path / label / "leg" / "delivered-event.json"
+        assert json.loads(record.read_text()) == posted[label], label
+    bad, good = posted["flipped"], posted["unflipped"]
+    assert nv.verify_event(good)[0], "control: the unflipped path must post a valid event"
+    assert not nv.verify_event(bad)[0], "the --flip-signature path posted an event that verifies"
+    sig = bytearray.fromhex(bad["sig"])
+    sig[builder.deliver_event.SIG_FLIP_BYTE_INDEX] ^= 0x01
+    restored = {**bad, "sig": sig.hex()}
+    assert nv.verify_event(restored)[0], "flipping the byte back must make the event verify"
+    assert restored == good
+    tpl = json.loads((FIXTURES / "neg-bad-signature.json").read_text())["template"]
+    assert (bad["content"], bad["kind"], bad["tags"]) == (tpl["content"], tpl["kind"], tpl["tags"])
+    assert bad["created_at"] == T0 + tpl["created_at_offset_s"]
+    leg = tmp_path / "flipped" / "leg"
+    assert sorted(p.name for p in leg.iterdir()) == [
+        "delivered-event.json", "delivery.json", "fixture.json", "t0.json"]
+    assert (leg / "fixture.json").read_text() == (FIXTURES / "neg-bad-signature.json").read_text()
+    assert json.loads((leg / "t0.json").read_text()) == {
+        "leg": "neg-bad-signature", "signed_by_secret_file": "role.env", "t0_epoch_s": T0}
+    assert set(json.loads((leg / "delivery.json").read_text())) == {
+        "http_status", "event_id", "accepted", "message", "event_id_echoed"}
+
+
+def test_flip_signature_keeps_the_still_verifies_refusal(tmp_path, monkeypatch):
+    """Item 2: the new path keeps the refusal of a flipped event that still
+    verifies, EXECUTED, not scanned (B6's lesson). The same in-process main first
+    posts once (the control), then, with the verifier forced to accept, refuses
+    with the exact text and makes no second request."""
+    mod = _b8_load_deliver(DELIVER)
+    monkeypatch.setenv("BUZZ_PRIVATE_KEY", _throwaway_secp256k1_key())
+    argv = ["deliver_event.py", "--fixture", "neg-bad-signature", "--secret", "role.env",
+            "--t0", str(T0), "--flip-signature"]
+    listener = _OwnedListener().start()
+    try:
+        relay = ["--relay-http", f"http://127.0.0.1:{listener.port}"]
+        assert mod.main(argv + relay + ["--leg-dir", str(tmp_path / "control")]) == 0
+        assert listener.count == 1
+        monkeypatch.setattr(mod.nv, "verify_event", lambda _event: (True, None))
+        with pytest.raises(SystemExit) as exc:
+            mod.main(argv + relay + ["--leg-dir", str(tmp_path / "refused")])
+    finally:
+        listener.stop()
+    assert str(exc.value) == B12_STILL_VERIFIES_TEXT
+    assert listener.count == 1, "the refusal made a request"
+
+
+def test_cli_refuses_reuse_with_flip_signature_before_any_request(tmp_path):
+    """Item 4c. --reuse together with --flip-signature is refused with rc 1 and
+    the named message, before any request (zero connections) and before the leg
+    directory exists, although a valid key is in the environment and the --reuse
+    file holds a valid signed event. Paired control: --reuse alone (the replay
+    leg's call) still POSTs that event verbatim, one connection."""
+    key = _throwaway_secp256k1_key()
+    tpl = json.loads((FIXTURES / "pos-allowed.json").read_text())["template"]
+    event = nv.sign_event(key, {"created_at": T0, "kind": tpl["kind"],
+                                "tags": tpl["tags"], "content": tpl["content"]})
+    reuse = tmp_path / "delivered-event.json"
+    reuse.write_text(json.dumps(event, indent=1, sort_keys=True) + "\n")
+    listener = _OwnedListener().start()
+    try:
+        refused = _run_deliver_cli(tmp_path / "refused", listener,
+                                   env_extra={"BUZZ_PRIVATE_KEY": key},
+                                   fixture="neg-bad-signature",
+                                   extra=("--reuse", str(reuse), "--flip-signature"))
+        refused_count = listener.count
+        replayed = _run_deliver_cli(tmp_path / "replayed", listener,
+                                    env_extra={"BUZZ_PRIVATE_KEY": key},
+                                    fixture="neg-replayed", extra=("--reuse", str(reuse)))
+    finally:
+        listener.stop()
+    assert (refused.returncode, refused.stdout, refused.stderr.decode()) == (
+        1, b"", B12_REUSE_FLIP_REFUSE_TEXT + "\n")
+    assert refused_count == 0, "the refusal made a request"
+    assert not (tmp_path / "refused" / "leg").exists()
+    assert replayed.returncode == 0, replayed.stderr.decode()[:400]
+    assert listener.count == 1
+    assert _b12_bodies(listener) == [event]
+
+
+def test_live_bad_signature_probe_turn_fails_the_committed_checker(tmp_path):
+    """Item 4d, the regression (AF-AP-36; AF-AP-42's fix). The first live capture's
+    bad-signature timeline carried the probe's turn, and the committed checker
+    refused it with exactly B12_TURN_REASON — the checker was right. The input is
+    REAL producer bytes (sha-pinned above), never a hand-written line. Through a
+    fresh interpreter, as proof-runner runs it: the untouched pass-bundle copy
+    passes; the same copy with this record as its bad-signature timeline fails
+    with exactly the live line. A checker that counts only the prompts after the
+    flipped delivery (the rejected alternative, m5) lets this setup turn hide."""
+    data = B12_PROBE_PROMPT.read_bytes()
+    assert hashlib.sha256(data).hexdigest() == B12_PROBE_PROMPT_SHA256, "the live bytes changed"
+    assert [(r["dir"], r["frame"]["method"], r["seq"])
+            for r in map(json.loads, data.splitlines())] == [("c2a", "session/prompt", 7)]
+    bundle = _bundle(tmp_path)
+    before = _cli("--synthetic-root", bundle, bundle / "legs")
+    assert (before.returncode, before.stdout, before.stderr) == (0, PASS_STDOUT.decode(), "")
+    (_leg(bundle, "neg-bad-signature") / "timeline.jsonl").write_bytes(data)
+    after = _cli("--synthetic-root", bundle, bundle / "legs")
+    assert (after.returncode, after.stdout, after.stderr) == (
+        1, f"failure_reason: {B12_TURN_REASON}\n", "")
+
+
+@pytest.mark.parametrize("other", [
+    r["fixture"] for r in oracle.ROWS
+    if r["leg"] == "negative" and r["evidence"] == oracle.EV_DELIVERY
+    and r["observable"] != oracle.row("revoked")["observable"]])
+def test_bundle_refuses_a_revoked_receipt_carrying_another_classes_text(tmp_path, other):
+    """Item 5 (B11's A1). The bundle kept revoked out of the distinctness keys and
+    skipped it in the named-observable loop, and _observe_all needs only SOME
+    known observable, so a revoked receipt carrying another relay class's text
+    PASSED (B11 reproduced it with the stale text). The bundle reads revoked's
+    row from the observation as --denial revoked does (_observed_row) and refuses
+    with the same named line."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_leg(bundle, "revoked") / "delivery.json", lambda b: b.__setitem__(
+        "message", json.dumps({"error": oracle.row(other)["observable"]})))
+    with pytest.raises(checker.Failure) as exc:
+        _run_checker(bundle)
+    assert str(exc.value) == (
+        f"revoked: the observed denial matches the oracle's {other} row, not revoked's")

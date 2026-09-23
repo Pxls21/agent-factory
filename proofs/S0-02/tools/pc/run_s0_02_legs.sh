@@ -252,12 +252,12 @@ for leg in $LEGS; do
       delta_timeline "$out" "$first_bytes"
       ;;
     neg-bad-signature)
-      # The positive event with one signature byte flipped: the ONLY difference
-      # from a passing event is the signature.
-      deliver pos-allowed "$out/.probe" "$(role_for pos-allowed)"
+      # The positive template signed and corrupted in ONE deliver call: the ONLY
+      # difference from a passing event is the signature, and the valid event
+      # never leaves deliver_event.py (B12, AF-AP-156: a setup delivery of the
+      # positive event put a real turn inside this leg's window).
       deliver neg-bad-signature "$out" "$(role_for neg-bad-signature)" \
-        --reuse "$out/.probe/delivered-event.json" --flip-signature
-      rm -rf "$out/.probe"
+        --flip-signature
       wait_turn_window 0
       collect_leg "$out"
       ;;

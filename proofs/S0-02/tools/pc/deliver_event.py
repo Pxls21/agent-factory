@@ -2,7 +2,8 @@
 """Deliver one S0-02 fixture to the isolated Buzz relay and record the receipt.
 
     deliver_event.py --fixture <name> --leg-dir <dir> --secret <role.env> \
-                     --relay-http <http://127.0.0.1:PORT> --t0 <epoch> [--reuse <event.json>]
+                     --relay-http <http://127.0.0.1:PORT> --t0 <epoch> \
+                     [--reuse <event.json> | --flip-signature]
 
 NOT RUN IN THE SANDBOX. This runs on the PC beside the S0-01 relay stack; the
 sandbox has no relay and no key material. Every external call it makes is listed
@@ -25,8 +26,11 @@ tools/build_fixtures.py). Three things force a run-time signature:
 So the fixture supplies the deterministic TEMPLATE (kind, tags, content,
 created_at offset) and the role key supplies the signature. `--reuse` posts a
 previously delivered event VERBATIM, which is how the replay leg delivers one
-id twice and how the bad-signature leg delivers the positive event with a byte
-flipped.
+id twice. `--flip-signature` signs the template the same way, flips one
+signature byte and posts ONLY the corrupted event, so the valid event never
+leaves this process (B12, AF-AP-156: the bad-signature leg once delivered the
+valid positive event first, into the same buzz-acp process, and that event's
+turn landed inside the leg's own window). The two flags are refused together.
 
 The secret file is sourced by the CALLER into the environment (BUZZ_PRIVATE_KEY);
 it is never passed in argv (AF-AP-39). --secret names the file only so the leg
@@ -74,6 +78,15 @@ nv = _load("s0_01_nostr_verify", NOSTR_VERIFY)
 SCALAR_REFUSE_TEXT = (
     "BUZZ_PRIVATE_KEY is outside the secp256k1 scalar range "
     "1..n-1 (n is the curve order, as nv.sign_event requires)"
+)
+
+# B12 (AF-AP-156): the bad-signature leg signs and corrupts in ONE call. Flipping
+# a REUSED event needed a valid delivery first, and that delivery's turn landed
+# inside the leg's window; the combination is refused before any file, key or
+# network action.
+REUSE_FLIP_REFUSE_TEXT = (
+    "--flip-signature is refused with --reuse: it signs the fixture template and "
+    "corrupts it in this call, so no valid event is delivered first (AF-AP-156)"
 )
 
 
@@ -184,8 +197,11 @@ def main(argv) -> int:
     ap.add_argument("--t0", type=int, required=True)
     ap.add_argument("--reuse", help="post this already-signed event verbatim")
     ap.add_argument("--flip-signature", action="store_true",
-                    help="flip one signature byte of the reused event (bad-signature leg)")
+                    help="sign the fixture template, flip one signature byte and post only "
+                         "that event (bad-signature leg); refused with --reuse")
     args = ap.parse_args(argv[1:])
+    if args.reuse is not None and args.flip_signature:
+        raise SystemExit(REUSE_FLIP_REFUSE_TEXT)
 
     fixture_path = PROOF_DIR / "fixtures" / f"{args.fixture}.json"
     fixture = json.loads(fixture_path.read_text())
@@ -195,13 +211,6 @@ def main(argv) -> int:
     privkey = _privkey()
     if args.reuse:
         event = json.loads(Path(args.reuse).read_text())
-        if args.flip_signature:
-            sig = bytearray.fromhex(event["sig"])
-            sig[SIG_FLIP_BYTE_INDEX] ^= 0x01
-            event["sig"] = sig.hex()
-            ok, _reason = nv.verify_event(event)
-            if ok:
-                raise SystemExit("flipped event still verifies — refusing to deliver it")
     else:
         tpl = fixture["template"]
         event = nv.sign_event(privkey, {
@@ -210,6 +219,15 @@ def main(argv) -> int:
             "tags": tpl["tags"],
             "content": tpl["content"],
         })
+    if args.flip_signature:
+        # The event signed above is corrupted BEFORE the one POST below, so the
+        # valid event never leaves the process (B12, AF-AP-156).
+        sig = bytearray.fromhex(event["sig"])
+        sig[SIG_FLIP_BYTE_INDEX] ^= 0x01
+        event["sig"] = sig.hex()
+        ok, _reason = nv.verify_event(event)
+        if ok:
+            raise SystemExit("flipped event still verifies — refusing to deliver it")
 
     body = json.dumps(event, separators=(",", ":"), sort_keys=True).encode()
     url = args.relay_http.rstrip("/") + "/events"
