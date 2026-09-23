@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 04:2xZ — C1 landed GATED-PENDING-VERIFY: Canny's verify-command classifier ported (45 tests; the coordinator fixed a cwd-relative script path and killed the two surviving mutants).
+
 2026-09-23 04:0xZ — VERIFY-T92-T90R3-PCJ1 failed on route capacity (four attempts refused: one OmniRoute admission 503, three with no first token inside 80-100 s); queued for a resume when a PC slot frees. Sandbox verifiers VERIFY-E2-R1 and VERIFY-J1-2 running.
 
 2026-09-23 04:0xZ — owner decisions recorded: D-051 (S0-05 relay reach = a leg-scoped DNAT, CD1 option 1), D-052 (Canny: port the deterministic core, C1 + C2), D-053 (jev-pruner stays parked in lanes); K1-h dispatched on the PC (PIN 74aa8c5).
