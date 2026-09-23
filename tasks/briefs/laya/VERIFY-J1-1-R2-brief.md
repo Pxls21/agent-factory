@@ -1,7 +1,7 @@
 # VERIFY-J1-1-R2 — the targeted independent verify of the decision ledger's sk/bearer yield repair (task #197)
 
-PIN: POST-PUSH-OF-9ad0e66 (the origin commit of "J1-1-R2 landed (task #192; GATED-PENDING-VERIFY): …", local 9ad0e66). The boundary
-files are byte-identical at later heads until another J1-1 round lands (blob ids below; re-measure them first).
+PIN: fb016d0 (the origin commit of "J1-1-R2 landed (task #192; GATED-PENDING-VERIFY): …", local 9ad0e66). The boundary files are
+byte-identical at the origin head 0dfd28e and at later heads until another J1-1 round lands (blob ids below; re-measure them first).
 COMPONENT: `src/agent_factory/decisions/volatile.py` (V), `tests/test_decisions_canonical.py` (TC), `tests/test_decisions_ledger.py`
 (TL). The builder's report `tasks/briefs/laya/J1-1-R2-report.md` is an INPUT TO ATTACK, not a truth.
 LANE: verify-j1-1-r2 (sandbox; agent `adversarial-verifier`, in the SHARED tree, no worktree isolation). Honey `full`: line-bounded
@@ -53,8 +53,9 @@ D-056 (AMENDMENT 1: bound after redact). KNOWN, do not re-derive; report as KNOW
 
 Standing rules: write ONLY `tasks/briefs/laya/VERIFY-J1-1-R2-report.md` (incrementally, from the start) and scratch files under `/tmp`.
 Every mutation runs on a scratch copy; never edit, stash, checkout, restore, reset or clean anything in the shared tree, and never run
-git add or commit there. Other lanes are live in the tree (B11 on `proofs/S0-02/check_buzz_authz.py`, `proofs/S0-02/spec.json`,
-`tests/test_s0_02_buzz_authz.py`; a verifier writing `tasks/briefs/laya/VERIFY-J1-0-R5-report.md`): never touch their files. Take no
+git add or commit there. Other lanes are live in the tree (S198A on `scripts/transcript_export.py`, `tests/test_transcript_export.py`;
+B12 on `proofs/S0-02/` and `tests/test_s0_02_buzz_authz.py`; a verifier writing `tasks/briefs/laya/VERIFY-J1-0-R5-report.md`): never
+touch their files. Take no
 outward-facing action. Paste every count and timestamp from command output. Fake secrets only (`QZJ8…`, `X4Z9…` style), never a real
 key. End with a GATE RECOMMENDATION (MERGE-READY / MERGE-READY-WITH-FOLLOWUPS / NOT-READY / CONTRACT-INVALID) under the blocking
 predicate (contract-mapped, reproduced through `decision_state` and the ledger append, materially effective, a concrete discriminator,
