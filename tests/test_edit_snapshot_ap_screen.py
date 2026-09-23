@@ -469,3 +469,21 @@ class TestAFAP127:
 
     def test_no_fire_on_a_suffix_slice(self):
         assert not self.rx.search("rest = scrub(txt[1:])")
+
+
+# ---- AF-AP-159 (AP_SCREEN): a line number computed from a YAML node's start mark ----
+
+class TestAFAP159:
+    rx = _AP_BY_ID["AF-AP-159"]
+
+    def test_fires_on_the_j1_0_r5_line_map(self):
+        assert self.rx.search('runs.append((value.start_mark.line + (2 if value.style in ("|", ">") else 1), value.value,')
+
+    def test_fires_without_spaces(self):
+        assert self.rx.search("first = node.start_mark.line+1")
+
+    def test_no_fire_on_the_token_line_lookup(self):
+        assert not self.rx.search("line = token_line.get(value.end_mark.index, value.start_mark.line)")
+
+    def test_no_fire_on_the_token_map(self):
+        assert not self.rx.search("token_line = {t.end_mark.index: t.start_mark.line for t in yaml.scan(content)")

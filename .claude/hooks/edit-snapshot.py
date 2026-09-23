@@ -185,6 +185,10 @@ AP_SCREEN = [
     # exporters did `scrub(text[:cap])`; the J1-1 contract truncated inside normalize before redact.
     ("AF-AP-127", re.compile(r"""\b(?:scrub|redact|sanitize|mask_secrets?|_redact_str)\w*\(\s*[\w.]+\[\s*:[^\]\n]*\]\s*\)"""),
      "a redaction/scrub applied to an already-capped slice (`scrub(x[:cap])`) — a secret straddling the cap falls below its pattern's minimum and its stub survives; redact the WHOLE text, then cap (`scrub(x)[:cap]`) (AF-AP-127)"),
+    # AF-AP-159 (2026-09-23, VERIFY-J1-0-R5 V5-05): a PyYAML node's start_mark is its first PROPERTY (&anchor,
+    # !!tag), which can sit on the line above the value, so `node.start_mark.line + k` named a line outside it.
+    ("AF-AP-159", re.compile(r"""\.start_mark\.line\s*\+"""),
+     "a line number computed from a node's start_mark — a YAML node starts at its first property (&anchor, !!tag), which can sit on an earlier line than the value; take the scalar TOKEN's line (yaml.scan, keyed by the node's end_mark.index) (AF-AP-159)"),
     ("AF-AP-118", re.compile(r"""\bfallback_providers\b"""),
      "a harness fallback chain (`fallback_providers`) written into a lane/profile config — the chain IS a route: a lane on it is HYBRID until its calls are measured (call_logs `requested_model`), and the harvest line must read the served model (AF-AP-118)"),
 
