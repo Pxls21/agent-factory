@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 20:0xZ — WHAT IS LIVE NOW (this block supersedes the 19:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (six lanes, unchanged):** VERIFY-K1-h (#194), VERIFY-J1-0-R6 (#201), J1-3 (#120), J1-1-R3 (#202), VERIFY-T94 (#200 + #167), C2 (#148). Monitor bpr3zk2ed.
+- **DONE (D-060):** the Laya unit reinstalled from the main clone (issue #51 C-2; smoke bitwise-identical ×2); sandbox venv-laya + the orphaned HF blob deleted.
+- **WAITING ON THE OWNER:** "removed" after the S0-02 owner2 removal one-liner. Then: the S0-02 eight-leg recapture, then the S0-05 pair identity (option 1), then the S0-05 live run (needs the owner's sudo).
+
 **2026-09-23 19:1xZ — WHAT IS LIVE NOW (this block supersedes the 18:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (six lanes):** VERIFY-K1-h (task #194; poller re-attached 18:51Z, 622 messages, mutation battery done) and VERIFY-J1-0-R6 (task #201) on the local route; J1-3 (task #120), J1-1-R3 (task #202), VERIFY-T94 (tasks #200 + #167; since 18:54Z) and C2 (task #148, the lane done-gate; since 19:05Z) on the cloud routes. Monitor br5w1c570 (C2 joins at the next re-arm).
 - **LANDED (GATED-PENDING-VERIFY):** T94 (1a94bbb) with the coordinator's probe amendment; the amended probe returned RUNNING live on the PC (18:52Z). S0-02 B12 as before.
@@ -423,6 +428,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 20:0xZ — D-060 owner answers: Laya unit reinstalled from the main clone; sandbox venv-laya + HF blob deleted; S0-02 removal handed over; S0-05 identity = option 1 after the S0-02 capture.
 2026-09-23 19:1xZ — VERIFY-T94 and C2 dispatched (six PC lanes); VERIFY-K1-h re-attached; task #150 gains items k and l.
 2026-09-23 18:4xZ — T94 landed (GATED-PENDING-VERIFY) with a coordinator amendment to the poll probe (AF-AP-162; issue #54); VERIFY-T94 next.
 2026-09-23 18:2xZ — VERIFY-S198A home: MERGE-READY-WITH-FOLLOWUPS; S198A verified; F1/F2 filed on issue #53 (A10, A11).
