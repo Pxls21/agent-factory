@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 03:2xZ — J1-2 (the ledger module, task #119) briefed for a sandbox code-implementer beside E2-R1; amendment J1-A1 takes the source file digest out of the row identity (a growing source would re-key old rows).
+
 2026-09-23 03:1xZ — CD1 amendment written from three read-only PC probes (task #142): the pinned units run directly (sha256-checked), S0-05 owns every byte it writes, the Hermes unit needs two pipes and no credential; buzz-acp is blocked on the relay bind (127.0.0.1:3999), OD-1 is the owner's; AF-AP-128 (sysfs keeps the parent netns view) registered; CI run 929 red only on the three tests E2-R1 fixes.
 
 2026-09-23 03:0xZ — E2-R1 dispatched in the sandbox at 03:02Z (task #141, the seven VERIFY-E2 blockers); VERIFY-E2's non-blocking residue filed as issue #29; four PC lanes alive (VERIFY-T92-T90R3-PCJ1, B9, VERIFY-J1-1, VERIFY-J1-0-R23-STAMP).
