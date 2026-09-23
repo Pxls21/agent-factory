@@ -24,7 +24,7 @@ builder's report `tasks/briefs/s0-05-support/E2-report.md` is an INPUT to attack
   `$$` → `namespace-live: <ns> owned by pid <p>`, rc 65. The record written at L:114, removed by destroy at L:257; its path is
   L:230-231 `EGRESS_OWNER_DIR=${EGRESS_OWNER_DIR:-/run/s0-05-egress}` + `egress_ns_owner_file` (COORDINATOR TOUCH 2 — the
   brief had put it in `/etc/netns/<ns>/`, which `ip netns exec` bind-mounts over /etc).
-- **F6** an address-plan collision refused — L:87-97: after the destroy-first step, any host interface already holding
+- **F6** an address-plan collision refused — L:89-97: after the destroy-first step, any host interface already holding
   `10.201.<octet>.` → `address-plan-collision: <ns> 10.201.<octet>.0/24 on <if>`, rc 65.
 - **F7** destroy kills every process in the namespace — L:236-257: SIGTERM to each `ip netns pids`, a bounded wait of 50 × 0.1 s,
   then the veth and the namespace are deleted (no SIGKILL escalation).
@@ -35,7 +35,7 @@ builder's report `tasks/briefs/s0-05-support/E2-report.md` is an INPUT to attack
   DROP_BEFORE guard at R:72-75).
 - **F11** the venue required — R:30-35, `run_canaries: venue must be sandbox or pc, got '<v>'`, rc 64.
 - **F18** an empty unit name refused — C:360-364, `usage: --units carries an empty unit name`, rc 64.
-- **F19** the allow host a literal — L:133-137 (a character class `*[!0-9.]*|*/*|""` → rc 64).
+- **F19** the allow host a literal — L:134-137 (a character class `*[!0-9.]*|*/*|""` → rc 64).
 - **COORDINATOR TOUCH 1** — PC:86: the `local create_err` line in the runner's top-level loop removed (bash printed
   `local: can only be used in a function` for every unit).
 - Tests: T:909 `test_address_plan_collision_is_refused`, T:978 `test_live_sibling_namespace_is_refused`, T:1021
@@ -95,8 +95,8 @@ effective · a concrete discriminator · in boundary). A red test is necessary, 
 3. **F6's reach.** The check reads host-side IPv4 addresses only (L:92-94). (a) A `10.201.<octet>.x` address on a non-veth
    interface (a dummy link you create) → refused? (b) The same /24 held only INSIDE another namespace (no host-side address) →
    missed? Is that reachable through the library (a half-torn-down run) or adversary-only? (c) The octet function
-   `_egress_octet`: list the S0-05 unit names in use (PC:47-66 + the tests' names) and report any two that share an octet.
-   (d) The refusal happens AFTER `egress_ns_destroy "$ns"` (L:85): state what an F6 refusal leaves behind, against the brief's
+   `_egress_octet`: list the S0-05 unit names in use (PC:50-66 + the tests' names) and report any two that share an octet.
+   (d) The refusal happens AFTER `egress_ns_destroy "$ns"` (L:87): state what an F6 refusal leaves behind, against the brief's
    "nothing left behind".
 4. **The exit-3 paths of R.** F3+F17 moved the file creation after the DROP_BEFORE guard (R:72-80). The SECOND exit-3 path is
    DROP_AFTER (R:114-115), after every canary ran: what is on disk then (`canaries.jsonl` without `gate.json` /
