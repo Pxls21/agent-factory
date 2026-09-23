@@ -1,0 +1,17 @@
+{
+  "expected_digest": "a51a56c48e98cca60a95923da2a34a25bfb3609c1b23197588ad32af90cfc06b",
+  "question_id": "wf.drift",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "drift_kind": "prose-claim",
+    "expected": "the test count is pasted from the summary",
+    "observed": "the count was typed by hand",
+    "step_id": "count-pasted"
+  },
+  "variant": {
+    "drift_kind": "prose-claim",
+    "expected": "the   test count  is  pasted   from the summary",
+    "observed": "the  count   was typed  by hand",
+    "step_id": "count-pasted"
+  }
+}

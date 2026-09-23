@@ -1,0 +1,2464 @@
+diff --git a/src/agent_factory/decisions/__init__.py b/src/agent_factory/decisions/__init__.py
+new file mode 100644
+index 00000000..00c00847
+--- /dev/null
++++ b/src/agent_factory/decisions/__init__.py
+@@ -0,0 +1,21 @@
++"""First-party passive decision ledger (J1, the Laya layer's capture spine).
++
++J1-1 lands the closed state schemas (volatile), the
++normalize -> redact -> canonical -> sha256 pipeline and the golden digests
++(canonical). The append-only ledger and the harvest arrive in J1-2/J1-3.
++
++NOTE on names: the `canonical` attribute here is the MODULE
++(`agent_factory.decisions.canonical`), not the function -- the function
++`canonical()` is imported from that module (re-exporting it would shadow the
++module and make `import agent_factory.decisions.canonical as m` bind a
++function, bpo-17636). The pipeline entry point is `state_digest`.
++"""
++
++from agent_factory.decisions.volatile import (  # noqa: F401 (re-exported)
++    DecisionStateError,
++    normalize,
++    redact,
++)
++from agent_factory.decisions.canonical import state_digest  # noqa: F401
++
++__all__ = ["DecisionStateError", "normalize", "redact", "state_digest"]
+diff --git a/src/agent_factory/decisions/canonical.py b/src/agent_factory/decisions/canonical.py
+new file mode 100644
+index 00000000..cda5c198
+--- /dev/null
++++ b/src/agent_factory/decisions/canonical.py
+@@ -0,0 +1,77 @@
++"""Canonical serialization and the state digest: canonical -> sha256.
++
++J1 contract: canonical(obj) = sorted keys, ensure_ascii=False, separators
++(",", ":"), NFC, no newline, and only integers / strings / lists / dicts
++(a float is refused). The full pipeline is
++
++    state_digest = sha256(canonical(redact(normalize(state))))
++
++normalize (volatile) is the STABILITY mechanism; redact (volatile) is the
++SECURITY mechanism, applied AFTER normalize. Neither is defined here.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import unicodedata
++
++from agent_factory.decisions.volatile import (  # noqa: F401 (re-exported)
++    DecisionStateError,
++    normalize,
++    redact,
++)
++
++
++def _canon_str(value) -> str:
++    """A string or dict-key to its NFC JSON form (ensure_ascii=False)."""
++    s = unicodedata.normalize("NFC", str(value))
++    if "\n" in s or "\r" in s:
++        raise DecisionStateError("decision-canonical-newline", s[:32])
++    return json.dumps(s, ensure_ascii=False)
++
++
++def canonical(obj) -> str:
++    """A canonical JSON form: sorted keys, no ASCII-escaping, tight
++    separators, NFC, newline-free. Only integers, strings, lists and dicts
++    are accepted; anything else (a float, a bool, a None) is refused with
++    its key's path."""
++    return _canon(obj, "$")
++
++
++def _canon(value, path: str) -> str:
++    if isinstance(value, dict):
++        if not value:
++            return "{}"
++        parts = []
++        for k in sorted(value, key=lambda key: str(key)):
++            kcanon = _canon_str(k)
++            parts.append(kcanon + ":" + _canon(value[k], path + "." + str(k)))
++        return "{" + ",".join(parts) + "}"
++    if isinstance(value, list):
++        if not value:
++            return "[]"
++        parts = [_canon(item, f"{path}[{i}]") for i, item in enumerate(value)]
++        return "[" + ",".join(parts) + "]"
++    if isinstance(value, bool):
++        # bool subclasses int: refuse it explicitly, never let it print true.
++        raise DecisionStateError("decision-canonical-float", path)
++    if isinstance(value, int):
++        return str(value)
++    if isinstance(value, float):
++        raise DecisionStateError("decision-canonical-float", path)
++    if value is None:
++        raise DecisionStateError("decision-canonical-float", path)
++    if isinstance(value, str):
++        return _canon_str(value)
++    raise DecisionStateError("decision-canonical-type", path)
++
++
++def state_digest(question_id: str, state: dict, root: str | None = None) -> str:
++    """sha256(canonical(redact(normalize(state)))), hex. The pipeline is
++    normalize -> redact -> canonical -> sha256; the order is load-bearing
++    (a whitespace-run-split secret is caught only after normalize)."""
++    normed = normalize(question_id, state, root)
++    redacted = redact(normed)
++    text = canonical(redacted)
++    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+diff --git a/src/agent_factory/decisions/volatile.py b/src/agent_factory/decisions/volatile.py
+new file mode 100644
+index 00000000..6d3d6a34
+--- /dev/null
++++ b/src/agent_factory/decisions/volatile.py
+@@ -0,0 +1,295 @@
++"""Closed per-question-type state schemas and the normalize / redact transforms.
++
++J1 contract (seeds/seed-laya-j1-v1.yaml; the pinned decisions in
++tasks/laya-j1-breakdown.md): state is a BOUNDED, CLOSED, per-question-type
++extraction -- never verbatim bytes. Line numbers, timestamps, absolute paths,
++run ids and PIN SHAs are never state keys; they belong to source_ref.locator
++(J1-2's).
++
++Two transforms, two jobs, one fixed order (normalize -> redact):
++  normalize -- the STABILITY mechanism: repo-relativize (root-bound), NFC,
++      collapse whitespace runs to one space and strip, sort list keys,
++      case-fold enum values to the schema's case, truncate bounded fields
++      on a character boundary.
++  redact    -- the SECURITY mechanism only: every secret class -> a fixed
++      placeholder. Applied AFTER normalize. It never contributes to stability
++      and stability never relies on it.
++"""
++
++from __future__ import annotations
++
++import os
++import re
++import unicodedata
++from dataclasses import dataclass
++
++EXCERPT_LIMIT = 400            # ap.violates_row.action_excerpt, wf.drift.observed/expected
++MSG_LIMIT = 200               # b1.finding_sev / b1.finding_kind msg (bounded, not verbatim)
++FINDING_KIND_OPTIONS_MAX = 8  # b1.finding_kind: open slug closed to <= 8 by the harvest
++
++#: Fixed redaction placeholder per secret class. A fixture's clean form
++#: CONTAINS the placeholder, so a secret-bearing state and the secret-free
++#: state redact to the same bytes and hash to the same digest.
++PLACEHOLDERS = {
++    "sk": "<redacted:sk>",
++    "token": "<redacted:token>",
++    "bearer": "<redacted:bearer>",
++    "envval": "<redacted:envval>",
++    "privkey": "<redacted:privkey>",
++}
++
++_BEARER = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/-]{16,}=*")
++_SK = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
++# A 32+ hex/base64 run after the word "token" with a SINGLE separator
++# (one space, or ":" optionally followed by one space). A whitespace-RUN
++# separator (e.g. "token:  <run>") is NOT matched here: it is only caught
++# once normalize has collapsed the run to one space -- that asymmetry is what
++# discriminates the normalize -> redact order in the order test.
++_TOKEN = re.compile(r"(?i)\btoken(?:[:=] ?| )?([A-Za-z0-9+/]{32,})")
++# KEY=/TOKEN=/SECRET=/PASSWORD=(API_KEY) assignments: the name is kept, the
++# value part is replaced. Applied before the bare token rule so an
++# assignment wins its own class.
++_ENVVAL = re.compile(
++    r"(?P<name>(?:[A-Z][A-Z0-9_]*_)*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY))=\S+"
++)
++# A private-key block, BEGIN ... END (the whole block becomes one placeholder).
++_PRIVKEY = re.compile(
++    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
++    re.S,
++)
++
++
++class DecisionStateError(RuntimeError):
++    """A fail-closed state boundary refusal with a stable reason string."""
++
++    def __init__(self, reason: str, detail: str = "") -> None:
++        self.reason = reason
++        self.detail = detail
++        message = reason if not detail else f"{reason}: {detail}"
++        super().__init__(message)
++
++
++@dataclass(frozen=True)
++class _Field:
++    """One closed state key and its normalization rules."""
++
++    kind: str  # "str" | "path" | "list" | "target"
++    limit: int | None = None
++    case: str | None = None  # "lower" | "upper" | None (open slug: untouched)
++    enum: tuple[str, ...] | None = None  # a closed option set (canonical case)
++    strip_pin: bool = False
++
++
++def _strip_pin_suffix(value: str) -> str:
++    """Strip only the harness lane suffix ``--<7..40 hex PIN>``.
++
++    The PIN belongs to ``source_ref.locator`` (J1-2), never stable state.
++    A literal ``--`` elsewhere in a lane name is not a PIN and is preserved.
++    """
++    return re.sub(r"--[0-9a-fA-F]{7,40}$", "", value)
++
++
++def _nfc_collapse(value: str) -> str:
++    """NFC-normalize, collapse whitespace runs to one space, strip."""
++    s = unicodedata.normalize("NFC", str(value))
++    return re.sub(r"\s+", " ", s).strip()
++
++
++def _path(key: str, value: str, root: str | os.PathLike | None) -> str:
++    """A repo-relative path. An absolute path under `root` is relativized;
++    an absolute path outside the root (or with no root bound) is refused,
++    never silently relativized."""
++    s = _nfc_collapse(value)
++    if s.startswith("/") or s.startswith("~"):
++        if root is None:
++            raise DecisionStateError("decision-state-abs-path", key)
++        r = os.path.normpath(os.fspath(root))
++        p = os.path.normpath(s)
++        if p == r or p.startswith(r + os.sep):
++            rel = os.path.relpath(p, r).replace(os.sep, "/")
++            return rel if not rel.startswith("..") else _refuse_path(key, s)
++        return _refuse_path(key, s)
++    rel = s.replace(os.sep, "/")
++    if rel.startswith("..") or "/../" in rel:
++        return _refuse_path(key, s)
++    return rel
++
++
++def _refuse_path(key: str, original: str) -> str:
++    raise DecisionStateError("decision-state-abs-path", key)
++
++
++def _apply_case(s: str, case: str | None) -> str:
++    if case == "lower":
++        return s.lower()
++    if case == "upper":
++        return s.upper()
++    return s
++
++
++def _normalize_field(f: _Field, key: str, value, root):
++    if f.kind == "list":
++        # A sorted list of repo-relative paths: normalize + relativize each
++        # item, then sort. The order of the input list never matters.
++        if not isinstance(value, list):
++            raise DecisionStateError("decision-state-bad-type", key)
++        items = [_path(key, str(v), root) for v in value]
++        return sorted(items)
++    s = _nfc_collapse(value)
++    if f.strip_pin:
++        s = _strip_pin_suffix(s)
++    s = _apply_case(s, f.case)
++    if f.limit is not None:
++        s = s[: f.limit]
++    if f.kind == "path":
++        return _path(key, s, root)
++    if f.kind == "target":
++        return _path(key, s.split()[0] if s.split() else s, root)
++    return s
++
++
++# The seven closed state schemas. Incumbent answers (role/severity/class/
++# verdict) are row provenance in J1-2, not state keys here.
++SCHEMAS: dict[str, dict[str, _Field]] = {
++    "b2.hit_role": {
++        "sym": _Field("str", limit=120),
++        "file": _Field("path"),
++        "snippet": _Field("str", limit=EXCERPT_LIMIT),
++    },
++    "b1.finding_sev": {
++        "file": _Field("path"),
++        "kind": _Field("str", limit=80),
++        "msg": _Field("str", limit=MSG_LIMIT),
++    },
++    "b1.finding_kind": {
++        "file": _Field("path"),
++        "kind": _Field("str", limit=80),
++        "msg": _Field("str", limit=MSG_LIMIT),
++    },
++    "d1.bug_echo_scores": {
++        "class_slug": _Field("str", limit=80),
++        "finding_title": _Field("str", limit=120),
++    },
++    "v1.finding_class": {
++        "lane": _Field("str", limit=80, strip_pin=True),
++        "finding_id": _Field("str", limit=80),
++        "title": _Field("str", limit=120),
++        "paths": _Field("list"),
++        "disposition": _Field(
++            "str",
++            limit=40,
++            case="upper",
++            enum=("BLOCKING", "NON-BLOCKING"),
++        ),
++    },
++    "ap.violates_row": {
++        "action_kind": _Field(
++            "str",
++            limit=20,
++            case="lower",
++            enum=("edit", "command", "brief", "report"),
++        ),
++        "action_target": _Field("target"),
++        "action_excerpt": _Field("str", limit=EXCERPT_LIMIT),
++        "row_id": _Field("str", limit=40),
++        "row_title": _Field("str", limit=120),
++    },
++    "wf.drift": {
++        "step_id": _Field(
++            "str",
++            limit=40,
++            case="lower",
++            enum=(
++                "verify-seam-first",
++                "one-increment-code-test-commit",
++                "negative-control",
++                "count-pasted",
++                "timestamp-pasted",
++                "commit-before-dispatch",
++                "impact-before-edit",
++                "premise-measured",
++                "report-lint-floor",
++                "boundary-respected",
++            ),
++        ),
++        "expected": _Field("str", limit=EXCERPT_LIMIT),
++        "observed": _Field("str", limit=EXCERPT_LIMIT),
++        "drift_kind": _Field(
++            "str",
++            limit=40,
++            case="lower",
++            enum=("skipped-step", "out-of-boundary", "substituted-step", "mirror-test", "prose-claim"),
++        ),
++    },
++}
++
++#: Options maxima recorded by the schema (b1.finding_kind is the open slug
++#: closed to <= 8 by the harvest; d1.bug_echo_scores is six sub-questions of
++#: five levels each).
++OPTIONS_MAX = {
++    "b1.finding_kind": FINDING_KIND_OPTIONS_MAX,
++    "d1.bug_echo_scores": 6 * 5,
++}
++
++
++def schema_keys(question_id: str) -> tuple[str, ...]:
++    """The ordered allowed keys for a question type; unknown type is refused."""
++    if question_id not in SCHEMAS:
++        raise DecisionStateError("decision-question-unknown", question_id)
++    return tuple(SCHEMAS[question_id])
++
++
++def normalize(question_id: str, state: dict, root: str | os.PathLike | None = None) -> dict:
++    """The STABILITY transform: closed-schema check + per-key normalization.
++
++    Order inside: question type, then per-key (normalize first), then the
++    unknown-key sweep, then the closed-enum check on the raw value. Redaction
++    is a separate transform (redact) and never happens here.
++    """
++    if question_id not in SCHEMAS:
++        raise DecisionStateError("decision-question-unknown", question_id)
++    fields = SCHEMAS[question_id]
++    if not isinstance(state, dict):
++        raise DecisionStateError("decision-state-not-mapping", question_id)
++    out: dict = {}
++    for key, spec in fields.items():
++        if key not in state:
++            raise DecisionStateError("decision-state-missing-key", f"{question_id}.{key}")
++        out[key] = _normalize_field(spec, key, state[key], root)
++    for key in state:
++        if key not in fields:
++            raise DecisionStateError("decision-state-unknown-key", f"{question_id}.{key}")
++    for key, spec in fields.items():
++        if spec.enum is None or key not in state:
++            continue
++        raw = state[key]
++        if not isinstance(raw, str) or out[key] not in spec.enum:
++            raise DecisionStateError("decision-state-bad-enum", f"{question_id}.{key}={raw}")
++    return out
++
++
++def redact(state: dict) -> dict:
++    """The SECURITY transform only: every secret class -> its fixed
++    placeholder. Applied AFTER normalize (a whitespace-run-split token is
++    caught only once normalize has collapsed it). Never a stability input."""
++    out: dict = {}
++    for key, value in state.items():
++        if isinstance(value, str):
++            out[key] = _redact_str(value)
++        elif isinstance(value, list):
++            out[key] = [_redact_str(v) if isinstance(v, str) else v for v in value]
++        else:
++            out[key] = value
++    return out
++
++
++def _redact_str(text: str) -> str:
++    # Order: the private-key block first (so it is not split), then sk, then
++    # bearer, then the env-assignment (which wins over the bare token rule for
++    # a NAME=value form), then the bare 32+ token run.
++    text = _PRIVKEY.sub(PLACEHOLDERS["privkey"], text)
++    text = _SK.sub(PLACEHOLDERS["sk"], text)
++    text = _BEARER.sub(PLACEHOLDERS["bearer"], text)
++    text = _ENVVAL.sub(lambda m: f"{m.group('name')}={PLACEHOLDERS['envval']}", text)
++    text = _TOKEN.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDERS["token"]), text)
++    return text
+diff --git a/tasks/briefs/laya/J1-1-report.md b/tasks/briefs/laya/J1-1-report.md
+new file mode 100644
+index 00000000..2e65a07a
+--- /dev/null
++++ b/tasks/briefs/laya/J1-1-report.md
+@@ -0,0 +1,95 @@
++PC-J1-1 BUILD-LANE REPORT
++
++Header
++
++- Status: build proposal only. Independent sandbox adversarial verification has not run. This lane does not issue a gate verdict.
++- PIN: `330803c`. Lane: `pc-j1-1`. Finished at `2026-09-23T02:26:33Z`.
++- Scope: only the J1-1 boundary in `tasks/briefs/laya/J1-1-brief.md:5`.
++
++PREMISE — VERIFIED
++
++- The exact contract names `SCHEMAS` as seven closed schemas and exact refusal strings at `B:8-19`.
++- The PIN tree had no decisions package; this increment added `state_digest` at `C:70-77` and package exports at `src/agent_factory/decisions/__init__.py:14-21`.
++- The build follows the pinned `state_digest` transform order in `L:14-17`: normalize -> redact -> canonical -> sha256.
++
++FILES / LINES
++
++- `src/agent_factory/decisions/__init__.py:14-21` — exports `DecisionStateError`, `normalize`, `redact`, and `state_digest`; SHA-256 `2aec3875f71213e4dc91557013439fdba6174b9a777cc87f6470e8d8b92c10b5`.
++- `C:26-77` — `_canon_str`, `canonical`, `_canon`, and `state_digest`; SHA-256 `bc9cb1d03fdb77a47dba18098367c15f1902fc4907cfd2f676e04cce09c879ad`.
++- `V:30-59` — `PLACEHOLDERS`, `_BEARER`, `_SK`, `_TOKEN`, `_ENVVAL`, and `_PRIVKEY` implement five fixed redaction classes.
++- `V:72-148` — `_Field`, `_strip_pin_suffix`, `_nfc_collapse`, `_path`, and `_normalize_field` implement exact PIN stripping, paths, sorted lists, leading-token command targets, NFC, whitespace, case, and bounds.
++- `V:151-224` — `SCHEMAS` contains the seven closed state schemas; incumbent answers remain row provenance, not stable state.
++- `V:242-295` — `normalize`, `redact`, and `_redact_str` enforce closed-schema refusals, enums, normalization, and redaction; file SHA-256 `b48899c883c7231f85f0a0db57de60fcbedf2b9238f3cef747d0999c2cd7b1a7`.
++- `T:42-50` — `GOLDEN_DIGESTS` holds seven pasted values.
++- `T:63-96` — `test_golden_digests_exact` and `test_relanding_stable` prove exact digests x2 and re-landing identity.
++- `T:108-185` — `test_secret_redacted_every_class` covers five classes, identical clean-state digests, and secret-byte absence.
++- `T:193-283` — `test_unknown_key_refused`, `test_closed_schema_refuses_incumbent_answer_key`, and sibling tests pin closed-schema/path/canonical failures plus leading-token and exact-PIN controls.
++- `T:291-340` — `test_normalize_does_not_redact`, `test_redact_does_not_normalize`, and `test_order_is_normalize_then_redact`; test-file SHA-256 `48fdf09e8038a146cd7f7d24643fe33a911f4051f3c66021543264928f553048`.
++- `tests/fixtures/decisions/golden/ap.violates_row.json:1-19`.
++- `tests/fixtures/decisions/golden/b1.finding_kind.json:1-15`.
++- `tests/fixtures/decisions/golden/b1.finding_sev.json:1-15`.
++- `tests/fixtures/decisions/golden/b2.hit_role.json:1-15`.
++- `tests/fixtures/decisions/golden/d1.bug_echo_scores.json:1-13`.
++- `tests/fixtures/decisions/golden/v1.finding_class.json:1-25`.
++- `tests/fixtures/decisions/golden/wf.drift.json:1-17`.
++
++GOLDEN DIGESTS — PRODUCED, COMMITTED, ASSERTED EXACTLY
++
++- `b2.hit_role` = `3ced4cd39a61faa5519dd3c491b9019347cfc12d447448bc53fc49118bc6423e`.
++- `b1.finding_sev` = `8c42d5dd1e8c349e6e94ab40189e706dcc3ada5e262d44077734ef91c178350d`.
++- `b1.finding_kind` = `9e18ed7e5146a2c3762ec1e00ae233351928e06ef07308563e844b07aec16abf`.
++- `d1.bug_echo_scores` = `5a8c4ad2659c0e6b5dd2b2638bc2a546adca5e55f7246e073197fa30f5971bb8`.
++- `v1.finding_class` = `f41a299c4a38ab305fc612dfc61cedd4481b9e6c6f9d3e1ffe24a229f10ad43e`.
++- `ap.violates_row` = `594584bde9869086e1814489784747f00dbee9918e12c3d4f4bdb4f90702deef`.
++- `wf.drift` = `a51a56c48e98cca60a95923da2a34a25bfb3609c1b23197588ad32af90cfc06b`.
++- Producer repeat: `bitwise-stable (x2): True`; `ALL-RELAND-OK: True`.
++
++RED -> GREEN
++
++- First complete suite: `1 failed, 13 passed`; red test `test_order_is_normalize_then_redact`; root cause: the first discriminator used the `sk` class, which is independent of leading whitespace.
++- Corrected negative control: a 32+ token run after `token:` and two spaces. Redact-first leaks it; normalize-first collapses to one space and catches it (`tests/test_decisions_canonical.py:314-340`).
++- Final producer-backed count: `pytest-summary: 14 passed in 0.04s`; `pytest-exit: 0`.
++
++MUTATION TABLE — SCRATCH COPIES, COMPILE + COLLECT + RESTORE SHA VERIFIED
++
++- m1 drop normalize -> `2 failed, 12 passed`; named reds `test_relanding_stable`, `test_order_is_normalize_then_redact`; compiled=True, collected=True, restore-sha-ok=True.
++- m2 drop redact -> `2 failed, 12 passed`; named reds `test_secret_redacted_every_class`, `test_order_is_normalize_then_redact`; compiled=True, collected=True, restore-sha-ok=True.
++- m3 drop NFC -> `1 failed, 13 passed`; named red `test_relanding_stable`; compiled=True, collected=True, restore-sha-ok=True.
++- m4 allow floats -> `1 failed, 13 passed`; named red `test_float_refused`; compiled=True, collected=True, restore-sha-ok=True.
++- m5 swap order -> `1 failed, 13 passed`; named red `test_order_is_normalize_then_redact`; compiled=True, collected=True, restore-sha-ok=True.
++- m6 open schema -> `2 failed, 12 passed`; named reds `test_unknown_key_refused`, `test_closed_schema_refuses_incumbent_answer_key`; compiled=True, collected=True, restore-sha-ok=True.
++- Harness line: `ALL-MUTANTS-DEAD: True`.
++
++GATES
++
++- PC gate run 1: `14 passed in 0.02s`; `run1-rc=0`.
++- PC gate run 2 after deleting basetemp: `14 passed in 0.02s`; `run2-rc=0`.
++- Seed AC 3 verify command with the PC interpreter: `14 passed in 0.02s`; `AC3-rc=0`.
++- Pyflakes: `pyflakes-rc=0` (0 hits).
++- Compile: `compile-rc=0`.
++- `git diff --check`: `diff-check-rc=0`.
++- FLAG-form AP screen: `--- TEST_SCREEN over 3 path(s): 0 hits over 3 files ---`; `ap-screen-rc=0`.
++- Never-a-gate screen: `no_laya_in_gates: 33 files scanned, clean`; `no-laya-rc=0`.
++
++SELF-ATTACK
++
++- Wrong schema boundary: ruled out by the exact schema map at `src/agent_factory/decisions/volatile.py:151-224`, the unknown-key controls at `tests/test_decisions_canonical.py:193-230`, and m6.
++- Stability accidentally depends on redaction or vice versa: ruled out by the separation controls and order discriminator at `tests/test_decisions_canonical.py:291-340`, plus m1, m2 and m5.
++- Golden values are self-referential: reduced by pasting the seven produced values into a separate assertion table at `tests/test_decisions_canonical.py:42-50`, committing raw/re-landed fixture pairs, repeating each pipeline twice, and killing m1/m3 against those pairs. Independent verification is still required.
++
++DISCREPANCIES
++
++- Seed AC 1 is RED-until-J1-2 exactly as the brief predicts: `ModuleNotFoundError: No module named 'agent_factory.decisions.ledger'`; `AC1-rc=1`. No `ledger.py` stub was created.
++- The venv is not installed editable; AC 1 required `PYTHONPATH=src` to reach the intended J1-2 ledger failure. Without it, the earlier command failed first with `No module named 'agent_factory'`.
++- m1 and m2 each kill the designated test plus the order test; m6 kills the two unknown-key controls. The brief's word `only` does not reproduce, but every required mutant compiles, collects and dies for the intended mechanism.
++- GitNexus clone index is 654 commits stale and does not contain new J1 symbols; `detect-changes` said `No changes detected.` It is not used as correctness evidence. Ripwire indexed the worktree and reported `state_digest`, `normalize`, `redact`, and the qualified decisions `canonical` as new symbols with zero incompatible callers.
++- First `scripts/test_summary.sh` invocation incorrectly used Python and raised `SyntaxError`; the required shell invocation produced the pasted 14-test summary above.
++- Production AP screen reported only AP-32 hash-use hits; classification: REQUIRED/RUN, because `state_digest` uses SHA-256 as the contract's identity primitive at `C:70-77`. The mandated FLAG-form screen reported 0 hits.
++- Final bounded lint line: `report_lint: 29 refs — OK 17, NEAR 0, MISS 0, UNCHECKABLE 12, UNRESOLVED 0 (worktree)`.
++
++NOT-DONE
++
++- `src/agent_factory/decisions/ledger.py` is J1-2 and is NOT built.
++- `scripts/decide-harvest` is J1-3 and is NOT built.
++- No hook, script, ledger, task ledger, wiki, commit, push, PR or outward action was performed.
++- Independent sandbox adversarial verification has not run; this remains a build proposal.
+diff --git a/tests/fixtures/decisions/golden/ap.violates_row.json b/tests/fixtures/decisions/golden/ap.violates_row.json
+new file mode 100644
+index 00000000..0c27315d
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/ap.violates_row.json
+@@ -0,0 +1,19 @@
++{
++  "expected_digest": "594584bde9869086e1814489784747f00dbee9918e12c3d4f4bdb4f90702deef",
++  "question_id": "ap.violates_row",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "action_excerpt": "the screen refused the unlisted gate file",
++    "action_kind": "edit",
++    "action_target": "scripts/gate_files.txt",
++    "row_id": "AF-AP-76",
++    "row_title": "mech-bar three-round cap"
++  },
++  "variant": {
++    "action_excerpt": "the  screen   refused  the unlisted  gate file",
++    "action_kind": "edit",
++    "action_target": "/home/rocco/agent-factory/scripts/gate_files.txt",
++    "row_id": "AF-AP-76",
++    "row_title": "mech-bar three-round cap"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/b1.finding_kind.json b/tests/fixtures/decisions/golden/b1.finding_kind.json
+new file mode 100644
+index 00000000..34ddd368
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/b1.finding_kind.json
+@@ -0,0 +1,15 @@
++{
++  "expected_digest": "9e18ed7e5146a2c3762ec1e00ae233351928e06ef07308563e844b07aec16abf",
++  "question_id": "b1.finding_kind",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "file": "src/agent_factory/audit/events.py",
++    "kind": "event-log-gap",
++    "msg": "the audit sink path is not bound"
++  },
++  "variant": {
++    "file": "/home/rocco/agent-factory/src/agent_factory/audit/events.py",
++    "kind": "event-log-gap",
++    "msg": "the audit sink   path is  not bound"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/b1.finding_sev.json b/tests/fixtures/decisions/golden/b1.finding_sev.json
+new file mode 100644
+index 00000000..2d2ea8df
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/b1.finding_sev.json
+@@ -0,0 +1,15 @@
++{
++  "expected_digest": "8c42d5dd1e8c349e6e94ab40189e706dcc3ada5e262d44077734ef91c178350d",
++  "question_id": "b1.finding_sev",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "file": "src/agent_factory/governance/pin.py",
++    "kind": "gpg-sign",
++    "msg": "the owner key must be pinned before re-sign"
++  },
++  "variant": {
++    "file": "/home/rocco/agent-factory/src/agent_factory/governance/pin.py",
++    "kind": "gpg-sign",
++    "msg": "the   owner key must  be pinned before re-sign"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/b2.hit_role.json b/tests/fixtures/decisions/golden/b2.hit_role.json
+new file mode 100644
+index 00000000..c12c9b38
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/b2.hit_role.json
+@@ -0,0 +1,15 @@
++{
++  "expected_digest": "3ced4cd39a61faa5519dd3c491b9019347cfc12d447448bc53fc49118bc6423e",
++  "question_id": "b2.hit_role",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "file": "scripts/validate_ledger.py",
++    "snippet": "def validate_ledger(args): result = process(args) return result",
++    "sym": "validate_ledger"
++  },
++  "variant": {
++    "file": "/home/rocco/agent-factory/scripts/validate_ledger.py",
++    "snippet": "def   validate_ledger(args):   result  = process(args)    return result",
++    "sym": "validate_ledger"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/d1.bug_echo_scores.json b/tests/fixtures/decisions/golden/d1.bug_echo_scores.json
+new file mode 100644
+index 00000000..5df8a971
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/d1.bug_echo_scores.json
+@@ -0,0 +1,13 @@
++{
++  "expected_digest": "5a8c4ad2659c0e6b5dd2b2638bc2a546adca5e55f7246e073197fa30f5971bb8",
++  "question_id": "d1.bug_echo_scores",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "class_slug": "hollow-green",
++    "finding_title": "the é-gate never ran its own control"
++  },
++  "variant": {
++    "class_slug": "hollow-green",
++    "finding_title": "the é-gate   never ran   its own control"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/v1.finding_class.json b/tests/fixtures/decisions/golden/v1.finding_class.json
+new file mode 100644
+index 00000000..c0723956
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/v1.finding_class.json
+@@ -0,0 +1,25 @@
++{
++  "expected_digest": "f41a299c4a38ab305fc612dfc61cedd4481b9e6c6f9d3e1ffe24a229f10ad43e",
++  "question_id": "v1.finding_class",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "disposition": "NON-BLOCKING",
++    "finding_id": "F-7",
++    "lane": "pc-j1-1",
++    "paths": [
++      "src/agent_factory/decisions/canonical.py",
++      "tests/test_decisions_canonical.py"
++    ],
++    "title": "the lint floor is the gate"
++  },
++  "variant": {
++    "disposition": "non-blocking",
++    "finding_id": "F-7",
++    "lane": "pc-j1-1--330803c",
++    "paths": [
++      "/home/rocco/agent-factory/tests/test_decisions_canonical.py",
++      "/home/rocco/agent-factory/src/agent_factory/decisions/canonical.py"
++    ],
++    "title": "the   lint floor  is the gate"
++  }
++}
+diff --git a/tests/fixtures/decisions/golden/wf.drift.json b/tests/fixtures/decisions/golden/wf.drift.json
+new file mode 100644
+index 00000000..a4fc7345
+--- /dev/null
++++ b/tests/fixtures/decisions/golden/wf.drift.json
+@@ -0,0 +1,17 @@
++{
++  "expected_digest": "a51a56c48e98cca60a95923da2a34a25bfb3609c1b23197588ad32af90cfc06b",
++  "question_id": "wf.drift",
++  "root": "/home/rocco/agent-factory",
++  "state": {
++    "drift_kind": "prose-claim",
++    "expected": "the test count is pasted from the summary",
++    "observed": "the count was typed by hand",
++    "step_id": "count-pasted"
++  },
++  "variant": {
++    "drift_kind": "prose-claim",
++    "expected": "the   test count  is  pasted   from the summary",
++    "observed": "the  count   was typed  by hand",
++    "step_id": "count-pasted"
++  }
++}
+diff --git a/tests/test_decisions_canonical.py b/tests/test_decisions_canonical.py
+new file mode 100644
+index 00000000..aa22d19c
+--- /dev/null
++++ b/tests/test_decisions_canonical.py
+@@ -0,0 +1,340 @@
++"""J1-1 tests: normalize -> redact -> canonical -> sha256, the seven closed
++state schemas, and the committed golden digests.
++
++Every test is LLM-free and deterministic. The negative controls (the refusal
++strings, the secret-leak assertions, the order discriminator) fail for the
++EXACT expected reason. The golden digests are asserted EXACTLY (pasted, not
++recomputed) and a re-landed variant per type must hash to the SAME digest.
++
++The pipeline entry point under test is the public
++``state_digest(question_id, state, root)`` = sha256(canonical(redact(normalize(state))));
++the two transforms are also tested directly for their separation (normalize
++never redacts, redact never normalizes).
++
++Contract: tasks/briefs/laya/J1-1-brief.md (seeds/seed-laya-j1-v1.yaml AC 1 +
++AC 3; the verdict's J1 acceptance test 1 + the KC-J6 field list).
++"""
++from __future__ import annotations
++
++import json
++import os
++
++import pytest
++
++from agent_factory.decisions.canonical import canonical, state_digest
++from agent_factory.decisions.volatile import DecisionStateError, normalize, redact
++
++GOLDEN_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "decisions", "golden")
++
++# The seven question types, each with one golden fixture.
++GOLDEN_IDS = [
++    "b2.hit_role",
++    "b1.finding_sev",
++    "b1.finding_kind",
++    "d1.bug_echo_scores",
++    "v1.finding_class",
++    "ap.violates_row",
++    "wf.drift",
++]
++
++# The committed golden digests (pasted from the fixtures the lane produced;
++# asserted EXACTLY, never recomputed into the assertion).
++GOLDEN_DIGESTS = {
++    "b2.hit_role": "3ced4cd39a61faa5519dd3c491b9019347cfc12d447448bc53fc49118bc6423e",
++    "b1.finding_sev": "8c42d5dd1e8c349e6e94ab40189e706dcc3ada5e262d44077734ef91c178350d",
++    "b1.finding_kind": "9e18ed7e5146a2c3762ec1e00ae233351928e06ef07308563e844b07aec16abf",
++    "d1.bug_echo_scores": "5a8c4ad2659c0e6b5dd2b2638bc2a546adca5e55f7246e073197fa30f5971bb8",
++    "v1.finding_class": "f41a299c4a38ab305fc612dfc61cedd4481b9e6c6f9d3e1ffe24a229f10ad43e",
++    "ap.violates_row": "594584bde9869086e1814489784747f00dbee9918e12c3d4f4bdb4f90702deef",
++    "wf.drift": "a51a56c48e98cca60a95923da2a34a25bfb3609c1b23197588ad32af90cfc06b",
++}
++
++
++def _load(qid: str) -> dict:
++    with open(os.path.join(GOLDEN_DIR, qid + ".json"), encoding="utf-8") as fh:
++        return json.load(fh)
++
++
++# ---------------------------------------------------------------------------
++# Golden digests: the committed values, asserted EXACTLY, twice (bitwise).
++# ---------------------------------------------------------------------------
++
++
++def test_golden_digests_exact():
++    # Run the pipeline twice per type; the two results must be bitwise
++    # identical and must equal the pasted golden digest for all seven types.
++    first = {}
++    for qid in GOLDEN_IDS:
++        fixture = _load(qid)
++        first[qid] = state_digest(qid, fixture["state"], fixture.get("root"))
++    for qid in GOLDEN_IDS:
++        fixture = _load(qid)
++        again = state_digest(qid, fixture["state"], fixture.get("root"))
++        assert first[qid] == again, f"{qid}: pipeline not bitwise-stable"
++        assert first[qid] == GOLDEN_DIGESTS[qid], (
++            f"{qid}: digest {first[qid]} != golden {GOLDEN_DIGESTS[qid]}"
++        )
++
++
++# ---------------------------------------------------------------------------
++# Re-landing stability: a re-landed variant (absolute path under the root,
++# a PIN suffix, extra whitespace, NFD instead of NFC) hashes to the SAME
++# digest as the clean base.
++# ---------------------------------------------------------------------------
++
++
++def test_relanding_stable():
++    for qid in GOLDEN_IDS:
++        fixture = _load(qid)
++        root = fixture.get("root")
++        base = state_digest(qid, fixture["state"], root)
++        variant = state_digest(qid, fixture["variant"], root)
++        assert variant == base, (
++            f"{qid}: re-landed variant {variant} != base {base} "
++            f"(variant={json.dumps(fixture['variant'])})"
++        )
++        assert base == GOLDEN_DIGESTS[qid], f"{qid}: base {base} != golden"
++
++
++# ---------------------------------------------------------------------------
++# The injected-secret test: for every secret class, a state carrying the
++# secret hashes IDENTICAL to the same state with the secret absent (the
++# clean form contains the placeholder, so the placeholder equals the
++# redaction of the absent form), and the secret bytes appear in no output
++# (asserted over the canonical bytes of the pipeline input).
++# ---------------------------------------------------------------------------
++
++
++def test_secret_redacted_every_class():
++    # (qid, secret-bearing state, clean state containing the placeholder,
++    #  a distinctive raw-secret substring that must not survive)
++    cases = [
++        (
++            "b1.finding_sev",
++            {"file": "src/a.py", "kind": "k", "msg": "key is sk-abcdef1234567890"},
++            {"file": "src/a.py", "kind": "k", "msg": "key is <redacted:sk>"},
++            "sk-abcdef1234567890",
++        ),
++        (
++            "b1.finding_kind",
++            {"file": "src/a.py", "kind": "k", "msg": "hdr Bearer 0123456789abcdef0123456789abcdef"},
++            {"file": "src/a.py", "kind": "k", "msg": "hdr <redacted:bearer>"},
++            "0123456789abcdef0123456789abcdef",
++        ),
++        (
++            "b2.hit_role",
++            {"file": "src/a.py", "snippet": "token: 0123456789abcdef0123456789abcdef", "sym": "s"},
++            {"file": "src/a.py", "snippet": "token: <redacted:token>", "sym": "s"},
++            "0123456789abcdef0123456789abcdef",
++        ),
++        (
++            "ap.violates_row",
++            {
++                "action_excerpt": "API_KEY=abcd1234abcd1234abcd1234abcd",
++                "action_kind": "edit",
++                "action_target": "a/b.py",
++                "row_id": "AF-AP-1",
++                "row_title": "t",
++            },
++            {
++                "action_excerpt": "API_KEY=<redacted:envval>",
++                "action_kind": "edit",
++                "action_target": "a/b.py",
++                "row_id": "AF-AP-1",
++                "row_title": "t",
++            },
++            "abcd1234abcd1234abcd1234abcd",
++        ),
++        (
++            "wf.drift",
++            {
++                "drift_kind": "mirror-test",
++                "expected": "the key block follows",
++                "observed": (
++                    "-----BEGIN RSA PRIVATE KEY-----\n"
++                    "MIIBOgIBAAJBAKj34GkSqaCn74a3\n"
++                    "-----END RSA PRIVATE KEY-----"
++                ),
++                "step_id": "verify-seam-first",
++            },
++            {
++                "drift_kind": "mirror-test",
++                "expected": "the key block follows",
++                "observed": "<redacted:privkey>",
++                "step_id": "verify-seam-first",
++            },
++            "MIIBOgIBAAJBAKj34GkSqaCn74a3",
++        ),
++    ]
++    for qid, secret_state, clean_state, raw_secret in cases:
++        # The clean form must contain the placeholder (the placeholder equals
++        # the redaction of the absent form).
++        clean_text = canonical(redact(normalize(qid, clean_state)))
++        assert "<redacted:" in clean_text, f"{qid}: clean form must contain the placeholder"
++        # The secret-bearing state must hash IDENTICAL to the clean state.
++        secret_digest = state_digest(qid, secret_state)
++        clean_digest = state_digest(qid, clean_state)
++        assert secret_digest == clean_digest, (
++            f"{qid}: secret-bearing {secret_digest} != clean {clean_digest} "
++            f"(redaction must equal the redaction of the absent form)"
++        )
++        # The raw secret bytes must appear in NO output: the canonical bytes
++        # of the pipeline input (normalize -> redact) must not carry it.
++        pipeline_input = canonical(redact(normalize(qid, secret_state)))
++        assert raw_secret not in pipeline_input, f"{qid}: raw secret leaked into the digest input"
++        assert raw_secret not in clean_text, f"{qid}: raw secret leaked into the clean canonical"
++
++
++# ---------------------------------------------------------------------------
++# The closed-schema refusals: exact contract strings.
++# ---------------------------------------------------------------------------
++
++
++def test_unknown_key_refused():
++    fixture = _load("b1.finding_sev")
++    state = dict(fixture["state"])
++    state["timestamp"] = "2026-09-22T20:47:50Z"  # a locator key, never state
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("b1.finding_sev", state, fixture["root"])
++    assert exc.value.reason == "decision-state-unknown-key"
++    assert str(exc.value) == "decision-state-unknown-key: b1.finding_sev.timestamp"
++
++
++def test_missing_key_refused():
++    state = {"kind": "gpg-sign", "msg": "m"}  # missing 'file' (required)
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("b1.finding_sev", state, "/home/rocco/agent-factory")
++    assert exc.value.reason == "decision-state-missing-key"
++    assert str(exc.value) == "decision-state-missing-key: b1.finding_sev.file"
++
++
++def test_bad_enum_refused():
++    state = {
++        "lane": "pc-j1-1",
++        "finding_id": "F-1",
++        "title": "t",
++        "paths": ["src/a.py"],
++        "disposition": "MAYBE",  # not in {BLOCKING,NON-BLOCKING}
++    }
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("v1.finding_class", state, "/home/rocco/agent-factory")
++    assert exc.value.reason == "decision-state-bad-enum"
++    assert str(exc.value) == "decision-state-bad-enum: v1.finding_class.disposition=MAYBE"
++
++
++def test_closed_schema_refuses_incumbent_answer_key():
++    # Incumbent answers belong to row provenance (J1-2), not stable state.
++    state = {"sym": "normalize", "file": "src/a.py", "snippet": "def normalize", "role": "def"}
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("b2.hit_role", state, "/home/rocco/agent-factory")
++    assert str(exc.value) == "decision-state-unknown-key: b2.hit_role.role"
++
++
++def test_command_target_uses_leading_token_and_pin_strip_is_exact():
++    root = "/home/rocco/agent-factory"
++    command = {
++        "action_kind": "command",
++        "action_target": "python3 scripts/check.py --strict",
++        "action_excerpt": "ran the checker",
++        "row_id": "AF-AP-1",
++        "row_title": "checker",
++    }
++    assert normalize("ap.violates_row", command, root)["action_target"] == "python3"
++    finding = {
++        "lane": "team--alpha--330803c",
++        "finding_id": "F-1",
++        "title": "t",
++        "paths": ["src/a.py"],
++        "disposition": "blocking",
++    }
++    assert normalize("v1.finding_class", finding, root)["lane"] == "team--alpha"
++    finding["lane"] = "team--alpha"
++    assert normalize("v1.finding_class", finding, root)["lane"] == "team--alpha"
++
++
++def test_unknown_question_refused():
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("not.a.question", {"file": "a"}, "/home/rocco/agent-factory")
++    assert exc.value.reason == "decision-question-unknown"
++    assert str(exc.value) == "decision-question-unknown: not.a.question"
++
++
++def test_abs_path_outside_root_refused():
++    # An absolute path NOT under the repo root is refused, never relativized.
++    state = {"file": "/etc/passwd", "kind": "k", "msg": "m"}
++    with pytest.raises(DecisionStateError) as exc:
++        normalize("b1.finding_sev", state, "/home/rocco/agent-factory")
++    assert exc.value.reason == "decision-state-abs-path"
++    assert exc.value.detail == "file"
++    assert str(exc.value) == "decision-state-abs-path: file"
++
++
++def test_float_refused():
++    # canonical accepts only int/str/list/dict; a float is refused with its
++    # key's path. (bool is an int subclass and is refused explicitly, never
++    # printed as true.)
++    with pytest.raises(DecisionStateError) as exc:
++        canonical({"score": 1.5})
++    assert exc.value.reason == "decision-canonical-float"
++    assert exc.value.detail == "$.score"
++    with pytest.raises(DecisionStateError) as exc2:
++        canonical({"flag": True})
++    assert exc2.value.reason == "decision-canonical-float"
++    assert exc2.value.detail == "$.flag"
++
++
++# ---------------------------------------------------------------------------
++# The two transforms have two jobs, one fixed order (normalize -> redact).
++# ---------------------------------------------------------------------------
++
++
++def test_normalize_does_not_redact():
++    # A secret survives normalize ALONE (normalize is stability, not security).
++    state = {"file": "src/a.py", "kind": "k", "msg": "key is sk-abcdef1234567890"}
++    normed = normalize("b1.finding_sev", state, "/home/rocco/agent-factory")
++    assert "sk-abcdef1234567890" in normed["msg"], (
++        "normalize must NOT redact: the secret survives normalize alone"
++    )
++    assert "sk-abcdef1234567890" not in redact(normed)["msg"], (
++        "redact (applied after normalize) must remove it"
++    )
++
++
++def test_redact_does_not_normalize():
++    # Whitespace (a double space) SURVIVES redact ALONE (redact is security,
++    # not stability): the run is only collapsed by normalize.
++    state = {"file": "src/a.py", "kind": "k", "msg": "a  secret"}
++    redacted = redact(state)
++    assert "a  secret" == redacted["msg"], (
++        "redact must NOT collapse whitespace: a run survives redact alone"
++    )
++    assert normalize("b1.finding_sev", state, "/home/rocco/agent-factory")["msg"] == "a secret"
++
++
++def test_order_is_normalize_then_redact():
++    # A secret SPLIT BY A WHITESPACE RUN is caught only in the right order.
++    # raw: "token:  <run>" (a colon followed by TWO spaces before the 32+ run).
++    # The token rule (colon + at most ONE space, or a single space) cannot
++    # bridge a two-space run, so redact-first MISSES it; only after normalize
++    # has collapsed the run to a single space does the rule match. The test
++    # goes through the public pipeline: the split secret must hash to the
++    # SAME digest as the clean placeholder form.
++    raw = {"file": "src/a.py", "kind": "k", "msg": "token:  0123456789abcdef0123456789abcdef"}
++    clean = {"file": "src/a.py", "kind": "k", "msg": "token: <redacted:token>"}
++    run = "0123456789abcdef0123456789abcdef"
++    # The wrong order (redact FIRST, then normalize): the two-space run is
++    # present when redact runs, so the token rule cannot bridge it and the
++    # secret survives into the normalized output (normalize does not redact).
++    wrong_input = canonical(normalize("b1.finding_sev", redact(raw)))
++    assert run in wrong_input, (
++        "redact-first must MISS the whitespace-run-split token (it is only caught "
++        "after normalize collapses the run) -- this is the order discriminator"
++    )
++    # The right order (normalize -> redact, the pipeline's order): the split
++    # secret is caught and hashes IDENTICAL to the clean placeholder form.
++    assert state_digest("b1.finding_sev", raw) == state_digest("b1.finding_sev", clean), (
++        "normalize-first must CATCH the whitespace-run-split token (same digest as the clean form)"
++    )
++    right_input = canonical(redact(normalize("b1.finding_sev", raw)))
++    assert run not in right_input, "normalize-first must CATCH the whitespace-run-split token"
++    assert "<redacted:token>" in right_input, "normalize-first must leave the token placeholder"
+diff --git a/transcripts/pc/pc-j1-1.md--330803c.md b/transcripts/pc/pc-j1-1.md--330803c.md
+new file mode 100644
+index 00000000..6246d673
+--- /dev/null
++++ b/transcripts/pc/pc-j1-1.md--330803c.md
+@@ -0,0 +1,1439 @@
++# Hermes lane session 20260922_225236_829bcc
++
++- model: qwen-local/qwen3.8-27b-local
++- started: 2026-09-22T21:52:37.980998+00:00
++- cwd: /home/rocco/agent-factory/.lanes/pc-j1-1.md--330803c/tree
++- messages: 312; tool calls: 179
++- tokens in/out/cache_read/reasoning: 2079437/379988/11884192/304094
++
++## user @ 21:52:37
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 21:53:08 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:53:09 — 8212 chars (body not exported)
++
++## tool result (terminal) @ 21:53:09 — 319 chars (body not exported)
++
++## assistant @ 21:53:18 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:53:18 — 3832 chars (body not exported)
++
++## assistant @ 21:53:23 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 21:53:23 — 882 chars (body not exported)
++
++## assistant @ 21:53:26 → tools: read_file
++
++
++
++## tool result (read_file) @ 21:53:26 — 12626 chars (body not exported)
++
++## assistant @ 21:56:05 → tools: terminal, terminal
++
++I've verified the brief against the current tree and confirmed the state is correct. Now I'll run the environment and instrument checks, then start drafting the report.
++
++## tool result (terminal) @ 21:56:05 — 416 chars (body not exported)
++
++## tool result (terminal) @ 21:56:05 — 1940 chars (body not exported)
++
++## assistant @ 21:56:13 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:56:13 — 476 chars (body not exported)
++
++## assistant @ 21:56:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 21:56:19 — 543 chars (body not exported)
++
++## assistant @ 21:56:34 → tools: terminal, terminal
++
++Graft-first pass on the seams my code must conform to (existing package conventions, error-style precedents):
++
++## tool result (terminal) @ 21:56:35 — 1898 chars (body not exported)
++
++## tool result (terminal) @ 21:56:36 — 2071 chars (body not exported)
++
++## assistant @ 21:56:47 → tools: read_file, read_file
++
++I'm checking the house convention for base error classes in the governance module to understand the pattern I need to follow.
++
++## tool result (read_file) @ 21:56:47 — 605 chars (body not exported)
++
++## tool result (read_file) @ 21:56:47 — 594 chars (body not exported)
++
++## assistant @ 22:06:30 → tools: terminal, terminal
++
++I've verified the house conventions for error classes and the test patterns. Now I'll check the verdict's J1 acceptance tests and field list to finalize the design.
++
++## tool result (terminal) @ 22:06:31 — 7636 chars (body not exported)
++
++## tool result (terminal) @ 22:06:31 — 1774 chars (body not exported)
++
++## assistant @ 22:07:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:07:06 — 3496 chars (body not exported)
++
++## assistant @ 22:28:05 → tools: read_file, terminal
++
++I've verified the house conventions and now I'm checking the top-level package, venv, and pytest availability to determine how the AC 1 command will run.
++
++## tool result (read_file) @ 22:28:06 — 169 chars (body not exported)
++
++## tool result (terminal) @ 22:28:06 — 647 chars (body not exported)
++
++## assistant @ 22:42:02 → tools: terminal, terminal
++
++I've confirmed the house conventions and error patterns. Now I'll check the lane-id format in a real report and review the existing fixture style.
++
++## tool result (terminal) @ 22:42:02 — 2063 chars (body not exported)
++
++## tool result (terminal) @ 22:42:02 — 2099 chars (body not exported)
++
++## assistant @ 22:50:27 → tools: terminal
++
++I found a key issue with the `line numbers` re-landing variant that needs verification. Let me check the primary source for the producers' output shapes.
++
++## tool result (terminal) @ 22:50:27 — 204 chars (body not exported)
++
++## assistant @ 22:51:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:51:05 — 484 chars (body not exported)
++
++## assistant @ 22:51:10 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:51:11 — 4936 chars (body not exported)
++
++## assistant @ 22:54:04 → tools: terminal
++
++Premise verified and primary sources read. Now checking the anti-pattern registry to know what the screen will flag before I write any code:
++
++## tool result (terminal) @ 22:54:05 — 89 chars (body not exported)
++
++## assistant @ 22:54:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:54:47 — 111 chars (body not exported)
++
++## assistant @ 22:54:51 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:54:51 — 2754 chars (body not exported)
++
++## assistant @ 22:59:22 → tools: terminal
++
++All premise facts reproduced. Now I have the full design. Before writing code, one more seam check — the report_lint `alias@<sha>:NN` form, which I need for brief citations (the brief file was rewritten after the PIN):
++
++## tool result (terminal) @ 22:59:22 — 1024 chars (body not exported)
++
++## assistant @ 23:16:11 → tools: terminal
++
++I've verified the design against the primary source and identified key constraints: the closed key tuple handles volatile data, the PIN-suffix lane strips, and the token-class separator is the only whitespace split that discriminates normalize/redact order. Now I'll check what the anti-pattern screen will flag.
++
++## tool result (terminal) @ 23:16:11 — 3747 chars (body not exported)
++
++## assistant @ 23:28:47 → tools: write_file, write_file
++
++All seams verified (house error-class convention at `governance/pin.py:14-21`, audit mirror, verdict redaction test at `COUNCIL-VERDICT-JEV-LAYA-v1.md:96`, ap_screen's live pattern list, and the J1-1 row in the breakdown at line 30). One design point from the brief's contract that drives everything: the **token class (32+ hex/base64 run) is the only whitespace-sensitive redaction** — it is the discriminator that proves the normalize→redact order, since every other class spans its own whitespace. Writing the three source files plus the test now (RED first, per the build loop):
++
++## tool result (write_file) @ 23:28:48 — 655 chars (body not exported)
++
++## tool result (write_file) @ 23:28:48 — 401 chars (body not exported)
++
++## assistant @ 23:32:35 → tools: terminal
++
++Two issues to fix: a stray broken annotation line in volatile.py, and the architecture — normalize/redact belong in `volatile.py` (the schemas' home) while `canonical.py` owns the canonical→sha256 pipeline and re-exports. Let me also check the venv install state before finalizing the module layout:
++
++## tool result (terminal) @ 23:35:35 — 591 chars (body not exported)
++
++## assistant @ 00:02:34 → tools: write_file
++
++The full suite is a 180s+ run (J1-5's boundary, not mine) — my gate is the single decisions-canonical file. Let me verify the anti-pattern screen's exact hit behavior on a probe, then write the final clean sources. First, fix the volatile.py syntax and restructure with a clean field-spec:
++
++## tool result (write_file) @ 00:02:36 — 343 chars (body not exported)
++
++## assistant @ 00:05:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 00:05:23 — 404 chars (body not exported)
++
++## assistant @ 00:06:41 → tools: write_file
++
++The canonical.py has an f-string with nested-quote/syntax issues and a duplicated branch. Let me rewrite it cleanly:
++
++## tool result (write_file) @ 00:06:42 — 344 chars (body not exported)
++
++## assistant @ 00:08:49 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 00:08:50 — 2044 chars (body not exported)
++
++## assistant @ 00:09:49 → tools: patch
++
++Bearer regex has a double-quantifier (`{16,}*`). The brief's form is `[A-Za-z0-9._~+/-]{16,}=*`. Fixing:
++
++## tool result (patch) @ 00:09:49 — 918 chars (body not exported)
++
++## assistant @ 00:13:10 → tools: execute_code
++
++I've fixed the double-quantifier issue and verified the token design—the separator between `token` and the run is a single space, not multiple, which discriminates the order test. Now I'll rerun the probe.
++
++## tool result (execute_code) @ 00:13:11 — 507 chars (body not exported)
++
++## assistant @ 00:15:12 → tools: write_file
++
++I found that the `canonical` function is shadowing the `canonical` module, which breaks the import pattern — I'll remove the function re-export from `__init__` to keep the module reference clean.
++
++## tool result (write_file) @ 00:15:13 — 341 chars (body not exported)
++
++## assistant @ 00:16:16 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 00:16:17 — 1807 chars (body not exported)
++
++## assistant @ 00:19:42 → tools: execute_code
++
++I found the issues: the token and v1 findings aren't matching due to how secrets are handled and path ordering. I'll re-probe with a consistent construction where the clean form is the redaction of the secret-bearing form.
++
++## tool result (execute_code) @ 00:19:42 — 1502 chars (body not exported)
++
++## assistant @ 00:21:49 → tools: execute_code
++
++The design has a flaw: the double-space token rule is order-symmetric, so it can't discriminate the transform order. Let me verify the exact discriminator math before fixing — the brief's order test needs `redact-first` to leak where `normalize-first` catches.
++
++## tool result (execute_code) @ 00:21:49 — 677 chars (body not exported)
++
++## assistant @ 00:24:44 → tools: write_file
++
++The discriminator math confirms: a **single-sep** token rule + a **two-space** raw fixture makes normalize-first catch where redact-first leaks. That's the exact brief order-test. Now I have the full design settled. Rewriting volatile.py with the corrected field spec (optional answer keys, b1.finding_kind open-slug cap, no separate ENUMS/ANSWERS):
++
++## tool result (write_file) @ 00:24:45 — 343 chars (body not exported)
++
++## assistant @ 00:25:00 → tools: execute_code
++
++Now the test file. Let me first verify the module imports cleanly and re-check the v1 path issue:
++
++## tool result (execute_code) @ 00:25:01 — 568 chars (body not exported)
++
++## assistant @ 00:25:27 → tools: patch
++
++`paths` is wrongly a string — the brief says it's a **sorted list** of repo-relative paths. Fixing the field spec and normalizer:
++
++## tool result (patch) @ 00:25:27 — 935 chars (body not exported)
++
++## assistant @ 00:25:43 → tools: patch
++
++Now update `_normalize_field` to handle the `list` kind (sorted repo-relative paths) and the v1 schema:
++
++## tool result (patch) @ 00:25:45 — 1048 chars (body not exported)
++
++## assistant @ 00:25:50 → tools: patch
++
++
++
++## tool result (patch) @ 00:25:51 — 986 chars (body not exported)
++
++## assistant @ 00:27:25 → tools: execute_code
++
++pyflakes clean. Let me regenerate the golden digests with the corrected v1 (list paths) and verify the reland + order + secret math in one probe:
++
++## tool result (execute_code) @ 00:27:26 — 1720 chars (body not exported)
++
++## assistant @ 00:27:55 → tools: execute_code
++
++All core mechanics verified. The `v1 variant==base: False` is a bug in my probe (I changed the title text, not just the NFD form). Let me build a correct NFD variant (same logical title, different encoding) and finalize the golden digests:
++
++## tool result (execute_code) @ 00:27:55 — 431 chars (body not exported)
++
++## assistant @ 00:32:00 → tools: write_file
++
++All mechanics verified: the 7 golden digests are stable, re-landing (abs-path + whitespace + NFD + PIN-suffix + case) collapses to the same digest, the order discriminator (double-space token) leaks under redact-first but not normalize-first, normalize-only keeps secrets, redact-only keeps whitespace, and all 6 refusal strings + float are exact. My shell `unicode_escape` hack was the only failure — the module's NFC is proven correct. Now I'll generate the 7 committed fixtures (base + re-landed variant + digest) with a throwaway generator, then write the test:
++
++## tool result (write_file) @ 00:32:01 — 588 chars (body not exported)
++
++## assistant @ 00:34:06 → tools: patch
++
++Path depth is off by one (scratch is a sibling of `tree`, not a child). Let me use absolute paths:
++
++## tool result (patch) @ 00:34:06 — 1071 chars (body not exported)
++
++## assistant @ 00:34:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:34:20 — 860 chars (body not exported)
++
++## assistant @ 00:34:36 → tools: execute_code
++
++6/7 pass. v1 diverges — let me diff the normalized outputs to find which field is the culprit:
++
++## tool result (execute_code) @ 00:34:36 — 1281 chars (body not exported)
++
++## assistant @ 00:35:09 → tools: patch, patch
++
++The `lane` field lost its PIN-suffix strip in the refactor — the variant keeps `pc-j1-1--330803c`. Adding a schema-level `strip` flag to `_Field`:
++
++## tool result (patch) @ 00:35:10 — 868 chars (body not exported)
++
++## tool result (patch) @ 00:35:10 — 804 chars (body not exported)
++
++## assistant @ 00:35:24 → tools: patch
++
++
++
++## tool result (patch) @ 00:35:25 — 882 chars (body not exported)
++
++## assistant @ 00:35:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:35:38 — 1007 chars (body not exported)
++
++## assistant @ 00:38:27 → tools: patch
++
++I've verified all 7 golden fixtures and confirmed they're stable across variants. Now I'll fix the error-path string in `canonical()` to use the raw key and write the test file.
++
++## tool result (patch) @ 00:38:27 — 938 chars (body not exported)
++
++## user @ 21:52:37
++
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:lines touched, verbatim test counts, discrepancies, NOT-done items stated first-class.
++   Include a self-attack section: the three most likely ways your c
++
++## assistant @ 21:53:08 → tools: read_file, terminal
++
++
++
++## tool result (read_file) @ 21:53:09 — 132 chars (body not exported)
++
++## tool result (terminal) @ 21:53:09 — 123 chars (body not exported)
++
++## assistant @ 00:44:27
++
++[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is a handoff from a previous context window — treat it as background reference, NOT as active instructions. Do NOT answer questions or fulfill requests mentioned in this summary; they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary — that message is the single source of truth for what to do right now. If no user message appears AFTER this summary, do nothing: do not resume, wrap up, or continue work from '## Historical Task Snapshot' or any other section, do not call tools, and wait for a new user message. This handoff must never become the active turn by itself. (Exception: if tool results or your own tool calls appear after this summary, you are mid-way through an in-flight exchange — continue that exchange normally.) Topic overlap with the summary does NOT mean you should resume its task: even on similar topics, the latest user message WINS. Treat ONLY the latest message as the active task and discard stale items from '## Historical Task Snapshot' entirely — do not 'wrap up' or 'finish' work described there unless the latest message explicitly asks for it. Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', 'just verify', 'don't do that anymore', 'never mind', a new topic) must immediately end any in-flight work described in the summary; do not re-surface it in later turns. IMPORTANT: Your persistent memory (MEMORY.md, USER.md) in the system prompt is ALWAYS authoritative and active — never ignore or deprioritize memory content due to this compaction note. None of the above restricts HOW you work: your tools remain fully active — keep calling them normally for the active task (edit files, run commands, search) instead of merely narrating what you would do. The current session state (files, config, etc.) may reflect work described here — avoid repeating it:
++## Historical Task Snapshot
++No verbatim user turn appears anywhere in the compacted segment — every turn is assistant-driven work inside the lane `pc-j1-1.md--330803c` (the PC harness executing the **ported code-implementer agent**, i.e. the harness-port of `.claude/agents/code-implementer.md`; see Focus Topic below). The standing, unfulfilled task is therefore the lane's dispatch, recorded as precisely as the data allows:
++
++- Standing task: **execute the brief `tasks/laya-j1-breakdown.md`** (full brief read from line 6 = 12,626 chars) inside `/home/rocco/agent-factory/.lanes/pc-j1-1.md--330803c/tree`, as the code-implementer port dictates: verify brief → environment/instrument checks → graft-first convention pass → finalize design → implement → draft report.
++- **Not yet completed (exact position where the segment ends):** the pre-implementation design-finalization step. The last two actions were (a) `grep -n 'KC-J6\|finding_class\|disposition\|SOLID\|BLOCKING' docs/research/COUNCIL-VERDICT-JEV-LAYA-v1.md | head -25` and (b) `pyth
++
++## assistant @ 22:07:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:07:06 — 123 chars (body not exported)
++
++## assistant @ 22:28:05 → tools: read_file, terminal
++
++I've verified the house conventions and now I'm checking the top-level package, venv, and pytest availability to determine how the AC 1 command will run.
++
++## tool result (read_file) @ 22:28:06 — 169 chars (body not exported)
++
++## tool result (terminal) @ 22:28:06 — 123 chars (body not exported)
++
++## assistant @ 22:42:02 → tools: terminal, terminal
++
++I've confirmed the house conventions and error patterns. Now I'll check the lane-id format in a real report and review the existing fixture style.
++
++## tool result (terminal) @ 22:42:02 — 123 chars (body not exported)
++
++## tool result (terminal) @ 22:42:02 — 123 chars (body not exported)
++
++## assistant @ 22:50:27 → tools: terminal
++
++I found a key issue with the `line numbers` re-landing variant that needs verification. Let me check the primary source for the producers' output shapes.
++
++## tool result (terminal) @ 22:50:27 — 123 chars (body not exported)
++
++## assistant @ 22:51:05 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:51:05 — 123 chars (body not exported)
++
++## assistant @ 22:51:10 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:51:11 — 166 chars (body not exported)
++
++## assistant @ 22:54:04 → tools: terminal
++
++Premise verified and primary sources read. Now checking the anti-pattern registry to know what the screen will flag before I write any code:
++
++## tool result (terminal) @ 22:54:05 — 89 chars (body not exported)
++
++## assistant @ 22:54:47 → tools: terminal
++
++
++
++## tool result (terminal) @ 22:54:47 — 111 chars (body not exported)
++
++## assistant @ 22:54:51 → tools: read_file
++
++
++
++## tool result (read_file) @ 22:54:51 — 121 chars (body not exported)
++
++## assistant @ 22:59:22 → tools: terminal
++
++All premise facts reproduced. Now I have the full design. Before writing code, one more seam check — the report_lint `alias@<sha>:NN` form, which I need for brief citations (the brief file was rewritten after the PIN):
++
++## tool result (terminal) @ 22:59:22 — 123 chars (body not exported)
++
++## assistant @ 23:16:11 → tools: terminal
++
++I've verified the design against the primary source and identified key constraints: the closed key tuple handles volatile data, the PIN-suffix lane strips, and the token-class separator is the only whitespace split that discriminates normalize/redact order. Now I'll check what the anti-pattern screen will flag.
++
++## tool result (terminal) @ 23:16:11 — 123 chars (body not exported)
++
++## assistant @ 23:28:47 → tools: write_file, write_file
++
++All seams verified (house error-class convention at `governance/pin.py:14-21`, audit mirror, verdict redaction test at `COUNCIL-VERDICT-JEV-LAYA-v1.md:96`, ap_screen's live pattern list, and the J1-1 row in the breakdown at line 30). One design point from the brief's contract that drives everything: the **token class (32+ hex/base64 run) is the only whitespace-sensitive redaction** — it is the discriminator that proves the normalize→redact order, since every other class spans its own whitespace. Writing the three source files plus the test now (RED first, per the build loop):
++
++## tool result (write_file) @ 23:28:48 — 130 chars (body not exported)
++
++## tool result (write_file) @ 23:28:48 — 131 chars (body not exported)
++
++## assistant @ 23:32:35 → tools: terminal
++
++Two issues to fix: a stray broken annotation line in volatile.py, and the architecture — normalize/redact belong in `volatile.py` (the schemas' home) while `canonical.py` owns the canonical→sha256 pipeline and re-exports. Let me also check the venv install state before finalizing the module layout:
++
++## tool result (terminal) @ 23:35:35 — 125 chars (body not exported)
++
++## assistant @ 00:02:34 → tools: write_file
++
++The full suite is a 180s+ run (J1-5's boundary, not mine) — my gate is the single decisions-canonical file. Let me verify the anti-pattern screen's exact hit behavior on a probe, then write the final clean sources. First, fix the volatile.py syntax and restructure with a clean field-spec:
++
++## tool result (write_file) @ 00:02:36 — 131 chars (body not exported)
++
++## assistant @ 00:05:23 → tools: write_file
++
++
++
++## tool result (write_file) @ 00:05:23 — 131 chars (body not exported)
++
++## assistant @ 00:06:41 → tools: write_file
++
++The canonical.py has an f-string with nested-quote/syntax issues and a duplicated branch. Let me rewrite it cleanly:
++
++## tool result (write_file) @ 00:06:42 — 131 chars (body not exported)
++
++## assistant @ 00:08:49 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 00:08:50 — 97 chars (body not exported)
++
++## assistant @ 00:09:49 → tools: patch
++
++Bearer regex has a double-quantifier (`{16,}*`). The brief's form is `[A-Za-z0-9._~+/-]{16,}=*`. Fixing:
++
++## tool result (patch) @ 00:09:49 — 135 chars (body not exported)
++
++## assistant @ 00:13:10 → tools: execute_code
++
++I've fixed the double-quantifier issue and verified the token design—the separator between `token` and the run is a single space, not multiple, which discriminates the order test. Now I'll rerun the probe.
++
++## tool result (execute_code) @ 00:13:11 — 97 chars (body not exported)
++
++## assistant @ 00:15:12 → tools: write_file
++
++I found that the `canonical` function is shadowing the `canonical` module, which breaks the import pattern — I'll remove the function re-export from `__init__` to keep the module reference clean.
++
++## tool result (write_file) @ 00:15:13 — 130 chars (body not exported)
++
++## assistant @ 00:16:16 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 00:16:17 — 97 chars (body not exported)
++
++## assistant @ 00:19:42 → tools: execute_code
++
++I found the issues: the token and v1 findings aren't matching due to how secrets are handled and path ordering. I'll re-probe with a consistent construction where the clean form is the redaction of the secret-bearing form.
++
++## tool result (execute_code) @ 00:19:42 — 97 chars (body not exported)
++
++## assistant @ 00:21:49 → tools: execute_code
++
++The design has a flaw: the double-space token rule is order-symmetric, so it can't discriminate the transform order. Let me verify the exact discriminator math before fixing — the brief's order test needs `redact-first` to leak where `normalize-first` catches.
++
++## tool result (execute_code) @ 00:21:49 — 97 chars (body not exported)
++
++## assistant @ 00:24:44 → tools: write_file
++
++The discriminator math confirms: a **single-sep** token rule + a **two-space** raw fixture makes normalize-first catch where redact-first leaks. That's the exact brief order-test. Now I have the full design settled. Rewriting volatile.py with the corrected field spec (optional answer keys, b1.finding_kind open-slug cap, no separate ENUMS/ANSWERS):
++
++## tool result (write_file) @ 00:24:45 — 131 chars (body not exported)
++
++## assistant @ 00:25:00 → tools: execute_code
++
++Now the test file. Let me first verify the module imports cleanly and re-check the v1 path issue:
++
++## tool result (execute_code) @ 00:25:01 — 97 chars (body not exported)
++
++## assistant @ 00:25:27 → tools: patch
++
++`paths` is wrongly a string — the brief says it's a **sorted list** of repo-relative paths. Fixing the field spec and normalizer:
++
++## tool result (patch) @ 00:25:27 — 135 chars (body not exported)
++
++## assistant @ 00:25:43 → tools: patch
++
++Now update `_normalize_field` to handle the `list` kind (sorted repo-relative paths) and the v1 schema:
++
++## tool result (patch) @ 00:25:45 — 137 chars (body not exported)
++
++## assistant @ 00:25:50 → tools: patch
++
++
++
++## tool result (patch) @ 00:25:51 — 135 chars (body not exported)
++
++## assistant @ 00:27:25 → tools: execute_code
++
++pyflakes clean. Let me regenerate the golden digests with the corrected v1 (list paths) and verify the reland + order + secret math in one probe:
++
++## tool result (execute_code) @ 00:27:26 — 97 chars (body not exported)
++
++## assistant @ 00:27:55 → tools: execute_code
++
++All core mechanics verified. The `v1 variant==base: False` is a bug in my probe (I changed the title text, not just the NFD form). Let me build a correct NFD variant (same logical title, different encoding) and finalize the golden digests:
++
++## tool result (execute_code) @ 00:27:55 — 97 chars (body not exported)
++
++## assistant @ 00:32:00 → tools: write_file
++
++All mechanics verified: the 7 golden digests are stable, re-landing (abs-path + whitespace + NFD + PIN-suffix + case) collapses to the same digest, the order discriminator (double-space token) leaks under redact-first but not normalize-first, normalize-only keeps secrets, redact-only keeps whitespace, and all 6 refusal strings + float are exact. My shell `unicode_escape` hack was the only failure — the module's NFC is proven correct. Now I'll generate the 7 committed fixtures (base + re-landed variant + digest) with a throwaway generator, then write the test:
++
++## tool result (write_file) @ 00:32:01 — 108 chars (body not exported)
++
++## assistant @ 00:34:06 → tools: patch
++
++Path depth is off by one (scratch is a sibling of `tree`, not a child). Let me use absolute paths:
++
++## tool result (patch) @ 00:34:06 — 114 chars (body not exported)
++
++## assistant @ 00:34:19 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:34:20 — 123 chars (body not exported)
++
++## assistant @ 00:34:36 → tools: execute_code
++
++6/7 pass. v1 diverges — let me diff the normalized outputs to find which field is the culprit:
++
++## tool result (execute_code) @ 00:34:36 — 97 chars (body not exported)
++
++## assistant @ 00:35:09 → tools: patch, patch
++
++The `lane` field lost its PIN-suffix strip in the refactor — the variant keeps `pc-j1-1--330803c`. Adding a schema-level `strip` flag to `_Field`:
++
++## tool result (patch) @ 00:35:10 — 135 chars (body not exported)
++
++## tool result (patch) @ 00:35:10 — 804 chars (body not exported)
++
++## assistant @ 00:35:24 → tools: patch
++
++
++
++## tool result (patch) @ 00:35:25 — 882 chars (body not exported)
++
++## assistant @ 00:35:37 → tools: terminal
++
++
++
++## tool result (terminal) @ 00:35:38 — 1007 chars (body not exported)
++
++## assistant @ 00:38:27 → tools: patch
++
++I've verified all 7 golden fixtures and confirmed they're stable across variants. Now I'll fix the error-path string in `canonical()` to use the raw key and write the test file.
++
++## tool result (patch) @ 00:38:27 — 938 chars (body not exported)
++
++## user @ 21:52:37
++
++[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]
++<!-- HARNESS PORT of .claude/agents/code-implementer.md — see docs/HARNESS-PORTS.md.
++     The body below is carried over UNCHANGED; only the Claude-Code frontmatter was
++     removed. The model pin does not survive the port: the PC harness serves ONE
++     model, so all three lane roles run on the same model and the coordinator-side
++     routing table does not apply there.
++
++     CONSEQUENCE, and it is the important one: on a single-model harness a lane
++     cannot supply its own independent verification. A build lane's output is a
++     PROPOSAL until the sandbox-side adversarial-verifier lane grades it. Never
++     self-accept, and never issue a gate verdict.
++
++     Codex loads this as `developer_instructions` via .codex/agents/code-implementer.toml.
++     Hermes has no role mechanism, so harness-ports/bin/pc-lane.sh prepends this
++     file to the brief instead. -->
++
++# Lane role: code-implementer
++
++<!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
++     delegate rules. Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->
++
++You are a disciplined implementation engineer. You turn settled designs into verified code.
++You do not decide *what* should be built or *why* — you establish that the brief's premise is
++true, build exactly what it specifies, and prove the result.
++
++## The contract
++
++1. **The brief is a hypothesis, not a fact.** FIRST action, before writing any code: verify the
++   premise — reproduce the defect, or trace the cited seams at their *current* state (cited line
++   numbers drift; cited behavior may have been fixed since the brief was written — check
++   `git log` on the relevant files). If evidence contradicts the premise or the design, **STOP
++   and report** — do not improvise an alternative fix, and do not implement a proven no-op.
++2. **Comments are claims, not ground truth.** Verify any comment you rely on against the code it
++   describes. If your change falsifies a nearby comment, fix that comment in the same change.
++3. **Never reason about correctness from timestamps.** Verify by exit code AND running the
++   result. A piped gate's exit code is the LAST stage's — read `${PIPESTATUS[0]}`.
++4. **Tests are part of the change.** Every increment ships a deterministic, LLM-free test with a
++   NEGATIVE control that fails for the exact expected reason. Extend a sibling test pattern
++   before declaring tests out of scope; a skip is a loudly-flagged deviation, never silent.
++   Prove new tests red-green where feasible; if you only ran green, say so explicitly.
++5. **If you reverse a conclusion mid-task, stop.** A reversal means you never had the whole
++   picture. Report both states and what each was based on, and escalate — do not report the
++   newest sample as the answer.
++6. **Report with evidence tiers** (verified / inferred / assumed) as DATA, not narrative:
++   files:
++
++## assistant @ 00:45:12 → tools: terminal
++
++I'm resuming with the golden digests stable and the canonical.py fix applied. Now I'll re-run the generator and pull the brief's test names and mutant definitions to write the test file correctly.
++
++## tool result (terminal) @ 00:45:13 — 938 chars (body not exported)
++
++## assistant @ 00:45:20 → tools: terminal
++
++All 7 golden digests are stable. I'll now check the brief's test spec sections to align the test names and structure with what was agreed.
++
++## tool result (terminal) @ 00:45:20 — 340 chars (body not exported)
++
++## assistant @ 00:45:24 → tools: read_file
++
++The brief is 46 lines. Let me read it in full to align my test/gate/report exactly with its contract:
++
++## tool result (read_file) @ 00:45:24 — 8406 chars (body not exported)
++
++## assistant @ 00:47:39 → tools: read_file
++
++Now I have the full contract. Let me read my actual source to lock the exact public API (function names, error class, signatures) before writing the test — this is the primary source the test imports:
++
++## tool result (read_file) @ 00:47:39 — 3342 chars (body not exported)
++
++## assistant @ 00:48:23 → tools: read_file
++
++canonical.py API is locked. Now volatile.py's public surface:
++
++## tool result (read_file) @ 00:48:23 — 14196 chars (body not exported)
++
++## assistant @ 00:49:37 → tools: terminal
++
++API is locked. Let me verify the golden fixtures' content (keys, digests) before writing the test — the test asserts exact values against them:
++
++## tool result (terminal) @ 00:49:38 — 3161 chars (body not exported)
++
++## assistant @ 00:54:36 → tools: terminal
++
++I now have the full API and fixture structure. Let me check the v1 variant (most complex: lane strip + list paths) to confirm what the test will assert, then write the test:
++
++## tool result (terminal) @ 00:54:36 — 729 chars (body not exported)
++
++## assistant @ 00:59:23 → tools: write_file
++
++I have the full API, the 7 golden fixtures, and the 5 secret-class designs. Now I'll write the test file with all 12 tests (exact strings, 5 secret classes, the order discriminator):
++
++## tool result (write_file) @ 00:59:23 — 382 chars (body not exported)
++
++## assistant @ 01:00:22 → tools: patch
++
++Syntax error at line 81 — the walrus in the assert is invalid. Fixing:
++
++## tool result (patch) @ 01:00:23 — 1133 chars (body not exported)
++
++## assistant @ 01:00:32 → tools: terminal
++
++Now the gate — first run to see the state:
++
++## tool result (terminal) @ 01:00:32 — 1925 chars (body not exported)
++
++## assistant @ 01:02:19 → tools: execute_code
++
++I found that the `sk` regex matches the full token regardless of preceding whitespace, so the order discriminator needs to use the `token` class instead. Let me verify the exact regex semantics for "token:  <run>" to confirm the behavior.
++
++## tool result (execute_code) @ 01:02:19 — 778 chars (body not exported)
++
++## assistant @ 01:05:29 → tools: execute_code
++
++The discriminator is the `token` class with a **double-space** separator (colon + 2 spaces): redact-first can't bridge 2 spaces (regex allows 1), normalize-first collapses to 1 space and then it's caught. The `sk` class isn't a discriminator (matches regardless of preceding spaces). Let me verify this exact case through the real module functions before writing:
++
++## tool result (execute_code) @ 01:05:29 — 467 chars (body not exported)
++
++## assistant @ 01:06:58 → tools: patch
++
++Confirmed through the real module: the `token` class with a **colon + double-space** separator is the true order discriminator (redact-first leaks it because the regex can't bridge 2 spaces; normalize-first collapses to 1 space and catches it). The `sk` class is not one (it matches regardless of preceding spaces). Fixing the order test to use the `token` class:
++
++## tool result (patch) @ 01:06:59 — 2797 chars (body not exported)
++
++## assistant @ 01:07:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:07:07 — 150 chars (body not exported)
++
++## assistant @ 01:13:25 → tools: write_file
++
++I found 14 tests passing, but the brief requires 6 specific mutants that only make their corresponding tests fail. I'm restructuring the test so the golden, relanding, secret, and order tests all route through the public `state_digest` entry point to make each mutant effective and discriminate correctly.
++
++## tool result (write_file) @ 01:13:26 — 611 chars (body not exported)
++
++## assistant @ 01:14:37 → tools: read_file
++
++The LSP caught a real bug: `normalize` is called with one arg (it needs `question_id` + `state`). Let me verify the exact call and fix it — the wrong-order check should apply `redact` then `normalize` properly:
++
++## tool result (read_file) @ 01:14:37 — 685 chars (body not exported)
++
++## assistant @ 01:15:06 → tools: patch
++
++The LSP caught a real bug: `normalize` needs `(question_id, state)`. The wrong-order pipeline is `redact → normalize → canonical`, so it must be `canonical(normalize(qid, redact(raw)))`. Fixing:
++
++## tool result (patch) @ 01:15:06 — 1389 chars (body not exported)
++
++## assistant @ 01:15:44 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:15:45 — 150 chars (body not exported)
++
++## assistant @ 01:17:40 → tools: terminal
++
++All 14 tests green. Now the six mutants (m1-m6) per the brief — each on a scratch copy, compiled + collected, with the failing test named. Let me check the pyproject pytest config and set up an isolated scratch harness:
++
++## tool result (terminal) @ 01:17:40 — 299 chars (body not exported)
++
++## assistant @ 01:24:38 → tools: read_file
++
++14/14 green. Now I need to reconcile the mutation table with the brief. My two extra positive-control tests (`relativizes_path`, `nfd_variant`) are normalize-dependent detectors that complicate the m1/m3 mutation rows — the brief folds path/NFD coverage into the re-landing test. Let me read the test file's tail and reduce to exactly the brief's 12 tests for a clean, faithful mutation table:
++
++## tool result (read_file) @ 01:24:38 — 1996 chars (body not exported)
++
++## assistant @ 01:26:39 → tools: execute_code
++
++I need to reconcile the mutation table with the brief. The brief's m1 (drop normalize) requires the re-landing test to be its detector — but a re-landing variant that's only *cosmetic* (whitespace/NFD) is normalize-invariant (state and variant both cosmetic → same digest), so m1 wouldn't fail it. The discriminator requires a **secret in the variant** that only normalize→redact catches (normalize-first catches it; redact-first, as the m1 pipeline does, leaks it → different digest). Let me add that to the `wf.drift` variant and confirm it's caught:
++
++## tool result (execute_code) @ 01:26:39 — 436 chars (body not exported)
++
++## assistant @ 01:27:59 → tools: execute_code
++
++The variant's token was single-space (caught even by m1). The discriminator needs a **double-space** token. Let me confirm the double-space token in the variant fails m1 (redact-first) but passes normalize-first:
++
++## tool result (execute_code) @ 01:27:59 — 488 chars (body not exported)
++
++## assistant @ 01:28:19 → tools: execute_code
++
++The variant's `observed` must redact to the same clean form as `base.observed` (both → `token: <redacted>, while the double-space token in the variant is the order discriminator. Let me set both to the token form and verify:
++
++## tool result (execute_code) @ 01:28:19 — 447 chars (body not exported)
++
++## assistant @ 01:29:31 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 01:29:31 — 7082 chars (body not exported)
++
++## assistant @ 01:33:42 → tools: terminal
++
++The golden fixture design is confirmed correct — the variant stays purely cosmetic (no secrets), so the m1/m5 kill sets stay clean. Now I'll strip the test file to exactly the brief's 12 tests (the two extra positive-control tests were my deviation; the NFD case rides in the d1 re-landing variant, the path/whitespace re-landing is the m1 detector). First, the seed's AC verify commands (needed verbatim for the gates), in parallel with the test rewrite:
++
++## tool result (terminal) @ 01:33:42 — 1938 chars (body not exported)
++
++## assistant @ 01:37:00 → tools: patch
++
++I have both AC verify commands. Now I'll trim the test file to **exactly the brief's 12 tests** — my two extra positive-control tests are a deviation that breaks the brief's mutation table (m1/m3 say "only the re-landing test reds," but a normalize-dependent extra test would red under m1/m3 too). Removing them keeps the mutation table faithful:
++
++## tool result (patch) @ 01:37:01 — 2304 chars (body not exported)
++
++## assistant @ 01:39:51 → tools: terminal
++
++Now the test file has exactly the brief's 12 tests. Let me re-run the gate to confirm 12 pass, then build the mutation harness:
++
++## tool result (terminal) @ 01:39:51 — 150 chars (body not exported)
++
++## assistant @ 01:43:27 → tools: write_file
++
++12 passed, RC=0. The test file is now exactly the brief's 12 tests. Now the mutation harness — I'll build an isolated scratch mini-tree per mutant, apply each mutation as a targeted edit to the scratch copy (never the tree), verify compile+collect, run, and sha-verify the restore:
++
++## tool result (write_file) @ 01:43:28 — 380 chars (body not exported)
++
++## assistant @ 01:44:53 → tools: read_file
++
++The harness has a syntax error at line 38. Let me read that region to see what got mangled:
++
++## tool result (read_file) @ 01:44:53 — 1118 chars (body not exported)
++
++## assistant @ 01:46:12 → tools: write_file
++
++Line 38 got mangled (a `...` crept in). Let me rewrite the harness cleanly:
++
++## tool result (write_file) @ 01:46:13 — 488 chars (body not exported)
++
++## assistant @ 01:46:45 → tools: patch
++
++The harness has a bug in `setup_base` (copying the `.py` modules into the golden dir). Let me fix that and run it:
++
++## tool result (patch) @ 01:46:46 — 955 chars (body not exported)
++
++## assistant @ 01:46:52 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:46:52 — 856 chars (body not exported)
++
++## assistant @ 01:47:03 → tools: patch
++
++I found that the `makedirs` call wasn't creating the intermediate `src/agent_factory` directory before the copy operation. I'll fix this by creating all the necessary directories first.
++
++## tool result (patch) @ 01:47:04 — 885 chars (body not exported)
++
++## assistant @ 01:47:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 01:47:14 — 1506 chars (body not exported)
++
++## assistant @ 01:50:12 → tools: terminal
++
++All six mutants are dead (compile, collect, restore-sha-ok, and each kills its designated test). Two honest deviations from the brief's "only X" phrasing: **m1 and m2 each kill 2 tests** (the designated one + the order test), because the order test's digest-equality check is sensitive to all three pipeline stages, not just the order. m3–m6 each kill exactly 1. The load-bearing property — every mutant is detected (AF-AP-78) — holds.
++
++Now the brief's other gates: the two bitwise pytest runs, pyflakes, no_laya_in_gates, ap_screen, and the AC 1/AC 3 verify commands. Let me run the two gate runs (rm -rf between) plus the clean screens together:
++
++## tool result (terminal) @ 01:50:12 — 307 chars (body not exported)
++
++## assistant @ 02:01:48 → tools: terminal
++
++Both gate runs are bitwise identical with 12 passing each. Now I'll check the three clean screens and run the AC 1/AC 3 verify commands verbatim.
++
++## tool result (terminal) @ 02:01:48 — 238 chars (body not exported)
++
++## assistant @ 02:04:15 → tools: patch
++
++
++
++## tool result (patch) @ 02:04:17 — 608 chars (body not exported)
++
++## assistant @ 02:05:12 → tools: terminal, terminal, terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:05:12 — 167 chars (body not exported)
++
++## tool result (terminal) @ 02:05:12 — 58 chars (body not exported)
++
++## tool result (terminal) @ 02:05:12 — 204 chars (body not exported)
++
++## tool result (terminal) @ 02:05:13 — 100 chars (body not exported)
++
++## tool result (terminal) @ 02:05:13 — 185 chars (body not exported)
++
++## tool result (terminal) @ 02:05:13 — 154 chars (body not exported)
++
++## assistant @ 02:05:57 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:05:57 — 218 chars (body not exported)
++
++## tool result (terminal) @ 02:05:57 — 2881 chars (body not exported)
++
++## tool result (terminal) @ 02:05:57 — 1325 chars (body not exported)
++
++## tool result (terminal) @ 02:05:57 — 45 chars (body not exported)
++
++## assistant @ 02:07:06 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:07:08 — 440 chars (body not exported)
++
++## tool result (terminal) @ 02:07:09 — 796 chars (body not exported)
++
++## tool result (terminal) @ 02:07:11 — 5253 chars (body not exported)
++
++## assistant @ 02:07:27 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:07:27 — 1191 chars (body not exported)
++
++## tool result (terminal) @ 02:07:28 — 4403 chars (body not exported)
++
++## tool result (terminal) @ 02:07:29 — 7107 chars (body not exported)
++
++## assistant @ 02:08:03 → tools: read_file, read_file, read_file
++
++
++
++## tool result (read_file) @ 02:08:03 — 4051 chars (body not exported)
++
++## tool result (read_file) @ 02:08:03 — 3691 chars (body not exported)
++
++## tool result (read_file) @ 02:08:03 — 10725 chars (body not exported)
++
++## assistant @ 02:08:16 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:08:16 — 6503 chars (body not exported)
++
++## tool result (terminal) @ 02:08:16 — 8931 chars (body not exported)
++
++## tool result (terminal) @ 02:08:19 — 55213 chars (body not exported)
++
++## assistant @ 02:09:39 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:09:39 — 45 chars (body not exported)
++
++## tool result (terminal) @ 02:09:39 — 764 chars (body not exported)
++
++## tool result (terminal) @ 02:09:39 — 79 chars (body not exported)
++
++## assistant @ 02:10:11 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 02:10:11 — 204 chars (body not exported)
++
++## tool result (terminal) @ 02:10:11 — 464 chars (body not exported)
++
++## assistant @ 02:14:15 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:14:17 — 1231 chars (body not exported)
++
++## tool result (terminal) @ 02:14:18 — 8602 chars (body not exported)
++
++## tool result (terminal) @ 02:14:19 — 12408 chars (body not exported)
++
++## assistant @ 02:18:38 → tools: patch
++
++
++
++## tool result (patch) @ 02:18:40 — 3756 chars (body not exported)
++
++## assistant @ 02:18:46 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:18:46 — 6972 chars (body not exported)
++
++## assistant @ 02:19:57 → tools: patch
++
++
++
++## tool result (patch) @ 02:19:58 — 5222 chars (body not exported)
++
++## assistant @ 02:20:08 → tools: patch
++
++
++
++## tool result (patch) @ 02:20:09 — 872 chars (body not exported)
++
++## assistant @ 02:20:14 → tools: read_file
++
++
++
++## tool result (read_file) @ 02:20:14 — 6097 chars (body not exported)
++
++## assistant @ 02:20:26 → tools: patch
++
++
++
++## tool result (patch) @ 02:20:27 — 1222 chars (body not exported)
++
++## assistant @ 02:21:08 → tools: patch, patch, patch, patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 02:21:09 — 975 chars (body not exported)
++
++## tool result (patch) @ 02:21:09 — 776 chars (body not exported)
++
++## tool result (patch) @ 02:21:10 — 742 chars (body not exported)
++
++## tool result (patch) @ 02:21:10 — 740 chars (body not exported)
++
++## tool result (patch) @ 02:21:10 — 712 chars (body not exported)
++
++## tool result (patch) @ 02:21:11 — 749 chars (body not exported)
++
++## tool result (patch) @ 02:21:11 — 702 chars (body not exported)
++
++## assistant @ 02:21:18 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:21:18 — 858 chars (body not exported)
++
++## assistant @ 02:21:58 → tools: patch, patch, patch, patch
++
++
++
++## tool result (patch) @ 02:21:58 — 1345 chars (body not exported)
++
++## tool result (patch) @ 02:21:59 — 1386 chars (body not exported)
++
++## tool result (patch) @ 02:21:59 — 1060 chars (body not exported)
++
++## tool result (patch) @ 02:22:00 — 1059 chars (body not exported)
++
++## assistant @ 02:22:14 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:22:15 — 1070 chars (body not exported)
++
++## tool result (terminal) @ 02:22:15 — 131 chars (body not exported)
++
++## tool result (terminal) @ 02:22:15 — 74 chars (body not exported)
++
++## assistant @ 02:22:29 → tools: patch
++
++
++
++## tool result (patch) @ 02:22:29 — 1435 chars (body not exported)
++
++## assistant @ 02:22:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:22:37 — 150 chars (body not exported)
++
++## assistant @ 02:22:49 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:22:50 — 433 chars (body not exported)
++
++## assistant @ 02:23:02 → tools: execute_code
++
++
++
++## tool result (execute_code) @ 02:23:03 — 467 chars (body not exported)
++
++## assistant @ 02:23:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:23:10 — 131 chars (body not exported)
++
++## assistant @ 02:23:22 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:23:26 — 1506 chars (body not exported)
++
++## assistant @ 02:23:47 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:23:48 — 65 chars (body not exported)
++
++## tool result (terminal) @ 02:23:53 — 165 chars (body not exported)
++
++## tool result (terminal) @ 02:23:54 — 2105 chars (body not exported)
++
++## assistant @ 02:24:00 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:24:04 — 21129 chars (body not exported)
++
++## assistant @ 02:24:10 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:24:10 — 6389 chars (body not exported)
++
++## assistant @ 02:24:17 → tools: patch
++
++
++
++## tool result (patch) @ 02:24:17 — 496 chars (body not exported)
++
++## assistant @ 02:24:37 → tools: patch
++
++
++
++## tool result (patch) @ 02:24:37 — 2165 chars (body not exported)
++
++## assistant @ 02:24:50 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 02:24:50 — 150 chars (body not exported)
++
++## tool result (terminal) @ 02:24:51 — 131 chars (body not exported)
++
++## assistant @ 02:24:57 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:24:57 — 654 chars (body not exported)
++
++## assistant @ 02:25:07 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:25:10 — 1557 chars (body not exported)
++
++## assistant @ 02:25:21 → tools: terminal, terminal
++
++
++
++## tool result (terminal) @ 02:25:21 — 155 chars (body not exported)
++
++## tool result (terminal) @ 02:25:22 — 249 chars (body not exported)
++
++## assistant @ 02:25:31 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:25:31 — 155 chars (body not exported)
++
++## assistant @ 02:25:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:25:41 — 418 chars (body not exported)
++
++## assistant @ 02:25:59 → tools: terminal, terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:26:00 — 188 chars (body not exported)
++
++## tool result (terminal) @ 02:26:00 — 202 chars (body not exported)
++
++## tool result (terminal) @ 02:26:00 — 154 chars (body not exported)
++
++## tool result (terminal) @ 02:26:00 — 74 chars (body not exported)
++
++## assistant @ 02:26:14 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:26:14 — 17958 chars (body not exported)
++
++## tool result (terminal) @ 02:26:14 — 19533 chars (body not exported)
++
++## tool result (terminal) @ 02:26:14 — 1871 chars (body not exported)
++
++## assistant @ 02:26:33 → tools: read_file, terminal, terminal
++
++
++
++## tool result (read_file) @ 02:26:33 — 11782 chars (body not exported)
++
++## tool result (terminal) @ 02:26:33 — 902 chars (body not exported)
++
++## tool result (terminal) @ 02:26:33 — 65 chars (body not exported)
++
++## assistant @ 02:26:41 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:26:41 — 1298 chars (body not exported)
++
++## assistant @ 02:28:08 → tools: write_file
++
++
++
++## tool result (write_file) @ 02:28:08 — 357 chars (body not exported)
++
++## assistant @ 02:28:20 → tools: write_file
++
++
++
++## tool result (write_file) @ 02:28:21 — 312 chars (body not exported)
++
++## assistant @ 02:28:29 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:28:30 — 5087 chars (body not exported)
++
++## assistant @ 02:28:41 → tools: patch
++
++
++
++## tool result (patch) @ 02:28:41 — 1359 chars (body not exported)
++
++## assistant @ 02:29:24 → tools: patch
++
++
++
++## tool result (patch) @ 02:29:25 — 4164 chars (body not exported)
++
++## assistant @ 02:29:33 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:29:33 — 1962 chars (body not exported)
++
++## assistant @ 02:29:43 → tools: patch
++
++
++
++## tool result (patch) @ 02:29:43 — 1876 chars (body not exported)
++
++## assistant @ 02:29:54 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:29:54 — 1492 chars (body not exported)
++
++## assistant @ 02:30:03 → tools: patch
++
++
++
++## tool result (patch) @ 02:30:03 — 1521 chars (body not exported)
++
++## assistant @ 02:30:11 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:30:12 — 148 chars (body not exported)
++
++## assistant @ 02:30:25 → tools: terminal, terminal, terminal
++
++
++
++## tool result (terminal) @ 02:30:26 — 65 chars (body not exported)
++
++## tool result (terminal) @ 02:30:26 — 272 chars (body not exported)
++
++## tool result (terminal) @ 02:30:26 — 131 chars (body not exported)
++
++## assistant @ 02:30:36 → tools: terminal
++
++
++
++## tool result (terminal) @ 02:30:41 — 177 chars (body not exported)
++
++## assistant @ 02:30:56 → tools: write_file
++
++
++
++## tool result (write_file) @ 02:30:56 — 312 chars (body not exported)
++
++## assistant @ 02:32:27
++
++DONE (proposal only): J1-1 is implemented and self-validated. Independent sandbox adversarial verification has not run, so this is not a gate verdict.
++
++FILES
++
++- `src/agent_factory/decisions/__init__.py:1-21`
++- `src/agent_factory/decisions/canonical.py:26-77`
++- `src/agent_factory/decisions/volatile.py:30-295`
++- `tests/test_decisions_canonical.py:42-340`
++- Seven fixtures under `tests/fixtures/decisions/golden/`
++- Full report: `tasks/briefs/laya/J1-1-report.md`
++
++IMPLEMENTED
++
++- Seven exact closed state schemas.
++- NFC, whitespace, enum-case, path, list, command-target, PIN-suffix, and length normalization.
++- Five secret classes with fixed placeholders.
++- Fixed pipeline: normalize → redact → canonical → SHA-256.
++- Exact unknown/missing/bad-enum/path/float refusal strings.
++- Re-landing stability for absolute paths, path ordering, whitespace, NFD, enum case, and PIN suffixes.
++- Incumbent answer fields remain outside stable state.
++- No `ledger.py`, harvest script, hook, or gate wiring was added.
++
++GOLDEN DIGESTS
++
++- `b2.hit_role`: `<opaque-redacted>`
++- `b1.finding_sev`: `<opaque-redacted>`
++- `b1.finding_kind`: `<opaque-redacted>`
++- `d1.bug_echo_scores`: `<opaque-redacted>`
++- `v1.finding_class`: `<opaque-redacted>`
++- `ap.violates_row`: `<opaque-redacted>`
++- `wf.drift`: `<opaque-redacted>`
++
++Producer repeat:
++
++- `bitwise-stable (x2): True`
++- `ALL-RELAND-OK: True`
++
++RED → GREEN
++
++- Initial complete suite: `1 failed, 13 passed`
++- Red test: `test_order_is_normalize_then_redact`
++- Cause: the first discriminator used the `sk` class, which does not depend on preceding whitespace.
++- Corrected control: a 32+ token after `token:` plus two spaces. Redact-first leaks it; normalize-first collapses the spaces and catches it.
++- Final producer count: `pytest-summary: 14 passed in 0.04s`; `pytest-exit: 0`
++
++MUTANTS
++
++All mutants compiled, collected, died, and passed restore-SHA verification:
++
++- m1 drop normalize: `2 failed, 12 passed`; `test_relanding_stable`, order test
++- m2 drop redact: `2 failed, 12 passed`; secret test, order test
++- m3 drop NFC: `1 failed, 13 passed`; re-landing test
++- m4 allow floats: `1 failed, 13 passed`; float-refusal test
++- m5 swap order: `1 failed, 13 passed`; order test
++- m6 open schema: `2 failed, 12 passed`; both unknown-key controls
++- Final line: `ALL-MUTANTS-DEAD: True`
++
++GATES
++
++- PC run 1: `14 passed in 0.02s`; rc 0
++- PC run 2 after basetemp removal: `14 passed in 0.02s`; rc 0
++- Seed AC 3: `14 passed in 0.02s`; rc 0
++- Pyflakes: 0 hits; rc 0
++- Python compilation: rc 0
++- `git diff --check`: rc 0
++- FLAG AP screen: `0 hits over 3 files`; rc 0
++- Never-a-gate screen: `no_laya_in_gates: 33 files scanned, clean`; rc 0
++- Report lint: `
++
++
++---
++usage.json:
++
++```json
++{
++  "estimated_cost_usd": 0.0,
++  "cost_status": "unknown",
++  "cost_source": "none",
++  "input_tokens": 2079437,
++  "output_tokens": 379988,
++  "cache_read_tokens": 11884192,
++  "cache_write_tokens": 0,
++  "reasoning_tokens": 304094,
++  "total_tokens": 14343617,
++  "api_calls": 139,
++  "model": "codex/gpt-5.6-sol-xhigh",
++  "provider": "custom",
++  "session_id": "20260922_225236_829bcc",
++  "completed": true,
++  "failed": false,
++  "service_tier": null
++}
++
++```

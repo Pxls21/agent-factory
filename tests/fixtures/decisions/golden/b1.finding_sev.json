@@ -1,0 +1,15 @@
+{
+  "expected_digest": "8c42d5dd1e8c349e6e94ab40189e706dcc3ada5e262d44077734ef91c178350d",
+  "question_id": "b1.finding_sev",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "file": "src/agent_factory/governance/pin.py",
+    "kind": "gpg-sign",
+    "msg": "the owner key must be pinned before re-sign"
+  },
+  "variant": {
+    "file": "/home/rocco/agent-factory/src/agent_factory/governance/pin.py",
+    "kind": "gpg-sign",
+    "msg": "the   owner key must  be pinned before re-sign"
+  }
+}

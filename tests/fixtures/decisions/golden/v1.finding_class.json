@@ -1,0 +1,25 @@
+{
+  "expected_digest": "f41a299c4a38ab305fc612dfc61cedd4481b9e6c6f9d3e1ffe24a229f10ad43e",
+  "question_id": "v1.finding_class",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "disposition": "NON-BLOCKING",
+    "finding_id": "F-7",
+    "lane": "pc-j1-1",
+    "paths": [
+      "src/agent_factory/decisions/canonical.py",
+      "tests/test_decisions_canonical.py"
+    ],
+    "title": "the lint floor is the gate"
+  },
+  "variant": {
+    "disposition": "non-blocking",
+    "finding_id": "F-7",
+    "lane": "pc-j1-1--330803c",
+    "paths": [
+      "/home/rocco/agent-factory/tests/test_decisions_canonical.py",
+      "/home/rocco/agent-factory/src/agent_factory/decisions/canonical.py"
+    ],
+    "title": "the   lint floor  is the gate"
+  }
+}

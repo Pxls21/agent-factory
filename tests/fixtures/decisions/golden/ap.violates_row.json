@@ -1,0 +1,19 @@
+{
+  "expected_digest": "594584bde9869086e1814489784747f00dbee9918e12c3d4f4bdb4f90702deef",
+  "question_id": "ap.violates_row",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "action_excerpt": "the screen refused the unlisted gate file",
+    "action_kind": "edit",
+    "action_target": "scripts/gate_files.txt",
+    "row_id": "AF-AP-76",
+    "row_title": "mech-bar three-round cap"
+  },
+  "variant": {
+    "action_excerpt": "the  screen   refused  the unlisted  gate file",
+    "action_kind": "edit",
+    "action_target": "/home/rocco/agent-factory/scripts/gate_files.txt",
+    "row_id": "AF-AP-76",
+    "row_title": "mech-bar three-round cap"
+  }
+}

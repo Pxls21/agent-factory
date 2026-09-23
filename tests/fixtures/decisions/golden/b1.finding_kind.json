@@ -1,0 +1,15 @@
+{
+  "expected_digest": "9e18ed7e5146a2c3762ec1e00ae233351928e06ef07308563e844b07aec16abf",
+  "question_id": "b1.finding_kind",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "file": "src/agent_factory/audit/events.py",
+    "kind": "event-log-gap",
+    "msg": "the audit sink path is not bound"
+  },
+  "variant": {
+    "file": "/home/rocco/agent-factory/src/agent_factory/audit/events.py",
+    "kind": "event-log-gap",
+    "msg": "the audit sink   path is  not bound"
+  }
+}

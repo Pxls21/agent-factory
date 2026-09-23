@@ -1,0 +1,15 @@
+{
+  "expected_digest": "3ced4cd39a61faa5519dd3c491b9019347cfc12d447448bc53fc49118bc6423e",
+  "question_id": "b2.hit_role",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "file": "scripts/validate_ledger.py",
+    "snippet": "def validate_ledger(args): result = process(args) return result",
+    "sym": "validate_ledger"
+  },
+  "variant": {
+    "file": "/home/rocco/agent-factory/scripts/validate_ledger.py",
+    "snippet": "def   validate_ledger(args):   result  = process(args)    return result",
+    "sym": "validate_ledger"
+  }
+}

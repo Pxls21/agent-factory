@@ -1,0 +1,13 @@
+{
+  "expected_digest": "5a8c4ad2659c0e6b5dd2b2638bc2a546adca5e55f7246e073197fa30f5971bb8",
+  "question_id": "d1.bug_echo_scores",
+  "root": "/home/rocco/agent-factory",
+  "state": {
+    "class_slug": "hollow-green",
+    "finding_title": "the é-gate never ran its own control"
+  },
+  "variant": {
+    "class_slug": "hollow-green",
+    "finding_title": "the é-gate   never ran   its own control"
+  }
+}
