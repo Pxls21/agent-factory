@@ -29,7 +29,11 @@ if [ "$MODE" = "--lanes-live" ]; then
   WT="$(mktemp -d /tmp/push-clean-wt.XXXXXX)"
   git worktree add -q --detach "$WT" HEAD || { echo "REFUSED: worktree add failed" >&2; exit 1; }
   echo "== --lanes-live: dirty set is exactly the declared lane files; rewriting/pushing from a detached worktree =="
-  ( cd "$WT" && TRANSCRIPT_SYNC=0 PUSH_BRANCH="$BRANCH" bash "$OLDPWD/scripts/push_clean.sh" --no-delegates-live ); rc=$?
+  # The inner run is the worktree's own COMMITTED push_clean.sh, and so HEAD's ci_gate.py, never this working copy: a
+  # lane may hold either script dirty (VERIFY-CI-GATE F20). `|| rc=$?` keeps errexit from skipping the cleanup below
+  # when the inner run fails (F2: each refusal leaked the worktree).
+  rc=0
+  ( cd "$WT" && TRANSCRIPT_SYNC=0 PUSH_BRANCH="$BRANCH" bash "$WT/scripts/push_clean.sh" --no-delegates-live ) || rc=$?
   git worktree remove --force "$WT" 2>/dev/null; git worktree prune
   if [ $rc -eq 0 ]; then
     # The rewrite ran in the worktree: origin now carries the stripped SHAs while this branch ref still names the
@@ -58,15 +62,30 @@ git diff --quiet && git diff --cached --quiet || {
   exit 1
 }
 git fetch origin "$BRANCH"
-RANGE="origin/$BRANCH..HEAD"
+# The range and the gate read the FULL remote-tracking ref: a local branch named origin/<branch> would shadow the short
+# name (VERIFY-CI-GATE F1). A fetch refspec that does not map the branch there updates FETCH_HEAD only and leaves that
+# ref stale, and the gate would read an older head's verdict: refuse.
+ORIGIN_REF="refs/remotes/origin/$BRANCH"
+FETCHED=$(git rev-parse --verify --quiet FETCH_HEAD || true)
+if [ -z "$FETCHED" ] || [ "$(git rev-parse --verify --quiet "$ORIGIN_REF" || true)" != "$FETCHED" ]; then
+  echo "REFUSED: $ORIGIN_REF is not the commit 'git fetch origin $BRANCH' just fetched (FETCH_HEAD $FETCHED):" \
+       "the fetch refspec (remote.origin.fetch) does not map the branch there. Restore the default:" \
+       "git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'" >&2
+  exit 2
+fi
+RANGE="$ORIGIN_REF..HEAD"
 N=$(git rev-list --count "$RANGE")
 [ "$N" -gt 0 ] || { echo "Nothing to push."; exit 0; }
 
 # CI GATE (AF-AP-126; owner 2026-09-23: "my email is littered … the third time"): every push onto a red head mails
-# the owner a failure notice, and "read the run before the next push" was forgotten twice. Refuse while the branch's
-# last stage0-ci verdict is red, unless the push names the red run it fixes (CI_FIX=<run id>). CI_GATE_RUNS_JSON is a
-# test input: it replaces the Actions API and says so.
-python3 "$(dirname "$0")/ci_gate.py" --branch "$BRANCH" --origin-ref "origin/$BRANCH" \
+# the owner a failure notice, and "read the run before the next push" was forgotten twice. The gate enforces that rule:
+# it reads the newest stage0-ci run in origin's history and allows only a run that passed (or a push that names the
+# red run it fixes: CI_FIX=<run id>). It exits 1 on a red verdict; 75 while the verdict is unknown (the run is still
+# going, or pushes after it have no run registered yet: wait with `ci_gate.py --wait`, or push anyway with
+# CI_WAIT_SKIP=<reason>); 2 when it cannot decide (CI_GATE_OFFLINE=<reason> rescues only the Actions API's data, never
+# a local git failure); 64 on a usage error. The code passes through. CI_GATE_RUNS_JSON is a test input: the gate
+# refuses it (64) when origin is a github.com remote.
+python3 "$(dirname "$0")/ci_gate.py" --branch "$BRANCH" --origin-ref "$ORIGIN_REF" \
   ${CI_GATE_RUNS_JSON:+--runs-json "$CI_GATE_RUNS_JSON"} || exit $?
 
 echo "== boundary ($N commits) =="

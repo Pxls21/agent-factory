@@ -40,9 +40,11 @@ Who depends on it: every build/verify/orchestration increment in the project. CL
 **Ops scripts** ([scripts/](scripts/)):
 - `push_clean.sh --no-delegates-live` (clean tree) or `--lanes-live` (the dirty set equals the
   untracked `.lanes-live` list): the ONLY push path. After its fetch it runs `ci_gate.py`, which
-  reads the branch's newest stage0-ci run in origin's history through the Actions API and REFUSES
-  while it is red (`CI_FIX=<run id>` names the red run a fix push repairs; an unreadable API fails
-  closed unless `CI_GATE_OFFLINE=<reason>`; AF-AP-126). Then it strips trailers, proves tree
+  reads the branch's newest stage0-ci run in origin's history through the Actions API: exit 1
+  REFUSES while it is red (`CI_FIX=<run id>` names the red run a fix push repairs), exit 75 WAITS
+  while the verdict is unknown (`ci_gate.py --wait 1800` waits it out; `CI_WAIT_SKIP=<reason>`
+  pushes anyway), exit 2 when it cannot decide (`CI_GATE_OFFLINE=<reason>` rescues only the API's
+  data); AF-AP-126, CI-GATE-R1. Then it strips trailers, proves tree
   identity and pushes the rev-parsed SHA. Its transcripts-only follow-up push does not call the
   gate and starts no run (`paths-ignore`). Open gate hardening: issue #34, task #166
 - `safe_commit.sh -m "<msg>" <paths>`: stages ONLY named paths, refuses if anything else staged
@@ -73,7 +75,7 @@ enclosing symbol's GitNexus blast radius + anti-pattern registry screen.
 - SessionStart hook --> setup.sh --> orient.sh --> wiki live-state injection
 - pre-commit --> lint_delta.py, bash -n, AP screen, sync-skills.sh --check
 - post-commit --> graft build, GitNexus analyze (background)
-- push_clean.sh --> git fetch --> ci_gate.py (Actions API: newest stage0-ci run; red = refuse)
+- push_clean.sh --> git fetch --> ci_gate.py (Actions API: newest stage0-ci run; red = refuse, unknown = wait 75)
   --> filter-branch (trailer strip) --> git push
 - edit-snapshot.py --> GitNexus impact, AP registry scan
 - graft-first-nag.py --> reminds on code-path grep calls

@@ -4,6 +4,7 @@ Uses YAML parsing for step-level assertions and line-anchored regexes for
 whole-file structure. Each assertion pins a structural property from the
 review-fixes brief's contract C1.
 """
+import importlib.util
 import re
 from pathlib import Path
 
@@ -61,6 +62,23 @@ def test_transcript_only_push_runs_no_ci():
     must not run the workflow."""
     wf = yaml.safe_load(_read())
     assert _on(wf)["push"] == {"paths-ignore": ["transcripts/**"]}
+
+
+def test_pull_request_runs_skip_transcript_only_changes():
+    """VERIFY-CI-GATE F10: with a pull request open, every transcripts-only sync push started a pull_request run."""
+    wf = yaml.safe_load(_read())
+    assert _on(wf)["pull_request"] == {"paths-ignore": ["transcripts/**"]}
+
+
+def test_the_push_gate_ignores_exactly_what_both_triggers_ignore():
+    """CI-GATE-R1 C6: scripts/ci_gate.py expects a new run after any push that changes a path outside its ignored
+    prefix. That prefix and the workflow's paths-ignore must not drift apart."""
+    spec = importlib.util.spec_from_file_location("ci_gate_prefix", ROOT / "scripts" / "ci_gate.py")
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    on = _on(yaml.safe_load(_read()))
+    assert on["push"]["paths-ignore"] == [gate.IGNORED_PREFIX + "**"]
+    assert on["pull_request"]["paths-ignore"] == [gate.IGNORED_PREFIX + "**"]
 
 
 def test_newer_push_cancels_superseded_run():

@@ -33,8 +33,10 @@ and never push to any other branch without the owner's explicit say-so.
   reach origin). Run `git log origin/<branch>..HEAD` before ANY push and review every unreviewed
   delegate commit first. **CI GATE (AF-AP-126; owner 2026-09-23, an inbox of "Run failed" mails, the third time):**
   after its fetch, push_clean runs `scripts/ci_gate.py`, which reads the branch's newest stage0-ci run in origin's history
-  through the Actions API and REFUSES while it is red; a push that carries the fix names the red run: `CI_FIX=<run id>`.
-  An unreadable API fails closed (`CI_GATE_OFFLINE=<reason>` pushes with a warning). Batch pushes: every push is a run.
+  through the Actions API. Exit 1 REFUSES while it is red (a push that carries the fix names the red run: `CI_FIX=<run id>`).
+  Exit 75 WAITS while the verdict is unknown (a run in progress, or pushes after it with no run registered yet): wait with
+  `python3 scripts/ci_gate.py --branch <branch> --wait 1800`, or push anyway with `CI_WAIT_SKIP=<reason>`. Exit 2 when it
+  cannot decide (`CI_GATE_OFFLINE=<reason>` rescues only the API's data; CI-GATE-R1). Batch pushes: every push is a run.
 - Coordinator commits in a shared tree go through `scripts/safe_commit.sh -m "<msg>" <path>…`
   (stages ONLY the named paths; refuses if anything else is already staged — a live delegate's
   staging must never be swept). Never `git add -A` while a delegate is live.

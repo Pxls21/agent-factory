@@ -8,6 +8,10 @@ on:
     paths-ignore:
       - 'transcripts/**'
   pull_request:
+    # The same filter: with a pull request open, a transcripts-only push would otherwise start a pull_request run
+    # (VERIFY-CI-GATE F10). scripts/ci_gate.py ignores the same prefix when it asks whether a run is expected.
+    paths-ignore:
+      - 'transcripts/**'
 
 # A newer push to the same ref cancels the run it supersedes; only the head's verdict matters.
 concurrency:
