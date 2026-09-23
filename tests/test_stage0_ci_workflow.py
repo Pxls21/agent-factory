@@ -50,6 +50,26 @@ def test_triggers_push_and_pull_request():
     assert re.search(r"^\s+pull_request:", text, re.MULTILINE), "pull_request trigger missing"
 
 
+def _on(wf):
+    # PyYAML reads the bare key `on` as the boolean True.
+    return wf["on"] if "on" in wf else wf[True]
+
+
+def test_transcript_only_push_runs_no_ci():
+    """Owner 2026-09-23: each push_clean is followed by a transcripts-only sync push, which doubled
+    every failure email. A push that changes only transcripts/ must not run the workflow."""
+    wf = yaml.safe_load(_read())
+    assert _on(wf)["push"] == {"paths-ignore": ["transcripts/**"]}
+
+
+def test_newer_push_cancels_superseded_run():
+    wf = yaml.safe_load(_read())
+    assert wf.get("concurrency") == {
+        "group": "${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": True,
+    }
+
+
 def test_permissions_contents_read():
     text = _read()
     assert re.search(r"^permissions:", text, re.MULTILINE)

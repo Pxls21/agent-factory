@@ -18,6 +18,7 @@ EXPECTED_PASS = "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 9 vendored roots
 
 ADAPTED_PATHS = [
     "agents/adversarial-verifier.md",
+    "agents/code-implementer.md",
     "hooks/edit-snapshot.py",
     "hooks/graft-first-nag.py",
     "hooks/session-start.sh",
@@ -370,15 +371,17 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     assert "| `.claude/ (kit-verbatim)`" in manifest
     assert "| `.claude/ (kit-adapted)`" in manifest
     assert "| `.claude/ (first-party)`" in manifest
-    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2958", "0"]
-    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["14", "0"]
+    # 2958/14 -> 2957/15 on 2026-09-23 (D-054, 6914400): agents/code-implementer.md pins its model id,
+    # so it differs from the kit index and moves from kit-verbatim to kit-adapted.
+    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2957", "0"]
+    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["15", "0"]
     # 81 -> 129 on 2026-09-22 19:20Z (6ec33ed): the 47 vendored Aegis skill files + PROVENANCE-AEGIS.md.
     # The class means "not in the kit index", and it already held other vendored skill sets (honey,
     # prism, typesafe): labelling them first-party is a known gap, tracked as the K1-h task.
     assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["129", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
-    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2958
-    assert sum(klass == "kit-adapted" for klass in classes.values()) == 14
+    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2957
+    assert sum(klass == "kit-adapted" for klass in classes.values()) == 15
     assert sum(klass == "first-party" for klass in classes.values()) == 129
 
 
@@ -386,7 +389,8 @@ def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:
     module = load_module()
     root = copy_fixture(tmp_path, module)
     rewrite_manifest_and_classes(root, module)
-    target = root / ".claude/agents/code-implementer.md"
+    # The target must be kit-verbatim in the committed class file; code-implementer.md is kit-adapted since D-054.
+    target = root / ".claude/agents/evidence-gatherer.md"
     target.write_bytes(target.read_bytes() + b"adapted now\n")
     replace_manifest_hash(root, ".claude/ (kit-verbatim)", module.build_manifest_data(root, module.repo_root_of(root)).records[0].tree_sha256)
     replace_manifest_hash(root, ".claude/ (kit-adapted)", module.build_manifest_data(root, module.repo_root_of(root)).records[1].tree_sha256)
@@ -394,7 +398,7 @@ def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:
     result = run_tool(root)
 
     assert result.returncode == 1
-    assert ".claude class drift: agents/code-implementer.md: committed=kit-verbatim generated=kit-adapted" in result.stderr
+    assert ".claude class drift: agents/evidence-gatherer.md: committed=kit-verbatim generated=kit-adapted" in result.stderr
 
 
 def test_new_first_party_claude_file_names_manifest_and_class_drift(tmp_path: Path) -> None:
@@ -967,8 +971,8 @@ def test_required_mutants_are_killed(
             root = copy_fixture(tmp_path, mutant)
             data = mutant.build_manifest_data(root, mutant.repo_root_of(root))
             counts = {record.path: record.regular_file_count for record in data.records}
-            assert counts[".claude/ (kit-verbatim)"] == 2958, mutant_name
-            assert counts[".claude/ (kit-adapted)"] == 14, mutant_name
+            assert counts[".claude/ (kit-verbatim)"] == 2957, mutant_name
+            assert counts[".claude/ (kit-adapted)"] == 15, mutant_name
         elif killer == "test_kit_index_sha256_mismatch_is_named":
             root = copy_fixture(tmp_path, mutant)
             index = root / mutant.KIT_INDEX_PATH
@@ -984,7 +988,7 @@ def test_required_mutants_are_killed(
         elif killer == "test_claude_class_drift_names_changed_path":
             root = copy_fixture(tmp_path, mutant)
             rewrite_manifest_and_classes(root, mutant)
-            target = root / ".claude/agents/code-implementer.md"
+            target = root / ".claude/agents/evidence-gatherer.md"
             target.write_bytes(target.read_bytes() + b"adapted now\n")
             result = subprocess.run(
                 [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), "--check"],
