@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 22:0xZ — WHAT IS LIVE NOW (this block supersedes the 21:4xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **PUSHED:** 39c699e..a78bdca; the S0-02 mint is 6bd8582 on origin. CI for a78bdca is pending. The PC clone is at a78bdca1.
+- **ROUTES:** the cloud route has served nothing since about 21:00Z (codex skipped, the free members refuse). The local route holds two lanes and logged two 504s at 21:45Z.
+- **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201). Monitor bf9tx2z3i.
+- **QUEUED for local slots, briefs pinned to a78bdca:** VERIFY-S0-02 (#205; the mint plus the batched B10, B11 and B12), then VERIFY-J1-3 (#120; premise regenerated), then J1-1-R3 (#202; relaunch from its draft).
+- **WAITING ON THE OWNER:** the S0-05 live run (the sudo one-liner in chat).
+
 **2026-09-23 21:4xZ — WHAT IS LIVE NOW (this block supersedes the 21:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **MINTED 21:4xZ: S0-02**, from the live eight-leg capture (clone e8db82c2, 21:20:43Z to 21:35:56Z, rc 0). The checker PASSES with 1 positive leg, 6 negative legs (6 distinct reasons) and the revocation leg, and each of the 4 spec denial legs gives its exact reason. Execution proofs stand at 8 of 9; S0-05 is the one still ABSENT. MINTED is not ACCEPTED: VERIFY-S0-02 is next, then the owner's signed `accepted/S0-02` tag.
 - **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194; 130 messages, item 4, no draft file yet) and VERIFY-J1-0-R6 (#201; draft about 30 KB). Monitor b0o1kfwz6.
@@ -448,6 +455,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 22:0xZ — pushed the S0-02 mint (a78bdca); the VERIFY-S0-02 and VERIFY-J1-3 briefs pinned; the cloud route down since about 21:00Z.
 2026-09-23 21:4xZ — S0-02 MINTED from the live eight-leg capture (8 of 9 execution proofs); VERIFY-S0-02 next.
 2026-09-23 21:2xZ — VERIFY-T94-R1 graded (T94 accepted, issue #55); VERIFY-C2 graded weak (C2 still gated, issue #56); S0-02 eight-leg capture running.
 2026-09-23 21:1xZ — VERIFY-J1-3 and VERIFY-C2 dispatched (PIN e8db82c).
