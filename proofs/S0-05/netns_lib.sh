@@ -67,24 +67,46 @@ egress_ns_create() {
   local ns=$1; shift
   [ -n "$ns" ] || { echo "egress_ns_create: namespace name required" >&2; return 64; }
   [ "$#" -ge 1 ] || { echo "egress_ns_create: at least one <ip:port> allow entry required" >&2; return 64; }
+
+  # F11/F12: validate EVERY allow entry up front, before any namespace/veth/rule/record work.
+  # A dotted quad of four decimal octets 0-255 with no leading zero (a lone 0 is fine), port 1-65535.
+  local entry ip port octet_pat='(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])'
+  local ip_pat="^${octet_pat}\\.${octet_pat}\\.${octet_pat}\\.${octet_pat}$"
+  for entry in "$@"; do
+    ip=${entry%:*}; port=${entry##*:}
+    if ! [[ "$port" =~ ^[1-9][0-9]*$ ]] || [ "$port" -gt 65535 ]; then
+      echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64
+    fi
+    if ! [[ "$ip" =~ $ip_pat ]]; then
+      echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64
+    fi
+  done
+
   local host_if ns_if host_ip ns_ip resolver
   host_if=$(egress_ns_host_if "$ns"); ns_if=$(egress_ns_if "$ns")
   host_ip=$(egress_ns_host_ip "$ns"); ns_ip=$(egress_ns_ip "$ns")
   resolver=$(egress_ns_resolver "$ns")
 
-  # F23: refuse to destroy-and-recreate a namespace whose recorded owner is a live process
-  # other than ourselves. A namespace whose owner is dead (or has no owner file) is stale.
-  local owner_file; owner_file=$(egress_ns_owner_file "$ns")
-  if [ -f "$owner_file" ]; then
+  # F2: claim the name atomically BEFORE destroy-first and creation. A claim held by a live pid
+  # other than $$ is refused; a stale claim (dead pid) is taken over atomically.
+  mkdir -p "$EGRESS_OWNER_DIR"
+  local claim_dir="$EGRESS_OWNER_DIR/${ns}.claim"
+  if mkdir "$claim_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
+  else
+    # claim exists: check who holds it
     local owner_pid
-    owner_pid=$(cat "$owner_file" 2>/dev/null)
+    owner_pid=$(cat "$(egress_ns_owner_file "$ns")" 2>/dev/null)
     if [ -n "$owner_pid" ] && [ "$owner_pid" != "$$" ] && kill -0 "$owner_pid" 2>/dev/null; then
       echo "namespace-live: $ns owned by pid $owner_pid" >&2; return 65
     fi
+    # stale: take over atomically
+    printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
   fi
 
-  # idempotent (probe.sh:36-37): remove any remains of a previous run of THIS namespace
-  egress_ns_destroy "$ns"
+  # idempotent (probe.sh:36-37): remove any remains of a previous run of THIS namespace.
+  # F2: use _egress_ns_teardown (not egress_ns_destroy) so our fresh claim is preserved.
+  _egress_ns_teardown "$ns"
 
   # F6: refuse when the /24 this name derives is already assigned to any host interface after
   # the destroy-first step.
@@ -93,6 +115,8 @@ egress_ns_create() {
   collision_if=$(ip -o -4 addr show 2>/dev/null \
     | awk -v pfx="10.201.${octet}." 'index($4, pfx) == 1 {print $2; exit}')
   if [ -n "$collision_if" ]; then
+    rm -rf "$claim_dir"
+    rm -f "$(egress_ns_owner_file "$ns")"
     echo "address-plan-collision: $ns $subnet on $collision_if" >&2; return 65
   fi
 
@@ -111,7 +135,6 @@ egress_ns_create() {
 
   # DNS blocked (docs/05_SECURITY.md:21 "DNS/connection canaries"): a resolver the gate drops.
   mkdir -p "/etc/netns/$ns"
-  mkdir -p "$EGRESS_OWNER_DIR" && printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
   printf 'nameserver %s\noptions timeout:1 attempts:1\n' "$resolver" > "/etc/netns/$ns/resolv.conf"
 
   _egress_apply_gate "$ns" "$@"
@@ -128,13 +151,7 @@ _egress_apply_gate() {
   done
   for entry in "$@"; do
     ip=${entry%:*}; port=${entry##*:}
-    case "$ip:$port" in
-      *:*[!0-9]*|*:) echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64;;
-    esac
-    # F19: the host part must be a dotted-quad IPv4 literal (not CIDR, not hostname, not empty).
-    case "$ip" in
-      *[!0-9.]*|*/*|"") echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64;;
-    esac
+    # F19: validation is done up front in egress_ns_create before any state is touched.
     ip netns exec "$ns" iptables -A OUTPUT -d "$ip" -p tcp --dport "$port" -j ACCEPT || return 1
     ip netns exec "$ns" iptables -A INPUT  -s "$ip" -p tcp --sport "$port" -j ACCEPT || return 1
   done
@@ -233,10 +250,15 @@ egress_ns_owner_file() { printf '%s/%s.owner\n' "$EGRESS_OWNER_DIR" "$1"; }
 # --- destroy ---------------------------------------------------------------------------------
 # probe.sh:26-32 (the trap body), by name, never by pattern.
 # F7: kill every process in the namespace BEFORE deleting the veth and the netns.
-egress_ns_destroy() {
+# F1: SIGTERM first, then SIGKILL survivors; fail loud if any remain.
+#
+# _egress_ns_teardown: the resource cleanup (processes, veth, netns, /etc/netns) without
+# touching the ownership claim. Used by create's destroy-first step so it doesn't wipe its
+# own fresh claim.
+_egress_ns_teardown() {
   local ns=$1 host_if pid
   host_if=$(egress_ns_host_if "$ns")
-  # Kill every process still inside the namespace.
+  # SIGTERM every process still inside the namespace.
   for pid in $(ip netns pids "$ns" 2>/dev/null); do
     kill "$pid" 2>/dev/null
   done
@@ -251,8 +273,48 @@ egress_ns_destroy() {
     sleep 0.1
     remaining=$((remaining - 1))
   done
+  # F1: escalate to SIGKILL for any SIGTERM-ignoring survivors.
+  local survivors=""
+  for pid in $(ip netns pids "$ns" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null
+      survivors="$survivors $pid"
+    fi
+  done
+  if [ -n "$survivors" ]; then
+    # Wait briefly for SIGKILL to take effect.
+    local kwait=20  # 20 * 0.1s = 2s
+    while [ $kwait -gt 0 ]; do
+      local kalive=0
+      for pid in $survivors; do
+        kill -0 "$pid" 2>/dev/null && kalive=1 && break
+      done
+      [ $kalive -eq 0 ] && break
+      sleep 0.1
+      kwait=$((kwait - 1))
+    done
+    # Fail loud if any process is still alive after SIGKILL.
+    local final_survivors=""
+    for pid in $survivors; do
+      kill -0 "$pid" 2>/dev/null && final_survivors="$final_survivors $pid"
+    done
+    if [ -n "$final_survivors" ]; then
+      echo "egress: namespace $ns still has live pids:$final_survivors" >&2
+      ip link del "$host_if" 2>/dev/null || true
+      ip netns del "$ns" 2>/dev/null || true
+      rm -rf "/etc/netns/$ns"
+      return 1
+    fi
+  fi
   ip link del "$host_if" 2>/dev/null || true
   ip netns del "$ns" 2>/dev/null || true
   rm -rf "/etc/netns/$ns"
-  rm -f "$(egress_ns_owner_file "$ns")"
+}
+
+egress_ns_destroy() {
+  _egress_ns_teardown "$1"
+  local rc=$?
+  rm -f "$(egress_ns_owner_file "$1")"
+  rm -rf "$EGRESS_OWNER_DIR/${1}.claim"
+  return $rc
 }

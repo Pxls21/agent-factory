@@ -70,7 +70,14 @@ status=$(egress_ns_capable) || { echo "run_s0_05_units: cannot run here ($status
 mkdir -p "$EVIDENCE_ROOT"
 declare -A RESULT
 NS_LIVE=""
-cleanup() { for ns in $NS_LIVE; do egress_ns_destroy "$ns"; done; }
+# F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$).
+cleanup() {
+  for ns in $NS_LIVE; do
+    local owner_pid
+    owner_pid=$(cat "$(egress_ns_owner_file "$ns")" 2>/dev/null)
+    [ "$owner_pid" = "$$" ] && egress_ns_destroy "$ns"
+  done
+}
 trap cleanup EXIT INT TERM
 
 for unit in "${UNITS[@]}"; do
@@ -89,7 +96,7 @@ for unit in "${UNITS[@]}"; do
     echo "SKIP $unit: ${create_err:-namespace creation failed}" >&2
     continue
   fi
-  NS_LIVE="$NS_LIVE $ns"
+  NS_LIVE="${NS_LIVE:+$NS_LIVE }$ns"
 
   # PREFLIGHT the exact predicate the proof consumes (AF-AP-24): C0 itself, before launching
   # anything. A unit whose allowed target is unreachable from its namespace is a blocker.
@@ -99,7 +106,7 @@ for unit in "${UNITS[@]}"; do
     echo "  (a) bind the service on $(egress_ns_host_ip "$ns") (the veth host address), or" >&2
     echo "  (b) add a host-side DNAT from that address to the service. NOT BUILT here." >&2
     RESULT[$unit]="not-run|positive control unreachable: $allowed not reachable from $ns"
-    egress_ns_destroy "$ns"; continue
+    egress_ns_destroy "$ns"; NS_LIVE=${NS_LIVE//$ns/}; NS_LIVE=${NS_LIVE# }; continue
   fi
 
   # Launch the unit INSIDE the namespace, then run the canaries as that unit.
@@ -122,7 +129,7 @@ for unit in "${UNITS[@]}"; do
     done
     if ! kill -0 "$launch_pid" 2>/dev/null; then
       RESULT[$unit]="not-run|launch exited within the settle window; see $EVIDENCE_ROOT/$unit.launch.log"
-      egress_ns_destroy "$ns"; continue
+      egress_ns_destroy "$ns"; NS_LIVE=${NS_LIVE//$ns/}; NS_LIVE=${NS_LIVE# }; continue
     fi
   fi
 
@@ -132,27 +139,38 @@ for unit in "${UNITS[@]}"; do
   # F9: stop the unit through the namespace (egress_ns_destroy kills all processes inside),
   # never by `kill "$launch_pid"` (that pid is the bash wrapper; the unit survives it).
   egress_ns_destroy "$ns"
+  NS_LIVE=${NS_LIVE//$ns/}; NS_LIVE=${NS_LIVE# }
 done
 
-# units.json: every unit the plan names, run or NOT, with its reason.
-{
-  printf '{\n  "units": [\n'
-  first=1
-  for unit in "${!RESULT[@]}"; do
-    st=${RESULT[$unit]%%|*}; why=${RESULT[$unit]#*|}
-    [ $first -eq 1 ] || printf ',\n'; first=0
-    if [ "$st" = "run" ]; then
-      printf '    {"unit": "%s", "status": "run", "note": "%s"}' "$unit" "$why"
-    else
-      printf '    {"unit": "%s", "status": "not-run", "reason": "%s"}' "$unit" "$why"
-    fi
-  done
-  for unit in "${!ABSENT[@]}"; do
-    [ $first -eq 1 ] || printf ',\n'; first=0
-    printf '    {"unit": "%s", "status": "not-run", "reason": "%s"}' "$unit" "${ABSENT[$unit]}"
-  done
-  printf '\n  ]\n}\n'
-} > "$EVIDENCE_ROOT/units.json"
+# F4: units.json encoded through python3 json.dumps, never printf with raw strings.
+# Every unit the plan names, run or NOT, with its reason.
+_json_tmp=$(mktemp)
+for unit in "${!RESULT[@]}"; do
+  st=${RESULT[$unit]%%|*}; why=${RESULT[$unit]#*|}
+  printf '%s\0%s\0%s\0' "$st" "$unit" "$why" >> "$_json_tmp"
+done
+for unit in "${!ABSENT[@]}"; do
+  printf '%s\0%s\0%s\0' "not-run" "$unit" "${ABSENT[$unit]}" >> "$_json_tmp"
+done
+python3 -c '
+import json, sys
+data = open(sys.argv[1], "rb").read()
+if not data:
+    json.dump({"units": []}, sys.stdout, indent=2); print(); sys.exit()
+fields = data.split(b"\x00")
+units = []
+i = 0
+while i + 2 < len(fields):
+    st = fields[i].decode(); unit = fields[i+1].decode(); detail = fields[i+2].decode()
+    if st == "run":
+        units.append({"unit": unit, "status": "run", "note": detail})
+    else:
+        units.append({"unit": unit, "status": "not-run", "reason": detail})
+    i += 3
+json.dump({"units": units}, sys.stdout, indent=2)
+print()
+' "$_json_tmp" > "$EVIDENCE_ROOT/units.json"
+rm -f "$_json_tmp"
 
 echo "=== units.json ==="; cat "$EVIDENCE_ROOT/units.json"
 echo "=== checker ==="

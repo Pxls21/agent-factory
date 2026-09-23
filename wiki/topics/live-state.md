@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 03:4xZ — E2-R1 landed GATED-PENDING-VERIFY (S0-05 seven blockers closed; root 137 passed twice, uid 65534 122 passed / 15 skipped, census clean); AF-AP-129 registered (a shell range guard passes a port bash cannot hold); B9 home on the PC (report + 4-file patch), J1-2 home in the sandbox.
+
 2026-09-23 03:3xZ — J1-2 dispatched in the sandbox (03:26Z); the K1-h brief written and queued for the next PC slot (117 of the 129 first-party .claude paths are vendored copies or declared sets).
 
 2026-09-23 03:2xZ — J1-2 (the ledger module, task #119) briefed for a sandbox code-implementer beside E2-R1; amendment J1-A1 takes the source file digest out of the row identity (a growing source would re-key old rows).
