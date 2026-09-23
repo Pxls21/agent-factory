@@ -14,6 +14,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 15:3xZ — WHAT IS LIVE NOW (this block supersedes the 14:5xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC:** VERIFY-K1-h (task #194), alive at the last heartbeat. VERIFY-T92 came home (task #132 closed).
+- **LIVE, sandbox:** S198A (task #198 increment A, the transcript scrubber), VERIFY-J1-1-R2 (task #197) and B12 (task #196, PIN c19736d).
+- **HOME AND RULED:** VERIFY-J1-0-R5 NOT-READY on V5-05 (a YAML property moves the named line out of the value) → J1-0-R6 under AMENDMENT 5 (task #199, the coordinator builds it); follow-ups issue #50. VERIFY-T92: T92 and PCJ1 accepted with follow-ups (issue #51), T90-R3 accepted.
+- **DEFECT FOUND AT HARVEST:** the dispatcher took VERIFY-T92's failed final turn (`HTTP 400: … No user query found`) as its report while the real 55 KB report sat in the lane directory (AF-AP-67, sixth family; task #200). Until #200 lands: check each harvested report's size against the draft and read `usage.json`.
+- **DO NOT CLEAN:** the PC lane tree `.lanes/pc-jev-laya-pc.md--dd4c579/tree/` — the live Laya unit runs from it (issue #51 C-2).
+- **NEXT:** CI run #991 (0dfd28e) to its verdict, then push; J1-0-R6; grade S198A, VERIFY-J1-1-R2, B12 and VERIFY-K1-h as they come home.
+
 **2026-09-23 14:5xZ — WHAT IS LIVE NOW (this block supersedes the 14:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC:** VERIFY-T92 (task #132) and VERIFY-K1-h (task #194), alive at the 14:47Z heartbeat.
 - **LIVE, sandbox:** J1-1-R2 (task #192), B11 (task #191) and VERIFY-J1-0-R5 (task #193).
@@ -383,6 +391,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 15:3xZ — B12 dispatched; VERIFY-J1-0-R5 ruled NOT-READY (J1-0-R6 under AMENDMENT 5, issue #50); VERIFY-T92 recovered from its lane directory and accepted (issue #51); AF-AP-67's sixth family (task #200).
 
 2026-09-23 15:2xZ — B11 landed (821515b, GATED-PENDING-VERIFY): the F16 floor is met; AF-AP-158 registered; A1 folded into B12.
 
