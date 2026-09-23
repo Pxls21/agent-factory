@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 20:3xZ — WHAT IS LIVE NOW (this block supersedes the 20:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (five lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201; poller re-attached 20:07Z) on the local route; J1-3 (#120), J1-1-R3 (#202), C2 (#148) on the cloud routes. Monitor bc8fr3m0s.
+- **HOME:** VERIFY-T94 NOT-READY (F-1: the FAILED-UNRETRIED branch had no executed case) → T94-R1 landed test-only (T2 51/0 ×2; four doubled-escape mutants red). VERIFY-T94-R1 next.
+- **WAITING ON THE OWNER:** "removed" after the S0-02 owner2 removal one-liner; then the S0-02 recapture, the S0-05 pair identity (option 1) and the S0-05 live run (sudo).
+
 **2026-09-23 20:0xZ — WHAT IS LIVE NOW (this block supersedes the 19:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (six lanes, unchanged):** VERIFY-K1-h (#194), VERIFY-J1-0-R6 (#201), J1-3 (#120), J1-1-R3 (#202), VERIFY-T94 (#200 + #167), C2 (#148). Monitor bpr3zk2ed.
 - **DONE (D-060):** the Laya unit reinstalled from the main clone (issue #51 C-2; smoke bitwise-identical ×2); sandbox venv-laya + the orphaned HF blob deleted.
@@ -428,6 +433,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 20:3xZ — VERIFY-T94 home NOT-READY (F-1); T94-R1 landed test-only; VERIFY-T94-R1 next.
 2026-09-23 20:0xZ — D-060 owner answers: Laya unit reinstalled from the main clone; sandbox venv-laya + HF blob deleted; S0-02 removal handed over; S0-05 identity = option 1 after the S0-02 capture.
 2026-09-23 19:1xZ — VERIFY-T94 and C2 dispatched (six PC lanes); VERIFY-K1-h re-attached; task #150 gains items k and l.
 2026-09-23 18:4xZ — T94 landed (GATED-PENDING-VERIFY) with a coordinator amendment to the poll probe (AF-AP-162; issue #54); VERIFY-T94 next.

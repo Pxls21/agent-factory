@@ -484,6 +484,25 @@ run_exec_poll --
 [ "$PROBE_OUT" = GONE ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 70 ]
 check "EXECUTED probe: no pidfile, no report and a stale launch.log polls GONE" $? \
   "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+# VERIFY-T94 F-1 (2026-09-23): the FAILED-UNRETRIED branch reads lane.pid through its own \$(cat …), and no case above
+# reaches it. A LIVE loop behind an API-failure line is the discriminator: read on the wrong side, the pid is empty,
+# `kill -0` fails and the probe answers FAILED-UNRETRIED for a lane that is still retrying.
+exec_lane "$OLD" - live 'API call failed: HTTP 503 capacity is busy'
+run_exec_poll --
+[ "$PROBE_OUT" = RUNNING ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 75 ]
+check "EXECUTED probe: an API-failure line while the lane loop is alive polls RUNNING (the loop retries; the pid is read on the PC)" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - dead 'API call failed: HTTP 503 capacity is busy'
+run_exec_poll --
+[ "$PROBE_OUT" = FAILED-UNRETRIED ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 70 ] \
+  && grep -Fq 'LANE FAILED — the harness died on an API failure' "$TMP/err.txt"
+check "EXECUTED probe: an API-failure line with the lane loop gone polls FAILED-UNRETRIED, rc 70" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
+exec_lane "$OLD" - dead '⚠️ No reply: session_persistence_failed'
+run_exec_poll --
+[ "$PROBE_OUT" = FAILED-UNRETRIED ] && [ -z "$PROBE_ERR" ] && [ "$POLL_RC" -eq 70 ]
+check "EXECUTED probe: a '⚠️ No reply:' line with the lane loop gone polls FAILED-UNRETRIED (the pattern's second alternative, executed)" $? \
+  "probe_out='$PROBE_OUT' probe_err='$PROBE_ERR' rc=$POLL_RC"
 
 READY_TEXT='REAL DISPATCH REPORT'
 READY_B64="$(printf '%s\n' "$READY_TEXT" | base64 -w0)"
