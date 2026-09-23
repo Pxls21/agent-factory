@@ -55,7 +55,7 @@ LANE_RUNTIME_VERIFIED = "; ".join((
     "identity probe 2026-09-23 08:58Z: b3399c1, Hermes Agent v0.21.1, venv Python 3.11.15, SQLite 3.53.1, "
     "shared state.db WAL",
     # (c) the lanes launched since the update, counted from their directories on the PC
-    "110 PC lanes first launched at or after 2026-09-08 14:22:00Z (98 with a report), "
+    "110 PC lane directories whose latest launch was at or after 2026-09-08 14:22:00Z (98 with a report; brief.md--0000000 never ran Hermes), "
     "tasks/briefs/hermes-repin/REPIN-a-R1-lane-record.md",
 ))
 # The whole entry (REPIN-a-R1 R4): all eight keys' exact values.

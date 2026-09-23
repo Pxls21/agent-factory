@@ -5,7 +5,8 @@ VERIFY-REPIN-a F3: the `verified:` field of `hermes-agent-lane-runtime` in `upst
 that included non-PC notes and missed PC ones. This record counts the primary source instead: the lane directories that
 `scripts/pc_lane.sh` creates under `~/agent-factory/.lanes/` on the PC.
 
-**Rule.** A lane counts when its directory's first launch (the mtime of `prompt.md`, else `brief.md`) is at or after
+**Rule.** A lane counts when its directory's LATEST launch (the mtime of `prompt.md`, which `harness-ports/bin/pc-lane.sh:218`
+truncates at every start; else `brief.md`) is at or after
 2026-09-08T14:22:00Z, the owner's `hermes update` that installed b3399c1 (D-043, D-048). `report` = a non-empty `report.md`;
 `FAILED` = a `FAILED` marker present at the measurement time.
 
