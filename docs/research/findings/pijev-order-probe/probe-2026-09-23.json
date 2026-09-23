@@ -1,0 +1,452 @@
+{
+ "lane": {
+  "batch": {
+   "answers": {
+    "p0": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0572,
+     "probabilities": {
+      "adversarial-verifier": 0.3022,
+      "code-implementer": 0.2056,
+      "evidence-gatherer": 0.4922
+     },
+     "type": "choice"
+    },
+    "p1": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0624,
+     "probabilities": {
+      "adversarial-verifier": 0.3088,
+      "code-implementer": 0.1958,
+      "evidence-gatherer": 0.4954
+     },
+     "type": "choice"
+    },
+    "p2": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0577,
+     "probabilities": {
+      "adversarial-verifier": 0.2842,
+      "code-implementer": 0.2161,
+      "evidence-gatherer": 0.4997
+     },
+     "type": "choice"
+    },
+    "p3": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0706,
+     "probabilities": {
+      "adversarial-verifier": 0.2699,
+      "code-implementer": 0.2098,
+      "evidence-gatherer": 0.5203
+     },
+     "type": "choice"
+    },
+    "p4": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0886,
+     "probabilities": {
+      "adversarial-verifier": 0.2655,
+      "code-implementer": 0.1926,
+      "evidence-gatherer": 0.542
+     },
+     "type": "choice"
+    },
+    "p5": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0639,
+     "probabilities": {
+      "adversarial-verifier": 0.282,
+      "code-implementer": 0.2096,
+      "evidence-gatherer": 0.5084
+     },
+     "type": "choice"
+    }
+   },
+   "code": 200,
+   "secs": 1.41
+  },
+  "labels": [
+   "adversarial-verifier",
+   "code-implementer",
+   "evidence-gatherer"
+  ],
+  "separate": [
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0572,
+     "probabilities": {
+      "adversarial-verifier": 0.3022,
+      "code-implementer": 0.2056,
+      "evidence-gatherer": 0.4922
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "adversarial-verifier",
+     "code-implementer",
+     "evidence-gatherer"
+    ],
+    "secs": 0.32
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0624,
+     "probabilities": {
+      "adversarial-verifier": 0.3088,
+      "code-implementer": 0.1958,
+      "evidence-gatherer": 0.4954
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "adversarial-verifier",
+     "evidence-gatherer",
+     "code-implementer"
+    ],
+    "secs": 0.31
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0577,
+     "probabilities": {
+      "adversarial-verifier": 0.2842,
+      "code-implementer": 0.2161,
+      "evidence-gatherer": 0.4997
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "code-implementer",
+     "adversarial-verifier",
+     "evidence-gatherer"
+    ],
+    "secs": 0.32
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0706,
+     "probabilities": {
+      "adversarial-verifier": 0.2699,
+      "code-implementer": 0.2098,
+      "evidence-gatherer": 0.5203
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "code-implementer",
+     "evidence-gatherer",
+     "adversarial-verifier"
+    ],
+    "secs": 0.31
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0886,
+     "probabilities": {
+      "adversarial-verifier": 0.2655,
+      "code-implementer": 0.1926,
+      "evidence-gatherer": 0.542
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "evidence-gatherer",
+     "adversarial-verifier",
+     "code-implementer"
+    ],
+    "secs": 0.31
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "evidence-gatherer",
+     "confidence": 0.0639,
+     "probabilities": {
+      "adversarial-verifier": 0.282,
+      "code-implementer": 0.2096,
+      "evidence-gatherer": 0.5084
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "evidence-gatherer",
+     "code-implementer",
+     "adversarial-verifier"
+    ],
+    "secs": 0.31
+   }
+  ]
+ },
+ "ticket": {
+  "batch": {
+   "answers": {
+    "p0": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0966,
+     "probabilities": {
+      "account": 0.2293,
+      "billing": 0.558,
+      "technical": 0.2127
+     },
+     "type": "choice"
+    },
+    "p1": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0763,
+     "probabilities": {
+      "account": 0.2035,
+      "billing": 0.5272,
+      "technical": 0.2693
+     },
+     "type": "choice"
+    },
+    "p2": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1092,
+     "probabilities": {
+      "account": 0.2055,
+      "billing": 0.5725,
+      "technical": 0.222
+     },
+     "type": "choice"
+    },
+    "p3": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1257,
+     "probabilities": {
+      "account": 0.1894,
+      "billing": 0.5893,
+      "technical": 0.2213
+     },
+     "type": "choice"
+    },
+    "p4": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0875,
+     "probabilities": {
+      "account": 0.2093,
+      "billing": 0.5456,
+      "technical": 0.2451
+     },
+     "type": "choice"
+    },
+    "p5": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1043,
+     "probabilities": {
+      "account": 0.1763,
+      "billing": 0.5575,
+      "technical": 0.2662
+     },
+     "type": "choice"
+    }
+   },
+   "code": 200,
+   "secs": 1.11
+  },
+  "labels": [
+   "account",
+   "billing",
+   "technical"
+  ],
+  "separate": [
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0966,
+     "probabilities": {
+      "account": 0.2293,
+      "billing": 0.558,
+      "technical": 0.2127
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "account",
+     "billing",
+     "technical"
+    ],
+    "secs": 0.31
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0763,
+     "probabilities": {
+      "account": 0.2035,
+      "billing": 0.5272,
+      "technical": 0.2693
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "account",
+     "technical",
+     "billing"
+    ],
+    "secs": 0.28
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1092,
+     "probabilities": {
+      "account": 0.2055,
+      "billing": 0.5725,
+      "technical": 0.222
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "billing",
+     "account",
+     "technical"
+    ],
+    "secs": 0.28
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1257,
+     "probabilities": {
+      "account": 0.1894,
+      "billing": 0.5893,
+      "technical": 0.2213
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "billing",
+     "technical",
+     "account"
+    ],
+    "secs": 0.28
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.0875,
+     "probabilities": {
+      "account": 0.2093,
+      "billing": 0.5456,
+      "technical": 0.2451
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "technical",
+     "account",
+     "billing"
+    ],
+    "secs": 0.28
+   },
+   {
+    "answer": {
+     "action": {
+      "act_probability": 1.0
+     },
+     "choice": "billing",
+     "confidence": 0.1043,
+     "probabilities": {
+      "account": 0.1763,
+      "billing": 0.5575,
+      "technical": 0.2662
+     },
+     "type": "choice"
+    },
+    "code": 200,
+    "order": [
+     "technical",
+     "billing",
+     "account"
+    ],
+    "secs": 0.28
+   }
+  ]
+ }
+}
