@@ -16,7 +16,7 @@ last_compiled: 2026-09-03
 
 **2026-09-23 17:0xZ — WHAT IS LIVE NOW (this block supersedes the 16:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **QUOTA STOP (16:4xZ):** the sandbox model's weekly limit (its message: "resets Sep 28, 11am (UTC)") killed every sandbox agent: S198A, T94, J1-3 and J1-1-R3. No sandbox agent is live; per the 2026-09-08 ruling none is resumed in the sandbox.
-- **LIVE, PC (six lanes):** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201) on the local route (the KV ceiling: two long-context lanes); T94 (`pc-t94.md--feb26d7`, tasks #200 + #167), J1-3 (`pc-j1-3.md--feb26d7`, task #120, with AMENDMENT A1) and J1-1-R3 (`pc-j1-1-r3.md--feb26d7`, task #202, D-059) on the CLOUD build route `agentfactory-build`, relaunched 16:59-17:03Z from continuation briefs with lane patches; VERIFY-S198A (`pc-verify-s198a.md--750699a`, task #203) on the CLOUD verify route since 17:18Z. Monitor bw49db58s.
+- **LIVE, PC (five lanes):** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201) on the local route (the KV ceiling: two long-context lanes); T94 (`pc-t94.md--feb26d7`, tasks #200 + #167), J1-3 (`pc-j1-3.md--feb26d7`, task #120, with AMENDMENT A1) and J1-1-R3 (`pc-j1-1-r3.md--feb26d7`, task #202, D-059) on the CLOUD build route `agentfactory-build`, relaunched 16:59-17:03Z from continuation briefs with lane patches. VERIFY-S198A came home 18:20Z: MERGE-READY-WITH-FOLLOWUPS, S198A VERIFIED (F1/F2 on issue #53). Monitor bnas82gr7 over the five live lanes.
 - **LANDED (GATED-PENDING-VERIFY):** S198A (task #198 A): the transcript scrubber stops a value before the next secret name; X1-X4 accepted by the coordinator; R-1 a declared residue. B12 (375ea55) as before.
 - **DONE since 17:0xZ:** pushed feb26d7..750699a (S198A = 5415c2a); issue #53 (A1-A9); task #204: no AF-AP-157 leak in any committed transcript (two instruments, both controls fired).
 - **NEXT:** CI of 750699a; harvest the six PC lanes as they come home (check each report's size against its draft, read `usage.json` until T94 lands); the S0-02 eight-leg recapture after the owner's revoked-leg removal.
@@ -413,6 +413,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 18:2xZ — VERIFY-S198A home: MERGE-READY-WITH-FOLLOWUPS; S198A verified; F1/F2 filed on issue #53 (A10, A11).
 2026-09-23 17:2xZ — pushed feb26d7..750699a; VERIFY-S198A dispatched (six PC lanes); no AF-AP-157 leak in any committed transcript (task #204, issue #53).
 2026-09-23 17:0xZ — the sandbox weekly limit killed four sandbox lanes; S198A landed (GATED-PENDING-VERIFY); T94, J1-3 and J1-1-R3 relaunched on the PC cloud build route; AF-AP-161 registered.
 2026-09-23 16:2xZ — B12 landed (375ea55) with AF-AP-160; the J1-3 brief committed (60dd650); T94 dispatched in the sandbox; issue #52 filed.
