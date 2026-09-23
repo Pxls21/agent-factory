@@ -45,7 +45,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: python -m pip install pyflakes
+        # PyYAML: harness-ports/bin/lane-profile.sh reads and rewrites the Hermes config.yaml (T92);
+        # without it test_lane_profile.sh failed 8 of 9 here while the PC and the sandbox had it.
+        run: python -m pip install pyflakes "PyYAML>=6.0"
       - name: Configure git for throwaway repos
         run: |
           git config --global user.email "ci@test"

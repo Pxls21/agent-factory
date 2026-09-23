@@ -372,11 +372,14 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     assert "| `.claude/ (first-party)`" in manifest
     assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2958", "0"]
     assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["14", "0"]
-    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["81", "0"]
+    # 81 -> 129 on 2026-09-22 19:20Z (6ec33ed): the 47 vendored Aegis skill files + PROVENANCE-AEGIS.md.
+    # The class means "not in the kit index", and it already held other vendored skill sets (honey,
+    # prism, typesafe): labelling them first-party is a known gap, tracked as the K1-h task.
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["129", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
     assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2958
     assert sum(klass == "kit-adapted" for klass in classes.values()) == 14
-    assert sum(klass == "first-party" for klass in classes.values()) == 81
+    assert sum(klass == "first-party" for klass in classes.values()) == 129
 
 
 def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:

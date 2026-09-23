@@ -51,7 +51,15 @@ def _throwaway_repo(tmp_path):
     repo = tmp_path / "repo"
     (repo / "scripts" / "hooks").mkdir(parents=True)
     shutil.copy(ROOT / "scripts" / "hooks" / "pre-commit", repo / "scripts" / "hooks" / "pre-commit")
-    shutil.copy(ROOT / "scripts" / "lint_delta.py", repo / "scripts" / "lint_delta.py")
+    # Every script the hook runs unconditionally is copied in, so the only gate that can fail is
+    # the one under test (2026-09-23: the never-a-gate screen and the future-stamp gate were wired
+    # into the hook without reaching this fixture, and the positive control went red in CI on
+    # "can't open file"). The screen reads its allowlist from the index; this one names the
+    # fixture's own gate files, as the real scripts/gate_files.txt does.
+    for name in ("lint_delta.py", "no_laya_in_gates.py", "stamp_check.py"):
+        shutil.copy(ROOT / "scripts" / name, repo / "scripts" / name)
+    (repo / "scripts" / "gate_files.txt").write_text(
+        "scripts/hooks/pre-commit\nscripts/lint_delta.py\nscripts/stamp_check.py\n")
     os.chmod(repo / "scripts" / "hooks" / "pre-commit", 0o755)
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
                GIT_COMMITTER_EMAIL="t@t", HOME=str(tmp_path))
