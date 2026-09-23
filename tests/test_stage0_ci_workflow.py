@@ -56,8 +56,9 @@ def _on(wf):
 
 
 def test_transcript_only_push_runs_no_ci():
-    """Owner 2026-09-23: each push_clean is followed by a transcripts-only sync push, which doubled
-    every failure email. A push that changes only transcripts/ must not run the workflow."""
+    """Owner 2026-09-23: push_clean follows a clean-tree push with a transcripts-only sync push, and
+    each ran the whole workflow (three of the eleven red runs). A push that changes only transcripts/
+    must not run the workflow."""
     wf = yaml.safe_load(_read())
     assert _on(wf)["push"] == {"paths-ignore": ["transcripts/**"]}
 
