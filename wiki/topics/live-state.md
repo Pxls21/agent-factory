@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 18:4xZ — WHAT IS LIVE NOW (this block supersedes the 17:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (four lanes):** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201) on the local route; J1-3 (task #120) and J1-1-R3 (task #202) on the cloud build route. Monitor bnas82gr7 over them.
+- **LANDED (GATED-PENDING-VERIFY):** T94 (tasks #200 + #167), with a coordinator amendment: the lane's poll probe had a doubled escape (the PC lookups ran in the sandbox; a syntax error on the PC) and an inverted FAILED predicate, hidden by a test double that never ran the probe. AF-AP-162 registered, AF-AP-89 recurrence, issue #54. S198A is VERIFIED (18:2xZ).
+- **NEXT:** push; VERIFY-T94 on the cloud verify route; harvest the four PC lanes as they come home; the S0-02 eight-leg recapture after the owner's revoked-leg removal.
+
 **2026-09-23 17:0xZ — WHAT IS LIVE NOW (this block supersedes the 16:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **QUOTA STOP (16:4xZ):** the sandbox model's weekly limit (its message: "resets Sep 28, 11am (UTC)") killed every sandbox agent: S198A, T94, J1-3 and J1-1-R3. No sandbox agent is live; per the 2026-09-08 ruling none is resumed in the sandbox.
 - **LIVE, PC (five lanes):** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201) on the local route (the KV ceiling: two long-context lanes); T94 (`pc-t94.md--feb26d7`, tasks #200 + #167), J1-3 (`pc-j1-3.md--feb26d7`, task #120, with AMENDMENT A1) and J1-1-R3 (`pc-j1-1-r3.md--feb26d7`, task #202, D-059) on the CLOUD build route `agentfactory-build`, relaunched 16:59-17:03Z from continuation briefs with lane patches. VERIFY-S198A came home 18:20Z: MERGE-READY-WITH-FOLLOWUPS, S198A VERIFIED (F1/F2 on issue #53). Monitor bnas82gr7 over the five live lanes.
@@ -413,6 +418,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 18:4xZ — T94 landed (GATED-PENDING-VERIFY) with a coordinator amendment to the poll probe (AF-AP-162; issue #54); VERIFY-T94 next.
 2026-09-23 18:2xZ — VERIFY-S198A home: MERGE-READY-WITH-FOLLOWUPS; S198A verified; F1/F2 filed on issue #53 (A10, A11).
 2026-09-23 17:2xZ — pushed feb26d7..750699a; VERIFY-S198A dispatched (six PC lanes); no AF-AP-157 leak in any committed transcript (task #204, issue #53).
 2026-09-23 17:0xZ — the sandbox weekly limit killed four sandbox lanes; S198A landed (GATED-PENDING-VERIFY); T94, J1-3 and J1-1-R3 relaunched on the PC cloud build route; AF-AP-161 registered.
