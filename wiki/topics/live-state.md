@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 02:5xZ — VERIFY-E2 home at 02:52Z: NOT-READY (F1, F2, F3, F4, F11, F12, F14) + CD1 returned (the S0-01 launcher reused by S0-05 would damage S0-01's pinned tree); E2-R1 (the seven blockers, sandbox) and the CD1 amendment (launch recipe measured on the PC first) next.
+
 2026-09-23 02:5xZ — the AF-AP-127 exporter fix landed (task #138: scrub then cap in both transcript exporters, a private-key class, the screen row); VERIFY-E2 came home NOT-READY (seven blockers + CD1), its grade and E2-R1 next.
 
 2026-09-23 02:5xZ — VERIFY-J1-1 dispatched (PC, task #130); the VERIFY-J1-0-R23-STAMP brief written (task #140) with five clean include shapes measured; PC lanes: VERIFY-T92-T90R3-PCJ1, B9, VERIFY-J1-1; sandbox: VERIFY-E2.
