@@ -3215,17 +3215,18 @@ def _sha_of(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _census_leg(e3dir, port, unit_code):
+def _census_leg(e3dir, port, unit_code, serve=None):
     """ONE real runner leg for A2': the pinned base moved (the recorded override) to <e3dir>/s0-01-pinned;
     the hermes-acp stand-in runs <unit_code> as the unit user inside its namespace and then exits, so its
     row reads `launch exited within the settle window` while the census after the last unit still runs.
+    <serve>(e3dir, port) starts the service on the leg's one allowed port (default: _listener).
     Returns the finished runner, the census file's content (None when absent) and its path."""
     env = _runner_env(e3dir, port, override={"PINNED_HERMES_HOME": str(e3dir / "s0-01-pinned" / ".hermes-home")},
                       extra=unit_code + "sys.exit(0)\n")
     evidence = e3dir / "evidence"
     listener = None
     try:
-        listener = _listener(e3dir, port)
+        listener = (serve or _listener)(e3dir, port)
         runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
     finally:
         _stop(listener)
@@ -3270,7 +3271,10 @@ def test_e3r1_r2_each_in_place_write_fails_the_leg_by_name(e3dir):
     assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
     assert f"=== S0-01's tree changed during the leg: the leg FAILS (census: {census_file}) ===" in runner.stderr
     assert census["changed"] == sorted(named) and sorted(census["changed_records"]) == census["changed"], census
-    assert sorted(census) == ["after", "base", "before", "changed", "changed_records", "tree"], census
+    # A2'' added `appended` (none here: no file of this tree has a holder) and `writers`
+    assert sorted(census) == ["after", "appended", "base", "before", "changed", "changed_records", "tree",
+                              "writers"], census
+    assert census["appended"] == {} and census["writers"] == {"before": {}, "after": {}}, census
     assert (census["before"]["entries"], census["after"]["entries"]) == (count, count + 1), census
     assert census["before"]["sha256"] != census["after"]["sha256"], census
     records = census["changed_records"]
@@ -3365,3 +3369,266 @@ def test_e3r1_r2_a_census_that_cannot_be_taken_fails_the_leg(e3dir):
     assert "=== S0-01's tree census failed (exit 1): the leg FAILS ===" in runner.stderr.splitlines(), runner.stderr
     assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
     assert census is None
+
+
+# A2'' (the first live pair leg, 2026-09-23 22:47Z): the pinned test relay, running since before the
+# leg, holds .markers/relay.log open for write as its stdout (fdinfo flags 0100001: O_WRONLY, no
+# O_APPEND) and appended to it while it served the pair, which failed the leg. These stand-ins take that
+# shape: each opens its files ONCE at start and writes through the descriptor it holds.
+RELAY_LOG_SERVER = """
+import http.server, os, socketserver, sys
+fd = os.open(sys.argv[3], os.O_WRONLY)
+os.lseek(fd, 0, os.SEEK_END)
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        os.write(fd, ("relay: %s %s\\n" % (self.client_address[0], self.path)).encode())
+        self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+    def log_message(self, *a): pass
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()
+"""
+
+# mode hold: hold each w:<path> for write and r:<path> for read from the start, append to the w: files on
+# SIGUSR1. mode leave: the same, then exit. mode late: hold nothing until SIGUSR1, then open the w: files,
+# append and keep holding them. mode stream: hold the w: files and append to them every half millisecond
+# until killed. <ready> is created once the files are held.
+HOLDER = """
+import os, signal, sys, time
+mode, ready, *specs = sys.argv[1:]
+held = []
+def hold():
+    for spec in specs:
+        how, path = spec.split(":", 1)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT if how == "w" else os.O_RDONLY)
+        os.lseek(fd, 0, os.SEEK_END)
+        held.append((how, fd))
+def on_signal(*_):
+    if mode == "late":
+        hold()
+    for how, fd in held:
+        if how == "w":
+            os.write(fd, ("%s %d: appended\\n" % (mode, os.getpid())).encode())
+    if mode == "leave":
+        os._exit(0)
+signal.signal(signal.SIGUSR1, on_signal)
+if mode != "late":
+    hold()
+open(ready, "w").close()
+while mode == "stream":
+    for how, fd in held:
+        os.write(fd, b"stream: one more line\\n")
+    time.sleep(0.0005)
+while True:
+    signal.pause()
+"""
+
+
+def _proc_identity(pid):
+    """[pid, start time, comm] from /proc, read independently of the runner: the census's holder key."""
+    stat_line = Path(f"/proc/{pid}/stat").read_text()
+    return [pid, int(stat_line[stat_line.rindex(")") + 2:].split()[19]), stat_line[stat_line.index("(") + 1:stat_line.rindex(")")]]
+
+
+def _wait_ready(path, process, what):
+    _wait_for(lambda: path.exists() or process.poll() is not None, 10, what)
+    assert path.exists(), f"{what} exited with {process.poll()} before it was ready"
+
+
+def _relay_log_server(workdir, port, log):
+    """The relay's shape on the leg's allowed port, as the unit user (on the PC the relay and the units
+    are both uid 1000). Returns the Popen; the caller kills it BY PID."""
+    script = workdir / "relay_log_server.py"
+    script.write_text(RELAY_LOG_SERVER)
+    process = subprocess.Popen([_agent_interpreter(), str(script), "0.0.0.0", str(port), str(log)],
+                               user=UNIT_USER[0], group=UNIT_USER[1], extra_groups=[],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if subprocess.run(["curl", "-fsS", "--noproxy", "*", "--max-time", "1", "-o", "/dev/null",
+                           f"http://127.0.0.1:{port}/ready"], capture_output=True).returncode == 0:
+            return process
+        time.sleep(0.1)
+    _stop(process)
+    raise AssertionError(f"the relay-log server on port {port} did not become ready")
+
+
+def _holder(workdir, mode, *specs, ns_over=None):
+    """A HOLDER process (as the unit user, so the unit can signal it). With <ns_over> it runs as root in
+    its OWN mount namespace with a tmpfs over <ns_over>: its descriptors then read as paths of the tree
+    while naming other inodes."""
+    script = workdir / "holder.py"
+    script.write_text(HOLDER)
+    ready = _rec_dir(workdir) / f"ready-{mode}-{uuid.uuid4().hex[:6]}"
+    argv = [_agent_interpreter(), str(script), mode, str(ready), *specs]
+    if ns_over is None:
+        process = subprocess.Popen(argv, user=UNIT_USER[0], group=UNIT_USER[1], extra_groups=[],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        process = subprocess.Popen(
+            ["unshare", "--mount", "--propagation", "private", "sh", "-c",
+             'mount -t tmpfs none "$0" && exec "$@"', str(ns_over), *argv],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _wait_ready(ready, process, f"holder {mode}")
+    return process
+
+
+UNIT_RELAY = """
+import socket
+M, HOST, PORT = @@M@@, @@HOST@@, @@PORT@@
+with socket.create_connection((HOST, PORT), timeout=5) as conn:
+    conn.sendall(b"GET /unit-was-here HTTP/1.0\\r\\n\\r\\n")
+    conn.recv(64)
+with open(os.path.join(M, "relay.log"), "a") as fh:     # declared limit 8: the unit's own append
+    fh.write("unit: appended itself\\n")
+"""
+
+
+@NEEDS_NETNS
+def test_a2pp_a_log_its_holder_appends_during_the_leg_passes(e3dir):
+    """A2'' (the relay's shape): relay.log, held open for write since before the leg by the service on
+    the leg's allowed port, grows during the leg — the runner's own preflight request and the unit's
+    request are both logged through the held descriptor — while every byte it held before stays. The
+    census lists it under `appended` with both records and its holder, says so on stderr, names nothing,
+    and the leg goes on to its checker. The unit's own append to the same file passes too: declared
+    limit 8, pinned here so the prose cannot drift from the behaviour."""
+    markers = _s0_01_tree(e3dir, dirs=["v2-run-1"], files={
+        "relay.log": b"relay: listening\n", "buzz-acp.pid": b"4242\n", "v2-run-1/frames.jsonl": b"{}\n"})
+    port, host = 18144, _lib("egress_ns_host_ip s0-05-hermes-acp").stdout.strip()
+    relay = {}
+    def serve(workdir, port):
+        relay["process"] = _relay_log_server(workdir, port, markers / "relay.log")
+        relay["identity"] = _proc_identity(relay["process"].pid)
+        return relay["process"]
+    unit = UNIT_RELAY.replace("@@M@@", repr(str(markers))).replace("@@HOST@@", repr(host)) \
+        .replace("@@PORT@@", str(port))
+    runner, census, census_file = _census_leg(e3dir, port, unit, serve=serve)
+    data = (markers / "relay.log").read_bytes()        # the holder is stopped: these are the final bytes
+    assert _changed_lines(runner.stderr) == [], runner.stderr
+    assert "=== checker ===" in runner.stdout, runner.stdout            # the census let the leg go on
+    pid, _, comm = relay["identity"]
+    assert f"s0-01-tree-appended: {markers / 'relay.log'} (held for write by pid {pid} ({comm}); not a change)" \
+        in runner.stderr.splitlines(), runner.stderr
+    assert census["changed"] == [] and census["changed_records"] == {} and census["tree"] == "present", census
+    assert census["before"]["sha256"] != census["after"]["sha256"], census   # the sides differ: A2'' decided
+    assert census["writers"] == {"before": {"relay.log": [relay["identity"]]},
+                                 "after": {"relay.log": [relay["identity"]]}}, census
+    assert sorted(census["appended"]) == ["relay.log"], census
+    was, now = census["appended"]["relay.log"]["before"], census["appended"]["relay.log"]["after"]
+    file_record = {"type": "file", "mode": "0644", "uid": UNIT_USER[0], "gid": UNIT_USER[1]}
+    assert now == {**file_record, "size": len(data), "sha256": _sha_of(data)}, (now, data)
+    assert was["size"] < now["size"] and was == {**file_record, "size": was["size"],
+                                                  "sha256": _sha_of(data[:was["size"]])}, (was, data)
+    grown = data[was["size"]:].decode()
+    assert f"relay: {_lib('egress_ns_ip s0-05-hermes-acp').stdout.strip()} /api/health\n" in grown, grown
+    assert "/unit-was-here\n" in grown and "unit: appended itself\n" in grown, grown
+
+
+UNIT_NOT_APPENDS = """
+import signal, socket, time
+M, HOST, PORT, HOLD, LEAVE, LATE = @@ARGS@@
+def size(rel):
+    return os.path.getsize(os.path.join(M, rel))
+def grow(rels, act):
+    was = [size(rel) for rel in rels]
+    act()
+    deadline = time.monotonic() + 20
+    while any(size(rel) <= before for rel, before in zip(rels, was)):
+        assert time.monotonic() < deadline, "no growth in %r" % (rels,)
+        time.sleep(0.05)
+def get():
+    with socket.create_connection((HOST, PORT), timeout=5) as conn:
+        conn.sendall(b"GET /unit-was-here HTTP/1.0\\r\\n\\r\\n")
+        conn.recv(64)
+grow(["relay.log"], get)                                                        # appended by its holder
+grow(["chmod.log", "prefix.log", "late.log"], lambda: os.kill(HOLD, signal.SIGUSR1))
+os.chmod(os.path.join(M, "chmod.log"), 0o600)                                   # then a new mode
+with open(os.path.join(M, "prefix.log"), "r+b") as fh:                           # then a rewritten byte
+    fh.write(b"X")
+grow(["late.log"], lambda: os.kill(LATE, signal.SIGUSR1))                       # a holder added
+grow(["exit.log"], lambda: os.kill(LEAVE, signal.SIGUSR1))                      # its holder then exits
+for rel in ("v2-run-1/frames.jsonl", "watched.log", "ghost.log"):               # no holder for write
+    with open(os.path.join(M, rel), "a") as fh:
+        fh.write("unit: appended\\n")
+"""
+
+
+@NEEDS_NETNS
+def test_a2pp_every_other_change_to_a_grown_file_still_fails_the_leg_by_name(e3dir):
+    """A2'' fails closed: one file per condition, each grown with every earlier byte kept, so only that
+    condition can name it — chmod.log (its holder appended, then a new mode), prefix.log (its holder
+    appended, then byte 0 rewritten), late.log (a second holder opened it for write during the leg),
+    exit.log (its holder appended and exited: no holder after), v2-run-1/frames.jsonl (no holder at
+    all), watched.log (held for READ only), ghost.log (held for write by a process whose own mount
+    namespace puts a tmpfs over .markers: the same path, another inode). Each is named and the leg
+    fails before the checker, while relay.log, appended by its holder in the same leg, is still listed
+    under `appended`: the allowance is per file."""
+    body = {rel: f"{rel}: before\n".encode() for rel in (
+        "relay.log", "chmod.log", "prefix.log", "late.log", "exit.log", "watched.log", "ghost.log")}
+    markers = _s0_01_tree(e3dir, dirs=["v2-run-1"], files={**body, "v2-run-1/frames.jsonl": b"{}\n"})
+    port, host = 18145, _lib("egress_ns_host_ip s0-05-hermes-acp").stdout.strip()
+    at = {rel: markers / rel for rel in body}
+    processes = []
+    try:
+        hold = _holder(e3dir, "hold", f"w:{at['chmod.log']}", f"w:{at['prefix.log']}", f"w:{at['late.log']}",
+                       f"r:{at['watched.log']}")
+        leave = _holder(e3dir, "leave", f"w:{at['exit.log']}")
+        late = _holder(e3dir, "late", f"w:{at['late.log']}")
+        processes += [hold, leave, late]
+        processes.append(_holder(e3dir, "hold", f"w:{at['ghost.log']}", ns_over=markers))
+        identity = {name: _proc_identity(p.pid) for name, p in (("hold", hold), ("leave", leave), ("late", late))}
+        relay = {}
+        def serve(workdir, port):
+            relay["process"] = _relay_log_server(workdir, port, at["relay.log"])
+            relay["identity"] = _proc_identity(relay["process"].pid)
+            return relay["process"]
+        args = repr((str(markers), host, port, hold.pid, leave.pid, late.pid))
+        runner, census, census_file = _census_leg(e3dir, port, UNIT_NOT_APPENDS.replace("@@ARGS@@", args),
+                                                  serve=serve)
+    finally:
+        for process in processes:
+            _stop(process)
+    launch_log = (e3dir / "evidence" / "hermes-acp.launch.log").read_text()
+    assert (markers / "exit.log").read_text().endswith(f"leave {identity['leave'][0]}: appended\n"), launch_log
+    for rel in ("v2-run-1/frames.jsonl", "watched.log", "ghost.log"):
+        assert (markers / rel).read_text().endswith("unit: appended\n"), (rel, launch_log)   # the unit ran to its end
+    named = sorted(str(Path(p).relative_to(markers)) for p in _changed_lines(runner.stderr))
+    expected = ["chmod.log", "exit.log", "ghost.log", "late.log", "prefix.log", "v2-run-1/frames.jsonl",
+                "watched.log"]
+    assert named == expected, (runner.stderr, launch_log)
+    assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
+    assert f"=== S0-01's tree changed during the leg: the leg FAILS (census: {census_file}) ===" in runner.stderr
+    assert census["changed"] == expected and sorted(census["changed_records"]) == expected, census
+    assert sorted(census["appended"]) == ["relay.log"], census
+    # the holders as the census saw them: no read-only holder, no holder from another mount namespace
+    assert census["writers"]["before"] == {
+        "relay.log": [relay["identity"]], "chmod.log": [identity["hold"]], "prefix.log": [identity["hold"]],
+        "late.log": [identity["hold"]], "exit.log": [identity["leave"]]}, census
+    assert census["writers"]["after"] == {
+        "relay.log": [relay["identity"]], "chmod.log": [identity["hold"]], "prefix.log": [identity["hold"]],
+        "late.log": sorted([identity["hold"], identity["late"]])}, census
+    records = census["changed_records"]
+    assert (records["chmod.log"]["before"]["mode"], records["chmod.log"]["after"]["mode"]) == ("0644", "0600"), records
+    assert records["prefix.log"]["after"]["size"] > records["prefix.log"]["before"]["size"], records
+    assert (markers / "prefix.log").read_bytes().startswith(b"Xrefix.log: before\n"), records
+
+
+@NEEDS_NETNS
+def test_a2pp_a_file_that_grows_while_the_census_reads_it_gets_one_consistent_record(e3dir):
+    """A2'': a file's size is the count of the bytes its digest covers. stream.log (32 MiB) is held open
+    for write since before the leg by a holder that appends a line every half millisecond the whole time,
+    so it grows WHILE each census reads it. Each record still describes one byte string: the leg goes on,
+    stream.log is listed under `appended`, and its records match the file's final bytes. (A size taken
+    from lstat before the read describes fewer bytes than the digest covers; the file would then be named,
+    its earlier bytes "changed", and the leg failed on a pure append.)"""
+    markers = _s0_01_tree(e3dir, files={"stream.log": b"s" * (32 << 20), "buzz-acp.pid": b"4242\n"})
+    stream = _holder(e3dir, "stream", f"w:{markers / 'stream.log'}")
+    try:
+        runner, census, _ = _census_leg(e3dir, 18146, "")
+    finally:
+        _stop(stream)
+    data = (markers / "stream.log").read_bytes()
+    assert _changed_lines(runner.stderr) == [] and "=== checker ===" in runner.stdout, runner.stderr
+    assert census["changed"] == [] and sorted(census["appended"]) == ["stream.log"], census
+    was, now = census["appended"]["stream.log"]["before"], census["appended"]["stream.log"]["after"]
+    assert (32 << 20) < was["size"] < now["size"] <= len(data), (was, now, len(data))
+    assert was["sha256"] == _sha_of(data[:was["size"]]) and now["sha256"] == _sha_of(data[:now["size"]]), census

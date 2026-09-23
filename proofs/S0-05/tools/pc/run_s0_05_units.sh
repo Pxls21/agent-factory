@@ -52,10 +52,21 @@
 #     (fail closed) and the fix is a one-line constant (OMNI_PROBE_PATH / RELAY_PROBE_PATH below).
 #  6. A 2xx from a health path proves that the unit's namespace reaches that ip:port; it does not
 #     prove the model API behind it would serve the unit (that is S0-03), nor which instance answers
-#     (the AF-AP-33 class: health-200 is not the right instance).
+#     (the AF-AP-33 class: health-200 is not the right instance), nor that the service takes the unit's
+#     own route: the pinned relay binds each WebSocket to a community by its Host header, which /health
+#     skips. The first live pair leg (2026-09-23 22:36Z) passed its preflight, then got the relay's 404
+#     `no community is configured for this host` until the owner added the fixture's community row for
+#     10.201.219.1:3999 (AF-AP-166).
 #  7. The S0-01 census (A2') compares each entry's type, mode, uid, gid and size, a regular file's
 #     sha256 and a symbolic link's target. It does not compare times, inode numbers, link counts or
 #     extended attributes, and it never reads what a symbolic link points to.
+#  8. A2'' lets one change through that the census cannot attribute: a regular file that the same
+#     processes (pid and start time) held open for write on the path's inode before the first unit and
+#     still hold after the last, which only grew, with every earlier byte and its mode, uid and gid
+#     unchanged (the pinned test relay's stdout, .markers/relay.log, appended while it serves the pair).
+#     A unit that appends to such a file itself (as a uid that may write it) and changes nothing else
+#     is not told apart from that writer. Any other change to the file still fails the leg: a
+#     rewritten byte, a new mode or owner, a holder gone or added.
 #
 # PREFLIGHT, not a workaround: a service bound only to 127.0.0.1 is unreachable from a namespace (a
 # fresh namespace has its own empty loopback — findings §6a, docs/research/FINDINGS-STAGE0-v1.md:98-108).
@@ -220,6 +231,19 @@ _pair_identity() {
 # after records of the CHANGED entries only. It prints each changed entry's path on disk. The base is
 # pins.py's (the directory holding PINNED_HERMES_HOME), never a literal; a tree absent on this venue
 # is recorded, not failed. Any other error exits non-zero, and that fails the leg.
+#
+# A2'' (the coordinator's amendment after the first live pair leg, 2026-09-23 22:47Z: the census failed
+# that leg on .markers/relay.log, which the pinned test relay, running since before the leg, holds open
+# for write as its stdout and appended while it served the pair). The census now tells ONE change apart
+# from the rest: a regular file that the same processes held open for write before the first unit and
+# still hold after the last, which only grew, with every byte it held before unchanged and its type,
+# mode, uid and gid unchanged. `compare` lists such a file under `appended`, never under `changed`, and
+# the leg goes on. A holder is a process with a descriptor open for writing (O_WRONLY or O_RDWR in its
+# fdinfo) on the very inode the tree's path names (device and inode compared, so a file that only reads
+# the same path in another mount namespace is no holder), identified by its pid and start time. `snap`
+# records the holders with the census; `compare` records both sides under `writers`. A file's size is
+# the count of the bytes its digest covers, so a file that grows while it is read still gets one record
+# that describes one byte string. Declared limit 8 says what this cannot tell apart.
 _s0_01_census() {  # snap | compare <census file>
   python3 -B - "${PIN[BASE]}" "$@" <<'PY'
 import hashlib, json, os, stat, sys
@@ -239,13 +263,64 @@ def record(path):
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise OSError(f"{path}: no longer a regular file")
-            digest = hashlib.sha256()
+            digest, size = hashlib.sha256(), 0
             for chunk in iter(lambda: os.read(fd, 1 << 20), b""):
                 digest.update(chunk)
+                size += len(chunk)
         finally:
             os.close(fd)
-        rec["sha256"] = digest.hexdigest()
+        rec["size"], rec["sha256"] = size, digest.hexdigest()
     return rec
+def holders():
+    """A2'': {path relative to .markers: [[pid, start time, comm], ...]} for every regular file of the
+    tree that a process holds open for writing. A process that ends mid-scan, or whose descriptors
+    cannot be read, is skipped: a skip can only take an allowance away, never grant one."""
+    root = os.path.realpath(markers) + os.sep
+    held = {}
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            fds = os.listdir(f"/proc/{pid}/fd")
+        except OSError:
+            continue
+        for fd in fds:
+            link = f"/proc/{pid}/fd/{fd}"
+            try:
+                target = os.readlink(link)
+                if not target.startswith(root):
+                    continue
+                with open(f"/proc/{pid}/fdinfo/{fd}") as fh:
+                    flags = int(next(line for line in fh if line.startswith("flags:")).split()[1], 8)
+                if (flags & os.O_ACCMODE) not in (os.O_WRONLY, os.O_RDWR):
+                    continue
+                opened, named = os.stat(link), os.lstat(target)
+                if not stat.S_ISREG(named.st_mode) or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+                    continue
+                with open(f"/proc/{pid}/stat") as fh:
+                    proc = fh.read()
+            except (OSError, StopIteration, ValueError):
+                continue
+            comm, fields = proc[proc.index("(") + 1:proc.rindex(")")], proc[proc.rindex(")") + 2:].split()
+            held.setdefault(target[len(root):], set()).add((int(pid), int(fields[19]), comm))
+    return {rel: sorted(map(list, who)) for rel, who in held.items()}
+def head_sha256(path, size):
+    """The sha256 of the first <size> bytes of <path> as it is now, or None: shorter, or not a regular file."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        digest = hashlib.sha256()
+        while size > 0:
+            chunk = os.read(fd, min(size, 1 << 20))
+            if not chunk:
+                return None
+            digest.update(chunk)
+            size -= len(chunk)
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
 def census():
     try:
         entries = {".": record(markers)}
@@ -261,25 +336,44 @@ def census():
                 todo.append(rel)
     return entries
 if mode == "snap":
-    sys.stdout.write(json.dumps(census(), sort_keys=True))   # one write (the C encoder; json.dump to a pipe took 3 s)
+    # one write (the C encoder; json.dump to a pipe took 3 s)
+    sys.stdout.write(json.dumps({"entries": census(), "writers": holders()}, sort_keys=True))
     sys.exit(0)
 def side(entries):
     lines = "".join(json.dumps([rel, entries[rel]], sort_keys=True) + "\n" for rel in sorted(entries))
     return {"entries": len(entries), "sha256": hashlib.sha256(lines.encode()).hexdigest()}
 with os.fdopen(3) as fh:
-    before = json.load(fh)
+    snap = json.load(fh)
+before, writers = snap["entries"], {"before": snap["writers"]}
 after = census()
+writers["after"] = holders()
 sides = {"before": side(before), "after": side(after)}
 # The verdict is the two sides' count and digest; the names come from the entries. A difference that no
 # entry explains still fails the leg, named "." (.markers itself).
-changed = [] if sides["before"] == sides["after"] else \
+differ = [] if sides["before"] == sides["after"] else \
     sorted(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel)) or ["."]
+def appended(rel):
+    # A2'': the same holders (pid and start time) before and after, the same mode, uid and gid, and every
+    # byte the file held before still in place. The type test only guards the record's keys: a holder is
+    # bound to a regular file at the path on both sides.
+    was, now, held = before.get(rel), after.get(rel), writers["before"].get(rel)
+    return bool(held) and [w[:2] for w in writers["after"].get(rel, [])] == [w[:2] for w in held] \
+        and was is not None and now is not None and was["type"] == now["type"] == "file" \
+        and all(was[key] == now[key] for key in ("mode", "uid", "gid")) \
+        and head_sha256(os.path.join(markers, rel), was["size"]) == was["sha256"]
+grown = [rel for rel in differ if appended(rel)]
+changed = [rel for rel in differ if rel not in grown]
 with open(sys.argv[3], "w") as fh:
     json.dump({"base": base, "tree": "present" if before or after else "absent on this venue (recorded, not failed)",
                **sides, "changed": changed,
-               "changed_records": {rel: {"before": before.get(rel), "after": after.get(rel)} for rel in changed}},
+               "changed_records": {rel: {"before": before.get(rel), "after": after.get(rel)} for rel in changed},
+               "appended": {rel: {"before": before[rel], "after": after[rel]} for rel in grown},
+               "writers": writers},
               fh, indent=2, sort_keys=True)
     fh.write("\n")
+for rel in grown:
+    who = ", ".join(f"pid {pid} ({comm})" for pid, _, comm in writers["before"][rel])
+    sys.stderr.write(f"s0-01-tree-appended: {os.path.join(markers, rel)} (held for write by {who}; not a change)\n")
 for rel in changed:
     sys.stdout.buffer.write(os.fsencode(markers if rel == "." else os.path.join(markers, rel)) + b"\n")
 PY
@@ -590,6 +684,8 @@ done
 
 # A2': the census after the last unit. A change in S0-01's tree fails the leg, and so does a census that
 # could not be taken: it certifies nothing (at the PIN a crashed census let the run go on to its checker).
+# A2'': a pure append by a holder from before the leg is listed under `appended` (and on stderr), never
+# returned as a change.
 census_failed=""
 census_changed=$(_s0_01_census compare "$EVIDENCE_ROOT/s0-01-census.json" 3<<<"$CENSUS_BEFORE") \
   || census_failed=$?

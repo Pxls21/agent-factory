@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 23:1xZ — WHAT IS LIVE NOW (this block supersedes the 22:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULING (about 23:0xZ):** local Hermes only; the codex subscription ran out. No cloud overflow until the owner says it is back.
+- **S0-05 live pair leg:** run 1 failed on the relay's Host binding (fixed by the owner's community row); run 2 failed on the A2' census (`.markers/relay.log`, the relay's own append). A2'' LANDED GATED-PENDING-VERIFY (task #206); the owner re-runs the same one-liner next.
+- **HOME, NOT YET GRADED:** VERIFY-S0-02 (#205): report 9,098 B, mostly served by the free cloud fallback (gemini-3.1-pro-low 56, qwen-local 22). VERIFY-K1-h (#194): the monitor expired; re-check.
+- **QUEUED for the local slots:** VERIFY-J1-3 (#120), then J1-1-R3 (#202).
+
 **2026-09-23 22:3xZ — WHAT IS LIVE NOW (this block supersedes the 22:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFIED 22:3xZ:** J1-0-R6 (VERIFY-J1-0-R6 MERGE-READY-WITH-FOLLOWUPS, all-local; follow-ups F-1/F-2 on issue #57).
 - **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194) and VERIFY-S0-02 (#205, PIN a78bdca, since 22:2xZ). Monitor bwvojpg3i.
@@ -461,6 +467,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 23:1xZ — S0-05 A2'' census allowance landed (task #206, GATED-PENDING-VERIFY); owner ruling: local Hermes only.
 2026-09-23 22:3xZ — VERIFY-J1-0-R6 graded (J1-0-R6 verified, issue #57); VERIFY-S0-02 dispatched on the local route.
 2026-09-23 22:0xZ — pushed the S0-02 mint (a78bdca); the VERIFY-S0-02 and VERIFY-J1-3 briefs pinned; the cloud route down since about 21:00Z.
 2026-09-23 21:4xZ — S0-02 MINTED from the live eight-leg capture (8 of 9 execution proofs); VERIFY-S0-02 next.
