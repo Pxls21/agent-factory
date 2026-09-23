@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 15:5xZ — WHAT IS LIVE NOW (this block supersedes the 15:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC:** VERIFY-K1-h (task #194) and VERIFY-J1-0-R6 (task #201, PIN c6dcd61): two long-context local lanes, the KV ceiling.
+- **LIVE, sandbox:** S198A (task #198 increment A), VERIFY-J1-1-R2 (task #197) and B12 (task #196).
+- **LANDED (GATED-PENDING-VERIFY):** J1-0-R6 (96c2cff): the workflow line map reads the scalar token; AF-AP-159 registered with a screen row (c6dcd61).
+- **PUSHED:** 0dfd28e..c6dcd61; CI run #992 running; the next push waits for it.
+- **NEXT:** grade S198A, VERIFY-J1-1-R2, B12, VERIFY-K1-h and VERIFY-J1-0-R6 as they come home; #200 (the failed-session harvest fix) when a sandbox slot frees; J1-3 (#120) when a PC slot frees.
+
 **2026-09-23 15:3xZ — WHAT IS LIVE NOW (this block supersedes the 14:5xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC:** VERIFY-K1-h (task #194), alive at the last heartbeat. VERIFY-T92 came home (task #132 closed).
 - **LIVE, sandbox:** S198A (task #198 increment A, the transcript scrubber), VERIFY-J1-1-R2 (task #197) and B12 (task #196, PIN c19736d).
@@ -391,6 +398,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 15:5xZ — J1-0-R6 landed (96c2cff) and AF-AP-159 registered (c6dcd61); pushed 0dfd28e..c6dcd61; VERIFY-J1-0-R6 dispatched on the PC.
 
 2026-09-23 15:3xZ — B12 dispatched; VERIFY-J1-0-R5 ruled NOT-READY (J1-0-R6 under AMENDMENT 5, issue #50); VERIFY-T92 recovered from its lane directory and accepted (issue #51); AF-AP-67's sixth family (task #200).
 
