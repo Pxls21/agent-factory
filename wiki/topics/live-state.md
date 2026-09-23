@@ -15,7 +15,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-23 20:3xZ — WHAT IS LIVE NOW (this block supersedes the 20:0xZ block and the older ones below for the live set; the ledger carries the detail).**
-- **LIVE, PC (six lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201; poller re-attached 20:07Z) on the local route; J1-3 (#120), J1-1-R3 (#202), C2 (#148) and VERIFY-T94-R1 (#200 + #167; PIN 6963f00, since 20:4xZ) on the cloud routes. Monitor bf7rc83kd.
+- **LIVE, PC (six lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201) on the local route; J1-1-R3 (#202), VERIFY-T94-R1 (#200 + #167; PIN 6963f00), VERIFY-J1-3 (#120) and VERIFY-C2 (#148) (both PIN e8db82c, since 21:1xZ) on the cloud routes. Monitor b0o1kfwz6.
 - **HOME:** VERIFY-T94 NOT-READY (F-1: the FAILED-UNRETRIED branch had no executed case) → T94-R1 landed test-only (T2 51/0 ×2; four doubled-escape mutants red). VERIFY-T94-R1 next.
 - **LANDED (GATED-PENDING-VERIFY) 20:5xZ:** J1-3 `scripts/decide-harvest` (33 tests; the real run 207 rows, 39 refused, byte-identical twice). VERIFY-J1-3 next.
 - **LANDED (GATED-PENDING-VERIFY, switched OFF) 21:0xZ:** C2, the lane done-gate (`lane-done-gate.py` + the `LANE_DONE_GATE` profile switch; 19/0 and 13/0 ×2). VERIFY-C2 next; the live check waits for the dispatcher to forward the switch.
@@ -435,6 +435,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 21:1xZ — VERIFY-J1-3 and VERIFY-C2 dispatched (PIN e8db82c).
 2026-09-23 21:0xZ — C2 landed (the lane done-gate, switched off, GATED-PENDING-VERIFY).
 2026-09-23 20:5xZ — J1-3 landed (decide-harvest, GATED-PENDING-VERIFY); lane_gate.sh relative-dir fix (AF-AP-163).
 2026-09-23 20:3xZ — VERIFY-T94 home NOT-READY (F-1); T94-R1 landed test-only; VERIFY-T94-R1 next.
