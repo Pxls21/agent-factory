@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 14:5xZ — WHAT IS LIVE NOW (this block supersedes the 14:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC:** VERIFY-T92 (task #132) and VERIFY-K1-h (task #194), alive at the 14:47Z heartbeat.
+- **LIVE, sandbox:** J1-1-R2 (task #192), B11 (task #191) and VERIFY-J1-0-R5 (task #193).
+- **S0-02:** the seven owner-free legs came home (rc 0, bundle sha aa4dde4b…3475, kept in the scratchpad). The committed checker fails the bad-signature leg: 1 prompt from the runner's own valid probe (AF-AP-156). B12 (task #196) fixes the runner after B11 lands. Then all eight legs are captured again in one run, after the owner's owner2 removal.
+- **NEXT:** push the local commits when the CI run for fd2aa30 passes; grade the lanes as they come home; B12 after B11.
+
 **2026-09-23 14:3xZ — WHAT IS LIVE NOW (this block supersedes the 14:2xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
 - **LIVE, PC:** VERIFY-T92 (task #132) and VERIFY-K1-h (task #194, lane `pc-verify-k1-h.md--5276976`, launched 14:35:55Z), both alive at the first heartbeat after the launch (vLLM run=2 wait=0 kv=0.35). The S0-02 seven-leg capture runs on the PC since 14:37:08Z (`~/s0-02-capture/c1`, the run marker files `run-7.rc` and `run-7.finished`).
 - **LIVE, sandbox:** J1-1-R2 (task #192), B11 (task #191, PIN 8d8c97e) and VERIFY-J1-0-R5 (task #193, PIN 10f1823).
@@ -377,6 +383,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 14:5xZ — the seven-leg S0-02 capture came home; the checker caught the bad-signature leg's probe turn (AF-AP-156); B12 queued behind B11.
 
 2026-09-23 14:3xZ — pushed 98e2efc..fd2aa30; B11, VERIFY-J1-0-R5 and VERIFY-K1-h dispatched; the S0-02 seven-leg capture started on the PC.
 
