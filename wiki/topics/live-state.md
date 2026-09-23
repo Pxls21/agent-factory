@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 14:3xZ — WHAT IS LIVE NOW (this block supersedes the 14:2xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
+- **LIVE, PC:** VERIFY-T92 (task #132) and VERIFY-K1-h (task #194, lane `pc-verify-k1-h.md--5276976`, launched 14:35:55Z), both alive at the first heartbeat after the launch (vLLM run=2 wait=0 kv=0.35). The S0-02 seven-leg capture runs on the PC since 14:37:08Z (`~/s0-02-capture/c1`, the run marker files `run-7.rc` and `run-7.finished`).
+- **LIVE, sandbox:** J1-1-R2 (task #192), B11 (task #191, PIN 8d8c97e) and VERIFY-J1-0-R5 (task #193, PIN 10f1823).
+- **PUSHED:** 98e2efc..fd2aa30 (B10 = 8d8c97e, K1-h = 5276976, D-058 = fd2aa30) after CI run #988 passed; the transcripts sync fa4532e; the next push waits on the CI run for fd2aa30.
+- **NEXT:** the capture's seven legs checked; the owner's owner2 removal, then the revoked leg; B11 graded; the S0-02 mint and the VERIFY-S0-02 brief (B10 + B11 + the live evidence).
+
 **2026-09-23 14:2xZ — WHAT IS LIVE NOW (this block supersedes the 14:0xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
 - **LIVE, PC:** VERIFY-T92 (task #132), alive at the 14:18Z heartbeat.
 - **LIVE, sandbox:** J1-1-R2 (task #192): the eaten-name secret leak repair under D-057.
@@ -371,6 +377,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 14:3xZ — pushed 98e2efc..fd2aa30; B11, VERIFY-J1-0-R5 and VERIFY-K1-h dispatched; the S0-02 seven-leg capture started on the PC.
 
 2026-09-23 14:3xZ — CI run #988 passed; D-058 recorded (the owner's dream-phase Jev triage idea, PROPOSED, `docs/11_DREAM_PHASE.md` §9, task #195); the open owner asks re-listed.
 
