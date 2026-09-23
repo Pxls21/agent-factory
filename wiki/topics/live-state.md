@@ -14,6 +14,17 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 14:2xZ — WHAT IS LIVE NOW (this block supersedes the 14:0xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
+- **LIVE, PC:** VERIFY-T92 (task #132), alive at the 14:18Z heartbeat.
+- **LIVE, sandbox:** J1-1-R2 (task #192): the eaten-name secret leak repair under D-057.
+- **LANDED (GATED-PENDING-VERIFY):** B10 (c63a3a9, the S0-02 fixture signers) and K1-h (efb4518, the vendored skill sets as manifest rows, merged onto D-054's counts).
+- **FILED:** issue #49 (VERIFY-J1-1-R1 follow-ups) and a comment on issue #46 (J1-0-R5's new rows).
+- **NEXT:**
+  1. Push when CI run #988 concludes.
+  2. Dispatch B11 (task #191) and VERIFY-J1-0-R5 (task #193).
+  3. Fast-forward the PC clone and run the seven owner-free S0-02 legs.
+  4. Hand the owner the owner2 removal command, then run the revoked leg.
+
 **2026-09-23 14:0xZ — WHAT IS LIVE NOW (this block supersedes the 13:2xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
 - **LIVE, PC:** VERIFY-T92 (task #132), alive at the 13:53Z heartbeat (vLLM kv 0.59, no request waiting). K1-h came home at 13:4xZ.
 - **LIVE, sandbox:** B10 (task #190): the S0-02 fixture signers per D-037 and D-038.
@@ -360,6 +371,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 14:2xZ — B10 (c63a3a9) and K1-h (efb4518) landed; J1-1-R2 dispatched; issue #49 filed; the B11 and VERIFY-J1-0-R5 briefs written.
 
 2026-09-23 14:0xZ — VERIFY-E3-R1, VERIFY-J1-1-R1 and J1-0-R5 home; J1-0-R5 landed (ee67995); D-057 authorizes J1-1-R2 (the eaten-name leak, reproduced 8 of 8); K1-h home; AF-AP-73 and AF-AP-153 instances logged.
 
