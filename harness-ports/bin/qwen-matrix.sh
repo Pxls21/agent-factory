@@ -93,7 +93,8 @@ RESTORE_NEEDED=0
 GPU_PID=""
 cleanup() {
   local rc=$?
-  trap - EXIT INT TERM
+  trap '' INT TERM
+  trap - EXIT
   if [ -n "$GPU_PID" ]; then
     kill "$GPU_PID" 2>/dev/null || true
     wait "$GPU_PID" 2>/dev/null || true
@@ -134,9 +135,16 @@ cleanup() {
   fi
   exit "$rc"
 }
+# AF-AP-145 (task #176): a SECOND SIGINT or SIGTERM must not abort the restore. Each handler ignores
+# both signals before its `exit`, and cleanup ignores them right after it reads its status, so every
+# later INT/TERM is dropped and the status stays the first signal's; every command cleanup starts
+# (the restore install) inherits the ignore. The handlers need their own ignore: a signal that lands
+# microseconds after the first runs its handler at bash's next command, and that `exit` would end the
+# EXIT trap before cleanup began (measured on the S0-05 runner, E3-R1 report section 2). Not covered:
+# a stop in the microseconds between the run's own end and cleanup's ignore, and SIGKILL.
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'trap "" INT TERM; exit 130' INT
+trap 'trap "" INT TERM; exit 143' TERM
 
 # install is the launcher's only persistent cell path. The guard above is intentionally before it;
 # install repeats the guard at its own pre-write boundary.

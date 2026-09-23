@@ -202,6 +202,38 @@ OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/signal-matrix.py" \
   [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ]
 check "TERM interruption restores baseline and leaves no completion record" $? "rc=$rc: $OUT"
 
+# AF-AP-145 (task #176): a SECOND signal while cleanup runs must change nothing. The load generator
+# sends the first signal to the runner and starts a helper that sends TERM again 0.3 s later; the
+# padded baseline env (300,000 comment lines, about a second of bash-only reading in the sandbox)
+# holds cleanup in the step BEFORE the restore, so a second signal that kills bash there leaves the
+# cell unit installed. The status must stay the first signal's (130 for INT, 143 for TERM), or the
+# run's own failure status (7) when the load generator fails and the only signal is the helper's.
+cat > "$TMP/bin/signal2-matrix.py" <<'PY'
+#!/usr/bin/env python3
+import os
+import signal
+import subprocess
+ppid = os.getppid()
+subprocess.Popen(["bash", "-c", f"sleep 0.3; kill -TERM {ppid}"], start_new_session=True)
+if os.environ["QM_FIRST_SIGNAL"] == "NONE":  # the run fails on its own: cleanup's own ignore is the guard
+    raise SystemExit(1)
+os.kill(ppid, getattr(signal, os.environ["QM_FIRST_SIGNAL"]))
+raise SystemExit(0)
+PY
+chmod +x "$TMP/bin/signal2-matrix.py"
+python3 -c "import sys; open(sys.argv[1], 'w').write('# padding\n' * 300000 + 'QWEN_CACHE_RAM=8192\n')" \
+  "$TMP/matrix/baseline/env-padded"
+for first in SIGTERM:143 SIGINT:130 NONE:7; do
+  printf 'baseline unit\n' > "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"
+  OUT=$(env "${COMMON[@]}" QWEN_MATRIX_PY="$TMP/bin/signal2-matrix.py" QM_FIRST_SIGNAL="${first%%:*}" \
+    QWEN_MATRIX_BASELINE_ENV="$TMP/matrix/baseline/env-padded" \
+    bash "$RUNNER" "SECOND_${first%%:*}" -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
+  [ "$rc" -eq "${first##*:}" ] && [ ! -e "$TMP/matrix/SECOND_${first%%:*}/run-complete" ] && \
+    [ "$(sha256sum "$TMP/home/.config/systemd/user/qwen-builder.service" | cut -d' ' -f1)" = "$BASELINE_SHA" ]
+  check "a TERM during cleanup after ${first%%:*} still restores the baseline (rc ${first##*:})" $? \
+    "rc=$rc unit=$(cat "$TMP/home/.config/systemd/user/qwen-builder.service") calls=$(tr '\n' ';' < "$CALLS"): $OUT"
+done
+
 # Initially absent is a distinct baseline state: success and failure must both remove the created unit.
 rm -f "$TMP/home/.config/systemd/user/qwen-builder.service"; : > "$CALLS"
 OUT=$(env "${COMMON[@]}" bash "$RUNNER" ABSENT_OK -- QWEN_CACHE_RAM=32768 2>&1); rc=$?
