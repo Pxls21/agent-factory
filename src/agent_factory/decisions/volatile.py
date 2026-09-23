@@ -1,19 +1,22 @@
-"""Closed per-question-type state schemas and the normalize / redact transforms.
+"""Closed per-question-type state schemas and the normalize / redact / bound transforms.
 
 J1 contract (seeds/seed-laya-j1-v1.yaml; the pinned decisions in
-tasks/laya-j1-breakdown.md): state is a BOUNDED, CLOSED, per-question-type
-extraction -- never verbatim bytes. Line numbers, timestamps, absolute paths,
-run ids and PIN SHAs are never state keys; they belong to source_ref.locator
-(J1-2's).
+tasks/laya-j1-breakdown.md; AMENDMENT 1, D-056): state is a BOUNDED, CLOSED,
+per-question-type extraction -- never verbatim bytes. Line numbers, timestamps,
+absolute paths, run ids and PIN SHAs are never state keys; they belong to
+source_ref.locator (J1-2's).
 
-Two transforms, two jobs, one fixed order (normalize -> redact):
+Three transforms, three jobs, one fixed order (normalize -> redact -> bound),
+composed by ONE public function, decision_state:
   normalize -- the STABILITY mechanism: repo-relativize (root-bound), NFC,
       collapse whitespace runs to one space and strip, sort list keys,
-      case-fold enum values to the schema's case, truncate bounded fields
-      on a character boundary.
+      case-fold enum values to the schema's case. It never cuts.
   redact    -- the SECURITY mechanism only: every secret class -> a fixed
       placeholder. Applied AFTER normalize. It never contributes to stability
       and stability never relies on it.
+  bound     -- the SIZE mechanism: each bounded field is cut at its limit on a
+      code-point boundary, then its trailing whitespace is stripped. Applied
+      AFTER redact, so no cut splits a secret before a pattern sees it.
 """
 
 from __future__ import annotations
@@ -40,21 +43,45 @@ PLACEHOLDERS = {
 
 _BEARER = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/-]{16,}=*")
 _SK = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
-# A 32+ hex/base64 run after the word "token" with a SINGLE separator
-# (one space, or ":" optionally followed by one space). A whitespace-RUN
-# separator (e.g. "token:  <run>") is NOT matched here: it is only caught
-# once normalize has collapsed the run to one space -- that asymmetry is what
-# discriminates the normalize -> redact order in the order test.
-_TOKEN = re.compile(r"(?i)\btoken(?:[:=] ?| )?([A-Za-z0-9+/]{32,})")
-# KEY=/TOKEN=/SECRET=/PASSWORD=(API_KEY) assignments: the name is kept, the
-# value part is replaced. Applied before the bare token rule so an
-# assignment wins its own class.
-_ENVVAL = re.compile(
-    r"(?P<name>(?:[A-Z][A-Z0-9_]*_)*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY))=\S+"
+# A 32+ hex/base64 run after "token", "*_token" or "*_TOKEN" (C-F3a): an
+# optional quote after the name, then ONE space, or ":" / "=" with at most one
+# space on each side, then an optional quote ("token = <run>",
+# '"token": "<run>"', "AGENT_TOKEN: <run>"). A whitespace-RUN separator (e.g.
+# "token:  <run>") is NOT matched here: it is only caught once normalize has
+# collapsed the run to one space -- that asymmetry is what discriminates the
+# normalize -> redact order in the order test.
+_TOKEN = re.compile(r"(?i)(?:\b|(?<=_))token[\"']?(?: ?[:=] ?| )?[\"']?([A-Za-z0-9+/]{32,})")
+# The env assignments: the name is kept, the value part is replaced. Two
+# forms in two passes, in the class order of the D-1 ruling:
+#   _ENVVAL      -- the upper-case NAME=value (any value), TOKEN included, as
+#       at the PIN. It runs BEFORE the token class, so an upper-case
+#       assignment wins its own class (PC_BRIDGE_TOKEN=<run> -> envval).
+#   _ENVVAL_WIDE -- (C-F3b) the names matched without regard to case, TOKEN
+#       included, with at most one space around "=" or ":" and an optional
+#       quote after the name and before the value, whose value must have 8+
+#       characters (the transcript scrubber's floor,
+#       scripts/transcript_export.py:33, so prose such as "key: sorted"
+#       stays). It runs AFTER the token class, so a 32+ run after a TOKEN
+#       name keeps the token placeholder, and its guard (_envval_wide) never
+#       replaces a value that already is a placeholder. At most one space: a
+#       whitespace RUN is never bridged, which keeps the order test's
+#       normalize -> redact discriminator (a run exists only before normalize).
+# A name's prefix (SECRET_, db_, AWS_SECRET_ACCESS_) is matched by the scan,
+# not by a pattern group: the text before the name is kept either way, and
+# the nested group "(?:[A-Z][A-Z0-9_]*_)*" backtracked exponentially
+# ("A_" * 26 took 8.6 s; J1-1-R1 report D-3).
+_ENVVAL = re.compile(r"(?P<name>(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)=)\S+")
+_ENVVAL_WIDE = re.compile(
+    r"(?P<wide>(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)[\"']?\s?[:=]\s?[\"']?)"
+    r"(?P<value>[^\s\"'&,;]{8,})"
 )
-# A private-key block, BEGIN ... END (the whole block becomes one placeholder).
+# A private-key block -- the transcript scrubber's label family
+# (scripts/transcript_export.py:29-31: PEM, OpenSSH and GnuPG armor) -- BEGIN
+# through END, or through the end of the value when the END line is missing
+# (VERIFY-J1-1 F-11). The whole block becomes one placeholder.
 _PRIVKEY = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"
+    r"(?:-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----|\Z)",
     re.S,
 )
 
@@ -139,8 +166,6 @@ def _normalize_field(f: _Field, key: str, value, root):
     if f.strip_pin:
         s = _strip_pin_suffix(s)
     s = _apply_case(s, f.case)
-    if f.limit is not None:
-        s = s[: f.limit]
     if f.kind == "path":
         return _path(key, s, root)
     if f.kind == "target":
@@ -283,13 +308,56 @@ def redact(state: dict) -> dict:
     return out
 
 
+def _envval_wide(m: re.Match) -> str:
+    # The guard: a value that already is a placeholder -- whole, or cut by
+    # bound -- is never replaced again, so no class is relabelled (a 32+ run
+    # after a TOKEN name ends as <redacted:token> only). Any other value,
+    # including a placeholder followed by more of the value (a base64url
+    # tail after a token run), becomes envval whole.
+    if any(p.startswith(m.group("value")) for p in PLACEHOLDERS.values()):
+        return m.group(0)
+    return m.group("wide") + PLACEHOLDERS["envval"]
+
+
 def _redact_str(text: str) -> str:
-    # Order: the private-key block first (so it is not split), then sk, then
-    # bearer, then the env-assignment (which wins over the bare token rule for
-    # a NAME=value form), then the bare 32+ token run.
+    # Order (the D-1 ruling; each pass sees the text the earlier passes left):
+    # the private-key block first (so it is not split), then sk, then bearer,
+    # then the upper-case env assignment (which wins over the token rule for
+    # a NAME=value form), then the token class (a 32+ run after a TOKEN
+    # name), then the widened env assignment for the rest (guarded).
     text = _PRIVKEY.sub(PLACEHOLDERS["privkey"], text)
     text = _SK.sub(PLACEHOLDERS["sk"], text)
     text = _BEARER.sub(PLACEHOLDERS["bearer"], text)
-    text = _ENVVAL.sub(lambda m: f"{m.group('name')}={PLACEHOLDERS['envval']}", text)
+    text = _ENVVAL.sub(lambda m: m.group("name") + PLACEHOLDERS["envval"], text)
     text = _TOKEN.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDERS["token"]), text)
+    text = _ENVVAL_WIDE.sub(_envval_wide, text)
     return text
+
+
+def bound(question_id: str, state: dict) -> dict:
+    """The SIZE transform, applied AFTER redact: each bounded field is cut at
+    its limit on a code-point boundary, then its trailing whitespace is
+    stripped (a cut right after a space would leave one: VERIFY-J1-1 F-3).
+    Lists and unbounded fields pass unchanged. Because it runs after redact,
+    a secret that straddles a limit is replaced whole before any cut."""
+    if question_id not in SCHEMAS:
+        raise DecisionStateError("decision-question-unknown", question_id)
+    fields = SCHEMAS[question_id]
+    out: dict = {}
+    for key, value in state.items():
+        spec = fields.get(key)
+        if spec is not None and spec.limit is not None and isinstance(value, str):
+            value = value[: spec.limit].rstrip()
+        out[key] = value
+    return out
+
+
+def decision_state(question_id: str, state: dict, root: str | os.PathLike | None = None) -> dict:
+    """The ONE public composition, bound(redact(normalize(state))) (D-056):
+    state_digest and both ledger call sites use it. It is idempotent on its
+    own output -- the ledger's fixed-point check depends on that -- including
+    when the cut lands inside a placeholder: redact can only complete a cut
+    placeholder again, and bound cuts it back to the same prefix. (One known
+    exception, J1-1-R1 report D-2: a v1 lane whose cut exposes a PIN-shaped
+    suffix, which normalize strips on the next pass.)"""
+    return bound(question_id, redact(normalize(question_id, state, root)))

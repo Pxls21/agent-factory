@@ -7,12 +7,14 @@ EXACT expected reason. The golden digests are asserted EXACTLY (pasted, not
 recomputed) and a re-landed variant per type must hash to the SAME digest.
 
 The pipeline entry point under test is the public
-``state_digest(question_id, state, root)`` = sha256(canonical(redact(normalize(state))));
-the two transforms are also tested directly for their separation (normalize
-never redacts, redact never normalizes).
+``state_digest(question_id, state, root)`` = sha256(canonical(decision_state(state))),
+where ``decision_state`` = bound(redact(normalize(state))) (AMENDMENT 1, D-056);
+the transforms are also tested directly for their separation (normalize
+never redacts, redact never normalizes, normalize never cuts).
 
 Contract: tasks/briefs/laya/J1-1-brief.md (seeds/seed-laya-j1-v1.yaml AC 1 +
-AC 3; the verdict's J1 acceptance test 1 + the KC-J6 field list).
+AC 3; the verdict's J1 acceptance test 1 + the KC-J6 field list), amended by
+tasks/briefs/laya/J1-1-R1-brief.md (A1-A5).
 """
 from __future__ import annotations
 
@@ -338,3 +340,509 @@ def test_order_is_normalize_then_redact():
     right_input = canonical(redact(normalize("b1.finding_sev", raw)))
     assert run not in right_input, "normalize-first must CATCH the whitespace-run-split token"
     assert "<redacted:token>" in right_input, "normalize-first must leave the token placeholder"
+
+
+# ===========================================================================
+# J1-1-R1 -- AMENDMENT 1 to J1-1 (D-056): the state is bounded AFTER
+# redaction, through ONE public composition
+#     decision_state(qid, state, root) = bound(redact(normalize(state)))
+# that state_digest and both ledger call sites use
+# (tasks/briefs/laya/J1-1-R1-brief.md, A1-A5).
+#
+# Every secret below is FAKE. A secret BODY uses only the letters Q Z X J,
+# which occur in no name, separator, placeholder or filler these tests put
+# next to a body: "no byte of the body reaches the output" is checked one
+# character at a time, so a one-character leak is red.
+# ===========================================================================
+
+_BODY_ALPHABET = frozenset("QZXJ")
+
+
+def _body(n: int) -> str:
+    """A FAKE secret body of n characters over the body alphabet."""
+    return ("QZXJ" * (n // 4 + 1))[:n]
+
+
+def _decision_state(qid, state, root=None):
+    # Imported at call time: the name does not exist at the PIN, so each test
+    # that needs it is red on its own while the rest of the file collects.
+    from agent_factory.decisions import decision_state
+
+    return decision_state(qid, state, root)
+
+
+def _bound(qid, state):
+    from agent_factory.decisions.volatile import bound
+
+    return bound(qid, state)
+
+
+# Every bounded free-text key and its limit, pinned here (the amendment keeps
+# the limits' values). The enum keys are bounded too, but a value outside its
+# enum is refused before bound runs, so an enum key never carries a secret.
+_BOUNDED = {
+    ("b2.hit_role", "sym"): 120,
+    ("b2.hit_role", "snippet"): 400,
+    ("b1.finding_sev", "kind"): 80,
+    ("b1.finding_sev", "msg"): 200,
+    ("b1.finding_kind", "kind"): 80,
+    ("b1.finding_kind", "msg"): 200,
+    ("d1.bug_echo_scores", "class_slug"): 80,
+    ("d1.bug_echo_scores", "finding_title"): 120,
+    ("v1.finding_class", "lane"): 80,
+    ("v1.finding_class", "finding_id"): 80,
+    ("v1.finding_class", "title"): 120,
+    ("ap.violates_row", "action_excerpt"): 400,
+    ("ap.violates_row", "row_id"): 40,
+    ("ap.violates_row", "row_title"): 120,
+    ("wf.drift", "expected"): 400,
+    ("wf.drift", "observed"): 400,
+}
+_ENUM_BOUNDED = {
+    ("v1.finding_class", "disposition"): 40,
+    ("ap.violates_row", "action_kind"): 20,
+    ("wf.drift", "step_id"): 40,
+    ("wf.drift", "drift_kind"): 40,
+}
+
+# A short, valid, secret-free state per question type.
+_BASE = {
+    "b2.hit_role": {"sym": "s", "file": "src/a.py", "snippet": "x"},
+    "b1.finding_sev": {"file": "src/a.py", "kind": "k", "msg": "x"},
+    "b1.finding_kind": {"file": "src/a.py", "kind": "k", "msg": "x"},
+    "d1.bug_echo_scores": {"class_slug": "c", "finding_title": "x"},
+    "v1.finding_class": {
+        "lane": "l",
+        "finding_id": "f",
+        "title": "x",
+        "paths": ["src/a.py"],
+        "disposition": "BLOCKING",
+    },
+    "ap.violates_row": {
+        "action_kind": "edit",
+        "action_target": "a/b.py",
+        "action_excerpt": "x",
+        "row_id": "r",
+        "row_title": "t",
+    },
+    "wf.drift": {
+        "step_id": "count-pasted",
+        "expected": "e",
+        "observed": "x",
+        "drift_kind": "prose-claim",
+    },
+}
+
+
+def _forms(body_len: int = 40):
+    """(class, secret text, the same text with its placeholder in the
+    secret's place). Each secret is the whole matched form; its body is FAKE."""
+    b = _body(body_len)
+    return [
+        ("sk", "sk-" + b, "<redacted:sk>"),
+        ("bearer", "Bearer " + b, "<redacted:bearer>"),
+        ("token", "token: " + b, "token: <redacted:token>"),
+        ("token C-F3a", "AGENT_TOKEN: " + b, "AGENT_TOKEN: <redacted:token>"),
+        ("envval", "API_KEY=" + b, "API_KEY=<redacted:envval>"),
+        ("envval C-F3b", '"api_key": "' + b + '"', '"api_key": "<redacted:envval>"'),
+        ("envval TOKEN name, short value", "SECRET_TOKEN = " + b[:20], "SECRET_TOKEN = <redacted:envval>"),
+        ("envval base64url token value", "token: " + b[:16] + "-" + b[16:32], "token: <redacted:envval>"),
+        (
+            "privkey",
+            "-----BEGIN RSA PRIVATE KEY----- " + b + " -----END RSA PRIVATE KEY-----",
+            "<redacted:privkey>",
+        ),
+        (
+            "privkey GnuPG",
+            "-----BEGIN PGP PRIVATE KEY BLOCK----- " + b + " -----END PGP PRIVATE KEY BLOCK-----",
+            "<redacted:privkey>",
+        ),
+    ]
+
+
+def _assert_bounded_and_clean(qid, out, context):
+    text = canonical(out)
+    leaked = sorted(set(text) & _BODY_ALPHABET)
+    assert not leaked, f"{context}: secret body bytes {leaked} in the decision state {text!r}"
+    for (q, key), limit in list(_BOUNDED.items()) + list(_ENUM_BOUNDED.items()):
+        if q != qid:
+            continue
+        assert len(out[key]) <= limit, f"{context}: {key} has {len(out[key])} > {limit} characters"
+        assert out[key] == out[key].rstrip(), f"{context}: {key} ends with whitespace"
+
+
+def test_normalize_never_cuts():
+    # A1: normalize keeps every other step and no longer cuts a bounded field.
+    state = dict(_BASE["ap.violates_row"], action_excerpt="a" * 399 + "  b" + " c" * 100)
+    assert normalize("ap.violates_row", state)["action_excerpt"] == "a" * 399 + " b" + " c" * 100
+    finding = {
+        "lane": "pc-j1-1--330803c",
+        "finding_id": "F-1",
+        "title": "  " + "t " * 100,
+        "paths": ["b.py", "a.py"],
+        "disposition": "non-blocking",
+    }
+    out = normalize("v1.finding_class", finding)
+    assert out == {
+        "lane": "pc-j1-1",
+        "finding_id": "F-1",
+        "title": ("t " * 100).strip(),
+        "paths": ["a.py", "b.py"],
+        "disposition": "NON-BLOCKING",
+    }
+
+
+def test_straddle_every_class_every_bounded_key():
+    # A2 + A5: a secret that STRADDLES a bounded key's limit -- its first k
+    # characters before the limit, the rest after it, for k = 1 .. len-1 --
+    # is replaced whole before the cut. No body byte survives, the digest
+    # equals the placeholder form's, every bounded field is within its limit,
+    # and decision_state is a fixed point of itself (the sweep moves the cut
+    # through every position inside every placeholder).
+    cases = 0
+    for (qid, key), limit in _BOUNDED.items():
+        for cls, secret, placeholder in _forms():
+            for k in range(1, min(len(secret), limit - 1)):
+                prefix = "a" * (limit - k - 1) + " "
+                state = dict(_BASE[qid], **{key: prefix + secret + " tail"})
+                clean = dict(_BASE[qid], **{key: prefix + placeholder + " tail"})
+                context = f"{qid}.{key} {cls} k={k}"
+                assert state_digest(qid, state) == state_digest(qid, clean), (
+                    f"{context}: the straddling secret does not hash as its placeholder form"
+                )
+                out = _decision_state(qid, state)
+                _assert_bounded_and_clean(qid, out, context)
+                assert _decision_state(qid, out) == out, f"{context}: not idempotent"
+                cases += 1
+    assert cases > 5000, cases
+
+
+def test_over_limit_identity_every_class():
+    # A5 / item 6 for over-limit fields: the secret sits wholly INSIDE the
+    # limit and a long tail takes the field past it. The secret-bearing state
+    # hashes IDENTICAL to the state with the placeholder in its place
+    # (VERIFY-J1-1 section 4 measured 374 vs 400 kept characters at the PIN).
+    cases = 0
+    for (qid, key), limit in _BOUNDED.items():
+        for cls, secret, placeholder in _forms():
+            if len(secret) + 4 > limit:
+                continue
+            tail = " " + "w" * (2 * limit)
+            state = dict(_BASE[qid], **{key: "a b " + secret + tail})
+            clean = dict(_BASE[qid], **{key: "a b " + placeholder + tail})
+            context = f"{qid}.{key} {cls}"
+            assert state_digest(qid, state) == state_digest(qid, clean), (
+                f"{context}: an over-limit field breaks the secret/placeholder identity"
+            )
+            out = _decision_state(qid, state)
+            _assert_bounded_and_clean(qid, out, context)
+            assert out == _decision_state(qid, clean), context
+            cases += 1
+    assert cases >= 90, cases
+
+
+def test_private_key_blocks_longer_than_the_limit_gnupg_and_endless():
+    # A4 privkey: the transcript scrubber's label family (PEM, OpenSSH and
+    # GnuPG armor), a block longer than the field's limit, and a block whose
+    # END line is missing (redacted to the end of the value, VERIFY-J1-1 F-11).
+    body = "\n".join(_body(64) for _ in range(24))  # a FAKE 1,559-character body
+    labels = (
+        "RSA PRIVATE KEY",
+        "PRIVATE KEY",
+        "OPENSSH PRIVATE KEY",
+        "ENCRYPTED PRIVATE KEY",
+        "PGP PRIVATE KEY BLOCK",
+        "PGP SECRET KEY BLOCK",
+    )
+    for label in labels:
+        for with_end in (True, False):
+            block = f"-----BEGIN {label}-----\n{body}"
+            if with_end:
+                raw = "block follows: " + block + f"\n-----END {label}-----" + " then more"
+                want = "block follows: <redacted:privkey> then more"
+            else:
+                raw = "block follows: " + block + " and words after it"
+                want = "block follows: <redacted:privkey>"
+            state = dict(_BASE["wf.drift"], observed=raw)
+            clean = dict(_BASE["wf.drift"], observed=want)
+            context = f"{label} end={with_end}"
+            redacted = redact(normalize("wf.drift", state))
+            assert redacted["observed"] == want, f"{context}: {redacted['observed'][:80]!r}"
+            assert state_digest("wf.drift", state) == state_digest("wf.drift", clean), context
+            out = _decision_state("wf.drift", state)
+            _assert_bounded_and_clean("wf.drift", out, context)
+            assert out["observed"] == want, context
+
+
+def test_token_assignment_forms_redacted():
+    # A4 / C-F3a: a 32+ [A-Za-z0-9+/] run after token, *_token or *_TOKEN in
+    # the assignment forms is redacted (VERIFY-J1-1 sections 4 and 8). The
+    # forms the PIN caught stay caught, in the same class.
+    run = _body(40)
+    forms = [
+        (f"token = {run}", "token = <redacted:token>"),
+        (f"access_token={run}", "access_token=<redacted:token>"),
+        (f'"token": "{run}"', '"token": "<redacted:token>"'),
+        (f"PC_BRIDGE_TOKEN: {run}", "PC_BRIDGE_TOKEN: <redacted:token>"),
+        (f"AGENT_TOKEN: {run}", "AGENT_TOKEN: <redacted:token>"),
+        (f"token: {run}", "token: <redacted:token>"),
+        (f"Token={run}", "Token=<redacted:token>"),
+        (f"token {run}", "token <redacted:token>"),
+        (f"X-Agent-Token: {run}", "X-Agent-Token: <redacted:token>"),
+        (f"PC_BRIDGE_TOKEN={run}", "PC_BRIDGE_TOKEN=<redacted:envval>"),
+    ]
+    for raw, want in forms:
+        state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+        clean = {"file": "src/a.py", "kind": "k", "msg": "set " + want + " now"}
+        got = redact(normalize("b1.finding_sev", state))["msg"]
+        assert got == "set " + want + " now", f"{raw!r} -> {got!r}"
+        assert state_digest("b1.finding_sev", state) == state_digest("b1.finding_sev", clean), raw
+
+
+def test_env_assignment_forms_redacted_and_prose_kept():
+    # A4 / C-F3b: the env-assignment names matched without regard to case,
+    # with optional spaces around "=" or ":" and an optional quote; a value of
+    # 8+ characters becomes the envval placeholder and the name is kept. The
+    # PIN's upper-case NAME=value form stays, for any value length.
+    value = _body(20)
+    forms = [
+        (f"password={value}", "password=<redacted:envval>"),
+        (f"PASSWORD = {value}", "PASSWORD = <redacted:envval>"),
+        (f"password: {value}", "password: <redacted:envval>"),
+        (f"SECRET_KEY: {value}", "SECRET_KEY: <redacted:envval>"),
+        (f'"api_key": "{value}"', '"api_key": "<redacted:envval>"'),
+        (f"db_passwd='{value}'", "db_passwd='<redacted:envval>'"),
+        (f"API_KEY={value}", "API_KEY=<redacted:envval>"),
+        ("KEY=x", "KEY=<redacted:envval>"),
+    ]
+    for raw, want in forms:
+        state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+        clean = {"file": "src/a.py", "kind": "k", "msg": "set " + want + " now"}
+        got = redact(normalize("b1.finding_sev", state))["msg"]
+        assert got == "set " + want + " now", f"{raw!r} -> {got!r}"
+        assert state_digest("b1.finding_sev", state) == state_digest("b1.finding_sev", clean), raw
+    # Negative control: prose is not a secret. A value under 8 characters stays
+    # (the transcript scrubber's floor, scripts/transcript_export.py:33).
+    for prose in (
+        "key: sorted order",
+        "the owner key must be pinned before re-sign",
+        "password: short",
+        "set key = value pairs",
+    ):
+        state = {"file": "src/a.py", "kind": "k", "msg": prose}
+        assert redact(normalize("b1.finding_sev", state))["msg"] == prose, prose
+
+
+def test_env_assignment_redaction_does_not_backtrack_exponentially():
+    # J1-1-R1 D-3: the PIN's nested name-prefix group "(?:[A-Z][A-Z0-9_]*_)*"
+    # backtracked exponentially ("A_" * 26, 52 characters, took 8.6 s), and a
+    # case-insensitive copy of it does the same on lower-case snake_case.
+    # redact now sees a whole unbounded field (A1), so each input below must
+    # finish at once: it takes microseconds without the nested group and
+    # hours with it. The alarm interrupts a runaway match (the re engine
+    # checks signals) and fails the test instead of hanging the suite.
+    import signal
+
+    class _Runaway(Exception):
+        pass
+
+    def _alarm(signum, frame):
+        raise _Runaway()
+
+    previous = signal.signal(signal.SIGALRM, _alarm)
+    try:
+        for text in ("A_" * 40, "a_" * 40, "Ab9_" * 30 + "x", "SECRET_" * 30 + "value"):
+            signal.setitimer(signal.ITIMER_REAL, 5.0)
+            try:
+                out = redact({"msg": text})
+            except _Runaway:
+                pytest.fail(f"redact backtracked for over 5 s on {text[:24]!r}...")
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            assert out == {"msg": text}, text[:24]
+    finally:
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_bound_cuts_code_points_strips_trailing_whitespace_every_field_within_limit():
+    # A2: bound cuts each bounded field at its limit on a code-point boundary,
+    # then strips trailing whitespace; lists and unbounded fields pass
+    # unchanged; every bounded field is at most its limit.
+    qid = "ap.violates_row"
+    # VERIFY-J1-1 F-3: a cut right after a space no longer leaves the space.
+    out = _decision_state(qid, dict(_BASE[qid], action_excerpt="a" * 399 + " b"))
+    assert out["action_excerpt"] == "a" * 399
+    # The cut counts code points, never bytes or UTF-16 units.
+    for ch in ("é", "中", "\U0001f600"):
+        out = _decision_state(qid, dict(_BASE[qid], action_excerpt=ch * 450))
+        assert out["action_excerpt"] == ch * 400, repr(ch)
+    # Every bounded field of every question type ends within its limit. Each
+    # limit is a multiple of 5, so every cut lands right after a space here.
+    for q, base in _BASE.items():
+        state = dict(base)
+        for (qq, key), limit in _BOUNDED.items():
+            if qq == q:
+                state[key] = "word " * limit
+        out = _decision_state(q, state)
+        normed = normalize(q, state)
+        for key in base:
+            limit = _BOUNDED.get((q, key))
+            if limit is None:
+                assert out[key] == normed[key], (q, key)
+            else:
+                assert out[key] == ("word " * limit)[:limit].rstrip(), (q, key)
+                assert len(out[key]) == limit - 1, (q, key)
+    # bound itself, called directly: a list and an unbounded field pass
+    # unchanged; bounded fields are cut and stripped.
+    got = _bound(
+        "v1.finding_class",
+        {
+            "lane": "x" * 100,
+            "finding_id": "f",
+            "title": "t " * 100,
+            "paths": ["z/b.py", "a.py"],
+            "disposition": "BLOCKING",
+        },
+    )
+    assert got == {
+        "lane": "x" * 80,
+        "finding_id": "f",
+        "title": ("t " * 60).rstrip(),
+        "paths": ["z/b.py", "a.py"],
+        "disposition": "BLOCKING",
+    }
+    got = _bound("ap.violates_row", dict(_BASE[qid], action_target="t" * 500, action_excerpt="e" * 500))
+    assert got["action_target"] == "t" * 500
+    assert got["action_excerpt"] == "e" * 400
+    with pytest.raises(DecisionStateError) as exc:
+        _bound("not.a.question", {})
+    assert str(exc.value) == "decision-question-unknown: not.a.question"
+
+
+def test_decision_state_idempotent_including_a_cut_inside_each_placeholder():
+    # A3: decision_state is a fixed point of itself (the ledger's fixed-point
+    # check depends on it), including when the cut lands inside a placeholder.
+    for qid in GOLDEN_IDS:
+        fixture = _load(qid)
+        for which in ("state", "variant"):
+            out = _decision_state(qid, fixture[which], fixture.get("root"))
+            assert _decision_state(qid, out) == out, (qid, which)
+    texts = (
+        "<redacted:sk>",
+        "<redacted:bearer>",
+        "token: <redacted:token>",
+        "AGENT_TOKEN: <redacted:token>",
+        "API_KEY=<redacted:envval>",
+        "password: <redacted:envval>",
+        "SECRET_TOKEN = <redacted:envval>",
+        '"api_key": "<redacted:envval>"',
+        "<redacted:privkey>",
+    )
+    cases = 0
+    for (qid, key), limit in _BOUNDED.items():
+        for text in texts:
+            for cut in range(1, len(text)):
+                state = dict(_BASE[qid], **{key: "a" * (limit - cut - 1) + " " + text + " tail"})
+                out = _decision_state(qid, state)
+                assert out[key].endswith(text[:cut].rstrip()), (qid, key, text, cut, out[key][-40:])
+                assert _decision_state(qid, out) == out, (qid, key, text, cut)
+                cases += 1
+    assert cases > 1000, cases
+
+
+def test_state_digest_is_sha256_of_canonical_decision_state():
+    # A3: ONE public composition, exported from agent_factory.decisions, and
+    # state_digest = sha256(canonical(decision_state(...))).
+    import hashlib
+
+    import agent_factory.decisions as decisions
+
+    assert "decision_state" in decisions.__all__
+    states = []
+    for qid in GOLDEN_IDS:
+        fixture = _load(qid)
+        states.append((qid, fixture["state"], fixture.get("root")))
+        states.append((qid, fixture["variant"], fixture.get("root")))
+    states.append(
+        (
+            "ap.violates_row",
+            dict(_BASE["ap.violates_row"], action_excerpt="a" * 390 + " sk-" + _body(40) + " tail"),
+            None,
+        )
+    )
+    states.append(("wf.drift", dict(_BASE["wf.drift"], observed="word " * 200), None))
+    for qid, state, root in states:
+        text = canonical(decisions.decision_state(qid, state, root))
+        assert state_digest(qid, state, root) == hashlib.sha256(text.encode("utf-8")).hexdigest(), qid
+
+
+# ---------------------------------------------------------------------------
+# The D-1 ruling (coordinator, option D). The class order, first match wins:
+# privkey, sk, bearer, the upper-case NAME=value env form (TOKEN included,
+# as at the PIN), the token class (a 32+ run after a TOKEN name), then the
+# widened env form WITH TOKEN, whose guard never replaces a value that
+# already is a placeholder. The placeholders are pinned here, not imported.
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_TEXTS = (
+    "<redacted:sk>",
+    "<redacted:token>",
+    "<redacted:bearer>",
+    "<redacted:envval>",
+    "<redacted:privkey>",
+)
+
+# (id, raw text, the redacted text). Each shape leaked before the ruling: the
+# widened env form left TOKEN out (J1-1-R1 report, D-1).
+_RESIDUAL_SHAPES = [
+    ("token-colon-short", "token: " + _body(10), "token: <redacted:envval>"),
+    ("underscore-token-equals-short", "access_token=" + _body(10), "access_token=<redacted:envval>"),
+    ("prefixed-upper-spaced-short", "SECRET_TOKEN = " + _body(10), "SECRET_TOKEN = <redacted:envval>"),
+    ("bridge-name-colon-short", "PC_BRIDGE_TOKEN: " + _body(10), "PC_BRIDGE_TOKEN: <redacted:envval>"),
+    ("base64url-dash", "token: " + _body(16) + "-" + _body(16), "token: <redacted:envval>"),
+    ("base64url-underscore", "token: " + _body(16) + "_" + _body(16), "token: <redacted:envval>"),
+    ("run-then-base64url-tail", "token: " + _body(40) + "-" + _body(12), "token: <redacted:envval>"),
+]
+
+
+@pytest.mark.parametrize(
+    "raw, want",
+    [(raw, want) for _, raw, want in _RESIDUAL_SHAPES],
+    ids=[shape_id for shape_id, _, _ in _RESIDUAL_SHAPES],
+)
+def test_token_named_residual_shape_redacted(raw, want):
+    # A TOKEN-named assignment whose value is NOT a 32+ [A-Za-z0-9+/] run
+    # becomes envval through the widened form, which runs after the token
+    # class; no byte of the value survives.
+    state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+    clean = {"file": "src/a.py", "kind": "k", "msg": "set " + want + " now"}
+    got = redact(normalize("b1.finding_sev", state))["msg"]
+    assert got == "set " + want + " now", f"{raw!r} -> {got!r}"
+    assert not (set(got) & _BODY_ALPHABET), got
+    assert state_digest("b1.finding_sev", state) == state_digest("b1.finding_sev", clean), raw
+
+
+def test_token_run_keeps_the_token_placeholder_and_no_placeholder_is_relabelled():
+    # A 32+ run after a TOKEN name ends with the token placeholder only --
+    # never an envval around it -- because the widened env form's guard never
+    # replaces a value that already is a placeholder.
+    run = _body(40)
+    for lead in (
+        "token = ",
+        "access_token=",
+        '"token": "',
+        "PC_BRIDGE_TOKEN: ",
+        "AGENT_TOKEN: ",
+        "token: ",
+        "Token=",
+        "X-Agent-Token: ",
+    ):
+        got = redact({"msg": lead + run})["msg"]
+        assert got == lead + "<redacted:token>", f"{lead + run!r} -> {got!r}"
+    # The guard holds for every placeholder after a widened-form name, whole
+    # or as the bound cut it (every prefix the value pattern could match).
+    for lead in ("password: ", "token = ", '"api_key": "'):
+        for placeholder in _PLACEHOLDER_TEXTS:
+            for end in range(8, len(placeholder) + 1):
+                text = lead + placeholder[:end]
+                assert redact({"msg": text})["msg"] == text, text

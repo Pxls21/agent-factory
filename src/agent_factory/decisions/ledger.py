@@ -39,8 +39,7 @@ import stat
 from agent_factory.decisions.canonical import canonical, state_digest
 from agent_factory.decisions.volatile import (
     DecisionStateError,
-    normalize,
-    redact,
+    decision_state,
     schema_keys,
 )
 
@@ -268,10 +267,10 @@ def _validate_row(row: dict) -> None:
             "decision-row-digest-mismatch", row["row_id"]
         )
 
-    # (d) fixed-point check: redact(normalize(qid, state, None)) == state.
+    # (d) fixed-point check: decision_state(qid, state, None) == state.
     qid = row["question_id"]
     try:
-        restate = redact(normalize(qid, row["state"], None))
+        restate = decision_state(qid, row["state"], None)
     except DecisionStateError:
         raise DecisionStateError(
             "decision-row-state-not-canonical", row["row_id"]
@@ -402,7 +401,7 @@ def make_row(
 
     # R7: compute state and state_digest; wrap non-DSE exceptions.
     try:
-        s = redact(normalize(question_id, raw_state, root))
+        s = decision_state(question_id, raw_state, root)
         sd = state_digest(question_id, raw_state, root)
     except DecisionStateError:
         raise

@@ -2,12 +2,14 @@
 
 J1 contract: canonical(obj) = sorted keys, ensure_ascii=False, separators
 (",", ":"), NFC, no newline, and only integers / strings / lists / dicts
-(a float is refused). The full pipeline is
+(a float is refused). The full pipeline (AMENDMENT 1, D-056) is
 
-    state_digest = sha256(canonical(redact(normalize(state))))
+    state_digest = sha256(canonical(decision_state(state)))
+    decision_state = bound(redact(normalize(state)))
 
 normalize (volatile) is the STABILITY mechanism; redact (volatile) is the
-SECURITY mechanism, applied AFTER normalize. Neither is defined here.
+SECURITY mechanism, applied AFTER normalize; bound (volatile) is the SIZE
+mechanism, applied AFTER redact. None of them is defined here.
 """
 
 from __future__ import annotations
@@ -18,8 +20,7 @@ import unicodedata
 
 from agent_factory.decisions.volatile import (  # noqa: F401 (re-exported)
     DecisionStateError,
-    normalize,
-    redact,
+    decision_state,
 )
 
 
@@ -68,10 +69,10 @@ def _canon(value, path: str) -> str:
 
 
 def state_digest(question_id: str, state: dict, root: str | None = None) -> str:
-    """sha256(canonical(redact(normalize(state)))), hex. The pipeline is
-    normalize -> redact -> canonical -> sha256; the order is load-bearing
-    (a whitespace-run-split secret is caught only after normalize)."""
-    normed = normalize(question_id, state, root)
-    redacted = redact(normed)
-    text = canonical(redacted)
+    """sha256(canonical(decision_state(state))), hex. The pipeline is
+    normalize -> redact -> bound -> canonical -> sha256; the order is
+    load-bearing (a whitespace-run-split secret is caught only after
+    normalize, and a secret that straddles a limit only when bound runs
+    after redact)."""
+    text = canonical(decision_state(question_id, state, root))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

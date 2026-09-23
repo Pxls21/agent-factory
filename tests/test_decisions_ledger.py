@@ -1466,3 +1466,69 @@ def test_fsync_called_once_per_append(tmp_path):
         append(ledger, row)
 
     assert len(fsync_calls) == 1, f"expected 1 fsync call, got {len(fsync_calls)}"
+
+
+# ---------------------------------------------------------------------------
+# J1-1-R1 (D-056, A3 + A5): an over-limit state whose bounded field carries a
+# secret that straddles the limit goes through the REAL make_row -> append ->
+# replay path. Every secret is FAKE; a secret body uses only the letters
+# Q Z X J, which no other byte of these rows contains (the digests are
+# lower-case hex), so the ledger file is searched one character at a time.
+# ---------------------------------------------------------------------------
+
+
+def test_over_limit_straddling_secret_appends_and_replays(tmp_path):
+    """make_row then append: the row is accepted, the ledger file's bytes
+    hold no byte of any secret body, replay verifies every row, and the
+    fixed-point check (run by append and by replay) accepts each one --
+    VERIFY-J1-1 F-9: both ledger call sites use decision_state."""
+    from agent_factory.decisions.ledger import append, make_row, replay
+
+    body = "QZXJ" * 12  # 48 FAKE characters
+    limit = 400  # ap.violates_row.action_excerpt
+
+    def straddle(secret, k):
+        # The secret's first k characters sit before the limit, the rest after.
+        return "a" * (limit - k - 1) + " " + secret + " tail"
+
+    pem = "-----BEGIN RSA PRIVATE KEY-----\n" + "\n".join(body for _ in range(30))
+    gpg = "-----BEGIN PGP PRIVATE KEY BLOCK-----\n" + "\n".join(body for _ in range(30))
+    cases = [
+        ("sk, 7 body characters before the limit", straddle("sk-" + body, 10)),
+        ("bearer, 15 body characters before the limit", straddle("Bearer " + body, 22)),
+        ("token run, 31 characters before the limit", straddle("token: " + body[:40], 38)),
+        ("token assignment C-F3a", straddle("AGENT_TOKEN: " + body[:40], 30)),
+        ("env assignment C-F3b", straddle("password: " + body, 20)),
+        ("a TOKEN name with a short value (the D-1 ruling)", straddle("SECRET_TOKEN = " + body[:20], 25)),
+        ("a base64url token value (the D-1 ruling)", straddle("token: " + body[:16] + "-" + body[16:32], 20)),
+        ("the cut lands inside the envval placeholder", straddle("API_KEY=" + body, 15)),
+        ("a PEM block of 1,500 characters", "see " + pem + "\n-----END RSA PRIVATE KEY----- tail"),
+        ("GnuPG armor", "see " + gpg + "\n-----END PGP PRIVATE KEY BLOCK----- tail"),
+        ("a PEM block with no END line", "a" * 390 + " " + pem),
+        ("F-3: the cut lands right after a space", "a" * 399 + " b"),
+    ]
+    ledger = tmp_path / "ledger.jsonl"
+    rows = []
+    for name, excerpt in cases:
+        raw_state = {
+            "action_kind": "edit",
+            "action_target": "a/b.py",
+            "action_excerpt": excerpt,
+            "row_id": "AF-AP-1",
+            "row_title": "t",
+        }
+        source_ref = dict(_fake_source_ref(), locator="straddle case " + name)
+        row = make_row(
+            producer="decide-harvest/incident-log",
+            question_id="ap.violates_row",
+            raw_state=raw_state,
+            incumbent_answer="accepted",
+            source_ref=source_ref,
+            root=None,
+        )
+        assert append(ledger, row) == row["row_id"], name
+        leaked = sorted(set(ledger.read_text(encoding="utf-8")) & set("QZXJ"))
+        assert not leaked, f"{name}: secret body bytes {leaked} reached the ledger file"
+        assert len(row["state"]["action_excerpt"]) <= limit, name
+        rows.append(row)
+    assert replay(ledger) == rows
