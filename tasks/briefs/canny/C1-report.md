@@ -40,7 +40,7 @@ All measurements match the brief (2026-09-23):
 
 **T:195-302** -- our additions: `test_leading_spaces_do_not_count` (T:195), `test_nbsp_before_help_does_not_trigger_asks_only` (T:215), `test_with_pipefail_returns_none_for_head` and `test_with_pipefail_returns_none_when_already_counts` (T:221-228), `test_invalid_pattern_raises_value_error` (T:230), `test_cli_counts` through `test_cli_with_pipefail_no_effect` (T:235-302).
 
-273 lines in V, 283 lines in T. Standard library only; no imports from `src/` or `sandbox-kit/`.
+273 lines in V, 283 lines in T at the lane's hand-back (302 after the coordinator's landing touch added two rows; VERIFY-C1 F7). Standard library only; no imports from `src/` or `sandbox-kit/`.
 
 ## RED then GREEN
 
@@ -99,7 +99,7 @@ All measurements match the brief (2026-09-23):
 no_laya_in_gates: 38 files scanned, clean
 ```
 
-**report_lint**: the lane's run read `39 refs -- OK 37, NEAR 1, MISS 1` (the M9 row's two refs); the coordinator reworded that row at landing and re-ran the lint (the line is in the section below).
+**report_lint**: the lane's run read `39 refs -- OK 37, NEAR 1, MISS 1` (the M9 row's two refs); the coordinator reworded that row at landing; the re-run, pasted by VERIFY-C1 (F7) and again by the coordinator on 2026-09-23, is unchanged: `39 refs — OK 37, NEAR 1, MISS 1, UNCHECKABLE 0, UNRESOLVED 0 (worktree)`.
 
 ## DISCREPANCIES
 
