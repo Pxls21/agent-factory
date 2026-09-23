@@ -496,10 +496,12 @@ def _command_segments(content, first_line=1):
 
 def _workflow_runs(content):
     """(first line, text, literal) of every scalar `run:` value in a workflow file, in line order; None when the
-    file does not parse (R4-3). The first line is where the value starts: the line after the indicator of a block
-    (| or >), else the start mark's line. Only a literal block (|) keeps its lines, so a refusal in it names its
-    own line; any other style (plain, quoted, folded) folds or escapes its line breaks, so every refusal in it
-    names the first line (R5-4)."""
+    file does not parse (R4-3). The first line is read from the value's own scalar token, never from the node's
+    start, which is its first property (an &anchor or a !!tag) and can sit on an earlier line (R6): the line after
+    the indicator of a block (| or >), else the line of a plain or quoted scalar's first character. Only a literal
+    block (|) keeps every line break, so a refusal in it names its own line; a plain, quoted or folded value joins
+    or escapes some of its line breaks, so its lines do not map back to the file's and every refusal in it names
+    the first line (R5-4)."""
     try:
         import yaml
     except ImportError:
@@ -507,6 +509,9 @@ def _workflow_runs(content):
         return None
     try:
         stack = list(yaml.compose_all(content, Loader=yaml.SafeLoader))
+        # a scalar node ends where its token ends; an empty value has no token and nothing to refuse
+        token_line = {t.end_mark.index: t.start_mark.line for t in yaml.scan(content, Loader=yaml.SafeLoader)
+                      if isinstance(t, yaml.ScalarToken)}
     except yaml.YAMLError:
         return None
     runs, seen = [], set()
@@ -518,8 +523,8 @@ def _workflow_runs(content):
         if isinstance(node, yaml.MappingNode):
             for key, value in node.value:
                 if isinstance(key, yaml.ScalarNode) and key.value == "run" and isinstance(value, yaml.ScalarNode):
-                    runs.append((value.start_mark.line + (2 if value.style in ("|", ">") else 1), value.value,
-                                 value.style == "|"))
+                    line = token_line.get(value.end_mark.index, value.start_mark.line)
+                    runs.append((line + (2 if value.style in ("|", ">") else 1), value.value, value.style == "|"))
                 stack += [key, value]
         elif isinstance(node, yaml.SequenceNode):
             stack += node.value

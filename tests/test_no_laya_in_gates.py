@@ -1220,6 +1220,9 @@ _NON_LITERAL_RUNS = [
     ("Y2c", "      - run: >\n          echo a\n\n          . scripts/helper.sh\n", 7),
     ("Y13", '      - run: "echo a\\n. scripts/helper.sh"\n      - run: echo ok\n', 6),
     ("Y14", "      - run: 'echo a\n\n          . scripts/helper.sh'\n", 6),
+    # D-MX6 (VERIFY-J1-0-R5 V5-08): a plain value over a blank line folds it to one break; read line for line it
+    # would name 7
+    ("MX6", "      - run: echo a\n\n          . scripts/helper.sh\n      - run: echo ok\n", 6),
 ]
 
 
@@ -1252,3 +1255,40 @@ def test_literal_run_block_keeps_its_line_map(tmp_path):
     r = _run(["--root", str(tmp_path)])
     assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
     assert _err_lines(r) == ["gate-file-sources: %s:10: scripts/helper.sh" % _WF], r.stderr
+
+
+# V5-05 (VERIFY-J1-0-R5): PyYAML's node start mark is the node's first property (an &anchor or a !!tag), and the
+# property can sit on the line above the scalar; R5 counted from it and named the indicator's or the key's line.
+# R6 (AMENDMENT 5) counts from the scalar's own token. Line 6 is the first step.
+_PROPERTY_RUNS = [
+    # (shape, steps, the refusal line; R5 named 8, 7, 7, 6, 6)
+    ("W10", "      - run: &x\n          |\n          echo a\n          . scripts/helper.sh\n", 9),
+    ("W10b", "      - run: &x\n          |\n          . scripts/helper.sh\n", 8),
+    ("W11", "      - run: !!str\n          >\n          echo a\n\n          . scripts/helper.sh\n", 8),
+    ("W12", "      - run: &x\n          . scripts/helper.sh\n", 7),
+    ("W12b", '      - run: !!str\n          ". scripts/helper.sh"\n', 7),
+]
+
+
+def test_empty_run_value_has_no_token_and_is_read_from_its_node(tmp_path):
+    """R6: an empty run: value, bare or behind a property, has no scalar token; its line falls back to the node, the
+    scan does not stop on it, and the next step's source edge is named at its own line."""
+    steps = "      - run:\n      - run: &y\n      - run: . scripts/helper.sh\n"
+    _make_tree(tmp_path, _WF + "\n", dict(_HELPER, **{_WF: _WF_HEAD + steps}))
+    runs = _workflow_runs(tmp_path, _WF)
+    assert runs == [". scripts/helper.sh"] and _bash_runs_helper(tmp_path, "-c", runs[0]), runs
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:8: scripts/helper.sh" % _WF], r.stderr
+
+
+@pytest.mark.parametrize("shape,steps,line", _PROPERTY_RUNS, ids=[m[0] for m in _PROPERTY_RUNS])
+def test_run_value_behind_a_node_property_names_a_line_inside_it(tmp_path, shape, steps, line):
+    """R6: a property on the line before the scalar moves no refusal out of the value; a literal block (W10, W10b)
+    still names the helper's own line, any other style its first line."""
+    _make_tree(tmp_path, _WF + "\n", dict(_HELPER, **{_WF: _WF_HEAD + steps}))
+    runs = _workflow_runs(tmp_path, _WF)
+    assert _bash_runs_helper(tmp_path, "-c", runs[0]), runs   # the value a YAML consumer runs sources the helper
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:%d: scripts/helper.sh" % (_WF, line)], r.stderr
