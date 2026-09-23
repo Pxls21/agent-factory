@@ -2,7 +2,15 @@
 # run_canaries.sh — run the S0-05 canary suite INSIDE an already-created egress namespace, as
 # one contained unit, and write that unit's evidence bundle.
 #
-#   run_canaries.sh <unit> <ns> <allowed ip:port> [evidence-root] [blocked ip:port] [venue]
+#   run_canaries.sh <unit> <ns> <allowed> [evidence-root] [blocked ip:port] [venue]
+#
+#   <allowed>  the unit's WHOLE allow-set (E3-b A): comma-separated ENTRIES, each `<ip>:<port>`
+#              optionally followed by the path its C0 asks (P: `/` and at most 63 characters of
+#              [A-Za-z0-9._~/-]); an entry without a path asks /v1/models. No two entries share an
+#              ip:port (the path is not part of identity). gate.json `allowed` records every ip:port,
+#              in the given order, without paths; C0 runs once per entry, in that order.
+#   [blocked]  C6's routable target that is NOT allow-listed: `<ip>:<port>`, never in the allowed
+#              set; default <the namespace's host ip>:<the FIRST entry's port + 1>.
 #
 # The namespace's lifecycle belongs to the CALLER (egress_ns_create / egress_ns_destroy in a
 # trap): this script only observes. It writes
@@ -20,13 +28,37 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=proofs/S0-05/netns_lib.sh
 . "$HERE/netns_lib.sh"
 
-UNIT=${1:?usage: run_canaries.sh <unit> <ns> <allowed ip:port> [evidence-root] [blocked ip:port] [venue]}
+UNIT=${1:?usage: run_canaries.sh <unit> <ns> <allowed ip:port[/path],...> [evidence-root] [blocked ip:port] [venue]}
 NS=${2:?ns}
-ALLOWED=${3:?allowed ip:port}
 EVIDENCE_ROOT=${4:-"$HERE/evidence"}
-HOST_IP=$(egress_ns_host_ip "$NS")
-ALLOWED_PORT=${ALLOWED##*:}
-BLOCKED=${5:-"$HOST_IP:$((ALLOWED_PORT + 1))"}
+
+# E3-b A: arguments 3, 5 and 6 are validated in that order; the first failure exits 64 with its
+# text, BEFORE any arithmetic on an input, any namespace access, any directory or file and any
+# canary. An ip:port passes the library's one allow-entry rule (egress_allow_entry_ok); a path
+# passes P's, ASCII only under any locale (an explicit list, never a range a locale may widen).
+refuse() { printf 'run_canaries: %s\n' "$1" >&2; exit 64; }
+PROBE_PATH_RE='^/[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~/-]{0,63}$'
+ALLOWED=(); PROBE_PATHS=()
+rest="${3-},"          # the appended comma keeps a leading, trailing or doubled one an EMPTY entry
+while [ -n "$rest" ]; do
+  entry=${rest%%,*}; rest=${rest#*,}
+  ipport=${entry%%/*}; path=${entry#"$ipport"}
+  if [ -z "$entry" ] || ! egress_allow_entry_ok "$ipport" || { [ -n "$path" ] && ! [[ "$path" =~ $PROBE_PATH_RE ]]; }; then
+    refuse "allowed entry '$entry' is not <ip>:<port>[/<path>]"
+  fi
+  for seen in "${ALLOWED[@]}"; do [ "$seen" != "$ipport" ] || refuse "allowed entry '$ipport' is listed twice"; done
+  ALLOWED+=("$ipport"); PROBE_PATHS+=("${path:-/v1/models}")
+done
+BLOCKED=${5-}
+if [ -n "$BLOCKED" ]; then
+  egress_allow_entry_ok "$BLOCKED" || refuse "blocked entry '$BLOCKED' is not <ip>:<port>"
+else
+  # Computed only now: the first entry's port is a validated 1-65535 with no leading zero.
+  first_port=${ALLOWED[0]##*:}
+  [ "$first_port" -lt 65535 ] || refuse "default blocked port 65536 is out of range; pass a blocked entry"
+  BLOCKED="$(egress_ns_host_ip "$NS"):$((first_port + 1))"
+fi
+for seen in "${ALLOWED[@]}"; do [ "$seen" != "$BLOCKED" ] || refuse "blocked entry '$BLOCKED' is in the allowed set"; done
 VENUE=${6:-}
 # F11: venue is required and must be sandbox or pc.
 case "$VENUE" in
@@ -80,7 +112,10 @@ mkdir -p "$OUT"
 : > "$JSONL"
 
 # C0 — the positive control first: if the unit cannot reach its allowed target, nothing else means anything.
-run_canary c0_allowed_target.sh "$UNIT" "$ALLOWED"
+# E3-b A + P: once per entry, in the given order, the entry's ip:port as target and its path passed explicitly.
+for i in "${!ALLOWED[@]}"; do
+  run_canary c0_allowed_target.sh "$UNIT" "${ALLOWED[$i]}" "${PROBE_PATHS[$i]}"
+done
 
 # C1 — DNS resolution of every model host must fail inside the namespace.
 for h in $MODEL_HOSTS; do run_canary c1_dns_resolve.sh "$UNIT" "$h"; done
@@ -121,13 +156,14 @@ RULES_SHA=$(egress_ns_rules_sha256 "$NS")
 GATE_STATE=$(egress_ns_gate_state "$NS")
 MECHANISM=$(egress_ns_mechanism "$NS")
 
-python3 - "$OUT" "$UNIT" "$NS" "$ALLOWED" "$RULES_SHA" "$DROP_BEFORE" "$DROP_AFTER" \
+python3 - "$OUT" "$UNIT" "$NS" "$(IFS=,; printf '%s' "${ALLOWED[*]}")" "$RULES_SHA" "$DROP_BEFORE" "$DROP_AFTER" \
         "$(uname -r)" "$(iptables --version)" "$VENUE" "$SCRUBBED" "$RULES_TXT" "$GATE_STATE" "$MECHANISM" <<'PY'
 import json, os, sys
 (out, unit, ns, allowed, rules_sha, before, after, kernel, ipt, venue, scrubbed, rules_txt,
  gate_state, mechanism) = sys.argv[1:15]
+# E3-b A: every entry's ip:port, in the given order, without paths (a validated ip:port has no comma).
 gate = {"gate": gate_state, "mechanism": mechanism, "netns": ns, "unit": unit,
-        "allowed": [allowed], "rules_sha256": rules_sha}
+        "allowed": allowed.split(","), "rules_sha256": rules_sha}
 runtime = {"venue": venue, "unit": unit, "kernel": kernel, "iptables_version": ipt,
            "rules": rules_txt.splitlines(), "drop_counter_before": int(before),
            "drop_counter_after": int(after), "proxy_env_scrubbed": scrubbed.split()}

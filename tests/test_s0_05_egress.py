@@ -425,10 +425,17 @@ def test_a_dropped_policy_line_is_caught(tmp_path):
 
 
 def test_a_widened_allow_list_changes_the_expected_digest(tmp_path):
-    """Declaring a second allowed destination without the rules to match is caught."""
+    """Declaring a second allowed destination without the rules to match is caught.
+    E3-b item C (the fixture, not the expectation, changed): the positive control is per allowed entry
+    now, so the widened entry also gets its passing C0 record — otherwise the positive control would
+    refuse the bundle first, and this test is about the rule pin."""
     bundle = copy_bundle(tmp_path)
     gate = json.loads((bundle / "curl" / "gate.json").read_text())
     patch_json(bundle / "curl" / "gate.json", allowed=gate["allowed"] + ["1.2.3.4:443"])
+    rows = records(bundle / "curl")
+    c0 = next(r for r in rows if r["canary"] == "C0")
+    rows.insert(rows.index(c0) + 1, {**c0, "target": "1.2.3.4:443"})
+    write_records(bundle / "curl", rows)
     result = run_checker(bundle)
     assert result.returncode == 1
     assert result.stdout.splitlines()[0].startswith("egress-rules-unpinned: curl rules are not the pinned allow-list")
@@ -614,12 +621,12 @@ def test_a_gate_file_missing_a_key_is_rejected(tmp_path, key):
 def test_the_pass_line_counts_units_not_records(tmp_path):
     """18-class sweep, class 15: the PASS line's `positive controls N/M` must be two DIFFERENT
     populations. A unit with two allowed targets has two C0 records; the line must still read
-    1/1 (one unit proven of one checked), not 2/2."""
-    bundle = copy_bundle(tmp_path)
-    rows = records(bundle / "curl")
-    extra = dict([r for r in rows if r["canary"] == "C0"][0])
-    rows.insert(1, extra)
-    write_records(bundle / "curl", rows)
+    1/1 (one unit proven of one checked), not 2/2.
+    E3-b item C (the fixture, not the expectation, changed): the old fixture duplicated the ONE C0
+    record, which is now a refusal shape (two C0 records for one target); the unit here really has
+    two allowed targets, each with its own C0 record (`_two_entry_bundle`)."""
+    bundle = _two_entry_bundle(tmp_path)
+    assert len([r for r in records(bundle / "curl") if r["canary"] == "C0"]) == 2
     result = run_checker(bundle)
     assert result.returncode == 0, result.stdout
     assert "1 units," in result.stdout and "positive controls 1/1" in result.stdout
@@ -1093,7 +1100,9 @@ def test_runner_live_leg(e3dir):
     override = json.loads((e3dir / "override.json").read_text())
     standin = override["PINNED_AGENT_REALPATH"]
     try:
-        listener = _listener(e3dir, port)
+        # E3-b R1/R2 (a stricter fixture): the OmniRoute stand-in is shaped like the real service on the
+        # PC (2026-09-23 06:57Z: 200 on /api/health, 401 on /v1/models).
+        listener = _listener(e3dir, port, status={"/v1/models": 401})
         # Before the leg: a concurrent create of the same name is refused while its owner lives.
         r = subprocess.run(
             ["bash", "-c",
@@ -1202,6 +1211,15 @@ def test_runner_live_leg(e3dir):
         assert f"=== hermes-acp: namespace {ns}, allowed 10.201.107.1:{port} ===" in runner.stdout
         seen = (e3dir / "listener.log").read_text().split()
         assert "10.201.107.2" in seen, seen          # the preflight and C0 came from inside the namespace
+        # E3-b R1 + R2 + P: the preflight and C0 each asked OmniRoute's health path — never /v1/models,
+        # which this stand-in answers 401 like the real service — and C0 recorded the path it asked.
+        asked = (e3dir / "listener.log").read_text().splitlines()
+        assert asked == ["10.201.107.2 /api/health"] * 2, asked
+        c0 = [row for row in (json.loads(line) for line in
+                               (evidence / "hermes-acp" / "canaries.jsonl").read_text().splitlines() if line.strip())
+              if row["canary"] == "C0"]
+        assert [(r["target"], r.get("path"), r["rc"], r["http_status"]) for r in c0] == \
+            [(f"10.201.107.1:{port}", "/api/health", 0, 200)], c0
     finally:
         _stop(listener)
         _lib(f'egress_ns_destroy {ns}')
@@ -1568,23 +1586,26 @@ def e3dir():
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _listener(workdir, port, host="0.0.0.0", name="listener"):
-    """A host HTTP stand-in answering 200 on every GET and logging each client address (one line
-    per request) to <workdir>/<name>.log. Returns the Popen; the caller kills it BY PID."""
+def _listener(workdir, port, host="0.0.0.0", name="listener", status=None):
+    """A host HTTP stand-in answering 200 on every GET and logging each client address and path (one
+    line per request) to <workdir>/<name>.log. E3-b: `status` maps an exact path to the status that
+    path answers (default 200), so one stand-in can be shaped like a real service — 200 on its health
+    path, 401 or 404 on /v1/models. Returns the Popen; the caller kills it BY PID."""
     script = workdir / f"{name}.py"
     log = workdir / f"{name}.log"
     script.write_text(
-        "import http.server, socketserver, sys\n"
+        "import http.server, json, socketserver, sys\n"
         "LOG = sys.argv[3]\n"
+        "STATUS = json.loads(sys.argv[4])\n"
         "class H(http.server.BaseHTTPRequestHandler):\n"
         "    def do_GET(self):\n"
         "        with open(LOG, 'a') as fh:\n"
         "            fh.write(self.client_address[0] + ' ' + self.path + '\\n')\n"
-        "        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
+        "        self.send_response(STATUS.get(self.path, 200)); self.end_headers(); self.wfile.write(b'{}')\n"
         "    def log_message(self, *a): pass\n"
         "socketserver.TCPServer.allow_reuse_address = True\n"
         "socketserver.TCPServer((sys.argv[1], int(sys.argv[2])), H).serve_forever()\n")
-    process = subprocess.Popen([sys.executable, str(script), host, str(port), str(log)],
+    process = subprocess.Popen([sys.executable, str(script), host, str(port), str(log), json.dumps(status or {})],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     probe_host = "127.0.0.1" if host in ("0.0.0.0", "127.0.0.1") else host
     deadline = time.monotonic() + 5
@@ -1896,7 +1917,10 @@ def test_x4_runner_cleanup_reaps_its_own_namespace_at_exit(e3dir):
     """X4 (VERIFY-E2-R1 F8), case 1, through the runner's REAL `cleanup` (its EXIT/INT/TERM trap,
     never a copy of its logic): the runner is interrupted with SIGTERM while its unit is live in the
     namespace it owns; after the runner exits, that namespace, its veth, /etc/netns/<ns> and the
-    owner record are gone and the stand-in unit is dead."""
+    owner record are gone and the stand-in unit is dead.
+    E3-b R4 (stricter): a stop stops — the runner exits 143 (`trap 'exit 143' TERM`, `cleanup` on EXIT
+    only), writes no units.json, runs neither the census comparison (no s0-01-census.json) nor the
+    checker. On the PIN (`trap cleanup EXIT INT TERM`) it ran cleanup and CONTINUED to its checker."""
     ns = "s0-05-hermes-acp"
     port = 18092
     env = _runner_env(e3dir, port)
@@ -1914,6 +1938,10 @@ def test_x4_runner_cleanup_reaps_its_own_namespace_at_exit(e3dir):
         out, err = runner.communicate(timeout=180)
         assert _census(ns) == CLEAN, (_census(ns), out, err)
         assert not _pid_alive(standin), f"stand-in {standin} outlived its runner"
+        # E3-b R4: exit 143, and nothing after the stop.
+        assert runner.returncode == 143, (runner.returncode, out, err)
+        assert "=== checker ===" not in out, out
+        assert not (evidence / "units.json").exists() and not (evidence / "s0-01-census.json").exists()
     finally:
         _stop(runner)
         _stop(listener)
@@ -2443,7 +2471,13 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
     substitutions (A6), and the pair's OWN socket reaches the relay through the DNAT. The pair's
     identity reaches its environment (and its agent child's) from the identity file, never an argv
     or the runner's environment (A5/A6). unit-identity.json names the compiled stand-in (A7). After
-    the runner exits, no PREROUTING rule names the pair's interface and the interface is gone."""
+    the runner exits, no PREROUTING rule names the pair's interface and the interface is gone.
+    E3-b (R1-R3, A, P, C): both stand-ins are shaped like the real services on the PC (2026-09-23
+    06:57Z: the relay 200 on /health and 404 on /v1/models, OmniRoute 200 on /api/health and 401 on
+    /v1/models); the preflight and C0 ask each service's health path; the collector records the WHOLE
+    allow-set [relay, OmniRoute] and one C0 per entry, in order, with its path; and the checker's
+    positive control and rule pin both pass on this real bundle (E3 section 9 measured
+    `egress-rules-unpinned` here: the PIN collector recorded one entry)."""
     ns = "s0-05-buzz-acp"
     host_ip = _lib(f'egress_ns_host_ip {ns}').stdout.strip()
     host_if = _lib(f'egress_ns_host_if {ns}').stdout.strip()
@@ -2461,8 +2495,8 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
     evidence = e3dir / "evidence"
     relay = omni = None
     try:
-        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay")
-        omni = _listener(e3dir, omni_port, name="omniroute")
+        relay = _listener(e3dir, RELAY_PORT, host="127.0.0.1", name="relay", status={"/v1/models": 404})
+        omni = _listener(e3dir, omni_port, name="omniroute", status={"/v1/models": 401})
         runner = _run_runner(env, evidence, "buzz-acp", timeout=300)
         assert PAIR_KEY not in runner.stdout + runner.stderr + (evidence / "units.json").read_text()
         row = _unit_row(evidence, "buzz-acp")
@@ -2480,7 +2514,10 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
         # preflight; the relay saw the namespace's address.
         assert pair["relay_reply"].startswith("HTTP/1.0 200"), pair["relay_reply"]
         seen = (e3dir / "relay.log").read_text().splitlines()
-        assert f"{ns_ip} /v1/models" in seen and f"{ns_ip} /pair-own-socket" in seen, seen
+        # E3-b R1 (a changed expectation: the PIN's preflight asked /v1/models, which the real relay
+        # answers 404): the preflight and C0 each asked the relay's health path, the pair its own path.
+        assert sorted(seen) == sorted([f"{ns_ip} /health"] * 2 + [f"{ns_ip} /pair-own-socket"]), seen
+        assert (e3dir / "omniroute.log").read_text().splitlines() == [f"{ns_ip} /api/health"] * 2
         # A5 + A6: the environment is the declared set plus the pair's identity key — its value from
         # the identity file, not the planted runner variable — and nothing else secret-shaped.
         assert pair["env_keys"] == sorted(UNIT_ENV_KEYS + ["BUZZ_PRIVATE_KEY"]), pair["env_keys"]
@@ -2505,7 +2542,20 @@ def test_d_pair_leg_reaches_the_relay_through_the_dnat(e3dir):
             f"-A OUTPUT -d {host_ip}/32 -p tcp -m tcp --dport {RELAY_PORT} -j ACCEPT",
             f"-A OUTPUT -d {host_ip}/32 -p tcp -m tcp --dport {omni_port} -j ACCEPT"]), rules
         assert "=== buzz-acp: exited 0 on stdin EOF ===" in runner.stdout
+        # E3-b A + P + C: the collector recorded the WHOLE allow-set, in the runner's order (R3: relay,
+        # then OmniRoute), one C0 per entry with its health path, each 2xx; the checker's positive
+        # control and its rule pin both pass on this real bundle.
+        unit_dir = evidence / "buzz-acp"
+        gate = json.loads((unit_dir / "gate.json").read_text())
+        allowed = [f"{host_ip}:{RELAY_PORT}", f"{host_ip}:{omni_port}"]
+        assert gate["allowed"] == allowed, gate
+        c0 = [r for r in records(unit_dir) if r["canary"] == "C0"]
+        assert [(r["target"], r.get("path"), r["rc"], r["http_status"]) for r in c0] == \
+            [(allowed[0], "/health", 0, 200), (allowed[1], "/api/health", 0, 200)], c0
+        assert chk.check_positive_control(chk.read_records(unit_dir, "buzz-acp"), "buzz-acp", gate["allowed"]) == 1
+        assert chk.check_runtime_and_rules(unit_dir, "buzz-acp", gate).startswith("gate-fired: buzz-acp "), gate
         checker_out = runner.stdout.split("=== checker ===\n", 1)[1]
+        print("the full checker's first line on the pair bundle:", checker_out.splitlines()[0])
         assert checker_out.splitlines()[0] == "units-manifest-invalid: buzz-acp override present"
         census = json.loads((evidence / "s0-01-census.json").read_text())
         assert census["tree"] == "present" and census["changed"] == [], census
@@ -2548,3 +2598,402 @@ def test_d_without_the_relay_reach_the_pair_is_not_run(e3dir, fault):
         _lib(f'egress_ns_destroy {ns}')
     assert _nat_rules_naming(host_if) == [] and _route_localnet(host_if) is None
     assert _census(ns) == CLEAN
+
+
+# ===================================================================== E3-b — G, A, P, C, R
+# tasks/briefs/s0-05-support/E3-b-brief.md: G one allow-entry rule in three places; A the collector
+# records the unit's whole allow-set; P the probe path rides the C0 record; C the checker's positive
+# control is per allowed entry; R the runner (R1 per-service health paths, R2 the preflight grades
+# what the checker grades, R3 the whole entry list reaches the collector, R4 a stop stops).
+
+COLLECTOR = PROOF / "run_canaries.sh"
+NO_NS = "s0-05-e3b-nonexistent-ns"      # never created: an argument list that got past validation reads exit 3
+LOCALES = ("C", "C.UTF-8")               # the locales this sandbox has (`locale -a`); the rule is ASCII in each
+ARABIC_INDIC = str.maketrans("0123456789", "".join(chr(0x0660 + digit) for digit in range(10)))
+
+# G: one table, the rule as the brief states it (never read from either implementation): a dotted quad
+# of four decimal octets 0-255 with no leading zero (a lone 0 allowed); a port 1-65535 with no leading
+# zero and at most five digits; ASCII only.
+_G_ROWS = [
+    ("valid", "10.201.7.1:20128", True),
+    ("zeros-port-1", "0.0.0.0:1", True),
+    ("all-max", "255.255.255.255:65535", True),
+    ("leading-zero-octet", "010.201.7.1:20128", False),
+    ("leading-zero-port", "10.201.7.1:080", False),
+    ("octet-256", "256.201.7.1:20128", False),
+    ("port-0", "10.201.7.1:0", False),
+    ("port-65536", "10.201.7.1:65536", False),
+    ("port-6-digits", "10.201.7.1:100000", False),
+    ("port-20-digits", "10.201.7.1:99999999999999999999", False),
+    ("arabic-indic-port", "10.201.7.1:" + "20128".translate(ARABIC_INDIC), False),
+    ("arabic-indic-octet", "10".translate(ARABIC_INDIC) + ".201.7.1:20128", False),
+    *[(f"{name}-{where}", entry, False)
+      for name, ws in (("space", " "), ("tab", "\t"), ("vt", "\v"), ("ff", "\f"), ("nl", "\n"))
+      for where, entry in (("inside", f"10.201.7.1:201{ws}28"), ("end", f"10.201.7.1:20128{ws}"))],
+    ("empty", "", False),
+    ("missing-port", "10.201.7.1", False),
+    ("trailing-colon", "10.201.7.1:", False),
+    ("ipv6", "[::1]:20128", False),
+    ("hostname", "localhost:20128", False),
+]
+
+
+def _checker_accepts(entry):
+    """`_split_ip_port`'s verdict. A refusal must carry one of its two texts, exactly."""
+    try:
+        chk._split_ip_port(entry)
+    except chk.Failure as error:
+        texts = (f"gate-manifest-invalid: allow entry {entry!r} is not <ipv4>:<port>",
+                 f"gate-manifest-invalid: allow entry {entry!r} is out of range")
+        return False if str(error) in texts else f"refused with another text: {error}"
+    return True
+
+
+def _library_accepts(entry, locale):
+    """egress_allow_entry_ok's verdict under one locale: a SILENT predicate, status 0 or 1 and no output;
+    anything else comes back as the raw result, so a failure names what the library did."""
+    result = subprocess.run(["bash", "-c", '. "$0" && egress_allow_entry_ok "$1"', str(LIB), entry],
+                            capture_output=True, text=True, timeout=30, env={**os.environ, "LC_ALL": locale})
+    if result.returncode in (0, 1) and not result.stdout and not result.stderr:
+        return result.returncode == 0
+    return f"rc={result.returncode} out={result.stdout!r} err={result.stderr.strip()!r}"
+
+
+@pytest.mark.parametrize("entry, accepted", [row[1:] for row in _G_ROWS], ids=[row[0] for row in _G_ROWS])
+def test_e3b_g_one_allow_entry_rule_in_the_library_and_the_checker(entry, accepted):
+    """G: ONE allow-entry rule, held by the library's silent predicate `egress_allow_entry_ok` (status 0
+    valid, 1 not, no output) under every locale this venue has, and by the checker's `_split_ip_port`
+    (its two refusal texts kept): the same accept/refuse on every row of one table, argv built here.
+    On the PIN the checker read `\\d` (every Unicode digit) and `$` (which also matches before a trailing
+    newline), and the library had no predicate to share."""
+    verdicts = {"checker": _checker_accepts(entry),
+                **{f"library[{locale}]": _library_accepts(entry, locale) for locale in LOCALES}}
+    assert verdicts == dict.fromkeys(verdicts, accepted), (entry, verdicts)
+
+
+@pytest.mark.parametrize("bad", ["10.201.1.1:" + "80".translate(ARABIC_INDIC), "10.201.1.1:080",
+                                 "010.201.1.1:80", "10.201.1.1:80\n"],
+                         ids=["arabic-indic-port", "leading-zero-port", "leading-zero-octet", "trailing-nl"])
+def test_e3b_g_egress_ns_create_checks_every_entry_by_the_one_rule(bad):
+    """G: egress_ns_create calls the shared predicate for EVERY entry — here a valid FIRST entry and an
+    invalid SECOND one — and keeps its text, status and ordering byte-for-byte: 64 and the exact contract
+    line, before any namespace, veth, rule or record work (census on a root venue). Green on the PIN by
+    design (its inline rule checked every entry): this guards the move into one function (B14)."""
+    ns = f"s0-05-e3b-{uuid.uuid4().hex[:8]}"
+    try:
+        result = subprocess.run(["bash", "-c", '. "$0" && egress_ns_create "$@"', str(LIB), ns, "10.201.1.1:1", bad],
+                                capture_output=True, text=True, timeout=60)
+        assert (result.returncode, result.stderr) == \
+            (64, f"egress: allow entry must be <ip>:<port>, got '{bad}'\n"), result
+        if netns_capable():
+            assert _census(ns) == CLEAN, _census(ns)
+    finally:
+        if netns_capable():
+            _lib(f'egress_ns_destroy {ns}')
+
+
+def _collect(tmp_path, allowed, blocked="", venue="sandbox", ns=NO_NS):
+    """The REAL collector against a namespace that does not exist: an argument list that got past
+    validation reaches the namespace and reads the exit-3 unreadable-counter refusal, so an exit 64 with
+    no evidence directory proves the refusal came first."""
+    evidence = tmp_path / "ev"
+    result = subprocess.run(["bash", str(COLLECTOR), "curl", ns, allowed, str(evidence), blocked, venue],
+                            capture_output=True, text=True, timeout=120)
+    return result, evidence
+
+
+_NOT_ENTRY = "run_canaries: allowed entry '{}' is not <ip>:<port>[/<path>]"
+_A_REFUSALS = [   # (id, allowed, blocked, venue, the exact stderr line); {H} = the host address of NO_NS
+    ("empty-argument", "", "", "sandbox", _NOT_ENTRY.format("")),
+    ("leading-comma", ",10.201.1.1:80", "", "sandbox", _NOT_ENTRY.format("")),
+    ("trailing-comma", "10.201.1.1:80,", "", "sandbox", _NOT_ENTRY.format("")),
+    ("doubled-comma", "10.201.1.1:80,,10.201.1.2:80", "", "sandbox", _NOT_ENTRY.format("")),
+    ("leading-zero-port", "10.201.1.1:080", "", "sandbox", _NOT_ENTRY.format("10.201.1.1:080")),
+    ("overflow", "10.201.1.1:9223372036854775807", "", "sandbox",
+     _NOT_ENTRY.format("10.201.1.1:9223372036854775807")),
+    ("bad-second-entry", "10.201.1.1:80,10.201.1.1:0/health", "", "sandbox",
+     _NOT_ENTRY.format("10.201.1.1:0/health")),
+    ("path-with-space", "10.201.1.1:80/bad path", "", "sandbox", _NOT_ENTRY.format("10.201.1.1:80/bad path")),
+    ("path-64-chars", "10.201.1.1:80/" + "a" * 64, "", "sandbox", _NOT_ENTRY.format("10.201.1.1:80/" + "a" * 64)),
+    ("path-non-ascii", "10.201.1.1:80/héalth", "", "sandbox", _NOT_ENTRY.format("10.201.1.1:80/héalth")),
+    ("path-query", "10.201.1.1:80/health?probe=1", "", "sandbox", _NOT_ENTRY.format("10.201.1.1:80/health?probe=1")),
+    ("path-only", "/health", "", "sandbox", _NOT_ENTRY.format("/health")),
+    ("listed-twice", "10.201.1.1:80,10.201.1.1:80", "", "sandbox",
+     "run_canaries: allowed entry '10.201.1.1:80' is listed twice"),
+    ("listed-twice-other-path", "10.201.1.1:80/a,10.201.1.1:80/b", "", "sandbox",
+     "run_canaries: allowed entry '10.201.1.1:80' is listed twice"),
+    ("blocked-with-a-path", "10.201.1.1:80", "10.201.1.1:81/health", "sandbox",
+     "run_canaries: blocked entry '10.201.1.1:81/health' is not <ip>:<port>"),
+    ("blocked-leading-zero", "10.201.1.1:80", "10.201.1.1:081", "sandbox",
+     "run_canaries: blocked entry '10.201.1.1:081' is not <ip>:<port>"),
+    ("blocked-explicit-in-set", "10.201.1.1:80,10.201.1.1:81", "10.201.1.1:81", "sandbox",
+     "run_canaries: blocked entry '10.201.1.1:81' is in the allowed set"),
+    ("blocked-default-in-set", "{H}:3999,{H}:4000", "", "sandbox",
+     "run_canaries: blocked entry '{H}:4000' is in the allowed set"),
+    ("default-blocked-65536", "10.201.1.1:65535", "", "sandbox",
+     "run_canaries: default blocked port 65536 is out of range; pass a blocked entry"),
+    ("order-3-before-5-and-6", "10.201.1.1:0", "10.201.1.1:0", "x", _NOT_ENTRY.format("10.201.1.1:0")),
+    ("order-5-before-6", "10.201.1.1:80", "10.201.1.1:0", "x",
+     "run_canaries: blocked entry '10.201.1.1:0' is not <ip>:<port>"),
+    ("order-default-5-before-6", "10.201.1.1:65535", "", "x",
+     "run_canaries: default blocked port 65536 is out of range; pass a blocked entry"),
+    ("order-6-last", "10.201.1.1:80", "", "x", "run_canaries: venue must be sandbox or pc, got 'x'"),
+]
+
+
+@pytest.mark.parametrize("allowed, blocked, venue, line", [row[1:] for row in _A_REFUSALS],
+                         ids=[row[0] for row in _A_REFUSALS])
+def test_e3b_a_a_bad_argument_is_refused_before_anything(tmp_path, allowed, blocked, venue, line):
+    """A: `<allowed>` is a comma-separated list of `<ip>:<port>[<path>]` entries. Arguments are validated
+    in the order 3, 5, 6; the first failure exits 64 with its exact text (the whole stderr) BEFORE any
+    arithmetic on an input, any namespace access (a namespace access would read the exit-3 refusal
+    instead), any directory or file and any canary — no evidence directory. The venue refusal keeps its
+    text. On the PIN the collector did arithmetic on the raw port first (octal, overflow) and took the
+    whole list as one entry."""
+    host = _lib(f"egress_ns_host_ip {NO_NS}").stdout.strip()
+    allowed, line = allowed.replace("{H}", host), line.replace("{H}", host)
+    result, evidence = _collect(tmp_path, allowed, blocked, venue)
+    assert (result.returncode, result.stderr) == (64, line + "\n"), result
+    assert not evidence.exists()
+
+
+def test_e3b_a_an_injected_port_never_runs(tmp_path):
+    """A (the premise, measured on the PIN): a port of the form `NS[$(touch <file>)]` made the collector's
+    `$((ALLOWED_PORT + 1))` RUN the command substitution (NS names a set variable, so its subscript is
+    expanded). The argv is built here, never through a shell: now the one rule refuses the entry, exit 64,
+    and the file never appears."""
+    marker = tmp_path / "the-injected-command-ran"
+    entry = f"10.201.1.1:NS[$(touch {marker})]"
+    result, evidence = _collect(tmp_path, entry)
+    assert (result.returncode, result.stderr) == (64, _NOT_ENTRY.format(entry) + "\n"), result
+    assert not marker.exists(), "the injected command ran"
+    assert not evidence.exists()
+
+
+@pytest.mark.skipif(shutil.which("ip") is None, reason="iproute2 absent; NOT run here")
+@pytest.mark.parametrize("allowed, blocked", [
+    ("10.201.1.1:12800", ""),
+    ("10.201.1.1:12800,10.201.1.1:3999/health", ""),
+    ("10.201.1.1:12800/api/health,10.201.1.1:3999/", "10.201.1.1:4000"),
+    ("10.201.1.1:1/" + "~._-/aZ09" * 7, ""),
+], ids=["one-entry", "two-entries-a-path", "paths-explicit-blocked", "path-of-63-chars"])
+def test_e3b_a_a_valid_argument_list_reaches_the_namespace(tmp_path, allowed, blocked):
+    """The other side of every refusal above: the same collector, a valid list (one entry, two entries,
+    paths, an explicit blocked entry, a path of the full 63 characters after its slash) gets past
+    validation and reaches the namespace — the exit-3 unreadable-counter refusal, nothing else on stderr,
+    no evidence directory."""
+    result, evidence = _collect(tmp_path, allowed, blocked)
+    assert (result.returncode, result.stderr) == \
+        (3, f"run_canaries: cannot read the OUTPUT DROP counter of {NO_NS}\n"), result
+    assert not evidence.exists()
+
+
+@NEEDS_NETNS
+def test_e3b_a_a_two_entry_run_records_the_whole_allow_set(e3dir):
+    """A + P on a REAL namespace with two allowed entries: the first carries a probe path, the second
+    none (it probes /v1/models, passed explicitly). gate.json `allowed` = both ip:port parts in order; C0
+    runs once per entry, in order, with the entry's ip:port as target and its path recorded, and each
+    listener's own log shows the path asked from the namespace's address; the recorded rules are the
+    checker's own derivation from that allow-set (check_runtime_and_rules passes). On the PIN the
+    collector took the whole list as ONE entry: `"allowed": [<the list>]` (E3 section 9)."""
+    ns = f"s0-05-e3b-{uuid.uuid4().hex[:8]}"
+    host_ip = _lib(f"egress_ns_host_ip {ns}").stdout.strip()
+    ns_ip = _lib(f"egress_ns_ip {ns}").stdout.strip()
+    first, second = f"{host_ip}:18120", f"{host_ip}:18130"   # not adjacent: the default blocked is first + 1
+    root = e3dir / "evidence"
+    listeners = []
+    try:
+        created = _lib(f"egress_ns_create {ns} {first} {second}")
+        assert created.returncode == 0, created.stderr
+        listeners = [_listener(e3dir, 18120, name="first"), _listener(e3dir, 18130, name="second")]
+        run = subprocess.run(["bash", str(COLLECTOR), "curl", ns, f"{first}/health,{second}", str(root), "", "sandbox"],
+                             capture_output=True, text=True, timeout=180)
+        assert run.returncode == 0, run.stderr
+        gate = json.loads((root / "curl" / "gate.json").read_text())
+        assert gate["allowed"] == [first, second], gate
+        c0 = [r for r in records(root / "curl") if r["canary"] == "C0"]
+        assert [(r["target"], r.get("path"), r["rc"], r["http_status"]) for r in c0] == \
+            [(first, "/health", 0, 200), (second, "/v1/models", 0, 200)], c0
+        assert (e3dir / "first.log").read_text().splitlines() == [f"{ns_ip} /health"]
+        assert (e3dir / "second.log").read_text().splitlines() == [f"{ns_ip} /v1/models"]
+        c6 = [r for r in records(root / "curl") if r["canary"] == "C6"]
+        assert [r["target"] for r in c6] == [f"{host_ip}:18121"], c6          # the default blocked entry
+        runtime = json.loads((root / "curl" / "runtime.json").read_text())
+        assert runtime["rules"] == chk.expected_rules([first, second]), runtime["rules"]
+        assert chk.check_positive_control(chk.read_records(root / "curl", "curl"), "curl", gate["allowed"]) == 1
+        assert chk.check_runtime_and_rules(root / "curl", "curl", gate).startswith("gate-fired: curl "), runtime
+    finally:
+        for listener in listeners:
+            _stop(listener)
+        _lib(f"egress_ns_destroy {ns}")
+    assert _census(ns) == CLEAN, _census(ns)
+
+
+def test_e3b_p_the_c0_record_carries_the_path_it_asked(tmp_path):
+    """P: `c0_allowed_target.sh` adds `path=<path>` to its record (emit_canary keeps a non-integer value
+    as a string) — the target alone no longer says what was asked. The stand-in's own log shows that
+    path was the one requested. No namespace needed: the canary itself, against a loopback stand-in."""
+    port = 18122
+    listener = _listener(tmp_path, port, host="127.0.0.1", name="c0-standin")
+    try:
+        result = subprocess.run(["bash", str(PROOF / "canaries" / "c0_allowed_target.sh"), "curl",
+                                 f"127.0.0.1:{port}", "/api/health"], capture_output=True, text=True, timeout=60)
+    finally:
+        _stop(listener)
+    record = json.loads(result.stdout)
+    assert (record["target"], record.get("path"), record["rc"], record["http_status"]) == \
+        (f"127.0.0.1:{port}", "/api/health", 0, 200), record
+    assert (tmp_path / "c0-standin.log").read_text().splitlines() == ["127.0.0.1 /api/health"]
+
+
+def _two_entry_bundle(tmp_path, second="10.201.136.1:3999"):
+    """The committed mechanism bundle declared with a SECOND allowed entry: gate.json `allowed` [first,
+    second] with the recorded rules and the digest re-derived for both (the checker's own derivation: the
+    rule pin is not what this fixture tests), and a passing C0 record for the second entry right after
+    the first one's."""
+    bundle = copy_bundle(tmp_path)
+    unit = bundle / "curl"
+    gate = json.loads((unit / "gate.json").read_text())
+    runtime = json.loads((unit / "runtime.json").read_text())
+    assert runtime["rules"] == chk.expected_rules(gate["allowed"]), "the committed rules are the one-entry set"
+    allowed = gate["allowed"] + [second]
+    rules = chk.expected_rules(allowed)
+    patch_json(unit / "runtime.json", rules=rules)
+    patch_json(unit / "gate.json", allowed=allowed, rules_sha256=chk.rules_digest(rules))
+    rows = records(unit)
+    c0 = next(r for r in rows if r["canary"] == "C0")
+    rows.insert(rows.index(c0) + 1, {**c0, "target": second})
+    write_records(unit, rows)
+    return bundle
+
+
+@pytest.mark.parametrize("shape", ["allowed-entry-without-c0", "c0-target-outside-the-allow-set",
+                                   "two-c0-for-one-target", "second-c0-not-2xx"])
+def test_e3b_c_the_positive_control_is_per_allowed_entry(tmp_path, shape):
+    """C: a unit proves its positive control only if its C0 targets are every allowed entry exactly once
+    and nothing else, and every C0 record meets today's predicate. Every failure is the one line
+    `positive-control-failed: <unit>`. Each shape breaks ONE half: an allowed entry with no C0 record and
+    two C0 records for one target break "every allowed entry exactly once"; a C0 target outside the
+    allow-set breaks "nothing else"; a second C0 answering 401 breaks the per-record predicate. On the
+    PIN only the per-record predicate was graded: the first three shapes PASSED."""
+    two = shape in ("allowed-entry-without-c0", "second-c0-not-2xx")
+    bundle = _two_entry_bundle(tmp_path) if two else copy_bundle(tmp_path)
+    rows = records(bundle / "curl")
+    c0 = [r for r in rows if r["canary"] == "C0"]
+    if shape == "allowed-entry-without-c0":
+        rows.remove(c0[1])
+    elif shape == "c0-target-outside-the-allow-set":
+        rows.insert(rows.index(c0[0]) + 1, {**c0[0], "target": "10.201.136.1:4000"})
+    elif shape == "two-c0-for-one-target":
+        rows.insert(rows.index(c0[0]) + 1, dict(c0[0]))
+    else:
+        rows[rows.index(c0[1])] = {**c0[1], "http_status": 401}
+    write_records(bundle / "curl", rows)
+    result = run_checker(bundle)
+    assert result.returncode == 1, result.stdout
+    assert result.stdout.splitlines()[0] == "positive-control-failed: curl"
+
+
+@NEEDS_NETNS
+def test_e3b_r2_a_health_path_answering_401_launches_nothing(e3dir):
+    """R2: the preflight grades what the checker grades — the collector's own C0 request (the same path,
+    the proxy variables scrubbed, the canaries' timeouts) must get rc 0 AND a 2xx. A stand-in whose health
+    path answers 401 is an HTTP answer outside 2xx: stderr `positive-control-not-2xx: <unit>
+    <ip:port><path> HTTP <code>`, the row `not-run|positive control not 2xx: <ip:port><path> answered HTTP
+    <code> from <ns>`, the namespace destroyed (census) and NO unit launched (no stand-in record; the
+    stand-in saw the one preflight request). The stand-in answers 401 on /v1/models too: on the PIN the
+    preflight asked /v1/models and passed ANY HTTP answer (curl without -f), so the unit launched and
+    only the checker would have failed it later."""
+    port = 18123
+    env = _runner_env(e3dir, port)
+    override = json.loads((e3dir / "override.json").read_text())
+    evidence = e3dir / "evidence"
+    listener = None
+    probe = f"10.201.107.1:{port}/api/health"
+    try:
+        listener = _listener(e3dir, port, status={"/api/health": 401, "/v1/models": 401})
+        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+        assert _unit_row(evidence, "hermes-acp") == {
+            "unit": "hermes-acp", "status": "not-run", "override": override,
+            "reason": f"positive control not 2xx: {probe} answered HTTP 401 from s0-05-hermes-acp"}, runner.stderr
+        assert f"positive-control-not-2xx: hermes-acp {probe} HTTP 401" in runner.stderr.splitlines(), runner.stderr
+        assert _standin_records(e3dir) == [], "a unit launched past a not-2xx preflight"
+        assert (e3dir / "listener.log").read_text().splitlines() == ["10.201.107.2 /api/health"]
+    finally:
+        _stop(listener)
+        _lib('egress_ns_destroy s0-05-hermes-acp')
+    assert _census("s0-05-hermes-acp") == CLEAN
+
+
+@NEEDS_NETNS
+def test_e3b_r4_sigint_stops_the_runner_with_130(e3dir):
+    """R4: `trap 'exit 130' INT` with `cleanup` on EXIT only — SIGINT mid-leg ends the runner with 130:
+    the namespace it owns is gone with its veth, /etc/netns entry and owner record, the unit is dead,
+    and nothing runs after the stop (no units.json, no census comparison, no checker). On the PIN
+    (`trap cleanup EXIT INT TERM`) the runner ran cleanup and CONTINUED to its checker."""
+    ns = "s0-05-hermes-acp"
+    env = _runner_env(e3dir, 18124)
+    evidence = e3dir / "evidence"
+    listener = runner = None
+    try:
+        listener = _listener(e3dir, 18124)
+        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to start inside the namespace")
+        standin = _standin_records(e3dir)[0]["pid"]
+        runner.send_signal(signal.SIGINT)
+        out, err = runner.communicate(timeout=180)
+        assert runner.returncode == 130, (runner.returncode, out, err)
+        assert "=== checker ===" not in out, out
+        assert not (evidence / "units.json").exists() and not (evidence / "s0-01-census.json").exists()
+        assert _census(ns) == CLEAN, (_census(ns), out, err)
+        assert not _pid_alive(standin), f"stand-in {standin} outlived its runner"
+    finally:
+        _stop(runner)
+        _stop(listener)
+        _lib(f'egress_ns_destroy {ns}')
+
+
+@NEEDS_NETNS
+def test_e3b_r4_a_stop_in_the_first_leg_starts_no_second_leg(e3dir):
+    """R4: a two-unit run (hermes-acp, then buzz-acp, with every precondition of the pair's leg met: its
+    pins through the override and its identity file) stopped with SIGTERM during its FIRST leg exits 143,
+    runs `cleanup` ONCE and never creates the second unit's namespace. The instrument: a PATH `ip` shim
+    logs every `ip` call the runner makes; the test writes a STOP line into that log just before the
+    signal. After it: exactly one `netns del s0-05-hermes-acp` (the one cleanup), and no call anywhere
+    names s0-05-buzz-acp. On the PIN the TERM trap ran cleanup, the loop went on, the leg teardown
+    destroyed the name a second time and the pair's namespace was built."""
+    shim = e3dir / "shim"
+    shim.mkdir()
+    ip_log = e3dir / "ip-calls.log"
+    (shim / "ip").write_text(f'#!/bin/bash\nprintf "%s\\n" "$*" >> {ip_log}\nexec {IP_REAL} "$@"\n')
+    (shim / "ip").chmod(0o755)
+    port = 18125
+    env = _runner_env(e3dir, port, path_prefix=shim, override=_pair_override(e3dir))
+    env["S0_05_PAIR_IDENTITY"] = str(_identity_file(e3dir / "id" / "pair.env"))
+    evidence = e3dir / "evidence"
+    listener = runner = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = subprocess.Popen(["bash", str(RUNNER), str(evidence), "hermes-acp", "buzz-acp"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        _wait_for(lambda: _standin_records(e3dir), 60, "the first unit to start inside its namespace")
+        with open(ip_log, "a") as handle:
+            handle.write("=== STOP ===\n")
+        runner.send_signal(signal.SIGTERM)
+        out, err = runner.communicate(timeout=240)
+        assert runner.returncode == 143, (runner.returncode, out, err)
+        calls = ip_log.read_text().splitlines()
+        assert "netns add s0-05-hermes-acp" in calls, calls           # the instrument saw the first leg
+        after = calls[calls.index("=== STOP ===") + 1:]
+        assert after.count("netns del s0-05-hermes-acp") == 1, after   # cleanup ran once
+        assert not [call for call in calls if "s0-05-buzz-acp" in call], calls
+        assert "=== buzz-acp:" not in out and "=== checker ===" not in out, out
+        assert not (evidence / "units.json").exists()
+    finally:
+        _stop(runner)
+        _stop(listener)
+        _lib('egress_ns_destroy s0-05-hermes-acp')
+        _lib('egress_ns_destroy s0-05-buzz-acp')
+    assert _census("s0-05-hermes-acp") == CLEAN and _census("s0-05-buzz-acp") == CLEAN
+    assert _nat_rules_naming(_lib('egress_ns_host_if s0-05-buzz-acp').stdout.strip()) == []

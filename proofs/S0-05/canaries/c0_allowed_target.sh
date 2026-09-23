@@ -12,4 +12,4 @@ err=$(mktemp); code=$(curl -sS --connect-timeout "$EGRESS_CONNECT_TIMEOUT" --max
       -o /dev/null -w '%{http_code}' "$url" 2>"$err"); rc=$?
 detail=$(cat "$err"); rm -f "$err"
 [ -n "$detail" ] || detail="curl exit $rc, HTTP $code"
-emit_canary C0 "$unit" "$target" http-get "$rc" run "$detail" "http_status=$code"
+emit_canary C0 "$unit" "$target" http-get "$rc" run "$detail" "http_status=$code" "path=$path"

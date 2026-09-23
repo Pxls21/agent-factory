@@ -19,7 +19,9 @@ Order is part of the contract, and it runs in this order for a reason:
      gate-disabled`.
   2. POSITIVE CONTROL (C0). A unit that could not reach its allowed target proves nothing about
      containment — that is what bare `unshare --net` looks like (AF-AP-1,
-     row AF-AP-1 in docs/INCIDENT-LOG.md). Exit 1, `positive-control-failed: <unit>`.
+     row AF-AP-1 in docs/INCIDENT-LOG.md). Exit 1, `positive-control-failed: <unit>`. Per entry
+     (E3-b C): the unit's C0 targets are every entry of its gate.json `allowed` exactly once and
+     nothing else, and every C0 record ran, rc 0, with a 2xx.
   3. DENIAL CANARIES (C1 DNS, C2 TCP, C3 TLS, C5 UDP/53, C6 routable-but-not-allow-listed).
      Each must have failed with an rc in {6, 7, 28}, a diagnostic drawn from this mechanism's
      own vocabulary, AND — where the diagnostic names an endpoint — that endpoint must be the
@@ -91,7 +93,13 @@ MECHANISM = "veth-iptables"
 RUNTIME_KEYS = ("venue", "unit", "kernel", "iptables_version", "rules",
                 "drop_counter_before", "drop_counter_after")
 RECORD_KEYS = ("canary", "unit", "target", "kind", "rc", "status", "detail")
-IPV4_PORT = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$")
+# G (E3-b): the ONE allow-entry rule netns_lib.sh's egress_allow_entry_ok holds — a parity test drives
+# one table through both. Octets without a leading zero (a lone 0 is fine), a port of at most five
+# digits without one (a lone 0 is kept for the `out of range` text); _split_ip_port bounds the values.
+# ASCII only: `[0-9]`, never `\d` (which matches every Unicode digit), and fullmatch, never `$` (which
+# also matches before a trailing newline).
+_OCTET = r"(0|[1-9][0-9]{0,2})"
+IPV4_PORT = re.compile(rf"{_OCTET}\.{_OCTET}\.{_OCTET}\.{_OCTET}:(0|[1-9][0-9]{{0,4}})")
 # The two places a curl diagnostic names the endpoint it failed on.
 CURL_CONNECT = re.compile(r"Failed to connect to (\S+) port (\d+)")
 CURL_RESOLVE = re.compile(r"Could not resolve host: (\S+?)\.?$")
@@ -196,7 +204,7 @@ def _load_json(path, name):
 
 
 def _split_ip_port(entry):
-    match = IPV4_PORT.match(entry or "")
+    match = IPV4_PORT.fullmatch(entry or "")
     if not match:
         raise Failure(f"gate-manifest-invalid: allow entry {entry!r} is not <ipv4>:<port>")
     *octets, port = match.groups()
@@ -262,17 +270,35 @@ def read_records(unit_dir, unit):
     return records
 
 
-def check_positive_control(records, unit):
-    """Returns 1 for a unit whose positive control is proven. The PASS line's
+def c0_proves(record):
+    """The per-record positive-control predicate (today's, unchanged): the C0 record ran, curl
+    returned 0, and its HTTP status is an int that is not a bool, in 2xx. run_s0_05_units.sh's
+    preflight grades its own C0 request with THIS function, so the runner can never launch a unit on
+    an answer the checker would refuse (E3-b R2). `.get`: read_records guarantees the keys here, and
+    the runner hands over a raw record."""
+    status = record.get("http_status")
+    return not (record.get("status") != "run" or record.get("rc") != 0 or not _is_int(status)
+                or not 200 <= status < 300)
+
+
+def check_positive_control(records, unit, allowed):
+    """Returns 1 for a unit whose positive control is proven: its C0 targets are EVERY allowed entry
+    exactly once and nothing else, and every C0 record proves reach (c0_proves). E3-b C: a unit with
+    two allowed destinations (the buzz-acp pair: relay + OmniRoute) proves both, one C0 each. Every
+    failure is the one line `positive-control-failed: <unit>`. `==` over lists, never a hash or a sort,
+    so any JSON value in `allowed` or a target compares without a crash. The PASS line's
     `positive controls N/M` is then units-proven over units-checked — two distinct populations,
     not one count printed twice."""
     entries = records.get(POSITIVE, [])
     if not entries:
         raise Failure(f"positive-control-failed: {unit}")
+    targets = [record["target"] for record in entries]
+    if any(targets.count(entry) != 1 for entry in allowed):       # every allowed entry, exactly once
+        raise Failure(f"positive-control-failed: {unit}")
+    if any(target not in allowed for target in targets):          # and nothing else
+        raise Failure(f"positive-control-failed: {unit}")
     for record in entries:
-        status = record.get("http_status")
-        if (record["status"] != "run" or record["rc"] != 0 or not _is_int(status)
-                or not 200 <= status < 300):
+        if not c0_proves(record):
             raise Failure(f"positive-control-failed: {unit}")
     return 1
 
@@ -441,7 +467,7 @@ def check(root, required_units):
     lines, denied, positives = list(absent_lines) + identity_lines, 0, 0
     for unit in units:
         records = read_records(root / unit, unit)
-        positives += check_positive_control(records, unit)
+        positives += check_positive_control(records, unit, gates[unit]["allowed"])
         denied += check_denials(records, unit)
         lines.extend(check_recorded(records, unit))
         lines.append(check_runtime_and_rules(root / unit, unit, gates[unit]))

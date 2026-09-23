@@ -9,7 +9,8 @@
 #   run_s0_05_units.sh <evidence-root> [unit...]      (default: hermes-acp buzz-acp)
 #
 # For each unit: check the pinned unit on disk (A1), create its own selective-egress namespace with
-# ONLY that unit's allowed destinations (A8), PREFLIGHT that each one answers from inside it, launch
+# ONLY that unit's allowed destinations (A8), PREFLIGHT that each one answers 2xx on its health path
+# from inside it (E3-b R1, R2), launch
 # the REAL unit in it as the non-root unit user (A4) with a clean environment (A5), its stdio on pipes
 # (A3) and its own scratch tree (A2), record which process actually runs (A7), run the canary suite
 # as that unit, stop it, tear down. Units that cannot run are declared in units.json as `not-run`
@@ -45,12 +46,20 @@
 #     place, mode, owner and shape, never whether the relay accepts the key.
 #  4. unit-identity.json is unkeyed: it binds the process that ran to the pins, not against a forger
 #     with root on the PC.
+#  5. The two probe paths (E3-b R1: OmniRoute /api/health, the relay /health) are facts about the
+#     services on the PC today; if one changes, the preflight refuses with the named not-2xx reason
+#     (fail closed) and the fix is a one-line constant (OMNI_PROBE_PATH / RELAY_PROBE_PATH below).
+#  6. A 2xx from a health path proves that the unit's namespace reaches that ip:port; it does not
+#     prove the model API behind it would serve the unit (that is S0-03), nor which instance answers
+#     (the AF-AP-33 class: health-200 is not the right instance).
 #
 # PREFLIGHT, not a workaround: a service bound only to 127.0.0.1 is unreachable from a namespace (a
 # fresh namespace has its own empty loopback — findings §6a, docs/research/FINDINGS-STAGE0-v1.md:98-108).
 # OmniRoute listens on 0.0.0.0:20128 (CD1 probe 1); the relay listens on 127.0.0.1:3999 only, which is
 # what the relay reach is for. A destination that does not answer from the namespace is `not-run|
-# positive control unreachable: ...`; the script never falls back to a listener of its own.
+# positive control unreachable: ...`; one that answers outside 2xx is `not-run|positive control not
+# 2xx: ...` (E3-b R2: the preflight is the collector's own C0 request, graded by the checker's own
+# predicate); the script never falls back to a listener of its own.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$HERE/../.." && pwd)"
@@ -64,6 +73,13 @@ SETPRIV_BIN=$(command -v setpriv) || { echo "run_s0_05_units: cannot run here (n
 ENV_BIN=$(command -v env); IP_BIN=$(command -v ip); PY_BIN=$(command -v python3)
 
 OMNI_PORT=${S0_05_OMNIROUTE_PORT:-20128}
+# R1 (E3-b): the path each allowed service answers 2xx on, asked by the preflight and by C0. Facts about
+# the services on the PC, measured 2026-09-23 06:57Z by the coordinator's bridge probes (quoted in
+# tasks/briefs/s0-05-support/E3-b-brief.md): OmniRoute `/api/health` 200 application/json while
+# `/v1/models` is 401 (it now requires a key); the relay `/health` 200 text/plain while `/v1/models` is
+# 404. If a service moves its health path, the preflight refuses it as not-2xx: change the constant.
+OMNI_PROBE_PATH=/api/health
+RELAY_PROBE_PATH=/health
 UNIT_USER=${S0_05_UNIT_USER:-}
 PAIR_IDENTITY=${S0_05_PAIR_IDENTITY:-}
 PIN_OVERRIDE=${S0_05_PIN_OVERRIDE:-}
@@ -249,6 +265,38 @@ sys.exit(1 if problems else 0)
 PY
 }
 
+# R2 (E3-b): the preflight is the collector's OWN C0 request — the real canaries/c0_allowed_target.sh
+# inside the namespace, in the canaries' scrubbed environment (the `env -u` wrapper run_canaries.sh
+# puts on every canary, its list read from canaries/_emit.sh), with the same path and the canaries' own
+# connect and total timeouts — graded by the checker's OWN predicate (check_egress.c0_proves). Prints
+# `ok`, `not-2xx <code>` (curl rc 0 with an HTTP status outside 2xx) or `unreachable` (no HTTP answer,
+# or anything else that fails the predicate).
+C0_SCRUB=(env)
+for _var in $(bash -c '. "$1" && printf "%s" "$EGRESS_SCRUBBED_ENV"' _ "$P/canaries/_emit.sh"); do C0_SCRUB+=(-u "$_var"); done
+[ "${#C0_SCRUB[@]}" -gt 1 ] || { echo "run_s0_05_units: cannot read the canaries' scrub list (canaries/_emit.sh)" >&2; exit 2; }
+_c0_preflight() {  # <ns> <unit> <ip:port> <path>
+  local record
+  record=$(egress_ns_run "$1" "${C0_SCRUB[@]}" bash "$P/canaries/c0_allowed_target.sh" "$2" "$3" "$4")
+  python3 -B - "$P/check_egress.py" "$record" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("check_egress", sys.argv[1])
+checker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checker)
+try:
+    record = json.loads(sys.argv[2])
+except ValueError:
+    record = None
+status = record.get("http_status") if isinstance(record, dict) else None
+if isinstance(record, dict) and checker.c0_proves(record):
+    print("ok")
+elif (isinstance(record, dict) and record.get("rc") == 0 and checker._is_int(status) and status > 0
+        and not 200 <= status < 300):
+    print(f"not-2xx {status}")
+else:
+    print("unreachable")
+PY
+}
+
 # One leg's teardown, on every path after the launch: close the unit's stdin if still held, destroy
 # the namespace (it kills whatever is left inside and removes the relay reach — the backstop), drop
 # the name from NS_LIVE, reap the log pipe's reader BY PID, remove the pipes.
@@ -280,7 +328,12 @@ cleanup() {
   for pid in $LOG_PIDS; do _kill_our_child "$pid"; done
   for dir in $FIFO_DIRS; do rm -rf "$dir"; done
 }
-trap cleanup EXIT INT TERM
+# R4 (E3-b): a stop stops. `cleanup` runs ONCE, on EXIT; SIGINT and SIGTERM exit 130 / 143 through it,
+# so no further unit leg starts, no units.json is written, and neither the census comparison nor the
+# checker runs. (`trap cleanup EXIT INT TERM` ran cleanup on the signal and then CONTINUED, E3.)
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 CENSUS_BEFORE=$(_s0_01_census)
 
@@ -325,9 +378,12 @@ for unit in "${UNITS[@]}"; do
   # A8: every allow entry is formed here, from the namespace's veth host address and a port input
   # (never word-split: a malformed port reaches egress_ns_create whole and is refused by name).
   # The pair's allow-set is exactly {relay, OmniRoute} (D-051); its agent is its own child.
+  # R1 (E3-b): each entry carries its service's probe path (probe_paths[i] for allowed[i]);
+  # egress_ns_create still gets the ip:port entries alone, never a path.
   host_ip=$(egress_ns_host_ip "$ns")
-  allowed=("$host_ip:$OMNI_PORT")
-  [ "$unit" = buzz-acp ] && allowed=("$host_ip:${PIN[RELAY_PORT]}" "$host_ip:$OMNI_PORT")
+  allowed=("$host_ip:$OMNI_PORT"); probe_paths=("$OMNI_PROBE_PATH")
+  [ "$unit" = buzz-acp ] && { allowed=("$host_ip:${PIN[RELAY_PORT]}" "$host_ip:$OMNI_PORT")
+                              probe_paths=("$RELAY_PROBE_PATH" "$OMNI_PROBE_PATH"); }
   echo "=== $unit: namespace $ns, allowed ${allowed[*]} ==="
   # X2: the name enters the reap set BEFORE create runs, and stays there when create fails, so a
   # leftover that create could not roll back (its shell killed mid-way) is still reaped by
@@ -351,18 +407,27 @@ for unit in "${UNITS[@]}"; do
     fi
   fi
 
-  # PREFLIGHT the exact predicate the proof consumes (AF-AP-24): C0 to EVERY allowed destination,
-  # with no proxy (the canaries scrub the proxy environment too), before launching anything.
-  unreachable=""
-  for entry in "${allowed[@]}"; do
-    egress_ns_run "$ns" curl -sS --noproxy '*' --connect-timeout 5 -o /dev/null "http://$entry/v1/models" \
-      || { unreachable=$entry; break; }
+  # PREFLIGHT the exact predicate the proof consumes (AF-AP-24), before launching anything: for EVERY
+  # allowed destination, in order, the collector's own C0 request graded by the checker's own predicate
+  # (_c0_preflight, R2). No HTTP answer keeps the `unreachable` texts; an HTTP answer outside 2xx is
+  # `not-2xx`, named with the path it asked.
+  verdict=ok
+  for i in "${!allowed[@]}"; do
+    entry=${allowed[$i]}; probe=$entry${probe_paths[$i]}
+    verdict=$(_c0_preflight "$ns" "$unit" "$entry" "${probe_paths[$i]}")
+    [ "$verdict" = ok ] || break
   done
-  if [ -n "$unreachable" ]; then
-    echo "positive-control-unreachable: $unit $unreachable" >&2
-    echo "  the service is not reachable from inside the namespace. Fix it, do not stub it: listen on" >&2
-    echo "  $(egress_ns_host_ip "$ns") (the veth host address) or 0.0.0.0; the relay's reach is D-051's DNAT." >&2
-    RESULT[$unit]="not-run|positive control unreachable: $unreachable not reachable from $ns"
+  if [ "$verdict" != ok ]; then
+    case $verdict in
+      "not-2xx "*)
+        echo "positive-control-not-2xx: $unit $probe HTTP ${verdict#not-2xx }" >&2
+        RESULT[$unit]="not-run|positive control not 2xx: $probe answered HTTP ${verdict#not-2xx } from $ns";;
+      *)
+        echo "positive-control-unreachable: $unit $entry" >&2
+        echo "  the service is not reachable from inside the namespace. Fix it, do not stub it: listen on" >&2
+        echo "  $(egress_ns_host_ip "$ns") (the veth host address) or 0.0.0.0; the relay's reach is D-051's DNAT." >&2
+        RESULT[$unit]="not-run|positive control unreachable: $entry not reachable from $ns";;
+    esac
     egress_ns_destroy "$ns"; NS_LIVE=${NS_LIVE//$ns/}; NS_LIVE=${NS_LIVE# }; continue
   fi
 
@@ -433,7 +498,12 @@ for unit in "${UNITS[@]}"; do
     _leg_teardown; continue
   fi
 
-  bash "$P/run_canaries.sh" "$unit" "$ns" "$(egress_ns_host_ip "$ns"):$OMNI_PORT" "$EVIDENCE_ROOT" "" pc
+  # R3 (E3-b): the collector gets the unit's WHOLE entry list, comma-joined in this runner's order (the
+  # pair: relay, then OmniRoute), each entry with its probe path (R1): its gate.json records every
+  # allowed ip:port, so the rule pin can hold for the pair (E3 section 9), and C0 asks what R2 asked.
+  entries=""
+  for i in "${!allowed[@]}"; do entries="${entries:+$entries,}${allowed[$i]}${probe_paths[$i]}"; done
+  bash "$P/run_canaries.sh" "$unit" "$ns" "$entries" "$EVIDENCE_ROOT" "" pc
   RESULT[$unit]="run|contained live unit"
 
   # A3 + F9: the stop is closing stdin (the adapter exits 0 at EOF, CD1 probe 3); the namespace

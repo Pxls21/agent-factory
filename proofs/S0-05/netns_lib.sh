@@ -15,6 +15,7 @@
 # is the committed control for that class.
 #
 # API
+#   egress_allow_entry_ok <entry>        G: the ONE allow-entry rule, a silent predicate (0 valid)
 #   egress_ns_create <ns> <ip:port>...   idempotent; claims the name, creates the ns, the veth
 #                                        pair, the rules; a failed step rolls all of it back (X2)
 #   egress_ns_run <ns> <cmd...>          run a command as the contained unit
@@ -64,6 +65,23 @@ egress_ns_capable() {
   echo "ok"
 }
 
+# --- the allow-entry rule (G) ------------------------------------------------------------------
+# ONE rule for an allow entry, held in three places: here, run_canaries.sh (which calls this) and
+# check_egress.py's _split_ip_port (the same set; a parity test drives one table through both). A
+# dotted quad of four decimal octets 0-255 with no leading zero (a lone 0 is fine), then a port
+# 1-65535 with no leading zero. X1 (VERIFY-E2-R1 F1, AF-AP-129): the port's DIGIT COUNT is bounded
+# before the arithmetic — five digits cannot overflow, while a longer string made `[ -gt ]` exit 2,
+# which `||` read as false; and `[` parses a number, where `[[ -gt ]]` would EVALUATE an expression.
+# ASCII-only under any locale: every class is an explicit list, never a range a locale may widen.
+# SILENT: no output; status 0 valid, 1 not.
+egress_allow_entry_ok() {
+  local entry=${1-} d='[0123456789]' nz='[123456789]' octet ip port
+  octet="(0|${nz}${d}?|1${d}${d}|2[01234]${d}|25[012345])"
+  local ip_re="^${octet}\\.${octet}\\.${octet}\\.${octet}\$" port_re="^${nz}${d}{0,4}\$"
+  ip=${entry%:*}; port=${entry##*:}
+  [[ "$port" =~ $port_re ]] && [ "$port" -le 65535 ] && [[ "$ip" =~ $ip_re ]]
+}
+
 # --- create ----------------------------------------------------------------------------------
 # probe.sh:39-58 verbatim in shape: netns add, veth pair, peer into the ns, addresses, links up,
 # policy DROP on INPUT/OUTPUT/FORWARD, an ACCEPT pair per allowed ip:port, loopback ACCEPT.
@@ -72,20 +90,11 @@ egress_ns_create() {
   [ -n "$ns" ] || { echo "egress_ns_create: namespace name required" >&2; return 64; }
   [ "$#" -ge 1 ] || { echo "egress_ns_create: at least one <ip:port> allow entry required" >&2; return 64; }
 
-  # F11/F12: validate EVERY allow entry up front, before any namespace/veth/rule/record work.
-  # A dotted quad of four decimal octets 0-255 with no leading zero (a lone 0 is fine), port 1-65535.
-  # X1 (VERIFY-E2-R1 F1, AF-AP-129): the port's DIGIT COUNT is bounded before the arithmetic: five
-  # digits cannot overflow, while a longer string made `[ -gt ]` exit 2, which `||` read as false.
-  local entry ip port octet_pat='(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])'
-  local ip_pat="^${octet_pat}\\.${octet_pat}\\.${octet_pat}\\.${octet_pat}$"
+  # F11/F12 + X1: validate EVERY allow entry up front, before any namespace/veth/rule/record work,
+  # by the one allow-entry rule (egress_allow_entry_ok, above).
+  local entry
   for entry in "$@"; do
-    ip=${entry%:*}; port=${entry##*:}
-    if ! [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$port" -gt 65535 ]; then
-      echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64
-    fi
-    if ! [[ "$ip" =~ $ip_pat ]]; then
-      echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64
-    fi
+    egress_allow_entry_ok "$entry" || { echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64; }
   done
 
   local host_if ns_if host_ip ns_ip resolver
