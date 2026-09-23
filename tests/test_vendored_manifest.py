@@ -375,14 +375,246 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     # so it differs from the kit index and moves from kit-verbatim to kit-adapted.
     assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2957", "0"]
     assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["15", "0"]
-    # 81 -> 129 on 2026-09-22 19:20Z (6ec33ed): the 47 vendored Aegis skill files + PROVENANCE-AEGIS.md.
-    # The class means "not in the kit index", and it already held other vendored skill sets (honey,
-    # prism, typesafe): labelling them first-party is a known gap, tracked as the K1-h task.
-    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["129", "0"]
+    # K1-h (task #137): the 129 first-party row of 6ec33ed split into 56 byte-identical
+    # copies of kit roots (20 council-of-high-intelligence + 19 honey-for-devs + 13
+    # llm-wiki-compiler + 4 output-styles), 61 declared-set members (47 aegis + 12 prism
+    # + 2 typesafe), and a 12-file remainder. The 129 pin is replaced by K1-h counts.
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["12", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
     assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2957
     assert sum(klass == "kit-adapted" for klass in classes.values()) == 15
-    assert sum(klass == "first-party" for klass in classes.values()) == 129
+    assert sum(klass == "first-party" for klass in classes.values()) == 12
+
+
+# K1-h: the 12-file remainder of `.claude/ (first-party)` at the PIN. The three
+# PROVENANCE-*.md files document the declared sets but are not set members;
+# they stay first-party.
+K1H_FIRST_PARTY_REMAINDER = [
+    "agents/codebase-memory-auditor.md",
+    "agents/codebase-memory-scout.md",
+    "agents/codebase-memory.md",
+    "commands/fetch-bookmarks.md",
+    "commands/wiki-ingest.md",
+    "commands/wiki-visualize.md",
+    "skills/PROVENANCE-AEGIS.md",
+    "skills/PROVENANCE-PRISM.md",
+    "skills/PROVENANCE-TYPESAFE.md",
+    "skills/codebase-memory/SKILL.md",
+    "skills/session-start-hook/SKILL.md",
+    "skills/wiki-compiler/SKILL.md",
+]
+
+# The three PROVENANCE-*.md files are the only first-party files OUTSIDE a
+# declared set prefix and outside the copy rule; everything else under the
+# set prefixes is a set member, everything byte-identical to a kit root is a
+# copy, and the 12 above are the remainder.
+K1H_SET_REMAINDER_PATHS = {
+    "skills/PROVENANCE-AEGIS.md",
+    "skills/PROVENANCE-PRISM.md",
+    "skills/PROVENANCE-TYPESAFE.md",
+}
+
+# A .claude/ file whose blob matches EXACTLY ONE file under EXACTLY ONE
+# declared kit root, so a one-byte edit flips it copy -> first-party without
+# triggering the copy-ambiguous refusal.
+K1H_HONEY_COPY_FILE = ".claude/agents/hive-builder.md"
+
+# A source file whose blob is unique to ONE kit root (llm-wiki-compiler) and
+# has NO committed .claude/ copy, so planting a byte-identical copy under
+# .claude/ plus a second root's file makes the walk name THAT .claude/ path in
+# the copy-ambiguous refusal. (The output-styles files are NOT usable: they
+# already have byte-identical .claude/ copies, which the walk hits first and
+# names in the refusal instead.)
+K1H_AMBIGUOUS_SOURCE = "sandbox-kit/llm-wiki-compiler/README.md"
+
+
+def k1h_class_counts(classes: dict[str, str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for klass in classes.values():
+        counts[klass] = counts.get(klass, 0) + 1
+    return counts
+
+
+def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
+    """The K1-h class table: 12 first-party (the named remainder), 61 set
+    members (47 aegis + 12 prism + 2 typesafe), 56 copies (20 + 19 + 13 + 4),
+    and the unchanged kit-verbatim 2957 / kit-adapted 15 (D-054). The 129-pin test
+    above carries the manifest row; this test carries the per-class split."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    classes = class_rows(root / module.CLASSES_PATH)
+    counts = k1h_class_counts(classes)
+
+    assert counts.get("first-party", 0) == 12
+    assert counts.get("vendored:aegis", 0) == 47
+    assert counts.get("vendored:prism", 0) == 12
+    assert counts.get("vendored:typesafe", 0) == 2
+    assert counts.get("copy:sandbox-kit/council-of-high-intelligence/", 0) == 20
+    assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 19
+    assert counts.get("copy:sandbox-kit/llm-wiki-compiler/", 0) == 13
+    assert counts.get("copy:sandbox-kit/output-styles/", 0) == 4
+    assert counts.get("kit-verbatim", 0) == 2957
+    assert counts.get("kit-adapted", 0) == 15
+    assert [
+        path
+        for path, klass in sorted(classes.items())
+        if klass == "first-party"
+    ] == K1H_FIRST_PARTY_REMAINDER
+    assert [
+        path
+        for path, klass in sorted(classes.items())
+        if klass == "vendored:aegis"
+    ] == sorted(
+        path for path in classes if path.startswith("skills/aegis-")
+    )
+    assert [
+        path
+        for path, klass in sorted(classes.items())
+        if klass == "vendored:prism"
+    ] == sorted(
+        path for path in classes if path.startswith("skills/prism-")
+    )
+    assert [
+        path
+        for path, klass in sorted(classes.items())
+        if klass == "vendored:typesafe"
+    ] == sorted(
+        path for path in classes if path.startswith("skills/typesafe-ai/")
+    )
+    # The 9 non-PROVENANCE remainder paths stay first-party and must NOT be
+    # copies: the copy set is disjoint from them (their blobs are not under
+    # any declared kit root — measured at the PIN, the brief's premise).
+    copy_paths = {
+        path for path, klass in classes.items() if klass.startswith("copy:")
+    }
+    assert not (
+        copy_paths & (set(K1H_FIRST_PARTY_REMAINDER) - K1H_SET_REMAINDER_PATHS)
+    )
+
+
+def test_k1h_new_aegis_file_is_vendored_set_member(tmp_path: Path) -> None:
+    """Control (b) first half: a NEW file under a declared set prefix is
+    classified by the set rule, not the copy rule (the aegis tree is not
+    byte-identical to any kit root, so the copy rule would not catch it)."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    new_dir = root / ".claude/skills/aegis-new"
+    new_dir.mkdir(parents=True)
+    (new_dir / "SKILL.md").write_text("new aegis skill\n", encoding="utf-8")
+
+    classes = module.render_classes(
+        module.build_manifest_data(root, module.repo_root_of(root)).claude_classes
+    )
+    parsed = module.parse_classes(classes)
+
+    assert parsed["skills/aegis-new/SKILL.md"] == "vendored:aegis"
+
+
+def test_k1h_aegis_provenance_pin_removed_is_refused(tmp_path: Path) -> None:
+    """Control (b) second half: the aegis pin string removed from
+    PROVENANCE-AEGIS.md refuses the WHOLE generation with the exact
+    provenance-mismatch message and writes nothing (neither manifest nor
+    class file is touched). The pin and the source share line 3, so the pin
+    token is removed in place (the source line is kept) to isolate the
+    `aegis pin` field: deleting the line would break the source first and
+    mis-name the error."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    before = (root / module.MANIFEST_PATH).read_bytes()
+    before_classes = (root / module.CLASSES_PATH).read_bytes()
+    provenance = root / ".claude/skills/PROVENANCE-AEGIS.md"
+    original = provenance.read_text(encoding="utf-8")
+    assert original.count("60321ed") == 1  # the pin appears exactly once
+    mutated = original.replace("60321ed", "0000000")
+    assert "GanyuanRan/Aegis" in mutated and "60321ed" not in mutated
+    provenance.write_text(mutated, encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert "manifest: provenance mismatch: aegis pin" in result.stderr
+    assert (root / module.MANIFEST_PATH).read_bytes() == before
+    assert (root / module.CLASSES_PATH).read_bytes() == before_classes
+
+
+def test_k1h_honey_copy_byte_change_falls_back_to_first_party(tmp_path: Path) -> None:
+    """Control (a): one byte changed in a hive file that is a byte-identical
+    copy of `sandbox-kit/honey-for-devs/` (the honey set is NOT a declared
+    set: it is carried by the copy rule) flips the path copy ->
+    first-party (the copy rule matches by blob identity only; a name match
+    would not produce this fallback, which is what m2 kills)."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    target = root / K1H_HONEY_COPY_FILE
+    target.write_bytes(target.read_bytes() + b"one byte changed\n")
+
+    data = module.build_manifest_data(root, module.repo_root_of(root))
+    classes = module.parse_classes(
+        module.render_classes(data.claude_classes)
+    )
+
+    assert classes["agents/hive-builder.md"] == "first-party"
+    counts = k1h_class_counts(classes)
+    assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 18
+    assert counts.get("first-party", 0) == 13
+
+
+def test_k1h_ambiguous_copy_blob_is_refused_by_name(tmp_path: Path) -> None:
+    """Control (c): a `.claude/` file whose blob matches files under TWO
+    different declared kit roots is refused by name (the ambiguity
+    refusal); no classification is produced. The source file is
+    `llm-wiki-compiler/README.md`: its blob is unique to that root and has no
+    committed `.claude/` copy, so the ONLY `.claude/` file holding it is the
+    one planted here. Planting the same blob into `output-styles/` makes the
+    planted `.claude/` copy match two roots, so the refusal names THAT path
+    (a pre-existing `.claude/` copy would be named instead)."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    source = root / K1H_AMBIGUOUS_SOURCE
+    blob = source.read_bytes()
+    (root / "sandbox-kit/output-styles/AMBIGUOUS-PLANT.md").write_bytes(blob)
+    (root / ".claude/skills/dup-copy.md").write_bytes(blob)
+
+    detected = False
+    message = ""
+    try:
+        module.render(root)
+    except module.ManifestError as error:
+        detected = "manifest: .claude copy ambiguous: skills/dup-copy.md matches" in str(error)
+        message = str(error)
+    assert detected
+    # both roots named (the refusal names every matching root, sorted)
+    assert "sandbox-kit/llm-wiki-compiler/" in message
+    assert "sandbox-kit/output-styles/" in message
+
+
+def test_k1h_check_passes_then_honey_copy_flip_names_class_drift(
+    tmp_path: Path,
+) -> None:
+    """Control (d) first half: --check PASSES on the (rewritten) committed
+    tree; then a single byte in a honey copy flips its class and --check
+    fails with the existing class-drift message naming the path."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+
+    good = run_tool(root)
+    assert good.returncode == 0, good.stderr
+    assert good.stdout == EXPECTED_PASS
+
+    target = root / K1H_HONEY_COPY_FILE
+    target.write_bytes(target.read_bytes() + b"one byte changed\n")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1
+    assert (
+        ".claude class drift: agents/hive-builder.md: "
+        "committed=copy:sandbox-kit/honey-for-devs/ generated=first-party"
+    ) in result.stderr
 
 
 def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:

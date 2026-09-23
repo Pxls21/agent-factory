@@ -4,6 +4,14 @@
 `.claude/` classification compares each file's git blob sha1 with the committed
 kit index. Mode differences such as 100644 vs 100755 are ignored for class;
 mode 120000 is used only to identify kit symlink paths.
+
+K1-h (task #137) widens the `.claude/` split. Classification order per path:
+(a) in the kit index -> `kit-verbatim` / `kit-adapted`; (b) under a declared
+set prefix (CLAUDE_DECLARED_SETS) -> `vendored:<set>`; (c) a regular file whose
+git blob sha1 equals a committed file under a declared `sandbox-kit/<name>/`
+root (match by blob identity only, never by name; a blob under two roots is
+refused by name) -> `copy:sandbox-kit/<name>/`; (d) everything else, including
+every symlink, stays `first-party` under today's rule.
 """
 
 from __future__ import annotations
@@ -142,6 +150,70 @@ SANDBOX_KIT_ENTRIES: dict[str, str] = {
     "dot-claude.aeb3082.index.tsv": "first-party",
 }
 KIT_PORTABLE_ROW = "sandbox-kit/ (kit-portable files)"
+
+
+class DeclaredSet(NamedTuple):
+    """A vendored set installed under `.claude/` (K1-h, task #137).
+
+    `prefix` is relative to `.claude/`. Every field is verified against the
+    provenance file at generation: the file must exist and contain both the
+    `owner/repo` source and the pin string, else `manifest: provenance
+    mismatch: <set> <field>` (non-zero exit, nothing written). The row's pin
+    source cell names `<provenance file>:<line>` of the line carrying the pin
+    (computed, never typed). The license SHA-256 cell is the file's sha256
+    when `license_file` is present and `none found` otherwise (never inferred
+    from another source).
+    """
+
+    name: str
+    prefix: str
+    provenance: str
+    source: str
+    pin: str
+    license: str
+    license_file: str | None = None
+
+
+# CLOSED table (one entry per set, K1-h). honey is NOT a set: its `.claude/`
+# files are byte-identical copies of `sandbox-kit/honey-for-devs/`, which
+# already has its own row; they are classified by the copy rule. The three
+# `PROVENANCE-*.md` files document the sets but are not set members: they
+# stay `first-party` (measured at the PIN: no set-prefixed path is a kit-index
+# path and no set-prefixed path is a blob-copy of a kit root).
+CLAUDE_DECLARED_SETS = (
+    DeclaredSet(
+        name="aegis",
+        prefix="skills/aegis-",
+        provenance="skills/PROVENANCE-AEGIS.md",
+        source="https://github.com/GanyuanRan/Aegis",
+        pin="60321ed",
+        license="MIT (declared)",
+        license_file=None,
+    ),
+    DeclaredSet(
+        name="prism",
+        prefix="skills/prism-",
+        provenance="skills/PROVENANCE-PRISM.md",
+        source="https://github.com/Cranot/super-hermes",
+        pin="ffe2d10042041dcc23325f013e8b7e607e069952",
+        license="MIT (declared)",
+        license_file=None,
+    ),
+    DeclaredSet(
+        name="typesafe",
+        prefix="skills/typesafe-ai/",
+        provenance="skills/PROVENANCE-TYPESAFE.md",
+        source="https://github.com/typesafe-ai/skills",
+        pin="65a39f3",
+        license="MIT (LICENSE)",
+        license_file="skills/typesafe-ai/LICENSE",
+    ),
+)
+
+# Path prefixes under `.claude/`, in classification order (first match wins).
+CLAUDE_SET_PREFIXES: tuple[tuple[str, str], ...] = tuple(
+    (set_.prefix, f"vendored:{set_.name}") for set_ in CLAUDE_DECLARED_SETS
+)
 
 
 class ManifestError(RuntimeError):
@@ -343,6 +415,75 @@ def load_kit_index(root: Path) -> dict[str, tuple[str, str]]:
     return entries
 
 
+def build_kit_blob_index(root: Path) -> dict[str, list[str]]:
+    """The committed git blob sha1 -> paths map over every declared
+    `sandbox-kit/<name>/` root (the `copy:` rule's source side; the root
+    digest rows already hold each root's files, but the copy rule needs the
+    blob identity, not the digest)."""
+    index: dict[str, list[str]] = {}
+    for item in VENDORED_ROOTS:
+        if not item.path.startswith("sandbox-kit/"):
+            continue
+        item_root = root / item.path
+        for _directory, _dirnames, filenames in os.walk(
+            item_root, topdown=True, followlinks=False
+        ):
+            for name in sorted(filenames):
+                path = Path(_directory) / name
+                if not path.is_file() or path.is_symlink():
+                    continue
+                blob = git_blob_sha1(path.read_bytes())
+                index.setdefault(blob, []).append(
+                    item.path + path.relative_to(item_root).as_posix()
+                )
+    return index
+
+
+def set_class_for(relative: str) -> str | None:
+    for prefix, klass in CLAUDE_SET_PREFIXES:
+        if relative.startswith(prefix):
+            return klass
+    return None
+
+
+def set_row_license(root: Path, item: DeclaredSet) -> tuple[str, str | None, str | None]:
+    if item.license_file is None:
+        return item.license, None, None
+    path = root / ".claude" / item.license_file
+    data = path.read_bytes()
+    return item.license, item.license_file, sha256_bytes(data)
+
+
+def verify_declared_sets(root: Path) -> dict[str, int]:
+    """K1-h: verify every declared set against its provenance file, BEFORE any
+    digest work (the fail-closed order: nothing is written on a mismatch).
+    The file must exist and contain the `owner/repo` source and the pin
+    string; the returned map carries each set's pin line number (computed,
+    never typed) for the pin-source cell."""
+    line_numbers: dict[str, int] = {}
+    for item in CLAUDE_DECLARED_SETS:
+        path = root / ".claude" / item.provenance
+        if not path.is_file():
+            raise ManifestError(f"manifest: provenance mismatch: {item.name} provenance file")
+        text = path.read_text(encoding="utf-8")
+        # The source's `owner/repo` (the URL's last two path segments).
+        segments = item.source.rstrip("/").rsplit("/")
+        if len(segments) < 2:
+            raise ManifestError(f"manifest: provenance mismatch: {item.name} source")
+        owner_repo = "/".join(segments[-2:])
+        if owner_repo not in text:
+            raise ManifestError(f"manifest: provenance mismatch: {item.name} source")
+        pin_line = None
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if item.pin in line:
+                pin_line = line_number
+                break
+        if pin_line is None:
+            raise ManifestError(f"manifest: provenance mismatch: {item.name} pin")
+        line_numbers[item.name] = pin_line
+    return line_numbers
+
+
 def claude_records(
     root: Path, repo_root: Path | None, index: dict[str, tuple[str, str]]
 ) -> tuple[dict[str, list[tuple[str, bytes]]], dict[str, str], int]:
@@ -354,6 +495,9 @@ def claude_records(
     if not claude_root.is_dir():
         raise ManifestError(f"vendored root missing or not a directory: {claude_root.as_posix()}")
 
+    # The copy rule runs before the per-file walk: one blob index over the
+    # declared roots answers every (c) classification in the pass.
+    kit_blobs = build_kit_blob_index(root)
     by_class: dict[str, list[tuple[str, bytes]]] = {
         "kit-verbatim": [],
         "kit-adapted": [],
@@ -373,7 +517,7 @@ def claude_records(
                 record = symlink_record(claude_root, path, repo_root)
                 klass = "kit-verbatim" if index.get(rel, ("", ""))[0] == "120000" else "first-party"
                 classes[rel] = klass
-                by_class[klass].append(record)
+                by_class.setdefault(klass, []).append(record)
             else:
                 kept_dirs.append(name)
         dirnames[:] = kept_dirs
@@ -387,19 +531,33 @@ def claude_records(
             if path.is_symlink():
                 record = symlink_record(claude_root, path, repo_root)
                 klass = "kit-verbatim" if index.get(rel, ("", ""))[0] == "120000" else "first-party"
-            elif path.is_file():
+            else:
                 data = path.read_bytes()
                 record = (rel, sha256_bytes(data).encode())
-                if rel not in index:
-                    klass = "first-party"
-                elif index[rel][1] == git_blob_sha1(data):
-                    klass = "kit-verbatim"
+                if rel in index:
+                    klass = "kit-verbatim" if index[rel][1] == git_blob_sha1(data) else "kit-adapted"
+                elif (set_class := set_class_for(rel)) is not None:
+                    klass = set_class
                 else:
-                    klass = "kit-adapted"
-            else:
-                continue
+                    # (c) copy rule: blob identity only, never by name. A blob
+                    # found under two declared roots is refused by name. The
+                    # kit path is `sandbox-kit/<name>/<file…>`: the root is its
+                    # first two segments.
+                    matched = [
+                        "/".join(kit_path.split("/")[:2]) + "/"
+                        for kit_path in kit_blobs.get(git_blob_sha1(data), [])
+                    ]
+                    matched = sorted(set(matched))
+                    if len(matched) > 1:
+                        raise ManifestError(
+                            f"manifest: .claude copy ambiguous: {rel} matches "
+                            + ", ".join(matched)
+                        )
+                    klass = (
+                        f"copy:{matched[0]}" if matched else "first-party"
+                    )
             classes[rel] = klass
-            by_class[klass].append(record)
+            by_class.setdefault(klass, []).append(record)
 
     for klass in by_class:
         by_class[klass] = sorted(by_class[klass], key=lambda record: record[0].encode("utf-8"))
@@ -420,9 +578,12 @@ def parse_classes(text: str) -> dict[str, str]:
     classes: dict[str, str] = {}
     for line_number, line in enumerate(lines[1:], start=2):
         cells = line.split("\t")
-        if len(cells) != 2 or cells[1] not in {"kit-verbatim", "kit-adapted", "first-party"}:
+        klass = cells[1] if len(cells) == 2 else ""
+        if klass not in {"kit-verbatim", "kit-adapted", "first-party"} and not (
+            klass.startswith("copy:") or klass.startswith("vendored:")
+        ):
             raise ManifestError(f".claude class file parse failure at line {line_number}")
-        classes[cells[0]] = cells[1]
+        classes[cells[0]] = klass
     return classes
 
 
@@ -692,6 +853,9 @@ def git_revision(root: Path) -> str:
 
 
 def build_manifest_data(root: Path, repo_root: Path | None) -> ManifestData:
+    # Fail-closed before any digest work (K1-h): a set that cannot be verified
+    # against its provenance file writes nothing (neither --check nor --write).
+    set_pin_lines = verify_declared_sets(root)
     index = load_kit_index(root)
     validate_sandbox_kit_entries(root)
     claude_by_class, claude_classes, kit_only_count = claude_records(root, repo_root, index)
@@ -733,6 +897,106 @@ def build_manifest_data(root: Path, repo_root: Path | None) -> ManifestData:
                         license="none found",
                         license_file=None,
                         license_sha256=None,
+                        regular_file_count=regular_count,
+                        symlink_count=symlink_count,
+                        tree_sha256=digest_records(files),
+                    )
+                )
+
+            # K1-h: one row per NON-EMPTY copy root, then per NON-EMPTY
+            # declared set. Copy rows copy their source cells from the kit
+            # root's own row (the digest stays over the .claude/ copies
+            # themselves); set rows carry the verified set's own cells.
+            copy_rows: list[tuple[str, str, str, str, str, str | None, str | None, list[tuple[str, bytes]]]] = []
+            for item in VENDORED_ROOTS:
+                if not item.path.startswith("sandbox-kit/"):
+                    continue
+                row_files = claude_by_class.get(f"copy:{item.path}", [])
+                if not row_files:
+                    continue
+                # The license cells come from the root's own files (the same
+                # `license_for` call the root's row makes), per the K1-h
+                # contract.
+                root_files = walk_tree(root / item.path, repo_root)
+                license_id, license_file, license_sha = license_for(
+                    root / item.path, root_files
+                )
+                copy_rows.append(
+                    (
+                        f".claude/ (copy of {item.path})",
+                        item.source,
+                        item.pin,
+                        item.pin_source,
+                        license_id,
+                        license_file,
+                        license_sha,
+                        row_files,
+                    )
+                )
+            for (
+                path,
+                source,
+                pin,
+                pin_source,
+                license_id,
+                license_file,
+                license_sha,
+                files,
+            ) in copy_rows:
+                regular_count, symlink_count = record_counts(files)
+                records.append(
+                    TreeRecord(
+                        path=path,
+                        source=source,
+                        pin=pin,
+                        pin_source=pin_source,
+                        license=license_id,
+                        license_file=license_file,
+                        license_sha256=license_sha,
+                        regular_file_count=regular_count,
+                        symlink_count=symlink_count,
+                        tree_sha256=digest_records(files),
+                    )
+                )
+
+            set_rows: list[tuple[str, str, str, str, str, str | None, str | None, list[tuple[str, bytes]]]] = []
+            for item in CLAUDE_DECLARED_SETS:
+                row_files = claude_by_class.get(f"vendored:{item.name}", [])
+                if not row_files:
+                    continue
+                license_id, license_file, license_sha = set_row_license(root, item)
+                set_rows.append(
+                    (
+                        f".claude/ (vendored: {item.name})",
+                        item.source,
+                        item.pin,
+                        f".claude/{item.provenance}:{set_pin_lines[item.name]}",
+                        license_id,
+                        license_file,
+                        license_sha,
+                        row_files,
+                    )
+                )
+            for (
+                path,
+                source,
+                pin,
+                pin_source,
+                license_id,
+                license_file,
+                license_sha,
+                files,
+            ) in set_rows:
+                regular_count, symlink_count = record_counts(files)
+                records.append(
+                    TreeRecord(
+                        path=path,
+                        source=source,
+                        pin=pin,
+                        pin_source=pin_source,
+                        license=license_id,
+                        license_file=license_file,
+                        license_sha256=license_sha,
                         regular_file_count=regular_count,
                         symlink_count=symlink_count,
                         tree_sha256=digest_records(files),
