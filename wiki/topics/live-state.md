@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 04:0xZ — VERIFY-T92-T90R3-PCJ1 failed on route capacity (four attempts refused: one OmniRoute admission 503, three with no first token inside 80-100 s); queued for a resume when a PC slot frees. Sandbox verifiers VERIFY-E2-R1 and VERIFY-J1-2 running.
+
 2026-09-23 04:0xZ — owner decisions recorded: D-051 (S0-05 relay reach = a leg-scoped DNAT, CD1 option 1), D-052 (Canny: port the deterministic core, C1 + C2), D-053 (jev-pruner stays parked in lanes); K1-h dispatched on the PC (PIN 74aa8c5).
 
 2026-09-23 03:5xZ — B9 landed GATED-PENDING-VERIFY (S0-02 replay leg: the second delivery gets only the post-boundary timeline bytes, proven an exact extension of the first; PC 175 passed twice, sandbox 154 passed / 21 PC-only skipped twice).
