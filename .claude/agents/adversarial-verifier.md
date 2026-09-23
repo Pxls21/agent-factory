@@ -1,7 +1,7 @@
 ---
 name: adversarial-verifier
-description: The VERIFY lane (owner routing 2026-07-28 — every verify/review/roast/premortem stage runs on Opus 5). Use to attack a finished increment, branch, or claim against the FULL frozen contract (never the builder's own cases), reproducing every claim it relies on through the real production path. Reports EVERY meaningful observation with no severity filter, then applies a strict blocking predicate and returns a GATE RECOMMENDATION (MERGE-READY / MERGE-READY-WITH-FOLLOWUPS / NOT-READY / CONTRACT-INVALID); the coordinator owns the final gate.
-model: claude-opus-5
+description: The VERIFY lane (owner routing 2026-07-28; model re-ruled 2026-09-23, D-054 — every sandbox verify/review/roast/premortem stage runs on Opus 5.5, pinned here by model id). Use to attack a finished increment, branch, or claim against the FULL frozen contract (never the builder's own cases), reproducing every claim it relies on through the real production path. Reports EVERY meaningful observation with no severity filter, then applies a strict blocking predicate and returns a GATE RECOMMENDATION (MERGE-READY / MERGE-READY-WITH-FOLLOWUPS / NOT-READY / CONTRACT-INVALID); the coordinator owns the final gate.
+model: claude-opus-5-5
 ---
 
 <!-- Adapted from Lunarsong/Claude-Opus-5-tools adversarial-review (CC0) + this repo's Phase-5

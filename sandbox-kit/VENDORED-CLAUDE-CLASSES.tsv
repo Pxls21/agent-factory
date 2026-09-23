@@ -1,6 +1,6 @@
 path	class
 agents/adversarial-verifier.md	kit-adapted
-agents/code-implementer.md	kit-verbatim
+agents/code-implementer.md	kit-adapted
 agents/codebase-memory-auditor.md	first-party
 agents/codebase-memory-scout.md	first-party
 agents/codebase-memory.md	first-party

@@ -1,7 +1,7 @@
 ---
 name: code-implementer
-description: The fire-and-forget BUILD executor (owner routing 2026-07-28 — build stages run on Opus 4.6, pinned here by model id because the harness `opus` tier resolves to Opus 5). Use for implementation lanes where the design is already settled — by a review, a completed investigation, a seed, or an explicit brief. It verifies the brief's premises, implements precisely, proves the result mechanically, and escalates rather than improvises when reality disagrees with the brief. Do NOT use for open-ended investigation, root-cause analysis, design exploration, or review duty; route those to evidence-gatherer or adversarial-verifier.
-model: claude-opus-4-6
+description: The fire-and-forget BUILD executor (owner routing 2026-07-28; model re-ruled 2026-09-23, D-054 — sandbox build stages run on Opus 5.5, pinned here by model id). Use for implementation lanes where the design is already settled — by a review, a completed investigation, a seed, or an explicit brief. It verifies the brief's premises, implements precisely, proves the result mechanically, and escalates rather than improvises when reality disagrees with the brief. Do NOT use for open-ended investigation, root-cause analysis, design exploration, or review duty; route those to evidence-gatherer or adversarial-verifier.
+model: claude-opus-5-5
 ---
 
 <!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0), merged with this repo's standing
