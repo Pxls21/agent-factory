@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 22:3xZ — WHAT IS LIVE NOW (this block supersedes the 22:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFIED 22:3xZ:** J1-0-R6 (VERIFY-J1-0-R6 MERGE-READY-WITH-FOLLOWUPS, all-local; follow-ups F-1/F-2 on issue #57).
+- **LIVE, PC (two lanes, local route):** VERIFY-K1-h (#194) and VERIFY-S0-02 (#205, PIN a78bdca, since 22:2xZ). Monitor bwvojpg3i.
+- **QUEUED for the next local slot:** VERIFY-J1-3 (#120), then J1-1-R3 (#202). The cloud route has served nothing since about 21:00Z.
+- **WAITING ON THE OWNER:** the S0-05 live run (the sudo one-liner in chat).
+
 **2026-09-23 22:0xZ — WHAT IS LIVE NOW (this block supersedes the 21:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **PUSHED:** 39c699e..a78bdca; the S0-02 mint is 6bd8582 on origin. CI for a78bdca is pending. The PC clone is at a78bdca1.
 - **ROUTES:** the cloud route has served nothing since about 21:00Z (codex skipped, the free members refuse). The local route holds two lanes and logged two 504s at 21:45Z.
@@ -455,6 +461,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 22:3xZ — VERIFY-J1-0-R6 graded (J1-0-R6 verified, issue #57); VERIFY-S0-02 dispatched on the local route.
 2026-09-23 22:0xZ — pushed the S0-02 mint (a78bdca); the VERIFY-S0-02 and VERIFY-J1-3 briefs pinned; the cloud route down since about 21:00Z.
 2026-09-23 21:4xZ — S0-02 MINTED from the live eight-leg capture (8 of 9 execution proofs); VERIFY-S0-02 next.
 2026-09-23 21:2xZ — VERIFY-T94-R1 graded (T94 accepted, issue #55); VERIFY-C2 graded weak (C2 still gated, issue #56); S0-02 eight-leg capture running.
