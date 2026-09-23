@@ -15,7 +15,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-23 20:3xZ — WHAT IS LIVE NOW (this block supersedes the 20:0xZ block and the older ones below for the live set; the ledger carries the detail).**
-- **LIVE, PC (five lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201; poller re-attached 20:07Z) on the local route; J1-3 (#120), J1-1-R3 (#202), C2 (#148) on the cloud routes. Monitor bc8fr3m0s.
+- **LIVE, PC (six lanes):** VERIFY-K1-h (#194) and VERIFY-J1-0-R6 (#201; poller re-attached 20:07Z) on the local route; J1-3 (#120), J1-1-R3 (#202), C2 (#148) and VERIFY-T94-R1 (#200 + #167; PIN 6963f00, since 20:4xZ) on the cloud routes. Monitor bf7rc83kd.
 - **HOME:** VERIFY-T94 NOT-READY (F-1: the FAILED-UNRETRIED branch had no executed case) → T94-R1 landed test-only (T2 51/0 ×2; four doubled-escape mutants red). VERIFY-T94-R1 next.
 - **WAITING ON THE OWNER:** "removed" after the S0-02 owner2 removal one-liner; then the S0-02 recapture, the S0-05 pair identity (option 1) and the S0-05 live run (sudo).
 
