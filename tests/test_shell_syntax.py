@@ -54,17 +54,27 @@ def _throwaway_repo(tmp_path):
     # Every script the hook runs unconditionally is copied in, so the only gate that can fail is
     # the one under test (2026-09-23: the never-a-gate screen and the future-stamp gate were wired
     # into the hook without reaching this fixture, and the positive control went red in CI on
-    # "can't open file"). The screen reads its allowlist from the index; this one names the
-    # fixture's own gate files, as the real scripts/gate_files.txt does.
+    # "can't open file"). lint_delta.py also loads the edit-snapshot hook into its own process, so
+    # the hook is copied and staged too (CI run #983: J1-0-R4 listed it in scripts/gate_files.txt,
+    # this fixture did not follow, and the screen refused the positive control with
+    # gate-file-import-unlisted).
     for name in ("lint_delta.py", "no_laya_in_gates.py", "stamp_check.py"):
         shutil.copy(ROOT / "scripts" / name, repo / "scripts" / name)
-    (repo / "scripts" / "gate_files.txt").write_text(
-        "scripts/hooks/pre-commit\nscripts/lint_delta.py\nscripts/stamp_check.py\n")
+    (repo / ".claude" / "hooks").mkdir(parents=True)
+    shutil.copy(ROOT / ".claude" / "hooks" / "edit-snapshot.py", repo / ".claude" / "hooks" / "edit-snapshot.py")
+    # The screen reads its allowlist from the index. The fixture's list is the real list's entries
+    # that the fixture holds, parsed as the screen parses it, so a member the real list gains for a
+    # file the fixture already carries needs no edit here.
+    real = [line.strip() for line in (ROOT / "scripts" / "gate_files.txt").read_text().splitlines()]
+    held = [p for p in real if p and not p.startswith("#") and (repo / p).is_file()]
+    assert "scripts/hooks/pre-commit" in held, held
+    (repo / "scripts" / "gate_files.txt").write_text("".join(p + "\n" for p in held))
     os.chmod(repo / "scripts" / "hooks" / "pre-commit", 0o755)
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
                GIT_COMMITTER_EMAIL="t@t", HOME=str(tmp_path))
     assert _sh(["git", "init", "-q"], repo, env).returncode == 0
     assert _sh(["git", "config", "core.hooksPath", "scripts/hooks"], repo, env).returncode == 0
+    assert _sh(["git", "add", ".claude"], repo, env).returncode == 0
     return repo, env
 
 
