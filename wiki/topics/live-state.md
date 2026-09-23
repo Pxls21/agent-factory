@@ -384,6 +384,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 15:2xZ — B11 landed (821515b, GATED-PENDING-VERIFY): the F16 floor is met; AF-AP-158 registered; A1 folded into B12.
+
 2026-09-23 15:0xZ — J1-1-R2 landed (9ad0e66, GATED-PENDING-VERIFY); AF-AP-157 registered (the name-swallowing redaction gap in both redactors, task #198); pushed fa4532e..9801fb5.
 
 2026-09-23 14:5xZ — the seven-leg S0-02 capture came home; the checker caught the bad-signature leg's probe turn (AF-AP-156); B12 queued behind B11.
