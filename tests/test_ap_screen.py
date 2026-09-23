@@ -80,3 +80,15 @@ def test_the_ordinal_gate_row_still_ignores_a_phase_gate(tmp_path, capsys):
                  "        raise OSError()\n"
                  "    assert spy.call_count == 1\n")
     assert ap_screen.screen([f], rows, "TEST_SCREEN") == 0
+
+
+def test_hit_line_text_is_the_numbered_line_past_a_unicode_line_separator(tmp_path, capsys):
+    # AF-AP-132: the number counts "\n"; the printed text must come from the same numbering, not str.splitlines(),
+    # which also breaks on U+2028/U+2029 and would print a later line's text beside this line's number
+    f = tmp_path / "prod.py"
+    f.write_text('BAD = {" ", " "}\nx = 1\nemit(None)\ny = 2\n', encoding="utf-8")
+    rows = [("AP-X", re.compile(r"emit\(None\)"), "row")]
+    total = ap_screen.screen([f], rows, "t")
+    out = capsys.readouterr().out
+    assert total == 1
+    assert f"{f}:3: emit(None)" in out

@@ -52,11 +52,13 @@ def _read_file(path: str, rev: str | None, root: Path) -> list[str] | None:
         r = subprocess.run(["git", "-C", str(root), "show", f"{rev}:{path}"], capture_output=True, text=True)
         if r.returncode != 0:
             return None
-        return r.stdout.splitlines()
+        return r.stdout.split("\n")
     p = root / path
     if not p.is_file():
         return None
-    return p.read_text(errors="replace").splitlines()
+    # "\n" only, like git, grep and Python's own line numbers: str.splitlines() also breaks on
+    # U+2028/U+2029/U+0085/\x0b/\x0c/\x1c-\x1e, which shifts every later line (AF-AP-132)
+    return p.read_text(errors="replace").split("\n")
 
 
 def _claim_tokens(line: str, ref_text: str) -> list[str]:
@@ -74,7 +76,7 @@ def lint(report: Path, maps: dict[str, str], rev: str | None, tolerance: int, ro
     basenames = {Path(v).name: v for v in maps.values()}
     cache: dict[tuple, list[str] | None] = {}
     rows = []
-    for lineno, line in enumerate(report.read_text(errors="replace").splitlines(), 1):
+    for lineno, line in enumerate(report.read_text(errors="replace").split("\n"), 1):
         for m in REF_RE.finditer(line):
             key, ref_rev, a, b = m.group(1), m.group(2), int(m.group(3)), int(m.group(4) or m.group(3))
             at = ref_rev or rev   # `alias@<sha>:NN` pins ONE ref to a revision (a PIN-era line cited after the file moved on)

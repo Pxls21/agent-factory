@@ -47,7 +47,7 @@ def screen(files, rows, label, limit=8):
             text = f.read_text(errors="replace")
         except OSError:
             continue
-        lines = text.splitlines()
+        lines = text.split("\n")  # "\n" only, matching text.count("\n") below (AF-AP-132)
         # the whole text, not line by line: the hook screens multi-line HUNKS, and a signature that spans a line
         # break (a subprocess argv list wrapped after the paren) must screen the same way here
         for row in rows:

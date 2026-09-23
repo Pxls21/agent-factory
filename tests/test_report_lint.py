@@ -109,3 +109,15 @@ def test_report_lint_per_ref_revision_pin(tmp_path):
     rep.write_text("the old `def old_shape` at C:3 is gone\n")    # the same claim as a bare ref: a MISS (the control)
     r = _run(rep, ["C=mod.py"], tmp_path)
     assert r.returncode == 1 and "MISS 1" in r.stdout, r.stdout
+
+
+def test_report_lint_numbers_lines_like_git_not_splitlines(tmp_path):
+    # AF-AP-132: str.splitlines() also breaks on U+2028/U+2029/U+0085, so a source file holding one of them
+    # (J1-2-R1's ledger.py held two in a string literal) shifted every later line; git, grep and Python count "\n".
+    src = tmp_path / "mod.py"
+    src.write_text('BAD = {" ", " ", "\x85"}\n\ndef gamma_delta():\n    return 1\n', encoding="utf-8")
+    rep = tmp_path / "report.md"
+    rep.write_text("`def gamma_delta` at C:3\n")
+    r = _run(rep, ["C=mod.py"], tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OK 1, NEAR 0, MISS 0" in r.stdout
