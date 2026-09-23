@@ -7,10 +7,14 @@ Each test is deterministic and LLM-free. The screen's contract:
   exit 64 = usage error
 """
 
+import ast
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCREEN = str(REPO_ROOT / "scripts" / "no_laya_in_gates.py")
@@ -645,6 +649,11 @@ def test_closed_sets_locked():
         ("scripts/pc_lane.sh", '"$ROOT/.pc-bridge.env"'),
         ("scripts/pc_lane.sh", '"$PC_LANE_BRIDGE_FN"'),
     ])
+    assert mod.ALLOWED_DYNAMIC_LOADS == {
+        ("scripts/lint_delta.py", ".claude/hooks/edit-snapshot.py"): 1,
+        ("scripts/proof-runner", "scripts/validate-ledger"): 1,
+        ("scripts/ledger-gen", "scripts/validate-ledger"): 1,
+    }
 
 
 def test_real_tree_lists_every_checker_helper():
@@ -653,3 +662,436 @@ def test_real_tree_lists_every_checker_helper():
     for helper in ("proofs/S0-01/pins.py", "proofs/S0-01/negative_contract.py",
                    "proofs/S0-01/tools/nostr_verify.py", "proofs/S0-02/oracle/denial_table.py"):
         assert helper in listed, helper
+
+
+# =========================================================================
+# AMENDMENT 3 (J1-0-R4; AF-AP-143, AF-AP-120 reopened): the scan never goes blind (R4-1..R4-3),
+# and a dynamic in-process load is an include edge (R4-4, R4-5)
+# =========================================================================
+
+_HELPER = {"scripts/helper.sh": "echo HELPER-RAN laya\n"}
+_GATE = "scripts/g.sh"
+_WF = ".github/workflows/w.yml"
+
+
+def _bash_runs_helper(root, *argv):
+    """De-vacuous check: bash itself runs the fixture, and the fixture sources the helper."""
+    r = subprocess.run(["bash", *argv], cwd=root, capture_output=True, text=True, timeout=60)
+    return "HELPER-RAN" in r.stdout
+
+
+def _workflow_runs(root, wf):
+    """The run: values PyYAML reads from a workflow fixture, in document order."""
+    import yaml
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "run" and isinstance(value, str):
+                    found.append(value)
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(yaml.safe_load((root / wf).read_text()))
+    return found
+
+
+# F-B1's shell member triggers (VERIFY-J1-0-R23-STAMP, B2): each read CLEAN at J1-0-R3 while bash ran the helper.
+_SHELL_MEMBERS = [
+    ("S12", "echo $'it\\'s'\n. scripts/helper.sh\n", 3),
+    ("S17", "cat <<END-X\nbody\nEND-X\n. scripts/helper.sh\n", 5),   # = the verifier's proposed test 3
+    ("S18", "cat <<\\EOF\nit's\nEOF\n. scripts/helper.sh\n", 5),
+    ("S24", 'y=${x#"}"}\n. scripts/helper.sh\n', 3),
+    ("S26", "z=$(( 1 << n ))\n. scripts/helper.sh\n", 3),
+    ("S34", "echo x}#; . scripts/helper.sh\n", 2),
+    ("S35", "m=\"$(printf '%s' \"it's\")\"\n. scripts/helper.sh\n", 3),
+    ("S36", "y=${x:-'{'}; . scripts/helper.sh\n", 2),
+    # beyond the B2 table: the arithmetic command, and a case pattern inside a quoted substitution
+    ("arith-command", "(( m = 1 << n ))\n. scripts/helper.sh\n", 3),
+    ("case-in-cmdsub", "r=\"$(case \"$1\" in a) echo \"it's\";; esac)\"\n. scripts/helper.sh\n", 3),
+    # a source inside a backquote or a process substitution runs in the gate's forked shell (S6's class)
+    ("backtick-source", "echo \"`. scripts/helper.sh`\"\n", 2),
+    ("procsub-source", "cat <(. scripts/helper.sh)\n", 2),
+]
+
+
+@pytest.mark.parametrize("shape,body,line", _SHELL_MEMBERS, ids=[m[0] for m in _SHELL_MEMBERS])
+def test_shell_member_trigger_is_caught(tmp_path, shape, body, line):
+    """R4-2: after each trigger the scan stays in sync and names the source edge that follows it."""
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: "#!/bin/bash\n" + body}))
+    assert _bash_runs_helper(tmp_path, _GATE), shape   # the fixture really sources the helper
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:%d: scripts/helper.sh" % (_GATE, line)], r.stderr
+
+
+# F-B1's workflow member triggers (B2: S39, S40, X3).
+_YAML_MEMBERS = [
+    # S39 = the verifier's proposed test 2 (YH-4's shape)
+    ("S39", "jobs:\n  a:\n    steps:\n      - name: Install the suite's dependencies\n        run: echo ok\n"
+            "      - run: . scripts/helper.sh\n", 6),
+    ("S40", "jobs:\n  a:\n    steps:\n      - run: |\n          cat <<EOF\n          body\n          EOF\n"
+            "      - run: . scripts/helper.sh\n", 8),
+    ("X3", "jobs:\n  a:\n    steps:\n      - {name: a, run: . scripts/helper.sh}\n", 4),
+]
+
+
+@pytest.mark.parametrize("shape,text,line", _YAML_MEMBERS, ids=[m[0] for m in _YAML_MEMBERS])
+def test_workflow_member_trigger_is_caught(tmp_path, shape, text, line):
+    """R4-3: a workflow is parsed and each run: value is its own shell text, refused at its own YAML line."""
+    _make_tree(tmp_path, _WF + "\n", dict(_HELPER, **{_WF: text}))
+    runs = _workflow_runs(tmp_path, _WF)
+    assert runs[-1] == ". scripts/helper.sh" and _bash_runs_helper(tmp_path, "-c", runs[-1]), runs
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:%d: scripts/helper.sh" % (_WF, line)], r.stderr
+
+
+def test_nested_quote_heredoc_text_does_not_blind_the_scan(tmp_path):
+    """F-B1's live mechanism (scripts/pc_lane.sh:292; the verifier's proposed test 1): <<'PY' inside the quoted
+    argument of "$(bridge "…")" is text, not a heredoc, and the source edge after the construct is found."""
+    gate = ('#!/bin/bash\nX="$(bridge "python3 - \\"\\$MP\\" <<\'PY\'\nprint(1)\nPY")" || true\n'
+            ". scripts/helper.sh\n")
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: gate}))
+    assert _bash_runs_helper(tmp_path, _GATE)
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: scripts/g.sh:5: scripts/helper.sh"], r.stderr
+
+
+def test_heredoc_bodies_are_data_but_their_expansions_run(tmp_path):
+    """R4-2: a `.` line in a heredoc body is data, quoted or not, and so is a $( … ) in a quoted body; an
+    UNQUOTED body expands $( … ), so a source inside that substitution runs and is refused."""
+    gate = ("#!/bin/bash\ncat <<EOF\n. scripts/helper.sh\nEOF\ncat <<'EOF'\n$(. scripts/helper.sh)\nEOF\n"
+            "cat <<EOF\n$(. scripts/helper.sh)\nEOF\n")
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: gate}))
+    assert _bash_runs_helper(tmp_path, _GATE)   # only line 9's substitution can print the marker
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: scripts/g.sh:9: scripts/helper.sh"], r.stderr
+
+
+# R4-1's tripwire alone: the text ends with a construct open (none of these is a source edge).
+_OPEN_AT_END = [
+    ("dquote", 'echo "open\n. scripts/helper.sh\n', 'quote " open'),
+    ("squote", "echo 'open\n. scripts/helper.sh\n", "quote ' open"),
+    ("ansi", "echo $'open\n. scripts/helper.sh\n", "quote $' open"),
+    ("heredoc", "cat <<EOF\nbody\n. scripts/helper.sh\n", "heredoc <<EOF pending"),
+    ("cmdsub", "x=$(echo a\necho b\n", "$( unclosed"),
+    ("param", "y=${x:-a\necho b\n", "${ unclosed"),
+    ("arith", "z=$(( 1 + 2\necho b\n", "$(( unclosed"),
+    ("backtick", "w=`echo a\necho b\n", "` unclosed"),
+]
+
+
+@pytest.mark.parametrize("shape,body,what", _OPEN_AT_END, ids=[m[0] for m in _OPEN_AT_END])
+def test_scan_ending_inside_a_construct_fails_closed(tmp_path, shape, body, what):
+    """R4-1: a text that ends inside an open construct is refused, naming the line the construct began on."""
+    _make_tree(tmp_path, _GATE + "\n", dict(_HELPER, **{_GATE: "#!/bin/bash\necho ok\n" + body}))
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-unparseable: scripts/g.sh:3: " + what], r.stderr
+
+
+def test_scan_ending_inside_a_construct_fails_closed_staged(tmp_path):
+    """R4-1 in --staged mode: the index's text is what is scanned, and its open quote is refused."""
+    env = _git_env()
+    _init_repo(tmp_path, _GATE + "\n", {_GATE: "#!/bin/bash\necho ok\n"}, env)
+    (tmp_path / _GATE).write_text("#!/bin/bash\necho ok\necho \"open\n")
+    subprocess.run(["git", "add", _GATE], cwd=tmp_path, check=True, env=env)
+    (tmp_path / _GATE).write_text("#!/bin/bash\necho ok\n")   # the worktree copy is clean
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ['gate-file-unparseable: scripts/g.sh:3: quote " open'], r.stderr
+
+
+def test_unparseable_workflow_refused(tmp_path):
+    """R4-3: a workflow file that does not parse is refused whole."""
+    _make_tree(tmp_path, _WF + "\n", {_WF: "jobs: [unclosed\n  - run: . scripts/helper.sh\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-unparseable: .github/workflows/w.yml"], r.stderr
+
+
+def test_workflow_run_ending_inside_a_construct_names_its_yaml_line(tmp_path):
+    """R4-1 inside R4-3: an open quote in a literal run: block is refused at its line in the YAML file."""
+    text = "jobs:\n  a:\n    steps:\n      - run: echo ok\n      - run: |\n          echo start\n          echo \"open\n"
+    _make_tree(tmp_path, _WF + "\n", {_WF: text})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ['gate-file-unparseable: .github/workflows/w.yml:7: quote " open'], r.stderr
+
+
+def test_real_pc_lane_is_scanned_to_its_end(tmp_path):
+    """BH-2: the real scripts/pc_lane.sh, copied at test time, with `. scripts/helper.sh` inserted after line
+    400 (inside the 318 lines J1-0-R3 never scanned) is refused at line 401; the file alone reads clean."""
+    real = (REPO_ROOT / "scripts" / "pc_lane.sh").read_text()
+    _make_tree(tmp_path, "scripts/pc_lane.sh\n", dict(_HELPER, **{"scripts/pc_lane.sh": real}))
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    lines = real.split("\n")
+    gate = tmp_path / "scripts" / "pc_lane.sh"
+    gate.write_text("\n".join(lines[:400] + [". scripts/helper.sh"] + lines[400:]))
+    assert subprocess.run(["bash", "-n", str(gate)]).returncode == 0
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: scripts/pc_lane.sh:401: scripts/helper.sh"], r.stderr
+
+
+def _stage0_ci_with_a_sourcing_step(apostrophe):
+    """The real stage0-ci.yml plus a step that sources the helper, after the Run tests step; with or without
+    one apostrophe in an earlier step name. Returns the text and the new run: line (1-based)."""
+    lines = (REPO_ROOT / ".github" / "workflows" / "stage0-ci.yml").read_text().split("\n")
+    name_at = lines.index("      - name: Install dependencies")
+    run_at = lines.index("        run: python -m pytest tests/ -q")
+    assert name_at < run_at
+    if apostrophe:
+        lines[name_at] = "      - name: Install the suite's dependencies"
+    lines[run_at + 1:run_at + 1] = ["      - name: Load helper", "        run: . scripts/helper.sh"]
+    return "\n".join(lines), run_at + 3
+
+
+@pytest.mark.parametrize("apostrophe", [False, True], ids=["YH-3", "YH-4"])
+def test_real_workflow_step_that_sources_is_refused(tmp_path, apostrophe):
+    """YH-3 / YH-4: the real stage0-ci.yml, copied at test time, with a sourcing step; one apostrophe in an
+    earlier step name no longer hides it."""
+    wf = ".github/workflows/stage0-ci.yml"
+    text, line = _stage0_ci_with_a_sourcing_step(apostrophe)
+    _make_tree(tmp_path, wf + "\n", dict(_HELPER, **{wf: text}))
+    assert ". scripts/helper.sh" in _workflow_runs(tmp_path, wf)
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-sources: %s:%d: scripts/helper.sh" % (wf, line)], r.stderr
+
+
+_LOADER_HEAD = "import importlib.util\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parent\n"
+
+
+def test_dynamic_import_of_an_unlisted_file_is_refused(tmp_path):
+    """F-B2's code path (the verifier's proposed test 4, P09): spec_from_file_location + exec_module of an
+    unlisted repo file is an include edge."""
+    _make_tree(tmp_path, _CHECKER + "\n", {
+        _CHECKER: "import importlib.util\nspec = importlib.util.spec_from_file_location('h', 'proofs/x/helper.py')\n"
+                  "m = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n",
+        "proofs/x/helper.py": "X = 1\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unlisted: proofs/x/check_y.py:2 loads proofs/x/helper.py"], r.stderr
+
+
+def test_real_tree_lists_the_dynamically_loaded_helper():
+    """R4-5 (the verifier's proposed test 5): scripts/lint_delta.py and scripts/ap_screen.py load this hook."""
+    listed = set((REPO_ROOT / "scripts" / "gate_files.txt").read_text().split())
+    assert ".claude/hooks/edit-snapshot.py" in listed
+
+
+def test_dynamic_load_is_closed_over_the_list(tmp_path):
+    """R4-4: a Path(__file__)-built target that is unlisted is refused; listed, the helper is screened (its
+    vocabulary is an exit-3 violation); clean, the tree passes."""
+    checker = _LOADER_HEAD + 'spec = importlib.util.spec_from_file_location("helper", HERE / "helper.py")\n'
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: checker, "proofs/x/helper.py": "X = 1\n# laya\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unlisted: proofs/x/check_y.py:5 loads proofs/x/helper.py"], r.stderr
+    (tmp_path / "scripts" / "gate_files.txt").write_text(_CHECKER + "\nproofs/x/helper.py\n")
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 3 and r.stdout.splitlines() == ["proofs/x/helper.py:2:laya"], r.stdout + r.stderr
+    (tmp_path / "proofs" / "x" / "helper.py").write_text("X = 1\n")
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0 and "2 files scanned, clean" in r.stderr, r.stderr
+
+
+def test_dynamic_load_that_cannot_be_resolved_is_refused(tmp_path):
+    """R4-4: a load whose target is a runtime value cannot be proven, so it is refused."""
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: "import runpy\nimport sys\nrunpy.run_path(sys.argv[1])\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: proofs/x/check_y.py:3"], r.stderr
+
+
+_UNLISTED_LOADS = [
+    ("SourceFileLoader", "import importlib.machinery\nimportlib.machinery.SourceFileLoader('h', 'proofs/x/helper.py')\n"),
+    ("run_path", "import runpy\nrunpy.run_path('proofs/x/helper.py')\n"),
+    ("import_module", "import importlib\nimportlib.import_module('helper')\n"),
+    ("__import__", "import os\n__import__('helper')\n"),
+    ("exec-open-read", "import os\nexec(open('proofs/x/helper.py').read())\n"),
+    ("compile-read_text", "from pathlib import Path\ncompile(Path('proofs/x/helper.py').read_text(), 'h', 'exec')\n"),
+    ("aliased", "from importlib.util import spec_from_file_location as load\nload('h', 'proofs/x/helper.py')\n"),
+]
+
+
+@pytest.mark.parametrize("kind,checker", _UNLISTED_LOADS, ids=[k for k, _ in _UNLISTED_LOADS])
+def test_every_loader_kind_is_an_include_edge(tmp_path, kind, checker):
+    """R4-4: each call that loads a file's code into the gate's process names what it loads; unlisted, refused."""
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: checker, "proofs/x/helper.py": "X = 1\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{kind}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unlisted: proofs/x/check_y.py:2 loads proofs/x/helper.py"], r.stderr
+
+
+def test_loads_that_bring_no_repo_code_pass(tmp_path):
+    """R4-4's positive controls: a stdlib module by name, and code written in the gate itself."""
+    checker = "import importlib\nimportlib.import_module('json')\n__import__('os.path')\nexec('X = 1')\ncompile('Y = 2', 'y', 'exec')\n"
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: checker})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+
+
+def test_loader_parameter_is_resolved_at_its_calls(tmp_path):
+    """R4-4: a loader wrapper's parameter takes the values its callers in the file pass (the S0-02 checker's
+    _load_by_path shape): the unlisted one is refused at the load site; a wrapper that escapes as a value
+    can be called with anything, so its load is unresolved."""
+    checker = (_LOADER_HEAD + "\n\ndef _load_by_path(name, path):\n"
+               "    spec = importlib.util.spec_from_file_location(name, path)\n    return spec\n\n\n"
+               '_load_by_path("a", HERE / "listed.py")\n_load_by_path("b", HERE / "helper.py")\n')
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/listed.py\n", {
+        _CHECKER: checker, "proofs/x/listed.py": "X = 1\n", "proofs/x/helper.py": "X = 2\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unlisted: proofs/x/check_y.py:8 loads proofs/x/helper.py"], r.stderr
+    (tmp_path / _CHECKER).write_text(checker.replace('_load_by_path("b", HERE / "helper.py")', "LOADERS = [_load_by_path]"))
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: proofs/x/check_y.py:8"], r.stderr
+
+
+_PROOF_RUNNER = ('#!/usr/bin/env python3\nimport importlib.machinery\nimport sys\nfrom pathlib import Path\n\n\n'
+                 'def _load_validator(root):\n    path = root / "scripts" / "validate-ledger"\n'
+                 '    return importlib.machinery.SourceFileLoader("v", str(path))\n\n\n'
+                 '_load_validator(Path(sys.argv[1]))\n')
+
+
+def test_allowed_dynamic_load_is_bounded_and_keyed_by_target(tmp_path):
+    """R4-4's exception set: (scripts/proof-runner, scripts/validate-ledger) covers ONE load under a runtime
+    root; a second such load refuses both, and a load re-pointed at another (even listed) file is not covered."""
+    _make_tree(tmp_path, "scripts/proof-runner\nscripts/validate-ledger\nscripts/other.py\n", {
+        "scripts/proof-runner": _PROOF_RUNNER,
+        "scripts/validate-ledger": "#!/usr/bin/env python3\nX = 1\n",
+        "scripts/other.py": "X = 1\n"})
+    runner = tmp_path / "scripts" / "proof-runner"
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    runner.write_text(_PROOF_RUNNER.replace(
+        "    return importlib", '    importlib.machinery.SourceFileLoader("w", str(path))\n    return importlib'))
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: scripts/proof-runner:9",
+                             "gate-file-import-unresolved: scripts/proof-runner:10"], r.stderr
+    runner.write_text(_PROOF_RUNNER.replace('"validate-ledger"', '"other.py"'))
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: scripts/proof-runner:9"], r.stderr
+
+
+def test_edit_snapshot_hook_load_is_an_include_edge(tmp_path):
+    """ES (F-B2): the real scripts/ap_screen.py loads the real .claude/hooks/edit-snapshot.py in-process
+    (both copied at test time). Unlisted, the load is refused; listed, a vocabulary line in the hook is an
+    exit-3 violation naming its line."""
+    ap = (REPO_ROOT / "scripts" / "ap_screen.py").read_text()
+    hook = (REPO_ROOT / ".claude" / "hooks" / "edit-snapshot.py").read_text()
+    site = next(n for n, text in enumerate(ap.split("\n"), 1) if "spec_from_file_location" in text)
+    _make_tree(tmp_path, "scripts/ap_screen.py\n", {
+        "scripts/ap_screen.py": ap, ".claude/hooks/edit-snapshot.py": hook + "# laya\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [
+        "gate-file-import-unlisted: scripts/ap_screen.py:%d loads .claude/hooks/edit-snapshot.py" % site], r.stderr
+    (tmp_path / "scripts" / "gate_files.txt").write_text("scripts/ap_screen.py\n.claude/hooks/edit-snapshot.py\n")
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 3, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert r.stdout.splitlines() == [".claude/hooks/edit-snapshot.py:%d:laya" % (hook.count("\n") + 1)], r.stdout
+
+
+def test_allowed_dynamic_loads_match_the_live_tree_exactly():
+    """Each ALLOWED_DYNAMIC_LOADS entry covers exactly its count of loads in the live gate file. The screen
+    refuses more; this test refuses fewer, so a stale entry cannot wait for a new load to cover."""
+    mod = _screen_module()
+    for (gate, target), count in mod.ALLOWED_DYNAMIC_LOADS.items():
+        sites = mod._load_sites(gate, ast.parse((REPO_ROOT / gate).read_text()))
+        covered = [line for line, kind, values in sites if ("under", target) in values]
+        assert len(covered) == count, (gate, target, covered)
+
+
+def test_live_tree_clean_staged(tmp_path):
+    """The live tree through --staged: every listed file and the list, added to a throwaway index, read clean
+    with every listed file scanned (the index-side twin of test_live_tree_clean)."""
+    listed = [line.strip() for line in (REPO_ROOT / "scripts" / "gate_files.txt").read_text().splitlines()
+              if line.strip() and not line.strip().startswith("#")]
+    for rel in listed + ["scripts/gate_files.txt"]:
+        dst = tmp_path / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / rel, dst)
+    env = _git_env()
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=env)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, env=env)
+    r = _run(["--staged"], cwd=tmp_path)
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    assert "%d files scanned, clean" % len(listed) in r.stderr, r.stderr
+
+
+# Found while building R4-4 (the J1-0-R4 report, "self-attack"): Python's own binding rules can re-point a
+# load whose target reads as listed; each shape was a fail-open in a first draft of the resolver.
+_REBOUND_TARGETS = [
+    ("global-rebind", "T = HERE / 'listed.py'\n\n\ndef g():\n    global T\n    T = 'proofs/x/helper.py'\n\n\n"
+                      "g()\nimportlib.util.spec_from_file_location('x', T)\n", 14),
+    ("nonlocal-rebind", "def outer():\n    T = HERE / 'listed.py'\n\n    def inner():\n        nonlocal T\n"
+                        "        T = 'proofs/x/helper.py'\n    inner()\n    importlib.util.spec_from_file_location('x', T)\n", 12),
+    ("decorated-wrapper", "def deco(fn):\n    return lambda p: fn('proofs/x/helper.py')\n\n\n@deco\ndef load(p):\n"
+                          "    return importlib.util.spec_from_file_location('x', p)\n\n\nload('proofs/x/listed.py')\n", 11),
+    ("star-import", "T = HERE / 'listed.py'\nfrom os.path import *  # noqa\nimportlib.util.spec_from_file_location('x', T)\n", 7),
+    ("shadowed-Path", "def Path(x):\n    return 'proofs/x/helper.py'\n\n\n"
+                      "importlib.util.spec_from_file_location('x', Path('proofs/x/listed.py'))\n", 9),
+]
+
+
+@pytest.mark.parametrize("shape,body,line", _REBOUND_TARGETS, ids=[m[0] for m in _REBOUND_TARGETS])
+def test_rebinding_a_load_target_is_refused(tmp_path, shape, body, line):
+    """R4-4: a target name that a global, nonlocal, decorator, star import or shadowed helper can re-point
+    cannot be proven listed, so the load is refused."""
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/listed.py\n", {
+        _CHECKER: _LOADER_HEAD + body, "proofs/x/listed.py": "X = 1\n", "proofs/x/helper.py": "X = 2\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: proofs/x/check_y.py:%d" % line], r.stderr
+
+
+_INLINE_LOADS = [
+    ("exec-import", "exec('import helper')\n"),
+    ("exec-loader", "exec(\"import runpy; runpy.run_path('proofs/x/helper.py')\")\n"),
+    ("eval-dunder", "eval(\"__import__('helper')\")\n"),
+    ("exec-constant", "CODE = 'import helper'\nexec(CODE)\n"),
+]
+
+
+@pytest.mark.parametrize("shape,body", _INLINE_LOADS, ids=[m[0] for m in _INLINE_LOADS])
+def test_inline_code_that_loads_is_refused(tmp_path, shape, body):
+    """R4-4: code written into the gate as a string is part of the gate only while it imports and loads
+    nothing; otherwise exec/eval/compile of it is refused (the string hides the edge from the import rule)."""
+    _make_tree(tmp_path, _CHECKER + "\n", {_CHECKER: "import os\n" + body, "proofs/x/helper.py": "X = 1\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == ["gate-file-import-unresolved: proofs/x/check_y.py:%d" % (body.count("\n") + 1)], r.stderr
+
+
+_MODELLING_EDGES = [
+    # pathlib keeps a relative path relative: HERE / Path("a/b").parent is HERE/a, never the repo's a
+    ("relative-parent", "importlib.util.spec_from_file_location('x', HERE / Path('proofs/x/listed.py/y').parent)\n",
+     "gate-file-import-unresolved: proofs/x/check_y.py:5"),
+    # an argument annotation runs when the function is defined
+    ("annotation", "def f(a: exec(open('proofs/x/helper.py').read())):\n    pass\n",
+     "gate-file-import-unlisted: proofs/x/check_y.py:5 loads proofs/x/helper.py"),
+]
+
+
+@pytest.mark.parametrize("shape,body,line", _MODELLING_EDGES, ids=[m[0] for m in _MODELLING_EDGES])
+def test_path_modelling_edges_are_refused(tmp_path, shape, body, line):
+    """R4-4: two more first-draft fail-opens (the J1-0-R4 report): a relative path joined as if it were the
+    repo's, and a load inside an annotation."""
+    _make_tree(tmp_path, _CHECKER + "\nproofs/x/listed.py\n", {
+        _CHECKER: _LOADER_HEAD + body, "proofs/x/listed.py": "X = 1\n", "proofs/x/helper.py": "X = 2\n"})
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 4, f"{shape}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    assert _err_lines(r) == [line], r.stderr

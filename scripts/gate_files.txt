@@ -48,3 +48,6 @@ proofs/S0-01/pins.py
 proofs/S0-01/negative_contract.py
 proofs/S0-01/tools/nostr_verify.py
 proofs/S0-02/oracle/denial_table.py
+# files the listed gates load into their own process by path (AMENDMENT 3, R4-4): scripts/lint_delta.py
+# and scripts/ap_screen.py read the AP_SCREEN rows of the edit-snapshot hook
+.claude/hooks/edit-snapshot.py
