@@ -35,6 +35,8 @@ BUILDER = PROOF / "tools" / "build_fixtures.py"
 RUNNER = PROOF / "tools" / "pc" / "run_s0_02_legs.sh"
 DELIVER = PROOF / "tools" / "pc" / "deliver_event.py"
 SPEC = PROOF / "spec.json"
+S0_01_IDENTITIES = ROOT / "proofs" / "S0-01" / "fixtures" / "identities.json"
+S0_02_IDENTITIES = FIXTURES / "identities-s0-02.json"
 
 # The upstream tree the oracle rows are pinned to. Venue-declared, never guessed.
 BUZZ_SRC_ENV = "S0_02_BUZZ_SRC"
@@ -240,11 +242,18 @@ def test_self_authored_specimen_names_the_agent_identity():
 
 
 def test_unauthorized_specimen_is_not_a_known_identity():
+    """D-038 (B10): the leg binds to ONE host-local nonmember, the S0-02 file's
+    value, which is none of the S0-01 identities and not owner2. Checked in the
+    committed fixture the PC runner reads and in a fresh build."""
     ids = json.loads((ROOT / "proofs" / "S0-01" / "fixtures" / "identities.json").read_text())
+    s0_02 = json.loads(S0_02_IDENTITIES.read_text())
     blob = json.loads((FIXTURES / "neg-unauthorized.json").read_text())
-    assert blob["signer"]["role"] == "nonmember"
-    assert blob["signer"]["expected_pubkey"] is None
     known = {v for k, v in ids.items() if k != "relay_url"}
+    for signer in (blob["signer"], builder.build_all()["neg-unauthorized"]["signer"]):
+        assert signer["role"] == "nonmember"
+        assert signer["expected_pubkey"] == s0_02["nonmember"]
+        assert signer["expected_pubkey"] not in known
+        assert signer["expected_pubkey"] != s0_02["owner2"]
     assert blob["event"]["pubkey"] not in known
 
 
@@ -293,6 +302,141 @@ def test_not_allowlisted_specimen_is_relay_accepted_user2():
     assert blob["signer"]["role"] == "user2"
     assert blob["signer"]["specimen_pubkey"] != ids["user2"]
     assert oracle.row("neg-not-allowlisted")["evidence"] == oracle.EV_BUZZACP_LOG
+
+
+def test_revoked_specimen_signs_as_the_second_fixture_owner():
+    """D-037 (B10): the revoked leg removes owner2, a SECOND fixture owner, so it
+    never touches the owner the other legs sign as. Role and expected_pubkey name
+    owner2 (the S0-02 file's value, not the S0-01 owner) in the committed fixture
+    the PC runner reads (role_for) and in a fresh build."""
+    ids = json.loads(S0_01_IDENTITIES.read_text())
+    s0_02 = json.loads(S0_02_IDENTITIES.read_text())
+    committed = json.loads((FIXTURES / "revoked.json").read_text())["signer"]
+    for signer in (committed, builder.build_all()["revoked"]["signer"]):
+        assert signer["role"] == "owner2"
+        assert signer["expected_pubkey"] == s0_02["owner2"]
+        assert signer["expected_pubkey"] != ids["owner"]
+
+
+def test_every_fixture_signer_is_pinned():
+    """B10: only the revoked and unauthorized signers moved; the other six keep
+    their role and key. Committed bytes and a fresh build."""
+    ids = json.loads(S0_01_IDENTITIES.read_text())
+    s0_02 = json.loads(S0_02_IDENTITIES.read_text())
+    want = {
+        "pos-allowed": ("owner", ids["owner"]),
+        "neg-unauthorized": ("nonmember", s0_02["nonmember"]),
+        "neg-bad-signature": ("owner", ids["owner"]),
+        "neg-replayed": ("owner", ids["owner"]),
+        "neg-stale": ("owner", ids["owner"]),
+        "neg-self-authored": ("agent", ids["agent"]),
+        "neg-not-allowlisted": ("user2", ids["user2"]),
+        "revoked": ("owner2", s0_02["owner2"]),
+    }
+    assert set(want) == set(FIXTURE_NAMES)
+    fresh = builder.build_all()
+    for name in FIXTURE_NAMES:
+        committed = json.loads((FIXTURES / f"{name}.json").read_text())["signer"]
+        for signer in (committed, fresh[name]["signer"]):
+            assert (signer["role"], signer["expected_pubkey"]) == want[name], name
+
+
+def test_s0_02_identity_file_is_the_provenance_record():
+    """B10: exactly owner2 and nonmember, in canonical bytes (two-space indent,
+    sorted keys, trailing newline), each value the public key PROVENANCE.md
+    records, and no key shared with the S0-01 file."""
+    raw = S0_02_IDENTITIES.read_text()
+    s0_02 = json.loads(raw)
+    assert sorted(s0_02) == ["nonmember", "owner2"]
+    assert raw == json.dumps(s0_02, indent=2, sort_keys=True) + "\n"
+    prov = (FIXTURES / "PROVENANCE.md").read_text()
+    for role, pub in s0_02.items():
+        assert f"`{role}` `{pub}`" in prov, f"{role} is not the PROVENANCE record"
+    assert not set(s0_02) & set(json.loads(S0_01_IDENTITIES.read_text()))
+
+
+def _point_identities(monkeypatch, tmp_path: Path, s0_02: dict) -> tuple[Path, Path]:
+    """Point the builder's two identity paths at temporary files: a byte copy of
+    the S0-01 file and the given S0-02 map. The committed files are never touched."""
+    s0_01_path = tmp_path / "identities.json"
+    s0_01_path.write_bytes(S0_01_IDENTITIES.read_bytes())
+    s0_02_path = tmp_path / "identities-s0-02.json"
+    s0_02_path.write_text(json.dumps(s0_02, indent=2, sort_keys=True) + "\n")
+    monkeypatch.setattr(builder, "IDENTITIES", s0_01_path)
+    monkeypatch.setattr(builder, "IDENTITIES_S0_02", s0_02_path)
+    return s0_01_path, s0_02_path
+
+
+def test_identities_merges_both_files_and_writes_neither(tmp_path, monkeypatch):
+    """B10, the normal path: the S0-01 map plus the S0-02 keys, read from wherever
+    the two paths point (the temporary values differ from the committed ones), and
+    neither file written."""
+    s0_01 = json.loads(S0_01_IDENTITIES.read_text())
+    real = builder._identities()
+    assert real == {**s0_01, **json.loads(S0_02_IDENTITIES.read_text())}
+    assert set(real) - set(s0_01) == {"owner2", "nonmember"}
+    extra = {"nonmember": "c" * 64, "owner2": "d" * 64}
+    paths = _point_identities(monkeypatch, tmp_path, extra)
+    before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
+    assert builder._identities() == {**s0_01, **extra}
+    assert [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths] == before
+
+
+@pytest.mark.parametrize("key,value", [
+    ("owner", None),        # None = the S0-01 file's own value: agreeing is still a collision
+    ("owner", "e" * 64),    # a different value would re-point every owner leg
+    ("channel", "e" * 64),  # any S0-01 key, not only the pubkey roles
+])
+def test_identities_refuses_a_key_in_both_files(tmp_path, monkeypatch, key, value):
+    """B10: a key present in both files is refused, and the message names it."""
+    if value is None:
+        value = json.loads(S0_01_IDENTITIES.read_text())[key]
+    _point_identities(monkeypatch, tmp_path, {"nonmember": "c" * 64, key: value})
+    with pytest.raises(SystemExit) as exc:
+        builder._identities()
+    assert str(exc.value) == (
+        f"identities: key {key!r} is in both identities.json and identities-s0-02.json"
+    )
+
+
+@pytest.mark.parametrize("value", [
+    "A" * 64,         # uppercase
+    "a" * 63,         # short
+    "a" * 65,         # long: an unanchored match would take its prefix
+    "g" * 64,         # not hex
+    "a" * 64 + "\n",  # a trailing newline: a '$'-anchored match would accept it
+    64,               # not a string
+    None,
+])
+def test_identities_refuses_a_malformed_s0_02_value(tmp_path, monkeypatch, value):
+    """B10: an S0-02 value that is not 64 lowercase hex is refused, and the
+    message names its key."""
+    _point_identities(monkeypatch, tmp_path, {"nonmember": value, "owner2": "d" * 64})
+    with pytest.raises(SystemExit) as exc:
+        builder._identities()
+    assert str(exc.value) == (
+        "identities: identities-s0-02.json value for 'nonmember' is not 64 lowercase hex"
+    )
+
+
+@pytest.mark.parametrize("name", ["pass", "blanket"])
+def test_committed_bundle_equals_a_fresh_build(tmp_path, name):
+    """Issue #45 VF-1: --check compares the eight top-level fixtures only, so a
+    builder mutant that changes only a bundle (VERIFY-B9-R1's M18 and M19)
+    survived T2. A fresh build_bundle must equal the committed tree, file for
+    file and byte for byte."""
+    committed = FIXTURES / f"evidence-{name}"
+    fresh = tmp_path / f"evidence-{name}"
+    builder.build_bundle(name, fresh)
+
+    def tree(root: Path) -> dict:
+        return {p.relative_to(root).as_posix(): p.read_bytes()
+                for p in sorted(root.rglob("*")) if p.is_file()}
+
+    want, got = tree(committed), tree(fresh)
+    assert sorted(got) == sorted(want), f"evidence-{name}: the file sets differ"
+    drift = [rel for rel in sorted(want) if got[rel] != want[rel]]
+    assert drift == [], f"evidence-{name}: committed bytes differ from a fresh build: {drift}"
 
 
 # ---------------------------------------------------------------------------
@@ -1423,10 +1567,19 @@ def test_a_delivered_event_from_the_wrong_identity_fails(tmp_path):
 
 
 def test_a_nonmember_leg_signed_by_a_known_identity_fails(tmp_path):
-    """The other arm of the same binding: the nonmember role's sender must not
-    be one of the four known identities."""
+    """F21, the other arm of the same binding: a null expected_pubkey binds the
+    sender only by exclusion, so a sender that is one of the four known
+    identities fails. Since B10 (D-038) no committed fixture is null, so this
+    test nulls neg-unauthorized's expected_pubkey in BOTH copies the checker
+    compares (the leg's fixture.json and the bundle's fixtures/ anchor) to keep
+    the arm covered."""
     bundle = _bundle(tmp_path)
     leg_dir = _leg(bundle, "neg-unauthorized")
+    for path in (leg_dir / "fixture.json", bundle / "fixtures" / "neg-unauthorized.json"):
+        _rewrite(path, lambda b: b["signer"].__setitem__("expected_pubkey", None))
+    # Control: the null arm alone passes the bundle's own nonmember sender, so the
+    # failure below is the forged sender's.
+    assert _run_checker(bundle).startswith("PASS: S0-02 buzz-authz")
     ev = json.loads((leg_dir / "delivered-event.json").read_text())
     owner_key = builder._bundle_privkey(bundle.name.replace("evidence-", ""), "owner")
     forged = nv.sign_event(owner_key, {"created_at": ev["created_at"], "kind": ev["kind"],
@@ -1435,6 +1588,48 @@ def test_a_nonmember_leg_signed_by_a_known_identity_fails(tmp_path):
         json.dumps(forged, indent=1, sort_keys=True) + "\n")
     _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, forged["id"]))
     _expect_failure(bundle, "must not be one of the known S0-01 identities")
+
+
+@pytest.mark.parametrize("signer", ["owner", "unmeasured"])
+def test_a_nonmember_leg_binds_to_the_one_measured_nonmember(tmp_path, signer):
+    """D-038 (B10): neg-unauthorized binds to ONE nonmember identity by its exact
+    pubkey. A known identity (the owner) fails, and so does a fresh key that is no
+    identity at all: the null binding (F21) accepts any key outside the four
+    known identities, the exact binding accepts only the measured one."""
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "neg-unauthorized")
+    ev = json.loads((leg_dir / "delivered-event.json").read_text())
+    if signer == "owner":
+        key = builder._bundle_privkey(bundle.name.replace("evidence-", ""), "owner")
+    else:
+        key = hashlib.sha256(b"B10/an-unmeasured-non-member").hexdigest()
+    forged = nv.sign_event(key, {"created_at": ev["created_at"], "kind": ev["kind"],
+                                 "tags": ev["tags"], "content": ev["content"]})
+    assert forged["pubkey"] != ev["pubkey"]
+    (leg_dir / "delivered-event.json").write_text(
+        json.dumps(forged, indent=1, sort_keys=True) + "\n")
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, forged["id"]))
+    _expect_failure(bundle, "neg-unauthorized: delivered sender is not the nonmember identity")
+
+
+def test_a_revoked_leg_signed_by_the_first_owner_fails(tmp_path):
+    """D-037 (B10): the revoked leg is signed by owner2, the owner the removal
+    targets. A delivery signed by the owner the other legs use (the pre-B10
+    shape), with a removal receipt naming that sender, fails the sender binding.
+    Only the signer differs from the committed leg."""
+    bundle = _bundle(tmp_path)
+    leg_dir = _leg(bundle, "revoked")
+    ev = json.loads((leg_dir / "delivered-event.json").read_text())
+    owner_key = builder._bundle_privkey(bundle.name.replace("evidence-", ""), "owner")
+    forged = nv.sign_event(owner_key, {"created_at": ev["created_at"], "kind": ev["kind"],
+                                       "tags": ev["tags"], "content": ev["content"]})
+    assert forged["pubkey"] != ev["pubkey"]
+    (leg_dir / "delivered-event.json").write_text(
+        json.dumps(forged, indent=1, sort_keys=True) + "\n")
+    _rewrite(leg_dir / "delivery.json", lambda b: _set_delivery_event_id(b, forged["id"]))
+    _rewrite(leg_dir / "membership.json",
+             lambda b: b.__setitem__("removed_pubkey", forged["pubkey"]))
+    _expect_failure(bundle, "revoked: delivered sender is not the owner2 identity")
 
 
 def test_the_committed_specimen_key_cannot_be_delivered(tmp_path):

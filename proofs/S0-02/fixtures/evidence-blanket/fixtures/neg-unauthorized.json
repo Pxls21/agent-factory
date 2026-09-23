@@ -29,7 +29,7 @@
  },
  "fixture": "neg-unauthorized",
  "signer": {
-  "expected_pubkey": null,
+  "expected_pubkey": "cacfad5c5a1d49ff357dd1485642d8c986a3546e7344aa5390581e01052e4d92",
   "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
   "role": "nonmember",
   "specimen_pubkey": "413716fb0b38a911fa6f868f90f285ee0fc478f88f85bf8e3d8302f838bfa192"

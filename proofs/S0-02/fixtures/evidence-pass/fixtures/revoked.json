@@ -30,9 +30,9 @@
  "fixture": "revoked",
  "requires_membership_removal": true,
  "signer": {
-  "expected_pubkey": "f5111767ace19225e79d8588510b12a55b5c56fe7b6bd181e680384246bb1ed0",
+  "expected_pubkey": "5da14f594c9c90b681343f2e258ce28bc4bc2cd6587f35943bb430284f5bf21b",
   "note": "The PC runner signs the delivered instance with the role key from the host secret store; specimen_pubkey belongs to the committed fixture key and is never delivered.",
-  "role": "owner",
+  "role": "owner2",
   "specimen_pubkey": "5b26c858af43265df83a494da496df92317c192af795e27a2e73d914d54996bc"
  },
  "template": {

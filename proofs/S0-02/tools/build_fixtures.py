@@ -15,14 +15,17 @@ event that leg delivers:
      "expected": {"turns": 0|1, "failure_reason": ..., "mechanism": ...}}
 
 The specimen in ``event`` is signed with a per-fixture FIXTURE key derived from
-the committed seed below.  It is NOT any of the four S0-01 identities and is
-NOT a credential: the repository holds no private key for owner, agent, relay
-or user2 (``proofs/S0-01/fixtures/identities.json`` is pubkey-only), and the
-non-member key used against the LIVE relay is generated on the PC at leg time
-with its private half never leaving that host.  ``signer.role`` names the key
-the PC runner signs the delivered instance with; ``signer.expected_pubkey`` is
-the real pubkey that instance must carry (from identities.json), or null for
-the non-member role, whose pubkey is recorded in the leg instead.
+the committed seed below.  It is NOT any fixture identity and is NOT a
+credential.  The fixture identities are pubkey-only, in two files:
+``proofs/S0-01/fixtures/identities.json`` (owner, agent, relay, user2) and
+``proofs/S0-02/fixtures/identities-s0-02.json`` (owner2, the second fixture
+owner the revoked leg removes, D-037; nonmember, the one host-local
+non-member, D-038).  The role keys the PC runner signs with are host secrets
+on the PC (``fixtures/PROVENANCE.md``); no private key is committed.
+``signer.role`` names the key the PC runner signs the delivered instance with;
+``signer.expected_pubkey`` is the real pubkey that instance must carry, from
+the two files merged by ``_identities``.  A role in neither file would get
+null (the checker's F21 not-a-known-identity arm); no role in SPECS does.
 
 The specimen exists so the offline preconditions are checkable with no relay:
 the bad-signature specimen really fails ``verify_event``; the replayed specimen
@@ -37,6 +40,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -45,6 +49,10 @@ PROOF_DIR = HERE.parent
 ROOT = PROOF_DIR.parent.parent
 FIXTURE_DIR = PROOF_DIR / "fixtures"
 IDENTITIES = ROOT / "proofs" / "S0-01" / "fixtures" / "identities.json"
+# D-037/D-038's host-local identities (owner2, nonmember), pubkey-only. They get
+# their own file because the S0-01 one is an attested input of the accepted
+# S0-01 proof (proofs/S0-01/result.json): a key added there would re-mint S0-01.
+IDENTITIES_S0_02 = FIXTURE_DIR / "identities-s0-02.json"
 NOSTR_VERIFY = ROOT / "proofs" / "S0-01" / "tools" / "nostr_verify.py"
 DELIVER_EVENT = PROOF_DIR / "tools" / "pc" / "deliver_event.py"
 
@@ -78,6 +86,7 @@ KIND_CHANNEL_MESSAGE = 9
 # event id (computed over the fields, not the sig) stays valid and buzz-relay's
 # verify_id arm passes before the signature arm fires.
 SIG_FLIP_BYTE_INDEX = -1
+_LOWER_HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 def _specimen_privkey(fixture_name: str) -> str:
@@ -86,7 +95,23 @@ def _specimen_privkey(fixture_name: str) -> str:
 
 
 def _identities() -> dict:
-    return json.loads(IDENTITIES.read_text())
+    """The S0-01 identities merged with the S0-02 ones. Reads both files and
+    writes neither. Refuses a key in both files (neither file may re-point the
+    other's identity) and an S0-02 value that is not 64 lowercase hex."""
+    ids = json.loads(IDENTITIES.read_text())
+    for key, value in json.loads(IDENTITIES_S0_02.read_text()).items():
+        if key in ids:
+            raise SystemExit(
+                f"identities: key {key!r} is in both {IDENTITIES.name} and "
+                f"{IDENTITIES_S0_02.name}"
+            )
+        if not (isinstance(value, str) and _LOWER_HEX64.fullmatch(value)):
+            raise SystemExit(
+                f"identities: {IDENTITIES_S0_02.name} value for {key!r} is not "
+                f"64 lowercase hex"
+            )
+        ids[key] = value
+    return ids
 
 
 # --- the seven legs ----------------------------------------------------------
@@ -162,8 +187,11 @@ SPECS = (
         "failure_reason": "denied: not-allowlisted",
     },
     {
+        # D-037: the leg removes owner2, a SECOND fixture owner, so the removal
+        # never touches the owner the other legs sign as and never removes the
+        # last owner. The delivered instance is signed as owner2.
         "name": "revoked",
-        "role": "owner",
+        "role": "owner2",
         "created_at_offset_s": 0,
         "content": "S0-02 revoked: reply with exactly the single word: pong",
         "turns": 0,
@@ -287,7 +315,7 @@ def _bundle_privkey(bundle: str, role: str) -> str:
 def _bundle_identities(bundle: str) -> dict:
     base = _identities()
     ids = dict(base)
-    for role in ("owner", "agent", "relay", "user2"):
+    for role in ("owner", "agent", "relay", "user2", "owner2", "nonmember"):
         priv = _bundle_privkey(bundle, role)
         ev = nv.sign_event(priv, {"created_at": BUNDLE_T0, "kind": 1, "tags": [], "content": role})
         ids[role] = ev["pubkey"]

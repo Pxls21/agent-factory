@@ -54,14 +54,17 @@ recorded here.
   (`127.0.0.1:3999`) by the fixture owner with the pinned CLI
   (`buzz channels add-member --channel <id> --pubkey <owner2> --role owner`):
   receipt `{"accepted":true,"event_id":"2650c8cc0651996a845a702e16978ae8a77c8bfcebe6a6bf58ffe3c2b4f135e6","message":""}`.
-  The `revoked` fixture's `signer.role` / `expected_pubkey` must move from
-  `owner` to `owner2` before the next capture (B9); a capture's fixture setup
-  re-adds `owner2` when a prior run removed it (the same command is idempotent).
+  B10 (2026-09-23, task #190) moved the `revoked` fixture's `signer.role` /
+  `expected_pubkey` from `owner` to `owner2`; the builder reads the key from
+  `identities-s0-02.json`. When a prior capture removed `owner2`, the
+  coordinator re-adds it by hand before the next one with the same command
+  (idempotent); the PC runner makes no membership write.
 - `nonmember` `f5aa4962136f829d80cd01966d437eba54d8f1ca97b7d2073d3c5560367dd816`
   (generated 2026-09-22T11:12Z, D-038): the `neg-unauthorized` leg's signer;
   ABSENT from the channel's member listing (0 matches, measured after the
-  owner2 add). The `neg-unauthorized` fixture's `expected_pubkey` (`null`
-  today) takes this value in B9.
+  owner2 add). B10 (2026-09-23, task #190) set the `neg-unauthorized`
+  fixture's `expected_pubkey` (`null` before) to this value, read from
+  `identities-s0-02.json`.
 
 Generation: a 256-bit scalar from Python `secrets` reduced into the curve order,
 the public key derived by the repo signer's own `_point_mul(d, G)` x-only rule
