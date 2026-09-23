@@ -1,6 +1,7 @@
 """transcript_export: every planted secret class is scrubbed before it reaches disk (negative
 control per class), user/assistant text survives (positive control), noise turns are dropped,
 output is deterministic and idempotent. Synthetic JSONL only — never the live transcript."""
+import importlib.util
 import json
 import pathlib
 import subprocess
@@ -183,6 +184,165 @@ def test_compound_key_rule_stays_linear_on_a_long_run(tmp_path):
     blob = _export_one(tmp_path, "blob " + "Ab1" * 14000 + " done", 60000)
     assert time.monotonic() - t0 < 3, "the scrub is not linear on a long alphanumeric run"
     assert "done" in blob
+
+
+# AF-AP-157 (task #198 increment A): the credential value ran over a following secret NAME and its separator, so the rule
+# never saw that name and its value reached disk. The value now stops before each head (a name read at its shortest, an
+# optional quote, `:` or `=`) and the name stays. The 8-character floor reads the UNCUT run, as before; every value inside
+# a run it admits is redacted at any length, because the old rule redacted all of it. Every value here is fake.
+def _load_scrub():
+    spec = importlib.util.spec_from_file_location("transcript_export_under_test", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.scrub
+
+
+SCRUB = _load_scrub()
+
+# (text, its scrub output, the fake values of which no byte may survive). The first three are the brief's premise shapes.
+CHAINED = (
+    ("passwd=aAPI_KEY : X4Z92Q0X1ZX02Z71", "passwd=<redacted>API_KEY : <redacted>", ("X4Z92Q0X1ZX02Z71",)),
+    ("token='_API_KEY = 6Z4Z02ZX6Z4Z", "token='<redacted>API_KEY = <redacted>", ("6Z4Z02ZX6Z4Z",)),
+    ("password='-db_password: 62669Q3JJ88ZX5466", "password='<redacted>password: <redacted>", ("62669Q3JJ88ZX5466",)),
+    # a `token` head whose separator ends the run; its value comes after a space
+    ("api_key=QZJ8QZJ8token: X4Z92Q0X1ZX02Z71", "api_key=<redacted>token: <redacted>", ("QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    # upper case, the name at the run's very end, spaces around `=`
+    ("password=QZJ8QZJ8QZJ8_TOKEN = X4Z92Q0X1ZX02Z71", "password=<redacted>TOKEN = <redacted>",
+     ("QZJ8QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    # a quote between the name and `:` (JSON)
+    ('secret: QZJ8QZJ8.api_key": "X4Z92Q0X1ZX02Z71"', 'secret: <redacted>api_key": "<redacted>"',
+     ("QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    # a quote after `=`: the head ends the run
+    ("TOKEN=QZJ8QZJ8QZJ8SECRET='X4Z92Q0X1ZX02Z71'", "TOKEN=<redacted>SECRET='<redacted>'", ("QZJ8QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    # lower case, a hyphenated name, a space before `:`
+    ("passwd=qzj8qzj8qzj8.api-key : x4z92q0x1zx02z71", "passwd=<redacted>api-key : <redacted>",
+     ("qzj8qzj8qzj8", "x4z92q0x1zx02z71")),
+    # three heads in one run
+    ("password=QZJ8QZJ8_secret=WQ7XWQ7X_token : X4Z92Q0X1ZX02Z71", "password=<redacted>secret=<redacted>token : <redacted>",
+     ("QZJ8QZJ8", "WQ7XWQ7X", "X4Z92Q0X1ZX02Z71")),
+    # a value glued to a `*_key` name: read at its shortest (`_key`), the name leaves the value's own tail a value
+    ("password=QZJ8QZJ8my_key: X4Z92Q0X1ZX02Z71", "password=<redacted>_key: <redacted>", ("QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", CHAINED)
+def test_a_value_stops_before_the_next_secret_name(text, scrubbed, secrets):
+    out = SCRUB(text)
+    for s in secrets:
+        assert s not in out, f"a chained value survived: {out!r}"
+    assert out == scrubbed, out
+
+
+# Inside the run the floor admitted, a short piece before a head, a short value after one and an empty piece stay redacted.
+# (The old rule kept these values hidden too, as one long value, but it swallowed the second name.)
+IN_RUN = (
+    ("passwd=QZJ8Q_api_key=X4Z92Q0X1ZX02Z71", "passwd=<redacted>api_key=<redacted>", ("QZJ8Q", "X4Z92Q0X1ZX02Z71")),
+    ("passwd=QZJ8QZJ8_API_KEY=X4Z9X4Z", "passwd=<redacted>API_KEY=<redacted>", ("QZJ8QZJ8", "X4Z9X4Z")),
+    ("token=api_key=QZJ8QZJ8QZJ8", "token=api_key=<redacted>", ("QZJ8QZJ8QZJ8",)),
+    # two env lines glued together: the first value's tail is not read into the second name
+    ("DB_PASSWORD=QZJ8QZ12REDIS_KEY=X4Z9X4Z9", "DB_PASSWORD=<redacted>_KEY=<redacted>", ("QZJ8QZ12", "X4Z9X4Z9")),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", IN_RUN)
+def test_a_value_cut_by_a_head_is_redacted_at_any_length(text, scrubbed, secrets):
+    out = SCRUB(text)
+    for s in secrets:
+        assert s not in out, f"a value inside the run survived: {out!r}"
+    assert out == scrubbed, f"the second name did not stay a name: {out!r}"
+
+
+# The same class between rules (AF-AP-157 the other way): a value that ate the Bearer keyword, a value that ended inside a
+# bridge link (at `&`), and a Bearer token that ate a following `Bearer` or `https` each stopped a later rule, and what
+# that rule would have redacted showed. A value now stops before a Bearer match and takes a bridge link whole; a Bearer
+# token stops before a Bearer match and a link.
+LATER_RULES = (
+    # a head the old rule swallowed now starts its own value, which must not eat the Bearer keyword
+    ("passwd=QZJ8QZJ8.api_key:'QZJ8QZJ8/Bearer X4Z92Q0X1ZX02Z71", "passwd=<redacted>api_key:'<redacted>Bearer <redacted>",
+     ("QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    ("token=QZJ8:Bearer X4Z92Q0X1ZX02Z71", "token=<redacted>Bearer <redacted>", ("QZJ8", "X4Z92Q0X1ZX02Z71")),
+    # ... nor end inside a bridge link whose tail runs past `&`
+    ("passwd=QZJ8QZJ8.api_key: https://qz-jf.trycloudflare.com/x&s=X4Z92Q0X1ZX02Z71", "passwd=<redacted>api_key: <redacted>",
+     ("QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    ("api_key=https://qz-jf.trycloudflare.com/x&s=X4Z92Q0X1ZX02Z71", "api_key=<redacted>", ("X4Z92Q0X1ZX02Z71",)),
+    # a Bearer token must not eat the next Bearer keyword, nor a bridge link's `https`
+    ("Authorization: Bearer QZJ8QZJ8QZJ8Bearer X4Z92Q0X1ZX02Z71", "Authorization: Bearer <redacted>Bearer <redacted>",
+     ("QZJ8QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+    ("Bearer QZJ8QZJ8QZJ8https://qz-jf.trycloudflare.com/X4Z92Q0X1ZX02Z71", "Bearer <redacted>https://<bridge-link-redacted>",
+     ("QZJ8QZJ8QZJ8", "X4Z92Q0X1ZX02Z71")),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", LATER_RULES)
+def test_a_match_leaves_a_later_rule_its_whole_match(text, scrubbed, secrets):
+    out = SCRUB(text)
+    for s in secrets:
+        assert s not in out, f"a later rule's secret survived: {out!r}"
+    assert out == scrubbed, f"the output moved: {out!r}"
+
+
+# Negative controls: plain assignments, two chained shapes the old rule already split (separate runs), a name with no value,
+# a short non-secret value, and the planted classes. Each output is the PIN's (9801fb5), pasted from a run of its scrub.
+PIN_OUTPUTS = (
+    ("api_key: QZJ8QZJ8QZJ8", "api_key: <redacted>"),
+    ('password = "X4Z92Q0X1ZX02Z71"', 'password = "<redacted>"'),
+    ("key: service-API_KEY: QZJ8QZJ8QZJ8", "key: service-API_KEY: <redacted>"),
+    ("mask-PASSWORD=QZJ8QZJ8QZJ8;token: WQ7XWQ7XWQ7XWQ7X", "mask-PASSWORD=<redacted>;token: <redacted>"),
+    # a link that ends inside the value run, and a Bearer whose rule takes no token, stay part of the value
+    ("api_key=https://qz-jf.trycloudflare.com/exec", "api_key=<redacted>"),
+    ("api_key=QZJ8QZJ8QZJ8Bearer short", "api_key=<redacted> short"),
+    ("Bearer QZJ8QZJ8QZJ8Bearer short", "Bearer <redacted> short"),
+    ("x_key=QZJ8QZJ8QZJ8", "x_key=<redacted>"),
+    ("api_key:", "api_key:"),
+    ("password=", "password="),
+    ("token = ", "token = "),
+    ("X-Secret-Key:", "X-Secret-Key:"),
+    ("sort_key: name", "sort_key: name"),
+    ('"api_key": short', '"api_key": short'),
+    ("DB_PASSWORD=short", "DB_PASSWORD=short"),
+    ("my_API_KEY=short", "my_API_KEY=short"),
+    ("token: abc1234", "token: abc1234"),
+    (PLANTED["bridge-token-assign"], "AGENT_TOKEN=<redacted>"),
+    (PLANTED["env-token"], "PC_BRIDGE_TOKEN=<redacted>"),
+    (PLANTED["header"], "X-Agent-Token: <redacted>"),
+    (PLANTED["bearer"], "Authorization: Bearer <redacted>"),
+    (PLANTED["openai-key"], "sk-<redacted>"),
+    (PLANTED["github-pat"], "gh<redacted>"),
+    (PLANTED["google-key"], "AIza<redacted>"),
+    (PLANTED["yaml-key"], "api_key: <redacted>"),
+    (PLANTED["bridge-url"], "https://<bridge-link-redacted>"),
+    (PLANTED["opaque"], "token=<redacted>"),
+)
+
+
+@pytest.mark.parametrize("text,pin_output", PIN_OUTPUTS)
+def test_negative_controls_keep_their_pin_output(text, pin_output):
+    assert SCRUB(text) == pin_output
+
+
+def test_value_head_check_stays_linear_on_a_long_run():
+    # The value's head check runs at every value character; it must stay linear (a compound name without its anchor there
+    # would re-scan the rest of a long run at each position: AF-AP-152).
+    import time
+    t0 = time.monotonic()
+    out = SCRUB("password=" + "Ab1" * 14000 + " done")
+    assert time.monotonic() - t0 < 3, "the value's head check is not linear on a long run"
+    assert out == "password=<redacted> done", out[:60]
+
+
+def test_chained_values_never_reach_disk(tmp_path):
+    # the outward path: one turn per shape through the real CLI
+    rows = CHAINED + IN_RUN + LATER_RULES
+    jsonl = tmp_path / "chained.jsonl"
+    jsonl.write_text("".join(_entry("user", text, f"2026-09-23T15:{i:02d}:00Z") + "\n" for i, (text, _, _) in enumerate(rows)))
+    out = tmp_path / "out"
+    r = _run(jsonl, out)
+    assert r.returncode == 0, r.stderr
+    blob = (out / "chat-2026-09-23.md").read_text()
+    for _, scrubbed, secrets in rows:
+        for s in secrets:
+            assert s not in blob, f"a chained value reached disk: {s[:4]}…"
+        assert f"\n{scrubbed}\n" in blob, scrubbed
 
 
 def test_missing_transcript_exits_3(tmp_path):

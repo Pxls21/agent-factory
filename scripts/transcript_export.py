@@ -21,6 +21,38 @@ import os
 import re
 import sys
 
+# A secret NAME (a quoted name and a compound *_key name count, #187; the compound class starts only after a
+# non-alphanumeric: unanchored, a long run re-scans itself, quadratic). A bare `_key` / `-key` also starts an assignment:
+# that is where a value cut before such a name ends (below).
+_NAME = (r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]key|[_-]key|api[_-]?key"
+         r"|token|secret|password|passwd|Authorization)")
+# Inside a value a name is read at its shortest -- a secret word, or `_key` / `-key` without the compound's alphanumeric
+# prefix, which may be the value's own tail (`passwd=QZJ8my_key: v` keeps `QZJ8my` a value) -- and a HEAD is that name, an
+# optional quote, `:` or `=`.
+_WORD = r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|[_-]key|api[_-]?key|token|secret|password|passwd|Authorization)"
+_HEAD = _WORD + r"[\"']?\s*[:=]"
+# Where the Bearer rule matches (case as written; its token comes after whitespace), and where a bridge link starts.
+_BEARER = r"(?-i:Bearer)\s+[A-Za-z0-9._\-]{8}"
+_LINK = r"(?i:https?://[a-z0-9\-]+\.trycloudflare\.com)"
+_V = r"[^\s\"'&,;]"    # a value character
+_L = r"[^\s)\"']"       # a bridge link's tail character (the link rule's own class)
+# A value (AF-AP-157: a value that ran over the next name and its separator hid that name from this rule, and the name's
+# value reached disk). It keeps an in-run head (a name, `:` or `=`, then a value character) as a name; it stops before
+# any other head (a quote or whitespace after the name or the separator, or the run ends at the separator) and before a
+# Bearer match, which the next match and the Bearer rule take; it takes a bridge link whole, past `&`, `,` and `;` (a
+# value that ended inside a link left the link rule nothing to match).
+_VALUE = (r"(?:" + _WORD + r"[:=](?=" + _V + r")"
+          r"|" + _LINK + r"(?:" + _WORD + r"[:=](?=" + _L + r")|(?!" + _HEAD + r"|" + _BEARER + r")" + _L + r")*"
+          r"|(?!" + _HEAD + r"|" + _BEARER + r"|" + _LINK + r")" + _V + r")*")
+# Inside a matched value: the in-run heads and the pieces between them (no piece starts a head).
+_CUT = re.compile(r"(" + _WORD + r"[:=])|(?:(?!" + _HEAD + r").)+", re.I | re.S)
+
+
+def _redact_run(m):
+    """Keep the assignment's head and each in-run head; redact every value piece, whatever its length."""
+    return m.group(1) + _CUT.sub(lambda p: p.group(1) or "<redacted>", m.group(2))
+
+
 SECRET_PATTERNS = [
     # a private-key block, BEGIN through END: PEM and OpenSSH (`… PRIVATE KEY`) and GnuPG's armor
     # (`PGP PRIVATE KEY BLOCK`, the PGP 2.x `PGP SECRET KEY BLOCK`); a block with no END line (cut
@@ -29,10 +61,15 @@ SECRET_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"
                 r"(?:-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----|\Z)", re.S),
      "<private-key-redacted>"),
-    # explicit credential assignments / headers (value part replaced); a quoted name and a compound *_key name count (#187)
-    (re.compile(r"((?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]key|api[_-]?key|token|secret|password|passwd|Authorization)[\"']?\s*[:=]\s*[\"']?)([^\s\"'&,;]{8,})", re.I), r"\1<redacted>"),
-    # (the compound class starts only after a non-alphanumeric: unanchored, a long run re-scans itself, quadratic)
-    (re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]{8,}"), r"\1<redacted>"),
+    # explicit credential assignments / headers: the head is kept, the value (_VALUE) replaced. The 8-character floor reads
+    # the whole run after the separator (the lookahead). Every piece of the value is redacted whatever its length: the run
+    # was one value before AF-AP-157, so a floor on a piece would show bytes that were hidden. A head that is not in-run
+    # ends the match before its name; the next match takes it with its own floor.
+    (re.compile(r"(" + _NAME + r"[\"']?\s*[:=]\s*[\"']?)(?=" + _V + r"{8})(" + _VALUE + r")", re.I), _redact_run),
+    # a Bearer token (case as written): the floor reads the whole run; the token stops before a following Bearer match and
+    # a bridge link, which their rules take (a token that ate `Bearer` or `https` freed what followed: AF-AP-157)
+    (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9._\-]{8})(?:(?!" + _BEARER + r"|" + _LINK + r")[A-Za-z0-9._\-])+"),
+     r"\1<redacted>"),
     # provider-shaped keys
     (re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b"), "sk-<redacted>"),
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "gh<redacted>"),
