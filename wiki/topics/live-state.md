@@ -279,6 +279,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 06:2xZ — the push gate built (task #162): push_clean now reads the branch's last stage0-ci verdict and refuses to push onto a red head unless the push names the red run it fixes (`CI_FIX=<run id>`); 27 tests, eight mutants killed; its independent review is task #163. Pushed only after run #970 (the CI repair) is read.
+
 2026-09-23 06:2xZ — CI repaired after the owner's report ("my email is littered, the third time"): my D-054 commit had turned stage0-ci red from run #959, and each of my eight later pushes mailed a failure, twice per push because of the transcripts sync push. Two tests re-pinned (2957/15; the drift test now targets `agents/evidence-gatherer.md`); the workflow skips transcripts-only pushes and cancels superseded runs; AF-AP-126's third bite recorded and AF-AP-138 registered (a mutant "kill" that also fails on the unmutated code). The Actions API answers the sandbox shell, so the push gate (task #162) can be mechanical.
 
 2026-09-23 06:0xZ — VERIFY-J1-2-R1 home: the verifier said NOT-READY (four contract findings, all reproduced); the coordinator gated J1-2 GOOD-STATE under D-034 (nothing tears or corrupts the ledger; every hostile input is refused) and parked the four plus six follow-ups in issue #32. AF-AP-137 registered. J1-3 is unblocked.

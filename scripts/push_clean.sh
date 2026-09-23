@@ -62,6 +62,13 @@ RANGE="origin/$BRANCH..HEAD"
 N=$(git rev-list --count "$RANGE")
 [ "$N" -gt 0 ] || { echo "Nothing to push."; exit 0; }
 
+# CI GATE (AF-AP-126; owner 2026-09-23: "my email is littered … the third time"): every push onto a red head mails
+# the owner a failure notice, and "read the run before the next push" was forgotten twice. Refuse while the branch's
+# last stage0-ci verdict is red, unless the push names the red run it fixes (CI_FIX=<run id>). CI_GATE_RUNS_JSON is a
+# test input: it replaces the Actions API and says so.
+python3 "$(dirname "$0")/ci_gate.py" --branch "$BRANCH" --origin-ref "origin/$BRANCH" \
+  ${CI_GATE_RUNS_JSON:+--runs-json "$CI_GATE_RUNS_JSON"} || exit $?
+
 echo "== boundary ($N commits) =="
 git log "$RANGE" --format='%h %s'
 
