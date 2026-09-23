@@ -58,6 +58,20 @@ def test_gate_runs_the_tests_on_the_archive_and_reports_agreeing_counts(tmp_path
     assert "archive removed" in r.stdout
 
 
+def test_a_relative_gate_dir_still_writes_every_run_log(tmp_path, probe):
+    # J1-3 D-2 (2026-09-23): the run logs are written after `cd "$OUT"`, so a relative LANE_GATE_DIR named a log path that
+    # no longer resolved ("…run1.log: No such file or directory") while the RESULT line still printed
+    rel = os.path.relpath(tmp_path, ROOT)
+    assert not os.path.isabs(rel)
+    env = dict(os.environ, LANE_GATE_DIR=rel)
+    r = subprocess.run(["bash", str(ROOT / "scripts/lane_gate.sh"), "-r", "HEAD", "-f", probe, "-t", probe, "-n", "1"],
+                       cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "No such file or directory" not in r.stdout + r.stderr, r.stdout + r.stderr
+    logs = list(tmp_path.glob("gate-*.run1.log"))
+    assert len(logs) == 1 and "3 passed" in logs[0].read_text(), logs
+
+
 def test_gate_keeps_the_archive_when_asked_or_red(tmp_path, probe):
     env_keep = dict(os.environ, LANE_GATE_DIR=str(tmp_path / "keep"), LANE_GATE_KEEP="1")
     (tmp_path / "keep").mkdir()
