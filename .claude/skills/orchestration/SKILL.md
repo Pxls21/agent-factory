@@ -115,6 +115,7 @@ subordinate to, the Anthropic docs.
    the lane. The lane's premise check caught it and used `subtitle` (one DISCREPANCIES row per
    round); the lane-side catch is the backstop, never the plan. Pair with AF-AP-109: a control
    is verified to discriminate BEFORE it is asked to.
+   **0g′ — a LOCATION a brief assigns to new state is checked against that directory's consumers (2026-09-23, E2, AF-AP-124).** The E2 brief put the F23 owner record at `/etc/netns/<ns>/owner`; `ip netns exec` bind-mounts every file in that directory over /etc inside the namespace, so every exec printed `Bind /etc/netns/<ns>/owner -> /etc/owner failed`. Before naming a path for a new file, read who else lists, mounts, sources or deletes that directory, and cite the line.
 
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
