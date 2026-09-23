@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 02:5xZ — the AF-AP-127 exporter fix landed (task #138: scrub then cap in both transcript exporters, a private-key class, the screen row); VERIFY-E2 came home NOT-READY (seven blockers + CD1), its grade and E2-R1 next.
+
 2026-09-23 02:5xZ — VERIFY-J1-1 dispatched (PC, task #130); the VERIFY-J1-0-R23-STAMP brief written (task #140) with five clean include shapes measured; PC lanes: VERIFY-T92-T90R3-PCJ1, B9, VERIFY-J1-1; sandbox: VERIFY-E2.
 
 2026-09-23 02:4xZ — J1-1 landed (task #118, GATED-PENDING-VERIFY) with three coordinator findings from my own brief (AF-AP-127: a bound before redaction; the transcript exporters share the order, 0 instances measured); CI on the repair push: harness-suites green, tests running; VERIFY-T92-T90R3-PCJ1 and B9 (PC) and VERIFY-E2 (sandbox) still running.

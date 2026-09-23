@@ -451,3 +451,21 @@ class TestAFAP115:
 
     def test_no_fire_on_other_environ_key(self):
         assert not self.rx.search('home = os.environ.get("HOME")')
+
+
+# ---- AF-AP-127 (AP_SCREEN): a pattern redaction applied to an already-capped slice ----
+
+class TestAFAP127:
+    rx = _AP_BY_ID["AF-AP-127"]
+
+    def test_fires_on_scrub_of_a_capped_slice(self):
+        assert self.rx.search('days.append(f"{scrub(txt[:cap])}")')
+
+    def test_fires_on_redact_of_a_capped_attribute_slice(self):
+        assert self.rx.search("out = redact(self.body[: limit])")
+
+    def test_no_fire_on_scrub_then_cap(self):
+        assert not self.rx.search('days.append(f"{scrub(txt)[:cap]}")')
+
+    def test_no_fire_on_a_suffix_slice(self):
+        assert not self.rx.search("rest = scrub(txt[1:])")

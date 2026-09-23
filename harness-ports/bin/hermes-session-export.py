@@ -34,10 +34,11 @@ _HEADING_SHAPED = re.compile(r"(?m)^(## (?:user|assistant|tool result \())")
 
 
 def _body(scrub, text: str, cap: int) -> str:
-    """Cap, scrub, and indent any heading-shaped line by one space so the export grammar stays
-    unambiguous: a quoted `## user @ …` inside a body would otherwise read as a turn boundary
-    to the consumer (qwen_matrix.parse_export)."""
-    return _HEADING_SHAPED.sub(r" \1", scrub(text[:cap]))
+    """Scrub, then cap, and indent any heading-shaped line by one space so the export grammar
+    stays unambiguous: a quoted `## user @ …` inside a body would otherwise read as a turn
+    boundary to the consumer (qwen_matrix.parse_export). The scrub runs on the WHOLE text
+    before the cap (AF-AP-127): a cap first cuts a straddling secret below its pattern."""
+    return _HEADING_SHAPED.sub(r" \1", scrub(text)[:cap])
 
 
 def export(db: str, session: str, out: str, cap: int, tool_body_cap: int = 0) -> bool:

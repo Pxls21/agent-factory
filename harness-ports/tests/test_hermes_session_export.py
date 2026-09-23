@@ -5,6 +5,7 @@ exports them SCRUBBED and capped at N chars (matrix corpora on the PC); a plante
 assistant turn is scrubbed; a heading-shaped line inside ANY body is indented one space so the
 export grammar (consumed by qwen_matrix.parse_export) stays unambiguous; an unknown session
 exits 3."""
+import importlib.util
 import pathlib
 import re
 import sqlite3
@@ -68,13 +69,21 @@ def main():
         assert t2.count("(body capped at 80)") == 2 and "body not exported" not in t2; checks += 1
         assert "quoted turn inside a tool body" in t2; checks += 1
         assert len(re.findall(r"(?m)^## user @", t2)) == 1 and f"\n {QUOTED_HEADING}\n" in t2, "a quoted heading inside a tool body is indented, never a turn"; checks += 1
-        # --tool-body-cap 10 truncates BEFORE scrubbing: the first body becomes its first ten chars
+        # --tool-body-cap 10 keeps a body's first ten chars (scrubbed first, then capped: AF-AP-127)
         out3 = pathlib.Path(d) / "lane-capped.md"
         assert _run(db, out3, "--tool-body-cap", "10").returncode == 0
         t3 = out3.read_text()
         assert "SECRET-RESULT-BODY" not in t3 and "\n\nSECRET-RES\n" in t3 and t3.count("(body capped at 10)") == 2; checks += 1
         r4 = subprocess.run([sys.executable, str(TOOL), "--db", str(db), "--session", "nope", "--out", str(out)], capture_output=True, text=True, timeout=60)
         assert r4.returncode == 3 and "not found" in r4.stderr; checks += 1
+    # AF-AP-127: a secret straddling the cap. Capped first, the token's value is cut to 5 chars,
+    # below the scrubber's 8-char minimum, and the stub survives; scrubbed first, nothing does.
+    spec = importlib.util.spec_from_file_location("hermes_session_export", TOOL)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    scrub = mod._scrub()
+    text = "status ok AGENT_TOKEN=cVMjXl1uWH1c9Ogzoc_-k60yOL5KP5pr"
+    body = mod._body(scrub, text, len("status ok AGENT_TOKEN=") + 5)
+    assert "cVMjX" not in body and body.startswith("status ok AGENT_TOKEN="), body; checks += 1
     print(f"test_hermes_session_export: {checks} checks passed")
 
 

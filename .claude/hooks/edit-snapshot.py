@@ -180,6 +180,11 @@ AP_SCREEN = [
     # AF-AP-118 (2026-09-22, VERIFY-K1-g's route measurement): a harness-level fallback chain (Hermes `fallback_providers`)
     # silently re-routed "strict raw id" lanes to cloud models after local errors; a lane's route label is a call_logs
     # measurement (`requested_model`), never the dispatch parameter — any production file that writes the key is reviewed.
+    # AF-AP-127 (2026-09-23): a cap applied BEFORE a pattern redaction cuts a straddling secret below its
+    # pattern's minimum (or cuts a key block's END line off) and the stub survives — the two transcript
+    # exporters did `scrub(text[:cap])`; the J1-1 contract truncated inside normalize before redact.
+    ("AF-AP-127", re.compile(r"""\b(?:scrub|redact|sanitize|mask_secrets?|_redact_str)\w*\(\s*[\w.]+\[\s*:[^\]\n]*\]\s*\)"""),
+     "a redaction/scrub applied to an already-capped slice (`scrub(x[:cap])`) — a secret straddling the cap falls below its pattern's minimum and its stub survives; redact the WHOLE text, then cap (`scrub(x)[:cap]`) (AF-AP-127)"),
     ("AF-AP-118", re.compile(r"""\bfallback_providers\b"""),
      "a harness fallback chain (`fallback_providers`) written into a lane/profile config — the chain IS a route: a lane on it is HYBRID until its calls are measured (call_logs `requested_model`), and the harvest line must read the served model (AF-AP-118)"),
 

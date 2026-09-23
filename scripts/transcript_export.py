@@ -22,6 +22,10 @@ import re
 import sys
 
 SECRET_PATTERNS = [
+    # a private-key block, BEGIN through END; a block with no END line (cut at its source) is
+    # redacted to the end of the text. First, so no later rule leaves pieces of it behind.
+    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S),
+     "<private-key-redacted>"),
     # explicit credential assignments / headers (value part replaced)
     (re.compile(r"((?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|api[_-]?key|token|secret|password|passwd|Authorization)\s*[:=]\s*[\"']?)([^\s\"'&,;]{8,})", re.I), r"\1<redacted>"),
     (re.compile(r"(Bearer\s+)[A-Za-z0-9._\-]{8,}"), r"\1<redacted>"),
@@ -73,7 +77,9 @@ def export(transcript: str, out: str, cap: int) -> list:
     days = {}
     for role, ts, txt in turns(transcript):
         day = ts[:10] if ts != "?" else "undated"
-        days.setdefault(day, []).append(f"## {role} @ {ts}\n\n{scrub(txt[:cap])}\n")
+        # Scrub, THEN cap (AF-AP-127): a cap first cuts a secret that straddles it below its
+        # pattern's minimum length (or cuts a key block's END line off), and the stub survives.
+        days.setdefault(day, []).append(f"## {role} @ {ts}\n\n{scrub(txt)[:cap]}\n")
     written = []
     for day in sorted(days):
         p = os.path.join(out, f"chat-{day}.md")

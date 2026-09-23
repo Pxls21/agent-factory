@@ -77,6 +77,46 @@ def test_idempotent_and_deterministic(tmp_path):
     assert first == second
 
 
+def _export_one(tmp_path, text, cap):
+    jsonl = tmp_path / "one.jsonl"
+    jsonl.write_text(_entry("user", text, "2026-09-03T05:00:00Z") + "\n")
+    out = tmp_path / "out"
+    r = subprocess.run([sys.executable, str(TOOL), "--transcript", str(jsonl), "--out", str(out), "--cap", str(cap)],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return (out / "chat-2026-09-03.md").read_text()
+
+
+def test_secret_straddling_the_cap_never_reaches_disk(tmp_path):
+    # AF-AP-127: capped BEFORE the scrub, each value below is cut under its pattern's minimum
+    # (sk- needs 12 characters, a named token 8) and the stub reaches disk; scrubbed first, none does.
+    lead = "note one two three "
+    for secret, keep in (("sk-3c3d5f1e8a2b4c6d9e0f1234567890ab", 10),
+                         ("AGENT_TOKEN=cVMjXl1uWH1c9Ogzoc_-k60yOL5KP5pr", 19)):
+        blob = _export_one(tmp_path, lead + secret, len(lead) + keep)
+        stub = secret[keep - 7:keep]
+        assert stub not in blob, f"a {len(stub)}-char stub of the secret survived the cap: {blob!r}"
+
+
+# Real key bodies carry `+` and `/`, which break a base64 line into runs shorter than the
+# 40-character opaque rule, so without a key-block class their bytes reach disk.
+KEY_BODY = "MIIEpAIB+AAKCAQ/EAx7Qe+Wz3k/Rt9L" * 4
+
+
+def test_private_key_block_is_scrubbed_whole_or_to_the_end(tmp_path):
+    pem = "-----BEGIN RSA PRIVATE KEY-----\n" + KEY_BODY + "\n-----END RSA PRIVATE KEY-----"
+    blob = _export_one(tmp_path, "the key is\n" + pem + "\nafter the key", 4000)
+    assert "AAKCAQ" not in blob and "x7Qe" not in blob, blob
+    assert "<private-key-redacted>" in blob and "after the key" in blob
+    # a block whose END line is missing at the source is redacted to the end of the turn
+    blob = _export_one(tmp_path, "cut short\n-----BEGIN OPENSSH PRIVATE KEY-----\n" + KEY_BODY, 4000)
+    assert "AAKCAQ" not in blob and "<private-key-redacted>" in blob and "cut short" in blob, blob
+    # a block longer than the cap: scrubbed whole before the cap, no key characters on disk
+    long_pem = "-----BEGIN RSA PRIVATE KEY-----\n" + KEY_BODY * 12 + "\n-----END RSA PRIVATE KEY-----"
+    blob = _export_one(tmp_path, "long\n" + long_pem, 200)
+    assert "AAKCAQ" not in blob and "<private-key-redacted>" in blob, blob
+
+
 def test_missing_transcript_exits_3(tmp_path):
     r = subprocess.run([sys.executable, str(TOOL), "--transcript", str(tmp_path / "nope.jsonl"), "--out", str(tmp_path / "o")],
                        capture_output=True, text=True, timeout=60)
