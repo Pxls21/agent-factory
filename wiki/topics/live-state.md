@@ -327,7 +327,7 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
-- **OPEN 2026-09-23 05:1xZ:** (1) the S0-05 second-assertion wording, "1" (containment now, the routed assertion later; recommended) or "2" (task #154); (2) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (3) FYI, no action needed: the bare `opus` tier now resolves to Opus 5.5, so an explore lane dispatched by tier gets 5.5 while the `evidence-gatherer` agent still pins Opus 5. The bullets below this one are history; most predate 2026-09-15, and the ledger holds their status.
+- **OPEN 2026-09-23 14:3xZ:** (1) S0-02: the owner-run removal of owner2 from the test channel (the command is in the 14:26Z chat reply; the owner replies "removed"), then the coordinator runs the revoked leg; (2) S0-05: the buzz-acp relay identity `~/s0-05-identity/pair.env` does not exist — option 1 the coordinator creates it after the S0-02 capture (recommended), 2 the owner creates it, 3 park S0-05; after that, the owner's sudo run of the E3 recipe; (3) the sandbox disk: may the coordinator delete `/root/venv-laya` and the orphaned HF cache blob (yes or no; the classifier blocked the delete, not worked around); (4) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (5) no decision needed now: D-058, the owner's dream-phase Jev triage idea, is recorded as PROPOSED (task #195, blocked on the J1 closure and the Stage 5 build). RESOLVED since 05:1xZ: the S0-05 second-assertion wording (D-055, option 1, 10:5xZ). The bullets below this one are history; most predate 2026-09-15, and the ledger holds their status.
 - **RESOLVED 2026-09-14 16:3xZ: `accepted/S0-11` RE-SIGNED by the owner** on a9c0c55 after B3's attested schema change; the PC push refused (403) → the tag over the bridge as a bundle, its object committed (`docs/governance/tags/accepted-S0-11.tag`); anchor check rc 0 on both venues, `test_proof_status.py` 32 passed. NO owner item is open. Standing note for the owner: every schema/runner/validator/registry change re-mints every result and asks for this again (AF-AP-56 by design); the alternative — sign only the substance, not the tooling hashes and timestamps — is a design change for the owner to call.
 
 - **RESOLVED 2026-09-14 15:4xZ (owner: "just build it"): the local Qwen builder** — FINDINGS §8 decisions 1-2 answered by the build (the June CUDA build hosts it; the OmniRoute node + combo exist), decision 3 provisionally (`medium` is the measured default; the A/B is N5k's verify verdict). Nothing needed from the owner; the cloud route stays one env away.
@@ -371,6 +371,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 14:3xZ — CI run #988 passed; D-058 recorded (the owner's dream-phase Jev triage idea, PROPOSED, `docs/11_DREAM_PHASE.md` §9, task #195); the open owner asks re-listed.
 
 2026-09-23 14:2xZ — B10 (c63a3a9) and K1-h (efb4518) landed; J1-1-R2 dispatched; issue #49 filed; the B11 and VERIFY-J1-0-R5 briefs written.
 

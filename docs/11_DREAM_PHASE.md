@@ -95,3 +95,28 @@ Repeated rejected proposals should be suppressed by content/source digest until 
 - Worker failure produces no production mutation.
 - Evidence, evaluation, human decision, and final write are linked by digests.
 - Rejection, supersession, and rollback flows are tested across all four scopes.
+
+## 9. Proposed, not built: Jev/Laya advisory triage (D-058)
+
+The owner proposed on 2026-09-23 that Jev/Laya help decide what the dream phase keeps, promotes and filters. It is recorded as D-058 and is not built. The dream phase itself does not exist yet (Stage 5 of `docs/07_BUILD_PLAN.md`).
+
+What it would do:
+
+- Label and rank snapshot records and proposals: keep, promote-candidate, near-duplicate of a rejected proposal, noise.
+- Order the human review queue so the strongest candidates come first.
+- Flag near-duplicates of rejected proposals that §6's exact digest suppression misses.
+
+What it must never do:
+
+- Approve, reject or promote anything. The human signs every decision (§3 step 7), and the promotion service applies it.
+- Enter the deterministic tests of §3 step 6, a gate, or the promotion service's checks (KC-J1; Standing Rule 12).
+- Delete or hide a record. A "drop" is a queue label; every record and proposal stays listed and auditable (§5; Standing Rule 10).
+
+How it would learn: each §6 outcome record is a human label. A later J1 contract amendment adds the capture-only types `dp.keep`, `dp.promote` and `dp.dup_rejected`. No type drives the queue until it holds 200 human labels and beats the deterministic baseline (§6 digest suppression) on a blind set (KC-J2, KC-J7). The queue stores the Jev label beside the human decision, so the override rate is measured.
+
+Where it would run, decided in the Stage 5 design:
+
+- Inside the worker at §3 step 2. The worker reaches models only through a scoped OmniRoute key (§7), so Laya needs an OmniRoute route (Standing Rule 3).
+- System-side at the human queue (§3 step 7). The worker's network stays as it is, but the labeler reads untrusted proposal text, so its label is attack surface and never a filter.
+
+When: after the J1 decision ledger closes and after the Stage 5 dream-phase build exists (task #195).
