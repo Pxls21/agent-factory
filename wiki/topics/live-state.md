@@ -14,6 +14,22 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-23 13:2xZ — WHAT IS LIVE NOW (this block supersedes the 13:0xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
+- **LIVE, PC:** K1-h (task #137) and VERIFY-T92 (task #132), both alive at the 13:20Z heartbeat (vLLM kv 0.68, no request waiting).
+- **LIVE, sandbox (four agents):**
+  - J1-0-R5 (task #188, PIN e37a052, AMENDMENT 4).
+  - VERIFY-J1-1-R1 (task #189, PIN e37a052; it also grades #187).
+  - B10 (task #190, PIN 688b4bd): the S0-02 fixture signers per D-037 and D-038.
+  - VERIFY-E3-R1 (task #185), resumed after the restart; its report must state the model mix (AF-AP-154).
+- **FOUND:** two S0-02 fixtures still carried the old signers; the B9 inputs never reached a brief (AF-AP-155). The live capture waits for B10.
+- **PC, measured read-only 13:1xZ:** the isolated relay, the scripted backend and the five fixture key files are ready; owner2 is an owner, nonmember is absent.
+- **CI:** run #986 (e37a052) in progress. Local commits wait for it: 1e4c40a (the B10 brief) and the ledger plane.
+- **NEXT:**
+  1. Push when #986 concludes.
+  2. Land B10, then run the seven owner-free S0-02 legs on the PC.
+  3. Hand the owner the removal command for owner2 (D-037), then run the revoked leg.
+  4. Grade VERIFY-E3-R1, VERIFY-J1-1-R1 and J1-0-R5 as they come home.
+
 **2026-09-23 13:0xZ — WHAT IS LIVE NOW (this block supersedes the 12:3xZ block and the older ones below for the live set; the ledger `todo/BUILD-TASKLIST.md` §LIVE carries the detail).**
 - **LIVE, PC:**
   - K1-h (task #137, PC pid 3467866) and VERIFY-T92 (task #132, PC pid 3965057).
@@ -329,6 +345,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-23 13:2xZ — pushed e37a052 + 688b4bd; J1-0-R5, VERIFY-J1-1-R1 and B10 dispatched; the S0-02 fixture signers planned for B9 found missing before the capture (AF-AP-155); the PC capture prerequisites measured.
 
 2026-09-23 13:0xZ — J1-1-R1 landed (5718ea0; issue #47) and #187 (a318b8a), both GATED-PENDING-VERIFY; VERIFY-J1-0-R4 ruled NOT-READY → J1-0-R5 under AMENDMENT 4 (issue #46; AF-AP-152/153); a new bridge banner and a worker restart re-attached the PC pollers twice (AF-AP-131); VERIFY-E3-R1 resumed after a silent Opus 5.5 → 4.8 fallback (AF-AP-154).
 
