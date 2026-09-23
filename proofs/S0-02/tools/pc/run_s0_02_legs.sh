@@ -33,6 +33,10 @@ HOST_LEG=run-1
 FD=$MARKERS/v2-$HOST_LEG
 TURN_WAIT_S=${S0_02_TURN_WAIT_S:-100}
 POLL_S=5
+# Named return code for the neg-replayed leg: the final live timeline is not an
+# exact byte extension of the first snapshot (issue #17 step 5). 8 is free — the
+# codes in use before this lane are 0,3,4,5,6,7,9.
+S0_02_REPLAY_PREFIX_MISMATCH=8
 
 ALL_LEGS="pos-allowed neg-unauthorized neg-bad-signature neg-replayed neg-stale neg-self-authored neg-not-allowlisted revoked"
 
@@ -92,6 +96,43 @@ collect_leg() {
   local out=$1
   mkdir -p "$out"
   cp "$FD/timeline.jsonl" "$out/timeline.jsonl"
+}
+
+# Per-delivery DELTA model (issue #17 / D-036): the replay leg keeps ONE live
+# process across both deliveries. The first snapshot is a whole-line prefix of
+# the live timeline (a partial trailing line never enters it); the second
+# sub-leg receives only the post-boundary bytes. Neither step fabricates lines:
+# an empty delta (the relay dropped the duplicate and buzz-acp saw nothing) is
+# a valid runner output. Both read the live timeline in $FD and write into the
+# leg's sub-legs under the global $out (the replay leg root).
+#
+# snapshot_timeline : cut the live timeline at its last newline into
+# $out/first/timeline.jsonl and print the snapshot's byte length.
+snapshot_timeline() {
+  local out=$1 size first_bytes
+  mkdir -p "$out/first"
+  size=$(wc -c < "$FD/timeline.jsonl")
+  # Cut at the last newline: the first snapshot ends at the last \n (inclusive),
+  # so a partial trailing line (the live writer mid-line) never enters it.
+  # Python is the runner's existing producer-side tool (deliver/role_for use
+  # it); a one-line rfind is the exact, line-independent cut.
+  first_bytes=$(/usr/bin/python3 -c 'import sys; d=open(sys.argv[1],"rb").read(); p=d.rfind(b"\n"); print(p+1 if p>=0 else 0)' "$FD/timeline.jsonl")
+  head -c "$first_bytes" "$FD/timeline.jsonl" > "$out/first/timeline.jsonl"
+  printf '%s' "$first_bytes"
+}
+
+# delta_timeline <first_bytes> : prove the final live timeline is an exact byte
+# extension of the first snapshot (cmp -n on the byte count); on a mismatch print
+# the named error, write no second timeline, and return the named code. On
+# success write only the post-boundary bytes to $out/second/timeline.jsonl.
+delta_timeline() {
+  local out=$1 first_bytes=$2
+  if ! cmp -n "$first_bytes" "$out/first/timeline.jsonl" "$FD/timeline.jsonl"; then
+    echo "S0-02: neg-replayed final timeline does not extend the first snapshot (prefix mismatch)" >&2
+    return "$S0_02_REPLAY_PREFIX_MISMATCH"
+  fi
+  mkdir -p "$out/second"
+  tail -c +$((first_bytes + 1)) "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"
 }
 
 # The masked log is produced by the S0-01 post step (pc_post.sh:107), after the
@@ -184,7 +225,10 @@ for leg in $LEGS; do
       # the leg proves nothing, so it is checked before the second is sent.
       deliver pos-allowed "$out/first" "$(role_for pos-allowed)"
       wait_turn_window 1
-      collect_leg "$out/first"
+      # issue #17 step 2: cut the first delivery's timeline at its last newline
+      # (a partial trailing line never enters the snapshot) and record its byte
+      # length; the second delivery's timeline is the post-boundary DELTA.
+      first_bytes=$(snapshot_timeline "$out")
       # F5: sleep 1 before the second deliver to avoid the NIP-98 same-second
       # replay guard (crates/buzz-auth/src/nip98_replay.rs). The second sub-leg's
       # t0 is the FIRST sub-leg's t0 (the clock the reused event was signed
@@ -195,7 +239,17 @@ for leg in $LEGS; do
         --reuse "$out/first/delivered-event.json" \
         --t0 "$local_first_t0"
       wait_turn_window 0
-      collect_leg "$out/second"
+      # issue #17 steps 5+6: prove the final live timeline is an exact byte
+      # extension of the first snapshot, then write only the post-boundary
+      # bytes as the second delivery's timeline. The prefix proof (cmp -n) and
+      # the delta write (tail) both live inside delta_timeline, so the tests
+      # source exactly these production bytes (item 5's integration test,
+      # item 6a's prefix-mismatch control). On a prefix mismatch the function
+      # prints the named error, writes NO second timeline, and returns the
+      # named code (8) — set -e then aborts the leg. On success an EMPTY delta
+      # is a valid output (the relay dropped the duplicate; buzz-acp saw
+      # nothing) — the runner never fabricates lines.
+      delta_timeline "$out" "$first_bytes"
       ;;
     neg-bad-signature)
       # The positive event with one signature byte flipped: the ONLY difference
@@ -240,7 +294,19 @@ MSG
   esac
   stop_leg
   post_leg
-  collect_masked "$out"
+  if [ "$leg" = "neg-replayed" ]; then
+    # M-B (issue #17 / D-036): the checker's replay closure requires buzzacp.log
+    # in EACH sub-leg and NOTHING at the leg root (C:569-574, C:143-149). ONE
+    # continuous process produces ONE masked log (masking runs only after exit,
+    # pc_post.sh:107), so the same log is copied into both sub-legs; the checker
+    # scans only the second sub-leg's log for observables (C:609-610) — the first
+    # copy exists for the closure, not as a second observation. Every other leg
+    # keeps its single root copy.
+    collect_masked "$out/first"
+    collect_masked "$out/second"
+  else
+    collect_masked "$out"
+  fi
 done
 
 say "captured into $DEST"

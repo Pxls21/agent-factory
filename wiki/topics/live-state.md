@@ -276,6 +276,8 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-23 03:5xZ — B9 landed GATED-PENDING-VERIFY (S0-02 replay leg: the second delivery gets only the post-boundary timeline bytes, proven an exact extension of the first; PC 175 passed twice, sandbox 154 passed / 21 PC-only skipped twice).
+
 2026-09-23 03:4xZ — J1-2 landed GATED-PENDING-VERIFY (the decision ledger: append-only canonical JSONL, row_id without source_digest, named refusals; 27 passed twice with J1-1's tests).
 
 2026-09-23 03:4xZ — E2-R1 landed GATED-PENDING-VERIFY (S0-05 seven blockers closed; root 137 passed twice, uid 65534 122 passed / 15 skipped, census clean); AF-AP-129 registered (a shell range guard passes a port bash cannot hold); B9 home on the PC (report + 4-file patch), J1-2 home in the sandbox.

@@ -1478,7 +1478,9 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
             and variable_target.group(1) not in static_roots
         )
         if unresolved_variable_target or (
-            dynamic_out_assignment and "local_first_t0=$(" not in line
+            dynamic_out_assignment
+            and "local_first_t0=$(" not in line
+            and "first_bytes=$(" not in line
         ):
             unrecognised.append(f"line {lineno}: {line}")
             continue
@@ -1515,7 +1517,9 @@ def _runner_output_writes(text: str) -> tuple[set[str], list[str]]:
         if (
             re.match(r"(?:if\s+)?grep\b", line)
             or re.match(r"rm\s+-", line)
-            or re.match(r"(?:deliver|collect_leg)\b", line)
+            or re.match(r"mkdir\s+-", line)
+            or re.match(r"(?:if\s+!)?\s*cmp\b", line)
+            or re.match(r"(?:deliver|collect_leg|collect_masked)\b", line)
             or line.startswith("--reuse ")
             or "local_first_t0=$(" in line
         ):
@@ -1571,8 +1575,33 @@ def test_leg_file_table_matches_the_runner_writes():
         r'leg_dir / "([^"]+)"\)\.write_text', deliver_text
     ))
     revoked_only = {"membership.json"}
-    assert producer_writes | (direct_writes - revoked_only) == checker._LEG_FILES_PLAIN
-    assert producer_writes | direct_writes == checker._LEG_FILES_REVOKED
+
+    # The replay leg's per-delivery DELTA model (issue #17 / M-B) writes its
+    # timelines under the $out/<sub-leg>/ prefix (first snapshot via head,
+    # second delta via tail). Those two sub-leg paths must not count as
+    # top-level bundle leaves: split direct_writes by the sub-leg component.
+    subleg_paths = {p for p in direct_writes if "/" in p}
+    assert (
+        {p.split("/", 1)[0] for p in subleg_paths} <= set(checker.REPLAY_SUBLEGS)
+    ), subleg_paths
+    top_writes = direct_writes - subleg_paths
+
+    # Root-level leg outputs = the plain closure set (plus membership.json only
+    # for the revoked leg); the sub-leg timelines are sub-leg paths, not leaves.
+    assert producer_writes | (top_writes - revoked_only) == checker._LEG_FILES_PLAIN
+    assert producer_writes | top_writes == checker._LEG_FILES_REVOKED
+
+    # Each sub-leg holds EXACTLY the plain closure set: the deliver-produced
+    # files (fixture/delivered-event/delivery/t0) + the runner's snapshot and
+    # delta timelines + the collect_masked log. The mirror records only the
+    # root `buzzacp.log` from the cp inside collect_masked, but the same masked
+    # log is copied into BOTH sub-legs, so add it to the sub-leg set here.
+    subleg_files = (
+        {p.split("/", 1)[1] for p in subleg_paths}
+        | {n for n in producer_writes if n not in revoked_only}
+        | {"buzzacp.log"}
+    )
+    assert subleg_files == set(checker._LEG_FILES_PLAIN), subleg_files
 
     nested_writers = set(re.findall(
         r'^\s*(?:deliver|collect_leg)\b[^\n]*"\$out/([^"/]+)"', text, re.MULTILINE
@@ -1699,6 +1728,39 @@ def test_pc_runner_replay_window_and_nip98_guard_are_pinned():
     assert "NIP-98 same-second" in replay
     assert '"$out/first/t0.json"' in replay
     assert '--t0 "$local_first_t0"' in replay
+    # issue #17 / M-B (D-036): the per-delivery DELTA model and the dual
+    # sub-leg masked log. Each pin below is paired with a behavioural control:
+    #   cmp -n   -> item 6a (prefix-mismatch control, the named code + text)
+    #   tail -c  -> item 6b (mid-line snapshot; first + delta == final)
+    #   collect_masked "$out/first" / "$out/second" -> item 5 (the integration
+    #   test runs the real main for neg-replayed and the real checker requires
+    #   buzzacp.log in BOTH sub-legs and nothing at the leg root, C:569-574).
+    # A source-text pin alone is a mirror (AF-AP-80): the controls above close
+    # the loop.
+    delta = text[text.index("delta_timeline() {"):text.index("collect_masked() {")]
+    assert 'cmp -n "$first_bytes" "$out/first/timeline.jsonl" "$FD/timeline.jsonl"' in delta
+    assert 'tail -c +$((first_bytes + 1)) "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"' in delta
+    assert 'S0-02: neg-replayed final timeline does not extend the first snapshot (prefix mismatch)' in delta
+    assert "return \"$S0_02_REPLAY_PREFIX_MISMATCH\"" in delta
+    assert "S0_02_REPLAY_PREFIX_MISMATCH=8" in text
+    assert 'collect_masked "$out/first"' in text
+    assert 'collect_masked "$out/second"' in text
+    # the masked log lands in BOTH sub-legs and NOT at the leg root for the
+    # replay leg (the main-tail branch, item 5 / M-B). Split the branch into
+    # the then (replay leg) and else (every other leg) arms: the then arm must
+    # write the two sub-leg copies and NOT the root copy, the else arm keeps the
+    # single root copy.
+    main_tail = text[text.index('if [ "$leg" = "neg-replayed" ]'):text.index('done', text.index('if [ "$leg" = "neg-replayed" ]'))]
+    then_branch = main_tail[:main_tail.index("else")]
+    else_branch = main_tail[main_tail.index("else"):]
+    assert 'collect_masked "$out/first"' in then_branch
+    assert 'collect_masked "$out/second"' in then_branch
+    assert 'collect_masked "$out"\n' not in then_branch, (
+        "the replay leg must not keep the root masked-log copy"
+    )
+    assert 'collect_masked "$out"\n' in else_branch, (
+        "every other leg must keep its single root masked-log copy"
+    )
     assert checker.REPLAY_CLOCK_TOLERANCE_S > 100 + 30
     assert checker.LEG_CLOCK_TOLERANCE_S < checker.REPLAY_CLOCK_TOLERANCE_S
     assert (
@@ -2435,3 +2497,483 @@ def test_real_runner_passes_exact_pins_then_stops_at_labelled_deliver(tmp_path):
     assert "B8_NAMED_DELIVER_REFUSAL" in proc.stderr
     assert trace.read_text() == "deliver"
     assert not (dest / "pos-allowed" / "timeline.jsonl").exists()
+
+# ---------------------------------------------------------------------------
+# B9 (issue #17 / D-036) -- the per-delivery DELTA model in the runner, the
+# masked log into BOTH sub-legs, and the producer->consumer integration.
+# The sourced replay portion runs with a FAKE process (launcher/post) and a
+# FAKE deliver (the relay's wire append only); the REAL stop_leg,
+# wait_turn_window, snapshot_timeline, delta_timeline, collect_masked and main
+# are unchanged. The no-space timeline is the real producer's wire format
+# (what buzz-acp writes); the committed fixture/delivered-event/delivery/t0
+# sub-leg files stay byte-for-byte the same.
+# ---------------------------------------------------------------------------
+B9_SUB_FIRST = PASS_BUNDLE / "legs" / "neg-replayed" / "first"
+B9_SUB_SECOND = PASS_BUNDLE / "legs" / "neg-replayed" / "second"
+B9_PASS_LINE = (
+    "PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
+    "+1 revocation leg (assertion 2); removal evidence: coordinator-supplied receipt "
+    "(unauthenticated; ordering and fields verified; not an end-to-end revocation proof)"
+)
+
+
+def _b9_ns(txt: str) -> str:
+    """The producer wire format: compact (no-space) JSON, one frame per line.
+    wait_turn_window greps no-space; the checker's JSON parser is agnostic."""
+    return "".join(json.dumps(json.loads(l), separators=(",", ":")) + "\n"
+                   for l in txt.splitlines() if l.strip())
+
+
+def _b9_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The runner preflight's scratch tree (B8's pattern): pins + fixtures +
+    .markers + .secrets, with a fresh frame dir as $FD."""
+    repo = tmp_path / "repo"
+    pinned = tmp_path / "pinned"
+    pins = repo / "proofs" / "S0-01" / "pins.py"
+    pins.parent.mkdir(parents=True)
+    pins.write_text(
+        'PINNED_ENV_KEYS_S0_02 = PINNED_ENV_KEYS | frozenset({"RUST_LOG"})\n'
+        'PINNED_ENV_VALUES_S0_02 = {"RUST_LOG": "debug"}\n'
+    )
+    fx = repo / "proofs" / "S0-02" / "fixtures"
+    fx.mkdir(parents=True)
+    (fx / "pos-allowed.json").write_text(json.dumps({"signer": {"role": "owner"}}) + "\n")
+    (fx / "neg-replayed.json").write_text(json.dumps({"signer": {"role": "owner"}}) + "\n")
+    (pinned / ".markers").mkdir(parents=True)
+    (pinned / ".secrets").mkdir(parents=True)
+    # R sets FD=$PINNED/.markers/v2-run-1 when sourced (it ignores a caller's
+    # FD); create exactly that frame dir so the sourced production bytes run.
+    frame = pinned / ".markers" / "v2-run-1"
+    frame.mkdir()
+    return repo, pinned, frame
+
+
+def _b9_env(tmp_path: Path, runner: Path) -> dict[str, str]:
+    repo, pinned, frame = _b9_tree(tmp_path)
+    return {
+        **os.environ,
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "S0_02_REPO": str(repo),
+        "S0_02_PINNED": str(pinned),
+        "S0_02_RELAY_HTTP": "http://127.0.0.1:1",
+        "S0_02_TURN_WAIT_S": "0",
+        "POLL_S": "0.05",
+        "FD": str(frame),
+        "MARKERS": str(pinned / ".markers"),
+        "B9_R": str(runner),
+        "B9_DEST": str(tmp_path / "dest"),
+        "B9_FIRST_NS": str(tmp_path / "first_ns.jsonl"),
+        "B9_SECOND_NS": str(tmp_path / "second_ns.jsonl"),
+        "B9_SUB_FIRST": str(B9_SUB_FIRST),
+        "B9_SUB_SECOND": str(B9_SUB_SECOND),
+        "B9_SECOND_LOG": str(B9_SUB_SECOND / "buzzacp.log"),
+    }
+
+
+def _b9_run(tmp_path: Path, runner: Path, case: str, append: str,
+            extra: str = "") -> tuple[subprocess.CompletedProcess, Path]:
+    """Drive the runner's real main for neg-replayed. launch_leg/deliver/post
+    are labelled fakes; the real stop_leg sees no fake pidfile, takes R:63, and
+    returns 0. The sourced R defines every other function; `extra` (if any) is
+    inserted after the source and before main so it overrides the production
+    definition (mutants)."""
+    env = _b9_env(tmp_path, runner)
+    env.update({"B9_CASE": case, "B9_APPEND": append})
+    (tmp_path / "first_ns.jsonl").write_text(
+        _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text()))
+    (tmp_path / "second_ns.jsonl").write_text(
+        _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text()))
+    script = _B9_DRIVER.replace(
+        'main "$B9_DEST" neg-replayed',
+        (extra + "\n" if extra else "") + 'main "$B9_DEST" neg-replayed',
+    )
+    proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=60)
+    return proc, Path(env["B9_DEST"]) / "neg-replayed"
+
+
+def _b9_check(bundle_root: Path, leg: Path) -> str:
+    """Swap the runner-produced leg into a copy of the committed bundle and run
+    the REAL checker against it (exactly as the existing replay tests do)."""
+    dst = bundle_root / "legs" / "neg-replayed"
+    assert dst.exists(), "the committed pass bundle must include neg-replayed"
+    shutil.rmtree(dst)
+    shutil.copytree(leg, dst)
+    return _run_checker(bundle_root)
+
+
+def _b9_pin_runner(tmp_path: Path) -> Path:
+    """The PIN's runner bytes (git show 71463f3:...) into a scratch file."""
+    pin = subprocess.run(
+        ["git", "show", "71463f3:proofs/S0-02/tools/pc/run_s0_02_legs.sh"],
+        cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    p = tmp_path / "pin_runner.sh"
+    p.write_text(pin)
+    return p
+
+
+_B9_DRIVER = r'''
+# B9 driver: source the ENTIRE runner (real main, wait_turn_window,
+# snapshot_timeline, delta_timeline, collect_masked) and override ONLY the
+# process side (launch/stop/post) and the delivery side (deliver). This is the
+# exact replay portion of the runner, per issue #17's required test.
+source "$B9_R"
+launch_leg() { touch "$FD/launch.ready"; }
+# stop_leg stays the production function. The fake process writes no pidfile, so
+# the real R:63 path prints "no pidfile — nothing of ours to stop" and returns 0.
+# The fake's post step writes the process's exit marker + the masked log
+# (pc_post.sh's role, never the real PP). The committed second/buzzacp.log
+# carries the DEBUG canary + the duplicate-drop observable.
+post_leg() { touch "$FD/buzz-acp.exit"; cp "$B9_SECOND_LOG" "$FD/buzzacp.log"; }
+deliver() {
+  local fixture=$1 legdir=$2; shift 2
+  mkdir -p "$legdir"
+  local SRC
+  if [ "$fixture" = "pos-allowed" ]; then SRC="$B9_SUB_FIRST"; else SRC="$B9_SUB_SECOND"; fi
+  cp "$SRC/fixture.json" "$legdir/fixture.json"
+  cp "$SRC/delivered-event.json" "$legdir/delivered-event.json"
+  cp "$SRC/delivery.json" "$legdir/delivery.json"
+  cp "$SRC/t0.json" "$legdir/t0.json"
+  if [ "$B9_APPEND" = "cumulative" ]; then
+    # M-A / case C: each delivery appends its own committed shape to the same
+    # live file, so the second snapshot carries the cumulative 9-line timeline.
+    if [ "$fixture" = "pos-allowed" ]; then cat "$B9_FIRST_NS" >> "$FD/timeline.jsonl"
+    else cat "$B9_SECOND_NS" >> "$FD/timeline.jsonl"; fi
+  else
+    # the DELTA model (cases A/B): the first delivery appends the 7-line first
+    # snapshot; the second delivery appends only the 2-line second delta (A) or
+    # nothing (B, the empty delta).
+    if [ "$fixture" = "pos-allowed" ]; then cat "$B9_FIRST_NS" >> "$FD/timeline.jsonl"
+    elif [ "$B9_CASE" = "A" ]; then cat "$B9_SECOND_NS" >> "$FD/timeline.jsonl"; fi
+  fi
+  return 0
+}
+main "$B9_DEST" neg-replayed
+'''
+
+
+# --- item 5: the producer->consumer integration (cases A, B, C) -------------
+
+def test_replay_integration_runner_producer_into_real_checker(tmp_path):
+    """ITEM 5 case A -- the issue #17 producer->consumer integration. The
+    sourced replay portion (real main + real wait_turn_window +
+    snapshot_timeline + delta_timeline + collect_masked, a fake process and a
+    fake deliver) runs end-to-end for neg-replayed; its leg (no-space producer
+    timelines, committed sub-leg files copied exactly, buzzacp.log in BOTH
+    sub-legs, nothing at the leg root) is swapped into a full copy of the
+    evidence-pass bundle and the REAL checker must pass."""
+    proc, leg = _b9_run(tmp_path, RUNNER, "A", "delta")
+    assert proc.returncode == 0, proc.stderr
+    assert "no pidfile" in proc.stdout, "the real stop_leg no-pidfile path must run"
+    # the leg shape the checker requires (C:569-574, C:143-149):
+    assert sorted(p.name for p in leg.iterdir()) == ["first", "second"]
+    assert not (leg / "buzzacp.log").exists(), "the replay leg must keep no root masked log"
+    for sub in ("first", "second"):
+        subd = leg / sub
+        assert sorted(p.name for p in subd.iterdir()) == [
+            "buzzacp.log", "delivered-event.json", "delivery.json",
+            "fixture.json", "t0.json", "timeline.jsonl"], sub
+    # the DELTA model: first = 1-prompt snapshot, second = the post-boundary
+    # delta (0 prompts); one continuous process -> one masked log, byte-
+    # identical in both sub-legs (masking runs only after exit, pc_post.sh:107).
+    first = (leg / "first" / "timeline.jsonl").read_bytes()
+    second = (leg / "second" / "timeline.jsonl").read_bytes()
+    assert first.count(b'"method":"session/prompt"') == 1, "first must carry 1 prompt"
+    assert second.count(b'"method":"session/prompt"') == 0, "second delta must carry 0 prompts"
+    assert (leg / "first" / "buzzacp.log").read_bytes() == (
+        leg / "second" / "buzzacp.log").read_bytes(), "one masked log in both sub-legs"
+    assert (leg / "second" / "buzzacp.log").read_bytes() == (
+        B9_SUB_SECOND / "buzzacp.log").read_bytes(), "the committed canary/drop log must be copied"
+    bundle = _bundle(tmp_path)
+    line = _b9_check(bundle, leg)
+    assert line == B9_PASS_LINE, line
+
+
+def test_replay_integration_empty_delta_second_timeline_passes(tmp_path):
+    """ITEM 5 case B -- the relay dropped the duplicate, so the final timeline
+    is the first snapshot: the post-boundary delta is EMPTY. The runner writes a
+    zero-byte second timeline (it never fabricates lines, item 2); the real
+    checker must accept it (0 prompts, no observable required for an empty
+    second sub-leg)."""
+    proc, leg = _b9_run(tmp_path, RUNNER, "B", "delta")
+    assert proc.returncode == 0, proc.stderr
+    second = leg / "second" / "timeline.jsonl"
+    assert second.exists() and second.stat().st_size == 0, "empty delta is a valid runner output"
+    bundle = _bundle(tmp_path)
+    line = _b9_check(bundle, leg)
+    assert line == B9_PASS_LINE, line
+
+
+def test_replay_integration_pin_runner_reproduces_the_failure(tmp_path):
+    """ITEM 5 case C -- the red-first reproduction. The SAME harness over the
+    PIN's runner bytes (git show 71463f3:...) must be REFUSED by the real
+    checker: the PIN's root-level masked log trips the replay closure first
+    (M-B, C:569-574); with M-B alone repaired the cumulative second timeline
+    trips the turn count (M-A, C:621-624). Both exact texts are asserted."""
+    pin = _b9_pin_runner(tmp_path)
+    proc, leg = _b9_run(tmp_path, pin, "C", "cumulative")
+    assert proc.returncode == 0, proc.stderr
+    # M-B: the PIN wrote the masked log at the leg root (nothing in the sub-legs)
+    assert (leg / "buzzacp.log").exists(), "PIN M-B: root-level masked log"
+    bundle = _bundle(tmp_path)
+    err = None
+    try:
+        _b9_check(bundle, leg)
+    except checker.Failure as exc:
+        err = str(exc)
+    assert err == (
+        "neg-replayed: expected exactly the sub-leg directories "
+        "['first', 'second'], got ['buzzacp.log', 'first', 'second']"
+    ), err
+    # M-B alone repaired (dual sub-leg copy, cumulative second still present):
+    # the closure passes and the cumulative second's 1 prompt trips C:621-624.
+    mbsrc = pin.read_text().replace(
+        '  stop_leg\n  post_leg\n  collect_masked "$out"\ndone',
+        '  stop_leg\n  post_leg\n  if [ "$leg" = "neg-replayed" ]; then\n'
+        '    collect_masked "$out/first"\n    collect_masked "$out/second"\n'
+        '  else\n    collect_masked "$out"\n  fi\ndone')
+    assert mbsrc != pin.read_text(), "the M-B fix did not apply to the PIN bytes"
+    mb = tmp_path / "pin_mb_runner.sh"
+    mb.write_text(mbsrc)
+    proc2, leg2 = _b9_run(tmp_path / "mb", mb, "C", "cumulative")
+    assert proc2.returncode == 0, proc2.stderr
+    assert not (leg2 / "buzzacp.log").exists(), "M-B fixed: no root log"
+    assert (leg2 / "second" / "buzzacp.log").exists(), "M-B fixed: sub-leg log"
+    bundle2 = _bundle(tmp_path / "mbbundle")
+    err2 = None
+    try:
+        _b9_check(bundle2, leg2)
+    except checker.Failure as exc:
+        err2 = str(exc)
+    assert err2 == (
+        "neg-replayed/second: 1 ACP turn(s), expected 0 — the duplicate "
+        "delivery produced a second turn"
+    ), err2
+
+
+# --- item 6: the prefix-proof and boundary controls -------------------------
+
+def _b9_boundary(tmp_path: Path, case: str, live: str) -> str:
+    """A sourced R with the live timeline preloaded into $FD, then the named
+    boundary case run against the REAL snapshot_timeline / delta_timeline."""
+    env = _b9_env(tmp_path, RUNNER)
+    outdir = tmp_path / "boundary"
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "live").write_text(live)
+    env.update({"B9_CASE": case, "B9_OUT": str(outdir), "B9_LIVE": str(outdir / "live")})
+    script = (
+        'source "$B9_R"\n'
+        'mkdir -p "$B9_OUT"\n'
+        'cat "$B9_LIVE" > "$FD/timeline.jsonl"\n'
+        'case "$B9_CASE" in\n'
+        '  a)\n'
+        '    first_bytes=$(snapshot_timeline "$B9_OUT")\n'
+        '    printf X | dd of="$FD/timeline.jsonl" bs=1 seek=0 conv=notrunc status=none\n'
+        '    set +e; delta_timeline "$B9_OUT" "$first_bytes" 2>"$B9_OUT/err"; rc=$?; set -e\n'
+        '    echo "rc=$rc first=$first_bytes"\n'
+        '    echo "second=$( [ -f "$B9_OUT/second/timeline.jsonl" ] && wc -c < "$B9_OUT/second/timeline.jsonl" || echo ABSENT)"\n'
+        '    echo "err=$(cat "$B9_OUT/err")"\n'
+        '    ;;\n'
+        '  b)\n'
+        '    first_bytes=$(snapshot_timeline "$B9_OUT")\n'
+        '    printf %s "-DONE" >> "$FD/timeline.jsonl"\n'
+        '    set +e; delta_timeline "$B9_OUT" "$first_bytes"; rc=$?; set -e\n'
+        '    echo "rc=$rc first=$first_bytes"\n'
+        '    cat "$B9_OUT/first/timeline.jsonl" "$B9_OUT/second/timeline.jsonl" > "$B9_OUT/concat"\n'
+        '    if cmp -s "$B9_OUT/concat" "$FD/timeline.jsonl"; then echo "concat_ok=yes"; else echo "concat_ok=NO"; fi\n'
+        '    ;;\n'
+        '  c)\n'
+        '    first_bytes=$(snapshot_timeline "$B9_OUT")\n'
+        '    set +e; delta_timeline "$B9_OUT" "$first_bytes"; rc=$?; set -e\n'
+        '    echo "rc=$rc first=$first_bytes"\n'
+        '    echo "second=$( [ -f "$B9_OUT/second/timeline.jsonl" ] && wc -c < "$B9_OUT/second/timeline.jsonl" || echo ABSENT)"\n'
+        '    ;;\n'
+        'esac\n'
+    )
+    proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_replay_prefix_proof_refuses_a_non_extension(tmp_path):
+    """ITEM 6a -- the final live timeline is NOT an extension of the first
+    snapshot (a byte inside the first region changed after the snapshot): the
+    named code 8, the exact stderr text, and NO second timeline."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    live = f
+    out = _b9_boundary(tmp_path, "a", live)
+    assert "rc=8" in out, out
+    assert "second=ABSENT" in out, "a prefix mismatch must write no second timeline"
+    assert "final timeline does not extend the first snapshot (prefix mismatch)" in out, out
+
+
+def test_replay_mid_line_snapshot_first_plus_delta_equals_final(tmp_path):
+    """ITEM 6b -- the live file ends MID-LINE at snapshot time: the first
+    snapshot ends at the last newline (the partial line never enters it), and
+    first + delta == the final live timeline byte-for-byte."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    live = f + "PARTIAL-WRITER-BYTES"
+    out = _b9_boundary(tmp_path, "b", live)
+    assert "rc=0" in out, out
+    assert "concat_ok=yes" in out, "first (cut at last nl) + delta must equal the final timeline byte-for-byte"
+
+
+def test_replay_empty_delta_writes_zero_byte_second(tmp_path):
+    """ITEM 6c -- the relay dropped the duplicate: the final timeline is the
+    first snapshot, so the post-boundary delta is EMPTY. delta_timeline writes a
+    zero-byte second timeline (the runner never fabricates lines)."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    out = _b9_boundary(tmp_path, "c", f)
+    assert "rc=0" in out, out
+    assert "second=0" in out, "the empty delta is a zero-byte file"
+
+
+# --- item 7: the mutants (each run in place; the killer is the named test) ---
+
+def test_replay_mutant_cumulative_second_is_rejected(tmp_path):
+    """ITEM 7 m1 -- the PIN's behavior: the second sub-leg gets the CUMULATIVE
+    live timeline (1 prompt, not the 0-prompt delta). The real checker must
+    refuse at C:621-624. Only delta_timeline is overridden; main and the real
+    snapshot_timeline stay production bytes."""
+    override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
+                'cp "$FD/timeline.jsonl" "$out/second/timeline.jsonl"; }\n')
+    _, leg = _b9_run(tmp_path, RUNNER, "A", "cumulative", extra=override)
+    bundle = _bundle(tmp_path)
+    err = None
+    try:
+        _b9_check(bundle, leg)
+    except checker.Failure as exc:
+        err = str(exc)
+    assert err == (
+        "neg-replayed/second: 1 ACP turn(s), expected 0 — the duplicate "
+        "delivery produced a second turn"
+    ), err
+
+
+def test_replay_mutant_no_prefix_proof_still_writes_second(tmp_path):
+    """ITEM 7 m2 -- the cmp -n prefix proof is removed (the delta always
+    writes). The final live is NOT an extension of the snapshot (a byte changed
+    in the first region): the proof-less delta still writes the bad second (a
+    second exists), while the REAL delta (the 6a boundary, proof ON) refuses the
+    same input. The kill is 6a; this proves the proof is what refuses."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    s = _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text())
+    live = f + s
+    override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
+                'tail -c +$((first_bytes + 1)) "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"; }\n')
+    env = _b9_env(tmp_path, RUNNER)
+    (Path(env["FD"]) / "timeline.jsonl").write_text(live)
+    outdir = tmp_path / "m2out"; outdir.mkdir(parents=True, exist_ok=True)
+    env.update({"B9_OUT": str(outdir)})
+    script = ('source "$B9_R"\n' + override +
+              '\nfirst_bytes=$(snapshot_timeline "$B9_OUT")\n'
+              'printf X | dd of="$FD/timeline.jsonl" bs=1 seek=0 conv=notrunc status=none\n'
+              'set +e; delta_timeline "$B9_OUT" "$first_bytes"; rc=$?; set -e\n'
+              'echo "rc=$rc second=$( [ -f "$B9_OUT/second/timeline.jsonl" ] && wc -c < "$B9_OUT/second/timeline.jsonl" || echo ABSENT)"\n')
+    proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=30)
+    assert "second=" in proc.stdout and "ABSENT" not in proc.stdout, proc.stdout
+    # the REAL delta (proof ON) refuses the same input:
+    out = _b9_boundary(tmp_path / "control", "a", live)
+    assert "rc=8" in out, "the REAL delta (with the proof) must refuse this"
+
+
+def test_replay_mutant_off_by_one_delta_breaks_concatenation(tmp_path):
+    """ITEM 7 m3 -- the delta start is off by one (`tail -c +$first_bytes`
+    instead of `+$((first_bytes + 1))`): GNU tail's 1-based offset begins one
+    byte too early, so first + delta has a duplicated boundary byte and is not
+    byte-for-byte the same as final. The real (correct) delta makes them equal."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    s = _b9_ns((B9_SUB_SECOND / "timeline.jsonl").read_text())
+    live = f + s
+    override = ('delta_timeline() { local out=$1 first_bytes=$2; mkdir -p "$out/second"; '
+                'tail -c +$first_bytes "$FD/timeline.jsonl" > "$out/second/timeline.jsonl"; }\n')
+    env = _b9_env(tmp_path, RUNNER)
+    (Path(env["FD"]) / "timeline.jsonl").write_text(live)
+    outdir = tmp_path / "m3out"; outdir.mkdir(parents=True, exist_ok=True)
+    env.update({"B9_OUT": str(outdir)})
+    script = ('source "$B9_R"\n' + override +
+              '\nfirst_bytes=$(snapshot_timeline "$B9_OUT")\n'
+              'set +e; delta_timeline "$B9_OUT" "$first_bytes"; rc=$?; set -e\n'
+              'cat "$B9_OUT/first/timeline.jsonl" "$B9_OUT/second/timeline.jsonl" > "$B9_OUT/concat"\n'
+              'if cmp -s "$B9_OUT/concat" "$FD/timeline.jsonl"; then echo "concat_ok=yes"; else echo "concat_ok=NO"; fi\n')
+    proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=30)
+    assert "concat_ok=NO" in proc.stdout, "off-by-one delta must break first+delta==final"
+
+
+def test_replay_mutant_root_only_masked_log_is_rejected(tmp_path):
+    """ITEM 7 m4 -- the PIN's M-B: the masked log lands at the leg root only.
+    The real checker's replay closure refuses (C:569-574). The mutation is the
+    PIN runner's unchanged main tail (`collect_masked "$out"`), exercised by the
+    same process/delivery doubles as case C."""
+    pin = _b9_pin_runner(tmp_path)
+    _, leg = _b9_run(tmp_path, pin, "C", "cumulative")
+    assert (leg / "buzzacp.log").exists(), "m4: the log is at the leg root"
+    bundle = _bundle(tmp_path)
+    err = None
+    try:
+        _b9_check(bundle, leg)
+    except checker.Failure as exc:
+        err = str(exc)
+    assert err == (
+        "neg-replayed: expected exactly the sub-leg directories "
+        "['first', 'second'], got ['buzzacp.log', 'first', 'second']"
+    ), err
+
+
+def test_replay_mutant_masked_log_first_only_fails_second_closure(tmp_path):
+    """ITEM 7 m5 -- the masked log goes to the first sub-leg ONLY: the second
+    sub-leg's closure is missing buzzacp.log."""
+    override = ('collect_masked() { if [ "$1" = "$B9_DEST/neg-replayed/first" ]; then '
+                'cp "$FD/buzzacp.log" "$1/buzzacp.log"; fi; }\n')
+    _, leg = _b9_run(tmp_path, RUNNER, "A", "delta", extra=override)
+    assert not (leg / "second" / "buzzacp.log").exists(), "m5: no log in the second sub-leg"
+    bundle = _bundle(tmp_path)
+    err = None
+    try:
+        _b9_check(bundle, leg)
+    except checker.Failure as exc:
+        err = str(exc)
+    assert err == "neg-replayed/second: missing ['buzzacp.log']", err
+
+
+def test_replay_mutant_snapshot_not_cut_at_newline(tmp_path):
+    """ITEM 7 m6 -- the first snapshot is NOT cut at the last newline (it takes
+    the whole live file, including the mid-line partial). The snapshot therefore
+    does not end on a newline, violating item 6b's boundary assertion. The delta
+    prefix proof would still pass because this malformed snapshot is a byte
+    prefix; the newline-boundary control is what kills this mutant."""
+    f = _b9_ns((B9_SUB_FIRST / "timeline.jsonl").read_text())
+    live = f + "PARTIAL"
+    override = ('snapshot_timeline() { local out=$1; mkdir -p "$out/first"; '
+                'cp "$FD/timeline.jsonl" "$out/first/timeline.jsonl"; '
+                'printf %s "$(wc -c < "$FD/timeline.jsonl")"; }\n')
+    env = _b9_env(tmp_path, RUNNER)
+    (Path(env["FD"]) / "timeline.jsonl").write_text(live)
+    outdir = tmp_path / "m6out"; outdir.mkdir(parents=True, exist_ok=True)
+    env.update({"B9_OUT": str(outdir)})
+    script = ('source "$B9_R"\n' + override +
+              '\nfirst_bytes=$(snapshot_timeline "$B9_OUT")\n'
+              'last=$(tail -c 1 "$B9_OUT/first/timeline.jsonl" | od -An -tu1 | tr -d " \\n")\n'
+              'if [ "$last" = "10" ]; then echo "first_ends_nl=yes"; else echo "first_ends_nl=NO"; fi\n')
+    proc = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                          capture_output=True, text=True, timeout=30)
+    assert "first_ends_nl=NO" in proc.stdout, "m6: the snapshot is not cut at a newline"
+
+
+def test_replay_mutant_wait_removed_case_a_still_passes(tmp_path):
+    """ITEM 7 m7 -- wait_turn_window is removed before the final read (the
+    window is not honored). With the fake's zero-latency relay and
+    S0_02_TURN_WAIT_S=0, the second delivery is already in the timeline by the
+    final read, so case A is EQUIVALENT (still passes). A declared equivalence,
+    not a silent survivor: in production the relay has latency, so removing the
+    window would read a pre-duplicate final timeline and case A would go red at
+    C:621-624 -- this is why the window stays."""
+    override = 'wait_turn_window() { :; }\n'
+    proc, leg = _b9_run(tmp_path, RUNNER, "A", "delta", extra=override)
+    assert proc.returncode == 0, proc.stderr
+    bundle = _bundle(tmp_path)
+    line = _b9_check(bundle, leg)
+    assert line == B9_PASS_LINE, line
