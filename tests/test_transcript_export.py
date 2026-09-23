@@ -6,6 +6,8 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "scripts" / "transcript_export.py"
 
@@ -115,6 +117,32 @@ def test_private_key_block_is_scrubbed_whole_or_to_the_end(tmp_path):
     long_pem = "-----BEGIN RSA PRIVATE KEY-----\n" + KEY_BODY * 12 + "\n-----END RSA PRIVATE KEY-----"
     blob = _export_one(tmp_path, "long\n" + long_pem, 200)
     assert "AAKCAQ" not in blob and "<private-key-redacted>" in blob, blob
+
+
+KEY_FAMILIES = ("RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY", "ENCRYPTED PRIVATE KEY",
+                "PRIVATE KEY", "PGP PRIVATE KEY BLOCK", "PGP SECRET KEY BLOCK")
+
+
+@pytest.mark.parametrize("label", KEY_FAMILIES)
+def test_every_key_family_is_scrubbed_whole(tmp_path, label):
+    # VERIFY-AF-AP-127 F1: GnuPG armor ends its label in `KEY BLOCK` (and PGP 2.x says SECRET), so a
+    # rule that wants `PRIVATE KEY-----` never matched it and the body lines reached disk. The plain
+    # PKCS#8 label has no type word before PRIVATE (F8d).
+    armor = "\n" if label.startswith("PGP") else ""          # GnuPG writes a blank line, then a checksum
+    check = "\n=AbCd" if label.startswith("PGP") else ""
+    block = f"-----BEGIN {label}-----\n{armor}{KEY_BODY}{check}\n-----END {label}-----"
+    blob = _export_one(tmp_path, "the key is\n" + block + "\nafter the key", 4000)
+    assert "AAKCAQ" not in blob and "x7Qe" not in blob, blob
+    assert "<private-key-redacted>" in blob and "after the key" in blob, blob
+
+
+def test_key_block_after_a_credential_keyword_is_scrubbed_whole(tmp_path):
+    # The key rule runs FIRST (F8a): a credential rule that ran before it would take the BEGIN line
+    # as the assigned value, and the key rule would then find no BEGIN and leave the body behind.
+    block = "secret: -----BEGIN RSA PRIVATE KEY-----\n" + KEY_BODY + "\n-----END RSA PRIVATE KEY-----"
+    blob = _export_one(tmp_path, block + "\nafter the key", 4000)
+    assert "AAKCAQ" not in blob and "x7Qe" not in blob, blob
+    assert "after the key" in blob, blob
 
 
 def test_missing_transcript_exits_3(tmp_path):

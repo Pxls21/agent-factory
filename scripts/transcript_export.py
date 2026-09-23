@@ -22,9 +22,12 @@ import re
 import sys
 
 SECRET_PATTERNS = [
-    # a private-key block, BEGIN through END; a block with no END line (cut at its source) is
-    # redacted to the end of the text. First, so no later rule leaves pieces of it behind.
-    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S),
+    # a private-key block, BEGIN through END: PEM and OpenSSH (`… PRIVATE KEY`) and GnuPG's armor
+    # (`PGP PRIVATE KEY BLOCK`, the PGP 2.x `PGP SECRET KEY BLOCK`); a block with no END line (cut
+    # at its source) is redacted to the end of the text. First, so no later rule leaves pieces of it
+    # behind (a credential rule that ran earlier would eat the BEGIN line and strand the body).
+    (re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"
+                r"(?:-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----|\Z)", re.S),
      "<private-key-redacted>"),
     # explicit credential assignments / headers (value part replaced)
     (re.compile(r"((?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|api[_-]?key|token|secret|password|passwd|Authorization)\s*[:=]\s*[\"']?)([^\s\"'&,;]{8,})", re.I), r"\1<redacted>"),

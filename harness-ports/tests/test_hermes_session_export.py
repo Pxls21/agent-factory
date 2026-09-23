@@ -84,6 +84,11 @@ def main():
     text = "status ok AGENT_TOKEN=cVMjXl1uWH1c9Ogzoc_-k60yOL5KP5pr"
     body = mod._body(scrub, text, len("status ok AGENT_TOKEN=") + 5)
     assert "cVMjX" not in body and body.startswith("status ok AGENT_TOKEN="), body; checks += 1
+    # VERIFY-AF-AP-127 F1: GnuPG armor (`… KEY BLOCK`) is scrubbed whole through this exporter too.
+    key_body = "MIIEpAIB+AAKCAQ/EAx7Qe+Wz3k/Rt9L" * 4
+    armor = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{key_body}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
+    body = mod._body(scrub, "exported key:\n" + armor + "\ndone", 4000)
+    assert "AAKCAQ" not in body and "<private-key-redacted>" in body and "done" in body, body; checks += 1
     print(f"test_hermes_session_export: {checks} checks passed")
 
 
