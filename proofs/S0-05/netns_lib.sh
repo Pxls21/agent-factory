@@ -72,8 +72,29 @@ egress_ns_create() {
   host_ip=$(egress_ns_host_ip "$ns"); ns_ip=$(egress_ns_ip "$ns")
   resolver=$(egress_ns_resolver "$ns")
 
+  # F23: refuse to destroy-and-recreate a namespace whose recorded owner is a live process
+  # other than ourselves. A namespace whose owner is dead (or has no owner file) is stale.
+  local owner_file; owner_file=$(egress_ns_owner_file "$ns")
+  if [ -f "$owner_file" ]; then
+    local owner_pid
+    owner_pid=$(cat "$owner_file" 2>/dev/null)
+    if [ -n "$owner_pid" ] && [ "$owner_pid" != "$$" ] && kill -0 "$owner_pid" 2>/dev/null; then
+      echo "namespace-live: $ns owned by pid $owner_pid" >&2; return 65
+    fi
+  fi
+
   # idempotent (probe.sh:36-37): remove any remains of a previous run of THIS namespace
   egress_ns_destroy "$ns"
+
+  # F6: refuse when the /24 this name derives is already assigned to any host interface after
+  # the destroy-first step.
+  local octet subnet collision_if
+  octet=$(_egress_octet "$ns"); subnet="10.201.${octet}.0/24"
+  collision_if=$(ip -o -4 addr show 2>/dev/null \
+    | awk -v pfx="10.201.${octet}." 'index($4, pfx) == 1 {print $2; exit}')
+  if [ -n "$collision_if" ]; then
+    echo "address-plan-collision: $ns $subnet on $collision_if" >&2; return 65
+  fi
 
   ip netns add "$ns" || return 1
   ip link add "$host_if" type veth peer name "$ns_if" || return 1
@@ -90,6 +111,7 @@ egress_ns_create() {
 
   # DNS blocked (docs/05_SECURITY.md:21 "DNS/connection canaries"): a resolver the gate drops.
   mkdir -p "/etc/netns/$ns"
+  mkdir -p "$EGRESS_OWNER_DIR" && printf '%s\n' "$$" > "$(egress_ns_owner_file "$ns")"
   printf 'nameserver %s\noptions timeout:1 attempts:1\n' "$resolver" > "/etc/netns/$ns/resolv.conf"
 
   _egress_apply_gate "$ns" "$@"
@@ -108,6 +130,10 @@ _egress_apply_gate() {
     ip=${entry%:*}; port=${entry##*:}
     case "$ip:$port" in
       *:*[!0-9]*|*:) echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64;;
+    esac
+    # F19: the host part must be a dotted-quad IPv4 literal (not CIDR, not hostname, not empty).
+    case "$ip" in
+      *[!0-9.]*|*/*|"") echo "egress: allow entry must be <ip>:<port>, got '$entry'" >&2; return 64;;
     esac
     ip netns exec "$ns" iptables -A OUTPUT -d "$ip" -p tcp --dport "$port" -j ACCEPT || return 1
     ip netns exec "$ns" iptables -A INPUT  -s "$ip" -p tcp --sport "$port" -j ACCEPT || return 1
@@ -198,12 +224,35 @@ with open(path, "w") as fh:
 PY
 }
 
+# The F23 owner record lives OUTSIDE /etc/netns/<ns>/: `ip netns exec` bind-mounts every file in
+# that directory over /etc inside the namespace, so an `owner` file there made every exec print
+# `Bind /etc/netns/<ns>/owner -> /etc/owner failed` (the E2 landing, 2026-09-23).
+EGRESS_OWNER_DIR=${EGRESS_OWNER_DIR:-/run/s0-05-egress}
+egress_ns_owner_file() { printf '%s/%s.owner\n' "$EGRESS_OWNER_DIR" "$1"; }
+
 # --- destroy ---------------------------------------------------------------------------------
 # probe.sh:26-32 (the trap body), by name, never by pattern.
+# F7: kill every process in the namespace BEFORE deleting the veth and the netns.
 egress_ns_destroy() {
-  local ns=$1 host_if
+  local ns=$1 host_if pid
   host_if=$(egress_ns_host_if "$ns")
+  # Kill every process still inside the namespace.
+  for pid in $(ip netns pids "$ns" 2>/dev/null); do
+    kill "$pid" 2>/dev/null
+  done
+  # Bounded, failure-aware wait: stop the moment all are gone or the budget is spent.
+  local remaining=50  # 50 * 0.1s = 5s
+  while [ $remaining -gt 0 ]; do
+    local alive=0
+    for pid in $(ip netns pids "$ns" 2>/dev/null); do
+      kill -0 "$pid" 2>/dev/null && alive=1 && break
+    done
+    [ $alive -eq 0 ] && break
+    sleep 0.1
+    remaining=$((remaining - 1))
+  done
   ip link del "$host_if" 2>/dev/null || true
   ip netns del "$ns" 2>/dev/null || true
   rm -rf "/etc/netns/$ns"
+  rm -f "$(egress_ns_owner_file "$ns")"
 }

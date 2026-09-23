@@ -627,7 +627,7 @@ def test_the_collector_refuses_an_unreadable_drop_counter(tmp_path):
     a named reason. Driven against a namespace that does not exist."""
     result = subprocess.run(
         ["bash", str(PROOF / "run_canaries.sh"), "curl", "s0-05-e1-does-not-exist",
-         "10.201.1.1:12800", str(tmp_path / "ev")],
+         "10.201.1.1:12800", str(tmp_path / "ev"), "", "sandbox"],
         capture_output=True, text=True, timeout=120)
     assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
     assert "cannot read the OUTPUT DROP counter" in result.stderr
@@ -897,3 +897,347 @@ def test_the_canary_emitter_scrubs_the_proxy_environment():
             'echo "HTTPS_PROXY=[${HTTPS_PROXY:-unset}] https_proxy=[${https_proxy:-unset}]"')
     result = subprocess.run(["bash", "-c", body], capture_output=True, text=True, timeout=30)
     assert result.stdout.strip() == "HTTPS_PROXY=[unset] https_proxy=[unset]", result.stdout
+
+
+# ===================================================================== E2 — new tests
+
+
+RUNNER = PROOF / "tools" / "pc" / "run_s0_05_units.sh"
+
+
+@NEEDS_NETNS
+def test_address_plan_collision_is_refused(tmp_path):
+    """F6: two namespaces whose names derive one /24 octet (107) cannot both exist. The second
+    create returns 65 with the exact message and leaves nothing behind; the first still passes
+    its positive control."""
+    ns1 = "s0-05-hermes-acp"
+    ns2 = "s0-05-u7"
+    port = 18080
+    # server script in a file for reliability
+    server = tmp_path / "server.py"
+    server.write_text(
+        "import http.server, socketserver, sys\n"
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200)\n"
+        "        self.end_headers()\n"
+        "        self.wfile.write(b'ok')\n"
+        "    def log_message(self, *a): pass\n"
+        "socketserver.TCPServer.allow_reuse_address = True\n"
+        "socketserver.TCPServer(('0.0.0.0', int(sys.argv[1])), H).serve_forever()\n")
+    listener = None
+    try:
+        # verify both hash to the same octet
+        r = _lib(f'_egress_octet {ns1}', f'_egress_octet {ns2}')
+        o1, o2 = r.stdout.strip().split()
+        assert o1 == o2 == "107"
+        # create the first
+        r = _lib(f'egress_ns_create {ns1} 10.201.107.1:{port}')
+        assert r.returncode == 0, r.stderr
+        # start a listener on the host side for the positive control
+        listener = subprocess.Popen(
+            [sys.executable, str(server), str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # wait for the listener to become ready
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            probe = subprocess.run(
+                ["curl", "-fsS", "--max-time", "1", f"http://127.0.0.1:{port}/"],
+                capture_output=True, text=True, timeout=3)
+            if probe.returncode == 0:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("listener did not become ready")
+        # the second create must fail
+        r = _lib(f'egress_ns_create {ns2} 10.201.107.1:{port}')
+        assert r.returncode == 65, (r.returncode, r.stderr, r.stdout)
+        assert f"address-plan-collision: {ns2} 10.201.107.0/24" in r.stderr
+        # nothing of ns2 was created
+        census = subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
+        assert ns2 not in census
+        # the first namespace's positive control still works
+        r = _lib(f'egress_ns_run {ns1} curl -sS --connect-timeout 3 -o /dev/null '
+                 f'-w "%{{http_code}}" http://10.201.107.1:{port}/')
+        assert r.stdout.strip() == "200", r.stdout
+    finally:
+        if listener is not None:
+            listener.terminate()
+            try:
+                listener.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                listener.kill()
+                listener.wait(timeout=5)
+        _lib(f'egress_ns_destroy {ns1}')
+        _lib(f'egress_ns_destroy {ns2}')
+    census = subprocess.run(["ip", "netns", "list"], capture_output=True, text=True).stdout
+    assert ns1 not in census and ns2 not in census
+
+
+@NEEDS_NETNS
+def test_live_sibling_namespace_is_refused():
+    """F23: a create of a name whose owner is a live process returns 65; the sibling's veth is
+    still present. A stale owner (dead pid) allows the create to succeed."""
+    ns = f"s0-05-e2-{uuid.uuid4().hex[:8]}"
+    try:
+        # In a single bash process: create the namespace (records $$), then from a child bash
+        # (different $$, while parent is alive) try to re-create.
+        result = subprocess.run(
+            ["bash", "-c",
+             f'. {LIB}\n'
+             f'egress_ns_create {ns} 10.201.1.1:1 || exit 10\n'
+             f'echo "owner=$(cat /run/s0-05-egress/{ns}.owner)"\n'
+             f'echo "self=$$"\n'
+             f'bash -c \'. {LIB}; egress_ns_create {ns} 10.201.1.1:1; echo inner_rc=$?\''
+             f' 2>/tmp/e2_sibling.err\n'
+             f'cat /tmp/e2_sibling.err\n'
+             f'egress_ns_mechanism {ns}\n'
+             f'ip netns exec {ns} ip -o link show | grep -c en\n'],
+            capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        lines = result.stdout.strip().split('\n')
+        # owner was recorded
+        assert lines[0].startswith("owner=")
+        owner_pid = lines[0].split("=")[1]
+        assert lines[1] == f"self={owner_pid}"
+        # inner create was refused
+        assert "inner_rc=65" in result.stdout, lines
+        assert f"namespace-live: {ns}" in result.stdout, lines
+        # veth still present (mechanism is veth-iptables)
+        assert "veth-iptables" in result.stdout, lines
+        # at least one en* link inside the namespace
+        assert int(lines[-1]) >= 1, lines
+    finally:
+        _lib(f'egress_ns_destroy {ns}')
+    # stale owner: after the first bash exits, the owner pid is dead; re-create succeeds
+    result2 = _lib(f'egress_ns_create {ns} 10.201.1.1:1')
+    assert result2.returncode == 0, result2.stderr
+    _lib(f'egress_ns_destroy {ns}')
+    assert ns not in subprocess.run(
+        ["ip", "netns", "list"], capture_output=True, text=True).stdout
+
+
+@NEEDS_NETNS
+def test_destroy_kills_all_namespace_processes():
+    """F7+F9: a process started inside a namespace (as the runner starts a unit:
+    egress_ns_run <ns> setsid ...) is gone after egress_ns_destroy, and no process's
+    net-namespace inode equals the deleted namespace's."""
+    ns = f"s0-05-e2-{uuid.uuid4().hex[:8]}"
+    proc = None
+    try:
+        _lib(f'egress_ns_create {ns} 10.201.1.1:1')
+        # start a process inside the namespace the way the runner does
+        proc = subprocess.Popen(
+            ["ip", "netns", "exec", ns, "setsid", "/usr/bin/python3", "-c",
+             "import time; time.sleep(300)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+        assert proc.poll() is None, "process exited early"
+        # get pids inside the namespace and their net inode
+        pids_out = subprocess.run(
+            ["ip", "netns", "pids", ns], capture_output=True, text=True).stdout.strip()
+        unit_pids = [p for p in pids_out.split() if p]
+        assert unit_pids, "no pids in namespace"
+        ino = os.stat(f"/proc/{unit_pids[0]}/ns/net").st_ino
+        # destroy
+        _lib(f'egress_ns_destroy {ns}')
+        time.sleep(0.5)
+        # every recorded pid is dead or has a different net namespace
+        for pid in unit_pids:
+            try:
+                new_ino = os.stat(f"/proc/{pid}/ns/net").st_ino
+                assert new_ino != ino, f"pid {pid} still in the destroyed namespace"
+            except FileNotFoundError:
+                pass  # dead — good
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        _lib(f'egress_ns_destroy {ns}')
+    assert ns not in subprocess.run(
+        ["ip", "netns", "list"], capture_output=True, text=True).stdout
+
+
+@NEEDS_NETNS
+def test_runner_live_leg(tmp_path):
+    """Runner-level live test: run_s0_05_units.sh <tmp> hermes-acp with a test-local stand-in
+    launcher and a local listener on the unit's veth host address. Asserts: no stand-in process
+    remains, no namespace remains, units.json carries the F10 row, and a second concurrent
+    invocation for the same unit is refused while the first holds its namespace."""
+    ns = "s0-05-hermes-acp"
+    port = 18080
+    # create the test-local stand-in launcher
+    tools_dir = tmp_path / "tools" / "pc"
+    tools_dir.mkdir(parents=True)
+    (tools_dir / "pc_launch.py").write_text(
+        "#!/usr/bin/env python3\nimport time\ntime.sleep(300)\n")
+    (tools_dir / "pc_launch.py").chmod(0o755)
+    # start a listener on all interfaces for the preflight check
+    listener_script = tmp_path / "listener.py"
+    listener_script.write_text(
+        "import http.server,socketserver as s,sys\n"
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "  def do_GET(self):\n"
+        "    self.send_response(200);self.end_headers();self.wfile.write(b'{}')\n"
+        "  def log_message(self,*a):pass\n"
+        "s.TCPServer.allow_reuse_address = True\n"
+        "s.TCPServer(('0.0.0.0',int(sys.argv[1])),H).serve_forever()\n")
+    listener = subprocess.Popen(
+        [sys.executable, str(listener_script), str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    evidence = tmp_path / "evidence"
+    try:
+        time.sleep(0.5)
+        env = {**os.environ, "S0_01_TOOLS": str(tools_dir),
+               "ALLOWED_HERMES": f"10.201.107.1:{port}"}
+        # Run the runner in a subprocess; it will create the namespace, launch the stand-in,
+        # run canaries, and destroy. We also test F23 concurrency by checking the owner file
+        # during the run.
+        # First: run a quick concurrent test. Create the namespace, hold it, try a second runner.
+        r = subprocess.run(
+            ["bash", "-c",
+             f'. {LIB}\n'
+             f'egress_ns_create {ns} 10.201.107.1:{port}\n'
+             f'echo "created, owner=$(cat /run/s0-05-egress/{ns}.owner)"\n'
+             f'bash -c \'. {LIB}; egress_ns_create {ns} 10.201.107.1:{port}; echo rc=$?\''
+             f' 2>/tmp/e2_runner_sibling.err\n'
+             f'cat /tmp/e2_runner_sibling.err\n'
+             f'egress_ns_destroy {ns}'],
+            capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        assert "namespace-live:" in r.stdout or "namespace-live:" in r.stderr, r.stdout
+        assert "rc=65" in r.stdout, r.stdout
+        # Now run the actual runner
+        runner = subprocess.run(
+            ["bash", str(RUNNER), str(evidence), "hermes-acp"],
+            capture_output=True, text=True, timeout=120, env=env)
+        # The runner body is top-level code: a bash error line (e.g. `local` outside a
+        # function, coordinator touch at the E2 landing) must never reach its stderr.
+        assert "can only be used in a function" not in runner.stderr, runner.stderr
+        # No file of ours may sit in /etc/netns/<ns>/: `ip netns exec` bind-mounts every file there
+        # over /etc inside the namespace (coordinator touch at the E2 landing: the F23 owner file).
+        assert "Bind /etc/netns/" not in runner.stderr, runner.stderr
+        # the runner may exit 0 or non-zero depending on the checker; we don't assert the verdict
+        # verify no stand-in process remains with the stand-in's path
+        standin_procs = subprocess.run(
+            ["pgrep", "-f", str(tools_dir / "pc_launch.py")],
+            capture_output=True, text=True)
+        assert standin_procs.returncode != 0, \
+            f"stand-in still running: {standin_procs.stdout.strip()}"
+        # verify no namespace remains
+        census = subprocess.run(
+            ["ip", "netns", "list"], capture_output=True, text=True).stdout
+        assert ns not in census, census
+        # verify units.json carries the F10 row
+        units_json = json.loads((evidence / "units.json").read_text())
+        units_list = units_json["units"]
+        backend_row = [u for u in units_list if u["unit"] == "s0-01-backend"]
+        assert len(backend_row) == 1, units_list
+        assert backend_row[0]["status"] == "not-run"
+        assert "not a docs/05" in backend_row[0]["reason"]
+    finally:
+        listener.terminate()
+        try:
+            listener.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            listener.kill()
+            listener.wait(timeout=5)
+        _lib(f'egress_ns_destroy {ns}')
+    assert ns not in subprocess.run(
+        ["ip", "netns", "list"], capture_output=True, text=True).stdout
+
+
+def test_shebang_matches_launch_interpreter():
+    """F8: every LAUNCH row's interpreter agrees with its target script's shebang. A bash
+    script can never again be handed to python3."""
+    # Parse the LAUNCH rows from the runner
+    runner_text = RUNNER.read_text()
+    launch_lines = re.findall(r'LAUNCH\[[\w-]+\]="([^"]+)"', runner_text)
+    assert launch_lines, "no LAUNCH rows found"
+    for row in launch_lines:
+        parts = row.split()
+        interpreter = parts[0]  # e.g. /usr/bin/python3
+        # find the target script in the row (the first non-flag argument after the interpreter)
+        target = None
+        for part in parts[1:]:
+            if not part.startswith("-"):
+                # resolve $S0_01_TOOLS
+                target = part.replace("$S0_01_TOOLS", str(PROOF.parent / "S0-01" / "tools" / "pc"))
+                break
+        assert target is not None, f"no target script in LAUNCH row: {row}"
+        target_path = Path(target)
+        assert target_path.is_file(), f"target script not found: {target_path}"
+        shebang = target_path.read_text().split('\n')[0]
+        # interpreter /usr/bin/python3 requires a python shebang
+        if "python" in interpreter:
+            assert "python" in shebang, \
+                f"LAUNCH row uses {interpreter} but shebang is {shebang!r}: {target_path}"
+        elif "bash" in interpreter:
+            assert "bash" in shebang or "sh" in shebang, \
+                f"LAUNCH row uses {interpreter} but shebang is {shebang!r}: {target_path}"
+
+
+@pytest.mark.skipif(shutil.which("ip") is None, reason="iproute2 absent; NOT run here")
+def test_unreadable_counter_creates_no_canaries_file(tmp_path):
+    """F3+F17: an exit-3 collection (unreadable DROP counter) leaves no canaries.jsonl behind.
+    This discriminates: with the DROP_BEFORE guard removed (mutant m4) the canaries run and
+    write records before the DROP_AFTER guard exits 3."""
+    ev = tmp_path / "ev"
+    result = subprocess.run(
+        ["bash", str(PROOF / "run_canaries.sh"), "curl", "s0-05-e2-nonexistent-ns",
+         "10.201.1.1:12800", str(ev), "", "sandbox"],
+        capture_output=True, text=True, timeout=120)
+    assert result.returncode == 3, (result.returncode, result.stdout, result.stderr)
+    assert "cannot read the OUTPUT DROP counter" in result.stderr
+    assert not (ev / "curl" / "canaries.jsonl").exists(), \
+        "canaries.jsonl should not exist after an exit-3 collection"
+
+
+@pytest.mark.parametrize("venue,expected_rc", [
+    ("", 64), ("synthetic", 64), ("pc", None), ("sandbox", None),
+], ids=["missing", "invalid", "pc-valid", "sandbox-valid"])
+def test_venue_required_and_validated(tmp_path, venue, expected_rc):
+    """F11: venue must be sandbox or pc; anything else or nothing exits 64."""
+    args = ["bash", str(PROOF / "run_canaries.sh"), "curl", "s0-05-e2-nonexistent-ns",
+            "10.201.1.1:12800", str(tmp_path / "ev"), ""]
+    if venue:
+        args.append(venue)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    if expected_rc is not None:
+        assert result.returncode == expected_rc, (result.returncode, result.stderr)
+        assert "venue must be sandbox or pc" in result.stderr
+    else:
+        # valid venue: should NOT fail on venue (may fail on something else like DROP counter)
+        assert "venue must be sandbox or pc" not in result.stderr
+
+
+@pytest.mark.parametrize("units,label", [
+    ("", "empty-string"), (",", "bare-comma"), ("a,,b", "interior-empty"),
+], ids=["empty-string", "bare-comma", "interior-empty"])
+def test_empty_unit_name_rejected(tmp_path, units, label):
+    """F18: --units refuses an empty unit name in any of three spellings."""
+    result = run_checker(MECHANISM, "--units", units)
+    assert result.returncode == 64, (result.returncode, result.stdout)
+    assert "usage: --units carries an empty unit name" in result.stdout
+
+
+@pytest.mark.parametrize("entry", [
+    "10.0.0.1/8:443", "host.example:443", ":8080",
+], ids=["cidr", "hostname", "empty-host"])
+def test_allow_entry_must_be_ipv4_literal(entry):
+    """F19: _egress_apply_gate refuses an entry whose host part is not a dotted-quad IPv4
+    literal: CIDR, hostname, and empty host are each rejected with exit 64. Each entry has a
+    valid port so the existing port validation passes — only the F19 IPv4 guard catches them."""
+    ns = f"s0-05-e2-{uuid.uuid4().hex[:8]}"
+    result = _lib(
+        f'ip netns add {ns} && ip netns exec {ns} ip link set lo up',
+        f'_egress_apply_gate {ns} "{entry}"')
+    try:
+        assert result.returncode == 64, (result.returncode, result.stderr, result.stdout)
+        assert "allow entry must be <ip>:<port>" in result.stderr
+    finally:
+        _lib(f'ip netns del {ns}')

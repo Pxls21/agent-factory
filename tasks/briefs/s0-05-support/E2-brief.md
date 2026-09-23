@@ -1,5 +1,7 @@
 # E2 — S0-05 live-leg prerequisites: the namespace library, the collector and the PC runner made safe to run (issue #13)
 
+**STATUS 2026-09-23 01:5xZ — LANDED, GATED-PENDING-VERIFY (sandbox code-implementer; report `tasks/briefs/s0-05-support/E2-report.md`: 106 → 122 tests, 9 of 9 mutants).** Two coordinator touches at landing, each with a red/green assertion in the runner live test: (1) `local create_err` sat in the runner's top-level loop (bash prints `local: can only be used in a function` for every unit); (2) THIS BRIEF'S OWN DESIGN ERROR: item 2 put the F23 owner record at `/etc/netns/<ns>/owner`, a directory whose every file `ip netns exec` bind-mounts over /etc inside the namespace, so each exec printed `Bind /etc/netns/<ns>/owner -> /etc/owner failed`; the record now lives at `/run/s0-05-egress/<ns>.owner` and destroy removes it. VERIFY-E2 next.
+
 PIN: the origin head that carries this brief (read it with `git log -1 --format=%h origin/claude/soundbox-kit-migration-iz1jwf`;
 since 5762efe the only changes are this brief's commit and the transcripts-sync commit after it).
 ROLE: a SANDBOX build lane (`code-implementer`), run as root in the sandbox because every namespace test needs uid 0 and the PC

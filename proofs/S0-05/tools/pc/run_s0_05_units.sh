@@ -43,26 +43,27 @@ EVIDENCE_ROOT=${1:?usage: run_s0_05_units.sh <evidence-root> [unit...]}; shift |
 # reason recorded, never a silent skip.
 ALLOWED_HERMES=${ALLOWED_HERMES:-}        # docs/05 §6 "Hermes -> OmniRoute": OmniRoute :20128
 ALLOWED_BUZZACP=${ALLOWED_BUZZACP:-}      # docs/05 §6 "buzz-acp -> Buzz relay and local hermes-acp"
-ALLOWED_BACKEND=${ALLOWED_BACKEND:-}      # the S0-01 scripted backend behind its OmniRoute test route
 
 S0_01_TOOLS=${S0_01_TOOLS:-$P/../S0-01/tools/pc}
 
 declare -A ALLOWED LAUNCH ABSENT
+# F8: each LAUNCH row carries its full argv including the interpreter.
 ALLOWED[hermes-acp]=$ALLOWED_HERMES
-LAUNCH[hermes-acp]="$S0_01_TOOLS/pc_launch.py --leg run-1 --model s0-01-pong"
+LAUNCH[hermes-acp]="/usr/bin/python3 $S0_01_TOOLS/pc_launch.py --leg run-1 --model s0-01-pong"
 ALLOWED[buzz-acp]=$ALLOWED_BUZZACP
-LAUNCH[buzz-acp]="$S0_01_TOOLS/pc_launch.py --leg run-1 --model s0-01-pong"
-ALLOWED[s0-01-backend]=$ALLOWED_BACKEND
-LAUNCH[s0-01-backend]="$S0_01_TOOLS/pc_backend_restart.sh"
+LAUNCH[buzz-acp]="/usr/bin/python3 $S0_01_TOOLS/pc_launch.py --leg run-1 --model s0-01-pong"
+# F10: s0-01-backend is NOT a docs/05 §6 source. It is the model-provider stand-in on
+# OmniRoute's upstream side (the sanctioned stub in CLAUDE.md). Removed from ALLOWED/LAUNCH.
 # Units the plan names that DO NOT EXIST yet (docs/05 §6 rows with no implementation):
 ABSENT[memory-adapter]="unit does not exist"
 ABSENT[ai-memory]="unit does not exist"
 ABSENT[dream-foundry]="unit does not exist"
 ABSENT[pandaprobe]="unit does not exist"
 ABSENT[harness-router]="unit does not exist (conditional, not deployed in v1)"
+ABSENT[s0-01-backend]="not a docs/05 §6 source: the S0-01 scripted backend is the model-provider stand-in behind OmniRoute"
 
 UNITS=("$@")
-[ ${#UNITS[@]} -gt 0 ] || UNITS=(hermes-acp buzz-acp s0-01-backend)
+[ ${#UNITS[@]} -gt 0 ] || UNITS=(hermes-acp buzz-acp)
 
 status=$(egress_ns_capable) || { echo "run_s0_05_units: cannot run here ($status)" >&2; exit 2; }
 
@@ -81,7 +82,13 @@ for unit in "${UNITS[@]}"; do
   fi
   ns="s0-05-$unit"
   echo "=== $unit: namespace $ns, allowed $allowed ==="
-  egress_ns_create "$ns" "$allowed" || { RESULT[$unit]="not-run|namespace creation failed"; continue; }
+  # F23: capture refusal text from egress_ns_create.
+  create_err=$(egress_ns_create "$ns" "$allowed" 2>&1 >/dev/null)
+  if [ $? -ne 0 ]; then
+    RESULT[$unit]="not-run|${create_err:-namespace creation failed}"
+    echo "SKIP $unit: ${create_err:-namespace creation failed}" >&2
+    continue
+  fi
   NS_LIVE="$NS_LIVE $ns"
 
   # PREFLIGHT the exact predicate the proof consumes (AF-AP-24): C0 itself, before launching
@@ -99,8 +106,9 @@ for unit in "${UNITS[@]}"; do
   # NOT VERIFIED: no S0-01 launch has ever been run inside a network namespace.
   launch_pid=""
   if [ -n "${LAUNCH[$unit]:-}" ]; then
+    # F8: the launch row carries its full argv including the interpreter; run it as given.
     # shellcheck disable=SC2086
-    egress_ns_run "$ns" setsid /usr/bin/python3 ${LAUNCH[$unit]} </dev/null \
+    egress_ns_run "$ns" setsid ${LAUNCH[$unit]} </dev/null \
       >"$EVIDENCE_ROOT/$unit.launch.log" 2>&1 &
     launch_pid=$!
     # Failure-aware wait: the exit condition includes the FAILURE signature (the process is
@@ -121,7 +129,8 @@ for unit in "${UNITS[@]}"; do
   bash "$P/run_canaries.sh" "$unit" "$ns" "$allowed" "$EVIDENCE_ROOT" "" pc
   RESULT[$unit]="run|contained live unit"
 
-  [ -n "$launch_pid" ] && kill "$launch_pid" 2>/dev/null || true
+  # F9: stop the unit through the namespace (egress_ns_destroy kills all processes inside),
+  # never by `kill "$launch_pid"` (that pid is the bash wrapper; the unit survives it).
   egress_ns_destroy "$ns"
 done
 

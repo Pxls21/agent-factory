@@ -27,16 +27,19 @@ EVIDENCE_ROOT=${4:-"$HERE/evidence"}
 HOST_IP=$(egress_ns_host_ip "$NS")
 ALLOWED_PORT=${ALLOWED##*:}
 BLOCKED=${5:-"$HOST_IP:$((ALLOWED_PORT + 1))"}
-VENUE=${6:-sandbox}
+VENUE=${6:-}
+# F11: venue is required and must be sandbox or pc.
+case "$VENUE" in
+  sandbox|pc) ;;
+  *) echo "run_canaries: venue must be sandbox or pc, got '$VENUE'" >&2; exit 64;;
+esac
 RESOLVER=$(egress_ns_resolver "$NS")
 
 MODEL_HOSTS="api.openai.com api.anthropic.com generativelanguage.googleapis.com"
 INTERNET_HOST=example.com
 
 OUT="$EVIDENCE_ROOT/$UNIT"
-mkdir -p "$OUT"
 JSONL="$OUT/canaries.jsonl"
-: > "$JSONL"
 
 # The environment each canary runs with: the venue's proxy variables removed (canaries/_emit.sh).
 SCRUBBED="HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy"
@@ -70,6 +73,11 @@ DROP_BEFORE=$(egress_ns_drop_counter "$NS")
 # A counter that will not read is a broken instrument, not a zero: defaulting it would inflate
 # the recorded delta and fail-OPEN the checker's gate-inert rule (18-class sweep, class 6).
 [ -n "$DROP_BEFORE" ] || { echo "run_canaries: cannot read the OUTPUT DROP counter of $NS" >&2; exit 3; }
+
+# F3+F17: create the output directory and canaries.jsonl only AFTER the DROP_BEFORE instrument
+# guard passes, so an exit-3 collection leaves no canaries.jsonl behind.
+mkdir -p "$OUT"
+: > "$JSONL"
 
 # C0 — the positive control first: if the unit cannot reach its allowed target, nothing else means anything.
 run_canary c0_allowed_target.sh "$UNIT" "$ALLOWED"

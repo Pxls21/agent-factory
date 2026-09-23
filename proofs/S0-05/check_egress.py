@@ -46,7 +46,7 @@ PC), or a canary is recorded `status: not-run` — a discriminator that could no
 Usage:
   check_egress.py <evidence-root> [--units curl,hermes-acp]
 
-Exit 0 + PASS; 1 + reason; 2 + `deferred: ...`.
+Exit 0 + PASS; 1 + reason; 2 + `deferred: ...`; 64 + usage error.
 """
 import argparse
 import hashlib
@@ -357,7 +357,12 @@ def main(argv):
     parser.add_argument("--units", default="curl",
                         help="comma-separated units that MUST be present (default: curl)")
     args = parser.parse_args(argv)
-    required = [unit for unit in args.units.split(",") if unit]
+    # F18: refuse an empty unit name anywhere in the list.
+    parts = args.units.split(",")
+    if any(not part for part in parts):
+        print("usage: --units carries an empty unit name")
+        return 64
+    required = parts
     try:
         for line in check(Path(args.evidence_root), required):
             print(line)
