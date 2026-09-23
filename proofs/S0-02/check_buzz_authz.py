@@ -2,8 +2,15 @@
 """S0-02 checker — Buzz authorization and freshness over captured legs.
 
     python3 proofs/S0-02/check_buzz_authz.py <evidence-root>
+    python3 proofs/S0-02/check_buzz_authz.py --denial <fixture> <evidence-root>
 
 Exit codes: 0 PASS / 1 ``failure_reason: <reason>`` / 2 ``deferred: <reason>``.
+
+``--denial <fixture>`` (B11) grades ONE negative leg exactly as the bundle
+grades it and reads no sibling leg. A proven denial exits 1 with
+``failure_reason: <the reason of the oracle row the leg's evidence matched>``,
+the shape a spec negative leg expects; any other failure of the leg exits 1
+with its own line, which never carries ``denied:``.
 
 DEFERRAL RULE (S0-01's, deliberately): exit 2 iff the root is absent or NO leg
 directory carries ``timeline.jsonl``.  Once ANY leg carries a timeline, every
@@ -662,7 +669,7 @@ def _check_replay(root: Path, identities: dict, anchors: "Anchors"):
     carries a turn keeps its turn-count text); 2 the relay's `duplicate:`
     receipt bound to the second delivery (_check_duplicate_receipt, graded
     AFTER the distinctness gate because that receipt IS this leg's observable:
-    a blanket-rejection bundle must reach the gate first, spec.json's negative
+    a blanket-rejection bundle must reach the gate first, spec.json's blanket
     leg). Returns (found, the second receipt, the first delivery's event id).
     """
     leg_dir = root / "neg-replayed"
@@ -808,7 +815,11 @@ def _has_any_timeline(root: Path) -> bool:
     return False
 
 
-def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
+def _open_bundle(root: Path, anchors: "Anchors"):
+    """The anchors and the root closure, shared by the bundle mode and the
+    per-leg denial mode (B11 item 3): the root guard, the deferral gate, the
+    identity anchor and the root closure. Returns (the resolved root, the
+    identities)."""
     # The root itself must be a real directory, not a symlink: resolve() would
     # happily re-anchor every later containment check under the symlink target.
     try:
@@ -831,6 +842,11 @@ def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
     extra = actual_entries - expected_entries
     if extra:
         raise Failure(f"bundle: unexpected leg directories or files {sorted(extra)}")
+    return root, identities
+
+
+def _check_bundle_uncapped(root: Path, anchors: "Anchors") -> str:
+    root, identities = _open_bundle(root, anchors)
 
     observed: dict = {}
     removal_note = None
@@ -902,25 +918,110 @@ def check_bundle(root: Path, anchors: "Anchors | None" = None) -> str:
     return _check_with_timeout(90, _check_bundle_uncapped, root, anchors)
 
 
+def _observed_row(leg: str, found: frozenset, removal_receipt: bool) -> dict:
+    """B11 item 4: the oracle row the OBSERVED denial matches. The leg must show
+    exactly one row's (channel, text) key; the replay row's defense-in-depth
+    line is no row's key, so it neither counts nor matches. neg-unauthorized
+    and revoked share one key by design (the oracle's revoked row): the
+    membership receipt separates them — _check_leg verified it on the revoked
+    leg, and the leg closure keeps it off every other leg."""
+    negative = [r for r in oracle.ROWS if r["leg"] == "negative"]
+    keys = found & {oracle.observable_key(r["fixture"]) for r in negative}
+    if len(keys) != 1:
+        raise Failure(
+            f"{leg}: the evidence carries {len(keys)} oracle row observable(s) "
+            f"{sorted(keys)}, expected exactly one"
+        )
+    rows = [r for r in negative if oracle.observable_key(r["fixture"]) in keys]
+    if len(rows) > 1:
+        rows = [r for r in rows if (r["fixture"] == "revoked") == removal_receipt]
+    if len(rows) != 1:
+        raise Failure(f"internal: the observation {sorted(keys)} matches {len(rows)} oracle rows")
+    return rows[0]
+
+
+def _check_denial_uncapped(root: Path, fixture_name: str, anchors: "Anchors") -> str:
+    """B11 items 3-4: ONE negative leg, graded exactly as the bundle grades it —
+    the anchors and the root closure, the leg's own checks, then that leg's
+    denial grading. No sibling leg is read, so a broken sibling cannot change
+    this verdict, and no cross-leg gate (distinctness) applies. Returns the
+    reason of the oracle row the OBSERVED denial matched, never one chosen from
+    the argument."""
+    root, identities = _open_bundle(root, anchors)
+    if fixture_name == "neg-replayed":
+        leg, leg_dir = "neg-replayed/second", root / "neg-replayed" / "second"
+        found, delivery, first_id = _check_replay(root, identities, anchors)
+        _check_duplicate_receipt(found, delivery, first_id)
+    else:
+        leg, leg_dir = fixture_name, root / fixture_name
+        found, delivery, _note = _check_leg(leg_dir, leg, fixture_name, identities, anchors)
+        if fixture_name != "revoked":
+            # As the bundle: the revoked leg is graded structurally inside
+            # _check_leg and never by the named-observable check.
+            _check_named_observable(leg, fixture_name, found, delivery)
+    row = _observed_row(leg, found, os.path.lexists(leg_dir / "membership.json"))
+    if row["fixture"] != fixture_name:
+        raise Failure(
+            f"{leg}: the observed denial matches the oracle's {row['fixture']} row, "
+            f"not {fixture_name}'s"
+        )
+    return row["reason"]
+
+
+def check_denial(root: Path, fixture_name: str, anchors: "Anchors | None" = None) -> str:
+    anchors = anchors or Anchors.default()
+    # F13b: the bundle mode's wall-clock cap.
+    return _check_with_timeout(90, _check_denial_uncapped, root, fixture_name, anchors)
+
+
+USAGE = "usage: check_buzz_authz.py [--synthetic-root <dir>] [--denial <fixture>] <evidence-root>"
+
+
+def _denial_main(root: Path, fixture_name: str, anchors: "Anchors") -> int:
+    """B11 item 4's exit contract. A proven denial prints the observed row's
+    reason and exits 1, as a spec negative leg expects; any failure of the leg
+    exits 1 with its own line; the evidence-absent path defers (2)."""
+    try:
+        reason = check_denial(root, fixture_name, anchors)
+    except Deferred as exc:
+        print(f"deferred: {exc}")
+        return 2
+    except Failure as exc:
+        # scripts/proof-runner:194-197 reads a negative leg as proven when ANY
+        # output line CONTAINS the spec's reason, and a failure text can quote
+        # evidence bytes (a relay message, a file name). So no failure line in
+        # this mode carries `denied:`; only a proven denial does.
+        text = str(exc).replace("denied:", "denied\\x3a")
+        print(f"failure_reason: {text}")
+        return 1
+    print(f"failure_reason: {reason}")
+    return 1
+
+
 def main(argv) -> int:
     args = list(argv[1:])
     anchors = Anchors.default()
     if args[:1] == ["--synthetic-root"]:
-        if len(args) != 3:
-            print(
-                "usage: check_buzz_authz.py [--synthetic-root <dir>] <evidence-root>",
-                file=sys.stderr,
-            )
+        if len(args) < 3:
+            print(USAGE, file=sys.stderr)
             return 64
         anchors = Anchors.from_synthetic_root(Path(args[1]))
         args = args[2:]
+    denial = None
+    if args[:1] == ["--denial"]:
+        # B11 item 2: only an oracle negative fixture names a leg to grade;
+        # pos-allowed, an empty value or a missing one is a usage refusal.
+        if len(args) != 3 or args[1] not in oracle.NEGATIVE_FIXTURES:
+            print(USAGE, file=sys.stderr)
+            return 64
+        denial = args[1]
+        args = args[2:]
     if len(args) != 1:
-        print(
-            "usage: check_buzz_authz.py [--synthetic-root <dir>] <evidence-root>",
-            file=sys.stderr,
-        )
+        print(USAGE, file=sys.stderr)
         return 64
     root = Path(args[0])
+    if denial is not None:
+        return _denial_main(root, denial, anchors)
     try:
         print(check_bundle(root, anchors))
         return 0

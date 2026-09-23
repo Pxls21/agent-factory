@@ -22,6 +22,46 @@
         "exit_code": 1,
         "failure_reason": "blanket-rejection: reasons ['delivery::restricted: not a channel member'] not distinct — 6 negative legs collapsed to 1 observable(s)"
       }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--denial", "neg-unauthorized", "proofs/S0-02/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "denied: sender-not-in-allowlist"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--denial", "neg-bad-signature", "proofs/S0-02/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "denied: signature-invalid"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--denial", "neg-replayed", "proofs/S0-02/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "denied: event-replayed"
+      }
+    },
+    {
+      "leg": "negative",
+      "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--denial", "neg-stale", "proofs/S0-02/evidence"],
+      "cwd": ".",
+      "timeout_s": 120,
+      "expect": {
+        "exit_code": 1,
+        "failure_reason": "denied: event-stale"
+      }
     }
   ]
 }

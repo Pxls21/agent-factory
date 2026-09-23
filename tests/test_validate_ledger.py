@@ -520,10 +520,10 @@ def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_
 
 def test_spec_negative_leg_counts_meet_the_registry_floor_except_the_declared_shortfall():
     """The floor binds at MINT time (above); this pins the SPEC side today so the seed's number stays visible: every
-    proof's spec.json carries at least `required_negative_controls` negative legs — except the ONE declared shortfall,
-    pinned exactly so it cannot grow, shrink or move silently. S0-02 (registry 4 = the seed's four distinct denials)
-    ships one negative spec leg, the blanket-rejection bundle; its per-class kill-switch bundles are S0-02 round 3's
-    work. When they land this table becomes empty by a deliberate edit — never by a skip."""
+    proof's spec.json carries at least `required_negative_controls` negative legs. S0-02 (registry 4 = the seed's four
+    distinct denials) shipped one negative spec leg, the blanket-rejection bundle, until B11 (task #191) added the four
+    per-denial legs (`check_buzz_authz.py --denial <fixture>`); the declared-shortfall table became empty then, by this
+    deliberate edit — never by a skip. A new shortfall is a red here."""
     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
     short = {}
     for entry in registry["proofs"]:
@@ -531,7 +531,7 @@ def test_spec_negative_leg_counts_meet_the_registry_floor_except_the_declared_sh
         negatives = sum(1 for leg in legs if leg["leg"] == "negative")
         if negatives < entry["required_negative_controls"]:
             short[entry["proof_id"]] = (negatives, entry["required_negative_controls"])
-    assert short == {"S0-02": (1, 4)}, short
+    assert short == {}, short
 
 
 def test_registry_matches_seed_classes_and_counts():

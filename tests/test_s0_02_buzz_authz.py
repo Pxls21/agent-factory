@@ -961,7 +961,10 @@ def test_blanket_bundle_is_a_blanket_rejection():
 def test_spec_negative_leg_reason_is_the_exact_observed_line():
     """AF-AP-29: the canonical contract is at least as strong as the test."""
     spec = json.loads(SPEC.read_text())
-    neg = [leg for leg in spec["legs"] if leg["leg"] == "negative"]
+    # B11: the blanket leg is the one negative leg over a committed synthetic
+    # bundle; the four seed legs run over the live evidence (section 8).
+    neg = [leg for leg in spec["legs"]
+           if leg["leg"] == "negative" and "--synthetic-root" in leg["cmd"]]
     assert len(neg) == 1
     want = neg[0]["expect"]["failure_reason"]
     proc = subprocess.run([sys.executable, str(CHECKER)] + neg[0]["cmd"][2:],
@@ -3609,3 +3612,263 @@ def test_replay_runner_restarted_process_is_refused(tmp_path):
         "neg-replayed/second: the delta holds an ACP initialize frame (seq 1) — the agent "
         "restarted: a second process, not ONE continuous buzz-acp process (D-036 clause 3)"
     )
+
+
+# ---------------------------------------------------------------------------
+# 8. B11 (task #191): the per-leg denial mode and the spec's four seed legs
+# ---------------------------------------------------------------------------
+DENIAL_USAGE = (
+    "usage: check_buzz_authz.py [--synthetic-root <dir>] [--denial <fixture>] <evidence-root>\n"
+)
+# The bundle mode's stdout on the pass bundle, captured from the UNMODIFIED
+# checker before B11 changed it (sha256 74efad21affc2ea5...): the denial mode
+# must not move one byte of it.
+PASS_STDOUT = (
+    b"PASS: S0-02 buzz-authz - 1 positive, 6 negative legs, 6 distinct reasons; "
+    b"replay refused by the relay's duplicate: receipt (buzz-acp drop line absent, "
+    b"defense-in-depth only); +1 revocation leg (assertion 2); removal evidence: "
+    b"coordinator-supplied receipt (unauthenticated; ordering and fields verified; "
+    b"not an end-to-end revocation proof)\n"
+)
+
+
+def _seed_denials() -> list:
+    """S0-02's four seed negatives as (fixture, reason), in the seed's order, read
+    from the frozen seed (seed:376-379) — never from the oracle or the checker."""
+    import yaml
+
+    seed = yaml.safe_load((ROOT / "seeds" / "seed-stage0-v1.yaml").read_text())
+    block = next(p for p in seed["stage0_proofs"] if p["proof_id"] == "S0-02")
+    return [(Path(f["fixture"]).stem, f["expected_failure_reason"])
+            for f in block["negative_control"]["fixtures"]]
+
+
+SEED_DENIALS = _seed_denials()
+
+
+def _cli(*args):
+    """The checker as proof-runner runs it: a fresh interpreter from the repo root."""
+    return subprocess.run([sys.executable, str(CHECKER), *map(str, args)],
+                          cwd=ROOT, capture_output=True, text=True, timeout=120)
+
+
+def _main(capsys, *args):
+    """The same CLI in-process (no interpreter start; monkeypatchable): (rc, out, err)."""
+    rc = checker.main(["check_buzz_authz.py", *map(str, args)])
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def _denial(capsys, bundle: Path, fixture: str):
+    return _main(capsys, "--synthetic-root", bundle, "--denial", fixture, bundle / "legs")
+
+
+def _graded_dir(bundle: Path, fixture: str) -> Path:
+    """The directory whose receipt a leg's denial is graded on."""
+    leg = _leg(bundle, fixture)
+    return leg / "second" if fixture == "neg-replayed" else leg
+
+
+def _graded_leg(fixture: str) -> str:
+    return "neg-replayed/second" if fixture == "neg-replayed" else fixture
+
+
+@pytest.mark.parametrize("fixture", oracle.NEGATIVE_FIXTURES)
+def test_denial_mode_proves_each_negative_leg_of_the_pass_bundle(fixture):
+    """Items 3-4, normal behavior, through a real interpreter: over the passing
+    bundle each negative leg's denial is proven — rc 1 and exactly its reason on
+    stdout. The seed's four reasons come from the seed; the other three legs'
+    from their committed fixtures."""
+    want = dict(SEED_DENIALS).get(fixture) or json.loads(
+        (FIXTURES / f"{fixture}.json").read_text())["expected"]["failure_reason"]
+    proc = _cli("--synthetic-root", PASS_BUNDLE, "--denial", fixture, PASS_BUNDLE / "legs")
+    assert (proc.returncode, proc.stdout, proc.stderr) == (1, f"failure_reason: {want}\n", "")
+
+
+@pytest.mark.parametrize("fixture,reason", SEED_DENIALS)
+def test_denial_mode_refuses_another_classes_observable(tmp_path, capsys, fixture, reason):
+    """Item 6's mismatch control: the leg's receipt carries ANOTHER seed class's
+    relay text (neg-stale gets the unauthorized one). Its denial is not proven:
+    no output line carries its reason, and the leg fails exactly at its denial
+    grading — every earlier check passed, so the plant is the only reason."""
+    names = [name for name, _reason in SEED_DENIALS]
+    other = names[(names.index(fixture) + 1) % len(names)]
+    bundle = _bundle(tmp_path)
+    _rewrite(_graded_dir(bundle, fixture) / "delivery.json", lambda b: b.__setitem__(
+        "message", json.dumps({"error": oracle.row(other)["observable"]})))
+    rc, out, err = _denial(capsys, bundle, fixture)
+    assert rc == 1 and reason not in out + err, out + err
+    gate = ("expected exactly 'duplicate:'" if fixture == "neg-replayed"
+            else "does not carry the oracle observable")
+    assert out.startswith(f"failure_reason: {_graded_leg(fixture)}: ") and gate in out, out
+
+
+def test_revoked_denial_is_read_from_the_observation(tmp_path, capsys):
+    """Item 4, black-box. The bundle grades the revoked leg structurally and never
+    reads its relay text (check_buzz_authz.py's revoked skip), so a revoked leg
+    whose receipt carries the STALE text still passes _check_leg. The denial mode
+    reads the reason from what the leg shows: it names the neg-stale row and
+    never prints the revoked reason chosen by the argument."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_leg(bundle, "revoked") / "delivery.json", lambda b: b.__setitem__(
+        "message", json.dumps({"error": oracle.row("neg-stale")["observable"]})))
+    rc, out, err = _denial(capsys, bundle, "revoked")
+    assert rc == 1 and "denied: membership-revoked" not in out + err, out
+    assert out == ("failure_reason: revoked: the observed denial matches the oracle's "
+                   "neg-stale row, not revoked's\n"), out
+
+
+def test_denial_reason_never_comes_from_the_argument(tmp_path, capsys, monkeypatch):
+    """Item 4 on a seed leg, isolated from the named-observable gate that normally
+    fires first: neg-stale carrying the unauthorized relay text (no membership
+    receipt) is read back as the neg-unauthorized row, never as neg-stale."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_leg(bundle, "neg-stale") / "delivery.json", lambda b: b.__setitem__(
+        "message", json.dumps({"error": oracle.row("neg-unauthorized")["observable"]})))
+    monkeypatch.setattr(checker, "_check_named_observable", lambda *_args: None)
+    rc, out, err = _denial(capsys, bundle, "neg-stale")
+    assert rc == 1 and "denied: event-stale" not in out + err, out
+    assert out == ("failure_reason: neg-stale: the observed denial matches the oracle's "
+                   "neg-unauthorized row, not neg-stale's\n"), out
+
+
+@pytest.mark.parametrize("fixture,reason", SEED_DENIALS)
+def test_a_failure_line_never_carries_the_named_reason(tmp_path, capsys, fixture, reason):
+    """Item 4. proof-runner accepts a negative leg when ANY output line CONTAINS the
+    spec's reason (scripts/proof-runner:194-197), and a failure text quotes
+    evidence. Plant the leg's own reason where a failure quotes it (fixture.json's
+    name): the failure line must not carry it."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_graded_dir(bundle, fixture) / "fixture.json",
+             lambda b: b.__setitem__("fixture", reason))
+    rc, out, err = _denial(capsys, bundle, fixture)
+    assert rc == 1 and reason not in out + err, out
+    escaped = reason.replace("denied:", "denied\\x3a")
+    assert f"{_graded_leg(fixture)}: fixture.json names '{escaped}'" in out, out
+
+
+def test_a_replay_receipt_quoting_the_reason_is_not_a_proven_denial(tmp_path, capsys):
+    """The relay-controlled text itself: a `duplicate:`-prefixed receipt that
+    quotes the reason fails the exact-receipt check, and the quote is escaped."""
+    bundle = _bundle(tmp_path)
+    _rewrite(_leg(bundle, "neg-replayed") / "second" / "delivery.json",
+             lambda b: b.__setitem__("message", "duplicate: denied: event-replayed"))
+    rc, out, err = _denial(capsys, bundle, "neg-replayed")
+    assert rc == 1 and "denied: event-replayed" not in out + err, out
+    assert "the relay receipt message is 'duplicate: denied\\x3a event-replayed'" in out, out
+
+
+@pytest.mark.parametrize("fixture,reason", SEED_DENIALS)
+def test_a_broken_sibling_leg_does_not_change_the_denial_verdict(tmp_path, capsys, fixture, reason):
+    """Item 3's independence control: EVERY sibling leg loses its delivery receipt.
+    The bundle now fails; the named leg's denial verdict is byte-identical."""
+    intact = _denial(capsys, PASS_BUNDLE, fixture)
+    bundle = _bundle(tmp_path)
+    for name in FIXTURE_NAMES:
+        if name != fixture:
+            (_graded_dir(bundle, name) / "delivery.json").unlink()
+    assert _main(capsys, "--synthetic-root", bundle, bundle / "legs") == (
+        1, "failure_reason: pos-allowed: missing ['delivery.json']\n", "")
+    assert _denial(capsys, bundle, fixture) == intact == (1, f"failure_reason: {reason}\n", "")
+
+
+@pytest.mark.parametrize("fixture,reason", SEED_DENIALS)
+def test_the_blanket_bundle_proves_only_the_leg_its_text_names(capsys, fixture, reason):
+    """The committed blanket bundle (one relay text on every leg) graded one leg at
+    a time: only neg-unauthorized, whose OWN class that text is (the builder
+    writes that leg the same way in both bundles), is a proven denial; no other
+    seed leg is. Distinctness is a cross-leg property that the bundle mode
+    grades, through the spec's blanket leg."""
+    rc, out, err = _denial(capsys, BLANKET_BUNDLE, fixture)
+    assert rc == 1, out + err
+    if fixture == "neg-unauthorized":
+        assert (out, err) == (f"failure_reason: {reason}\n", "")
+    else:
+        assert out.startswith("failure_reason: ") and reason not in out + err, out
+
+
+@pytest.mark.parametrize("fixture", [name for name, _reason in SEED_DENIALS])
+def test_denial_mode_defers_when_the_evidence_is_absent(tmp_path, capsys, fixture):
+    """Item 4: the evidence-absent path stays `deferred:` rc 2, never a denial."""
+    assert _main(capsys, "--denial", fixture, tmp_path / "nope") == (
+        2, "deferred: S0-02 evidence not captured\n", "")
+
+
+@pytest.mark.parametrize("argv", [
+    ("--denial", "pos-allowed", "LEGS"),
+    ("--denial", "", "LEGS"),
+    ("--denial",),
+    ("--denial", "LEGS"),
+    ("--denial", "neg-stale"),
+    ("--denial", "neg-nonexistent", "LEGS"),
+    ("--denial", "neg-stale", "LEGS", "LEGS"),
+    ("--synthetic-root", "PASS", "--denial", "pos-allowed", "LEGS"),
+    ("--synthetic-root", "PASS", "--denial"),
+    ("--denial", "neg-stale", "--synthetic-root", "PASS", "LEGS"),
+    (),
+], ids=["pos-allowed", "empty-value", "missing-value", "root-as-value", "missing-root",
+        "unknown-fixture", "two-roots", "anchored-pos-allowed", "anchored-missing-value",
+        "anchors-after-denial", "no-arguments"])
+def test_denial_usage_refusals_exit_64(capsys, argv):
+    """Item 2: a usage refusal is rc 64, NOTHING on stdout (no line a runner could
+    read as a reason), and the one usage line names the new flag."""
+    args = [{"LEGS": PASS_BUNDLE / "legs", "PASS": PASS_BUNDLE}.get(a, a) for a in argv]
+    assert _main(capsys, *args) == (64, "", DENIAL_USAGE)
+
+
+def test_bundle_mode_stdout_is_unchanged_byte_for_byte():
+    """Item 2's regression pin, through a real interpreter: without --denial the
+    pass bundle's stdout is the pre-B11 bytes, stderr is empty, rc 0."""
+    proc = subprocess.run([sys.executable, str(CHECKER), "--synthetic-root", str(PASS_BUNDLE),
+                           str(PASS_BUNDLE / "legs")], capture_output=True, timeout=120)
+    assert (proc.returncode, proc.stdout, proc.stderr) == (0, PASS_STDOUT, b"")
+
+
+def test_spec_gains_one_denial_leg_per_seed_fixture_in_seed_order():
+    """Item 5 exactly: after the positive and the blanket leg (kept as they are),
+    one leg per seed fixture in the seed's order — the plain --denial command over
+    the real evidence root, the blanket leg's timeout, exit 1, the seed reason."""
+    legs = json.loads(SPEC.read_text())["legs"]
+    assert [leg["leg"] for leg in legs[:2]] == ["positive", "negative"]
+    assert "proofs/S0-02/fixtures/evidence-blanket" in legs[1]["cmd"]
+    assert legs[2:] == [
+        {"leg": "negative",
+         "cmd": ["python3", "proofs/S0-02/check_buzz_authz.py", "--denial", fixture,
+                 "proofs/S0-02/evidence"],
+         "cwd": ".", "timeout_s": legs[1]["timeout_s"],
+         "expect": {"exit_code": 1, "failure_reason": reason}}
+        for fixture, reason in SEED_DENIALS
+    ], legs[2:]
+
+
+def test_spec_negative_legs_meet_the_registry_floor_with_the_seed_reasons():
+    """VERIFY-B1 F16's floor (scripts/validate-ledger:312-324), mirrored where the
+    S0-02 suite sees it and read from the files: the spec's negative legs number
+    at least the registry's required_negative_controls, and their reasons are
+    exactly the seed's four plus the blanket reason. A spec edit that drops a
+    seed leg reds here before any mint."""
+    import yaml
+
+    registry = yaml.safe_load((ROOT / "proofs" / "registry.yaml").read_text())
+    floor = next(p for p in registry["proofs"]
+                 if p["proof_id"] == "S0-02")["required_negative_controls"]
+    negatives = [leg for leg in json.loads(SPEC.read_text())["legs"] if leg["leg"] == "negative"]
+    assert len(negatives) >= floor, (len(negatives), floor)
+    blanket = [leg["expect"]["failure_reason"] for leg in negatives
+               if "--synthetic-root" in leg["cmd"]]
+    assert len(blanket) == 1 and blanket[0].startswith("blanket-rejection: "), blanket
+    assert sorted(leg["expect"]["failure_reason"] for leg in negatives) == sorted(
+        [reason for _fixture, reason in SEED_DENIALS] + blanket)
+
+
+def test_spec_denial_legs_run_verbatim_and_reach_the_checker():
+    """The exact argv proof-runner will pass: never a usage refusal, never a crash.
+    Over the uncaptured evidence root each defers (2); once captured, each proves
+    its reason or fails (1). These legs see the live evidence only at mint time."""
+    legs = [leg for leg in json.loads(SPEC.read_text())["legs"] if "--denial" in leg["cmd"]]
+    assert len(legs) == len(SEED_DENIALS)
+    for leg in legs:
+        proc = _cli(*leg["cmd"][2:])
+        assert proc.returncode in (1, 2) and proc.stderr == "", proc.stderr
+        if proc.returncode == 2:
+            assert proc.stdout == "deferred: S0-02 evidence not captured\n", proc.stdout
