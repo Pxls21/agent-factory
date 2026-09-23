@@ -170,4 +170,4 @@ lane_runtime:
     role: "lane-runtime (scripts/pc_lane.sh -> hermes on the PC); NOT the S0-01 proof runtime"
     reason: "SQLite >= 3.51.3 for WAL on the shared profile state.db (VERIFY-B5j); owner-run hermes update 2026-09-08"
     diff_from_proof_pin: "31816 commits, 3939 files"
-    verified: "harness-ports/tests/run-all.sh (sandbox) + 43 PC-lane HOME/LANDED notes since 2026-09-08 14:2xZ"
+    verified: "harness-ports/tests/run-all.sh on the PC at 2ebd486, in a git clone with the lanes' AF_VENV, Python 3.13.11: all suites passed, rc 0, 2026-09-23 09:08Z (binary-free by its header); identity probe 2026-09-23 08:58Z: b3399c1, Hermes Agent v0.21.1, venv Python 3.11.15, SQLite 3.53.1, shared state.db WAL; 110 PC lanes first launched at or after 2026-09-08 14:22:00Z (98 with a report), tasks/briefs/hermes-repin/REPIN-a-R1-lane-record.md"

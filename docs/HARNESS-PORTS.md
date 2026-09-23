@@ -734,6 +734,8 @@ The PC build/verify lanes run Hermes at commit `b3399c1` (v0.21.1, python 3.11.1
 **What this pin covers:** every `scripts/pc_lane.sh` dispatch on the PC, where
 `~/.local/bin/hermes` resolves to the `~/.hermes/hermes-agent/venv/bin/hermes` install at that
 commit.
+Until REPIN-b lands, nothing reads `lane_runtime`, so a `hermes update` or a `HERMES_BIN`
+override moves the lanes with no check failing.
 
 **What this pin does NOT cover:** the S0-01 proof runtime, which remains the audited
 `selected_core.hermes-agent` at `527da60` (v0.21.0) under `/home/rocco/s0-01-pinned/`. The
