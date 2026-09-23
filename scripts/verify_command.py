@@ -4,16 +4,55 @@ reaches the caller.
 
 Port of qkal/canny @ f2c5e53, src/checks.ts:8-93.
 
-Regex semantics: all patterns are compiled with ``re.ASCII`` so that ``\\b`` and
-``\\w`` match only ASCII characters, matching the JS behavior (no ``u`` flag).
-JS ``\\s`` without the ``u`` flag matches Unicode spaces (NBSP, U+2028) while
-Python ``\\s`` under ``re.ASCII`` does not; since bash does not split words on
-NBSP either, the ASCII-only behavior is correct here.  A test row for U+00A0
-before ``--help`` pins this choice.
+Regex semantics: every regex here runs with ``re.ASCII`` -- the VERIFY list,
+the three not-a-check patterns, the six inline calls in ``executed``,
+``is_verify`` and ``with_pipefail``, the C1-A2 patterns, and every user
+pattern -- so ``\\b``, ``\\w`` and ``\\s`` match only ASCII characters.  For
+``\\b`` and ``\\w`` that is the JS behavior (no ``u`` flag).  JS ``\\s``
+matches Unicode spaces (NBSP, U+2028) while Python ``\\s`` under ``re.ASCII``
+does not; bash does not split words on NBSP either, so here a Unicode space
+inside ``set -o pipefail`` does not make a ``set`` statement, and a Unicode
+space before ``#`` does not start a comment.  A test row for U+00A0 before
+``--help`` pins this choice.  The flag has a cost, declared below: ``\\b``
+after ``pipefail`` also matches before a non-ASCII letter.
 
-Deviation from Canny: an invalid regex string in *patterns* raises
+Deviation 1 from Canny: an invalid regex string in *patterns* raises
 ``ValueError`` naming the bad pattern.  Canny's ``safeRegex`` silently turns it
 into "never matches"; here a silently dead pattern is a fail-soft that we refuse.
+"Invalid" means invalid in Python's ``re`` dialect, which is not JS's: an inline
+flag such as ``(?i)`` is valid here and dead in Canny, and a variable-length
+lookbehind such as ``(?<=a+)`` is valid in Canny and raises here.
+
+Deviation 2 from Canny (AMENDMENT C1-A2): a status-integrity pre-filter,
+because C2 (not built yet) will consume ``is_verify`` as a gate.  ``is_verify``
+returns False when, in the executed text: (a) the last segment contains ``||``
+anywhere, not only in the ``&&``-part that carries the check; (b) any segment
+begins with ``trap``; (c) the command contains a carriage return; (d) the
+command contains a backslash line continuation; (e) any segment begins with
+``exec`` or ``coproc``.  A segment is a piece of the executed text between
+``;`` and newline.  (d) also refuses an escaped backslash at a line end, and
+(e) also refuses ``exec 2>&1; pytest``: both carry the status, the cheap
+direction.
+
+Known hollow greens: each command below counts while bash exits 0 with the
+check failing.  Each is pinned by a ``strict`` xfail test that asserts the safe
+answer, so a fix turns it into an XPASS failure.  The list is not exhaustive.
+
+- H7, a builtin or a prefix assignment swallows the status:
+  ``export R=$(pytest)``.
+- H8, a shell function shadows the check: ``pytest(){ return 0; }; pytest``.
+- H9, the first-word rules (the print/inspect denylist, NEGATED, (b), (e))
+  are bypassed by a path, quoting, a wrapper or a backslash: ``/bin/echo tsc``.
+- A here-doc terminator line reads as a command: ``cat <<'pytest'``, newline,
+  ``foo``, newline, ``pytest``.
+- (b) and (e) see only segment starts: ``true && trap 'exit 0' EXIT; pytest``.
+  ``with_pipefail`` builds this shape itself: for
+  ``trap 'exit 0' EXIT; pytest | tail`` it returns
+  ``set -o pipefail && trap 'exit 0' EXIT; pytest | tail``.
+- The pipefail scan ends in ``pipefail\\b``, so a character that bash keeps
+  in the option word passes it: ``set -o pipefail-x; pnpm test | tail``.
+  Under ``re.ASCII`` a non-ASCII letter passes too (``pipefail`` followed by
+  U+00E9), which the port refused before C1-R1.
 
 MIT License
 
@@ -97,6 +136,22 @@ def _not_a_check(part: str) -> bool:
     )
 
 
+# AMENDMENT C1-A2 (b) and (e): first words matched at the start of a segment.
+_TRAP = re.compile(r"trap\b", re.ASCII)
+_EXEC_OR_COPROC = re.compile(r"(?:exec|coproc)\b", re.ASCII)
+
+
+def _hides_status(bare: str, segments: List[str], last: str) -> bool:
+    """AMENDMENT C1-A2: shapes whose exit status need not carry the check's."""
+    return bool(
+        "||" in last  # (a)
+        or any(_TRAP.match(s) for s in segments)  # (b)
+        or "\r" in bare  # (c)
+        or "\\\n" in bare  # (d)
+        or any(_EXEC_OR_COPROC.match(s) for s in segments)  # (e)
+    )
+
+
 def _compile_patterns(patterns: List[str]) -> List[re.Pattern[str]]:
     """Compile user-supplied patterns, raising ValueError on an invalid one."""
     compiled = []
@@ -114,9 +169,9 @@ def executed(command: str) -> str:
     checks.ts:48-50
     """
     # Drop quoted strings first.
-    bare = re.sub(r'"[^"]*"|\'[^\']*\'', "", command)
+    bare = re.sub(r'"[^"]*"|\'[^\']*\'', "", command, flags=re.ASCII)
     # Drop comments: a ``#`` after an escaped space is part of a word.
-    bare = re.sub(r"(^|(?<!\\)\s)#[^\n]*", r"\1", bare)
+    bare = re.sub(r"(^|(?<!\\)\s)#[^\n]*", r"\1", bare, flags=re.ASCII)
     return bare
 
 
@@ -137,12 +192,12 @@ def is_verify(
     # checks.ts:61-62 -- pipefail: the last ``set`` statement wins.
     pipefail = False
     for m in re.finditer(
-        r"(?:^|[;&\n])\s*set\s+([+-])\w*o\s+pipefail\b", bare
+        r"(?:^|[;&\n])\s*set\s+([+-])\w*o\s+pipefail\b", bare, flags=re.ASCII
     ):
         pipefail = m.group(1) == "-"
 
     # checks.ts:63-67 -- last non-empty segment after splitting on ; and \n.
-    segments = [s.strip() for s in re.split(r"[;\n]", bare)]
+    segments = [s.strip() for s in re.split(r"[;\n]", bare, flags=re.ASCII)]
     last = ""
     for s in reversed(segments):
         if s:
@@ -152,15 +207,20 @@ def is_verify(
     # checks.ts:68-79
     user_re = _compile_patterns(patterns) if patterns is not None else None
 
+    # Deviation 2 (AMENDMENT C1-A2).  It runs after the compile above, so an
+    # invalid pattern still raises when a rule refuses the command.
+    if _hides_status(bare, segments, last):
+        return False
+
     for raw in last.split("&&"):
         part = raw.strip()
-        if "||" in part:
+        if "||" in part:  # checks.ts:69; rule (a) already refused this.
             continue
         if not pipefail and "|" in part:
             continue
         # checks.ts:72 -- lone ``&`` backgrounds; ``2>&1`` and ``&>`` are
         # redirections.
-        if re.search(r"(?<!>)&(?!>)", part):
+        if re.search(r"(?<!>)&(?!>)", part, flags=re.ASCII):
             continue
         # checks.ts:74 -- under pipefail the check is the pipe feeder.
         check = part.split("|")[0].strip()
@@ -194,7 +254,7 @@ def with_pipefail(
         return None
     # Only if the pipe feeds tail (not head, grep, etc.).
     bare = executed(command)
-    if re.search(r"(?<!\|)\|(?!\|)(?!\s*tail\b)", bare):
+    if re.search(r"(?<!\|)\|(?!\|)(?!\s*tail\b)", bare, flags=re.ASCII):
         return None
     return candidate
 
@@ -224,6 +284,10 @@ def _cli() -> None:
             if i + 1 >= len(args):
                 print("--pattern requires a value", file=sys.stderr)
                 sys.exit(2)
+            if args[i + 1] == "":
+                # An empty regex matches every check: a silent catch-all.
+                print("--pattern value is empty", file=sys.stderr)
+                sys.exit(2)
             user_patterns.append(args[i + 1])
             i += 2
             continue
@@ -238,7 +302,16 @@ def _cli() -> None:
         print("missing -- before COMMAND", file=sys.stderr)
         sys.exit(2)
 
-    command = " ".join(command_parts)
+    # COMMAND is ONE argument: joining several would classify words the
+    # caller's shell has already unquoted.
+    if len(command_parts) > 1:
+        print(
+            f"COMMAND must be one argument, got {len(command_parts)}; quote it",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    command = command_parts[0] if command_parts else ""
     if not command.strip():
         print("COMMAND is empty", file=sys.stderr)
         sys.exit(2)
@@ -256,7 +329,12 @@ def _cli() -> None:
     if do_pipefail:
         result = with_pipefail(command, pats)
         if result is not None:
-            print(result)
+            try:
+                print(result)
+            except UnicodeEncodeError as exc:
+                # Exit 1 means "no rewrite"; a failed write is an error.
+                print(f"cannot write the rewrite: {exc}", file=sys.stderr)
+                sys.exit(2)
             sys.exit(0)
         else:
             sys.exit(1)
