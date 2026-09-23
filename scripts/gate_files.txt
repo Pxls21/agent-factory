@@ -18,6 +18,7 @@ scripts/lint_delta.py
 scripts/validate-ledger
 scripts/proof-runner
 scripts/ledger-gen
+scripts/ci_gate.py
 scripts/push_clean.sh
 scripts/safe_commit.sh
 scripts/vendored_manifest.py
