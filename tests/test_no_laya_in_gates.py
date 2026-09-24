@@ -108,6 +108,30 @@ def test_identifier_boundary(tmp_path):
     assert ":laya" in r.stdout
 
 
+def test_mojev_vocabulary_fires(tmp_path):
+    """MoJev's package and scorer class fire in any case; a longer run such as mojev_probe does not (task #210)."""
+    _make_tree(tmp_path, "scripts/hooks/pre-commit\n", {
+        "scripts/hooks/pre-commit": "#!/bin/bash\n# mojev_probe and packedscorer_test run here\necho ok\n",
+    })
+    r = _run(["--root", str(tmp_path)])
+    assert r.returncode == 0, f"Expected exit 0, got {r.returncode}.\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    for line, token in (("# the MoJev scorer\n", "mojev"), ("echo PackedScorer\n", "packedscorer")):
+        (tmp_path / "scripts" / "hooks" / "pre-commit").write_text("#!/bin/bash\n" + line + "echo ok\n")
+        r = _run(["--root", str(tmp_path)])
+        assert r.returncode == 3, f"Expected exit 3, got {r.returncode}.\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        assert r.stdout.strip() == f"scripts/hooks/pre-commit:2:{token}", r.stdout
+
+
+def test_simple_tokens_locked():
+    """The simple vocabulary is closed; narrowing or widening it is a reviewed change."""
+    assert _screen_module().SIMPLE_TOKENS == frozenset([
+        "laya", "systemone", "system_one", "system-one",
+        "jev", "jevcache", "sieve", "sieve-run",
+        "decide-harvest", "decide_harvest", "laya-decide",
+        "mojev", "packedscorer",
+    ])
+
+
 def test_import_check(tmp_path):
     """A .py file with 'from agent_factory.decisions import ledger' -> exit 3."""
     _make_tree(tmp_path, "scripts/gate_check.py\n", {

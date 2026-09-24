@@ -60,10 +60,13 @@ REGULAR_INDEX_MODES = frozenset(["100644", "100755"])
 # "laya_probe" is ONE run and is NOT in the list, so it does not fire.
 # "receives" is ONE run and is NOT in the list, so it does not fire.
 # "Laya" matches "laya" case-insensitively and fires.
+# "mojev" and "packedscorer" (MoJev's package and its scorer class, task #210, D-069 item 3) were added
+# before any MoJev code entered the tree (docs/research/findings/MOJEV-AUDIT-2026-09-24.md section 4, item 8).
 SIMPLE_TOKENS = frozenset([
     "laya", "systemone", "system_one", "system-one",
     "jev", "jevcache", "sieve", "sieve-run",
     "decide-harvest", "decide_harvest", "laya-decide",
+    "mojev", "packedscorer",
 ])
 
 # Dotted tokens: matched as literal substrings at identifier boundaries.
