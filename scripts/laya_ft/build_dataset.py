@@ -73,14 +73,18 @@ def collect(git, rev="HEAD", pins=None):
     reports = sorted(p for p in listed if REPORT_RX.search(p))
     items = []
     src = {"verify_reports": len(reports), "reports_with_findings": 0, "verify_findings": 0, "incident_entries": 0,
-           "entries_without_heading": 0}
-    excluded_v1, excluded_incident, text_dups = set(), set(), 0
+           "entries_without_heading": 0, "repeated_finding_ids": 0}
+    excluded_v1, excluded_incident, text_dups, seen = set(), set(), 0, set()
     for path in reports:
         blocks = C.J2C._blocks(path, show(path).decode("utf-8"))
         src["reports_with_findings"] += bool(blocks)
         for fid, _cls, _title, block in blocks:   # the class is the label: never stored (AF-AP-189)
-            src["verify_findings"] += 1
             ident = "%s#%s" % (path, fid)
+            if ident in seen:     # a later section restating an id (a reverify's table): the first block is the finding
+                src["repeated_finding_ids"] += 1
+                continue
+            seen.add(ident)
+            src["verify_findings"] += 1
             if ident in heldout["v1"]:
                 excluded_v1.add(ident)
                 continue
