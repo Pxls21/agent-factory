@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 18:1xZ — WHAT IS LIVE NOW (supersedes the 17:3xZ block for the live set).**
+- **LANDED, GATED-PENDING-VERIFY:** JT2-R1 (b97c84c; 180 passed twice on a clean copy); VERIFY-JT2-R1 running. FT1 (VERIFY-FT1 running).
+- **VERIFYING:** VERIFY-JT3-R1 (JT3's code uncommitted, the hook off until the verdict; told of ADJ-B).
+- **DATA:** OpenJev's 1,788 labels committed (`docs/research/findings/laya-ft-labels/2026-09-24-openjev/`); the dataset rebuilds from its tree.
+- **PC:** QJ1 alive (the GPU window waits for it); MoJev G0 20/30; RWKV-7 checkpoint downloaded, `~/venv-rwkv` imports cleanly, a fallback `~/venv-rwkv-b` installing; no GPU test possible while vLLM runs (a CUDA context cannot start).
+- **NEXT (task #242):** the guarded GPU-window runner and the RWKV-7 G0 probe, built before the window.
+
+
 **2026-09-24 17:3xZ — WHAT IS LIVE NOW (supersedes the 17:1xZ block for the live set).**
 - **D-081 (owner):** the RWKV-7 G0 probe joins the no-lanes GPU window, before Laya's training. PC prep: the pinned checkpoint is downloaded (`model.safetensors` 901,620,328 bytes); `~/venv-rwkv` (torch 2.14.0 cu130, flash-linear-attention 0.3.0, transformers 4.x) installing.
 - **VERIFYING (sandbox, Opus 5.5):** VERIFY-JT3-R1 (JT3's repair: 117 passed; the code stays uncommitted and the hook off until the verdict); VERIFY-FT1.

@@ -201,6 +201,8 @@ serves, through OmniRoute. What it needs on the PC, and how each piece was made 
   `examples_binary` branches (prefill `{"answer": "`, letter labels) pass with the compiler's exact token count is QJ1's first
   measurement.
 
+- **No second CUDA process while `qwen.service` runs (measured 2026-09-24 18:0xZ):** vLLM leaves about 550 MB of the 3090 free, and a toy RWKV-7 probe failed at CUDA context creation (`CUDA_ERROR_OUT_OF_MEMORY` from `cuDevicePrimaryCtxRetain`); vLLM was unaffected. Any GPU test, even a tiny one, waits for a window with the service stopped (D-078, D-081). The RWKV-7 G0 environment: `~/venv-rwkv` (Python 3.11, torch 2.14.0+cu130, triton 3.8.0, flash-linear-attention 0.3.0, transformers 4.57.6; imports clean) and a fallback `~/venv-rwkv-b` (torch 2.7.1 cu128, flash-linear-attention 0.3.0, transformers below 4.54); the checkpoint `RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9 is in the Hugging Face cache (`model.safetensors` 901,620,328 bytes).
+
 
 ## The local build-lane model on the PC — `qwen-builder` (2026-09-14; the vLLM fallback since 2026-09-16, D-032)
 
