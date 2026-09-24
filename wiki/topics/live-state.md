@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 06:5xZ — WHAT IS LIVE NOW (this block supersedes the 06:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **PUSHED:** K215 as `b318135` and the anti-hollow-green bake as `bfe66ec` (both GATED-PENDING-VERIFY); CI #1021 on ef21f88 green before the push.
+- **LIVE, SANDBOX (one agent, Opus 5.5):** VERIFY-K215 (#219), PIN bfe66ec, scratch `/tmp/vk215/`, report `tasks/briefs/kit-k1-support/VERIFY-K215-report.md`.
+- **LIVE, PC:** VERIFY-J1-45 (#217), lane `pc-verify-j1-45.md--780f25a`, since 05:35Z; poller re-attached 06:40Z (four-hour ceiling).
+- **NEXT:** harvest both verifies; push the VERIFY-K215 brief with that batch.
+- **OWNER DECISIONS OPEN:** the redaction-pass redesign (D-068, task #198); MoJev A/B/C (#210); which project hooks to restore (#214); the eight proofs' signing and the Stage 0 PR.
+
 **2026-09-24 06:3xZ — WHAT IS LIVE NOW (this block supersedes the 06:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **K215 LANDED, GATED-PENDING-VERIFY.** The owed AP_SCREEN rows (AF-AP-132, 141, 144, 145, 149, 152, 175, 177) and the three skill bakes (AF-AP-150, 151, 153); the coordinator's re-gate `226 passed`. Its adjacent defects: issue #65. The eleven registry rows now say LANDED.
 - **LIVE, PC:** VERIFY-J1-45 (#217), lane `pc-verify-j1-45.md--780f25a`, since 05:35Z.
@@ -586,6 +593,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 06:5xZ — pushed b318135 + bfe66ec; VERIFY-K215 dispatched (sandbox); VERIFY-J1-45's poller re-attached.
 2026-09-24 06:3xZ — anti-hollow-green bake (task #218): AF-AP-179's rule as 2(g) and "a measured zero states its generator's alphabet" as 3f.
 2026-09-24 06:3xZ — K215 landed (GATED-PENDING-VERIFY); issue #65 filed; the registry rows and a CLAUDE.md quirk line updated.
 2026-09-24 06:1xZ — VERIFY-J1-1-R3 NOT-READY (two leaks, reproduced); D-067 void, no revert; the redaction redesign is the owner's call (D-068).
