@@ -1616,8 +1616,9 @@ def test_v1_control_keeps_its_redaction_in_the_ledger_file(tmp_path, shape):
 # J1-1-R3 (D-059, C1-C4): the same rows as tests/test_decisions_canonical.py's
 # J1-1-R3 block, through make_row -> append -> the JSONL line on disk ->
 # replay. The FAKE body is the value the PIN d556c9b redacts ("QZJ8" runs);
-# a chain row's first value ("plainval", a run of "ab") keeps the PIN's
-# output, and no other byte of the file is an upper-case Q, Z or J.
+# a chain row's first value ("plainval", a run of "ab") kept the PIN's output
+# until D-070, which hides it too; no other byte of the file is an upper-case
+# Q, Z or J.
 # ---------------------------------------------------------------------------
 
 _TR = "ab" * 16
@@ -1647,8 +1648,8 @@ _R4_SHAPES = [
     ("special-letter-in-the-merged-run", f"task-password:plainvalbearer abcdefgh\u0131jklmnop==token: {_V}"),
     ("space-before-bearer-control", f"task-password:plainval bearer abcdefghijklmnop==token: {_V}"),
 ]
-# C2 (R-3): "NAME= v" behind sk or bearer. The "NAME==v" padding form is a
-# declared residue, deliberately not pinned here.
+# C2 (R-3): "NAME= v" behind sk or bearer. The "NAME==v" padding form was a
+# declared residue, not pinned here (hidden since D-070).
 _R3_SHAPES = [
     ("sk-name-space", f"task-DB_PASSWORD= {_V}"),
     ("bearer-name-space", f"Authorization: Bearer abcdefghijklmnopAPI_KEY= {_V}"),
@@ -1711,3 +1712,67 @@ def test_surviving_mutant_rows_stay_off_the_ledger_file(tmp_path, shape):
 def test_bearer_merge_step_keeps_every_j1_1_r2_redaction_in_the_file(tmp_path, shape):
     # C4: green at J1-1-R2 and after; the negative controls are mutants.
     _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+# ---------------------------------------------------------------------------
+# J1-1-R4 (D-070, C5): VERIFY-J1-1-R3's F-1 and F-2 hand shapes (its sections
+# 2c and 4a: the N1-* and N2-* shapes and R4-n2-a) and the brief's stub
+# example, through make_row -> append -> the JSONL line on disk -> replay.
+# The same shapes are in tests/test_decisions_canonical.py through
+# decision_state. At fdac751 the line of each F shape but the two controls
+# held its value. Upper-case X, Z, V, Q and J occur in no other byte of the
+# file (the digests are lower-case hex), so each value is searched one such
+# letter at a time and by its 4-character windows.
+# ---------------------------------------------------------------------------
+
+_V3 = "X4Z9X4Z9X4Z9"
+_SKV = "QZJ8QZJ8"
+_T16 = "ghjlmqfu012356ab"
+_XV = "XZVXZVXZVXZV"
+_VERIFIER_R3_SHAPES = [
+    ("N1-sk-api_KEY", f'sk-{_SKV}api_KEY=plainval"password: {_V3}', (_SKV, _V3)),
+    ("N1-sk-ApiKEY", f"sk-{_SKV}ApiKEY=plainval&secret: {_V3}", (_SKV, _V3)),
+    ("N1-bearer-api_KEY", f"Bearer {_SKV}{_SKV}api_KEY=plainval,token= {_V3}", (_SKV, _V3)),
+    ("N1-sk-dotted-I", f"sk-{_SKV}AP" + chr(0x130) + f"_KEY=plainval;passwd : {_V3}", (_SKV, _V3)),
+    ("N1-control-API_KEY", f'sk-{_SKV}API_KEY=plainval"password: {_V3}', (_SKV, _V3)),
+    ("N2-dot", f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopsk-qqqqqqqq.secret = {_V3}token: plainvl2", (_SKV, _V3)),
+    ("N2-plus", f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopsk-qqqqqqqq+Secret = {_V3}key: plainvl2", (_SKV, _V3)),
+    ("N2-tilde-key", f"sk-{_SKV}PASSWORD=plainvalbearer abcdefghijklmnopsk-qqqqqqqq~key= {_V3}token: plainvl2", (_SKV, _V3)),
+    (
+        "N2-control-no-inner-sk",
+        f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopqqqqqqqq.secret = {_V3}token: plainvl2",
+        (_SKV, _V3),
+    ),
+    ("R4-n2-a", f"sk-ghjlmqfupassword:plainonebearer {_T16}sk-ghjlmqfu.secret = {_XV}token: plainone", (_XV,)),
+    ("stub", "password: mykey=X4Z9Q", ("X4Z9Q",)),
+]
+
+
+@pytest.mark.parametrize("shape, values", [(s, v) for _, s, v in _VERIFIER_R3_SHAPES], ids=[i for i, _, _ in _VERIFIER_R3_SHAPES])
+def test_verifier_r3_shape_value_never_reaches_the_ledger_file(tmp_path, shape, values):
+    # C5 (with C1's sinks): no letter of a planted value and no 4-character
+    # window of it in the appended line or in replay's row; replay accepts it.
+    from agent_factory.decisions.ledger import append, make_row, replay
+
+    fixture = _load("b1.finding_sev")
+    row = make_row(
+        producer="decide-harvest/incident-log",
+        question_id="b1.finding_sev",
+        raw_state=dict(fixture["state"], msg=f"set {shape} now"),
+        incumbent_answer="accepted",
+        source_ref=dict(_fake_source_ref(), locator="the redesign hand shapes"),
+        root=fixture.get("root"),
+    )
+    ledger = tmp_path / "ledger.jsonl"
+    assert append(ledger, row) == row["row_id"]
+    text = ledger.read_text(encoding="utf-8")
+    replayed = replay(ledger)
+    assert replayed == [row], shape
+    replayed_text = canonical(replayed[0])
+    for value in values:
+        letters = set(value) & set("XZVQJ")
+        assert letters, value
+        for where, blob in (("the line", text), ("replay", replayed_text)):
+            assert not letters & set(blob), f"{shape!r}: {sorted(letters & set(blob))} of {value!r} in {where}"
+            windows = [value[i:i + 4] for i in range(len(value) - 3) if value[i:i + 4] in blob]
+            assert not windows, f"{shape!r}: {windows} of {value!r} in {where}"

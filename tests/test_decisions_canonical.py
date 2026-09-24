@@ -779,11 +779,11 @@ def test_state_digest_is_sha256_of_canonical_decision_state():
 
 
 # ---------------------------------------------------------------------------
-# The D-1 ruling (coordinator, option D). The class order, first match wins:
-# privkey, sk, bearer, the upper-case NAME=value env form (TOKEN included,
-# as at the PIN), the token class (a 32+ run after a TOKEN name), then the
-# widened env form WITH TOKEN, whose guard never replaces a value that
-# already is a placeholder. The placeholders are pinned here, not imported.
+# The D-1 ruling (coordinator, option D). The class order -- since D-070 the
+# order of a tie at one start, under a whole placeholder -- is privkey, sk,
+# bearer, the upper-case NAME=value env form (TOKEN included, as at the PIN),
+# the token class (a 32+ run after a TOKEN name), then the widened env form
+# WITH TOKEN. The placeholders are pinned here, not imported.
 # ---------------------------------------------------------------------------
 
 _PLACEHOLDER_TEXTS = (
@@ -803,7 +803,8 @@ _RESIDUAL_SHAPES = [
     ("bridge-name-colon-short", "PC_BRIDGE_TOKEN: " + _body(10), "PC_BRIDGE_TOKEN: <redacted:envval>"),
     ("base64url-dash", "token: " + _body(16) + "-" + _body(16), "token: <redacted:envval>"),
     ("base64url-underscore", "token: " + _body(16) + "_" + _body(16), "token: <redacted:envval>"),
-    ("run-then-base64url-tail", "token: " + _body(40) + "-" + _body(12), "token: <redacted:envval>"),
+    # D-070 rule 3: a tie at the same start: the token class outranks the widened form
+    ("run-then-base64url-tail", "token: " + _body(40) + "-" + _body(12), "token: <redacted:token>"),
 ]
 
 
@@ -814,8 +815,9 @@ _RESIDUAL_SHAPES = [
 )
 def test_token_named_residual_shape_redacted(raw, want):
     # A TOKEN-named assignment whose value is NOT a 32+ [A-Za-z0-9+/] run
-    # becomes envval through the widened form, which runs after the token
-    # class; no byte of the value survives.
+    # becomes envval through the widened form (one that starts with such a run
+    # is the token class's: the tie at one start, D-070); no byte of the value
+    # survives.
     state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
     clean = {"file": "src/a.py", "kind": "k", "msg": "set " + want + " now"}
     got = redact(normalize("b1.finding_sev", state))["msg"]
@@ -826,8 +828,8 @@ def test_token_named_residual_shape_redacted(raw, want):
 
 def test_token_run_keeps_the_token_placeholder_and_no_placeholder_is_relabelled():
     # A 32+ run after a TOKEN name ends with the token placeholder only --
-    # never an envval around it -- because the widened env form's guard never
-    # replaces a value that already is a placeholder.
+    # never an envval around it -- because at one start the token class
+    # outranks the widened form (D-070 rule 3).
     run = _body(40)
     for lead in (
         "token = ",
@@ -841,8 +843,8 @@ def test_token_run_keeps_the_token_placeholder_and_no_placeholder_is_relabelled(
     ):
         got = redact({"msg": lead + run})["msg"]
         assert got == lead + "<redacted:token>", f"{lead + run!r} -> {got!r}"
-    # The guard holds for every placeholder after a widened-form name, whole
-    # or as the bound cut it (every prefix the value pattern could match).
+    # A whole placeholder after a widened-form name is held (D-070 rule 4), and
+    # one that bound cut is no span (every prefix the value pattern could match).
     for lead in ("password: ", "token = ", '"api_key": "'):
         for placeholder in _PLACEHOLDER_TEXTS:
             for end in range(8, len(placeholder) + 1):
@@ -855,9 +857,9 @@ def test_token_run_keeps_the_token_placeholder_and_no_placeholder_is_relabelled(
 # B1-B5): a secret NAME that the sk or bearer class would swallow never frees
 # its value (VERIFY-J1-1-R1 V-1: "task-password: v" gave "ta<redacted:sk>: v"
 # and v reached the ledger). sk and bearer still fire where their PIN forms
-# fire; the run they replace ends before a secret assignment that a later
-# class redacts, unless that value holds another assignment head (then the
-# PIN's output stays, byte for byte).
+# fire. Since D-070 (J1-1-R4) their runs are greedy and each value is found on
+# its own: the yield and its guards are gone, and the rows below keep their
+# inputs and pin the union's layout.
 #
 # The rows are the brief's appendix driver, each as b1.finding_sev's msg.
 # FAKE bodies only: "QZJ8" runs. No other byte of these states is a Q, Z, J
@@ -870,14 +872,22 @@ _DRIVER_BODY = frozenset("QZJ8")
 
 # (id, raw text, the redacted text). Each leaks at the PIN.
 _V1_ROWS = [
-    ("V1-a", f"task-password: {_V}", "ta<redacted:sk>password: <redacted:envval>"),
-    ("V1-b", f"ask-password={_V}", "a<redacted:sk>password=<redacted:envval>"),
-    ("V1-c", f'"task-password": "{_V}"', '"ta<redacted:sk>password": "<redacted:envval>"'),
-    ("V1-d", f"desk-secret_key: {_V}", "de<redacted:sk>key: <redacted:envval>"),
-    ("V1-e", f"flask-access_token={_RUN}", "fla<redacted:sk>token=<redacted:token>"),
-    ("V1-f", "disk-PASSWORD=QZJ8QZ", "di<redacted:sk>PASSWORD=<redacted:envval>"),
-    ("V1-g", f"bearer my-service-password: {_V}", "<redacted:bearer>password: <redacted:envval>"),
-    ("V1-h", f"sk-abcdefgh-password={_V}", "<redacted:sk>password=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("V1-a", f"task-password: {_V}", "ta<redacted:sk>: <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("V1-b", f"ask-password={_V}", "a<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("V1-c", f'"task-password": "{_V}"', '"ta<redacted:sk>": "<redacted:envval>"'),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("V1-d", f"desk-secret_key: {_V}", "de<redacted:sk>: <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the _token head inside it is found on its own
+    ("V1-e", f"flask-access_token={_RUN}", "fla<redacted:sk>=<redacted:token>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("V1-f", "disk-PASSWORD=QZJ8QZ", "di<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the bearer run is greedy through the name; rule 2: the value is found on its own
+    ("V1-g", f"bearer my-service-password: {_V}", "<redacted:bearer>: <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("V1-h", f"sk-abcdefgh-password={_V}", "<redacted:sk>=<redacted:envval>"),
 ]
 # The driver's controls keep the PIN's redaction byte for byte. C-4 is the
 # row the verifier's option B leaks: a bearer token followed by a colon.
@@ -892,31 +902,47 @@ _V1_CONTROLS = [
 # The same class beyond the driver. The first ten leak at the PIN: each other
 # secret name (after a prefix with ":" or "=", and as an upper-case NAME= with
 # a short value, V1-f's form), and the token class's space form. The last
-# nine keep the PIN's own output: a value that holds a second assignment head
-# (each assignment form; an upper-case NAME='s value runs past ";" and the
+# nine kept the PIN's own output until D-070 (the five chain rows now hide
+# every value, the other four keep it): a value that holds a second
+# assignment head (each assignment form; an upper-case NAME='s value runs past ";" and the
 # token class's space head counts too: the value would swallow that name and
 # free its value), a token whose tail spells a name but no value follows, a
 # lower-case "=" (the upper-case NAME= form is case-sensitive), base64 "="
 # padding, and "token" with a space but no 32+ run.
 _V1_CLASS_ROWS = [
-    ("name-secret", f"desk-client_secret: {_V}", "de<redacted:sk>secret: <redacted:envval>"),
-    ("name-passwd", f"desk-db_passwd={_V}", "de<redacted:sk>passwd=<redacted:envval>"),
-    ("name-api_key", f"desk-my_api_key: {_V}", "de<redacted:sk>api_key: <redacted:envval>"),
-    ("upper-key-short", "desk-SERVICE_KEY=QZJ8QZ", "de<redacted:sk>KEY=<redacted:envval>"),
-    ("upper-token-short", "desk-SERVICE_TOKEN=QZJ8QZ", "de<redacted:sk>TOKEN=<redacted:envval>"),
-    ("upper-secret-short", "desk-SERVICE_SECRET=QZJ8QZ", "de<redacted:sk>SECRET=<redacted:envval>"),
-    ("upper-passwd-short", "desk-SERVICE_PASSWD=QZJ8QZ", "de<redacted:sk>PASSWD=<redacted:envval>"),
-    ("upper-api_key-short", "desk-SERVICE_API_KEY=QZJ8QZ", "de<redacted:sk>API_KEY=<redacted:envval>"),
-    ("token-space-sk", f"desk-access-token {_RUN}", "de<redacted:sk>token <redacted:token>"),
-    ("token-space-bearer", f"bearer my-service-access-token {_RUN}", "<redacted:bearer>token <redacted:token>"),
-    ("chain-widened", f"flask-tapasswd=aAPI_KEY : {_V}", "fla<redacted:sk>=aAPI_KEY : <redacted:envval>"),
-    ("chain-upper", f"mask-PASSWORD=xtoken: {_V}", "ma<redacted:sk>=xtoken: <redacted:envval>"),
-    ("chain-upper-past-a-stop", f"mask-PASSWORD=plainvalue;token: {_V}", "ma<redacted:sk>=plainvalue;token: <redacted:envval>"),
-    ("chain-upper-token-space", f"mask-PASSWORD=abc_token {_RUN}", "ma<redacted:sk>=abc_token <redacted:token>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("name-secret", f"desk-client_secret: {_V}", "de<redacted:sk>: <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("name-passwd", f"desk-db_passwd={_V}", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("name-api_key", f"desk-my_api_key: {_V}", "de<redacted:sk>: <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("upper-key-short", "desk-SERVICE_KEY=QZJ8QZ", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("upper-token-short", "desk-SERVICE_TOKEN=QZJ8QZ", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("upper-secret-short", "desk-SERVICE_SECRET=QZJ8QZ", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("upper-passwd-short", "desk-SERVICE_PASSWD=QZJ8QZ", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: its NAME= head is found on its own
+    ("upper-api_key-short", "desk-SERVICE_API_KEY=QZJ8QZ", "de<redacted:sk>=<redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the token head is found on its own
+    ("token-space-sk", f"desk-access-token {_RUN}", "de<redacted:sk> <redacted:token>"),
+    # D-070 rule 5: the bearer run is greedy through the name; rule 2: the token head is found on its own
+    ("token-space-bearer", f"bearer my-service-access-token {_RUN}", "<redacted:bearer> <redacted:token>"),
+    # D-070 rule 2: the head API_KEY : starts inside the first value and is found; rule 5: both values go
+    ("chain-widened", f"flask-tapasswd=aAPI_KEY : {_V}", "fla<redacted:sk>=<redacted:envval> : <redacted:envval>"),
+    # D-070 rule 5: the NAME= value runs to the space; rule 2: the head token: inside it is found on its own
+    ("chain-upper", f"mask-PASSWORD=xtoken: {_V}", "ma<redacted:sk>=<redacted:envval> <redacted:envval>"),
+    # D-070 rule 5: the NAME= value runs past ; to the space; rule 2: the head token: inside it is found on its own
+    ("chain-upper-past-a-stop", f"mask-PASSWORD=plainvalue;token: {_V}", "ma<redacted:sk>=<redacted:envval> <redacted:envval>"),
+    # D-070 rule 5: the NAME= value runs to the space; rule 2: the _token head inside it is found on its own
+    ("chain-upper-token-space", f"mask-PASSWORD=abc_token {_RUN}", "ma<redacted:sk>=<redacted:envval> <redacted:token>"),
+    # D-070 rule 2: the token head inside the bearer run is found; rule 5: its run takes the chain's first value
     (
         "chain-token-run",
         f"bearer my-service-access-token {'ab' * 16}key: {_V}",
-        f"<redacted:bearer> {'ab' * 16}key: <redacted:envval>",
+        "<redacted:bearer> <redacted:token>: <redacted:envval>",
     ),
     ("no-value", f"Authorization: Bearer {_V[:13]}key: ok", "Authorization: <redacted:bearer>: ok"),
     ("lower-equals", f"Authorization: Bearer {_V[:13]}key=ok", "Authorization: <redacted:bearer>ok"),
@@ -964,9 +990,8 @@ def test_v1_control_keeps_its_pin_redaction(raw, want):
     ids=[row_id for row_id, _, _ in _V1_CLASS_ROWS],
 )
 def test_v1_class_beyond_the_driver(raw, want):
-    # B1 for the other names and the token space form; B2 for the guards
-    # that keep the PIN's output where a yield would free or split nothing
-    # new (each guard's negative control is a mutant that drops it).
+    # B1 for the other names and the token space form; the rows after them
+    # were B2's guard rows (the guards are gone since D-070; the inputs stay).
     _assert_driver_row(raw, want)
 
 
@@ -1063,7 +1088,8 @@ def test_verifier_shapes_keep_every_pin_redaction():
 
 # ===========================================================================
 # J1-1-R3 -- AMENDMENT 3 to J1-1 (D-059; tasks/briefs/laya/J1-1-R3-brief.md,
-# C1-C5): the sk/bearer yield guard reads the value its class actually takes.
+# C1-C5): the sk/bearer yield guard reads the value its class actually takes
+# (D-070 removed that guard; the rows keep their inputs).
 # VERIFY-J1-1-R2 found three regressions of J1-1-R2, each a value body the
 # PIN d556c9b redacted reaching the ledger, and one V-1 residue:
 #   R-1  the bearer run lost the PIN's case-insensitive letters (U+0130,
@@ -1074,10 +1100,9 @@ def test_verifier_shapes_keep_every_pin_redaction():
 #        the text after "bearer <run>", and the merged value swallowed the
 #        next head (pure ASCII);
 #   R-3  "NAME= v" (upper case, a space after "=") behind sk or bearer.
-# In a chain row the FIRST value keeps the PIN's output (the chain design,
-# the chain-* rows above): "plainval" or a run of "ab" stands there, and the
-# FAKE "QZJ8" body is the value the PIN redacts. No other byte is a Q, Z, J
-# or 8.
+# In a chain row the FIRST value ("plainval" or a run of "ab") kept the PIN's
+# output until D-070, which hides it too; the FAKE "QZJ8" body is the value
+# the PIN redacts. No other byte is a Q, Z, J or 8.
 # ===========================================================================
 
 _TR = "ab" * 16  # a 32-character token run that a chain row leaves as the PIN does
@@ -1093,22 +1118,26 @@ _R1_ROWS = [
 # Each row but the last leaks at J1-1-R2: the token run's special letter hid
 # the second head from the check, the run swallowed it and freed its value.
 _R2_ROWS = [
+    # D-070 rule 2: the token head is found on its own; rule 5: its run takes the special letter and the name
     (
         "sk-dotless-i",
         f"sk-abcdefgh-token {_TR}\u0131password: {_V}",
-        f"<redacted:sk> {_TR}\u0131password: <redacted:envval>",
+        "<redacted:sk> <redacted:token>: <redacted:envval>",
     ),
+    # D-070 rule 2: the token head is found on its own; rule 5: its run takes the special letter and the name
     (
         "bearer-long-s",
         f"Bearer abcdefghijklmnop-token {_TR}\u017fkey={_V}",
-        f"<redacted:bearer> {_TR}\u017fkey=<redacted:envval>",
+        "<redacted:bearer> <redacted:token>=<redacted:envval>",
     ),
+    # D-070 rule 2: the token head is found on its own; rule 5: its run takes the special letter and the name
     (
         "sk-quote-dotted-I",
         f'sk-abcdefgh_token"{_TR}\u0130secret: {_V}',
-        f'<redacted:sk>"{_TR}\u0130secret: <redacted:envval>',
+        '<redacted:sk>"<redacted:token>: <redacted:envval>',
     ),
-    ("ascii-control", f"sk-abcdefgh-token {_TR}password: {_V}", f"<redacted:sk> {_TR}password: <redacted:envval>"),
+    # D-070 rule 2: the token head is found on its own; rule 5: its run takes the name
+    ("ascii-control", f"sk-abcdefgh-token {_TR}password: {_V}", "<redacted:sk> <redacted:token>: <redacted:envval>"),
 ]
 # Each row but the last leaks at J1-1-R2. The first five glue the value to
 # "bearer": after the bearer pass the value runs on past "<redacted:bearer>"
@@ -1117,49 +1146,59 @@ _R2_ROWS = [
 # leaks at d556c9b), and a bearer run holding U+0131 (J1-1-R2 left that
 # token visible: R-1). The control has a space before "bearer": no merge.
 _R4_ROWS = [
+    # D-070 rule 3: the value and the glued bearer merge; the value runs through it to the space (_spans)
     (
         "widened-bearer-padding",
         f"task-password:plainvalbearer abcdefghijklmnop==token: {_V}",
-        "ta<redacted:sk>:plainval<redacted:bearer>token: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> <redacted:envval>",
     ),
+    # D-070 rule 3: the value and the glued bearer merge; the value runs through it to the space (_spans)
     (
         "upper-bearer-padding",
         f"task-PASSWORD=plainvalbearer abcdefghijklmnop==token: {_V}",
-        "ta<redacted:sk>=plainval<redacted:bearer>token: <redacted:envval>",
+        "ta<redacted:sk>=<redacted:envval> <redacted:envval>",
     ),
+    # D-070 rule 5: the bearer run takes the name; rule 3: the value and the second bearer merge (_spans)
     (
         "bearer-yield-then-bearer",
         f"Bearer abcdefghijklmnoppassword:plainvalBearer abcdefghijklmnop)key: {_V}",
-        "<redacted:bearer>:plainval<redacted:bearer>)key: <redacted:envval>",
+        "<redacted:bearer>:<redacted:envval> <redacted:envval>",
     ),
+    # D-070 rule 3: the value and the glued bearer merge; the value runs through it to the space (_spans)
     (
         "head-the-bearer-leaves",
         f"task-password:plainvalbearer abcdefghijklmnoppassword: {_V}",
-        "ta<redacted:sk>:plainval<redacted:bearer>password: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> <redacted:envval>",
     ),
+    # D-070 rule 3: the value and the glued bearer merge; the value runs through it to the space (_spans)
     (
         "special-letter-in-the-merged-run",
         f"task-password:plainvalbearer abcdefgh\u0131jklmnop==token: {_V}",
-        "ta<redacted:sk>:plainval<redacted:bearer>token: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> <redacted:envval>",
     ),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
     (
         "space-before-bearer-control",
         f"task-password:plainval bearer abcdefghijklmnop==token: {_V}",
-        "ta<redacted:sk>password:<redacted:envval> <redacted:bearer>token: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> <redacted:bearer>token: <redacted:envval>",
     ),
 ]
 # C2 (R-3): an upper-case NAME, "=", a space, then the value, behind sk or
 # bearer. Each row but the last leaks at d556c9b and at J1-1-R2. The padding
-# form "NAME==v" behind sk or bearer is a declared residue (the lane report),
-# deliberately not pinned here.
+# form "NAME==v" behind sk or bearer was a declared residue (the lane report),
+# not pinned here; since D-070 the NAME= value takes the second "=" and v is
+# hidden (the C5 rows below, R3-pad).
 _R3_ROWS = [
-    ("sk-name-space", f"task-DB_PASSWORD= {_V}", "ta<redacted:sk>PASSWORD= <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("sk-name-space", f"task-DB_PASSWORD= {_V}", "ta<redacted:sk>= <redacted:envval>"),
+    # D-070 rule 5: the bearer run is greedy through the name and its = padding; rule 2: the value is found
     (
         "bearer-name-space",
         f"Authorization: Bearer abcdefghijklmnopAPI_KEY= {_V}",
-        "Authorization: <redacted:bearer>API_KEY= <redacted:envval>",
+        "Authorization: <redacted:bearer> <redacted:envval>",
     ),
-    ("sk-value-then-name-space", f"sk-abcdefgh-SECRET= {_V}", "<redacted:sk>SECRET= <redacted:envval>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
+    ("sk-value-then-name-space", f"sk-abcdefgh-SECRET= {_V}", "<redacted:sk>= <redacted:envval>"),
     ("no-prefix-control", f"DB_PASSWORD= {_V}", "DB_PASSWORD= <redacted:envval>"),
 ]
 # C3: the three mutants VERIFY-J1-1-R2 showed surviving all 121 tests (its
@@ -1171,42 +1210,51 @@ _R3_ROWS = [
 # then no longer mirrors _ENVVAL, the run yields to "APIKEY='", and _ENVVAL's
 # \S+ value swallows the next head and frees its value.
 _MUTANT_ROWS = [
-    ("V-M3-upper-token-space", f"desk-access-TOKEN {_RUN}", "de<redacted:sk>TOKEN <redacted:token>"),
-    ("V-M11-underscore-token-space", f"desk-access_token {_RUN}", "de<redacted:sk>token <redacted:token>"),
-    ("V-M4-upper-token-head-in-a-chain", f"mask-PASSWORD=abc_TOKEN {_RUN}", "ma<redacted:sk>=abc_TOKEN <redacted:token>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the token head is found on its own
+    ("V-M3-upper-token-space", f"desk-access-TOKEN {_RUN}", "de<redacted:sk> <redacted:token>"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the token head is found on its own
+    ("V-M11-underscore-token-space", f"desk-access_token {_RUN}", "de<redacted:sk> <redacted:token>"),
+    # D-070 rule 5: the NAME= value runs to the space; rule 2: the _TOKEN head inside it is found on its own
+    ("V-M4-upper-token-head-in-a-chain", f"mask-PASSWORD=abc_TOKEN {_RUN}", "ma<redacted:sk>=<redacted:envval> <redacted:token>"),
+    # D-070 rule 5: the NAME= value runs past the quotes and & to the space; rule 2: Secret = is found
     (
         "V-M10-upper-apikey-chain",
         f"task-DB_APIKEY='plainvalue'&Secret = {_V}",
-        "ta<redacted:sk>='plainvalue'&Secret = <redacted:envval>",
+        "ta<redacted:sk>=<redacted:envval> = <redacted:envval>",
     ),
 ]
-# C4 against J1-1-R2: the step over a bearer match is exact, so every value
-# J1-1-R2 redacts here stays redacted. A glued "bearer" that is no merge
+# C4 against J1-1-R2: every value J1-1-R2 redacts here stays redacted (the
+# step over a bearer match these rows were written for is gone since D-070).
+# A glued "bearer" that is no merge
 # (under 16 run characters: 7, and 15 with a head after it), a merge with no
 # head after it, a head the bearer run consumes (its value one character
-# under the widened form's 8), and a token run glued to a bearer (the token
-# check takes no step: _TOKEN's run stops at the "<").
+# under the widened form's 8), and a token run glued to a bearer.
 _MERGE_CONTROL_ROWS = [
-    ("merge-no-head", f"task-password:{_V[:8]}bearer abcdefghijklmnop rest", "ta<redacted:sk>password:<redacted:envval> rest"),
+    # D-070 rule 5: the sk run takes the name; rule 3: the value and the glued bearer merge
+    ("merge-no-head", f"task-password:{_V[:8]}bearer abcdefghijklmnop rest", "ta<redacted:sk>:<redacted:envval> rest"),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
     (
         "short-bearer-no-merge",
         f"task-password:{_V[:8]}bearer abcdkey: {_V[:8]}",
-        "ta<redacted:sk>password:<redacted:envval> abcdkey: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> abcdkey: <redacted:envval>",
     ),
+    # D-070 rule 5: the sk run is greedy through the name; rule 2: the value is found on its own
     (
         "bearer-run-of-15-glued",
         f"task-password:plainvalbearer bcdfghmnuvwbcdf==token: {_V}",
-        "ta<redacted:sk>password:<redacted:envval> bcdfghmnuvwbcdf==token: <redacted:envval>",
+        "ta<redacted:sk>:<redacted:envval> bcdfghmnuvwbcdf==token: <redacted:envval>",
     ),
+    # D-070 rule 5: the sk run takes the name; rule 3: the value and the glued bearer merge
     (
         "head-the-bearer-consumes",
         f"task-PASSWORD={_V[:8]}bearer abcdefghijklmnopapi_key= plainvl",
-        "ta<redacted:sk>PASSWORD=<redacted:envval> plainvl",
+        "ta<redacted:sk>=<redacted:envval> plainvl",
     ),
+    # D-070 rule 5: the sk run takes the name; rule 3: the token run and the glued bearer merge
     (
         "token-run-glued-to-bearer",
         f"sk-abcdefgh-token {_RUN[:32]}bearer abcdefghijklmnop",
-        "<redacted:sk>token <redacted:token><redacted:bearer>",
+        "<redacted:sk> <redacted:token>",
     ),
 ]
 
@@ -1226,7 +1274,7 @@ def test_r1_bearer_run_takes_the_pin_letters(raw, want):
 
 @_rows(_R2_ROWS)
 def test_r2_token_check_reads_the_run_as_the_token_class_does(raw, want):
-    # C1 (R-2): the second value is redacted; the run keeps the PIN's output.
+    # C1 (R-2): the second value is redacted, and since D-070 the run too.
     _assert_driver_row(raw, want)
 
 
@@ -1238,7 +1286,7 @@ def test_r4_env_check_reads_the_value_after_the_bearer_merge(raw, want):
 
 @_rows(_R3_ROWS)
 def test_r3_upper_name_equals_space_value_behind_sk_or_bearer(raw, want):
-    # C2: "NAME= v" yields to the widened form, which redacts v.
+    # C2: the widened form finds "NAME= v" on its own (D-070) and redacts v.
     _assert_driver_row(raw, want)
 
 
@@ -1253,3 +1301,104 @@ def test_bearer_merge_step_keeps_every_j1_1_r2_redaction(raw, want):
     # C4: green at J1-1-R2 and after; the negative controls are mutants (the
     # verifier's FIX-A as written, a step that re-enters the bearer run).
     _assert_driver_row(raw, want)
+
+
+# ===========================================================================
+# J1-1-R4 -- D-070 (tasks/briefs/laya/J1-1-R4-REDESIGN-brief.md, C5): the
+# verifier's hand shapes, each a named test, through decision_state and
+# canonical(): VERIFY-J1-1-R3 section 2c (F-1, the N1-* shapes; F-2, the N2-*
+# shapes; V3 is the value d556c9b hides and fdac751 showed), section 4a (its
+# own R-1..R-4 shapes; R4-n2-a is F-2's), section 5's grid example, and the
+# brief's stub example. FAKE values only. Left out: section 4a's R3-floor7, a
+# 7-character value under the widened form's floor by design (visible at
+# d556c9b, at fdac751 and here). A value's canary characters occur nowhere
+# else in the shape and in no fixed byte of the state, so a canary in the
+# output can only come from the value.
+# ===========================================================================
+
+_V3 = "X4Z9X4Z9X4Z9"
+_SKV = "QZJ8QZJ8"  # the N-shapes' sk run: a secret too
+_T16 = "ghjlmqfu012356ab"
+_T32 = "ghjlmqfu" * 4
+_XV = "XZVXZVXZVXZV"
+_I0, _I1, _LS = chr(0x130), chr(0x131), chr(0x17F)
+_FIXED_OUTPUT = set(canonical({"file": "src/a.py", "kind": "k", "msg": "set  now"})) | set("".join(_PLACEHOLDER_TEXTS))
+
+# (id, raw text, the values it plants)
+_VERIFIER_R3_SHAPES = [
+    ("N1-sk-api_KEY", f'sk-{_SKV}api_KEY=plainval"password: {_V3}', (_SKV, _V3)),
+    ("N1-sk-ApiKEY", f"sk-{_SKV}ApiKEY=plainval&secret: {_V3}", (_SKV, _V3)),
+    ("N1-bearer-api_KEY", f"Bearer {_SKV}{_SKV}api_KEY=plainval,token= {_V3}", (_SKV, _V3)),
+    ("N1-sk-dotted-I", f"sk-{_SKV}AP{_I0}_KEY=plainval;passwd : {_V3}", (_SKV, _V3)),
+    ("N1-control-API_KEY", f'sk-{_SKV}API_KEY=plainval"password: {_V3}', (_SKV, _V3)),
+    ("N2-dot", f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopsk-qqqqqqqq.secret = {_V3}token: plainvl2", (_SKV, _V3)),
+    ("N2-plus", f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopsk-qqqqqqqq+Secret = {_V3}key: plainvl2", (_SKV, _V3)),
+    ("N2-tilde-key", f"sk-{_SKV}PASSWORD=plainvalbearer abcdefghijklmnopsk-qqqqqqqq~key= {_V3}token: plainvl2", (_SKV, _V3)),
+    (
+        "N2-control-no-inner-sk",
+        f"sk-{_SKV}password:plainvalbearer abcdefghijklmnopqqqqqqqq.secret = {_V3}token: plainvl2",
+        (_SKV, _V3),
+    ),
+    ("R4-n2-a", f"sk-ghjlmqfupassword:plainonebearer {_T16}sk-ghjlmqfu.secret = {_XV}token: plainone", (_XV,)),
+    ("R4-n2-b", f"Bearer {_T16}passwd=plainonebearer {_T16}sk-ghjlmqfu+Key = {_XV}secret: plainone", (_XV,)),
+    (
+        "item5-example",
+        f"sk-ghjlmqfupassword:plainonebearer ghjlmqfu01235678sk-ghjlmqfu..secret = {_XV}token: zvzvzvzv",
+        (_XV,),
+    ),
+    ("R1-a", f"Auth: BEARER XZVXZVXZ{_I1}XZVXZVXZVX", (f"XZVXZVXZ{_I1}XZVXZVXZVX",)),
+    ("R1-b", '{"auth":"bEaReR ' + _LS + 'XZVXZVXZVXZVXZVX"}', (_LS + "XZVXZVXZVXZVXZVX",)),
+    ("R1-c", f"curl -H 'Auth: Bearer XZV{_I0}XZV{_I1}XZV{_LS}XZVX'", (f"XZV{_I0}XZV{_I1}XZV{_LS}XZVX",)),
+    ("R1-d", f"Bearer XZVXZVXZVXZVXZV{_I1} done", (f"XZVXZVXZVXZVXZV{_I1}",)),
+    ("R1-e", f"bearer {_I1 * 8}{_LS * 4}{_I0 * 4}", (f"{_I1 * 8}{_LS * 4}{_I0 * 4}",)),
+    ("R1-f", f"bearer XZ.VX~ZV+XZ/VX-ZV_{_I0}XZVX==", (f"XZ.VX~ZV+XZ/VX-ZV_{_I0}XZVX",)),
+    ("R1-g", f"type=Bearer&h=Bearer XZVXZVXZVX{_LS}XZVXZ", (f"XZVXZVXZVX{_LS}XZVXZ",)),
+    ("R2-a", f"sk-ghjlmqfu-token {_T32}{_I0}secret: {_XV}", (_XV,)),
+    ("R2-b", f'BEARER {_T16}_TOKEN "{_T32}{_LS}PASSWD={_XV}"', (_XV,)),
+    ("R2-c", f"sk-ghjlmqfu_token {_T32}{_I1}TOKEN={_XV}", (_XV,)),
+    ("R2-d", f"sk-ghjlmqfu-token {_I1}{_T32}Key: {_XV}", (_XV,)),
+    ("R2-e", f"bearer {_T16}-token '{_T32}{_I1}api_key = {_XV}", (_XV,)),
+    ("R4-a", f"sk-ghjlmqfusecret:plainoneBEARER {_T16}=key : {_XV}", (_XV,)),
+    ("R4-b", f"sk-ghjlmqfudb_passwd=plainonebearer {_T16}==Password: {_XV}", (_XV,)),
+    ("R4-c", f"task-password=plainonebearer {_T16})api_key= {_XV}", (_XV,)),
+    ("R4-h", f"Bearer {_T16}secret:plainoneBEARER {_T16}Token = {_XV}", (_XV,)),
+    ("R4-i", f"sk-ghjlmqfu-KEY=plainonebearer {_T16}/passwd: {_XV}", (_XV,)),
+    ("R4-d", f"task-password:plainonebearer {_T16}bearer {_T16}key: {_XV}", (_XV,)),
+    ("R4-e", f"sk-ghjlmqfuSECRET=plainonebEaReR {_T16}~token: {_XV}", (_XV,)),
+    ("R4-f", f"Bearer {_T16}password:plainonebearer {_T16}.SECRET = {_XV}", (_XV,)),
+    ("R4-g", f'sk-ghjlmqfu_api_key: plainonebearer {_T16}==token "{_XV}{_XV}{_XV}"', (_XV,)),
+    ("R3-a", f"task-SERVICE_TOKEN= {_XV}", (_XV,)),
+    ("R3-b", f"sk-ghjlmqfu-PASSWD= {_XV}", (_XV,)),
+    ("R3-c", f"Bearer {_T16}APIKEY= {_XV}", (_XV,)),
+    ("R3-d", f"sk-ghjlmqfu_KEY= {_XV}", (_XV,)),
+    ("R3-e", f'bEaReR {_T16}SECRET= "{_XV}"', (_XV,)),
+    ("R3-f", "sk-ghjlmqfuPASSWORD= XZVXZVXZ", ("XZVXZVXZ",)),
+    ("R3-pad", f"sk-ghjlmqfuKEY=={_XV}", (_XV,)),
+    ("stub", "password: mykey=X4Z9Q", ("mykey=X4Z9Q",)),
+]
+
+
+def _canaries(raw, values):
+    rest = raw
+    for value in values:
+        rest = rest.replace(value, "\x00")
+    return {value: set(value) - set(rest) - _FIXED_OUTPUT for value in values}
+
+
+@pytest.mark.parametrize(
+    "raw, values",
+    [(raw, values) for _, raw, values in _VERIFIER_R3_SHAPES],
+    ids=[shape_id for shape_id, _, _ in _VERIFIER_R3_SHAPES],
+)
+def test_verifier_r3_shape_frees_no_value(raw, values):
+    # C5: no canary character and no 4-character window of any planted value
+    # in decision_state's output or in canonical() of it; a fixed point.
+    state = {"file": "src/a.py", "kind": "k", "msg": "set " + raw + " now"}
+    out = _decision_state("b1.finding_sev", state)
+    text = canonical(out)
+    for value, canary in _canaries(raw, values).items():
+        assert canary, f"{raw!r}: {value!r} has no canary character"
+        assert not canary & set(text), f"{raw!r}: bytes {sorted(canary & set(text))} of {value!r} in {text!r}"
+        windows = [value[i:i + 4] for i in range(len(value) - 3) if value[i:i + 4] in text]
+        assert not windows, f"{raw!r}: {windows} of {value!r} in {text!r}"
+    assert _decision_state("b1.finding_sev", out) == out, f"{raw!r}: not a fixed point"
