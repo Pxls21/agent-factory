@@ -175,3 +175,49 @@ teacher must be a model that can do the task (Haiku reached 0.60 here; OpenJev i
 
 Limits: POST-HOC; 76 of the 100 rows are table rows whose "whole finding" is only their full title cell; the verifier's
 own reasoning words (for example "reproduced", "blocks") stay in the text, as they would for any reader; one run each.
+
+## 7. OpenJev 0.1 on the same samples and scripts (16:3xZ; task #234, D-078; `j2b-variants/openjev_j2.py`)
+
+J2's rule for a new candidate (§3): the same samples and scripts, unchanged, with the same baselines. `openjev_j2.py` loads the
+committed probe scripts and swaps only their `post`: model `openjev-latest` on codiv.ai, every string through
+`transcript_export.scrub` first, one chunk per request for fan-out questions, at most one request per 1.05 s. The run
+(15:1xZ-16:3xZ) sent 3,300 requests and 851,486 input tokens and finished all six variants; the outputs are
+`j2b-variants/openjev/*.json` (`usage.json` holds the per-variant counts and times).
+
+| `v1.finding_class` | Input | Accuracy | Balanced accuracy | Blocking split | BLOCKER recall |
+|---|---|---:|---:|---:|---:|
+| Majority (FOLLOW-UP) | either | 0.43 | 0.167 | **0.91** | 0/7 |
+| Haiku 4.5 (§6) | whole finding | **0.60** | **0.364** | 0.85 | 4/7 |
+| **OpenJev `choice`** | whole finding | 0.54 | 0.341 | 0.83 | 4/7 |
+| OpenJev per-class `noul` | whole finding | 0.14 | 0.253 | 0.32 | 6/7 |
+| Laya `choice` (§6) | whole finding | 0.17 | 0.209 | 0.59 | 2/7 |
+| Haiku 4.5 (§5.2) | title | 0.45 | 0.278 | 0.88 | 0/7 |
+| OpenJev `choice` | title | 0.45 | 0.226 | 0.80 | 0/7 |
+| OpenJev per-class `noul` | title | 0.10 | 0.150 | 0.26 | 3/7 |
+| OpenJev `choice`, rich definitions (J2b) | title | 0.49 | 0.242 | 0.76 | 0/7 |
+
+The one yes/no question on the title (`v1_blocking`): OpenJev blocking split 0.89, blocking recall 1/9, false alarms 3/91;
+Laya 0.87, 0/9, 4/91; "never block" 0.91. OpenJev's per-class recall on whole findings: FOLLOW-UP 39/43, INFO 10/43,
+BLOCKER 4/7, KNOWN 1/3, CONTRACT-DEFECT 0/2, UNVERIFIED 0/2.
+
+| `ap.violates_row` | Top 1 | Top 3 |
+|---|---:|---:|
+| Lexical overlap | **0.59** | 0.69 |
+| **OpenJev `choice` over the lexical 16** | 0.58 | **0.74** |
+| OpenJev per-row `noul` | 0.20 | 0.40 |
+| Haiku 4.5 reranking (§5.2) | 0.39 | 0.48 |
+| Laya `choice` (§5.1) | 0.22 | 0.50 |
+| Laya per-row `noul` (§1) | 0.05 | 0.22 |
+| Ceiling: the label is in the lexical 16 | 0.85 | |
+
+**What this says.** (1) OpenJev reads whole findings nearly as well as Haiku (0.54 against 0.60, the same 4 of 7 blockers)
+and far better than Laya (0.17), so it can teach this question; it is not a strong teacher (balanced accuracy 0.34; it
+calls most INFO findings FOLLOW-UP), and its soft labels carry that bias. (2) The shape matters as much for OpenJev as for
+Laya: one `choice` question beats one `noul` per class (0.54 against 0.14) and one `noul` per row (0.58 against 0.20). The
+per-class `noul` finds 6 of 7 blockers only by flagging most findings (blocking split 0.32). (3) On registry matching,
+OpenJev is the first model to reach the lexical baseline: level at top 1 (0.58 against 0.59), ahead at top 3 (0.74 against
+0.69). It does not beat it at top 1, so the lexical order stays the default there (§3; D-077 for the locator). (4) The title
+still caps every model (no blocker found from titles by any model).
+
+Limits: POST-HOC; one run; a hosted model whose weights and revision are not pinned (`openjev-latest` served as
+`openjev-0.1`), so a rerun may differ; the same sample limits as §6 (76 of the 100 v1 rows are table rows).

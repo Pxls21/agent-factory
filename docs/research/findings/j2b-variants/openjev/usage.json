@@ -1,0 +1,35 @@
+{
+ "model": "openjev-latest",
+ "runs": {
+  "ap_choice": {
+   "input_tokens": 137676,
+   "requests": 100,
+   "seconds": 106.3
+  },
+  "ap_noul": {
+   "input_tokens": 411861,
+   "requests": 1600,
+   "seconds": 2614.1
+  },
+  "v1": {
+   "input_tokens": 106879,
+   "requests": 700,
+   "seconds": 797.1
+  },
+  "v1_blocking": {
+   "input_tokens": 13956,
+   "requests": 100,
+   "seconds": 111.5
+  },
+  "v1_choice_rich": {
+   "input_tokens": 29256,
+   "requests": 100,
+   "seconds": 109.2
+  },
+  "v1_full": {
+   "input_tokens": 151858,
+   "requests": 700,
+   "seconds": 855.9
+  }
+ }
+}
