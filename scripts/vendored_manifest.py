@@ -26,6 +26,8 @@ import subprocess
 import sys
 from typing import Iterable, NamedTuple
 
+import yaml
+
 MANIFEST_PATH = Path("sandbox-kit/VENDORED-MANIFEST.md")
 PROVENANCE_PATH = Path("sandbox-kit/VENDORED-FROM.md")
 LOCK_PATH = Path("upstream.lock.yaml")
@@ -247,6 +249,84 @@ def normalize_repo(value: str) -> str:
     value = value.strip().removesuffix(".git").rstrip("/")
     value = re.sub(r"^(?:https?://)?(?:www\.)?github\.com/", "github.com/", value)
     return value.lower()
+
+
+# K170 (D-1/D-2): the lock and SBOM are parsed with PyYAML's safe loader, through a
+# per-call loader subclass that refuses a duplicate mapping key at any depth, instead
+# of the old line regex that silently skipped every line it did not recognise (AF-AP-25).
+#
+# R1: characters both YAML and `str.splitlines()` treat as a line break (U+0085,
+# U+2028, U+2029, carriage return). Built with chr() so none is ever typed in source;
+# a file holding one is refused before any line is numbered, because any later line
+# number would disagree with an editor's and with git's (AF-AP-132). The read is RAW
+# bytes (`read_bytes().decode`), never `Path.read_text`: universal-newline translation
+# in `read_text` silently strips a carriage return, so a CRLF file would slip past the
+# R1 scan and reach the YAML parser as a different document than an editor or git sees.
+_LINE_SEPARATORS = (chr(0x0085), chr(0x2028), chr(0x2029), chr(0x000D))
+
+
+def _refuse_line_separators(text: str, path: Path) -> None:
+    """R1: refuse a file holding U+0085 / U+2028 / U+2029 / a carriage return, naming the
+    file first, then the 1-based line (counted by newline characters, never
+    `str.splitlines()`, AF-AP-132), then the character itself by `repr`. Shared by the
+    YAML and provenance loaders so one scan answers "which line holds a break both YAML
+    and `splitlines` would split"."""
+    for separator in _LINE_SEPARATORS:
+        index = text.find(separator)
+        if index >= 0:
+            line = text.count("\n", 0, index) + 1
+            raise ManifestError(f"{path.as_posix()}: line {line} holds {separator!r}")
+
+
+def load_manifest_yaml(path: Path, label: str) -> object:
+    """Read one manifest input and parse it with the fail-closed loader (D-1/D-2).
+
+    A missing file, a separator character (R1), a YAML syntax error and a duplicate key
+    (R2) all become a `ManifestError` naming the file and the line, never a raw
+    `yaml.YAMLError` or a traceback. The separator line is counted by newline characters
+    so it agrees with an editor's and git's (R1, AF-AP-132); a YAML syntax error carries
+    the line from the YAML mark (R2); a duplicate key carries the second key's line by
+    YAML's own mark. The read is raw bytes so a carriage return is seen, not translated
+    away by universal-newline mode.
+    """
+    if not path.is_file():
+        raise ManifestError(f"{label} missing: {path.as_posix()}")
+    text = path.read_bytes().decode("utf-8")
+    _refuse_line_separators(text, path)
+    loader = type("K170 manifest loader", (yaml.SafeLoader,), {})
+
+    def mapping(loader_, node, deep=False):
+        loader_.flatten_mapping(node)
+        seen = set()
+        for key_node, _value_node in node.value:
+            key = loader_.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise ManifestError(
+                    f"{label} duplicate key {key!r} at line {key_node.start_mark.line + 1} ({path.as_posix()})"
+                )
+            seen.add(key)
+        return yaml.SafeLoader.construct_mapping(loader_, node, deep)
+
+    loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    try:
+        return yaml.load(text, Loader=loader)
+    except ManifestError:
+        raise
+    except yaml.YAMLError as error:
+        mark = error.problem_mark
+        line = mark.line + 1 if mark is not None else None
+        if line is None:
+            raise ManifestError(f"{label} parse failure in {path.as_posix()}") from None
+        raise ManifestError(f"{label} parse failure at line {line} ({path.as_posix()})") from None
+
+
+def _clean_str(value: object, where: str) -> str:
+    """R5: a repository or pin must be a non-empty string carrying no whitespace
+    (YAML reads a long run of digits as an int, an empty value as None; a stray space
+    would glue into the value). Anything else is refused by `where`."""
+    if not isinstance(value, str) or not value or any(char.isspace() for char in value):
+        raise ManifestError(f"{where}: the value {value!r} is not a non-empty whitespace-free string")
+    return value
 
 
 def excluded(relative: PurePosixPath) -> bool:
@@ -650,7 +730,9 @@ def clean_code(cell: str) -> str:
 def parse_provenance(path: Path) -> tuple[set[str], dict[str, int]]:
     if not path.is_file():
         raise ManifestError(f"provenance file missing: {path.as_posix()}")
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text = path.read_bytes().decode("utf-8")
+    _refuse_line_separators(text, path)
+    lines = text.split("\n")
     header = next(
         (index for index, line in enumerate(lines) if markdown_cells(line)[:2] == ["Source (pxls21/sandbox-kit)", "Here"]),
         None,
@@ -665,7 +747,9 @@ def parse_provenance(path: Path) -> tuple[set[str], dict[str, int]]:
     row_count = 0
     for offset, line in enumerate(lines[header + 2 :], start=header + 3):
         if not line.startswith("|"):
-            break
+            if line.strip() == "":
+                break  # R8: the table ends at the first blank line
+            raise ManifestError(f"provenance table parse failure at line {offset}: expected a row")
         cells = markdown_cells(line)
         if len(cells) != 3 or not all(cells[:2]):
             raise ManifestError(f"provenance table parse failure at line {offset}: expected 3 cells")
@@ -751,63 +835,81 @@ def validate_declared_roots(root: Path) -> None:
 
 
 def parse_lock(path: Path) -> dict[str, tuple[str, str]]:
-    if not path.is_file():
-        raise ManifestError(f"upstream lock missing: {path.as_posix()}")
-    section = ""
-    component = ""
-    entries: dict[str, dict[str, str]] = {}
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if not line.startswith(" ") and line.endswith(":"):
-            section = line[:-1]
-            component = ""
-            continue
-        match = re.fullmatch(r"  ([a-z0-9][a-z0-9-]*):", line)
-        if match:
-            component = match.group(1)
-            entries.setdefault(component, {})["key"] = f"{section}.{component}"
-            continue
-        match = re.fullmatch(r"    (repository|commit|binary_sha256|asset_sha256):\s*(.+)", line)
-        if match and component:
-            entries[component][match.group(1)] = match.group(2).strip().strip('"')
-        elif line.startswith("    ") and ":" not in line:
-            raise ManifestError(f"upstream lock parse failure at line {line_number}")
+    """R3-R6. Parse the lock with the fail-closed loader (D-1) and extract the
+    `result[normalize_repo(repository)] = (pin, section.component)` agreement map.
 
-    parsed: dict[str, tuple[str, str]] = {}
-    for name, values in entries.items():
-        pin = values.get("commit") or values.get("binary_sha256") or values.get("asset_sha256")
-        repository = values.get("repository")
-        if repository and pin:
-            parsed[normalize_repo(repository)] = (pin, values["key"])
-    return parsed
+    A top-level scalar carries no pin and is ignored (R3); a section must be a mapping
+    and a component inside it must be a mapping (R3); a component with a `repository`
+    must carry a pin (R4); a repository and its chosen pin must be non-empty
+    whitespace-free strings (R5); two components whose repositories normalise to one
+    key are refused by both `section.component` keys (R6). A component without a
+    `repository` stays outside the agreement check, as before. Pin precedence:
+    `commit`, `binary_sha256`, `asset_sha256`.
+    """
+    doc = load_manifest_yaml(path, "upstream lock")
+    if not isinstance(doc, dict):
+        raise ManifestError("upstream lock: the top level is not a mapping")
+    result: dict[str, tuple[str, str]] = {}
+    for section, body in doc.items():
+        if not isinstance(body, dict):
+            if body is None or isinstance(body, (str, int, float, bool)):
+                continue  # R3: a top-level scalar carries no pin
+            if isinstance(body, (list, tuple)):
+                raise ManifestError(f"upstream lock: section {section!r} is a list, not a mapping")
+            raise ManifestError(f"upstream lock: section {section!r} is not a mapping")
+        for component, values in body.items():
+            where = f"{section}.{component}"
+            if not isinstance(values, dict):
+                raise ManifestError(f"upstream lock: {where} is not a mapping")
+            if "repository" not in values:
+                continue  # R4: no repository -> outside the agreement check
+            key = normalize_repo(_clean_str(values["repository"], where))
+            if key in result:
+                raise ManifestError(f"upstream lock: repository {key} is pinned by both {result[key][1]} and {where}")
+            pins = [pin for pin in ("commit", "binary_sha256", "asset_sha256") if pin in values]
+            if not pins:
+                raise ManifestError(
+                    f"upstream lock: {where} has a repository but no pin (commit, binary_sha256, asset_sha256)"
+                )
+            result[key] = (_clean_str(values[pins[0]], where), where)
+    return result
 
 
 def parse_sbom(path: Path) -> dict[str, tuple[str, str]]:
-    if not path.is_file():
-        raise ManifestError(f"SBOM missing: {path.as_posix()}")
-    current: dict[str, str] = {}
-    entries: dict[str, tuple[str, str]] = {}
+    """R7. Parse the SBOM with the fail-closed loader (D-1) and extract the
+    `result[normalize_repo(repository)] = (pin, name)` agreement map.
 
-    def finish() -> None:
-        repository = current.get("repository")
-        pin = current.get("commit") or current.get("digest")
-        if repository and pin:
-            entries[normalize_repo(repository)] = (pin, current.get("name", "unnamed"))
-
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        match = re.fullmatch(r"\s*- name:\s*(\S+)\s*", line)
-        if match:
-            finish()
-            current = {"name": match.group(1)}
-            continue
-        match = re.fullmatch(r"\s+(repository|commit|digest):\s*(\S+)\s*", line)
-        if match and current:
-            current[match.group(1)] = match.group(2).strip('"')
-        elif line.lstrip().startswith("-") and current and "name:" not in line:
-            raise ManifestError(f"SBOM parse failure at line {line_number}")
-    finish()
-    return entries
+    The top level must be a mapping whose `components` value is a list; each item must
+    be a mapping with a non-empty string `name` and `repository`, and a pin (`commit` or
+    `digest`) that is a non-empty whitespace-free string (R5). A non-mapping item, a
+    missing name, a missing repository, a missing pin, or two items whose repositories
+    normalise to one key are refused, naming the item's `name` (or its 1-based position
+    when it has none) (R7). Pin precedence: `commit`, `digest`.
+    """
+    doc = load_manifest_yaml(path, "SBOM")
+    if not isinstance(doc, dict):
+        raise ManifestError("SBOM: the top level is not a mapping")
+    components = doc.get("components")
+    if not isinstance(components, list):
+        raise ManifestError("SBOM: the 'components' value is not a list")
+    result: dict[str, tuple[str, str]] = {}
+    for position, item in enumerate(components, start=1):
+        if not isinstance(item, dict):
+            raise ManifestError(f"SBOM: component #{position} is not a mapping")
+        name = item.get("name")
+        label = name if isinstance(name, str) and name else f"#{position}"
+        if not (isinstance(name, str) and name):
+            raise ManifestError(f"SBOM: component {label} is missing its name")
+        if "repository" not in item:
+            raise ManifestError(f"SBOM: component {label} is missing its repository")
+        key = normalize_repo(_clean_str(item["repository"], f"SBOM: component {label}"))
+        if key in result:
+            raise ManifestError(f"SBOM: repository {key} is named by both {result[key][1]} and {label}")
+        pins = [pin for pin in ("commit", "digest") if pin in item]
+        if not pins:
+            raise ManifestError(f"SBOM: component {label} has a repository but no pin (commit, digest)")
+        result[key] = (_clean_str(item[pins[0]], f"SBOM: component {label}"), label)
+    return result
 
 
 def validate_pin_agreement(root: Path) -> None:
