@@ -718,6 +718,9 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 17:2xZ — skill bakes: build-loop rule 1 (a shared value is read against every consumer, from F-20) and anti-hollow-green 3b (a mutant runs its own bytecode, AF-AP-192); new helper `scripts/skill_bake_finish.sh` (the mechanical tail of a skill bake, with a clean-worktree manifest); AF-AP-193's echo: JT2 is the one bug site.
+
+
 2026-09-24 17:1xZ — FT1 landed; JT1 accepted (D-080); JT2 NOT-READY on the coordinator's own F-20, JT2-R1 running; VERIFY-FT1 running; the codiv labeling started; AF-AP-192 and AF-AP-193; issue #72.
 
 
