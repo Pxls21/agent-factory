@@ -13,7 +13,7 @@ last_compiled: 2026-09-03
 
 **2026-09-24 22:2xZ — WHAT IS LIVE NOW (supersedes the 21:4xZ block for the live set).**
 - **LIVE:** the JT3 search hook; at commit, the staged-shell AP screen and the commit-message stamp gate; at push, the stale-id check (repaired: a refusal is now sticky).
-- **VERIFYING (two sandbox agents):** VERIFY-GW1-R2 on `scripts/gpu_window.sh` blob 70bda4dca641 (the second and last repair D-031 allows); VERIFY-T243-245-R1 on the repaired stale-id check and staged-shell screen.
+- **VERIFYING (two sandbox agents):** VERIFY-GW1-R2 on `scripts/gpu_window.sh` blob 70bda4dca641 (the second and last repair D-031 allows); VERIFY-T243-245-R2 on the stale-id check's second repair (push_clean blob d514e2f0c095). The staged-shell screen is MERGE-READY-WITH-FOLLOWUPS (task #245 closed; #75).
 - **PC:** no lane live; qwen active; the window1 jobs file staged. The Laya base-model evaluation finished: POSITIVE CONTROL PASS (the baseline for the trained head).
 - **NEXT:** VERIFY-GW1-R2's verdict, then the window (`--max-minutes 20`), then the head checkpoint's evaluation on the PC CPU (about 44 min) and the Qwen J2 continuation.
 
@@ -776,6 +776,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 22:5xZ — VERIFY-T243-245-R1: B and C ready with follow-ups (#75; task #245 closed); A's second repair (every non-pushing exit puts the branch back) in verify.
 2026-09-24 22:3xZ — AF-AP-145 refined (every exit after the handler traps ignores INT/TERM first) with a third AP_SCREEN tell (a bare exit after the handlers); its echo is task #247 (the S0-05 runner, a re-mint); the live set unchanged.
 2026-09-24 22:2xZ — GW1-R2 committed (VERIFY-GW1-R1 NOT-READY on R1-F-1) and in verify; the tooling repair committed (VERIFY-T243-245 A/B NOT-READY) and in verify; the Laya baseline PASS.
 2026-09-24 21:5xZ — retro batch: the commit-msg stamp gate; build-loop baked (a repair starts from the registry row); AF-AP-187/68/37 echoes; the window1 jobs file committed.
