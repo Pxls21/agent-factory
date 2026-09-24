@@ -1,0 +1,79 @@
+{
+ "code": {
+  "docs/research/findings/ap-hawk-probe/ap_probe.py": "11d4be533643bd68869b3d0f7c29c7b9fa1d12107303b4758d56c31e6202e222",
+  "docs/research/findings/j2-v1-probe/v1_probe.py": "e861fdbae913be77faacd9d9010bdac4e11e5916ddd44e4e53982fafc0effecd",
+  "docs/research/findings/j2c-fulltext/j2c.py": "28634691edf1cfbfb3acf92a1891391086b1abdab5d0c6aa8111d80c9390466e",
+  "scripts/decide-harvest": "7022dd819436010c273ff83f0cadd2fbd94bb7f6ad7f399441eb4a72dcf0c380",
+  "scripts/laya_ft/build_dataset.py": "b9c29b4a06eee521f5967a1309e9637ad3e703017ce276cc979fd10c6d8f134b",
+  "scripts/laya_ft/common.py": "51346a79470e6fd5731f5ff59bec5a5d2c3e1fe9932ab57f231776fe9f440b97",
+  "scripts/transcript_export.py": "f63cd97ef441b8174221c926911b37b0d6d39539a306ea6e1bcbd245b18ae3c1"
+ },
+ "commit": "eb256f49c0ee87a6ff2d122dcf13d6db6a70bc3f",
+ "counts": {
+  "cut_to_window": {
+   "ap.violates_row": 32,
+   "v1.blocking": 0,
+   "v1.finding_class": 0
+  },
+  "merged_duplicates": 0,
+  "rows": {
+   "ap.violates_row": 1616,
+   "v1.blocking": 86,
+   "v1.finding_class": 86
+  },
+  "rows_total": 1788,
+  "trainable_entries": 101,
+  "trainable_findings": 86
+ },
+ "dataset": {
+  "bytes": 4077876,
+  "file": "dataset.jsonl",
+  "sha256": "d7cd9b49abac267bb9b5290641ea353180a9a61047ce6c590809520b085cea1c"
+ },
+ "heldout": {
+  "incident_entries": {
+   "excluded": 100,
+   "identities": 100
+  },
+  "samples": {
+   "docs/research/findings/ap-hawk-probe/sample.json": {
+    "rows": 100,
+    "sha256": "c07c581ad74201e19efe8b9da61eedd4a4cfcc81c3c10f7036ba20da3aaa2044"
+   },
+   "docs/research/findings/j2-v1-probe/sample.json": {
+    "rows": 100,
+    "sha256": "b1cf7867f5995280f1c9298fa48e024b3039ee50ddca1e3626367717c9f27fc9"
+   },
+   "docs/research/findings/j2c-fulltext/sample.json": {
+    "rows": 100,
+    "sha256": "af469599e3e1054241c75f7b81eec5ae0214136d88fbbbbf6b8701e404b44df3"
+   }
+  },
+  "text_duplicates_excluded": 0,
+  "verify_findings": {
+   "excluded": 100,
+   "identities": 100
+  }
+ },
+ "model": {
+  "config_sha256": "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8",
+  "head_max_len": 256,
+  "max_len": 1024,
+  "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "tokenizer_sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+ },
+ "questions": {
+  "ap.violates_row": "0a0670b428b9eb387654df674d0a7efabd6cd4f665469c026c19653dcc4e6787",
+  "v1.blocking": "b9621938a4836e7ad02091ffbcfa3956b97a9c3f476cdbf0294cdfb49a066183",
+  "v1.finding_class": "1e589fa1a499250e4db2b0bd4c532ff0f38f48ff47f1bf59c9a1496392677edd"
+ },
+ "sources": {
+  "candidates_per_entry": 16,
+  "entries_without_heading": 0,
+  "incident_entries": 201,
+  "registry_rows": 193,
+  "reports_with_findings": 11,
+  "verify_findings": 186,
+  "verify_reports": 93
+ }
+}
