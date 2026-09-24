@@ -14,6 +14,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 00:0xZ — WHAT IS LIVE NOW (this block supersedes the 23:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULING (about 23:0xZ):** local Hermes only; the codex subscription ran out. No cloud overflow until the owner says it is back.
+- **S0-05 MINTED 23:5xZ, GATED-PENDING-VERIFY:** the owner's third run (evidence 20260923T234303Z) passed the A2'' census and every egress assertion; the checker first refused curl 8.11's "Could not connect to server" spelling (AF-AP-168, fixed in c26553d). All nine execution proofs are minted. Next: VERIFY-S0-05 (the A2'' census, the curl spelling, the mint).
+- **S0-02 ACCEPTED 23:41Z:** the owner's signed `accepted/S0-02` tag, anchored over the bridge (the push draws 403, as for S0-01); `check-proof-status.py` rc 0.
+- **HOME, to grade:** VERIFY-J1-3 (#120).
+- **LIVE, PC (one long-context local lane):** VERIFY-K1-h (#194). Monitor bj0fz9gnk.
+- **QUEUED for the free local slot:** J1-1-R3 (#202).
+
 **2026-09-23 23:1xZ — WHAT IS LIVE NOW (this block supersedes the 22:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULING (about 23:0xZ):** local Hermes only; the codex subscription ran out. No cloud overflow until the owner says it is back.
 - **S0-05 live pair leg:** run 1 failed on the relay's Host binding (fixed by the owner's community row); run 2 failed on the A2' census (`.markers/relay.log`, the relay's own append). A2'' LANDED GATED-PENDING-VERIFY (task #206); the owner re-runs the same one-liner next.
@@ -468,6 +476,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 00:0xZ — S0-05 MINTED from the owner's live run (9 of 9 execution proofs; GATED-PENDING-VERIFY); S0-02 ACCEPTED (the signed tag anchored).
 2026-09-23 23:2xZ — VERIFY-S0-02 graded (S0-02 verified; the owner's tag next); VERIFY-J1-3 dispatched.
 2026-09-23 23:1xZ — S0-05 A2'' census allowance landed (task #206, GATED-PENDING-VERIFY); owner ruling: local Hermes only.
 2026-09-23 22:3xZ — VERIFY-J1-0-R6 graded (J1-0-R6 verified, issue #57); VERIFY-S0-02 dispatched on the local route.

@@ -1,0 +1,19 @@
+[2m2026-09-23T23:43:41.845303Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m buzz-acp starting: relay=ws://10.201.219.1:3999 pubkey=467b79de499ba3fdc2bc6af840ef618a8d2d2ff2cef38884ed67e03ebd11a1d0 agent_cmd=/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp  mcp_cmd= idle_timeout=900s max_turn=3600s agents=1 heartbeat=0s subscribe=Mentions dedup=Queue session_policy=channel meh=Steer ignore_self=true context_limit=12 max_turns_per_session=0 presence=true typing=true memory=true model=(agent default) permission_mode=bypassPermissions respond_to=owner-only
+2026-09-24 00:43:41 [INFO] acp_adapter.entry: No .env found at /home/rocco/s0-05-evidence/20260923T234303Z/buzz-acp/scratch/hermes-home/.env, using system env
+2026-09-24 00:43:41 [INFO] acp_adapter.entry: Starting hermes-agent ACP adapter
+2026-09-24 00:43:42 [INFO] acp_adapter.server: ACP client connected
+2026-09-24 00:43:42 [INFO] acp_adapter.server: Initialize from buzz-acp (protocol v2)
+[2m2026-09-23T23:43:42.333931Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m agent initialized: {"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true},"sessionCapabilities":{"fork":{},"list":{},"resume":{}}},"agentInfo":{"name":"hermes-agent","version":"0.21.0"},"authMethods":[{"args":["--setup"],"description":"Open Hermes' interactive model/provider setup in a terminal. Use this when Hermes has not been configured on this machine yet.","id":"hermes-setup","name":"Configure Hermes provider","type":"terminal"}],"protocolVersion":1} [3magent[0m[2m=[0m0
+[2m2026-09-23T23:43:42.333952Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m agent initialized [3magent[0m[2m=[0m0 [3mname[0m[2m=[0m"hermes-agent" [3msteering_supported[0m[2m=[0mfalse
+[2m2026-09-23T23:43:42.333971Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m agent_pool_ready agents=1
+[2m2026-09-23T23:43:42.349915Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m connected to relay at ws://10.201.219.1:3999
+[2m2026-09-23T23:43:42.350961Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m subscribed to membership notifications
+[2m2026-09-23T23:43:42.350970Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m no agent owner configured
+[2m2026-09-23T23:43:42.350974Z[0m [33m WARN[0m [2mbuzz_acp[0m[2m:[0m respond-to=owner-only but no owner is set — all events will be dropped. Set BUZZ_AUTH_TAG or --agent-owner, or use --respond-to=anyone.
+[2m2026-09-23T23:43:42.355942Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m discovered 0 channel(s)
+[2m2026-09-23T23:43:42.355950Z[0m [33m WARN[0m [2mbuzz_acp[0m[2m:[0m no channel subscriptions resolved — agent will sit idle
+[2m2026-09-23T23:43:42.355998Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m presence set to online
+[2m2026-09-23T23:44:28.502284Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m shutting down
+[2m2026-09-23T23:44:28.502301Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m shutdown: waiting for in-flight prompts
+[2m2026-09-23T23:44:28.508628Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m presence set to offline
+[2m2026-09-23T23:44:28.508726Z[0m [32m INFO[0m [2mbuzz_acp[0m[2m:[0m buzz-acp stopped

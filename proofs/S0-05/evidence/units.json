@@ -1,0 +1,44 @@
+{
+  "units": [
+    {
+      "unit": "hermes-acp",
+      "status": "run",
+      "note": "contained live unit"
+    },
+    {
+      "unit": "buzz-acp",
+      "status": "run",
+      "note": "contained live unit"
+    },
+    {
+      "unit": "memory-adapter",
+      "status": "not-run",
+      "reason": "unit does not exist"
+    },
+    {
+      "unit": "dream-foundry",
+      "status": "not-run",
+      "reason": "unit does not exist"
+    },
+    {
+      "unit": "ai-memory",
+      "status": "not-run",
+      "reason": "unit does not exist"
+    },
+    {
+      "unit": "pandaprobe",
+      "status": "not-run",
+      "reason": "unit does not exist"
+    },
+    {
+      "unit": "s0-01-backend",
+      "status": "not-run",
+      "reason": "not a docs/05 \u00a76 source: the S0-01 scripted backend is the model-provider stand-in behind OmniRoute"
+    },
+    {
+      "unit": "harness-router",
+      "status": "not-run",
+      "reason": "unit does not exist (conditional, not deployed in v1)"
+    }
+  ]
+}

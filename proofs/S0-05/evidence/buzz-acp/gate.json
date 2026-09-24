@@ -1,0 +1,11 @@
+{
+  "allowed": [
+    "10.201.219.1:3999",
+    "10.201.219.1:20128"
+  ],
+  "gate": "enabled",
+  "mechanism": "veth-iptables",
+  "netns": "s0-05-buzz-acp",
+  "rules_sha256": "e086277caab22ed3327d1516f930dc2ff7aff2d79594d0c0d418767f654967ea",
+  "unit": "buzz-acp"
+}

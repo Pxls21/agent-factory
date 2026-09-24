@@ -1,0 +1,29 @@
+{
+  "drop_counter_after": 6,
+  "drop_counter_before": 0,
+  "iptables_version": "iptables v1.8.11 (nf_tables)",
+  "kernel": "6.17.11-200.fc42.x86_64",
+  "proxy_env_scrubbed": [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy"
+  ],
+  "rules": [
+    "-A INPUT -i lo -j ACCEPT",
+    "-A INPUT -s 10.201.219.1/32 -p tcp -m tcp --sport 20128 -j ACCEPT",
+    "-A INPUT -s 10.201.219.1/32 -p tcp -m tcp --sport 3999 -j ACCEPT",
+    "-A OUTPUT -d 10.201.219.1/32 -p tcp -m tcp --dport 20128 -j ACCEPT",
+    "-A OUTPUT -d 10.201.219.1/32 -p tcp -m tcp --dport 3999 -j ACCEPT",
+    "-A OUTPUT -o lo -j ACCEPT",
+    "-P FORWARD DROP",
+    "-P INPUT DROP",
+    "-P OUTPUT DROP"
+  ],
+  "unit": "buzz-acp",
+  "venue": "pc"
+}

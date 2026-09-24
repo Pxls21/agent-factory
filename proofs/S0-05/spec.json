@@ -12,7 +12,7 @@
     },
     {
       "leg": "positive",
-      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/evidence"],
+      "cmd": ["python3", "proofs/S0-05/check_egress.py", "proofs/S0-05/evidence", "--units", "hermes-acp,buzz-acp"],
       "cwd": ".",
       "timeout_s": 60,
       "expect": {

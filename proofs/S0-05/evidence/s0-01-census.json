@@ -1,0 +1,68 @@
+{
+  "after": {
+    "entries": 34043,
+    "sha256": "a9960456c1460bd0e81b5fc5b4354f939f37a137be7e551756192b6de95b2ac1"
+  },
+  "appended": {
+    "relay.log": {
+      "after": {
+        "gid": 1000,
+        "mode": "0644",
+        "sha256": "362b49713034d45e9a8e602ca10b415ca156f0bb520e5a3a8926064ff3a60377",
+        "size": 265950,
+        "type": "file",
+        "uid": 1000
+      },
+      "before": {
+        "gid": 1000,
+        "mode": "0644",
+        "sha256": "711660380c2ec92296eba10f669b4391c345010e82aad2713f2da82c781b5a54",
+        "size": 264326,
+        "type": "file",
+        "uid": 1000
+      }
+    }
+  },
+  "base": "/home/rocco/s0-01-pinned",
+  "before": {
+    "entries": 34043,
+    "sha256": "d0f36172f4018dfd531abe110618805c156b9a28e592c15ccaa65b6fcbdc5889"
+  },
+  "changed": [],
+  "changed_records": {},
+  "tree": "present",
+  "writers": {
+    "after": {
+      "backend-v2.log": [
+        [
+          53658,
+          481166,
+          "python3"
+        ]
+      ],
+      "relay.log": [
+        [
+          53277,
+          477750,
+          "buzz-relay"
+        ]
+      ]
+    },
+    "before": {
+      "backend-v2.log": [
+        [
+          53658,
+          481166,
+          "python3"
+        ]
+      ],
+      "relay.log": [
+        [
+          53277,
+          477750,
+          "buzz-relay"
+        ]
+      ]
+    }
+  }
+}

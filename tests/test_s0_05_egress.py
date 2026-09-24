@@ -581,9 +581,15 @@ def test_an_absent_evidence_root_defers(tmp_path):
     assert result.stdout.splitlines()[0].startswith("deferred: evidence-root-absent:")
 
 
-def test_the_committed_spec_positive_leg_defers_here():
+def test_the_committed_live_root_needs_its_unit_list():
+    """The live root is committed now (2026-09-23 23:43Z), so it no longer defers. Its units are
+    hermes-acp and buzz-acp: checked with the default unit list (`curl`, the sandbox mechanism
+    bundle's unit) it fails `unit-missing: curl`, which is why the spec's live leg names them."""
     result = run_checker(PROOF / "evidence")
-    assert result.returncode == 2
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[0] == "unit-missing: curl"
+    live_legs = [leg for leg in json.loads(SPEC.read_text())["legs"] if "proofs/S0-05/evidence" in leg["cmd"]]
+    assert [leg["cmd"][-2:] for leg in live_legs] == [["--units", "hermes-acp,buzz-acp"]], live_legs
 
 
 def test_a_canary_that_could_not_run_defers(tmp_path):
@@ -705,12 +711,96 @@ def test_every_spec_leg_behaves_exactly_as_declared():
         result = subprocess.run(leg["cmd"], capture_output=True, text=True, cwd=REPO,
                                 timeout=leg["timeout_s"])
         expected = leg["expect"]["exit_code"]
-        if leg["leg"] == "positive" and leg["cmd"][-1].endswith("S0-05/evidence"):
-            assert result.returncode in (expected, 2), result.stdout  # defers until the PC leg runs
-            continue
+        # The live leg no longer defers: the first live bundle is committed (2026-09-23 23:43Z).
         assert result.returncode == expected, (leg["cmd"], result.stdout, result.stderr)
         if "failure_reason" in leg["expect"]:
             assert result.stdout.splitlines()[0] == leg["expect"]["failure_reason"]
+
+
+
+# ---------------------------------------------------------------- the committed live bundle (the mint)
+
+LIVE = PROOF / "evidence"
+LIVE_UNITS = "hermes-acp,buzz-acp"
+# The checker's whole output on the first live bundle (owner-run on the PC, 2026-09-23 23:43Z; the
+# runner's A2'' census let the test relay's own log append through). Pinned whole: the unit identities,
+# C4 recorded, the gate's DROP counter 0 -> 6 in each namespace, and the PASS line.
+LIVE_OUTPUT = """NOT run: memory-adapter — unit does not exist
+NOT run: dream-foundry — unit does not exist
+NOT run: ai-memory — unit does not exist
+NOT run: pandaprobe — unit does not exist
+NOT run: s0-01-backend — not a docs/05 §6 source: the S0-01 scripted backend is the model-provider stand-in behind OmniRoute
+NOT run: harness-router — unit does not exist (conditional, not deployed in v1)
+unit-identity: buzz-acp pid 930321 runs /home/rocco/s0-01-pinned/buzz/target/release/buzz-acp (sha256 a5a17ffc0c7e) as uid 1000
+unit-identity: hermes-acp pid 929556 runs /home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp (sha256 f90a0cc333fa) as uid 1000
+recorded: buzz-acp C4 example.com:443 denied rc=7 — OSError [Errno 101] Network is unreachable
+gate-fired: buzz-acp OUTPUT policy DROP 0 -> 6 packets
+recorded: hermes-acp C4 example.com:443 denied rc=7 — OSError [Errno 101] Network is unreachable
+gate-fired: hermes-acp OUTPUT policy DROP 0 -> 6 packets
+PASS: S0-05 no-direct-egress - 2 units, 22 canaries failed as required, positive controls 2/2
+"""
+
+
+def test_the_committed_live_bundle_passes_with_every_line_pinned():
+    result = run_checker(LIVE, "--units", LIVE_UNITS)
+    assert result.returncode == 0, result.stdout
+    assert result.stdout == LIVE_OUTPUT, result.stdout
+
+
+def _live_rows(path):
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _live_c2_open(bundle):
+    rows = _live_rows(bundle / "buzz-acp" / "canaries.jsonl")
+    for row in rows:
+        if row["canary"] == "C2" and row["target"] == "api.openai.com:443":
+            row.update(rc=0, detail="connected")
+    write_records(bundle / "buzz-acp", rows)
+
+
+def _live_c1_proxy(bundle):
+    rows = _live_rows(bundle / "hermes-acp" / "canaries.jsonl")
+    for row in rows:
+        if row["canary"] == "C1" and row["target"] == "api.openai.com":
+            row["detail"] = NEW_SPELLING_PROXY_DETAIL
+    write_records(bundle / "hermes-acp", rows)
+
+
+def _live_json(path, change):
+    payload = json.loads(path.read_text())
+    change(payload)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _live_override(bundle):
+    def change(units):
+        for row in units["units"]:
+            if row["unit"] == "hermes-acp":
+                row["override"] = {"PINNED_AGENT_REALPATH": "/tmp/stand-in"}
+    _live_json(bundle / "units.json", change)
+
+
+@pytest.mark.parametrize("mutate, first_line", [
+    (_live_c2_open, "egress-permitted: buzz-acp C2 api.openai.com:443"),
+    (_live_c1_proxy, "denial-detail-foreign-target: hermes-acp C1 denial names 127.0.0.1, not api.openai.com"),
+    (lambda b: _live_json(b / "hermes-acp" / "runtime.json",
+                          lambda r: r.update(drop_counter_after=r["drop_counter_before"])),
+     "gate-inert: hermes-acp OUTPUT DROP counter did not advance (0 -> 0)"),
+    (_live_override, "units-manifest-invalid: hermes-acp override present"),
+    (lambda b: _live_json(b / "buzz-acp" / "unit-identity.json", lambda r: r.update(entrypoint_sha256="0" * 64)),
+     "unit-identity-invalid: buzz-acp entrypoint_sha256 " + "0" * 64 + " is not the pin"),
+    (lambda b: shutil.rmtree(b / "buzz-acp"), "unit-missing: buzz-acp"),
+], ids=["c2-egress-open", "c1-proxy-new-spelling", "gate-inert", "override-present", "identity-not-pinned",
+        "unit-dir-gone"])
+def test_a_hostile_copy_of_the_live_bundle_fails_by_name(tmp_path, mutate, first_line):
+    """AF-AP-36: the live bundle is graded against hostile copies, never only itself. Each copy changes one
+    thing a forged or broken capture could; the checker names it on its first line and exits 1."""
+    bundle = copy_bundle(tmp_path, source=LIVE)
+    mutate(bundle)
+    result = run_checker(bundle, "--units", LIVE_UNITS)
+    assert result.returncode == 1, result.stdout
+    assert result.stdout.splitlines()[0] == first_line, result.stdout
 
 
 # ------------------------------------------------------------------------ shell + library legs

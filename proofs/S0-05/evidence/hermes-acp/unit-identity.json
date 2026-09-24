@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/home/rocco/s0-01-pinned/.venv-hermes/bin/python3",
+    "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp"
+  ],
+  "entrypoint_realpath": "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+  "entrypoint_sha256": "f90a0cc333fa86d99495c7c984e4e11a1b83a7e3dc92883b7fd295ae70358ef1",
+  "exe_realpath": "/usr/bin/python3.13",
+  "pid": 929556,
+  "uid": [
+    1000,
+    1000,
+    1000,
+    1000
+  ],
+  "unit": "hermes-acp"
+}

@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+    "--relay-url",
+    "ws://10.201.219.1:3999",
+    "--agent-command",
+    "/home/rocco/s0-01-pinned/.venv-hermes/bin/hermes-acp",
+    "--agent-args",
+    "",
+    "--idle-timeout",
+    "900",
+    "--max-turn-duration",
+    "3600"
+  ],
+  "entrypoint_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+  "entrypoint_sha256": "a5a17ffc0c7ef878648a506b9d5066120b91984d1158a60e6ce9664a39f88064",
+  "exe_realpath": "/home/rocco/s0-01-pinned/buzz/target/release/buzz-acp",
+  "pid": 930321,
+  "uid": [
+    1000,
+    1000,
+    1000,
+    1000
+  ],
+  "unit": "buzz-acp"
+}
