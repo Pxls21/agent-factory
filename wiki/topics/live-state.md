@@ -13,6 +13,7 @@ last_compiled: 2026-09-03
 
 **2026-09-24 12:4xZ — WHAT IS LIVE NOW (this block supersedes the 12:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** VERIFY-COORD-0924 home: the five hooks, AF-AP-181 and D-071 each MERGE-READY-WITH-FOLLOWUPS (issue #67). Fixed the same hour: the hooks fail open when the repo or a script is absent (AF-AP-184); every hook's text stays under the harness's 10,000-character limit, so the live-state now reaches the model at a compaction (AF-AP-183); the prompt hook skips `<agent-message` hand-backs. Pushed af3ab70.
+- **FIXED 12:5xZ (AF-AP-185):** af3ab70 carried three red pinned tests (my wiki-context edit moved that hook to kit-adapted; the pins said 16). Fixed and pushed as 78a6eec, which cancels run #1030; a pre-commit CLASS-PIN gate now runs the pinned tests on any class move. The retro gate no longer re-fires on retro-plane commits.
 - **LIVE, SANDBOX SERVER:** the local Laya endpoint on 127.0.0.1:47411 (pid in `.jev/server.pid`).
 - **LIVE, PC:** K170 (#170), attempt 3; poller re-attached 12:2xZ.
 - **LIVE, SANDBOX (Opus 5.5):** J1-1-R4 (#198, files in `.lanes-live`); JT1 (#224, the Jev tool and the hiccup tracker).
@@ -648,6 +649,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 12:5xZ — AF-AP-185 fixed (pinned manifest tests, CLASS-PIN gate); retro-plane exemption; pushed 78a6eec.
 2026-09-24 12:4xZ — retro: the AP-hawk probe sample committed; task #225 (quirk guard) registered; the trailing-& incident logged.
 2026-09-24 12:4xZ — VERIFY-COORD-0924 home (issue #67); hook fixes AF-AP-183/184 pushed as af3ab70.
 2026-09-24 12:2xZ — #221 synthesis committed; context diet (AF-AP-182, task DB open-only); a sandbox-local Laya server; JT1 dispatched.
