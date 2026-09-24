@@ -143,3 +143,35 @@ Haiku left the lexical first pick in 42 of 100 rows. It was right in 2 of them; 
    labels are few today (144 v1 rows).
 5. MoJev (Gate 0, task #230), the hosted Laya model (needs the owner's key through OmniRoute), or the local Qwen through
    OmniRoute where a few seconds per call is acceptable.
+
+## 6. J2c (15:1xZ): the whole finding, not its title (POST-HOC; `j2c-fulltext/`)
+
+The same 100 v1 rows, each re-joined to its verify report through decide-harvest's own parsing helpers (82 exact joins,
+18 on a unique 40-character prefix where the ledger had redacted or normalized the title). A bullet finding keeps its whole
+paragraph; a table row keeps its full title cell (its other cells carry the verifier's class notation). J2's MASK hides the
+class words, and a parenthesised qualifier after a masked word is dropped. State length: median 258 characters, maximum
+2,071 (was 120). The sample was committed by digest before scoring (`sample.json`, sha256
+`af469599e3e1054241c75f7b81eec5ae0214136d88fbbbbf6b8701e404b44df3`); Laya was scored by the UNCHANGED J2 scorer
+(`v1_probe.py score`, 533.5 s); Haiku 4.5 read label-free inputs only (13 turns, all Haiku, 0 refusals; its answers are
+`haiku_v1_full.json`, scored by `j2c.py score-answers`).
+
+| `v1.finding_class`, whole finding | Accuracy | Balanced accuracy | Blocking split | BLOCKER recall |
+|---|---:|---:|---:|---:|
+| Majority (FOLLOW-UP) | 0.43 | 0.167 | **0.91** | 0/7 |
+| Keyword heuristic | 0.32 | 0.223 | 0.66 | 1/7 |
+| **Haiku 4.5** | **0.60** | **0.364** | 0.85 | **4/7** (blocking recall 5/9, false alarms 11/91) |
+| Laya `choice` | 0.17 | 0.209 | 0.59 | 2/7 |
+| Laya per-class `noul` | 0.10 | 0.242 | 0.59 | 1/7 |
+
+Beside the title-only numbers (§2, §5.2): Haiku 0.45 to 0.60 accuracy and 0/7 to 4/7 blockers; Laya `choice` 0.21 to 0.17
+accuracy and 0/7 to 2/7 blockers.
+
+**What this says.** The 120-character title capped every model: from titles no model found a blocker. With the whole
+finding, a general model beats the plain baseline for the first time on either J2 task, so the task is learnable from this
+text. Laya stays below the majority even with the whole finding, so its limit is the model (training and capacity), not
+only the input. Two consequences for the fine-tune (task #233, D-075): train and evaluate on whole findings, never on
+ledger titles (and fix the capture schema's 120-character cap with AF-AP-189's `disposition` leak, task #238); and the
+teacher must be a model that can do the task (Haiku reached 0.60 here; OpenJev is untested pending the owner's data OK).
+
+Limits: POST-HOC; 76 of the 100 rows are table rows whose "whole finding" is only their full title cell; the verifier's
+own reasoning words (for example "reproduced", "blocks") stay in the text, as they would for any reader; one run each.
