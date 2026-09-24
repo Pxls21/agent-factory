@@ -1,0 +1,920 @@
+{
+ "rows": {
+  "AF-AP-1": "total-isolation instrument offered as a selective-egress negative control (the canary fails for a reason other than the gate under test) `unshare --net` in any S0-05 fixture without a positive-control leg reaching the allowed target",
+  "AF-AP-10": "one artifact's identity inflating another proof's state (payload `proof_id` ≠ its directory) `proofs/<id>/{result,blocked}.json` whose `proof_id` differs from `<id>`",
+  "AF-AP-100": "A CAPTURE RUNNER WHOSE DONE-CONDITION IS `end_turn`/A DONE-MARKER, NOT THE REAL ROUND TRIP, GRADES A 401-IN-TRANSCRIPT AS CAPTURED — an evidence-capture runner that launches an agent and waits for a terminal marker (`end_turn`, `launch.ready`, a `.done` file) treats the marker as proof the work happened, but the agent can reach that marker having made ZERO upstream calls: an auth/config error retu",
+  "AF-AP-101": "AN EVIDENCE CHECKER THAT READS AN EXTERNAL SYSTEM'S RECORDS WITH FABRICATED COLUMN SEMANTICS PASSES EVERY SYNTHETIC ROUND AND BINDS TO NOTHING REAL — a gate whose independent instrument cross-checks another system's records (a DB, an API log) is only as sound as its model of that schema; when the binding columns are authored from ASSUMPTION rather than one real row, the synthetic fixtures encode t",
+  "AF-AP-102": "A \"CONFIRMED FROM SOURCE\" CREDENTIAL/INTEGRATION CLAIM WRITTEN TO A DURABLE ARTIFACT, THEN FALSIFIED BY THE LIVE RUN — reading ONE resolution path in the source and declaring an integration \"confirmed / self-contained\" in a committed doc is a hollow green in prose when a DIFFERENT runtime path governs the real behaviour. An in-process unit resolution is NECESSARY, not SUFFICIENT; only the live run",
+  "AF-AP-103": "A HERMES-INTERNAL PROVIDER-SELECTOR PREFIX LEAKED INTO THE WIRE MODEL NAME AND THE AGGREGATOR RETURNED A 401 THAT READS LIKE A LOCAL CREDENTIAL FAILURE — a custom OpenAI-compatible aggregator provider is selected by a `custom:<name>` label that is INTERNAL to the client (Hermes reads it from `model.provider` to pick the provider's base_url + key). Put that label in `model.default` and the client f",
+  "AF-AP-104": "A READ-ONLY SQLITE INSTRUMENT OPENED `immutable=1` MISSES ROWS STILL IN THE `-wal` FILE ON A LIVE WAL DATABASE — `file:…?immutable=1` reads ONLY the main database file and never consults the `-wal`, so on a database the live service runs in WAL mode any row not yet checkpointed out of the WAL is INVISIBLE to the reader; a durably-committed fresh row can stay invisible for minutes (until an auto-ch",
+  "AF-AP-105": "A CAPTURE RUNNER THAT REUSES A FIXED-NAME OUTPUT DIR AND POLLS FOR A READINESS MARKER RACES THE PRIOR RUN'S STALE MARKER — a runner that launches a DETACHED producer into a dir keyed by a fixed name (`<markers>/v2-<leg>`) then polls for the producer's `launch.ready` sees the PRIOR run's stale `launch.ready` (+ `runtime-identity.json`, pidfiles) on its FIRST poll, before the producer's own startup ",
+  "AF-AP-106": "A RESIDUAL-SELECTION CHECK THAT PICKS \"NEWEST MATCH\" FOR A COMMITTED-CONSTANT KEY AGAINST A PERSISTENT PRODUCER SILENTLY REUSES A PRIOR RUN'S ARTIFACT WHEN THE CURRENT ACTION PRODUCED NONE — when a producer's output store persists across runs (a shared backend you do NOT own, so you cannot pre-clean it — the AF-AP-105 sibling for the un-cleanable case) and the selection key is a COMMITTED CONSTANT",
+  "AF-AP-107": "A DETERMINISM GOLDEN OVER AN EVENT STREAM THAT CARRIES ASYNCHRONOUS NOTIFICATIONS — TWO IDENTICAL SAMPLES ARE A COIN TOSS, NOT PROOF — a \"golden ×2 byte-identical after structure-preserving normalization\" claim over a wire transcript that includes notifications the protocol does NOT order against the request/response stream (an agent's session-metadata update emitted from an independent task) pass",
+  "AF-AP-108": "A REMOTE SHELL COMMAND WHOSE LAST STATEMENT IS `[ -f X ] && …` RETURNS 1 WHEN X IS ABSENT, AND A `set -e`/`pipefail` CALLER READS THAT AS THE COMMAND'S FAILURE — a `for` loop of `[ -f sidecar ] && echo …` as the tail of a `bash scripts/pc.sh \"…\"` string makes the whole remote call's exit status the LAST test's status; when the last sidecar is absent (a leg that legitimately has none) the bridge re",
+  "AF-AP-109": "A REORDER CONTROL BUILT FROM SLICE ARITHMETIC THAT DUPLICATES THE NEIGHBOUR INSTEAD OF SWAPPING (`x[:i] + x[i+1:i+2] + x[i:i+1] + x[i+1:]` — the last slice must start at `i+2`): the \"moved\" list has one extra frame, so \"the output changed\" holds for the wrong reason and the control kills NOTHING it was written for (VERIFY-VB-F12 2026-09-21: the closed-set and the sync-order controls of the S0-01 g",
+  "AF-AP-11": "a subprocess test spawns a repo CLI through its shebang — the green proves the host interpreter's site-packages, not the declared toolchain `subprocess.run([str(CLI)…` with no `sys.executable`; a `#!/usr/bin/env python3` script under test with venv-only deps",
+  "AF-AP-110": "AN ISOLATED-HOMEDIR gpg CALL LEAVES A gpg-agent DAEMON BEHIND — a `tempfile.TemporaryDirectory()` used as `GNUPGHOME` for `gpg --import` / `--list-keys` / `--verify` auto-starts `gpg-agent --homedir <tmp> --use-standard-socket --daemon`; the directory is deleted on exit and the agent outlives it, ONE orphan per call (measured 2026-09-22 06:17Z on the real `verify_review`, `src/agent_factory/govern",
+  "AF-AP-111": "A ROUTE CLAIM STATED FROM CONFIG, NOT FROM THE EGRESS LOG — \"the local-Qwen lane\" named a combo whose step 2 is a cloud chain, and the local step refused long-context turns (`[400]: System message must be at the beginning.`, 343× on 2026-09-22 alone, first seen 2026-09-17T10:06Z at the vLLM cutover), so 57 % of the day’s successful build turns and 30 % of the verify turns ran on codex `gpt-5.6-*` ",
+  "AF-AP-112": "SCRATCH COPIES OF THE TREE ON A tmpfs EXHAUST INODES, NOT BYTES — eight `git archive` copies of an 85k-file tree (VB-F12-G1’s `/tmp/g1*`, 2026-09-21) plus 265k pytest basetemp files filled the PC’s 1,048,576-inode `/tmp` at 16 % of its bytes; every live lane then failed to create a temp file (2026-09-22 08:04Z) while `df -h` read 53 GB free. Rule: tree copies and basetemps go under the lane’s own ",
+  "AF-AP-113": "A DOCUMENTED INVOCATION EXAMPLE MISSTATES THE PARSER'S GRAMMAR — `-s SYM…` (one flag, many values) for a parser that takes one value per flag; a lane pasted the example and lost a turn to a refusal screen: none mechanical — the rule is editorial (paste from the parser's `case` arm / `--help`; write repeats as `[-x V]…`); the echo sweep is `grep -n -o -E -- '-[a-zA-Z] [A-Za-z_<>-]+(…",
+  "AF-AP-114": "A RED-FIRST COUNT READ AS A RED-FIRST PROOF — the new live test was red at the PIN, but for a `gate-inert` refusal, not the rc-0 PASS it claimed to reproduce; the grade pasted \"7 failed\" and never the failing assertion screen: none mechanical — the grading rule: every red-first run pastes the FIRST failing assertion + its message per new test (`--tb=short`, grep `^E `), and a test whose docstring ",
+  "AF-AP-115": "A TRUST ANCHOR RESOLVED FROM THE CALLER'S ENVIRONMENT — a verifier locates the executable it trusts on the ambient PATH (`shutil.which(\"gpg\")`) and forwards that PATH into the child, so whoever controls the caller's environment supplies the verifier: a scratch `gpg` that prints a shaped GOODSIG/VALIDSIG line made the real `verify_review` accept an UNSIGNED record; the docstring's F5 claim (\"PATH-s",
+  "AF-AP-116": "A SPLIT LEG'S PER-PROCESS ARTIFACT COLLECTED AT THE LEG ROOT WHILE THE CONSUMER'S CLOSURE IS KEYED ON THE SUB-LEG — the S0-02 runner's `collect_masked \"$out\"` (R:246, `out=$DEST/neg-replayed`) writes the replay leg's masked log once at the root, while `_check_replay` requires the root to hold EXACTLY `first`+`second` (C:569-572) and each sub-leg the six plain files incl. `buzzacp.log` (C:143-149):",
+  "AF-AP-117": "A FIXTURE CHANGES THE MODE OF A SHARED SYSTEM PATH IT DID NOT CREATE — a verifier's `chmod 755 /tmp /tmp/vj10r1` (to make its scratch traversable for `nobody`) stripped the sandbox's `/tmp` from `1777` to `755` for two hours (2026-09-22 18:14Z-20:15Z); nothing but the delegate's own disclosure surfaced it. Rule: make only the root you created traversable (`mkdir -p <scratch-root>/x && chmod 755 <s",
+  "AF-AP-118": "a lane's route label is its dispatch parameter while a harness-level fallback chain (Hermes `fallback_providers`) silently re-routes the lane to other models after upstream errors; a combo-keyed provider-mix line is blind to raw-id lanes a `fallback_providers:` block in a lane profile config; call_logs rows whose `requested_model` differs from the lane's HERMES_MODEL; a `499 Request aborted` on th",
+  "AF-AP-119": "REPRESENTATION-BOUNDARY EXPANSION LOSS — a value deliberately stored as shell syntax for later expansion (`$HOME/...`) is transferred as data (base64, JSON, argv) and decoded unexpanded on the consuming side; the tests only ever feed absolute temp paths, so the symbolic production default is never exercised no mechanical code signature; the field tell is the PC runner's `already running … not star",
+  "AF-AP-12": "a JSON-schema `format` keyword with no registered checker — the schema claims a check that never runs `\"format\": \"date-time\"` in a schema while `rfc3339-validator` is absent from the pinned deps; `FormatChecker()` with no presence assertion",
+  "AF-AP-120": "THE LEXICAL GATE SCREEN'S CLOSURE STOPS AT THE FILE — a never-a-gate screen reads the TEXT of each listed gate file, so a listed file that sources an unlisted helper carries the banned behaviour into the gate's process while the screen reads clean a `source` or `.` line added to a file listed in `scripts/gate_files.txt` (no AP_SCREEN row: the signature is generic outside the listed set, so the clo",
+  "AF-AP-121": "A PORTED TOOL FAILS OPEN ON A PRECONDITION ONLY ITS NATIVE HARNESS CREATES — the smoke plants the precondition (the tool's own state under a temporary HOME) and goes green, while the target harness never creates it, so the wrapper's ON state is behaviourally identical to OFF no mechanical code signature (a temporary HOME is normal test isolation); the tell is a smoke fixture that writes the third-",
+  "AF-AP-122": "A DEPLOYED UNIT BOUND TO AN EPHEMERAL LANE TREE — a lane that installs a long-running service from inside its own worktree writes the worktree path into the unit, so the service runs code no landing reaches and breaks at its next start once the lane tree is cleaned runtime, not code: `systemctl --user show <unit> -p ExecStart` (or WorkingDirectory) containing `/.lanes/`; the installer-side guard i",
+  "AF-AP-123": "AN IDENTIFIER CITED FROM MEMORY — a decision, registry or task number written into a brief or ledger without resolving it against its registry resolves to a different record, and the record it meant may not exist at all no code signature; the tell is a `D-0NN` or `AF-AP-NNN` citation with no pasted registry grep beside it, or a ledger note saying RECORDED with no matching row in the log",
+  "AF-AP-124": "A NEW RECORD PLACED IN A DIRECTORY ANOTHER TOOL CONSUMES — a brief or builder picks a path for new state without reading who lists, mounts, sources or deletes that directory, and the other tool acts on the record `ip netns exec` bind-mounts every file in `/etc/netns/<ns>/` over /etc (only `resolv.conf`-style overlays belong there); the tell elsewhere: a new file in a directory owned by a tool's co",
+  "AF-AP-125": "A SUITE'S TEMP FOOTPRINT EXCEEDS THE VENUE'S FREE DISK — pytest keeps every `tmp_path` until the session ends, so a function-scoped fixture that copies large trees accumulates one copy per test; on a nearly full venue it fills the disk and starves every other process's temp (lane pollers, the tool's own output) `shutil.copytree(REPO / ...)` or large copy loops in a function-scoped fixture, with no",
+  "AF-AP-126": "A PUSHED HEAD'S CI RUN NOT READ — the landing loop reads local gates only, so reds that landings bring in accumulate across pushes unseen a landing note with no CI line; no `actions_list` call between two pushes",
+  "AF-AP-127": "A BOUND BEFORE A PATTERN REDACTION — a truncate/cap/limit applied to text before a regex redaction or scrub cuts a boundary-straddling secret below its pattern's minimum length (or cuts off a block's END marker), so the partial secret survives into the output `scrub(x[:cap])` / `redact(x[:n])`; a normalize step that truncates before a later redact step",
+  "AF-AP-128": "A NAMESPACE FACT READ THROUGH A VIEW THE NAMESPACE DOES NOT SCOPE — an isolation (or other per-namespace) claim is read from an interface that still shows the parent's view, so an isolated context reads as networked, or the reverse; sysfs keeps the view of the netns that mounted it `unshare -n` or `nsenter --net` followed by a `/sys/class/net` read with no sysfs remount; one instrument behind an i",
+  "AF-AP-129": "A SHELL NUMERIC TEST THAT ERRORS READS AS FALSE — `[ \"$x\" -gt N ]` on a value bash cannot hold as an integer (overflow past 2^63-1, or a non-integer) prints `integer expression expected` and returns 2; inside `A \\ \\",
+  "AF-AP-13": "a declared-contract fact hardcoded inside the gate that checks the contract (the registry's missing rule id injected by validator code) any literal rule/proof id in validator code outside the canonical constants (`allowed.setdefault(\"map-…\")`)",
+  "AF-AP-130": "A TEST THAT FINDS ITS SUBJECT THROUGH THE WORKING DIRECTORY — a repo-relative path literal (`\"scripts/x.py\"`) in `spec_from_file_location` or a subprocess argv resolves against the process cwd, so the suite is green only when pytest runs from the repository root and a gate run from there hides it a bare `\"scripts/…\"`, `\"proofs/…\"`, `\"src/…\"` or `\"harness-ports/…\"` literal as a module path or argv ",
+  "AF-AP-131": "A CONFIG CHANGE ASSUMED LIVE IN A PROCESS THAT READ IT AT START — an edit to a file a long-running consumer loads once (the harness's `.claude/agents/*.md`, an MCP registration, the Hermes profile under a running lane) is taken as in effect for the next action, while the consumer still serves the value it read at its own start no code signature (an orchestration step): a dispatch, launch or claim ",
+  "AF-AP-132": "A LINE NUMBER COMPUTED WITH `str.splitlines()` — it also breaks on U+2028, U+2029, U+0085, `\\x0b`, `\\x0c` and `\\x1c`-`\\x1e`, so a tool that numbers lines with it disagrees with git, grep and Python's own line numbers on any file that holds one of those characters (every later line reads N lines late); the same characters written LITERALLY in source are invisible and render as line breaks in many v",
+  "AF-AP-133": "A COMMAND CLASSIFIER GRADED ONLY AGAINST ITS OWN EXPECTED TABLE — a predicate that decides whether a command \"counts\" as verification (a done-gate, an `is_verify`) is tested against a table of expected booleans, never against the shell with the check stubbed to fail, so shapes whose exit status does not carry the check's status count while bash exits 0 (`pytest && false ",
+  "AF-AP-134": "AN EXPORTED STUB PATH POISONS EVERY LATER COMMAND IN THE SAME COMPOUND SHELL CALL — `export PATH=<stubdir>:$PATH` inside one Bash tool call makes every later `git`, `python3` or `node` in that call run the stub, and the stub's `rc 3` reads like a real result `export PATH=` or `PATH=<dir>:$PATH` followed by more commands in the same compound call",
+  "AF-AP-135": "A PATTERN FIX GRADED ONLY ON ITS TARGET SHAPE — changing a regex's character semantics (a flag such as `re.ASCII`, a `\\b`, a `\\s`) re-classifies every string the pattern touches; grading the change only on the reported shape can open a sibling a flag or anchor change in a classifier pattern whose tests add rows for the reported shape only",
+  "AF-AP-136": "A POSITIONAL RULE THE MODULE'S OWN REWRITER MOVES OUT OF POSITION — a rule keyed on position (\"a segment begins with `trap`\") is bypassed by a transformation the same module applies to its input a rule anchored at a segment or line start in a module that also rewrites commands",
+  "AF-AP-137": "A VALIDATOR RUN ON THE PRE-NORMALIZATION FORM OF A VALUE THAT IS STORED NORMALIZED — a constructor validates the raw object it returns, but the sink canonicalizes (NFC, key order, casing) before writing, so a value that passes in raw form fails the same rule in stored form and the constructor's own output is refused downstream a `make_*`/builder that ends in `validate(raw)` while the writer stores",
+  "AF-AP-138": "A MUTANT \"KILLED\" BY AN ASSERTION THAT ALSO FAILS ON THE UNMUTATED CODE — the kill harness asserts only that the killer raises on the mutant, so when the killer's own pin goes stale every mutant \"dies\" and the mutation row stays green while the direct test is red: the kill is not attributable to the mutant (a sibling of AF-AP-78, where a crash stood in for the kill) a `pytest.raises(AssertionError",
+  "AF-AP-139": "A STAND-IN MORE PERMISSIVE THAN THE SERVICE IT STANDS IN FOR — a positive control's request is graded only against a test stand-in that answers success to every request, so every round passes while the real service refuses that request; the request itself was never sent to the real service before the design froze a test HTTP handler that sends the same 2xx for every path and method (no branch on `",
+  "AF-AP-14": "unvalidated alias/indirection table — both sides of a comparison resolve through the same typo'd map and agree on a non-canonical value alias values/keys and branch classes never checked against the canonical set",
+  "AF-AP-140": "A TERMINAL MARKER THAT OUTLIVES ITS ATTEMPT — a relaunch reuses the run directory, and the poller reads the previous attempt's FAILED / exit / ready marker as the current attempt's verdict, so a live run is reported dead (or a dead one ready) a poller that tests a marker file's existence (`test -f …/FAILED`, `…/buzz-acp.exit`, `…/launch.ready`) without binding it to the current attempt (its pid al",
+  "AF-AP-141": "A GIT HISTORY-WALK EXIT CODE READ AS A BOOLEAN — `git merge-base --is-ancestor` answers 1 with `error: Could not read <sha>` when its walk meets a missing object, even for a TRUE ancestor (git 2.43, measured), and 0 or 1 by the walk order, which follows commit dates; a caller that reads exit 1 alone as \"not an ancestor\" decides on a history git could not read a `merge-base --is-ancestor` call whos",
+  "AF-AP-142": "A TEST OVER A DAMAGED OBJECT STORE WITHOUT PINNED COMMIT DATES — git's history walk follows commit dates, so a test that deletes an object and expects one exit code from a walk passes or fails with the second its commits land in a test that removes a file under a throwaway repo's `.git/objects` and commits without `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` pinned",
+  "AF-AP-143": "A STATEFUL SCANNER THAT ENDS IN A NON-FINAL STATE SILENTLY — a hand-written tokenizer tracks quote and heredoc state; ordinary text it does not model (a quote nested inside `\"$(… \"…\")\"`, `$'…'`, a heredoc marker inside a string, an apostrophe in a YAML step name) desyncs it, and from there it scans NOTHING to the end of the file with no error, because the end of input never asks \"am I back in the ",
+  "AF-AP-144": "A CHECKER'S EVIDENCE PARSE ESCAPES ITS EXIT CONTRACT — a proof checker promises one named failure line (`failure_reason:` or a named prefix) and rc 1 for every refused bundle, but reads evidence with a raw call (`json.loads`, `bytes.decode`, `yaml.safe_load`, a default-encoding text read) whose exception is not in `main`'s caught set, so a malformed file dies with a traceback, rc 1 and no reason l",
+  "AF-AP-145": "A CLEANUP THAT A SECOND SIGNAL CAN ABORT — a bash script's EXIT-trap cleanup runs with INT and TERM still live, so a second signal while it runs (an operator's double Ctrl-C, a stop sent to the process group) abandons the teardown half-done: either a handler's `exit` inside the EXIT trap ends it, or, with no INT/TERM trap, the default action kills bash mid-cleanup; the script exits with the first ",
+  "AF-AP-146": "A LANE CEILING COUNTED IN LANES WHEN THE SHARED RESOURCE IS COUNTED IN TOKENS: the local-route concurrency rule was measured as throughput at short contexts (\"near-linear to ~310 tok/s at 7 lanes\"), but the binding constraint at production context lengths is the vLLM KV cache, 222,822 tokens. Lanes that have run for hours send 57-90k-token prompts. Two fit; a third lane's request waits inside vLLM",
+  "AF-AP-147": "A TEST'S WAIT GUARANTEES LESS THAN ITS ASSERTION CHECKS: a test waits for condition W, then asserts A, but W does not imply A. The gap is hidden by a timing margin (a sleep after the wait) that holds on a fast machine and fails on a loaded one. Here the wait was `updated_seq >= 100`, which counts both directions, while the assertion was `tl_c2a >= 100`, one direction. The red is intermittent and r",
+  "AF-AP-148": "A HOOK RUNS GATE CODE FROM THE WORKING TREE WHILE A LIVE LANE EDITS IT: `scripts/hooks/pre-commit` executes `scripts/no_laya_in_gates.py` and `scripts/lint_delta.py` from the shared working tree. In a tree where a lane is rewriting the screen, every commit is judged by the lane's unverified half-edit. It fails closed (blocking unrelated commits), or fails open (a half-edit with a check removed let",
+  "AF-AP-149": "A SECRET-BLOCK PATTERN WRITTEN FOR ONE LABEL SPELLING — a private-key redaction rule that wants `PRIVATE KEY-----` right after the label misses GnuPG's armor (`PGP PRIVATE KEY BLOCK`, PGP 2.x `PGP SECRET KEY BLOCK`), and a rule that needs the END line misses a block cut at its source; the body lines reach the output whole a regex over `-----BEGIN …` that contains `PRIVATE KEY-----` with no `(?: BL",
+  "AF-AP-15": "a transport reply cap silently truncates a payload and the received TAIL looks like a valid file any bridge fetch of a file with no size/hash check against the remote (`pc_bridge_exec` replies cap at ~45 KB)",
+  "AF-AP-150": "A SIBLING SWEEP SCOPED TO THE FIX'S OWN DIRECTORIES — the sweep for a bug class searches where the fixed file lives, not every first-party root the class can live in, so a same-class site in another root stays open and is found later by chance a sibling-sweep command in a report, a commit message or a registry row whose path arguments name fewer roots than `scripts/ harness-ports/ src/ proofs/ .cl",
+  "AF-AP-151": "A TEST FIXTURE THAT HAND-COPIES PART OF A REAL CONFIG — a throwaway-repo fixture writes its own literal copy of a committed allowlist or input set, so when the real config grows the fixture falls behind and its positive control goes red in CI, after a landing whose gate never ran that test a test fixture that `write_text`s a literal list copied from a committed config (a gate list, an allowlist, a",
+  "AF-AP-152": "A SCRUBBER REGEX WHOSE COST GROWS FASTER THAN ITS INPUT — a quantified group nested in a quantified group over overlapping classes backtracks exponentially, and an alternative that starts with an unanchored `[class]*` re-scans a long run from every start position (quadratic); one long line in a transcript or a ledger row then stalls the scrub, and the scrub runs inside a commit hook and on every p",
+  "AF-AP-153": "A REWRITE THAT RAISES FIDELITY ON THE SHAPES IT NAMES AND DROPS A REFUSAL ON ONE IT DOES NOT — a repair replaces a cruder lexer with one that follows the real language's rules for a listed set of forms; one unlisted form (here a quoting form) is now translated differently from the real interpreter, and a text the old lexer REFUSED now reads CLEAN; the repair's tests cover the new shapes and the ol",
+  "AF-AP-154": "A LANE'S SERVED MODEL CHANGED MID-RUN AFTER A REFUSAL, WITH NO NOTICE — a sandbox subagent dispatched on the routed model hits a content-safeguard `stop_reason: \"refusal\"`; the harness drops its thinking blocks (`thinking_drop`, reason `model_mismatch`) and serves every later turn on a different model; the lane's hand-back and report still name the dispatched model, so a verify graded as one model",
+  "AF-AP-155": "A LANE'S PLANNED INPUTS RECORDED ONLY IN PROSE NEVER REACH ITS BRIEF — a note names a future lane and what it must carry (\"B9's inputs: `revoked.json` signer → `owner2` …\", \"takes this value in B9\"); the lane's brief is written later from a verify report and an issue, so the prose plan is dropped; each lane lands green on its own contract, and the gap surfaces only at the live run that needed the ",
+  "AF-AP-156": "A NEGATIVE LEG'S SETUP RUNS THE POSITIVE PATH INSIDE THE WINDOW IT OBSERVES — to build its negative stimulus, a leg first performs the positive action inside the same observed process (here: it POSTs a valid event to get a signed copy it can corrupt), so the leg's evidence carries the positive outcome. The checker then fails real evidence; a checker loosened to \"count only after the stimulus\" woul",
+  "AF-AP-157": "A REDACTION MATCH SWALLOWS THE NEXT SECRET'S NAME — one class's match (a prefix class such as `sk-` or `bearer`, or an assignment's value run) runs over a following secret NAME and its separator, so the class that keys on that name never sees it, and that name's value survives into the output a value or prefix class whose character set admits the letters, `_` and `-` of a secret name and whose end",
+  "AF-AP-158": "A SUBSTRING-GRADED NEGATIVE LEG OVER OUTPUT THAT QUOTES EVIDENCE — a runner reads a negative leg as proven when ANY output line CONTAINS the spec's reason, while the checker's failure lines interpolate evidence bytes (a relay message, a file name, a receipt key); evidence that carries the reason text reads as a proven denial even when the checker failed for another cause a spec negative leg over a",
+  "AF-AP-159": "A NODE'S START READ AS ITS CONTENT'S START — a parser's node position includes the node's prefix (PyYAML's `ScalarNode.start_mark` is its first PROPERTY, an `&anchor` or a `!!tag`), and a property can sit on the line above the value, so a line map built as `node.start_mark.line + k` names the block indicator's or the key's line: a refusal that points outside the value it refuses, and a literal blo",
+  "AF-AP-16": "all-or-nothing deliverable: a long-running lane/agent writes its report only at the end, so a mid-run death leaves zero evidence of the work a lane brief with no incremental-report rule; `report.md` empty while `state.db`/worktree hold hours of work",
+  "AF-AP-160": "A LEG EXEMPTED FROM ONE GATE BY DESIGN IS EXEMPTED FROM ALL — a grading loop keeps a structurally-separated leg out of one cross-leg gate with a `continue`, and the same `continue` also skips every check of that leg's own observable, so any text on that leg passes: the exemption was meant for one gate and reached all of them structural, not a line pattern: inside a `for`/`while` over legs, an `if ",
+  "AF-AP-161": "A GUARD JUDGES TEXT THAT A LATER PASS REWRITES — in a multi-pass redaction or normalization, a guard's verdict is computed on the text as it stands before a later pass changes it (removes a space, folds case, joins tokens), so the verdict does not hold for the output and a value the rewritten text would have refused passes no mechanical code signature; the tell is a guard or predicate evaluated in",
+  "AF-AP-162": "A REMOTE PROGRAM TESTED ONLY BY A DOUBLE THAT MATCHES ITS TEXT — a command string built for the far side of a bridge (a probe, a check) is a program; the test double answers it from a `case` arm keyed on a substring and returns a canned state, so the program's logic and its quoting never run, and any change passes while the arm still matches. A lane that adds an arm for its own new string has writ",
+  "AF-AP-163": "A CALLER'S RELATIVE PATH USED AFTER THE SCRIPT'S OWN `cd` — a directory taken from an environment variable or an option is stored as given, the script changes directory, and a later read or write through that value resolves against the new directory: the file is missing or lands elsewhere, and a tool that only warns on the failed write still prints its green summary line. The sibling of AF-AP-130 ",
+  "AF-AP-164": "A PREMISE LINE THAT IS NOT THE COMMAND THAT RAN — a brief's measured block pastes output under a command line typed by hand (a pattern re-escaped, a flag dropped) or measured on a state the PIN no longer has (the commit list before push_clean's rewrite); the lane re-runs the echoed line, gets different output and stops CONTRACT-INVALID, or worse, passes on a premise nobody measured a `$ …` line in",
+  "AF-AP-165": "A COMMAND RECOGNIZER THAT GRADES ONE SEGMENT, NOT THE CONTROL FLOW — a classifier decides \"this command runs a check\" from the segment that names the check (the last `;`/newline segment, or the first match), while an earlier segment ends the shell (`exit`, `exit 0 &&`) or redefines the check's name (a shell function), so the check never runs and the command's exit 0 is recorded as a passing check.",
+  "AF-AP-166": "A POSITIVE CONTROL ON A ROUTE THAT SKIPS THE BINDING THE REAL TRAFFIC MEETS — the preflight asks a path the service answers before its tenant, Host or auth binding (a health path, NIP-11), so the control is green while the unit's real route is refused (the relay's `404 no community is configured for this host`). The AF-AP-33 family: health-200 is not the route the traffic takes a preflight or C0 p",
+  "AF-AP-167": "A CENSUS THAT ASSUMES THE WATCHED TREE IS QUIET — a before/after census fails a run on any change, on the premise that only the run could write to the tree, while a long-running process outside the run (a service that logs into the tree) keeps writing: a false red on the service's own log, and the tempting fix (exclude the file by name) is a blind spot a unit can hide behind a before/after census ",
+  "AF-AP-168": "A TOOL'S ERROR-TEXT VOCABULARY CAPTURED ON ONE VERSION — a checker allow-lists message fragments copied from the tool on the venue where it was built (curl 8.5's \"Couldn't connect to server\"), and the live venue runs a newer version that words the same failure differently (curl 8.11's \"Could not connect to server\"): the first live run fails closed on a real denial, and a hurried fix drops the voca",
+  "AF-AP-169": "A PRIVILEGED RUN WRITES INTO THE UNPRIVILEGED WORKING TREE — a tool run under sudo is given an output path inside a repository clone that an unprivileged user maintains; the root-owned directory it leaves behind later collides with a committed path, and the unprivileged user can neither remove it nor write into it, so `git` refuses the fast-forward (or a checkout) until someone with sudo clears it",
+  "AF-AP-17": "oversized lane scope — a brief that cannot fit one context compacts repeatedly, and each compaction prunes the governing role/skill text, so the lane continues under weaker rules a lane session with ≥2 `CONTEXT COMPACTION` markers; a brief carrying >16 contract items or >8 attacks",
+  "AF-AP-170": "A MERGE-READY OVER UN-RUN ITEMS — a verify lane returns a clean gate recommendation while its report skips most of the brief's demanded items (no races run, too few hostile inputs, no pasted harvest lines, a fraction of the mutants) and asserts claims that a complete pass refutes; read at face value it closes a component that holds four blockers a report whose per-item sections carry no command an",
+  "AF-AP-171": "A HEARTBEAT THAT READS ONLY LIVENESS — a watcher reports a lane `alive` from its pid and the age of its last model message while the lane's runner has already failed an attempt and restarted it, and the lane has changed nothing; hours of zero progress look the same as hours of work a heartbeat line with a live pid and a fresh message age but no progress field; a progress field read from a file the",
+  "AF-AP-172": "A HOOK REGISTERED WHERE THE HARNESS DOES NOT LOOK — a hook is described as live because its registration exists, while the venue never loads that registration (a project settings file under a directory that is not the session's root) or loads it but shows its output only to the human (plain stdout on exit 0 from a PreToolUse or PostToolUse hook) a `$CLAUDE_PROJECT_DIR`-relative hook in a repo that",
+  "AF-AP-173": "A GRAMMAR TESTED ONLY ON ONE-LINE INSTANCES OF A CONSTRUCT THE CONTRACT SAYS MAY WRAP — the parser joins the pieces of a wrapped anchor or title and drops one (`prefix = joined[:-1]` kept only the last piece of a 2-line title; a 3-line one lost its middle line), and no test held a wrapped instance, so the harvest refused a valid BLOCKER and minted rows with a line missing a multi-line join whose a",
+  "AF-AP-174": "A CONTRACT PATTERN RE-TYPED NARROWER, AND THE LANE'S OWN TEST PINS THE NARROWING — the brief gave an exact anchor regex; the code re-typed it with a second required delimiter and the lane wrote a test asserting that narrower reading, so a real contract record (`P5c-report.md:13`) yielded no row and no refusal a regex in code that differs from the regex its brief quotes; a lane test that the contra",
+  "AF-AP-175": "A MOVING REF RESOLVED PER READ — one run names the symbolic ref `HEAD` in each git call (`ls-tree … HEAD`, `cat-file blob HEAD:<path>`), so a commit landing mid-run makes one row carry bytes from two commits, and a later harvest of either commit writes a second row for the same decision with exit 0 two or more reads of `HEAD` (or a branch name) in one process that must see one snapshot; an admissi",
+  "AF-AP-176": "ONE REFUSAL REASON FOR A BENIGN AND A CORRUPT STATE, DOWNGRADED BY THE CALLER — the ledger raised `decision-row-duplicate` both for \"this row is already here\" and for \"the file holds a row id twice\"; the harvester counted every such refusal as a duplicate skip with exit 0, so a ledger corrupted by two concurrent writers reported clean skips forever while holding 1 of 10 rows an `except <X>Error` t",
+  "AF-AP-177": "A PARSED JSON VALUE USED AS A HASH KEY BEFORE ITS TYPE IS CHECKED — a value read from untrusted JSON (`block.get(\"name\")`, `inputs.get(\"subagent_type\")`) goes straight into a set or dict membership test; a JSON list or object there raises `TypeError: unhashable type`, which crashes the run instead of refusing the record `.get(...) in {` or `.get(...) not in {` on a parsed record, or a variable ass",
+  "AF-AP-178": "A RUNTIME CONDITION GUARDED BY A BARE `assert` — a production script asserts a condition that an outside actor can make false (a commit pruned mid-run, a missing input), so the run dies on a bare `AssertionError` traceback with no named refusal and leaves partial output behind, and under `python -O` the check vanishes entirely `^\\s*assert\\s` in production code whose condition depends on the filesy",
+  "AF-AP-179": "A \"RUNS WITHOUT X\" CLOSURE THAT BLOCKS X IN ONE PROCESS AND COUNTS ONLY FAILURES — a test claims a suite has no dependency on package X by blocking X at import time, but the blocker lives only in the process that installs it, so the scripts the tests start run unblocked; and it reads failures, not attempts, so an import the code catches, or a test that skips on ImportError, passes. A `builtins.__i",
+  "AF-AP-18": "a finding suppressed to avoid a duplicate hides its siblings — `if missing and X not in missing` style guards turn one defect into the only reported one a conditional that skips a findings/errors emission because another finding already covers part of the set",
+  "AF-AP-180": "A LANE'S FINAL REPLY THAT ECHOES THE HARNESS'S INJECTED CONTEXT, SAVED AS ITS REPORT — after a context compaction a Hermes lane's last turn can return the text the harness injected into its prompt (the wiki-context block `[wiki live-state — …]`), and the dispatcher saves any non-empty final reply as `tasks/briefs/pc/report-<lane>.md`; a harvest that trusts that file has no report, and the text rea",
+  "AF-AP-181": "A RACE HANDLER WHOSE FALLBACK ITS OWN ASSERT REJECTS — a liveness check reads `/proc/<pid>/stat` after `os.path.exists`, anticipates the reaper removing the entry between the two calls, and assigns a fallback (\"gone\") in the `except` branch; the assert that follows accepts only the other value (\"Z\"), so the race the handler was written for still fails the test, rarely and on no code change (CI run",
+  "AF-AP-182": "A CONTEXT HOOK THAT FIRES ON HARNESS EVENTS — a UserPromptSubmit hook injects context on every \"prompt\", and the harness also delivers task notifications, agent hand-backs and hook feedback as prompts. Once the five hooks fired in the `/home/user` session (task #214, 2026-09-24 11:0xZ), `wiki-context.py` injected the first 40 lines of live-state on every event: 6,537 bytes per person's prompt and ",
+  "AF-AP-183": "A HOOK'S TEXT OVER THE HARNESS'S SIZE LIMIT — Claude Code swaps any hook text over 10,000 characters for a 2 KB preview of its head (read from the running 2.1.280 binary by VERIFY-COORD-0924), so a hook that prints a long prefix hides its payload: `session-start.sh` printed setup's whole log first and its live-state never reached the model (2 of 2 compactions over the limit, max 19,145 characters)",
+  "AF-AP-184": "A HOOK COMMAND WHOSE OWN FAILURE IS THE BLOCKING CODE — exit 2 blocks a PreToolUse call, a Stop and a prompt, and both a failed `cd` under dash and python's can't-open error exit 2, so the installed `cd <repo> && python3 <hook>` commands would refuse every Grep, block every Stop and drop every prompt when the repo or a script is absent (a checkout without `scripts/hook_context.py` is enough) (VERI",
+  "AF-AP-19": "self-reinforcing context loop — compaction prunes the loaded skills, the handoff says reload them, the reload refills the context, compaction again; the task's own contract is what gets summarized away a lane transcript with ≥2 `CONTEXT COMPACTION` markers each followed by the same `skill_view` calls; a report that speaks of \"recovering the brief\"",
+  "AF-AP-2": "collective reference satisfying a per-item gate by count (ids appear in a list, never as specified items) seed/registry ids that appear only once in a spec",
+  "AF-AP-20": "a gate that reports success when its comparison never ran — process substitution / subshell failures leave empty results that read as \"no drift\" `$(comm … <(…) <(…))` or any `$(cmd)` whose exit status is not checked, followed by a success message",
+  "AF-AP-21": "a test that mutates shared repository state at import time (sentinel deleted, temp dirs leaked, `.git` assumed a directory) — order-dependent siblings and worktree crashes module-level filesystem side effects in a test file; `ROOT / \".git\" / …` paths; `mkdtemp` without cleanup",
+  "AF-AP-22": "tautological isolation/reachability assertion — a containment check whose positive observation is satisfied by the ambient environment independent of the isolating mechanism, so a pass-through wrapper still \"passes\" an isolation checker that runs its probe ONLY through the wrapper (`unshare`/`nsenter`/`firejail`), with no un-wrapped run of the same probe proving the assertion flips; \"cannot reach ",
+  "AF-AP-23": "OPEN-ENDED filter passed off as an allow-list — a credential stripper keyed on a NAME blacklist, a sweep gated on a FILE-EXTENSION allowlist, OR an env allow-list keyed on a NAME PREFIX (`RUBRIC_*`): each silently passes an out-of-set member. A prefix is not a closed set. an env \"clean\" builder that `continue`s on named keys / a suffix set; a sweep `if path.suffix not in (…)`; `k.startswith(\"RUBRI",
+  "AF-AP-24": "proxy capability preflight — a skip/availability guard tests a PROXY signal (a uid change) instead of the EXACT predicate the real check consumes, so it green-lights a host the real check then hard-fails a `skipif`/availability probe that checks one capability while the checked code reads several (`/proc/self/ns/net`, a listener, a uid); preflight and consumer diverge",
+  "AF-AP-25": "regex-list gate where a PARSER is required — a security check scans structured input (Python, YAML, JSON) with regexes, so real calls/keys in a form the regex does not spell out slip through, and the checker must self-exclude to avoid matching its own pattern strings a `re`-only sweep over `.py`/`.yaml` for security ops; a checker that excludes itself from its own sweep",
+  "AF-AP-26": "permissive-default / relative-only security predicate — a validator reads evidence with a safe default (`report.get(k, [])`) so MISSING evidence passes, or asserts only a relative bound (`uid != parent`) without the absolute floor (`uid != 0`) `.get(field)`/`.get(field, <benign>)` on a required field in a gate; an identity/limit check that omits the absolute boundary",
+  "AF-AP-27": "a FROZEN contract (seed/registry) reshaped in an implementation without an explicit owner decision — the negative control the seed pinned is deleted or its reason changed under cover of an unrelated fix a spec/registry edit that drops or rewrites a seed-declared `negative_control`/`expected_failure_reason`/frozen mapping; the change appears only in the diff, never surfaced",
+  "AF-AP-28": "a security assertion trusts the SUBJECT's self-report — the isolated process reports its own uid/netns/env and the checker believes it; a fake/pass-through wrapper fabricates a clean report. Sibling: an isolation/privilege binary resolved via `PATH` can be replaced. a checker that reads the child's stdout/JSON for its own isolation state; `unshare`/`nsenter`/`setpriv` invoked by bare name (PATH-re",
+  "AF-AP-29": "the machine-checkable CONTRACT is weaker than the test — the canonical runner accepts a result a committed test would reject (a spec `failure_reason` prefix vs the full reason; a schema looser than an assertion) a proof/spec `expect.failure_reason` that is a prefix/substring while the test asserts the complete string; any canonical gate laxer than the strongest test of the same property",
+  "AF-AP-3": "uncommitted work at a multi-agent dispatch boundary (container reset vaporizes it) dispatch with `git status` non-empty",
+  "AF-AP-30": "specimen-only remediation — a review's named cases are fixed and the whole CLASS declared closed, so the same defect re-appears one equivalent out (prefix→exact, blacklist→prefix, regex→AST, child-report→parent-observe) a \"fixed\" claim after a review whose tests cover only the reported instances; no equivalence-class mutants (alias/computed/defaulted forms, boundary values, the observe-vs-report a",
+  "AF-AP-31": "proof output not bound to its executable inputs — a recorded result artifact carries command/output hashes but not the digest of the CODE/spec/fixtures that produced it, so neutering the checker and keeping the stale green still validates; the gate re-validates the artifact without re-running the proof a `result.json`/report schema whose fields hash only the run I/O (a positive hash that is merely",
+  "AF-AP-32": "status precedes owner acceptance — the coordinator records a proof/task as closed (\"re-closed\", DONE) while it is still under the owner's active review, so the ledger claims completion the owner has not granted a build-ledger row or task that marks an owner-reopened item closed with no owner-acceptance record; a chat handoff that says \"review-pending\" contradicting the tracked status",
+  "AF-AP-33": "health-200 ≠ the right instance — a duplicate/unmanaged process squats the service port and answers health while serving a divergent dataset or config, so port-level liveness reads green during an outage of the real service a liveness check that hits only `/health` or `/api/health`; a systemd unit reported \"active\" inside an `EADDRINUSE` restart loop; two processes with the same binary name and di",
+  "AF-AP-34": "name-based process kill on a shared host — `pkill -x <name>`, `pkill -f <pattern>`, `killall` match EVERY process with that binary name or command line: other installs, container processes (visible in the host table under the bare name), or the caller's own shell carrying the pattern `pkill`/`killall`/`kill $(pgrep …)` in ops scripts or bridge commands; a stop that names a BINARY instead of readin",
+  "AF-AP-35": "redaction keyed on the secret's VALUE — a filter or regex built from the value puts the value into the command line, the tool output or the transcript it was meant to protect, and a quoting slip echoes it verbatim `sed \"s/$SECRET/…/\"`, `s/$(printf …)/`, `.replace(secret, …)`, `re.sub(secret, …)`; any command that expands a `*KEY*`/`*SECRET*`/`*TOKEN*`/`*PASSWORD*` variable into argv",
+  "AF-AP-36": "mint-before-mutants — a proof artifact (result.json / PRESENT) is minted while reviewer-reported mutations of its evidence still pass the checker, because the findings were fixed as prose or specimens instead of committed failing tests a review that lists concrete mutations followed by a commit that mints or re-mints the artifact without a test per mutation; a checker whose tests pass only the bui",
+  "AF-AP-37": "hand-typed test counts — a report or commit message states a pass count the author typed or inferred (collection totals, stale runs, counts that include skips), not the runner's own summary line a number in prose with no pasted `N passed[, M skipped] in Ns` line; \"N tests green\" when pytest printed skips or the run predates the last edit",
+  "AF-AP-38": "presence instead of exact value — a checker asserts that a configuration/echo field EXISTS or is truthy where the contract pins a VALUE, so drift (and outright contract breaches) pass `if echo.get(x):` / `assert field` on a contract-pinned value; a capture that echoes a default the contract forbids and still passes",
+  "AF-AP-39": "secret-in-argv launcher — a shell launcher passes a secret through `bash -c \"… KEY='$VALUE' …\"` / `env -i … KEY=$VALUE cmd`, so the value sits in `/proc/<pid>/cmdline` (world-readable) for the process lifetime and lands verbatim in any `ps`-derived evidence `env\\s+-i[^\\n]*(KEY/TOKEN/SECRET)=`, `bash -c \"[^\"]*(KEY/TOKEN/SECRET)=`, an f-string interpolating a `*KEY*`/`*TOKEN*`/`*SECRET*` value into ",
+  "AF-AP-4": "sandbox-probe-as-world: venue classification from the sandbox alone while the owner's live host holds the capability any \"blocked_host/blocked_credential\" label with no PC-bridge probe record",
+  "AF-AP-40": "presence-gated check — `if path.exists(): check()` in a checker turns a required artifact into an optional one: deleting the file switches the check off and the success line still prints (fail-open by omission) `if\\s+\\w[\\w.]*\\.(exists/is_dir/is_file)\\(\\)\\s*:` guarding an assertion in `proofs/**/check_*.py`; a required-file list that is only consulted when the file is present",
+  "AF-AP-41": "last-wins parse of a config echo — `dict(re.findall(…))` (or any last-assignment loop) over a startup line lets a duplicated key token override the real value, so a one-token forgery passes an exact-value gate; sibling: two terminal responses for one request id collapsing to the last one `dict\\(\\s*re\\.findall`; `for k, v in pairs: d[k] = v` over an echo line with no duplicate check; `by_id[rid] = ",
+  "AF-AP-42": "fixture-shaped hollow green — a synthetic test fixture diverges from the real producer's shape (key case, record layout, token format), so the checker passes the fixture, rejects (or would accept fake) REAL evidence, and the suite cannot notice a fixture builder for a producer that exists, with no test pinning the builder's output to a committed real sample; the real-bundle CLI test patched, skipp",
+  "AF-AP-43": "ordering evidence sampled outside the ordering lock — timestamps (`t_utc`, `t_mono_ns`) taken before `with lock: seq += 1`, so honest concurrent producers yield inversions that read as tampering, and the gate either fails a legitimate run or is loosened until forgeries pass `monotonic_ns()` / `time.time()` sampled, then `with … lock:` assigning the sequence number; a BufferedReader read on a threa",
+  "AF-AP-44": "module-scope environment probe that RAISES — a test module (or import-time code) probes a venue path with `Path.exists()`/`os.stat` at collection time; under another identity (CI's non-root runner, a 0700 `/root`) the probe raises PermissionError and aborts the WHOLE test job before any test runs, so every green is local-only `@pytest.mark.skipif(not <path>.exists()` / `.is_file()` / `.is_dir()` a",
+  "AF-AP-45": "zombie counted as a live process — liveness read from `ps` presence or `/proc/<pid>` existence without the STATE column: a SIGKILLed/exited child stays in the table as `<defunct>` until its parent reaps it, so cleanup evidence reports a survivor that no longer runs (or a wait loop spins until timeout) `ps -eo pid,ppid,...,args` without `stat`; `os.path.exists(\"/proc/<pid>\")` / `[ -d /proc/$PID ]` ",
+  "AF-AP-46": "race-dependent test outcome — the expected result depends on which of two processes wins a scheduling race (a fixture agent's exit vs the tee's forward of buffered input), so the test passes on the slow box and fails on the fast runner (or the reverse); \"flaky\" reads as \"environment\" while the test design is the defect a fixture that exits/closes right after answering while the client has already ",
+  "AF-AP-47": "guard narrowed to serve a specimen — a fix that changes a guard's condition to admit one reported value (`Content-Length: 0` must be served → `if cl > 0:` around the reject) silently widens the ACCEPTED domain to every value the new condition does not name (all negatives, `-0`), re-opening the arm below; the specimen test goes green, the previous build's refusal is lost, and nothing tests the wide",
+  "AF-AP-48": "set-shaped reason assertion: `assert reason in {c1, c2, …}` where the reason is deterministic — the set-shaped sibling of `ok or <substring>`; a reordering of the checks or a different pin failing first passes unnoticed `assert str(e) in {` / `in (` over a reason/message",
+  "AF-AP-49": "normalization applied in ONE order — a screen/canonicaliser that composes its normalizations in a fixed sequence (strip∘unquote but never unquote∘strip) mirrors the attacker's chosen order; membership must be tested under the CLOSURE of the normalization set (bounded, fail closed), and the test oracle must be a strictly wider, independent lattice a single `normalize(x)` chain feeding one `in` chec",
+  "AF-AP-5": "partial block deletion leaves orphaned lines past a top-level `exit`/`return` — unreachable at runtime, syntactically invalid, invisible to review `bash -n` failure; any line after a top-level `exit 0` in a hook/script",
+  "AF-AP-50": "interpreter-dependent bound — a guard that relies on the interpreter raising (RecursionError, MemoryError, a C-decoder limit) to reject hostile input is venue-dependent: 3.11 raised, 3.12/3.13 parsed depth 1000 and the handler crashed later with no response `except RecursionError` as the ONLY defence against nested input; a \"must raise\" fixture green on one interpreter",
+  "AF-AP-51": "fail-closed encoded as a data value — a boolean-intent decision (\"fail closed\") returned as a value the consumer interprets by membership/equality fails OPEN when the consumer does not recognise it (D5e's `frozenset({s, \"FAIL_CLOSED\"})` under `token in form`) a sentinel string/element standing in for a decision; a consumer that tests `x in forms`",
+  "AF-AP-52": "oracle without a self-test — a test oracle never fed known-bad/known-good inputs and never shown to change any test's outcome can be a tautology (`return True` left 49 passed unchanged) an `_absent_under_…` / `_is_clean` helper used only inside assertions that other assertions already imply",
+  "AF-AP-53": "a timeout that moves a loss cliff — a drain/flush loop bounded by a stall timeout turns \"lost immediately\" into \"lost after N seconds\" and calls it fixed (the tee's 5 s c2a drain) `stall_timeout`, `deadline` on a loop whose purpose is to record everything the peer sends",
+  "AF-AP-54": "rewrite-on-a-copy leaves the canonical ref behind — a history rewrite or any state change performed in a detached worktree / scratch copy updates only the copy's HEAD; the branch ref in the main tree still names the old commits and the next push sees an N-commit divergence over an IDENTICAL tree `git worktree add --detach` + a rewrite/push inside it; a branch \"ahead and behind\" origin with an empt",
+  "AF-AP-55": "identity sampled at an intermediate stage — a reading of a spawned process's identity (`/proc/<pid>/exe`, argv, cwd, a connection's peer) taken at spawn time describes whatever stage exists at that instant (env, a shell wrapper, a launcher), not the stage that does the work; single-exec fixtures never see it `readlink(\"/proc/%d/exe\")` right after `Popen`; \"the first successful reading is authorita",
+  "AF-AP-56": "attested-input change without regeneration — an edit to a file that minted artifacts attest by hash (a schema, the runner, the validator, the registry, a proof's own inputs) flips every dependent artifact INVALID; the venue gates that run the touched suites stay green because none of them runs the integrity check a diff under `proofs/schemas/`, `scripts/proof-runner`, `scripts/validate-ledger`, `p",
+  "AF-AP-57": "ordinal gate in a test fake — a fake that selects its behaviour by call COUNT (\"attempt 1 fails, attempt 2 succeeds\") encodes the current loop shape, which is the first thing a mutant changes; the mutated loop's later attempt lands on the \"success\" ordinal and the test stays green with the identical error text `if _calls[0] == 1:` / `if call_count < 2:` inside a fake; a killer whose only discrimin",
+  "AF-AP-58": "raising handler installed before its catching scope — a signal handler (or hook/callback) that RAISES is moved earlier than the `try:` that catches its exception; every event in the gap is an uncaught exception (traceback, wrong rc, no status file), and a fixed-delay test lands after the gap on a fast fixture and stays green `signal.signal(...)` N lines before the `try:` whose `except` handles the",
+  "AF-AP-59": "world-scoped enumeration asserted against an empty world — a test over a system-wide listing (ps/proc rows, listening ports, a directory walk, a pinned-path census) asserts the WHOLE result equals its own spawn set, which holds only when the test is alone on the box; a parallel venue (xdist workers, a sibling lane's live tee) puts admissible foreign rows in the result `assert rows == []` / `assert",
+  "AF-AP-6": "a ported/copied doc carries the SOURCE's verification claims about content that was not ported (the claim outlives its subject — hollow green in prose) a doc sentence asserting a check (\"byte-for-byte\", \"hash-identical\", \"verified\") of a heading/section that `grep -c \"^#* <heading>\"` finds 0 times in the target files",
+  "AF-AP-60": "a guard implemented as a subprocess whose exit code is never inspected — a text-pattern ban (`grep -c …` over test source) reads an EMPTY stdout as \"zero hits\", so ANY tool failure (a renamed file, a grep without `-P`, a bad PATH) turns the guard green over the very defect it exists to catch `subprocess.run([\"grep\", …])` / `check_output([\"grep\"…` in a test whose `.returncode` is never read and tha",
+  "AF-AP-61": "a class ban written as a syntactic-form pattern — a regex over source text bans one SPELLING (`assert …[\"body\"] != MARKER`) while the class (any comparison whose truth does not depend on the recorded value) has unbounded spellings; a two-line rewrite (`_b = …[\"body\"]; assert _b != MARKER`) restores the exact hollow green the ban exists to prevent `re.compile(r'…assert…!=…')` / a `test_no_*_asserti",
+  "AF-AP-62": "gitignore-swallowed fixture — a committed evidence bundle carries a file whose NAME matches an ignore pattern (`*.log` ⇒ `buzzacp.log`), so a lane's byte-copy gate is green while `git archive`, a fresh checkout and CI never carry the file; the checker then fails for what looks like a missing artifact `git ls-files --others --ignored --exclude-standard -- <fixture dirs>` non-empty (lane_gate.sh pri",
+  "AF-AP-63": "a control that can only pass — (a) assert-then-count: a distinctness/absence gate asserts each element's EXPECTED value first and only then counts distinct values, so the count can never fall short; (b) self-hit: a source-scan control plants its \"bad\" literal inside the very test that scans, so the scan finds the pattern in itself and the control reports success review lens (no screen regex): a `f",
+  "AF-AP-64": "an idiom with no live site is protected by nothing — a parser/allowlist declares an idiom (a write form, a spelling, a category) that no current producer uses, and the only gates are a per-producer coverage FLOOR or a SUBSET check, which get GREENER the less the parser resolves; deleting the idiom changes no test a coverage floor (`>=` count) or a subset assertion (`written ⊆ allowed`) as the sole",
+  "AF-AP-65": "assertion skipped when its precondition fails — a check of the form `if <field> == <expected precondition>:` asserts the property only on the true arm and has no `else`/`elif` that raises, so a bundle whose precondition FAILED (the mount could not run, the tool was absent, the read was denied) passes the property without observing it; the sibling of AF-AP-40 (presence-gated) at the VALUE level `if",
+  "AF-AP-66": "a requirement recorded where no gate reads it — a registry/spec/config count (`required_*`, `min_*`, `*_count`) validated only for type and range and consumed by nothing: documentation wearing a gate's clothes (VERIFY-B1 F16: `required_negative_controls: 4` for S0-02 while a one-negative-leg artifact would have minted PRESENT). Screen: for every such key in `proofs/registry.yaml`, `spec.json`, a c",
+  "AF-AP-67": "a harness failure line standing as the lane's report — every non-report output a harness can print (a route refusal, a quota line, an upstream overload text, a session-persistence failure banner, a crash) exits 0 or leaves a non-empty report.md, and a collector that keys on 'non-empty report' delivers the failure as the deliverable; each family was met one at a time (B5i's 503 2026-09-07; six lane",
+  "AF-AP-68": "a process tree stopped one level deep — a stop that kills a loop's pid (and maybe its direct child) leaves the grandchildren (terminal-tool shells, their probes, load loops, watchdogs) re-parented to pid 1 and running; a killed parent's EXIT trap dies with it, so the children's own cleanup never runs; the sibling of AF-AP-59 (kill by pid) at the TREE level — pid-targeted is necessary, one level is",
+  "AF-AP-69": "a normalizing rewrite applied to a whole range — a push path that rewrites message/identity on EVERY commit it sends changes the object id of commits it did not need to touch (a foreign author's, a signed one, a tag's target), silently breaking every reference and signature that names them; its sibling: a guard whose 'outgoing range' for a NEW ref is the ref's whole history, so it blocks on facts ",
+  "AF-AP-7": "a config diagnostic prints a whole block that carries a credential (the redaction lived in one probe, not in the method) any bridge/CLI print of a config dict/block without a structural `api_key",
+  "AF-AP-70": "classify-then-open by pathname (TOCTOU) — a guard proves what the NAME is at t0 (`S_ISREG`, `is_file()`, `lstat`, `_refuse_non_regular`) and the open at t1 trusts the name; anything planted in between (a FIFO, a symlink) is what actually gets opened, and a FIFO hangs the opener forever — the guard closes the pre-planted case and REOPENS the same hang one race later; the sibling of AF-AP-30 (open b",
+  "AF-AP-71": "a bounded query upstream of a completeness or uniqueness gate — `LIMIT n` (or a page size) applied BEFORE the filter that selects the graded window, so \"exactly one row in the window\" is true whenever the concurrent row is the (n+1)th; the gate reads a truncated prefix as the whole set — AF-AP-15's sibling at the query level (a transport cap truncating a payload) `LIMIT ?` / `LIMIT <n>` / `LIMIT $",
+  "AF-AP-72": "a typed upstream field coerced at the ONE producer boundary — `bool(blob[\"accepted\"])` turns the string `\"false\"` into `True`, `int(uid)` accepts a float/str, and the stored artifact carries a well-typed value the downstream checker can no longer distinguish from a malformed upstream; the malformed shape vanishes exactly where it should have been named `bool(` / `int(` / `float(` of a subscript or",
+  "AF-AP-73": "a brief's quantified acceptance line written from memory — \"every required file emptied must fail\", \"refuse any symlink escaping the root\", \"23 non-marker files emptied\": a rule quantified over a SET whose members the brief-writer never enumerated against the real producers or the real corpus; the lane then either builds a hollow gate that fits the false premise or (correctly) stops — three stops ",
+  "AF-AP-74": "a mechanical gate that counts failures over the graded artifact's OWN citations passes vacuously when the artifact cites nothing — `report_lint` read `0 refs — OK 0, MISS 0` as clean (rc 0) over a report whose every claim was prose (`line ~120`), so the report-discipline gate was satisfiable by omission; the empty-input-set hollow green at the tooling layer (the sibling of the validator's empty-se",
+  "AF-AP-75": "shell-quoting output handed to a parser that is NOT a shell — bash `printf '%q'` / `${var@Q}` text written into a systemd `ExecStart=` (the same class for JSON/YAML/TOML/argv files): the consumer keeps or misreads the escapes (systemd keeps an unknown `\\{` verbatim under its RELAX retry and logs \"Invalid escape sequences in line, correcting\") and the program receives a corrupted argument `printf '",
+  "AF-AP-76": "an UNBOUNDED mechanical bar OR PREMISE in a brief — \"`report_lint` MISS 0\" (or any \"0 hits / 0 warnings / clean\" demand) on a HEURISTIC instrument with no fix procedure, no round cap and no escape hatch: a lane that cannot satisfy it (the tool's false MISSes on prose acronyms, references to PIN-era lines) loops on the TOOL instead of the work, re-deriving the tool's rule from its source each turn;",
+  "AF-AP-77": "content placed relative to a tool-managed region's VISIBLE heading instead of its MARKER — the region (`<!-- x:start -->` … `<!-- x:end -->`) begins before the heading, so the insert lands inside it and the tool's next rewrite deletes it silently; a \"stays last\" gate anchored on the heading passes on the clobber-prone layout a `## ` heading between `<!-- gitnexus:start -->` and `# GitNexus — Code ",
+  "AF-AP-78": "a mutant that does not COMPILE (or collect) counted as KILLED — the driver maps any non-zero pytest rc to a kill, so a `SyntaxError`/`ImportError`/collection error (rc 2 / rc 4 \"no tests ran\") mints a hollow mutation score: the target assertion never executed a mutant driver whose kill branch is `rc != 0` with no `py_compile`/`ast.parse`/collect step on the mutated file; a `KILLED … rc=2` or `rc=4",
+  "AF-AP-79": "a refusal guard placed AFTER a persistent write — the check that should have refused the whole operation runs once the durable part has already landed (a unit file written + daemon-reloaded + enabled, a config saved, a symlink flipped), so the refusal protects only the last, visible step (the restart) while the next unrelated restart/boot applies the mutation silently; the sibling of the build loo",
+  "AF-AP-8": "pinning one context (process cwd, a flag) and assuming the tool follows — the tool has its own carrier (`TERMINAL_CWD`) any lane/agent launch that sets cwd by `cd`/`--in` without the tool's own cwd variable; report `pwd` absent from the first lane output",
+  "AF-AP-80": "a SOURCE-TEXT pin as the ONLY guard of a behavioral property — a substring/inventory/presence assertion over the module's text or AST stands in for the property it names, and the property survives a mutation the pin does not see: a comment satisfies a file-wide `in source` check, a second predicate slips a \"the shared call is present\" check, a flag listed in a source inventory is dropped from the ",
+  "AF-AP-81": "a HIDDEN TEST INPUT — a suite green only under an ambient interpreter environment (PYTHONPATH, site-packages, a shell's exported path) that no declared input names: the tests never obtain the dependency through the declared input's own contract, so a bare run (the static-copy gate, a fresh container, CI) is red while the lane's shell was green — the report's pasted count is true and the capability",
+  "AF-AP-82": "a FIXTURE that fails BEFORE the instrument — a test's setup trips on a venue property (a long pytest basetemp over AF_UNIX's 108-byte pathname limit, a tmp dir inside a git clone, a root-only scratch the dropped-privilege target cannot read, a gpg-agent socket under a deep path) and the red is read as the oracle's, or the test is \"fixed\" by weakening the oracle; the property under test was never r",
+  "AF-AP-83": "an UNAUTHENTICATED auth oracle — a health/readiness check that certifies a keyed service through a PUBLIC endpoint, or a test's fake sink that answers any request without checking the credential header: the key path is never exercised, so a broken key, a wrong header or a missing file still reads \"healthy\" / \"N passed\" a `health` that only GETs `/health`, `/v1/models` or another endpoint the serve",
+  "AF-AP-84": "a DENOMINATOR DERIVED FROM THE EXECUTED SET — a mutation driver (or any gate) computes its `EXPECTED` from the rows it ran (`expected=$((killed + survived))`, a per-row `expected+=1`), so a deleted, skipped or mis-anchored row silently lowers the bar and the summary still reads \"all killed\"; the contract's row count is never asserted `EXPECTED=$((` / `expected=$((` / `expected=$((expected + 1))` i",
+  "AF-AP-85": "OBSERVATION SCOPE NARROWER THAN THE CLAIM — a census, sweep or oracle whose NAME certifies a general property (\"no fd leak\", \"every write\", \"all callers\") but whose loop observes a subset (only the framedir directory fds, only one file family, only one spelling), so a violation outside the subset reads green under the general name a test named `*_no_*_leak`/`*_sees_no_*`/`*_every_*` whose body fil",
+  "AF-AP-86": "an OUTPUT-PARENT FAIL-OPEN — a wrapper redirects its output to a path whose parent does not exist, the redirection fails, the producer never runs, and the wrapper still prints \"written\" and exits 0 (or reports a size of a file it never made); the caller attaches an empty or absent artifact as if it were the pack/report/log `emit > \"$OUT\"` (or `tee`/`>>`) with no `-d \"$(dirname \"$OUT\")\"` check befo",
+  "AF-AP-87": "a PID-LIVENESS CHECK BLIND TO ZOMBIES — `kill -0 <pid>` returns 0 for a Z/defunct process that has exited but not been reaped, so a `! kill -0` (\"assert dead\") or singleton-liveness gate reads a lingering zombie PID as ALIVE. It passes where the parent reaps promptly (the PC's systemd init) and fails where reaping lags (a sandbox subshell that has not `wait`ed) — a venue-conditioned red. QM0-b's t",
+  "AF-AP-88": "A PERSISTED DIGEST VALIDATED AS FORMAT, NOT RECOMPUTED FROM ITS PREIMAGE — a reader accepts an identity/integrity digest (a sha256, a model hash) after checking only that it is WELL-FORMED (lowercase 64-hex, the right length, a magic-byte prefix, a matching filename) without RECOMPUTING it from the persisted preimage bytes, so an arbitrary well-formed digest of unrelated bytes passes as the claime",
+  "AF-AP-89": "A REMOTE COMMAND SUBSTITUTION EXPANDED LOCALLY — a `$(...)` (or backticks) embedded UNESCAPED in a double-quoted argument to the PC bridge helper is expanded by the SANDBOX shell before the string is shipped, so it runs against the sandbox (empty/wrong output) rather than the PC; a silent wrong value then flows into the remote command. Compounding: `systemctl --user` on the PC over the bridge need",
+  "AF-AP-9": "a coordinator turn-end mechanism (retro gate, Stop hook) wired into a one-shot delegate/lane — it replaces the deliverable with the gate's answer `pre_verify`/Stop-style hook present in a lane profile; lane report opening with a retro checklist",
+  "AF-AP-90": "A GENERATION/REPLAY PROMPT THAT ENDS AT THE MODEL'S OWN (ASSISTANT) TURN INDUCES ~0 OUTPUT — a corpus/prompt built by truncating a transcript at an ASSISTANT boundary, then sent to a chat/completions endpoint (which appends a generation prompt), asks the model to speak AFTER a complete turn; greedy decode emits end-of-turn at once (1 token, `predicted_seconds` 0), so a decode-throughput measuremen",
+  "AF-AP-91": "RAPID PER-ITERATION SERVICE RESTARTS TRIP systemd `StartLimitBurst` AND LEAVE THE UNIT DOWN — a benchmark/matrix harness that restarts a `systemd --user` unit once per cell/config exhausts the unit's `StartLimitBurst` restarts inside `StartLimitIntervalSec`; the next `systemctl start` returns exit 5 (`start request repeated too quickly`) and the unit lands in `failed` and STAYS down, so every late",
+  "AF-AP-92": "A `scripts/pc.sh` BRIDGE CALL THAT RUNS >120 s IS CUT OFF AND SILENTLY RE-EXECUTED — pc.sh wraps one command in `curl -m 120` and retries a non-JSON reply up to 3× (pc.sh:15-21), re-POSTing the SAME body each time; a command that outlives 120 s (an in-script poll/sleep loop, a long build/suite) returns `curl (28) … timed out`, and each retry RE-RUNS the whole command on the PC (attempt 1 may also ",
+  "AF-AP-93": "A \"PORTABLE / EVERY VENUE\" SHELL SCRIPT THAT DEPENDS ON `/dev/fd` (PROCESS SUBSTITUTION) — bash process substitution `<(…)` / `>(…)` is implemented through `/dev/fd`, which is not mounted on every host; a script whose header promises it runs \"on every venue\" but filters/pipes through `2> >(grep …)` or `done < <(cmd)` dies where `/dev/fd` is absent (the redirection fails, the command it feeds dies)",
+  "AF-AP-94": "VERIFY-THEN-REPARSE TOCTOU, AND GRADING A SUBPROCESS VERIFIER BY A SUBSTRING — two ways a cryptographic/external verification is defeated while the crypto itself is sound. (a) **TOCTOU:** code that VERIFIES a file (`gpg --verify <path>`, a hash/signature check) and then RE-OPENS the same path to USE its content binds nothing between the two reads; an attacker who can write the file flips it in the",
+  "AF-AP-95": "A CREDENTIAL/AUTH SCREEN THAT MATCHES BY VALUE-SCHEME PREFIX OR A SEGMENT-SPLIT NAME, MISSING A SINGLE-TOKEN STANDARD HEADER — a screen that decides \"this field carries a credential\" by (a) a VALUE prefix allow-list (`bearer `/`basic `/`sk-`) and/or (b) splitting the NAME on separators and matching segments against a set, silently passes the single most common auth header: `Authorization` is one t",
+  "AF-AP-96": "A STATIC-SOURCE PARSER USED AS A CONTAINMENT/CLOSURE ORACLE IS INHERENTLY INCOMPLETE — a test that proves \"the producer writes only to `<declared dir>`\" (or any containment/exclusivity claim) by PARSING the producer's source against a bounded grammar silently misses every construction outside the grammar, so each new idiom needs another hardening round (a diminishing-returns treadmill). Shell idio",
+  "AF-AP-97": "BUILDING A PINNED IMAGE WITH THE WRONG DOCKERFILE FRONTEND — a Dockerfile using a BuildKit symbolic `COPY --chmod=a+rX,go-w` (or `--link`) with NO `# syntax=` directive builds ONLY with a symbolic-chmod-capable frontend. podman 5.7/buildah AND buildkit's BUILT-IN `dockerfile.v0` frontend are OCTAL-chmod-only and reject it (`invalid chmod parameter` / `Error parsing chmod`); a modern `docker build`",
+  "AF-AP-98": "AN IN-CONTAINER / BUILD DOWNLOAD THAT \"WORKS ON THE HOST\" CAN STALL ON A BLACK-HOLING IPv6 ROUTE — a node/playwright/getaddrinfo client without Happy-Eyeballs prefers a resolved AAAA (IPv6) address and BLOCKS the full connect timeout (30 s) when the host's only global IPv6 route black-holes (e.g. a Tailscale ULA `fd7a:…`, `pref low`, with no real public-IPv6 egress), while `curl -L` (Happy-Eyeball",
+  "AF-AP-99": "A HOST-ONLY PROOF RUNNER NEVER EXECUTED AGAINST ITS REAL RUNTIME CARRIES LATENT FORMAT BUGS — a runner/checker written for a specific runtime but never actually run on it encodes assumptions the real tool violates. `run_containment.sh` required the image id to match `^sha256:[0-9a-f]{64}$` (DOCKER's `{{.Id}}` form) but its declared runtime is podman, whose `{{.Id}}` and `{{.Image}}` are BARE hex ("
+ },
+ "sample": [
+  {
+   "labels": [
+    "AF-AP-182",
+    "AF-AP-183",
+    "AF-AP-184"
+   ],
+   "line": 10,
+   "state": "2026-09-24 12:4xZ — Two hook defects from VERIFY-COORD-0924, fixed the same hour (AF-AP-?, AF-AP-?); and AF-AP-?'s own fix missed the hand-back prompt."
+  },
+  {
+   "labels": [
+    "AF-AP-182"
+   ],
+   "line": 11,
+   "state": "2026-09-24 12:0xZ — The five hooks made live at 11:0xZ multiplied the context of every background event (AF-AP-?); fixed the same hour."
+  },
+  {
+   "labels": [
+    "AF-AP-181"
+   ],
+   "line": 12,
+   "state": "2026-09-24 10:5xZ — CI run #1026 red on a test race, not a product defect (AF-AP-?); found when push_clean's CI gate refused the acceptance push."
+  },
+  {
+   "labels": [
+    "AF-AP-180"
+   ],
+   "line": 16,
+   "state": "2026-09-24 07:2xZ — VERIFY-J1-45 home: J1-4 and J1-5 verified with follow-ups; the lane's report carried two false claims, and its dispatcher report was the injected wiki text (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-179"
+   ],
+   "line": 21,
+   "state": "2026-09-24 05:0xZ — J1-5's no-model closure test blocked the model packages in one process and counted only failures; fixed before the push (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-92"
+   ],
+   "line": 24,
+   "state": "2026-09-24 04:1xZ — J0-b's PC launch hit two known bridge rules (AF-AP-? and the pgrep self-match rule); no harm, one probe running."
+  },
+  {
+   "labels": [
+    "AF-AP-177",
+    "AF-AP-178"
+   ],
+   "line": 26,
+   "state": "2026-09-24 04:0xZ — VERIFY-J1-3-R1 MERGE-READY-WITH-FOLLOWUPS; TWO NEW CLASSES (AF-AP-?, AF-AP-?) AND THREE RECURRENCES FROM ITS FOLLOW-UPS."
+  },
+  {
+   "labels": [
+    "AF-AP-173",
+    "AF-AP-176"
+   ],
+   "line": 28,
+   "state": "2026-09-24 03:3xZ — FOUR DEFECT CLASSES FROM THE J1-3 VERIFY REGISTERED (AF-AP-? TO AF-AP-?) AND TWO RECURRENCES NOTED; their repair J1-3-R1 is under independent verify (task #212)."
+  },
+  {
+   "labels": [
+    "AF-AP-172"
+   ],
+   "line": 30,
+   "state": "2026-09-24 03:2xZ — THE PROJECT'S FIVE CLAUDE CODE HOOKS NEVER LOADED IN THE `/home/user`-ROOTED SESSION, AND TWO OF THEM PRINT WHERE THE MODEL NEVER READS (AF-AP-? registered; found by the MoJev evidence lane, task #210)."
+  },
+  {
+   "labels": [
+    "AF-AP-171"
+   ],
+   "line": 32,
+   "state": "2026-09-24 02:4xZ — A HEARTBEAT THAT READ ONLY LIVENESS HID TWO HOURS OF ZERO PROGRESS (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-131",
+    "AF-AP-146"
+   ],
+   "line": 34,
+   "state": "2026-09-24 01:5xZ — A WORKER RESTART KILLED A SANDBOX AGENT AND ORPHANED BOTH PC POLLERS (AF-AP-?, met again); THE SECOND LONG-CONTEXT LOCAL LANE STARVED (AF-AP-?, met again)."
+  },
+  {
+   "labels": [
+    "AF-AP-170"
+   ],
+   "line": 36,
+   "state": "2026-09-24 01:1xZ — A MERGE-READY OVER UN-RUN ITEMS: VERIFY-J1-3's FIRST PASS WAS REFUTED BY ITS COMPLETION (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-169"
+   ],
+   "line": 38,
+   "state": "2026-09-24 00:0xZ — A SUDO RUN'S ROOT-OWNED DEBRIS BLOCKED THE PC CLONE'S FAST-FORWARD (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-168"
+   ],
+   "line": 40,
+   "state": "2026-09-23 23:5xZ — S0-05'S THIRD LIVE RUN FAILED ON CURL'S SPELLING, NOT ON EGRESS (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-166",
+    "AF-AP-167"
+   ],
+   "line": 42,
+   "state": "2026-09-23 23:1xZ — S0-05'S FIRST TWO LIVE PAIR LEGS FAILED ON FACTS THE SANDBOX LEGS NEVER HAD (AF-AP-?, AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-165"
+   ],
+   "line": 44,
+   "state": "2026-09-23 21:3xZ — A CHECK THAT NEVER RAN COUNTS AS A PASSING CHECK (AF-AP-?; found while grading VERIFY-C2)."
+  },
+  {
+   "labels": [
+    "AF-AP-164"
+   ],
+   "line": 46,
+   "state": "2026-09-23 21:1xZ — VERIFY-J1-3 STOPPED CONTRACT-INVALID ON THE COORDINATOR'S OWN PREMISE (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-163"
+   ],
+   "line": 48,
+   "state": "2026-09-23 20:5xZ — A CALLER'S RELATIVE PATH, USED AFTER THE SCRIPT'S OWN `cd` (AF-AP-?; J1-3's D-2)."
+  },
+  {
+   "labels": [
+    "AF-AP-162"
+   ],
+   "line": 50,
+   "state": "2026-09-23 20:3xZ — VERIFY-T94 NOT-READY: THE COORDINATOR'S OWN EXECUTED-PROBE CASES MISSED ONE BRANCH (AF-AP-?'s second instance, in the fix for its first)."
+  },
+  {
+   "labels": [
+    "AF-AP-80",
+    "AF-AP-89",
+    "AF-AP-162"
+   ],
+   "line": 52,
+   "state": "2026-09-23 18:4xZ — T94'S POLLER FIX WOULD HAVE STOPPED EVERY LANE HARVEST: A DOUBLED ESCAPE RAN THE PC LOOKUPS IN THE SANDBOX, AND THE TEST DOUBLE NEVER RAN THE PROBE (AF-AP-? registered; AF-AP-? recurrence; AF-AP-? recurrence)."
+  },
+  {
+   "labels": [
+    "AF-AP-67"
+   ],
+   "line": 67,
+   "state": "2026-09-23 15:3xZ — A PC VERIFY LANE'S FAILED FINAL TURN CAME HOME AS ITS REPORT, WHILE ITS REAL 55 KB REPORT SAT UNHARVESTED IN THE LANE DIRECTORY (AF-AP-?, sixth family; task #200)."
+  },
+  {
+   "labels": [
+    "AF-AP-42",
+    "AF-AP-156"
+   ],
+   "line": 73,
+   "state": "2026-09-23 14:5xZ — THE FIRST LIVE S0-02 CAPTURE CAUGHT A CONTAMINATED NEGATIVE LEG: THE BAD-SIGNATURE LEG SENDS A VALID PROBE INTO THE PROCESS IT OBSERVES (AF-AP-?, new; AF-AP-? recurrence 4)."
+  },
+  {
+   "labels": [
+    "AF-AP-73",
+    "AF-AP-153"
+   ],
+   "line": 81,
+   "state": "2026-09-23 14:0xZ — TWO LANES HOME: A REPAIR BRIEF'S GATE RULE COVERED ROWS THE SAME BRIEF EXCLUDED (J1-0-R5, AF-AP-?'s class), AND A VERIFIER'S PROPOSED FIX WOULD HAVE OPENED A NEW LEAK (VERIFY-J1-1-R1 option B, AF-AP-?'s class; caught at brief authoring)."
+  },
+  {
+   "labels": [
+    "AF-AP-155"
+   ],
+   "line": 85,
+   "state": "2026-09-23 13:1xZ — THE S0-02 FIXTURE SIGNERS PLANNED FOR B9 NEVER REACHED A BRIEF; FOUND WHILE PREPARING THE LIVE CAPTURE (task #190, B10; AF-AP-? registered)."
+  },
+  {
+   "labels": [
+    "AF-AP-154"
+   ],
+   "line": 91,
+   "state": "2026-09-23 12:5xZ — A SANDBOX VERIFY LANE HIT A SAFEGUARD REFUSAL ON OPUS 5.5, AND THE HARNESS FINISHED IT ON ANOTHER MODEL WITHOUT A NOTICE (VERIFY-E3-R1, task #185; AF-AP-? registered)."
+  },
+  {
+   "labels": [
+    "AF-AP-131"
+   ],
+   "line": 100,
+   "state": "2026-09-23 12:5xZ — A NEW BRIDGE BANNER, THEN A WORKER RESTART, EACH LEFT THE SURVIVING POLLERS ON A DEAD ENDPOINT (AF-AP-?'s second and third instances; the 2026-09-22 18:3xZ entry's mechanism, measured)."
+  },
+  {
+   "labels": [
+    "AF-AP-146"
+   ],
+   "line": 113,
+   "state": "2026-09-23 10:5xZ — THREE LOCAL-ROUTE LANES STARVED ONE: THE CEILING IS KV TOKENS, NOT LANES (AF-AP-? registered; the 04:0xZ and 08:3xZ entries' third instance, now with its mechanism measured)."
+  },
+  {
+   "labels": [
+    "AF-AP-120",
+    "AF-AP-143"
+   ],
+   "line": 121,
+   "state": "2026-09-23 09:4xZ — THE NEVER-A-GATE SCREEN WAS BLIND TO 318 LINES OF A LISTED GATE, AND A GATE PROCESS LOADED AN UNLISTED FILE (AF-AP-? registered; AF-AP-? reopened)."
+  },
+  {
+   "labels": [
+    "AF-AP-140"
+   ],
+   "line": 125,
+   "state": "2026-09-23 07:2xZ — A RELAUNCHED PC LANE REPORTED \"LANE FAILED\" FROM ITS PREVIOUS LOOP'S MARKER, AND THE COORDINATOR BUILT A CAPACITY CLAIM ON IT (AF-AP-? registered; corrected before any push)."
+  },
+  {
+   "labels": [
+    "AF-AP-24",
+    "AF-AP-139"
+   ],
+   "line": 127,
+   "state": "2026-09-23 07:0xZ — THE S0-05 POSITIVE CONTROL ASKS A PATH THE REAL SERVICES REFUSE, AND ITS PREFLIGHT PASSES WHAT ITS CHECKER FAILS (AF-AP-? registered; AF-AP-? recurs)."
+  },
+  {
+   "labels": [
+    "AF-AP-126",
+    "AF-AP-138"
+   ],
+   "line": 129,
+   "state": "2026-09-23 06:2xZ — CI RED AGAIN FROM MY OWN D-054 COMMIT, AND EIGHT MORE PUSHES WITHOUT READING IT (AF-AP-?, the third bite; AF-AP-? registered; reported by the owner from their inbox)."
+  },
+  {
+   "labels": [
+    "AF-AP-130"
+   ],
+   "line": 131,
+   "state": "2026-09-23 04:2xZ — A TEST THAT FINDS ITS SUBJECT THROUGH THE WORKING DIRECTORY (AF-AP-?; found grading C1)."
+  },
+  {
+   "labels": [
+    "AF-AP-129"
+   ],
+   "line": 135,
+   "state": "2026-09-23 03:4xZ — A SHELL RANGE GUARD THAT PASSES THE VALUE IT CANNOT EVALUATE (AF-AP-?; found grading E2-R1)."
+  },
+  {
+   "labels": [
+    "AF-AP-128"
+   ],
+   "line": 137,
+   "state": "2026-09-23 03:1xZ — AN ISOLATION CHECK READ FROM SYSFS, WHICH KEEPS THE PARENT'S VIEW (AF-AP-?; caught by the next probe)."
+  },
+  {
+   "labels": [
+    "AF-AP-37"
+   ],
+   "line": 141,
+   "state": "2026-09-23 02:5xZ — A BARE DISPATCH STAMP TYPED AHEAD AGAIN (AF-AP-?, the third bite in three hours; caught before the commit)."
+  },
+  {
+   "labels": [
+    "AF-AP-127"
+   ],
+   "line": 143,
+   "state": "2026-09-23 02:3xZ — MY J1-1 BRIEF ORDERED TRUNCATION BEFORE REDACTION, SO A SECRET CUT AT A FIELD LIMIT ESCAPES ITS PATTERN; THE TWO TRANSCRIPT EXPORTERS DO THE SAME (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-126"
+   ],
+   "line": 145,
+   "state": "2026-09-23 02:1xZ — CI HAD BEEN RED ON EVERY PUSH SINCE 2026-09-22 19:20Z AND NOBODY READ IT (AF-AP-?; the 2026-09-06 lesson, second bite)."
+  },
+  {
+   "labels": [
+    "AF-AP-125"
+   ],
+   "line": 147,
+   "state": "2026-09-23 02:1xZ — MY OWN SANDBOX TEST RUN FILLED THE DISK AND BROKE THE LANE POLLERS' TEMP (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-37"
+   ],
+   "line": 149,
+   "state": "2026-09-23 02:0xZ — FOUR DATE-PREFIXED STAMPS WERE COMMITTED AHEAD OF THEIR OWN COMMITS (AF-AP-?'s timestamp half, the second bite); the future half is now a pre-commit gate."
+  },
+  {
+   "labels": [
+    "AF-AP-124"
+   ],
+   "line": 151,
+   "state": "2026-09-23 01:4xZ — TWO DEFECTS FOUND AT THE E2 LANDING, ONE OF THEM THE BRIEF'S OWN DESIGN (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-123"
+   ],
+   "line": 155,
+   "state": "2026-09-23 01:4xZ — A DECISION NUMBER CITED FROM MEMORY RESOLVED TO ANOTHER DECISION, AND THE RULING IT MEANT WAS NEVER LOGGED (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-122"
+   ],
+   "line": 157,
+   "state": "2026-09-23 01:1xZ — A DEPLOYED USER UNIT RUNS CODE FROM AN EPHEMERAL LANE WORKTREE (AF-AP-?); and a re-armed monitor missed a lane report in its own gap."
+  },
+  {
+   "labels": [
+    "AF-AP-120"
+   ],
+   "line": 159,
+   "state": "2026-09-23 00:4xZ — J1-0-R3 LANDED (AF-AP-? closed for in-process edges); its brief's premise was measured by a narrower instrument than the rule it grounded, and the worktree-isolated build agent could not run."
+  },
+  {
+   "labels": [
+    "AF-AP-121"
+   ],
+   "line": 161,
+   "state": "2026-09-23 00:1xZ — A THIRD-PARTY TOOL PORTED FROM ITS NATIVE HARNESS FAILS OPEN ON A PRECONDITION ONLY THAT HARNESS CREATES: the smoke planted the precondition, a real lane never has it, and the wrapper's \"ON\" behaved exactly like OFF (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-120"
+   ],
+   "line": 163,
+   "state": "2026-09-22 23:1xZ — THE NEVER-A-GATE SCREEN'S CLOSURE STOPS AT THE FILE: a listed gate file that sources an unlisted helper carries banned behaviour past a lexical screen (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-119"
+   ],
+   "line": 165,
+   "state": "2026-09-22 22:0xZ — REPRESENTATION-BOUNDARY EXPANSION LOSS: the dispatcher's re-attach probe shipped a lane path built from the LITERAL `$HOME/agent-factory` default (kept for PC-side shell expansion) through a base64 transfer, and the PC decoded it as DATA — a live lane read FIRST on the production default while every test fed absolute temp paths (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-118"
+   ],
+   "line": 167,
+   "state": "2026-09-22 20:4xZ — a lane's route label was its dispatch parameter while the Hermes profile's `fallback_providers` chain (three cloud codex models through OmniRoute) silently took \"strict raw id\" lanes over after local errors (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-117"
+   ],
+   "line": 169,
+   "state": "2026-09-22 20:1xZ — a delegate's fixture step changed the mode of `/tmp` itself (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-67"
+   ],
+   "line": 175,
+   "state": "2026-09-22 18:1xZ — two dispatcher-harvest wrinkles at the T90-R2 landing (AF-AP-?'s class twice: an instrument blind to a family the production path produces)."
+  },
+  {
+   "labels": [
+    "AF-AP-116"
+   ],
+   "line": 189,
+   "state": "2026-09-22 13:5xZ — a SECOND producer/consumer mismatch on the S0-02 replay leg, found at B9 authoring, not by any test (AF-AP-? registered; fix queued as B9 item 3)."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-70",
+    "AF-AP-110",
+    "AF-AP-115"
+   ],
+   "line": 197,
+   "state": "2026-09-22 10:4xZ — VERIFY-GOV2c-B HOME (NOT-READY for items 1/5/6/8): two real defects in the review binding, both reproduced through the REAL `verify_review` on the PC. F1 → AF-AP-? registered (+ a hook screen row): the gpg the binding trusts is resolved from the caller's PATH (`shutil.which(\"gpg\")` review.py:114, the PATH forwarded at :136) — the lane's scratch fake gpg accepted an unsigned record, `/usr/bin/gpg` refused `fubuki-review-signature-invalid`. F2 = AF-AP-?'s SECOND instance in this binding AND an AF-AP-? instance: GOV2c (b1dba7b) closed VERIFY-GOV2b's TOCTOU blocker by opening with `O_NOFOLLOW` (review.py:53) — the SYMLINK specimen — while the AF-AP-? row names the FIFO in the same sentence; a mode-0600 FIFO swapped in after the `is_file()` pre-check at :109 blocks the open forever (no `O_NONBLOCK`, no `fstat` of the FD): `timeout 10` → rc 124, twice. AF-AP-?'s rule applies unchanged: a repair of a registry-row instance covers the ROW's whole planted-object class, and the verify brief lists every object the row names as a mutant (the GOV2c verify brief's item 6 did — the VERIFIER caught it; the builder's own gate had no FIFO row). Repair = GOV2d (task #100), ONE focused repair after GOV2c-C lands (D-031). F3 (the gpg-agent census 0→0 on the PC's GnuPG 2.4.7 against one survivor per call on the sandbox's 2.4.4, AF-AP-?'s measurement) is a venue difference to re-measure before the cleanup is decided, not a contradiction."
+  },
+  {
+   "labels": [
+    "AF-AP-112"
+   ],
+   "line": 200,
+   "state": "2026-09-22 09:4xZ — the SANDBOX's temp filesystem filled (AF-AP-?'s second venue: bytes on the per-session allowance, not inodes on a tmpfs)."
+  },
+  {
+   "labels": [
+    "AF-AP-114"
+   ],
+   "line": 202,
+   "state": "2026-09-22 09:08Z — VERIFY-E1-R1 F1: the E1-R1 live test was red at the PIN for the WRONG reason (AF-AP-? registered)."
+  },
+  {
+   "labels": [
+    "AF-AP-113"
+   ],
+   "line": 204,
+   "state": "2026-09-22 08:52Z — AF-AP-?'s SECOND instance within the hour, the coordinator's own: the CLAUDE.md `pc_lane.sh` private-copy note described a recipe the script had outgrown."
+  },
+  {
+   "labels": [
+    "AF-AP-113"
+   ],
+   "line": 206,
+   "state": "2026-09-22 08:4xZ — a DOCUMENTED INVOCATION SHAPE the tool refuses cost the E1-R1 lane one turn (AF-AP-? registered):"
+  },
+  {
+   "labels": [
+    "AF-AP-112"
+   ],
+   "line": 211,
+   "state": "2026-09-22 08:04Z — the PC’s `/tmp` (tmpfs, 63 GB) ran OUT OF INODES (1,048,576 used, 100 %; 10 GB of 63 GB used) — three live lanes could not create temp files; AF-AP-? registered."
+  },
+  {
+   "labels": [
+    "AF-AP-39"
+   ],
+   "line": 214,
+   "state": "2026-09-22 07:2xZ — AF-AP-? instance, the coordinator’s own: an OmniRoute API-key VALUE echoed into the session transcript."
+  },
+  {
+   "labels": [
+    "AF-AP-111"
+   ],
+   "line": 217,
+   "state": "2026-09-22 07:09Z — SAFEGUARD FLAG on a lane + the SILENT CLOUD FALLBACK behind every \"local Qwen\" lane since 2026-09-17 (AF-AP-? registered; OWNER DECISION asked in chat):"
+  },
+  {
+   "labels": [
+    "AF-AP-110"
+   ],
+   "line": 223,
+   "state": "2026-09-22 06:2xZ — a gpg-agent orphan per governance review verification (AF-AP-? registered; found while authoring VERIFY-GOV2c, NOT yet repaired):"
+  },
+  {
+   "labels": [
+    "AF-AP-73"
+   ],
+   "line": 230,
+   "state": "2026-09-22 — K1-c stopped CONTRACT-INVALID on a brief premise the coordinator wrote from memory (AF-AP-? at the brief level, again; orchestration rule 0d/0a):"
+  },
+  {
+   "labels": [
+    "AF-AP-105"
+   ],
+   "line": 232,
+   "state": "2026-09-21 — the independent audit (uploaded findings, 2026-09-21) reproduced two coordinator process failures; the VB-F12 recapture's own preflight then found an unexploded AF-AP-? sibling, a substrate baseline that had pinned volatile bytecode caches, and a relay whose media store had silently pointed outside the harness."
+  },
+  {
+   "labels": [
+    "AF-AP-103"
+   ],
+   "line": 238,
+   "state": "2026-09-18 — S0-03 leg B PROVEN LIVE (a real Hermes tool-call round trip through real OmniRoute); the 4+-recapture blocker was a provider-selector prefix leaking to the aggregator, not a credential failure (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-4",
+    "AF-AP-59"
+   ],
+   "line": 249,
+   "state": "2026-09-07 — the PC checker gate went red on a world-scoped scan test under 8 xdist workers (AF-AP-?, AF-AP-?'s parallel cousin)."
+  },
+  {
+   "labels": [
+    "AF-AP-4"
+   ],
+   "line": 255,
+   "state": "2026-09-06 — checkpoint 8k's PC gate red on a fixture that assumed `/bin/dash` (AF-AP-? recurrence)."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-36"
+   ],
+   "line": 273,
+   "state": "2026-09-06 — round 7: the framing gate rebuilt as an ALLOW-LIST over the input domain (lane D5c), the probe/classifier survivors killed against the verifier's set (lane N5c), and every lane graded by an independent verifier on a scratch copy before the checkpoint (AF-AP-? recurrence 10 closed at the class; AF-AP-? twin rule baked into contract-gate)."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-44",
+    "AF-AP-46",
+    "AF-AP-47"
+   ],
+   "line": 275,
+   "state": "2026-09-06 — round-6 adversarial verify: the backend's third NOT-READY on the SAME class (request framing), with a regression the round-6 fix itself introduced (AF-AP-? recurrence; AF-AP-? new); the checker header requirement (A5c) landed with its red controls green; CI read on every push found two sandbox-only greens (AF-AP-? sibling, AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-36",
+    "AF-AP-44",
+    "AF-AP-45"
+   ],
+   "line": 277,
+   "state": "2026-09-06 — Codex audit of checkpoint 5 (`541648c`/`ec0eee7`): CI had been red for FOUR pushes and nobody read it; the shutdown check rejected a successful cleanup and accepted an owned survivor; the real-leg process test had no body; the tee's verdict was produced but never consumed; the ledger claimed a two-POST gate that does not exist (AF-AP-? + AF-AP-? new; AF-AP-?/40/42 recurrences)."
+  },
+  {
+   "labels": [
+    "AF-AP-36"
+   ],
+   "line": 279,
+   "state": "2026-09-05 — S0-01 evidence-v2 repair: the first lane set was graded NOT-READY by four adversarial verifiers BEFORE any re-capture (the AF-AP-? pre-mint gate working as designed); three repair rounds followed; the owner's external Codex audit of checkpoint 3 (`08a4a7d`, filed verbatim at `docs/reviews/2026-09-05-codex-audit-08a4a7d.md`) found six P1 + two P2 blockers still open — S0-01 stays REVIEW-PENDING, nothing minted."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-31",
+    "AF-AP-36",
+    "AF-AP-37",
+    "AF-AP-38"
+   ],
+   "line": 281,
+   "state": "2026-09-05 — S0-01 closure DECLINED by the owner: five reported mutations of the evidence bundle still made the checker print PASS, and several dimensions were self-reported metadata rather than derived evidence (AF-AP-? recurrence 9, AF-AP-? recurrence, AF-AP-? + AF-AP-? + AF-AP-? new). The invalid `result.json` is WITHDRAWN (ledger back to ABSENT) until a hostile bundle fails for every mutation."
+  },
+  {
+   "labels": [
+    "AF-AP-33"
+   ],
+   "line": 283,
+   "state": "2026-09-05 — OmniRoute: an unmanaged duplicate squatted `:20128` serving the WRONG database while `/api/health` said 200 (diagnosed and repaired by the owner's Codex session; AF-AP-? new) — and the managed instance runs its inference plane UNAUTHENTICATED on `0.0.0.0` (owner decision, task #34)."
+  },
+  {
+   "labels": [
+    "AF-AP-34"
+   ],
+   "line": 285,
+   "state": "2026-09-04 — the coordinator restarted the owner's PRODUCTION Buzz relay FOUR times with name-based kills aimed at the isolated S0-01 test relay (AF-AP-? new; \"never stop or restart the owner's running servers\" bitten, unnoticed for eight hours)."
+  },
+  {
+   "labels": [
+    "AF-AP-35"
+   ],
+   "line": 287,
+   "state": "2026-09-04 — the coordinator leaked OmniRoute's `STORAGE_ENCRYPTION_KEY` into the session transcript through a redaction built from the secret's VALUE (AF-AP-? new); the owner declared the key compromised; rotation is owner-run (task #33)."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-32"
+   ],
+   "line": 289,
+   "state": "2026-09-04 (cycle 8) — S0-11 ACCEPTED by owner process decision; the eighth review closed the review, not the proof. One live guard bug fixed (AF-AP-?; AF-AP-? recurrence 8)."
+  },
+  {
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-32"
+   ],
+   "line": 291,
+   "state": "2026-09-04 (cycle 7) — S0-11's SEVENTH review: the trust binding is accepted; the ACCEPTANCE MECHANISM was three more AF-AP-? instances (AF-AP-? recurrence 7)."
+  },
+  {
+   "labels": [
+    "AF-AP-30"
+   ],
+   "line": 293,
+   "state": "2026-09-04 (cycle 6) — S0-11's SIXTH review: the cycle-5 trust binding was INCOMPLETE, and the status guard was a word ban not a state check (AF-AP-? recurrence 6)."
+  },
+  {
+   "labels": [
+    "AF-AP-30"
+   ],
+   "line": 295,
+   "state": "2026-09-04 (cycle 5) — S0-11's FIFTH review: the proof was not bound to the code that produced it, plus three more (AF-AP-? recurrence 5)."
+  },
+  {
+   "labels": [
+    "AF-AP-30"
+   ],
+   "line": 297,
+   "state": "2026-09-04 (cycle 4) — S0-11's FOURTH review: three more reproduced blockers behind the parent-observation rewrite (the meta-recurrence AF-AP-? predicts)."
+  },
+  {
+   "labels": [
+    "AF-AP-37"
+   ],
+   "line": 362,
+   "state": "2026-09-07 23:3xZ — AF-AP-? bit the coordinator: a commit message (ef54308) stated `36 passed, 0 failed` for a test the edit had just broken (an escaped `\\&\\&` left in the shell by a Python re.sub) — the real line was `35 passed, 1 failed`."
+  },
+  {
+   "labels": [
+    "AF-AP-4"
+   ],
+   "line": 375,
+   "state": "2026-09-08 03:4xZ — a spike artifact recorded a FALSE environment fact (AF-AP-? sibling: a repo-presence probe read wrong, then typed into the artifact):"
+  },
+  {
+   "labels": [
+    "AF-AP-62"
+   ],
+   "line": 376,
+   "state": "2026-09-08 03:4xZ — a committed evidence bundle's files matched a gitignore pattern (AF-AP-?): the lane's gate was green, the git-view gate red."
+  },
+  {
+   "labels": [
+    "AF-AP-64"
+   ],
+   "line": 377,
+   "state": "2026-09-08 04:2xZ — an idiom no producer uses is protected by nothing (AF-AP-?; lane P5b's mutant P8):"
+  },
+  {
+   "labels": [
+    "AF-AP-4"
+   ],
+   "line": 378,
+   "state": "2026-09-08 04:4xZ — the PC venue found the sandbox-root assumption AGAIN (AF-AP-?, third instance this wave): lane G2's two P1 tests assumed `dmesg` is readable by whoever runs the suite."
+  },
+  {
+   "labels": [
+    "AF-AP-66"
+   ],
+   "line": 383,
+   "state": "2026-09-08 08:3xZ — VERIFY-B1 F16 closed at the tooling level (AF-AP-?): `required_negative_controls` bound at mint time."
+  },
+  {
+   "labels": [
+    "AF-AP-67"
+   ],
+   "line": 388,
+   "state": "2026-09-08 13:3xZ — a verify lane died on Hermes `session_persistence_failed`, and its failure line came home as its report (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-67"
+   ],
+   "line": 390,
+   "state": "2026-09-08 15:2xZ — the poller read a lane as READY before its runner had finished: VERIFY-B5j's patch carried the dead first attempt's transcript instead of the resumed session's (AF-AP-?'s sibling — a deliverable read mid-write)."
+  },
+  {
+   "labels": [
+    "AF-AP-69"
+   ],
+   "line": 391,
+   "state": "2026-09-08 19:1xZ — push_clean rewrote the OWNER'S signed-key commit and orphaned the first ACCEPTED anchor; the pre-push hook blocked the tag by scanning the whole history (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-68"
+   ],
+   "line": 393,
+   "state": "2026-09-08 15:5xZ — a lane stopped by pid left its grandchildren running: VERIFY-B5j's six race-margin busy loops burned six cores for 90 minutes (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-70"
+   ],
+   "line": 394,
+   "state": "2026-09-08 19:1xZ — three PC verify verdicts home in one window, all NOT-READY, three NEW bug classes registered (AF-AP-?/71/72) with hook screen rows and fire/no-fire tests."
+  },
+  {
+   "labels": [
+    "AF-AP-73"
+   ],
+   "line": 396,
+   "state": "2026-09-08 21:3xZ — the same brief stopped a lane TWICE on a quantified line the coordinator never measured (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-87"
+   ],
+   "line": 399,
+   "state": "2026-09-15 17:5xZ — QM0-b landed (restart-when-idle) with a coordinator amendment (AF-AP-?): the qwen suite read 98/1 in the sandbox where the lane reported 99/0 on the PC. Root-caused (diagnostic, not guessed): the failing test's `! kill -0 \"$P1\"` saw the detached watcher as a ZOMBIE (`/proc/$P1/stat` state = Z; `kill -0` returns 0 for a defunct PID), because the sandbox subshell had not reaped it while the PC's init does. An `is_dead` helper (absent OR state=Z) hardened the one expiry check → 99/0 ×2 deterministic, `run-all.sh` ALL SUITES PASSED, dispatcher 13/0 (the env-conditioned dispatcher red the earlier probe chased is now resolved by QM0-b's rewrite). The lane's own retro had flagged the PID-only-liveness class and fixed the production `status` command; the test was the residual."
+  },
+  {
+   "labels": [
+    "AF-AP-86"
+   ],
+   "line": 402,
+   "state": "2026-09-15 16:4xZ — QM1-b home (the L1 matrix runner, the cloud build route, 15:16Z-16:39Z): REVIEW-PENDING, built against QM0's real seams; one tooling fail-open found (AF-AP-?) and one external input missing."
+  },
+  {
+   "labels": [
+    "AF-AP-83"
+   ],
+   "line": 406,
+   "state": "2026-09-15 16:0xZ — VERIFY-QM0 home (the cloud verify route, 15:18Z-15:59Z, 41 min; findings only by the single-model rule) with a BLOCKING finding that is FALSE on the real sink and a kernel that is true (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-82"
+   ],
+   "line": 408,
+   "state": "2026-09-15 15:1xZ — two fixture-before-instrument reds in one hour (AF-AP-?): N5l's AF_UNIX shape test tripped on the PC lane's long basetemp (`OSError: AF_UNIX path too long`) before its primitive ran — fixed by the lane with a short `/tmp` socket path plus a negative control reproducing the long-path refusal; the PC joint set on the GOV1 landing read `1 failed, 2728 passed, 22 skipped, 13 xfailed in 223.39s` where the one red, `test_anchor_check_needs_a_git_repository_and_no_anchors_skips_explicitly`, was the anchor checker finding the ENCLOSING clone through `git rev-parse --git-dir` because `pc_suite.sh` keeps its basetemp under the clone."
+  },
+  {
+   "labels": [
+    "AF-AP-73"
+   ],
+   "line": 414,
+   "state": "2026-09-15 12:2xZ — lane QM1 (the L1 matrix runner, the cloud build route) came home BLOCKED after 17 minutes, correctly: three premises in the coordinator's brief were false (AF-AP-? at the brief again — written from memory of the launcher, not from its bytes)."
+  },
+  {
+   "labels": [
+    "AF-AP-73"
+   ],
+   "line": 418,
+   "state": "2026-09-15 10:4xZ — a test-count FLOOR pasted into a brief without its file set (AF-AP-? at the floor: the number without the enumeration behind it)."
+  },
+  {
+   "labels": [
+    "AF-AP-77"
+   ],
+   "line": 422,
+   "state": "2026-09-15 08:1xZ — a section placed INSIDE a tool-managed markdown region was silently deleted by the next reindex (AF-AP-?); the mirror gate had anchored on the region's visible heading, not its marker."
+  },
+  {
+   "labels": [
+    "AF-AP-73",
+    "AF-AP-76"
+   ],
+   "line": 430,
+   "state": "2026-09-14 23:0xZ — the xhigh arm LOOPED on a brief PREMISE the coordinator never measured (AF-AP-? at the brief level; the unbounded investigation = AF-AP-?'s sibling, the row widened)."
+  },
+  {
+   "labels": [
+    "AF-AP-76"
+   ],
+   "line": 432,
+   "state": "2026-09-14 21:4xZ — a lane LOOPED 47 minutes on a mechanical bar its brief left unbounded (AF-AP-?); the fix went into the tool, the dispatcher and the skill, not into the lane."
+  },
+  {
+   "labels": [
+    "AF-AP-74"
+   ],
+   "line": 442,
+   "state": "2026-09-14 12:3xZ — the hollow lint: a report with no machine-checkable reference lints clean (AF-AP-?)."
+  },
+  {
+   "labels": [
+    "AF-AP-76"
+   ],
+   "line": 446,
+   "state": "2026-09-16 — the build-verify loop looped: no blocking predicate + a resettable round cap reopened completed work (D-031, the round-level generalization of AF-AP-?)."
+  }
+ ]
+}
