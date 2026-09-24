@@ -27,8 +27,30 @@ STOPWORDS = {
 }
 
 
+# Harness events are not a person's prompt: task notifications, agent hand-backs and hook feedback arrive inside a
+# conversation that already holds the context (compaction re-injects live-state through session-start.sh). Measured
+# 2026-09-24 once the hooks fired in the /home/user session (task #214): 6.5 KB per plain prompt and 11.5 KB per
+# notification, repeated on every background event.
+HARNESS_EVENT_PREFIXES = ("[SYSTEM NOTIFICATION", "Another Claude session sent a message", "Stop hook feedback",
+                          "<task-notification>")
+LIVE_BLOCK_MAX_LINES = 30
+
+
 def tokens(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9_]{3,}", text.lower()) if w not in STOPWORDS}
+
+
+def live_block(lines: list[str]) -> list[str]:
+    """The newest dated block under '## Active lanes' (the page's convention: newest first), else the first 40 lines."""
+    try:
+        start = lines.index("## Active lanes")
+    except ValueError:
+        return lines[:40]
+    heads = [i for i in range(start + 1, len(lines)) if lines[i].startswith("**20")]
+    if not heads:
+        return lines[:40]
+    end = heads[1] if len(heads) > 1 else len(lines)
+    return lines[heads[0]:end][:LIVE_BLOCK_MAX_LINES]
 
 
 def main() -> int:
@@ -37,15 +59,15 @@ def main() -> int:
     except Exception:
         return 0
     prompt = payload.get("prompt") or ""
-    if not prompt.strip() or not WIKI.is_dir():
+    if not prompt.strip() or not WIKI.is_dir() or prompt.lstrip().startswith(HARNESS_EVENT_PREFIXES):
         return 0
     qtok = tokens(prompt)
 
     out: list[str] = []
     if LIVE_STATE.is_file():
         body = LIVE_STATE.read_text(errors="replace").strip().splitlines()
-        out.append("[wiki live-state — turn-maintained continuity snapshot]")
-        out.extend(body[:40])
+        out.append("[wiki live-state — the newest block; the page holds the rest]")
+        out.extend(live_block(body))
 
     if qtok:
         # Incident integration (owner directive 2026-08-25): the anti-pattern
