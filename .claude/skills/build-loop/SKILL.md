@@ -206,6 +206,8 @@ never the final gate verdict.
    in the gap into an uncaught exception; the fix's test must reach the WINDOW it names deterministically —
    make the window long (a 200 MB entrypoint, a child-exists poll), never a fixed delay, and paste the red
    state on the unfixed tree (AF-AP-58).
+**Before a scarce run (a GPU window, the owner's time), the smoke takes the scarce run's OWN path (2026-09-24, twice in one day).** Run the smallest real call on whatever venue is free, and check that it reaches every first-use step the scarce run will: a CPU forward never reaches a GPU-only toolchain step. The first live GPU window spent its three jobs in 32 s: Triton compiles a C shim for its CUDA driver on first GPU use and needs `Python.h`, and the PC had no `python3.11-devel`; the CPU plumbing run and the trainer's CPU smoke were green because neither touched Triton. That compile needs no GPU memory (`python -c "from triton.backends.nvidia.driver import CudaUtils; CudaUtils()"` with a throwaway TRITON_CACHE_DIR), so it could have run while the service held the GPU. List the scarce run's first-use steps (compilers, kernel caches, driver shims, downloads) and probe each where it costs nothing.
+
 5. **Close the loop in writing — and ECHO before closing (owner mandate, ratified into the
    light loop 2026-08-22).** Any real defect this increment FOUND or FIXED gets `/bug-echo`
    run on its anti-pattern and the class registered in the ANTI-PATTERN REGISTRY atop
