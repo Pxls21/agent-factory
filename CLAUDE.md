@@ -682,7 +682,7 @@ egress fixtures (bare `unshare --net` is TOTAL isolation — AF-AP-1), venue cla
 for Y", "how does Z resolve") goes to `graft ask "<question>"` (add `--source` / `--in <path>`)
 BEFORE any grep/Read exploration. Bare Grep stays legal ONLY for literal-token sweeps (exact
 strings, env-var names, JSONL/telemetry logs, non-code files) and as the named fallback while
-`graft/INDEX.md` is absent (the PreToolUse hook `graft-first-nag.py` reminds you on code paths).
+`graft/INDEX.md` is absent (the PreToolUse hook `search-intercept.py`, JT3, answers semantic Grep/grep/rg searches graft-first with `graft-first-nag.py`'s classifier in-process; it is off while `.jev/intercept-off` exists).
 One graft pack routinely saves ~100k+ tokens vs reading files whole. The source repo's
 coordinator regressed to grep TWICE within hours of correction — if you are about to type a
 Grep/sed call to answer code semantics, STOP and rewrite it as `graft ask`.
