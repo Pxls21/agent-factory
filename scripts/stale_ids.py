@@ -25,7 +25,9 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 def git(*args):
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+    """Decoded with surrogateescape: a byte that is not UTF-8 is kept, never a crash (VERIFY-T243-245 A-F3)."""
+    out = subprocess.run(["git", *args], capture_output=True, check=True).stdout
+    return out.decode("utf-8", "surrogateescape")
 
 
 def stale_in(line, rewritten):
@@ -39,7 +41,9 @@ def added_lines(origin_ref, head):
     `diff --git` and the first hunk, so an added line whose text starts with `++ ` is still scanned; a path git quotes
     (a non-ASCII name) is only a label: its lines are scanned all the same."""
     out, path, num, in_header = [], "?", 0, False
-    diff = git("diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-U0", origin_ref, head)
+    diff = git("diff", "--no-color", "--no-ext-diff", "--text", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
+               "-U0", origin_ref, head)       # --text: a NUL byte, a binary or -diff attribute or bigFileThreshold would
+                                             # print "Binary files differ"; --no-textconv: a driver could drop the line (A-F2)
     for raw in diff.split("\n"):
         if raw.startswith("diff --git "):
             in_header, path = True, "?"

@@ -96,7 +96,9 @@ git log "$RANGE" --format='%h %s'
 # byte (2026-09-08: the unconditional identity filter rewrote the owner's signed-key commit 80422cb into e719da8 and
 # orphaned the tag `accepted/S0-11`, AF-AP-69).
 OLD_IDS=$(mktemp /tmp/push-clean-ids.XXXXXX)   # the range's ids before the rewrite, oldest first (stale_ids.py)
+trap 'rm -f "$OLD_IDS"' EXIT                   # every exit path, the aborts below included (VERIFY-T243-245 A-F5)
 git rev-list --reverse "$RANGE" > "$OLD_IDS"
+HEAD_BEFORE=$(git rev-parse --verify 'HEAD^{commit}')   # a stale-id refusal puts the branch back here (A-F1)
 TREE_BEFORE=$(git rev-parse 'HEAD^{tree}')
 git filter-branch -f \
   --msg-filter 'grep -v "Co-Authored-By: Claude\|Claude-Session:"' \
@@ -114,12 +116,14 @@ LEFT=$(git log "$RANGE" --format='%B' | grep -c 'Co-Authored-By: Claude\|Claude-
 # warning only. STALE_ID_OK=<reason> pushes anyway.
 src=0
 python3 "$(dirname "$0")/stale_ids.py" --old "$OLD_IDS" --origin-ref "$ORIGIN_REF" || src=$?
-rm -f "$OLD_IDS"
 if [ "$src" != 0 ]; then
   if [ "$src" = 4 ] && [ -n "${STALE_ID_OK:-}" ]; then
     echo "stale_ids: pushing anyway (STALE_ID_OK=$STALE_ID_OK)" >&2
   else
-    echo "REFUSED by stale_ids (rc $src): NOT pushed. Cite each commit by its subject or by the new id, commit, and run push_clean again." >&2
+    # Put the branch back on its pre-rewrite commits (the tree is the same, proven above): left rewritten, the next
+    # run's rewrite would be a no-op, stale_ids would see nothing rewritten, and the stale note would push (A-F1).
+    git update-ref HEAD "$HEAD_BEFORE"
+    echo "REFUSED by stale_ids (rc $src): NOT pushed; the branch is back on its pre-rewrite commits. Cite each commit by its subject or by the new id named above (the next run gives the same ids), commit, and run push_clean again." >&2
     exit 4
   fi
 fi

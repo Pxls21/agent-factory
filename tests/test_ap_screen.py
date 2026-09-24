@@ -143,3 +143,63 @@ def test_staged_shell_fails_loud_outside_a_git_repo(tmp_path):
 def test_the_pre_commit_hook_runs_the_staged_shell_screen_and_never_blocks_on_it():
     hook = (Path(__file__).resolve().parents[1] / "scripts" / "hooks" / "pre-commit").read_text()
     assert '"$PY" "$REPO_ROOT/scripts/ap_screen.py" --staged-shell || true\n' in hook
+
+
+# VERIFY-T243-245 B-F1..B-F5: the screen reads the STAGED blob, filters names itself, follows no symlink.
+import os  # noqa: E402
+
+
+def _init(root):
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    return root
+
+
+def _screen(root, **env):
+    return subprocess.run([sys.executable, str(SCRIPT), "--staged-shell"], cwd=root, capture_output=True, text=True,
+                          timeout=60, env={**os.environ, **env})
+
+
+def _add(root, *paths):
+    subprocess.run(["git", "add", "--", *paths], cwd=root, check=True)
+
+
+def test_staged_shell_screens_the_staged_blob_never_the_working_tree(tmp_path):
+    root = _init(tmp_path / "r")
+    (root / "fixed.sh").write_text(TRAPPED)
+    (root / "dirty.sh").write_text(IGNORED)
+    (root / "gone.sh").write_text(TRAPPED)
+    _add(root, "fixed.sh", "dirty.sh", "gone.sh")
+    (root / "fixed.sh").write_text(IGNORED)      # fixed in the tree only: the commit still carries the shape
+    (root / "dirty.sh").write_text(TRAPPED)      # a hit in the tree only: not in the commit
+    (root / "gone.sh").unlink()                  # deleted from the tree only: still in the commit
+    r = _screen(root)
+    assert r.returncode == 0, r.stderr
+    assert "fixed.sh:2: cleanup() {" in r.stdout and "gone.sh:2: cleanup() {" in r.stdout, r.stdout
+    assert "dirty.sh" not in r.stdout, r.stdout
+
+
+def test_staged_shell_never_follows_a_staged_symlink(tmp_path):
+    root = _init(tmp_path / "r")
+    (root / "zero.sh").symlink_to("/dev/zero")
+    _add(root, "zero.sh")
+    r = _screen(root)
+    assert r.returncode == 0 and r.stdout == "", (r.stdout, r.stderr)
+
+
+def test_staged_shell_ignores_the_pathspec_env_and_screens_renames_and_look_alike_dirs(tmp_path):
+    root = _init(tmp_path / "r")
+    (root / "old.sh").write_text(IGNORED + "# padding so the rename is detected\n" * 3)
+    _add(root, "old.sh")
+    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "x"],
+                   cwd=root, check=True)
+    subprocess.run(["git", "mv", "old.sh", "new.sh"], cwd=root, check=True)
+    (root / "new.sh").write_text(IGNORED + "# padding so the rename is detected\n" * 3 + "trap 'exit 143' TERM\n")
+    (root / "sandbox-kitx").mkdir()
+    (root / "sandbox-kitx" / "v.sh").write_text(TRAPPED)
+    _add(root, "new.sh", "sandbox-kitx/v.sh")
+    status = subprocess.run(["git", "diff", "--cached", "--name-status"], cwd=root, capture_output=True, text=True)
+    assert status.stdout.startswith("R"), status.stdout
+    for env in ({}, {"GIT_LITERAL_PATHSPECS": "1"}, {"GIT_GLOB_PATHSPECS": "1"}):
+        r = _screen(root, **env)
+        assert r.returncode == 0 and "new.sh:" in r.stdout and "sandbox-kitx/v.sh:" in r.stdout, (env, r.stdout)

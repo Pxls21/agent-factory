@@ -7,6 +7,7 @@ and a green CI record for origin's head, then runs the real push_clean.sh.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -70,16 +71,15 @@ def test_a_note_citing_a_rewritten_commit_is_refused_then_the_new_id_pushes(work
     _commit(root, "notes.md", "fixed in %s (local)\n" % old[:7], "a note")
     r = _push(root, runs)
     assert r.returncode == 4, r.stdout + r.stderr
-    new = _new_id(root, old)
-    assert new != old
-    assert "stale_ids: notes.md:1 cites %s, a commit this push rewrote; it is %s on origin" % (old[:7], new[:7]) \
-        in r.stderr, r.stderr
+    m = re.search(r"stale_ids: notes\.md:1 cites %s, a commit this push rewrote; it is ([0-9a-f]{7}) on origin" % old[:7],
+                  r.stderr)
+    assert m and m.group(1) != old[:7], r.stderr
     assert "REFUSED by stale_ids (rc 4): NOT pushed" in r.stderr and _git(origin, "rev-parse", "feat") == base
-    _commit(root, "notes.md", "fixed in %s\n" % new[:7], "the note cites the new id")
+    _commit(root, "notes.md", "fixed in %s\n" % m.group(1), "the note cites the new id")
     r = _push(root, runs)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert _git(origin, "cat-file", "-t", new) == "commit" and _git(origin, "rev-parse", "feat") == \
-        _git(root, "rev-parse", "HEAD")
+    assert _git(origin, "rev-parse", "--verify", m.group(1) + "^{commit}").startswith(m.group(1))
+    assert _git(origin, "rev-parse", "feat") == _git(root, "rev-parse", "HEAD")
 
 
 def test_stale_id_ok_pushes_anyway_and_says_so(work):
@@ -144,3 +144,75 @@ def test_the_checker_fails_loud_when_it_cannot_map_the_range(work, tmp_path):
     r = subprocess.run([sys.executable, str(REPO / "scripts" / "stale_ids.py"), "--old", str(ids), "--origin-ref",
                         "refs/remotes/origin/feat"], cwd=root, capture_output=True, text=True, timeout=60)
     assert r.returncode == 2 and "had 2 commits before the rewrite and 1 after" in r.stderr, r.stderr
+
+
+# VERIFY-T243-245 A-F1..A-F5.
+def test_a_refusal_is_sticky_the_branch_is_put_back_and_a_plain_rerun_refuses_again(work):
+    """A-F1: a refused run left the branch rewritten, so the next run rewrote nothing and pushed the stale note."""
+    root, origin, base, runs = work
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    head = _commit(root, "notes.md", "fixed in %s\n" % old[:7], "a note")
+    for _ in range(2):
+        r = _push(root, runs)
+        assert r.returncode == 4 and "cites %s" % old[:7] in r.stderr, r.stdout + r.stderr
+        assert _git(root, "rev-parse", "HEAD") == head and _git(origin, "rev-parse", "feat") == base
+
+
+def test_fixing_one_of_two_stale_notes_still_refuses_on_the_other(work):
+    root, origin, base, runs = work
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    _commit(root, "one.md", "see %s\n" % old[:7], "two notes")
+    _commit(root, "two.md", "and %s\n" % old[:8], "the second")
+    r = _push(root, runs)
+    new7 = re.search(r"one\.md:1 cites %s, a commit this push rewrote; it is ([0-9a-f]{7})" % old[:7], r.stderr).group(1)
+    _commit(root, "one.md", "see %s\n" % new7, "one note fixed")
+    r = _push(root, runs)
+    assert r.returncode == 4 and "two.md:1 cites %s" % old[:8] in r.stderr and "one.md" not in r.stderr, r.stderr
+    assert _git(origin, "rev-parse", "feat") == base
+
+
+@pytest.mark.parametrize("shape", ["nul byte", "binary attribute", "-diff attribute", "bigFileThreshold", "textconv"])
+def test_a_citation_is_found_in_a_file_git_would_call_binary(work, shape):
+    """A-F2: without --text / --no-textconv the diff printed "Binary files differ" (or a converted text) and the
+    citation was never read."""
+    root, origin, base, runs = work
+    if shape == "binary attribute":
+        (root / ".gitattributes").write_text("notes.md binary\n")
+    elif shape == "-diff attribute":
+        (root / ".gitattributes").write_text("notes.md -diff\n")
+    elif shape == "bigFileThreshold":
+        _git(root, "config", "core.bigFileThreshold", "1")
+    elif shape == "textconv":
+        (root / ".gitattributes").write_text("notes.md diff=blank\n")
+        _git(root, "config", "diff.blank.textconv", "sh -c 'echo nothing to see'")
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    body = ("fixed in %s\n" % old[:7]).encode() + (b"\0tail\n" if shape == "nul byte" else b"")
+    (root / "notes.md").write_bytes(body)
+    _git(root, "add", "--", "notes.md")
+    _git(root, "commit", "-q", "-m", "a note")
+    r = _push(root, runs)
+    assert r.returncode == 4 and "notes.md:1 cites %s" % old[:7] in r.stderr, (shape, r.stdout + r.stderr)
+    assert _git(origin, "rev-parse", "feat") == base
+
+
+def test_a_file_that_is_not_utf8_is_read_not_a_crash(work):
+    """A-F3: a Latin-1 byte made the checker raise, and push_clean printed a false refusal."""
+    root, origin, base, runs = work
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    (root / "latin.txt").write_bytes(b"caf\xe9 fixed in " + old[:7].encode() + b"\n")
+    _git(root, "add", "--", "latin.txt")
+    _git(root, "commit", "-q", "-m", "a latin-1 note")
+    r = _push(root, runs)
+    assert r.returncode == 4 and "latin.txt:1 cites %s" % old[:7] in r.stderr and "Traceback" not in r.stderr, r.stderr
+
+
+def test_the_old_ids_file_never_leaks(work):
+    """A-F5: the temp file of old ids leaked on the abort paths; an EXIT trap removes it on every path."""
+    root, origin, base, runs = work
+    before = set(Path("/tmp").glob("push-clean-ids.*"))
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    _commit(root, "notes.md", "see %s\n" % old[:7], "a note")
+    assert _push(root, runs).returncode == 4
+    _commit(root, "notes.md", "no citation\n", "the note fixed")
+    assert _push(root, runs).returncode == 0
+    assert set(Path("/tmp").glob("push-clean-ids.*")) <= before

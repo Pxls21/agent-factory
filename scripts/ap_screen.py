@@ -45,12 +45,19 @@ def _files(paths):
 
 
 def screen(files, rows, label, limit=8, quiet=False):
-    hits = {}
+    items = []
     for f in files:
         try:
-            text = f.read_text(errors="replace")
+            items.append((f, f.read_text(errors="replace")))
         except OSError:
             continue
+    return screen_texts(items, rows, label, limit, quiet, n_files=len(files))
+
+
+def screen_texts(items, rows, label, limit=8, quiet=False, n_files=None):
+    """The screen over (name, text) pairs: a file read from the tree, or a staged blob (--staged-shell)."""
+    hits = {}
+    for f, text in items:
         lines = text.split("\n")  # "\n" only, matching text.count("\n") below (AF-AP-132)
         # the whole text, not line by line: the hook screens multi-line HUNKS, and a signature that spans a line
         # break (a subprocess argv list wrapped after the paren) must screen the same way here
@@ -67,7 +74,7 @@ def screen(files, rows, label, limit=8, quiet=False):
     total = sum(len(v) for v in hits.values())
     if quiet and not total:
         return 0
-    print(f"--- {label}: {total} hits over {len(files)} files ---")
+    print(f"--- {label}: {total} hits over {len(items) if n_files is None else n_files} files ---")
     for ap in sorted(hits, key=lambda k: (-len(hits[k]), k)):
         print(f"{ap}: {len(hits[ap])}")
         for h in hits[ap][:limit]:
@@ -88,12 +95,20 @@ def main(argv=None) -> int:
     ns = ap.parse_args(argv)
     ap_rows, test_rows = _load_screens()
     if ns.staged_shell:
-        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
-        names = subprocess.run(["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR", "--", "*.sh"],
-                               capture_output=True, text=True, check=True).stdout.split("\0")
-        files = [Path(top.stdout.strip()) / n for n in names
-                 if n and not n.startswith(("sandbox-kit/", ".claude/"))]
-        if screen(files, ap_rows, "AP_SCREEN over the staged shell files", ns.limit, quiet=True):
+        # The STAGED blob of each staged *.sh (`git show :<path>`), never the working-tree file: the commit carries the
+        # blob (VERIFY-T243-245 B-F1), a staged symlink is its target string, never followed (B-F3), and the names are
+        # filtered here rather than by a pathspec that GIT_*_PATHSPECS would reinterpret (B-F4); T counts (B-F2).
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             check=True).stdout.strip()
+        names = subprocess.run(["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], cwd=top,
+                               capture_output=True, check=True).stdout.decode("utf-8", "surrogateescape").split("\0")
+        items = []
+        for n in names:
+            if not n.endswith(".sh") or n.startswith(("sandbox-kit/", ".claude/")):
+                continue
+            blob = subprocess.run(["git", "show", ":" + n], cwd=top, capture_output=True, check=True).stdout
+            items.append((Path(top) / n, blob.decode("utf-8", "replace")))
+        if screen_texts(items, ap_rows, "AP_SCREEN over the staged shell files", ns.limit, quiet=True):
             print("(advisory, never blocking: classify each hit by running it; the screen finds tells, not verdicts)")
         return 0
     if ns.s0_01:
