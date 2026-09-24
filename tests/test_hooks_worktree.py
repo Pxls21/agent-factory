@@ -94,3 +94,24 @@ def test_code_beside_the_ledger_still_fires_the_gate(tmp_path):
     assert _sh(["bash", str(gate)], repo, env).returncode == 2
     _commit(repo, env, {"sandbox-kit/OTHER.md": "guide\n"}, "a kit guide is not in the retro plane")
     assert _sh(["bash", str(gate)], repo, env).returncode == 2
+
+
+def test_a_skill_bake_with_its_companions_is_quiet_in_both_hooks(tmp_path):
+    # 2026-09-24: a build-loop bake (the skill, its two mirrors, the hand-port hashes, the manifest and the class file)
+    # marked the wiki stale in post-commit although the retro gate treated the same set as retro plane.
+    repo, _wt, env = _repo(tmp_path)
+    assert _sh(["git", "config", "core.hooksPath", "scripts/hooks"], repo, env).returncode == 0
+    gate = repo / ".claude" / "hooks" / "turn-retro-gate.sh"
+    marker = repo / ".git" / "wiki-stale"
+    _commit(repo, env, {"scripts/tool.py": "x = 1\n"}, "code")
+    assert marker.is_file()
+    marker.unlink()
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
+    _commit(repo, env, {".claude/skills/build-loop/SKILL.md": "lesson\n", ".agents/skills/build-loop/SKILL.md": "lesson\n",
+                        ".agents/lane-skills/build-loop/SKILL.md": "lesson\n", "harness-ports/hand-ported.sha256": "h\n",
+                        "sandbox-kit/VENDORED-MANIFEST.md": "m\n", "sandbox-kit/VENDORED-CLAUDE-CLASSES.tsv": "t\n"},
+            "skill bake")
+    assert not marker.exists(), "a skill bake with its companions must not mark the wiki stale"
+    assert _sh(["bash", str(gate)], repo, env).returncode == 0
+    _commit(repo, env, {"transcripts/pc/x.jsonl": "{}\n"}, "transcripts sync")
+    assert not marker.exists() and _sh(["bash", str(gate)], repo, env).returncode == 0
