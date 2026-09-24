@@ -14,7 +14,7 @@ last_compiled: 2026-09-03
 **2026-09-24 20:0xZ — WHAT IS LIVE NOW (supersedes the 19:2xZ block for the live set).**
 - **LIVE:** the JT3 search hook, re-armed 20:06:30Z (a semantic Grep in `scripts/` is answered graft-first; the identical repeat within 120 s runs raw). `.jev/intercept-off` switches it off.
 - **LANDED:** JT2 (after JT2-R2) and JT3, both MERGE-READY-WITH-FOLLOWUPS (#72, #71). The CI red on a repeated finding id is fixed (f1679db, CI green).
-- **GATING:** FT1-F built by the sandbox builder (32 passed twice, 22 of 22 mutants killed); the coordinator's own re-run is in progress, then the commit.
+- **LANDED 20:1xZ:** FT1-F (GATED-PENDING-VERIFY; the coordinator's re-run 32 passed, set 8b147318aa48); adjacent defects on #73.
 - **VERIFYING:** VERIFY-GW1 on `scripts/gpu_window.sh` before its first live window.
 - **PC:** no lane live. QJ1 ended FAILED (records committed). The dataset and both RWKV venvs are ready; the trainer's CPU smoke passed.
 - **NEXT:** the GPU window after VERIFY-GW1 and the FT1-F commit: G0, then a timed head-mode Laya run, then qwen back.
