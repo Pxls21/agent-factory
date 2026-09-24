@@ -230,3 +230,77 @@ def test_the_pre_commit_hook_runs_the_gate():
     assert "SKIP_STAMP_CHECK" in hook
     # the gate sits before the hook's final success exit
     assert hook.index("scripts/stamp_check.py") < hook.rindex("exit 0")
+
+
+# --message (the commit-msg hook, 2026-09-24): "retro 21:5xZ" was committed at 21:45:43Z; the staged files were clean.
+def _msg(tmp_path, text, now):
+    m = tmp_path / "COMMIT_EDITMSG"
+    m.write_text(text)
+    return subprocess.run([sys.executable, SCRIPT, "--message", str(m), "--now", now], capture_output=True,
+                          text=True, env=_env())
+
+
+def test_a_subject_bucket_ahead_of_the_clock_blocks_with_the_exact_line(tmp_path):
+    r = _msg(tmp_path, "retro 21:5xZ: AF-AP-187 echo\n\nbody\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 1, r.stderr
+    assert ("stamp_check: the commit subject: '21:5xZ' is 4.3 min ahead of the clock 2026-09-24T21:45:43Z"
+            in r.stderr), r.stderr
+
+
+def test_the_current_bucket_and_a_past_minute_pass(tmp_path):
+    r = _msg(tmp_path, "retro 21:4xZ, landed 21:45Z\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_minute_stamp_on_the_subject_keeps_the_slack(tmp_path):
+    assert _msg(tmp_path, "x 21:47Z\n", "2026-09-24T21:45:43Z").returncode == 0
+    r = _msg(tmp_path, "x 21:48Z\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 1 and "'21:48Z' is 2.3 min ahead" in r.stderr, r.stderr
+
+
+def test_a_bare_time_in_the_body_is_not_checked_but_a_dated_stamp_anywhere_is(tmp_path):
+    assert _msg(tmp_path, "subject\n\nat 23:5xZ we\n", "2026-09-24T21:45:43Z").returncode == 0
+    r = _msg(tmp_path, "subject\n\nat 2026-09-24 23:5xZ we\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 1 and "the commit message: '2026-09-24 23:5xZ' is" in r.stderr, r.stderr
+
+
+def test_a_dated_past_stamp_on_the_subject_is_not_read_as_a_bare_time(tmp_path):
+    r = _msg(tmp_path, "the 2026-09-20 23:5xZ batch\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_subject_stamp_after_midnight_is_read_as_the_previous_day(tmp_path):
+    r = _msg(tmp_path, "retro 23:5xZ\n", "2026-09-25T00:05:00Z")
+    assert r.returncode == 0, r.stderr
+
+
+def test_git_comment_lines_are_skipped(tmp_path):
+    r = _msg(tmp_path, "# retro 23:5xZ\nsubject 21:4xZ\n# 2099-01-01 00:0xZ\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 0, r.stderr
+
+
+def test_an_invalid_subject_time_blocks(tmp_path):
+    r = _msg(tmp_path, "at 25:1xZ\n", "2026-09-24T21:45:43Z")
+    assert r.returncode == 1 and "'25:1xZ' names no valid time" in r.stderr, r.stderr
+
+
+def test_the_commit_msg_hook_runs_the_gate_on_the_real_script(tmp_path):
+    ok, bad = tmp_path / "ok", tmp_path / "bad"
+    ok.write_text("subject\n")
+    bad.write_text("subject\n\nplanned 2099-01-01 00:0xZ\n")
+    hook = str(REPO_ROOT / "scripts" / "hooks" / "commit-msg")
+    env = {k: v for k, v in _env().items() if k != "SKIP_STAMP_CHECK"}
+
+    def run(path, **extra):
+        return subprocess.run(["bash", hook, str(path)], cwd=REPO_ROOT, capture_output=True, text=True,
+                              env={**env, **extra})
+    assert run(ok).returncode == 0
+    r = run(bad)
+    assert r.returncode == 1 and "COMMIT BLOCKED by the future-stamp gate on the message" in r.stderr, r.stderr
+    r = run(bad, SKIP_STAMP_CHECK="1")
+    assert r.returncode == 0 and "bypassed" in r.stderr, r.stderr
+
+
+def test_a_subject_bucket_gets_no_slack(tmp_path):
+    r = _msg(tmp_path, "retro 21:5xZ\n", "2026-09-24T21:49:00Z")
+    assert r.returncode == 1 and "'21:5xZ' is 1.0 min ahead" in r.stderr, r.stderr

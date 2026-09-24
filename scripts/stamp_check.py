@@ -24,6 +24,11 @@ file.
 A BUCKET stamp (HH:MxZ) gets no slack: it already spans ten minutes, so its earliest instant must not be later than
 the clock (2026-09-24: a `20:1xZ` wiki block written at 20:08:53Z passed the 120 s slack). The minute and ISO forms
 keep the slack.
+--message FILE (the commit-msg hook, 2026-09-24: a "retro 21:5xZ" subject was committed at 21:45Z; the staged
+files were clean, the message was not): every dated stamp in the message, and every BARE stamp (HH:MxZ, HH:MMZ) on its
+subject line, must not be later than the clock. A bare subject stamp is placed on the clock's date, or the day before
+when that date puts it more than 12 h ahead (a batch stamped 23:5xZ and committed after midnight). Lines starting "#"
+are git's comments and are skipped; a bare time in the body is not checked (it may name another day).
 Exit 0 clean; 1 a new stamp later than the clock plus the slack, or one that names no valid
 instant (one stderr line each); 2 usage error (argparse).
 """
@@ -41,6 +46,7 @@ LEDGER_PLANE = (
 )
 MEASURED_RX = re.compile(r"(?i)measured at authoring|^STATUS ")
 STAMP_RX = re.compile(r"(?<![0-9])(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d)([x0-9])(?::(\d{2}))?Z")
+BARE_RX = re.compile(r"(?<!\d{4}-\d{2}-\d{2}[ T])(?<![0-9:.T-])(\d{2}):(\d)([x0-9])Z(?![0-9A-Za-z])")
 UTC = datetime.timezone.utc
 
 
@@ -67,10 +73,41 @@ def _instant(match):
         return None
 
 
+def check_message(path, now, limit, now_text):
+    """-> the problems of the commit message at PATH (see --message in the module docstring)."""
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        lines = [line for line in fh.read().splitlines() if not line.startswith("#")]
+    subject = next((line for line in lines if line.strip()), "")
+    problems = []
+    for match in STAMP_RX.finditer("\n".join(lines)):
+        instant = _instant(match)
+        if instant is None:
+            problems.append(f"stamp_check: the commit message: '{match.group(0)}' names no valid instant")
+        elif instant > (now if match.group(6) == "x" else limit):
+            problems.append(f"stamp_check: the commit message: '{match.group(0)}' is "
+                            f"{(instant - now).total_seconds() / 60:.1f} min ahead of the clock {now_text}")
+    for match in BARE_RX.finditer(subject):
+        hour, tens, unit = match.groups()
+        minute = int(tens) * 10 + (0 if unit == "x" else int(unit))
+        if int(hour) > 23 or minute > 59:
+            problems.append(f"stamp_check: the commit subject: '{match.group(0)}' names no valid time")
+            continue
+        instant = now.replace(hour=int(hour), minute=minute, second=0)
+        if instant - now > datetime.timedelta(hours=12):
+            instant -= datetime.timedelta(days=1)
+        if instant > (now if unit == "x" else limit):
+            problems.append(f"stamp_check: the commit subject: '{match.group(0)}' is "
+                            f"{(instant - now).total_seconds() / 60:.1f} min ahead of the clock {now_text} — "
+                            f"paste stamps from date -u")
+    return problems
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Refuse a new ledger-plane stamp later than the clock.")
-    ap.add_argument("--staged", action="store_true", required=True,
-                    help="check the index copies of the ledger-plane files against HEAD")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--staged", action="store_true",
+                      help="check the index copies of the ledger-plane files against HEAD")
+    mode.add_argument("--message", metavar="FILE", help="check a commit message (the commit-msg hook)")
     ap.add_argument("--now", help="the clock as YYYY-MM-DDTHH:MM:SSZ (tests); default: the system clock")
     ap.add_argument("--slack-seconds", type=int, default=120)
     args = ap.parse_args(argv)
@@ -83,6 +120,15 @@ def main(argv=None):
             ap.error(f"--now {args.now!r} is not YYYY-MM-DDTHH:MM:SSZ")
     limit = now + datetime.timedelta(seconds=args.slack_seconds)
     now_text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if args.message is not None:
+        try:
+            problems = check_message(args.message, now, limit, now_text)
+        except OSError as exc:
+            print(f"stamp_check: cannot read the commit message: {exc}", file=sys.stderr)
+            return 1
+        for line in problems:
+            print(line, file=sys.stderr)
+        return 1 if problems else 0
 
     staged = _git("diff", "--cached", "--name-only", "--diff-filter=ACMR")
     if staged.returncode != 0:

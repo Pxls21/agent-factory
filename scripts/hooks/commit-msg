@@ -1,0 +1,19 @@
+#!/bin/bash
+# FUTURE-STAMP GATE ON THE COMMIT MESSAGE (2026-09-24, AF-AP-37's timestamp half, third bite): a "retro 21:5xZ" subject
+# was committed at 21:45Z; the pre-commit gate reads only the staged files. Every dated stamp in the message, and every
+# bare HH:MxZ / HH:MMZ stamp on its subject, must not be later than the clock (scripts/stamp_check.py --message).
+# Bypass (printed, so it shows in review): SKIP_STAMP_CHECK=1 git commit ...
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PY="${AF_VENV:-/root/venv-agent-factory}/bin/python"
+[ -x "$PY" ] || PY="python3"
+if [ -n "${SKIP_STAMP_CHECK:-}" ]; then
+  echo "commit-msg: SKIP_STAMP_CHECK set — the future-stamp gate on the message bypassed." >&2
+  exit 0
+fi
+"$PY" "$REPO_ROOT/scripts/stamp_check.py" --message "$1"
+RC=$?
+if [ "$RC" != "0" ]; then
+  echo "COMMIT BLOCKED by the future-stamp gate on the message (rc=$RC) — paste the stamp from date -u." >&2
+  exit 1
+fi
+exit 0

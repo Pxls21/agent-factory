@@ -5,6 +5,7 @@
 # hooks
 scripts/hooks/pre-commit
 scripts/hooks/pre-push
+scripts/hooks/commit-msg
 scripts/hooks/post-commit
 # CI workflows
 .github/workflows/planning-checks.yml
