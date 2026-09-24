@@ -748,6 +748,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 19:4xZ — stage0-ci run 36046249811 was red (a report restated finding id N-10; the dataset builder counted it twice); fixed in build_dataset.py (first block kept; the 0b342c7 dataset still d7cd9b49; AF-AP-199) and pushed as f1679db.
 2026-09-24 19:3xZ — JT2 landed MERGE-READY-WITH-FOLLOWUPS (JT2-R2 closed F-16/F-17); #227 and #229 closed; follow-ups on #72.
 2026-09-24 19:2xZ — JT3 landed with its hook off; JT2-R2 in reverify; FT1-F building; G0 ready; no CPU path for RWKV-7; the dataset rebuilt on the PC; QJ1 stuck on the local 400.
 2026-09-24 18:4xZ — retro batch: AF-AP-196 (a finiteness guard on a step's input, none on the saved artifact) and AF-AP-197 (a precondition checked after the work it protects) registered with AP_SCREEN tells; task #243 (a check for notes that cite commit ids push_clean rewrote). The live set is unchanged from the 18:3xZ block.
