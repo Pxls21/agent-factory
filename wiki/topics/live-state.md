@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 21:4xZ — WHAT IS LIVE NOW (supersedes the 21:1xZ block for the live set).**
+- **LIVE:** the JT3 search hook. NEW at commit time: `scripts/ap_screen.py --staged-shell` prints the AP_SCREEN hits of staged `*.sh` files (task #245). NEW at push time: push_clean refuses a note that cites a commit id the push rewrote (task #243; its first run caught the manifest's provenance line, task #246).
+- **VERIFYING (two sandbox agents):** VERIFY-GW1-R1 on `scripts/gpu_window.sh` (F-1 not fully closed, the coordinator's finding; the second repair waits); VERIFY-T243-245 on the three tooling changes.
+- **PC:** no lane live; qwen active; the window1 jobs file staged.
+- **NEXT:** the GW1-R2 repair and its verify, then the window (`--max-minutes 20`; qwen down about 10 to 20 minutes; its restart takes about 80 s), then the Laya evaluation on the PC CPU and the Qwen J2 continuation.
+
 **2026-09-24 21:1xZ — WHAT IS LIVE NOW (supersedes the 20:0xZ block for the live set).**
 - **LIVE:** the JT3 search hook (unchanged since 20:06:30Z).
 - **VERIFYING:** VERIFY-GW1-R1 on `scripts/gpu_window.sh` blob 2d373812a9b9 (the GW1-R1 repair: F-1, F-2, F-7, F-8; 22 tests). The coordinator's sweep found F-1 not fully closed (AF-AP-145: a burst of TERMs skips the restart); the second repair waits for the verifier. The script and its tests stay untouched while it runs.
@@ -763,6 +769,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 21:4xZ — tooling while VERIFY-GW1-R1 runs: #244 closed; #245 (staged-shell AP screen) and #243 (the stale-id push check) landed gated and in their own verify; AF-AP-200 registered; the check's first run caught the manifest's dangling provenance id (task #246).
 2026-09-24 21:1xZ — GW1-R1 committed and in re-verify; the coordinator found F-1 not fully closed (AF-AP-145, a TERM burst); follow-ups on #74; the window1 jobs file staged on the PC; task #245 opened.
 2026-09-24 20:1xZ — stamp_check gives a ten-minute bucket stamp no slack (the 20:1xZ slip at 20:08:53Z; incident log 20:0xZ); the live set unchanged.
 2026-09-24 20:0xZ — JT3's hook re-armed and live; VERIFY-GW1 dispatched; FT1-F built, the coordinator's gate in progress; CI green on f1679db.
