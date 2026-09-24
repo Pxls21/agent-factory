@@ -24,6 +24,22 @@ fi
 # follows status) and minus the kit guides other than the manifest (tests/test_hooks_worktree.py holds both).
 if [ -f "$SENT" ]; then
   LAST="$(cat "$SENT")"
+  # push_clean rewrites the unpushed range (it strips model trailers; every tree stays identical), so the acked SHA can
+  # stop being an ancestor of HEAD and every rewritten commit would read as new: the gate re-fired after each push
+  # (2026-09-24). Map the acked commit to its rewritten twin (same tree, same subject) among HEAD's last 60 commits.
+  if ! (cd "$REPO_ROOT" && git merge-base --is-ancestor "$LAST" HEAD 2>/dev/null); then
+    LT="$(cd "$REPO_ROOT" && git rev-parse -q --verify "$LAST^{tree}" 2>/dev/null)"
+    LS="$(cd "$REPO_ROOT" && git log -1 --format=%s "$LAST" 2>/dev/null)"
+    if [ -n "$LT" ]; then
+      while IFS=$'\t' read -r CH CT CS; do
+        if [ "$CT" = "$LT" ] && [ "$CS" = "$LS" ]; then LAST="$CH"; break; fi
+      done < <(cd "$REPO_ROOT" && git log -60 --format='%h%x09%T%x09%s' HEAD 2>/dev/null)
+    fi
+    if [ "$LAST" = "$HEAD_SHA" ]; then
+      echo "$HEAD_SHA" > "$SENT"
+      exit 0
+    fi
+  fi
   NONEXEMPT=0
   for C in $(cd "$REPO_ROOT" && git rev-list "$LAST..HEAD" 2>/dev/null); do
     SUBJ="$(cd "$REPO_ROOT" && git log -1 --format=%s "$C")"

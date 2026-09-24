@@ -115,3 +115,19 @@ def test_a_skill_bake_with_its_companions_is_quiet_in_both_hooks(tmp_path):
     assert _sh(["bash", str(gate)], repo, env).returncode == 0
     _commit(repo, env, {"transcripts/pc/x.jsonl": "{}\n"}, "transcripts sync")
     assert not marker.exists() and _sh(["bash", str(gate)], repo, env).returncode == 0
+
+
+def test_a_rewritten_range_does_not_fire_the_gate_again(tmp_path):
+    # 2026-09-24: push_clean strips model trailers from the unpushed range, so every pushed commit gets a new SHA with the
+    # same tree and subject; the gate read the rewritten commits as new work and re-fired after each push.
+    repo, _wt, env = _repo(tmp_path)
+    gate = repo / ".claude" / "hooks" / "turn-retro-gate.sh"
+    (repo / "scripts").mkdir(exist_ok=True)
+    (repo / "scripts" / "tool.py").write_text("x = 1\n")
+    assert _sh(["git", "add", "scripts/tool.py"], repo, env).returncode == 0
+    assert _sh(["git", "commit", "-q", "-m", "code\n\nCo-Authored-By: someone <x@y>"], repo, env).returncode == 0
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
+    assert _sh(["git", "commit", "--amend", "-q", "-m", "code"], repo, env).returncode == 0  # the rewrite: same tree
+    assert _sh(["bash", str(gate)], repo, env).returncode == 0
+    _commit(repo, env, {"scripts/tool.py": "x = 2\n"}, "more code")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
