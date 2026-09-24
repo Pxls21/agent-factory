@@ -19,7 +19,7 @@ last_compiled: 2026-09-03
 - **LIVE, sandbox (D-062):** VERIFY-S0-05 (#207, uid 0; gates the owner's `accepted/S0-05` tag) and VERIFY-J1-3-R2 (#208; completes the partial PC verify of J1-3).
 - **LIVE, PC (two long-context local lanes):** VERIFY-K1-h (#194, since 14:36Z) and J1-1-R3 (#202, relaunched 00:0xZ as `pc-j1-1-r3.md--ff7a671`). Monitor bdkh25j6n.
 - **GRADED PARTIAL:** VERIFY-J1-3 (MERGE-READY claimed, half served by gemini-3.1-pro-low, most items not run); J1-3 stays GATED-PENDING-VERIFY.
-- **OWNER STEP PENDING:** the PC clone cannot fast-forward past a root-owned `proofs/S0-05/evidence/` left by a 2026-09-19 sudo run (AF-AP-169); one `sudo mv` line handed over.
+- **DONE 00:4xZ:** the owner moved the root-owned `proofs/S0-05/evidence/` out of the PC clone (AF-AP-169); the clone fast-forwarded to 28a915e.
 - **FILED:** issue #58 (S0-05 evidence records the canary tool's version).
 
 **2026-09-24 00:0xZ — WHAT IS LIVE NOW (this block supersedes the 23:1xZ block and the older ones below for the live set; the ledger carries the detail).**
@@ -484,6 +484,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 00:4xZ — the owner cleared AF-AP-169's root-owned debris; the PC clone fast-forwarded to 28a915e.
 2026-09-24 00:1xZ — J1-1-R3 relaunched on the local route; VERIFY-S0-05 and VERIFY-J1-3-R2 dispatched as sandbox agents (D-062); VERIFY-J1-3 graded partial; D-061/D-062 recorded; AF-AP-169.
 2026-09-24 00:0xZ — S0-05 MINTED from the owner's live run (9 of 9 execution proofs; GATED-PENDING-VERIFY); S0-02 ACCEPTED (the signed tag anchored).
 2026-09-23 23:2xZ — VERIFY-S0-02 graded (S0-02 verified; the owner's tag next); VERIFY-J1-3 dispatched.
