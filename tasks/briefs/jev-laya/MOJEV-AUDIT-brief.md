@@ -103,6 +103,34 @@ SIMPLE_TOKENS = frozenset([
     triage (#195), the AP-hawk (#115) and drift-hawk (#116) proposals (`af/todo/BUILD-TASKLIST.md` and `af/docs/08_DECISION_LOG.md`
     D-046/D-047), and `af/docs/11_DREAM_PHASE.md`'s section headings.
 
+## AMENDMENT 1 (2026-09-24 02:1xZ): three more owner use cases, three more questions
+
+The owner stopped the first run (it made no deliverable yet) and added three use cases. Relaunched on Opus 5.5 (D-065). The rules
+above hold for these questions too: facts only, cited, static reading, numbers-only transcript scripts.
+
+11. **Bug localization** (owner: "it gets a bunch of outputs from the different tools and the error trace, then determines which
+    function is the problem"). (a) What our code-intel instruments output: `af/scripts/lane_context.sh`, the pack's sections and which
+    tool fills each (graft, GitNexus, codebase-memory, code-review-graph, ripwire, ap_screen), cited. (b) An evaluation corpus we
+    already own: up to 15 past defects in `af/docs/INCIDENT-LOG.md` and its AF-AP registry rows that record BOTH the failing test or
+    trace AND the fix commit or the function changed, each cited; do not analyze them. (c) Whether mojev-mix or the preprint has any
+    code, stack-trace or program-repair domain: quote the domain list.
+12. **Workflow hygiene** (owner: the model decides when the wiki, skills or the anti-pattern registry need an update, instead of a
+    hook that reminds every time and costs tokens). (a) What fires the Stop hook `af/.claude/hooks/turn-retro-gate.sh`, what it
+    injects, the byte size of the injected text, and whether `af/scripts/gate_files.txt` lists it. (b) The post-commit wiki-stale
+    mechanism (`af/scripts/hooks/`, `.git/wiki-stale`) and what it triggers. (c) With a numbers-only script: how many times the retro
+    checklist was injected in the coordinator transcript named in question 10(d), matched on a fixed marker taken from the hook's own
+    source (paste the marker), per day.
+13. **Context manager** (owner: "out of all the files and all the pieces of information we have, what is the most important thing
+    right now that the agent needs to know … Laya identifies what needs to be searched, MoJev finds it and decides what to present,
+    injected through the hooks"). (a) Every hook that injects context today and what it injects: `af/.claude/settings.json` (hook
+    registrations), `session-start.sh`, `wiki-context.py` (how it selects excerpts: the matching rule, the budget), the graft-first
+    nag; cite each. (b) The sieve plan already decided for Laya: the relevant lines of
+    `af/docs/research/findings/RESEARCH-FINDINGS-2-part1-laya-sieve-fp32-build-spec.md`,
+    `af/docs/research/findings/RESEARCH-FINDINGS-2-part2-system-one-integration-map.md` and
+    `af/docs/research/COUNCIL-VERDICT-JEV-LAYA-v1.md` (its gates, e.g. the shadow week), quoted. (c) From the MoJev side: whether
+    any code path, the preprint or the cards treat retrieval, reranking or relevance scoring over many candidates, and the largest
+    candidate count per request the server accepts (question 6's limits).
+
 ## Final message (at most 40 lines)
 
 The deliverable path and size; the count of cited rows per section; everything you could not determine and why. No
