@@ -95,15 +95,32 @@ git log "$RANGE" --format='%h %s'
 # range keeps its object id — a foreign commit (the owner's, a signed one, a tag target) must survive the push byte for
 # byte (2026-09-08: the unconditional identity filter rewrote the owner's signed-key commit 80422cb into e719da8 and
 # orphaned the tag `accepted/S0-11`, AF-AP-69).
-OLD_IDS=$(mktemp /tmp/push-clean-ids.XXXXXX)   # the range's ids before the rewrite, oldest first (stale_ids.py)
-trap 'rm -f "$OLD_IDS"' EXIT                   # every exit path, the aborts below included (VERIFY-T243-245 A-F5)
+OLD_IDS=$(mktemp "${TMPDIR:-/tmp}/push-clean-ids.XXXXXX")   # the range's ids before the rewrite, oldest first
+HEAD_BEFORE=$(git rev-parse --verify 'HEAD^{commit}'); HEAD_AFTER=""; PUSHED=0
+# EVERY exit that does not push puts the branch back on its pre-rewrite commits (VERIFY-T243-245 A-F1, R1-A-F1): left
+# rewritten, the next run's rewrite is a no-op, stale_ids sees nothing rewritten, and a stale note pushes; a refusal,
+# a failed push and a signal all left it so. Only while the trees are equal and the branch is where the rewrite left
+# it (R1-A-F5); a failed reset says so (R1-A-F6); the ids file goes on every path (A-F5). The ignore first: a second
+# signal must not abort the reset (AF-AP-145).
+back() {
+  trap '' INT TERM
+  rm -f "$OLD_IDS"
+  [ "$PUSHED" = 1 ] || [ -z "$HEAD_AFTER" ] || [ "$HEAD_AFTER" = "$HEAD_BEFORE" ] && return 0
+  if [ "$(git rev-parse "$HEAD_AFTER^{tree}")" != "$(git rev-parse "$HEAD_BEFORE^{tree}")" ]; then
+    echo "push_clean: the rewrite changed the tree; the branch stays on $HEAD_AFTER: reconcile by hand" >&2
+    return 0
+  fi
+  git update-ref -m "push_clean: not pushed; back on the pre-rewrite commits" HEAD "$HEAD_BEFORE" "$HEAD_AFTER" ||
+    echo "push_clean: WARNING: the branch could not be put back on $HEAD_BEFORE (it moved, or its ref is locked)" >&2
+}
+trap back EXIT
 git rev-list --reverse "$RANGE" > "$OLD_IDS"
-HEAD_BEFORE=$(git rev-parse --verify 'HEAD^{commit}')   # a stale-id refusal puts the branch back here (A-F1)
 TREE_BEFORE=$(git rev-parse 'HEAD^{tree}')
 git filter-branch -f \
   --msg-filter 'grep -v "Co-Authored-By: Claude\|Claude-Session:"' \
   --env-filter 'if git log -1 --format=%B "$GIT_COMMIT" | grep -q "Co-Authored-By: Claude\|Claude-Session:"; then export GIT_COMMITTER_EMAIL=noreply@anthropic.com GIT_COMMITTER_NAME=Claude GIT_AUTHOR_EMAIL=noreply@anthropic.com GIT_AUTHOR_NAME=Claude; fi' \
   "$RANGE" >/dev/null 2>&1 || true  # exit 1 when nothing needed rewriting is fine
+HEAD_AFTER=$(git rev-parse --verify 'HEAD^{commit}')
 TREE_AFTER=$(git rev-parse 'HEAD^{tree}')
 [ "$TREE_BEFORE" = "$TREE_AFTER" ] || { echo "TREE MISMATCH after rewrite — ABORT, do not push." >&2; exit 2; }
 
@@ -120,9 +137,6 @@ if [ "$src" != 0 ]; then
   if [ "$src" = 4 ] && [ -n "${STALE_ID_OK:-}" ]; then
     echo "stale_ids: pushing anyway (STALE_ID_OK=$STALE_ID_OK)" >&2
   else
-    # Put the branch back on its pre-rewrite commits (the tree is the same, proven above): left rewritten, the next
-    # run's rewrite would be a no-op, stale_ids would see nothing rewritten, and the stale note would push (A-F1).
-    git update-ref HEAD "$HEAD_BEFORE"
     echo "REFUSED by stale_ids (rc $src): NOT pushed; the branch is back on its pre-rewrite commits. Cite each commit by its subject or by the new id named above (the next run gives the same ids), commit, and run push_clean again." >&2
     exit 4
   fi
@@ -131,6 +145,7 @@ fi
 SHA=$(git rev-parse HEAD)
 echo "== pushing $SHA =="
 git push -u origin "$SHA:refs/heads/$BRANCH"
+PUSHED=1
 
 # TRANSCRIPT SYNC (owner ask 2026-09-03): after every successful push, refresh the scrubbed daily
 # chat digests under transcripts/sandbox/ and push them as their own ledger-plane commit (no

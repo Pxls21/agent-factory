@@ -788,6 +788,11 @@ class TestAFAP145:
     def test_no_fire_on_an_exit_when_no_exit_trap_runs_a_cleanup(self):
         assert not self.rx.search("trap 'trap \"\" INT TERM; exit 143' TERM\nexit 1\n")
 
+    def test_no_fire_on_exits_after_an_ignore_that_is_not_a_handler(self):
+        # scripts/push_clean.sh (task #243): its EXIT-trap cleanup opens with `trap '' INT TERM`; it arms no handler
+        src = "back() {\n  trap '' INT TERM\n  rm -f x\n}\ntrap back EXIT\n[ -n \"$a\" ] || { echo no >&2; exit 2; }\n"
+        assert not self.rx.search(src)
+
 
 # ---- AF-AP-149 (AP_SCREEN): a private-key block rule written for one label spelling ----
 

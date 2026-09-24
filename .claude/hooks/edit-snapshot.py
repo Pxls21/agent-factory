@@ -109,8 +109,8 @@ class _ExitTrapCleanup:
     # the third tell (VERIFY-GW1-R1 R1-F-1, 2026-09-24): a bare `exit` after the INT/TERM handler traps, in a script
     # whose EXIT trap runs a cleanup; the exit hands over to the EXIT trap with INT and TERM live, so ONE signal in the
     # gap runs the handler's own exit inside it. An exit on a line that ignores first (`trap '' INT TERM; exit`) is fine.
-    _ARMS = re.compile(r"""^[ \t]*trap[ \t]+(['"])(?:(?!\1)[^\n])*\1[ \t]+(?:[A-Z0-9]+[ \t]+)*(?:INT|TERM)\b[^\n]*$""",
-                       re.MULTILINE)
+    _ARMS = re.compile(r"""^[ \t]*trap[ \t]+(['"])(?:(?!\1)[^\n])+\1[ \t]+(?:[A-Z0-9]+[ \t]+)*(?:INT|TERM)\b[^\n]*$""",
+                       re.MULTILINE)   # a non-empty handler: `trap '' INT TERM` is the ignore, not a handler
     _EXIT = re.compile(r"""^(?![ \t]*#)(?![^\n]*""" + _IGNORE + r"""[ \t]*;[ \t]*exit\b)[^\n#]*?(?<![\w-])exit(?![\w-])""",
                        re.MULTILINE)
 

@@ -206,13 +206,50 @@ def test_a_file_that_is_not_utf8_is_read_not_a_crash(work):
     assert r.returncode == 4 and "latin.txt:1 cites %s" % old[:7] in r.stderr and "Traceback" not in r.stderr, r.stderr
 
 
-def test_the_old_ids_file_never_leaks(work):
-    """A-F5: the temp file of old ids leaked on the abort paths; an EXIT trap removes it on every path."""
+def test_the_old_ids_file_never_leaks(work, tmp_path):
+    """A-F5: the temp file of old ids leaked on the abort paths; an EXIT trap removes it on every path. The file lives
+    under TMPDIR, so the test reads a directory of its own, never the shared /tmp (R1-A-F3: flaky beside parallel runs)."""
     root, origin, base, runs = work
-    before = set(Path("/tmp").glob("push-clean-ids.*"))
+    tmpd = tmp_path / "tmpdir"
+    tmpd.mkdir()
     old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
     _commit(root, "notes.md", "see %s\n" % old[:7], "a note")
-    assert _push(root, runs).returncode == 4
+    assert _push(root, runs, TMPDIR=str(tmpd)).returncode == 4
     _commit(root, "notes.md", "no citation\n", "the note fixed")
-    assert _push(root, runs).returncode == 0
-    assert set(Path("/tmp").glob("push-clean-ids.*")) <= before
+    assert _push(root, runs, TMPDIR=str(tmpd)).returncode == 0
+    assert list(tmpd.iterdir()) == []
+
+
+def test_a_failed_push_puts_the_branch_back_so_a_note_citing_a_listed_id_is_refused(work):
+    """R1-A-F1: only the stale-id refusal reset the branch. A push the origin rejected left it rewritten; a note citing
+    the id the boundary listing had printed (the pre-rewrite one) then pushed with rc 0 on the next plain run."""
+    root, origin, base, runs = work
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text('#!/bin/sh\n[ -f "$GIT_DIR/rejected-once" ] && exit 0\ntouch "$GIT_DIR/rejected-once"\nexit 1\n')
+    hook.chmod(0o755)
+    _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    head = _commit(root, "notes.md", "no citation yet\n", "a note")
+    r = _push(root, runs)
+    assert r.returncode != 0 and _git(origin, "rev-parse", "feat") == base, r.stdout + r.stderr
+    assert _git(root, "rev-parse", "HEAD") == head, "the branch was left rewritten"
+    listed = [line.split()[0] for line in r.stdout.splitlines() if line.endswith(" the fix")][0]
+    _commit(root, "notes2.md", "fixed in %s\n" % listed, "a note citing the listed id")
+    r = _push(root, runs)
+    assert r.returncode == 4 and "notes2.md:1 cites %s" % listed in r.stderr, r.stdout + r.stderr
+    assert _git(origin, "rev-parse", "feat") == base
+
+
+def test_a_refusal_after_rc2_is_sticky(work, tmp_path):
+    """R1-A-F2: a reset only on rc 4 survived every test; rc 2 (a blob the diff needs is missing) must leave the branch
+    un-rewritten too, so the plain re-run after the blob is back still refuses the stale note."""
+    root, origin, base, runs = work
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    _commit(root, "notes.md", "fixed in %s\n" % old[:7], "a note")
+    blob = _git(root, "rev-parse", "HEAD:notes.md")
+    obj, aside = root / ".git" / "objects" / blob[:2] / blob[2:], tmp_path / "aside"
+    obj.rename(aside)
+    r1 = _push(root, runs)
+    aside.rename(obj)
+    r2 = _push(root, runs)
+    assert r1.returncode == 4 and "rc 2" in r1.stderr, r1.stdout + r1.stderr
+    assert r2.returncode == 4 and "cites %s" % old[:7] in r2.stderr and _git(origin, "rev-parse", "feat") == base
