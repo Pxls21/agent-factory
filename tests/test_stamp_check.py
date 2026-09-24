@@ -153,6 +153,34 @@ def test_files_outside_the_ledger_plane_are_not_checked(tmp_path):
     assert r.returncode == 0 and r.stderr == "", r.stderr
 
 
+def test_a_brief_premise_heading_ahead_of_the_clock_blocks(tmp_path):
+    """2026-09-24: VERIFY-JT3-R1's premise heading read 17:3xZ at 17:29Z (and a plan's STATUS read 16:4xZ at 16:38Z)."""
+    repo = _repo(tmp_path, {"README.md": "r\n"})
+    _stage(repo, "tasks/briefs/x.md", "# b\n## PREMISE — MEASURED at authoring (2026-09-24 17:3xZ, the tree)\n")
+    r = _run(repo, "2026-09-24T17:25:00Z")          # beyond the 120 s slack (the real slip was 1 min, inside it)
+    assert r.returncode == 1 and "stamp_check: tasks/briefs/x.md: '2026-09-24 17:3xZ' is 5.0 min ahead" in r.stderr, r.stderr
+    _stage(repo, "tasks/plan.md", "STATUS 2026-09-24 16:4xZ: a PLAN\n")
+    r = _run(repo, "2026-09-24T16:35:00Z")
+    assert r.returncode == 1 and "stamp_check: tasks/plan.md: '2026-09-24 16:4xZ' is 5.0 min ahead" in r.stderr, r.stderr
+
+
+def test_a_brief_measurement_stamp_in_the_past_passes_and_other_brief_stamps_stay_unchecked(tmp_path):
+    repo = _repo(tmp_path, {"README.md": "r\n"})
+    _stage(repo, "tasks/briefs/x.md", "## PREMISE — MEASURED at authoring (2026-09-24 17:2xZ, the tree)\n"
+                                       "The window opens 2026-09-25 09:0xZ (a plan, not a measurement).\n")
+    r = _run(repo, "2026-09-24T17:29:00Z")
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == ("stamp_check: 1 new measurement stamp(s) in 1 tasks/ file(s), none ahead of the clock "
+                        "2026-09-24T17:29:00Z\n"), r.stderr
+
+
+def test_a_measurement_line_outside_tasks_is_not_checked(tmp_path):
+    repo = _repo(tmp_path, {"README.md": "r\n"})
+    _stage(repo, "docs/x.md", "## PREMISE — MEASURED at authoring (2026-09-24 17:3xZ)\n")
+    r = _run(repo, "2026-09-24T17:29:00Z")
+    assert r.returncode == 0 and r.stderr == "", r.stderr
+
+
 def test_a_new_ledger_plane_file_has_every_stamp_checked(tmp_path):
     repo = _repo(tmp_path, {"README.md": "r\n"})
     _stage(repo, "wiki/topics/live-state.md", "X 2026-09-23 09:0xZ\n")

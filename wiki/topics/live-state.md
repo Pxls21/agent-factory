@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 17:3xZ — WHAT IS LIVE NOW (supersedes the 17:1xZ block for the live set).**
+- **D-081 (owner):** the RWKV-7 G0 probe joins the no-lanes GPU window, before Laya's training. PC prep: the pinned checkpoint is downloaded (`model.safetensors` 901,620,328 bytes); `~/venv-rwkv` (torch 2.14.0 cu130, flash-linear-attention 0.3.0, transformers 4.x) installing.
+- **VERIFYING (sandbox, Opus 5.5):** VERIFY-JT3-R1 (JT3's repair: 117 passed; the code stays uncommitted and the hook off until the verdict); VERIFY-FT1.
+- **REPAIR RUNNING:** JT2-R1 (F-20).
+- **LIVE, PC:** QJ1 (the Qwen 27B adapter; the GPU window opens after it); MoJev G0.
+- **RUNNING, SANDBOX:** the codiv labeling (1,788 rows, from 17:15Z).
+- **GPU WINDOW ORDER (D-078, D-081):** no lane live; stop `qwen.service`; RWKV-7 G0 (10-20 minutes); Laya training once VERIFY-FT1 and the labels are ready; start `qwen.service`; check `/v1/models`.
+
+
 **2026-09-24 17:1xZ — WHAT IS LIVE NOW (supersedes the 16:3xZ block for the live set; the ledger carries the detail).**
 - **ACCEPTED:** JT1 (the Jev client and hiccup tracker): VERIFY-JT1R1-JT2 MERGE-READY-WITH-FOLLOWUPS; D-080 states the character-budget limit (F-08); issue #72.
 - **LANDED, GATED-PENDING-VERIFY:** FT1 (the Laya fine-tune tooling; 22 passed; VERIFY-FT1 running).

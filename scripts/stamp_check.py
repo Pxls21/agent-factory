@@ -12,6 +12,11 @@ Scope: the STAGED copies of the ledger-plane files (LEDGER_PLANE). A stamp is da
 YYYY-MM-DD HH:MxZ (a ten-minute bucket; its earliest instant HH:M0 is compared),
 YYYY-MM-DD HH:MMZ, or YYYY-MM-DDTHH:MM:SSZ. A stamp whose exact text already occurs in HEAD's
 copy of the same file is not new and is not checked (a re-edited line keeps its old stamps).
+Also checked (2026-09-24, two more slips in files outside that list): in a staged Markdown file under
+`tasks/`, the stamps on a MEASUREMENT line only (a line holding "MEASURED at authoring", "measured at
+authoring" or starting "STATUS "): a brief's premise heading and a plan's status stamp say when something
+was measured, so they can never be later than the commit. Other stamps in those files may be plans
+(a window, a deadline) and stay unchecked.
 NOT checked, by design: bare times with no date (a re-edited running paragraph re-adds bare
 times from earlier days, so a bare time cannot be placed on the clock), and stamps in any other
 file.
@@ -31,6 +36,7 @@ LEDGER_PLANE = (
     "wiki/topics/live-state.md",
     "docs/08_DECISION_LOG.md",
 )
+MEASURED_RX = re.compile(r"(?i)measured at authoring|^STATUS ")
 STAMP_RX = re.compile(r"(?<![0-9])(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d)([x0-9])(?::(\d{2}))?Z")
 UTC = datetime.timezone.utc
 
@@ -80,12 +86,20 @@ def main(argv=None):
         print("stamp_check: git diff --cached failed: " + staged.stderr.decode("utf-8", "replace").strip(),
               file=sys.stderr)
         return 1
-    paths = [p for p in staged.stdout.decode("utf-8", "replace").splitlines() if p in LEDGER_PLANE]
+    names = staged.stdout.decode("utf-8", "replace").splitlines()
+    paths = [p for p in names if p in LEDGER_PLANE]
+    measured = [p for p in names if p.startswith("tasks/") and p.endswith(".md") and p not in LEDGER_PLANE]
+
+    def _texts(path):
+        text = _blob(":" + path)
+        if path in LEDGER_PLANE:
+            return text
+        return "\n".join(line for line in text.splitlines() if MEASURED_RX.search(line))
 
     problems, checked = set(), set()
-    for path in paths:
+    for path in paths + measured:
         head = _blob("HEAD:" + path)
-        for match in STAMP_RX.finditer(_blob(":" + path)):
+        for match in STAMP_RX.finditer(_texts(path)):
             stamp = match.group(0)
             if stamp in head:
                 continue
@@ -100,7 +114,12 @@ def main(argv=None):
     for line in sorted(problems):
         print(line, file=sys.stderr)
     if paths and not problems:
-        print(f"stamp_check: {len(checked)} new stamp(s) in {len(paths)} ledger-plane file(s), "
+        n_plane = sum(1 for path, _ in checked if path in LEDGER_PLANE)
+        print(f"stamp_check: {n_plane} new stamp(s) in {len(paths)} ledger-plane file(s), "
+              f"none ahead of the clock {now_text}", file=sys.stderr)
+    n_meas = sum(1 for path, _ in checked if path not in LEDGER_PLANE)
+    if n_meas and not problems:
+        print(f"stamp_check: {n_meas} new measurement stamp(s) in {len(measured)} tasks/ file(s), "
               f"none ahead of the clock {now_text}", file=sys.stderr)
     return 1 if problems else 0
 
