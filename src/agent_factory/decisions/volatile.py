@@ -2,7 +2,8 @@
 
 J1 contract (seeds/seed-laya-j1-v1.yaml; the pinned decisions in
 tasks/laya-j1-breakdown.md; AMENDMENT 1, D-056; AMENDMENT 2, D-057 -- the sk
-and bearer class forms): state is a BOUNDED, CLOSED,
+and bearer class forms; AMENDMENT 3, D-059 -- their yield guard): state is a
+BOUNDED, CLOSED,
 per-question-type extraction -- never verbatim bytes. Line numbers, timestamps,
 absolute paths, run ids and PIN SHAs are never state keys; they belong to
 source_ref.locator (J1-2's).
@@ -42,37 +43,70 @@ PLACEHOLDERS = {
     "privkey": "<redacted:privkey>",
 }
 
-# sk and bearer (AMENDMENT 2, D-057; VERIFY-J1-1-R1 V-1): each fires where its
-# PIN form fires -- "sk-" then 8+ run characters; "bearer", whitespace, 16+ --
-# so its prefix is always replaced and a second pass finds nothing to redact
-# there, even after bound's cut. The run it replaces ends before a secret
-# assignment that a later class redacts (_YIELD): the name stays for that
-# class and its value is redacted. At the PIN "task-password: v" gave
-# "ta<redacted:sk>: v" and v reached the ledger. The run does not yield when
-# that value holds another assignment head: the value would swallow the second
-# name and free ITS value (the widened value's chain gap, which the PIN's
-# swallow hid), so the run keeps its PIN form. A run holds at most one name
-# that a separator follows (a separator ends the run), and the value checks
-# stop at the value's end or at the first head, so the cost stays linear.
+# sk and bearer (AMENDMENT 2, D-057, VERIFY-J1-1-R1 V-1; AMENDMENT 3, D-059,
+# VERIFY-J1-1-R2 R-1..R-4): each fires where its PIN form fires -- "sk-" then
+# 8+ run characters; "bearer", whitespace, 16+ run characters matched without
+# regard to case as at the PIN (_BEARER_RUN: under re.I the letters also take
+# U+0130, U+0131 and U+017F, which normalize keeps) -- so its prefix is always
+# replaced and a second pass finds nothing to redact there, even after bound's
+# cut. The run it replaces ends before a secret assignment that a later class
+# redacts (_YIELD): the name stays for that class and its value is redacted.
+# At the PIN "task-password: v" gave "ta<redacted:sk>: v" and v reached the
+# ledger. The run does not yield when that value holds another assignment
+# head: the value would swallow the second name and free ITS value (the
+# widened value's chain gap, which the PIN's swallow hid), so the run keeps
+# its PIN form. "That value" is the text its class takes after the passes
+# before it: the token check reads the run's letters as _TOKEN does, and the
+# env checks read on past a bearer match glued to the value (_BEARER_MERGE).
+# A run holds at most one name that a separator follows (a separator ends the
+# run); the value checks stop at the value's end or at the first head, and a
+# step over a bearer match replays that one run, so the cost stays linear.
 _SECRET_NAME = r"(?i:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)"
 # The start of an assignment a later class could take: a name, an optional
 # quote and "=" or ":" (the widened form; the upper-case NAME= is one of them),
 # or "token" and a quote or whitespace (the token class's other separators).
 _ASSIGNMENT_HEAD = _SECRET_NAME + r"[\"']?\s?[:=]|(?i:(?:\b|(?<=_))token)[\"'\s]"
 _ENVVAL_HEAD = r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)="
-# The assignments sk and bearer yield to, each with the value its class takes:
-# _ENVVAL (upper-case NAME=, any value but base64 "=" padding), _ENVVAL_WIDE
-# (8+ value characters; an upper-case NAME= is _ENVVAL's, whose \S+ value runs
-# further) and _TOKEN (a quote or one space, then a 32+ run).
-_YIELD = (
-    _ENVVAL_HEAD + r"(?=[^\s=])(?!\S*?(?:" + _ASSIGNMENT_HEAD + r"))"
-    r"|(?!" + _ENVVAL_HEAD + r")" + _SECRET_NAME + r"[\"']?\s?[:=]\s?[\"']?"
-    r"(?=[^\s\"'&,;]{8})(?![^\s\"'&,;]*?(?:" + _ASSIGNMENT_HEAD + r"))"
-    r"|(?i:(?:\b|(?<=_))token)(?=[\"' ])[\"']? ?[\"']?"
-    r"(?=[A-Za-z0-9+/]{32})(?![A-Za-z0-9+/]*?(?:" + _ASSIGNMENT_HEAD + r"))"
+_BEARER_RUN = r"(?i:[A-Za-z0-9._~+/-])"
+
+
+def _yield_pattern(merge: str) -> str:
+    # The assignments sk and bearer yield to, each with the value its class
+    # takes: _ENVVAL (upper-case NAME= and a non-space; any value but base64
+    # "=" padding), _ENVVAL_WIDE (8+ value characters; an upper-case NAME=
+    # that a non-space follows is _ENVVAL's, whose \S+ value runs further;
+    # in "NAME= v" _ENVVAL cannot start at the space, so it is this form's,
+    # R-3) and _TOKEN (a quote or one space, then a 32+ run whose letters are
+    # matched without regard to case, as _TOKEN's are: R-2). The two env
+    # value scans may also step over `merge` (r"(?!)": no step).
+    return (
+        _ENVVAL_HEAD + r"(?=[^\s=])(?!(?:" + merge + r"|\S)*?(?:" + _ASSIGNMENT_HEAD + r"))"
+        r"|(?!" + _ENVVAL_HEAD + r"\S)" + _SECRET_NAME + r"[\"']?\s?[:=]\s?[\"']?"
+        r"(?=[^\s\"'&,;]{8})(?!(?:" + merge + r"|[^\s\"'&,;])*?(?:" + _ASSIGNMENT_HEAD + r"))"
+        r"|(?i:(?:\b|(?<=_))token)(?=[\"' ])[\"']? ?[\"']?"
+        r"(?=(?i:[A-Za-z0-9+/]){32})(?!(?i:[A-Za-z0-9+/])*?(?:" + _ASSIGNMENT_HEAD + r"))"
+    )
+
+
+# A value glued to "bearer", whitespace and 16+ run characters is longer after
+# the bearer pass than the text shows now: the placeholder replaces the
+# whitespace, and _ENVVAL and _ENVVAL_WIDE, which run later, take the text
+# after that match too (R-4: "task-password:v1bearer <run>==token: v2" freed
+# v2). So the env value scans step over such a match: its run as the bearer
+# pass runs it, stopping where it yields (possessive: a scan never stops
+# inside it). A head the bearer consumes is then no head, and a head after
+# the match is one ("=" padding holds no head). The replayed run yields to a
+# _YIELD without this step, so a bearer glued inside that match's own value
+# can make a scan see a head the bearer pass then consumes: the run keeps its
+# PIN form there. The token value needs no step: _TOKEN's run cannot cross
+# the "<".
+_BEARER_MERGE = (
+    r"(?i:bearer)\s+(?=" + _BEARER_RUN + r"{16})"
+    r"(?:(?!" + _yield_pattern(r"(?!)") + r")" + _BEARER_RUN + r")*+"
 )
+_YIELD = _yield_pattern(_BEARER_MERGE)
 _BEARER = re.compile(
-    r"(?i:bearer)\s+(?=[A-Za-z0-9._~+/-]{16})(?:(?!" + _YIELD + r")[A-Za-z0-9._~+/-])*=*"
+    r"(?i:bearer)\s+(?=" + _BEARER_RUN + r"{16})(?:(?!" + _YIELD + r")" + _BEARER_RUN + r")*=*"
 )
 _SK = re.compile(r"sk-(?=[A-Za-z0-9_-]{8})(?:(?!" + _YIELD + r")[A-Za-z0-9_-])*")
 # A 32+ hex/base64 run after "token", "*_token" or "*_TOKEN" (C-F3a): an

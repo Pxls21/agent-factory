@@ -1610,3 +1610,104 @@ def test_v1_control_keeps_its_redaction_in_the_ledger_file(tmp_path, shape):
     # B2: green at the PIN and after; the negative control is a mutant (the
     # verifier's option-B bearer form leaks C-4's token into the file).
     _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+# ---------------------------------------------------------------------------
+# J1-1-R3 (D-059, C1-C4): the same rows as tests/test_decisions_canonical.py's
+# J1-1-R3 block, through make_row -> append -> the JSONL line on disk ->
+# replay. The FAKE body is the value the PIN d556c9b redacts ("QZJ8" runs);
+# a chain row's first value ("plainval", a run of "ab") keeps the PIN's
+# output, and no other byte of the file is an upper-case Q, Z or J.
+# ---------------------------------------------------------------------------
+
+_TR = "ab" * 16
+
+# R-1: a bearer token holding U+0131, U+017F or U+0130 (each but the control
+# leaks at J1-1-R2, fb016d0).
+_R1_SHAPES = [
+    ("dotless-i-inside", f"Authorization: Bearer {_V[:8]}\u0131{_V}"),
+    ("dotless-i-first", f"Authorization: Bearer \u0131{_V}"),
+    ("long-s-tail", f"Authorization: Bearer {_V}\u017f{_V[:8]}"),
+    ("dotted-I-inside", f"Authorization: Bearer {_V[:10]}\u0130{_V[:12]}"),
+    ("ascii-control", f"Authorization: Bearer {_V}{_V[:8]}"),
+]
+# R-2: a special letter in a token run hides the next head from the check.
+_R2_SHAPES = [
+    ("sk-dotless-i", f"sk-abcdefgh-token {_TR}\u0131password: {_V}"),
+    ("bearer-long-s", f"Bearer abcdefghijklmnop-token {_TR}\u017fkey={_V}"),
+    ("sk-quote-dotted-I", f'sk-abcdefgh_token"{_TR}\u0130secret: {_V}'),
+    ("ascii-control", f"sk-abcdefgh-token {_TR}password: {_V}"),
+]
+# R-4: a value glued to "bearer" merges with the text after the bearer match.
+_R4_SHAPES = [
+    ("widened-bearer-padding", f"task-password:plainvalbearer abcdefghijklmnop==token: {_V}"),
+    ("upper-bearer-padding", f"task-PASSWORD=plainvalbearer abcdefghijklmnop==token: {_V}"),
+    ("bearer-yield-then-bearer", f"Bearer abcdefghijklmnoppassword:plainvalBearer abcdefghijklmnop)key: {_V}"),
+    ("head-the-bearer-leaves", f"task-password:plainvalbearer abcdefghijklmnoppassword: {_V}"),
+    ("special-letter-in-the-merged-run", f"task-password:plainvalbearer abcdefgh\u0131jklmnop==token: {_V}"),
+    ("space-before-bearer-control", f"task-password:plainval bearer abcdefghijklmnop==token: {_V}"),
+]
+# C2 (R-3): "NAME= v" behind sk or bearer. The "NAME==v" padding form is a
+# declared residue, deliberately not pinned here.
+_R3_SHAPES = [
+    ("sk-name-space", f"task-DB_PASSWORD= {_V}"),
+    ("bearer-name-space", f"Authorization: Bearer abcdefghijklmnopAPI_KEY= {_V}"),
+    ("sk-value-then-name-space", f"sk-abcdefgh-SECRET= {_V}"),
+    ("no-prefix-control", f"DB_PASSWORD= {_V}"),
+]
+# C3: the rows that kill VERIFY-J1-1-R2's surviving mutants V-M3, V-M11, V-M4
+# (and its V-M10, which frees the second value of this upper-case chain).
+_MUTANT_SHAPES = [
+    ("V-M3-upper-token-space", f"desk-access-TOKEN {_RUN}"),
+    ("V-M11-underscore-token-space", f"desk-access_token {_RUN}"),
+    ("V-M4-upper-token-head-in-a-chain", f"mask-PASSWORD=abc_TOKEN {_RUN}"),
+    ("V-M10-upper-apikey-chain", f"task-DB_APIKEY='plainvalue'&Secret = {_V}"),
+]
+# C4 against J1-1-R2: values it redacts next to a glued "bearer" stay redacted.
+_MERGE_CONTROL_SHAPES = [
+    ("merge-no-head", f"task-password:{_V[:8]}bearer abcdefghijklmnop rest"),
+    ("short-bearer-no-merge", f"task-password:{_V[:8]}bearer abcdkey: {_V[:8]}"),
+    ("bearer-run-of-15-glued", f"task-password:plainvalbearer bcdfghmnuvwbcdf==token: {_V}"),
+    ("head-the-bearer-consumes", f"task-PASSWORD={_V[:8]}bearer abcdefghijklmnopapi_key= plainvl"),
+    ("token-run-glued-to-bearer", f"sk-abcdefgh-token {_RUN[:32]}bearer abcdefghijklmnop"),
+]
+
+
+def _shapes(rows):
+    return pytest.mark.parametrize("shape", [shape for _, shape in rows], ids=[row_id for row_id, _ in rows])
+
+
+@_shapes(_R1_SHAPES)
+def test_r1_bearer_token_bytes_never_reach_the_ledger_file(tmp_path, shape):
+    # C1 (R-1): no byte of the token in the line on disk; replay accepts it.
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@_shapes(_R2_SHAPES)
+def test_r2_second_value_never_reaches_the_ledger_file(tmp_path, shape):
+    # C1 (R-2): the value after the head the token run held is not on disk.
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@_shapes(_R4_SHAPES)
+def test_r4_value_after_a_bearer_merge_never_reaches_the_ledger_file(tmp_path, shape):
+    # C1 (R-4): the value after the head the merged value held is not on disk.
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@_shapes(_R3_SHAPES)
+def test_r3_upper_name_equals_space_value_never_reaches_the_ledger_file(tmp_path, shape):
+    # C2: "NAME= v" behind sk or bearer; v is not on disk.
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@_shapes(_MUTANT_SHAPES)
+def test_surviving_mutant_rows_stay_off_the_ledger_file(tmp_path, shape):
+    # C3: green at J1-1-R2 and after; each negative control is its mutant.
+    _assert_no_value_byte_on_disk(tmp_path, shape)
+
+
+@_shapes(_MERGE_CONTROL_SHAPES)
+def test_bearer_merge_step_keeps_every_j1_1_r2_redaction_in_the_file(tmp_path, shape):
+    # C4: green at J1-1-R2 and after; the negative controls are mutants.
+    _assert_no_value_byte_on_disk(tmp_path, shape)

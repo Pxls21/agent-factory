@@ -14,8 +14,9 @@ never redacts, redact never normalizes, normalize never cuts).
 
 Contract: tasks/briefs/laya/J1-1-brief.md (seeds/seed-laya-j1-v1.yaml AC 1 +
 AC 3; the verdict's J1 acceptance test 1 + the KC-J6 field list), amended by
-tasks/briefs/laya/J1-1-R1-brief.md (A1-A5) and
-tasks/briefs/laya/J1-1-R2-brief.md (B1-B5).
+tasks/briefs/laya/J1-1-R1-brief.md (A1-A5),
+tasks/briefs/laya/J1-1-R2-brief.md (B1-B5) and
+tasks/briefs/laya/J1-1-R3-brief.md (C1-C5).
 """
 from __future__ import annotations
 
@@ -1058,3 +1059,197 @@ def test_verifier_shapes_keep_every_pin_redaction():
         leaked = sorted(set(text) & _DRIVER_BODY)
         assert not leaked, f"{raw!r}: value body bytes {leaked} in {text!r}"
         assert _decision_state("b1.finding_sev", out) == out, f"{raw!r}: not a fixed point"
+
+
+# ===========================================================================
+# J1-1-R3 -- AMENDMENT 3 to J1-1 (D-059; tasks/briefs/laya/J1-1-R3-brief.md,
+# C1-C5): the sk/bearer yield guard reads the value its class actually takes.
+# VERIFY-J1-1-R2 found three regressions of J1-1-R2, each a value body the
+# PIN d556c9b redacted reaching the ledger, and one V-1 residue:
+#   R-1  the bearer run lost the PIN's case-insensitive letters (U+0130,
+#        U+0131, U+017F), so a token holding one stayed visible;
+#   R-2  the token check read the run case-sensitively while _TOKEN does not,
+#        so a special letter hid the next head and that head's value was freed;
+#   R-4  the env checks judged a value before the bearer pass merged it with
+#        the text after "bearer <run>", and the merged value swallowed the
+#        next head (pure ASCII);
+#   R-3  "NAME= v" (upper case, a space after "=") behind sk or bearer.
+# In a chain row the FIRST value keeps the PIN's output (the chain design,
+# the chain-* rows above): "plainval" or a run of "ab" stands there, and the
+# FAKE "QZJ8" body is the value the PIN redacts. No other byte is a Q, Z, J
+# or 8.
+# ===========================================================================
+
+_TR = "ab" * 16  # a 32-character token run that a chain row leaves as the PIN does
+
+# Each row but the last leaks at J1-1-R2 (fb016d0): the token stays visible.
+_R1_ROWS = [
+    ("dotless-i-inside", f"Authorization: Bearer {_V[:8]}\u0131{_V}", "Authorization: <redacted:bearer>"),
+    ("dotless-i-first", f"Authorization: Bearer \u0131{_V}", "Authorization: <redacted:bearer>"),
+    ("long-s-tail", f"Authorization: Bearer {_V}\u017f{_V[:8]}", "Authorization: <redacted:bearer>"),
+    ("dotted-I-inside", f"Authorization: Bearer {_V[:10]}\u0130{_V[:12]}", "Authorization: <redacted:bearer>"),
+    ("ascii-control", f"Authorization: Bearer {_V}{_V[:8]}", "Authorization: <redacted:bearer>"),
+]
+# Each row but the last leaks at J1-1-R2: the token run's special letter hid
+# the second head from the check, the run swallowed it and freed its value.
+_R2_ROWS = [
+    (
+        "sk-dotless-i",
+        f"sk-abcdefgh-token {_TR}\u0131password: {_V}",
+        f"<redacted:sk> {_TR}\u0131password: <redacted:envval>",
+    ),
+    (
+        "bearer-long-s",
+        f"Bearer abcdefghijklmnop-token {_TR}\u017fkey={_V}",
+        f"<redacted:bearer> {_TR}\u017fkey=<redacted:envval>",
+    ),
+    (
+        "sk-quote-dotted-I",
+        f'sk-abcdefgh_token"{_TR}\u0130secret: {_V}',
+        f'<redacted:sk>"{_TR}\u0130secret: <redacted:envval>',
+    ),
+    ("ascii-control", f"sk-abcdefgh-token {_TR}password: {_V}", f"<redacted:sk> {_TR}password: <redacted:envval>"),
+]
+# Each row but the last leaks at J1-1-R2. The first five glue the value to
+# "bearer": after the bearer pass the value runs on past "<redacted:bearer>"
+# and swallows the next head -- behind the widened form, the upper-case NAME=
+# form, a bearer's own yield, a head the bearer run leaves (that one also
+# leaks at d556c9b), and a bearer run holding U+0131 (J1-1-R2 left that
+# token visible: R-1). The control has a space before "bearer": no merge.
+_R4_ROWS = [
+    (
+        "widened-bearer-padding",
+        f"task-password:plainvalbearer abcdefghijklmnop==token: {_V}",
+        "ta<redacted:sk>:plainval<redacted:bearer>token: <redacted:envval>",
+    ),
+    (
+        "upper-bearer-padding",
+        f"task-PASSWORD=plainvalbearer abcdefghijklmnop==token: {_V}",
+        "ta<redacted:sk>=plainval<redacted:bearer>token: <redacted:envval>",
+    ),
+    (
+        "bearer-yield-then-bearer",
+        f"Bearer abcdefghijklmnoppassword:plainvalBearer abcdefghijklmnop)key: {_V}",
+        "<redacted:bearer>:plainval<redacted:bearer>)key: <redacted:envval>",
+    ),
+    (
+        "head-the-bearer-leaves",
+        f"task-password:plainvalbearer abcdefghijklmnoppassword: {_V}",
+        "ta<redacted:sk>:plainval<redacted:bearer>password: <redacted:envval>",
+    ),
+    (
+        "special-letter-in-the-merged-run",
+        f"task-password:plainvalbearer abcdefgh\u0131jklmnop==token: {_V}",
+        "ta<redacted:sk>:plainval<redacted:bearer>token: <redacted:envval>",
+    ),
+    (
+        "space-before-bearer-control",
+        f"task-password:plainval bearer abcdefghijklmnop==token: {_V}",
+        "ta<redacted:sk>password:<redacted:envval> <redacted:bearer>token: <redacted:envval>",
+    ),
+]
+# C2 (R-3): an upper-case NAME, "=", a space, then the value, behind sk or
+# bearer. Each row but the last leaks at d556c9b and at J1-1-R2. The padding
+# form "NAME==v" behind sk or bearer is a declared residue (the lane report),
+# deliberately not pinned here.
+_R3_ROWS = [
+    ("sk-name-space", f"task-DB_PASSWORD= {_V}", "ta<redacted:sk>PASSWORD= <redacted:envval>"),
+    (
+        "bearer-name-space",
+        f"Authorization: Bearer abcdefghijklmnopAPI_KEY= {_V}",
+        "Authorization: <redacted:bearer>API_KEY= <redacted:envval>",
+    ),
+    ("sk-value-then-name-space", f"sk-abcdefgh-SECRET= {_V}", "<redacted:sk>SECRET= <redacted:envval>"),
+    ("no-prefix-control", f"DB_PASSWORD= {_V}", "DB_PASSWORD= <redacted:envval>"),
+]
+# C3: the three mutants VERIFY-J1-1-R2 showed surviving all 121 tests (its
+# section 8), each a row that the mutant leaks and the code redacts: V-M3
+# (the token check case-sensitive), V-M11 (the token check without its
+# "_token" form), V-M4 (the head's token form case-sensitive, so a chain
+# guard misses "_TOKEN <run>" and the upper-case value swallows it). The
+# last row is for its V-M10 (_ENVVAL_HEAD without "APIKEY"): the NAME= check
+# then no longer mirrors _ENVVAL, the run yields to "APIKEY='", and _ENVVAL's
+# \S+ value swallows the next head and frees its value.
+_MUTANT_ROWS = [
+    ("V-M3-upper-token-space", f"desk-access-TOKEN {_RUN}", "de<redacted:sk>TOKEN <redacted:token>"),
+    ("V-M11-underscore-token-space", f"desk-access_token {_RUN}", "de<redacted:sk>token <redacted:token>"),
+    ("V-M4-upper-token-head-in-a-chain", f"mask-PASSWORD=abc_TOKEN {_RUN}", "ma<redacted:sk>=abc_TOKEN <redacted:token>"),
+    (
+        "V-M10-upper-apikey-chain",
+        f"task-DB_APIKEY='plainvalue'&Secret = {_V}",
+        "ta<redacted:sk>='plainvalue'&Secret = <redacted:envval>",
+    ),
+]
+# C4 against J1-1-R2: the step over a bearer match is exact, so every value
+# J1-1-R2 redacts here stays redacted. A glued "bearer" that is no merge
+# (under 16 run characters: 7, and 15 with a head after it), a merge with no
+# head after it, a head the bearer run consumes (its value one character
+# under the widened form's 8), and a token run glued to a bearer (the token
+# check takes no step: _TOKEN's run stops at the "<").
+_MERGE_CONTROL_ROWS = [
+    ("merge-no-head", f"task-password:{_V[:8]}bearer abcdefghijklmnop rest", "ta<redacted:sk>password:<redacted:envval> rest"),
+    (
+        "short-bearer-no-merge",
+        f"task-password:{_V[:8]}bearer abcdkey: {_V[:8]}",
+        "ta<redacted:sk>password:<redacted:envval> abcdkey: <redacted:envval>",
+    ),
+    (
+        "bearer-run-of-15-glued",
+        f"task-password:plainvalbearer bcdfghmnuvwbcdf==token: {_V}",
+        "ta<redacted:sk>password:<redacted:envval> bcdfghmnuvwbcdf==token: <redacted:envval>",
+    ),
+    (
+        "head-the-bearer-consumes",
+        f"task-PASSWORD={_V[:8]}bearer abcdefghijklmnopapi_key= plainvl",
+        "ta<redacted:sk>PASSWORD=<redacted:envval> plainvl",
+    ),
+    (
+        "token-run-glued-to-bearer",
+        f"sk-abcdefgh-token {_RUN[:32]}bearer abcdefghijklmnop",
+        "<redacted:sk>token <redacted:token><redacted:bearer>",
+    ),
+]
+
+
+def _rows(rows):
+    return pytest.mark.parametrize(
+        "raw, want", [(raw, want) for _, raw, want in rows], ids=[row_id for row_id, _, _ in rows]
+    )
+
+
+@_rows(_R1_ROWS)
+def test_r1_bearer_run_takes_the_pin_letters(raw, want):
+    # C1 (R-1): no byte of the token in the output or canonical(), the exact
+    # redacted text, a fixed point of itself.
+    _assert_driver_row(raw, want)
+
+
+@_rows(_R2_ROWS)
+def test_r2_token_check_reads_the_run_as_the_token_class_does(raw, want):
+    # C1 (R-2): the second value is redacted; the run keeps the PIN's output.
+    _assert_driver_row(raw, want)
+
+
+@_rows(_R4_ROWS)
+def test_r4_env_check_reads_the_value_after_the_bearer_merge(raw, want):
+    # C1 (R-4): the value after the swallowed head is redacted.
+    _assert_driver_row(raw, want)
+
+
+@_rows(_R3_ROWS)
+def test_r3_upper_name_equals_space_value_behind_sk_or_bearer(raw, want):
+    # C2: "NAME= v" yields to the widened form, which redacts v.
+    _assert_driver_row(raw, want)
+
+
+@_rows(_MUTANT_ROWS)
+def test_surviving_mutant_rows_stay_redacted(raw, want):
+    # C3: green at J1-1-R2 and after; each negative control is its mutant.
+    _assert_driver_row(raw, want)
+
+
+@_rows(_MERGE_CONTROL_ROWS)
+def test_bearer_merge_step_keeps_every_j1_1_r2_redaction(raw, want):
+    # C4: green at J1-1-R2 and after; the negative controls are mutants (the
+    # verifier's FIX-A as written, a step that re-enters the bearer run).
+    _assert_driver_row(raw, want)
