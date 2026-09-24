@@ -16,7 +16,7 @@ last_compiled: 2026-09-03
 - **DONE:** VERIFY-GW1-R2 MERGE-READY-WITH-FOLLOWUPS; the first live GPU window ran 23:09:02Z-23:10:57Z (qwen down 1 min 53 s) and restored qwen; all three jobs failed in 32 s.
 - **BLOCKED ON THE OWNER:** the PC has no `python3.11-devel` (Triton's first-use CUDA shim needs `Python.h`). Either `sudo dnf install python3.11-devel`, or the say-so for C_INCLUDE_PATH to the uv CPython 3.11.13 headers (the shim compiles with them). Then window1 reruns unchanged.
 - **PC:** no lane live; qwen active; the Laya baseline recorded (PASS).
-- **VERIFYING:** VERIFY-T243-245-R2 (the stale-id check's second repair).
+- **DONE 23:1xZ:** VERIFY-T243-245-R2: the stale-id check MERGE-READY-WITH-FOLLOWUPS (task #243 closed; follow-ups on #75). No verifier is running.
 
 **2026-09-24 22:2xZ — WHAT IS LIVE NOW (supersedes the 21:4xZ block for the live set).**
 - **LIVE:** the JT3 search hook; at commit, the staged-shell AP screen and the commit-message stamp gate; at push, the stale-id check (repaired: a refusal is now sticky).
