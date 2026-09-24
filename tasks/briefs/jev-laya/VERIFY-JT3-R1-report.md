@@ -481,3 +481,152 @@ repair claimed holds:
 If the coordinator grades N-1 as a follow-up, this lane's recommendation becomes MERGE-READY-WITH-FOLLOWUPS (N-1 to N-8),
 and the landing commit must carry the vendored-manifest regeneration (N-10). Keep `.jev/intercept-off` in place until
 then.
+
+## 11. JT3-R2 reverify: the final repair of N-1 (2026-09-24 18:39Z to 18:55Z)
+
+Same lane and standing rules. Scratch: `/tmp/vj3r1/r2_globs.py`, `/tmp/vj3r1/mutants.py` (S-mutants added),
+`/tmp/vj3r1/replay.py`, `/tmp/vj3r1/regress.py`; the R1 hook copy `/tmp/vj3r1/r2/search-intercept.R1.py` (sha256
+`927410a3...`, from my fixture).
+
+### 11.1 Premise and the diff
+
+```
+$ sha256sum (first 16)   .claude/hooks/search-intercept.py 03d4c9a0afa0a959 (was 927410a382b2138f)
+                         tests/test_search_intercept.py    b755d407395ae960 (was ffb8f18123a4f0e0)
+                         tests/test_session_hooks.py 2a3a90c86ba3001e  scripts/install_session_hooks.py 30c4862939017c5c
+                         .claude/settings.json ad7fe12e10a72d51          (the coordinator's figures: MATCH)
+$ diff -U2 <R1 copy 927410a3> .claude/hooks/search-intercept.py
+   + def grep_tool_splits(glob)   (brace depth; True on `,` or ch.isspace() at depth 0, on a `}` at depth 0, on depth != 0 at the end)
+   + grep_tool_search: `... or grep_tool_splits(glob): return None`, and one docstring line.   Nothing else changed.
+```
+
+HEAD moved during the verify, from d483505 to d90fe65 and then d7c9868 at 18:44:46 (the coordinator's retro
+commits: edit-snapshot, INCIDENT-LOG, the manifest, a test, the ledger). None touches the five files; the digests were
+re-checked after: unchanged. This report had no working-tree change before this append.
+
+### 11.2 N-1 through the installed command, beside the real Grep tool
+
+The installed PreToolUse command (`sh -c` from `/`, a fresh scratch state each; payload `pattern ROOT, path
+/home/user/agent-factory/scripts`) is compared with the Grep tool's own split. That split is computed by `node` with
+the primary-source rule of `AIn`: `r.split(/\s+/)`, then each piece split on `,` unless it holds `{` and `}`. The real
+Grep tool ran where I could type the input:
+
+```
+glob                              hook (installed command)                  the tool's globs            real Grep tool
+*.sh,*.md                         rc 0, passed through                      [*.sh, *.md]                14 files (section 2.2)
+*.sh *.md / *.sh, *.md / a tab    rc 0, passed through                      [*.sh, *.md]                -
+*.sh U+00A0 *.md (NBSP)           rc 0, passed through                      [*.sh, *.md]                -
+*.sh U+FEFF *.md (BOM)            rc 2, "rg: 0 hits."                       [*.sh, *.md]                not run live (rg on the split globs: 14)   <- R2-2
+*.{py,sh}  (comma inside)         rc 2, "27 files match; the first 20"      [*.{py,sh}]                 "Found 27 files"
+*.{py, sh} (space inside)         rc 2, "13 files match (all shown)"        [*.{py, sh}] -> ['*.{py', 'sh}']   "Search failed — ripgrep rejected the
+                                                                                                        pattern, glob, or file type without
+                                                                                                        searching: rg: error parsing glob
+                                                                                                        '*.{py': unclosed alternate group"   <- R2-1
+*.{py,sh   (unbalanced)           rc 0, passed through                      ['*.{py', 'sh'] (rg rejects the first)   -
+*.py,      (trailing comma)       rc 0, passed through                      [*.py]                      13 files, 39 lines (count mode)
+*.{py,sh},*.md (braced piece, comma outside)  rc 0, passed through (over-match)  [*.{py,sh},*.md] (kept whole)  -
+*.py}      (a lone close brace)   rc 0, passed through (over-match)         [*.py}]                     -
+*.sh       (one glob)             rc 2, "14 files match (all shown)"        [*.sh]                      -
+```
+
+**N-1 is CLOSED** for every well-formed separated glob: comma, space, comma plus space, tab, NBSP, and every other
+JS-whitespace code point but U+FEFF. My exhaustive comparison over U+0000 to U+FFFF: JS `\s` holds 25 code points,
+Python `isspace()` 29; JS splits and the rule misses only U+FEFF. The rule flags U+001C to U+001F and U+0085, which JS
+does not split: pass-through only. Such calls now reach the real tool, which answers my discriminator with its 14
+files. A brace glob with a comma inside is still answered, and it equals the real tool (27 files).
+
+**Over-matching costs only a pass-through.** `grep_tool_splits` True makes `grep_tool_search` return None and
+`decide()` return 0, so the raw Grep call runs. This was checked through the installed command on both over-match
+shapes (rc 0, no output). It loses no historical intercept: of the 145 historical Grep calls, 42 carried a glob and
+the rule flags none of them.
+
+### 11.3 The two residual under-matches (the rule answers where the tool splits)
+
+- **R2-1, whitespace inside braces.** `AIn` splits on whitespace BEFORE it looks at braces. So `*.{py, sh}` becomes
+  `*.{py` and `sh}`, rg rejects the first, and the real tool fails loudly (above). The hook answers the literal glob:
+  13 `.py` files "(all shown)", where the evident intent `*.{py,sh}` holds 27. The repair's docstring ("it splits on
+  commas and whitespace outside braces") is wrong about whitespace, and the new test pins the gap as expected:
+  `test_a_glob_the_grep_tool_splits_is_never_answered_as_one[src/**/*.{ts, tsx}-globs7]` asserts one glob. My mutant
+  S7 applies the tool's own rule (whitespace at any depth) and turns exactly that case red, a hollow red for the
+  right fix (anti-hollow-green tactic 7, baked at d90fe65). Predicate check:
+  - contract-mapped: F-1 (a), "searches what the Grep tool searches ... never assume its rules";
+  - reproduced canonically: yes;
+  - a discriminator: yes (S7);
+  - in the boundary: yes;
+  - material: NO. The input is a glob the tool itself rejects, so the raw result is an error, not files. It occurred
+    0 times in 42 historical globbed calls: "hypothetical misuse" in the predicate's words.
+  Class: **FOLLOW-UP**. Fix: flag whitespace at any depth (S7's one line) and flip that test case to None.
+- **R2-2, a U+FEFF separator.** The tool splits on it (JS `\s`); `str.isspace()` does not. The hook answers
+  `rg: 0 hits.` where the tool reads two valid globs, a false absence. No model is known to emit a BOM inside a glob
+  (0 in 42). Class: **FOLLOW-UP**. Fix: add `chr(0xFEFF)` to the whitespace test.
+
+### 11.4 Regressions (all against the R2 hook)
+
+```
+suites   bash scripts/test_summary.sh <3 files> --basetemp /tmp/vj3r1/r2bt1             pytest-summary: 129 passed in 40.51s
+         PATH=/usr/local/bin:/usr/bin:/bin ... <the pair> --basetemp /tmp/vj3r1/r2bt2   pytest-summary: 88 passed, 35 skipped in 19.62s
+         PATH=/tmp/vj3r1/farm-nogr/bin ... <the pair> --basetemp /tmp/vj3r1/r2bt3       pytest-summary: 87 passed, 36 skipped in 19.54s
+         (129 = the pair's 123, the coordinator's figure, + test_hooks_worktree's 6; the 10 new unit cases run without graft or rg)
+gates    lint_delta: 0 NEW pyflakes hit(s); pyflakes rc 0; no_laya_in_gates: 40 files scanned, clean; separator bytes 0
+```
+
+- **regress.py, every row as in R1.** Fail-open: graft absent, rg absent, graft error, graft hang 20.1 s, rg hang
+  10.1 s, 8 malformed payloads, the off switch (file and environment) all give rc 0 and no output. The cap: largest
+  6,072 characters. The escape hatch, the Jev switch (off by default, no `calls.jsonl`) and Jev down (file order kept,
+  the reason named) all hold.
+- **One transient (R2-3, INFO):** the pathless `grep -rl self` passed through once (rc 0) at the moment the
+  coordinator's commit landed (18:44:46). Afterwards the hook answered it 5 of 5 times (3,481 characters, as under R1),
+  and rg alone gave rc 0 five times. Inferred cause: a file under `.git/` vanished during the `--hidden` walk; rg
+  exits 2 on a read error, and the hook fails open, as designed. This comes from R1's `--hidden` for grep, not R2.
+- **Mutants (fresh copies, sha256 `03d4c9a0...` the same before and after):** the four A5 mutants and the three
+  repair mutants are killed by the same named tests as in section 5 (7 / 1 / 5 / 1; 1 / 2 / 1). New S-mutants:
+
+  | Mutant | Result |
+  |---|---|
+  | S1: the call removed | 8 failed: the six split cases plus `Grep-glob-comma` and `Grep-glob-space`, the coordinator's discriminator |
+  | S2: no comma clause | 2 failed |
+  | S3: no whitespace clause | 3 failed |
+  | S4: unbalanced end accepted | 1 failed (`{a,b`) |
+  | S5: a lone `}` accepted | 1 failed (`a}`) |
+  | S6: always split | 15 failed |
+  | S7: the tool's own whitespace rule | 1 failed (R2-1) |
+
+- **Replay:** 102 historical searches (one new since section 2.4). 85 are answered, all identical to the raw call
+  (one Grep answer with a truncated Cut listing has an equal total), and 17 fail open. The new one is the
+  coordinator's 18:19Z `grep -n 'PIDFILE' harness-ports/bin/pc-lane.sh | head -12`, which fails open because graft
+  refuses `--in` a single file, like the other 16.
+- **N-10 is unchanged:** `vendored_manifest.py --check` still prints FAIL on the working tree.
+- **N-2 to N-8:** R2 changed none of their functions (the diff touches only `grep_tool_search`), so they are not
+  reopened.
+
+### 11.5 Inventory update (R2)
+
+| # | Class | Finding | Evidence | Contract | Canonical | Material effect | Reproduction | Fix |
+|---|---|---|---|---|---|---|---|---|
+| N-1 | resolved | separated globs pass through; brace globs are answered and equal the real tool | R (installed command, real Grep tool, the node split) | F-1 (a) | yes | - | section 11.2 | - |
+| R2-1 | FOLLOW-UP | whitespace inside braces is answered, while the tool splits it and rejects it; the new test pins this | R, S (primary source), S7 | F-1 (a) | yes | an answer instead of the tool's error, for a malformed glob; 0 of 42 historical | `glob "*.{py, sh}"`: hook 13 files, tool "Search failed" | whitespace at any depth; flip the test case |
+| R2-2 | FOLLOW-UP | a U+FEFF separator is answered "0 hits" | R (hook), S (node, the primary-source regex) | F-1 (a) | yes (hook side) | a false absence on an input no model is known to produce | exhaustive BMP comparison | add U+FEFF |
+| R2-3 | INFO | a transient fail-open while a commit rewrote `.git/` during a `--hidden` walk | R (5 of 5 answered after) | D-3 (fail-open, correct) | yes | none: the raw call runs | section 11.4 | none needed |
+| N-10 | INFO | the manifest check still fails on the working tree | R | the landing commit's step | yes | stage0-ci red if omitted | `--check` | regenerate at landing |
+
+Served model: 397 assistant records in this lane's transcript, all `claude-opus-5-5`; no refusal stop.
+
+### 11.6 Gate recommendation (supersedes section 10)
+
+**MERGE-READY-WITH-FOLLOWUPS.** No finding meets the whole blocking predicate:
+- **N-1 is closed.** Checked through the installed command against the real Grep tool, for every well-formed separated
+  glob.
+- **The two residual shapes are FOLLOW-UPs**, both one-line fixes, both with 0 occurrences in 42 historical globbed
+  calls:
+  - a malformed glob that the tool itself rejects (R2-1, which the new test currently pins);
+  - a U+FEFF separator (R2-2).
+- **Regressions:** everything holds (suites, fail-open, cap, escape hatch, switches, all named mutants, the replay).
+
+Follow-ups:
+- R2-1: fix it before re-arming the hook, with the test flip.
+- R2-2.
+- N-2 to N-8: the issue.
+- N-10: regenerate the vendored manifest in the landing commit, or stage0-ci goes red.
+- N-11: the stale `docs/INCIDENT-LOG.md:20` and `CLAUDE.md:685` lines.
+
+`.jev/intercept-off` stays in place until the coordinator re-arms the hook.
