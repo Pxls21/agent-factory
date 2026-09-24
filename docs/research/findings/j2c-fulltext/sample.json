@@ -1,0 +1,811 @@
+{
+ "from": "j2-v1-probe/sample.json",
+ "head": "40dcc2148994755da84f9192d075b50513695911",
+ "joins": {
+  "exact": 82,
+  "prefix40": 18
+ },
+ "n": 100,
+ "sample": [
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "01609c79e3caf9b278a07ad363f994fafbf23408dfc415aa837cf7fd32704cac",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-4",
+   "state": "Test gaps: surviving mutants W3, I1, I2 are load-bearing (see 1.4); W7, I3, I4, I6 also survive."
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "03784fb590c6f1520acc2dff008ce2aeadd82aeee90389cfdfb9e3ec0525da36",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F13",
+   "state": "the only disclaimer is \"(binary-free by its header)\", first in `verified:` of the b3399c1 entry, beside a second Python (3.13.11); a reader can take the pass as a test OF b3399c1. The ledger (BUILD-TASKLIST.md:226) says it plainly"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "0b3397aa1287d4180953dc714067d20364fff4fe6c252251890f5b00e10fc1e0",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-10",
+   "state": "- **V-10 [CLASS] — declared R4-4 limits, measured:** P5 (getattr), P6/P24 (the globals()/vars family), P8\n  (`pkgutil.resolve_name`), P11 (`importlib.util.find_spec` + `exec_module`, a natural idiom), P28 (`imp.load_source`), P29\n  (`site.addsitedir` + a `.pth` line). All run unlisted code; the docstring's \"other ways to run code in the process\" covers them\n  in general. Fix: add `find_spec`, `resolve_name`, `load_source`, `addsitedir` to `_LOADERS` or name them in the docstring."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-0-R6",
+   "row_digest": "0b69fad7ed772bd59378427b2555db129e3c399b21059e3e0f5bc85bf5f01fec",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R6-report.md#F-4",
+   "state": "- **F-4 [CLASS] — CRLF files parse and name the correct line (j1).** SOLID. § 2 (j1: `read_text(errors='replace')` turns\n  CRLF→LF, the file parses, and R5==R6 name line 6, the value's own line; no property involved). Not a defect; the\n  CRLF→LF translation is what makes the marks line up, and it is correct. No contract line touches CRLF."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "0bb133641fa12e915d72cff849bf654c8eb94e1dc47bb49aa7235cee00701b4b",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#I-3",
+   "state": "The opaque rule (`scripts/transcript_export.py:43`, `<opaque-redacted>`) cuts 40+ runs out of public base64 (certificates, public keys): pre-existing, coarse by design, not the key rule"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "10fe0ea639fefa4d9078b063e6405853f2b7e696c545356f4e3b8bde3ec60f10",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F19",
+   "state": "D-048: 3.47.2 \"carries the WAL-reset bug that killed lanes\"; D-043: the death class is \"NOT measured on 3.47.2\". By version range, not a strict contradiction"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "1190418acec035a14151439dfe861fa42d2384dd3cf41d7a495013c81ff38699",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#B-1",
+   "state": "The separator `\"; \"` joining the three pieces (`tests/test_upstream_lock_lane_runtime.py:50`, `LANE_RUNTIME_VERIFIED`) now occurs INSIDE piece (c) (\"(98 with a report; brief.md--0000000 …)\"): a naive split gives 4 parts. Nothing splits the value today"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "11e6dfe73a8e369e7c64b44f415c4a9046de4ef484d441a9136d5792923d8ada",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F14",
+   "state": "The commit message and the registry row say the row found \"1 hit on HEAD's exporter\"; the real row at `2d10a2c^` finds 2 (both exporters)."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "126e89e2ab6c4f75ad6125dade1842ef77bccaf326278d9d8f868679b3ef5dab",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-8",
+   "state": "`--remove` is exact at the JSON-value level only for non-empty content: `{\"hooks\": {}}`, empty event lists and `\"hooks\": null` come back as `{}`; an absent file comes back as `{}`; bytes are re-serialized (indent 2, `\\u` escapes). The coordinator's own test compares JSON values."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "17fdd2f6bfa5024789993fa58abbb06393782d8b38857b2093588fcab1a31c73",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#5",
+   "state": "D-1's premise does not hold for every visible \"name\": when a key's or token's body ENDS in a name spelling followed by a separator and a value, those tail bytes (<= 8, from the 22-spelling dictionary) and bearer padding now show (29-35 per 20,000 ASCII inputs)"
+  },
+  {
+   "join": "exact",
+   "label": "KNOWN",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "1c2d81874c2d38105afbe419d57d524a0ce1b11c5e0602ff4cb6bb2eeac20f7d",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-10",
+   "state": "The `NAME==v` residue (`R3-pad`), the 8-character floor (`R3-floor7`), and AF-AP-157's chain family (a chain's first value or token run keeps d556c9b's output: the `ghjlmqfu…` runs in R2-a..e) reproduce as declared"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "1c566ed6820795462a17fdc53703aecf8c87110fd4c8df119306d0e1d6f4917e",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F11",
+   "state": "The tell prints `AF-AP-127a redaction…`: `{ap_id:6s}` (`.claude/hooks/edit-snapshot.py:463`) is narrower than every 9-char `AF-AP-*` id."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "1c7251765363a647dfb7a6f156e74c2a574e565f7e645f8fe5d12c515ef86043",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F21",
+   "state": "\"`~/.local/bin/hermes` resolves to the … install\": D-043 says it is a wrapper that execs it (`readlink -f` returns itself). The R5 sentence sits in the \"What this pin covers\" paragraph although it states what is NOT enforced"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "20814d9ccf414318e75ad7fe2d7b7647cef9c3f90f1f635dc2c8a74d6316a7b7",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L3-2",
+   "state": "A `.py` gate file that IMPORTS mojev is refused with exit 4 `gate-file-import-unresolved`, and the `path:line:mojev` line never prints (the include-edge check returns before the scan). The barrier holds (non-zero), but the refusal names an import, not the vocabulary. `_flagged_by_vocabulary` routes only `agent_factory.decisions` imports to the vocabulary report. This predates L3 and applies to every simple token (`import laya` too)."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "2273a4e543b9aef71d737e4bae160815a6739ca36742ba8d94b14df1c0910c97",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F10",
+   "state": "\"48,701 committed turn bodies\" counts SECTIONS: 118 file headers + 25,512 PC tool-result headings with no body + 70 in-body `## ` splits + the turns; text-bearing bodies = 4,404 + 18,014 = 22,418. The zero holds on either count."
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "22fe17169fe5260a3d53aa77858cc8858467f98a0a1b28184e5e92ee68ebee37",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-2",
+   "state": "**N-2.** `_BEARER_MERGE` (`:103-106`) replays the bearer run on the text the sk pass sees, before `_SK` has run; the real bearer pass runs after `_SK` and stops at an inner `<redacted:sk>`. When the inner sk run ends on `.`, `~`, `+`, `/` or U+0130/U+0131/U+017F, the replay runs past a head whose own value holds a head, the scan sees none, the outer sk yields, and the widened value swallows that head in the real text: its value, which d556c9b hid, is freed. An R-4 shape the step leaves open; it needs an OUTER sk"
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "2376fdaa26141d7c657dbc609981d186310d09c1af63e96e1e21676d25c7b45a",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-13",
+   "state": "Wrapping a hook that prints its own hook JSON (a deny) neutralizes the decision (A15); `EVENTS` omits Stop, so wrapping the retro gate would disable it silently (usage error, exit 0). Neither is wired today."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "2388acb86097156aafb0916a338069ffab74661426e0d5e50eaebb9cc18e7aac",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-2",
+   "state": "A mangled label defeats the rule: a doubled space inside `PRIVATE KEY` / `KEY BLOCK` (1-32 lines), lowercase (20/25), 4 dashes, smart dashes, a zero-width char, a tab (20/25 each). 6 dashes still match. OpenSSL/GnuPG reject every one of these labels"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "23a2d223b97f9f2fa051a122c3fac6d038a337366e46fd616185eaa21f669a62",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-04",
+   "state": "- **V-04 [CLASS] — EXPONENTIAL scan time, introduced by R4.** SOLID. Nested `$(( … ) )` costs 2^k: 27.62 s for a 192-byte line\n  (R3: 0.04 s). `def arith` (`scripts/no_laya_in_gates.py:332`) scans, fails and restores; `dollar()` re-scans the body as\n  commands. One such line in any listed gate would stall every commit (a DoS; no fail-open). Not live (the live run is 0.39 s).\n  Contract: none (cost is not a frozen line; item 9 makes it a finding). Fix: decide `$((`-arithmetic vs `$( (`-subshell once\n  per start position (memoize), never by a full re-scan."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "25a44492fdff6f1437d8fce248a46640813daf49f3df75cb2e0477508c7642a4",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-11",
+   "state": "The builder's claims that reproduce: the red-green split (30 new tests red at fb016d0 and no other test; 22 new tests red at d556c9b); 30 of its mutant rows (counts and killer sets); m5/m6/m7 each killed by its own C3 row; the goldens and the probe unchanged; its all-reverted variant equal to fb016d0 on my inputs; every fb016d0 exposure attributed to R1/R2/R4/R3 or a combination; C1-C3 on my R-1/R-2/R-3 shapes; cost linear; the gates (177 x2, 67 x2, pyflakes, no_laya)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "2755b38e5d482f3f31cf61c338576e1f76eac7ae50e5f57d1f2079206c1857e3",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-06",
+   "state": "- **V-06 [CLASS] — wrong R4-3 refusal lines for folded and multi-line quoted `run:` values** (Y2b, Y2c, Y13 names the next\n  step's line, Y14). SOLID.\n  - `_workflow_runs` (`start_mark`, `scripts/no_laya_in_gates.py:492`) adds a style offset, then counts the value's own newlines. Its docstring\n    (`scripts/no_laya_in_gates.py:472-473`, ending `a folded or flow value has no line of its own`) says every other style maps to the value's start line: false as stated.\n  - The refusal still fires; no live workflow uses these styles.\n  - Contract: R4-3's line clause (mapped). Material: only the diagnostic line; the decision does not change.\n  - Fix: for any style other than `|`, report the value's start line (what the docstring says)."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "2e4318eda73d3054c61ade18bf304caa16d34d1c9bdbf7e67ccddd493f1d1a38",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-05",
+   "state": "- **V-05 [CLASS] — the exception set trusts any unknown base and counts sites, not loads.** SOLID.\n  - E1a/E1d(i): the entry is re-pointed through its base; both the runtime check and the exactness test stay green.\n  - E1b: a wrapper makes one site carry a second load.\n  - Real hook, commit 4: the commit landed while the hook's own `lint_delta` process ran a foreign `edit-snapshot.py` carrying the\n    vocabulary. This is F-B2's ES shape, re-opened through the entry.\n  - The comment at `scripts/no_laya_in_gates.py:697-698` (`re-pointed at another file`, \"the F-B5 class\") and\n    the \"never more\" at `scripts/no_laya_in_gates.py:696` are false as stated.\n  - The builder's report declares the base residual (Self-attack 3).\n  - Contract: R4-4(a) (exact (file, target), count checked): met per site. Material: needs a deliberate edit of the load's base or\n    a wrapper; the F-B5 class ([CLASS], issue #37).\n  - Fix: correct the comment; bind each entry to its base expression (e.g. `REPO`, the parameter `root`) and count wrapper calls."
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "2f98db5e4254790d4d6c65b6ab6488073d8bd379a150cef6624866549ca74a15",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#2",
+   "state": "R-2: `_YIELD`'s token branch checks its value and scans for a second head with a case-SENSITIVE `[A-Za-z0-9+/]` (`src/agent_factory/decisions/volatile.py:71-72`) while `_TOKEN`'s run is case-insensitive (`src/agent_factory/decisions/volatile.py:85`); a special letter in the run hides the next `NAME[:=]` from the guard and the SECOND value is freed"
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "30822e935866566dd9f7e9bfbc01345ef6875141376ca49bb4041438da00f24d",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F8a",
+   "state": "Mutant M4 (key rule after the opaque rule) survives both suites; with a keyword on the BEGIN line (`secret: -----BEGIN …`) 16/20 body lines leak. The \"First, so no later rule…\" property (`scripts/transcript_export.py:25-26`) is unpinned."
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "31b3ea6fc4c97fe05826b89f39880ea59876769e8697b5f7a1156f499c837bd6",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#3",
+   "state": "R-4: the chain guard decides on the value as the sk/bearer pass sees it; `_BEARER` then merges across the space inside `bearer <token>`, and `_ENVVAL`/`_ENVVAL_WIDE` take the merged value, swallow the next head and free its value (`src/agent_factory/decisions/volatile.py:61`, `:67-73`, the pass order `:361-365`)"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "32206ad80d32babfc20866a8a51b9490e8903a2d59aef232da5071d799d19e9e",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F13",
+   "state": "Prose that names a BEGIN line with no END loses the rest of its turn (the `\\Z` alternative; over-redaction by design). 0 placeholders in committed transcripts @de33838."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "338f3bc2b916716edd9b2d9cf7abeab81b1cca9d77a58c210bb18ed6ea5e8363",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F3",
+   "state": "a non-empty `report.md` can be a promoted PARTIAL draft (P:502-505); how many of the 98 are drafts is not recorded"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "339ed2e346423a847caacb2d1e602638ae8184c6d4abe1766ee7917f8d7dda4c",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-1",
+   "state": "Ownership marker `f\"{root}/.claude/hooks/\"` is the UNQUOTED path; the commands embed `shlex.quote(root)`. For a repo path that needs quoting (space, quote) the installer never recognizes its own entries: every run appends 5 more, `--check` always 1, `--remove` answers `unchanged` and removes nothing (the owner's opt-out is dead)."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "359b86c43e05bac45e885402001d6b3d7c18c0cc1b13c7f49115bb1ee0d219e9",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-3",
+   "state": "The harness keeps any hook text over 10,000 chars (`fpo=1e4`, both plain stdout and additionalContext) as a file plus a 2 KB preview. The installed SessionStart printed 18,836 chars at the 11:24Z compaction: the model got a 2,216-char `<persisted-output>` preview of setup-log noise; the wiki live-state block (char 3,794 onward), the hook's stated purpose, never reached it. UserPromptSubmit (wiki-context.py) went over the threshold in 2 of 3 live runs (10,714 / 10,657 chars). A sibling shape of AF-AP-172 (\"fires, but the model does not see it\")."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "369566a59e6f668849420f57b3d5a766a9b990818602b23c4fa8b11eb0a0f6b1",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F6",
+   "state": "The row fires on one spelling, `verb(name[:bound])` (`.claude/hooks/edit-snapshot.py:186`): 19 of 20 cap-before-scrub shapes are missed (`r[\"k\"][:n]`, `(expr)[:n]`, `x[0:n]`, a tail cap `x[-n:]`, `_scrub`/`self._redact`, 4 of the repo's 9 redactors, extra or keyword args, `.sh`); 3 false positives. The no-fire on a tail cap is a design gap (item 5 probe)."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "3822f7b7b336c0af097e1c60cc47d4afe215c9b82ac4d38052ba559bc8366e87",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F16",
+   "state": "env.json \"byte-identical\" claim, dict assert; M8e (writer indent) survives; the byte format is pinned nowhere"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "39385481edb77b1ed5ce7ecbe49fef1d767939c608740eff72d2ea86d15044e4",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-5",
+   "state": "The PC exporter binds to the rule by PATH, not version (`harness-ports/bin/hermes-session-export.py:23-30`). A stale rule (9932f34^) at `SCRUB_SRC` exports GnuPG armor with 8/11 lines and rc 0 through the verbatim harvest block; an identity `scrub` exports everything. Every BROKEN scrubber fails closed"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "3edb20891dacef2268ced52f828bf19919c7f01456e79d08d3856b6755be77d5",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L3-6",
+   "state": "Live tree clean at the PIN, in the working tree and in the index; exact lines in every gate-file type for text occurrences; the pre-commit `--staged` path fires and reads the index; the longer runs stay clean; case-insensitive; 121 passed; mutants T1-T5 killed; the lock names the whole list."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "3f66a48b9e2dd88a916025a18afdeb11ffa892992f7e386c18fb8efaabb49785",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-07",
+   "state": "- **V5-07 [CLASS] — super-linear cost outside D8: failed `$((` nests cost depth × body.** SOLID. § 7: k=300 around 100 KB = 37.64 s\n  (R3 0.06 s; R4 > 600 s at k=16). The mechanism is the builder's D3 (1 + d scans per character, d ≤ ~330), true as stated.\n  Contract: R5-2's numeric lines are met (k=22 0.06 s; live +1.3 % / +2.8 %); its headline \"linear\" holds only in D3's reading.\n  Material: no (no fail-open; a crafted file stalls the hook; not live). UNRUN question, not a recommendation: cap the total re-scan\n  work per text and refuse past the cap (fail closed), or reuse the inner command re-scans' segments instead of re-scanning?"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "3fb339734423e73afe2f52b8408a3fc8bae8c990f8005a7b3af37c80c1619aad",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F9",
+   "state": "S1: the message says `got '<no line>'` at L line 13, which holds the comment that ended the entry"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "3fc7f2dc8bfe9901277db75ae8dcf913e620ec56b76def0d76ffe5c14d37ea4a",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#B-4",
+   "state": "The Rule line's \"which `harness-ports/bin/pc-lane.sh:218` (`: > \"$PROMPT_FILE\"`) truncates at every start\" (record lines 8-9), and 9c991a2's message: starts refused at P:65-185 never reach :218. The count and piece (c) stand; the error runs toward conservatism"
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "40799a9da636c7ab07c7fbdc33a9b332aa5b929e85ae9867cb25da545c3255b4",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#9",
+   "state": "B5 holds: linear 16k..256k on 14 adversarial generators; the sk/bearer pass costs ~100x the PIN per character (47.23 ms vs 0.45 ms at 256k); `_redact_str` ~1.2-1.6x"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "40e3f5b5b85eadae3feb447a76647213377a97f90321bb29072d28426be4702d",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F4",
+   "state": "S5e: a quoted `\"hermes-agent\":` with another commit placed BEFORE the original passes T (both views), V and S0-12"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "4939bf782a3b97dd12e587a5976b4f29bf4be734a16897e8041733a819c0e0f7",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-1",
+   "state": "The exact CI-1026 regression is unguarded. Narrowing either site back to `== \"Z\"` (mutants S1, S2) keeps every test green, and the row cannot see it: the fallback now lives inside the helper (the cross-function MISS). The race only shows up as a rare CI red."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "4c642ae71068b8bee594061c869ede7e07670d9c72acc6d979e75a3ada6e7033",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F12",
+   "state": "only a one-space `⚠️ No reply:` is retried or made FAILED. T91 widened P:304 `SAFETY_RX` for 0/1/2 spaces (P:302 `Hermes can render two`). A 0- or 2-space line stands as `report.md` and counts as `report`"
+  },
+  {
+   "join": "prefix40",
+   "label": "KNOWN",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "4cde50a51eb75515c59535021f142ee1a663a8c3fb5ef5b269efa950c4024b1a",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#15",
+   "state": "Issues #49 (V-2…V-6, V-15, V-16, V-12…V-14) and #47: not re-derived; the 8-character floor rows of my grid (23,130) and the 43-table's V-6/V-7 rows sit there"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "4d170f0436fb47817796749e1f30c34a98a812085d4518440ed890cb0b8d2fff",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-5",
+   "state": "Wording: the brief says \"within two lines\", the commit and registry say \"within three lines\". The regex allows 0-2 intermediate lines (fires at 2, quiet at 3, measured): both wordings fit. No test pins the upper bound (R3 survives) or the same-name back-reference (R4 survives)."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "4da4dad0f669201aef1d4d6ceddf6083d1eca4c5bfe0a8d756ecc8ed8c793aa5",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-04",
+   "state": "- **V5-04 [CLASS] — the docstrings that enumerate `_Open`'s causes omit the R5-2 guard.** SOLID (read). The module docstring\n  (`scripts/no_laya_in_gates.py:19`, `cannot finish in sync`), `class _Open` (`scripts/no_laya_in_gates.py:112-113`: \"The scan cannot finish in sync: a construct is\n  still open … or a heredoc word holds an escape\"), `class _ShellScan` (`scripts/no_laya_in_gates.py:150-159`) and `_command_segments`\n  (`scripts/no_laya_in_gates.py:485`, `_Open: R4-1, R5-1; or nesting too deep`); only `def arith` (`scripts/no_laya_in_gates.py:338-348`) describes it. Contract: no frozen line\n  requires these texts (R5-2 has no docstring clause). Material: documentation only. Fix (a doc edit, UNRUN): name the guard in the four places."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "4ecb95de2a1ad59a58e8db2a9dd7915668e4b2a9311596f8d6597e7d9a4b1153",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#4",
+   "state": "R-3: a V-1 residue — an upper-case `NAME= v` (a space after `=`) or `NAME==v` behind sk/bearer still frees the value, at the PIN and after (`src/agent_factory/decisions/volatile.py:69` `(?!_ENVVAL_HEAD)`; `:68` `(?=[^\\s=])`)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "4edb6bea83e53666523573e46a1b701f828e3ee5d290908ff6f93b5857070a58",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-3",
+   "state": "Comments F-1/F-2 falsify (section 9): `volatile.py:58-60`, `:95-96`, `:76-77`; the builder's section 12.1 argument; D-067's C4a premise"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "4f0e34e09bbd94086d1a08eb80f1d00288836007195ffee0da13d4bdcf1c3c4a",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#I-1",
+   "state": "A third consumer of `scrub`: `harness-ports/bin/qwen_matrix.py:126` `_scrub_messages` (the Qwen corpus, PC-side, not committed); it fails closed with a named `MatrixError` (`:135-136`)"
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "4fee037399054b39f06e97c9994e20c362435fc20a23867a8d0ac25b6968fe09",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-6",
+   "state": "Mutant N2 (`[A-Z ]*`, no digits) survives both suites: `KEY_FAMILIES` (`tests/test_transcript_export.py:122-123`) holds no digit label; ED25519/ED448/X25519/X448/SM2 blocks would leak 21/26 lines"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "5029195bb74b48264a81c759a0a1a2248a0b462aa52f184bb2fea237810feaad",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-8",
+   "state": "Mutant N4 (`\\Z` -> `$`) is EQUIVALENT: without `re.M` the only difference is one trailing newline; no key byte differs"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "509de8a25258806f103848e675cf1e5baea8b1e4fab8ac149658f01051ecebc9",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L3-3",
+   "state": "Line numbers come from `str.splitlines()`, which also breaks at FF, VT, FS/GS/RS, NEL and U+2028/2029: one such character before the token puts the reported line one past `grep -n`. Latent (no listed gate file holds one); predates L3."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "50c8be979730c6dda9d68d0800bc80335156a66dc1d09148440c4ee4e2634ae3",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-12",
+   "state": "The brief's \"committed as 7aa7f35\" names the local id; on origin the brief is b26f9f9 (`git diff --stat 7aa7f35 b26f9f9` empty: the push rewrite stripped trailers only)"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "50eaf5d327128e78963fe417ad773d1802718c109d5ca037f2f6e92ca3a8c695",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-6",
+   "state": "Helper residuals: state `X` (EXIT_DEAD) is returned as is and fails the site assert (a transient window the old code had too); an empty read gives `?`; a non-UTF-8 comm raises UnicodeDecodeError (unreachable: the test's children have ASCII names); pid reuse after the reap could read a foreign process (the file's own gc-pid docstring measures that window as unreachable)."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "52752ddb3b2a1bd8796ced324b68ec634eec3c7655165b5834aafb88e3f0105d",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F9",
+   "state": "C6: the fix's real re-export (`5dfd550`→`280d3df`) changed 27 committed turns, ALL by admitting 23-143 more scrubbed characters at the cap (1,700 total), and 0 by redaction. \"only more redaction\" (`todo/BUILD-TASKLIST.md:186`) and \"changes no byte except by redacting\" (the brief) are false as stated. \"never less\" holds: 0 less-redaction spans, 0 of 120 files change under the current scrub."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "53e8d2af5d0aaae85f3b41804cad1fff8eb48749503ef3da8d609e02492e7535",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#I-2",
+   "state": "F15 partly closed: `cryptography` 50.0.1 writes a REAL `OPENSSH PRIVATE KEY` (64 columns); `ssh-keygen`'s 70 columns stay unprobed (a FAKE row covers it). Both are redacted whole"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "550d9facd91e040735444f8e3d4a5df55beff0360b13d52a94f1f540afbb5969",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#B-5",
+   "state": "The record never states that 5 of the 98 reports (rows 22-26) are mixed-runtime products (first launched 11:40Z-14:12Z on 3.49.1, `docs/INCIDENT-LOG.md:286`, `hermes update`). Piece (c) is still true: graded NOT a hollow green (item 10)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "5776f28ec6bbe39d01575a4c9d4baad464f5ac15145697cba2df9d66c76c8e95",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-08",
+   "state": "- **V-08 [CLASS] — `shell: python` steps that load files read CLEAN** (Y9, Y9b, Y9c). SOLID / INFERRED (GitHub side). D4 files\n  this under \"refusals that are safe\": false as stated. Pre-existing; no live `shell:` key. Fix: refuse a step whose `shell:` is not\n  bash/sh (or apply R4-4's Python rules to its text); correct D4."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "5c87d3231c07790c6692553803b6403f242d7cac14b0dcee7a90b124c01a8120",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#7",
+   "state": "Mirror-precision survivors with no body effect: V-M6 (widened value check `{7}`), V-M7 (bearer `{16}`->`{15}`, an over-redaction), V-M10 (`API_?KEY`->`API_KEY` splits the name)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "5d87894172c8155dd632b1563ca2183075462fa7bb2820154ccf5656cc2f3ae2",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-7",
+   "state": "Mutant N7 (`PUBLIC` added) survives: no test holds a public block, so a rule that eats `PUBLIC KEY`/`RSA PUBLIC KEY`/`PGP PUBLIC KEY BLOCK` passes. Over-redaction, not a security gap"
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "6021c6fecda2cc44572d4b8ece7a0e6a15103a3f78df63bfa32e655645e11ee7",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-15",
+   "state": "All five installed entries fired live; the two wrapped hooks' additionalContext reached this model; one block per call; the harness's plain-stdout rule confirmed from the binary; happy-path idempotence, `--check`, `--remove`; 24 concurrent installs consistent; adapters 7/7, 6/6, 9/9; premise 309 passed."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "60b40e72fdf92aa8679c390395ab41c3c03078065eac18cca05d27084e61a4f2",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-08",
+   "state": "- **V5-08 [CLASS] — three new mutants survive (test gaps).** SOLID. § 8: MX1 (R5-1's \"naming the operator's line\": only single-line\n  words are pinned), MX3 (R5-2's equal-tuple trust branch: no test; the mutant refuses a clean text with no heredoc), MX6 (R5-4's\n  \"every scalar style\": no plain multi-line case). Each is non-equivalent (discriminators D-MX1a, D-MX3, D-MX6). Contract: beyond the\n  brief's required test list. Material: no (the code is right; the pins are missing). Fix: add D-MX1a, D-MX3 and D-MX6 as tests (each fixture was RUN above: the real screen gives the right answer, and the matching\n  mutant gives another)."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "61853c49758364927e3a792c2cbe693bc235c5ffbad817d19cf9bdd4559b8dd0",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F7",
+   "state": "`src/agent_factory/decisions/volatile.py:142-143` (`if f.limit is not None:` then `s = s[: f.limit]`) truncates before `redact` (`src/agent_factory/decisions/ledger.py:274,405`): a FAKE `sk-` key straddling the 400 limit comes out `…sk-FA` through the real functions at the PIN. The registry marks it OPEN for J1-1-R1 (`docs/INCIDENT-LOG.md:475`); the screen cannot see it (helper)."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "62c8a7e3128ffb174f9c355abce9a82a8c56fa2e59c6a37a81d0e157cf9057f8",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#B-3",
+   "state": "The record's script names its variable `first` (record lines 142-143) under a Rule that now says LATEST. The script is a verbatim record, so it keeps the name"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "6426a946fb3b500a537cc5b0672b8ad99895642efc42e44fe3345d830b7ce957",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-09",
+   "state": "- **V-09 [CLASS] — undeclared Python load spellings.** SOLID. `__builtins__.exec` and an aliased `builtins` (P6b, P6c;\n  `node.attr` in `_loader_name`, `scripts/no_laya_in_gates.py:1014`), `os.chdir` + a relative literal\n  (P27; `def _as_path`, `scripts/no_laya_in_gates.py:720`), `__file__` re-pointed through `sys.modules[__name__]` (P23). Deliberate; none in the 28\n  listed Python gates. Fix: treat exec/eval/compile on any name bound to the builtins module as a loader; refuse relative-literal\n  loads after `os.chdir`; declare the `__file__` rebinding family in the docstring."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "64967fc32dd8227582ab635b2279cf1095b2bbbdf8260fcd54ab660335a20aa5",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-06",
+   "state": "- **V5-06 [CLASS] — R5-3's \"another directory\" is true only for a directory the resolver cannot tell.** SOLID. § 5 E4: a base\n  re-pointed to an absolute literal (`Path(\"/tmp/elsewhere\")`) is refused. The comment claims less enforcement than exists, never\n  more, so R5-3 holds. Fix (a comment edit, UNRUN, optional): \"another directory held in a value the resolver cannot tell\"."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "67391395b5a6e242af05af0541427aecb328eb3bb5fa6c06fb99adc99d4870d5",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#17",
+   "state": "Suffix-extended names (`keys:`, `tokens:`, `passwords=`, `secretary:`, `keyboard:`) are no assignment in any class and keep the PIN's output; prefix-extended (`monkey:`, `turkey=`) are better than the PIN; the four enum fields refuse a secret-bearing value (`decision-state-bad-enum`)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "679d01cdd2c2da9d0070e95c1c82d59ad86897c3f4ae6393d9fff9e499c8cc54",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#A-3",
+   "state": "Secret-bearing formats outside the PEM key labels: `SSL SESSION PARAMETERS` (pem.h:50, master secret; 2/3 lines), SSH.com `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----` (17/20; the format, not probed), a URL-encoded PEM (19/25), PuTTY `.ppk` (1/2; not armored, the F3 class)"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "6bbb8bd5c0bdc577ba9b49d86af1e876d9d9667635002d7bdc6a49e3216eac18",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#I-8",
+   "state": "`harness-ports/tests/test_pc_lane_dispatcher.sh` leaves `/tmp/pc-lane-provider-mix-brief.md--0000000-<pid>.sql` behind on every run: 159 files in this sandbox since 09-22 12:40Z, 4-6 per run. Its local bridge double executes the provider-mix write that `scripts/pc_lane.sh:538` (`MIX_REMOTE`) meant for the PC, and nothing removes it. Outside both boundaries"
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "6d62b94c774add14bc9224d4980c690a3ae2f96b64bf23776f983c5f45d51e4e",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#1",
+   "state": "R-1: `_BEARER`'s run and lookahead lost the PIN's case-insensitivity (global `(?i)` scoped to `(?i:bearer)`, `src/agent_factory/decisions/volatile.py:74-76`); a bearer token holding U+0130/U+0131/U+017F is no longer redacted (whole, or its tail)"
+  },
+  {
+   "join": "exact",
+   "label": "KNOWN",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "6dc9d4613e6d1034788383d85e5ef7929f93f5ab46d9d3e9544f890af90e49b0",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#14",
+   "state": "AF-AP-157 F-1 and D-3: the five chained shapes, identical at the PIN d556c9b and after"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-AF-AP-127-R1-REPIN-a-R2",
+   "row_digest": "726b681cea723970bf89e439eae87470fe0f312e3573ba146912c13adecd958d",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-R1-REPIN-a-R2-report.md#I-6",
+   "state": "The ledger names the repairs by their PRE-push ids: `todo/BUILD-TASKLIST.md:233` \"AF-AP-127-R1 (#177) LANDED e44c914\", \"REPIN-a-R2 (#178) LANDED 1f41e13\"; origin has 9932f34 and 9c991a2 (trees identical: 42bf52203161, b16cbffce732). The local ids resolve on no other clone"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "7737510a126707d436e4800226df8a5f8d1f44d4aeec9bea84a41149602eed74",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-6",
+   "state": "The builder's instrument is narrower than the contract's BODY: `diff3.py`'s `body` role excludes special letters and bearer-alphabet run characters, and its generator draws no mixed-case `KEY` name and no sk inside a bearer run, which is why its 0 missed F-1/F-2. Its saved d556c9b hits hold no `special`/`tokchar` role"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "7ac6161386d822af78f5762d1daa456f846f17db020cd6eb08a80e843b434ff9",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-5",
+   "state": "Cut shift: 945 of 165,000 inputs show at the PIN a BODY byte that d556c9b's field LIMIT hid while its redactor left it visible; the PIN's shorter output moves it inside the limit. 205 of the fb016d0 exposures are of the same kind at d556c9b"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "7b89e1c4a3087eab9d9e2739d035d43ed008b56f18a4844193998ba025adbd89",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F18",
+   "state": "the cutoff 14:22:00Z is called \"the owner's `hermes update`\"; INCIDENT-LOG.md:278 dates the repair 14:19Z (conservative)"
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "7bcda9d98912ddd4eaddbd7c3cd3bb905ccbc66c32176af1139521a4b90a25e0",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-7",
+   "state": "Merge rule edges: an entry that mixes a foreign hook with an ours-marked hook is dropped whole on install and on remove (the foreign `echo owner-logger` is lost); owner hand-edits inside our entries are reverted by every session start (setup.sh re-runs the installer). The contract's rule defines such entries as ours; the collateral foreign hook is the only real loss. None exists in the live file."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "863cfe4db06b434a548e49f9aea9b495c9d00c29e61ed841a8646255b5cd5d5f",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L3-4",
+   "state": "Lookalike spellings pass (Cyrillic o in packedscorer; a zero-width space or soft hyphen in mojev). Deliberate obfuscation is outside a vocabulary tripwire's job."
+  },
+  {
+   "join": "prefix40",
+   "label": "CONTRACT-DEFECT",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "8786592275539d434452e8fd8841d722f1bdd0f64bb0994c1f3f9df1a69e7f87",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F1",
+   "state": "\"first launched\" is false. The count dates each lane by `prompt.md`'s mtime, which P:218 `: > \"$PROMPT_FILE\"` resets on every start that passes P:102-109 `$REPORT`, so it is the LAST launch. Record lines 21-25 are the five lanes that INCIDENT-LOG.md:278 says started 11:40Z-14:12Z on the 3.49.1 runtime and were relaunched at 14:2xZ. At most 105 of the 110 were first launched at or after the cutoff; the five reports are mixed-runtime"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "883120ee6d3b7fea754b54a14b1ecfdaafc30c2ac678fa4a835cdeb985566d9c",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F11",
+   "state": "an int is named by its decimal repr (octal row); a missing `commit` key raises `KeyError`, not the named text"
+  },
+  {
+   "join": "prefix40",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "8940fa3c4687b58d0f3180b931f0cdbd15138f6f34224c98e1e9ef3540932b16",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-4",
+   "state": "Legitimate shapes the row flags (asked by the brief): a fallback branch that `return`s or `continue`s before the assert (the assert can never see the fallback), and the exception-to-sentinel idiom."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "8efa2c434643fedfa51f64170d41bc196824992e8597ea60ade519ab9172defb",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F5",
+   "state": "`harness-ports/bin/pc-lane.sh:516` appends `profile:` and the whole `usage.json` to the committed PC transcript with no scrub."
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "94cca1a4b3120c043dd15c8dccbf91324f9b7ef87d67bb9db821ffe41361d976",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-11",
+   "state": "- **V5-11 [CLASS] — `_workflow_runs`'s reason clause is loose.** \"any other style (plain, quoted, folded) folds or escapes its line\n  breaks\" (`scripts/no_laya_in_gates.py:501`, `folds or escapes its`) is not true of a folded block's more-indented lines (YAML keeps those breaks: Y2b); the\n  rule it justifies is what the code does."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "95ad9a7f1be17fb99e29ce7431227e90c53ca5f4a5b5da3921eb13b79b276757",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L3-1",
+   "state": "Spellings MoJev's own code, server and data use pass a listed gate file unflagged: the env vars `MOJEV_SOURCE`, `MOJEV_DEVICE`, `MOJEV_NODE_MODULES`; the served model name `mojev-latest`; the config `model_type` `mojev-scorer` and class `PackedScorerConfig`; the dataset id `MoLeMo-Lab/mojev-mix` (neither run fires); `test_mojev`, `mojev-browser-v1`, `Open-Jev`/`openjev`. The env vars and the model name are the strings a shell or config integration would most likely carry."
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "99b90b4a22fa93e3080508142cc4ce6922ae58ec47a671d8ed65baf3c0e97b97",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-1",
+   "state": "**N-1.** The widened branch (`src/agent_factory/decisions/volatile.py:84-85`) lets the sk/bearer run yield at a `(?i)` `API_?KEY` name whose tail is an upper-case `KEY=` (`api_KEY=`, `ApiKEY=`, `APİ_KEY=`). Its exclusion `(?!_ENVVAL_HEAD\\S)` tests only the name's first character and its scan stops at `\"'&,;`; but `_ENVVAL` (`:139`) takes the tail `KEY=` with `\\S+`, crosses the stop, swallows the next head and frees its value, which d556c9b hid"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "9be23dac515caf241fd6af56313c290cd5e341a31907c5f2bdbfdce108274b26",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F10",
+   "state": "conservative false reds: a blank line, a 4-space or column-0 comment after the entry, or the entry moved to the end of `selected_core:` (S3b, S2b, S2c, S8b)"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "9f6f7e5e82b76ecc8192432ada8a9a782961e6cd54e7a5d9f436484520057021",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F2",
+   "state": "A block whose BEGIN was lost upstream, or one split across two turns, leaves body lines for EVERY family (e.g. PKCS#1 RSA: 13/15 tail lines; split: 11/25 lines through both exporters). Nothing mirrors the `\\Z` alternative for a missing BEGIN."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "9ff570accee78122587906d11d7d8a7a1c76b3915c023d3804f15b880c3212c8",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F8d",
+   "state": "Mutant X2 (`[A-Z0-9 ]+`) survives: the tests pin only the RSA and OPENSSH labels; a plain PKCS#8 block then leaks 16/20 lines."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-1-R3",
+   "row_digest": "a05444de59c5e9e62b3dc1423d3b2ff8f811ddb871139d6e1a3522cc622a96d0",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R3-report.md#F-4",
+   "state": "D-3 is incomplete: the LEDGER twin of the R-4 control (`tests/test_decisions_ledger.py`, `space-before-bearer-control`) is red under none of my 38 mutants, including the five D-3 names for it (each reds only the canonical twin, whose exact-text check sees the change; the ledger check is body-only)"
+  },
+  {
+   "join": "exact",
+   "label": "INFO",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "a17a3ff2a2698b578cef728248181ccd829ccdfaa97c70e2c922fbd1d581d06c",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-8",
+   "state": "Red-green reproduced with CI #1026's exact message; the row hits exactly the two pre-fix sites and nothing else in 1,403 tracked `.py` files; fire and quiet behave as contracted through the real hook; linear-time regex; no sibling in the tree; full file 121 passed; helper mutants H1-H5 and row mutants R1, R2, R5, R6 killed."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "a1c47426ed60451e6bcf66baae4385ba450c226f7a9354480609089880e05fe9",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F7",
+   "state": "the committed script cannot print 110/98/4: no line prints `n`/`r`/`f`, and they die in the `for … done \\| sort` subshell (repro: `n=0 r=0 f=0`). The producer of `lanes=110 with_report=98 failed_marker=4` is not committed; the table recounts to the same numbers"
+  },
+  {
+   "join": "exact",
+   "label": "UNVERIFIED",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "a43ee93f7d4ce7ea0c941692d212d97dc009f9a1b419a3444140e3132e44b8dd",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F15",
+   "state": "`ssh-keygen` is absent in this sandbox: the OpenSSH label and its 70-column body come from the format, not a binary. The scrub result on that label is SOLID."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "a4c3b1a8576803719b368884d3253d459fde55055938f084bc1bfbd4efd5669d",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F3",
+   "state": "`openssl pkey -text` prints the private exponent as colon hex; a FAKE dump keeps 18/18 `privateExponent` lines."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "a55bca14267ddce5ad509155cabe7a64258a98e82d152fa10c400c12f0836be0",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L2-3",
+   "state": "Row coverage (asked by the brief): 14 same-class shapes pass quiet, among them the natural ones: a trailing `# comment` on the fallback line, a log line before the fallback, the cross-function helper call, an assert-only Edit hunk."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-1-R2",
+   "row_digest": "a8308de3e093a35db6e10adff9827f3ba4992a86b4e13ccf1465eba537fd24c9",
+   "source": "tasks/briefs/laya/VERIFY-J1-1-R2-report.md#6",
+   "state": "Test gaps: my mutants V-M3 (token branch `(?i:)` dropped), V-M11 (`(?<=_)` dropped in the token branch) and V-M4 (the head's token alternative case-sensitive) each reopen a leak and survive all 121 tests"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "ad059a06b793f4f9bfc7f5d4eaa565804a9b9805e83759a121e8723bd97662ee",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-03",
+   "state": "- **V-03 [CLASS] — `$[ … ]` arithmetic: its `<<` is a heredoc that can end at a later line** (DA1 CLEAN). SOLID. Pre-existing.\n  The builder's D4 (\"which ends in an R4-1 refusal\") is false as stated; only DA2's shape refuses. Fix: model `$[ … ]` as\n  arithmetic, or refuse it; correct D4 and the self-attack line \"Its [CLASS] exotic triggers refuse instead (D4)\"."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-J1-0-R4",
+   "row_digest": "ad531d95ec089b4eb817b49c8a8f55f11a07903e9edbf79ffde0a24b7d42a4ac",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R4-report.md#V-13",
+   "state": "- **V-13 [CLASS] — mutation test gaps** (§ 10): 10 new survivors turn a refusal into CLEAN on text whose helper runs (N1, N12,\n  N13, N16, N18, N20, N22, N23, N24, N32); 3 more only refuse more (N7, N8, N11). The builder's \"a missing PyYAML fails\n  closed\" and D5 (`.yaml`) have no test. Fix: one fixture per discriminator in § 10."
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "aeb1eeabdf3e58b2f211ff4cadc1ca3b94dbe4b4833e6f1c0b254acdf8fac8df",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F12",
+   "state": "Pre-existing coverage gaps outside C1-C6: `Authorization: bearer <token>` (lowercase scheme), JSON-quoted keys (`\"password\": \"…\"`, `\"api_key\": \"…\"`), AWS-shaped key pairs pass unredacted."
+  },
+  {
+   "join": "prefix40",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "afaecaba1862f2463cd8e9d61839818f0141ff30bfa9e2d7dd99f115f4b5a902",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F15",
+   "state": "\"byte-identical\" claim, key-SET assert; M8a-M8d survive the file; caught downstream by check_acp_conformance.py:443-498 on a fresh PC capture"
+  },
+  {
+   "join": "exact",
+   "label": "FOLLOW-UP",
+   "lane": "VERIFY-COORD-0924",
+   "row_digest": "b189a00b696beb3386ac0f1fed738c46d51d85a1cd52ff02cc408dc1176cb16a",
+   "source": "tasks/briefs/kit-k1-support/VERIFY-COORD-0924-report.md#F-L1-6",
+   "state": "The default target is `<repo parent>/.claude/settings.json`; for a clone directly under `$HOME` (the PC clone is `$HOME/agent-factory`, `scripts/pc_lane.sh:142`) that is the USER-scope file, so a run there registers the five hooks for every Claude Code session of that user and double-fires in repo-rooted sessions (the case the commit message itself rejected). No PC invoker exists today (`pc-setup.sh` does not call it)."
+  },
+  {
+   "join": "exact",
+   "label": "CONTRACT-DEFECT",
+   "lane": "VERIFY-REPIN-a-R1",
+   "row_digest": "b34d1c6097c05fc8986450fd7f46ddc58392cc1980237d5c841f0d61c0483006",
+   "source": "tasks/briefs/hermes-repin/VERIFY-REPIN-a-R1-report.md#F2",
+   "state": "counted among the \"110 PC lanes\", but it never ran Hermes: P:165-171 `worktree add` refuse PIN `0000000` before P:217 writes `prompt.md` and before P:446 `HERMES_BIN` runs Hermes, so the row is dated by the dispatcher's `brief.md` (scripts/pc_lane.sh:250-251)"
+  },
+  {
+   "join": "prefix40",
+   "label": "BLOCKER",
+   "lane": "VERIFY-AF-AP-127",
+   "row_digest": "d6bbac69101edee5599603c3474a9204e48b437d104623fac3ddb27a6cc7bf25",
+   "source": "tasks/briefs/continuity/VERIFY-AF-AP-127-report.md#F1",
+   "state": "The private-key rule never matches GnuPG's armored secret key (`-----BEGIN PGP PRIVATE KEY BLOCK-----`, and gpg's PGP 2.x input label `PGP SECRET KEY BLOCK`): the rule needs `PRIVATE KEY-----` right after the label (`scripts/transcript_export.py:27`). 11-14 of 15 body lines (567-639 of 900 body chars) reach the written file through BOTH real exporters, in every shape."
+  },
+  {
+   "join": "exact",
+   "label": "UNVERIFIED",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "ef3380afc6a6a9e6b8c71325a955d8ea803e8730663b7ea3e424202fbac75f70",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-10",
+   "state": "- **V5-10 [CLASS] — the memo's stated premise omits one read.** `def arith`'s docstring (`scripts/no_laya_in_gates.py:343-344`, `the only state an attempt reads`:\n  \"the pending heredocs are the only state an attempt reads, and only through read_bodies\") and the builder's \"Exactness, by\n  construction\" omit the nested memo comparison, which reads the memo dict and compares the pending tuple without `read_bodies`. The\n  conclusion survived every test here (§ 3(a): 3,603 targeted `None` hits, 0 wrong); I could not build a text where the omission\n  changes a verdict. Not [CLASS]. Fix (a doc edit, UNRUN): state the premise with the nested lookup."
+  },
+  {
+   "join": "exact",
+   "label": "BLOCKER",
+   "lane": "VERIFY-J1-0-R5",
+   "row_digest": "f3368ce2b2394f03aeb79a85ead4c8f788682d07eddbf9e949f16cf640dfc311",
+   "source": "tasks/briefs/laya/VERIFY-J1-0-R5-report.md#V5-05",
+   "state": "- **V5-05 [CLASS] — R5-4: a node property on the line before a `run:` scalar moves the named line out of the value, and shifts a\n  literal block's line map.** SOLID.\n  - Evidence: § 4 (W10, W10b, W11, W12, W12b through the real screen) and § 6 C5 (the real hook names `vj.yml:7`, the `|` line; the\n    edge is on line 8). PyYAML's `ScalarNode.start_mark` is the node's first property (`&x`, `!!str`), so `start_mark.line + 2`\n    (`scripts/no_laya_in_gates.py:521`, `value.start_mark.line`) is the indicator's own line when the property sits on the line above it.\n  - Contract: R5-4 — \"A workflow refusal names a line inside the value\" (false for W10b, W11, W12, W12b), \"a literal block (`|`),\n    which keeps its line-for-line map\" (false for W10: the helper on line 9 is named 8) and \"The docstring says exactly that\": the R5\n    docstring (`scripts/no_laya_in_gates.py:499-501`) says `the line after the indicator of a block` \"(| or >)\" and \"a refusal in it names\n    its own line\", both false as stated for W10, W10b and W11. The builder's report repeats both claims (its R5-4 section, \"the line\n    after the indicator for `|` and `>`\", and self-attack 3, \"A literal block keeps its line-for-line map\").\n  - Canonical: the real screen (`--root`) and the real hook (C5). Material: under the brief's clause \"a stated claim is false as\n    stated\" — yes. The verdict is right in every row (rc 4); only the named line is wrong; W11 is worse than R4 (R4 named a line inside\n    the value). No live workflow holds an anchor, alias or tag; GitHub's acceptance of these shapes is NOT measured (valid YAML 1.2;\n    PyYAML accepts them).\n  - Discriminator: W10b — expected 8, R5 names 7; W11 — expected a line in 8-10 (R5-4's rule: 8), R5 names 7; W10 — expected 9,\n    R5 names 8.\n  - Fix (RUN, § 4): key the first line on the scalar TOKEN (`yaml.scan`), by the node's `end_mark.index`; 112 tests pass, every\n    builder Y shape byte-identical, the live tree clean in both modes; no rc changes anywhere, so nothing new leaks or is refused. Add\n    W10, W10b and W11 as tests."
+  }
+ ]
+}
