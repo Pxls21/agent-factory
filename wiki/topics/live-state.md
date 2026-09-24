@@ -16,7 +16,7 @@ last_compiled: 2026-09-03
 - **LIVE, SANDBOX SERVER:** the local Laya endpoint on 127.0.0.1:47411 (pid in `.jev/server.pid`).
 - **LIVE, PC:** K170 (#170), attempt 3; poller re-attached 12:2xZ.
 - **LIVE, SANDBOX (Opus 5.5):** J1-1-R4 (#198, files in `.lanes-live`); JT1 (#224, the Jev tool and the hiccup tracker).
-- **NEXT:** CI on af3ab70; harvest J1-1-R4 and JT1; the live PC-venue check of `jev.py`; the signal probe on `ap.violates_row` after J1-1-R4 lands; MOJEV-G0 when K170 frees the slot; an independent verify of today's coordinator hook fixes (rule 0f).
+- **NEXT:** CI on af3ab70; harvest J1-1-R4 and JT1; the live PC-venue check of `jev.py`; score the AP-hawk probe (`docs/research/findings/ap-hawk-probe/`, sample of 100 headings committed by digest c07c581a before scoring) once JT1 frees the local endpoint; task #225 (a deterministic quirk guard on Bash; the trailing-`&` rule bit again 12:1xZ); MOJEV-G0 when K170 frees the slot; an independent verify of today's coordinator hook fixes (rule 0f).
 - **OWNER DECISIONS OPEN:** the three questions in `docs/research/findings/JEV-LEVERAGE-AUDIT-2026-09-24.md` section 9; the Stage 0 PR to main (open only on the owner's word).
 
 **2026-09-24 12:2xZ — WHAT IS LIVE NOW (this block supersedes the 11:4xZ block and the older ones below for the live set; the ledger carries the detail).**
@@ -648,6 +648,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 12:4xZ — retro: the AP-hawk probe sample committed; task #225 (quirk guard) registered; the trailing-& incident logged.
 2026-09-24 12:4xZ — VERIFY-COORD-0924 home (issue #67); hook fixes AF-AP-183/184 pushed as af3ab70.
 2026-09-24 12:2xZ — #221 synthesis committed; context diet (AF-AP-182, task DB open-only); a sandbox-local Laya server; JT1 dispatched.
 2026-09-24 11:4xZ — retro bakes: the anchor_edit insert quirk in CLAUDE.md; `harness-ports/bin/mojev-stage.sh` committed.
