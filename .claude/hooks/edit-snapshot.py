@@ -413,6 +413,11 @@ TEST_SCREEN = [
      # Shell-test pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
      ("AF-AP-87", re.compile(r"""!\s*kill -0\b"""),
       "a `! kill -0 <pid>` liveness gate reads a zombie (Z/defunct, unreaped) PID as ALIVE — treat dead as absent OR /proc/<pid>/stat=Z (an is_dead helper), or pair the pid with a persisted terminal rc, never kill -0 alone (AF-AP-87)"),
+    # AF-AP-181 (2026-09-24, CI run #1026): a race handler whose fallback value its own assert rejects. The except
+    # branch anticipates the exists-then-read race on /proc and assigns "gone"; the assert that follows accepts only
+    # "Z", so the race the handler was written for still fails the test.
+    ("AF-AP-181", re.compile(r"""except\b[^\n]*:[ \t]*\n[ \t]*(\w+)[ \t]*=[ \t]*(["'])([^"'\n]*)\2[ \t]*\n(?:[^\n]*\n){0,2}?[ \t]*assert[ \t]+\1[ \t]*==[ \t]*(["'])(?!\3\4)[^"'\n]*\4"""),
+     "an except branch assigns a fallback that the next assert rejects: the race it handles still fails; read once through one helper and assert membership of every acceptable value (`in (\"Z\", \"gone\")`)"),
     _AF_AP_139,  # the same row as in AP_SCREEN: the registry's instance was a test stand-in (tests/test_s0_05_egress.py)
 ]
 

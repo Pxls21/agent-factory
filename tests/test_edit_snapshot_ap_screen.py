@@ -969,3 +969,39 @@ def test_pyflakes_delta_is_empty_when_the_venv_is_absent(monkeypatch, tmp_path):
     edited = tmp_path / "edited.py"
     edited.write_text("import os\n", encoding="utf-8")
     assert _mod.pyflakes_delta(str(edited), "import os\n") == []
+
+
+# ---- AF-AP-181 (TEST_SCREEN): a race handler whose fallback its own assert rejects ----
+
+class TestAFAP181:
+    rx = _TEST_BY_ID["AF-AP-181"]
+
+    def test_fires_on_the_ci_1026_shape(self):
+        # the exact shape CI run #1026 failed on (tests/test_s0_01_frame_tee.py before the fix)
+        assert self.rx.search(
+            '                except (OSError, IOError):\n'
+            '                    proc_state = "gone"\n'
+            '                assert proc_state == "Z", (\n')
+
+    def test_fires_with_a_line_between_the_fallback_and_the_assert(self):
+        assert self.rx.search(
+            "    except KeyError:\n"
+            "        verdict = 'missing'\n"
+            "    log(verdict)\n"
+            "    assert verdict == 'ok'\n")
+
+    def test_no_fire_on_membership_of_every_acceptable_value(self):
+        assert not self.rx.search(
+            '                except (OSError, IOError):\n'
+            '                    proc_state = "gone"\n'
+            '                assert proc_state in ("Z", "gone"), (\n')
+
+    def test_no_fire_when_the_assert_accepts_the_fallback(self):
+        assert not self.rx.search(
+            '    except OSError:\n'
+            '        state = "gone"\n'
+            '    assert state == "gone"\n')
+
+    def test_no_fire_on_the_fixed_frame_tee_file(self):
+        src = (Path(__file__).resolve().parents[1] / "tests" / "test_s0_01_frame_tee.py").read_text()
+        assert not self.rx.search(src)

@@ -95,6 +95,23 @@ def _sha256_file(path):
     return h.hexdigest()
 
 
+def _proc_state_after_kill(pid):
+    """The state letter of ``/proc/<pid>/stat`` (Z = zombie, killed but unreaped), or "gone" when there is no entry.
+
+    One read, no ``os.path.exists`` first: the reaper can remove the entry between a check and a read, and a pid
+    reaped in that window IS gone (AF-AP-181; CI run #1026 on eb71442 failed on exactly that window, because the
+    old inline check mapped the vanished read to "gone" and then asserted "Z"). The state is the first field after
+    the last ")", so a command name that holds spaces or parentheses cannot shift it.
+    """
+    try:
+        with open("/proc/%d/stat" % pid) as fh:
+            data = fh.read()
+    except (OSError, IOError):
+        return "gone"
+    rest = data.rsplit(")", 1)[-1].split()
+    return rest[0] if rest else "?"
+
+
 def _build_input():
     """Three client-to-agent lines: initialize, burst trigger, non-JSON."""
     lines = [
@@ -2982,15 +2999,10 @@ class TestEarlySigterm:
             except (OSError, IOError):
                 break  # vanished between exists() and open()
             time.sleep(0.1)
-        # Final assertion: gone or zombie
-        if os.path.exists("/proc/%d/stat" % child_pid):
-            try:
-                stat_fields = open("/proc/%d/stat" % child_pid).read().split()
-                proc_state = stat_fields[2] if len(stat_fields) >= 3 else "?"
-            except (OSError, IOError):
-                proc_state = "gone"
-            assert proc_state == "Z", (
-                "agent child pid %d state %s, expected Z or gone" % (child_pid, proc_state))
+        # Final assertion: gone or zombie (one read, AF-AP-181)
+        proc_state = _proc_state_after_kill(child_pid)
+        assert proc_state in ("Z", "gone"), (
+            "agent child pid %d state %s, expected Z or gone" % (child_pid, proc_state))
 
     def test_no_statement_between_signal_and_try(self, tmp_path):
         """F13 structural pin: in main(), the signal.signal(SIGTERM, ...)
@@ -3328,15 +3340,10 @@ class TestSigtermTerminatesAgent:
                 except (OSError, IOError):
                     break
                 time.sleep(0.1)
-            # Final: gone or zombie
-            if os.path.exists("/proc/%d/stat" % agent_pid):
-                try:
-                    sf = open("/proc/%d/stat" % agent_pid).read().split()
-                    proc_state = sf[2] if len(sf) >= 3 else "?"
-                except (OSError, IOError):
-                    proc_state = "gone"
-                assert proc_state == "Z", (
-                    "agent pid %d state %s after 2 s, expected Z or gone" % (agent_pid, proc_state))
+            # Final: gone or zombie (one read, AF-AP-181)
+            proc_state = _proc_state_after_kill(agent_pid)
+            assert proc_state in ("Z", "gone"), (
+                "agent pid %d state %s after 2 s, expected Z or gone" % (agent_pid, proc_state))
         finally:
             if tee_proc.poll() is None:
                 tee_proc.kill()
@@ -3966,3 +3973,50 @@ class TestDocstringAnchor:
             "module docstring does not mention last RUNNING status")
         assert not re.search(r"SIGTERM path[^.]*(covers it|bounds)", doc), (
             "docstring still claims the SIGTERM path bounds a wedged leg")
+
+
+class TestProcStateAfterKill:
+    """AF-AP-181: ``_proc_state_after_kill`` reads a pid reaped between a check and a read as "gone".
+
+    CI run #1026 (eb71442) failed ``test_sigterm_kills_agent_child`` with "state gone after 2 s, expected Z or gone":
+    the old inline check saw ``/proc/<pid>/stat`` exist, lost the read to the reaper, set "gone" and then asserted
+    "Z". The helper reads once and returns "gone" for any failed read; these tests pin each state it can return.
+    """
+
+    def test_read_lost_to_the_reaper_is_gone(self, monkeypatch):
+        import errno
+        for err in (FileNotFoundError(errno.ENOENT, "gone"), ProcessLookupError(errno.ESRCH, "gone")):
+            def _vanished(path, *a, _err=err, **k):
+                raise _err
+            monkeypatch.setitem(globals(), "open", _vanished)
+            assert _proc_state_after_kill(424242) == "gone"
+            monkeypatch.delitem(globals(), "open")
+
+    def test_reaped_pid_is_gone(self):
+        proc = subprocess.Popen(["true"])
+        proc.wait(timeout=10)
+        assert _proc_state_after_kill(proc.pid) == "gone"
+
+    def test_exited_unreaped_child_is_zombie(self):
+        proc = subprocess.Popen(["true"])
+        try:
+            deadline = time.monotonic() + 10
+            state = _proc_state_after_kill(proc.pid)
+            while state != "Z" and time.monotonic() < deadline:
+                time.sleep(0.05)
+                state = _proc_state_after_kill(proc.pid)
+            assert state == "Z"
+        finally:
+            proc.wait(timeout=10)
+
+    def test_live_pid_is_neither_zombie_nor_gone(self):
+        proc = subprocess.Popen(["sleep", "30"])
+        try:
+            assert _proc_state_after_kill(proc.pid) not in ("Z", "gone")
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    def test_state_is_read_after_the_last_paren(self, monkeypatch):
+        monkeypatch.setitem(globals(), "open", lambda *a, **k: io.StringIO("123 (a b) c) S 1 123 123 0 -1\n"))
+        assert _proc_state_after_kill(123) == "S"
