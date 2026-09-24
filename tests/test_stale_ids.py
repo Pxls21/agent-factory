@@ -122,6 +122,20 @@ def test_a_citation_removed_again_in_the_range_and_hex_inside_a_word_are_not_cit
     assert "stale_ids" not in r.stderr, r.stderr
 
 
+@pytest.mark.parametrize("shape", ["noprefix", "quoted path", "text starting with ++"])
+def test_a_citation_is_found_whatever_the_diff_header_looks_like(work, shape):
+    root, origin, base, runs = work
+    if shape == "noprefix":
+        _git(root, "config", "diff.noprefix", "true")
+    old = _commit(root, "a.txt", "a\n", "the fix\n\n" + TRAILER)
+    name = "n\u00f6tes.md" if shape == "quoted path" else "notes.md"
+    text = "++ fixed in %s\n" % old[:7] if shape == "text starting with ++" else "fixed in %s\n" % old[:7]
+    _commit(root, name, text, "a note")
+    r = _push(root, runs)
+    assert r.returncode == 4 and "cites %s, a commit this push rewrote" % old[:7] in r.stderr, r.stdout + r.stderr
+    assert _git(origin, "rev-parse", "feat") == base
+
+
 def test_the_checker_fails_loud_when_it_cannot_map_the_range(work, tmp_path):
     root, origin, base, runs = work
     _commit(root, "a.txt", "a\n", "one more")

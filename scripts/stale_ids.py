@@ -34,15 +34,27 @@ def stale_in(line, rewritten):
 
 
 def added_lines(origin_ref, head):
-    """-> [(path, line number, text)] for every added line of the range's diff."""
-    out, path, num = [], None, 0
-    for raw in git("diff", "--no-color", "--no-ext-diff", "-U0", origin_ref, head).split("\n"):
-        if raw.startswith("+++ "):
-            path = raw[6:] if raw.startswith("+++ b/") else None
+    """-> [(path, line number, text)] for every added line of the range's diff. The prefixes are explicit, so a
+    `diff.noprefix` or `diff.mnemonicPrefix` config cannot change the header; a `+++ ` line is a header only between
+    `diff --git` and the first hunk, so an added line whose text starts with `++ ` is still scanned; a path git quotes
+    (a non-ASCII name) is only a label: its lines are scanned all the same."""
+    out, path, num, in_header = [], "?", 0, False
+    diff = git("diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-U0", origin_ref, head)
+    for raw in diff.split("\n"):
+        if raw.startswith("diff --git "):
+            in_header, path = True, "?"
+        elif in_header:
+            if raw.startswith("+++ "):
+                path = raw[4:].strip('"')
+                path = path[2:] if path.startswith("b/") else path
+            elif raw.startswith("@@"):
+                in_header = False
+                m = HUNK.match(raw)
+                num = int(m.group(1)) if m else 0
         elif raw.startswith("@@"):
             m = HUNK.match(raw)
             num = int(m.group(1)) if m else 0
-        elif raw.startswith("+") and path is not None:
+        elif raw.startswith("+"):
             out.append((path, num, raw[1:]))
             num += 1
     return out
