@@ -24,6 +24,7 @@ ADAPTED_PATHS = [
     "hooks/graft-first-nag.py",
     "hooks/session-start.sh",
     "hooks/turn-retro-gate.sh",
+    "hooks/wiki-context.py",
     "settings.json",
     "skills/adversarial-review/SKILL.md",
     "skills/anti-hollow-green/SKILL.md",
@@ -375,16 +376,18 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     # 2958/14 -> 2957/15 on 2026-09-23 (D-054, 6914400): agents/code-implementer.md pins its model id,
     # so it differs from the kit index and moves from kit-verbatim to kit-adapted.
     # 2957/15 -> 2956/16 on 2026-09-24 (D-065): agents/evidence-gatherer.md pins its model id the same way.
-    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2956", "0"]
-    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["16", "0"]
+    # 2956/16 -> 2955/17 on 2026-09-24 (AF-AP-182, cf026a9): hooks/wiki-context.py skips harness events and injects
+    # one bounded live-state block, so it differs from the kit index.
+    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2955", "0"]
+    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["17", "0"]
     # K1-h (task #137): the 129 first-party row of 6ec33ed split into 56 byte-identical
     # copies of kit roots (20 council-of-high-intelligence + 19 honey-for-devs + 13
     # llm-wiki-compiler + 4 output-styles), 61 declared-set members (47 aegis + 12 prism
     # + 2 typesafe), and a 12-file remainder. The 129 pin is replaced by K1-h counts.
     assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["12", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
-    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2956
-    assert sum(klass == "kit-adapted" for klass in classes.values()) == 16
+    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2955
+    assert sum(klass == "kit-adapted" for klass in classes.values()) == 17
     assert sum(klass == "first-party" for klass in classes.values()) == 12
 
 
@@ -440,7 +443,7 @@ def k1h_class_counts(classes: dict[str, str]) -> dict[str, int]:
 def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     """The K1-h class table: 12 first-party (the named remainder), 61 set
     members (47 aegis + 12 prism + 2 typesafe), 56 copies (20 + 19 + 13 + 4),
-    and kit-verbatim 2956 / kit-adapted 16 (D-054, D-065). The 129-pin test
+    and kit-verbatim 2955 / kit-adapted 17 (D-054, D-065, AF-AP-182). The 129-pin test
     above carries the manifest row; this test carries the per-class split."""
     module = load_module()
     root = copy_fixture(tmp_path, module)
@@ -456,8 +459,8 @@ def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 19
     assert counts.get("copy:sandbox-kit/llm-wiki-compiler/", 0) == 13
     assert counts.get("copy:sandbox-kit/output-styles/", 0) == 4
-    assert counts.get("kit-verbatim", 0) == 2956
-    assert counts.get("kit-adapted", 0) == 16
+    assert counts.get("kit-verbatim", 0) == 2955
+    assert counts.get("kit-adapted", 0) == 17
     assert [
         path
         for path, klass in sorted(classes.items())
@@ -1230,8 +1233,8 @@ def run_killer(killer: str, module, work: Path, label: str) -> None:
         root = copy_fixture(work, module)
         data = module.build_manifest_data(root, module.repo_root_of(root))
         counts = {record.path: record.regular_file_count for record in data.records}
-        assert counts[".claude/ (kit-verbatim)"] == 2956, label
-        assert counts[".claude/ (kit-adapted)"] == 16, label
+        assert counts[".claude/ (kit-verbatim)"] == 2955, label
+        assert counts[".claude/ (kit-adapted)"] == 17, label
     elif killer == "test_kit_index_sha256_mismatch_is_named":
         root = copy_fixture(work, module)
         index = root / module.KIT_INDEX_PATH

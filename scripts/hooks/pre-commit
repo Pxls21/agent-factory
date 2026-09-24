@@ -61,6 +61,26 @@ if [ -z "${SKIP_MANIFEST_CHECK:-}" ] && [ -f "$REPO_ROOT/scripts/vendored_manife
 elif [ -n "${SKIP_MANIFEST_CHECK:-}" ]; then
   echo "pre-commit: SKIP_MANIFEST_CHECK set — the vendored-manifest gate bypassed." >&2
 fi
+# CLASS-PIN GATE (2026-09-24 12:5xZ, AF-AP-185): tests/test_vendored_manifest.py pins the .claude/ class counts and the
+# kit-adapted path list. An edit that moves a file between classes (a kit file edited in place becomes kit-adapted)
+# passes the manifest gate above after '--write', but the pinned tests go red in CI: 2026-09-23 (D-054), and again
+# 2026-09-24 when wiki-context.py moved (cf026a9, pushed red). When the staged class file's class counts differ from
+# HEAD's, the two pinned tests run here and block on red. Bypass (printed): SKIP_CLASS_PIN_CHECK=1 git commit ...
+_CLS="sandbox-kit/VENDORED-CLAUDE-CLASSES.tsv"
+if [ -z "${SKIP_CLASS_PIN_CHECK:-}" ] && git diff --cached --name-only | grep -qx "$_CLS"; then
+  _OLD=$(git show "HEAD:$_CLS" 2>/dev/null | cut -f2 | sort | uniq -c)
+  _NEW=$(git show ":$_CLS" 2>/dev/null | cut -f2 | sort | uniq -c)
+  if [ "$_OLD" != "$_NEW" ]; then
+    echo "pre-commit: the .claude/ class counts changed — running the pinned class tests" >&2
+    if ! (cd "$REPO_ROOT" && "$PY" -m pytest -q -p no:cacheprovider tests/test_vendored_manifest.py \
+          -k "test_real_claude_split_counts_and_class_file or test_k1h_claude_classification_and_remainder" >&2); then
+      echo "COMMIT BLOCKED: the class counts in $_CLS changed and tests/test_vendored_manifest.py still pins the old ones — update ADAPTED_PATHS and the counts, stage the test with this commit (AF-AP-185)." >&2
+      exit 1
+    fi
+  fi
+elif [ -n "${SKIP_CLASS_PIN_CHECK:-}" ]; then
+  echo "pre-commit: SKIP_CLASS_PIN_CHECK set — the class-pin gate bypassed." >&2
+fi
 # SKILL-SYNC GATE (2026-09-03): a lesson baked into .claude/skills/ left its .agents/skills/
 # twin stale until the final sweep caught it. If any .claude/skills/ path is staged, the two
 # trees must agree (harness-ports/bin/sync-skills.sh --check). Fix = run the sync, stage both.
