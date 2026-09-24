@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 05:3xZ — WHAT IS LIVE NOW (this block supersedes the 05:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **PUSHED:** origin head 780f25a (the J1-4/J1-5 test hardening is 0574ac1; a pre-verify mutation audit found 8 of 15 mutants surviving, now 17 of 17 killed). The J1-5 full suite at 942ad5e: `3937 passed, 81 skipped, 8 xfailed` on the PC.
+- **LIVE, SANDBOX (two agents, Opus 5.5):** VERIFY-J1-1-R3 (#216; `/tmp/vj113r3/`) and K215 (#215; `/tmp/k215/`). Read progress from their reports and scratch dirs (AF-AP-171).
+- **LIVE, PC:** VERIFY-J1-45 (#217), lane `pc-verify-j1-45.md--780f25a` on the local verify route, since 05:35Z; the sandbox poller logs to the scratchpad `pc-verify-j1-45.log`.
+- **NEXT:** harvest the three verifies; J1-4 (#121) and J1-5 (#122) close on VERIFY-J1-45's verdict; J1-1-R3 (#202) on VERIFY-J1-1-R3's.
+
+
 **2026-09-24 05:1xZ — WHAT IS LIVE NOW (this block supersedes the 04:5xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **PUSHED:** origin head 942ad5e (J0-b, J1-1-R3 as fdac751, J1-4, J1-5 and its hardening, AF-AP-179).
 - **LIVE, SANDBOX (two agents, Opus 5.5):** VERIFY-J1-1-R3 (#216; report `tasks/briefs/laya/VERIFY-J1-1-R3-report.md`, scratch `/tmp/vj113r3/`) and K215 (#215; report `tasks/briefs/kit-k1-support/K215-report.md`, scratch `/tmp/k215/`). Read progress from those report files and scratch dirs (AF-AP-171). `.lanes-live` lists the 17 paths they may leave dirty.
@@ -565,6 +572,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 05:3xZ — pushed 780f25a (the J1-4/J1-5 tests hardened); VERIFY-J1-45 dispatched on the PC local verify route.
 2026-09-24 05:1xZ — pushed 942ad5e; VERIFY-J1-1-R3 and K215 dispatched as sandbox agents; the J1-5 full suite running on the PC.
 2026-09-24 04:5xZ — J1-4 (the Laya pin) and J1-5 (the no-model closure) landed GATED-PENDING-VERIFY; every J1 increment is in.
 2026-09-24 04:4xZ — J0 done (PC ASYNC-ONLY, DETERMINISTIC); J1-1-R3 landed GATED-PENDING-VERIFY with D-067.
