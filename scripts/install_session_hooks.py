@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import shlex
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -32,17 +33,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def our_hooks(root: Path) -> dict:
     r = shlex.quote(str(root))
-    cd = f"cd {r} && "
     wrap = f"python3 {r}/scripts/hook_context.py"
+
+    def guarded(script: str, cmd: str, wrapped: bool = False) -> str:
+        # Fail open (VERIFY-COORD-0924 F-L1-2): exit 2 is the blocking code, and a failed `cd` under dash and python's
+        # can't-open error both exit 2, so a missing repo or script ends the hook with 0 before anything runs.
+        need = f"[ -f {r}/{script} ]" + (f" && [ -f {r}/scripts/hook_context.py ]" if wrapped else "")
+        return f"{need} || exit 0; cd {r} || exit 0; {cmd}"
+
     return {
-        "SessionStart": [{"hooks": [{"type": "command",
-                                     "command": f"{cd}CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh"}]}],
-        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": f"{cd}python3 {r}/.claude/hooks/wiki-context.py"}]}],
-        "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command",
-                         "command": f"{cd}{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py"}]}],
-        "PreToolUse": [{"matcher": "Grep", "hooks": [{"type": "command",
-                        "command": f"{cd}{wrap} PreToolUse -- python3 {r}/.claude/hooks/graft-first-nag.py"}]}],
-        "Stop": [{"hooks": [{"type": "command", "command": f"{cd}bash {r}/.claude/hooks/turn-retro-gate.sh"}]}],
+        "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]}],
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/wiki-context.py", f"python3 {r}/.claude/hooks/wiki-context.py")}]}],
+        "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/edit-snapshot.py", f"{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py", True)}]}],
+        "PreToolUse": [{"matcher": "Grep", "hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/graft-first-nag.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/graft-first-nag.py",
+            True)}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]}],
     }
 
 
@@ -52,7 +62,7 @@ def _ours(entry: object, marker: str) -> bool:
 
 
 def merged(current: dict, root: Path, remove: bool) -> dict:
-    marker = f"{root}/.claude/hooks/"
+    marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
     out = dict(current)
     hooks = dict(out.get("hooks") or {})
     for event in sorted(set(hooks) | set(our_hooks(root))):
@@ -101,7 +111,15 @@ def main(argv: list[str]) -> int:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(want, fh, indent=2)
         fh.write("\n")
-    os.chmod(tmp, 0o644)
+    if target.exists():  # keep the file's mode and owner (VERIFY-COORD-0924 F-L1-5: 0600 uid 1000 became 0644 root)
+        st = target.stat()
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+    else:
+        os.chmod(tmp, 0o644)
     os.replace(tmp, target)
     verb = "removed ours from" if args.remove else "installed 5 in"
     print(f"session hooks: {verb} {target} (live from the next tool call)")

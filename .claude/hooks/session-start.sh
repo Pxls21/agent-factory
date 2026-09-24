@@ -16,31 +16,38 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
-# Timing + progress so both you and the agent know how long it took and that it
-# finished. This hook is SYNCHRONOUS by design — the session waits for it — which
-# is the right trade-off: it guarantees the toolchain is ready before any
-# test/lint/MCP call, and the cost is bounded (cold a few minutes, cached <30s).
+# The harness swaps any hook text over 10,000 characters for a 2 KB preview of its head (VERIFY-COORD-0924 F-L1-3,
+# read from the running binary). Setup printed about 18 KB first, so the live-state below never reached the model at a
+# compaction (18,836 characters at 2026-09-24 11:24Z). So: setup's output goes to a log and only its problem lines are
+# shown; the live-state is its newest block; orientation is cut; the whole text stays under 9,000 characters.
+# SYNCHRONOUS by design: the session waits (cold a few minutes, cached <30s), so the toolchain is ready first.
+SETUP_LOG="${AF_SETUP_LOG:-/tmp/agent-factory-setup.log}"
+# Cut to N characters, never inside a UTF-8 sequence (head -c counts bytes and can split one).
+cut_chars() { python3 -c 'import sys; sys.stdout.write(sys.stdin.buffer.read().decode("utf-8", "replace")[:int(sys.argv[1])])' "$1"; }
+OUT="$(mktemp)"
 START=$(date +%s)
-echo "▶ agent-factory setup: rebuilding toolchain (Ouroboros, GitNexus, graft, council/wiki, codebase-memory, aleph)."
-echo "  SYNCHRONOUS — the session waits. Expect a few minutes on a cold container, <30s when cached."
-bash scripts/setup.sh || true   # tolerant: a flaky optional install must never block the session
-echo "✓ agent-factory setup done in $(( $(date +%s) - START ))s — session ready."
+bash scripts/setup.sh > "$SETUP_LOG" 2>&1   # tolerant: a flaky optional install must never block the session
+SETUP_RC=$?
+{
+  echo "▶ agent-factory setup: done in $(( $(date +%s) - START ))s, rc ${SETUP_RC}; full log ${SETUP_LOG}"
+  # setup.sh marks a problem with warn() ("  ! <text>"); strip the colour codes first.
+  sed 's/\x1b\[[0-9;]*m//g' "$SETUP_LOG" | grep -E '^  ! |Traceback|[Ee]rror:' | head -5 | cut -c1-200
 
-# WIKI-CONTINUITY: inject the turn-maintained live-state page at every session
-# start/compaction resume, so the wiki — not transcript archaeology — is the
-# first-read continuity source. Map, not gospel: verify state before resuming
-# any in-flight work.
-if [ -f "wiki/topics/live-state.md" ]; then
-  echo "── wiki live-state (turn-maintained continuity snapshot; verify before resuming) ──"
-  head -60 wiki/topics/live-state.md
-  echo "── end live-state ──"
-fi
+  # WIKI-CONTINUITY: the live-state page's newest block at every start or compaction (the page holds the rest).
+  if [ -f "wiki/topics/live-state.md" ]; then
+    echo "── wiki live-state: the newest block (a map; verify before resuming in-flight work) ──"
+    python3 .claude/hooks/wiki-context.py --live-block
+    echo "── end live-state ──"
+  fi
 
-# Three-layer startup orientation (chat history → last commits → graft), if the
-# project has authored scripts/orient.sh.
-if [ -x "scripts/orient.sh" ]; then
-  bash scripts/orient.sh 2>/dev/null | head -80
-fi
+  # Three-layer startup orientation (chat history, last commits, graft), cut to its first 3,000 characters.
+  if [ -x "scripts/orient.sh" ]; then
+    bash scripts/orient.sh 2>/dev/null | head -80 | cut_chars 3000
+    echo
+  fi
+} > "$OUT" 2>/dev/null
+cut_chars 9000 < "$OUT"
+rm -f "$OUT"
 
 # Persist PYTHONPATH so pytest / tools resolve the project root without a manual prefix.
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then

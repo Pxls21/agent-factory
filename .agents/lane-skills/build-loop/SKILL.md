@@ -56,7 +56,11 @@ RECOMMENDATION, never the final gate verdict.
    universe was rejected at launch by the hash-pinned compliance allowlist —
    `validate_universe_proposal` was importable and would have refused in seconds; the miss
    burned an owner kill+relaunch cycle. Corollary: a consumption proof needs a value that
-   DIFFERS from the default — env==default "verified" nothing). **A bulk mechanical edit (re.sub
+   DIFFERS from the default — env==default "verified" nothing). **A HOOK's seam is what the harness HANDS it and what
+   the model RECEIVES — read both from the harness's own records (the transcript's queue, hook and attachment
+   records), never from the rendered chat** (2026-09-24: AF-AP-182's fix keyed the skip on the rendered hand-back line
+   while the hook received `<agent-message`; AF-AP-183: both compactions that day delivered a 2 KB preview of setup
+   noise instead of the live-state, because the harness swaps hook text over 10,000 characters). **A bulk mechanical edit (re.sub
    sweep, scripted insert) gets verified at the SEMANTIC level, not the import level: "module
    imports clean" is a vacuous gate for binding bugs — prove the touched NAME resolves
    (`getattr(mod, name)`) and the insertion landed as code, not inside a string/docstring**

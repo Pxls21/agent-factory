@@ -32,8 +32,15 @@ STOPWORDS = {
 # 2026-09-24 once the hooks fired in the /home/user session (task #214): 6.5 KB per plain prompt and 11.5 KB per
 # notification, repeated on every background event.
 HARNESS_EVENT_PREFIXES = ("[SYSTEM NOTIFICATION", "Another Claude session sent a message", "Stop hook feedback",
-                          "<task-notification>")
+                          "<task-notification>", "<agent-message")
 LIVE_BLOCK_MAX_LINES = 30
+# The harness swaps any hook text over 10,000 characters for a 2 KB preview of its head (VERIFY-COORD-0924 F-L1-3, read
+# from the running binary), and the incident log's entries are single lines of 2-3 KB, so every part is bounded in
+# characters, not only in lines.
+LIVE_BLOCK_MAX_CHARS = 4500
+LINE_MAX_CHARS = 300
+MATCH_MAX_CHARS = 1000
+OUTPUT_MAX_CHARS = 8000
 
 
 def tokens(text: str) -> set[str]:
@@ -53,7 +60,26 @@ def live_block(lines: list[str]) -> list[str]:
     return lines[heads[0]:end][:LIVE_BLOCK_MAX_LINES]
 
 
+def bounded(lines: list[str], limit: int, line_max: int) -> list[str]:
+    """Whole lines up to `limit` characters in total; a line over `line_max` is cut and marked."""
+    out: list[str] = []
+    used = 0
+    for line in lines:
+        if len(line) > line_max:
+            line = line[:line_max] + " [...]"
+        if used + len(line) + 1 > limit:
+            break
+        out.append(line)
+        used += len(line) + 1
+    return out
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--live-block"]:  # session-start.sh prints the same bounded block
+        if LIVE_STATE.is_file():
+            body = LIVE_STATE.read_text(errors="replace").strip().splitlines()
+            print("\n".join(bounded(live_block(body), LIVE_BLOCK_MAX_CHARS, LIVE_BLOCK_MAX_CHARS)))
+        return 0
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -67,7 +93,7 @@ def main() -> int:
     if LIVE_STATE.is_file():
         body = LIVE_STATE.read_text(errors="replace").strip().splitlines()
         out.append("[wiki live-state — the newest block; the page holds the rest]")
-        out.extend(live_block(body))
+        out.extend(bounded(live_block(body), LIVE_BLOCK_MAX_CHARS, LIVE_BLOCK_MAX_CHARS))
 
     if qtok:
         # Incident integration (owner directive 2026-08-25): the anti-pattern
@@ -105,10 +131,10 @@ def main() -> int:
             except ValueError:
                 label = f"incident match: {page.relative_to(WIKI.parent)}"
             out.append(f"[{label}]")
-            out.extend(lines[best_i : best_i + EXCERPT_LINES])
+            out.extend(bounded(lines[best_i : best_i + EXCERPT_LINES], MATCH_MAX_CHARS, LINE_MAX_CHARS))
 
     if out:
-        print("\n".join(out))
+        print("\n".join(bounded(out, OUTPUT_MAX_CHARS, LIVE_BLOCK_MAX_CHARS)))
         print("[wiki-context: excerpts are a MAP, not gospel — verify load-bearing claims against tree/ledger]")
     return 0
 

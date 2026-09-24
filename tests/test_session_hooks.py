@@ -135,3 +135,103 @@ def test_installed_commands_run_through_a_shell(tmp_path):
     r = subprocess.run(["sh", "-c", prompt], input=json.dumps({"prompt": "what is live now"}),
                        capture_output=True, text=True, timeout=60, cwd="/")
     assert r.returncode == 0
+
+
+# ---- VERIFY-COORD-0924 follow-ups (issue #67): fail open, the cd, the override, the event names, quoting, the mode ----
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import install_session_hooks as ish  # noqa: E402
+
+
+def _commands(root):
+    return {ev: arr[0]["hooks"][0]["command"] for ev, arr in ish.our_hooks(Path(root)).items()}
+
+
+def _fake_repo(tmp_path, hook_scripts=True, wrapper=True, stop_rc=0):
+    repo = tmp_path / "repo"
+    (repo / ".claude" / "hooks").mkdir(parents=True)
+    (repo / "scripts").mkdir()
+    if hook_scripts:
+        (repo / ".claude" / "hooks" / "session-start.sh").write_text('echo "dir=$CLAUDE_PROJECT_DIR pwd=$(pwd)"\n')
+        (repo / ".claude" / "hooks" / "turn-retro-gate.sh").write_text(f"echo retro >&2; exit {stop_rc}\n")
+        for name in ("wiki-context.py", "edit-snapshot.py", "graft-first-nag.py"):
+            (repo / ".claude" / "hooks" / name).write_text("import os; print('ran from', os.getcwd())\n")
+    if wrapper:
+        (repo / "scripts" / "hook_context.py").write_bytes(WRAP.read_bytes())
+    return repo
+
+
+def _sh(cmd, stdin="{}", cwd="/", env=None):
+    return subprocess.run(["sh", "-c", cmd], input=stdin, capture_output=True, text=True, timeout=60, cwd=cwd, env=env)
+
+
+def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
+    for ev, cmd in _commands(tmp_path / "no-such-repo").items():
+        r = _sh(cmd)
+        assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
+
+
+def test_wrapped_commands_fail_open_when_the_wrapper_is_absent(tmp_path):
+    repo = _fake_repo(tmp_path, wrapper=False)
+    cmds = _commands(repo)
+    for ev in ("PostToolUse", "PreToolUse"):
+        r = _sh(cmds[ev])
+        assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
+
+
+def test_a_missing_hook_script_fails_open(tmp_path):
+    repo = _fake_repo(tmp_path, hook_scripts=False)
+    for ev, cmd in _commands(repo).items():
+        r = _sh(cmd)
+        assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
+
+
+def test_a_present_hook_keeps_its_blocking_exit(tmp_path):
+    repo = _fake_repo(tmp_path, stop_rc=2)
+    r = _sh(_commands(repo)["Stop"])
+    assert r.returncode == 2 and "retro" in r.stderr
+
+
+def test_commands_run_from_the_repo_and_session_start_gets_the_project_dir(tmp_path):
+    repo = _fake_repo(tmp_path)
+    cmds = _commands(repo)
+    env = {"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": "/elsewhere"}
+    r = _sh(cmds["SessionStart"], env=env)
+    assert r.returncode == 0 and r.stdout.strip() == f"dir={repo} pwd={repo}", r.stdout
+    r = _sh(cmds["UserPromptSubmit"])
+    assert r.stdout.strip() == f"ran from {repo}"
+
+
+def test_wrapped_commands_name_their_own_event(tmp_path):
+    hooks = ish.our_hooks(tmp_path)
+    for ev, arr in hooks.items():
+        cmd = arr[0]["hooks"][0]["command"]
+        if "hook_context.py" in cmd:
+            assert cmd.rsplit("hook_context.py ", 1)[1].split(" ", 1)[0] == ev, (ev, cmd)  # the call, not the guard
+    repo = _fake_repo(tmp_path)
+    r = _sh(_commands(repo)["PreToolUse"])
+    assert json.loads(r.stdout)["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+
+
+def test_a_real_read_from_another_cwd_reaches_the_model_form():
+    cmd = _commands(ROOT)["PostToolUse"]
+    payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(INSTALL)}})
+    r = _sh(cmd, stdin=payload, cwd="/")
+    assert r.returncode == 0 and "READ CONTEXT" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path):
+    root = Path("/tmp/a b'c/agent-factory")
+    foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
+    once = ish.merged(foreign, root, remove=False)
+    assert ish.merged(once, root, remove=False) == once
+    assert sum(len(v) for v in once["hooks"].values()) == 6
+    assert ish.merged(once, root, remove=True) == foreign
+
+
+def test_the_install_keeps_the_file_mode(tmp_path):
+    target = tmp_path / "settings.json"
+    target.write_text("{}\n")
+    target.chmod(0o600)
+    assert install(target).returncode == 0
+    assert (target.stat().st_mode & 0o777) == 0o600
