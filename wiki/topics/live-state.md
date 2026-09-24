@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 14:3xZ — WHAT IS LIVE NOW (this block supersedes the 13:4xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULINGS:** D-074 (Jev stays model-based; a plain order is only the baseline to beat) and D-075 (fine-tune Laya and keep it; a codiv.ai OpenJev key for testing and teacher data, stored at `/root/.codiv/api.env`, never echoed). **HELD FOR THE OWNER:** an explicit OK to send repo text to codiv.ai (the safety check refused it); tasks #233, #234.
+- **J2b FILED:** Laya lost in every framing; Haiku also lost to word overlap on registry matching and only tied the majority on finding class; two input limits (120-character v1 titles; 15 tokens per option in Laya's head). Laya training speed measured on the PC CPU (full step 24 s at 256 tokens, 67 s at 512; head-only 5 s and 23 s; batch 8).
+- **LANDED (GATED-PENDING-VERIFY):** K170 (#170; VERIFY-K170 queued for the PC after MoJev G0) and the MoJev G0 probe (#230). JT1 is NOT-READY (VERIFY-JT1: one blocker, two contract defects; task #235). JT3 is built, not committed; its hook is OFF (`.jev/intercept-off`) after going live early (task #236).
+- **LIVE, PC:** MoJev Gate 0 smoke (2 tasks, started 14:34:37Z, `~/mojev-g0-run/smoke.log`), then the full run (30 tasks). `~/venv-mojev` is built; the snapshot is the FULL-sha directory.
+- **LIVE, SANDBOX (Opus 5.5):** JT2 (#227/#229) and VERIFY-J1-1-R4. One local Laya server (127.0.0.1:47411); 47412 stopped.
+- **PUSHED:** ac943c0 (2f73abb..ac943c0).
+- **OWNER DECISIONS OPEN:** the codiv data OK; whether to pause vLLM for a GPU training window; the Stage 0 PR to main (only on the owner's word).
+
 **2026-09-24 13:4xZ — WHAT IS LIVE NOW (this block supersedes the 13:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **J2 FILED:** Laya has no usable signal on either labeled type (`docs/research/findings/J2-SIGNAL-PROBE-2026-09-24.md`): registry matching top-1 0.05 vs lexical 0.59; finding class accuracy 0.21 vs majority 0.43. Both rejected by KC-J3. Tools keep non-model default orders; the AP-hawk is lexical if built; MoJev is the next candidate.
 - **LANDED (GATED-PENDING-VERIFY):** JT1 (#224; VERIFY-JT1 running) and J1-1-R4 (#198, the redaction redesign, D-073; VERIFY-J1-1-R4 running).
@@ -674,6 +683,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-24 14:3xZ — J2b filed; D-074 and D-075 (fine-tune Laya; codiv OpenJev held for the data OK); K170 and the MoJev probe landed; VERIFY-JT1 NOT-READY; JT3 hook off; pushed ac943c0; MoJev G0 smoke running.
 
 2026-09-24 13:4xZ — J2 filed (Laya rejected on both types); J1-1-R4 landed; two verifies running; the push waits on AF-AP-188.
 2026-09-24 13:3xZ — JT1 landed; J2 ap.violates_row: Jev no signal (5% vs lexical 59%); VERIFY-JT1 dispatched.
