@@ -297,10 +297,10 @@ build continues; the first pending increment is named in the ledger.
   (`session-start.sh`) and relevance-matched wiki excerpts on every prompt (`wiki-context.py`,
   UserPromptSubmit). Resume order: wiki live-state FIRST for orientation, then the three-clock
   reconcile for VERIFICATION — the wiki is a map, never a substitute for primary-source checks.
-  **Status: `wiki-init` ran 2026-09-03 (`wiki/INDEX.md` exists) and the hooks are registered, **but they load only when the session is rooted in `agent-factory`: in a
-  `/home/user`-rooted session (transcripts under `~/.claude/projects/-home-user/`) none of the five fires — the retro checklist ran
-  0 times in 834 Stop runs (AF-AP-172, 2026-09-24); until the owner picks which to restore, run `scripts/resume-heal.sh` and the
-  retro checklist by hand**; `live-state.md` was re-synced
+  **Status: `wiki-init` ran 2026-09-03 (`wiki/INDEX.md` exists) and the hooks are registered, **and since 2026-09-24 (owner: all five, task #214) they fire in a `/home/user`-rooted session too:
+  `scripts/install_session_hooks.py` writes them with absolute paths into `/home/user/.claude/settings.json` (setup.sh and
+  resume-heal.sh run it; a settings file written mid-session is live from the NEXT tool call, measured — running it IS the manual
+  start). Before that none of the five fired there (the retro checklist ran 0 times in 834 Stop runs, AF-AP-172)**; `live-state.md` was re-synced
   2026-09-22 after a week's gap (2026-09-16..21 are in the ledger only) — keep the per-turn delta honest, never narrative.**
 
 ## Environment & Tools (summary)
@@ -701,8 +701,9 @@ grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexe
   (`graft_find_code`/`graft_trace_calls`/…) register at user scope for the NEXT session; same-
   session use is the CLI. Provenance: `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §Graft.
 - **EDIT-SNAPSHOT hook (owner directive 2026-08-25):** every Edit/Write on a production `.py`
-  auto-returns a snapshot (**NOT to the model: it prints plain text and exits 0, which the harness shows only in the transcript
-  view, and it is not loaded at all in a `/home/user`-rooted session — AF-AP-172**) — enclosing symbol's GitNexus blast radius + an anti-pattern-registry
+  auto-returns a snapshot (**to the model through `scripts/hook_context.py`, which turns the hook's plain text into additionalContext — plain
+  PostToolUse/PreToolUse stdout reaches only the transcript view, measured live 2026-09-24; the graft nag runs through it too, and
+  the hook scripts stay plain text for the Codex/Hermes adapters — AF-AP-172**) — enclosing symbol's GitNexus blast radius + an anti-pattern-registry
   screen of the hunk (`.claude/hooks/edit-snapshot.py`, PostToolUse; venv
   `/root/venv-agent-factory`, package prefix `agent_factory`, `sandbox-kit/` excluded). READ it,
   act on flags; it says "index rebuilding" during the post-commit reanalyze window — re-check

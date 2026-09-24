@@ -350,6 +350,14 @@ if [ -d "$REPO_ROOT/scripts/hooks" ]; then
     || warn "git hooks activation failed"
 fi
 
+# --- Claude Code session hooks (task #214, AF-AP-172) -------------------------
+# A session rooted above the repo (/home/user in CCR) never loads .claude/settings.json, so none of the five
+# project hooks fired there. Register them at the session root too. Idempotent; a settings file written
+# mid-session is live from the next tool call.
+python3 "$REPO_ROOT/scripts/install_session_hooks.py" \
+  && ok "session hooks registered at the session root" \
+  || warn "session hooks registration failed"
+
 # --- Output styles (vendored: sandbox-kit/output-styles) -----------------------
 # Chat-format styles for Claude Code (attention-kind / spartan / rundown).
 # Install = copy; activation stays a per-session/user choice (/output-style).

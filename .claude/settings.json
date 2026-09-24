@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/edit-snapshot.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PostToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/edit-snapshot.py"
           }
         ]
       }
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/graft-first-nag.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/graft-first-nag.py"
           }
         ]
       }

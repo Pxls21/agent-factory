@@ -11,6 +11,7 @@ git fetch origin "$BR" -q && git merge --ff-only "origin/$BR" 2>/dev/null \
   && echo "tree: $(git log -1 --format=%h) (ff-synced)" \
   || echo "tree: $(git log -1 --format=%h) (NO ff — diverged or already current; compare clocks manually)"
 git config core.hooksPath scripts/hooks && echo "hooks: active"
+python3 scripts/install_session_hooks.py || echo "session hooks: install FAILED (task #214)"
 VP=/root/venv-agent-factory/bin/python
 [ -x "$VP" ] && "$VP" -c "import pyflakes" 2>/dev/null && echo "venv: ok" || echo "venv: MISSING — run scripts/setup.sh"
 [ -x /root/venv-agent-factory/bin/aleph ] && echo "aleph: ok" || echo "aleph: MISSING — run scripts/setup.sh"

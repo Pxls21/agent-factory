@@ -17,7 +17,7 @@ last_compiled: 2026-09-03
 **2026-09-24 10:5xZ — WHAT IS LIVE NOW (this block supersedes the 08:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** all twelve Stage 0 proofs ACCEPTED. The owner signed the last eight in one command (tagger 10:26:45Z to 10:26:50Z, on fa20942); the tag objects are committed as `docs/governance/tags/accepted-<id>.tag`, each GOODSIG against the owner's key; `check-proof-status.py` rc 0; `tests/test_proof_status.py` 33 passed.
 - **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b`, local build route, dispatched 08:04Z; sandbox poller pid 29016.
-- **LIVE, SANDBOX:** none yet this block.
+- **LIVE, SANDBOX:** none yet this block. **HOOKS LIVE since 11:0xZ:** all five, from `/home/user/.claude/settings.json` (written by `scripts/install_session_hooks.py`; the turn-end retro gate blocks once per landed batch again).
 - **NEXT (owner rulings D-069):** #214 restore all five hooks rooted at `/home/user` plus a manual start; #198 the J1-1 redaction REDESIGN (deterministic, default-deny; Jev as an offline leak hunter); #210 MoJev option B on the PC's CPU after the hook fix; #221 the Jev leverage re-audit (skills, hooks, workflows; a programmable Jev tool; a quirk tracker); #222 a static read of Contrastive-LM/CLM and Asymptote-Labs/agent-beacon; harvest K170 and send it to an independent verify.
 - **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
 
@@ -621,6 +621,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 11:0xZ — CI run #1026's test race fixed (AF-AP-181, pushed de06db6); the five project hooks live in the /home/user-rooted session (task #214): install_session_hooks.py + hook_context.py.
 2026-09-24 10:5xZ — all twelve Stage 0 proofs ACCEPTED (the owner's eight signed tags anchored); the owner's rulings D-069 on #198, #210, #214, and the new asks #221 and #222.
 2026-09-24 08:0xZ — K170 dispatched (PC local build lane, PIN 9e6821b); pushed 99f3864 (VERIFY-K215 harvest) and 00ac4ec (the K170 brief).
 2026-09-24 07:5xZ — VERIFY-K215 home: K215 and the anti-hollow-green bake verified with follow-ups (issue #65); the typed-escape quirk widened to the Bash tool.
