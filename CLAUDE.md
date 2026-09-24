@@ -316,7 +316,7 @@ RUNNING on the PC (`:20128`)** — never a sandbox model server, and vLLM is NOT
 this project (owner ruling 2026-09-03: "just use omniroute"); S0-03's identity assertion is the
 routed model id OmniRoute reports. Never stop or restart the owner's running servers (Buzz relay,
 OmniRoute, Ollama, Phoenix, OpenObserve, neo4j; the `qwen-builder` model unit — a restart kills every lane mid-turn) without their say-so; `sudo` on the PC needs the
-owner's password — surface it, never work around it.
+owner's password — surface it, never work around it; an owner-run package command is written with `-y` (`sudo dnf install -y …`): the owner's terminal does not take a typed answer at dnf's `[y/N]` prompt (2026-09-24, PC-BRIDGE.md).
 
 Ephemeral container. `scripts/setup.sh` is the toolchain source of truth (the SessionStart hook
 re-runs it every session; idempotent, tolerant). Commit and push anything worth keeping. The ops
