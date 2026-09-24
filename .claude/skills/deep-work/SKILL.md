@@ -50,6 +50,7 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   (`module:fn`) — it does Y" — before designing anything that could duplicate it.
 
 **Phase 2 — measure before designing.**
+- **An anecdote is not a signal: a model-ranked order becomes a DEFAULT only after it beats plain baselines on a committed sample** (2026-09-24, J2): one live test had Jev rank the right quirk note first out of eight, and two build briefs made Jev ranking their default; the 100-heading probe then measured Jev's reranking at 5% top-1 against 59% for plain word overlap, below random. Brief a ranker as opt-in until its probe (majority, lexical and random beside it) is filed.
 - **A process ordered killed is a measurement asset — profile it BEFORE killing it.** A live
   process exhibiting the defect at production shape is the one profiling substrate no fixture
   reproduces; py-spy it first, kill second (2026-08-26 K4 speed wave: the 90s pre-kill profile

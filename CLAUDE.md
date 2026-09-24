@@ -330,7 +330,7 @@ the PC's 12 cores with 8 xdist workers, on the pushed head + the working tree as
 gate venue when the bridge is up; `spikes/` stays sandbox-only)** · `scripts/why.sh <file> [fn]`
 (on-demand chronology from primary sources) · `scripts/replay_transcript_edits.py` (recover a
 dead delegate's edits from its transcript) · `scripts/lint_delta.py` (the pre-commit pyflakes
-DELTA gate: new hits only) · `scripts/verify-planning-repo.sh` (the planning docs' own check) · **`scripts/anchor_edit.py` (ledger-plane
+DELTA gate: new hits only; `--base HEAD` reads tracked files only, so a lane's NEW files are linted by `pyflakes` directly until staged, JT1 DISC-1 2026-09-24) · `scripts/verify-planning-repo.sh` (the planning docs' own check) · **`scripts/anchor_edit.py` (ledger-plane
 edits: every anchor validated unique BEFORE any write, all-or-nothing, rc 2 with the file untouched on a miss; `--replace OLD NEW` /
 `--insert-after|--insert-before PREFIX TEXT`, `@file` values; it never commits — a mutation and a commit never share a call, bit twice 2026-09-08; a VALUE that begins with `@` is ALWAYS read as a file path — there is no escape — so a placeholder never starts with `@`, bit 2026-09-22 on an `@@FULL@@` placeholder; an `@file` OLD value carries the file's trailing newline, so an OLD anchor ends at a line boundary or is written without one — a mid-line OLD is refused with nothing written, bit 2026-09-22; an `@file` TEXT for `--insert-after|--insert-before` is split on newlines, so a file that ends in a newline inserts one EXTRA blank line: write it with `printf '%s'`, bit twice 2026-09-24, a wiki block and the D-070 row)**.
 
