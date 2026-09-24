@@ -203,6 +203,22 @@ def test_collect_masks_scrubs_and_excludes_on_a_fixture_repo(tmp_path):
             assert value not in text
 
 
+def test_collect_keeps_the_first_block_of_a_repeated_finding_id(tmp_path):
+    """AF-AP-199 (stage0-ci run 36046249811, task #244): a reverify section that restated finding N-10 made collect
+    count two findings under one path#id. The first block is the finding; a restatement is counted, never trained."""
+    repo, pins = _fixture_repo(tmp_path)
+    _, before = BD.collect(BD.git_runner(repo), "HEAD", pins=pins)
+    report = repo / "tasks" / "briefs" / "t" / "VERIFY-T-report.md"
+    report.write_text(REPORT + "\n## Reverify\n\n- **F-1 FOLLOW-UP — restated after the repair: the mode check now "
+                      "holds** Re-run on the new blob.\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "a reverify restates F-1")
+    items, info = BD.collect(BD.git_runner(repo), "HEAD", pins=pins)
+    assert before["sources"]["repeated_finding_ids"] == 0 and info["sources"]["repeated_finding_ids"] == 1
+    assert info["sources"]["verify_findings"] == before["sources"]["verify_findings"] == 3
+    f1 = [it[2] for it in items if it[0] == "v1" and it[3][0]["finding_id"] == "F-1"]
+    assert len(f1) == 2 and all("never checks its mode" in s and "restated" not in s for s in f1)
+
+
 def test_collect_resolves_the_commit_once_even_when_the_ref_moves(tmp_path):
     """D-4 / AF-AP-175: one rev-parse; every later read names that sha; a commit landing mid-run changes nothing."""
     repo, pins = _fixture_repo(tmp_path)
