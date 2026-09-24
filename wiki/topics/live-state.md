@@ -11,6 +11,16 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 15:1xZ — WHAT IS LIVE NOW (this block supersedes the 14:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **KEY RESULT (J2c, J2 findings section 6):** with the WHOLE finding, Haiku beats the majority (accuracy 0.60 vs 0.43; blockers 4/7, from 0/7 on titles); Laya stays below it (0.17; 2/7). The 120-character title capped every model; Laya needs training (D-075, task #233; train on whole findings, fix AF-AP-189 first, task #238).
+- **VERIFIED:** J1-1 (the redaction redesign, task #198 closed): VERIFY-J1-1-R4 MERGE-READY-WITH-FOLLOWUPS; issue #70.
+- **DECIDED:** D-076 (JT1 amendment: scrub-normalize-scrub-cut; a rank window budget; KC-J1b as bytes); D-077 (the bug locator defaults to `lexical`, Jev opt-in).
+- **LIVE, SANDBOX (Opus 5.5):** VERIFY-JT3 (the hook stays OFF until its verdict); JT2 resumed to flip its default constant (then commit and VERIFY-JT2). JT1-R1 (brief committed) dispatches after JT2 finishes (it edits `scripts/jev.py`, which JT2 imports).
+- **LIVE, PC:** MoJev Gate 0 full run, 6 of 30 tasks at 15:10Z (2,048 tokens: fp32 about 17-18 s per decision, bf16 84-90 s; the option count barely matters). VERIFY-K170 waits for it.
+- **ISSUES FILED:** #68 (VERIFY-JT1 follow-ups), #69 (AF-AP-189), #70 (VERIFY-J1-1-R4 follow-ups).
+- **PUSHED:** 40dcc21; later commits push after the next CI verdict.
+- **OWNER DECISIONS OPEN:** the codiv data OK (repo text to codiv.ai); a GPU window for training (pausing vLLM); the Stage 0 PR to main (only on the owner's word).
+
 **2026-09-24 14:3xZ — WHAT IS LIVE NOW (this block supersedes the 13:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS:** D-074 (Jev stays model-based; a plain order is only the baseline to beat) and D-075 (fine-tune Laya and keep it; a codiv.ai OpenJev key for testing and teacher data, stored at `/root/.codiv/api.env`, never echoed). **HELD FOR THE OWNER:** an explicit OK to send repo text to codiv.ai (the safety check refused it); tasks #233, #234.
 - **J2b FILED:** Laya lost in every framing; Haiku also lost to word overlap on registry matching and only tied the majority on finding class; two input limits (120-character v1 titles; 15 tokens per option in Laya's head). Laya training speed measured on the PC CPU (full step 24 s at 256 tokens, 67 s at 512; head-only 5 s and 23 s; batch 8).
@@ -684,6 +694,8 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-24 15:1xZ — J2c: whole findings lift Haiku above the baseline, not Laya (train Laya); J1-1 verified; D-076, D-077; issues #68-#70; MoJev G0 6/30.
 
 2026-09-24 14:3xZ — J2b filed; D-074 and D-075 (fine-tune Laya; codiv OpenJev held for the data OK); K170 and the MoJev probe landed; VERIFY-JT1 NOT-READY; JT3 hook off; pushed ac943c0; MoJev G0 smoke running.
 
