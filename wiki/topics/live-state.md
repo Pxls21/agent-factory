@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 01:0xZ — WHAT IS LIVE NOW (this block supersedes the 00:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFIED 01:0xZ:** S0-05 (VERIFY-S0-05 MERGE-READY-WITH-FOLLOWUPS, issue #59; served Opus 5.5, then Opus 4.8 after one refusal) and K1-h (VERIFY-K1-h MERGE-READY-WITH-FOLLOWUPS, issue #60; local Qwen only).
+- **OWNER STEP:** the signed `accepted/S0-05` tag (one line handed over; the tag object comes over the bridge).
+- **LIVE, sandbox:** VERIFY-J1-3-R2 (#208).
+- **LIVE, PC:** J1-1-R3 (#202, local build route). The local verify slot is free.
+- **UNBLOCKED:** task #150 (the deferred kit edits, waiting on K1-h until now).
+
 **2026-09-24 00:1xZ — WHAT IS LIVE NOW (this block supersedes the 00:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS:** D-061 local Hermes only (the cloud subscription is out); D-062 sandbox Opus 5.5 agents allowed in moderation (two to three at once).
 - **LIVE, sandbox (D-062):** VERIFY-S0-05 (#207, uid 0; gates the owner's `accepted/S0-05` tag) and VERIFY-J1-3-R2 (#208; completes the partial PC verify of J1-3).
@@ -484,6 +491,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 01:0xZ — S0-05 and K1-h verified (issues #59, #60); the owner's accepted/S0-05 tag handed over.
 2026-09-24 00:4xZ — the owner cleared AF-AP-169's root-owned debris; the PC clone fast-forwarded to 28a915e.
 2026-09-24 00:1xZ — J1-1-R3 relaunched on the local route; VERIFY-S0-05 and VERIFY-J1-3-R2 dispatched as sandbox agents (D-062); VERIFY-J1-3 graded partial; D-061/D-062 recorded; AF-AP-169.
 2026-09-24 00:0xZ — S0-05 MINTED from the owner's live run (9 of 9 execution proofs; GATED-PENDING-VERIFY); S0-02 ACCEPTED (the signed tag anchored).
