@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 23:1xZ — WHAT IS LIVE NOW (supersedes the 22:2xZ block for the live set).**
+- **LIVE:** the JT3 search hook; at commit, the staged-shell screen and the commit-message stamp gate; at push, the stale-id check (its second repair in VERIFY-T243-245-R2).
+- **DONE:** VERIFY-GW1-R2 MERGE-READY-WITH-FOLLOWUPS; the first live GPU window ran 23:09:02Z-23:10:57Z (qwen down 1 min 53 s) and restored qwen; all three jobs failed in 32 s.
+- **BLOCKED ON THE OWNER:** the PC has no `python3.11-devel` (Triton's first-use CUDA shim needs `Python.h`). Either `sudo dnf install python3.11-devel`, or the say-so for C_INCLUDE_PATH to the uv CPython 3.11.13 headers (the shim compiles with them). Then window1 reruns unchanged.
+- **PC:** no lane live; qwen active; the Laya baseline recorded (PASS).
+- **VERIFYING:** VERIFY-T243-245-R2 (the stale-id check's second repair).
+
 **2026-09-24 22:2xZ — WHAT IS LIVE NOW (supersedes the 21:4xZ block for the live set).**
 - **LIVE:** the JT3 search hook; at commit, the staged-shell AP screen and the commit-message stamp gate; at push, the stale-id check (repaired: a refusal is now sticky).
 - **VERIFYING (two sandbox agents):** VERIFY-GW1-R2 on `scripts/gpu_window.sh` blob 70bda4dca641 (the second and last repair D-031 allows); VERIFY-T243-245-R2 on the stale-id check's second repair (push_clean blob d514e2f0c095). The staged-shell screen is MERGE-READY-WITH-FOLLOWUPS (task #245 closed; #75).
@@ -776,6 +783,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:1xZ — VERIFY-GW1-R2 ready with follow-ups; the first GPU window ran (qwen down 1 min 53 s) and every job failed on a missing python3.11-devel: owner decision; task #246 landed.
 2026-09-24 22:5xZ — VERIFY-T243-245-R1: B and C ready with follow-ups (#75; task #245 closed); A's second repair (every non-pushing exit puts the branch back) in verify.
 2026-09-24 22:3xZ — AF-AP-145 refined (every exit after the handler traps ignores INT/TERM first) with a third AP_SCREEN tell (a bare exit after the handlers); its echo is task #247 (the S0-05 runner, a re-mint); the live set unchanged.
 2026-09-24 22:2xZ — GW1-R2 committed (VERIFY-GW1-R1 NOT-READY on R1-F-1) and in verify; the tooling repair committed (VERIFY-T243-245 A/B NOT-READY) and in verify; the Laya baseline PASS.
