@@ -1,0 +1,133 @@
+{
+ "env": {
+  "cuda": true,
+  "fla": "0.3.0",
+  "free_mib": 23606,
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "python": "3.11.15",
+  "snapshot": "/home/rocco/.cache/huggingface/hub/models--RWKV--RWKV7-Goose-World2.9-0.4B-HF/snapshots/e94655a9fad2c8da9f25aba575d8f0fdedc05931",
+  "torch": "2.7.1+cu128",
+  "total_mib": 24122,
+  "transformers": "4.53.3",
+  "triton": "3.3.1"
+ },
+ "finished": "2026-09-24T23:29:24Z",
+ "g0": "rwkv7-world2.9-0.4b zero-shot",
+ "j2": {
+  "ap_choice": {
+   "forwards": 200,
+   "ok": true,
+   "requests": 100,
+   "seconds": 18.3
+  },
+  "ap_noul": {
+   "forwards": 3200,
+   "ok": true,
+   "requests": 1600,
+   "seconds": 123.5
+  },
+  "v1": {
+   "forwards": 1400,
+   "ok": true,
+   "requests": 700,
+   "seconds": 51.2
+  },
+  "v1_blocking": {
+   "forwards": 200,
+   "ok": true,
+   "requests": 100,
+   "seconds": 7.8
+  },
+  "v1_choice_rich": {
+   "forwards": 200,
+   "ok": true,
+   "requests": 100,
+   "seconds": 7.4
+  },
+  "v1_full": {
+   "forwards": 1400,
+   "ok": true,
+   "requests": 700,
+   "seconds": 52.6
+  }
+ },
+ "j4": "NOT run: J4 is not built",
+ "ladder": {
+  "reuse_check": {
+   "max_abs_logit_diff": 0.1875,
+   "same_argmax": true
+  },
+  "rows": [
+   {
+    "finite": true,
+    "peak_mib": 1260,
+    "seconds": 42.882,
+    "tokens": 2048
+   },
+   {
+    "finite": true,
+    "peak_mib": 1514,
+    "seconds": 0.384,
+    "tokens": 4096
+   },
+   {
+    "finite": true,
+    "peak_mib": 2154,
+    "seconds": 0.18,
+    "tokens": 8192
+   },
+   {
+    "finite": true,
+    "peak_mib": 3434,
+    "seconds": 1.468,
+    "tokens": 16384
+   },
+   {
+    "finite": true,
+    "peak_mib": 5994,
+    "seconds": 0.64,
+    "tokens": 32768
+   },
+   {
+    "finite": true,
+    "peak_mib": 10474,
+    "seconds": 1.174,
+    "tokens": 61440
+   }
+  ],
+  "state_reuse": {
+   "16384": {
+    "question_tokens": 15,
+    "seconds_all": [
+     9.6099,
+     0.0374,
+     0.0371,
+     0.0371,
+     0.0372
+    ],
+    "seconds_median": 0.0372
+   },
+   "61440": {
+    "question_tokens": 15,
+    "seconds_all": [
+     0.0469,
+     0.0458,
+     0.0455,
+     0.0455,
+     0.0456
+    ],
+    "seconds_median": 0.0456
+   }
+  }
+ },
+ "load": {
+  "allocated_mib": 859,
+  "class": "RWKV7ForCausalLM",
+  "dtype": "bfloat16",
+  "parameters": 450767872,
+  "seconds": 0.44
+ },
+ "no_cache": false,
+ "plumbing": false,
+ "started": "2026-09-24T23:24:00Z"
+}

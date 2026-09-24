@@ -1,0 +1,9 @@
+{"ts":"2026-09-24T23:23:58Z","window":"20260924T232358Z","event":"open","jobs":3,"max_minutes":20}
+{"ts":"2026-09-24T23:24:00Z","window":"20260924T232358Z","event":"stop","rc":0}
+{"ts":"2026-09-24T23:24:00Z","window":"20260924T232358Z","event":"gpu_free","used_mib":255}
+{"ts":"2026-09-24T23:29:26Z","window":"20260924T232358Z","event":"job","n":1,"rc":0,"seconds":326,"log":"/home/rocco/gpu-window/20260924T232358Z-job1.log"}
+{"ts":"2026-09-24T23:29:26Z","window":"20260924T232358Z","event":"job","n":2,"rc":0,"seconds":0,"log":"/home/rocco/gpu-window/20260924T232358Z-job2.log"}
+{"ts":"2026-09-24T23:31:15Z","window":"20260924T232358Z","event":"job","n":3,"rc":0,"seconds":109,"log":"/home/rocco/gpu-window/20260924T232358Z-job3.log"}
+{"ts":"2026-09-24T23:31:15Z","window":"20260924T232358Z","event":"start","rc":0}
+{"ts":"2026-09-24T23:32:30Z","window":"20260924T232358Z","event":"back","ok":true,"seconds":75}
+{"ts":"2026-09-24T23:32:30Z","window":"20260924T232358Z","event":"close","rc":0}

@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 23:3xZ — WHAT IS LIVE NOW (supersedes the 23:2xZ block for the live set).**
+- **DONE:** GPU window `20260924T232358Z`: all three jobs rc 0; qwen down 23:24:00Z-23:32:30Z (8 min 30 s) and back. G0: RWKV-7 0.4B zero-shot is REJECTED on every KC-J3 line; the long-input mechanics hold (61,440 tokens in 1.17 s; a question from a copied state in about 40 ms). Results: `docs/research/findings/j2b-variants/rwkv7-g0/2026-09-24-window2/`. Task #242 closed.
+- **DONE:** the Laya head checkpoint `~/laya-ft/ckpt-head-w1/` (224 steps; loss over its own training items 0.459 to 0.345; the encoder unchanged).
+- **IN FLIGHT since 23:32:5xZ:** its held-out evaluation on the PC CPU (`~/laya-ft/eval-head-w1`, log `~/laya-ft/eval-head-w1.log`, launcher `~/laya-ft/eval-head-w1.sh`; about 44 min; compare with `docs/research/findings/laya-ft-eval/2026-09-24-base-cpu/evaluate-summary.json`).
+- **PC:** no lane live; qwen active; the owner's stale dnf (pid 1699180, pts/4) is theirs to close. **Sandbox:** the unpushed commits wait on CI run #1048 (its tests step was still running at 23:34Z, longer than the usual 24-28 min).
+- **NEXT:** the evaluation verdict to the owner; the Qwen J2 continuation (#241) on the local route.
+
 **2026-09-24 23:2xZ — WHAT IS LIVE NOW (supersedes the 23:1xZ block for the live set).**
 - **UNBLOCKED:** the owner installed `python3.11-devel` 3.11.15-4 with `sudo dnf install -y` (the first try hung at dnf's prompt: their terminal does not take the typed answer). The Triton preflight passes in `~/venv-rwkv-b`, `~/venv-rwkv` and `~/venv-laya` with no `C_INCLUDE_PATH` (23:23Z).
 - **IN FLIGHT since 23:23:58Z:** GPU window `20260924T232358Z` (window1.jobs unchanged, `--max-minutes 20`; log `~/gpu-window/window2.log`, record `~/gpu-window/record.jsonl`). qwen stopped at 23:24:00Z; the GPU freed at 255 MiB. The failed run's G0 outputs were moved aside to `~/rwkv-g0/out-{a,b}-w1.failed-2309Z`. A sandbox poller (background Bash, `gw2-poll.sh` in the session scratchpad) wakes the coordinator when the window process ends.
@@ -790,6 +797,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:3xZ — GPU window 2 ran all three jobs (qwen down 8 min 30 s); RWKV-7 G0 zero-shot rejected on every KC-J3 line, mechanics hold; the Laya head checkpoint trained, its held-out evaluation in flight; task #242 closed.
 2026-09-24 23:2xZ — the owner installed python3.11-devel; the Triton preflight passes in all three window venvs; GPU window 2 (window1.jobs unchanged) in flight since 23:23:58Z.
 2026-09-24 23:1xZ — PC-BRIDGE.md: the GPU-window preflight (Triton's CUDA shim needs Python.h; checked in each venv while qwen runs); the live set unchanged.
 2026-09-24 23:1xZ — VERIFY-GW1-R2 ready with follow-ups; the first GPU window ran (qwen down 1 min 53 s) and every job failed on a missing python3.11-devel: owner decision; task #246 landed.
