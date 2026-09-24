@@ -742,6 +742,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 18:4xZ — retro batch: AF-AP-196 (a finiteness guard on a step's input, none on the saved artifact) and AF-AP-197 (a precondition checked after the work it protects) registered with AP_SCREEN tells; task #243 (a check for notes that cite commit ids push_clean rewrote). The live set is unchanged from the 18:3xZ block.
 2026-09-24 18:3xZ — the live set: the GPU window script landed (GATED-PENDING-VERIFY), VERIFY-FT1 and VERIFY-JT3-R1 returned, FT1-F and JT3-R2 in flight, the RWKV yes/no refusal traced to the prompt (AF-AP-194, AF-AP-195).
 2026-09-24 17:2xZ — skill bakes: build-loop rule 1 (a shared value is read against every consumer, from F-20) and anti-hollow-green 3b (a mutant runs its own bytecode, AF-AP-192); new helper `scripts/skill_bake_finish.sh` (the mechanical tail of a skill bake, with a clean-worktree manifest); AF-AP-193's echo: JT2 is the one bug site.
 
