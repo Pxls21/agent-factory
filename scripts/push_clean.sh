@@ -95,6 +95,8 @@ git log "$RANGE" --format='%h %s'
 # range keeps its object id — a foreign commit (the owner's, a signed one, a tag target) must survive the push byte for
 # byte (2026-09-08: the unconditional identity filter rewrote the owner's signed-key commit 80422cb into e719da8 and
 # orphaned the tag `accepted/S0-11`, AF-AP-69).
+OLD_IDS=$(mktemp /tmp/push-clean-ids.XXXXXX)   # the range's ids before the rewrite, oldest first (stale_ids.py)
+git rev-list --reverse "$RANGE" > "$OLD_IDS"
 TREE_BEFORE=$(git rev-parse 'HEAD^{tree}')
 git filter-branch -f \
   --msg-filter 'grep -v "Co-Authored-By: Claude\|Claude-Session:"' \
@@ -105,6 +107,22 @@ TREE_AFTER=$(git rev-parse 'HEAD^{tree}')
 
 LEFT=$(git log "$RANGE" --format='%B' | grep -c 'Co-Authored-By: Claude\|Claude-Session:' || true)
 [ "$LEFT" = "0" ] || { echo "$LEFT trailer(s) remain — ABORT." >&2; exit 3; }
+
+# STALE-ID CHECK (task #243; 2026-09-24: the ledger, the wiki and the incident log cited four commits by their LOCAL
+# ids, and the rewrite above replaced each): an added line of the range that cites a commit this rewrite replaced
+# would point at nothing on origin. Refuse (4), naming the old and the new id; a commit message that cites one is a
+# warning only. STALE_ID_OK=<reason> pushes anyway.
+src=0
+python3 "$(dirname "$0")/stale_ids.py" --old "$OLD_IDS" --origin-ref "$ORIGIN_REF" || src=$?
+rm -f "$OLD_IDS"
+if [ "$src" != 0 ]; then
+  if [ "$src" = 4 ] && [ -n "${STALE_ID_OK:-}" ]; then
+    echo "stale_ids: pushing anyway (STALE_ID_OK=$STALE_ID_OK)" >&2
+  else
+    echo "REFUSED by stale_ids (rc $src): NOT pushed. Cite each commit by its subject or by the new id, commit, and run push_clean again." >&2
+    exit 4
+  fi
+fi
 
 SHA=$(git rev-parse HEAD)
 echo "== pushing $SHA =="
