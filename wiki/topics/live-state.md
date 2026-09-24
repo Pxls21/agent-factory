@@ -783,6 +783,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:1xZ — PC-BRIDGE.md: the GPU-window preflight (Triton's CUDA shim needs Python.h; checked in each venv while qwen runs); the live set unchanged.
 2026-09-24 23:1xZ — VERIFY-GW1-R2 ready with follow-ups; the first GPU window ran (qwen down 1 min 53 s) and every job failed on a missing python3.11-devel: owner decision; task #246 landed.
 2026-09-24 22:5xZ — VERIFY-T243-245-R1: B and C ready with follow-ups (#75; task #245 closed); A's second repair (every non-pushing exit puts the branch back) in verify.
 2026-09-24 22:3xZ — AF-AP-145 refined (every exit after the handler traps ignores INT/TERM first) with a third AP_SCREEN tell (a bare exit after the handlers); its echo is task #247 (the S0-05 runner, a re-mint); the live set unchanged.
