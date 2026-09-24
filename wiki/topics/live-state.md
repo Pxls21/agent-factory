@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 11:4xZ — WHAT IS LIVE NOW (this block supersedes the 11:2xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **DONE:** task #222 (the CLM / agent-beacon static read; verdict: CLM later, agent-beacon not installed). MoJev Gate 0 staged on the PC: `~/mojev-pin` at a74d58cd19ec and `~/mojev-snapshot/0c8695b6252f/`, every file checked; brief `tasks/briefs/pc/pc-mojev-g0.md` committed (premise gate rc 0). D-071: the never-a-gate screen learned `mojev` and `packedscorer` (GATED-PENDING-VERIFY).
+- **LIVE, PC:** K170 (task #170), attempt 3 since 11:23Z on the local build route (attempts 1-2 died on a local 400 and a 600 s combo timeout); sandbox poller pid 29016 (its 240-minute ceiling is about 12:04Z).
+- **LIVE, SANDBOX (Opus 5.5, three, D-062's ceiling):** J1-1-R4 (#198, code-implementer, the span-union redesign, files in `.lanes-live`); the Jev leverage evidence lane (#221); VERIFY-COORD-0924 (the independent verify of the five hooks, the AF-AP-181 fix and D-071).
+- **NEXT:** harvest #221 into `docs/research/findings/JEV-LEVERAGE-AUDIT-2026-09-24.md`; dispatch MOJEV-G0 when K170 frees the long-context local slot; harvest K170, then its verify; J1-1-R4, then its verify; the MoJev lock row with the Gate 0 result.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 11:2xZ — WHAT IS LIVE NOW (this block supersedes the 10:5xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** CI run #1027 green on de06db6 (the AF-AP-181 race fix). Task #214 closed: all five project hooks live from `/home/user/.claude/settings.json`; manual start = `python3 scripts/install_session_hooks.py`.
 - **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b`, local build route; sandbox poller pid 29016.
@@ -628,6 +635,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 11:4xZ — #222 home (CLM later, agent-beacon not installed); MoJev Gate 0 staged and briefed; D-071; VERIFY-COORD-0924 dispatched.
 2026-09-24 11:2xZ — CI run #1027 green; J1-1-R4 redesign briefed (D-070, span union, contract C1-C7) and dispatched; task #223 (offline Jev leak hunter) new; #214 closed.
 2026-09-24 11:0xZ — CI run #1026's test race fixed (AF-AP-181, pushed de06db6); the five project hooks live in the /home/user-rooted session (task #214): install_session_hooks.py + hook_context.py.
 2026-09-24 10:5xZ — all twelve Stage 0 proofs ACCEPTED (the owner's eight signed tags anchored); the owner's rulings D-069 on #198, #210, #214, and the new asks #221 and #222.
