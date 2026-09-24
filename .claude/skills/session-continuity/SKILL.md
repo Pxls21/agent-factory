@@ -220,6 +220,15 @@ origin state, task state, or owner statements contradict what you remember:
   JSONL works (every Write is recorded) but costs a whole archaeology lane; the
   one-line repo copy at citation time costs nothing.
 
+- **A STOPPED BACKGROUND AGENT IS RESUMED, NOT RE-DISPATCHED (2026-09-24: a sandbox worker restart stopped JT2
+  and VERIFY-J1-1-R4 mid-run).** The harness lists the stopped tasks ("Re-create them if still needed"). A
+  `SendMessage` to the agent's id resumes it from its own transcript with its context intact: both lanes picked
+  up where they stopped and finished (JT2's benchmark file held 20 complete lines; the verifier re-checked its
+  pinned blobs and scratch state). Before the message, check the lane's files on disk; in it, say what changed
+  while it was stopped (the restart time, other lanes' landings, any new finding that touches its files) and
+  repeat the standing rules. Re-dispatch only when the transcript is gone. Processes a lane or the coordinator
+  started outside the harness (a `setsid` server, a PC run) survive a worker restart: check them by pid.
+
 ## Handed-value freshness (2026-09-03 — three stale values in one night, all owner-caught)
 
 Any VALUE handed to a human for execution (env var, launch parameter, universe,
