@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 07:5xZ — WHAT IS LIVE NOW (this block supersedes the 07:2xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFIED:** K215 (the owed screens and bakes, task #215) and the anti-hollow-green bake (task #218), through VERIFY-K215 (MERGE-READY-WITH-FOLLOWUPS) plus the coordinator's reproductions. Follow-ups: issue #65.
+- **LIVE, SANDBOX:** none.
+- **LIVE, PC:** none; the one long-context local slot is free.
+- **NEXT:** task #170 (fail-closed lock and SBOM parsers) as a PC local build lane, its brief in progress; push this harvest after CI run #1024.
+- **OWNER DECISIONS OPEN:** the redaction-pass redesign (D-068, task #198); MoJev A/B/C (#210); which project hooks to restore (#214); the eight proofs' signing and the Stage 0 PR.
+
 **2026-09-24 07:2xZ — WHAT IS LIVE NOW (this block supersedes the 06:5xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFIED:** J1-4 (the Laya pin) and J1-5 (the no-model closure), through VERIFY-J1-45 plus the coordinator's reproductions. Follow-ups: issue #66. The J1 chain now waits only on J1-1's redaction redesign (the owner's decision, D-068).
 - **LIVE, SANDBOX (one agent, Opus 5.5):** VERIFY-K215 (#219), PIN bfe66ec, report `tasks/briefs/kit-k1-support/VERIFY-K215-report.md`.
@@ -600,6 +607,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 07:5xZ — VERIFY-K215 home: K215 and the anti-hollow-green bake verified with follow-ups (issue #65); the typed-escape quirk widened to the Bash tool.
 2026-09-24 07:2xZ — VERIFY-J1-45 home: J1-4 and J1-5 verified with follow-ups (issue #66); AF-AP-180 registered.
 2026-09-24 06:5xZ — pushed b318135 + bfe66ec; VERIFY-K215 dispatched (sandbox); VERIFY-J1-45's poller re-attached.
 2026-09-24 06:3xZ — anti-hollow-green bake (task #218): AF-AP-179's rule as 2(g) and "a measured zero states its generator's alphabet" as 3f.
