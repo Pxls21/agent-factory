@@ -4,9 +4,14 @@ Deterministic and LLM-free; no network beyond 127.0.0.1. Two venues:
 - this interpreter: the masking, the scrub, the held-out rule (D-3), the commit resolved once (D-4), the ap ranking against
   the committed lexical picks, the label format and join, the evaluator's comparisons, and the teacher client (resume,
   rate limit, retry, key handling, scrub) against a local stand-in HTTP server, a double for the NETWORK only (the live
-  API is exercised by the lane's `--limit 5` smoke, never here);
+  API is exercised by the lane's `--limit 5` smoke, never here); FT1-F (VERIFY-FT1 F-1): train.main's parse-time
+  refusal of --lr, --weight-decay and --max-grad-norm outside their domains, and the evaluator's refusal of a served
+  probability that is not a finite float;
 - the Laya venv, as subprocesses: the builder's determinism and window fit on the real tree, and the trainer on the REAL
-  model on CPU (three steps lower the loss, the checkpoint round trip, head mode's frozen encoder, the loss's sign).
+  model on CPU (three steps lower the loss, the checkpoint round trip, head mode's frozen encoder, the loss's sign);
+  FT1-F (F-1, F-4, F-6): the finiteness and free-space guards on crafted tensors (torch lives only in this venv, so they
+  cannot run in CI), and train.main and evaluate.main on the real model with a fault injected by the test (a NaN written
+  into a trained parameter after a real step or after the first served answer; a filesystem that reports 40 MiB free).
 The Laya venv and snapshot are DECLARED inputs of the sandbox venue (S0_01_VENUE, which scripts/test_summary.sh exports):
 absent there = FAIL. CI declares no venue, so those tests skip loudly; the PC's Laya paths are not declared to this file,
 so they skip loudly there too.
@@ -30,6 +35,7 @@ from laya_ft import build_dataset as BD  # noqa: E402
 from laya_ft import common as C  # noqa: E402
 from laya_ft import evaluate as EV  # noqa: E402
 from laya_ft import teacher_label as TL  # noqa: E402
+from laya_ft import train as TR  # noqa: E402   (imports no torch: its parse-time checks run in CI)
 
 FINDINGS = ROOT / "docs" / "research" / "findings"
 # the oracle's own copy of J2's class words (J2 section 2): none may survive in a v1 state
@@ -254,11 +260,12 @@ def test_collect_excludes_every_heldout_row_on_the_real_tree():
 
 # ---------- D-3 refusals ----------
 
-def _write_dataset(ddir, rows):
+def _write_dataset(ddir, rows, model=None):
     body = "".join(json.dumps(r, ensure_ascii=True) + "\n" for r in rows).encode("ascii")
     ddir.mkdir(parents=True, exist_ok=True)
     (ddir / "dataset.jsonl").write_bytes(body)
-    (ddir / "manifest.json").write_text(json.dumps({"commit": "test", "counts": {"rows_total": len(rows)}, "model": {},
+    (ddir / "manifest.json").write_text(json.dumps({"commit": "test", "counts": {"rows_total": len(rows)},
+                                                    "model": model or {},   # train.py compares a model fingerprint
                                                     "dataset": {"file": "dataset.jsonl", "sha256": C.sha256_hex(body)}}))
 
 
@@ -588,6 +595,54 @@ def test_kc_j3_lines_reject_at_or_under_the_bar():
         "n": 4, "blocking_split": 0.5, "blocking_recall": "1/2", "false_alarms": "1/2", "never_baseline_split": 0.5}
 
 
+def test_evaluator_refuses_a_served_probability_that_is_not_finite():
+    """VERIFY-FT1 F-1: J2's scorers counted a NaN checkpoint's answers (every prediction BLOCKER, ECE 0.0). The served
+    shape is laya.Agent.system_one's: a choice's `probabilities` and a noul's `noul`, each a float."""
+    choice = {"type": "choice", "choice": "FOLLOW-UP", "probabilities": {"BLOCKER": 0.1, "FOLLOW-UP": 0.9},
+              "confidence": 0.8, "action": {"act_probability": 0.5}}
+    noul = {"type": "noul", "noul": 0.25, "confidence": 0.75, "action": {"act_probability": 0.5}}
+    served = {"model": "laya-rl-agent", "answers": {"q": choice, "r1": noul}, "usage": {"input_tokens": 9}}
+    assert EV.check_served(served) is served   # the control: finite answers pass, unchanged
+    for bad in (float("nan"), float("inf"), float("-inf"), None, "0.5", 1):
+        for qid, answer in (("q", dict(choice, probabilities=dict(choice["probabilities"], BLOCKER=bad))),
+                            ("r1", dict(noul, noul=bad))):
+            with pytest.raises(EV.NonFiniteAnswer) as e:
+                EV.check_served(dict(served, answers=dict(served["answers"], **{qid: answer})))
+            assert str(e.value) == "answer %r serves the probability %r, not a finite float" % (qid, bad)
+
+
+# ---------- the trainer's optimizer settings: usage errors before any model loads (VERIFY-FT1 F-1) ----------
+
+def _tampered_dataset(ddir):
+    """A dataset whose bytes are not its manifest's: train.run() refuses it (DatasetError, exit 64) before any model or
+    torch import, so a setting the parser accepts reads 64 here and one it refuses reads 2."""
+    _write_dataset(ddir, [])
+    (ddir / "dataset.jsonl").write_bytes(b"{}\n")
+    return ddir
+
+
+def test_train_refuses_optimizer_settings_outside_their_domain_at_parse_time(tmp_path, capsys):
+    (tmp_path / "model").mkdir()
+    base = ["--dataset", str(_tampered_dataset(tmp_path / "ds")), "--labels", str(tmp_path / "labels.jsonl"),
+            "--out", str(tmp_path / "out"), "--mode", "head", "--device", "cpu", "--model-dir", str(tmp_path / "model")]
+    for extra in ([], ["--lr", "1e-4", "--weight-decay", "0", "--max-grad-norm", "1e-6"],
+                  ["--lr", "1e300", "--weight-decay", "1e300", "--max-grad-norm", "1e300"]):
+        assert TR.main(base + extra) == 64, extra   # the controls: parsed, then refused on the dataset
+        assert capsys.readouterr().err.startswith("train: refused: DatasetError: "), extra
+    for flag, value, shown in (("--lr", "inf", "inf"), ("--lr", "-inf", "-inf"), ("--lr", "nan", "nan"),
+                               ("--lr", "0", "0.0"), ("--lr", "-1e-4", "-0.0001"), ("--lr", "1e-400", "0.0"),
+                               ("--weight-decay", "inf", "inf"), ("--weight-decay", "nan", "nan"),
+                               ("--weight-decay", "-0.01", "-0.01"), ("--max-grad-norm", "inf", "inf"),
+                               ("--max-grad-norm", "nan", "nan"), ("--max-grad-norm", "0", "0.0"),
+                               ("--max-grad-norm", "-1", "-1.0")):
+        with pytest.raises(SystemExit) as e:
+            TR.main(base + ["%s=%s" % (flag, value)])   # "=": argparse would read a bare "-inf" as an option
+        rule = "finite and >= 0" if flag == "--weight-decay" else "finite and > 0"
+        assert e.value.code == 2, (flag, value)
+        assert capsys.readouterr().err.endswith("error: %s must be %s, not %s\n" % (flag, rule, shown)), (flag, value)
+    assert not (tmp_path / "out").exists()
+
+
 # ---------- the Laya venv (the builder's fit and determinism, the trainer on the real model) ----------
 
 def _present(path):
@@ -755,3 +810,255 @@ def test_trainer_checkpoint_loads_into_a_fresh_model_and_changes_its_outputs(tra
     assert "checkpoint" not in r, r   # the driver wrote one
     assert r["base_differs"] and r["loaded_equals_trained"], r
     assert r["ckpt"][1] == ["head", "scorer", "type_emb"]
+
+
+# ---------- FT1-F: non-finite results and the free-space order (VERIFY-FT1 F-1, F-4, F-6), in the Laya venv ----------
+
+GUARD_CHECK = r"""
+import json, shutil, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from laya_ft import train as T
+import torch
+tmp, nan, inf = Path(sys.argv[2]), float("nan"), float("inf")
+out = {"tmp": str(tmp)}
+
+
+def said(fn, *args):   # the refusal a guard raises, "Type: message"; None when it lets the input through
+    try:
+        fn(*args)
+    except (T.Refusal, T.NonFinite) as e:
+        return "%s: %s" % (type(e).__name__, e)
+    return None
+
+
+def poisoned(value, shape=(4, 5), at=0):
+    t = torch.zeros(shape)
+    t.view(-1)[at] = value
+    return t
+
+
+ok = {"head.w": torch.randn(4, 5), "scorer.b": torch.full((3,), 3.0e38), "type_emb.e": torch.zeros(0, 2),
+      "head.h": torch.ones(2, dtype=torch.bfloat16)}   # a large, an empty and a bf16 tensor are finite too
+out["finite"] = {"clean": T.non_finite_tensors(ok),
+                 "one_nan": T.non_finite_tensors(dict(ok, **{"head.w": poisoned(nan, at=19)})),
+                 "order": T.non_finite_tensors({"a": poisoned(inf), "b": torch.ones(2), "c": poisoned(-inf, at=7),
+                                                "d": poisoned(nan).to(torch.bfloat16)})}
+out["refuse"] = {"clean": said(T.refuse_non_finite, ok, 0.5), "unmeasured": said(T.refuse_non_finite, ok, None),
+                 "tensor": said(T.refuse_non_finite, dict(ok, **{"scorer.b": poisoned(inf, (3,))}), 0.5),
+                 "loss_nan": said(T.refuse_non_finite, ok, nan), "loss_inf": said(T.refuse_non_finite, ok, inf),
+                 "premise": said(T.refuse_non_finite, {"t%02d" % i: poisoned(nan) for i in range(31)}, nan)}
+m = torch.nn.Module()   # a crafted module: load_checkpoint reads only named_parameters and load_state_dict
+m.head, m.act_head = torch.nn.Linear(5, 4), torch.nn.Linear(5, 1)
+before = {k: v.detach().clone() for k, v in m.state_dict().items()}
+good = {"head.weight": torch.randn(4, 5), "head.bias": torch.randn(4)}
+torch.save(good, str(tmp / "good.pt"))
+out["load"] = {"good": list(T.load_checkpoint(m, tmp / "good.pt")),
+               "good_loaded": torch.equal(m.head.weight, good["head.weight"]) and torch.equal(m.head.bias, good["head.bias"])}
+m.load_state_dict(before)
+for name, sd in (("nan_weight", dict(good, **{"head.weight": poisoned(nan, (4, 5), 3)})),
+                 ("inf_bias", dict(good, **{"head.bias": poisoned(-inf, (4,))}))):
+    torch.save(sd, str(tmp / (name + ".pt")))
+    out["load"][name] = said(T.load_checkpoint, m, tmp / (name + ".pt"))
+out["load"]["model_unchanged"] = all(torch.equal(v, before[k]) for k, v in m.state_dict().items())
+real, asked = shutil.disk_usage, []
+
+
+def small(path):   # the filesystem reports 1 MiB free; the disk itself is real
+    asked.append(str(path))
+    return real(path)._replace(free=1 << 20)
+
+
+shutil.disk_usage = small
+(tmp / "ck").mkdir()
+out["space"] = {"early": said(T.check_space, 4 << 10, tmp / "not" / "yet"), "early_asked": list(asked),
+                "created": (tmp / "not").exists(), "save": said(T.save_checkpoint, good, tmp / "ck" / "checkpoint.pt")}
+out["space"]["save_files"] = sorted(p.name for p in (tmp / "ck").iterdir())
+shutil.disk_usage = real
+out["space"]["early_real"] = said(T.check_space, 4 << 10, tmp / "not" / "yet")
+out["space"]["save_real"] = said(T.save_checkpoint, good, tmp / "ck" / "checkpoint.pt")
+out["space"]["save_real_files"] = sorted(p.name for p in (tmp / "ck").iterdir())
+print(json.dumps(out))
+"""
+
+
+@pytest.fixture(scope="module")
+def guard_run(laya_venue, tmp_path_factory):
+    return _laya(laya_venue, GUARD_CHECK, str(ROOT / "scripts"), str(tmp_path_factory.mktemp("ft1f-guards")))
+
+
+def test_finiteness_guards_on_crafted_tensors(guard_run):
+    r = guard_run
+    assert r["finite"] == {"clean": [], "one_nan": ["head.w"], "order": ["a", "c", "d"]}, r
+    assert r["refuse"] == {
+        "clean": None, "unmeasured": None,
+        "tensor": "NonFinite: 1 of 4 trained tensors are not finite (scorer.b): nothing is saved",
+        "loss_nan": "NonFinite: eval_loss_after is nan: nothing is saved",
+        "loss_inf": "NonFinite: eval_loss_after is inf: nothing is saved",
+        "premise": "NonFinite: 31 of 31 trained tensors are not finite (t00, t01, t02); eval_loss_after is nan: nothing "
+                   "is saved"}, r
+
+
+def test_load_checkpoint_refuses_a_non_finite_tensor_before_loading_it(guard_run):
+    r, tmp = guard_run["load"], guard_run["tmp"]
+    assert r["good"] == [2, ["head"]] and r["good_loaded"], r   # the control: a finite checkpoint loads
+    assert r["nan_weight"] == "Refusal: checkpoint %s/nan_weight.pt: 1 of 2 tensors are not finite: ['head.weight']" % tmp
+    assert r["inf_bias"] == "Refusal: checkpoint %s/inf_bias.pt: 1 of 2 tensors are not finite: ['head.bias']" % tmp
+    assert r["model_unchanged"], r
+
+
+def test_free_space_is_probed_without_writing_and_checked_again_at_save(guard_run):
+    r, tmp = guard_run["space"], guard_run["tmp"]
+    assert r["early"] == "Refusal: the checkpoint needs 64 MiB and %s/not/yet has 1 MiB free" % tmp, r
+    assert r["early_asked"] == [tmp] and not r["created"], r   # the nearest existing ancestor; nothing created
+    assert r["save"] == "Refusal: the checkpoint needs 64 MiB and %s/ck has 1 MiB free" % tmp and r["save_files"] == [], r
+    assert (r["early_real"], r["save_real"], r["save_real_files"]) == (None, None, ["checkpoint.pt"]), r
+
+
+POISONED = "head.layers.0.self_attn.in_proj_weight"   # the first trained parameter; a NaN there reaches every logit
+TRAIN_CLI = r"""
+import contextlib, io, json, shutil, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from laya_ft import train as T
+import torch
+scenario, argv = sys.argv[2], json.loads(sys.argv[3])
+out_dir = Path(argv[argv.index("--out") + 1])
+real_step, real_usage = T.train_step, shutil.disk_usage
+seen = {"steps": 0, "poisoned": None, "asked": []}
+
+
+def step(model, opt, items, *rest):   # the real step; the "nan" fault is written after the first one returns
+    loss = real_step(model, opt, items, *rest)
+    seen["steps"] += 1
+    if scenario == "nan" and seen["steps"] == 1:
+        name, p = next((n, p) for n, p in model.named_parameters() if p.requires_grad)
+        with torch.no_grad():
+            p.view(-1)[0] = float("nan")
+        seen["poisoned"] = name
+    return loss
+
+
+def usage(path):   # "disk_full": the filesystem reports 40 MiB free (the verifier's tmpfs); the disk itself is real
+    if scenario != "disk_full":
+        return real_usage(path)
+    seen["asked"].append(str(path))
+    return real_usage(path)._replace(free=40 << 20)
+
+
+T.train_step, shutil.disk_usage = step, usage
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    rc = T.main(argv)
+res = dict(seen, rc=rc, said=[line for line in err.getvalue().splitlines() if line.startswith("train:")],
+           files=sorted(p.name for p in out_dir.iterdir()) if out_dir.exists() else None)
+if (out_dir / "checkpoint.pt").exists():   # the oracle's own reading, torch.isfinite, not the guard under test
+    sd = torch.load(str(out_dir / "checkpoint.pt"), map_location="cpu", weights_only=True)
+    res["tensors"], res["non_finite"] = len(sd), sum(not bool(torch.isfinite(t).all()) for t in sd.values())
+    res["guards"] = json.loads((out_dir / "train-manifest.json").read_text())["guards"]
+print(json.dumps(res))
+"""
+
+
+def _tiny_training_inputs(root, model_dir):
+    """Two rows made by the real builder's make_row, in a dataset built for this model (its fingerprint), and a teacher
+    label for each in the labels file's own record shape."""
+    finding = "The gate reads the token file but never checks its mode; a group-readable token passes the check."
+    rows = [BD.make_row("v1", qid, finding, _v1_source(fid="F-1"), None) for qid in ("v1.finding_class", "v1.blocking")]
+    _write_dataset(root / "ds", rows, model=C.model_fingerprint(model_dir))
+    targets = {"v1.finding_class": [0.1, 0.6, 0.1, 0.1, 0.05, 0.05], "v1.blocking": [0.8, 0.2]}
+    with open(root / "labels.jsonl", "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps({"key": C.label_key(r["item_id"], r["question_id"]), "item_id": r["item_id"],
+                                 "question_id": r["question_id"], "question_sha": r["question_sha"],
+                                 "sent_state_sha": r["state_sha"], "options": r["options"],
+                                 "target": targets[r["question_id"]], "answer": {}, "model": "stand-in",
+                                 "endpoint": "none", "input_tokens": 0, "attempts": 1, "ts": 0.0}) + "\n")
+    return root / "ds", root / "labels.jsonl"
+
+
+def _train_cli(venue, tmp_path, scenario, *extra):
+    ds, labels = _tiny_training_inputs(tmp_path, venue["model_dir"])
+    argv = ["--dataset", str(ds), "--labels", str(labels), "--out", str(tmp_path / "out"), "--mode", "head",
+            "--device", "cpu", "--model-dir", venue["model_dir"], "--batch-size", "1", "--threads", "4", *extra]
+    return _laya(venue, TRAIN_CLI, str(ROOT / "scripts"), scenario, json.dumps(argv))
+
+
+def test_train_cli_refuses_a_non_finite_trained_tensor_and_writes_nothing(laya_venue, tmp_path):
+    """F-1: a NaN written into a trained parameter after the LAST real step, which train_step's loss check never sees."""
+    r = _train_cli(laya_venue, tmp_path, "nan", "--limit", "1", "--eval-loss")
+    assert (r["rc"], r["steps"], r["poisoned"], r["files"]) == (5, 1, POISONED, None), r   # no --out, no .tmp
+    assert r["said"] == ["train: refused: NonFinite: 1 of 31 trained tensors are not finite (%s); eval_loss_after is "
+                         "nan: nothing is saved" % POISONED], r
+
+
+def test_train_cli_refuses_a_non_finite_loss_without_a_traceback(laya_venue, tmp_path):
+    """F-4, the trainer half: the same fault before a second step is train_step's non-finite loss (rc 1 and a raw
+    FloatingPointError traceback before FT1-F)."""
+    r = _train_cli(laya_venue, tmp_path, "nan", "--limit", "2")
+    assert (r["rc"], r["steps"], r["files"]) == (5, 1, None), r
+    assert r["said"] == ["train: refused: FloatingPointError: non-finite loss nan: the step is refused"], r
+
+
+def test_train_cli_refuses_a_full_disk_before_the_first_step(laya_venue, tmp_path):
+    """F-6: --out on a filesystem with 40 MiB free is refused after the model load and before any step (it was refused
+    at save, after the training)."""
+    r = _train_cli(laya_venue, tmp_path, "disk_full", "--limit", "1")
+    assert (r["rc"], r["steps"], r["files"]) == (64, 0, None), r
+    assert r["said"] == ["train: refused: Refusal: the checkpoint needs 164 MiB and %s has 40 MiB free"
+                         % (tmp_path / "out")], r
+    assert r["asked"] == [str(tmp_path)], r   # one probe, of --out's nearest existing ancestor
+
+
+def test_train_cli_saves_a_finite_checkpoint_when_nothing_is_wrong(laya_venue, tmp_path):
+    """The control for the three refusals above: the same inputs, no fault, the real disk."""
+    r = _train_cli(laya_venue, tmp_path, "none", "--limit", "1", "--eval-loss")
+    assert (r["rc"], r["steps"], r["said"]) == (0, 1, []), r
+    assert r["files"] == ["checkpoint.pt", "train-manifest.json"] and (r["tensors"], r["non_finite"]) == (31, 0), r
+    assert r["guards"] == {"act_head_unchanged": True, "encoder_unchanged": True, "model_dir_unchanged": True}, r
+
+
+EVAL_CLI = r"""
+import contextlib, io, json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from laya_ft import evaluate as EV, train as T
+import torch
+out_dir, poison, real_load = Path(sys.argv[2]), sys.argv[3], T.load_base
+seen = {"answers": 0}
+
+
+def load_base(model_dir, device):   # the real load; the fault is written after the first served answer
+    agent = real_load(model_dir, device)
+    real_one = agent.system_one
+
+    def system_one(state, questions):
+        if seen["answers"] == 7:   # v1's first row takes 7 calls (a choice, then 6 per chunk); an 8th means it scored on
+            raise RuntimeError("the evaluator went on past a non-finite answer: %d served" % seen["answers"])
+        answer = real_one(state, questions)
+        seen["answers"] += 1
+        if seen["answers"] == 1:
+            with torch.no_grad():
+                dict(agent.model.named_parameters())[poison].view(-1)[0] = float("nan")
+        return answer
+
+    agent.system_one = system_one
+    return agent
+
+
+T.load_base = load_base
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    rc = EV.main(["--only", "v1", "--out-dir", str(out_dir), "--threads", "4"])
+print(json.dumps(dict(seen, rc=rc, said=[line for line in err.getvalue().splitlines() if line.startswith("evaluate:")],
+                      files=sorted(p.name for p in out_dir.iterdir()))))
+"""
+
+
+def test_evaluate_cli_refuses_a_non_finite_served_probability(laya_venue, tmp_path):
+    """F-1, the evaluator: the real model serves one finite answer, then a NaN in a head parameter makes every served
+    probability NaN, which J2's v1 scorer counted (VERIFY-FT1: every prediction BLOCKER, ECE 0.0)."""
+    r = _laya(laya_venue, EVAL_CLI, str(ROOT / "scripts"), str(tmp_path / "eval"), POISONED)
+    assert (r["rc"], r["answers"], r["files"]) == (5, 7, []), r   # the finite choice passed; no result was written
+    assert r["said"] == ["evaluate: refused: NonFiniteAnswer: answer 'BLOCKER' serves the probability nan, not a finite "
+                         "float: nothing is scored"], r

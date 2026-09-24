@@ -12,15 +12,20 @@ the loss is the NEGATED laya.common.proper_reward (the strictly proper scoring r
 marker_mask. --mode head freezes the encoder (requires_grad off, and Laya's own detach_encoder=True in the forward) and
 trains the decision head, the type embedding and the scorer; --mode full trains the encoder too. The act head is never
 trained: it is outside the loss, frozen, outside the optimizer, and its digest is compared after the run (the encoder's
-too, in head mode). AdamW; a fixed seed (the data order per epoch derives from it); bf16 autocast on CUDA; a non-finite
-loss stops the run. Output: checkpoint.pt (the state_dict of the trained parameters, on CPU) and train-manifest.json. The
-Hugging Face cache is only read: an --out inside it is refused, and the model directory's files (size and mtime) are
-compared before and after the run. The dataset must have been built for this model (its manifest's fingerprint).
-Exit: 0 done; 5 a guard failed after training (a frozen part changed, or the model directory changed); 64 usage or refusal.
+too, in head mode). AdamW; a fixed seed (the data order per epoch derives from it); bf16 autocast on CUDA; --lr,
+--weight-decay and --max-grad-norm are checked at parse time (finite; lr and max-grad-norm > 0, weight-decay >= 0). A
+non-finite loss, trained tensor or eval_loss_after refuses the run before anything is written (VERIFY-FT1 F-1). The free
+space for the checkpoint is checked before the first step and again at save (F-6). Output: checkpoint.pt (the state_dict
+of the trained parameters, on CPU) and train-manifest.json. The Hugging Face cache is only read: an --out inside it is
+refused, and the model directory's files (size and mtime) are compared before and after the run. The dataset must have
+been built for this model (its manifest's fingerprint).
+Exit: 0 done; 2 usage (argparse); 5 a guard failed after training (a frozen part changed, or the model directory changed:
+checkpoint and manifest written) or a non-finite loss, trained tensor or eval_loss_after (nothing written); 64 a refusal.
 """
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -38,6 +43,11 @@ DEFAULT_LR = {"head": 1e-4, "full": 2e-5}
 
 class Refusal(Exception):
     pass
+
+
+class NonFinite(FloatingPointError):
+    """A trained tensor or eval_loss_after that is not finite: the run is refused before anything is written (exit 5).
+    A FloatingPointError, as train_step's non-finite loss is, so main() maps both to one refusal."""
 
 
 def load_base(model_dir, device):
@@ -146,15 +156,43 @@ def trained_state_dict(trainable):
     return {name: p.detach().cpu().clone() for name, p in trainable}
 
 
+def non_finite_tensors(sd):
+    """The names of the tensors in a state dict that hold a NaN or an infinity, in the dict's order."""
+    import torch
+    return [k for k, t in sd.items() if not bool(torch.isfinite(t).all())]
+
+
+def refuse_non_finite(sd, loss_after):
+    """Raise NonFinite when a trained tensor or eval_loss_after (None: not measured) is not finite. VERIFY-FT1 F-1: the
+    loss check in train_step reads each step's INPUT, so one step at --lr inf saved 31 of 31 NaN tensors with exit 0."""
+    bad = non_finite_tensors(sd)
+    what = []
+    if bad:
+        what.append("%d of %d trained tensors are not finite (%s)" % (len(bad), len(sd), ", ".join(bad[:3])))
+    if loss_after is not None and not math.isfinite(loss_after):
+        what.append("eval_loss_after is %r" % loss_after)
+    if what:
+        raise NonFinite("; ".join(what) + ": nothing is saved")
+
+
+def check_space(nbytes, directory, margin=64 << 20):
+    """Refuse when the filesystem that holds `directory` (its nearest existing ancestor while it does not exist yet)
+    has less than `nbytes` plus the margin free. Nothing is created or written here."""
+    probe = Path(directory).absolute()
+    while not probe.exists():
+        probe = probe.parent
+    need = nbytes + margin
+    free = shutil.disk_usage(probe).free
+    if free < need:
+        raise Refusal("the checkpoint needs %d MiB and %s has %d MiB free" % (need >> 20, directory, free >> 20))
+
+
 def save_checkpoint(sd, path, margin=64 << 20):
     """torch.save through a .tmp file, refused BEFORE writing when the disk cannot hold it: a full disk fails every
     process on the machine (FT1 filled the sandbox disk once, 2026-09-24, with a 1.6 GB encoder checkpoint)."""
     import torch
     path = Path(path)
-    need = sum(t.numel() * t.element_size() for t in sd.values()) + margin
-    free = shutil.disk_usage(path.parent).free
-    if free < need:
-        raise Refusal("the checkpoint needs %d MiB and %s has %d MiB free" % (need >> 20, path.parent, free >> 20))
+    check_space(sum(t.numel() * t.element_size() for t in sd.values()), path.parent, margin)
     tmp = path.with_name(path.name + ".tmp")
     try:
         torch.save(sd, str(tmp))
@@ -165,14 +203,18 @@ def save_checkpoint(sd, path, margin=64 << 20):
 
 
 def load_checkpoint(model, path):
-    """Load a checkpoint.pt into a base model: every key must name a parameter of the same shape, the act head never.
-    -> (tensors, the top-level modules it replaced)"""
+    """Load a checkpoint.pt into a base model: every key must name a parameter of the same shape, the act head never,
+    and every tensor must be finite (VERIFY-FT1 F-1). -> (tensors, the top-level modules it replaced)"""
     import torch
     sd = torch.load(str(path), map_location="cpu", weights_only=True)
     own = dict(model.named_parameters())
     bad = [k for k in sd if k not in own or tuple(own[k].shape) != tuple(sd[k].shape) or k.startswith(ACT_PREFIX)]
     if not sd or bad:
         raise Refusal("checkpoint %s: %d tensors, %d not loadable: %s" % (path, len(sd), len(bad), bad[:3]))
+    nonfinite = non_finite_tensors(sd)
+    if nonfinite:   # refused before load_state_dict: the model is left as it was
+        raise Refusal("checkpoint %s: %d of %d tensors are not finite: %s" % (path, len(nonfinite), len(sd),
+                                                                           nonfinite[:3]))
     _missing, unexpected = model.load_state_dict(sd, strict=False)
     if unexpected:
         raise Refusal("checkpoint %s: unexpected keys %s" % (path, unexpected[:3]))
@@ -236,6 +278,8 @@ def run(args):
     items = make_items(tok, agent.cfg, examples)
     trainable = select_trainable(model, args.mode)
     params = [p for _, p in trainable]
+    # F-6: the checkpoint's size is known here, so a disk that cannot hold it costs the model load, never the training
+    check_space(sum(p.numel() * p.element_size() for p in params), out)
     if args.grad_checkpointing:
         model.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     act_before = param_digest(model, ACT_PREFIX)
@@ -260,8 +304,9 @@ def run(args):
     guards = {"act_head_unchanged": param_digest(model, ACT_PREFIX) == act_before}
     if enc_before is not None:
         guards["encoder_unchanged"] = param_digest(model, ENCODER_PREFIX) == enc_before
-    out.mkdir(parents=True, exist_ok=True)
     sd = trained_state_dict(trainable)
+    refuse_non_finite(sd, loss_after)   # F-1: on what would be saved, before --out is created
+    out.mkdir(parents=True, exist_ok=True)
     save_checkpoint(sd, out / "checkpoint.pt")
     guards["model_dir_unchanged"] = dir_state(model_dir) == before
     import laya
@@ -320,11 +365,21 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.epochs < 1 or args.batch_size < 1 or (args.limit is not None and args.limit < 1):
         ap.error("--epochs, --batch-size and --limit must be >= 1")
+    # F-1: an optimizer setting outside its domain is a usage error; --lr inf trained 31 of 31 tensors to NaN
+    if args.lr is not None and not (math.isfinite(args.lr) and args.lr > 0):
+        ap.error("--lr must be finite and > 0, not %r" % args.lr)
+    if not (math.isfinite(args.weight_decay) and args.weight_decay >= 0):
+        ap.error("--weight-decay must be finite and >= 0, not %r" % args.weight_decay)
+    if not (math.isfinite(args.max_grad_norm) and args.max_grad_norm > 0):
+        ap.error("--max-grad-norm must be finite and > 0, not %r" % args.max_grad_norm)
     try:
         m = run(args)
     except (Refusal, C.DatasetError, C.HeldOutLeak, C.HeldOutError, C.LabelError) as e:
         print("train: refused: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 64
+    except FloatingPointError as e:   # NonFinite, or train_step's non-finite loss (F-4: it was a raw traceback, rc 1)
+        print("train: refused: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        return 5
     print(json.dumps({k: m[k] for k in ("examples", "steps", "per_epoch_loss", "eval_loss_before", "eval_loss_after",
                                         "guards", "trained", "checkpoint", "device", "wall_seconds")}, sort_keys=True))
     if not all(m["guards"].values()):

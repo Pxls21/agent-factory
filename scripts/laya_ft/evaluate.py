@@ -16,10 +16,13 @@ them: the KC-J3 verdict line, the committed base numbers, the rows that agree wi
 laya.common.ece_score over the answers as served (with the checkpoint config's temperatures; confidence = the chosen
 option's probability). `v1_blocking` and `v1_full_blocking` score the trained D-6(b) question (threshold 0.5), which J2
 never asked in this form, so they have no committed base number. With NO checkpoint the run is its own positive control:
-every number of v1, v1_full and ap must equal the committed J2, J2c and AP results (exit 2 otherwise).
+every number of v1, v1_full and ap must equal the committed J2, J2c and AP results (exit 2 otherwise). A served
+probability that is not a finite float refuses the evaluation (exit 5) instead of being scored, and train.load_checkpoint
+refuses a checkpoint with a non-finite tensor (VERIFY-FT1 F-1).
 """
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -36,6 +39,21 @@ J2_RUNS = {   # run -> (sample, committed results), repo-relative under docs/res
 BLOCKING_RUNS = {"v1_blocking": "j2-v1-probe/sample.json", "v1_full_blocking": "j2c-fulltext/sample.json"}
 ALL_RUNS = tuple(J2_RUNS) + tuple(BLOCKING_RUNS)
 LAYA_V1 = ("jev_choice", "jev_noul")
+
+
+class NonFiniteAnswer(Exception):
+    """A served probability that is not a finite float: the evaluation is refused (exit 5), nothing is scored."""
+
+
+def check_served(out):
+    """Refuse (NonFiniteAnswer) a served answer whose probabilities (a choice's or a score's `probabilities`, a noul's
+    `noul`) are not all finite floats. VERIFY-FT1 F-1: J2's scorers counted a NaN checkpoint's answers, every prediction
+    BLOCKER with ECE 0.0. -> out"""
+    for qid, a in (out.get("answers") or {}).items():
+        for v in list((a.get("probabilities") or {}).values()) + ([a["noul"]] if "noul" in a else []):
+            if not (isinstance(v, float) and math.isfinite(v)):
+                raise NonFiniteAnswer("answer %r serves the probability %r, not a finite float" % (qid, v))
+    return out
 
 
 def compare(run, mine, committed):
@@ -115,6 +133,14 @@ def ece_of(calls, run, sample):
 
 
 def main(argv=None):
+    try:
+        return _main(argv)
+    except NonFiniteAnswer as e:
+        print("evaluate: refused: NonFiniteAnswer: %s: nothing is scored" % e, file=sys.stderr)
+        return 5
+
+
+def _main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--checkpoint", default=None, help="a train.py checkpoint.pt; none = the base model")
     ap.add_argument("--only", default="v1,v1_full,ap", help="runs, from %s" % ",".join(ALL_RUNS))
@@ -150,7 +176,7 @@ def main(argv=None):
     calls = []
 
     def post(url, body, timeout=600):   # the J2 scorers' post, in process: the server's own fan-out, no socket
-        out = server._answer(body["state"], body["questions"])
+        out = check_served(server._answer(body["state"], body["questions"]))   # a non-finite answer is never scored
         calls.append((body, out))
         return out
 
