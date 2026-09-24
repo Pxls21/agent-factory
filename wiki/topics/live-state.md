@@ -14,7 +14,8 @@ last_compiled: 2026-09-03
 **2026-09-24 21:4xZ — WHAT IS LIVE NOW (supersedes the 21:1xZ block for the live set).**
 - **LIVE:** the JT3 search hook. NEW at commit time: `scripts/ap_screen.py --staged-shell` prints the AP_SCREEN hits of staged `*.sh` files (task #245). NEW at push time: push_clean refuses a note that cites a commit id the push rewrote (task #243; its first run caught the manifest's provenance line, task #246).
 - **VERIFYING (two sandbox agents):** VERIFY-GW1-R1 on `scripts/gpu_window.sh` (F-1 not fully closed, the coordinator's finding; the second repair waits); VERIFY-T243-245 on the three tooling changes.
-- **PC:** no lane live; qwen active; the window1 jobs file staged.
+- **PC:** no lane live; qwen active; the window1 jobs file staged (committed as `tasks/briefs/jev-laya/window1.jobs`, sha256/16 12977f2755c92839). IN FLIGHT since 21:42Z: the Laya base-model evaluation on the PC CPU (`~/laya-ft/eval-base-w1`, log `~/laya-ft/eval-base-w1.log`; the positive control, exit 2 if a J2 number differs).
+- **CI:** the run for origin 84d93b0 is being waited for (`ci_gate.py --wait`).
 - **NEXT:** the GW1-R2 repair and its verify, then the window (`--max-minutes 20`; qwen down about 10 to 20 minutes; its restart takes about 80 s), then the Laya evaluation on the PC CPU and the Qwen J2 continuation.
 
 **2026-09-24 21:1xZ — WHAT IS LIVE NOW (supersedes the 20:0xZ block for the live set).**

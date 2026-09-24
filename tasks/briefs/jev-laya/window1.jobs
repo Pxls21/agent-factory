@@ -1,0 +1,5 @@
+# window1 (2026-09-24): G0, RWKV-7 0.4B zero-shot (D-081), then a timed head-mode Laya run (D-078). Run with --max-minutes 20.
+# Inner caps use timeout --foreground so no job makes a new process group: the window's own TERM/KILL must reach every process.
+cd ~/agent-factory && timeout --foreground -k 10 480 ~/venv-rwkv-b/bin/python docs/research/findings/j2b-variants/rwkv7_g0.py --out-dir ~/rwkv-g0/out-b-w1
+grep -q '"load": {' ~/rwkv-g0/out-b-w1/g0.json 2>/dev/null || { cd ~/agent-factory && timeout --foreground -k 10 300 ~/venv-rwkv/bin/python docs/research/findings/j2b-variants/rwkv7_g0.py --no-cache --out-dir ~/rwkv-g0/out-a-w1; }
+cd ~/agent-factory && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 ~/venv-laya/bin/python scripts/laya_ft/train.py --dataset ~/laya-ft/ds-0b342c7 --labels docs/research/findings/laya-ft-labels/2026-09-24-openjev/labels.jsonl --out ~/laya-ft/ckpt-head-w1 --mode head --device cuda --epochs 1 --batch-size 8 --eval-loss --model-dir ~/hf-laya/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982/typed-decisions
