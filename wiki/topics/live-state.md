@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 10:5xZ — WHAT IS LIVE NOW (this block supersedes the 08:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **DONE:** all twelve Stage 0 proofs ACCEPTED. The owner signed the last eight in one command (tagger 10:26:45Z to 10:26:50Z, on fa20942); the tag objects are committed as `docs/governance/tags/accepted-<id>.tag`, each GOODSIG against the owner's key; `check-proof-status.py` rc 0; `tests/test_proof_status.py` 33 passed.
+- **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b`, local build route, dispatched 08:04Z; sandbox poller pid 29016.
+- **LIVE, SANDBOX:** none yet this block.
+- **NEXT (owner rulings D-069):** #214 restore all five hooks rooted at `/home/user` plus a manual start; #198 the J1-1 redaction REDESIGN (deterministic, default-deny; Jev as an offline leak hunter); #210 MoJev option B on the PC's CPU after the hook fix; #221 the Jev leverage re-audit (skills, hooks, workflows; a programmable Jev tool; a quirk tracker); #222 a static read of Contrastive-LM/CLM and Asymptote-Labs/agent-beacon; harvest K170 and send it to an independent verify.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 08:0xZ — WHAT IS LIVE NOW (this block supersedes the 07:5xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b` on the local build route, PC pid 1300506, dispatched 08:04Z; the sandbox poller is pid 29016. Its report lands at `tasks/briefs/kit-k1-support/K170-report.md`.
 - **LIVE, SANDBOX:** none.
@@ -566,6 +573,7 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
+- **RESOLVED 2026-09-24 10:4xZ (D-069):** the eight proofs signed (all twelve ACCEPTED); #198 redesign, not a patch; #210 option B with the owner's yes to running MoJev on the PC's CPU; #214 all five hooks, rooted at `/home/user`. Still open: the Stage 0 PR to main.
 - **OPEN 2026-09-24 03:2xZ (adds to the 02:3xZ list):** (4) MoJev: option A, B (recommended: a bounded CPU probe on the PC, bug localization first; needs a yes to running its code and weights on the PC) or C (`docs/research/findings/MOJEV-AUDIT-2026-09-24.md` §6); (5) the project hooks (#214): which of the five to restore (session start, per-prompt wiki excerpts, edit snapshot, graft nag, turn-end retro); each costs tokens.
 - **OPEN 2026-09-24 02:3xZ (supersedes the 2026-09-23 14:3xZ list, whose S0-02 and S0-05 items are done: both proofs are ACCEPTED):** (1) review and signed acceptance of the eight minted proofs not yet accepted: S0-03, S0-04, S0-06, S0-07 (REVIEW-PENDING), S0-08, S0-09, S0-10, S0-12 (one signing command per proof, as for S0-01, S0-02 and S0-05); (2) then the Stage 0 pull request to `main`, owner-merged; (3) MoJev (task #210), once the read-only audit's findings land; (4) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (5) the cloud route (D-061/D-062). Mirrored in `STATUS.md` §Next decision.
 - **OPEN 2026-09-23 14:3xZ:** (1) S0-02: the owner-run removal of owner2 from the test channel (the command is in the 14:26Z chat reply; the owner replies "removed"), then the coordinator runs the revoked leg; (2) S0-05: the buzz-acp relay identity `~/s0-05-identity/pair.env` does not exist — option 1 the coordinator creates it after the S0-02 capture (recommended), 2 the owner creates it, 3 park S0-05; after that, the owner's sudo run of the E3 recipe; (3) the sandbox disk: may the coordinator delete `/root/venv-laya` and the orphaned HF cache blob (yes or no; the classifier blocked the delete, not worked around); (4) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (5) no decision needed now: D-058, the owner's dream-phase Jev triage idea, is recorded as PROPOSED (task #195, blocked on the J1 closure and the Stage 5 build). RESOLVED since 05:1xZ: the S0-05 second-assertion wording (D-055, option 1, 10:5xZ). The bullets below this one are history; most predate 2026-09-15, and the ledger holds their status.
@@ -613,6 +621,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 10:5xZ — all twelve Stage 0 proofs ACCEPTED (the owner's eight signed tags anchored); the owner's rulings D-069 on #198, #210, #214, and the new asks #221 and #222.
 2026-09-24 08:0xZ — K170 dispatched (PC local build lane, PIN 9e6821b); pushed 99f3864 (VERIFY-K215 harvest) and 00ac4ec (the K170 brief).
 2026-09-24 07:5xZ — VERIFY-K215 home: K215 and the anti-hollow-green bake verified with follow-ups (issue #65); the typed-escape quirk widened to the Bash tool.
 2026-09-24 07:2xZ — VERIFY-J1-45 home: J1-4 and J1-5 verified with follow-ups (issue #66); AF-AP-180 registered.
