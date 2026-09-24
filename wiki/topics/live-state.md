@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 02:1xZ — WHAT IS LIVE NOW (this block supersedes the 02:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (the local build route, ONE long-context lane):** J1-1-R3 (#202, `pc-j1-1-r3.md--ff7a671`). One monitor watches it (10-minute heartbeats with the vLLM KV use).
+- **LIVE, SANDBOX 02:1xZ (three agents, all Opus 5.5 per D-065, relaunched after the owner stopped them by mistake):** J1-3-R1 (#209, from its premise section), K150 (#150, items a/d1/l′ in the tree, continuing), the MoJev evidence lane (#210, with AMENDMENT 1: bug localization, workflow-hygiene triggers, a context manager). `.lanes-live` holds 20 paths.
+- **PUSHED 02:1xZ:** 499cb55 (CI run pending, a waiter watches it); 247a39a (D-065 + the MoJev brief amendment) is local, for the next push.
+
 **2026-09-24 02:0xZ — WHAT IS LIVE NOW (this block supersedes the 01:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (the local build route, ONE long-context lane):** J1-1-R3 (#202, `pc-j1-1-r3.md--ff7a671`), re-attached after the 01:54Z worker restart (AF-AP-131). One monitor watches it, with 10-minute heartbeats that read the vLLM KV use.
 - **MOVED 02:0xZ:** J1-3-R1 (#209) starved on the local route beside J1-1-R3 (504 at the 100 s first-event limit, the fallback 403, zero tree changes; AF-AP-146) and was stopped; it now runs as a sandbox `code-implementer` (Opus, the shared tree; D-062).
@@ -509,6 +514,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 02:1xZ — the owner stopped all three sandbox agents by mistake; all three relaunched on Opus 5.5 (D-065).
 2026-09-24 02:1xZ — task #210: the read-only MoJev audit dispatched (owner ask).
 2026-09-24 02:0xZ — worker restart recovered; J1-3-R1 moved to a sandbox agent; K150 re-dispatched.
 2026-09-24 01:4xZ — pushed d091312; K150 dispatched in the sandbox (task #150).
