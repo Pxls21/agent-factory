@@ -87,7 +87,11 @@ def read_question(a):
                 text = fh.read()
         except OSError as e:
             raise Usage("cannot read --from-file %s: %s" % (a.from_file, e.strerror))
-        text = text[-FROM_FILE_CHARS:]
+        # The WHOLE file is scrubbed before the cut: a raw cut can leave a value whose name it removed, which no later
+        # scrub recognizes (VERIFY-JT2-R1 F-16, F-17; AF-AP-193). Without the scrubber nothing is sent to Jev, and the
+        # lexical order reads the raw tail as before.
+        fitted = jc.fit_scrubbed(text, FROM_FILE_CHARS, "tail")
+        text = fitted if fitted is not None else text[-FROM_FILE_CHARS:]
     else:
         text = a.text
     if not text.strip():

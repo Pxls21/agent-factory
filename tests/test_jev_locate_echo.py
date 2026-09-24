@@ -288,6 +288,28 @@ def test_from_file_reads_the_last_4000_characters(locate_repo, tmp_path, double)
 
 @NEEDS_RG
 @NEEDS_GIT
+def test_from_file_is_scrubbed_whole_before_its_cut(locate_repo, tmp_path, double):
+    """VERIFY-JT2-R1 F-16/F-17 (its reproduction, a FAKE value): the raw 4,000 cut removed a credential's NAME and kept
+    its value; the rest of the window (a long run the scrub collapses) shrank below the 1,000 query, so the query kept
+    the window's start and sent the value to Jev, and the pack's question line showed it."""
+    value = "QZJ8abcdefghijklmnop"
+    secret, k = "password=" + value, 9                   # the raw cut would remove the name and the separator
+    end = "open_socket raised in retry_pool: LAST_WORDS"
+    blob = " " + "A" * (4000 - (len(secret) - k) - 2 - len(end)) + " "
+    trace = tmp_path / "trace.txt"
+    trace.write_text("y " * 700 + secret[:k] + secret[k:] + blob + end)
+    assert len(secret[k:] + blob + end) == 4000
+    d = double(lambda text: 0.5)
+    rc, out, err = run(LOCATE, "--from-file", str(trace), "--root", str(locate_repo), "--order", "jev",
+                       "--jev-url", d.url, *FAST)
+    assert rc == 0, err
+    assert d.requests and all(value not in r["state"]["query"] and r["state"]["query"].endswith("LAST_WORDS")
+                              for r in d.requests)
+    assert value not in out and value not in err
+
+
+@NEEDS_RG
+@NEEDS_GIT
 def test_oversized_output_stays_under_the_hard_cap(locate_repo):
     # spaced words, not one long run: the scrubber collapses a 40+ character run to `<opaque-redacted>`, and a first
     # version of this fixture was therefore never cut at all (mutant M3 survived it; the lane report, A6)
