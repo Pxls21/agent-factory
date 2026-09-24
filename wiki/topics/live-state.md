@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 21:1xZ — WHAT IS LIVE NOW (supersedes the 20:0xZ block for the live set).**
+- **LIVE:** the JT3 search hook (unchanged since 20:06:30Z).
+- **VERIFYING:** VERIFY-GW1-R1 on `scripts/gpu_window.sh` blob 2d373812a9b9 (the GW1-R1 repair: F-1, F-2, F-7, F-8; 22 tests). The coordinator's sweep found F-1 not fully closed (AF-AP-145: a burst of TERMs skips the restart); the second repair waits for the verifier. The script and its tests stay untouched while it runs.
+- **PC:** no lane live; qwen active. The window1 jobs file is staged at `~/rwkv-g0/window1.jobs` (G0, then the head-mode Laya run).
+- **FOLLOW-UPS:** #74 (VERIFY-GW1's F-3..F-6, F-9, F-10, F-14..F-17). Task #245 (no hook screens a shell edit).
+- **NEXT:** the second repair, its verify, then the window with `--max-minutes 20`, then the Qwen J2 continuation.
+
 **2026-09-24 20:0xZ — WHAT IS LIVE NOW (supersedes the 19:2xZ block for the live set).**
 - **LIVE:** the JT3 search hook, re-armed 20:06:30Z (a semantic Grep in `scripts/` is answered graft-first; the identical repeat within 120 s runs raw). `.jev/intercept-off` switches it off.
 - **LANDED:** JT2 (after JT2-R2) and JT3, both MERGE-READY-WITH-FOLLOWUPS (#72, #71). The CI red on a repeated finding id is fixed (f1679db, CI green).
@@ -756,6 +763,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 21:1xZ — GW1-R1 committed and in re-verify; the coordinator found F-1 not fully closed (AF-AP-145, a TERM burst); follow-ups on #74; the window1 jobs file staged on the PC; task #245 opened.
 2026-09-24 20:1xZ — stamp_check gives a ten-minute bucket stamp no slack (the 20:1xZ slip at 20:08:53Z; incident log 20:0xZ); the live set unchanged.
 2026-09-24 20:0xZ — JT3's hook re-armed and live; VERIFY-GW1 dispatched; FT1-F built, the coordinator's gate in progress; CI green on f1679db.
 2026-09-24 19:4xZ — stage0-ci run 36046249811 was red (a report restated finding id N-10; the dataset builder counted it twice); fixed in build_dataset.py (first block kept; the 0b342c7 dataset still d7cd9b49; AF-AP-199) and pushed as f1679db.
