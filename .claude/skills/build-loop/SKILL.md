@@ -165,7 +165,10 @@ never the final gate verdict.
    edit shipped without `python3 scripts/vendored_manifest.py --write` turned CI's ordinary suite red for four
    pushes on that one row. The hooks now gate it (pre-commit on a staged root path, pre-push on the outgoing
    range; the check is 0.35 s), but the discipline is the coordinator's: regenerate and paste the tool's PASS
-   line in the commit.
+   line in the commit. **The tests that PIN the artifact run in the same commit too (AF-AP-185, 2026-09-24):** a
+   regenerated class file moved an edited hook to kit-adapted, `--check` passed, and the class counts pinned in
+   `tests/test_vendored_manifest.py` went red in CI (the third time: D-054, D-065, then cf026a9); the pre-commit
+   CLASS-PIN gate now runs the pinned tests when the class counts move.
 
 3. **An unexpected test failure indicts YOUR assumption first — debugging ladder: telemetry →
    isolation → code.** Read the trace FIRST (a 10-line stage_event spy) — a well-instrumented
