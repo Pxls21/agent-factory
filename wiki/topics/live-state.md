@@ -776,6 +776,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 22:3xZ — AF-AP-145 refined (every exit after the handler traps ignores INT/TERM first) with a third AP_SCREEN tell (a bare exit after the handlers); its echo is task #247 (the S0-05 runner, a re-mint); the live set unchanged.
 2026-09-24 22:2xZ — GW1-R2 committed (VERIFY-GW1-R1 NOT-READY on R1-F-1) and in verify; the tooling repair committed (VERIFY-T243-245 A/B NOT-READY) and in verify; the Laya baseline PASS.
 2026-09-24 21:5xZ — retro batch: the commit-msg stamp gate; build-loop baked (a repair starts from the registry row); AF-AP-187/68/37 echoes; the window1 jobs file committed.
 2026-09-24 21:4xZ — tooling while VERIFY-GW1-R1 runs: #244 closed; #245 (staged-shell AP screen) and #243 (the stale-id push check) landed gated and in their own verify; AF-AP-200 registered; the check's first run caught the manifest's dangling provenance id (task #246).
