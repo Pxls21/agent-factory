@@ -1,0 +1,911 @@
+diff --git a/docs/research/findings/j2b-variants/qwen27b_j2.py b/docs/research/findings/j2b-variants/qwen27b_j2.py
+new file mode 100644
+index 00000000..1cd9886e
+--- /dev/null
++++ b/docs/research/findings/j2b-variants/qwen27b_j2.py
+@@ -0,0 +1,130 @@
++#!/usr/bin/env python3
++"""The J2 probes, UNCHANGED, against the Qwen3.8-27B Jev adapter (D-079, task #241).
++
++J2 section 3 set the rule for a new candidate: "these two samples and scripts rerun against it unchanged,
++with the same baselines". This runner loads `ap_probe.py`, `v1_probe.py` and `j2b.py` as they are committed and
++swaps only their `post`: the request goes to `http://127.0.0.1:47420/v1/systemone` (the Qwen adapter's wire,
++D-5), which does the per-chunk fan-out server-side (the Laya server's form), so every question sees one chunk.
++The adapter's policy is `examples_binary` (D-2's default, the oracle's own selection for this backbone); the
++`baseline` policy is run separately (`--policy baseline`), comparison only. The OmniRoute key is read by the
++adapter from its private file (D-6); this runner never touches it.
++
++Deliberate deviation from openjev_j2.py (named, not hidden): openjev scrubbed every request string before
++sending because codiv.ai is external egress. This runner sends over loopback only, and the brief's "only the
++URL differs" means the samples reach the adapter byte-identical to the committed J2 scripts (the Laya runs
++sent them unscrubbed too). Measured: 4 of the 484 sample/row texts change under scrub, so scrubbing here would
++change the scored inputs; the loopback destination is the owner's own machine and no new egress is added.
++
++  qwen27b_j2.py [--only v1_full,v1,v1_choice_rich,v1_blocking,ap_choice,ap_noul] [--out-dir DIR] [--url URL] [--policy P]
++"""
++import argparse
++import importlib.util
++import json
++import sys
++import time
++import urllib.error
++import urllib.request
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++FINDINGS = HERE.parent
++
++
++def _load(name, path):
++    spec = importlib.util.spec_from_file_location(name, path)
++    mod = importlib.util.module_from_spec(spec)
++    sys.modules[name] = mod
++    spec.loader.exec_module(mod)
++    return mod
++
++
++def make_post(base, usage):
++    def post(url, body, timeout=600):
++        state, questions = body["state"], body["questions"]
++        data = json.dumps({"state": state, "questions": questions}).encode()
++        for attempt in range(7):
++            req = urllib.request.Request(base + "/v1/systemone", data=data,
++                                         headers={"Content-Type": "application/json"})
++            try:
++                with urllib.request.urlopen(req, timeout=timeout) as r:
++                    out = json.loads(r.read())
++                    usage["requests"] += 1
++                    usage["input_tokens"] += out.get("usage", {}).get("input_tokens", 0)
++                    answers = out.get("answers", {})
++                    usage["refused"] = usage.get("refused", 0) + sum(
++                        1 for a in answers.values() if isinstance(a, dict) and a.get("refused"))
++                    usage["bounded_answers"] = usage.get("bounded_answers", 0) + sum(
++                        1 for a in answers.values() if isinstance(a, dict) and a.get("bounded_labels"))
++                    usage["bounded_labels"] = usage.get("bounded_labels", 0) + sum(
++                        len(a.get("bounded_labels") or []) for a in answers.values() if isinstance(a, dict))
++                    return out
++            except urllib.error.HTTPError as e:
++                if e.code not in (500, 502, 503) or attempt == 6:
++                    raise SystemExit(f"qwen-jev HTTP {e.code}: {e.read(300).decode('utf-8', 'replace')}")
++            except (urllib.error.URLError, TimeoutError) as e:
++                if attempt == 6:
++                    raise SystemExit(f"qwen-jev unreachable: {type(e).__name__}: {e}")
++            time.sleep(5 * 2 ** attempt)
++        raise AssertionError("unreachable")
++    return post
++
++
++def main(argv):
++    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    ap.add_argument("--only", default="v1_full,v1,v1_choice_rich,v1_blocking,ap_choice,ap_noul")
++    ap.add_argument("--out-dir", default=str(HERE / "qwen27b"))
++    ap.add_argument("--url", default="http://127.0.0.1:47420")
++    ap.add_argument("--policy", default="examples_binary")
++    args = ap.parse_args(argv)
++    out_dir = Path(args.out_dir)
++    out_dir.mkdir(parents=True, exist_ok=True)
++    usage = {"requests": 0, "input_tokens": 0, "refused": 0}
++    post = make_post(args.url, usage)
++    apm = _load("ap_probe", FINDINGS / "ap-hawk-probe" / "ap_probe.py")
++    v1m = _load("v1_probe", FINDINGS / "j2-v1-probe" / "v1_probe.py")
++    sys.path.insert(0, str(HERE))
++    j2b = _load("j2b", HERE / "j2b.py")
++    for mod in (apm, v1m, j2b):
++        mod.post = post
++    summary = {}
++    for name in args.only.split(","):
++        t0, before = time.time(), dict(usage)
++        if name == "ap_noul":
++            apm.cmd_score(argparse.Namespace(sample=str(FINDINGS / "ap-hawk-probe" / "sample.json"), url=args.url,
++                                             out=str(out_dir / "ap_noul.json")))
++            result = None
++        elif name == "v1":
++            v1m.cmd_score(argparse.Namespace(sample=str(FINDINGS / "j2-v1-probe" / "sample.json"), url=args.url,
++                                             out=str(out_dir / "v1.json")))
++            result = None
++        elif name == "v1_full":  # J2c: the same rows with the whole finding (section 6 of the J2 findings)
++            v1m.cmd_score(argparse.Namespace(sample=str(FINDINGS / "j2c-fulltext" / "sample.json"), url=args.url,
++                                             out=str(out_dir / "v1_full.json")))
++            result = None
++        elif name == "v1_choice_rich":
++            result = j2b.v1_choice_rich(args.url)
++        elif name == "v1_blocking":
++            result = j2b.v1_blocking(args.url)
++        elif name == "ap_choice":
++            result = j2b.ap_choice(args.url)
++        else:
++            raise SystemExit(f"unknown variant: {name}")
++        if result is not None:  # the j2b variants return their metrics (openjev discards them; we persist ours)
++            (out_dir / f"{name}.json").write_text(
++                json.dumps(result, indent=1, sort_keys=True) + "\n", encoding="utf-8")
++        summary[name] = {
++            "policy": args.policy,
++            "seconds": round(time.time() - t0, 1),
++            "requests": usage["requests"] - before["requests"],
++            "input_tokens": usage["input_tokens"] - before["input_tokens"],
++            "refused": usage.get("refused", 0) - before.get("refused", 0),
++        }
++        print(f"{name} {json.dumps(summary[name])}", flush=True)
++    (out_dir / "run-summary.json").write_text(
++        json.dumps({"policy": args.policy, "url": args.url, "usage": usage, "per_variant": summary},
++                   indent=1, sort_keys=True) + "\n", encoding="utf-8")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/scripts/qwen_jev.py b/scripts/qwen_jev.py
+new file mode 100644
+index 00000000..a111bb30
+--- /dev/null
++++ b/scripts/qwen_jev.py
+@@ -0,0 +1,450 @@
++#!/usr/bin/env python3
++"""The Qwen3.8-27B Jev adapter (D-079, task #241): applies simple-jev's v1 rules to the
++Qwen3.8-27B model already served behind OmniRoute, without loading any model of its own.
++
++simple-jev (featherless-ai, Apache-2.0, pinned in upstream.lock.yaml advisory_jev_runtimes)
++answers typed questions (choice, score, noul) from the next-token logprobs over the answer
++labels, with no text generation. Its own HF server loads the model with Transformers; here the
++3090 already runs the vLLM container that serves this model behind OmniRoute, so this adapter is
++the thin bridge: it imports simple-jev's common/ and hf-server/hf_prompt_policies.py (used, never
++copied), compiles every request with simple-jev's PromptCompiler on the served model's tokenizer,
++sends each compiled branch to OmniRoute /v1/chat/completions (D-3's single path), and builds every
++answer with simple-jev's own scoring (build_response; restore_binary_noul for binary noul).
++
++  GET  /health           -> {ok, model, prompt_policy, revision, tokenizer}
++  GET  /v1/models       -> {data:[{id: <served id>}]}
++  POST /v1/systemone     -> the house wire contract (D-5): {model?, state, questions}
++  POST /v1/classifier    -> same handler (D-5: both routes)
++
++D-5 (the house wire contract, mirrored from scripts/laya_systemone_server.py): a request without a
++`model` gets the served id; when every question id names a state.chunks id, each question sees only
++its own chunk (the Laya per-chunk fan-out); the response carries answers keyed by question id,
++usage, model, and fan_out.
++
++D-3 (one path, OmniRoute): each branch goes to /v1/chat/completions with the served model id
++qwen-local/qwen3.8-27b-local, the branch's messages plus the assistant prefill, continue_final_message
++true, add_generation_prompt false, chat_template_kwargs.enable_thinking as the compiler used it, the
++branch's reasoning_content when it has one, max_tokens 1, temperature 0, logprobs true, top_logprobs
++20. The response's model must name the local model, or the answer is refused.
++
++D-4 (parity, never assumed): for every branch, usage.prompt_tokens must equal the compiler's
++len(branch.token_ids), and every label must map to its token (the label's logprob is read from
++top_logprobs by the label's decoded token string). A branch that fails the count is refused (not
++scored). A label absent from the top 20 is BOUNDED (given the lowest logprob shown, an upper bound)
++and named in the answer as bounded_labels; it is never silently filled.
++
++D-6 (the key): the OmniRoute key is read in process from a private file (default
++~/.config/qwen-jev/omniroute.key; QWEN_JEV_KEY_FILE overrides the path). It never appears in argv, a
++log line, an error line, or a response.
++
++D-1 (the oracle, used never copied): this refuses to serve unless the pinned simple-jev checkout
++HEAD equals advisory_jev_runtimes.simple-jev.revision in upstream.lock.yaml.
++"""
++import argparse
++import json
++import os
++import subprocess
++import sys
++import urllib.error
++import urllib.request
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from typing import ClassVar
++
++SIMPLE_JEV = os.path.expanduser("~/simple-jev")
++TOKENIZER_DIR = os.path.expanduser("~/qwen-jev-tokenizer")
++UPSTREAM_LOCK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "upstream.lock.yaml")
++DEFAULT_KEY_FILE = os.path.expanduser("~/.config/qwen-jev/omniroute.key")
++SERVED_ID = "qwen-local/qwen3.8-27b-local"  # D-3: the model id; never a combo (the build combo falls back to the cloud chain)
++DEFAULT_PORT = 47420
++MAX_BODY = 8 * 1024 * 1024
++
++# The verified pin (D-1), populated by make_service before the server starts; the health
++# endpoint reports it. The oracle is never served before this check passes.
++_pin_actual = None
++
++
++def _add_simple_jev_paths():
++    """D-1: import common/ and hf-server/ from the pinned checkout (used, never copied)."""
++    if SIMPLE_JEV not in sys.path:
++        sys.path.insert(0, SIMPLE_JEV)
++    hf = os.path.join(SIMPLE_JEV, "hf-server")
++    if hf not in sys.path:
++        sys.path.insert(0, hf)
++
++
++# The oracle is imported once the pin is verified (main() verifies before construction).
++# These are bound at call time via a module-level loader so the test double path can import without the pin.
++_oracle = {}
++
++
++def load_oracle():
++    """Import the pinned simple-jev modules and return the names this adapter drives.
++
++    D-1: import common and hf_prompt_policies from the pinned checkout. The pin itself is
++    checked separately by verify_pin(); this only does the import.
++    """
++    _add_simple_jev_paths()
++    import common  # noqa: F401  (the v1 prompt plan, request schema and response scoring)
++    from common import build_response
++    from common import ClassifierRequest
++    from hf_prompt_policies import prepare_policy, restore_binary_noul
++    from hf_server import PromptCompiler, unique_prompt_tokens
++    _oracle["common"] = common
++    _oracle["build_response"] = build_response
++    _oracle["ClassifierRequest"] = ClassifierRequest
++    _oracle["prepare_policy"] = prepare_policy
++    _oracle["restore_binary_noul"] = restore_binary_noul
++    _oracle["PromptCompiler"] = PromptCompiler
++    _oracle["unique_prompt_tokens"] = unique_prompt_tokens
++    return _oracle
++
++
++def read_key(key_file):
++    """D-6: read the key from a private file. The caller controls the path (test uses a FAKE file).
++    The value is returned to the caller and is never logged, put in argv, or written to a response."""
++    path = os.path.expanduser(key_file or DEFAULT_KEY_FILE)
++    with open(path) as fh:
++        value = fh.read().strip()
++    if not value:
++        raise RuntimeError("empty OmniRoute key at %s" % path)
++    return value
++
++
++def verify_pin():
++    """D-1: refuse to serve unless the checkout HEAD equals upstream.lock.yaml advisory_jev_runtimes.
++    Returns (ok, revision_expected, revision_actual, reason). A mismatch is a hard refusal, not a fallback."""
++    try:
++        actual = subprocess.run(
++            ["git", "-C", SIMPLE_JEV, "rev-parse", "HEAD"],
++            capture_output=True, text=True, timeout=30).stdout.strip()
++    except Exception as e:  # no git / not a checkout
++        return False, None, None, "cannot read the pinned checkout: %s: %s" % (type(e).__name__, e)
++    expected = None
++    try:
++        import yaml  # present in the venv (PyYAML is a simple-jev dependency)
++        with open(UPSTREAM_LOCK) as fh:
++            data = yaml.safe_load(fh)
++        expected = (data or {}).get("advisory_jev_runtimes", {}).get("simple-jev", {}).get("revision")
++    except Exception:
++        # Fallback: parse the pin without PyYAML. The lock file indents top-level
++        # keys at column 0 and the simple-jev block at two spaces.
++        in_block = in_simple = False
++        try:
++            lines = open(UPSTREAM_LOCK)
++        except Exception:
++            lines = ()
++        for line in lines:
++            if line.rstrip("\n") == "advisory_jev_runtimes:":
++                in_block = True
++                continue
++            if in_block and line and not line.startswith(" "):
++                break
++            if in_block and line.startswith("  simple-jev:"):
++                in_simple = True
++                continue
++            if in_block and in_simple and line.strip().startswith("revision:"):
++                expected = line.split("revision:", 1)[1].strip().strip('"')
++                break
++    if not expected:
++        return False, None, actual, "no advisory_jev_runtimes.simple-jev.revision in upstream.lock.yaml"
++    if actual != expected:
++        return False, expected, actual, "simple-jev checkout %s != pinned %s" % (actual, expected)
++    return True, expected, actual, "ok"
++
++
++def _logits_from_logprobs(top, branch, sq, tokenizer):
++    """D-4: map each output label to its token string (via the tokenizer) and read that token's logprob
++    from top_logprobs. Returns (label->logprob dict, bounded-labels list, per-label found-in-top20).
++    A bounded label is given the lowest logprob shown (an upper bound) and named, never silently filled."""
++    top_by_token = {t["token"]: t["logprob"] for t in top}
++    lowest = min((t["logprob"] for t in top), default=None)
++    row, bounded, found = {}, [], []
++    for i, label in enumerate(sq.output_labels):
++        tok = tokenizer.decode([branch.output_ids[i]])
++        if tok in top_by_token:
++            row[label] = top_by_token[tok]
++            found.append(label)
++        else:
++            # Bounded: the label is not in the top 20; the lowest shown logprob is an upper bound.
++            row[label] = lowest if lowest is not None else 0.0
++            bounded.append(label)
++    return row, bounded, found
++
++
++def _wire_messages(branch, named):
++    """Mirror the compiler's EXACT rendering (the part the compiler keeps private) so the wire
++    reproduces its tokens. baseline appends the answer prefix to the last user message and renders
++    add_generation_prompt=True / enable_thinking=False; the named policy renders every message as a
++    native text-block list, adds a final assistant message carrying the prefill and (when present)
++    reasoning_content, and renders add_generation_prompt=False / continue_final_message=True /
++    enable_thinking=(reasoning_content is not None). See hf_server.py:248-266 and the parity probes."""
++    messages = [dict(m) for m in branch.messages]
++    if named:
++        messages = [{**m, "content": [{"type": "text", "text": m["content"]}]} for m in messages]
++        assistant = {"role": "assistant", "content": [{"type": "text", "text": branch.answer_prefix}]}
++        if branch.reasoning_content is not None:
++            assistant["reasoning_content"] = branch.reasoning_content
++        return messages + [assistant]
++    # baseline
++    if isinstance(messages[-1]["content"], str):
++        messages[-1]["content"] = messages[-1]["content"] + branch.answer_prefix
++    else:
++        messages[-1]["content"] = [{"type": "text", "text": str(messages[-1]["content"]) + branch.answer_prefix}]
++    return messages
++
++
++class JevService:
++    """Bind the pinned oracle, the served tokenizer and the OmniRoute transport to the wire contract.
++
++    send() is the OmniRoute transport; tests substitute a fake. It is threaded so a request never
++    blocks on the network and the adapter's own state is read-only after construction.
++    """
++
++    served_id: ClassVar[str] = SERVED_ID
++
++    def __init__(self, tokenizer, policy, key, send=None, *, max_branches=100):
++        self.tokenizer = tokenizer
++        self.policy = policy
++        self._key = key
++        self._send = send if send is not None else self._send_omniroute
++        self.compiler = _oracle["PromptCompiler"](tokenizer, prompt_policy=policy)
++        self.max_branches = max_branches
++
++    def _send_omniroute(self, messages, named):
++        """D-3: one branch to OmniRoute /v1/chat/completions. The key rides the Authorization header
++        only; it is never in the body, a log line, or a returned error."""
++        body = {
++            "model": self.served_id,
++            "messages": messages,
++            "continue_final_message": True,
++            "add_generation_prompt": False,
++            "chat_template_kwargs": {"enable_thinking": named},
++            "max_tokens": 1,
++            "temperature": 0,
++            "logprobs": True,
++            "top_logprobs": 20,
++        }
++        req = urllib.request.Request(
++            os.environ.get("QWEN_JEV_OMNI", "http://127.0.0.1:20128") + "/v1/chat/completions",
++            data=json.dumps(body).encode(),
++            headers={"Content-Type": "application/json", "Authorization": "Bearer " + self._key},
++        )
++        try:
++            with urllib.request.urlopen(req, timeout=120) as r:
++                return r.status, json.loads(r.read())
++        except urllib.error.HTTPError as e:
++            return e.code, json.loads(e.read() or b"{}")
++        except (urllib.error.URLError, TimeoutError, OSError) as e:
++            # D-6: never name the key in the error; a transport failure is a refusal, not a fake answer.
++            return 502, {"error": {"message": "omniroute transport: %s: %s" % (type(e).__name__, str(e)[:160])}}
++
++    def _branch_logits(self, branch, sq):
++        """Send one branch, D-4-check it, and return (logit-row, bounded, ok, reason, usage).
++        ok is False when the branch must be refused (count mismatch or a non-local served model)."""
++        named = branch.reasoning_content is not None
++        status, resp = self._send(_wire_messages(branch, named), named)
++        if status != 200 or not resp.get("choices"):
++            return None, [], False, "omniroute HTTP %s: %s" % (status, str(resp)[:160]), {}
++        # D-4: the response's model must name the local model, or the answer is refused.
++        served = resp.get("model")
++        if served != self.served_id:
++            return None, [], False, "served model %r is not %r" % (served, self.served_id), {}
++        usage = resp.get("usage", {})
++        prompt_tokens = usage.get("prompt_tokens")
++        compiler_tokens = len(branch.token_ids)
++        if prompt_tokens != compiler_tokens:
++            # D-4: a branch that fails the token count is refused (not scored).
++            return None, [], False, "token count %s != compiler %s" % (prompt_tokens, compiler_tokens), usage
++        top = resp["choices"][0].get("logprobs", {}).get("content", [])
++        row, bounded, _found = _logits_from_logprobs(top, branch, sq, self.tokenizer)
++        return row, bounded, True, "ok", usage
++
++    def _single(self, state, questions):
++        """Compile + send + score ONE request (no fan-out). Returns the response dict (D-5 envelope):
++        {model, answers, usage, [fan_out], [refused], [bounded]}. Refused branches keep their answer
++        shape with the refused value null, so the house J2 scripts (which read answers[qid][field])
++        never crash; the refused/bounded sets are surfaced so a consumer can see the parity wall."""
++        if len(questions) > self.max_branches:
++            raise ValueError("too many branches: %d > %d" % (len(questions), self.max_branches))
++        creq = _oracle["ClassifierRequest"].model_validate(
++            {"model": self.served_id, "state": state, "questions": questions})
++        plan, binary_keys = _oracle["prepare_policy"](creq, "v1", self.policy)
++        compiled = self.compiler.compile(creq)
++        qmap = {q.branch_id: q for q in compiled.plan.questions}
++        qid_by_branch = {q.branch_id: q.question_id for q in compiled.plan.questions}
++        logits, bounded_all, refused = {}, {}, {}
++        usage_sum = {"input_tokens": 0, "output_tokens": 0}
++        for br in compiled.branches:
++            row, bounded, ok, reason, usage = self._branch_logits(br, qmap[br.branch_id])
++            if not ok:
++                # D-4: refused (count mismatch / non-local model / transport). Named, never silent.
++                refused[qid_by_branch[br.branch_id]] = reason
++                continue
++            logits[br.branch_id] = row
++            if bounded:
++                bounded_all[qid_by_branch[br.branch_id]] = bounded
++            for k in usage_sum:
++                usage_sum[k] += int(usage.get(k, 0) or 0)
++        # D-1: build every answer with simple-jev's own scoring. build_response requires a finite
++        # logit row for EVERY planned branch; a refused branch is given an all-zero row (finite,
++        # uniform) so the oracle runs, then its answer is nulled and named below, so no score is
++        # reported from a refused branch.
++        for br in compiled.branches:
++            if br.branch_id not in logits:
++                sq = qmap[br.branch_id]
++                logits[br.branch_id] = {lab: 0.0 for lab in sq.output_labels}
++        response = _oracle["build_response"](
++            plan, logits, input_tokens=_oracle["unique_prompt_tokens"]([b.token_ids for b in compiled.branches]))
++        _oracle["restore_binary_noul"](response, binary_keys)
++        # Surface the parity wall without altering the oracle's answer values: a refused answer is
++        # nulled (after the noul restore, so the restore cannot resurrect a refused score) and named.
++        for qid, reason in refused.items():
++            ans = response["answers"].get(qid)
++            if isinstance(ans, dict):
++                for k in ("choice", "noul", "score", "probabilities", "confidence"):
++                    if k in ans:
++                        ans[k] = None
++                ans["refused"] = reason
++            else:
++                response["answers"][qid] = {"type": "refused", "refused": reason}
++        if bounded_all:
++            for qid, labels in bounded_all.items():
++                ans = response["answers"].get(qid)
++                if isinstance(ans, dict):
++                    ans["bounded_labels"] = labels
++        if len(questions) > 1 and all(qid in (refused or {}) or qid in response["answers"] for qid in questions):
++            response["fan_out"] = len(questions)
++        return response
++
++    def systemone(self, body):
++        """D-5: the house wire contract. A request without `model` gets the served id; when every
++        question id names a state.chunks id, each question sees only its own chunk (the Laya
++        per-chunk fan-out); otherwise one call. The response carries answers keyed by question id,
++        usage, model, and fan_out."""
++        body = dict(body)
++        body.setdefault("model", self.served_id)  # D-5: a request without `model` gets the served id
++        state, questions = body["state"], body["questions"]
++        chunks = _chunk_map(state)
++        if chunks is not None and set(questions) <= set(chunks):
++            # D-5 fan-out: one call per chunk, each question sees only its own chunk.
++            base = {k: v for k, v in state.items() if k != "chunks"}
++            answers, usage_sum, model, refused, bounded = {}, {"input_tokens": 0, "output_tokens": 0}, None, {}, {}
++            for qid, q in questions.items():
++                one = self._single(dict(base, chunk=chunks[qid]), {qid: q})
++                answers[qid] = one["answers"][qid]
++                model = one.get("model", model) or self.served_id
++                for k in usage_sum:
++                    usage_sum[k] += int(one.get("usage", {}).get(k, 0) or 0)
++                if "refused" in (one.get("answers", {}).get(qid) or {}):
++                    refused[qid] = one["answers"][qid]["refused"]
++                bl = (one.get("answers", {}).get(qid) or {}).get("bounded_labels")
++                if bl:
++                    bounded[qid] = bl
++            out = {"model": model, "answers": answers, "usage": usage_sum, "fan_out": len(questions)}
++            if refused:
++                out["refused"] = refused
++            if bounded:
++                out["bounded_labels"] = bounded
++            return out
++        one = self._single(state, questions)
++        out = {"model": one["model"], "answers": one["answers"], "usage": one["usage"]}
++        if "refused" in one:
++            out["refused"] = one["refused"]
++        if "bounded_labels" in one:
++            out["bounded_labels"] = one["bounded_labels"]
++        if "fan_out" in one:
++            out["fan_out"] = one["fan_out"]
++        return out
++
++
++def _chunk_map(state):
++    """D-5 (the Laya pruner batch form): state.chunks=[{id,text}...] -> {id:text}; None for any other shape.
++    Mirrors scripts/laya_systemone_server.py:118-127."""
++    if not isinstance(state, dict) or not isinstance(state.get("chunks"), list):
++        return None
++    out = {}
++    for c in state["chunks"]:
++        if not isinstance(c, dict) or not isinstance(c.get("id"), str) or not isinstance(c.get("text"), str):
++            return None
++        out[c["id"]] = c["text"]
++    return out
++
++
++class Handler(BaseHTTPRequestHandler):
++    server_version = "qwen-jev/0.1"
++    service: ClassVar[JevService] = None
++
++    def _send(self, code, obj):
++        body = json.dumps(obj, ensure_ascii=False).encode()
++        self.send_response(code)
++        self.send_header("content-type", "application/json")
++        self.send_header("content-length", str(len(body)))
++        self.end_headers()
++        self.wfile.write(body)
++
++    def log_message(self, fmt, *args):  # D-6: the access log must never carry a key; keep it terse and key-free.
++        pass
++
++    def do_GET(self):
++        if self.path in ("/health", "/"):
++            return self._send(200, {"ok": True, "model": self.service.served_id,
++                                    "prompt_policy": self.service.policy,
++                                    "revision": _pin_actual, "tokenizer": TOKENIZER_DIR})
++        if self.path == "/v1/models":
++            return self._send(200, {"data": [{"id": self.service.served_id}]})
++        return self._send(404, {"error": "not found"})
++
++    def do_POST(self):
++        if self.path not in ("/v1/systemone", "/v1/classifier"):
++            return self._send(404, {"error": "not found"})
++        length = int(self.headers.get("content-length") or 0)
++        if length > MAX_BODY:
++            return self._send(413, {"error": "body too large"})
++        try:
++            body = json.loads(self.rfile.read(length) or b"{}")
++        except json.JSONDecodeError:
++            return self._send(400, {"error": "invalid JSON body"})
++        if "state" not in body or not isinstance(body.get("questions"), dict) or not body["questions"]:
++            return self._send(400, {"error": "need state and a non-empty questions map"})
++        try:
++            out = self.service.systemone(body)
++            return self._send(200, out)
++        except Exception as e:
++            # D-6: the key is never in an error line; a failure is a refusal with a reason, never a fake answer.
++            return self._send(503, {"error": "jev failed: %s: %s" % (type(e).__name__, str(e)[:200])})
++
++
++def make_service(policy, key_file, send=None):
++    """Construct the service: verify the pin (D-1), load the oracle and the served tokenizer, read the key (D-6)."""
++    global _pin_actual
++    ok, expected, actual, reason = verify_pin()
++    if not ok:
++        raise SystemExit("REFUSED to serve (D-1): %s" % reason)
++    _pin_actual = actual
++    load_oracle()  # D-1: the oracle is imported after the pin passes; JevService binds its names
++    from transformers import AutoTokenizer
++    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
++    key = read_key(key_file)
++    return JevService(tokenizer, policy, key, send=send), (expected, actual)
++
++
++def main(argv):
++    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
++    ap.add_argument("--port", type=int, default=int(os.environ.get("QWEN_JEV_PORT", DEFAULT_PORT)))
++    ap.add_argument("--policy", default="examples_binary", choices=["baseline", "examples_binary"])
++    ap.add_argument("--key-file", default=os.environ.get("QWEN_JEV_KEY_FILE", DEFAULT_KEY_FILE))
++    args = ap.parse_args(argv)
++    import socket
++    if socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect_ex(("127.0.0.1", args.port)) == 0:
++        raise SystemExit("port %d is not free" % args.port)  # the brief: check it is free
++    service, (expected, actual) = make_service(args.policy, args.key_file)
++    Handler.service = service
++    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
++    # D-1/D-2: report the pin and policy at startup; the key is never printed.
++    print("qwen-jev on 127.0.0.1:%d policy=%s pin=%s (serving id %s)"
++          % (args.port, args.policy, actual, SERVED_ID), file=sys.stderr)
++    server.serve_forever()
++
++
++if __name__ == "__main__":
++    main(sys.argv[1:])
+diff --git a/tests/test_qwen_jev.py b/tests/test_qwen_jev.py
+new file mode 100644
+index 00000000..e08967e2
+--- /dev/null
++++ b/tests/test_qwen_jev.py
+@@ -0,0 +1,313 @@
++#!/usr/bin/env python3
++"""Tests for scripts/qwen_jev.py (D-079, task #241).
++
++Deterministic, LLM-free: the real pinned simple-jev oracle (imported from ~/simple-jev at its
++pinned revision), the real served tokenizer (~/qwen-jev-tokenizer), and a FAKE send that stands
++in for the OmniRoute NETWORK only. The key is a FAKE key file (QWEN_JEV_KEY_FILE); the real
++~/.config/qwen-jev/omniroute.key is never read here.
++
++  tests/test_qwen_jev.py
++
++Negative controls: each guard has a paired red case below (count mismatch, cloud model, missing
++fan_out, bounded label, non-pinned checkout, key leakage).
++"""
++import json
++import os
++import sys
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++sys.path.insert(0, str(HERE.parent))
++import scripts.qwen_jev as qwen_jev  # noqa: E402
++
++from scripts.qwen_jev import (  # noqa: E402
++    JevService,
++    TOKENIZER_DIR,
++    make_service,
++    read_key,
++    verify_pin,
++)
++
++SERVED = "qwen-local/qwen3.8-27b-local"
++
++# The real served tokenizer (tokenizers only; transformers in the venv is fine without torch).
++from transformers import AutoTokenizer  # noqa: E402
++
++TZ = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
++
++# D-1 precondition: the oracle is used at its pinned revision.
++assert verify_pin()[0], "pinned simple-jev checkout does not match upstream.lock.yaml"
++qwen_jev.load_oracle()
++
++
++def make_service_for_tests(policy):
++    """A JevService with the real oracle and tokenizer, a FAKE send, and a FAKE key file."""
++    svc = JevService(TZ, policy, key="fake-key-not-real", send=None)
++    return svc
++
++
++def compile_branches(svc, state, questions):
++    """The oracle's own compile, as _single does it (one question type per request)."""
++    creq = qwen_jev._oracle["ClassifierRequest"].model_validate(
++        {"model": SERVED, "state": state, "questions": questions})
++    qwen_jev._oracle["prepare_policy"](creq, "v1", svc.policy)
++    compiled = svc.compiler.compile(creq)
++    qmap = {q.branch_id: q for q in compiled.plan.questions}
++    return compiled, qmap
++
++
++def fake_ok_response(svc, branch, sq, logprob_map=None):
++    """A wire response for one branch: the exact token count, the branch's answer labels present
++    in top_logprobs with fixed logprob values. logprob_map overrides values by token string."""
++    top = []
++    for i, label in enumerate(sq.output_labels):
++        tok = TZ.decode([branch.output_ids[i]])
++        lp = (logprob_map or {}).get(tok, -float(i + 1))
++        top.append({"token": tok, "logprob": lp})
++    # fill to 20 with deterministic non-label tokens, so the bounded case has a full top list
++    j = 1
++    while len(top) < 20:
++        top.append({"token": "fill%d" % j, "logprob": -(len(top) + 10.0)})
++        j += 1
++    top.sort(key=lambda t: t["logprob"])
++    return {
++        "model": SERVED,
++        "choices": [{"index": 0, "message": {"role": "assistant", "content": ""},
++                     "logprobs": {"content": top}}],
++        "usage": {"prompt_tokens": len(branch.token_ids), "completion_tokens": 1},
++    }
++
++
++def test_pin_passes_and_refuses_when_unpinned(tmp_path, monkeypatch):
++    """The pin check: the pinned checkout passes; a checkout at another revision is refused."""
++    ok, expected, actual, _reason = verify_pin()
++    assert ok and expected == actual
++    # negative control: a checkout at a different revision must be refused
++    other = tmp_path / "other-jev"
++    other.mkdir()
++    monkeypatch.setattr(qwen_jev, "SIMPLE_JEV", str(other))
++    ok2, _exp2, _act2, reason = verify_pin()
++    assert not ok2, "an unpinned checkout must be refused"
++    assert "not a checkout" in reason or "!=" in reason
++
++
++def test_pin_refuses_when_lock_missing(tmp_path, monkeypatch):
++    monkeypatch.setattr(qwen_jev, "UPSTREAM_LOCK", str(tmp_path / "missing.lock"))
++    ok, _exp, _act, reason = verify_pin()
++    assert not ok
++    assert "no advisory_jev_runtimes" in reason or "no " in reason
++
++
++def _ok_for(compiled, qmap, branch, sq, logprob_map=None):
++    """A valid wire response for one compiled branch (exact count, labels present, fixed logprobs)."""
++    return 200, fake_ok_response(None, branch, sq, logprob_map=logprob_map)
++
++
++def test_fake_key_never_in_body_logs_or_response(tmp_path, monkeypatch):
++    """D-6: a FAKE key file; the key may ride the Authorization header only."""
++    keyfile = tmp_path / "fake.key"
++    keyfile.write_text("FAKE-KEY-DO-NOT-LEAK\n")
++    os.chmod(keyfile, 0o600)
++    monkeypatch.setenv("QWEN_JEV_KEY_FILE", str(keyfile))
++    assert read_key(str(keyfile)) == "FAKE-KEY-DO-NOT-LEAK"
++
++    # the service must read the key from the FAKE file (not an inline key)
++    svc, _pin = make_service("examples_binary", key_file=str(keyfile), send=None)
++    state = {"finding": "the verifier reproduced the break through the real path"}
++    questions = {"q": {"type": "noul", "instructions": "Does it block?"}}
++    compiled, qmap = compile_branches(svc, state, questions)
++    br, sq = compiled.branches[0], qmap[compiled.branches[0].branch_id]
++    recorded = []
++
++    def send(messages, named):
++        # the transport test double: the real transport's Authorization header carries the key.
++        recorded.append({"auth": "Bearer " + svc._key, "body": messages})
++        return _ok_for(compiled, qmap, br, sq)
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    blob = json.dumps(out, sort_keys=True)
++    assert "FAKE-KEY-DO-NOT-LEAK" not in blob, "the key must never appear in a response"
++    # the key rides the Authorization header only
++    assert recorded and recorded[0]["auth"] == "Bearer FAKE-KEY-DO-NOT-LEAK"
++    for c in recorded:
++        assert "FAKE-KEY-DO-NOT-LEAK" not in json.dumps(c["body"], sort_keys=True), \
++            "the key must never appear in the wire body"
++
++
++def test_scoring_equals_oracle_on_fixed_logprobs():
++    """A branch whose label logprobs are fixed: the adapter's answer must equal what the oracle's
++    build_response gives for the same logits (the scoring boundary is the oracle's, not ours)."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"finding": "the verifier reproduced the break through the real path"}
++    questions = {"q": {"type": "choice", "instructions": "Which class?",
++                       "criteria": {"A": "breaks", "B": "follows up", "C": "notes only",
++                                    "D": "not reproduced", "E": "wrong contract", "F": "known"}}}
++    compiled, qmap = compile_branches(svc, state, questions)
++    sq = qmap[compiled.branches[0].branch_id]
++
++    def send(messages, named):
++        return 200, fake_ok_response(svc, compiled.branches[0], sq)
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    # oracle reference for the same fixed logits
++    logits = {compiled.branches[0].branch_id: {lab: float(-(i + 1))
++                                              for i, lab in enumerate(sq.output_labels)}}
++    ref = qwen_jev._oracle["build_response"](
++        compiled.plan, logits,
++        input_tokens=qwen_jev._oracle["unique_prompt_tokens"]([b.token_ids for b in compiled.branches]))
++    q = out["answers"]["q"]
++    assert q["choice"] == ref["answers"]["q"]["choice"]
++    assert not q.get("refused"), "a counted branch must not be refused: %r" % q.get("refused")
++
++
++def test_count_mismatch_refused():
++    """D-4: a branch whose prompt_tokens differ from the compiler's is refused, not scored."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"finding": "a short finding text"}
++    questions = {"q": {"type": "noul", "instructions": "Does it block?"}}
++    compiled, qmap = compile_branches(svc, state, questions)
++    sq = qmap[compiled.branches[0].branch_id]
++    resp = fake_ok_response(svc, compiled.branches[0], sq)
++    resp["usage"]["prompt_tokens"] = len(compiled.branches[0].token_ids) + 1  # the mismatch
++
++    def send(messages, named):
++        return 200, resp
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    q = out["answers"]["q"]
++    assert q["refused"], "a count-mismatch branch must be refused: %r" % q
++    assert q["noul"] is None, "a refused answer must not report a score"
++
++
++def test_cloud_served_model_refused():
++    """D-3: the response's model must name the local model; a cloud/combo id is a refusal."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"finding": "a short finding text"}
++    questions = {"q": {"type": "noul", "instructions": "Does it block?"}}
++    compiled, qmap = compile_branches(svc, state, questions)
++    sq = qmap[compiled.branches[0].branch_id]
++    resp = fake_ok_response(svc, compiled.branches[0], sq)
++    resp["model"] = "agentfactory-build-local"  # the build combo falls back to the cloud chain
++
++    def send(messages, named):
++        return 200, resp
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    q = out["answers"]["q"]
++    assert q["refused"], "a non-local served model must be refused: %r" % q
++    assert q["noul"] is None
++
++
++def test_bounded_label_named(tmp_path):
++    """D-4: a label absent from the top 20 is BOUNDED (the lowest shown logprob, an upper bound)
++    and named in the answer; it is never silently filled with a real value."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"finding": "a short finding text"}
++    questions = {"q": {"type": "noul", "instructions": "Does it block?"}}
++    compiled, qmap = compile_branches(svc, state, questions)
++    br = compiled.branches[0]
++    sq = qmap[br.branch_id]
++    labels = list(sq.output_labels)
++    # pick the label with the lowest fake logprob (index 0 = highest, last = lowest)
++    hi_tok = TZ.decode([br.output_ids[0]])
++    lo_tok = TZ.decode([br.output_ids[-1]])
++    resp = fake_ok_response(svc, br, sq, logprob_map={hi_tok: -0.1, lo_tok: -0.1})
++    # drop the low label's entry from the top list entirely (it is not in the top 20)
++    resp["choices"][0]["logprobs"]["content"] = [
++        t for t in resp["choices"][0]["logprobs"]["content"] if t["token"] != lo_tok]
++
++    def send(messages, named):
++        return 200, resp
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    q = out["answers"]["q"]
++    assert not q.get("refused"), "a counted branch with a bounded label must still be scored"
++    assert q.get("bounded_labels") == [labels[-1]], \
++        "the bounded label must be named: %r" % q.get("bounded_labels")
++    # the bounded label's logprob is the lowest shown (an upper bound): the answer must be finite
++    assert isinstance(q.get("noul"), float) and q["noul"] == q["noul"]
++
++
++def test_no_model_gets_served_id_and_fan_out(tmp_path):
++    """D-5: a request without `model` gets the served id; when every question id names a
++    state.chunks id, each question sees only its own chunk (the Laya fan-out) and the response
++    carries answers keyed by question id, usage, model, and fan_out."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"query": "what failed in the last run",
++             "chunks": [{"id": "r1", "text": "row one"}, {"id": "r2", "text": "row two"}]}
++    questions = {"r1": {"type": "noul", "instructions": "Does it show?"},
++                 "r2": {"type": "noul", "instructions": "Does it show?"}}
++
++    from scripts.qwen_jev import _chunk_map
++    chunk_map = _chunk_map(state)
++    per_call = {}
++    for qid in ("r1", "r2"):
++        one = JevService(TZ, "examples_binary", key="k", send=None)
++        c, qm = compile_branches(one, dict({"query": "what failed in the last run",
++                                            "chunk": chunk_map[qid]}, ), {qid: questions[qid]})
++        per_call[qid] = (c, qm)
++
++    calls = []
++
++    def send2(messages, named):
++        calls.append(messages)
++        # find which chunk this message carries -> which pre-compiled branch to answer
++        blob = json.dumps(messages)
++        qid = "r1" if '"chunk": "row one"' in blob else "r2"
++        c, qm = per_call[qid]
++        return 200, fake_ok_response(svc, c.branches[0], qm[c.branches[0].branch_id])
++
++    svc._send = send2
++    out = svc.systemone({"state": state, "questions": questions})  # no `model` field
++    assert out["model"] == SERVED, "a request without `model` must be answered as the served id"
++    assert out["fan_out"] == 2, "the per-chunk fan-out must be named: %r" % out.get("fan_out")
++    assert set(out["answers"]) == {"r1", "r2"}
++    assert "usage" in out and out["usage"].get("input_tokens", 0) >= 0
++    # each question saw only its own chunk
++    assert len(calls) == 2
++
++
++def test_single_call_fan_out_absent_when_not_a_chunk_batch(tmp_path):
++    """D-5 negative control: a batch with no state.chunks is one call, no fan_out."""
++    svc = make_service_for_tests("examples_binary")
++    state = {"finding": "a short finding text"}
++    compiled, qmap = compile_branches(svc, state, {"q": {"type": "noul",
++                                                         "instructions": "Does it block?"}})
++    sq = qmap[compiled.branches[0].branch_id]
++
++    def send(messages, named):
++        return 200, fake_ok_response(svc, compiled.branches[0], sq)
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state,
++                         "questions": {"q": {"type": "noul", "instructions": "Does it block?"}}})
++    assert "fan_out" not in out, "no fan_out for a non-chunk batch: %r" % out.get("fan_out")
++    assert out["model"] == SERVED
++
++
++def test_upstream_502_refused_not_scored():
++    """A transport/upstream 502 (e.g. the baseline noul whitespace-only token) is a refusal:
++    the answer is null and named, never a fake score."""
++    svc = make_service_for_tests("baseline")
++    state = {"finding": "a short finding text"}
++    questions = {"q": {"type": "noul", "instructions": "Does it block?"}}
++
++    def send(messages, named):
++        return 502, {"error": {"message": "upstream returned an empty response",
++                               "code": "upstream_empty_response"}}
++
++    svc._send = send
++    out = svc.systemone({"model": "laya", "state": state, "questions": questions})
++    q = out["answers"]["q"]
++    assert q.get("refused"), "an upstream 502 must be refused, not scored: %r" % q
++    assert q.get("noul") is None
++
++
++if __name__ == "__main__":
++    import pytest
++    sys.exit(pytest.main([__file__, "-v"]))
