@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 13:4xZ — WHAT IS LIVE NOW (this block supersedes the 13:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **J2 FILED:** Laya has no usable signal on either labeled type (`docs/research/findings/J2-SIGNAL-PROBE-2026-09-24.md`): registry matching top-1 0.05 vs lexical 0.59; finding class accuracy 0.21 vs majority 0.43. Both rejected by KC-J3. Tools keep non-model default orders; the AP-hawk is lexical if built; MoJev is the next candidate.
+- **LANDED (GATED-PENDING-VERIFY):** JT1 (#224; VERIFY-JT1 running) and J1-1-R4 (#198, the redaction redesign, D-073; VERIFY-J1-1-R4 running).
+- **LIVE, SANDBOX (Opus 5.5):** JT2 (#227/#229); JT3 (#228/#225); MOJEV-G0-S (#230); VERIFY-JT1; VERIFY-J1-1-R4. One local Laya server (127.0.0.1:47411).
+- **PUSH WAITING (AF-AP-188):** 10 local commits; the pre-push manifest check hashes the working tree and counts JT3's untracked hook file. It clears when JT3 lands or starts editing its tracked files (then `--lanes-live` pushes from a clean worktree). Task #232 fixes the check.
+- **LIVE, PC:** K170 (#170), attempt 3.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 13:3xZ — WHAT IS LIVE NOW (this block supersedes the 13:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LANDED (GATED-PENDING-VERIFY):** JT1 (#224): `scripts/jev.py`, `scripts/jev_local.sh`, `scripts/hiccup_scan.py`, `docs/HICCUPS.md`; the PC venue answered live. VERIFY-JT1 dispatched.
 - **J2 RESULT (#226), `ap.violates_row`:** lexical overlap picks the right registry row first 59% of the time; Jev's reranking 5%, below random (6.1%). Jev has no signal on this type; the AP-hawk, if built, is lexical. JT2 and JT3 now default to their unranked orders.
@@ -667,6 +675,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 13:4xZ — J2 filed (Laya rejected on both types); J1-1-R4 landed; two verifies running; the push waits on AF-AP-188.
 2026-09-24 13:3xZ — JT1 landed; J2 ap.violates_row: Jev no signal (5% vs lexical 59%); VERIFY-JT1 dispatched.
 2026-09-24 13:1xZ — D-072; JT2, JT3, MOJEV-G0-S dispatched; J2 running; the pruner finding (#231).
 2026-09-24 12:5xZ — AF-AP-185 fixed (pinned manifest tests, CLASS-PIN gate); retro-plane exemption; pushed 78a6eec.
