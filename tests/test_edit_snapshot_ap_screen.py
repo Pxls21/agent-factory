@@ -3,7 +3,11 @@
 8-verify F17: asserts fire/no-fire pairs for AF-AP-33..45 so the screen rows
 have a test gate and cannot be silently weakened.
 """
+import errno
 import importlib.util
+import io
+import json
+import subprocess
 from pathlib import Path
 
 # Import the hook module from its non-package location
@@ -534,6 +538,19 @@ class TestAFAP139:
     def test_no_fire_on_a_literal_200_outside_a_handler(self):
         assert not self.rx.search("    def _stream(self, model):\n        self.send_response(200)\n")
 
+    def test_fires_on_a_handler_annotated_to_return_none(self):
+        # VERIFY-K150 F-06 (its near miss A1): the return annotation does not change the class
+        assert self.rx.search("    def do_GET(self) -> None:\n        self.send_response(200)\n        self.end_headers()\n")
+
+    def test_fires_on_an_http_status_member(self):
+        # VERIFY-K150 F-06 (A2): HTTPStatus.OK is the same 2xx as the literal
+        assert self.rx.search("    def do_GET(self):\n        self.send_response(HTTPStatus.OK)\n        self.end_headers()\n")
+
+    def test_no_fire_on_a_handler_that_always_refuses(self):
+        # VERIFY-K150 F-06 (its mutant K3, any status): an always-401 stand-in refuses every request, so it is not more
+        # permissive than the service it stands in for
+        assert not self.rx.search("    def do_GET(self):\n        self.send_response(401)\n        self.end_headers()\n")
+
 
 # ---- AF-AP-25 (AP_SCREEN): a regex line parser that skips a line it does not recognise ----
 
@@ -588,6 +605,290 @@ class TestAFAP89:
         assert not self.rx.search(r'bridge "uptime"; echo "\\$(date)"')
 
 
+# ---- AF-AP-132 (AP_SCREEN): a line number computed with str.splitlines() ----
+
+class TestAFAP132:
+    rx = _AP_BY_ID["AF-AP-132"]
+
+    def test_fires_on_the_no_laya_screen_loop(self):
+        # scripts/no_laya_in_gates.py:1443 at the K215 PIN, an open site the registry names
+        assert self.rx.search("        for lineno, line in enumerate(content.splitlines(), 1):\n")
+
+    def test_fires_on_the_parse_lock_loop(self):
+        # scripts/vendored_manifest.py:759 at the K215 PIN (parse_lock), the other open site
+        assert self.rx.search('    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):\n')
+
+    def test_fires_on_a_list_from_splitlines_enumerated_with_a_start(self):
+        # scripts/vendored_manifest.py:575-577 (parse_classes): the same line map spelled over two statements
+        src = ('    lines = text.splitlines()\n'
+               '    if not lines or lines[0] != "path\\tclass":\n'
+               '        raise ManifestError(".claude class file parse failure at line 1")\n'
+               '    classes: dict[str, str] = {}\n'
+               '    for line_number, line in enumerate(lines[1:], start=2):\n')
+        assert self.rx.search(src)
+
+    def test_fires_on_a_literal_separator(self):
+        # J1-2-R1's ledger held two literal separators in a set of bad characters: invisible, and a line break to splitlines
+        assert self.rx.search("_BAD = frozenset('" + chr(0x2028) + chr(0x2029) + "')\n")
+
+    def test_no_fire_on_the_newline_split(self):
+        # the fix the registry names: number lines on "\n" only
+        assert not self.rx.search('        for lineno, line in enumerate(content.split("\\n"), 1):\n')
+
+    def test_no_fire_on_a_line_that_did_not_decode(self):
+        # a binary file read with errors="replace" (a .gz evidence file named to ap_screen.py) holds U+FFFD beside the
+        # byte pairs that decode as U+0085: that line is not source (275 such hits in 11 files at the K215 PIN)
+        assert not self.rx.search("r" + chr(0xFFFD) + "C[" + chr(0x85) + "I\n")
+
+    def test_no_fire_on_the_separator_written_as_its_escape(self):
+        assert not self.rx.search("_BAD = frozenset('" + "\\" + "u2028" + "\\" + "u2029')\n")
+
+    def test_no_fire_on_a_list_used_as_an_index(self):
+        # an index into the list, never a line number
+        src = ('    lines = text.splitlines()\n'
+               '    header = next((i for i, line in enumerate(lines) if line.startswith("|")), None)\n')
+        assert not self.rx.search(src)
+
+
+# ---- AF-AP-141 (AP_SCREEN): a git history-walk exit code read as a yes/no ----
+
+class TestAFAP141:
+    rx = _AP_BY_ID["AF-AP-141"]
+
+    def test_fires_on_the_check_proof_status_ancestry_check(self):
+        # scripts/check-proof-status.py:164, the registry's WATCH site
+        assert self.rx.search('    if _git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD").returncode != 0:\n')
+
+    def test_fires_on_a_cat_file_existence_check(self):
+        # scripts/ci_gate.py:213, the OPEN sibling (issue #40)
+        assert self.rx.search('    if _git(root, "cat-file", "-e", f"{sha}^{{commit}}")[0] != 0:\n')
+
+    def test_fires_on_a_shell_existence_check(self):
+        # scripts/pc_suite.sh:67 spells it in shell: stderr discarded, the exit code decides
+        assert self.rx.search('  bridge "cd $PC_AF_REPO && { git cat-file -e $BASE^{commit} 2>/dev/null && echo HAVE; }"\n')
+
+    def test_no_fire_when_the_error_text_is_bound(self):
+        # scripts/ci_gate.py:207, the fix: rc, out and err come back together and err is read
+        assert not self.rx.search('    rc, _, err = _git(root, "merge-base", "--is-ancestor", sha, origin_sha)\n')
+
+    def test_no_fire_on_other_git_calls(self):
+        assert not self.rx.search('    base = _git(root, "merge-base", sha, origin_sha).stdout.strip()\n')
+        assert not self.rx.search('    tagged = _git(repo_root, "cat-file", "-p", f"{commit}:{rel}", binary=True)\n')
+
+
+# ---- AF-AP-144 (AP_SCREEN, path-scoped by the hook's main): a raw parse call in a proof checker ----
+
+class TestAFAP144:
+    row = _AP_BY_ID["AF-AP-144"]
+
+    def test_fires_in_a_proof_checker(self):
+        # proofs/S0-12/check_pin_diff.py:33, a WATCH site: yaml.safe_load of a committed file, no handler in main
+        assert self.row.for_path("/repo/proofs/S0-12/check_pin_diff.py").search("    sbom = yaml.safe_load(sbom_text)\n")
+
+    def test_fires_on_a_default_encoding_read_and_a_decode(self):
+        rx = self.row.for_path("proofs/S0-07/check_fubuki_corrections.py")
+        assert rx.search('    review_text = (fixture_dir / "01-review-only.txt").read_text()\n')
+        assert rx.search("    text = raw.decode()\n")
+
+    def test_no_fire_outside_the_checker_paths(self):
+        hunk = "    sbom = yaml.safe_load(sbom_text)\n"
+        assert not self.row.for_path("/repo/proofs/S0-12/tools/check_helper.py").search(hunk)
+        assert not self.row.for_path("/repo/scripts/check-proof-status.py").search(hunk)
+
+    def test_no_fire_on_a_read_that_names_its_encoding(self):
+        # the signature is the DEFAULT-encoding read; an explicit encoding is a different line
+        assert not self.row.for_path("proofs/S0-07/check_x.py").search('    text = path.read_text(encoding="utf-8")\n')
+
+    def test_the_path_less_callers_see_nothing(self):
+        # scripts/ap_screen.py and scripts/lint_delta.py pass text alone, so the scope cannot apply there
+        assert self.row.search("json.loads(x)\n") is None
+        assert list(self.row.finditer("json.loads(x)\n")) == []
+
+
+def _snapshot(monkeypatch, capsys, path, hunk):
+    """The hook's real main on an Edit payload; the slow probes (git history, pyflakes) answer nothing."""
+    monkeypatch.setattr(_mod, "file_chronology", lambda fp, n=3: [])
+    monkeypatch.setattr(_mod, "pyflakes_delta", lambda fp, src: [])
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(path), "new_string": hunk}}
+    monkeypatch.setattr(_mod.sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert _mod.main() == 0
+    return capsys.readouterr().out
+
+
+def test_af_ap_144_the_hook_applies_the_path_scope(monkeypatch, capsys, tmp_path):
+    hunk = "sbom = yaml.safe_load(open(p).read())\n"
+    checker = tmp_path / "proofs" / "S0-99" / "check_pins.py"
+    helper = tmp_path / "proofs" / "S0-99" / "tools" / "pins.py"
+    for path in (checker, helper):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(hunk, encoding="utf-8")
+    assert "/tests/" not in str(tmp_path)  # a /tests/ path takes the TEST_SCREEN branch instead
+    assert "AF-AP-144" in _snapshot(monkeypatch, capsys, checker, hunk)
+    assert "AF-AP-144" not in _snapshot(monkeypatch, capsys, helper, hunk)
+
+
+# ---- AF-AP-145 (AP_SCREEN, shell): an EXIT-trap cleanup that a second signal can abort ----
+
+# proofs/S0-05/tools/pc/run_s0_05_units.sh before E3-R1 (97b589a^:322-336), shortened
+PRE_FIX_S0_05_CLEANUP = (
+    "cleanup() {\n"
+    "  local ns owner_pid pid dir\n"
+    "  for ns in $NS_LIVE; do\n"
+    '    ip netns del "$ns"\n'
+    "  done\n"
+    "}\n"
+    "trap cleanup EXIT\n"
+)
+FIXED_S0_05_CLEANUP = (
+    "cleanup() {\n"
+    "  trap '' INT TERM\n"
+    "  local ns owner_pid pid dir\n"
+    "}\n"
+    "trap cleanup EXIT\n"
+    "trap 'trap \"\" INT TERM; exit 130' INT\n"
+    "trap 'trap \"\" INT TERM; exit 143' TERM\n"
+)
+
+
+class TestAFAP145:
+    rx = _AP_BY_ID["AF-AP-145"]
+
+    def test_fires_on_the_pre_fix_s0_05_cleanup(self):
+        assert self.rx.search(PRE_FIX_S0_05_CLEANUP)
+
+    def test_fires_when_the_trap_line_comes_first(self):
+        # bash resolves the name when the trap runs, so a trap above its function is the same cleanup
+        assert self.rx.search("trap cleanup EXIT\n\ncleanup() {\n  ip netns del \"$NS\"\n}\n")
+
+    def test_fires_on_a_handler_without_the_ignore(self):
+        # the pre-fix handlers (97b589a^:335-336): E3-R1 measured the cleanup ignore alone still aborting
+        assert self.rx.search("trap 'exit 143' TERM\n")
+
+    def test_no_fire_on_the_fixed_s0_05_runner(self):
+        assert not self.rx.search(FIXED_S0_05_CLEANUP)
+
+    def test_no_fire_when_a_status_capture_comes_first(self):
+        # harness-ports/bin/qwen-matrix.sh:94-96 after task #176: `$?` must be read before any other command
+        src = "cleanup() {\n  local rc=$?\n  trap '' INT TERM\n  trap - EXIT\n}\ntrap cleanup EXIT\n"
+        assert not self.rx.search(src)
+
+    def test_no_fire_on_a_function_no_exit_trap_names(self):
+        assert not self.rx.search("stop_all() {\n  kill $pid\n}\ntrap stop_all RETURN\n")
+
+
+# ---- AF-AP-149 (AP_SCREEN): a private-key block rule written for one label spelling ----
+
+class TestAFAP149:
+    rx = _AP_BY_ID["AF-AP-149"]
+
+    def test_fires_on_the_first_decisions_redactor(self):
+        # the J1-1 redactor (01ca7d5, _PRIVKEY): one label spelling and no end-of-text alternative
+        assert self.rx.search('    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",\n')
+
+    def test_fires_on_the_pre_fix_transcript_exporter(self):
+        # scripts/transcript_export.py before 9932f34 (:27): the END is optional, the label still one spelling
+        assert self.rx.search(r'''    (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S),''')
+
+    def test_fires_on_a_rule_that_needs_the_end_line(self):
+        src = r'''    re.compile(r"-----BEGIN [A-Z ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?-----END [A-Z ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----", re.S)'''
+        assert self.rx.search(src)
+
+    def test_no_fire_on_the_fixed_transcript_exporter(self):
+        # 9932f34 and after: both label families on the BEGIN line; the END line ends in |\Z on the next line
+        assert not self.rx.search('    (re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"\n')
+
+    def test_no_fire_on_a_literal_key_fixture(self):
+        # a test's fake key block is text, not a rule
+        assert not self.rx.search('    pem = "-----BEGIN RSA PRIVATE KEY-----\\n" + KEY_BODY + "\\n-----END RSA PRIVATE KEY-----"\n')
+
+
+# ---- AF-AP-152 (AP_SCREEN): a scrubber regex whose cost grows faster than its input ----
+
+class TestAFAP152:
+    rx = _AP_BY_ID["AF-AP-152"]
+
+    def test_fires_on_the_nested_name_prefix_group(self):
+        # the J1-1 redactor's _ENVVAL (01ca7d5): 8.14 s at 26 repeats of `A_`, doubling per repeat (J1-1-R1 D-3)
+        assert self.rx.search(r'''    r"(?P<name>(?:[A-Z][A-Z0-9_]*_)*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY))=\S+"''')
+
+    def test_fires_on_an_unanchored_class_alternative(self):
+        # task #187's first widening of scripts/transcript_export.py's name rule (caught at design): 17.4 s on a 40k run
+        assert self.rx.search(r'''_NAME = (r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|[A-Za-z0-9]*[_-]key|api[_-]?key"''')
+
+    def test_no_fire_on_the_anchored_alternative(self):
+        # the shipped rule: a lookbehind in front makes the alternative start only where a name can start
+        assert not self.rx.search(r'''_NAME = (r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]key|[_-]key"''')
+
+    def test_no_fire_on_a_group_with_a_required_separator(self):
+        # each repeat must begin with `-`, which the class cannot take: one way to split, linear
+        assert not self.rx.search(r'''KIND_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")''')
+
+    def test_no_fire_on_a_negated_class(self):
+        assert not self.rx.search(r'''PAIRS = re.compile(r"(?:[^_]*_)*end")''')
+
+
+# ---- AF-AP-175 (AP_SCREEN): a moving ref resolved per read ----
+
+class TestAFAP175:
+    rx = _AP_BY_ID["AF-AP-175"]
+
+    def test_fires_on_each_read_of_j1_3s_harvester(self):
+        # J1-3 before R1 (0d62801^:141 and :152): an admission read and a content read, each naming HEAD
+        assert self.rx.search('    result = _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD")\n')
+        assert self.rx.search('    result = _git(root, "cat-file", "blob", f"HEAD:{path}")\n')
+
+    def test_fires_on_the_single_resolve(self):
+        # the fix reads the ref once; the row still names it, and the message asks for the count
+        assert self.rx.search('    result = _git(root, "rev-parse", "--verify", "HEAD^{commit}")\n')
+
+    def test_no_fire_on_a_threaded_sha(self):
+        assert not self.rx.search('    result = _git(root, "cat-file", "blob", f"{commit}:{path}")\n')
+
+    def test_no_fire_on_other_refs_or_prose(self):
+        assert not self.rx.search('    orig = _git(root, "rev-parse", "ORIG_HEAD")\n')
+        assert not self.rx.search('        out.append(f"  {tag} NEW pyflakes hit vs HEAD: {m}")\n')
+
+
+# ---- AF-AP-177 (AP_SCREEN): a parsed JSON value used as a hash key before its type is checked ----
+
+J1_3_R1_DISPATCH_SCAN = (
+    '            if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") not in {"Agent", "Task"}:\n'
+    "                continue\n"
+    '            inputs = block.get("input")\n'
+    '            role = inputs.get("subagent_type") if isinstance(inputs, dict) else None\n'
+    '            tool_id = block.get("id")\n'
+    '            if role in {"hive-scout", "hive-reviewer"}:\n'
+)
+
+
+class TestAFAP177:
+    rx = _AP_BY_ID["AF-AP-177"]
+
+    def test_fires_on_a_get_tested_against_a_set(self):
+        # J1-3-R1's harvester (0d62801:686): a JSON list in `name` raises TypeError, rc 1, no harvest line
+        assert self.rx.search(J1_3_R1_DISPATCH_SCAN.splitlines()[0])
+
+    def test_fires_on_the_variable_held_form(self):
+        # 0d62801:689-691: the value is bound first, then tested two lines later (the first line's form removed)
+        assert self.rx.search("\n".join(J1_3_R1_DISPATCH_SCAN.split("\n")[2:]))
+
+    def test_fires_on_the_qwen_matrix_role_check(self):
+        # harness-ports/bin/qwen_matrix.py:263, the sibling the registry's sweep found
+        assert self.rx.search('            and message.get("role") in {"system", "user", "assistant", "tool"}\n')
+
+    def test_no_fire_after_a_str_check(self):
+        assert not self.rx.search('    ok = isinstance(block.get("name"), str) and block.get("name") in {"Agent", "Task"}\n')
+        src = ('    role = inputs.get("subagent_type")\n'
+               '    if not isinstance(role, str):\n'
+               '        return None\n'
+               '    if role in {"hive-scout", "hive-reviewer"}:\n')
+        assert not self.rx.search(src)
+
+    def test_no_fire_on_a_string_method_result(self):
+        # the harvester's table-header check: .lower() returns a str, so the set test cannot raise
+        assert not self.rx.search('            and headers[0].strip().lower() in {"#", "id"}\n')
+
+
 # ---- AF-AP-44, the hook instance: pyflakes_delta is a tell, never a blocker ----
 # 2026-09-23 (the D-048 PC run, VERIFY-REPIN-a F4): with AF_VENV unset the venv path is under /root, and a lane user
 # (/root mode 0550) got PermissionError from Path.exists() outside the function's try, so the hook crashed (three
@@ -620,6 +921,51 @@ def test_pyflakes_delta_is_empty_when_running_the_venv_python_raises(monkeypatch
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(_mod.subprocess, "run", run)
+    edited = tmp_path / "edited.py"
+    edited.write_text("import os\n", encoding="utf-8")
+    assert _mod.pyflakes_delta(str(edited), "import os\n") == []
+
+
+# VERIFY-K150 F-07: the two tests above pin only PermissionError, so a catch narrowed to it (or to OSError) passed them
+# while the hook crashed again on the other failures of the same probes (its mutants K14 and K15, measured through the
+# real main), and an absent venv answering a line (K16) printed a false tell. One control per failure.
+
+def test_pyflakes_delta_is_empty_when_the_venv_path_is_too_long(monkeypatch, tmp_path):
+    # an overlong AF_VENV: the probe raises ENAMETOOLONG, an OSError that is not a PermissionError
+    path_cls = type(Path())
+    real_exists = path_cls.exists
+
+    def exists(self, *args, **kwargs):
+        if str(self) == _mod._VENV_PY:
+            raise OSError(errno.ENAMETOOLONG, "File name too long", str(self))
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(path_cls, "exists", exists)
+    edited = tmp_path / "edited.py"
+    edited.write_text("import os\n", encoding="utf-8")
+    assert _mod.pyflakes_delta(str(edited), "import os\n") == []
+
+
+def test_pyflakes_delta_is_empty_when_the_venv_python_times_out(monkeypatch, tmp_path):
+    # a venv python that hangs past PROBE_TIMEOUT: subprocess.TimeoutExpired, which is not an OSError
+    path_cls = type(Path())
+    real_exists, real_run = path_cls.exists, _mod.subprocess.run
+    monkeypatch.setattr(path_cls, "exists", lambda self, *a, **kw: str(self) == _mod._VENV_PY or real_exists(self, *a, **kw))
+
+    def run(argv, *args, **kwargs):
+        if argv[0] == _mod._VENV_PY:
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(_mod.subprocess, "run", run)
+    edited = tmp_path / "edited.py"
+    edited.write_text("import os\n", encoding="utf-8")
+    assert _mod.pyflakes_delta(str(edited), "import os\n") == []
+
+
+def test_pyflakes_delta_is_empty_when_the_venv_is_absent(monkeypatch, tmp_path):
+    # no venv python at all: no tell, not a line saying so
+    monkeypatch.setattr(_mod, "_VENV_PY", str(tmp_path / "no-venv" / "bin" / "python"))
     edited = tmp_path / "edited.py"
     edited.write_text("import os\n", encoding="utf-8")
     assert _mod.pyflakes_delta(str(edited), "import os\n") == []

@@ -85,7 +85,15 @@ RECOMMENDATION, never the final gate verdict.
 
 **A pushed head is green only when ITS CI run has been read (2026-09-06, checkpoints 4-5).** Local summaries prove the sandbox, not the runner: the `tests` job died at COLLECTION on four consecutive pushes (a module-scope `Path.exists()` on `/root/...` raises PermissionError under CI's non-root identity — AF-AP-44) while every pasted local line said green. Boundary rule: after every push, read the workflow runs for that SHA (`actions_list` + `get_job_logs`), and treat CI's identity, cwd and capability set as a second venue — every venue probe returns absent on OSError, never raises. **The instrument is `scripts/ci_gate.py` (2026-09-23, AF-AP-126: the written rule was forgotten twice and eleven red runs went unread):** `scripts/push_clean.sh` runs it after its fetch; it refuses the push while the branch's newest stage0-ci run in origin's history is red (exit 1) and stops with exit 75 while that verdict is unknown; `python3 scripts/ci_gate.py --branch <branch> --wait 1800` waits for the verdict.
 
-2. **One increment = code + deterministic test + commit.** Test is LLM-free, in-sandbox, with a
+2. **One increment = code + deterministic test + commit.** **When you touch the pre-commit hook
+   (`scripts/hooks/pre-commit`), a script it runs, or `scripts/gate_files.txt`, run
+   `tests/test_shell_syntax.py` as well, and build every fixture list FROM the committed config
+   file instead of typing a copy (AF-AP-151, 2026-09-23).** The throwaway repo in that test held
+   its own short gate list: once J1-0-R4 added `.claude/hooks/edit-snapshot.py` to
+   `scripts/gate_files.txt`, CI run #983 went red on the positive control
+   (`gate-file-import-unlisted`), because the landing had gated on `tests/test_no_laya_in_gates.py`
+   alone; run 917 had broken the same fixture when two gates joined the hook. Test is LLM-free,
+   in-sandbox, with a
    NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
    gate runs RED and provably never touches the cwd). **A capability-gated proof is tested under
    BOTH a capable and an incapable environment (AF-AP-24, S0-11): every leg that reads the gated

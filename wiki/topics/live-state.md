@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 06:3xZ — WHAT IS LIVE NOW (this block supersedes the 06:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **K215 LANDED, GATED-PENDING-VERIFY.** The owed AP_SCREEN rows (AF-AP-132, 141, 144, 145, 149, 152, 175, 177) and the three skill bakes (AF-AP-150, 151, 153); the coordinator's re-gate `226 passed`. Its adjacent defects: issue #65. The eleven registry rows now say LANDED.
+- **LIVE, PC:** VERIFY-J1-45 (#217), lane `pc-verify-j1-45.md--780f25a`, since 05:35Z.
+- **LIVE, SANDBOX:** none.
+- **NEXT:** the owed anti-hollow-green bake (AF-AP-179 and "a measured zero states its generator's alphabet"); then VERIFY-K215 on a sandbox agent; push when CI run #1021 (ef21f88) is green; harvest VERIFY-J1-45.
+- **OWNER DECISIONS OPEN:** the redaction-pass redesign (D-068, task #198); MoJev A/B/C (#210); which project hooks to restore (#214); the eight proofs' signing and the Stage 0 PR.
+
 **2026-09-24 06:1xZ — WHAT IS LIVE NOW (this block supersedes the 05:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFY-J1-1-R3 HOME: NOT-READY (D-068).** Two secret-value leaks in the redaction pass (F-1, F-2), both already at fb016d0; reproduced by the coordinator through the ledger. D-067 is void; its revert is not executed (fb016d0 has the same leaks plus the four fixed ones). J1-1 stays NOT-READY at the PIN code. No fourth repair: the redaction pass goes to a redesign, the OWNER'S DECISION (D-059; task #198). Follow-ups: issue #64.
 - **LIVE, SANDBOX (one agent, Opus 5.5):** K215 (#215; `/tmp/k215/`; editing `.claude/hooks/edit-snapshot.py`).
@@ -579,6 +586,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 06:3xZ — K215 landed (GATED-PENDING-VERIFY); issue #65 filed; the registry rows and a CLAUDE.md quirk line updated.
 2026-09-24 06:1xZ — VERIFY-J1-1-R3 NOT-READY (two leaks, reproduced); D-067 void, no revert; the redaction redesign is the owner's call (D-068).
 2026-09-24 05:3xZ — pushed 780f25a (the J1-4/J1-5 tests hardened); VERIFY-J1-45 dispatched on the PC local verify route.
 2026-09-24 05:1xZ — pushed 942ad5e; VERIFY-J1-1-R3 and K215 dispatched as sandbox agents; the J1-5 full suite running on the PC.

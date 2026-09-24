@@ -82,7 +82,14 @@ never the final gate verdict.
    `SKIP_LINT_DELTA=1` bypass prints itself; rationale in `scripts/lint_delta.py`), and a
    LANE of increments exits only through `scripts/lane_gate.sh <push-base> <gate-files.txt>`
    with its VERDICT block pasted verbatim (owner mandate 2026-09-02 — orphaned imports and
-   "pre-existing" mislabels each cost a verify round before these two existed). Test is
+   "pre-existing" mislabels each cost a verify round before these two existed). **A change to
+   `scripts/hooks/pre-commit`, to a script it runs, or to `scripts/gate_files.txt` also runs
+   `tests/test_shell_syntax.py`, and a test fixture derives its lists from the committed config,
+   never from a hand copy (AF-AP-151, 2026-09-23):** that test's throwaway repo carried its own
+   gate list, so after J1-0-R4 listed `.claude/hooks/edit-snapshot.py` in `scripts/gate_files.txt`,
+   CI run #983 failed its positive control (`gate-file-import-unlisted`) — the landing's gate had
+   run only `tests/test_no_laya_in_gates.py`. Run 917 failed the same fixture when two gates were
+   wired into the hook (`can't open file`). Test is
    LLM-free, in-sandbox, with a NEGATIVE control failing for the exact expected reason (e.g. a synthetic mutant workflow whose
    gate runs RED and provably never touches the cwd). **A capability-gated proof is tested under
    BOTH a capable and an incapable environment (AF-AP-24, S0-11): every leg that reads the gated

@@ -101,6 +101,14 @@ expansion.
    loop, a file the later stage writes, a protocol byte) and assert the mechanism from the
    wrapper. And RUN the named mutant before landing the killer: a proposed killer is a
    hypothesis, not a kill.
+   **3e. When you rewrite a parser, lexer or screen, run the OLD version's refusals through the
+   NEW one (AF-AP-153, 2026-09-23, VERIFY-J1-0-R4 V-01).** Give both versions the texts the old
+   one refused plus fresh hostile variants; each old refusal must still be refused, or the report
+   names it as a deliberate change. J1-0-R4 matched bash on the heredoc forms it listed but kept
+   the escapes of an ANSI-C `$'…'` delimiter, which bash translates: a four-line gate that R3
+   refused with rc 4 passed R4 as clean (rc 0), and neither the new tests nor the old ones went
+   red. The other half, testing a verifier's proposed fix before adopting it, is orchestration
+   0d″.
    **The driver's denominator is a LITERAL from the brief, never a sum of what ran (AF-AP-84, VERIFY-N5l 2026-09-15):**
    `expected=$((killed + survived))` let a deleted row read `EXPECTED=9 KILLED=9 SURVIVED=0` — pin `EXPECTED=N`, gate
    `[[ $killed -eq $EXPECTED ]]`, and give the driver a self-test (a copy with one row deleted must exit non-zero). A census or

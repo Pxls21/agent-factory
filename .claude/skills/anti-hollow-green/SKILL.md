@@ -93,6 +93,13 @@ expansion.
    loop, a file the later stage writes, a protocol byte) and assert the mechanism from the
    wrapper. And RUN the named mutant before landing the killer: a proposed killer is a
    hypothesis, not a kill.
+   **3e. A rewrite of a parser, lexer or screen keeps every refusal the old version made
+   (AF-AP-153, 2026-09-23, VERIFY-J1-0-R4 V-01).** Feed the previous version's refusals, and new
+   hostile variants, to BOTH versions: every old refusal stays a refusal or is named in the report
+   as an intended change. J1-0-R4's heredoc lexer followed bash for the forms it listed and kept
+   the escapes of an ANSI-C `$'…'` delimiter that bash translates, so a four-line gate R3 refused
+   (rc 4) read clean under R4 (rc 0) while the new shapes' tests and every old test stayed green.
+   Adopting a verifier's proposed fix is the other half: orchestration 0d″.
    **The driver's denominator is a LITERAL from the brief, never a sum of what ran (AF-AP-84, VERIFY-N5l 2026-09-15):**
    `expected=$((killed + survived))` let a deleted row read `EXPECTED=9 KILLED=9 SURVIVED=0` — pin `EXPECTED=N`, gate
    `[[ $killed -eq $EXPECTED ]]`, and give the driver a self-test (a copy with one row deleted must exit non-zero). A census or

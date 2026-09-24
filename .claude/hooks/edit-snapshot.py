@@ -62,14 +62,58 @@ class _EmitNoneKwarg:
 # the live leg's positive control would have failed. The tell: a do_<METHOD> handler that reaches a literal-2xx
 # send_response with no `if … self.path` line before it (logging the path is not a branch on it). Stand-ins live in
 # tests and in production stubs, and the hook screens /tests/ paths with TEST_SCREEN only, so the row is in both.
+# Widened 2026-09-24 (VERIFY-K150 F-06): a `-> None` return annotation and a 2xx HTTPStatus member are the same class.
 _AF_AP_139 = (
     "AF-AP-139",
-    re.compile(r"""def\s+do_[A-Z]+\(\s*self\b[^)]*\)\s*:(?:(?!\bif\b[^\n]*\bself\.path\b|\bdef\s)[\s\S]){0,1000}?\bsend_response\(\s*2\d\d\s*\)"""),
+    re.compile(r"""def\s+do_[A-Z]+\(\s*self\b[^)]*\)\s*(?:->\s*None\s*)?:(?:(?!\bif\b[^\n]*\bself\.path\b|\bdef\s)[\s\S]){0,1000}?\bsend_response\(\s*(?:2\d\d|(?:http\.)?HTTPStatus\.(?:OK|CREATED|ACCEPTED|NON_AUTHORITATIVE_INFORMATION|NO_CONTENT|RESET_CONTENT|PARTIAL_CONTENT|MULTI_STATUS|ALREADY_REPORTED|IM_USED))\s*\)"""),
     "an HTTP stand-in that sends a literal 2xx with no branch on `self.path` — more permissive than the service it "
     "stands in for, so the positive control is graded against nothing; measure the real service's answer to the "
     "probe's exact request, key the stand-in's status on the path, and add a negative control that refuses on the "
     "probe path (AF-AP-139)",
 )
+
+
+class _PathScoped:
+    """A row whose class lives in one family of paths. A row carries no path, so the hook's main, which knows the
+    edited file, asks for_path(path) for the pattern to apply there. The callers that pass text alone
+    (scripts/ap_screen.py, scripts/lint_delta.py) get no match from search()/finditer(): they cannot apply the scope,
+    and the pattern unscoped would fire on every such call in the tree."""
+
+    def __init__(self, paths, rx):
+        self.paths, self.rx = paths, rx
+
+    def for_path(self, path):
+        return self.rx if self.paths.search(path) else self
+
+    def search(self, text):
+        return None
+
+    def finditer(self, text):
+        return iter(())
+
+
+class _ExitTrapCleanup:
+    """AF-AP-145's two tells, each found in one pass, so the cost stays linear in the text: a lookahead that re-scanned
+    the rest of the text from every function definition took 0.68 s on 2,000 of them (AF-AP-152's class). The names an
+    EXIT trap runs are collected first, so a trap line above its function is seen as well."""
+
+    _IGNORE = r"""[ \t]*trap[ \t]+(?:''|"")[ \t]+(?:INT[ \t]+TERM|TERM[ \t]+INT)\b"""
+    _TRAPPED = re.compile(r"""^[ \t]*trap[ \t]+(['"]?)([A-Za-z_]\w*)\1[ \t]+(?:[A-Z0-9]+[ \t]+)*EXIT\b""", re.MULTILINE)
+    # a function body that does not open with the ignore (a `$?` capture or a comment may come first)
+    _BODY = re.compile(r"""^[ \t]*(?:function[ \t]+)?([A-Za-z_]\w*)[ \t]*\(\)[ \t]*\{[ \t]*(?:#[^\n]*)?\n"""
+                       r"""(?!(?:[ \t]*(?:#[^\n]*|(?:local[ \t]+)?[A-Za-z_]\w*=\$\?[ \t]*(?:#[^\n]*)?)\n)*""" + _IGNORE + ")",
+                       re.MULTILINE)
+    # an INT/TERM handler string that does not open with the ignore
+    _HANDLER = re.compile(r"""^[ \t]*trap[ \t]+(['"])(?!\1)(?!""" + _IGNORE + r""")(?:(?!\1)[^\n])*\1[ \t]+"""
+                          r"""(?:[A-Z0-9]+[ \t]+)*(?:INT|TERM)\b""", re.MULTILINE)
+
+    def finditer(self, text):
+        trapped = {m.group(2) for m in self._TRAPPED.finditer(text)}
+        hits = [m for m in self._BODY.finditer(text) if m.group(1) in trapped]
+        return iter(sorted(hits + list(self._HANDLER.finditer(text)), key=lambda m: m.start()))
+
+    def search(self, text):
+        return next(self.finditer(text), None)
 
 
 # Mechanical signatures distilled from the ANTI-PATTERN REGISTRY (id: regex,
@@ -218,8 +262,83 @@ AP_SCREEN = [
     # escaped its PC-side lookups twice inside the double-quoted bridge argument, so the lookups ran in the SANDBOX and
     # the PC received a syntax error; the text-matching test double never ran the probe (AF-AP-162). The tell: a doubled
     # escape before `$(` or before an escaped quote inside a double-quoted bridge / scripts/pc.sh argument.
+    # Shell/bridge pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
     ("AF-AP-89", re.compile(r"""(?:\bbridge|\bpc\.sh)[ \t]+"(?:[^"\\]|\\[\s\S])*?\\\\(?:\$\(|\\")"""),
      r'''a doubled escape (`\\$(` or `\\\"`) inside a double-quoted `bridge` / `scripts/pc.sh` argument — `\\$(` is a literal backslash and then a command substitution that runs in the SANDBOX, so the PC receives a wrong or empty value; escape a remote substitution ONCE (`\$(…)`) and test the rendered remote program by RUNNING it against a fake PC root, never with a double that matches its text; the one legitimate `\\\"` travels verbatim into a quoted heredoc (<<'PY') (AF-AP-89; AF-AP-162)'''),
+    # AF-AP-132 (2026-09-23): a line number computed with str.splitlines(), which also breaks on U+2028, U+2029, U+0085,
+    # \x0b, \x0c and \x1c-\x1e, so a tool that reports file:line reads every later line late (report_lint graded 28 of
+    # J1-2-R1's 56 citations MISS, two lines late after a literal separator). The tells: enumerate over a .splitlines()
+    # call; a list bound from .splitlines() and enumerated with a start within 15 lines; a literal U+2028/U+2029/U+0085
+    # on a line that decoded (a binary read with errors="replace" holds U+FFFD: 275 false hits in 11 .gz evidence files).
+    ("AF-AP-132", re.compile(r"""\benumerate\(\s*[^\n]*?\.splitlines\(\)|^[ \t]*(\w+)[ \t]*=(?!=)[^\n]*\.splitlines\(\)[^\n]*\n(?:[^\n]*\n){0,15}?[^\n]*\benumerate\(\s*\1(?:\[[^\]\n]*\])?\s*,|^(?![^\n]*\ufffd)[^\n]*?[\u2028\u2029\u0085]""", re.MULTILINE),
+     r"""a line number computed with `.splitlines()` (enumerate over it, or over a list taken from it), or a literal U+2028/U+2029/U+0085 in source — splitlines also breaks on those, on \x0b, \x0c and \x1c-\x1e, so a tool that reports file:line numbers every later line late against git, grep and Python, and the literal is invisible; number lines on "\n" only (`text.split("\n")`) and write a separator as its escape (AF-AP-132)"""),
+    # AF-AP-141 (2026-09-23, CI-GATE-R1): a history-walk exit code read as a yes/no. merge-base --is-ancestor exits 1
+    # with `error: Could not read <sha>` when its walk meets a missing object, even for a TRUE ancestor (git 2.43,
+    # measured), and cat-file -e fails the same way on a corrupt or unreadable object. The tells: either call in an argv
+    # (a line that binds the call's error text, `rc, _, err = ...`, reads it and stays quiet), or on a shell command line.
+    # Shell/bridge pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
+    ("AF-AP-141", re.compile(r"""^(?=[^\n]*?(?:["']--is-ancestor["']|["']cat-file["'][ \t]*,[ \t]*["']-e["']))(?![^\n]*\b\w+[ \t]*,[ \t]*\w+[ \t]*,[ \t]*(?!_\b)\w+[ \t]*=(?!=))[^\n]*?(?:["']--is-ancestor["']|["']cat-file["'][ \t]*,[ \t]*["']-e["'])|\bgit\b[^\n;|&]*?\b(?:merge-base[ \t]+--is-ancestor|cat-file[ \t]+-e)\b""", re.MULTILINE),
+     "a `merge-base --is-ancestor` or `cat-file -e` exit code used as a yes/no — exit 1 also comes with `error: Could not "
+     "read <sha>` when the walk meets a missing object (even for a TRUE ancestor), and cat-file -e fails the same way on a "
+     "corrupt object; read stderr with the code (exit 1 with no `error:`/`fatal:` line is a no, anything else means git "
+     "cannot tell) or prove the history complete first (`rev-list --quiet <sha>`) (AF-AP-141)"),
+    # AF-AP-144 (2026-09-23, VERIFY-B9 F-13): a proof checker promises one named failure line and rc 1 for every refused
+    # bundle, but a raw parse call whose error main does not catch dies with a traceback and no reason line. Scoped to
+    # proofs/*/check_*.py by the hook's main (_PathScoped). Not checked: whether main catches everything or the reader
+    # converts the error, so a checker that fails closed through a catch-all is a false hit here.
+    ("AF-AP-144", _PathScoped(re.compile(r"""(?:^|/)proofs/[^/]+/check_[^/]+\.py$"""),
+                              re.compile(r"""\bjson\.loads\(|\byaml\.safe_load\(|\.decode\(|\.read_text\(\)""")),
+     "a raw parse call (json.loads, yaml.safe_load, .decode, a default-encoding .read_text()) in a proof checker — unless "
+     "main catches it or the reader converts it, a malformed evidence file ends in a traceback, rc 1 and no failure_reason "
+     "line (refused by accident, unnamed, and a spec leg that expects a reason cannot match it); convert the parse error "
+     "to the checker's named failure at the reader (AF-AP-144)"),
+    # AF-AP-145 (2026-09-23, VERIFY-E3 F3): an EXIT-trap cleanup a second signal can abort. Cleanup runs with INT and TERM
+    # live, so a second signal (a double Ctrl-C, a stop sent to the group) leaves the teardown half done; E3-R1 measured
+    # that the ignore is needed first in cleanup AND first in each INT/TERM handler. The tells: a function an EXIT trap
+    # names whose body does not open with the ignore (a `$?` capture or a comment may come first), and an INT/TERM
+    # handler string that does not open with it (_ExitTrapCleanup). Not seen: a one-line function body.
+    # Shell pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
+    ("AF-AP-145", _ExitTrapCleanup(),
+     r"""an EXIT-trap cleanup function, or an INT/TERM handler, that does not open with the signal ignore (`trap '' INT TERM`) — a second signal while cleanup runs (a double Ctrl-C, a stop sent to the process group) aborts the teardown half done and leaves host state (namespaces, rules, units, restored configs) behind; make the ignore the first command of the cleanup function AND of each INT/TERM handler (`trap 'trap "" INT TERM; exit 143' TERM`): E3-R1 measured the cleanup ignore alone still aborting 26 of 60 trials (AF-AP-145)"""),
+    # AF-AP-149 (2026-09-23, VERIFY-AF-AP-127 F1): a private-key redaction rule written for one label spelling. A rule
+    # that wants PRIVATE KEY right before the closing dashes misses GnuPG's armor (PGP PRIVATE KEY BLOCK, the PGP 2.x
+    # PGP SECRET KEY BLOCK), and a rule that needs the END line misses a block cut at its source: the body reaches the
+    # output whole (9 of 15 body lines through both transcript exporters). The tell, on a BEGIN line written as a regex
+    # (a class, `.*`, `.+`): no SECRET/BLOCK alternative, or an END with no end-of-text (\Z) alternative on the line.
+    ("AF-AP-149", re.compile(r"""-----BEGIN (?=[^\n]*?(?:\.\*|\.\+|\[\\s\\S\]|\[A-Z|\[\^))(?:(?![^\n]*(?:SECRET|BLOCK))[^\n]*?PRIVATE KEY-----|(?![^\n]*\\Z)[^\n]*?-----END)"""),
+     r"""a private-key block rule written for one label spelling — a pattern that wants PRIVATE KEY right before the closing dashes misses GnuPG's armor (PGP PRIVATE KEY BLOCK, PGP 2.x PGP SECRET KEY BLOCK), and one that needs the END line misses a block cut at its source, so the body lines reach the output whole; match (?:PRIVATE|SECRET) KEY(?: BLOCK)? and end at the END line OR at the end of the text (|\Z) (AF-AP-149)"""),
+    # AF-AP-152 (2026-09-23; J1-1-R1 D-3, task #187): a scrubber regex whose cost grows faster than its input. A repeated
+    # group whose body ends with a character its own quantified class also takes backtracks exponentially (an
+    # upper-case name-prefix group repeated under *: 8.14 s at 26 repeats, doubling per repeat); an alternative that
+    # opens with a quantified class before a literal re-scans a long run from every start (a compound `...key` name rule:
+    # 17.4 s on a 40k run, 0.005 s behind a lookbehind). Not seen: \w-style shorthands in the second form, a hand-written
+    # scanner (the third instance), whether the pattern runs over free text.
+    ("AF-AP-152", re.compile(r"""\(\?:[^()\n]*?(?:\[(?!\^)[^\]\n]*?([\w-])[^\]\n]*\][*+]\1|\\w[*+]\w|(?:\\S|\.)[*+][^\s()\\|])\)(?:[*+]|\{\d*,\d*\})|(?<!\\)\|\[[^\]\n]+\][*+](?:\[[^\]\n]+\])?[A-Za-z0-9_]{2}"""),
+     "a regex whose cost grows faster than its input — a repeated group whose body ends with a character its own "
+     "quantified class also matches backtracks exponentially, and an alternative that opens with a quantified class "
+     "before a literal re-scans a long run from every start position; one long line then stalls a scrub that runs in "
+     "the commit hook and on every push: make the separator unambiguous, anchor the alternative (a lookbehind such as "
+     "`(?<![A-Za-z0-9])`) and pin a timing test on a long run (AF-AP-152)"),
+    # AF-AP-175 (2026-09-24, J1-3 F-03): a moving ref resolved per read. Each git call that names HEAD sees whatever
+    # commit it points at then, so a commit landing mid-run mixes two commits' bytes in one record (45 of 300 racer
+    # runs). The registry asks for a per-file count (two or more reads); a row sees one hunk or one file's text and
+    # counts nothing, so this is the line form: every quoted HEAD literal. The count is the reader's (ap_screen.py
+    # prints the hits per file).
+    ("AF-AP-175", re.compile(r"""["']HEAD(?=["':^~@{])"""),
+     "a quoted HEAD passed to git — if this process names the ref more than once (an admission check and a later read, "
+     "ls-tree then cat-file), a commit landing mid-run mixes two commits' bytes in one record; resolve it once "
+     "(`rev-parse --verify HEAD^{commit}`), thread the SHA to every read, and test with the ref moved between the first "
+     "and the last read (AF-AP-175)"),
+    # AF-AP-177 (2026-09-24, VERIFY-J1-3-R1 follow-up 1): a parsed JSON value used as a hash key before its type is
+    # checked. A list or an object there raises TypeError (unhashable) and crashes the run instead of refusing the record
+    # (J1-3's harvester: rc 1, no harvest line). The tells: a .get(...) value tested with `in {…}`, and a name bound
+    # from a .get(...) and tested with `in {…}` within 8 lines, neither with an isinstance(…, str) check first. Not seen:
+    # a set held in a name (`in ALLOWED`), a subscript read (`rec["k"] in {…}`).
+    ("AF-AP-177", re.compile(r"""^(?=[^\n]*?\.get\()(?![^\n]*\bisinstance\([^\n]*?,[ \t]*str[ \t]*\))[^\n]*?\.get\([^()\n]*\)[ \t]+(?:not[ \t]+)?in[ \t]+\{|^[ \t]*(\w+)[ \t]*=(?!=)[^\n]*?\.get\([^()\n]*\)[^\n]*\n(?:(?![^\n]*\bisinstance\([ \t]*\1[ \t]*,[ \t]*str[ \t]*\))[^\n]*\n){0,8}?(?![^\n]*\bisinstance\([ \t]*\1[ \t]*,[ \t]*str[ \t]*\))[^\n]*?\b\1[ \t]+(?:not[ \t]+)?in[ \t]+\{""", re.MULTILINE),
+     "a value read from parsed JSON tested with `in {…}` before its type is checked — a list or an object there raises "
+     "TypeError (unhashable) and crashes the run instead of refusing the record; check `isinstance(v, str)` (or the "
+     "declared type) first, refuse the record by name, and give the parser's hostile-input tests a list and an object "
+     "in every field it tests by membership (AF-AP-177)"),
 
 
 ]
@@ -495,6 +614,8 @@ def main() -> int:
 
     flagged = []
     for ap_id, rx, msg in AP_SCREEN:
+        if isinstance(rx, _PathScoped):  # only here is the edited file's path known
+            rx = rx.for_path(fp)
         if rx.search(new_code):
             flagged.append(f"  {ap_id:6s}{msg}")
     flagged.extend(file_aware_screen(new_code, src))

@@ -658,6 +658,10 @@ def test_new_first_party_claude_file_names_manifest_and_class_drift(tmp_path: Pa
         ("unknown-class", lambda lines: (2, [lines[0], lines[1].split("\t")[0] + "\tBROKEN-CLASS", *lines[2:]])),
         # a row with no tab appended (the K150 brief's premise probe)
         ("no-tab", lambda lines: (len(lines) + 1, [*lines, "this row has no tab"])),
+        # VERIFY-K150 F-08: the header refused by name (its mutant M8d, the header check removed, passed the whole file)
+        ("bad-header", lambda lines: (1, ["path\tKLASS", *lines[1:]])),
+        # VERIFY-K150 F-08: a row with a third cell (its mutant M8e, cells[1] whatever the count, passed the whole file)
+        ("extra-cell", lambda lines: (2, [lines[0], lines[1] + "\textra", *lines[2:]])),
     ),
 )
 def test_malformed_claude_class_row_is_refused_by_line(tmp_path: Path, shape: str, malform) -> None:
@@ -1269,13 +1273,8 @@ def run_killer(killer: str, module, work: Path, label: str) -> None:
         pytest.fail(f"no killer implementation for {killer}")
 
 
-@pytest.mark.parametrize(("mutant_name", "mutate", "killer"), MUTANTS)
-def test_required_mutants_are_killed(
-    tmp_path: Path,
-    mutant_name: str,
-    mutate,
-    killer: str,
-) -> None:
+def assert_mutant_killed(tmp_path: Path, mutant_name: str, mutate, killer: str, run=run_killer) -> None:
+    """The kill harness. `run` is a parameter only so the AF-AP-138 control below can be fed a killer of its own."""
     text = SCRIPT.read_text(encoding="utf-8")
     mutated = mutate(text)
     assert mutated != text, f"{mutant_name} mutation did not apply"
@@ -1288,7 +1287,7 @@ def test_required_mutants_are_killed(
     baseline = tmp_path / "baseline"
     baseline.mkdir()
     try:
-        run_killer(killer, load_module(), baseline, mutant_name)
+        run(killer, load_module(), baseline, mutant_name)
     except AssertionError as error:
         pytest.fail(f"AF-AP-138: {killer} fails on the UNMUTATED module, so a kill of {mutant_name} "
                     f"is not attributable to the mutation: {error!r}")
@@ -1299,4 +1298,35 @@ def test_required_mutants_are_killed(
     # A mutant is killed only when its named assertion fails for the exact mutant
     # name; an unrelated exception is not accepted as a kill.
     with pytest.raises(AssertionError, match=mutant_name):
-        run_killer(killer, mutant, mutated_work, mutant_name)
+        run(killer, mutant, mutated_work, mutant_name)
+
+
+@pytest.mark.parametrize(("mutant_name", "mutate", "killer"), MUTANTS)
+def test_required_mutants_are_killed(
+    tmp_path: Path,
+    mutant_name: str,
+    mutate,
+    killer: str,
+) -> None:
+    assert_mutant_killed(tmp_path, mutant_name, mutate, killer)
+
+
+def test_af_ap_138_control_refuses_a_killer_that_fails_on_the_unmutated_module(tmp_path: Path) -> None:
+    """VERIFY-K150 F-03: the baseline control had no committed negative control; deleting it, or swallowing its
+    pytest.fail, left the 11 rows green, because every killer passes on the unmutated module today. This feeds the
+    harness D-10's stale killer (656ddf6^: the walk order without the root record fe2284d added). It fails on the
+    unmutated module AND on the mutant, so a harness without the control scores it a kill."""
+
+    def stale_walk_order(killer, module, work, label):
+        tree = work / "tree"
+        (tree / "aaa").mkdir(parents=True)
+        (tree / "zzz").mkdir(parents=True)
+        (tree / "b.txt").write_text("b", encoding="utf-8")
+        (tree / "aaa/c.txt").write_text("c", encoding="utf-8")
+        (tree / "zzz/d.txt").write_text("d", encoding="utf-8")
+        assert [path for path, _ in module.walk_tree(tree, work)] == ["aaa/c.txt", "b.txt", "zzz/d.txt"], label
+
+    mutant_name, mutate, killer = MUTANTS[0]
+    assert mutant_name == "unsorted-tree-digest"
+    with pytest.raises(pytest.fail.Exception, match=f"^AF-AP-138: {killer} fails on the UNMUTATED module"):
+        assert_mutant_killed(tmp_path, mutant_name, mutate, killer, run=stale_walk_order)

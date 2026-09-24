@@ -202,7 +202,12 @@ failed to break it.**
   bug had a live copy). Register every new class in the ANTI-PATTERN REGISTRY at the top of
   `docs/INCIDENT-LOG.md` (id, one-line mechanism, greppable signature, proven instance) in
   the SAME increment — the registry is the sweep corpus for the next echo. Skip only for
-  doc/rename/pure-test edits with no behavioral pattern.
+  doc/rename/pure-test edits with no behavioral pattern. **The sweep names every first-party
+  root, and the report pastes its command (AF-AP-150, 2026-09-23):** `scripts/ harness-ports/
+  src/ proofs/ .claude/hooks/ .github/`, with `tests/` as its own list — never only the fixed
+  file's directory. AF-AP-127's redaction sweep searched `scripts/` and `harness-ports/bin/`
+  and missed the same one-label key rule in `src/` (AF-AP-149), found later by chance while
+  the J1-1-R1 brief was being written.
 - **Dispatch scoped review agents in parallel, one dimension each** (typical trio: logic/table
   correctness on tricky inputs · live-path reachability · hollow-green mutation audit). A good
   brief: exact files/functions/lines; your suspicions to confirm/refute; demands runnable-probe
