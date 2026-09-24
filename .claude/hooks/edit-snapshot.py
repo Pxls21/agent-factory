@@ -368,6 +368,14 @@ AP_SCREEN = [
      "a diff header parsed by its prefix — pass explicit --src-prefix=a/ --dst-prefix=b/, treat `+++` as a header only "
      "between `diff --git` and the first `@@`, and never drop an added line whose path did not parse: a diff.noprefix "
      "config, a quoted path or an added line starting `++` otherwise hides it (AF-AP-200)"),
+    # AF-AP-201 (2026-09-24, task #241): a request option that makes the shared model server allocate outside its
+    # reserved memory. A transport probe sent `prompt_logprobs: 0` through OmniRoute to the vLLM `qwen` container: a
+    # float32 log-softmax over the whole vocabulary for every prompt token (758 MiB, 148 MiB free) OOM-killed the engine
+    # and systemd restarted qwen.service for every user. The tell: the option set as a key or a keyword.
+    ("AF-AP-201", re.compile(r"""(?:["']|\b)(?:prompt_logprobs|best_of)["']?\s*[:=](?!=)"""),
+     "a request option that makes the model server compute output for every prompt token (prompt_logprobs) or extra "
+     "sequences (best_of) — vLLM allocates it OUTSIDE its reserved memory; on the PC's 3090 `prompt_logprobs` "
+     "OOM-killed the engine and restarted qwen for every user: never send it to a shared server (AF-AP-201)"),
 
 
 ]

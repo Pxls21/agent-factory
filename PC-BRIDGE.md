@@ -197,9 +197,16 @@ serves, through OmniRoute. What it needs on the PC, and how each piece was made 
 - **What OmniRoute carries (measured 16:0xZ-16:1xZ):** a plain chat call with `logprobs: true, top_logprobs: 20` returns the logprobs
   for `qwen-local/qwen3.8-27b-local` and for the build combo (use the model id: the combo can fall back to the cloud chain). A chat
   call with `continue_final_message` and the prefill `{"answer": ` returned 502 `upstream_empty_response` (OmniRoute refuses a
-  whitespace-only token). `/v1/completions` with a raw prompt and integer `logprobs` returned 400 on `body.logprobs`. Whether the
-  `examples_binary` branches (prefill `{"answer": "`, letter labels) pass with the compiler's exact token count is QJ1's first
-  measurement.
+  whitespace-only token). `/v1/completions` with a raw prompt and integer `logprobs` returned 400 on `body.logprobs`. **Measured
+  2026-09-24 23:4xZ (`docs/research/findings/j2b-variants/qwen27b/TRANSPORT-2026-09-24.md`):** a `reasoning_content` field on the
+  final assistant message does not reach the server's template (an `examples_binary` choice branch arrives 12 tokens short,
+  exactly its reasoning block; a `reasoning` field, or both, the same). With the reasoning inside the message text, the local
+  template and the wire agree token for token (both +4: an empty think block comes first). The response names the model
+  `qwen3.8-27b-local`, and the 20 candidates sit in `logprobs.content[0].top_logprobs`.
+- **Never send `prompt_logprobs` (or `best_of`) to the shared server (AF-AP-201, 2026-09-24):** vLLM computes a float32
+  log-softmax over the whole vocabulary for every prompt token, outside the memory it reserved at start. One request (a
+  1,037-token prompt: 758 MiB needed, 148 MiB free) OOM-killed the EngineCore at 23:45:08Z; systemd restarted `qwen.service`
+  at 23:45:21Z and it answered again at 23:50:00Z, about 5 minutes down for every user.
 
 - **No second CUDA process while `qwen.service` runs (measured 2026-09-24 18:0xZ):** vLLM leaves about 550 MB of the 3090 free, and a toy RWKV-7 probe failed at CUDA context creation (`CUDA_ERROR_OUT_OF_MEMORY` from `cuDevicePrimaryCtxRetain`); vLLM was unaffected. Any GPU test, even a tiny one, waits for a window with the service stopped (D-078, D-081). The RWKV-7 G0 environment: `~/venv-rwkv` (Python 3.11, torch 2.14.0+cu130, triton 3.8.0, flash-linear-attention 0.3.0, transformers 4.57.6; imports clean) and a fallback `~/venv-rwkv-b` (torch 2.7.1 cu128, flash-linear-attention 0.3.0, transformers below 4.54); the checkpoint `RWKV/RWKV7-Goose-World2.9-0.4B-HF` at e94655a9 is in the Hugging Face cache (`model.safetensors` 901,620,328 bytes).
 - **The RWKV-7 environments, measured on the CPU 2026-09-24 19:1xZ (no GPU needed to see these):** `~/venv-rwkv` loads the checkpoint (450,767,872 parameters, 7.5 s) but a forward with `use_cache=True` fails at fla 0.3.0's cache: transformers 4.57.6 requires `layers` or `layer_class_to_replicate` ("You should provide exactly one of ..."); with `use_cache=False` on the CPU, fla's CPU fallback fails (`module 'torch.cpu' has no attribute 'device'`). `~/venv-rwkv-b` (torch 2.7.1+cu128, transformers 4.53.3, triton 3.3.1) cannot import fla without a visible GPU (Triton: "0 active drivers"), so its forward is testable only inside the GPU window; it is the cached path for G0 and `~/venv-rwkv` with `--no-cache` the fallback. simple-jev needs pydantic, fastapi and starlette in each venv (the same pins as `~/venv-rwkv`). There is no CPU path for RWKV-7 through fla here.

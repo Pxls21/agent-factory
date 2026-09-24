@@ -1073,3 +1073,20 @@ class TestAFAP200:
     def test_no_fire_on_front_matter_or_a_single_plus(self):
         for line in ('if line.startswith("---"):', 'elif raw.startswith("+"):', 'x.startswith("++")'):
             assert not self.rx.search(line), line
+
+
+class TestAFAP201:
+    rx = _AP_BY_ID["AF-AP-201"]
+
+    def test_fires_on_the_crashing_request_body(self):
+        assert self.rx.search('            "temperature": 0, "logprobs": True, "top_logprobs": 20, "prompt_logprobs": 0}')
+        assert self.rx.search("params = SamplingParams(max_tokens=1, prompt_logprobs=0)")
+
+    def test_fires_on_best_of(self):
+        assert self.rx.search("body = {'model': m, 'best_of': 4}")
+        assert self.rx.search("sp.best_of = 2")
+
+    def test_no_fire_on_the_safe_logprob_options_names_or_a_comparison(self):
+        for line in ('"logprobs": True, "top_logprobs": 20,', "report = prompt_logprobs_note",
+                     "best_of_n = 3", "if params.prompt_logprobs == 0:"):
+            assert not self.rx.search(line), line
