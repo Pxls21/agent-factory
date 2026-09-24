@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -16,7 +19,7 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_ROOT / "src"))
 
 from agent_factory.decisions import DecisionStateError  # noqa: E402
-from agent_factory.decisions.ledger import append, make_row  # noqa: E402
+from agent_factory.decisions.ledger import append, make_row, replay  # noqa: E402
 
 
 QUESTION_IDS = (
@@ -44,7 +47,7 @@ BULLET_FINDING_RE = re.compile(
     r"(?P<class>BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)\b"
 )
 BOUNDARY_RE = re.compile(
-    r"^(?:- \*\*BOUNDARY DEVIATION\*\*|\d+\. BOUNDARY DEVIATION)"
+    r"^(?:- \*\*|\d+\. )BOUNDARY DEVIATION\b"
     r"\s*(?:—|:|\*\*)(?P<tail>.*)$",
     re.IGNORECASE,
 )
@@ -137,8 +140,17 @@ def _kind(path: str) -> str | None:
     return None
 
 
-def _tree_paths(root: Path) -> list[str] | None:
-    result = _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD")
+def _resolve_commit(root: Path) -> str | None:
+    # The ONE read of the symbolic ref: every later git argument names this commit id (R3).
+    result = _git(root, "rev-parse", "--verify", "HEAD^{commit}")
+    commit = result.stdout.decode("ascii", "replace").strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", commit):
+        return None
+    return commit
+
+
+def _tree_paths(root: Path, commit: str) -> list[str] | None:
+    result = _git(root, "ls-tree", "-r", "--name-only", "-z", commit)
     if result.returncode != 0:
         return None
     try:
@@ -148,23 +160,35 @@ def _tree_paths(root: Path) -> list[str] | None:
     return sorted(paths, key=lambda p: p.encode("utf-8"))
 
 
-def _head_blob(root: Path, path: str) -> bytes | None:
-    result = _git(root, "cat-file", "blob", f"HEAD:{path}")
+def _head_blob(root: Path, commit: str, path: str) -> bytes | None:
+    result = _git(root, "cat-file", "blob", f"{commit}:{path}")
     return result.stdout if result.returncode == 0 else None
 
 
 def _regular_worktree_bytes(root: Path, path: str) -> bytes | None:
-    target = root / path
+    # One open, then the type check on THAT fd: a FIFO or a symlink swapped in is refused, never read
+    # (a path check followed by a second open could block on a FIFO; S1, the ledger's own pattern).
     try:
-        if not target.is_file() or target.is_symlink():
-            return None
-        return target.read_bytes()
+        fd = os.open(root / path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError:
         return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
-def _admit(root: Path, requested: list[str]) -> tuple[list[Source] | None, tuple[int, str] | None]:
-    tree_paths = _tree_paths(root)
+def _admit(root: Path, commit: str, requested: list[str]) -> tuple[list[Source] | None, tuple[int, str] | None]:
+    tree_paths = _tree_paths(root, commit)
     if tree_paths is None:
         return None, (64, "decide-harvest: --root is not a git work tree")
     if requested:
@@ -177,7 +201,7 @@ def _admit(root: Path, requested: list[str]) -> tuple[list[Source] | None, tuple
 
     admitted: list[Source] = []
     for path in paths:
-        data = _head_blob(root, path)
+        data = _head_blob(root, commit, path)
         if data is None or _regular_worktree_bytes(root, path) != data:
             return None, (4, f"harvest-source-uncommitted: {path}")
         try:
@@ -227,24 +251,30 @@ def _collapse(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _lines(text: str) -> list[str]:
+    # Git's and the contract's lines: split on "\n" only (U+2028, U+0085, \x0b, \x0c and \x1c-\x1e are
+    # text, AF-AP-132); the final empty piece is dropped and one trailing "\r" per line removed (R4).
+    pieces = text.split("\n")
+    if pieces[-1] == "":
+        pieces.pop()
+    return [piece[:-1] if piece.endswith("\r") else piece for piece in pieces]
+
+
 def _heading_text(lines: list[str], start: int) -> tuple[str | None, str | None]:
-    joined: list[str] = []
     first = lines[start]
     opening = first.find("**")
     if opening < 0:
         return None, "unterminated-heading"
-    joined.append(first[opening + 2 :])
+    pieces: list[str] = []
     for offset in range(10):
         index = start + offset
         if index >= len(lines):
             break
-        piece = joined[0] if offset == 0 else lines[index]
+        piece = first[opening + 2 :] if offset == 0 else lines[index]
         close = piece.find("**")
         if close >= 0:
-            prefix = joined[:-1] if offset else []
-            return _collapse(" ".join(prefix + [piece[:close]])), None
-        if offset:
-            joined.append(piece)
+            return _collapse(" ".join(pieces + [piece[:close]])), None
+        pieces.append(piece)
     return None, "unterminated-heading"
 
 
@@ -257,7 +287,7 @@ def _nearest_heading(lines: list[str], before: int) -> str:
 
 
 def _registry(text: str) -> dict[str, str]:
-    lines = text.splitlines()
+    lines = _lines(text)
     heading = next((i for i, line in enumerate(lines) if line.startswith("## ANTI-PATTERN REGISTRY")), -1)
     if heading < 0:
         return {}
@@ -300,7 +330,7 @@ def _ap_candidate(
 
 
 def _parse_incident(source: Source, registry: dict[str, str]) -> list[Candidate]:
-    lines = source.text.splitlines()
+    lines = _lines(source.text)
     candidates: list[Candidate] = []
     for index, line in enumerate(lines):
         if not INCIDENT_ANCHOR_RE.match(line):
@@ -349,7 +379,7 @@ def _title_column(headers: list[str]) -> int | None:
 
 
 def _parse_class(cell: str) -> str | None:
-    raw = cell.strip().strip("*").strip()
+    raw = cell.replace("*", "").strip()
     match = re.fullmatch(
         r"(BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)"
         r"(?:, (?:SOLID|UNSURE)| \([^\r\n()]+\))?",
@@ -358,21 +388,19 @@ def _parse_class(cell: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _report_paths(text: str, root: Path, tree: set[str]) -> list[str]:
+def _report_paths(text: str, tree: set[str]) -> list[str]:
     found: set[str] = set()
     for token in BACKTICK_RE.findall(text):
         candidate = re.sub(r":\d+(?:(?:-|–)\d+)?(?:[,:].*)?$", "", token)
-        if candidate.startswith(str(root) + os.sep):
-            candidate = os.path.relpath(candidate, root).replace(os.sep, "/")
         if candidate in tree:
             found.add(candidate)
     return sorted(found)
 
 
 def _finding_candidates(
-    *, source: Source, root: Path, tree: set[str], registry: dict[str, str]
+    *, source: Source, tree: set[str], registry: dict[str, str]
 ) -> list[Candidate]:
-    lines = source.text.splitlines()
+    lines = _lines(source.text)
     records: list[tuple[int, str, str, str, str]] = []
     anchors: list[int] = [i for i, line in enumerate(lines) if BULLET_FINDING_RE.match(line)]
     for index in anchors:
@@ -450,7 +478,7 @@ def _finding_candidates(
                     "lane": lane,
                     "finding_id": finding_id,
                     "title": title,
-                    "paths": _report_paths(text_or_reason, root, tree),
+                    "paths": _report_paths(text_or_reason, tree),
                     "disposition": "BLOCKING" if finding_class in BLOCKING_CLASSES else "NON-BLOCKING",
                 },
                 locator=locator,
@@ -512,7 +540,7 @@ def _rating_answer(headers: tuple[str, ...], cells: list[str]) -> str | None:
 
 
 def _parse_lane_report(source: Source) -> list[Candidate]:
-    lines = source.text.splitlines()
+    lines = _lines(source.text)
     candidates: list[Candidate] = []
     for index, line in enumerate(lines):
         match = BOUNDARY_RE.match(line)
@@ -639,10 +667,10 @@ def _scout_rows(payload: object) -> tuple[list[dict] | None, str | None]:
 def _parse_transcript(source: Source) -> list[Candidate]:
     records: list[dict | None] = []
     candidates: list[Candidate] = []
-    for line_number, raw in enumerate(source.text.splitlines(), 1):
+    for line_number, raw in enumerate(_lines(source.text), 1):
         try:
             value = json.loads(raw)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # JSONDecodeError is a ValueError; deep nesting recurses (S6)
             records.append(None)
             candidates.append(Candidate(line_number, "", "", "", {}, "", "bad-json"))
             continue
@@ -685,7 +713,7 @@ def _parse_transcript(source: Source) -> list[Candidate]:
         payload_text = _tool_result_payload(block)
         try:
             payload = json.loads(payload_text) if payload_text is not None else None
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             payload = None
         if payload is None:
             candidates.append(Candidate(result_index + 1, "", "", "", {}, "", "bad-payload"))
@@ -738,11 +766,11 @@ def _parse_transcript(source: Source) -> list[Candidate]:
     return candidates
 
 
-def _candidates(source: Source, *, root: Path, tree: set[str], registry: dict[str, str]) -> list[Candidate]:
+def _candidates(source: Source, *, tree: set[str], registry: dict[str, str]) -> list[Candidate]:
     if source.kind == "incident_log":
         return _parse_incident(source, registry)
     if source.kind == "verify_report":
-        return _finding_candidates(source=source, root=root, tree=tree, registry=registry)
+        return _finding_candidates(source=source, tree=tree, registry=registry)
     if source.kind == "lane_report":
         return _parse_lane_report(source)
     return _parse_transcript(source)
@@ -757,6 +785,37 @@ def _source_ref(source: Source, locator: str) -> dict:
     }
 
 
+def _errno_name(exc: OSError) -> str:
+    return errno.errorcode.get(exc.errno, type(exc).__name__)
+
+
+def _output_invalid(path: str, reason: str) -> int:
+    print(f"harvest-output-invalid: {path} ({reason})", file=sys.stderr)
+    return 6
+
+
+def _claim_output(path: str) -> str | None:
+    """Lock `--out` and replay it once, before any source is parsed (D-063, D-064 (4); R5 (a)-(b)).
+
+    Returns None, or the refusal reason: `locked`, a `DecisionStateError` code, or an errno name.
+    The fd is never closed: the exclusive lock is held until the process exits.
+    """
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o644)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return "decision-ledger-not-regular"
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "locked"
+        replay(path)
+    except DecisionStateError as exc:
+        return exc.reason
+    except OSError as exc:
+        return _errno_name(exc)
+    return None
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = UsageParser(add_help=True)
     parser.add_argument("--out", required=True)
@@ -768,26 +827,30 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     root = _repo_root(args.root)
-    if root is None:
+    commit = _resolve_commit(root) if root is not None else None
+    if root is None or commit is None:
         print("decide-harvest: --root is not a git work tree", file=sys.stderr)
         return 64
     output_path = Path(args.out).resolve()
     if output_path == root or root in output_path.parents:
         relative_output = output_path.relative_to(root).as_posix()
-        if relative_output and _head_blob(root, relative_output) is not None:
+        if relative_output and _head_blob(root, commit, relative_output) is not None:
             print(f"harvest-output-source-conflict: {relative_output}", file=sys.stderr)
             return 4
-    sources, error = _admit(root, args.sources)
+    sources, error = _admit(root, commit, args.sources)
     if error:
         code, message = error
         print(message, file=sys.stderr)
         return code
     assert sources is not None
+    claim_error = _claim_output(args.out)
+    if claim_error is not None:
+        return _output_invalid(args.out, claim_error)
 
-    tree_paths = _tree_paths(root)
+    tree_paths = _tree_paths(root, commit)
     assert tree_paths is not None
     tree = set(tree_paths)
-    incident_data = _head_blob(root, "docs/INCIDENT-LOG.md")
+    incident_data = _head_blob(root, commit, "docs/INCIDENT-LOG.md")
     registry = _registry(incident_data.decode("utf-8", "strict")) if incident_data is not None else {}
 
     counts = {question_id: 0 for question_id in QUESTION_IDS}
@@ -798,7 +861,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for source in sources:
         kinds[source.kind] += 1
-        parsed = _candidates(source, root=root, tree=tree, registry=registry)
+        parsed = _candidates(source, tree=tree, registry=registry)
         if not parsed:
             no_records += 1
         for candidate in parsed:
@@ -819,12 +882,7 @@ def main(argv: list[str] | None = None) -> int:
                     source_ref=_source_ref(source, candidate.locator),
                     root=root,
                 )
-                append(args.out, row)
             except DecisionStateError as exc:
-                if exc.reason == "decision-row-duplicate":
-                    skipped += 1
-                    print(str(exc), file=sys.stderr)
-                    continue
                 reason = f"state:{exc.reason}"
                 refused.append(Refusal(source.path, candidate.line, reason))
                 print(
@@ -832,6 +890,17 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 continue
+            try:
+                append(args.out, row)
+            except DecisionStateError as exc:
+                # A skip only for THIS row's own id; `append` raises the same reason for a corrupt ledger (D-063 (2)).
+                if exc.reason == "decision-row-duplicate" and exc.detail == row["row_id"]:
+                    skipped += 1
+                    print(str(exc), file=sys.stderr)
+                    continue
+                return _output_invalid(args.out, exc.reason)
+            except OSError as exc:
+                return _output_invalid(args.out, _errno_name(exc))
             counts[candidate.question_id] += 1
 
     per_type = ", ".join(f"{question_id}={counts[question_id]}" for question_id in QUESTION_IDS)
