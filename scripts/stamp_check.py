@@ -21,6 +21,9 @@ NOT checked, by design: bare times with no date (a re-edited running paragraph r
 times from earlier days, so a bare time cannot be placed on the clock), and stamps in any other
 file.
 
+A BUCKET stamp (HH:MxZ) gets no slack: it already spans ten minutes, so its earliest instant must not be later than
+the clock (2026-09-24: a `20:1xZ` wiki block written at 20:08:53Z passed the 120 s slack). The minute and ISO forms
+keep the slack.
 Exit 0 clean; 1 a new stamp later than the clock plus the slack, or one that names no valid
 instant (one stderr line each); 2 usage error (argparse).
 """
@@ -107,7 +110,7 @@ def main(argv=None):
             instant = _instant(match)
             if instant is None:
                 problems.add(f"stamp_check: {path}: '{stamp}' names no valid instant")
-            elif instant > limit:
+            elif instant > (now if match.group(6) == "x" else limit):   # a bucket gets no slack
                 ahead = (instant - now).total_seconds() / 60
                 problems.add(f"stamp_check: {path}: '{stamp}' is {ahead:.1f} min ahead of the clock "
                              f"{now_text} — paste stamps from date -u or the commit clock")

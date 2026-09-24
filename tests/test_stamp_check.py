@@ -87,6 +87,18 @@ def test_the_slack_boundary_is_inclusive(tmp_path):
     assert r.returncode == 1 and "'2026-09-23 01:50Z' is 2.0 min ahead" in r.stderr, r.stderr
 
 
+def test_a_bucket_stamp_gets_no_slack(tmp_path):
+    """2026-09-24: a `20:1xZ` block written at 20:08:53Z was 67 s ahead, inside the 120 s slack, and passed. A bucket
+    already spans ten minutes, so its earliest instant may not pass the clock at all; a minute stamp keeps the slack."""
+    repo = _repo(tmp_path, {LEDGER: "# ledger\n"})
+    _stage(repo, LEDGER, "# ledger\nX 2026-09-24 20:1xZ\n")
+    r = _run(repo, "2026-09-24T20:08:53Z")
+    assert r.returncode == 1 and "'2026-09-24 20:1xZ' is 1.1 min ahead" in r.stderr, r.stderr
+    assert _run(repo, "2026-09-24T20:10:00Z").returncode == 0
+    _stage(repo, LEDGER, "# ledger\nX 2026-09-24 20:10Z\n")
+    assert _run(repo, "2026-09-24T20:08:53Z").returncode == 0
+
+
 def test_the_bucket_compares_its_earliest_instant(tmp_path):
     """01:5xZ names 01:50:00 at the earliest; at 01:52:00 it is not in the future."""
     repo = _repo(tmp_path, {LEDGER: "# ledger\n"})
