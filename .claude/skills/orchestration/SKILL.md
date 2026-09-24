@@ -214,6 +214,7 @@ tier. When Opus coordinates:
    pytest-only PC gates through `scripts/pc_suite.sh launch|wait`, nothing else on the bridge) — a delegate once opened a clean-build→main PR to deliver a
    one-line docs edit, minting a 256k-line phantom diff whose failing fork-CI checks
    mailed the owner on every subsequent push for a day (closed 2026-07-22, PR #1).
+   Sending repo content (code, findings, logs, transcripts, registry rows) to a THIRD-PARTY API is an outward action too: it runs only on the owner's explicit OK for that service and purpose, recorded in the decision log, and never from a delegate; before the OK, only synthetic text may be sent (2026-09-24, D-075: the sandbox safety check refused a J2 rerun against codiv.ai as data exfiltration, and it was right to).
 5. **Keep compounding.** The retrospective rule runs identically — bake lessons in the same
    increment; the protocol is the institution, the coordinator is replaceable.
 

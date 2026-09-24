@@ -141,6 +141,7 @@ expansion.
    the graded artifact choose its own oracle value). Drop ONLY when: (a) change provably scoped,
    (b) ≥1 retained assertion is INVARIANT to the change, (c) the reduced gate still fails an
    empty/mutant workflow. Fail any leg → abstain, never mint.
+   **4c. A feature derived from the label is a leak, not a signal** (2026-09-24, AF-AP-189): before any evaluation or training on captured rows, check every input field against the answer. `decide-harvest` stored the v1 finding's `disposition` (computed from its class) in the state, so a model given the whole state would score the blocking split perfectly.
 5. **No LLM-judge in the gate spine.** Gate/oracle/assertion execution is deterministic
    exit-code / set-hash comparison; an LLM enters ONLY at codify/generate/tune time.
 6. **A stress benchmark's value is the defects it FORCES, not the green it prints.** Design the
