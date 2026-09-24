@@ -19,7 +19,8 @@ last_compiled: 2026-09-03
 - **LIVE, PC:** MoJev Gate 0 full run, 6 of 30 tasks at 15:10Z (2,048 tokens: fp32 about 17-18 s per decision, bf16 84-90 s; the option count barely matters). VERIFY-K170 waits for it.
 - **ISSUES FILED:** #68 (VERIFY-JT1 follow-ups), #69 (AF-AP-189), #70 (VERIFY-J1-1-R4 follow-ups).
 - **PUSHED:** 40dcc21; later commits push after the next CI verdict.
-- **OWNER DECISIONS OPEN:** the codiv data OK (repo text to codiv.ai); a GPU window for training (pausing vLLM); the Stage 0 PR to main (only on the owner's word).
+- **D-078 (15:1xZ):** Laya trains on the GPU in a no-lanes window (stop `qwen.service`, train, restart); codiv approved for generating the training data. OpenJev rerun running (task #234, about an hour); FT1 building the fine-tune tooling (task #233).
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (only on the owner's word).
 
 **2026-09-24 14:3xZ — WHAT IS LIVE NOW (this block supersedes the 13:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS:** D-074 (Jev stays model-based; a plain order is only the baseline to beat) and D-075 (fine-tune Laya and keep it; a codiv.ai OpenJev key for testing and teacher data, stored at `/root/.codiv/api.env`, never echoed). **HELD FOR THE OWNER:** an explicit OK to send repo text to codiv.ai (the safety check refused it); tasks #233, #234.
