@@ -74,3 +74,72 @@ best answered by "never", which is the majority's 0.91.
 - The v1 sample comes from 11 of the 89 verify reports (the only ones with the grammar), so the rows are correlated by lane.
 - One model, one revision, FP32, 2 threads on a shared CPU (timings are not measurements; accuracies are).
 - Laya's input window is 1,024 tokens; every state here is far shorter.
+
+## 5. Addendum (14:0xZ): the question, the model, or the task? (J2b, POST-HOC)
+
+The owner asked whether Laya fails or the way we asked fails. Two probes answer it: Laya asked three other ways, and a much
+larger general model on the same inputs. Both were chosen after §1-§4, so a win here would be a hypothesis to re-confirm on
+rows the samples never used. None won.
+
+### 5.1 Laya asked three other ways (`j2b-variants/j2b.py`; `results.json`; same samples, same server revision)
+
+| Variant | What changed | Result | Best plain baseline |
+|---|---|---|---|
+| `ap_choice` | one `choice` over the lexical 16: Laya's own coarse-to-fine shape (`laya/shortlist.py`) | top-1 0.22, top-3 0.50 | lexical 0.59, 0.69 |
+| `v1_choice_rich` | fuller class definitions; the state keyed as a finding | accuracy 0.14; blocking split 0.63; BLOCKER 0/7 | majority 0.43; 0.91 |
+| `v1_blocking` | one yes/no question: does this finding block the merge? | blocking split 0.87; blocking recall 0/9; false alarms 4/91 | "never" 0.91 |
+
+### 5.2 A much larger general model on the same inputs (`j2b-variants/haiku_compare.py`)
+
+Haiku 4.5 as a sandbox agent (37 assistant turns, all Haiku, 0 refusals) read label-free inputs only: the masked heading
+with the lexical 16 (each row's first 260 characters, in lexical order), and the v1 state alone. Its answers are recorded
+as data (`haiku_ap.json`, `haiku_v1.json`, one run); `haiku_compare.py inputs` rebuilds the exact inputs from the committed
+samples and `score` reproduces the numbers.
+
+| `ap.violates_row` | Top 1 | Top 3 |
+|---|---:|---:|
+| Lexical overlap | **0.59** | **0.69** |
+| Haiku 4.5, reranking the lexical 16 | 0.39 | 0.48 |
+| Laya `choice` (5.1) | 0.22 | 0.50 |
+| Laya per-row `noul` (§1) | 0.05 | 0.22 |
+
+Haiku left the lexical first pick in 42 of 100 rows. It was right in 2 of them; the lexical pick was right in 22.
+
+| `v1.finding_class` | Accuracy | Balanced accuracy | Blocking split | BLOCKER recall |
+|---|---:|---:|---:|---:|
+| Majority (FOLLOW-UP) | 0.43 | 0.167 | **0.91** | 0/7 |
+| Haiku 4.5 | **0.45** | **0.278** | 0.88 | 0/7 |
+| Laya `choice` (§2) | 0.21 | 0.133 | 0.82 | 0/7 |
+
+### 5.3 Two input limits, found while reading the inputs
+
+1. **The v1 state is a 120-character title.** The `v1.finding_class` schema caps `title` at 120 characters
+   (`SCHEMAS` in `src/agent_factory/decisions/volatile.py`); 59 of the 100 sampled states are exactly 120 characters, cut
+   mid-sentence. The class depends on reproduction, contract mapping and materiality, which live in the finding's body.
+   No model saw them.
+2. **Laya gives each option a few tokens.** The question and all its options share `head_max_len` = 256 tokens
+   (`typed-decisions/rl_agent_config.json` at the pinned revision; `build_sequence` in `laya/common.py`). With 16 options,
+   each keeps at most 15 tokens, its marker included: the row id and a few words. Laya's own `shortlist` module says so
+   ("a large label set leaves only a few tokens per label"). The design fits short labels over a long state, not long
+   registry rows as labels.
+
+### 5.4 What this says
+
+- Laya is the weakest model on every shape tried. It never beat a plain baseline, and it trailed Haiku on both tasks.
+- The two tasks, as posed, are also weak tests of any model. In registry matching the heading and the row share their
+  author's words, so word overlap is the strongest signal and a model that leaves it is usually wrong. In finding class
+  the input is a 120-character title.
+- So the evidence rejects Laya as it ships, on these inputs. It does not show that no model can help, and it does not
+  test Laya's design shape (short typed questions over a long state).
+
+### 5.5 Open paths that keep a model in the loop (owner, 2026-09-24 13:48Z: a non-model version "defeats the purpose")
+
+1. The locator benchmark (JT2, `jev-locate-bench`) measures Laya on the owner's main use: ranking files for a bug from
+   all the tools' output. It reads the same KC-J3 rule.
+2. Re-ask v1 with the whole finding (the report paragraph, class words masked) to Laya and Haiku. If accuracy rises, the
+   capture schema's 120-character title is the limit to fix, through the redaction layer.
+3. Use a model beside the plain order, not in place of it (the model reorders only lexical ties, or a measured blend).
+4. Fine-tune Laya on the ledger's labels (the council's KC-J3 consequence). The package ships no training code, and the
+   labels are few today (144 v1 rows).
+5. MoJev (Gate 0, task #230), the hosted Laya model (needs the owner's key through OmniRoute), or the local Qwen through
+   OmniRoute where a few seconds per call is acceptable.
