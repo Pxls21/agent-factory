@@ -53,6 +53,19 @@ def test_insert_after_prefix_line(tmp_path):
     assert p.read_text() == "# title\n- **Origin tip:** old\n- **Local HEAD:** new\n- row alpha | x |\n- row beta | y |\n"
 
 
+def test_insert_that_adds_a_blank_run_warns_and_still_writes(tmp_path):
+    doc = "head\n\n**B** block\n"
+    p = tmp_path / "d.md"; p.write_text(doc)
+    r = _run(p, "--insert-before", "**B**", "**A** block\n\n")     # the 2026-09-24 slip: one newline too many
+    assert r.returncode == 0, r
+    assert p.read_text() == "head\n\n**A** block\n\n\n**B** block\n"
+    assert "WARNING: the edit adds 1 run(s) of two or more blank lines" in r.stderr, r.stderr
+    p.write_text(doc)                                                # the right shape: exactly one newline, no warning
+    r = _run(p, "--insert-before", "**B**", "**A** block\n")
+    assert r.returncode == 0 and r.stderr == "", r
+    assert p.read_text() == "head\n\n**A** block\n\n**B** block\n"
+
+
 def test_insert_before_prefix_line_multiline_text(tmp_path):
     p = tmp_path / "d.md"; p.write_text(DOC)
     r = _run(p, "--insert-before", "- row beta", "- row a2\n- row a3")

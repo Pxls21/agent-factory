@@ -65,6 +65,10 @@ def main(argv):
     with open(path, "w", encoding="utf-8") as f:
         f.write(after)
     print("anchor_edit: %d op(s) applied to %s (%d -> %d bytes)" % (len(ops), path, len(before), len(after)))
+    grew = after.count("\n\n\n") - before.count("\n\n\n")   # advisory: a TEXT ending in a newline inserts one more
+    if grew > 0:                                            # (empty) line; bit four times on 2026-09-24
+        print("anchor_edit: WARNING: the edit adds %d run(s) of two or more blank lines; an insert TEXT that ends "
+              "in a newline inserts one more (empty) line" % grew, file=sys.stderr)
     return 0
 
 
