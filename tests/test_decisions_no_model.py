@@ -1,10 +1,12 @@
 """J1-5 (task #122): the decision ledger has no model dependency (seed-laya-j1-v1 AC 5 and AC 10).
 
 Two checks. (1) A static scan: no J1 module imports a model package, statically or through
-`importlib.import_module` / `__import__` with a constant name. (2) A run: the J1 test files pass in a
-subprocess where every model package is blocked at import time, so the result does not depend on what
-the venv happens to have installed. Negative controls: the scan reds an added `import laya` (the
-breakdown's mutant m1, on a copy of ledger.py); the blocker reds a real import of a blocked package.
+`importlib.import_module` / `__import__` with a constant name. (2) A run: the J1 test files pass while every
+model package is blocked at import time in every Python process of the run, the scripts the tests start
+included (a `sitecustomize` on `PYTHONPATH` installs the blocker at interpreter start), and the blocker's log
+holds zero ATTEMPTS: an import the code catches, or a test that skips on ImportError, still counts. Negative
+controls: the scan reds an added `import laya` (the breakdown's mutant m1, on a copy of ledger.py); the blocker
+reds an import, logs a caught one, and reaches a child process.
 """
 import ast
 import os
@@ -32,10 +34,13 @@ BLOCKER = textwrap.dedent(
     import sys
 
     BLOCKED = {blocked!r}
+    LOG = {log!r}
 
     class _Block(importlib.abc.MetaPathFinder):
         def find_spec(self, name, path, target=None):
             if name.split(".")[0] in BLOCKED:
+                with open(LOG, "a", encoding="utf-8") as handle:
+                    handle.write(name + "\\n")
                 raise ImportError("model-import-blocked: " + name)
             return None
 
@@ -43,7 +48,6 @@ BLOCKER = textwrap.dedent(
     for loaded in list(sys.modules):
         if loaded.split(".")[0] in BLOCKED:
             del sys.modules[loaded]
-    {body}
     """
 )
 
@@ -69,18 +73,24 @@ def model_imports(path: pathlib.Path) -> list[str]:
     return found
 
 
-def _run_blocked(body: str, *args: str, tmp_path: pathlib.Path) -> subprocess.CompletedProcess:
-    code = BLOCKER.format(blocked=set(MODEL_PACKAGES), body=body)
-    # The venv's editable install may point at another checkout: import this tree's src first.
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join(filter(None, [str(ROOT / "src"), os.environ.get("PYTHONPATH")])))
-    return subprocess.run(
-        [sys.executable, "-c", code, *args],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
+def _run_blocked(work: pathlib.Path, *argv: str) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run `python ARGV` with the model packages blocked in it and in every Python process it starts.
+
+    Returns the result and the blocked import attempts, in order."""
+    site_dir = work / "model-blocker"
+    site_dir.mkdir(parents=True)
+    log = work / "blocked-imports.log"
+    (site_dir / "sitecustomize.py").write_text(
+        BLOCKER.format(blocked=MODEL_PACKAGES, log=str(log)), encoding="utf-8"
     )
+    # The venv's editable install may point at another checkout: import this tree's src first.
+    path = [str(site_dir), str(ROOT / "src"), os.environ.get("PYTHONPATH")]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(filter(None, path)))
+    result = subprocess.run(
+        [sys.executable, *argv], cwd=ROOT, env=env, capture_output=True, text=True, timeout=600
+    )
+    attempts = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return result, attempts
 
 
 def test_no_j1_module_imports_a_model_package():
@@ -101,15 +111,23 @@ def test_scan_reds_an_added_laya_import(tmp_path):
 
 
 def test_j1_suite_passes_with_model_packages_blocked(tmp_path):
-    body = "import pytest\nsys.exit(pytest.main(sys.argv[1:]))"
-    result = _run_blocked(body, *J1_TESTS, "-q", "-p", "no:cacheprovider", f"--basetemp={tmp_path / 'bt'}", tmp_path=tmp_path)
+    argv = ["-m", "pytest", *J1_TESTS, "-q", "-p", "no:cacheprovider", f"--basetemp={tmp_path / 'bt'}"]
+    result, attempts = _run_blocked(tmp_path, *argv)
     tail = (result.stdout + result.stderr)[-3000:]
     assert result.returncode == 0, tail
-    assert "model-import-blocked" not in result.stdout + result.stderr, tail
+    assert attempts == [], "decisions-attempted-model-import: " + ", ".join(attempts)
     assert " passed" in result.stdout.splitlines()[-1], tail
 
 
-def test_blocker_reds_a_blocked_import(tmp_path):
-    result = _run_blocked("import laya", tmp_path=tmp_path)
+def test_blocker_reds_an_import_logs_a_caught_one_and_reaches_a_child(tmp_path):
+    result, attempts = _run_blocked(tmp_path / "direct", "-c", "import laya")
     assert result.returncode != 0
     assert "ImportError: model-import-blocked: laya" in result.stderr
+    assert attempts == ["laya"]
+    result, attempts = _run_blocked(tmp_path / "caught", "-c", "try:\n    import torch.nn\nexcept ImportError:\n    pass")
+    assert (result.returncode, attempts) == (0, ["torch"])
+    child = "import subprocess, sys; raise SystemExit(subprocess.run([sys.executable, '-c', 'import transformers']).returncode)"
+    result, attempts = _run_blocked(tmp_path / "child", "-c", child)
+    assert result.returncode != 0
+    assert "ImportError: model-import-blocked: transformers" in result.stderr
+    assert attempts == ["transformers"]

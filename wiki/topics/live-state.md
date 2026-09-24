@@ -16,7 +16,7 @@ last_compiled: 2026-09-03
 
 **2026-09-24 04:5xZ — WHAT IS LIVE NOW (this block supersedes the 04:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **J1-4 LANDED 04:5xZ, GATED-PENDING-VERIFY:** the Laya pin in `upstream.lock.yaml` (`advisory_models.laya-typed-decisions`: revision, weights digest, `laya` 0.3.5 wheel digest, the measured runtimes and verdicts, role advisory), held equal to both J0 probe JSONs and the probe report by `tests/test_laya_pin.py` (task #121).
-- **J1-5 LANDED 04:5xZ, GATED-PENDING-VERIFY:** `tests/test_decisions_no_model.py`: no J1 module imports a model package, and the four J1 test files pass in a subprocess that blocks `laya`, `torch`, `transformers`, `safetensors` and `huggingface_hub`. Task #122 stays open for the full-suite paste (seed AC 10): the pushed head's CI run and one PC run.
+- **J1-5 LANDED 04:5xZ, GATED-PENDING-VERIFY:** `tests/test_decisions_no_model.py`: no J1 module imports a model package, and the four J1 test files pass while `laya`, `torch`, `transformers`, `safetensors` and `huggingface_hub` are blocked in every Python process of the run, with zero import attempts (hardened 05:0xZ before the push; AF-AP-179). Task #122 stays open for the full-suite paste (seed AC 10): the pushed head's CI run and one PC run.
 - **Every J1 increment has landed.** The verifies still owed: VERIFY-J1-1-R3 (#216, which must reproduce C4a and C4b's attribution or void D-067), then one batched verify of J1-4 and J1-5.
 - **NEXT:** push (CI run #1018 on f83aa36 still running at 04:59Z), then VERIFY-J1-1-R3 (#216) and K215 (#215) as sandbox Opus 5.5 agents. No PC lane is live.
 
