@@ -15,7 +15,7 @@ last_compiled: 2026-09-03
 - **DONE:** GPU window `20260924T232358Z`: all three jobs rc 0; qwen down 23:24:00Z-23:32:30Z (8 min 30 s) and back. G0: RWKV-7 0.4B zero-shot is REJECTED on every KC-J3 line; the long-input mechanics hold (61,440 tokens in 1.17 s; a question from a copied state in about 40 ms). Results: `docs/research/findings/j2b-variants/rwkv7-g0/2026-09-24-window2/`. Task #242 closed.
 - **DONE:** the Laya head checkpoint `~/laya-ft/ckpt-head-w1/` (224 steps; loss over its own training items 0.459 to 0.345; the encoder unchanged).
 - **IN FLIGHT since 23:32:5xZ:** its held-out evaluation on the PC CPU (`~/laya-ft/eval-head-w1`, log `~/laya-ft/eval-head-w1.log`, launcher `~/laya-ft/eval-head-w1.sh`; about 44 min; compare with `docs/research/findings/laya-ft-eval/2026-09-24-base-cpu/evaluate-summary.json`).
-- **PC:** no lane live; qwen active; the owner's stale dnf (pid 1699180, pts/4) is theirs to close. **Sandbox:** the unpushed commits wait on CI run #1048 (its tests step was still running at 23:34Z, longer than the usual 24-28 min).
+- **PC:** no lane live; qwen active; the owner's stale dnf (pid 1699180, pts/4) is theirs to close. **Sandbox:** pushed 23:3xZ (origin d4def2e, then the transcripts commit 61bd8a1); CI run #1048 passed; the new head's CI is running. Task #246 closed (the push needed no hand fix).
 - **NEXT:** the evaluation verdict to the owner; the Qwen J2 continuation (#241) on the local route.
 
 **2026-09-24 23:2xZ — WHAT IS LIVE NOW (supersedes the 23:1xZ block for the live set).**
@@ -797,6 +797,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:3xZ — pushed (origin d4def2e); task #246 closed: the manifest names its tree, and the push needed no hand fix.
 2026-09-24 23:3xZ — GPU window 2 ran all three jobs (qwen down 8 min 30 s); RWKV-7 G0 zero-shot rejected on every KC-J3 line, mechanics hold; the Laya head checkpoint trained, its held-out evaluation in flight; task #242 closed.
 2026-09-24 23:2xZ — the owner installed python3.11-devel; the Triton preflight passes in all three window venvs; GPU window 2 (window1.jobs unchanged) in flight since 23:23:58Z.
 2026-09-24 23:1xZ — PC-BRIDGE.md: the GPU-window preflight (Triton's CUDA shim needs Python.h; checked in each venv while qwen runs); the live set unchanged.
