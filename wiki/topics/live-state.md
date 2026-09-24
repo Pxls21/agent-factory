@@ -15,7 +15,7 @@ last_compiled: 2026-09-03
 - **KEY RESULT (J2c, J2 findings section 6):** with the WHOLE finding, Haiku beats the majority (accuracy 0.60 vs 0.43; blockers 4/7, from 0/7 on titles); Laya stays below it (0.17; 2/7). The 120-character title capped every model; Laya needs training (D-075, task #233; train on whole findings, fix AF-AP-189 first, task #238).
 - **VERIFIED:** J1-1 (the redaction redesign, task #198 closed): VERIFY-J1-1-R4 MERGE-READY-WITH-FOLLOWUPS; issue #70.
 - **DECIDED:** D-076 (JT1 amendment: scrub-normalize-scrub-cut; a rank window budget; KC-J1b as bytes); D-077 (the bug locator defaults to `lexical`, Jev opt-in).
-- **LIVE, SANDBOX (Opus 5.5):** VERIFY-JT3 (the hook stays OFF until its verdict); JT2 resumed to flip its default constant (then commit and VERIFY-JT2). JT1-R1 (brief committed) dispatches after JT2 finishes (it edits `scripts/jev.py`, which JT2 imports).
+- **LIVE, SANDBOX (Opus 5.5):** VERIFY-JT3 (the hook stays OFF until its verdict) and JT1-R1 (the D-076 repair; its files are in `.lanes-live`). JT2 LANDED GATED-PENDING-VERIFY (default `lexical`, D-077; `78 passed` twice); VERIFY-JT2 dispatches after JT1-R1 lands (both touch the Jev client).
 - **LIVE, PC:** MoJev Gate 0 full run, 6 of 30 tasks at 15:10Z (2,048 tokens: fp32 about 17-18 s per decision, bf16 84-90 s; the option count barely matters). VERIFY-K170 waits for it.
 - **ISSUES FILED:** #68 (VERIFY-JT1 follow-ups), #69 (AF-AP-189), #70 (VERIFY-J1-1-R4 follow-ups).
 - **PUSHED:** 40dcc21; later commits push after the next CI verdict.
