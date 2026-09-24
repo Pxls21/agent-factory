@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 04:4xZ — WHAT IS LIVE NOW (this block supersedes the 04:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **J0 DONE 04:4xZ:** the PC probe ran (task #123 closed). PC, the reference venue: ASYNC-ONLY (p50 336.18 ms at 4 threads) and DETERMINISTIC; the sandbox keeps SYNC-OK for its own instance; one digest on both. J1-4 (#121) is unblocked.
+- **J1-1-R3 LANDED 04:4xZ, GATED-PENDING-VERIFY:** the redaction regressions R-1, R-2, R-4 and R-3 fixed (a813d9c locally). Its D-1 forced D-067: C4 split into C4a (nothing d556c9b hides becomes visible) and C4b (against fb016d0 only attributed, counted exposures). VERIFY-J1-1-R3 (#216) must reproduce both or D-067 is void.
+- **NEXT (sandbox, two agents):** VERIFY-J1-1-R3 (#216) and K215 (#215, the owed screens and bakes plus issue #63), dispatched after the push. No PC lane is live.
+
 **2026-09-24 04:3xZ — WHAT IS LIVE NOW (this block supersedes the 04:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFIED 04:2xZ:** K150 (VERIFY-K150 MERGE-READY-WITH-FOLLOWUPS; tasks #213 and #150 closed). Follow-ups: issue #63; the nine registry promises #150 never carried moved to task #215 `registry-owed-screens-and-bakes` (with the AF-AP-175 and AF-AP-177 screens). The three empty `r_*.txt` files were VERIFY-K150's; it removed them.
 - **LANDED 04:3xZ, GATED-PENDING-VERIFY:** task #211 (AF-AP-171 baked into `orchestration` §Parallel agents) and the `evidence-gatherer` re-pin to `claude-opus-5-5` (D-065; manifest tests now 2956 kit-verbatim / 16 kit-adapted). The independent check folds into task #215's verify. Dispatches still pass `model: "opus"` this session.
@@ -546,6 +551,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 04:4xZ — J0 done (PC ASYNC-ONLY, DETERMINISTIC); J1-1-R3 landed GATED-PENDING-VERIFY with D-067.
 2026-09-24 04:3xZ — VERIFY-K150 home: K150 verified (issue #63, task #215); AF-AP-171 baked (#211); `evidence-gatherer` re-pinned to Opus 5.5 (D-065).
 2026-09-24 04:0xZ — VERIFY-J1-3-R1 home: J1-3-R1 verified, J1-3 closed (issue #62).
 2026-09-24 03:3xZ — VERIFY-K150 dispatched; AF-AP-173 to AF-AP-176 registered; issues #11 and #17 closed.
