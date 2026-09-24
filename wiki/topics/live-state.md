@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 23:2xZ — WHAT IS LIVE NOW (supersedes the 23:1xZ block for the live set).**
+- **UNBLOCKED:** the owner installed `python3.11-devel` 3.11.15-4 with `sudo dnf install -y` (the first try hung at dnf's prompt: their terminal does not take the typed answer). The Triton preflight passes in `~/venv-rwkv-b`, `~/venv-rwkv` and `~/venv-laya` with no `C_INCLUDE_PATH` (23:23Z).
+- **IN FLIGHT since 23:23:58Z:** GPU window `20260924T232358Z` (window1.jobs unchanged, `--max-minutes 20`; log `~/gpu-window/window2.log`, record `~/gpu-window/record.jsonl`). qwen stopped at 23:24:00Z; the GPU freed at 255 MiB. The failed run's G0 outputs were moved aside to `~/rwkv-g0/out-{a,b}-w1.failed-2309Z`. A sandbox poller (background Bash, `gw2-poll.sh` in the session scratchpad) wakes the coordinator when the window process ends.
+- **NEXT:** harvest G0 (`~/rwkv-g0/out-b-w1/g0.json`) and the head checkpoint (`~/laya-ft/ckpt-head-w1/`); evaluate the checkpoint on the PC CPU exactly as the baseline ran (`--only v1,v1_full,ap,v1_blocking,v1_full_blocking --threads 8`, about 44 min, out `~/laya-ft/eval-head-w1`).
+- **OWNER, harmless:** the first `sudo dnf install python3.11-devel` (pid 1699180 on pts/4) still waits at its prompt; close that terminal or press Ctrl-C there.
+- **PC:** no lane live. **Sandbox:** the unpushed commits wait on CI run #1048 (in progress).
+
 **2026-09-24 23:1xZ — WHAT IS LIVE NOW (supersedes the 22:2xZ block for the live set).**
 - **LIVE:** the JT3 search hook; at commit, the staged-shell screen and the commit-message stamp gate; at push, the stale-id check (its second repair in VERIFY-T243-245-R2).
 - **DONE:** VERIFY-GW1-R2 MERGE-READY-WITH-FOLLOWUPS; the first live GPU window ran 23:09:02Z-23:10:57Z (qwen down 1 min 53 s) and restored qwen; all three jobs failed in 32 s.
@@ -783,6 +790,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:2xZ — the owner installed python3.11-devel; the Triton preflight passes in all three window venvs; GPU window 2 (window1.jobs unchanged) in flight since 23:23:58Z.
 2026-09-24 23:1xZ — PC-BRIDGE.md: the GPU-window preflight (Triton's CUDA shim needs Python.h; checked in each venv while qwen runs); the live set unchanged.
 2026-09-24 23:1xZ — VERIFY-GW1-R2 ready with follow-ups; the first GPU window ran (qwen down 1 min 53 s) and every job failed on a missing python3.11-devel: owner decision; task #246 landed.
 2026-09-24 22:5xZ — VERIFY-T243-245-R1: B and C ready with follow-ups (#75; task #245 closed); A's second repair (every non-pushing exit puts the branch back) in verify.
