@@ -1,0 +1,36 @@
+{
+ "note": "head_only still runs the encoder forward each step; with the encoder outputs cached once, a head-only epoch costs roughly (head_only - encoder_forward) per batch. Estimates for 2,000 examples (derived, not measured): head-only cached about 40 min at 256 tokens; full 3-epoch fine-tune about 5 h at 256 tokens, about 14 h at 512.",
+ "producer": "docs/research/findings/laya-train-timing/timing.py (sha256 be74e7096ddd3cbefc1de43a9412df854d922f480a1336a5b14c8f84d1853e4e, run as `~/laya-venv/bin/python timing.py 12`)",
+ "result": {
+  "encoder_forward_b8_L256_s": 3.62,
+  "encoder_forward_b8_L512_s": 16.65,
+  "full_step_b8_L256_s": [
+   21.59,
+   23.73,
+   25.56
+  ],
+  "full_step_b8_L512_s": [
+   66.67,
+   66.69,
+   67.67
+  ],
+  "head_only_step_b8_L256_s": [
+   5.09,
+   4.73,
+   4.8
+  ],
+  "head_only_step_b8_L512_s": [
+   22.59,
+   23.06,
+   24.04
+  ],
+  "load_s": 18.2,
+  "params_encoder": 394781696,
+  "params_total": 421293827,
+  "threads": 12,
+  "torch": "2.14.0+cpu"
+ },
+ "venue": "PC, ~/laya-venv (torch 2.14.0+cpu), 12 threads, FP32, batch 8, AdamW lr 1e-5; the PC was otherwise quiet (load 0.35 before the run)",
+ "what": "Laya typed-decisions TRAINING step times on the owner's PC CPU (task #233, D-075); synthetic targets, nothing saved, no data left the machine",
+ "when": "2026-09-24, started about 14:2xZ, DONE before 14:30Z"
+}

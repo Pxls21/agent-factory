@@ -18,6 +18,7 @@ last_compiled: 2026-09-03
 - **LIVE, PC:** MoJev Gate 0 smoke (2 tasks, started 14:34:37Z, `~/mojev-g0-run/smoke.log`), then the full run (30 tasks). `~/venv-mojev` is built; the snapshot is the FULL-sha directory.
 - **LIVE, SANDBOX (Opus 5.5):** JT2 (#227/#229) and VERIFY-J1-1-R4. One local Laya server (127.0.0.1:47411); 47412 stopped.
 - **PUSHED:** ac943c0 (2f73abb..ac943c0).
+- **RETRO 14:4xZ:** AF-AP-189 registered (the v1 state's `disposition` is derived from the label; task #238 gates the fine-tune #233); AF-AP-148's second shape logged with its echo; the CI gate's stale read recurred inside push_clean (task #237, fail-safe); three skill lessons baked with their hand ports (deep-work: clear the task and the inputs before indicting a model; orchestration: repo text to a third-party API needs the owner's OK; anti-hollow-green 4c: a feature derived from the label is a leak); the Laya timing probe and the MoJev venv script committed as the producers of their numbers.
 - **OWNER DECISIONS OPEN:** the codiv data OK; whether to pause vLLM for a GPU training window; the Stage 0 PR to main (only on the owner's word).
 
 **2026-09-24 13:4xZ — WHAT IS LIVE NOW (this block supersedes the 13:3xZ block and the older ones below for the live set; the ledger carries the detail).**
