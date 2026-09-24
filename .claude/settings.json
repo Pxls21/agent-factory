@@ -70,11 +70,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Grep",
+        "matcher": "Grep|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/graft-first-nag.py"
+            "command": "[ -f $CLAUDE_PROJECT_DIR/.claude/hooks/search-intercept.py ] && [ -f $CLAUDE_PROJECT_DIR/scripts/hook_context.py ] || exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/search-intercept.py"
           }
         ]
       }

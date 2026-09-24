@@ -5,6 +5,7 @@ measured live 2026-09-24); install_session_hooks registers the five project hook
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -88,7 +89,8 @@ def test_fresh_install_registers_the_five_hooks(tmp_path):
     assert all(len(c) == 1 and MARKER in c[0] for c in cmds.values())
     assert "hook_context.py PostToolUse --" in cmds["PostToolUse"][0]
     assert "hook_context.py PreToolUse --" in cmds["PreToolUse"][0]
-    assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read" and hooks["PreToolUse"][0]["matcher"] == "Grep"
+    assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read" and hooks["PreToolUse"][0]["matcher"] == "Grep|Bash"
+    assert "/.claude/hooks/search-intercept.py" in cmds["PreToolUse"][0]
 
 
 def test_second_install_is_a_no_op(tmp_path):
@@ -128,9 +130,12 @@ def test_installed_commands_run_through_a_shell(tmp_path):
     install(target)
     hooks = json.loads(target.read_text())["hooks"]
     pre = hooks["PreToolUse"][0]["hooks"][0]["command"]
-    semantic = json.dumps({"tool_name": "Grep", "tool_input": {"pattern": "parse_lock", "path": "scripts"}})
-    r = subprocess.run(["sh", "-c", pre], input=semantic, capture_output=True, text=True, timeout=60, cwd="/")
-    assert r.returncode == 0 and "GRAFT-FIRST" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    # a quirk payload: blocked with exit 2 through the wrapper, and it needs neither graft nor rg, which CI lacks
+    # (VERIFY-JT3 F-4); the search answer itself is tested in tests/test_search_intercept.py
+    quirk = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git rev-parse --short HEAD HEAD~1"}})
+    env = dict(os.environ, AF_SEARCH_INTERCEPT_STATE=str(tmp_path / "intercept-state"))  # never the real .jev/
+    r = subprocess.run(["sh", "-c", pre], input=quirk, capture_output=True, text=True, timeout=60, cwd="/", env=env)
+    assert r.returncode == 2 and r.stdout == "" and r.stderr.startswith("QUIRK GUARD")  # blocked once, explained
     prompt = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
     r = subprocess.run(["sh", "-c", prompt], input=json.dumps({"prompt": "what is live now"}),
                        capture_output=True, text=True, timeout=60, cwd="/")
@@ -154,7 +159,7 @@ def _fake_repo(tmp_path, hook_scripts=True, wrapper=True, stop_rc=0):
     if hook_scripts:
         (repo / ".claude" / "hooks" / "session-start.sh").write_text('echo "dir=$CLAUDE_PROJECT_DIR pwd=$(pwd)"\n')
         (repo / ".claude" / "hooks" / "turn-retro-gate.sh").write_text(f"echo retro >&2; exit {stop_rc}\n")
-        for name in ("wiki-context.py", "edit-snapshot.py", "graft-first-nag.py"):
+        for name in ("wiki-context.py", "edit-snapshot.py", "search-intercept.py"):
             (repo / ".claude" / "hooks" / name).write_text("import os; print('ran from', os.getcwd())\n")
     if wrapper:
         (repo / "scripts" / "hook_context.py").write_bytes(WRAP.read_bytes())

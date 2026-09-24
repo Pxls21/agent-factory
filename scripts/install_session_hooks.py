@@ -7,9 +7,11 @@ CCR default here) never loads `agent-factory/.claude/settings.json`, so none of 
 paths, into `<repo parent>/.claude/settings.json`. Measured 2026-09-24 (task #214): a settings file created
 mid-session takes effect on the next tool call, so running this script IS the manual start; no restart is needed.
 
-The two hooks that print plain text (edit-snapshot, graft-first-nag) run through scripts/hook_context.py, which turns
-their output into additionalContext the model reads. The hook scripts themselves are unchanged (the Codex and Hermes
-adapters parse their plain text).
+The two tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
+additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
+PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
+which the wrapper passes through unchanged. graft-first-nag.py stays for the Codex and Hermes adapters; search-intercept
+runs its classifier.
 
 Merge rule: entries whose command names `<repo>/.claude/hooks/` are ours and are replaced; every other key and entry
 in the file is kept. An existing file that is not a JSON object is refused (exit 1), never overwritten.
@@ -48,8 +50,8 @@ def our_hooks(root: Path) -> dict:
             ".claude/hooks/wiki-context.py", f"python3 {r}/.claude/hooks/wiki-context.py")}]}],
         "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/edit-snapshot.py", f"{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py", True)}]}],
-        "PreToolUse": [{"matcher": "Grep", "hooks": [{"type": "command", "command": guarded(
-            ".claude/hooks/graft-first-nag.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/graft-first-nag.py",
+        "PreToolUse": [{"matcher": "Grep|Bash", "hooks": [{"type": "command", "command": guarded(
+            ".claude/hooks/search-intercept.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/search-intercept.py",
             True)}]}],
         "Stop": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]}],

@@ -384,11 +384,12 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     # copies of kit roots (20 council-of-high-intelligence + 19 honey-for-devs + 13
     # llm-wiki-compiler + 4 output-styles), 61 declared-set members (47 aegis + 12 prism
     # + 2 typesafe), and a 12-file remainder. The 129 pin is replaced by K1-h counts.
-    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["12", "0"]
+    # 12 -> 13 on 2026-09-24 (JT3 lands, tasks #228/#225): hooks/search-intercept.py is first-party (no kit counterpart).
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["13", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
     assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2955
     assert sum(klass == "kit-adapted" for klass in classes.values()) == 17
-    assert sum(klass == "first-party" for klass in classes.values()) == 12
+    assert sum(klass == "first-party" for klass in classes.values()) == 13
 
 
 # K1-h: the 12-file remainder of `.claude/ (first-party)` at the PIN. The three
@@ -401,6 +402,7 @@ K1H_FIRST_PARTY_REMAINDER = [
     "commands/fetch-bookmarks.md",
     "commands/wiki-ingest.md",
     "commands/wiki-visualize.md",
+    "hooks/search-intercept.py",
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
     "skills/PROVENANCE-TYPESAFE.md",
@@ -412,7 +414,7 @@ K1H_FIRST_PARTY_REMAINDER = [
 # The three PROVENANCE-*.md files are the only first-party files OUTSIDE a
 # declared set prefix and outside the copy rule; everything else under the
 # set prefixes is a set member, everything byte-identical to a kit root is a
-# copy, and the 12 above are the remainder.
+# copy, and the 13 above are the remainder (12 at K1-h, plus JT3's hook).
 K1H_SET_REMAINDER_PATHS = {
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
@@ -441,7 +443,7 @@ def k1h_class_counts(classes: dict[str, str]) -> dict[str, int]:
 
 
 def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
-    """The K1-h class table: 12 first-party (the named remainder), 61 set
+    """The K1-h class table: 13 first-party (the named remainder; 12 at K1-h plus JT3's hook), 61 set
     members (47 aegis + 12 prism + 2 typesafe), 56 copies (20 + 19 + 13 + 4),
     and kit-verbatim 2955 / kit-adapted 17 (D-054, D-065, AF-AP-182). The 129-pin test
     above carries the manifest row; this test carries the per-class split."""
@@ -451,7 +453,7 @@ def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     classes = class_rows(root / module.CLASSES_PATH)
     counts = k1h_class_counts(classes)
 
-    assert counts.get("first-party", 0) == 12
+    assert counts.get("first-party", 0) == 13
     assert counts.get("vendored:aegis", 0) == 47
     assert counts.get("vendored:prism", 0) == 12
     assert counts.get("vendored:typesafe", 0) == 2
@@ -564,7 +566,7 @@ def test_k1h_honey_copy_byte_change_falls_back_to_first_party(tmp_path: Path) ->
     assert classes["agents/hive-builder.md"] == "first-party"
     counts = k1h_class_counts(classes)
     assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 18
-    assert counts.get("first-party", 0) == 13
+    assert counts.get("first-party", 0) == 14   # the 13-file remainder (JT3's hook since 2026-09-24) plus the changed copy
 
 
 def test_k1h_ambiguous_copy_blob_is_refused_by_name(tmp_path: Path) -> None:

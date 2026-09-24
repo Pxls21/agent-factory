@@ -40,6 +40,7 @@ commands/wiki-upgrade.md	copy:sandbox-kit/llm-wiki-compiler/
 commands/wiki-visualize.md	first-party
 hooks/edit-snapshot.py	kit-adapted
 hooks/graft-first-nag.py	kit-adapted
+hooks/search-intercept.py	first-party
 hooks/session-start.sh	kit-adapted
 hooks/turn-retro-gate.sh	kit-adapted
 hooks/wiki-context.py	kit-adapted
