@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 11:2xZ — WHAT IS LIVE NOW (this block supersedes the 10:5xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **DONE:** CI run #1027 green on de06db6 (the AF-AP-181 race fix). Task #214 closed: all five project hooks live from `/home/user/.claude/settings.json`; manual start = `python3 scripts/install_session_hooks.py`.
+- **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b`, local build route; sandbox poller pid 29016.
+- **LIVE, SANDBOX (Opus 5.5, three at most, D-062):** the Jev leverage evidence lane (#221) and the CLM / agent-beacon static read (#222), both evidence-gatherers; J1-1-R4 (#198, the redaction REDESIGN, D-070) dispatches as a code-implementer right after this push.
+- **NEXT:** harvest #221 into `docs/research/findings/JEV-LEVERAGE-AUDIT-2026-09-24.md` (a programmable Jev tool, Jev in the hooks as advisory context, a hiccup and quirk tracker); harvest #222 into a short verdict; MoJev option B on the PC's CPU (#210); harvest K170 and send it to an independent verify; J1-1-R4 then its independent verify (rule 0f); task #223 (the offline Jev leak hunter) after #221.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 10:5xZ — WHAT IS LIVE NOW (this block supersedes the 08:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** all twelve Stage 0 proofs ACCEPTED. The owner signed the last eight in one command (tagger 10:26:45Z to 10:26:50Z, on fa20942); the tag objects are committed as `docs/governance/tags/accepted-<id>.tag`, each GOODSIG against the owner's key; `check-proof-status.py` rc 0; `tests/test_proof_status.py` 33 passed.
 - **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b`, local build route, dispatched 08:04Z; sandbox poller pid 29016.
@@ -621,6 +628,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 11:2xZ — CI run #1027 green; J1-1-R4 redesign briefed (D-070, span union, contract C1-C7) and dispatched; task #223 (offline Jev leak hunter) new; #214 closed.
 2026-09-24 11:0xZ — CI run #1026's test race fixed (AF-AP-181, pushed de06db6); the five project hooks live in the /home/user-rooted session (task #214): install_session_hooks.py + hook_context.py.
 2026-09-24 10:5xZ — all twelve Stage 0 proofs ACCEPTED (the owner's eight signed tags anchored); the owner's rulings D-069 on #198, #210, #214, and the new asks #221 and #222.
 2026-09-24 08:0xZ — K170 dispatched (PC local build lane, PIN 9e6821b); pushed 99f3864 (VERIFY-K215 harvest) and 00ac4ec (the K170 brief).
