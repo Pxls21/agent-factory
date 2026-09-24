@@ -11,6 +11,18 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 16:3xZ — WHAT IS LIVE NOW (this block supersedes the 15:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULINGS (D-079):** simple-jev (Apache-2.0) is the Jev pattern; Qwen 27B (the running vLLM, through OmniRoute) is the local teacher; Laya keeps short decisions; RWKV-7 Goose World2.9 0.4B trains on LONG inputs (8k-32k, question first); J2 plus a new long-input test decide. Pins in `upstream.lock.yaml` (`advisory_jev_runtimes.simple-jev`, `advisory_models.rwkv7-goose-world2.9-0.4b`).
+- **KEY RESULTS:** OpenJev (J2 section 7): whole findings 0.54 accuracy, 4/7 blockers (Haiku 0.60, Laya 0.17); registry matching level with lexical at top 1 (0.58 vs 0.59), ahead at top 3. Task #234 closed.
+- **LANDED, GATED-PENDING-VERIFY:** JT1-R1 (e0d2bdc, with the JT2 alignment: `JEV_QUERY_CHARS` 1000 = `jev.RANK_QUERY_CHARS`; 172 passed twice on a clean copy).
+- **LIVE, SANDBOX (Opus 5.5):** FT1 (the Laya fine-tune tooling, task #233); JT3-R1 (the one repair after VERIFY-JT3 NOT-READY; the hook stays off); VERIFY-JT1R1-JT2 (one verify of both Jev landings).
+- **LIVE, PC:** QJ1 (lane `pc-qj1.md--dda7ffb`, local route): the Qwen 27B Jev adapter, parity against simple-jev's own compiler, then J2 on it. If no v1-exact path goes through OmniRoute it stops (a direct vLLM call needs the owner). MoJev Gate 0 at 14/30 tasks (16:0xZ).
+- **OPEN FINDING:** the v1 answer-prefill failed through OmniRoute (502 on a whitespace token; 400 on integer logprobs for raw completions); plain-chat logprobs pass.
+- **DISK:** the sandbox disk filled at 16:2xZ (finished lanes' scratch); cleared to 3.4 GB; `lane_gate.sh` now refuses under 1,500 MB free.
+- **GPU TRAINING:** queued (owner): only in a window with no lanes live; nothing is ready to train yet (FT1 building; no teacher labels yet).
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (only on the owner's word).
+
+
 **2026-09-24 15:1xZ — WHAT IS LIVE NOW (this block supersedes the 14:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **KEY RESULT (J2c, J2 findings section 6):** with the WHOLE finding, Haiku beats the majority (accuracy 0.60 vs 0.43; blockers 4/7, from 0/7 on titles); Laya stays below it (0.17; 2/7). The 120-character title capped every model; Laya needs training (D-075, task #233; train on whole findings, fix AF-AP-189 first, task #238).
 - **VERIFIED:** J1-1 (the redaction redesign, task #198 closed): VERIFY-J1-1-R4 MERGE-READY-WITH-FOLLOWUPS; issue #70.
@@ -695,6 +707,9 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-24 16:3xZ — D-079 (simple-jev; Qwen 27B teacher; RWKV-7 0.4B for long inputs); OpenJev J2 done (0.54 on whole findings); JT1-R1 landed with the JT2 alignment; VERIFY-JT3 NOT-READY, JT3-R1 running; QJ1 launched on the PC; the disk-full fix.
+
 
 2026-09-24 15:1xZ — J2c: whole findings lift Haiku above the baseline, not Laya (train Laya); J1-1 verified; D-076, D-077; issues #68-#70; MoJev G0 6/30.
 
