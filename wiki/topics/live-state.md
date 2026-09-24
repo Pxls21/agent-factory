@@ -18,7 +18,7 @@ last_compiled: 2026-09-03
 - **VERIFIED:** K215 (the owed screens and bakes, task #215) and the anti-hollow-green bake (task #218), through VERIFY-K215 (MERGE-READY-WITH-FOLLOWUPS) plus the coordinator's reproductions. Follow-ups: issue #65.
 - **LIVE, SANDBOX:** none.
 - **LIVE, PC:** none; the one long-context local slot is free.
-- **NEXT:** task #170 (fail-closed lock and SBOM parsers) as a PC local build lane, its brief in progress; push this harvest after CI run #1024.
+- **NEXT:** task #170 (fail-closed lock and SBOM parsers): brief `tasks/briefs/pc/pc-k170.md` committed (PIN 9e6821b); the lane dispatches right after this push, on the one long-context local slot.
 - **OWNER DECISIONS OPEN:** the redaction-pass redesign (D-068, task #198); MoJev A/B/C (#210); which project hooks to restore (#214); the eight proofs' signing and the Stage 0 PR.
 
 **2026-09-24 07:2xZ — WHAT IS LIVE NOW (this block supersedes the 06:5xZ block and the older ones below for the live set; the ledger carries the detail).**
