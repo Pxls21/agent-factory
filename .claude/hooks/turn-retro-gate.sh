@@ -16,9 +16,11 @@ if [ -f "$SENT" ] && [ "$(cat "$SENT")" = "$HEAD_SHA" ]; then
   exit 0
 fi
 # Exemptions: ack silently when EVERY commit since the last acked SHA is
-# (a) index-stamp machine churn, or (b) wiki-only (a wiki delta IS a retro
-# product — demanding a retro for the retro is a loop; bit live 2026-08-25
-# twice: churn ping-pong, then wiki-delta ping-pong).
+# (a) index-stamp machine churn, or (b) retro-plane only: the wiki, the ledger, the incident log and its registry,
+# the research echoes, and a skill bake with its mirrors and manifest (each IS a retro product; demanding a retro
+# for the retro is a loop: bit live 2026-08-25 twice, churn then wiki-delta ping-pong, and twice more 2026-09-24,
+# when a retro's incident entry and ledger note fired the gate again). The list matches post-commit's
+# ledger-plane and lesson-bake exemptions.
 if [ -f "$SENT" ]; then
   LAST="$(cat "$SENT")"
   NONEXEMPT=0
@@ -26,7 +28,7 @@ if [ -f "$SENT" ]; then
     SUBJ="$(cd "$REPO_ROOT" && git log -1 --format=%s "$C")"
     case "$SUBJ" in "gitnexus index-stamp churn"*) continue;; esac
     FILES="$(cd "$REPO_ROOT" && git diff-tree --no-commit-id --name-only -r "$C")"
-    if [ -n "$FILES" ] && [ -z "$(echo "$FILES" | grep -v '^wiki/')" ]; then
+    if [ -n "$FILES" ] && [ -z "$(echo "$FILES" | grep -v -E '^wiki/|^docs/INCIDENT-LOG\.md$|^todo/BUILD-TASKLIST\.md$|^\.agents/research/|^\.claude/skills/|^\.agents/(lane-)?skills/|^harness-ports/hand-ported\.sha256$|^sandbox-kit/VENDORED-(MANIFEST\.md|CLAUDE-CLASSES\.tsv)$')" ]; then
       continue
     fi
     NONEXEMPT=1; break

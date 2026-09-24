@@ -59,3 +59,38 @@ def test_post_commit_marker_uses_the_common_git_dir(tmp_path):
     r = _sh(["git", "commit", "-q", "-m", "lane commit"], wt, env)
     assert r.returncode == 0, r.stderr
     assert (repo / ".git" / "wiki-stale").is_file(), "wiki-stale must be written to the COMMON git dir from a worktree"
+
+
+def _commit(repo, env, files, msg):
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    assert _sh(["git", "add", *files], repo, env).returncode == 0
+    assert _sh(["git", "commit", "-q", "-m", msg], repo, env).returncode == 0
+
+
+def test_a_retro_plane_commit_does_not_fire_the_gate_again(tmp_path):
+    # 2026-09-24: a retro answered with an incident entry, a ledger note and a wiki delta fired the gate a second time.
+    repo, _wt, env = _repo(tmp_path)
+    gate = repo / ".claude" / "hooks" / "turn-retro-gate.sh"
+    _commit(repo, env, {"scripts/tool.py": "x = 1\n"}, "code")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
+    _commit(repo, env, {"docs/INCIDENT-LOG.md": "entry\n", "todo/BUILD-TASKLIST.md": "note\n",
+                        "wiki/topics/live-state.md": "block\n"}, "retro answer")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 0
+    _commit(repo, env, {".claude/skills/build-loop/SKILL.md": "lesson\n", ".agents/skills/build-loop/SKILL.md": "lesson\n",
+                        ".agents/lane-skills/build-loop/SKILL.md": "lesson\n", "harness-ports/hand-ported.sha256": "h\n",
+                        "sandbox-kit/VENDORED-MANIFEST.md": "m\n", "sandbox-kit/VENDORED-CLAUDE-CLASSES.tsv": "t\n"},
+            "skill bake")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 0
+
+
+def test_code_beside_the_ledger_still_fires_the_gate(tmp_path):
+    repo, _wt, env = _repo(tmp_path)
+    gate = repo / ".claude" / "hooks" / "turn-retro-gate.sh"
+    _commit(repo, env, {"scripts/tool.py": "x = 1\n"}, "code")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
+    _commit(repo, env, {"todo/BUILD-TASKLIST.md": "note\n", "scripts/tool.py": "x = 2\n"}, "code and ledger")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
+    _commit(repo, env, {"sandbox-kit/OTHER.md": "guide\n"}, "a kit guide is not in the retro plane")
+    assert _sh(["bash", str(gate)], repo, env).returncode == 2
