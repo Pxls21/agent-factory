@@ -775,6 +775,19 @@ class TestAFAP145:
     def test_no_fire_on_a_function_no_exit_trap_names(self):
         assert not self.rx.search("stop_all() {\n  kill $pid\n}\ntrap stop_all RETURN\n")
 
+    def test_fires_on_a_bare_exit_after_the_handler_traps(self):
+        # VERIFY-GW1-R1 R-2: ONE TERM right after this `exit 1` ran the handler's exit inside the EXIT trap
+        assert self.rx.search(FIXED_S0_05_CLEANUP + "if [ -n \"$failed\" ]; then\n  exit 1\nfi\n")
+
+    def test_no_fire_on_exits_that_ignore_first_or_come_before_the_handlers(self):
+        src = ("usage() { echo usage >&2; exit 64; }\n" + FIXED_S0_05_CLEANUP.replace("trap cleanup EXIT\n", "")
+               + "leave() { trap '' INT TERM; exit \"$1\"; }\ntrap cleanup EXIT\n"
+               + "[ -n \"$x\" ] || leave 1\n  trap '' INT TERM; exit 2\nexit_code=3\n")
+        assert not self.rx.search(src)
+
+    def test_no_fire_on_an_exit_when_no_exit_trap_runs_a_cleanup(self):
+        assert not self.rx.search("trap 'trap \"\" INT TERM; exit 143' TERM\nexit 1\n")
+
 
 # ---- AF-AP-149 (AP_SCREEN): a private-key block rule written for one label spelling ----
 

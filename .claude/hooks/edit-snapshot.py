@@ -106,10 +106,20 @@ class _ExitTrapCleanup:
     # an INT/TERM handler string that does not open with the ignore
     _HANDLER = re.compile(r"""^[ \t]*trap[ \t]+(['"])(?!\1)(?!""" + _IGNORE + r""")(?:(?!\1)[^\n])*\1[ \t]+"""
                           r"""(?:[A-Z0-9]+[ \t]+)*(?:INT|TERM)\b""", re.MULTILINE)
+    # the third tell (VERIFY-GW1-R1 R1-F-1, 2026-09-24): a bare `exit` after the INT/TERM handler traps, in a script
+    # whose EXIT trap runs a cleanup; the exit hands over to the EXIT trap with INT and TERM live, so ONE signal in the
+    # gap runs the handler's own exit inside it. An exit on a line that ignores first (`trap '' INT TERM; exit`) is fine.
+    _ARMS = re.compile(r"""^[ \t]*trap[ \t]+(['"])(?:(?!\1)[^\n])*\1[ \t]+(?:[A-Z0-9]+[ \t]+)*(?:INT|TERM)\b[^\n]*$""",
+                       re.MULTILINE)
+    _EXIT = re.compile(r"""^(?![ \t]*#)(?![^\n]*""" + _IGNORE + r"""[ \t]*;[ \t]*exit\b)[^\n#]*?(?<![\w-])exit(?![\w-])""",
+                       re.MULTILINE)
 
     def finditer(self, text):
         trapped = {m.group(2) for m in self._TRAPPED.finditer(text)}
         hits = [m for m in self._BODY.finditer(text) if m.group(1) in trapped]
+        arms = [m.end() for m in self._ARMS.finditer(text)]
+        if trapped and arms:
+            hits += list(self._EXIT.finditer(text, max(arms)))
         return iter(sorted(hits + list(self._HANDLER.finditer(text)), key=lambda m: m.start()))
 
     def search(self, text):
@@ -296,10 +306,11 @@ AP_SCREEN = [
     # live, so a second signal (a double Ctrl-C, a stop sent to the group) leaves the teardown half done; E3-R1 measured
     # that the ignore is needed first in cleanup AND first in each INT/TERM handler. The tells: a function an EXIT trap
     # names whose body does not open with the ignore (a `$?` capture or a comment may come first), and an INT/TERM
-    # handler string that does not open with it (_ExitTrapCleanup). Not seen: a one-line function body.
+    # handler string that does not open with it (_ExitTrapCleanup). Not seen: a one-line function body. Refined by
+    # VERIFY-GW1-R1 (R1-F-1): a bare `exit` after the handler traps is the third tell (one signal, not two).
     # Shell pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
     ("AF-AP-145", _ExitTrapCleanup(),
-     r"""an EXIT-trap cleanup function, or an INT/TERM handler, that does not open with the signal ignore (`trap '' INT TERM`) — a second signal while cleanup runs (a double Ctrl-C, a stop sent to the process group) aborts the teardown half done and leaves host state (namespaces, rules, units, restored configs) behind; make the ignore the first command of the cleanup function AND of each INT/TERM handler (`trap 'trap "" INT TERM; exit 143' TERM`): E3-R1 measured the cleanup ignore alone still aborting 26 of 60 trials (AF-AP-145)"""),
+     r"""an EXIT-trap cleanup function, or an INT/TERM handler, that does not open with the signal ignore (`trap '' INT TERM`) — a second signal while cleanup runs (a double Ctrl-C, a stop sent to the process group) aborts the teardown half done and leaves host state (namespaces, rules, units, restored configs) behind; make the ignore the first command of the cleanup function AND of each INT/TERM handler (`trap 'trap "" INT TERM; exit 143' TERM`): E3-R1 measured the cleanup ignore alone still aborting 26 of 60 trials — AND before every exit after the handler traps (`leave() { trap '' INT TERM; exit "$1"; }`): one signal right after a bare exit runs the handler's exit inside the EXIT trap (VERIFY-GW1-R1: 25 of 150) (AF-AP-145)"""),
     # AF-AP-149 (2026-09-23, VERIFY-AF-AP-127 F1): a private-key redaction rule written for one label spelling. A rule
     # that wants PRIVATE KEY right before the closing dashes misses GnuPG's armor (PGP PRIVATE KEY BLOCK, the PGP 2.x
     # PGP SECRET KEY BLOCK), and a rule that needs the END line misses a block cut at its source: the body reaches the
