@@ -19,6 +19,7 @@ EXPECTED_PASS = "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 9 vendored roots
 ADAPTED_PATHS = [
     "agents/adversarial-verifier.md",
     "agents/code-implementer.md",
+    "agents/evidence-gatherer.md",
     "hooks/edit-snapshot.py",
     "hooks/graft-first-nag.py",
     "hooks/session-start.sh",
@@ -373,16 +374,17 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     assert "| `.claude/ (first-party)`" in manifest
     # 2958/14 -> 2957/15 on 2026-09-23 (D-054, 6914400): agents/code-implementer.md pins its model id,
     # so it differs from the kit index and moves from kit-verbatim to kit-adapted.
-    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2957", "0"]
-    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["15", "0"]
+    # 2957/15 -> 2956/16 on 2026-09-24 (D-065): agents/evidence-gatherer.md pins its model id the same way.
+    assert manifest_row(manifest, ".claude/ (kit-verbatim)").split(" | ")[6:8] == ["2956", "0"]
+    assert manifest_row(manifest, ".claude/ (kit-adapted)").split(" | ")[6:8] == ["16", "0"]
     # K1-h (task #137): the 129 first-party row of 6ec33ed split into 56 byte-identical
     # copies of kit roots (20 council-of-high-intelligence + 19 honey-for-devs + 13
     # llm-wiki-compiler + 4 output-styles), 61 declared-set members (47 aegis + 12 prism
     # + 2 typesafe), and a 12-file remainder. The 129 pin is replaced by K1-h counts.
     assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["12", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
-    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2957
-    assert sum(klass == "kit-adapted" for klass in classes.values()) == 15
+    assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2956
+    assert sum(klass == "kit-adapted" for klass in classes.values()) == 16
     assert sum(klass == "first-party" for klass in classes.values()) == 12
 
 
@@ -438,7 +440,7 @@ def k1h_class_counts(classes: dict[str, str]) -> dict[str, int]:
 def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     """The K1-h class table: 12 first-party (the named remainder), 61 set
     members (47 aegis + 12 prism + 2 typesafe), 56 copies (20 + 19 + 13 + 4),
-    and the unchanged kit-verbatim 2957 / kit-adapted 15 (D-054). The 129-pin test
+    and kit-verbatim 2956 / kit-adapted 16 (D-054, D-065). The 129-pin test
     above carries the manifest row; this test carries the per-class split."""
     module = load_module()
     root = copy_fixture(tmp_path, module)
@@ -454,8 +456,8 @@ def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 19
     assert counts.get("copy:sandbox-kit/llm-wiki-compiler/", 0) == 13
     assert counts.get("copy:sandbox-kit/output-styles/", 0) == 4
-    assert counts.get("kit-verbatim", 0) == 2957
-    assert counts.get("kit-adapted", 0) == 15
+    assert counts.get("kit-verbatim", 0) == 2956
+    assert counts.get("kit-adapted", 0) == 16
     assert [
         path
         for path, klass in sorted(classes.items())
@@ -621,8 +623,9 @@ def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:
     module = load_module()
     root = copy_fixture(tmp_path, module)
     rewrite_manifest_and_classes(root, module)
-    # The target must be kit-verbatim in the committed class file; code-implementer.md is kit-adapted since D-054.
-    target = root / ".claude/agents/evidence-gatherer.md"
+    # The target must be kit-verbatim in the committed class file; code-implementer.md is kit-adapted since D-054,
+    # evidence-gatherer.md since D-065. A vendored template is the stable choice.
+    target = root / ".claude/skills/0-autoresearch-skill/templates/findings.md"
     target.write_bytes(target.read_bytes() + b"adapted now\n")
     replace_manifest_hash(root, ".claude/ (kit-verbatim)", module.build_manifest_data(root, module.repo_root_of(root)).records[0].tree_sha256)
     replace_manifest_hash(root, ".claude/ (kit-adapted)", module.build_manifest_data(root, module.repo_root_of(root)).records[1].tree_sha256)
@@ -630,7 +633,7 @@ def test_claude_class_drift_names_changed_path(tmp_path: Path) -> None:
     result = run_tool(root)
 
     assert result.returncode == 1
-    assert ".claude class drift: agents/evidence-gatherer.md: committed=kit-verbatim generated=kit-adapted" in result.stderr
+    assert ".claude class drift: skills/0-autoresearch-skill/templates/findings.md: committed=kit-verbatim generated=kit-adapted" in result.stderr
 
 
 def test_new_first_party_claude_file_names_manifest_and_class_drift(tmp_path: Path) -> None:
@@ -1223,8 +1226,8 @@ def run_killer(killer: str, module, work: Path, label: str) -> None:
         root = copy_fixture(work, module)
         data = module.build_manifest_data(root, module.repo_root_of(root))
         counts = {record.path: record.regular_file_count for record in data.records}
-        assert counts[".claude/ (kit-verbatim)"] == 2957, label
-        assert counts[".claude/ (kit-adapted)"] == 15, label
+        assert counts[".claude/ (kit-verbatim)"] == 2956, label
+        assert counts[".claude/ (kit-adapted)"] == 16, label
     elif killer == "test_kit_index_sha256_mismatch_is_named":
         root = copy_fixture(work, module)
         index = root / module.KIT_INDEX_PATH
@@ -1240,7 +1243,7 @@ def run_killer(killer: str, module, work: Path, label: str) -> None:
     elif killer == "test_claude_class_drift_names_changed_path":
         root = copy_fixture(work, module)
         rewrite_manifest_and_classes(root, module)
-        target = root / ".claude/agents/evidence-gatherer.md"
+        target = root / ".claude/skills/0-autoresearch-skill/templates/findings.md"
         target.write_bytes(target.read_bytes() + b"adapted now\n")
         result = subprocess.run(
             [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), "--check"],

@@ -1,7 +1,7 @@
 ---
 name: evidence-gatherer
-description: The EXPLORATION lane (owner routing 2026-07-28 — analysis/forensics run on Opus 5). Use to collect the evidence for an investigation WITHOUT concluding — it produces exhaustive, file:line-cited, git-dated evidence tables (layer chains, call paths, measurements, repro logs) that the main loop synthesizes into a verdict. Use when an investigation's reading and measuring is large but the verdict is judgment-heavy. It must not propose root causes, verdicts, or fixes — verdicts stay in the main loop (Reflection Firewall).
-model: claude-opus-5
+description: The EXPLORATION lane (owner routing 2026-07-28; model re-ruled 2026-09-24, D-065 — every sandbox explore/analysis/forensics stage runs on Opus 5.5, pinned here by model id). Use to collect the evidence for an investigation WITHOUT concluding — it produces exhaustive, file:line-cited, git-dated evidence tables (layer chains, call paths, measurements, repro logs) that the main loop synthesizes into a verdict. Use when an investigation's reading and measuring is large but the verdict is judgment-heavy. It must not propose root causes, verdicts, or fixes — verdicts stay in the main loop (Reflection Firewall).
+model: claude-opus-5-5
 ---
 
 <!-- Adapted from Lunarsong/Claude-Opus-5-tools (CC0). Provenance: docs/THIRD-PARTY-AGENT-TOOLS.md -->

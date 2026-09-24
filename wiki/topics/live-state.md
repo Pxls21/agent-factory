@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 04:3xZ — WHAT IS LIVE NOW (this block supersedes the 04:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFIED 04:2xZ:** K150 (VERIFY-K150 MERGE-READY-WITH-FOLLOWUPS; tasks #213 and #150 closed). Follow-ups: issue #63; the nine registry promises #150 never carried moved to task #215 `registry-owed-screens-and-bakes` (with the AF-AP-175 and AF-AP-177 screens). The three empty `r_*.txt` files were VERIFY-K150's; it removed them.
+- **LANDED 04:3xZ, GATED-PENDING-VERIFY:** task #211 (AF-AP-171 baked into `orchestration` §Parallel agents) and the `evidence-gatherer` re-pin to `claude-opus-5-5` (D-065; manifest tests now 2956 kit-verbatim / 16 kit-adapted). The independent check folds into task #215's verify. Dispatches still pass `model: "opus"` this session.
+- **LIVE, SANDBOX (one):** J1-1-R3 (#202). It works in the non-git copy `/tmp/j113s/work`, not the worktree `/tmp/j113s/wt`; read its progress from there (AF-AP-171).
+- **LIVE, PC:** the J0-b probe (pid 1085354, `/home/rocco/j0b/`, online on a hardlinked HF cache after the offline launch died on a missing `rl_common.py`). No PC lane is live.
+- **NEXT:** harvest J0-b into `LAYA-PROBE-1.md` (task #123) → J1-4 (#121); harvest J1-1-R3 → its verify; task #215 (sandbox build, then verify).
+
 **2026-09-24 04:0xZ — WHAT IS LIVE NOW (this block supersedes the 03:3xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFIED 04:0xZ:** J1-3-R1 (VERIFY-J1-3-R1 MERGE-READY-WITH-FOLLOWUPS); J1-3 closed; follow-ups in issue #62; AF-AP-177 and AF-AP-178 registered.
 - **LIVE, SANDBOX (two):** VERIFY-K150 (#213, PIN 656ddf6; its report path is the one entry in `.lanes-live`) and J1-1-R3 (#202, private clone `/tmp/j113s/wt`). No PC lane is live.
@@ -539,6 +546,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 04:3xZ — VERIFY-K150 home: K150 verified (issue #63, task #215); AF-AP-171 baked (#211); `evidence-gatherer` re-pinned to Opus 5.5 (D-065).
 2026-09-24 04:0xZ — VERIFY-J1-3-R1 home: J1-3-R1 verified, J1-3 closed (issue #62).
 2026-09-24 03:3xZ — VERIFY-K150 dispatched; AF-AP-173 to AF-AP-176 registered; issues #11 and #17 closed.
 2026-09-24 03:2xZ — MoJev findings written (owner decision); AF-AP-172: the project hooks do not fire in this session (#214).
