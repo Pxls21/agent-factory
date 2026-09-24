@@ -1,4 +1,4 @@
-# K150 — the kit edits that waited for VERIFY-K1-h (task #150): eight skill bakes, four screen rows, two test controls, one hook fix
+# K150 — the kit edits that waited for VERIFY-K1-h (task #150): eight skill bakes, four screen rows, three test controls, one hook fix
 
 PIN: 033a9b0 (the shared tree's HEAD at authoring; every boundary file is byte-identical at origin f772bfc — premise below). LANE:
 k150 (sandbox; agent `code-implementer`, in the SHARED tree, no worktree isolation). Honey `ultra` Lever-2: your report is DATA:
@@ -60,6 +60,11 @@ HOOK FIX AND MANIFEST CONTROL
   fix and GREEN after.
 - (b) AF-AP-138's baseline control in `tests/test_vendored_manifest.py`: each mutation test runs its killing check on the UNMUTATED
   module first and asserts it passes, so a kill cannot come from a broken harness. Read the row, then the file's mutant tests.
+
+- (n) issue #60, finding 1 of VERIFY-K1-h: `parse_classes` in `scripts/vendored_manifest.py` (the malformed-row refusal) has no
+  committed test; the verifier's mutants v-D (the refusal swallowed) and v4 (`parse_classes` made a no-op) both passed 51/51. Add a test
+  that feeds a malformed class row through `--check` and asserts the named refusal (`FAIL: .claude class file parse failure at line <n>`,
+  rc 1), then rebuild v-D and v4 on a scratch copy and paste each one RED. `scripts/vendored_manifest.py` itself stays READ-ONLY.
 
 OUT OF SCOPE: issue #57 F-1 (a docstring in `scripts/no_laya_in_gates.py`, which rides with the next J1-0 touch); task #183.
 
@@ -171,4 +176,15 @@ $ /root/venv-agent-factory/bin/python -m pytest tests/test_edit_snapshot_ap_scre
 152 passed
 $ bash scripts/pc_suite.sh set-id -- tests/test_edit_snapshot_ap_screen.py tests/test_vendored_manifest.py
 2 files set=2a60fb528bf2
+```
+
+Item (n)'s refusal, measured through `--check` on a scratch copy of HEAD (the guard is live; only its test is missing):
+```
+$ rm -rf /tmp/k150p && mkdir -p /tmp/k150p/w && git archive HEAD | tar -x -C /tmp/k150p/w && git -C /tmp/k150p/w init -q && git -C /tmp/k150p/w add -A && git -C /tmp/k150p/w -c user.name=p -c user.email=p@p commit -q -m p && python3 scripts/vendored_manifest.py --check --root /tmp/k150p/w | tail -1
+PASS: sandbox-kit/VENDORED-MANIFEST.md matches 9 vendored roots
+$ printf 'this row has no tab\n' >> /tmp/k150p/w/sandbox-kit/VENDORED-CLAUDE-CLASSES.tsv && python3 scripts/vendored_manifest.py --check --root /tmp/k150p/w; echo "rc=$?"
+FAIL: .claude class file parse failure at line 3103
+rc=1
+$ rm -rf /tmp/k150p; ls -d /tmp/k150p 2>&1 | cut -c1-50
+ls: cannot access '/tmp/k150p': No such file or di
 ```
