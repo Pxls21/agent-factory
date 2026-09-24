@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-24 21:4xZ — WHAT IS LIVE NOW (supersedes the 21:1xZ block for the live set).**
-- **LIVE:** the JT3 search hook. NEW at commit time: `scripts/ap_screen.py --staged-shell` prints the AP_SCREEN hits of staged `*.sh` files (task #245). NEW at push time: push_clean refuses a note that cites a commit id the push rewrote (task #243; its first run caught the manifest's provenance line, task #246).
+- **LIVE:** the JT3 search hook. NEW at commit time: `scripts/ap_screen.py --staged-shell` prints the AP_SCREEN hits of staged `*.sh` files (task #245), and `scripts/hooks/commit-msg` blocks a commit message whose stamp is ahead of the clock (bypass SKIP_STAMP_CHECK=1). NEW at push time: push_clean refuses a note that cites a commit id the push rewrote (task #243; its first run caught the manifest's provenance line, task #246).
 - **VERIFYING (two sandbox agents):** VERIFY-GW1-R1 on `scripts/gpu_window.sh` (F-1 not fully closed, the coordinator's finding; the second repair waits); VERIFY-T243-245 on the three tooling changes.
 - **PC:** no lane live; qwen active; the window1 jobs file staged (committed as `tasks/briefs/jev-laya/window1.jobs`, sha256/16 12977f2755c92839). IN FLIGHT since 21:42Z: the Laya base-model evaluation on the PC CPU (`~/laya-ft/eval-base-w1`, log `~/laya-ft/eval-base-w1.log`; the positive control, exit 2 if a J2 number differs).
 - **CI:** the run for origin 84d93b0 is being waited for (`ci_gate.py --wait`).
@@ -770,6 +770,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 21:5xZ — retro batch: the commit-msg stamp gate; build-loop baked (a repair starts from the registry row); AF-AP-187/68/37 echoes; the window1 jobs file committed.
 2026-09-24 21:4xZ — tooling while VERIFY-GW1-R1 runs: #244 closed; #245 (staged-shell AP screen) and #243 (the stale-id push check) landed gated and in their own verify; AF-AP-200 registered; the check's first run caught the manifest's dangling provenance id (task #246).
 2026-09-24 21:1xZ — GW1-R1 committed and in re-verify; the coordinator found F-1 not fully closed (AF-AP-145, a TERM burst); follow-ups on #74; the window1 jobs file staged on the PC; task #245 opened.
 2026-09-24 20:1xZ — stamp_check gives a ten-minute bucket stamp no slack (the 20:1xZ slip at 20:08:53Z; incident log 20:0xZ); the live set unchanged.
