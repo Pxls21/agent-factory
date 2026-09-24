@@ -14,6 +14,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 00:1xZ — WHAT IS LIVE NOW (this block supersedes the 00:0xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULINGS:** D-061 local Hermes only (the cloud subscription is out); D-062 sandbox Opus 5.5 agents allowed in moderation (two to three at once).
+- **LIVE, sandbox (D-062):** VERIFY-S0-05 (#207, uid 0; gates the owner's `accepted/S0-05` tag) and VERIFY-J1-3-R2 (#208; completes the partial PC verify of J1-3).
+- **LIVE, PC (two long-context local lanes):** VERIFY-K1-h (#194, since 14:36Z) and J1-1-R3 (#202, relaunched 00:0xZ as `pc-j1-1-r3.md--ff7a671`). Monitor bdkh25j6n.
+- **GRADED PARTIAL:** VERIFY-J1-3 (MERGE-READY claimed, half served by gemini-3.1-pro-low, most items not run); J1-3 stays GATED-PENDING-VERIFY.
+- **OWNER STEP PENDING:** the PC clone cannot fast-forward past a root-owned `proofs/S0-05/evidence/` left by a 2026-09-19 sudo run (AF-AP-169); one `sudo mv` line handed over.
+- **FILED:** issue #58 (S0-05 evidence records the canary tool's version).
+
 **2026-09-24 00:0xZ — WHAT IS LIVE NOW (this block supersedes the 23:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULING (about 23:0xZ):** local Hermes only; the codex subscription ran out. No cloud overflow until the owner says it is back.
 - **S0-05 MINTED 23:5xZ, GATED-PENDING-VERIFY:** the owner's third run (evidence 20260923T234303Z) passed the A2'' census and every egress assertion; the checker first refused curl 8.11's "Could not connect to server" spelling (AF-AP-168, fixed in c26553d). All nine execution proofs are minted. Next: VERIFY-S0-05 (the A2'' census, the curl spelling, the mint).
@@ -476,6 +484,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 00:1xZ — J1-1-R3 relaunched on the local route; VERIFY-S0-05 and VERIFY-J1-3-R2 dispatched as sandbox agents (D-062); VERIFY-J1-3 graded partial; D-061/D-062 recorded; AF-AP-169.
 2026-09-24 00:0xZ — S0-05 MINTED from the owner's live run (9 of 9 execution proofs; GATED-PENDING-VERIFY); S0-02 ACCEPTED (the signed tag anchored).
 2026-09-23 23:2xZ — VERIFY-S0-02 graded (S0-02 verified; the owner's tag next); VERIFY-J1-3 dispatched.
 2026-09-23 23:1xZ — S0-05 A2'' census allowance landed (task #206, GATED-PENDING-VERIFY); owner ruling: local Hermes only.
