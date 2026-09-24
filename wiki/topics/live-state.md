@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 01:3xZ — WHAT IS LIVE NOW (this block supersedes the 01:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC (the local build route, two long-context lanes, AF-AP-146):** J1-1-R3 (#202, `pc-j1-1-r3.md--ff7a671`) and J1-3-R1 (#209, `pc-j1-3-r1.md--f772bfc`, pid 1002771: the one focused repair of the harvester under D-063 and D-064). One monitor watches both, with 10-minute heartbeats that read the vLLM KV use.
+- **OWNER STEP:** the signed `accepted/S0-05` tag (one line handed over).
+- **Filed 01:3xZ:** issue #61 (the harvester's findings outside the repair). No sandbox agent is live.
+
 **2026-09-24 01:1xZ — WHAT IS LIVE NOW (this block supersedes the 01:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **NOT-READY 01:1xZ:** J1-3 (VERIFY-J1-3-R2: four blockers in `scripts/decide-harvest`; F-05 amended as D-063; the first pass's MERGE-READY refuted, AF-AP-170). J1-3-R1 (#209) is next on the PC's free local slot.
 - **OWNER STEP:** the signed `accepted/S0-05` tag (one line handed over).
@@ -496,6 +501,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 01:3xZ — J1-3-R1 dispatched on the PC local route (D-064; issue #61); the PC clone fast-forwarded to f772bfc.
 2026-09-24 01:1xZ — VERIFY-J1-3-R2 NOT-READY (J1-3 needs a repair, J1-3-R1 next); D-063; AF-AP-170.
 2026-09-24 01:0xZ — S0-05 and K1-h verified (issues #59, #60); the owner's accepted/S0-05 tag handed over.
 2026-09-24 00:4xZ — the owner cleared AF-AP-169's root-owned debris; the PC clone fast-forwarded to 28a915e.
