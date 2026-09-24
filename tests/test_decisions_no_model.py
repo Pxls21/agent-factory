@@ -53,7 +53,7 @@ BLOCKER = textwrap.dedent(
 
 
 def model_imports(path: pathlib.Path) -> list[str]:
-    """Every import of a model package in one source file, as `name:line: module`."""
+    """Every import of a model package in one source file, as `name:line: module`, in line order."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found = []
     for node in ast.walk(tree):
@@ -69,8 +69,8 @@ def model_imports(path: pathlib.Path) -> list[str]:
                 names = [node.args[0].value]
         for name in names:
             if name.split(".")[0] in MODEL_PACKAGES:
-                found.append(f"{path.name}:{node.lineno}: {name}")
-    return found
+                found.append((node.lineno, f"{path.name}:{node.lineno}: {name}"))
+    return [text for _, text in sorted(found)]
 
 
 def _run_blocked(work: pathlib.Path, *argv: str) -> tuple[subprocess.CompletedProcess, list[str]]:
@@ -105,9 +105,17 @@ def test_scan_reds_an_added_laya_import(tmp_path):
     mutant.write_text(ledger + "\nimport laya\n", encoding="utf-8")
     line = len(mutant.read_text(encoding="utf-8").splitlines())
     assert model_imports(mutant) == [f"ledger.py:{line}: laya"]
-    dynamic = tmp_path / "dynamic.py"
-    dynamic.write_text("import importlib\nimportlib.import_module('torch.nn')\n", encoding="utf-8")
-    assert model_imports(dynamic) == ["dynamic.py:2: torch.nn"]
+    forms = tmp_path / "forms.py"
+    forms.write_text(
+        "import importlib\n"
+        "importlib.import_module('torch.nn')\n"
+        "from transformers import AutoModel\n"
+        "__import__('safetensors')\n"
+        "from .torch import helpers\n",
+        encoding="utf-8",
+    )
+    # The relative import (line 5) names a local module, not the package: it must not be flagged.
+    assert model_imports(forms) == ["forms.py:2: torch.nn", "forms.py:3: transformers", "forms.py:4: safetensors"]
 
 
 def test_j1_suite_passes_with_model_packages_blocked(tmp_path):
