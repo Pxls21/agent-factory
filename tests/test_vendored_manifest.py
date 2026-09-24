@@ -648,6 +648,37 @@ def test_new_first_party_claude_file_names_manifest_and_class_drift(tmp_path: Pa
     assert ".claude class drift: first-party-new.md: committed=<missing> generated=first-party" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("shape", "malform"),
+    (
+        # the class cell of line 2 replaced with an unknown value (VERIFY-K1-h's probe)
+        ("unknown-class", lambda lines: (2, [lines[0], lines[1].split("\t")[0] + "\tBROKEN-CLASS", *lines[2:]])),
+        # a row with no tab appended (the K150 brief's premise probe)
+        ("no-tab", lambda lines: (len(lines) + 1, [*lines, "this row has no tab"])),
+    ),
+)
+def test_malformed_claude_class_row_is_refused_by_line(tmp_path: Path, shape: str, malform) -> None:
+    """Issue #60 finding 1 (VERIFY-K1-h): `parse_classes` refuses a malformed class row by line number, but no test
+    reached the refusal, and mutants v-D (the refusal swallowed into first-party) and v4 (`parse_classes` a no-op)
+    passed the whole file. `--check` parses the committed class file (`class_difference`) once it differs from the
+    generated one, so a malformed row fails with the named refusal, never as a class drift."""
+    module = load_module()
+    root = copy_fixture(tmp_path, module)
+    rewrite_manifest_and_classes(root, module)
+    good = run_tool(root)
+    assert good.returncode == 0, good.stderr
+    assert good.stdout == EXPECTED_PASS
+
+    classes = root / module.CLASSES_PATH
+    line, lines = malform(classes.read_text(encoding="utf-8").splitlines())
+    classes.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = run_tool(root)
+
+    assert result.returncode == 1, shape
+    assert f"FAIL: .claude class file parse failure at line {line}\n" in result.stderr, (shape, result.stderr)
+
+
 def test_kit_index_sha256_mismatch_is_named(tmp_path: Path) -> None:
     module = load_module()
     root = copy_fixture(tmp_path, module)
@@ -1095,6 +1126,146 @@ MUTANTS = (
 )
 
 
+def run_killer(killer: str, module, work: Path, label: str) -> None:
+    """One killer's check against `module`, inside its own directory `work`. Each assertion carries `label`,
+    so a kill is that named assertion failing, never an unrelated exception."""
+    if killer == "test_walk_is_sorted_before_digest":
+        tree = work / "tree"
+        (tree / "aaa").mkdir(parents=True)
+        (tree / "zzz").mkdir(parents=True)
+        (tree / "b.txt").write_text("b", encoding="utf-8")
+        (tree / "aaa/c.txt").write_text("c", encoding="utf-8")
+        (tree / "zzz/d.txt").write_text("d", encoding="utf-8")
+        # the root's own record ("", b"dir") comes first since fe2284d, as the direct test pins; this copy of the
+        # list lacked it, so the row failed on the UNMUTATED module too (AF-AP-138, caught by the baseline control)
+        assert [path for path, _ in module.walk_tree(tree, work)] == [
+            "",
+            "aaa/c.txt",
+            "b.txt",
+            "zzz/d.txt",
+        ], label
+    elif killer == "test_exclusions_do_not_affect_tree_record":
+        tree = work / "tree"
+        tree.mkdir()
+        (tree / "kept.txt").write_text("kept", encoding="utf-8")
+        baseline = module.walk_tree(tree, work)
+        excluded = tree / "node_modules/module.js"
+        excluded.parent.mkdir()
+        excluded.write_text("must stay excluded", encoding="utf-8")
+        assert module.walk_tree(tree, work) == baseline, label
+    elif killer == "test_sbom_pin_disagreement_is_named":
+        root = copy_fixture(work, module)
+        (root / module.LOCK_PATH).write_text(
+            "selected_core:\n  example:\n    repository: https://github.com/example/component.git\n"
+            "    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            encoding="utf-8",
+        )
+        (root / module.SBOM_PATH).write_text(
+            "components:\n  - name: example\n    repository: https://github.com/example/component.git\n"
+            "    commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
+            encoding="utf-8",
+        )
+        detected = False
+        try:
+            # Exercise the production entry that the mutant disconnects;
+            # calling validate_pin_agreement() directly would survive the
+            # mutation and produce a hollow green.
+            module.render(root)
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_escaping_symlink_is_refused_by_name":
+        repo = work / "repo"
+        tree = repo / "vendored"
+        tree.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        link = tree / "escape-link"
+        link.symlink_to("/etc/hostname")
+        detected = False
+        try:
+            module.walk_tree(tree, module.repo_root_of(repo))
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_declared_root_symlink_target_outside_sandbox_kit_is_refused_by_name":
+        root = copy_fixture(work, module)
+        declared = root / "sandbox-kit/aleph"
+        real = root / "aleph-real"
+        declared.rename(real)
+        declared.symlink_to("../aleph-real")
+        detected = False
+        try:
+            module.render(root)
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_undeclared_sandbox_kit_entry_is_named":
+        root = copy_fixture(work, module)
+        undeclared = root / "sandbox-kit/newtool"
+        undeclared.mkdir()
+        (undeclared / "file.txt").write_text("new\n", encoding="utf-8")
+        detected = False
+        try:
+            module.render(root)
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_vendored_root_table_entry_missing_is_named":
+        root = copy_fixture(work, module)
+        shutil.rmtree(root / "sandbox-kit/docs")
+        detected = False
+        try:
+            module.render(root)
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_real_claude_split_counts_and_class_file":
+        root = copy_fixture(work, module)
+        data = module.build_manifest_data(root, module.repo_root_of(root))
+        counts = {record.path: record.regular_file_count for record in data.records}
+        assert counts[".claude/ (kit-verbatim)"] == 2957, label
+        assert counts[".claude/ (kit-adapted)"] == 15, label
+    elif killer == "test_kit_index_sha256_mismatch_is_named":
+        root = copy_fixture(work, module)
+        index = root / module.KIT_INDEX_PATH
+        lines = index.read_text(encoding="utf-8").splitlines()
+        lines[0] += " tampered"
+        index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        detected = False
+        try:
+            module.render(root)
+        except module.ManifestError:
+            detected = True
+        assert detected, label
+    elif killer == "test_claude_class_drift_names_changed_path":
+        root = copy_fixture(work, module)
+        rewrite_manifest_and_classes(root, module)
+        target = root / ".claude/agents/evidence-gatherer.md"
+        target.write_bytes(target.read_bytes() + b"adapted now\n")
+        result = subprocess.run(
+            [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), "--check"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=180,
+        )
+        assert ".claude class drift" in result.stderr, label
+    elif killer == "test_docs_byte_change_names_docs_row":
+        root = copy_fixture(work, module)
+        before = module.render(root)
+        before_match = re.search(r"^\| `sandbox-kit/docs/`.*$", before, re.M)
+        assert before_match, label
+        changed = root / "sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md"
+        changed.write_bytes(changed.read_bytes() + b"changed-byte\n")
+        after = module.render(root)
+        after_match = re.search(r"^\| `sandbox-kit/docs/`.*$", after, re.M)
+        assert after_match, label
+        assert before_match.group(0) != after_match.group(0), label
+    else:
+        pytest.fail(f"no killer implementation for {killer}")
+
+
 @pytest.mark.parametrize(("mutant_name", "mutate", "killer"), MUTANTS)
 def test_required_mutants_are_killed(
     tmp_path: Path,
@@ -1107,140 +1278,22 @@ def test_required_mutants_are_killed(
     assert mutated != text, f"{mutant_name} mutation did not apply"
     mutant_script = tmp_path / f"vendored_manifest_{mutant_name}.py"
     mutant_script.write_text(mutated, encoding="utf-8")
-    mutant = load_module(mutant_script)
 
+    # AF-AP-138 baseline control: the killer runs on the UNMUTATED module first and must pass there. A killer that
+    # fails on the real module (a stale pin, a broken fixture) would "kill" every mutant, and the kill would say
+    # nothing about the mutation.
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    try:
+        run_killer(killer, load_module(), baseline, mutant_name)
+    except AssertionError as error:
+        pytest.fail(f"AF-AP-138: {killer} fails on the UNMUTATED module, so a kill of {mutant_name} "
+                    f"is not attributable to the mutation: {error!r}")
+
+    mutant = load_module(mutant_script)
+    mutated_work = tmp_path / "mutant"
+    mutated_work.mkdir()
     # A mutant is killed only when its named assertion fails for the exact mutant
     # name; an unrelated exception is not accepted as a kill.
     with pytest.raises(AssertionError, match=mutant_name):
-        if killer == "test_walk_is_sorted_before_digest":
-            tree = tmp_path / "tree"
-            (tree / "aaa").mkdir(parents=True)
-            (tree / "zzz").mkdir(parents=True)
-            (tree / "b.txt").write_text("b", encoding="utf-8")
-            (tree / "aaa/c.txt").write_text("c", encoding="utf-8")
-            (tree / "zzz/d.txt").write_text("d", encoding="utf-8")
-            assert [path for path, _ in mutant.walk_tree(tree, tmp_path)] == [
-                "aaa/c.txt",
-                "b.txt",
-                "zzz/d.txt",
-            ], mutant_name
-        elif killer == "test_exclusions_do_not_affect_tree_record":
-            tree = tmp_path / "tree"
-            tree.mkdir()
-            (tree / "kept.txt").write_text("kept", encoding="utf-8")
-            baseline = mutant.walk_tree(tree, tmp_path)
-            excluded = tree / "node_modules/module.js"
-            excluded.parent.mkdir()
-            excluded.write_text("must stay excluded", encoding="utf-8")
-            assert mutant.walk_tree(tree, tmp_path) == baseline, mutant_name
-        elif killer == "test_sbom_pin_disagreement_is_named":
-            root = copy_fixture(tmp_path, mutant)
-            (root / mutant.LOCK_PATH).write_text(
-                "selected_core:\n  example:\n    repository: https://github.com/example/component.git\n"
-                "    commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-                encoding="utf-8",
-            )
-            (root / mutant.SBOM_PATH).write_text(
-                "components:\n  - name: example\n    repository: https://github.com/example/component.git\n"
-                "    commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
-                encoding="utf-8",
-            )
-            detected = False
-            try:
-                # Exercise the production entry that the mutant disconnects;
-                # calling validate_pin_agreement() directly would survive the
-                # mutation and produce a hollow green.
-                mutant.render(root)
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_escaping_symlink_is_refused_by_name":
-            repo = tmp_path / "repo"
-            tree = repo / "vendored"
-            tree.mkdir(parents=True)
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-            link = tree / "escape-link"
-            link.symlink_to("/etc/hostname")
-            detected = False
-            try:
-                mutant.walk_tree(tree, mutant.repo_root_of(repo))
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_declared_root_symlink_target_outside_sandbox_kit_is_refused_by_name":
-            root = copy_fixture(tmp_path, mutant)
-            declared = root / "sandbox-kit/aleph"
-            real = root / "aleph-real"
-            declared.rename(real)
-            declared.symlink_to("../aleph-real")
-            detected = False
-            try:
-                mutant.render(root)
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_undeclared_sandbox_kit_entry_is_named":
-            root = copy_fixture(tmp_path, mutant)
-            undeclared = root / "sandbox-kit/newtool"
-            undeclared.mkdir()
-            (undeclared / "file.txt").write_text("new\n", encoding="utf-8")
-            detected = False
-            try:
-                mutant.render(root)
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_vendored_root_table_entry_missing_is_named":
-            root = copy_fixture(tmp_path, mutant)
-            shutil.rmtree(root / "sandbox-kit/docs")
-            detected = False
-            try:
-                mutant.render(root)
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_real_claude_split_counts_and_class_file":
-            root = copy_fixture(tmp_path, mutant)
-            data = mutant.build_manifest_data(root, mutant.repo_root_of(root))
-            counts = {record.path: record.regular_file_count for record in data.records}
-            assert counts[".claude/ (kit-verbatim)"] == 2957, mutant_name
-            assert counts[".claude/ (kit-adapted)"] == 15, mutant_name
-        elif killer == "test_kit_index_sha256_mismatch_is_named":
-            root = copy_fixture(tmp_path, mutant)
-            index = root / mutant.KIT_INDEX_PATH
-            lines = index.read_text(encoding="utf-8").splitlines()
-            lines[0] += " tampered"
-            index.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            detected = False
-            try:
-                mutant.render(root)
-            except mutant.ManifestError:
-                detected = True
-            assert detected, mutant_name
-        elif killer == "test_claude_class_drift_names_changed_path":
-            root = copy_fixture(tmp_path, mutant)
-            rewrite_manifest_and_classes(root, mutant)
-            target = root / ".claude/agents/evidence-gatherer.md"
-            target.write_bytes(target.read_bytes() + b"adapted now\n")
-            result = subprocess.run(
-                [sys.executable, str(root / "scripts" / SCRIPT.name), "--root", str(root), "--check"],
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=180,
-            )
-            assert ".claude class drift" in result.stderr, mutant_name
-        elif killer == "test_docs_byte_change_names_docs_row":
-            root = copy_fixture(tmp_path, mutant)
-            before = mutant.render(root)
-            before_match = re.search(r"^\| `sandbox-kit/docs/`.*$", before, re.M)
-            assert before_match, mutant_name
-            changed = root / "sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md"
-            changed.write_bytes(changed.read_bytes() + b"changed-byte\n")
-            after = mutant.render(root)
-            after_match = re.search(r"^\| `sandbox-kit/docs/`.*$", after, re.M)
-            assert after_match, mutant_name
-            assert before_match.group(0) != after_match.group(0), mutant_name
-        else:
-            pytest.fail(f"no killer implementation for {killer}")
+        run_killer(killer, mutant, mutated_work, mutant_name)

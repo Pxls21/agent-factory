@@ -57,6 +57,21 @@ class _EmitNoneKwarg:
         return None
 
 
+# AF-AP-139 (2026-09-23, S0-05's C0 probe): an HTTP stand-in that answers the same literal 2xx on every path — the
+# E1-E3 stand-ins answered 200 to `GET /v1/models`, where the real OmniRoute answers 401 and the real relay 404, so
+# the live leg's positive control would have failed. The tell: a do_<METHOD> handler that reaches a literal-2xx
+# send_response with no `if … self.path` line before it (logging the path is not a branch on it). Stand-ins live in
+# tests and in production stubs, and the hook screens /tests/ paths with TEST_SCREEN only, so the row is in both.
+_AF_AP_139 = (
+    "AF-AP-139",
+    re.compile(r"""def\s+do_[A-Z]+\(\s*self\b[^)]*\)\s*:(?:(?!\bif\b[^\n]*\bself\.path\b|\bdef\s)[\s\S]){0,1000}?\bsend_response\(\s*2\d\d\s*\)"""),
+    "an HTTP stand-in that sends a literal 2xx with no branch on `self.path` — more permissive than the service it "
+    "stands in for, so the positive control is graded against nothing; measure the real service's answer to the "
+    "probe's exact request, key the stand-in's status on the path, and add a negative control that refuses on the "
+    "probe path (AF-AP-139)",
+)
+
+
 # Mechanical signatures distilled from the ANTI-PATTERN REGISTRY (id: regex,
 # message). Only patterns that are cheaply greppable in a diff hunk belong
 # here; judgment-class rows stay in review.
@@ -187,10 +202,24 @@ AP_SCREEN = [
      "a redaction/scrub applied to an already-capped slice (`scrub(x[:cap])`) — a secret straddling the cap falls below its pattern's minimum and its stub survives; redact the WHOLE text, then cap (`scrub(x)[:cap]`) (AF-AP-127)"),
     # AF-AP-159 (2026-09-23, VERIFY-J1-0-R5 V5-05): a PyYAML node's start_mark is its first PROPERTY (&anchor,
     # !!tag), which can sit on the line above the value, so `node.start_mark.line + k` named a line outside it.
-    ("AF-AP-159", re.compile(r"""\.start_mark\.line\s*\+"""),
+    # Widened 2026-09-24 (issue #57 F-2): the sum with the start line as the RIGHT operand is the same line map.
+    ("AF-AP-159", re.compile(r"""\.start_mark\.line\s*\+|\+\s*[\w.\[\]]*\bstart_mark\.line\b"""),
      "a line number computed from a node's start_mark — a YAML node starts at its first property (&anchor, !!tag), which can sit on an earlier line than the value; take the scalar TOKEN's line (yaml.scan, keyed by the node's end_mark.index) (AF-AP-159)"),
     ("AF-AP-118", re.compile(r"""\bfallback_providers\b"""),
      "a harness fallback chain (`fallback_providers`) written into a lane/profile config — the chain IS a route: a lane on it is HYBRID until its calls are measured (call_logs `requested_model`), and the harvest line must read the served model (AF-AP-118)"),
+    _AF_AP_139,
+    # AF-AP-25, the line-parser form (2026-09-23, VERIFY-REPIN-a F11): `parse_lock` / `parse_sbom` in
+    # scripts/vendored_manifest.py re.fullmatch each line and SKIP a line no pattern spells out, so one trailing
+    # space on a lock line dropped a pin from validate_pin_agreement with no error. The tell: a loop over a file's
+    # lines whose body re.match-es / re.fullmatch-es each line (a pattern compiled into a name is not seen).
+    ("AF-AP-25", re.compile(r"""\bfor\s+[\w, ]+\s+in\s+[^\n]*(?:\.splitlines\(\)|\.readlines\(\)|\bopen\()[^\n]*:[ \t]*(?:#[^\n]*)?\n[\s\S]{0,400}?\bre\.(?:full)?match\("""),
+     "a line loop that regex-matches each line of a structured file (a lock, an SBOM, a config, a registry) — a line no pattern spells out (a trailing space, a YAML comment, a quoted value) is SKIPPED, and a pin silently drops out of the gate that consumes the parse; refuse every non-blank, non-comment line the loop does not recognise, by line number, or parse with a real parser (yaml.safe_load with a duplicate-key refusal) (AF-AP-25)"),
+    # AF-AP-89's doubled escape (2026-09-23, the T94 landing; AF-AP-162): T94's poll probe in scripts/pc_lane.sh
+    # escaped its PC-side lookups twice inside the double-quoted bridge argument, so the lookups ran in the SANDBOX and
+    # the PC received a syntax error; the text-matching test double never ran the probe (AF-AP-162). The tell: a doubled
+    # escape before `$(` or before an escaped quote inside a double-quoted bridge / scripts/pc.sh argument.
+    ("AF-AP-89", re.compile(r"""(?:\bbridge|\bpc\.sh)[ \t]+"(?:[^"\\]|\\[\s\S])*?\\\\(?:\$\(|\\")"""),
+     r'''a doubled escape (`\\$(` or `\\\"`) inside a double-quoted `bridge` / `scripts/pc.sh` argument — `\\$(` is a literal backslash and then a command substitution that runs in the SANDBOX, so the PC receives a wrong or empty value; escape a remote substitution ONCE (`\$(…)`) and test the rendered remote program by RUNNING it against a fake PC root, never with a double that matches its text; the one legitimate `\\\"` travels verbatim into a quoted heredoc (<<'PY') (AF-AP-89; AF-AP-162)'''),
 
 
 ]
@@ -265,6 +294,7 @@ TEST_SCREEN = [
      # Shell-test pattern: ap_screen.py catches it on explicitly-passed .sh files; the .py PostToolUse hook does not fire on shell edits.
      ("AF-AP-87", re.compile(r"""!\s*kill -0\b"""),
       "a `! kill -0 <pid>` liveness gate reads a zombie (Z/defunct, unreaped) PID as ALIVE — treat dead as absent OR /proc/<pid>/stat=Z (an is_dead helper), or pair the pid with a persisted terminal rc, never kill -0 alone (AF-AP-87)"),
+    _AF_AP_139,  # the same row as in AP_SCREEN: the registry's instance was a test stand-in (tests/test_s0_05_egress.py)
 ]
 
 MAX_SYMBOLS = 2
@@ -296,10 +326,12 @@ def _pyflakes_msgs(py: str, text: str) -> dict:
 
 def pyflakes_delta(fp: str, src: str) -> list[str]:
     """NEW pyflakes hits in this file vs its HEAD version. [] when the venv
-    pyflakes is absent or anything fails — a tell, never a blocker."""
-    if not Path(_VENV_PY).exists():
-        return []
+    pyflakes is absent or anything fails — a tell, never a blocker. Every probe
+    of the venv path is inside the try: under another identity (a PC lane user,
+    /root mode 0550) Path.exists() RAISES PermissionError (AF-AP-44)."""
     try:
+        if not Path(_VENV_PY).exists():
+            return []
         root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                               cwd=Path(fp).parent, timeout=PROBE_TIMEOUT).stdout.strip()
         rel = str(Path(fp).resolve().relative_to(root)) if root else fp

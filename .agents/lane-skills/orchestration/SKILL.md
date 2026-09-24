@@ -63,13 +63,22 @@ subordinate to, the Anthropic docs.
    with their set ids, the lane’s line map from `grep -n`) — written from the run, never from memory or a report; the lane’s
    item 1 re-measures and stops CONTRACT-INVALID on a mismatch; the dispatcher refuses a FIRST launch of a brief without the block
    (task #90, `scripts/pc_lane.sh`; a resume of an already-launched lane is exempt). A premise that cannot be measured is written
-   as a QUESTION for the lane, never as a fact.
+   as a QUESTION for the lane, never as a fact. **A premise command's output carries no VOLATILE field (2026-09-23, VERIFY-J1-3;
+   AF-AP-164):** the lane re-runs each echoed line and stops CONTRACT-INVALID on any difference, so strip pytest's ` in N.NNs`
+   timing (and any clock or pid) with a `sed` INSIDE the echoed command itself (`… | tail -1 | sed -E 's/ in [0-9.]+s.*//'`), never
+   by hand after the run. VERIFY-J1-3's first block pasted `33 passed in 12.09s` under a command that kept the time, beside a retyped
+   grep and pre-push SHAs (the two the lane named when it stopped at item 1); the re-measured block, printed by
+   `scripts/premise_block.sh` at the PIN after the push, strips the time inside the command.
    **0d″ — a flip or mutant the brief DEMANDS a result of is RUN at authoring (2026-09-22, VERIFY-B67 item 6).** The first brief with a
    measured premise block still shipped an unmeasured EXPECTATION: "widen the real-root test’s rc-set, it must red" — at the PIN the real
    root was absent (rc 2 stayed in the widened set) and an independent `PASS:` assertion already caught rc 0, so the flip could not red
    and the lane stopped CONTRACT-INVALID as told. The premise block covers three things, each pasted from a run on the PIN: identities and
    hunks; every count with its set; and every flip/mutant whose outcome the brief asserts. An expectation that was not run is written as a
-   question for the lane ("does this flip red? if not, say why"), never as a contract line.
+   question for the lane ("does this flip red? if not, say why"), never as a contract line. **A verifier's PROPOSED FIX is a
+   hypothesis too (2026-09-23, VERIFY-J1-1-R1's option B; AF-AP-153's class):** before a brief adopts it, run it against a control
+   with a REAL value for each condition under which it SKIPS a redaction or a refusal. Option B added a lookahead that skips the
+   bearer redaction when `:` or `=` follows the token; run at authoring on a scratch copy, `Authorization: Bearer <token>: rejected`
+   kept the token, and D-057 rejected the option.
    **0d‴ — a premise that grounds a NEW RULE is measured by the rule itself (2026-09-23, J1-0-R3).** The J1-0-R3 brief stated "zero source lines in the listed gate files" from a line-start grep; the rule it grounded splits command segments, and its first run on the real tree flagged seven: two real mid-line sources (`&& . "$ROOT/.pc-bridge.env"`, `|| . "$PC_LANE_BRIDGE_FN"`) and five false positives inside quoted strings. Before a brief states what a new check will find on the real tree, run the check (or its exact pattern) over the real tree and paste that output; a narrower grep is a different instrument and predicts nothing.
    **0d⁗ — an IDENTIFIER a brief or ledger cites is resolved against its registry at authoring (2026-09-23, AF-AP-123).** The owner's lane-profile ruling (2026-09-22 22:0xZ) was cited as "D-048" in the T90-R3 and T92 ledger notes, the T92 brief, the wiki and the VERIFY-T92-T90R3-PCJ1 brief, while the log's D-048 is the 16:4xZ J1 ruling; the ledger even said "D-048 RECORDED" for a row nobody wrote. A decision number is allocated by reading the log's last row (`grep -o '^| D-0[0-9]*' docs/08_DECISION_LOG.md | tail -1`) and the row lands in the SAME commit as its first citation; every `D-`, `AF-AP-` or task id a brief cites is grepped in its registry at authoring and the grep line is pasted with the premises.
 
@@ -88,6 +97,7 @@ subordinate to, the Anthropic docs.
    blockers two days earlier and were ancestors of HEAD. The lane correctly refused (code-implementer
    rule 1 + the premise-conflict bound) and re-verified rather than regressing B5's hardening —
    ~2 PC-hours on done work. A lane must never be the first place stale coordinator state is found.
+   **0e′ — a lane's PLANNED INPUTS written only in prose are grepped at authoring (2026-09-23, AF-AP-155).** A ledger or PROVENANCE note that names a future lane and what it must carry never reaches that lane's brief by itself: the brief is written later, from a verify report and an issue. At authoring, grep the ledger and every PROVENANCE file for the lane's name — `grep -n "<LANE>'s inputs\|in <LANE>\b\|<LANE> option\|takes this value in <LANE>" todo/BUILD-TASKLIST.md $(git ls-files 'proofs/*PROVENANCE.md')` — and carry each hit into the brief, or state in the brief why it is out of scope. The 2026-09-22 fixture-identities note said "B9's inputs: `revoked.json` signer → `owner2` …, `neg-unauthorized.json` `expected_pubkey` → the nonmember pub"; neither B9 brief carried them, and the gap surfaced only while the S0-02 live capture was being prepared (2026-09-23 13:1xZ).
 
 0f. **Coordinator re-execution of a builder's gate is NOT independent verification (audit
    2026-09-21, A5P-06).** Re-running the lane's own gate — even on the PC, even with the patch sha
@@ -101,6 +111,13 @@ subordinate to, the Anthropic docs.
    incident: A5p (S0-01 checker r18) landed as "verified, declared-final, tools frozen" on the
    coordinator's re-run of its own gate (432 passed, 13 xfailed) while its report said no
    independent verifier ran; the audit's first hostile pass found four in-domain defects (issue #8).
+   **A partial verify is never a verification.** (1) A verify lane served entirely by a low-tier fallback, whose mutants were
+   REASONED, not executed, is a partial verify, and the landing stays `GATED-PENDING-VERIFY` whatever it recommends (VERIFY-C2,
+   2026-09-23: 29 calls, all on the verify combo's low-tier fallback, MERGE-READY-WITH-FOLLOWUPS over reasoned mutants; the
+   coordinator's own probe then found a new accepted-check shape class, issue #56). (2) A MERGE-READY over un-run items is VOID: a
+   partial verify's recommendation is never counted, and the completion verify grades the first pass claim by claim (VERIFY-J1-3's
+   first pass, 2026-09-23, returned MERGE-READY from a 4.7 KB report that skipped the races and pasted no harvest lines;
+   VERIFY-J1-3-R2 refuted it, NOT-READY with four blockers; AF-AP-170).
 
 
 0b. **A research doc's FORMULA is a paraphrase, not a spec (2026-08-28).** Before a brief
@@ -294,6 +311,8 @@ costs more than doing it in the main loop.
 
 - **A re-armed log monitor is blind to its own gap (2026-09-23, T92).** A watch that starts with `tail -n 0 -F` sees only lines written after it starts, so a lane report printed between the old monitor's expiry and the re-arm never becomes an event: T92 came home at 01:04Z inside that gap and read as silent until a poller check found its report. On every re-arm, first grep each watched log for the filter's patterns since the previous monitor's last delivered event, and act on what it finds; then re-arm.
 
+- **A terminal marker belongs to ONE attempt (2026-09-23, VERIFY-T92's relaunch; AF-AP-140).** A relaunch that reuses a run directory inherits the last attempt's `FAILED`, exit or ready marker, so a poller that only tests whether the file exists reports a live run dead, or a dead one ready. Read a marker only when it is bound to the current attempt: its pid alive or dead, an attempt counter, or an mtime after this launch. At 07:14Z VERIFY-T92's relaunch was running on the PC while `scripts/pc_lane.sh` printed `LANE FAILED` from the 04:03Z loop's marker, and the coordinator committed a false capacity claim on it (corrected before the push).
+
 ### A lane's route is a MEASUREMENT, never its dispatch parameter (baked 2026-09-22; AF-AP-111 + AF-AP-118)
 
 The model a lane ran on is read from the egress log (OmniRoute `call_logs`: the `requested_model` column = what the harness asked for, `model`/`provider` = what served it), never from the `HERMES_MODEL` the dispatcher exported, the combo name, or the lane's own claim. Two silent re-routers sit between the dispatch and the wire: OmniRoute's combo fallback (a combo's cloud member takes the turn when the local step refuses — D-039's strict combo removes it) and the harness's OWN fallback chain (Hermes `fallback_providers` in the profile config — a "strict raw id" lane still lands on the chain's cloud models after a local 504/499/400; the signature is a `499 Request aborted` on the fallback model seconds after the session's `ended_at`, measured on three lanes 2026-09-22). A combo-keyed mix line is blind to raw-id lanes (`combo_name` empty). So: the harvest line names the served model from `usage.json` plus the call_logs rows of the lane's window; a lane whose profile carries a fallback chain is labelled HYBRID until its rows are measured; the ledger never writes "the local route" from the dispatch parameter alone. Admission refusals (`HTTP 503 … Chat admission capacity`) leave NO call_logs row — only the PC runner's `report.attemptN.md` shows them; size the parallel lane count by the measured admission ceiling, not by the ruling's number.
@@ -424,7 +443,28 @@ a duplicate lane on shared files is strictly worse than a late one. **Brief dele
 — a delegate that backgrounds a run and stops is NEVER rewoken by its completion; it sits stalled
 until the coordinator messages it (two executors parked this way in one sprint).** A stalled
 agent's EXTERNAL artifacts persist — recover by inspecting what it left and finishing lean, not
-re-running from scratch.
+re-running from scratch. **A user-STOPPED sandbox agent cannot be resumed at all** (the sandbox harness refuses to
+resume it: "won't be resumed"), but its commits and its `setsid` gate keep running
+(2026-09-02: I3h stopped by an accidental owner keypress after 2 commits + a live lane_gate).
+**COMMIT-EARLY IS THE RECOVERY INSURANCE (2026-09-02, second keypress kill in one day):**
+both stray-keypress-killed builders (I3h, I4a) were cheap to recover ONLY because each had
+already committed its increment in its worktree before dying — the loss was just the report
+and a truncated mutant run, refinished lean in minutes. Every build brief's worktree
+discipline therefore includes: commit each increment the moment its own tests are green,
+never batch commits to the end of the lane — an uncommitted dead lane is a full rebuild.
+Recovery = `git status` + `git log <dispatch-sha>..HEAD` + `pgrep -fa '[l]ane_gate'`, read
+its gate output as the report, diff its commits against the brief's item list, and
+re-dispatch ONLY the residual — never a fresh full brief. **A container RESTART is the same
+shape:** it kills every agent but not their `setsid` gates (2026-09-02: two lane_gate runs
+survived a restart the compaction summary presumed had killed them) — `pgrep`/`ls $OUT` BEFORE
+relaunching anything, and brief the re-dispatched agent to REUSE the surviving artifacts.
+**A QUOTA STOP is a different shape (owner ruling 2026-09-08, after the third stop):** a lane that the sandbox's usage limit
+kills (HTTP 429) is never resumed in the sandbox. It continues on the PC, on the route the current routing ruling allows, from a
+continuation brief that names the PIN and the original brief, with its uncommitted work shipped as a `LANE_PATCH`. A lane that
+died AFTER its final gates, with only a comment edit after them, is LANDED, not relaunched: prove its final blob AST-identical
+(docstrings kept, so only `#` comments may differ) to the blob its gates ran on, re-run the gates, land it `GATED-PENDING-VERIFY`,
+and send its verify to the PC (S198A, 2026-09-23: gates run at 16:28Z, the lane killed at about 16:4xZ; final blob 37d94bd
+AST-identical to 515d78b).
 
 (e) **Commit at every boundary between agent handoffs** — a dirty tree across turn-ends burns
 quota and blocks committing finished work.

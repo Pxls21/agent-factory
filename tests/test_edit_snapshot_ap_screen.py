@@ -1,4 +1,4 @@
-"""Tests for .claude/hooks/edit-snapshot.py AP_SCREEN and TEST_SCREEN rows.
+"""Tests for .claude/hooks/edit-snapshot.py: the AP_SCREEN and TEST_SCREEN rows, and pyflakes_delta's fail-soft contract.
 
 8-verify F17: asserts fire/no-fire pairs for AF-AP-33..45 so the screen rows
 have a test gate and cannot be silently weakened.
@@ -487,3 +487,139 @@ class TestAFAP159:
 
     def test_no_fire_on_the_token_map(self):
         assert not self.rx.search("token_line = {t.end_mark.index: t.start_mark.line for t in yaml.scan(content)")
+
+    def test_fires_on_the_right_operand_form(self):
+        # issue #57 F-2: the start line as the RIGHT operand of the sum is the same line map
+        assert self.rx.search("first = 2 + node.start_mark.line")
+
+    def test_no_fire_on_a_right_operand_column(self):
+        # a column offset is not a line map
+        assert not self.rx.search("col = 2 + node.start_mark.column")
+
+
+# ---- AF-AP-139 (AP_SCREEN and TEST_SCREEN): an HTTP stand-in more permissive than the service ----
+
+# tests/test_s0_05_egress.py before E3-b (76f439f^:1579-1583): the embedded server logs the path, never branches on it
+PRE_FIX_S0_05_LISTENER = r'''
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        with open(LOG, 'a') as fh:\n"
+        "            fh.write(self.client_address[0] + ' ' + self.path + '\\n')\n"
+        "        self.send_response(200); self.end_headers(); self.wfile.write(b'{}')\n"
+'''
+
+
+class TestAFAP139:
+    rx = _AP_BY_ID["AF-AP-139"]
+
+    def test_the_same_row_screens_tests(self):
+        # the registry's instance was a test stand-in, and the hook screens /tests/ paths with TEST_SCREEN only
+        assert _TEST_BY_ID["AF-AP-139"] is self.rx
+
+    def test_fires_on_the_pre_fix_s0_05_listener(self):
+        assert self.rx.search(PRE_FIX_S0_05_LISTENER)
+
+    def test_fires_on_a_class_handler_that_always_answers_200(self):
+        assert self.rx.search("    def do_POST(self):\n        body = self.rfile.read(n)\n        self.send_response(200)\n")
+
+    def test_no_fire_on_a_status_keyed_on_the_path(self):
+        # the E3-b fix: the stand-in's status comes from a per-path map
+        assert not self.rx.search("    def do_GET(self):\n        self.send_response(STATUS.get(self.path, 200)); self.end_headers()\n")
+
+    def test_no_fire_when_the_handler_branches_on_the_path(self):
+        src = ('    def do_GET(self):\n        if self.path == "/health":\n            self.send_response(200)\n'
+               "        else:\n            self.send_response(404)\n")
+        assert not self.rx.search(src)
+
+    def test_no_fire_on_a_literal_200_outside_a_handler(self):
+        assert not self.rx.search("    def _stream(self, model):\n        self.send_response(200)\n")
+
+
+# ---- AF-AP-25 (AP_SCREEN): a regex line parser that skips a line it does not recognise ----
+
+class TestAFAP25:
+    rx = _AP_BY_ID["AF-AP-25"]
+
+    def test_fires_on_the_parse_sbom_loop(self):
+        # scripts/vendored_manifest.py parse_sbom (VERIFY-REPIN-a F11's sibling)
+        src = ('    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):\n'
+               '        match = re.fullmatch(r"\\s*- name:\\s*(\\S+)\\s*", line)\n')
+        assert self.rx.search(src)
+
+    def test_fires_past_the_skip_prefix_of_parse_lock(self):
+        src = ('    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):\n'
+               '        if not line.strip() or line.lstrip().startswith("#"):\n'
+               "            continue\n"
+               '        if not line.startswith(" ") and line.endswith(":"):\n'
+               "            section = line[:-1]\n"
+               '            component = ""\n'
+               "            continue\n"
+               '        match = re.fullmatch(r"  ([a-z0-9][a-z0-9-]*):", line)\n')
+        assert self.rx.search(src)
+
+    def test_no_fire_on_a_jsonl_loop(self):
+        # json.loads raises on a malformed line: the loop cannot skip one silently
+        assert not self.rx.search("    for line in path.read_text().splitlines():\n        rows.append(json.loads(line))\n")
+
+    def test_no_fire_on_a_single_value_match(self):
+        assert not self.rx.search('    if not re.fullmatch(r"[0-9a-f]{40}", sha):\n        raise ManifestError(sha)\n')
+
+
+# ---- AF-AP-89 (AP_SCREEN): a doubled escape inside a double-quoted bridge argument (AF-AP-162) ----
+
+class TestAFAP89:
+    rx = _AP_BY_ID["AF-AP-89"]
+
+    def test_fires_on_the_t94_doubled_command_substitution(self):
+        # T94's poll probe (scripts/pc_lane.sh, 2026-09-23): the lookup ran in the sandbox
+        assert self.rx.search(r'probe="$(bridge "! kill -0 \\$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid 2>/dev/null) 2>/dev/null && echo READY")"')
+
+    def test_fires_on_a_doubled_escaped_quote_through_pc_sh(self):
+        assert self.rx.search(r'bash scripts/pc.sh "test ! -f $D/lane.pid && [ -n \\\"$X\\\" ] && echo RUNNING"')
+
+    def test_no_fire_on_the_single_escape(self):
+        # the correct form: the substitution is escaped once and resolves on the PC
+        assert not self.rx.search(r'probe="$(bridge "kill -0 \$(cat $PC_AF_REPO/.lanes/$LANE_ID/lane.pid) 2>/dev/null && echo RUNNING")"')
+
+    def test_no_fire_outside_a_bridge_argument(self):
+        assert not self.rx.search(r'echo "a literal \\$(date) for the log"')
+
+    def test_no_fire_after_the_argument_closes(self):
+        assert not self.rx.search(r'bridge "uptime"; echo "\\$(date)"')
+
+
+# ---- AF-AP-44, the hook instance: pyflakes_delta is a tell, never a blocker ----
+# 2026-09-23 (the D-048 PC run, VERIFY-REPIN-a F4): with AF_VENV unset the venv path is under /root, and a lane user
+# (/root mode 0550) got PermissionError from Path.exists() outside the function's try, so the hook crashed (three
+# harness suites red in a bare PC shell). Root in the sandbox is never refused by the kernel, so each test makes one
+# probe of the venv path raise that error.
+
+def test_pyflakes_delta_is_empty_when_the_venv_probe_raises(monkeypatch, tmp_path):
+    path_cls = type(Path())
+    real_exists = path_cls.exists
+
+    def exists(self, *args, **kwargs):
+        if str(self) == _mod._VENV_PY:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(path_cls, "exists", exists)
+    edited = tmp_path / "edited.py"
+    edited.write_text("import os\n", encoding="utf-8")
+    assert _mod.pyflakes_delta(str(edited), "import os\n") == []
+
+
+def test_pyflakes_delta_is_empty_when_running_the_venv_python_raises(monkeypatch, tmp_path):
+    path_cls = type(Path())
+    real_exists, real_run = path_cls.exists, _mod.subprocess.run
+    monkeypatch.setattr(path_cls, "exists", lambda self, *a, **kw: str(self) == _mod._VENV_PY or real_exists(self, *a, **kw))
+
+    def run(argv, *args, **kwargs):
+        if argv[0] == _mod._VENV_PY:
+            raise PermissionError(13, "Permission denied", argv[0])
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(_mod.subprocess, "run", run)
+    edited = tmp_path / "edited.py"
+    edited.write_text("import os\n", encoding="utf-8")
+    assert _mod.pyflakes_delta(str(edited), "import os\n") == []
