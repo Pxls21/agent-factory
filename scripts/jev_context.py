@@ -14,10 +14,13 @@ The pipeline (the brief's pinned decisions D-1 to D-4):
              lines merge and keep every instrument that found them (D-2). Record rows (registry rows, CLAUDE.md quirk
              segments, commits) stay separate rows and are not files to read (the lane report, DD-8).
   jev_rank() scores at most 48 chunks through scripts/jev.py, one noul per chunk, after a lexical pre-filter (D-3).
-             Only the local endpoint is asked (venue "local", or a pinned loopback url): never the bridge. The query
-             is the question's last 1,000 characters, because the model's window is 1,024 tokens and the server puts
-             the query BEFORE the chunk and cuts from the right: a longer query would cut every chunk off. 1,000 is
-             also jev.rank's own query cut (D-076 (b)), which keeps a query's HEAD: sending more would lose the tail.
+             Only the local endpoint is asked (venue "local", or a pinned loopback url): never the bridge. Every query
+             reaches jev.rank WHOLE (JT2-R1): scrubbed FIRST with the scrub jev.rank applies, then cut to at most
+             1,000 characters as a text that scrub leaves unchanged (fit_scrubbed), so rank's own scrub and its HEAD
+             cut to 1,000 (D-076 (b)) change nothing. The locator keeps the question's END; bug-echo fits each side
+             of its labelled query to 488 characters, so the label and both sides arrive. The server puts the query
+             BEFORE the chunk in the model's 1,024-token window; 1,000 characters leave English text with short
+             chunks room (D-080: a character bound, not a token guarantee).
   render()   the pack, markdown or JSON, under the character budget (default 6,000, hard cap 9,000: AF-AP-183) (D-4).
              Deterministic for fixed inputs and fixed instrument outputs: every order has a total tie-break, and the
              pack holds no timing.
@@ -52,7 +55,7 @@ TEXT_CAP = 400
 MERGE_LINES = 5
 MAX_JEV_CHUNKS = 48
 JEV_BATCH = 8               # chunks per call (at most 48 in all, D-3); see jev_rank
-JEV_QUERY_CHARS = 1000      # = jev.RANK_QUERY_CHARS (D-076 (b)); the tail is kept here, so nothing is cut there
+JEV_QUERY_CHARS = 1000      # = jev.RANK_QUERY_CHARS (D-076 (b)); jev_query fits a query to it AFTER the scrub
 JEV_TIMEOUT = 240.0
 TOP_DEFAULT = 12
 BUDGET_DEFAULT = 6000
@@ -752,10 +755,32 @@ def jev_text(c):
     return "%s (%s)\n%s" % (where, "+".join(c["instruments"]), c["text"])
 
 
+def fit_scrubbed(text, n, keep="tail"):
+    """A text as it may go to jev.rank, at most n characters (JT2-R1; VERIFY-JT1R1-JT2 F-20, F-21): scrubbed FIRST (the
+    scrub can lengthen it: an 8-character value becomes the 10-character `<redacted>`; a cut first can also leave a
+    value whose name it cut off, AF-AP-127), stripped, then its LONGEST tail (keep="tail") or head ("head") of at most
+    n characters that the scrub leaves unchanged. A cut can split a token the scrub reads (a head cut inside a
+    `<redacted>` after a name leaves 8-9 value characters that a second scrub regrows; a tail cut can expose a run at a
+    new word boundary), so the cut shortens one character at a time until the scrub changes nothing: jev.rank's own
+    scrub, then its cut, are no-ops. Ends: "" is unchanged. None without the scrubber: nothing may be sent."""
+    if _scrub is None:
+        return None
+    s = _scrub(str(text)).strip()
+    n = min(n, len(s))
+    while n > 0:
+        cut = s[-n:] if keep == "tail" else s[:n]
+        if _scrub(cut) == cut:
+            return cut
+        n -= 1
+    return ""
+
+
 def jev_query(text):
-    """The question's last JEV_QUERY_CHARS characters (the model's window; see the module docstring)."""
-    t = str(text).strip()
-    return t[-JEV_QUERY_CHARS:]
+    """The query jev.rank gets WHOLE: the question's END, scrubbed first and fitted to JEV_QUERY_CHARS =
+    jev.RANK_QUERY_CHARS (fit_scrubbed, keep="tail"). A query its builder already fitted (bug-echo's labelled query)
+    arrives as built, its outer whitespace stripped. None for None (bug-echo without the scrubber) and without the
+    scrubber."""
+    return None if text is None else fit_scrubbed(text, JEV_QUERY_CHARS, "tail")
 
 
 _JEV_LOCK = threading.Lock()
@@ -776,13 +801,15 @@ def jev_rank(query, chunks, instructions=None, url=None, timeout=JEV_TIMEOUT, lo
     else:
         opts["venue"] = "local"
     items = [{"id": c["id"], "text": jev_text(c)} for c in sent]
+    q = jev_query(query)        # once for every batch; rank's scrub and its cut leave it as it is (JT2-R1)
+    if q is None:
+        return None, "the query is not sent: the scrubber (scripts/transcript_export.py) did not import", sent
     scores, n = {}, (len(items) + JEV_BATCH - 1) // JEV_BATCH
     for b in range(n):
         # small calls: the server answers under ONE lock (laya_systemone_server.py do_POST), and the endpoint is shared
         # with other lanes; each chunk is its own model call either way, so a batch changes no score
         with _JEV_LOCK:
-            res = jev.rank(jev_query(query), items[b * JEV_BATCH:(b + 1) * JEV_BATCH],
-                           instructions or jev.RANK_INSTRUCTIONS, **opts)
+            res = jev.rank(q, items[b * JEV_BATCH:(b + 1) * JEV_BATCH], instructions or jev.RANK_INSTRUCTIONS, **opts)
             reason = jev.last_reason
         if res is None:      # all or nothing: a partial ranking is not offered as a ranking
             return None, clean("call %d of %d: %s" % (b + 1, n, reason or "no answer"))[:NOTE_CHARS], sent

@@ -13,8 +13,10 @@ import importlib.util
 import json
 import os
 import pathlib
+import random
 import shutil
 import socket
+import string
 import subprocess
 import sys
 import threading
@@ -415,6 +417,185 @@ def test_echo_reads_a_patch_file_and_jev_down_is_unranked(echo_repo, tmp_path):
     assert rc == 0, err
     assert "Jev unavailable: call 1 of 1: url: connection refused (unranked)" in out
     assert echo_sites(out)[0] == "scripts/b.py:5"
+
+
+# ---------- JT2-R1: every Jev query reaches jev.rank whole (VERIFY-JT1R1-JT2 F-20, F-21) ----------
+
+def _scrub(text):
+    import transcript_export                # the scrubber jev.rank applies; scripts/ is on the path once jev_echo loads
+    return transcript_export.scrub(text)
+
+
+def _racy_before(notes):
+    """BEFORE for a.py with `notes` comment lines inside the racy function: FAKE 8-character named values, which the
+    scrub lengthens to the 10-character `<redacted>`."""
+    note = "".join("    # racy note %02d: password=QZJ8%04d token=X4Z9%04d\n" % (i, i, i) for i in range(notes))
+    head, tail = BEFORE.format(n="a").rsplit('\n    return "gone"\n', 1)      # before the function's last line
+    return head + "\n" + note + '    return "gone"\n' + tail
+
+
+def _fixed_after(notes):
+    return AFTER_A + "".join("    # fixed note %02d: passwd=QZJ9%04d secret=X4Z8%04d\n" % (i, i, i) for i in range(notes))
+
+
+@NEEDS_RG
+@NEEDS_GIT
+@pytest.mark.parametrize("added_notes, pin_built", [(16, 1144), (7, 1029)], ids=["both-sides-long", "one-side-long"])
+def test_the_echo_query_reaches_jev_whole_at_its_maximum_size(tmp_path, double, added_notes, pin_built):
+    """F-20: bug-echo's labelled query, its sides over the old 560-character share (both, like 40543ab's 1,144; or one,
+    like de06db6's 1,013), reaches Jev WHOLE: label first, both sides, at most 1,000 characters, a text the scrub
+    leaves unchanged, so jev.rank cuts nothing. Each side is scrubbed first (FAKE values), then keeps its head."""
+    repo = tmp_path / "repo"
+    write(repo, {"scripts/a.py": _racy_before(16), "scripts/b.py": BEFORE.format(n="b"), "scripts/c.py": CONFIG})
+    git(repo, "init", "-q")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "init")
+    write(repo, {"scripts/a.py": _fixed_after(added_notes)})
+    git(repo, "commit", "-qam", "fix the /proc race in a.py")
+    d = double(lambda text: 0.95 if "scripts/c.py" in text else 0.1)
+    rc, out, err = run(ECHO, "--diff", "HEAD", "--root", str(repo), "--order", "jev", "--jev-url", d.url,
+                       "--instruments", "rg-token,rg-shape", "--no-jev-log")
+    assert rc == 0, err
+    assert d.requests and "ranking: Jev reorders the lexical order's selection" in out
+    (q,) = {r["state"]["query"] for r in d.requests}
+    assert q.startswith("the defect: ") and q.count("; fixed as: ") == 1, q[:80]     # the PIN cut the label here
+    show = subprocess.run(["git", "-C", str(repo), "show", "--format=", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout
+    removed, added, _, _ = echo.defect(echo.parse_patch(show))
+    raw_removed, raw_added = "\n".join(removed), "\n".join(added)
+    assert len("the defect: %s; fixed as: %s" % (raw_removed[:560], raw_added[:560])) == pin_built   # the old shape
+    a, b = _scrub(raw_removed).strip()[:488], _scrub(raw_added).strip()[:488]
+    assert _scrub(a) == a and _scrub(b) == b                  # this fixture's cuts split no scrub token
+    assert q == ("the defect: %s; fixed as: %s" % (a, b)).strip()
+    assert len(q) <= 1000 and _scrub(q) == q and "QZJ" not in q and "X4Z" not in q
+
+
+@NEEDS_RG
+@NEEDS_GIT
+def test_the_locator_query_keeps_its_last_words_after_the_scrub(locate_repo, double):
+    """F-21 at the command line: the bug text's last 1,000 characters hold FAKE 8-character named values that the scrub
+    lengthens; Jev still gets the text's END (where an error line ends), scrubbed, at most 1,000 characters."""
+    question = QUESTION + " " + "alpha beta gamma " * 60 + " ".join("password=QZJ8%04d" % i for i in range(70)) + \
+        " then open_socket raised: LAST_WORDS_OF_THE_ERROR"
+    assert len(_scrub(question[-1000:])) > 1000                   # de-vacuoused: a raw tail outgrows rank's cut
+    d = double(lambda text: 0.9 if "scripts/net.py" in text else 0.1)
+    rc, out, err = run(LOCATE, question, "--root", str(locate_repo), "--order", "jev", "--jev-url", d.url, *FAST)
+    assert rc == 0, err
+    assert d.requests
+    (q,) = {r["state"]["query"] for r in d.requests}
+    assert q.endswith(" LAST_WORDS_OF_THE_ERROR"), q[-60:]
+    assert q == _scrub(question).strip()[-1000:] and "QZJ8" not in q
+
+
+def _longest_fixed_piece(s, n, keep):
+    """The rule, read as its definition: the longest tail (or head) of s, at most n characters, that the scrub leaves
+    unchanged."""
+    for m in range(min(n, len(s)), -1, -1):
+        piece = s[len(s) - m:] if keep == "tail" else s[:m]
+        if _scrub(piece) == piece:
+            return piece
+
+
+def _generated(rnd, lengthen=False):
+    """One generated text: prose, error lines, FAKE named values of 4-30 characters, provider-shaped FAKE keys, bare
+    `<redacted>` markers, long opaque runs and runs glued to a non-ASCII letter, joined by assorted separators.
+    `lengthen`: only prose, error lines and 8-9 character named values, which the scrub lengthens (F-21's shape)."""
+    alph = string.ascii_letters + string.digits + "_-"
+
+    def val(k):
+        return "".join(rnd.choice(alph) for _ in range(k))
+    prose = [lambda: "E   OSError: open_socket failed at line %d" % rnd.randint(1, 999),
+             lambda: " ".join(rnd.choice(["alpha", "beta", "gamma", "delta"]) for _ in range(rnd.randint(1, 12)))]
+    short = [lambda: "password=QZJ8" + val(rnd.choice([4, 5])), lambda: "token: X4Z9" + val(4),
+             lambda: "api_key=" + val(rnd.choice([8, 9]))]
+    rest = [lambda: "password=QZJ8" + val(rnd.choice([8, 20])), lambda: "token: X4Z9" + val(6),
+            lambda: "api_key=" + val(30), lambda: "Authorization: Bearer QZJ8" + val(8),
+            lambda: "sk-QZJ8" + val(rnd.choice([8, 16])), lambda: "ghp_" + val(24), lambda: "<redacted>",
+            lambda: chr(0xe9) + val(rnd.choice([30, 45, 70])), lambda: val(rnd.choice([10, 41, 90]))]
+    pieces = prose + short * 3 if lengthen else prose + short + rest
+    seps = [" ", "\n", ", ", "; ", "", "\t", " = "]
+    return "".join(rnd.choice(pieces)() + rnd.choice(seps) for _ in range(rnd.randint(40 if lengthen else 1, 160)))
+
+
+def test_every_jev_query_fits_rank_whole_after_the_scrub(double, monkeypatch):
+    """The property sweep (JT2-R1): over generated locator questions and generated bug-echo diffs, plus fixed cuts that
+    split a scrub token (tail cuts on a run and on FAKE keys glued to a letter; a head cut inside `<redacted>` after a
+    name), what the endpoint receives is (1) exactly what JT2 passed to jev.rank, so rank's
+    scrub and its 1,000-character cut change nothing; (2) at most 1,000 characters and unchanged by the scrub; (3) the
+    rule: the locator's query is the longest tail of scrub(question) within 1,000 that the scrub leaves unchanged;
+    bug-echo's is its label with each side's longest head of scrub(side) within 488, label first."""
+    import jev
+    jc = echo.jc
+    passed, real = [], jev.rank
+
+    def spy(query, *args, **kwargs):
+        passed.append(query)
+        return real(query, *args, **kwargs)
+    monkeypatch.setattr(jev, "rank", spy)
+    d = double(lambda text: 0.8 if "chunk 1" in text else 0.2)
+    chunks = [{"id": "k%d" % i, "path": "f%d.py" % i, "line": 1, "instruments": ["rg"], "agreement": 1,
+               "record": False, "text": "chunk %d" % i, "lexical": i} for i in range(2)]
+    rnd = random.Random(20260924)
+    run_on = chr(0xe9) + "A" * 1100                          # a run the whole-text scrub leaves; a tail cut exposes it
+    questions = [_generated(rnd) for _ in range(120)] + [_generated(rnd, lengthen=True) for _ in range(40)]
+    questions += ["x " * 600 + run_on + " LAST_WORDS"]
+    for token in ("sk-QZJ8" + "B" * 20, "ghp_" + "C" * 24):     # FAKE keys glued to a letter: no word boundary before
+        rest = (" then open_socket raised" * 50)[:1000 - len(token) - 11] + " LAST_WORDS"
+        questions.append("x " * 300 + "a" + token + rest)        # ... until the 1,000 cut starts on the key
+    # a side whose 488 cut lands inside `<redacted>` after a name, leaving 8-9 value characters the scrub regrows
+    marker_cut = next(s for s in ("a " * k + "b token: QZJ8abcd and more text after it" for k in range(228, 244))
+                      if _scrub(_scrub(s)[:488]) != _scrub(s)[:488])
+    diffs = [([ln.strip() for ln in _generated(rnd).split("\n") if ln.strip()] or ["x = 1"],
+              [ln.strip() for ln in _generated(rnd).split("\n") if ln.strip()]) for _ in range(120)]
+    diffs += [([marker_cut], [marker_cut]), (["x = 1"], [])]
+    stats = {"pin_lost_end": 0, "tail_unstable": 0, "pin_lost_label": 0, "side_unstable": 0}
+    for q in questions:
+        scores, reason, _ = jc.jev_rank(q, chunks, url=d.url, timeout=5, log=False)
+        assert reason is None, reason
+        got = d.requests[-1]["state"]["query"]
+        s = _scrub(q).strip()
+        want = _longest_fixed_piece(s, 1000, "tail")
+        assert got == passed[-1] == want and len(got) <= jev.RANK_QUERY_CHARS and _scrub(got) == got
+        stats["pin_lost_end"] += len(_scrub(q.strip()[-1000:])) > 1000
+        stats["tail_unstable"] += len(want) < min(1000, len(s))
+    for removed, added in diffs:
+        query = echo.echo_query(removed, added)
+        scores, reason, _ = jc.jev_rank(query, chunks, url=d.url, timeout=5, log=False)
+        assert reason is None, reason
+        got = d.requests[-1]["state"]["query"]
+        sa, sb = _scrub("\n".join(removed)).strip(), _scrub("\n".join(added)).strip()
+        a, b = _longest_fixed_piece(sa, 488, "head"), _longest_fixed_piece(sb, 488, "head")
+        want = ("the defect: %s; fixed as: %s" % (a, b)).strip()
+        assert got == passed[-1] == want and got.startswith("the defect: ")
+        assert len(got) <= jev.RANK_QUERY_CHARS and _scrub(got) == got
+        pin = "the defect: %s; fixed as: %s" % ("\n".join(removed)[:560], "\n".join(added)[:560])
+        stats["pin_lost_label"] += len(_scrub(pin.strip())) > 1000
+        stats["side_unstable"] += (len(a) < min(488, len(sa))) + (len(b) < min(488, len(sb)))
+    # de-vacuoused: the sweep holds cases the PIN code got wrong, and cuts the rule had to settle
+    assert all(v >= 3 for v in stats.values()), stats
+
+
+def test_the_echo_side_budget_is_tied_to_rank_s_cut():
+    """F-20's mutant J4 (SIDE_CHARS 560 -> 900 survived the suite): the side share follows from the query bound and the
+    label, so the labelled query fits jev.rank's cut; and the echo scrubs with the function jev.rank applies."""
+    import jev
+    assert echo.LABEL % ("", "") == "the defect: ; fixed as: "
+    assert echo.SIDE_CHARS == 488 == (jev.RANK_QUERY_CHARS - len(echo.LABEL % ("", ""))) // 2
+    assert echo.jc.JEV_QUERY_CHARS == jev.RANK_QUERY_CHARS and echo.jc._scrub is jev._scrub
+
+
+def test_without_the_scrubber_no_jev_query_is_built_or_sent(double, monkeypatch):
+    """The scrub runs in JT2 now: without scripts/transcript_export.py, jev_query and echo_query build nothing (no
+    crash: the echo builds its query on the default path too), and jev_rank sends nothing and returns the reason
+    (jev.rank would refuse too)."""
+    monkeypatch.setattr(echo.jc, "_scrub", None)
+    assert echo.jc.jev_query("why does it fail") is None and echo.echo_query(["a = 1"], ["a = 2"]) is None
+    d = double(lambda text: 0.9)
+    chunks = [{"id": "k0", "path": "f.py", "line": 1, "instruments": ["rg"], "agreement": 1, "record": False,
+               "text": "chunk 0", "lexical": 0}]
+    scores, reason, sent = echo.jc.jev_rank("why does it fail", chunks, url=d.url, timeout=5, log=False)
+    assert scores is None and d.requests == [] and len(sent) == 1
+    assert reason == "the query is not sent: the scrubber (scripts/transcript_export.py) did not import"
 
 
 def test_echo_with_no_removed_code_line_has_nothing_to_echo(tmp_path):

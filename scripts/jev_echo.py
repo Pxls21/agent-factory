@@ -34,7 +34,9 @@ ECHO_TOP = 10
 ECHO_TOKENS = 6
 ECHO_SHAPES = 2
 CONTEXT = 3
-SIDE_CHARS = 560
+LABEL = "the defect: %s; fixed as: %s"          # D-6's query
+# each side's share AFTER the scrub (488), so the labelled query fits jev.rank's 1,000-character cut whole (F-20)
+SIDE_CHARS = (jc.JEV_QUERY_CHARS - len(LABEL % ("", ""))) // 2
 INSTRUCTIONS = "Does this code show the same defect as the one fixed?"
 NOTE = ("note: a score is a lead, not a verdict: the BUG/WATCH/OK call on each site stays with the model "
         "(KC-J1b; a Jev score is never the only evidence).")
@@ -255,6 +257,14 @@ def candidates(ctx, removed, added, touched, instruments):
     return hits, notes, sorted(set(answered), key=ECHO_INSTRUMENTS.index)
 
 
+def echo_query(removed, added):
+    """D-6's query, WHOLE at jev.rank (JT2-R1; VERIFY-JT1R1-JT2 F-20): each side is scrubbed FIRST, then keeps its
+    longest head within SIDE_CHARS that the scrub leaves unchanged (jc.fit_scrubbed), so the label and both sides fit
+    JEV_QUERY_CHARS and jev_query's tail cut removes nothing. None without the scrubber (Jev is then not asked)."""
+    sides = [jc.fit_scrubbed("\n".join(lines), SIDE_CHARS, "head") for lines in (removed, added)]
+    return None if None in sides else LABEL % tuple(sides)
+
+
 def get_patch(arg, root, tools):
     if os.path.isfile(arg):
         try:
@@ -314,7 +324,7 @@ def main(argv=None):
     else:
         hits, notes, answered = candidates(ctx, removed, added, touched, instruments)
         chunks = jc.merge(hits, jc.words("\n".join(removed)))
-        query = "the defect: %s; fixed as: %s" % ("\n".join(removed)[:SIDE_CHARS], "\n".join(added)[:SIDE_CHARS])
+        query = echo_query(removed, added)
         mode, scores, rank = rank_chunks(a.order, query, chunks, a.top, a, instructions=INSTRUCTIONS,
                                          what="candidate sites")
         if scores is not None:

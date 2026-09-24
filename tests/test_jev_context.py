@@ -429,6 +429,51 @@ def test_jev_call_is_per_chunk_with_the_query_capped_to_its_tail(double):
                                 for cid in ("k0", "k1", "k2")}
 
 
+def test_the_query_keeps_the_questions_end_after_the_scrub_lengthens_it(double):
+    """VERIFY-JT1R1-JT2 F-21 (JT2-R1): the question's last 1,000 characters hold 8-character named values (FAKE) that
+    the scrub turns into the 10-character `<redacted>`. jev.rank scrubs, then keeps a query's HEAD 1,000, so a raw
+    tail cut first lost the question's last words there. The query is scrubbed FIRST, then its tail is taken."""
+    import transcript_export                    # the scrubber jev.rank applies (scripts/ is on the path)
+    d = double(_by_index)
+    question = "HEAD " + "alpha beta gamma " * 60 + " ".join("password=QZJ8%04d" % i for i in range(70)) + \
+        " LAST_WORDS_OF_THE_ERROR"
+    raw_tail = question[-jc.JEV_QUERY_CHARS:]
+    assert len(transcript_export.scrub(raw_tail)) > len(raw_tail)       # de-vacuoused: the scrub lengthens this tail
+    scores, reason, sent = jc.jev_rank(question, _chunks(3), url=d.url, timeout=5, log=False)
+    assert reason is None and set(scores) == {"k0", "k1", "k2"}
+    (req,) = d.requests
+    q = req["state"]["query"]
+    assert q.endswith(" LAST_WORDS_OF_THE_ERROR"), q[-60:]
+    expected = transcript_export.scrub(question).strip()[-jc.JEV_QUERY_CHARS:]
+    assert transcript_export.scrub(expected) == expected                  # this fixture's cut splits no scrub token
+    assert q == expected and len(q) <= jc.JEV_QUERY_CHARS and "QZJ8" not in q
+
+
+def test_jev_rank_asks_the_local_venue_only_never_the_bridge(double, monkeypatch):
+    """VERIFY-JT1R1-JT2 F-23 (JT2 DD-1, D-7: no network but the local endpoint). With no pinned url, every JT2 call to
+    jev.rank names venue "local". The REAL client runs: its local endpoint is the double (never the real server) and
+    its PC venue is a trap. `auto` would walk to the trap (F-10): the double answers no GET, so /health fails there."""
+    import jev
+    d = double(_by_index)
+    monkeypatch.setattr(jev, "LOCAL_URL", d.url)
+    bridge = []
+
+    def trap(path, *args, **kwargs):
+        bridge.append(path)
+        raise jev.Unavailable("the PC venue was asked")
+    monkeypatch.setattr(jev, "_pc", trap)
+    calls, real = [], jev.rank
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(jev, "rank", spy)
+    scores, reason, sent = jc.jev_rank("q", _chunks(20), timeout=5, log=False)
+    assert bridge == [] and [c.get("venue") for c in calls] == ["local"] * 3, (bridge, calls)
+    assert not any("url" in c for c in calls)
+    assert reason is None and len(scores) == 20 and len(d.requests) == 3
+
+
 def test_jev_is_asked_in_batches_of_8_and_every_sent_chunk_is_scored(double):
     d = double(_by_index)
     scores, reason, sent = jc.jev_rank("q", _chunks(20), url=d.url, timeout=5, log=False)
@@ -470,6 +515,7 @@ def test_the_query_bound_leaves_room_for_a_chunk():
     chunk cap the budget was measured with."""
     import jev                                  # on the path once jev_context is loaded
     assert jc.JEV_QUERY_CHARS == 1000 == jev.RANK_QUERY_CHARS and jc.TEXT_CAP == 400
+    assert jc._scrub is jev._scrub              # JT2 fits its query with the very scrub jev.rank applies (JT2-R1)
 
 
 def test_jev_down_is_a_reason_not_an_exception():
