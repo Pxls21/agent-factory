@@ -56,7 +56,7 @@ RECOMMENDATION, never the final gate verdict.
    universe was rejected at launch by the hash-pinned compliance allowlist —
    `validate_universe_proposal` was importable and would have refused in seconds; the miss
    burned an owner kill+relaunch cycle. Corollary: a consumption proof needs a value that
-   DIFFERS from the default — env==default "verified" nothing). **A HOOK's seam is what the harness HANDS it and what
+   DIFFERS from the default — env==default "verified" nothing). **A SHARED value (a constant, a budget, a cut) is a seam with MANY consumers: a change to it is read against EVERY consumer's use, enumerated by the impact tool, never only the one that prompted it** (2026-09-24, VERIFY-JT1R1-JT2 F-20: to align JT2 with a client's new 1,000-character query cut, the coordinator lowered the shared `JEV_QUERY_CHARS` with a tail cut, reasoning from the locator's query; GitNexus had listed 6 impacted symbols; bug-echo's head-first query lost its label, and the locator's own tail broke when the downstream scrub lengthened it, AF-AP-193). **A HOOK's seam is what the harness HANDS it and what
    the model RECEIVES — read both from the harness's own records (the transcript's queue, hook and attachment
    records), never from the rendered chat** (2026-09-24: AF-AP-182's fix keyed the skip on the rendered hand-back line
    while the hook received `<agent-message`; AF-AP-183: both compactions that day delivered a 2 KB preview of setup
