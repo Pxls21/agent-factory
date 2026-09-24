@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 17:1xZ — WHAT IS LIVE NOW (supersedes the 16:3xZ block for the live set; the ledger carries the detail).**
+- **ACCEPTED:** JT1 (the Jev client and hiccup tracker): VERIFY-JT1R1-JT2 MERGE-READY-WITH-FOLLOWUPS; D-080 states the character-budget limit (F-08); issue #72.
+- **LANDED, GATED-PENDING-VERIFY:** FT1 (the Laya fine-tune tooling; 22 passed; VERIFY-FT1 running).
+- **REPAIRS RUNNING (sandbox, Opus 5.5):** JT2-R1 (F-20: the coordinator's own shared tail cut broke bug-echo's query; AF-AP-193); JT3-R1 (the hook stays off).
+- **LIVE, PC:** QJ1 (the Qwen 27B Jev adapter, then J2 on it); MoJev G0 at 16/30.
+- **RUNNING, SANDBOX:** the full codiv labeling of the fine-tune dataset (1,788 rows, from 17:15Z, about 30 minutes).
+- **OPEN OWNER QUESTION:** a short RWKV-7 zero-shot probe inside the no-lanes GPU window.
+
+
 **2026-09-24 16:3xZ — WHAT IS LIVE NOW (this block supersedes the 15:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS (D-079):** simple-jev (Apache-2.0) is the Jev pattern; Qwen 27B (the running vLLM, through OmniRoute) is the local teacher; Laya keeps short decisions; RWKV-7 Goose World2.9 0.4B trains on LONG inputs (8k-32k, question first); J2 plus a new long-input test decide. Pins in `upstream.lock.yaml` (`advisory_jev_runtimes.simple-jev`, `advisory_models.rwkv7-goose-world2.9-0.4b`).
 - **KEY RESULTS:** OpenJev (J2 section 7): whole findings 0.54 accuracy, 4/7 blockers (Haiku 0.60, Laya 0.17); registry matching level with lexical at top 1 (0.58 vs 0.59), ahead at top 3. Task #234 closed.
@@ -708,6 +717,9 @@ build-status or count disagreement.
 - Stage 0 proof pack: 1 of 18 increments closed (#1), #2a landed; the twelve proofs ABSENT by design
 
 ## Last updated
+
+2026-09-24 17:1xZ — FT1 landed; JT1 accepted (D-080); JT2 NOT-READY on the coordinator's own F-20, JT2-R1 running; VERIFY-FT1 running; the codiv labeling started; AF-AP-192 and AF-AP-193; issue #72.
+
 
 2026-09-24 16:3xZ — D-079 (simple-jev; Qwen 27B teacher; RWKV-7 0.4B for long inputs); OpenJev J2 done (0.54 on whole findings); JT1-R1 landed with the JT2 alignment; VERIFY-JT3 NOT-READY, JT3-R1 running; QJ1 launched on the PC; the disk-full fix.
 
