@@ -1,0 +1,2148 @@
+{
+ "majority_label": "AF-AP-30",
+ "n": 100,
+ "per_sample": [
+  {
+   "jev": [
+    "AF-AP-58",
+    "AF-AP-154",
+    "AF-AP-184"
+   ],
+   "jev_scores": {
+    "AF-AP-154": 0.7855,
+    "AF-AP-184": 0.756,
+    "AF-AP-58": 0.795
+   },
+   "labels": [
+    "AF-AP-182",
+    "AF-AP-183",
+    "AF-AP-184"
+   ],
+   "lexical": [
+    "AF-AP-150",
+    "AF-AP-182",
+    "AF-AP-183"
+   ],
+   "line": 10
+  },
+  {
+   "jev": [
+    "AF-AP-148",
+    "AF-AP-58",
+    "AF-AP-171"
+   ],
+   "jev_scores": {
+    "AF-AP-148": 0.754,
+    "AF-AP-171": 0.7245,
+    "AF-AP-58": 0.7523
+   },
+   "labels": [
+    "AF-AP-182"
+   ],
+   "lexical": [
+    "AF-AP-182",
+    "AF-AP-150",
+    "AF-AP-19"
+   ],
+   "line": 11
+  },
+  {
+   "jev": [
+    "AF-AP-60",
+    "AF-AP-57",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-57": 0.6943,
+    "AF-AP-60": 0.7,
+    "AF-AP-73": 0.6855
+   },
+   "labels": [
+    "AF-AP-181"
+   ],
+   "lexical": [
+    "AF-AP-81",
+    "AF-AP-114",
+    "AF-AP-46"
+   ],
+   "line": 12
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-16",
+    "AF-AP-154"
+   ],
+   "jev_scores": {
+    "AF-AP-154": 0.704,
+    "AF-AP-16": 0.7206,
+    "AF-AP-76": 0.7348
+   },
+   "labels": [
+    "AF-AP-180"
+   ],
+   "lexical": [
+    "AF-AP-180",
+    "AF-AP-67",
+    "AF-AP-170"
+   ],
+   "line": 16
+  },
+  {
+   "jev": [
+    "AF-AP-58",
+    "AF-AP-96",
+    "AF-AP-44"
+   ],
+   "jev_scores": {
+    "AF-AP-44": 0.6628,
+    "AF-AP-58": 0.6986,
+    "AF-AP-96": 0.6651
+   },
+   "labels": [
+    "AF-AP-179"
+   ],
+   "lexical": [
+    "AF-AP-179",
+    "AF-AP-36",
+    "AF-AP-82"
+   ],
+   "line": 21
+  },
+  {
+   "jev": [
+    "AF-AP-162",
+    "AF-AP-117",
+    "AF-AP-24"
+   ],
+   "jev_scores": {
+    "AF-AP-117": 0.7189,
+    "AF-AP-162": 0.7277,
+    "AF-AP-24": 0.7124
+   },
+   "labels": [
+    "AF-AP-92"
+   ],
+   "lexical": [
+    "AF-AP-34",
+    "AF-AP-4",
+    "AF-AP-7"
+   ],
+   "line": 24
+  },
+  {
+   "jev": [
+    "AF-AP-109",
+    "AF-AP-73",
+    "AF-AP-96"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7692,
+    "AF-AP-73": 0.7379,
+    "AF-AP-96": 0.7366
+   },
+   "labels": [
+    "AF-AP-177",
+    "AF-AP-178"
+   ],
+   "lexical": [
+    "AF-AP-170",
+    "AF-AP-109",
+    "AF-AP-110"
+   ],
+   "line": 26
+  },
+  {
+   "jev": [
+    "AF-AP-109",
+    "AF-AP-107",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-107": 0.7229,
+    "AF-AP-109": 0.751,
+    "AF-AP-112": 0.7225
+   },
+   "labels": [
+    "AF-AP-173",
+    "AF-AP-176"
+   ],
+   "lexical": [
+    "AF-AP-32",
+    "AF-AP-49",
+    "AF-AP-107"
+   ],
+   "line": 28
+  },
+  {
+   "jev": [
+    "AF-AP-101",
+    "AF-AP-121",
+    "AF-AP-60"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.7897,
+    "AF-AP-121": 0.7679,
+    "AF-AP-60": 0.749
+   },
+   "labels": [
+    "AF-AP-172"
+   ],
+   "lexical": [
+    "AF-AP-182",
+    "AF-AP-183",
+    "AF-AP-19"
+   ],
+   "line": 30
+  },
+  {
+   "jev": [
+    "AF-AP-112",
+    "AF-AP-117",
+    "AF-AP-33"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7562,
+    "AF-AP-117": 0.75,
+    "AF-AP-33": 0.7291
+   },
+   "labels": [
+    "AF-AP-171"
+   ],
+   "lexical": [
+    "AF-AP-171",
+    "AF-AP-16",
+    "AF-AP-117"
+   ],
+   "line": 32
+  },
+  {
+   "jev": [
+    "AF-AP-110",
+    "AF-AP-154",
+    "AF-AP-131"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7908,
+    "AF-AP-131": 0.7602,
+    "AF-AP-154": 0.7704
+   },
+   "labels": [
+    "AF-AP-131",
+    "AF-AP-146"
+   ],
+   "lexical": [
+    "AF-AP-111",
+    "AF-AP-8",
+    "AF-AP-16"
+   ],
+   "line": 34
+  },
+  {
+   "jev": [
+    "AF-AP-152",
+    "AF-AP-109",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7524,
+    "AF-AP-110": 0.7424,
+    "AF-AP-152": 0.7814
+   },
+   "labels": [
+    "AF-AP-170"
+   ],
+   "lexical": [
+    "AF-AP-170",
+    "AF-AP-105",
+    "AF-AP-111"
+   ],
+   "line": 36
+  },
+  {
+   "jev": [
+    "AF-AP-56",
+    "AF-AP-11",
+    "AF-AP-117"
+   ],
+   "jev_scores": {
+    "AF-AP-11": 0.7394,
+    "AF-AP-117": 0.7329,
+    "AF-AP-56": 0.7767
+   },
+   "labels": [
+    "AF-AP-169"
+   ],
+   "lexical": [
+    "AF-AP-169",
+    "AF-AP-46",
+    "AF-AP-82"
+   ],
+   "line": 38
+  },
+  {
+   "jev": [
+    "AF-AP-98",
+    "AF-AP-102",
+    "AF-AP-171"
+   ],
+   "jev_scores": {
+    "AF-AP-102": 0.7309,
+    "AF-AP-171": 0.7172,
+    "AF-AP-98": 0.7485
+   },
+   "labels": [
+    "AF-AP-168"
+   ],
+   "lexical": [
+    "AF-AP-112",
+    "AF-AP-114",
+    "AF-AP-140"
+   ],
+   "line": 40
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-112",
+    "AF-AP-117"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7195,
+    "AF-AP-114": 0.7548,
+    "AF-AP-117": 0.7184
+   },
+   "labels": [
+    "AF-AP-166",
+    "AF-AP-167"
+   ],
+   "lexical": [
+    "AF-AP-114",
+    "AF-AP-112",
+    "AF-AP-182"
+   ],
+   "line": 42
+  },
+  {
+   "jev": [
+    "AF-AP-162",
+    "AF-AP-63",
+    "AF-AP-33"
+   ],
+   "jev_scores": {
+    "AF-AP-162": 0.7439,
+    "AF-AP-33": 0.7109,
+    "AF-AP-63": 0.7228
+   },
+   "labels": [
+    "AF-AP-165"
+   ],
+   "lexical": [
+    "AF-AP-94",
+    "AF-AP-133",
+    "AF-AP-165"
+   ],
+   "line": 44
+  },
+  {
+   "jev": [
+    "AF-AP-56",
+    "AF-AP-174",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.737,
+    "AF-AP-174": 0.7544,
+    "AF-AP-56": 0.8073
+   },
+   "labels": [
+    "AF-AP-164"
+   ],
+   "lexical": [
+    "AF-AP-155",
+    "AF-AP-164",
+    "AF-AP-19"
+   ],
+   "line": 46
+  },
+  {
+   "jev": [
+    "AF-AP-110",
+    "AF-AP-117",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7355,
+    "AF-AP-112": 0.696,
+    "AF-AP-117": 0.7155
+   },
+   "labels": [
+    "AF-AP-163"
+   ],
+   "lexical": [
+    "AF-AP-163",
+    "AF-AP-117",
+    "AF-AP-181"
+   ],
+   "line": 48
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-112",
+    "AF-AP-162"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7823,
+    "AF-AP-116": 0.8064,
+    "AF-AP-162": 0.7818
+   },
+   "labels": [
+    "AF-AP-162"
+   ],
+   "lexical": [
+    "AF-AP-105",
+    "AF-AP-111",
+    "AF-AP-150"
+   ],
+   "line": 50
+  },
+  {
+   "jev": [
+    "AF-AP-47",
+    "AF-AP-162",
+    "AF-AP-81"
+   ],
+   "jev_scores": {
+    "AF-AP-162": 0.7875,
+    "AF-AP-47": 0.8021,
+    "AF-AP-81": 0.7664
+   },
+   "labels": [
+    "AF-AP-80",
+    "AF-AP-89",
+    "AF-AP-162"
+   ],
+   "lexical": [
+    "AF-AP-162",
+    "AF-AP-76",
+    "AF-AP-81"
+   ],
+   "line": 52
+  },
+  {
+   "jev": [
+    "AF-AP-170",
+    "AF-AP-81",
+    "AF-AP-171"
+   ],
+   "jev_scores": {
+    "AF-AP-170": 0.7919,
+    "AF-AP-171": 0.7724,
+    "AF-AP-81": 0.7799
+   },
+   "labels": [
+    "AF-AP-67"
+   ],
+   "lexical": [
+    "AF-AP-67",
+    "AF-AP-110",
+    "AF-AP-112"
+   ],
+   "line": 67
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-156",
+    "AF-AP-102"
+   ],
+   "jev_scores": {
+    "AF-AP-102": 0.7519,
+    "AF-AP-116": 0.8174,
+    "AF-AP-156": 0.7618
+   },
+   "labels": [
+    "AF-AP-42",
+    "AF-AP-156"
+   ],
+   "lexical": [
+    "AF-AP-156",
+    "AF-AP-69",
+    "AF-AP-105"
+   ],
+   "line": 73
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-47",
+    "AF-AP-94"
+   ],
+   "jev_scores": {
+    "AF-AP-47": 0.7461,
+    "AF-AP-76": 0.78,
+    "AF-AP-94": 0.7458
+   },
+   "labels": [
+    "AF-AP-73",
+    "AF-AP-153"
+   ],
+   "lexical": [
+    "AF-AP-66",
+    "AF-AP-29",
+    "AF-AP-73"
+   ],
+   "line": 81
+  },
+  {
+   "jev": [
+    "AF-AP-121",
+    "AF-AP-112",
+    "AF-AP-81"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7662,
+    "AF-AP-121": 0.7861,
+    "AF-AP-81": 0.7182
+   },
+   "labels": [
+    "AF-AP-155"
+   ],
+   "lexical": [
+    "AF-AP-155",
+    "AF-AP-172",
+    "AF-AP-12"
+   ],
+   "line": 85
+  },
+  {
+   "jev": [
+    "AF-AP-101",
+    "AF-AP-83",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.7753,
+    "AF-AP-112": 0.755,
+    "AF-AP-83": 0.7599
+   },
+   "labels": [
+    "AF-AP-154"
+   ],
+   "lexical": [
+    "AF-AP-154",
+    "AF-AP-67",
+    "AF-AP-111"
+   ],
+   "line": 91
+  },
+  {
+   "jev": [
+    "AF-AP-92",
+    "AF-AP-116",
+    "AF-AP-96"
+   ],
+   "jev_scores": {
+    "AF-AP-116": 0.7413,
+    "AF-AP-92": 0.7845,
+    "AF-AP-96": 0.7299
+   },
+   "labels": [
+    "AF-AP-131"
+   ],
+   "lexical": [
+    "AF-AP-67",
+    "AF-AP-92",
+    "AF-AP-96"
+   ],
+   "line": 100
+  },
+  {
+   "jev": [
+    "AF-AP-98",
+    "AF-AP-109",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7584,
+    "AF-AP-110": 0.7428,
+    "AF-AP-98": 0.7749
+   },
+   "labels": [
+    "AF-AP-146"
+   ],
+   "lexical": [
+    "AF-AP-146",
+    "AF-AP-111",
+    "AF-AP-67"
+   ],
+   "line": 113
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-60",
+    "AF-AP-167"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.7645,
+    "AF-AP-167": 0.7353,
+    "AF-AP-60": 0.7567
+   },
+   "labels": [
+    "AF-AP-120",
+    "AF-AP-143"
+   ],
+   "lexical": [
+    "AF-AP-120",
+    "AF-AP-20",
+    "AF-AP-62"
+   ],
+   "line": 121
+  },
+  {
+   "jev": [
+    "AF-AP-109",
+    "AF-AP-77",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7725,
+    "AF-AP-112": 0.7544,
+    "AF-AP-77": 0.7628
+   },
+   "labels": [
+    "AF-AP-140"
+   ],
+   "lexical": [
+    "AF-AP-140",
+    "AF-AP-111",
+    "AF-AP-112"
+   ],
+   "line": 125
+  },
+  {
+   "jev": [
+    "AF-AP-101",
+    "AF-AP-156",
+    "AF-AP-24"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.8174,
+    "AF-AP-156": 0.7788,
+    "AF-AP-24": 0.7735
+   },
+   "labels": [
+    "AF-AP-24",
+    "AF-AP-139"
+   ],
+   "lexical": [
+    "AF-AP-166",
+    "AF-AP-139",
+    "AF-AP-156"
+   ],
+   "line": 127
+  },
+  {
+   "jev": [
+    "AF-AP-121",
+    "AF-AP-56",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.8009,
+    "AF-AP-121": 0.8194,
+    "AF-AP-56": 0.8136
+   },
+   "labels": [
+    "AF-AP-126",
+    "AF-AP-138"
+   ],
+   "lexical": [
+    "AF-AP-36",
+    "AF-AP-112",
+    "AF-AP-8"
+   ],
+   "line": 129
+  },
+  {
+   "jev": [
+    "AF-AP-83",
+    "AF-AP-63",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.6209,
+    "AF-AP-63": 0.6498,
+    "AF-AP-83": 0.677
+   },
+   "labels": [
+    "AF-AP-130"
+   ],
+   "lexical": [
+    "AF-AP-130",
+    "AF-AP-6",
+    "AF-AP-11"
+   ],
+   "line": 131
+  },
+  {
+   "jev": [
+    "AF-AP-38",
+    "AF-AP-129",
+    "AF-AP-41"
+   ],
+   "jev_scores": {
+    "AF-AP-129": 0.7178,
+    "AF-AP-38": 0.736,
+    "AF-AP-41": 0.7155
+   },
+   "labels": [
+    "AF-AP-129"
+   ],
+   "lexical": [
+    "AF-AP-39",
+    "AF-AP-129",
+    "AF-AP-161"
+   ],
+   "line": 135
+  },
+  {
+   "jev": [
+    "AF-AP-162",
+    "AF-AP-128",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7052,
+    "AF-AP-128": 0.709,
+    "AF-AP-162": 0.7307
+   },
+   "labels": [
+    "AF-AP-128"
+   ],
+   "lexical": [
+    "AF-AP-128",
+    "AF-AP-22",
+    "AF-AP-24"
+   ],
+   "line": 137
+  },
+  {
+   "jev": [
+    "AF-AP-58",
+    "AF-AP-54",
+    "AF-AP-44"
+   ],
+   "jev_scores": {
+    "AF-AP-44": 0.7455,
+    "AF-AP-54": 0.764,
+    "AF-AP-58": 0.7939
+   },
+   "labels": [
+    "AF-AP-37"
+   ],
+   "lexical": [
+    "AF-AP-164",
+    "AF-AP-36",
+    "AF-AP-37"
+   ],
+   "line": 141
+  },
+  {
+   "jev": [
+    "AF-AP-92",
+    "AF-AP-164",
+    "AF-AP-171"
+   ],
+   "jev_scores": {
+    "AF-AP-164": 0.756,
+    "AF-AP-171": 0.7527,
+    "AF-AP-92": 0.8442
+   },
+   "labels": [
+    "AF-AP-127"
+   ],
+   "lexical": [
+    "AF-AP-127",
+    "AF-AP-149",
+    "AF-AP-19"
+   ],
+   "line": 143
+  },
+  {
+   "jev": [
+    "AF-AP-54",
+    "AF-AP-112",
+    "AF-AP-60"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7138,
+    "AF-AP-54": 0.7265,
+    "AF-AP-60": 0.7133
+   },
+   "labels": [
+    "AF-AP-126"
+   ],
+   "lexical": [
+    "AF-AP-82",
+    "AF-AP-87",
+    "AF-AP-112"
+   ],
+   "line": 145
+  },
+  {
+   "jev": [
+    "AF-AP-174",
+    "AF-AP-154",
+    "AF-AP-117"
+   ],
+   "jev_scores": {
+    "AF-AP-117": 0.7442,
+    "AF-AP-154": 0.748,
+    "AF-AP-174": 0.7658
+   },
+   "labels": [
+    "AF-AP-125"
+   ],
+   "lexical": [
+    "AF-AP-125",
+    "AF-AP-112",
+    "AF-AP-81"
+   ],
+   "line": 147
+  },
+  {
+   "jev": [
+    "AF-AP-112",
+    "AF-AP-148",
+    "AF-AP-54"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7585,
+    "AF-AP-148": 0.7451,
+    "AF-AP-54": 0.7409
+   },
+   "labels": [
+    "AF-AP-37"
+   ],
+   "lexical": [
+    "AF-AP-148",
+    "AF-AP-36",
+    "AF-AP-54"
+   ],
+   "line": 149
+  },
+  {
+   "jev": [
+    "AF-AP-56",
+    "AF-AP-174",
+    "AF-AP-151"
+   ],
+   "jev_scores": {
+    "AF-AP-151": 0.7138,
+    "AF-AP-174": 0.7181,
+    "AF-AP-56": 0.7582
+   },
+   "labels": [
+    "AF-AP-124"
+   ],
+   "lexical": [
+    "AF-AP-19",
+    "AF-AP-160",
+    "AF-AP-56"
+   ],
+   "line": 151
+  },
+  {
+   "jev": [
+    "AF-AP-83",
+    "AF-AP-123",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-123": 0.6574,
+    "AF-AP-73": 0.6506,
+    "AF-AP-83": 0.6901
+   },
+   "labels": [
+    "AF-AP-123"
+   ],
+   "lexical": [
+    "AF-AP-123",
+    "AF-AP-27",
+    "AF-AP-73"
+   ],
+   "line": 155
+  },
+  {
+   "jev": [
+    "AF-AP-81",
+    "AF-AP-174",
+    "AF-AP-148"
+   ],
+   "jev_scores": {
+    "AF-AP-148": 0.7541,
+    "AF-AP-174": 0.756,
+    "AF-AP-81": 0.772
+   },
+   "labels": [
+    "AF-AP-122"
+   ],
+   "lexical": [
+    "AF-AP-122",
+    "AF-AP-155",
+    "AF-AP-174"
+   ],
+   "line": 157
+  },
+  {
+   "jev": [
+    "AF-AP-168",
+    "AF-AP-109",
+    "AF-AP-76"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7731,
+    "AF-AP-168": 0.7761,
+    "AF-AP-76": 0.7594
+   },
+   "labels": [
+    "AF-AP-120"
+   ],
+   "lexical": [
+    "AF-AP-16",
+    "AF-AP-76",
+    "AF-AP-110"
+   ],
+   "line": 159
+  },
+  {
+   "jev": [
+    "AF-AP-99",
+    "AF-AP-81",
+    "AF-AP-162"
+   ],
+   "jev_scores": {
+    "AF-AP-162": 0.7475,
+    "AF-AP-81": 0.7567,
+    "AF-AP-99": 0.7801
+   },
+   "labels": [
+    "AF-AP-121"
+   ],
+   "lexical": [
+    "AF-AP-121",
+    "AF-AP-65",
+    "AF-AP-62"
+   ],
+   "line": 161
+  },
+  {
+   "jev": [
+    "AF-AP-60",
+    "AF-AP-57",
+    "AF-AP-114"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.7541,
+    "AF-AP-57": 0.7617,
+    "AF-AP-60": 0.8136
+   },
+   "labels": [
+    "AF-AP-120"
+   ],
+   "lexical": [
+    "AF-AP-120",
+    "AF-AP-62",
+    "AF-AP-73"
+   ],
+   "line": 163
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-171",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7066,
+    "AF-AP-114": 0.74,
+    "AF-AP-171": 0.7285
+   },
+   "labels": [
+    "AF-AP-119"
+   ],
+   "lexical": [
+    "AF-AP-119",
+    "AF-AP-81",
+    "AF-AP-112"
+   ],
+   "line": 165
+  },
+  {
+   "jev": [
+    "AF-AP-118",
+    "AF-AP-149",
+    "AF-AP-103"
+   ],
+   "jev_scores": {
+    "AF-AP-103": 0.7065,
+    "AF-AP-118": 0.723,
+    "AF-AP-149": 0.7068
+   },
+   "labels": [
+    "AF-AP-118"
+   ],
+   "lexical": [
+    "AF-AP-118",
+    "AF-AP-111",
+    "AF-AP-131"
+   ],
+   "line": 167
+  },
+  {
+   "jev": [
+    "AF-AP-58",
+    "AF-AP-109",
+    "AF-AP-117"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.6997,
+    "AF-AP-117": 0.6817,
+    "AF-AP-58": 0.7962
+   },
+   "labels": [
+    "AF-AP-117"
+   ],
+   "lexical": [
+    "AF-AP-117",
+    "AF-AP-82",
+    "AF-AP-109"
+   ],
+   "line": 169
+  },
+  {
+   "jev": [
+    "AF-AP-44",
+    "AF-AP-117",
+    "AF-AP-30"
+   ],
+   "jev_scores": {
+    "AF-AP-117": 0.715,
+    "AF-AP-30": 0.7141,
+    "AF-AP-44": 0.7215
+   },
+   "labels": [
+    "AF-AP-67"
+   ],
+   "lexical": [
+    "AF-AP-175",
+    "AF-AP-67",
+    "AF-AP-82"
+   ],
+   "line": 175
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-96",
+    "AF-AP-174"
+   ],
+   "jev_scores": {
+    "AF-AP-116": 0.7681,
+    "AF-AP-174": 0.7592,
+    "AF-AP-96": 0.7623
+   },
+   "labels": [
+    "AF-AP-116"
+   ],
+   "lexical": [
+    "AF-AP-116",
+    "AF-AP-1",
+    "AF-AP-42"
+   ],
+   "line": 189
+  },
+  {
+   "jev": [
+    "AF-AP-73",
+    "AF-AP-94",
+    "AF-AP-148"
+   ],
+   "jev_scores": {
+    "AF-AP-148": 0.6702,
+    "AF-AP-73": 0.7017,
+    "AF-AP-94": 0.6793
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-70",
+    "AF-AP-110",
+    "AF-AP-115"
+   ],
+   "lexical": [
+    "AF-AP-115",
+    "AF-AP-70",
+    "AF-AP-94"
+   ],
+   "line": 197
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-110",
+    "AF-AP-44"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.6862,
+    "AF-AP-116": 0.7004,
+    "AF-AP-44": 0.6399
+   },
+   "labels": [
+    "AF-AP-112"
+   ],
+   "lexical": [
+    "AF-AP-112",
+    "AF-AP-125",
+    "AF-AP-182"
+   ],
+   "line": 200
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-58",
+    "AF-AP-138"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.7594,
+    "AF-AP-138": 0.7424,
+    "AF-AP-58": 0.759
+   },
+   "labels": [
+    "AF-AP-114"
+   ],
+   "lexical": [
+    "AF-AP-109",
+    "AF-AP-114",
+    "AF-AP-138"
+   ],
+   "line": 202
+  },
+  {
+   "jev": [
+    "AF-AP-184",
+    "AF-AP-112",
+    "AF-AP-174"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7306,
+    "AF-AP-174": 0.7249,
+    "AF-AP-184": 0.7625
+   },
+   "labels": [
+    "AF-AP-113"
+   ],
+   "lexical": [
+    "AF-AP-81",
+    "AF-AP-112",
+    "AF-AP-117"
+   ],
+   "line": 204
+  },
+  {
+   "jev": [
+    "AF-AP-154",
+    "AF-AP-125",
+    "AF-AP-76"
+   ],
+   "jev_scores": {
+    "AF-AP-125": 0.755,
+    "AF-AP-154": 0.7628,
+    "AF-AP-76": 0.7483
+   },
+   "labels": [
+    "AF-AP-113"
+   ],
+   "lexical": [
+    "AF-AP-113",
+    "AF-AP-76",
+    "AF-AP-8"
+   ],
+   "line": 206
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-168",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7368,
+    "AF-AP-116": 0.7829,
+    "AF-AP-168": 0.775
+   },
+   "labels": [
+    "AF-AP-112"
+   ],
+   "lexical": [
+    "AF-AP-112",
+    "AF-AP-110",
+    "AF-AP-117"
+   ],
+   "line": 211
+  },
+  {
+   "jev": [
+    "AF-AP-33",
+    "AF-AP-106",
+    "AF-AP-125"
+   ],
+   "jev_scores": {
+    "AF-AP-106": 0.7556,
+    "AF-AP-125": 0.7177,
+    "AF-AP-33": 0.7585
+   },
+   "labels": [
+    "AF-AP-39"
+   ],
+   "lexical": [
+    "AF-AP-35",
+    "AF-AP-137",
+    "AF-AP-19"
+   ],
+   "line": 214
+  },
+  {
+   "jev": [
+    "AF-AP-110",
+    "AF-AP-154",
+    "AF-AP-118"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7732,
+    "AF-AP-118": 0.7189,
+    "AF-AP-154": 0.7412
+   },
+   "labels": [
+    "AF-AP-111"
+   ],
+   "lexical": [
+    "AF-AP-111",
+    "AF-AP-8",
+    "AF-AP-27"
+   ],
+   "line": 217
+  },
+  {
+   "jev": [
+    "AF-AP-116",
+    "AF-AP-109",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7247,
+    "AF-AP-112": 0.718,
+    "AF-AP-116": 0.7913
+   },
+   "labels": [
+    "AF-AP-110"
+   ],
+   "lexical": [
+    "AF-AP-110",
+    "AF-AP-94",
+    "AF-AP-36"
+   ],
+   "line": 223
+  },
+  {
+   "jev": [
+    "AF-AP-174",
+    "AF-AP-76",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.6941,
+    "AF-AP-174": 0.7372,
+    "AF-AP-76": 0.7184
+   },
+   "labels": [
+    "AF-AP-73"
+   ],
+   "lexical": [
+    "AF-AP-73",
+    "AF-AP-164",
+    "AF-AP-19"
+   ],
+   "line": 230
+  },
+  {
+   "jev": [
+    "AF-AP-106",
+    "AF-AP-69",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-106": 0.7621,
+    "AF-AP-112": 0.7335,
+    "AF-AP-69": 0.7531
+   },
+   "labels": [
+    "AF-AP-105"
+   ],
+   "lexical": [
+    "AF-AP-150",
+    "AF-AP-74",
+    "AF-AP-106"
+   ],
+   "line": 232
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-60",
+    "AF-AP-168"
+   ],
+   "jev_scores": {
+    "AF-AP-168": 0.7228,
+    "AF-AP-60": 0.7331,
+    "AF-AP-76": 0.7376
+   },
+   "labels": [
+    "AF-AP-103"
+   ],
+   "lexical": [
+    "AF-AP-103",
+    "AF-AP-168",
+    "AF-AP-100"
+   ],
+   "line": 238
+  },
+  {
+   "jev": [
+    "AF-AP-57",
+    "AF-AP-151",
+    "AF-AP-44"
+   ],
+   "jev_scores": {
+    "AF-AP-151": 0.6684,
+    "AF-AP-44": 0.6683,
+    "AF-AP-57": 0.6768
+   },
+   "labels": [
+    "AF-AP-4",
+    "AF-AP-59"
+   ],
+   "lexical": [
+    "AF-AP-59",
+    "AF-AP-81",
+    "AF-AP-1"
+   ],
+   "line": 249
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-151",
+    "AF-AP-117"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.6878,
+    "AF-AP-117": 0.618,
+    "AF-AP-151": 0.6655
+   },
+   "labels": [
+    "AF-AP-4"
+   ],
+   "lexical": [
+    "AF-AP-151",
+    "AF-AP-1",
+    "AF-AP-62"
+   ],
+   "line": 255
+  },
+  {
+   "jev": [
+    "AF-AP-95",
+    "AF-AP-109",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.6849,
+    "AF-AP-73": 0.6834,
+    "AF-AP-95": 0.7137
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-36"
+   ],
+   "lexical": [
+    "AF-AP-73",
+    "AF-AP-74",
+    "AF-AP-81"
+   ],
+   "line": 273
+  },
+  {
+   "jev": [
+    "AF-AP-163",
+    "AF-AP-47",
+    "AF-AP-139"
+   ],
+   "jev_scores": {
+    "AF-AP-139": 0.7299,
+    "AF-AP-163": 0.7531,
+    "AF-AP-47": 0.7327
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-44",
+    "AF-AP-46",
+    "AF-AP-47"
+   ],
+   "lexical": [
+    "AF-AP-139",
+    "AF-AP-150",
+    "AF-AP-163"
+   ],
+   "line": 275
+  },
+  {
+   "jev": [
+    "AF-AP-114",
+    "AF-AP-162",
+    "AF-AP-55"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.8212,
+    "AF-AP-162": 0.8082,
+    "AF-AP-55": 0.7955
+   },
+   "labels": [
+    "AF-AP-36",
+    "AF-AP-44",
+    "AF-AP-45"
+   ],
+   "lexical": [
+    "AF-AP-114",
+    "AF-AP-87",
+    "AF-AP-86"
+   ],
+   "line": 277
+  },
+  {
+   "jev": [
+    "AF-AP-101",
+    "AF-AP-148",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.7508,
+    "AF-AP-148": 0.7172,
+    "AF-AP-73": 0.7169
+   },
+   "labels": [
+    "AF-AP-36"
+   ],
+   "lexical": [
+    "AF-AP-36",
+    "AF-AP-148",
+    "AF-AP-170"
+   ],
+   "line": 279
+  },
+  {
+   "jev": [
+    "AF-AP-38",
+    "AF-AP-144",
+    "AF-AP-32"
+   ],
+   "jev_scores": {
+    "AF-AP-144": 0.7374,
+    "AF-AP-32": 0.7347,
+    "AF-AP-38": 0.7617
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-31",
+    "AF-AP-36",
+    "AF-AP-37",
+    "AF-AP-38"
+   ],
+   "lexical": [
+    "AF-AP-36",
+    "AF-AP-86",
+    "AF-AP-28"
+   ],
+   "line": 281
+  },
+  {
+   "jev": [
+    "AF-AP-176",
+    "AF-AP-109",
+    "AF-AP-89"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7909,
+    "AF-AP-176": 0.7932,
+    "AF-AP-89": 0.7898
+   },
+   "labels": [
+    "AF-AP-33"
+   ],
+   "lexical": [
+    "AF-AP-33",
+    "AF-AP-32",
+    "AF-AP-83"
+   ],
+   "line": 283
+  },
+  {
+   "jev": [
+    "AF-AP-162",
+    "AF-AP-47",
+    "AF-AP-114"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.7249,
+    "AF-AP-162": 0.7416,
+    "AF-AP-47": 0.7403
+   },
+   "labels": [
+    "AF-AP-34"
+   ],
+   "lexical": [
+    "AF-AP-68",
+    "AF-AP-34",
+    "AF-AP-47"
+   ],
+   "line": 285
+  },
+  {
+   "jev": [
+    "AF-AP-149",
+    "AF-AP-157",
+    "AF-AP-162"
+   ],
+   "jev_scores": {
+    "AF-AP-149": 0.7085,
+    "AF-AP-157": 0.6316,
+    "AF-AP-162": 0.6284
+   },
+   "labels": [
+    "AF-AP-35"
+   ],
+   "lexical": [
+    "AF-AP-35",
+    "AF-AP-39",
+    "AF-AP-157"
+   ],
+   "line": 287
+  },
+  {
+   "jev": [
+    "AF-AP-109",
+    "AF-AP-112",
+    "AF-AP-102"
+   ],
+   "jev_scores": {
+    "AF-AP-102": 0.6846,
+    "AF-AP-109": 0.7451,
+    "AF-AP-112": 0.6861
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-32"
+   ],
+   "lexical": [
+    "AF-AP-32",
+    "AF-AP-30",
+    "AF-AP-36"
+   ],
+   "line": 289
+  },
+  {
+   "jev": [
+    "AF-AP-101",
+    "AF-AP-109",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.7499,
+    "AF-AP-109": 0.7283,
+    "AF-AP-112": 0.6714
+   },
+   "labels": [
+    "AF-AP-30",
+    "AF-AP-32"
+   ],
+   "lexical": [
+    "AF-AP-30",
+    "AF-AP-32",
+    "AF-AP-73"
+   ],
+   "line": 291
+  },
+  {
+   "jev": [
+    "AF-AP-162",
+    "AF-AP-32",
+    "AF-AP-60"
+   ],
+   "jev_scores": {
+    "AF-AP-162": 0.7041,
+    "AF-AP-32": 0.6934,
+    "AF-AP-60": 0.6875
+   },
+   "labels": [
+    "AF-AP-30"
+   ],
+   "lexical": [
+    "AF-AP-24",
+    "AF-AP-32",
+    "AF-AP-60"
+   ],
+   "line": 293
+  },
+  {
+   "jev": [
+    "AF-AP-56",
+    "AF-AP-32",
+    "AF-AP-60"
+   ],
+   "jev_scores": {
+    "AF-AP-32": 0.6629,
+    "AF-AP-56": 0.7782,
+    "AF-AP-60": 0.6529
+   },
+   "labels": [
+    "AF-AP-30"
+   ],
+   "lexical": [
+    "AF-AP-31",
+    "AF-AP-13",
+    "AF-AP-32"
+   ],
+   "line": 295
+  },
+  {
+   "jev": [
+    "AF-AP-32",
+    "AF-AP-110",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.6875,
+    "AF-AP-32": 0.6916,
+    "AF-AP-73": 0.6831
+   },
+   "labels": [
+    "AF-AP-30"
+   ],
+   "lexical": [
+    "AF-AP-30",
+    "AF-AP-54",
+    "AF-AP-110"
+   ],
+   "line": 297
+  },
+  {
+   "jev": [
+    "AF-AP-83",
+    "AF-AP-171",
+    "AF-AP-114"
+   ],
+   "jev_scores": {
+    "AF-AP-114": 0.647,
+    "AF-AP-171": 0.707,
+    "AF-AP-83": 0.7171
+   },
+   "labels": [
+    "AF-AP-37"
+   ],
+   "lexical": [
+    "AF-AP-37",
+    "AF-AP-52",
+    "AF-AP-83"
+   ],
+   "line": 362
+  },
+  {
+   "jev": [
+    "AF-AP-106",
+    "AF-AP-109",
+    "AF-AP-112"
+   ],
+   "jev_scores": {
+    "AF-AP-106": 0.7375,
+    "AF-AP-109": 0.7136,
+    "AF-AP-112": 0.6973
+   },
+   "labels": [
+    "AF-AP-4"
+   ],
+   "lexical": [
+    "AF-AP-65",
+    "AF-AP-72",
+    "AF-AP-74"
+   ],
+   "line": 375
+  },
+  {
+   "jev": [
+    "AF-AP-57",
+    "AF-AP-62",
+    "AF-AP-16"
+   ],
+   "jev_scores": {
+    "AF-AP-16": 0.63,
+    "AF-AP-57": 0.6889,
+    "AF-AP-62": 0.6747
+   },
+   "labels": [
+    "AF-AP-62"
+   ],
+   "lexical": [
+    "AF-AP-62",
+    "AF-AP-42",
+    "AF-AP-81"
+   ],
+   "line": 376
+  },
+  {
+   "jev": [
+    "AF-AP-109",
+    "AF-AP-112",
+    "AF-AP-96"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7874,
+    "AF-AP-112": 0.7427,
+    "AF-AP-96": 0.7212
+   },
+   "labels": [
+    "AF-AP-64"
+   ],
+   "lexical": [
+    "AF-AP-64",
+    "AF-AP-16",
+    "AF-AP-67"
+   ],
+   "line": 377
+  },
+  {
+   "jev": [
+    "AF-AP-73",
+    "AF-AP-56",
+    "AF-AP-125"
+   ],
+   "jev_scores": {
+    "AF-AP-125": 0.6849,
+    "AF-AP-56": 0.7155,
+    "AF-AP-73": 0.7247
+   },
+   "labels": [
+    "AF-AP-4"
+   ],
+   "lexical": [
+    "AF-AP-44",
+    "AF-AP-81",
+    "AF-AP-117"
+   ],
+   "line": 378
+  },
+  {
+   "jev": [
+    "AF-AP-110",
+    "AF-AP-109",
+    "AF-AP-5"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7107,
+    "AF-AP-110": 0.7249,
+    "AF-AP-5": 0.6829
+   },
+   "labels": [
+    "AF-AP-66"
+   ],
+   "lexical": [
+    "AF-AP-66",
+    "AF-AP-109",
+    "AF-AP-21"
+   ],
+   "line": 383
+  },
+  {
+   "jev": [
+    "AF-AP-154",
+    "AF-AP-73",
+    "AF-AP-118"
+   ],
+   "jev_scores": {
+    "AF-AP-118": 0.6713,
+    "AF-AP-154": 0.7179,
+    "AF-AP-73": 0.6947
+   },
+   "labels": [
+    "AF-AP-67"
+   ],
+   "lexical": [
+    "AF-AP-67",
+    "AF-AP-111",
+    "AF-AP-118"
+   ],
+   "line": 388
+  },
+  {
+   "jev": [
+    "AF-AP-154",
+    "AF-AP-109",
+    "AF-AP-105"
+   ],
+   "jev_scores": {
+    "AF-AP-105": 0.7462,
+    "AF-AP-109": 0.7593,
+    "AF-AP-154": 0.7695
+   },
+   "labels": [
+    "AF-AP-67"
+   ],
+   "lexical": [
+    "AF-AP-67",
+    "AF-AP-105",
+    "AF-AP-111"
+   ],
+   "line": 390
+  },
+  {
+   "jev": [
+    "AF-AP-152",
+    "AF-AP-141",
+    "AF-AP-106"
+   ],
+   "jev_scores": {
+    "AF-AP-106": 0.7634,
+    "AF-AP-141": 0.7701,
+    "AF-AP-152": 0.8058
+   },
+   "labels": [
+    "AF-AP-69"
+   ],
+   "lexical": [
+    "AF-AP-69",
+    "AF-AP-159",
+    "AF-AP-54"
+   ],
+   "line": 391
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-154",
+    "AF-AP-109"
+   ],
+   "jev_scores": {
+    "AF-AP-109": 0.7279,
+    "AF-AP-154": 0.7352,
+    "AF-AP-76": 0.7814
+   },
+   "labels": [
+    "AF-AP-68"
+   ],
+   "lexical": [
+    "AF-AP-68",
+    "AF-AP-67",
+    "AF-AP-111"
+   ],
+   "line": 393
+  },
+  {
+   "jev": [
+    "AF-AP-152",
+    "AF-AP-148",
+    "AF-AP-47"
+   ],
+   "jev_scores": {
+    "AF-AP-148": 0.763,
+    "AF-AP-152": 0.8252,
+    "AF-AP-47": 0.7568
+   },
+   "labels": [
+    "AF-AP-70"
+   ],
+   "lexical": [
+    "AF-AP-47",
+    "AF-AP-182",
+    "AF-AP-66"
+   ],
+   "line": 394
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-75",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7252,
+    "AF-AP-75": 0.7282,
+    "AF-AP-76": 0.7609
+   },
+   "labels": [
+    "AF-AP-73"
+   ],
+   "lexical": [
+    "AF-AP-73",
+    "AF-AP-164",
+    "AF-AP-19"
+   ],
+   "line": 396
+  },
+  {
+   "jev": [
+    "AF-AP-56",
+    "AF-AP-138",
+    "AF-AP-170"
+   ],
+   "jev_scores": {
+    "AF-AP-138": 0.7046,
+    "AF-AP-170": 0.6906,
+    "AF-AP-56": 0.7358
+   },
+   "labels": [
+    "AF-AP-87"
+   ],
+   "lexical": [
+    "AF-AP-87",
+    "AF-AP-162",
+    "AF-AP-181"
+   ],
+   "line": 399
+  },
+  {
+   "jev": [
+    "AF-AP-98",
+    "AF-AP-56",
+    "AF-AP-99"
+   ],
+   "jev_scores": {
+    "AF-AP-56": 0.7548,
+    "AF-AP-98": 0.7598,
+    "AF-AP-99": 0.7496
+   },
+   "labels": [
+    "AF-AP-86"
+   ],
+   "lexical": [
+    "AF-AP-111",
+    "AF-AP-32",
+    "AF-AP-73"
+   ],
+   "line": 402
+  },
+  {
+   "jev": [
+    "AF-AP-98",
+    "AF-AP-110",
+    "AF-AP-101"
+   ],
+   "jev_scores": {
+    "AF-AP-101": 0.7434,
+    "AF-AP-110": 0.7547,
+    "AF-AP-98": 0.7633
+   },
+   "labels": [
+    "AF-AP-83"
+   ],
+   "lexical": [
+    "AF-AP-111",
+    "AF-AP-18",
+    "AF-AP-73"
+   ],
+   "line": 406
+  },
+  {
+   "jev": [
+    "AF-AP-112",
+    "AF-AP-58",
+    "AF-AP-151"
+   ],
+   "jev_scores": {
+    "AF-AP-112": 0.7174,
+    "AF-AP-151": 0.6827,
+    "AF-AP-58": 0.7096
+   },
+   "labels": [
+    "AF-AP-82"
+   ],
+   "lexical": [
+    "AF-AP-82",
+    "AF-AP-112",
+    "AF-AP-151"
+   ],
+   "line": 408
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-73",
+    "AF-AP-32"
+   ],
+   "jev_scores": {
+    "AF-AP-32": 0.6848,
+    "AF-AP-73": 0.7319,
+    "AF-AP-76": 0.7373
+   },
+   "labels": [
+    "AF-AP-73"
+   ],
+   "lexical": [
+    "AF-AP-73",
+    "AF-AP-111",
+    "AF-AP-19"
+   ],
+   "line": 414
+  },
+  {
+   "jev": [
+    "AF-AP-124",
+    "AF-AP-60",
+    "AF-AP-73"
+   ],
+   "jev_scores": {
+    "AF-AP-124": 0.7521,
+    "AF-AP-60": 0.6876,
+    "AF-AP-73": 0.6863
+   },
+   "labels": [
+    "AF-AP-73"
+   ],
+   "lexical": [
+    "AF-AP-37",
+    "AF-AP-123",
+    "AF-AP-21"
+   ],
+   "line": 418
+  },
+  {
+   "jev": [
+    "AF-AP-91",
+    "AF-AP-124",
+    "AF-AP-110"
+   ],
+   "jev_scores": {
+    "AF-AP-110": 0.7035,
+    "AF-AP-124": 0.7077,
+    "AF-AP-91": 0.7264
+   },
+   "labels": [
+    "AF-AP-77"
+   ],
+   "lexical": [
+    "AF-AP-77",
+    "AF-AP-79",
+    "AF-AP-84"
+   ],
+   "line": 422
+  },
+  {
+   "jev": [
+    "AF-AP-76",
+    "AF-AP-138",
+    "AF-AP-162"
+   ],
+   "jev_scores": {
+    "AF-AP-138": 0.7643,
+    "AF-AP-162": 0.7453,
+    "AF-AP-76": 0.7803
+   },
+   "labels": [
+    "AF-AP-73",
+    "AF-AP-76"
+   ],
+   "lexical": [
+    "AF-AP-65",
+    "AF-AP-68",
+    "AF-AP-71"
+   ],
+   "line": 430
+  },
+  {
+   "jev": [
+    "AF-AP-121",
+    "AF-AP-76",
+    "AF-AP-168"
+   ],
+   "jev_scores": {
+    "AF-AP-121": 0.7726,
+    "AF-AP-168": 0.74,
+    "AF-AP-76": 0.7685
+   },
+   "labels": [
+    "AF-AP-76"
+   ],
+   "lexical": [
+    "AF-AP-76",
+    "AF-AP-17",
+    "AF-AP-8"
+   ],
+   "line": 432
+  },
+  {
+   "jev": [
+    "AF-AP-170",
+    "AF-AP-16",
+    "AF-AP-74"
+   ],
+   "jev_scores": {
+    "AF-AP-16": 0.6352,
+    "AF-AP-170": 0.7098,
+    "AF-AP-74": 0.6315
+   },
+   "labels": [
+    "AF-AP-74"
+   ],
+   "lexical": [
+    "AF-AP-74",
+    "AF-AP-28",
+    "AF-AP-29"
+   ],
+   "line": 442
+  },
+  {
+   "jev": [
+    "AF-AP-92",
+    "AF-AP-100",
+    "AF-AP-76"
+   ],
+   "jev_scores": {
+    "AF-AP-100": 0.7286,
+    "AF-AP-76": 0.7122,
+    "AF-AP-92": 0.7849
+   },
+   "labels": [
+    "AF-AP-76"
+   ],
+   "lexical": [
+    "AF-AP-76",
+    "AF-AP-111",
+    "AF-AP-32"
+   ],
+   "line": 446
+  }
+ ],
+ "rates": {
+  "jev@1": 0.05,
+  "jev@3": 0.22,
+  "lexical@1": 0.59,
+  "lexical@3": 0.69,
+  "majority@1": 0.09,
+  "random@1 (expected)": 0.0612,
+  "recall@16": 0.85
+ },
+ "rows": 184,
+ "seconds": 1950.9,
+ "top_k": 16
+}

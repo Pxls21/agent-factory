@@ -1,0 +1,23 @@
+# Error families for scripts/hiccup_scan.py (D-9): a closed, committed map. One row per family:
+#   <regex> TAB <family> TAB <covering rule>
+# The regex is re.search()ed against a cluster's NORMALIZED line, the text the page shows (numbers are N, runs of 20+
+# identifier characters are T, URLs U, assignments KEY=V, quoted strings over 40 characters S; an `Exit code N` line
+# carries ` :: ` and its next non-empty output line). So `InputValidationError` (20 characters) reads `T`.
+# The FIRST matching row wins; a cluster no row matches is UNCOVERED. The covering rule is an AF-AP-<n> id or a short
+# CLAUDE.md phrase; `none` means no registry row or CLAUDE.md line covers the family (checked 2026-09-24).
+# Seeded from the E4.3 families (docs/research/findings/JEV-LEVERAGE-EVIDENCE-2026-09-24.md) plus every other family
+# with 5 or more events in the transcripts at 2026-09-24T12:39Z.
+isolation context for this agent was lost|\.claude/worktrees/	worktree isolation lost	CLAUDE.md: an Agent dispatch with isolation "worktree" cannot work on this tree
+^Exit code N :: fatal: not a git repository	cwd is not the repo	CLAUDE.md: the shell's cwd resets to /home/user after a container restart
+^Exit code N :: Terminated	Terminated (SIGTERM)	CLAUDE.md: analyze outlives the Bash tool's 240 s cap ("Terminated"); run it detached
+^Exit code N :: (Traceback \(most recent call last\):|File "<stdin>", line N)	python exception	none
+^Exit code N :: (=+ test session starts|[.FEsxX]{5,})	pytest run red	none
+^Exit code N :: .*(No such file or directory|cannot access|can't read)	missing path	none
+String to replace not found|File has not been read|File has been modified since read	edit anchor	CLAUDE.md: re-Read before Edit after out-of-band writes
+Found N matches of the string to replace	edit anchor not unique	CLAUDE.md: anchor_edit.py: every anchor validated unique BEFORE any write
+Blocked: sleep	harness blocked a foreground sleep	none
+Permission for this action was denied	auto-mode denial	none
+^<tool_use_error>T: 	input validation	none
+Ripgrep search timed out	ripgrep timeout	none
+doesn't want to proceed	user declined	none
+^Exit code N	exit code N	none
