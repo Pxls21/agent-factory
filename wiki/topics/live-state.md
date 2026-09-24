@@ -14,7 +14,7 @@ last_compiled: 2026-09-03
 **2026-09-24 19:2xZ — WHAT IS LIVE NOW (supersedes the 18:3xZ block for the live set).**
 - **LANDED:** JT3 (MERGE-READY-WITH-FOLLOWUPS; the hook stays OFF until a deliberate re-arm once no sandbox agent is mid-run; follow-ups on #71). `scripts/gpu_window.sh` (GATED-PENDING-VERIFY). The G0 probe `docs/research/findings/j2b-variants/rwkv7_g0.py` (plumbing green in both RWKV venvs).
 - **LANDED 19:3xZ:** JT2 (after JT2-R2 closed F-16, a from-file leak; MERGE-READY-WITH-FOLLOWUPS; follow-ups on #72; tasks #227, #229 closed). **BUILDING:** FT1-F (F-1 non-finite checkpoint, F-6 disk check first); issue #73 holds FT1's other follow-ups.
-- **PC:** QJ1's fourth and last attempt (since 19:18Z) got past the local route's `400 No user query found` and is building `scripts/qwen_jev.py`; the window waits for it. The dataset is rebuilt on the PC (sha d7cd9b49, identical); the trainer's CPU smoke on the PC passed (rc 0; eval loss 0.9248 -> 0.9129; guards true). No CPU path for RWKV-7 (fla).
+- **PC:** QJ1 ENDED FAILED on its fourth attempt (the cloud step's 403); its draft report and an unapplied partial-adapter patch are committed; the Qwen J2 needs a continuation lane after the window. No PC lane is live. The dataset is rebuilt on the PC (sha d7cd9b49, identical); the trainer's CPU smoke on the PC passed (rc 0; eval loss 0.9248 -> 0.9129; guards true). No CPU path for RWKV-7 (fla).
 - **NEXT:** the GPU window once QJ1 has ended and FT1-F has landed: G0 (`~/venv-rwkv-b`, fallback `~/venv-rwkv --no-cache`), then a timed head-mode Laya training run; qwen restarts at the end.
 
 **2026-09-24 18:3xZ — WHAT IS LIVE NOW (supersedes the 18:1xZ block for the live set).**
