@@ -1005,3 +1005,37 @@ class TestAFAP181:
     def test_no_fire_on_the_fixed_frame_tee_file(self):
         src = (Path(__file__).resolve().parents[1] / "tests" / "test_s0_01_frame_tee.py").read_text()
         assert not self.rx.search(src)
+
+
+# ---- AF-AP-196: a trained artifact saved with no finiteness check on what is saved (VERIFY-FT1 F-1) ----
+
+class TestAFAP196:
+    rx = _AP_BY_ID["AF-AP-196"]
+
+    def test_fires_on_the_ft1_save(self):
+        assert self.rx.search("        torch.save(sd, str(tmp))\n")    # scripts/laya_ft/train.py before FT1-F
+
+    def test_fires_on_the_other_tensor_writers(self):
+        for line in ("save_file(tensors, path)", "model.save_pretrained(out_dir)", "np.save(path, arr)"):
+            assert self.rx.search(line), line
+
+    def test_no_fire_on_a_load_or_a_wrapper_call(self):
+        for line in ("sd = torch.load(path, map_location='cpu')", "save_checkpoint(sd, out / 'checkpoint.pt')",
+                     "torch.saved = 1"):
+            assert not self.rx.search(line), line
+
+
+# ---- AF-AP-197: a precondition checked after the work it protects (VERIFY-FT1 F-6) ----
+
+class TestAFAP197:
+    rx = _AP_BY_ID["AF-AP-197"]
+
+    def test_fires_on_the_ft1_free_space_probe(self):
+        assert self.rx.search("    free = shutil.disk_usage(path.parent).free\n")
+
+    def test_fires_on_statvfs(self):
+        assert self.rx.search("st = os.statvfs(out)")
+
+    def test_no_fire_on_a_name_that_only_contains_the_word(self):
+        for line in ("report = disk_usage_report", "print(statvfs_note)"):
+            assert not self.rx.search(line), line

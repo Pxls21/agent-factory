@@ -339,6 +339,17 @@ AP_SCREEN = [
      "TypeError (unhashable) and crashes the run instead of refusing the record; check `isinstance(v, str)` (or the "
      "declared type) first, refuse the record by name, and give the parser's hostile-input tests a list and an object "
      "in every field it tests by membership (AF-AP-177)"),
+    # AF-AP-196 (2026-09-24, VERIFY-FT1 F-1): a trained artifact saved with no finiteness check on what is saved. The
+    # trainer checked the loss BEFORE each step, so the last step's NaN weights (31 of 31 tensors after one `--lr inf`
+    # step) were saved with rc 0 and the evaluator scored them BLOCKER 7/7. The tell: a tensor save in the hunk.
+    ("AF-AP-196", re.compile(r"""\b(?:torch\.save|save_file|save_pretrained|np\.save)\("""),
+     "a model artifact is saved — is EVERY saved tensor (and the final metric) checked finite before this write, with a "
+     "refusal that writes nothing? A guard on a step's input does not cover the step's output (AF-AP-196)"),
+    # AF-AP-197 (2026-09-24, VERIFY-FT1 F-6): a precondition checked after the work it protects. The free-space refusal
+    # ran at save time, after training, so a full disk threw the trained weights away. The tell: a free-space probe.
+    ("AF-AP-197", re.compile(r"""\b(?:disk_usage|statvfs)\("""),
+     "a free-space probe — does it run BEFORE the expensive work it protects (the size is usually known up front) as "
+     "well as at the write? A check after the work only chooses which loss you take (AF-AP-197)"),
 
 
 ]
