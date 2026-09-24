@@ -11,7 +11,11 @@ Commands (options follow the command):
 The wire contract is scripts/laya_systemone_server.py: POST /v1/systemone {"model", "state", "questions": {id: {...}}}.
 `rank` sends state = {"query": q, "chunks": [{"id", "text"}, ...]} and one `noul` question per chunk id, so the server
 makes one model call per chunk and returns `fan_out` (D-1); a reply without fan_out equal to the chunk count is refused
-(the batch form gave every chunk the same score, measured 2026-09-24 12:17Z).
+(the batch form gave every chunk the same score, measured 2026-09-24 12:17Z). The window budget (D-076 b): the query and
+each chunk share Laya's 1,024-token window after a head of up to 256 tokens, and the server puts the query first, so
+`rank` cuts the query to 1,000 characters and each chunk to 2,500 (after the scrub; a smaller --max-chars still wins),
+and it refuses as signal-free a reply whose two or more scores are all equal to 4 decimals (VERIFY-JT1 F-24: a query
+of about 3,900 characters cut every chunk out of the window and tied them at 0.4958 with fan_out intact).
 
 Venues (D-3): `--venue auto` (default) tries the local loopback endpoint 127.0.0.1:47411 (its /health must answer
 within 1 s), then the PC endpoint through the bridge, then gives up. The PC path reads .pc-bridge.env in-process (the
@@ -22,7 +26,8 @@ which can land on the data line. `--url` pins one loopback endpoint (tests).
 Fail-open (D-4): no answer = exit 3 and ONE stderr line `jev: unavailable: <reason>`; a usage error = exit 64. The
 import API (`from jev import health, ask, rank, classify`, with scripts/ on sys.path) returns None on any failure and
 never raises; `jev.last_reason` holds the reason. Scrub, then cap (D-5, AF-AP-127): every text that leaves the process
-(state, query, chunk, instructions, label) passes transcript_export.scrub first, then --max-chars (default 4000).
+(state, query, chunk, instructions, label) passes transcript_export.scrub first, then --max-chars (default 4000; for a
+rank's query and chunks, the window budget above when it is smaller).
 Call log (D-6): one JSON line per call in .jev/calls.jsonl (dir 0700, file 0600): ts, venue, cmd, n_questions, qtypes,
 state_sha256 (of the canonical JSON of the scrubbed, capped state as sent), answers, latency_ms, ok, reason; never the
 state text. --no-log skips it. No gate file may import or run this module (scripts/no_laya_in_gates.py). Standard
@@ -60,6 +65,8 @@ HEALTH_PROBE_S = 1.0
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_CHARS = 4000
 MAX_CHUNKS = 64
+RANK_QUERY_CHARS = 1000     # the window budget (D-076 b): a rank's query, after the scrub
+RANK_CHUNK_CHARS = 2500     # ... and each of its chunks
 BRIDGE_ENV = os.path.join(ROOT, ".pc-bridge.env")
 LOG_DIR = os.path.join(ROOT, ".jev")
 LOG_PATH = os.path.join(LOG_DIR, "calls.jsonl")
@@ -161,12 +168,13 @@ def _build(cmd, args, max_chars):
             cid, text = ("c%d" % i, c) if isinstance(c, str) else (c.get("id"), c.get("text")) if isinstance(c, dict) else (None, None)
             if not isinstance(cid, str) or not _ID.match(cid) or _prep(cid, 64) != cid:
                 raise Usage("chunk id %r must be 1-64 of [A-Za-z0-9_.:#-] and hold nothing the scrubber redacts" % (cid,))
-            items.append({"id": cid, "text": _text(text, "chunk %s" % cid, max_chars)})
+            items.append({"id": cid, "text": _text(text, "chunk %s" % cid,
+                                                   min(max_chars, RANK_CHUNK_CHARS))})
         ids = [c["id"] for c in items]
         if len(set(ids)) != len(ids):
             raise Usage("chunk ids must be distinct")
         instr = _text(instructions, "the instructions", max_chars)
-        state = {"query": _text(query, "the query", max_chars), "chunks": items}
+        state = {"query": _text(query, "the query", min(max_chars, RANK_QUERY_CHARS)), "chunks": items}
         return state, {cid: {"type": "noul", "instructions": instr} for cid in ids}, {"ids": ids}
     raise Usage("unknown command %r" % cmd)
 
@@ -215,6 +223,9 @@ def _result(cmd, reply, ctx):
             raise Unavailable("no per-chunk fan-out (fan_out=%r for %d chunks)" % (reply.get("fan_out"), len(ids)))
         for cid in ids:
             _check_answer(answers[cid], "noul", None)
+        if len(ids) >= 2 and len({round(answers[cid]["noul"], 4) for cid in ids}) == 1:
+            # D-076 b (VERIFY-JT1 F-24): one score for every chunk carries no ranking, whatever cut the chunks away
+            raise Unavailable("signal-free rank: all %d chunks scored %.4f" % (len(ids), answers[ids[0]]["noul"]))
         order = sorted(range(len(ids)), key=lambda i: (-answers[ids[i]]["noul"], i))
         return answers, {"fan_out": reply["fan_out"], "ranking": [[ids[i], answers[ids[i]]["noul"]] for i in order]}
     if set(answers) != {"q"}:

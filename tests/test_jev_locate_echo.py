@@ -204,8 +204,9 @@ def test_a_signal_free_jev_gives_the_base_pack_with_its_reason(locate_repo, doub
     assert rc == 0, err
     assert len(d.requests) >= 1                     # Jev WAS asked; its answer carried no signal
     reasons = [ln for ln in out.split("\n") if ln.startswith("Jev unavailable: ")]
-    assert len(reasons) == 1 and reasons[0].endswith("scores are equal (0.4958): no signal (a query over the window "
-                                                     "cuts every chunk) (unranked)")
+    # since D-076 (b) the Jev client refuses a signal-free batch itself; the reason is its own
+    assert len(reasons) == 1 and reasons[0] == ("Jev unavailable: call 1 of 1: url: signal-free rank: all 6 chunks "
+                                                "scored 0.4958 (unranked)")
     rc2, base, _ = run(LOCATE, QUESTION, "--root", str(locate_repo), "--order", JEV_BASE, *FAST)
     assert [where(x) for x in top_lines(out)] == [where(x) for x in top_lines(base)] and top_lines(out)
 

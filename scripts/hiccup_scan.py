@@ -10,14 +10,19 @@ Ported from the two E4.3 parsers in docs/research/findings/JEV-LEVERAGE-EVIDENCE
 jev_e5_side.py). No model runs unless --jev is given.
 
 Deterministic (D-8): the same input bytes give the same page bytes. The page clock is the newest transcript timestamp,
-never the wall clock, and every table is sorted. Nothing secret reaches the page (D-11): every excerpt is normalized
+never the wall clock, and every table is sorted. The secret scrub (D-11 as amended by D-076 a and d): every excerpt (an
+error's first line, an agent's description) is scrubbed with transcript_export.scrub on the raw text, then normalized
 (URLs -> U, KEY=value -> KEY=V, quoted strings over 40 characters -> S, runs of 20+ [A-Za-z0-9_-] -> T, numbers -> N),
-then scrubbed with transcript_export.scrub, then cut at 160 characters; the page stays under 40,000 bytes.
+then scrubbed again, then cut at 160 characters (normalizing first shrank short named or prefixed values under the
+scrubber's floors: VERIFY-JT1 F-16); every other text cell (tool, model and agent-id names: F-17) is scrubbed too. The
+scrub is only as good as transcript_export.scrub: a value it does not recognize in the raw text stays. The page stays
+under 40,000 bytes.
 
 --jev (D-10, advisory, KC-J1b): for each UNCOVERED cluster the page shows (the top-25 table and the new-this-week
 rows), a lexical top 8 over the registry row titles (docs/INCIDENT-LOG.md) and the CLAUDE.md `bit 2026-` quirk lines,
 then jev.rank over those 8; the best match and its score fill one extra column in both cluster tables. Jev unavailable:
-`n/a (<reason>)`. The column never changes any other number on the page.
+`n/a (<reason>)`. KC-J1b as bytes (D-076 c): for every input, the --jev page minus its column is the plain page byte
+for byte, over the cap too (build_page trims both against one budget; F-18).
 
 usage: hiccup_scan.py [--project-dir DIR | --transcript PATH ...] [--limit-bytes N] [--out PATH] [--jev]
                       [--jev-venue auto|local|pc]
@@ -61,8 +66,10 @@ SLEEP_FAMILY = "harness blocked a foreground sleep"
 DENIAL_FAMILY = "auto-mode denial"
 JEV_TOP = 8
 JEV_INSTRUCTIONS = "Does this note explain or fix the error in the query?"   # the wording measured at 12:17Z
+JEV_HEAD, JEV_RULE = " Jev suggests (advisory) |", "---|"   # what the column adds to a table's head and rule lines
+JEV_CELL_BYTES = 100            # an advisory cell as printed, at most (the room each cluster row keeps for it)
 
-# ---------- excerpts (D-11): normalize, then scrub, then cut ----------
+# ---------- excerpts (D-11, D-076 a): scrub, normalize, scrub again, cut ----------
 
 _SEPARATORS = {cp: " " for cp in (0x85, 0x2028, 0x2029)}   # built from code points: a typed escape can become the bytes
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
@@ -75,8 +82,12 @@ _NUM = re.compile(r"\d+")
 
 
 def excerpt(text):
-    """Normalize (URLs, KEY=value, long quoted strings, long runs, numbers), THEN scrub, THEN cut at 160 (D-11)."""
-    s = str(text).encode("utf-8", "replace").decode("utf-8")      # a lone surrogate from a JSON escape cannot be written
+    """Scrub the raw text, THEN normalize (URLs, KEY=value, long quoted strings, long runs, numbers), THEN scrub again,
+    THEN cut at 160 (D-11 as amended by D-076 a). The raw scrub sees every value at its full length: normalized first, a
+    digit run read N and shrank an 8-19 character value under its rule's floor (VERIFY-JT1 F-16). The second scrub
+    takes what only the normalization reveals (a control character between a name and its `=` becomes a space)."""
+    s = scrub(str(text))
+    s = s.encode("utf-8", "replace").decode("utf-8")      # a lone surrogate from a JSON escape cannot be written
     s = _CTRL.sub(" ", s.translate(_SEPARATORS))
     s = _URL.sub("U", s)
     s = _KV.sub("KEY=V", s)
@@ -352,8 +363,18 @@ def _code(text):
 
 
 def _plain(text):
-    """A plain table cell: pipes escaped, and `<`/`>` as entities so `<synthetic>` is not read as an HTML tag."""
-    return str(text).replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
+    """A plain table cell: scrubbed (tool, model and agent-id names come from the transcript too: D-076 d, VERIFY-JT1
+    F-17), then pipes escaped, and `<`/`>` as entities so `<synthetic>` is not read as an HTML tag."""
+    return scrub(str(text)).replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _jev_cell(text):
+    """An advisory cell as printed, at most JEV_CELL_BYTES bytes: scrubbed whole, THEN cut (AF-AP-127), so the column
+    never adds more than jev_room() to a page (KC-J1b as bytes, D-076 c)."""
+    s = scrub(str(text))[:JEV_CELL_BYTES]
+    while len(_plain(s).encode("utf-8")) > JEV_CELL_BYTES:
+        s = s[:-1]
+    return _plain(s)
 
 
 def _hm(ts):
@@ -401,9 +422,11 @@ def render(sc, source, jev=None, max_agents=None):
     total_bytes = sum(v[1] for v in sc.inputs.values())
     L = ["# Agent hiccups and progress", "",
          "Generated by `scripts/hiccup_scan.py` from Claude Code transcripts; do not edit by hand. Deterministic: the "
-         "clock is the newest transcript timestamp, never the wall clock. Excerpts are normalized (numbers N, runs of 20+ "
-         "identifier characters T, URLs U, assignments KEY=V, quoted strings over 40 characters S), then scrubbed, then "
-         "cut at 160 characters. No model runs unless the error table carries the advisory Jev column.", "",
+         "clock is the newest transcript timestamp, never the wall clock. Excerpts are scrubbed, normalized (numbers "
+         "N, runs of 20+ identifier characters T, URLs U, assignments KEY=V, quoted strings over 40 characters S), "
+         "scrubbed again, then cut at 160 characters; tool, model and agent names are scrubbed too. The page stays "
+         "under its size cap with room kept for the advisory Jev column, so it drops the same oldest agents with or "
+         "without that column. No model runs unless the error table carries the advisory Jev column.", "",
          "Clock: %s" % ((clock[:19] + "Z") if clock else "none (no timestamped record)"), ""]
 
     L += ["## Inputs", "", "| kind | files | bytes parsed | lines | unparsable lines |", "|---|---:|---:|---:|---:|"]
@@ -465,8 +488,8 @@ def render(sc, source, jev=None, max_agents=None):
     head = "| # | normalized first line | family | covering rule | count | first seen | last seen | tools |"
     rule = "|---:|---|---|---|---:|---|---|---|"
     if jev is not None:
-        head += " Jev suggests (advisory) |"
-        rule += "---|"
+        head += JEV_HEAD
+        rule += JEV_RULE
     by_family = collections.Counter()
     for cl in sc.clusters.values():
         by_family[cl["family"] or "UNCOVERED"] += cl["count"]
@@ -480,7 +503,7 @@ def render(sc, source, jev=None, max_agents=None):
             i, _code(key), _plain(cl["family"] or "UNCOVERED"), _plain(cl["rule"] or "-"), cl["count"],
             _hm(cl["first"]), _hm(cl["last"]), _plain(", ".join(sorted(cl["tools"]))))
         if jev is not None:
-            row += " %s |" % _plain(jev.get(key, "-"))
+            row += " %s |" % _jev_cell(jev.get(key, "-"))
         L.append(row)
     L.append("")
 
@@ -502,29 +525,43 @@ def render(sc, source, jev=None, max_agents=None):
     head = "| normalized first line | family | count | first seen | tools |"
     rule = "|---|---|---:|---|---|"
     if jev is not None:
-        head += " Jev suggests (advisory) |"
-        rule += "---|"
+        head += JEV_HEAD
+        rule += JEV_RULE
     L += ["## New this week (clusters first seen in the last %d days)" % WEEK, "", head, rule]
     for key, cl in new[:NEW_ROWS]:
         row = "| %s | %s | %d | %s | %s |" % (_code(key), _plain(cl["family"] or "UNCOVERED"), cl["count"],
                                             _hm(cl["first"]), _plain(", ".join(sorted(cl["tools"]))))
         if jev is not None:
-            row += " %s |" % _plain(jev.get(key, "-"))
+            row += " %s |" % _jev_cell(jev.get(key, "-"))
         L.append(row)
     if len(new) > NEW_ROWS:
         L += ["", "%d more new clusters are not shown (the page cap)." % (len(new) - NEW_ROWS)]
     return "\n".join(L) + "\n"
 
 
+def jev_room(sc):
+    """The most bytes the advisory column can add to this scan's page, known without the column: its head and rule
+    cells in both cluster tables, and per cluster row shown, ' ' + a cell of at most JEV_CELL_BYTES + ' |'."""
+    rows = len(top_clusters(sc)) + len(new_clusters(sc)[:NEW_ROWS])
+    return 2 * len(JEV_HEAD + JEV_RULE) + rows * (JEV_CELL_BYTES + 3)
+
+
 def build_page(sc, source, jev=None):
-    """The page bytes: every agent of the window when the page fits under the cap, else the most recent ones that fit
-    (the page says how many it left out). A page still over the cap is returned as is; main() refuses to write it."""
-    page = render(sc, source, jev).encode("utf-8")
-    n = sum(1 for a in sc.agents.values() if a["last"])
-    while len(page) >= PAGE_MAX_BYTES and n > 0:
-        n = max(0, n - 5)
-        page = render(sc, source, jev, max_agents=n).encode("utf-8")
-    return page
+    """The page bytes, or None when the page cannot fit (main() then writes nothing, with or without --jev).
+    KC-J1b as bytes (D-076 c, VERIFY-JT1 F-18): the agent trim is decided once, on the page WITHOUT the column, against
+    one budget, the cap less jev_room(); the --jev page shows the same agents and adds only its column. So the --jev
+    page minus its column is the plain page byte for byte, and both stay under the cap. Every agent of the window is
+    shown when that fits, else the most recent ones that fit (the page says how many it left out); a page that cannot
+    keep the column's room even with no agent row is None."""
+    budget = PAGE_MAX_BYTES - jev_room(sc)
+    n, left = None, sum(1 for a in sc.agents.values() if a["last"])
+    page = render(sc, source).encode("utf-8")
+    while len(page) >= budget:
+        if left == 0:
+            return None
+        n = left = max(0, left - 5)
+        page = render(sc, source, max_agents=n).encode("utf-8")
+    return page if jev is None else render(sc, source, jev, max_agents=n).encode("utf-8")
 
 
 # ---------- the advisory Jev column (D-10) ----------
@@ -663,7 +700,11 @@ def main(argv=None):
         filled = sum(1 for v in col.values() if not v.startswith("n/a"))
         jev_note = " jev: uncovered_shown=%d filled=%d run_s=%.1f" % (len(col), filled, time.monotonic() - t0)
     page = build_page(sc, source, jev=col)
-    if len(page) >= PAGE_MAX_BYTES:
+    if page is None:
+        sys.stderr.write("hiccup_scan: the page does not fit the %d-byte cap with %d bytes kept for the Jev column, even "
+                         "with no agent row; nothing written\n" % (PAGE_MAX_BYTES, jev_room(sc)))
+        return 2
+    if len(page) >= PAGE_MAX_BYTES:        # unreachable while jev_room() bounds the column; kept as the last guard
         sys.stderr.write("hiccup_scan: the page is %d bytes, over the %d-byte cap; nothing written\n" % (len(page), PAGE_MAX_BYTES))
         return 2
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)

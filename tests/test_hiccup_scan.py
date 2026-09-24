@@ -8,7 +8,9 @@ import datetime
 import importlib.util
 import json
 import pathlib
+import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -203,8 +205,9 @@ def test_page_rows_are_exact(fixture_dir, tmp_path):
         "sleep 1, input validation 1, missing path 1, ripgrep timeout 1.",
         "| 1 | `Exit code N :: ls: cannot access '/tmp/ps/bt': No such file or directory` | missing path | none | 1 | "
         "2026-03-10 09:00 | 2026-03-10 09:00 | Bash |",
-        "| 5 | `failed to get job logs: HTTP N for T password: <redacted>` | UNCOVERED | - | 1 | 2026-03-10 09:04 | "
-        "2026-03-10 09:04 | mcp__github__get_job_logs |",
+        # D-076 (a): scrubbed on the raw text first, the sk- key reads `sk-<redacted>` (normalized first, it read `T`)
+        "| 5 | `failed to get job logs: HTTP N for sk-<redacted> password: <redacted>` | UNCOVERED | - | 1 | "
+        "2026-03-10 09:04 | 2026-03-10 09:04 | mcp__github__get_job_logs |",
         "| 6 | `Exit code N :: Authorization: Bearer <redacted> and KEY=V at U` | exit code N | none | 1 | 2026-03-10 09:05 | "
         "2026-03-10 09:05 | Bash |",
         "| 9 | `<tool_use_error>T: [{'code': 'invalid_type'}]</tool_use_error>` | input validation | none | 1 | "
@@ -429,3 +432,266 @@ def test_the_page_trims_the_oldest_agents_to_fit_and_refuses_what_cannot_fit(fix
     monkeypatch.setattr(hs, "PAGE_MAX_BYTES", 500)
     out = tmp_path / "H.md"
     assert hs.main(["--project-dir", str(fixture_dir), "--out", str(out)]) == 2 and not out.exists()
+
+
+# ---------- D-076 (a): scrub the raw text, normalize, scrub again, cut (VERIFY-JT1 F-16) ----------
+# The five F-16 shapes: values of 8-19 characters that the raw scrub redacts and that normalizing FIRST shrank under the
+# rule's floor (a digit run reads N), so letters of the value reached the page. Fake values only: every value's letters
+# start QZJ or X4Z (normalized first they read QZJN or XNZN).
+F16 = [("password: QZJ8123456", "password: <redacted>"),
+       ("Authorization: Bearer X4Z9123456789", "Authorization: Bearer <redacted>"),
+       ("X-Agent-Token: QZJ8765432109", "X-Agent-Token: <redacted>"),
+       ("sk-QZJ8x4z9123456", "sk-<redacted>"),
+       ("xoxb-QZJ8123456789", "xox-<redacted>")]
+
+
+def write_f16_fixture(path):
+    """Each shape in an error's first line (both cluster tables) and in an Agent description (the agents table)."""
+    recs = []
+    for i, (shape, _) in enumerate(F16):
+        t = "2026-03-12T10:%02d:%%02d.000Z" % i
+        aid = "af16x%02d" % i
+        recs += [assistant(t % 0, "a%d" % i, "r%d" % i, "claude-opus-5-5", [tool_use("te%d" % i, "Bash", command="curl")], 1),
+                 result(t % 1, "u%d" % i, [tr("te%d" % i, "curl: server said %s then closed\nnext line" % shape, True)]),
+                 assistant(t % 2, "b%d" % i, "q%d" % i, "claude-opus-5-5",
+                           [tool_use("ta%d" % i, "Agent", description="lane with " + shape, prompt="x")], 1),
+                 result(t % 3, "v%d" % i, [tr("ta%d" % i, [{"type": "text", "text": "done\nagentId: %s" % aid}], None)],
+                        tur={"agentId": aid}),
+                 assistant(t % 4, "s%d" % i, "rs%d" % i, "claude-opus-5-5", [{"type": "text", "text": "ok"}], 1,
+                           stop="end_turn", agent=aid)]
+    path.write_bytes(b"".join(_line(r) for r in recs))
+    return path
+
+
+def test_the_f16_shapes_leave_no_letter_of_the_value_on_the_page(tmp_path):
+    src = write_f16_fixture(tmp_path / "f16.jsonl")
+    out = tmp_path / "H.md"
+    r = run_cli("--transcript", src, "--out", out)
+    assert r.returncode == 0, r.stderr
+    page = out.read_text(encoding="utf-8")
+    for shape, shown in F16:
+        assert page.count("server said %s then closed" % shown) == 2, shape.split()[0]     # both cluster tables
+        assert page.count("lane with %s" % shown) == 1, shape.split()[0]                   # the agents table
+    for stub in ("QZJ", "X4Z", "XNZ"):
+        assert stub not in page, "a piece of a value reached the page: %s" % stub
+
+
+@pytest.mark.parametrize("shape", ["password: ab1234cd", "Authorization: Bearer abc12345xyz", "X-Agent-Token: zq12345678",
+                                   "api_key: qw12er34ty", "sk-abcdef123456", "xoxb-abc1234567"])
+def test_excerpt_scrubs_the_raw_text_before_it_normalizes(shape):
+    # VERIFY-JT1 F-16's own six: the raw scrub redacts each; normalized first, five of them kept letters of the value
+    line = "curl: server said %s then closed" % shape
+    assert hs.excerpt(line) == "curl: server said %s then closed" % hs.scrub(shape)
+
+
+def test_excerpt_scrubs_again_after_it_normalizes():
+    # a head that only the normalization reveals (the control character between the name and `=` becomes a space): the
+    # raw scrub cannot see it, the second scrub takes its value
+    assert hs.excerpt("token" + chr(1) + "=QZJ8123x4z9k2m7") == "token =<redacted>"
+
+
+# ---------- D-076 (c): KC-J1b as bytes, pages over the cap included (VERIFY-JT1 F-18) ----------
+
+KC_SRC = "the project directory's `*.jsonl` and `*/subagents/*.jsonl`; byte limit per file: none"   # main()'s source
+
+
+def _kc_env(ts, uuid, agent=None):
+    r = {"parentUuid": None, "isSidechain": agent is not None, "userType": "external", "sessionId": "s", "uuid": uuid,
+         "timestamp": ts}
+    if agent:
+        r["agentId"] = agent
+    return r
+
+
+def write_kc_fixture(d, n_agents=181, pad=3):
+    """VERIFY-JT1's F-18 fixture (its /tmp/vjt1/kc_confirm.py, the same records in the same order): n_agents subagent
+    transcripts, each joined to its Agent call's description, and two COVERED error clusters, so --jev asks no model."""
+    (d / "s" / "subagents").mkdir(parents=True)
+    main = []
+    for i in range(n_agents):
+        aid = "a%015d" % i
+        desc = "lane %d " % i + ("wo " * 60)[: (pad if i == 0 else 100)]
+        ts = "2026-09-20T%02d:%02d:00Z" % (i // 60 % 24, i % 60)
+        main.append(dict(_kc_env(ts, "m%d" % i), type="assistant", requestId="rq%d" % i, message={
+            "id": "mm%d" % i, "model": "claude-opus-5-5", "content": [
+                {"type": "tool_use", "id": "tu%d" % i, "name": "Agent", "input": {"description": desc}}],
+            "usage": {"input_tokens": 1}}))
+        main.append(dict(_kc_env(ts, "r%d" % i), type="user", message={"role": "user", "content": [
+            {"tool_use_id": "tu%d" % i, "type": "tool_result", "content": "done agentId: %s" % aid}]},
+            toolUseResult={"agentId": aid}))
+        (d / "s" / "subagents" / ("agent-%s.jsonl" % aid)).write_text(json.dumps(dict(
+            _kc_env(ts, "x%d" % i, aid), type="assistant", requestId="rx%d" % i, message={
+                "id": "mx%d" % i, "model": "claude-opus-5-5", "content": [], "usage": {"input_tokens": 2}})) + "\n")
+    for j, text in enumerate(["Exit code 143\nTerminated", "<tool_use_error>Blocked: sleep 30 followed by: x</tool_use_error>"]):
+        main.append(dict(_kc_env("2026-09-21T00:00:0%dZ" % j, "e%d" % j), type="assistant", requestId="re%d" % j, message={
+            "id": "me%d" % j, "model": "claude-opus-5-5", "content": [
+                {"type": "tool_use", "id": "te%d" % j, "name": "Bash", "input": {}}], "usage": {"input_tokens": 1}}))
+        main.append(dict(_kc_env("2026-09-21T00:00:1%dZ" % j, "f%d" % j), type="user", message={"role": "user", "content": [
+            {"tool_use_id": "te%d" % j, "type": "tool_result", "content": text, "is_error": True}]}))
+    (d / "s.jsonl").write_text("".join(json.dumps(r) + "\n" for r in main))
+
+
+def _agent_rows(page):
+    return sum(1 for ln in page.split("## Agents")[1].split("## Error")[0].splitlines() if ln.startswith("| a0"))
+
+
+def write_kc_fixture_in_the_f18_zone(d):
+    """The F-18 fixture, sized for the scanner under test so that its page WITHOUT the column is under the cap and its
+    page WITH the (unfilled) column is not: F-18's own zone. The size moves with the first agent's description (the
+    verifier's pad was 3 on the PIN scanner) and, past that range, the agent count. -> (the scan, the agent count)."""
+    n, pad = 181, 3
+    for _ in range(10):
+        shutil.rmtree(d, ignore_errors=True)
+        write_kc_fixture(d, n, pad)
+        sc = hs.Scan(hs.load_families())
+        for p in sorted(d.glob("*.jsonl")) + sorted(d.glob("*/subagents/*.jsonl")):
+            sc.feed(str(p))
+        plain, withcol = len(hs.render(sc, KC_SRC).encode("utf-8")), len(hs.render(sc, KC_SRC, {}).encode("utf-8"))
+        if plain < hs.PAGE_MAX_BYTES <= withcol:
+            return sc, n
+        pad += hs.PAGE_MAX_BYTES - (withcol - plain) // 2 - plain           # about one byte per character of the pad
+        while pad < 0:
+            n, pad = n - 1, pad + 150
+        while pad > 150:
+            n, pad = n + 1, pad - 150
+    raise AssertionError("no fixture size lands in F-18's zone")
+
+
+def test_kcj1b_the_jev_page_minus_its_column_is_the_plain_page_near_the_cap(tmp_path):
+    d = tmp_path / "kc"
+    sc, n = write_kc_fixture_in_the_f18_zone(d)
+    assert 170 <= n <= 200
+    assert len(sc.clusters) == 2 and all(c["family"] is not None for c in sc.clusters.values())   # --jev asks no model
+    plain, withcol = tmp_path / "plain.md", tmp_path / "jev.md"
+    a = run_cli("--project-dir", d, "--out", plain)
+    b = run_cli("--project-dir", d, "--out", withcol, "--jev", "--jev-venue", "local")
+    assert a.returncode == 0 and b.returncode == 0, (a.stderr, b.stderr)
+    assert "jev: uncovered_shown=0 filled=0" in b.stdout
+    P, J = plain.read_bytes(), withcol.read_bytes()
+    assert J.count(b"| Jev suggests (advisory) |") == 2
+    assert _strip_jev_column(J.decode("utf-8")).encode("utf-8") == P              # KC-J1b, byte for byte
+    assert len(P) < hs.PAGE_MAX_BYTES and len(J) < hs.PAGE_MAX_BYTES
+    # this page sits within the column's room of the cap: BOTH pages drop the same oldest agents and say so
+    assert _agent_rows(P.decode()) == _agent_rows(J.decode()) < n
+    assert P.count(b"older agents active in the window are not shown (the page cap)") == 1
+
+
+SWEEP_CELLS = ["AF-AP-148 0.5303", "CLAUDE.md:1234#2 0.5146", "n/a (no lexical candidate)",
+               "n/a (local: connection refused; pc: no bridge env file)",                      # the short, real shapes
+               "n/a (local: HTTP N (system_one failed: <redacted> | KeyError) " * 4 + ")",   # and ones that grow when
+               "<" * 300, chr(0x1D518) * 120, "|" * 200 + ">", "n/a (" + "x" * 400 + ")"]    # printed (entities, UTF-8)
+
+
+def _swept_scan(fixture_dir, agents, clusters):
+    sc = hs.Scan(hs.load_families())
+    for p in sorted(fixture_dir.rglob("*.jsonl")):
+        sc.feed(str(p))
+    for i, (aid, desc) in enumerate(agents):
+        sc.agents[aid] = {"models": {"claude-opus-5-5": 1}, "requests": {"r"}, "errors": 0, "refusals": 0,
+                          "first": "2026-03-11T%02d:00:00.000000000Z" % (i % 24),
+                          "last": "2026-03-12T%02d:%02d:00.000000000Z" % (i % 12, i % 60)}
+        sc.agent_desc[aid] = desc
+    sc.clusters.update(clusters)
+    return sc
+
+
+def test_kcj1b_holds_on_a_sweep_of_generated_over_cap_pages(fixture_dir):
+    # Per trial: random agents (the verifier's random description lengths), random clusters, and one of three columns
+    # (none filled, as in F-18's 76-byte case; short real cells; cells that grow when printed). Two inputs per trial:
+    # the most agents whose page WITHOUT the column is under the cap (F-18's edge: the column alone can push it over),
+    # and a page well over the cap.
+    rnd = random.Random(20260924)
+    seen = {"inputs": 0, "over_cap": 0, "f18_edge": 0, "trimmed": 0}
+    for trial in range(30):
+        pool = [("g%03d%012d" % (trial, i), hs.excerpt("lane %d " % i + ("wo | <x> " * 20)[:rnd.randrange(0, 150)]))
+                for i in range(320)]
+        clusters = {}
+        for k in range(rnd.randrange(0, 50)):
+            fam = None if rnd.random() < 0.5 else "exit code N"
+            clusters[hs.excerpt("injected error %d " % k + "e" * rnd.randrange(0, 150))] = {
+                "count": rnd.randrange(1, 9), "first": "2026-03-12T0%d:00:00.000000000Z" % (k % 10),
+                "last": "2026-03-12T11:00:00.000000000Z", "tools": {"Bash"}, "family": fam, "rule": None if fam is None else "none"}
+        kind = trial % 3
+        col = {} if kind == 0 else {key: rnd.choice(SWEEP_CELLS[:4] if kind == 1 else SWEEP_CELLS)
+                                    for key in clusters if rnd.random() < 0.7}
+        lo, hi = 0, len(pool)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if len(hs.render(_swept_scan(fixture_dir, pool[:mid], clusters), KC_SRC).encode("utf-8")) < hs.PAGE_MAX_BYTES:
+                lo = mid
+            else:
+                hi = mid - 1
+        for k in (lo, min(len(pool), lo + rnd.randrange(5, 120))):
+            sc = _swept_scan(fixture_dir, pool[:k], clusters)
+            seen["inputs"] += 1
+            seen["over_cap"] += len(hs.render(sc, KC_SRC, col).encode("utf-8")) >= hs.PAGE_MAX_BYTES
+            seen["f18_edge"] += len(hs.render(sc, KC_SRC).encode("utf-8")) < hs.PAGE_MAX_BYTES <= len(
+                hs.render(sc, KC_SRC, col).encode("utf-8"))
+            plain, withcol = hs.build_page(sc, KC_SRC), hs.build_page(sc, KC_SRC, jev=col)
+            assert plain is not None and withcol is not None, (trial, k)
+            assert _strip_jev_column(withcol.decode("utf-8")).encode("utf-8") == plain, (trial, kind, k)
+            assert len(plain) < hs.PAGE_MAX_BYTES and len(withcol) < hs.PAGE_MAX_BYTES, (trial, kind, k)
+            seen["trimmed"] += b"not shown (the page cap)" in plain
+    assert seen["inputs"] == 60 and seen["over_cap"] >= 40 and seen["f18_edge"] >= 10 and seen["trimmed"] >= 40, seen
+
+
+def test_an_advisory_cell_is_scrubbed_whole_before_it_is_cut(fixture_dir):
+    # the cell's cut falls inside a fake value: cut first, 7 value characters would be left, under the named rule's
+    # floor of 8 (AF-AP-127); scrubbed first, none are
+    sc = hs.Scan(hs.load_families())
+    for p in sorted(fixture_dir.rglob("*.jsonl")):
+        sc.feed(str(p))
+    cell = "n/a (" + "w " * 39 + "password: QZJ8x4z9k2m7n5)"
+    assert cell[:100].endswith("password: QZJ8x4z")
+    page = hs.build_page(sc, KC_SRC, jev={k: cell for k in sc.clusters})
+    assert page.count(b"| n/a (w w w") == 18 and b"QZJ" not in page        # 9 clusters, both tables
+
+
+def test_a_page_that_cannot_keep_the_column_room_is_refused_with_and_without_jev(fixture_dir, tmp_path, monkeypatch):
+    sc = hs.Scan(hs.load_families())
+    for p in sorted(fixture_dir.rglob("*.jsonl")):
+        sc.feed(str(p))
+    bare = len(hs.render(sc, KC_SRC, max_agents=0).encode("utf-8"))
+    monkeypatch.setattr(hs, "PAGE_MAX_BYTES", bare + 1)       # with no agent row the plain page fits, its column does not
+    assert hs.build_page(sc, KC_SRC) is None and hs.build_page(sc, KC_SRC, jev={}) is None
+    out = tmp_path / "H.md"
+    assert hs.main(["--project-dir", str(fixture_dir), "--out", str(out)]) == 2 and not out.exists()
+
+
+# ---------- D-076 (d): tool, model and agent-id fields pass the same scrub (VERIFY-JT1 F-17) ----------
+
+F17 = ["ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "AGENT_TOKEN=cVMjXl1uWH1c9Ogzoc_-k60yOL5KP5pr",
+       "https://leading-twist-aruba-pulse.trycloudflare.com/exec", "sk-3c3d5f1e8a2b4c6d9e0f1234567890ab",
+       "xoxp-QZJ8x4z9k2m7n5"]
+F17_VALUES = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "cVMjXl1uWH1c9Ogzoc", "leading-twist-aruba-pulse",
+              "3c3d5f1e8a2b4c6d9e0f1234567890ab", "QZJ8x4z9k2m7n5"]
+
+
+def test_tool_model_and_agent_id_fields_pass_the_scrub(tmp_path):
+    t = "2026-03-12T11:%02d:%02d.000Z"
+    recs = []
+    for i, name in enumerate(F17):                     # each as a TOOL name, with an error result
+        recs += [assistant(t % (i, 0), "a%d" % i, "r%d" % i, "claude-opus-5-5", [tool_use("tu%d" % i, name)], 1),
+                 result(t % (i, 1), "u%d" % i, [tr("tu%d" % i, "<tool_use_error>Error: No such tool available</tool_use_error>", True)])]
+    text = [{"type": "text", "text": "x"}]
+    recs += [assistant(t % (9, 0), "m1", "rm1", F17[1], text, 1, stop="end_turn"),                   # MODEL names
+             assistant(t % (9, 1), "m2", "rm2", F17[4], text, 1, stop="end_turn"),
+             assistant(t % (9, 2), "g1", "rg1", "claude-opus-5-5", text, 1, stop="end_turn", agent=F17[0]),   # AGENT ids
+             assistant(t % (9, 3), "g2", "rg2", F17[3], text, 1, stop="end_turn", agent=F17[3])]
+    src = tmp_path / "f17.jsonl"
+    src.write_bytes(b"".join(_line(r) for r in recs))
+    out = tmp_path / "H.md"
+    r = run_cli("--transcript", src, "--out", out)
+    assert r.returncode == 0, r.stderr
+    page = out.read_text(encoding="utf-8")
+    for v in F17_VALUES:
+        assert v not in page, "a secret on the page: %s..." % v[:8]
+    assert hs.scrub(page) == page
+    cost = page.split("## Context cost")[1].split("## New this week")[0]
+    for shown in ("gh&lt;redacted&gt;", "AGENT_TOKEN=&lt;redacted&gt;", "https://&lt;bridge-link-redacted&gt;",
+                  "sk-&lt;redacted&gt;", "xox-&lt;redacted&gt;"):
+        assert "| %s | 1 |" % shown in cost, shown                  # the five tool rows are on the page, scrubbed
+    models = page.split("## Served model per day")[1].split("## Agents")[0]
+    assert "AGENT_TOKEN=&lt;redacted&gt; 1" in models and "xox-&lt;redacted&gt; 1" in models
+    agents = page.split("## Agents")[1].split("## Error clusters")[0]
+    assert "| gh&lt;redacted&gt; | - | claude-opus-5-5 1 |" in agents and "| sk-&lt;redacted&gt; | - | sk-&lt;redacted&gt; 1 |" in agents

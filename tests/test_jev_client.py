@@ -336,6 +336,62 @@ def test_every_scrubber_class_is_removed_from_every_text_sent(double):
     assert sent.count("KEEP-ME") == 4 and "<redacted>" in sent
 
 
+# ---------- D-076 (b): the rank window budget (VERIFY-JT1 F-24) ----------
+# The query and each chunk share Laya's 1,024-token window after a head of up to 256 tokens, and the server puts the
+# query first; live, a query of about 3,900 characters tied every chunk at 0.4958 with fan_out 3 and rc 0. After the
+# scrub, rank cuts the query to 1,000 characters and each chunk to 2,500; a rank whose scores are all equal is refused.
+
+def test_rank_cuts_the_query_to_1000_and_each_chunk_to_2500_characters(double):
+    d = double()
+    query = "why did pytest fail? " + "E   FileNotFoundError: No such file or directory: '/tmp/ps/bt'\n" * 70
+    chunk = "a note about the basetemp parent " * 120
+    assert len(query) > 4000 and len(chunk) > 3000
+    assert jev.rank(query, [chunk, "a short note"], url=d.url, log=False) is not None
+    (req,) = d.posts()
+    assert req["state"]["query"] == query[:1000]
+    assert [c["text"] for c in req["state"]["chunks"]] == [chunk[:2500], "a short note"]
+    assert jev.rank(query, [chunk, "b"], url=d.url, max_chars=300, log=False) is not None     # the smaller cut wins
+    req = d.posts()[1]
+    assert (len(req["state"]["query"]), len(req["state"]["chunks"][0]["text"])) == (300, 300)
+    r = cli("rank", "--url", d.url, "--no-log", "--query", query, "--chunk", chunk, "--chunk", "b")
+    assert r.returncode == 0, r.stderr
+    req = d.posts()[2]
+    assert (len(req["state"]["query"]), len(req["state"]["chunks"][0]["text"])) == (1000, 2500)
+
+
+@pytest.mark.parametrize("where,cut", [("query", 1000), ("chunk", 2500)])
+def test_a_secret_straddling_the_window_cut_never_reaches_the_request(double, where, cut):
+    # scrub, THEN cut (AF-AP-127): cut first, 7 value characters would be left, under the named rule's floor of 8
+    secret = "AGENT_TOKEN=cVMjXl1uWH1c9Ogzoc_-k60yOL5KP5pr"
+    text = ("w " * cut)[:cut - 20] + " " + secret + " and the rest of the line"
+    assert text[:cut].endswith("AGENT_TOKEN=cVMjXl1")
+    d = double()
+    args = (text, ["x", "y"]) if where == "query" else ("q", [text, "y"])
+    assert jev.rank(*args, url=d.url, log=False) is not None
+    (req,) = d.posts()
+    sent = req["state"]["query"] if where == "query" else req["state"]["chunks"][0]["text"]
+    assert len(sent) == cut and "cVMjXl1" not in d.requests[0]["body"].decode()
+
+
+def test_rank_refuses_a_signal_free_ranking_whose_scores_are_all_equal(double, tmp_path):
+    tie = double(ok_behaviour({"c0": 0.4958, "c1": 0.4958, "c2": 0.4958}))       # F-24's live answer
+    log = tmp_path / "calls.jsonl"
+    assert jev.rank("q", ["a", "b", "c"], url=tie.url, log_path=log) is None
+    assert jev.last_reason == "url: signal-free rank: all 3 chunks scored 0.4958"
+    (e,) = [json.loads(x) for x in log.read_text().splitlines()]
+    assert (e["ok"], e["reason"]) == (False, "url: signal-free rank: all 3 chunks scored 0.4958")
+    r = cli("rank", "--url", tie.url, "--no-log", "--query", "q", "--chunk", "a", "--chunk", "b", "--chunk", "c")
+    assert (r.returncode, r.stdout) == (3, "")
+    assert r.stderr.splitlines() == ["jev: unavailable: url: signal-free rank: all 3 chunks scored 0.4958"]
+    near = double(ok_behaviour({"c0": 0.49581, "c1": 0.49584}))                  # equal to 4 decimals: refused
+    assert jev.rank("q", ["a", "b"], url=near.url, log=False) is None
+    assert jev.last_reason == "url: signal-free rank: all 2 chunks scored 0.4958"
+    spread = double(ok_behaviour({"c0": 0.4958, "c1": 0.4959}))                 # a spread at the 4th decimal ranks
+    assert jev.rank("q", ["a", "b"], url=spread.url, log=False)["ranking"] == [["c1", 0.4959], ["c0", 0.4958]]
+    one = double(ok_behaviour({"c0": 0.4958}))                                   # one chunk is never refused
+    assert jev.rank("q", ["a"], url=one.url, log=False)["ranking"] == [["c0", 0.4958]]
+
+
 # ---------- D-6 / A4: the call log ----------
 
 def test_call_log_never_holds_the_state_and_has_the_modes(double, tmp_path):

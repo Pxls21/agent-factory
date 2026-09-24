@@ -15,8 +15,9 @@ The pipeline (the brief's pinned decisions D-1 to D-4):
              segments, commits) stay separate rows and are not files to read (the lane report, DD-8).
   jev_rank() scores at most 48 chunks through scripts/jev.py, one noul per chunk, after a lexical pre-filter (D-3).
              Only the local endpoint is asked (venue "local", or a pinned loopback url): never the bridge. The query
-             is the question's last 1,200 characters, because the model's window is 1,024 tokens and the server puts
-             the query BEFORE the chunk and cuts from the right: a longer query would cut every chunk off.
+             is the question's last 1,000 characters, because the model's window is 1,024 tokens and the server puts
+             the query BEFORE the chunk and cuts from the right: a longer query would cut every chunk off. 1,000 is
+             also jev.rank's own query cut (D-076 (b)), which keeps a query's HEAD: sending more would lose the tail.
   render()   the pack, markdown or JSON, under the character budget (default 6,000, hard cap 9,000: AF-AP-183) (D-4).
              Deterministic for fixed inputs and fixed instrument outputs: every order has a total tie-break, and the
              pack holds no timing.
@@ -51,7 +52,7 @@ TEXT_CAP = 400
 MERGE_LINES = 5
 MAX_JEV_CHUNKS = 48
 JEV_BATCH = 8               # chunks per call (at most 48 in all, D-3); see jev_rank
-JEV_QUERY_CHARS = 1200
+JEV_QUERY_CHARS = 1000      # = jev.RANK_QUERY_CHARS (D-076 (b)); the tail is kept here, so nothing is cut there
 JEV_TIMEOUT = 240.0
 TOP_DEFAULT = 12
 BUDGET_DEFAULT = 6000

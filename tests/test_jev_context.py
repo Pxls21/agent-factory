@@ -422,7 +422,7 @@ def test_jev_call_is_per_chunk_with_the_query_capped_to_its_tail(double):
     assert reason is None and set(scores) == {"k0", "k1", "k2"}
     (req,) = d.requests
     assert d.paths == ["/v1/systemone"]
-    assert req["state"]["query"] == question[-jc.JEV_QUERY_CHARS:] and len(req["state"]["query"]) == 1200
+    assert req["state"]["query"] == question[-jc.JEV_QUERY_CHARS:] and len(req["state"]["query"]) == 1000
     assert req["state"]["query"].endswith("TAIL") and "HEAD" not in req["state"]["query"]
     assert [c["id"] for c in req["state"]["chunks"]] == ["k2", "k1", "k0"]
     assert req["questions"] == {cid: {"type": "noul", "instructions": "Does this chunk answer, match or explain the query?"}
@@ -441,7 +441,7 @@ def test_a_failed_batch_fails_the_whole_ranking(double):
     def scorer(q, t):
         if t.startswith("f05.py"):          # the chunk with lexical 5 sits in the second batch of 8
             raise ValueError("model error")
-        return 0.5
+        return _by_index(q, t)              # a spread: an all-equal batch is refused as signal-free (D-076 (b))
     d = double(scorer)
     scores, reason, sent = jc.jev_rank("q", _chunks(20), url=d.url, timeout=5, log=False)
     assert scores is None and reason.startswith("call 2 of 3: url: HTTP 500")
@@ -449,11 +449,12 @@ def test_a_failed_batch_fails_the_whole_ranking(double):
 
 def test_all_equal_scores_are_no_ranking(double):
     """VERIFY-JT1 F-24: every chunk cut out of the window scores the same, with fan_out intact. Such a ranking is
-    refused (the pack falls back to its base order with the reason); one chunk alone is not judged."""
+    refused (the pack falls back to its base order with the reason); one chunk alone is not judged. Since D-076 (b),
+    jev.rank refuses a signal-free batch itself, so the reason is the client's, prefixed with the call it came from."""
     d = double(lambda q, t: 0.4958)
     scores, reason, sent = jc.jev_rank("q", _chunks(3), url=d.url, timeout=5, log=False)
     assert scores is None and len(sent) == 3
-    assert reason == "all 3 scores are equal (0.4958): no signal (a query over the window cuts every chunk)"
+    assert reason == "call 1 of 1: url: signal-free rank: all 3 chunks scored 0.4958"
     scores, reason, sent = jc.jev_rank("q", _chunks(1), url=d.url, timeout=5, log=False)
     assert scores == {"k0": 0.4958} and reason is None
     d2 = double(_by_index)                      # negative control: a spread of scores is a ranking
@@ -464,8 +465,11 @@ def test_all_equal_scores_are_no_ranking(double):
 def test_the_query_bound_leaves_room_for_a_chunk():
     """The measured budget behind JEV_QUERY_CHARS (the lane report, section 10: the model's own tokenizer and
     build_sequence): 1,200 characters of the densest real query text plus the longest real chunk took 668 of 986
-    tokens; a trace-like query cut the chunk only at about 2,400. Pin the bound and the chunk cap it was measured with."""
-    assert jc.JEV_QUERY_CHARS == 1200 and jc.TEXT_CAP == 400
+    tokens; a trace-like query cut the chunk only at about 2,400. The bound is now 1,000, jev.rank's own query cut
+    (D-076 (b)): rank keeps a query's head, so a longer tail-cut query would lose its tail there. Pin both, and the
+    chunk cap the budget was measured with."""
+    import jev                                  # on the path once jev_context is loaded
+    assert jc.JEV_QUERY_CHARS == 1000 == jev.RANK_QUERY_CHARS and jc.TEXT_CAP == 400
 
 
 def test_jev_down_is_a_reason_not_an_exception():
