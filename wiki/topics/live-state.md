@@ -20,6 +20,7 @@ last_compiled: 2026-09-03
 - **OPEN FINDING:** the v1 answer-prefill failed through OmniRoute (502 on a whitespace token; 400 on integer logprobs for raw completions); plain-chat logprobs pass.
 - **DISK:** the sandbox disk filled at 16:2xZ (finished lanes' scratch); cleared to 3.4 GB; `lane_gate.sh` now refuses under 1,500 MB free.
 - **GPU TRAINING:** queued (owner): only in a window with no lanes live; nothing is ready to train yet (FT1 building; no teacher labels yet).
+- **PLANNED (16:3xZ):** J4, the long-input test (`tasks/jev-long-input-plan.md`): whole verify reports (9k-22k tokens) and the whole anti-pattern registry (about 60k tokens), both on J2's held-out labels. VERIFY-JT3's follow-ups are issue #71. Open owner question: a short RWKV-7 zero-shot probe inside the same no-lanes GPU window.
 - **OWNER DECISIONS OPEN:** the Stage 0 PR to main (only on the owner's word).
 
 
