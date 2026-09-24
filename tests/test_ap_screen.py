@@ -92,3 +92,54 @@ def test_hit_line_text_is_the_numbered_line_past_a_unicode_line_separator(tmp_pa
     out = capsys.readouterr().out
     assert total == 1
     assert f"{f}:3: emit(None)" in out
+
+
+# --staged-shell (task #245): the pre-commit hook's advisory step over the staged *.sh files. AF-AP-145's signature was
+# registered with a screen line, yet it never ran on scripts/gpu_window.sh: the edit-snapshot hook returns early for a
+# non-.py file, and the class was met there twice (2026-09-24).
+import subprocess  # noqa: E402
+
+TRAPPED = "#!/bin/bash\ncleanup() {\n  rm -f x\n}\ntrap cleanup EXIT\ntrap 'exit 143' TERM\n"
+IGNORED = "#!/bin/bash\ncleanup() {\n  trap '' INT TERM\n  rm -f x\n}\ntrap cleanup EXIT\ntrap 'trap \"\" INT TERM; exit 143' TERM\n"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ap_screen.py"
+
+
+def _repo(tmp_path, files, staged):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    if staged:
+        subprocess.run(["git", "add", "--", *staged], cwd=tmp_path, check=True)
+    return subprocess.run([sys.executable, str(SCRIPT), "--staged-shell"], cwd=tmp_path, capture_output=True,
+                          text=True, timeout=60)
+
+
+def test_staged_shell_prints_the_af_ap_145_hits_of_a_staged_file(tmp_path):
+    r = _repo(tmp_path, {"my run.sh": TRAPPED}, ["my run.sh"])
+    assert r.returncode == 0, r.stderr
+    assert "AF-AP-145: 2" in r.stdout and "my run.sh:2: cleanup() {" in r.stdout, r.stdout
+    assert "my run.sh:6: trap 'exit 143' TERM" in r.stdout and "advisory, never blocking" in r.stdout
+
+
+def test_staged_shell_is_silent_on_a_clean_file_unstaged_changes_and_the_vendored_trees(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "tracked.sh").write_text(IGNORED)
+    subprocess.run(["git", "add", "tracked.sh"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "x"],
+                   cwd=tmp_path, check=True)
+    (tmp_path / "tracked.sh").write_text(TRAPPED)  # changed in the tree and not staged: not this commit's content
+    r = _repo(tmp_path, {"ok.sh": IGNORED, "loose.sh": TRAPPED, "sandbox-kit/v.sh": TRAPPED, ".claude/h.sh": TRAPPED,
+                         "notes.py": TRAPPED}, ["ok.sh", "sandbox-kit/v.sh", ".claude/h.sh", "notes.py"])
+    assert r.returncode == 0 and r.stdout == "", (r.stdout, r.stderr)
+
+
+def test_staged_shell_fails_loud_outside_a_git_repo(tmp_path):
+    r = subprocess.run([sys.executable, str(SCRIPT), "--staged-shell"], cwd=tmp_path, capture_output=True, text=True,
+                       timeout=60, env={"PATH": "/usr/bin:/bin", "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)})
+    assert r.returncode != 0 and "CalledProcessError" in r.stderr, (r.returncode, r.stderr[-300:])
+
+
+def test_the_pre_commit_hook_runs_the_staged_shell_screen_and_never_blocks_on_it():
+    hook = (Path(__file__).resolve().parents[1] / "scripts" / "hooks" / "pre-commit").read_text()
+    assert '"$PY" "$REPO_ROOT/scripts/ap_screen.py" --staged-shell || true\n' in hook

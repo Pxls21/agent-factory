@@ -142,6 +142,10 @@ else
     exit 1
   fi
 fi
+# SHELL AP SCREEN (task #245, 2026-09-24): the edit-snapshot hook returns early for a non-.py file, so a registered
+# shell signature (AF-AP-145, met twice in scripts/gpu_window.sh) never reached its author. Advisory: the hits of
+# the staged *.sh files are printed, never blocking; silent when there is none.
+"$PY" "$REPO_ROOT/scripts/ap_screen.py" --staged-shell || true
 # ADVISORY-EXCLUSION SCREEN (KC-J1): forbidden vocabulary must never appear
 # in any gate-defining file. No bypass — this is an absorbing barrier.
 "$PY" "$REPO_ROOT/scripts/no_laya_in_gates.py" --staged
