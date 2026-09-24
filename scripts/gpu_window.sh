@@ -3,17 +3,22 @@
 # Runs ON the PC. Refuses while any PC lane is live, or when the service is not active and answering to begin with; stops
 # qwen.service; waits for the GPU to free; runs each job (one shell command per line of a jobs file) under ONE shared
 # time budget; and ALWAYS starts qwen.service again (an EXIT trap; INT or TERM first stops the running job, which gets
-# 30 s after TERM before KILL) and waits until its /v1/models answers. INT and TERM are ignored while it restores: the
-# restore is the safety action (VERIFY-GW1 F-1). Start it DETACHED, so the window closes even if the caller goes:
+# 30 s after TERM before KILL) and waits until its /v1/models answers. From the first INT or TERM on, and before every
+# exit once the traps are armed, INT and TERM are ignored: a signal must never re-run abort inside the EXIT trap, whose
+# restore is the safety action (VERIFY-GW1 F-1, VERIFY-GW1-R1 R1-F-1, AF-AP-145). Start it DETACHED, so the window
+# closes even if the caller goes:
 #   (setsid nohup bash scripts/gpu_window.sh ARGS > LOG 2>&1 < /dev/null &)
 # (a plain setsid from a non-interactive caller does not return, VERIFY-GW1 F-13). Every step is one JSON line in the
 # record file. Only a SIGKILL skips the restart: then `systemctl --user start qwen`. nvidia-smi is bounded by a 10 s
-# timeout (F-2). Test seams, whole numbers checked before anything stops: GPU_WINDOW_MAX_SECONDS (the job budget,
-# at most 14400), GPU_FREE_WAIT_SECONDS (default 180), GPU_JOB_KILL_AFTER (default 30), QWEN_BACK_SECONDS (default
-# 1200), GPU_FREE_MIB (default 1500).
+# timeout (F-2), and it must give a reading before the stop: a driver that cannot start a new GPU process would keep
+# the service from coming back (R1-F-6). Test seams, whole numbers checked before anything stops: GPU_WINDOW_MAX_SECONDS
+# (the job budget, at most 14400), GPU_FREE_WAIT_SECONDS (default 180, at most 3600), GPU_JOB_KILL_AFTER (default 30,
+# 1-300: 0 would turn timeout's KILL off, R1-F-2), QWEN_BACK_SECONDS (default 1200, at most 3600), GPU_FREE_MIB
+# (default 1500).
 #   usage: gpu_window.sh [--max-minutes N] [--dry-run] <jobs-file>
 #   exit: 0 every job rc 0 and the service back · 1 a job failed or timed out, the stop failed, or the GPU did not free
-#         (the service back) · 3 a lane is live · 4 the service is not active or does not answer · 5 another window
+#         (the service back) · 3 a lane is live · 4 the service is not active or does not answer, or nvidia-smi gives
+#         no reading · 5 another window
 #         holds the lock · 6 the service did not come back (also after a signal) · 130 stopped by INT or TERM (the
 #         service back) · 64 usage
 # The inference key is read from its file into a curl header file descriptor, never into argv (AF-AP-39).
@@ -40,6 +45,11 @@ done
 BUDGET_S=$((10#${GPU_WINDOW_MAX_SECONDS:-$((MAX_MIN * 60))}))
 [ "$BUDGET_S" -le 14400 ] || { echo "gpu_window: the job budget is at most 14400 s" >&2; exit 64; }
 FREE_WAIT_S=$((10#${GPU_FREE_WAIT_SECONDS:-180})); KILL_AFTER=$((10#${GPU_JOB_KILL_AFTER:-30}))
+FREE_MIB=$((10#${GPU_FREE_MIB:-1500}))     # the window's GPU is free when memory.used is under this
+BACK_S=$((10#${QWEN_BACK_SECONDS:-1200}))  # how long the service gets to answer /v1/models again
+[ "$KILL_AFTER" -ge 1 ] && [ "$KILL_AFTER" -le 300 ] ||
+  { echo "gpu_window: GPU_JOB_KILL_AFTER must be 1-300 (0 turns timeout's KILL off)" >&2; exit 64; }
+[ "$FREE_WAIT_S" -le 3600 ] && [ "$BACK_S" -le 3600 ] || { echo "gpu_window: a wait seam is at most 3600 s" >&2; exit 64; }
 [ -n "$JOBS" ] && [ -f "$JOBS" ] || usage
 mapfile -t cmds < <(grep -v -E '^[[:space:]]*(#|$)' "$JOBS")
 [ "${#cmds[@]}" -gt 0 ] || { echo "gpu_window: no jobs in $JOBS" >&2; exit 64; }
@@ -49,8 +59,6 @@ KEY_FILE="${QWEN_KEY_FILE:-$HOME/.config/qwen-builder/api-key}"
 MODELS_URL="${QWEN_MODELS_URL:-http://127.0.0.1:8080/v1/models}"
 STATE="${GPU_WINDOW_DIR:-$HOME/gpu-window}"
 UNIT="${QWEN_UNIT:-qwen}"
-FREE_MIB=$((10#${GPU_FREE_MIB:-1500}))     # the window's GPU is free when memory.used is under this
-BACK_S=$((10#${QWEN_BACK_SECONDS:-1200}))  # how long the service gets to answer /v1/models again
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 mkdir -p "$STATE"
 REC="$STATE/record.jsonl"
@@ -82,6 +90,13 @@ systemctl --user is-active --quiet "$UNIT" || { echo "gpu_window: $UNIT is not a
   rec refused '"reason":"service not active"'; exit 4; }
 models_answer || { echo "gpu_window: $MODELS_URL does not answer 200 before the window (the URL or the key)" >&2
   rec refused '"reason":"service does not answer"'; exit 4; }
+gpu_used() {                                # memory.used in MiB, bounded (F-2); only a first line that is a number is
+  local out                                 # a reading, never the digits of an error line (F-10)
+  out="$(timeout -k 2 10 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1)"
+  [[ "$out" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]] && echo "${BASH_REMATCH[1]}"
+}
+[ -n "$(gpu_used)" ] || { echo "gpu_window: nvidia-smi gives no reading, so $UNIT might not start again after a stop" >&2
+  rec refused '"reason":"no GPU reading"'; exit 4; }
 
 if [ "$DRY" = 1 ]; then
   echo "gpu_window: dry run: would stop $UNIT, run ${#cmds[@]} job(s) within $MAX_MIN min, start $UNIT, wait for $MODELS_URL"
@@ -109,26 +124,28 @@ restore() {
   rec back "\"ok\":true,\"seconds\":$((SECONDS - t0))"
 }
 jobpid=""
+leave() { trap '' INT TERM; exit "$1"; }    # EVERY exit once the traps are armed: a signal landing between an exit and
+                                            # restore's first line would re-run abort inside the EXIT trap, and its
+                                            # exit would end the shell before the start (R1-F-1, AF-AP-145)
 abort() {                                   # stop the running job now; the EXIT trap then restores the service
   rec abort "\"signal\":\"$1\""
   if [ -n "$jobpid" ]; then kill -TERM "$jobpid" 2>/dev/null; wait "$jobpid" 2>/dev/null; fi
-  exit 130
+  leave 130
 }
 trap 'restore' EXIT
-trap 'abort INT' INT
-trap 'abort TERM' TERM
+trap 'trap "" INT TERM; abort INT' INT      # the ignore first: a second signal must not re-run abort (AF-AP-145)
+trap 'trap "" INT TERM; abort TERM' TERM
 
 rec open "\"jobs\":${#cmds[@]},\"max_minutes\":$MAX_MIN"
 systemctl --user stop "$UNIT"; src=$?
 rec stop "\"rc\":$src"
-[ "$src" = 0 ] || { echo "gpu_window: stopping $UNIT failed (rc $src)" >&2; exit 1; }
+[ "$src" = 0 ] || { echo "gpu_window: stopping $UNIT failed (rc $src)" >&2; leave 1; }
 t0=$SECONDS
 while :; do
-  used="$(timeout -k 2 10 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 |
-    tr -dc 0-9)"                          # bounded: a hung probe must not hold the service down (F-2)
+  used="$(gpu_used)"
   [ -n "$used" ] && [ "$used" -lt "$FREE_MIB" ] && break
   if [ $((SECONDS - t0)) -ge "$FREE_WAIT_S" ]; then
-    rec gpu_busy "\"used_mib\":\"${used:-?}\""; echo "gpu_window: the GPU did not free (used ${used:-?} MiB)" >&2; exit 1
+    rec gpu_busy "\"used_mib\":\"${used:-?}\""; echo "gpu_window: the GPU did not free (used ${used:-?} MiB)" >&2; leave 1
   fi
   sleep 3
 done
@@ -147,4 +164,4 @@ for c in "${cmds[@]}"; do
 done
 restore
 rec close "\"rc\":$worst"
-exit "$worst"
+leave "$worst"

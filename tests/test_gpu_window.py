@@ -11,6 +11,8 @@ import http.server
 import json
 import os
 import pathlib
+import random
+import re
 import shutil
 import signal
 import subprocess
@@ -44,7 +46,13 @@ esac
 """
 NVIDIA_SMI = r"""#!/usr/bin/env bash
 echo "nvidia-smi $*" >> "$SHIM_DIR/calls.log"
-[ -e "$SHIM_DIR/nvsmi-hang" ] && exec sleep 60
+if [ ! -e "$SHIM_DIR/active" ]; then                 # the service is stopped: the window's free wait
+  [ -e "$SHIM_DIR/nvsmi-hang" ] && exec sleep 60
+  [ -e "$SHIM_DIR/nvsmi-hang-noterm" ] && { trap '' TERM; exec sleep 60; }
+  [ -e "$SHIM_DIR/nvsmi-error-after-stop" ] && { echo "Unable to determine the device handle for GPU0000:01:00.0: Unknown Error"; exit 0; }
+fi
+[ -e "$SHIM_DIR/nvsmi-hang-always" ] && exec sleep 60
+[ -e "$SHIM_DIR/nvsmi-broken" ] && { echo "Failed to initialize NVML: Driver/library version mismatch"; exit 18; }
 cat "$SHIM_DIR/gpu_used" 2>/dev/null || echo 100
 """
 CURL = r"""#!/usr/bin/env bash
@@ -408,7 +416,8 @@ def test_a_job_that_ignores_term_is_killed_after_the_grace_on_the_budget_and_on_
     finally:
         if proc.poll() is None:
             proc.kill()
-    assert rc == 130 and _dead(pid) and "job-dead-at-start" in _calls(win)
+    starts = [c for c in _calls(win) if c.startswith("job-")]   # the LAST start: the first half left its own line
+    assert rc == 130 and _dead(pid) and starts[-1] == "job-dead-at-start", starts
 
 
 def test_a_job_cannot_read_the_callers_stdin(win):
@@ -434,7 +443,125 @@ def test_numbers_are_decimal_and_the_seams_are_checked_before_anything_stops(win
                              ("GPU_WINDOW_MAX_SECONDS", "999999", "is too large"),
                              ("GPU_WINDOW_MAX_SECONDS", "20000", "at most 14400"),
                              ("QWEN_BACK_SECONDS", "20m", "must be a whole number"),
-                             ("GPU_FREE_MIB", "1.5k", "must be a whole number")):
+                             ("GPU_FREE_MIB", "1.5k", "must be a whole number"),
+                             ("GPU_JOB_KILL_AFTER", "0", "must be 1-300"),
+                             ("GPU_JOB_KILL_AFTER", "301", "must be 1-300"),
+                             ("GPU_FREE_WAIT_SECONDS", "3601", "at most 3600"),
+                             ("QWEN_BACK_SECONDS", "3601", "at most 3600")):
         r = _run(win, jobs, **{seam: value})
         assert r.returncode == 64 and msg in r.stderr, (seam, value, r.stderr)
     _never_stopped(win)
+
+
+def test_leading_zero_seams_are_decimal(win):
+    """VERIFY-GW1-R1 R1-F-5: `10#` on the seams had no test (its mutants survived). A leading 0 before an 8 or a 9 is an
+    octal error in bash arithmetic, so without `10#` the script dies before the lock."""
+    r = _run(win, _jobs(win, "true"), GPU_WINDOW_MAX_SECONDS="09", GPU_FREE_WAIT_SECONDS="09", GPU_JOB_KILL_AFTER="09",
+             QWEN_BACK_SECONDS="09", GPU_FREE_MIB="0900")
+    assert r.returncode == 0, r.stderr
+    assert [e["event"] for e in _events(win)][-3:] == ["start", "back", "close"]
+
+
+def test_no_gpu_reading_before_the_window_refuses_and_stops_nothing(win):
+    """VERIFY-GW1-R1 R1-F-6: a driver that cannot start a new GPU process (a driver update without a reboot) keeps the
+    running service alive but would keep it from starting again; nvidia-smi must give a number before the stop."""
+    (win.shim / "nvsmi-broken").touch()
+    r = _run(win, _jobs(win, 'echo ran >> "$SHIM_DIR/calls.log"'))
+    assert r.returncode == 4 and "nvidia-smi gives no reading" in r.stderr, r.stderr
+    assert _events(win)[-1]["reason"] == "no GPU reading" and "ran" not in _calls(win)
+    _never_stopped(win)
+
+
+def test_a_hung_nvidia_smi_before_the_window_is_bounded_and_refuses(win):
+    (win.shim / "nvsmi-hang-always").touch()
+    t0 = time.monotonic()
+    r = _run(win, _jobs(win, "true"))
+    assert r.returncode == 4 and time.monotonic() - t0 < 30, r.stderr
+    _never_stopped(win)
+
+
+def test_an_error_line_after_the_stop_is_no_reading_so_no_job_runs(win):
+    """VERIFY-GW1 F-10: `tr -dc 0-9` turned an error line into 1000 MiB ("free") and the jobs ran on a GPU nobody read."""
+    (win.shim / "nvsmi-error-after-stop").touch()
+    r = _run(win, _jobs(win, 'echo ran >> "$SHIM_DIR/calls.log"'), GPU_FREE_WAIT_SECONDS="0")
+    assert r.returncode == 1 and "the GPU did not free (used ? MiB)" in r.stderr, r.stderr
+    assert "ran" not in _calls(win) and (win.shim / "active").exists()
+
+
+def test_a_hung_probe_that_ignores_term_is_killed_after_two_seconds(win):
+    """VERIFY-GW1-R1 R1-F-5: `timeout 10` without `-k 2` survived; a probe that ignores TERM then held the window 60 s."""
+    (win.shim / "nvsmi-hang-noterm").touch()
+    t0 = time.monotonic()
+    r = _run(win, _jobs(win, "true"), GPU_FREE_WAIT_SECONDS="0", timeout=90)
+    assert r.returncode == 1 and time.monotonic() - t0 < 30, (r.stderr, time.monotonic() - t0)
+    assert (win.shim / "active").exists()
+
+
+def test_a_burst_of_signals_across_the_abort_never_skips_the_restore(win):
+    """AF-AP-145, met by VERIFY-GW1-R1 (R-1): a second signal between abort's exit and restore's first line re-ran abort
+    inside the EXIT trap, and its exit ended the shell before the service was started."""
+    job = 'echo $$ > "$SHIM_DIR/job.pid"; while :; do sleep 1; done'
+    for trial in range(8):
+        (win.shim / "job.pid").unlink(missing_ok=True)
+        proc = _start(win, _jobs(win, job), GPU_JOB_KILL_AFTER="3")
+        try:
+            _job_pid(win)
+            end = time.monotonic() + 0.05
+            while time.monotonic() < end and proc.poll() is None:
+                os.kill(proc.pid, signal.SIGTERM)
+                time.sleep(0.00005)
+            rc = proc.wait(timeout=40)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        ev = [e["event"] for e in _events(win)]
+        assert rc == 130 and ev[-2:] == ["start", "back"] and (win.shim / "active").exists(), (trial, rc, ev[-5:])
+
+
+@pytest.mark.parametrize("shape", ["gpu_busy", "failed stop"])
+def test_one_term_right_after_a_plain_exit_never_skips_the_restore(win, shape):
+    """VERIFY-GW1-R1 R-2 and R-3: ONE TERM 0-300 us after the busy-GPU or the failed-stop exit ran abort inside the EXIT
+    trap (25 of 150 and 13 of 150 lost the start on the first repair). A watcher sends it as the record line appears."""
+    random.seed(7)
+    marker = b'"gpu_busy"' if shape == "gpu_busy" else b'"rc":5'
+    extra = {"GPU_FREE_WAIT_SECONDS": "0"} if shape == "gpu_busy" else {"SHIM_STOP_RC": "5"}
+    if shape == "gpu_busy":
+        (win.shim / "gpu_used").write_text("20000\n")
+    rec = win.tmp / "state" / "record.jsonl"
+    for trial in range(20):
+        (win.shim / "active").touch()
+        seen = rec.read_bytes().count(marker) if rec.exists() else 0
+        starts = _calls(win).count("systemctl --user start qwen")
+        proc = _start(win, _jobs(win, "true"), **extra)
+        try:
+            deadline = time.monotonic() + 20
+            while not (rec.exists() and rec.read_bytes().count(marker) > seen):   # a busy watch: the gap is ~130 us
+                if proc.poll() is not None or time.monotonic() > deadline:
+                    assert rec.exists() and rec.read_bytes().count(marker) > seen, (trial, "the marker never appeared")
+                    break
+            t1, jitter = time.perf_counter(), random.uniform(0, 300e-6)
+            while time.perf_counter() - t1 < jitter:
+                pass
+            proc.send_signal(signal.SIGTERM)
+            rc = proc.wait(timeout=60)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        assert rc in (1, 130), (trial, rc)
+        assert _calls(win).count("systemctl --user start qwen") == starts + 1, (trial, rc, _events(win)[-4:])
+        assert _events(win)[-1]["event"] == "back" and (win.shim / "active").exists(), (trial, _events(win)[-4:])
+
+
+def test_every_exit_once_the_traps_are_armed_ignores_int_and_term_first():
+    """AF-AP-145 / R1-F-1, the deterministic form: the handlers open with the ignore, abort leaves through `leave`, and no
+    bare `exit` follows abort's definition (restore, defined earlier, opens with the ignore itself)."""
+    lines = SCRIPT.read_text().splitlines()
+    code = [re.sub(r"\s+#\s.*$", "", line) for line in lines]
+    assert "leave() { trap '' INT TERM; exit \"$1\"; }" in code
+    assert "trap 'trap \"\" INT TERM; abort INT' INT" in code
+    assert "trap 'trap \"\" INT TERM; abort TERM' TERM" in code
+    r = code.index("restore() {")
+    assert code[r + 1].strip() == "trap '' INT TERM"
+    a = code.index("abort() {")
+    bare = [(i + 1, line) for i, line in enumerate(code) if i > a and re.search(r"(?<![\w-])exit(?![\w-])", line)]
+    assert bare == [], bare
