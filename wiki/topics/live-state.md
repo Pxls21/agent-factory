@@ -14,6 +14,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 03:0xZ — WHAT IS LIVE NOW (this block supersedes the 02:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LANDED 03:0xZ, GATED-PENDING-VERIFY:** K150 (#150, aaca94f: the kit edits, four hook rows, issue #60's test) and J1-3-R1 (#209, ab4a8d5: the harvester's one focused repair; D-066). Both need an independent verify.
+- **HOME 03:0xZ:** the MoJev evidence (#210, 53e114c); the findings with options for the owner are next.
+- **LIVE, SANDBOX:** J1-1-R3 (#202) in a private clone, `/tmp/j113s/wt` at ff7a671 (moved off the PC after two idle hours, AF-AP-171). No PC lane is live.
+
 **2026-09-24 02:1xZ — WHAT IS LIVE NOW (this block supersedes the 02:0xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, PC (the local build route, ONE long-context lane):** J1-1-R3 (#202, `pc-j1-1-r3.md--ff7a671`). One monitor watches it (10-minute heartbeats with the vLLM KV use).
 - **LIVE, SANDBOX 02:1xZ (three agents, all Opus 5.5 per D-065, relaunched after the owner stopped them by mistake):** J1-3-R1 (#209, from its premise section), K150 (#150, items a/d1/l′ in the tree, continuing), the MoJev evidence lane (#210, with AMENDMENT 1: bug localization, workflow-hygiene triggers, a context manager). `.lanes-live` holds 20 paths.
@@ -515,6 +520,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 03:0xZ — K150 and J1-3-R1 landed (verify pending); the MoJev evidence home; J1-1-R3 moved to a private sandbox clone.
 2026-09-24 02:3xZ — owner decisions re-listed (eight proofs to sign, the Stage 0 PR, MoJev); STATUS.md refreshed; pushed 4c1d95d.
 2026-09-24 02:1xZ — the owner stopped all three sandbox agents by mistake; all three relaunched on Opus 5.5 (D-065).
 2026-09-24 02:1xZ — task #210: the read-only MoJev audit dispatched (owner ask).
