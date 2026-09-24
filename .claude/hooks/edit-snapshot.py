@@ -350,6 +350,13 @@ AP_SCREEN = [
     ("AF-AP-197", re.compile(r"""\b(?:disk_usage|statvfs)\("""),
      "a free-space probe — does it run BEFORE the expensive work it protects (the size is usually known up front) as "
      "well as at the write? A check after the work only chooses which loss you take (AF-AP-197)"),
+    # AF-AP-200 (2026-09-24, task #243): a parser of git's diff text keyed on a header prefix. The first stale_ids.py
+    # took a path only from `+++ b/` and skipped every added line it could not attribute, so `diff.noprefix`, a quoted
+    # path and an added line starting `++` each hid a stale citation and the push went through.
+    ("AF-AP-200", re.compile(r"""startswith\(\s*["'](?:\+\+\+|--- a/)"""),
+     "a diff header parsed by its prefix — pass explicit --src-prefix=a/ --dst-prefix=b/, treat `+++` as a header only "
+     "between `diff --git` and the first `@@`, and never drop an added line whose path did not parse: a diff.noprefix "
+     "config, a quoted path or an added line starting `++` otherwise hides it (AF-AP-200)"),
 
 
 ]

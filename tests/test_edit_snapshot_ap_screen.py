@@ -1039,3 +1039,19 @@ class TestAFAP197:
     def test_no_fire_on_a_name_that_only_contains_the_word(self):
         for line in ("report = disk_usage_report", "print(statvfs_note)"):
             assert not self.rx.search(line), line
+
+
+class TestAFAP200:
+    rx = _AP_BY_ID["AF-AP-200"]
+
+    def test_fires_on_the_first_stale_ids_header_parse(self):
+        assert self.rx.search('        if raw.startswith("+++ "):')
+        assert self.rx.search("            path = raw[6:] if raw.startswith('+++ b/') else None")
+
+    def test_fires_on_the_skip_and_the_old_side_header(self):
+        assert self.rx.search('if l.startswith("+") and not l.startswith("+++")]')
+        assert self.rx.search('elif line.startswith("--- a/"):')
+
+    def test_no_fire_on_front_matter_or_a_single_plus(self):
+        for line in ('if line.startswith("---"):', 'elif raw.startswith("+"):', 'x.startswith("++")'):
+            assert not self.rx.search(line), line
