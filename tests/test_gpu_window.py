@@ -29,12 +29,22 @@ echo "systemctl $*" >> "$SHIM_DIR/calls.log"
 case "$*" in
   "--user is-active --quiet qwen") [ -e "$SHIM_DIR/active" ];;
   "--user stop qwen") rc="${SHIM_STOP_RC:-0}"; [ "$rc" = 0 ] && rm -f "$SHIM_DIR/active"; exit "$rc";;
-  "--user start qwen") [ -e "$SHIM_DIR/never-back" ] || touch "$SHIM_DIR/active"; exit 0;;
+  "--user start qwen")
+    if [ -f "$SHIM_DIR/job.pid" ]; then          # a zombie holds nothing: `kill -0` alone would call it alive
+      st=$(awk '{print $3}' "/proc/$(cat "$SHIM_DIR/job.pid")/stat" 2>/dev/null)
+      if [ -n "$st" ] && [ "$st" != Z ]; then echo job-alive-at-start; else echo job-dead-at-start; fi \
+        >> "$SHIM_DIR/calls.log"
+    fi
+    if [ -e "$SHIM_DIR/never-back" ]; then :
+    elif [ -e "$SHIM_DIR/slow-start" ]; then (sleep 3; touch "$SHIM_DIR/active") > /dev/null 2>&1 &
+    else touch "$SHIM_DIR/active"; fi
+    exit 0;;
   *) exit 99;;
 esac
 """
 NVIDIA_SMI = r"""#!/usr/bin/env bash
 echo "nvidia-smi $*" >> "$SHIM_DIR/calls.log"
+[ -e "$SHIM_DIR/nvsmi-hang" ] && exec sleep 60
 cat "$SHIM_DIR/gpu_used" 2>/dev/null || echo 100
 """
 CURL = r"""#!/usr/bin/env bash
@@ -77,8 +87,8 @@ def win(tmp_path):
                AF_REPO=str(repo), QWEN_KEY_FILE=str(key), GPU_WINDOW_DIR=str(tmp_path / "state"),
                QWEN_MODELS_URL="http://127.0.0.1:%d/v1/models" % srv.server_address[1],
                XDG_RUNTIME_DIR=str(tmp_path))
-    for k in ("GPU_WINDOW_MAX_SECONDS", "GPU_FREE_WAIT_SECONDS", "QWEN_BACK_SECONDS", "SHIM_STOP_RC", "GPU_FREE_MIB",
-              "QWEN_UNIT"):
+    for k in ("GPU_WINDOW_MAX_SECONDS", "GPU_FREE_WAIT_SECONDS", "GPU_JOB_KILL_AFTER", "QWEN_BACK_SECONDS",
+              "SHIM_STOP_RC", "GPU_FREE_MIB", "QWEN_UNIT"):
         env.pop(k, None)
     w = type("W", (), {})()
     w.tmp, w.shim, w.repo, w.env, w.srv, w.key = tmp_path, shim, repo, env, srv, key
@@ -289,3 +299,142 @@ def test_term_stops_the_running_job_at_once_and_restores(win):
     ev = [e["event"] for e in _events(win)]
     assert ev[-3:] == ["abort", "start", "back"] and _events(win)[-3]["signal"] == "TERM"
     assert (win.shim / "active").exists()
+
+
+def _start(w, jobs, **extra):
+    return subprocess.Popen(["bash", str(SCRIPT), jobs], env=dict(w.env, **extra), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+
+
+def _wait_for(pred, seconds=15):
+    deadline = time.monotonic() + seconds
+    while not pred():
+        assert time.monotonic() < deadline, "timed out waiting"
+        time.sleep(0.05)
+
+
+def _job_pid(w):
+    _wait_for(lambda: (w.shim / "job.pid").exists() and (w.shim / "job.pid").read_text().strip())
+    return int((w.shim / "job.pid").read_text())
+
+
+def _dead(pid, seconds=10):
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def test_a_signal_during_the_restore_is_ignored_so_a_service_that_never_returns_still_exits_6(win):
+    """VERIFY-GW1 F-1: a TERM or INT during `restore` ended the script with rc 130 ("the service back") while the
+    service had not come back, and a TERM between `restored=1` and the start skipped the start."""
+    (win.shim / "never-back").touch()
+    proc = _start(win, _jobs(win, "true"), QWEN_BACK_SECONDS="4")
+    try:
+        _wait_for(lambda: any(e["event"] == "start" for e in _events(win)))
+        proc.send_signal(signal.SIGTERM)
+        time.sleep(0.2)
+        proc.send_signal(signal.SIGINT)
+        rc = proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert rc == 6 and "did not answer" in proc.stderr.read()
+    ev = [e["event"] for e in _events(win)]
+    assert ev[-2:] == ["start", "back"] and _events(win)[-1]["ok"] is False and "abort" not in ev
+
+
+def test_a_second_term_during_the_aborts_restore_is_ignored_and_the_service_returns(win):
+    (win.shim / "slow-start").touch()
+    job = 'echo $$ > "$SHIM_DIR/job.pid"; exec sleep 60'
+    proc = _start(win, _jobs(win, job))
+    try:
+        pid = _job_pid(win)
+        proc.send_signal(signal.SIGTERM)
+        _wait_for(lambda: any(e["event"] == "start" for e in _events(win)))
+        proc.send_signal(signal.SIGTERM)
+        rc = proc.wait(timeout=40)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert rc == 130 and _dead(pid)
+    ev = _events(win)
+    assert [e["event"] for e in ev][-3:] == ["abort", "start", "back"] and ev[-1]["ok"] is True
+    assert "job-dead-at-start" in _calls(win) and (win.shim / "active").exists()
+
+
+def test_int_during_a_job_stops_it_and_restores_after_it_is_dead(win):
+    job = 'echo $$ > "$SHIM_DIR/job.pid"; exec sleep 60'
+    proc = _start(win, _jobs(win, job, 'echo second >> "$SHIM_DIR/calls.log"'))
+    try:
+        pid = _job_pid(win)
+        t0 = time.monotonic()
+        proc.send_signal(signal.SIGINT)
+        rc = proc.wait(timeout=40)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert rc == 130 and time.monotonic() - t0 < 10 and _dead(pid)
+    assert "job-dead-at-start" in _calls(win) and "second" not in _calls(win)
+    assert _events(win)[-3]["signal"] == "INT" and (win.shim / "active").exists()
+
+
+def test_a_hung_nvidia_smi_is_bounded_and_the_service_returns(win):
+    """VERIFY-GW1 F-2: a probe with no time limit kept the service stopped for as long as it hung."""
+    (win.shim / "nvsmi-hang").touch()
+    t0 = time.monotonic()
+    r = _run(win, _jobs(win, 'echo ran >> "$SHIM_DIR/calls.log"'), GPU_FREE_WAIT_SECONDS="0")
+    assert r.returncode == 1 and "the GPU did not free" in r.stderr, r.stderr
+    assert time.monotonic() - t0 < 30 and "ran" not in _calls(win) and (win.shim / "active").exists()
+
+
+def test_a_job_that_ignores_term_is_killed_after_the_grace_on_the_budget_and_on_abort(win):
+    stubborn = 'trap "" TERM; echo $$ > "$SHIM_DIR/job.pid"; while :; do sleep 1; done'
+    t0 = time.monotonic()
+    r = _run(win, _jobs(win, stubborn), GPU_WINDOW_MAX_SECONDS="2", GPU_JOB_KILL_AFTER="2")
+    assert r.returncode == 1 and time.monotonic() - t0 < 20, r.stderr
+    assert [e.get("rc") for e in _events(win) if e["event"] == "job"] == [137]
+    (win.shim / "job.pid").unlink()
+    proc = _start(win, _jobs(win, stubborn), GPU_JOB_KILL_AFTER="2")
+    try:
+        pid = _job_pid(win)
+        proc.send_signal(signal.SIGTERM)
+        rc = proc.wait(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert rc == 130 and _dead(pid) and "job-dead-at-start" in _calls(win)
+
+
+def test_a_job_cannot_read_the_callers_stdin(win):
+    r = subprocess.run(["bash", str(SCRIPT), _jobs(win, 'read -r x; echo "read=[$x]" >> "$SHIM_DIR/calls.log"')],
+                       input="LEAK\n", capture_output=True, text=True, env=win.env, timeout=60)
+    assert r.returncode == 0 and "read=[]" in _calls(win), (r.stderr, _calls(win))
+
+
+def test_a_proxy_in_the_environment_is_never_used_for_the_loopback_check(win):
+    dead = "http://127.0.0.1:9"
+    r = _run(win, _jobs(win, "true"), http_proxy=dead, HTTP_PROXY=dead, no_proxy="", NO_PROXY="")
+    assert r.returncode == 0, r.stderr
+
+
+def test_numbers_are_decimal_and_the_seams_are_checked_before_anything_stops(win):
+    """VERIFY-GW1 F-7 (a leading zero read as octal) and F-8 (garbage seams reached a wait)."""
+    jobs = _jobs(win, "true")
+    for arg, minutes in (("010", 10), ("08", 8)):
+        r = _run(win, "--dry-run", "--max-minutes", arg, jobs)
+        assert r.returncode == 0 and "within %d min" % minutes in r.stdout, (arg, r.stdout, r.stderr)
+    for seam, value, msg in (("GPU_FREE_WAIT_SECONDS", "abc", "must be a whole number"),
+                             ("GPU_JOB_KILL_AFTER", "-1", "must be a whole number"),
+                             ("GPU_WINDOW_MAX_SECONDS", "999999", "is too large"),
+                             ("GPU_WINDOW_MAX_SECONDS", "20000", "at most 14400"),
+                             ("QWEN_BACK_SECONDS", "20m", "must be a whole number"),
+                             ("GPU_FREE_MIB", "1.5k", "must be a whole number")):
+        r = _run(win, jobs, **{seam: value})
+        assert r.returncode == 64 and msg in r.stderr, (seam, value, r.stderr)
+    _never_stopped(win)
