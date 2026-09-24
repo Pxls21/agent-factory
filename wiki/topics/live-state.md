@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 22:2xZ — WHAT IS LIVE NOW (supersedes the 21:4xZ block for the live set).**
+- **LIVE:** the JT3 search hook; at commit, the staged-shell AP screen and the commit-message stamp gate; at push, the stale-id check (repaired: a refusal is now sticky).
+- **VERIFYING (two sandbox agents):** VERIFY-GW1-R2 on `scripts/gpu_window.sh` blob 70bda4dca641 (the second and last repair D-031 allows); VERIFY-T243-245-R1 on the repaired stale-id check and staged-shell screen.
+- **PC:** no lane live; qwen active; the window1 jobs file staged. The Laya base-model evaluation finished: POSITIVE CONTROL PASS (the baseline for the trained head).
+- **NEXT:** VERIFY-GW1-R2's verdict, then the window (`--max-minutes 20`), then the head checkpoint's evaluation on the PC CPU (about 44 min) and the Qwen J2 continuation.
+
 **2026-09-24 21:4xZ — WHAT IS LIVE NOW (supersedes the 21:1xZ block for the live set).**
 - **LIVE:** the JT3 search hook. NEW at commit time: `scripts/ap_screen.py --staged-shell` prints the AP_SCREEN hits of staged `*.sh` files (task #245), and `scripts/hooks/commit-msg` blocks a commit message whose stamp is ahead of the clock (bypass SKIP_STAMP_CHECK=1). NEW at push time: push_clean refuses a note that cites a commit id the push rewrote (task #243; its first run caught the manifest's provenance line, task #246).
 - **VERIFYING (two sandbox agents):** VERIFY-GW1-R1 on `scripts/gpu_window.sh` (F-1 not fully closed, the coordinator's finding; the second repair waits); VERIFY-T243-245 on the three tooling changes.
@@ -770,6 +776,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 22:2xZ — GW1-R2 committed (VERIFY-GW1-R1 NOT-READY on R1-F-1) and in verify; the tooling repair committed (VERIFY-T243-245 A/B NOT-READY) and in verify; the Laya baseline PASS.
 2026-09-24 21:5xZ — retro batch: the commit-msg stamp gate; build-loop baked (a repair starts from the registry row); AF-AP-187/68/37 echoes; the window1 jobs file committed.
 2026-09-24 21:4xZ — tooling while VERIFY-GW1-R1 runs: #244 closed; #245 (staged-shell AP screen) and #243 (the stale-id push check) landed gated and in their own verify; AF-AP-200 registered; the check's first run caught the manifest's dangling provenance id (task #246).
 2026-09-24 21:1xZ — GW1-R1 committed and in re-verify; the coordinator found F-1 not fully closed (AF-AP-145, a TERM burst); follow-ups on #74; the window1 jobs file staged on the PC; task #245 opened.

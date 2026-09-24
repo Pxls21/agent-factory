@@ -1,0 +1,135 @@
+{
+ "checkpoint": null,
+ "device": "cpu",
+ "model_dir": "/home/rocco/hf-laya/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982/typed-decisions",
+ "positive_control": "PASS",
+ "runs": {
+  "ap": {
+   "agreement_with_committed_base": {
+    "jev_top3": "100/100"
+   },
+   "committed_base": {
+    "jev@1": 0.05,
+    "jev@3": 0.22,
+    "lexical@1": 0.59,
+    "lexical@3": 0.69,
+    "majority@1": 0.09,
+    "random@1 (expected)": 0.0612,
+    "recall@16": 0.85
+   },
+   "differences_from_committed_base": [],
+   "ece": 0.5035,
+   "kc_j3": [
+    "KC-J3 ap: Laya top-1 0.0500 vs max(majority 0.0900, lexical 0.5900) = 0.5900 -> REJECTED (at or under)"
+   ],
+   "result_file": "/home/rocco/laya-ft/eval-base-w1/ap.json",
+   "seconds": 1657.4
+  },
+  "v1": {
+   "agreement_with_committed_base": {
+    "jev_choice": "100/100",
+    "jev_noul": "100/100"
+   },
+   "committed_base": {
+    "jev_choice": {
+     "accuracy": 0.21,
+     "balanced_accuracy": 0.1331,
+     "blocking_split": 0.82,
+     "per_class_recall": {
+      "BLOCKER": "0/7",
+      "CONTRACT-DEFECT": "0/2",
+      "FOLLOW-UP": "17/43",
+      "INFO": "3/43",
+      "KNOWN": "1/3",
+      "UNVERIFIED": "0/2"
+     }
+    },
+    "jev_noul": {
+     "accuracy": 0.03,
+     "balanced_accuracy": 0.1944,
+     "blocking_split": 0.58,
+     "per_class_recall": {
+      "BLOCKER": "0/7",
+      "CONTRACT-DEFECT": "0/2",
+      "FOLLOW-UP": "0/43",
+      "INFO": "0/43",
+      "KNOWN": "2/3",
+      "UNVERIFIED": "1/2"
+     }
+    }
+   },
+   "differences_from_committed_base": [],
+   "ece": 0.0481,
+   "kc_j3": [
+    "KC-J3 v1 jev_choice: accuracy 0.2100 vs max(majority 0.4300, heuristic 0.4100) = 0.4300 -> REJECTED (at or under)",
+    "KC-J3 v1 jev_noul: accuracy 0.0300 vs max(majority 0.4300, heuristic 0.4100) = 0.4300 -> REJECTED (at or under)"
+   ],
+   "result_file": "/home/rocco/laya-ft/eval-base-w1/v1.json",
+   "seconds": 274.4
+  },
+  "v1_blocking": {
+   "blocking_recall": "0/9",
+   "blocking_split": 0.89,
+   "committed_base": null,
+   "ece": 0.2157,
+   "false_alarms": "2/91",
+   "n": 100,
+   "never_baseline_split": 0.91,
+   "seconds": 49.8
+  },
+  "v1_full": {
+   "agreement_with_committed_base": {
+    "jev_choice": "100/100",
+    "jev_noul": "100/100"
+   },
+   "committed_base": {
+    "jev_choice": {
+     "accuracy": 0.17,
+     "balanced_accuracy": 0.2091,
+     "blocking_split": 0.59,
+     "per_class_recall": {
+      "BLOCKER": "2/7",
+      "CONTRACT-DEFECT": "0/2",
+      "FOLLOW-UP": "10/43",
+      "INFO": "3/43",
+      "KNOWN": "2/3",
+      "UNVERIFIED": "0/2"
+     }
+    },
+    "jev_noul": {
+     "accuracy": 0.1,
+     "balanced_accuracy": 0.2415,
+     "blocking_split": 0.59,
+     "per_class_recall": {
+      "BLOCKER": "1/7",
+      "CONTRACT-DEFECT": "0/2",
+      "FOLLOW-UP": "2/43",
+      "INFO": "4/43",
+      "KNOWN": "2/3",
+      "UNVERIFIED": "1/2"
+     }
+    }
+   },
+   "differences_from_committed_base": [],
+   "ece": 0.1181,
+   "kc_j3": [
+    "KC-J3 v1_full jev_choice: accuracy 0.1700 vs max(majority 0.4300, heuristic 0.3200) = 0.4300 -> REJECTED (at or under)",
+    "KC-J3 v1_full jev_noul: accuracy 0.1000 vs max(majority 0.4300, heuristic 0.3200) = 0.4300 -> REJECTED (at or under)"
+   ],
+   "result_file": "/home/rocco/laya-ft/eval-base-w1/v1_full.json",
+   "seconds": 549.6
+  },
+  "v1_full_blocking": {
+   "blocking_recall": "1/9",
+   "blocking_split": 0.77,
+   "committed_base": null,
+   "ece": 0.1406,
+   "false_alarms": "15/91",
+   "n": 100,
+   "never_baseline_split": 0.91,
+   "seconds": 81.6
+  }
+ },
+ "threads": 8,
+ "wall_seconds": 2629.9
+}
