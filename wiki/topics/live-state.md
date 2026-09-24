@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 12:2xZ — WHAT IS LIVE NOW (this block supersedes the 11:4xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **DONE:** #221's synthesis `docs/research/findings/JEV-LEVERAGE-AUDIT-2026-09-24.md` (answer: Jev is not leveraged; plan: diet, `scripts/jev.py`, the hiccup tracker, a signal probe on the types with labels, then Jev in hooks; three owner questions in its section 9). The context diet: `wiki-context.py` skips harness events and injects one block (AF-AP-182); the task DB holds open tasks only (200 closed rows deleted).
+- **LIVE, SANDBOX SERVER:** a local Laya endpoint on 127.0.0.1:47411 (pid in `.jev/server.pid`, 2 threads, CPU); measured 12:17Z: a 10-way choice is flat, a per-chunk rank put the right quirk note first in 3.4 s for 8 notes.
+- **LIVE, PC:** K170 (#170), attempt 3 on the local build route; the tree shows progress (`scripts/vendored_manifest.py`, a new parse test); the poller re-attached 12:2xZ (15 s polls, 60 minutes).
+- **LIVE, SANDBOX (Opus 5.5, three, D-062's ceiling):** J1-1-R4 (#198, files in `.lanes-live`); VERIFY-COORD-0924; JT1 (#224, `scripts/jev.py`, `scripts/jev_local.sh`, `scripts/hiccup_scan.py`, brief `tasks/briefs/jev-laya/JT1-brief.md`).
+- **NEXT:** push once CI run #1029 reads green; harvest J1-1-R4, VERIFY-COORD and JT1; the live PC-venue check of `jev.py`; the signal probe on `ap.violates_row` after J1-1-R4 lands; MOJEV-G0 when K170 frees the slot.
+- **OWNER DECISIONS OPEN:** the three questions in the audit's section 9; the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 11:4xZ — WHAT IS LIVE NOW (this block supersedes the 11:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** task #222 (the CLM / agent-beacon static read; verdict: CLM later, agent-beacon not installed). MoJev Gate 0 staged on the PC: `~/mojev-pin` at a74d58cd19ec and `~/mojev-snapshot/0c8695b6252f/`, every file checked; brief `tasks/briefs/pc/pc-mojev-g0.md` committed (premise gate rc 0). D-071: the never-a-gate screen learned `mojev` and `packedscorer` (GATED-PENDING-VERIFY). The staging script is committed as `harness-ports/bin/mojev-stage.sh` (re-runnable; it re-verifies present files).
 - **LIVE, PC:** K170 (task #170), attempt 3 since 11:23Z on the local build route (attempts 1-2 died on a local 400 and a 600 s combo timeout); sandbox poller pid 29016 (its 240-minute ceiling is about 12:04Z).
@@ -632,6 +640,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 12:2xZ — #221 synthesis committed; context diet (AF-AP-182, task DB open-only); a sandbox-local Laya server; JT1 dispatched.
 2026-09-24 11:4xZ — retro bakes: the anchor_edit insert quirk in CLAUDE.md; `harness-ports/bin/mojev-stage.sh` committed.
 2026-09-24 11:4xZ — #222 home (CLM later, agent-beacon not installed); MoJev Gate 0 staged and briefed; D-071; VERIFY-COORD-0924 dispatched.
 2026-09-24 11:2xZ — CI run #1027 green; J1-1-R4 redesign briefed (D-070, span union, contract C1-C7) and dispatched; task #223 (offline Jev leak hunter) new; #214 closed.
