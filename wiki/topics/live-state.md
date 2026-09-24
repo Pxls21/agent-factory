@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 20:1xZ — WHAT IS LIVE NOW (supersedes the 19:2xZ block for the live set).**
+- **LIVE:** the JT3 search hook, re-armed 20:06:30Z (a semantic Grep in `scripts/` is answered graft-first; the identical repeat within 120 s runs raw). `.jev/intercept-off` switches it off.
+- **LANDED:** JT2 (after JT2-R2) and JT3, both MERGE-READY-WITH-FOLLOWUPS (#72, #71). The CI red on a repeated finding id is fixed (f1679db, CI green).
+- **GATING:** FT1-F built by the sandbox builder (32 passed twice, 22 of 22 mutants killed); the coordinator's own re-run is in progress, then the commit.
+- **VERIFYING:** VERIFY-GW1 on `scripts/gpu_window.sh` before its first live window.
+- **PC:** no lane live. QJ1 ended FAILED (records committed). The dataset and both RWKV venvs are ready; the trainer's CPU smoke passed.
+- **NEXT:** the GPU window after VERIFY-GW1 and the FT1-F commit: G0, then a timed head-mode Laya run, then qwen back.
+
 **2026-09-24 19:2xZ — WHAT IS LIVE NOW (supersedes the 18:3xZ block for the live set).**
 - **LANDED:** JT3 (MERGE-READY-WITH-FOLLOWUPS; the hook stays OFF until a deliberate re-arm once no sandbox agent is mid-run; follow-ups on #71). `scripts/gpu_window.sh` (GATED-PENDING-VERIFY). The G0 probe `docs/research/findings/j2b-variants/rwkv7_g0.py` (plumbing green in both RWKV venvs).
 - **LANDED 19:3xZ:** JT2 (after JT2-R2 closed F-16, a from-file leak; MERGE-READY-WITH-FOLLOWUPS; follow-ups on #72; tasks #227, #229 closed). **BUILDING:** FT1-F (F-1 non-finite checkpoint, F-6 disk check first); issue #73 holds FT1's other follow-ups.
@@ -748,6 +756,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 20:1xZ — JT3's hook re-armed and live; VERIFY-GW1 dispatched; FT1-F built, the coordinator's gate in progress; CI green on f1679db.
 2026-09-24 19:4xZ — stage0-ci run 36046249811 was red (a report restated finding id N-10; the dataset builder counted it twice); fixed in build_dataset.py (first block kept; the 0b342c7 dataset still d7cd9b49; AF-AP-199) and pushed as f1679db.
 2026-09-24 19:3xZ — JT2 landed MERGE-READY-WITH-FOLLOWUPS (JT2-R2 closed F-16/F-17); #227 and #229 closed; follow-ups on #72.
 2026-09-24 19:2xZ — JT3 landed with its hook off; JT2-R2 in reverify; FT1-F building; G0 ready; no CPU path for RWKV-7; the dataset rebuilt on the PC; QJ1 stuck on the local 400.
