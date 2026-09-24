@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 04:0xZ — WHAT IS LIVE NOW (this block supersedes the 03:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFIED 04:0xZ:** J1-3-R1 (VERIFY-J1-3-R1 MERGE-READY-WITH-FOLLOWUPS); J1-3 closed; follow-ups in issue #62; AF-AP-177 and AF-AP-178 registered.
+- **LIVE, SANDBOX (two):** VERIFY-K150 (#213, PIN 656ddf6; its report path is the one entry in `.lanes-live`) and J1-1-R3 (#202, private clone `/tmp/j113s/wt`). No PC lane is live.
+- **UNOWNED FILES:** three empty files in the tree's root (`r_medium.txt`, `r_unq.txt`, `r_xhigh.txt`, 03:44:11Z); VERIFY-J1-3-R1 says they are not its; removed after VERIFY-K150 returns.
+- **HELD until VERIFY-K150 returns:** task #211 (AF-AP-171 into orchestration; the AF-AP-175 and AF-AP-177 screens) and the `evidence-gatherer.md` re-pin (D-065).
+- **WAITS ON THE OWNER:** MoJev option A/B/C (#210) and which project hooks to restore (#214).
+
 **2026-09-24 03:3xZ — WHAT IS LIVE NOW (this block supersedes the 03:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **LIVE, SANDBOX (three, the D-062 ceiling):** VERIFY-K150 (#213, PIN 656ddf6), VERIFY-J1-3-R1 (#212, PIN 0d62801) and J1-1-R3 (#202, private clone `/tmp/j113s/wt`). Both verify report paths are in `.lanes-live`. No PC lane is live.
 - **DONE 03:3xZ:** the J1-3 verify's classes registered (AF-AP-173 to AF-AP-176); AF-AP-140 and AF-AP-155 corrected (K150 D-3, D-2); issues #11 and #17 closed (S0-02 accepted).
@@ -532,6 +539,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 04:0xZ — VERIFY-J1-3-R1 home: J1-3-R1 verified, J1-3 closed (issue #62).
 2026-09-24 03:3xZ — VERIFY-K150 dispatched; AF-AP-173 to AF-AP-176 registered; issues #11 and #17 closed.
 2026-09-24 03:2xZ — MoJev findings written (owner decision); AF-AP-172: the project hooks do not fire in this session (#214).
 2026-09-24 03:0xZ — K150 and J1-3-R1 landed (verify pending); the MoJev evidence home; J1-1-R3 moved to a private sandbox clone.
