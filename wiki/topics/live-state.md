@@ -17,6 +17,7 @@ last_compiled: 2026-09-03
 - **IN FLIGHT since 23:32:5xZ:** its held-out evaluation on the PC CPU (`~/laya-ft/eval-head-w1`, log `~/laya-ft/eval-head-w1.log`, launcher `~/laya-ft/eval-head-w1.sh`; about 44 min; compare with `docs/research/findings/laya-ft-eval/2026-09-24-base-cpu/evaluate-summary.json`).
 - **PC:** no lane live; qwen active; the owner's stale dnf (pid 1699180, pts/4) is theirs to close. **Sandbox:** pushed 23:3xZ (origin d4def2e, then the transcripts commit 61bd8a1); CI run #1048 passed; the new head's CI is running. Task #246 closed (the push needed no hand fix).
 - **INCIDENT 23:45Z:** the coordinator's probe (`prompt_logprobs`) OOM-killed the vLLM engine; qwen was down 23:45:08Z-23:50:00Z and is back (AF-AP-201; never send `prompt_logprobs` or `best_of`). **FOUND:** QJ1's 12-token gap is the reasoning field lost on the way (`docs/research/findings/j2b-variants/qwen27b/TRANSPORT-2026-09-24.md`); the Qwen J2 continuation (#241) waits on an owner decision (a direct vLLM path, or simple-jev's baseline policy for choice questions).
+- **TOOLING 23:5xZ:** `scripts/pc.sh` drops the owner's shell-hook `bind: warning` lines from the remote stderr (exact whole lines; `tests/test_pc_sh.py`); `scripts/anchor_edit.py` warns when an edit adds a blank-line run; build-loop: price every new option a probe sends to a shared server (AF-AP-201). **Laya evaluation:** 2 of 5 runs done at 23:56Z (finding classes: choice identical to the base, yes/no within 0.02 of it); the ap run, the type of 1,616 of the 1,788 training examples, ends about 00:21Z.
 - **NEXT:** the evaluation verdict to the owner; the Qwen J2 continuation (#241) on the local route.
 
 **2026-09-24 23:2xZ — WHAT IS LIVE NOW (supersedes the 23:1xZ block for the live set).**
@@ -798,6 +799,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 23:5xZ — pc.sh drops the bridge's shell-hook warnings; anchor_edit warns on blank-line runs; the Laya evaluation 2 of 5 runs done.
 2026-09-24 23:5xZ — the coordinator's probe OOM-killed the vLLM engine (about 5 minutes down, AF-AP-201); QJ1's parity gap traced to the reasoning field; the Qwen continuation waits on an owner decision.
 2026-09-24 23:3xZ — pushed (origin d4def2e); task #246 closed: the manifest names its tree, and the push needed no hand fix.
 2026-09-24 23:3xZ — GPU window 2 ran all three jobs (qwen down 8 min 30 s); RWKV-7 G0 zero-shot rejected on every KC-J3 line, mechanics hold; the Laya head checkpoint trained, its held-out evaluation in flight; task #242 closed.
