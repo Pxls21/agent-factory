@@ -12,7 +12,7 @@ for asynchronous session-metadata notifications (D-035) and two adversarial veri
 test-oracle blocker, repaired by G2, then VERIFY-G2 MERGE-READY-WITH-FOLLOWUPS, issue #10). S0-05 (no direct egress over the live units, hermes-acp and buzz-acp contained on
 the PC) is minted 2026-09-23 23:5xZ, verified 2026-09-24 (VERIFY-S0-05 MERGE-READY-WITH-FOLLOWUPS, issue #59) and accepted 2026-09-24 01:37Z. No blocked markers remain. No application code
 for the production spine has landed yet; the first proof-backed build lane under D-029, GOV1 (the Stage 3 governance core from
-S0-07, `src/agent_factory/governance/`, brief `tasks/briefs/stage3-gov1-governance-core-from-s0-07.md`), LANDED 2026-09-15 (unverified: VERIFY-GOV1 next; S0-07's owner review still gates acceptance). Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
+S0-07, `src/agent_factory/governance/`, brief `tasks/briefs/stage3-gov1-governance-core-from-s0-07.md`), LANDED 2026-09-15; with its review binding (GOV2, repaired as GOV2c, GOV2d and GOV2e) it is VERIFIED: VERIFY-GOV2e MERGE-READY-WITH-FOLLOWUPS on 2026-09-22, follow-ups in issue #25; S0-07's owner review still gates acceptance. Live status: `todo/BUILD-TASKLIST.md` (the single source of truth; this page is
 a distillation and the ledger wins on any disagreement).
 **Deployment readiness:** no
 **Last audit snapshot:** 2026-09-21 (the independent audit; disposition commit 36b08ab) — status lines refreshed 2026-09-22
@@ -93,11 +93,15 @@ interpreter). When all four are MERGE-READY: re-capture on the PC, run the check
 - S0-01's first end-to-end captures (2026-09-05/06) exposed the checker's hollow acceptance; the repaired tools re-captured the bundle
   on 2026-09-21 (v2.4, run-1 and run-2), the proof was minted (e458801) and the owner accepted it on 2026-09-22 (`accepted/S0-01`).
 
-## Next decision needed from the owner
+## Next decision needed from the owner (refreshed 2026-09-24 02:2xZ)
 
-- Vendored-kit packaging for review (`vendored-kit-packaging`): a generated source/commit/license manifest for the vendored trees,
-  or isolate Stage 0 code from the vendored environment in the PR stack.
-- ADR 0002 transport: the ADR says `codex_responses` with compression off; the repaired live Hermes profiles use `chat_completions`.
-  Amend the ADR or revert the transport.
-- The owner-verifiable acceptance anchor (`acceptance-anchor-af-ap-32`): identity separation (a bot identity, protected `main`, the
-  owner's native GitHub review on the head SHA) so that ACCEPTED becomes a machine-enforced guarantee instead of a recorded decision.
+The three items this section listed until today were all decided on 2026-09-08: the vendored-kit manifest (built; the K1 chain
+closed 2026-09-22), ADR 0002 (`chat_completions` is the live transport), and the signed-tag acceptance anchor (built; four proofs
+accepted by it). The open items now:
+
+- Review and signed acceptance of the eight minted proofs that are not yet accepted: S0-03, S0-04, S0-06, S0-07 (REVIEW-PENDING),
+  S0-08, S0-09, S0-10 and S0-12. The coordinator hands over one signing command per proof, as for S0-01, S0-02 and S0-05.
+- Then the Stage 0 pull request to `main`, which only the owner merges.
+- MoJev (task #210): a decision from the findings doc once the read-only audit lands.
+- The cloud model route (D-061, D-062): until it returns, the PC's local route carries one long-context lane at a time and sandbox
+  agents take the overflow.
