@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 13:3xZ — WHAT IS LIVE NOW (this block supersedes the 13:1xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LANDED (GATED-PENDING-VERIFY):** JT1 (#224): `scripts/jev.py`, `scripts/jev_local.sh`, `scripts/hiccup_scan.py`, `docs/HICCUPS.md`; the PC venue answered live. VERIFY-JT1 dispatched.
+- **J2 RESULT (#226), `ap.violates_row`:** lexical overlap picks the right registry row first 59% of the time; Jev's reranking 5%, below random (6.1%). Jev has no signal on this type; the AP-hawk, if built, is lexical. JT2 and JT3 now default to their unranked orders.
+- **LIVE, SANDBOX (Opus 5.5):** J1-1-R4 (#198); JT2 (#227/#229); JT3 (#228/#225); MOJEV-G0-S (#230); VERIFY-JT1.
+- **LIVE, J2:** `v1.finding_class` scoring on 127.0.0.1:47412.
+- **LIVE, PC:** K170 (#170), attempt 3, running its mutation checks; poller re-attached 13:2xZ.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 13:1xZ — WHAT IS LIVE NOW (this block supersedes the 12:4xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS D-072 (13:0xZ):** J2 on `ap.violates_row` and `v1.finding_class`; Jev never decides a gate but may prune and omit (recoverably); the Jev work runs in the sandbox on Opus 5.5 lanes, the PC's local lane stays on the main project; new asks: a bug locator, a Grep intercept, Jev-assisted bug-echo.
 - **LIVE, SANDBOX (Opus 5.5, five):** J1-1-R4 (#198); JT1 (#224, `jev.py` and the hiccup tracker); JT2 (#227/#229, the bug locator and echo); JT3 (#228/#225, the search intercept and quirk guard); MOJEV-G0-S (#230, the probe built here, run on the PC by the coordinator).
@@ -659,6 +667,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 13:3xZ — JT1 landed; J2 ap.violates_row: Jev no signal (5% vs lexical 59%); VERIFY-JT1 dispatched.
 2026-09-24 13:1xZ — D-072; JT2, JT3, MOJEV-G0-S dispatched; J2 running; the pruner finding (#231).
 2026-09-24 12:5xZ — AF-AP-185 fixed (pinned manifest tests, CLASS-PIN gate); retro-plane exemption; pushed 78a6eec.
 2026-09-24 12:4xZ — retro: the AP-hawk probe sample committed; task #225 (quirk guard) registered; the trailing-& incident logged.
