@@ -20,7 +20,10 @@ for attempt in 1 2 3; do
   sleep 1
 done
 python3 - "$RESP" <<'PY'
-import json, sys
+import json, re, sys
+# The owner's shell hook prints this on every bridge shell's stderr; merged with `2>&1` it landed on data lines, and after
+# a strip it left blank lines a `tail` read (2026-09-22, 2026-09-24). Only whole lines of exactly this text are dropped.
+NOISE = re.compile(r"^(?:\S*bash-hook\.bash: line \d+: )?bind: warning: line editing not enabled$\n?", re.M)
 raw = sys.argv[1]
 try:
     r = json.loads(raw)
@@ -28,6 +31,6 @@ except Exception:
     sys.stderr.write("bridge: non-JSON response after 3 attempts:\n" + raw[:400] + "\n"); sys.exit(3)
 if "error" in r and "rc" not in r:
     sys.stderr.write("bridge error: %s\n" % r["error"]); sys.exit(4)
-sys.stdout.write(r.get("stdout", "")); sys.stderr.write(r.get("stderr", ""))
+sys.stdout.write(r.get("stdout", "")); sys.stderr.write(NOISE.sub("", r.get("stderr", "")))
 sys.exit(int(r.get("rc", 1)))
 PY
