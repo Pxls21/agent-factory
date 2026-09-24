@@ -14,6 +14,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 06:1xZ — WHAT IS LIVE NOW (this block supersedes the 05:3xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **VERIFY-J1-1-R3 HOME: NOT-READY (D-068).** Two secret-value leaks in the redaction pass (F-1, F-2), both already at fb016d0; reproduced by the coordinator through the ledger. D-067 is void; its revert is not executed (fb016d0 has the same leaks plus the four fixed ones). J1-1 stays NOT-READY at the PIN code. No fourth repair: the redaction pass goes to a redesign, the OWNER'S DECISION (D-059; task #198). Follow-ups: issue #64.
+- **LIVE, SANDBOX (one agent, Opus 5.5):** K215 (#215; `/tmp/k215/`; editing `.claude/hooks/edit-snapshot.py`).
+- **LIVE, PC:** VERIFY-J1-45 (#217), lane `pc-verify-j1-45.md--780f25a`, since 05:35Z.
+- **NEXT:** harvest K215 and VERIFY-J1-45; after K215, bake AF-AP-179 and "a measured zero states its generator's alphabet" into `anti-hollow-green`.
+
+
 **2026-09-24 05:3xZ — WHAT IS LIVE NOW (this block supersedes the 05:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **PUSHED:** origin head 780f25a (the J1-4/J1-5 test hardening is 0574ac1; a pre-verify mutation audit found 8 of 15 mutants surviving, now 17 of 17 killed). The J1-5 full suite at 942ad5e: `3937 passed, 81 skipped, 8 xfailed` on the PC.
 - **LIVE, SANDBOX (two agents, Opus 5.5):** VERIFY-J1-1-R3 (#216; `/tmp/vj113r3/`) and K215 (#215; `/tmp/k215/`). Read progress from their reports and scratch dirs (AF-AP-171).
@@ -572,6 +579,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 06:1xZ — VERIFY-J1-1-R3 NOT-READY (two leaks, reproduced); D-067 void, no revert; the redaction redesign is the owner's call (D-068).
 2026-09-24 05:3xZ — pushed 780f25a (the J1-4/J1-5 tests hardened); VERIFY-J1-45 dispatched on the PC local verify route.
 2026-09-24 05:1xZ — pushed 942ad5e; VERIFY-J1-1-R3 and K215 dispatched as sandbox agents; the J1-5 full suite running on the PC.
 2026-09-24 04:5xZ — J1-4 (the Laya pin) and J1-5 (the no-model closure) landed GATED-PENDING-VERIFY; every J1 increment is in.
