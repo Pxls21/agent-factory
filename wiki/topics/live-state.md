@@ -586,6 +586,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 06:3xZ — anti-hollow-green bake (task #218): AF-AP-179's rule as 2(g) and "a measured zero states its generator's alphabet" as 3f.
 2026-09-24 06:3xZ — K215 landed (GATED-PENDING-VERIFY); issue #65 filed; the registry rows and a CLAUDE.md quirk line updated.
 2026-09-24 06:1xZ — VERIFY-J1-1-R3 NOT-READY (two leaks, reproduced); D-067 void, no revert; the redaction redesign is the owner's call (D-068).
 2026-09-24 05:3xZ — pushed 780f25a (the J1-4/J1-5 tests hardened); VERIFY-J1-45 dispatched on the PC local verify route.

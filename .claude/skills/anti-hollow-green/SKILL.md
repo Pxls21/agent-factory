@@ -47,6 +47,14 @@ expansion.
    `29 passed`, the bare static-copy gate `12 failed, 17 passed`. A report's count is graded in the BARE gate on
    the coordinator's venue before it is believed, and a mutation driver exports only repo roots (an ambient
    upstream path masked the root-insertion mutant).**
+   **(g) A "runs without X" closure blocks X in EVERY process of the run and counts ATTEMPTS, not failures (AF-AP-179,
+   J1-5 2026-09-24).** A blocker installed in the test's own process never reaches the scripts the tests start, and a
+   gate that reads only failures passes an import the code catches or a test that skips on ImportError. Put the blocker
+   where every Python process loads it (a `sitecustomize.py` on `PYTHONPATH` that inserts a `sys.meta_path` finder,
+   which also sees `importlib.import_module`; a `builtins.__import__` hook does not), log every attempt, assert the log
+   is empty, and keep three controls: a direct import reds, a caught import is logged, a child process is reached. A
+   child started with `-I`, `-S` or `-E`, or with an `env=` that drops `PYTHONPATH`, escapes it: name those in the
+   claim or refuse them.
 3. **Mutation-testing IS the hollow-green detector.** Inject bugs into the code-under-gate; a gate
    A CONTROL mutation is itself verified before its effect is asserted — same length, same multiset (`sorted(moved) == sorted(orig)`), different order — and every "the output differs" control is paired with a NAMED production mutant it must kill: a slice-built "swap" that duplicated the neighbour let two production mutants survive a 476-test suite while the real checker's verdicts changed (S0-01 golden, VERIFY-VB-F12 2026-09-21, AF-AP-109).
    that still passes is hollow. Demand BRANCH coverage. A gate surviving no mutants is a tautology
@@ -100,6 +108,14 @@ expansion.
    the escapes of an ANSI-C `$'…'` delimiter that bash translates, so a four-line gate R3 refused
    (rc 4) read clean under R4 (rc 0) while the new shapes' tests and every old test stayed green.
    Adopting a verifier's proposed fix is the other half: orchestration 0d″.
+   **3f. A measured zero states its generator's alphabet (VERIFY-J1-1-R3, 2026-09-24; D-067 void, D-068).** A "0 of N"
+   over generated inputs is a zero only over the classes the generator can draw. J1-1-R3's builder measured 0 leaks
+   with its own generator and a ruling (D-067) rested on it; that generator never drew a mixed-case `KEY` name and its
+   body count was blind to special letters, and the independent verifier's generator put a redacted value into the
+   ledger line on 9 of 165,000 inputs. Report a measured zero with its alphabet (the name cases, character classes,
+   lengths and separators the generator draws, and the ones it cannot), and claim the zero only when the class that
+   motivated the test is in that alphabet. A ruling that rests on a builder's zero stays conditional until an
+   independent generator reproduces it (orchestration 0f).
    **The driver's denominator is a LITERAL from the brief, never a sum of what ran (AF-AP-84, VERIFY-N5l 2026-09-15):**
    `expected=$((killed + survived))` let a deleted row read `EXPECTED=9 KILLED=9 SURVIVED=0` — pin `EXPECTED=N`, gate
    `[[ $killed -eq $EXPECTED ]]`, and give the driver a self-test (a copy with one row deleted must exit non-zero). A census or
