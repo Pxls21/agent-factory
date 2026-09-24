@@ -1,0 +1,87 @@
+{
+  "cpu_model": "AMD Ryzen 5 5600X 6-Core Processor",
+  "nproc": 12,
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "threads": 4,
+  "versions": {
+    "torch": "2.14.0+cu130",
+    "laya": "0.3.5",
+    "transformers": "5.17.0",
+    "safetensors": "0.8.0"
+  },
+  "checkpoint": "typed-decisions",
+  "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "safetensors_sha256": "4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e",
+  "fixture_sha256": "571cd075cf174f268fd12494055dbc598b2d147eb57357fdd80651a1979e83d9",
+  "fixture_count": 226,
+  "n_per_type": 200,
+  "per_type": {
+    "ap.violates_row": {
+      "n": 200,
+      "p50_ms": 326.83,
+      "p95_ms": 351.31,
+      "max_ms": 366.32
+    },
+    "b1.finding_kind": {
+      "n": 200,
+      "p50_ms": 456.23,
+      "p95_ms": 463.26,
+      "max_ms": 475.94
+    },
+    "b1.finding_sev": {
+      "n": 200,
+      "p50_ms": 317.09,
+      "p95_ms": 330.01,
+      "max_ms": 339.69
+    },
+    "b2.hit_role": {
+      "n": 200,
+      "p50_ms": 452.47,
+      "p95_ms": 477.2,
+      "max_ms": 510.41
+    },
+    "d1.bug_echo_scores": {
+      "n": 200,
+      "p50_ms": 291.88,
+      "p95_ms": 305.48,
+      "max_ms": 310.73
+    },
+    "v1.finding_class": {
+      "n": 200,
+      "p50_ms": 389.83,
+      "p95_ms": 401.24,
+      "max_ms": 414.98
+    },
+    "wf.drift": {
+      "n": 200,
+      "p50_ms": 325.15,
+      "p95_ms": 359.52,
+      "max_ms": 371.84
+    }
+  },
+  "overall": {
+    "n": 1400,
+    "p50_ms": 336.18,
+    "p95_ms": 461.7,
+    "max_ms": 510.41
+  },
+  "mean_tokens_per_state": 107.3,
+  "determinism": {
+    "digest_run1": "e39555ceb0bf06665f8ecfc54ec050738e403eaceb86dee3675f324a986b3005",
+    "digest_run2": "e39555ceb0bf06665f8ecfc54ec050738e403eaceb86dee3675f324a986b3005",
+    "digest_run3_fresh_process": "e39555ceb0bf06665f8ecfc54ec050738e403eaceb86dee3675f324a986b3005",
+    "deterministic": true
+  },
+  "loadavg_before": "0.20 0.15 0.12 1/750 1085367",
+  "loadavg_after": "4.22 4.15 3.48 1/765 1097246",
+  "wall_time_s": 513.4,
+  "latency_family": "193-464ms",
+  "dtype": "float32",
+  "device": "cpu",
+  "pin_cpus": "0-3"
+}
