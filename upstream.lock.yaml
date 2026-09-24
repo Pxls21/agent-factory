@@ -165,6 +165,28 @@ advisory_models:
     verdicts: "PC (reference) ASYNC-ONLY + DETERMINISTIC; sandbox SYNC-OK + DETERMINISTIC for its own instance"
     role: advisory_typed_decision_scorer_never_a_gate
     adopted: "2026-09-24 (J1-4; D-044, D-045; the PC endpoint is PCJ1, task #124)"
+  rwkv7-goose-world2.9-0.4b:
+    checkpoint_source: https://huggingface.co/RWKV/RWKV7-Goose-World2.9-0.4B-HF
+    revision: "e94655a9fad2c8da9f25aba575d8f0fdedc05931"
+    license: Apache-2.0
+    architecture: "RWKV-7, 24 layers, hidden 1024, head_dim 64, vocab 65536 (config.json at this revision)"
+    runtime_required: "flash-linear-attention 0.3.0, transformers 4.48 or later, trust_remote_code (modeling_rwkv7.py)"
+    role: advisory_long_input_decision_student_candidate_never_a_gate
+    adopted: "2026-09-24 (owner choice, D-079; not yet downloaded or run)"
+
+# Advisory Jev runtimes (D-079, task #241). ADVISORY: never a term in any gate, lint, commit, push or proof. Pinned by commit;
+# the key names avoid `repository`/`commit`/`*_sha256` on purpose, as advisory_models does (parse_lock reads those for the
+# SBOM pin-diff). Used from a checkout at this revision, never vendored into this repository.
+advisory_jev_runtimes:
+  simple-jev:
+    source: https://github.com/featherless-ai/simple-jev
+    revision: "5686b217dd0330b81b3325a64c8ace319017f8a2"
+    license: Apache-2.0
+    used_parts: "common/ (the v1 prompt plan, request schema and response scoring) and hf-server/hf_prompt_policies.py"
+    pc_checkout: "~/simple-jev; venv ~/venv-qwenjev: Python 3.13.11, pydantic 2.13.5, numpy 2.5.3 (2026-09-24)"
+    role: advisory_typed_decision_prompt_rules_never_a_gate
+    adopted: "2026-09-24 (owner pointer, D-079)"
+
 
 # Local model serving — the vLLM Qwen3.8-27B container (D-032). A model behind OmniRoute (rule 3), never a direct egress.
 local_model_server:

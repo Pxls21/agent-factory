@@ -29,7 +29,11 @@ while getopts "r:f:t:n:o:d:h" o; do case "$o" in
 SHA="$(git rev-parse --verify "$REV^{commit}" 2>/dev/null)" || { echo "lane_gate: rev $REV does not resolve" >&2; exit 65; }
 SP="${LANE_GATE_DIR:-/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad}"
 [ -n "$OUT" ] || OUT="$SP/gate-${SHA:0:7}-$(date -u +%H%M%S)"
-mkdir -p "$OUT" && git archive "$SHA" | tar -x -C "$OUT" || { echo "lane_gate: archive of $SHA failed" >&2; exit 66; }
+# A full disk made the archive fail as a bare tar error and left a partial copy behind (2026-09-24 16:2xZ, AF-AP-112's
+# third sandbox instance): say so before copying, and remove a partial copy.
+mkdir -p "$SP" && free_mb="$(df -Pm "$SP" | awk 'NR==2 {print $4}')"
+[ "${free_mb:-0}" -ge "${LANE_GATE_MIN_FREE_MB:-1500}" ] || { echo "lane_gate: only ${free_mb:-?} MB free under $SP; a tree copy needs about 1 GB (LANE_GATE_MIN_FREE_MB, default 1500): free space first" >&2; exit 66; }
+mkdir -p "$OUT" && git archive "$SHA" | tar -x -C "$OUT" || { rm -rf "$OUT"; echo "lane_gate: archive of $SHA failed (partial copy removed)" >&2; exit 66; }
 OUT="$(cd "$OUT" && pwd)" || exit 66  # absolute: the run logs are written after the `cd "$OUT"` below (J1-3 D-2, a relative LANE_GATE_DIR)
 echo "lane_gate: archive of ${SHA:0:12} at $OUT; $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "== identity (working-tree bytes copied over the archive) =="
