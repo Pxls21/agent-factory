@@ -18,6 +18,7 @@ last_compiled: 2026-09-03
 - **LIVE, J2 (#226):** `ap.violates_row` scoring on 47412; `v1.finding_class` sample committed (b1cf7867...), scoring next.
 - **LIVE, PC:** K170 (#170), attempt 3 on the local route.
 - **FINDING (#231):** the output pruner plugin never engages in Claude Code (0 requests for a 247 KB output); the harness's persisted-output did the omitting.
+- **FIXED 13:1xZ (AF-AP-187):** a push no longer re-fires the turn-end retro (the gate maps its acked commit to the rewritten twin).
 - **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
 
 **2026-09-24 12:4xZ — WHAT IS LIVE NOW (this block supersedes the 12:2xZ block and the older ones below for the live set; the ledger carries the detail).**
