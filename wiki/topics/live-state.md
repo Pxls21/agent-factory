@@ -11,6 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 13:1xZ — WHAT IS LIVE NOW (this block supersedes the 12:4xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **OWNER RULINGS D-072 (13:0xZ):** J2 on `ap.violates_row` and `v1.finding_class`; Jev never decides a gate but may prune and omit (recoverably); the Jev work runs in the sandbox on Opus 5.5 lanes, the PC's local lane stays on the main project; new asks: a bug locator, a Grep intercept, Jev-assisted bug-echo.
+- **LIVE, SANDBOX (Opus 5.5, five):** J1-1-R4 (#198); JT1 (#224, `jev.py` and the hiccup tracker); JT2 (#227/#229, the bug locator and echo); JT3 (#228/#225, the search intercept and quirk guard); MOJEV-G0-S (#230, the probe built here, run on the PC by the coordinator).
+- **LIVE, SANDBOX SERVERS:** Laya on 127.0.0.1:47411 (tools) and 127.0.0.1:47412 (the J2 probe); pids in `.jev/`.
+- **LIVE, J2 (#226):** `ap.violates_row` scoring on 47412; `v1.finding_class` sample committed (b1cf7867...), scoring next.
+- **LIVE, PC:** K170 (#170), attempt 3 on the local route.
+- **FINDING (#231):** the output pruner plugin never engages in Claude Code (0 requests for a 247 KB output); the harness's persisted-output did the omitting.
+- **OWNER DECISIONS OPEN:** the Stage 0 PR to main (open only on the owner's word).
+
 **2026-09-24 12:4xZ — WHAT IS LIVE NOW (this block supersedes the 12:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **DONE:** VERIFY-COORD-0924 home: the five hooks, AF-AP-181 and D-071 each MERGE-READY-WITH-FOLLOWUPS (issue #67). Fixed the same hour: the hooks fail open when the repo or a script is absent (AF-AP-184); every hook's text stays under the harness's 10,000-character limit, so the live-state now reaches the model at a compaction (AF-AP-183); the prompt hook skips `<agent-message` hand-backs. Pushed af3ab70.
 - **FIXED 12:5xZ (AF-AP-185):** af3ab70 carried three red pinned tests (my wiki-context edit moved that hook to kit-adapted; the pins said 16). Fixed and pushed as 78a6eec, which cancels run #1030; a pre-commit CLASS-PIN gate now runs the pinned tests on any class move. The retro gate no longer re-fires on retro-plane commits, and post-commit's wiki-stale exemption now covers a skill bake's companions (the two mirrors, the hand-port hashes, the class file); one test holds both hooks to the same bake.
@@ -649,6 +658,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 13:1xZ — D-072; JT2, JT3, MOJEV-G0-S dispatched; J2 running; the pruner finding (#231).
 2026-09-24 12:5xZ — AF-AP-185 fixed (pinned manifest tests, CLASS-PIN gate); retro-plane exemption; pushed 78a6eec.
 2026-09-24 12:4xZ — retro: the AP-hawk probe sample committed; task #225 (quirk guard) registered; the trailing-& incident logged.
 2026-09-24 12:4xZ — VERIFY-COORD-0924 home (issue #67); hook fixes AF-AP-183/184 pushed as af3ab70.
