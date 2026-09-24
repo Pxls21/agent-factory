@@ -14,6 +14,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 08:0xZ — WHAT IS LIVE NOW (this block supersedes the 07:5xZ block and the older ones below for the live set; the ledger carries the detail).**
+- **LIVE, PC:** K170 (task #170), lane `pc-k170.md--9e6821b` on the local build route, PC pid 1300506, dispatched 08:04Z; the sandbox poller is pid 29016. Its report lands at `tasks/briefs/kit-k1-support/K170-report.md`.
+- **LIVE, SANDBOX:** none.
+- **NEXT:** harvest K170, then its independent verify (rule 0f).
+- **OWNER DECISIONS OPEN:** unchanged: the redaction-pass redesign (D-068, task #198); MoJev A/B/C (#210); which project hooks to restore (#214); the eight proofs' signing and the Stage 0 PR.
+
 **2026-09-24 07:5xZ — WHAT IS LIVE NOW (this block supersedes the 07:2xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **VERIFIED:** K215 (the owed screens and bakes, task #215) and the anti-hollow-green bake (task #218), through VERIFY-K215 (MERGE-READY-WITH-FOLLOWUPS) plus the coordinator's reproductions. Follow-ups: issue #65.
 - **LIVE, SANDBOX:** none.
@@ -607,6 +613,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 08:0xZ — K170 dispatched (PC local build lane, PIN 9e6821b); pushed 99f3864 (VERIFY-K215 harvest) and 00ac4ec (the K170 brief).
 2026-09-24 07:5xZ — VERIFY-K215 home: K215 and the anti-hollow-green bake verified with follow-ups (issue #65); the typed-escape quirk widened to the Bash tool.
 2026-09-24 07:2xZ — VERIFY-J1-45 home: J1-4 and J1-5 verified with follow-ups (issue #66); AF-AP-180 registered.
 2026-09-24 06:5xZ — pushed b318135 + bfe66ec; VERIFY-K215 dispatched (sandbox); VERIFY-J1-45's poller re-attached.
