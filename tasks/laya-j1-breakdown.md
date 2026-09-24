@@ -1,6 +1,7 @@
 # Task breakdown — J0 probe + J1 passive decision ledger (Jev/Laya advisory layer)
 
 STATUS: 2026-09-22 16:5xZ — AUTHORED from `seeds/seed-laya-j1-v1.yaml` (seed_7193bc57c8f7, interview interview_20260922_162523, ambiguity 0.12) + the interview's five answered rounds (the exact strings below are the interview's, not the seed's paraphrase). Nothing of this layer exists on either venue at authoring; the seed's own verify_commands read RED 8/8 (one exempt, the full suite deferred). Increments register as tasks before any build.
+STATUS: 2026-09-24 07:2xZ — J1-0 VERIFIED (J1-0-R6), J1-2 GOOD-STATE (D-034), J1-3 VERIFIED (J1-3-R1), J1-4 and J1-5 VERIFIED (VERIFY-J1-45, MERGE-READY-WITH-FOLLOWUPS, issue #66). J1-1 NOT-READY: its redaction pass waits for the owner's redesign decision (D-068, task #198). The ledger has the detail.
 
 ## Read order
 1. `seeds/seed-laya-j1-v1.yaml` — the contract (constraints, ten acceptance criteria with verify_commands).
