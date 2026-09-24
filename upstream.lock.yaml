@@ -146,6 +146,26 @@ advisory_tooling:
     adopted: "2026-09-07 (owner ask; advisory, never a gate; binary only — bundled skills/hooks NOT installed)"
     telemetry: "no phone-home found (strings + --help audit: no telemetry/analytics subcommands, no outbound URLs beyond localhost/docs; the binary is documented offline — writes a per-root cache under TMPDIR only)"
 
+# Advisory model — the Laya typed-decisions checkpoint (J1-4, task #121). ADVISORY forever: never a term in any gate, lint,
+# commit, push or proof (seeds/seed-laya-j1-v1.yaml; scripts/no_laya_in_gates.py). Every value below is the one J0 measured
+# (docs/research/findings/LAYA-PROBE-1.md and its two JSONs); tests/test_laya_pin.py holds them equal. The key names avoid
+# `repository`/`commit`/`*_sha256` pin keys on purpose: scripts/vendored_manifest.py's parse_lock reads those for the SBOM pin-diff.
+advisory_models:
+  laya-typed-decisions:
+    checkpoint_source: https://huggingface.co/convaiinnovations/laya
+    revision: "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+    subfolder: typed-decisions
+    weights_digest: "sha256:4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e"
+    package: laya
+    package_version: 0.3.5
+    package_wheel: laya-0.3.5-py3-none-any.whl
+    package_wheel_digest: "sha256:4c57f64cbaf893bb5c7b4affddc2bf21a819f55df51941689f11868583be2903"
+    runtime_measured: "torch 2.14.0 (+cpu in the sandbox, +cu130 on the PC), transformers 5.17.0, safetensors 0.8.0; FP32 on 4 pinned CPU threads"
+    probe: docs/research/findings/LAYA-PROBE-1.md
+    verdicts: "PC (reference) ASYNC-ONLY + DETERMINISTIC; sandbox SYNC-OK + DETERMINISTIC for its own instance"
+    role: advisory_typed_decision_scorer_never_a_gate
+    adopted: "2026-09-24 (J1-4; D-044, D-045; the PC endpoint is PCJ1, task #124)"
+
 # Local model serving — the vLLM Qwen3.8-27B container (D-032). A model behind OmniRoute (rule 3), never a direct egress.
 local_model_server:
   qwen38-27b-rtx3090:
