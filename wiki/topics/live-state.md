@@ -469,6 +469,7 @@ last_compiled: 2026-09-03
   its transcript and red suite were recovered. Repair lane `s0-01b` DONE (39 passed ×2).
 
 ## Pending owner decisions
+- **OPEN 2026-09-24 02:3xZ (supersedes the 2026-09-23 14:3xZ list, whose S0-02 and S0-05 items are done: both proofs are ACCEPTED):** (1) review and signed acceptance of the eight minted proofs not yet accepted: S0-03, S0-04, S0-06, S0-07 (REVIEW-PENDING), S0-08, S0-09, S0-10, S0-12 (one signing command per proof, as for S0-01, S0-02 and S0-05); (2) then the Stage 0 pull request to `main`, owner-merged; (3) MoJev (task #210), once the read-only audit's findings land; (4) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (5) the cloud route (D-061/D-062). Mirrored in `STATUS.md` §Next decision.
 - **OPEN 2026-09-23 14:3xZ:** (1) S0-02: the owner-run removal of owner2 from the test channel (the command is in the 14:26Z chat reply; the owner replies "removed"), then the coordinator runs the revoked leg; (2) S0-05: the buzz-acp relay identity `~/s0-05-identity/pair.env` does not exist — option 1 the coordinator creates it after the S0-02 capture (recommended), 2 the owner creates it, 3 park S0-05; after that, the owner's sudo run of the E3 recipe; (3) the sandbox disk: may the coordinator delete `/root/venv-laya` and the orphaned HF cache blob (yes or no; the classifier blocked the delete, not worked around); (4) the T93-R1 profile change stays OWNER-RUN (`bash scripts/t93r1_apply_profile.sh`, task #111); (5) no decision needed now: D-058, the owner's dream-phase Jev triage idea, is recorded as PROPOSED (task #195, blocked on the J1 closure and the Stage 5 build). RESOLVED since 05:1xZ: the S0-05 second-assertion wording (D-055, option 1, 10:5xZ). The bullets below this one are history; most predate 2026-09-15, and the ledger holds their status.
 - **RESOLVED 2026-09-14 16:3xZ: `accepted/S0-11` RE-SIGNED by the owner** on a9c0c55 after B3's attested schema change; the PC push refused (403) → the tag over the bridge as a bundle, its object committed (`docs/governance/tags/accepted-S0-11.tag`); anchor check rc 0 on both venues, `test_proof_status.py` 32 passed. NO owner item is open. Standing note for the owner: every schema/runner/validator/registry change re-mints every result and asks for this again (AF-AP-56 by design); the alternative — sign only the substance, not the tooling hashes and timestamps — is a design change for the owner to call.
 
@@ -514,6 +515,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 02:3xZ — owner decisions re-listed (eight proofs to sign, the Stage 0 PR, MoJev); STATUS.md refreshed; pushed 4c1d95d.
 2026-09-24 02:1xZ — the owner stopped all three sandbox agents by mistake; all three relaunched on Opus 5.5 (D-065).
 2026-09-24 02:1xZ — task #210: the read-only MoJev audit dispatched (owner ask).
 2026-09-24 02:0xZ — worker restart recovered; J1-3-R1 moved to a sandbox agent; K150 re-dispatched.
