@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -86,17 +87,10 @@ def copy_fixture(tmp_path: Path, module=None) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     # Give the fixture a 40-hex HEAD without creating a commit object (rev-parse only
     # reads this ref), so git_revision() returns a real-shaped revision and
-    # repo_root_of() still gets a real toplevel. The generating commit line is
-    # informational — the drift comparison ignores it (see
-    # test_committed_manifest_passes_check_at_a_later_head).
-    commit_match = re.search(
-        r"^Generated from commit: `([0-9a-f]{40})`$",
-        (root / module.MANIFEST_PATH).read_text(encoding="utf-8"),
-        re.M,
-    )
-    if not commit_match:
-        raise AssertionError("committed manifest must carry a 40-hex generating commit")
-    (root / ".git/refs/heads/master").write_text(commit_match.group(1) + "\n", encoding="ascii")
+    # repo_root_of() still gets a real toplevel. The generating line is informational —
+    # the drift comparison ignores it (see test_committed_manifest_passes_check_at_a_later_head);
+    # with no commit object, its tree reads `unknown`.
+    (root / ".git/refs/heads/master").write_text("2" * 40 + "\n", encoding="ascii")
     return root
 
 
@@ -275,7 +269,7 @@ def test_committed_manifest_passes_check_at_a_later_head(tmp_path: Path) -> None
     assert control.returncode == 1
     assert "vendored manifest drift" in control.stderr
     assert "line 4" not in control.stderr
-    assert "Generated from commit" not in control.stderr
+    assert "Generated from" not in control.stderr
     assert "sandbox-kit/docs/" in control.stderr
 
 
@@ -1335,3 +1329,26 @@ def test_af_ap_138_control_refuses_a_killer_that_fails_on_the_unmutated_module(t
     assert mutant_name == "unsorted-tree-digest"
     with pytest.raises(pytest.fail.Exception, match=f"^AF-AP-138: {killer} fails on the UNMUTATED module"):
         assert_mutant_killed(tmp_path, mutant_name, mutate, killer, run=stale_walk_order)
+
+
+def test_the_provenance_is_the_generating_trees_id_and_survives_a_message_rewrite(tmp_path: Path) -> None:
+    """Task #246: the header named the generating COMMIT, and push_clean's rewrite (trailers stripped, trees kept)
+    replaced it, so the manifests on origin named commits that do not exist there (4bfa4da, 21288bd). The tree id
+    of the generating commit is the same before and after a message-only rewrite."""
+    module = load_module()
+    repo = tmp_path / "tiny"
+    repo.mkdir()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    (repo / "f").write_text("x\n")
+    subprocess.run(["git", "add", "f"], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "one\n\ntrailer: x"], cwd=repo, check=True, env=env)
+    before = module.git_revision(repo)
+    tree = module.git_tree(repo, before)
+    assert tree == subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=repo, capture_output=True, text=True,
+                                  check=True).stdout.strip()
+    subprocess.run(["git", "commit", "-q", "--amend", "-m", "one"], cwd=repo, check=True, env=env)
+    after = module.git_revision(repo)
+    assert after != before and module.git_tree(repo, after) == tree
+    assert module.git_tree(repo, "2" * 40) == "unknown"
