@@ -11,8 +11,15 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-24 18:3xZ — WHAT IS LIVE NOW (supersedes the 18:1xZ block for the live set).**
+- **LANDED, GATED-PENDING-VERIFY:** `scripts/gpu_window.sh` (3c9eb6f; 14 tests, 11 of 11 mutants killed; live dry-run on the PC: refused rc 3 while QJ1 runs, key check against vLLM rc 0). JT2-R1 (f74dfd7); VERIFY-JT2-R1 running.
+- **FT1:** VERIFY-FT1 MERGE-READY-WITH-FOLLOWUPS; FT1-F (F-1 non-finite checkpoint, F-6 disk check before training) building in the sandbox; the window's training job waits for it.
+- **JT3:** VERIFY-JT3-R1 NOT-READY on N-1 only; JT3-R2 (the one final repair, a split Grep glob passes through) done uncommitted; the same verifier reverifies. The hook stays off.
+- **RWKV:** the yes/no refusal was simple-jev's prompt (a trailing space), not the model (AF-AP-195); G0 runs yes/no with the prefill `{"answer":`. G0 script not written yet.
+- **PC:** QJ1 alive on its retry (attempt 1 died on the local 400 and the cloud 403); poller re-attached. No lane may start before the window closes.
+
 **2026-09-24 18:1xZ — WHAT IS LIVE NOW (supersedes the 17:3xZ block for the live set).**
-- **LANDED, GATED-PENDING-VERIFY:** JT2-R1 (b97c84c; 180 passed twice on a clean copy); VERIFY-JT2-R1 running. FT1 (VERIFY-FT1 running).
+- **LANDED, GATED-PENDING-VERIFY:** JT2-R1 (f74dfd7; 180 passed twice on a clean copy); VERIFY-JT2-R1 running. FT1 (VERIFY-FT1 running).
 - **VERIFYING:** VERIFY-JT3-R1 (JT3's code uncommitted, the hook off until the verdict; told of ADJ-B).
 - **DATA:** OpenJev's 1,788 labels committed (`docs/research/findings/laya-ft-labels/2026-09-24-openjev/`); the dataset rebuilds from its tree.
 - **PC:** QJ1 alive (the GPU window waits for it); MoJev G0 20/30; RWKV-7 checkpoint downloaded, `~/venv-rwkv` imports cleanly, a fallback `~/venv-rwkv-b` installing; no GPU test possible while vLLM runs (a CUDA context cannot start).
@@ -40,7 +47,7 @@ last_compiled: 2026-09-03
 **2026-09-24 16:3xZ — WHAT IS LIVE NOW (this block supersedes the 15:1xZ block and the older ones below for the live set; the ledger carries the detail).**
 - **OWNER RULINGS (D-079):** simple-jev (Apache-2.0) is the Jev pattern; Qwen 27B (the running vLLM, through OmniRoute) is the local teacher; Laya keeps short decisions; RWKV-7 Goose World2.9 0.4B trains on LONG inputs (8k-32k, question first); J2 plus a new long-input test decide. Pins in `upstream.lock.yaml` (`advisory_jev_runtimes.simple-jev`, `advisory_models.rwkv7-goose-world2.9-0.4b`).
 - **KEY RESULTS:** OpenJev (J2 section 7): whole findings 0.54 accuracy, 4/7 blockers (Haiku 0.60, Laya 0.17); registry matching level with lexical at top 1 (0.58 vs 0.59), ahead at top 3. Task #234 closed.
-- **LANDED, GATED-PENDING-VERIFY:** JT1-R1 (e0d2bdc, with the JT2 alignment: `JEV_QUERY_CHARS` 1000 = `jev.RANK_QUERY_CHARS`; 172 passed twice on a clean copy).
+- **LANDED, GATED-PENDING-VERIFY:** JT1-R1 (d03e7c4, with the JT2 alignment: `JEV_QUERY_CHARS` 1000 = `jev.RANK_QUERY_CHARS`; 172 passed twice on a clean copy).
 - **LIVE, SANDBOX (Opus 5.5):** FT1 (the Laya fine-tune tooling, task #233); JT3-R1 (the one repair after VERIFY-JT3 NOT-READY; the hook stays off); VERIFY-JT1R1-JT2 (one verify of both Jev landings).
 - **LIVE, PC:** QJ1 (lane `pc-qj1.md--dda7ffb`, local route): the Qwen 27B Jev adapter, parity against simple-jev's own compiler, then J2 on it. If no v1-exact path goes through OmniRoute it stops (a direct vLLM call needs the owner). MoJev Gate 0 at 14/30 tasks (16:0xZ).
 - **OPEN FINDING:** the v1 answer-prefill failed through OmniRoute (502 on a whitespace token; 400 on integer logprobs for raw completions); plain-chat logprobs pass.
@@ -735,6 +742,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-24 18:3xZ — the live set: the GPU window script landed (GATED-PENDING-VERIFY), VERIFY-FT1 and VERIFY-JT3-R1 returned, FT1-F and JT3-R2 in flight, the RWKV yes/no refusal traced to the prompt (AF-AP-194, AF-AP-195).
 2026-09-24 17:2xZ — skill bakes: build-loop rule 1 (a shared value is read against every consumer, from F-20) and anti-hollow-green 3b (a mutant runs its own bytecode, AF-AP-192); new helper `scripts/skill_bake_finish.sh` (the mechanical tail of a skill bake, with a clean-worktree manifest); AF-AP-193's echo: JT2 is the one bug site.
 
 
