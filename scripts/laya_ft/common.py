@@ -60,6 +60,9 @@ HELDOUT = {
 }
 
 
+SAMPLED_KINDS = ("v1", "incident")   # the source kinds a held-out sample holds (row_identities' first element)
+
+
 class HeldOutError(Exception):
     """The held-out samples cannot be read as pinned, or a held-out row cannot be found where the build looks."""
 
@@ -180,6 +183,8 @@ def row_identities(row):
             ids.add(("v1", "%s#%s" % (s["path"], s["finding_id"])))
         elif s.get("kind") == "incident":
             ids.add(("incident", s["heading"]))
+        elif s.get("kind") == "commit":   # a commit message (dataset version 2, D-085); no sample holds one
+            ids.add(("commit", s["commit"]))
         else:
             raise DatasetError("row %s: unknown source kind %r" % (row.get("item_id"), s.get("kind")))
     if not ids:
@@ -188,11 +193,13 @@ def row_identities(row):
 
 
 def check_no_heldout(rows, heldout):
-    """Refuse (HeldOutLeak) if any row is a held-out row: by source identity, or a v1 state equal to a held-out one."""
+    """Refuse (HeldOutLeak) if any row is a held-out row: by source identity, or a v1 state equal to a held-out one.
+    A kind no held-out sample holds (a commit) reads as an empty set; a sampled kind missing from `heldout` still raises,
+    and an unknown kind is refused in row_identities."""
     leaks = []
     for row in rows:
         for kind, ident in sorted(row_identities(row)):
-            if ident in heldout[kind]:
+            if ident in (heldout[kind] if kind in SAMPLED_KINDS else heldout.get(kind, ())):
                 leaks.append("%s <- %s %s" % (label_key(row["item_id"], row["question_id"]), kind, ident[:90]))
         if isinstance(row["state"], str) and row["state"] in heldout["v1_texts_scrubbed"]:
             leaks.append("%s <- the text of a held-out J2c row" % label_key(row["item_id"], row["question_id"]))

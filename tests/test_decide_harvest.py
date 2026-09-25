@@ -1142,3 +1142,285 @@ def test_json_parse_errors_beyond_decode_errors_are_refused_by_name(tmp_path, ki
         f"harvest-source-unparseable: transcripts/x/t.jsonl:{refusal}\n",
     )
     assert len(replay(out)) == 3
+
+
+# ---------- DSV2 (task #251; D-083, D-085; brief tasks/briefs/jev-laya/DSV2-brief.md AMENDMENT 1) ----------
+# The finding families beside the grammar. Every family and class-slot case below is a REAL line of a committed report,
+# cited by path and line at the PIN (AF-AP-42: never an invented shape); `test_family_cases_are_real_lines_of_the_pin`
+# checks each citation against the commit. The block-end, F13 and restatement cases read the real reports at the PIN.
+
+PIN = "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb"  # the brief's PIN; git must hold it (a declared input, CI clones deep)
+PIN_ROWS = (369, "c4589e0d77a97d9b")  # the grammar's rows at the PIN: the regression fixture (count, sha256/16)
+FAMILY_CASES = {  # family -> (path, first line, the real line(s), expected id, class, title prefix)
+    "F1": ("tasks/briefs/jev-laya/VERIFY-JT1R1-JT2-report.md", 509,
+           ("- **F-01 INFO (R).** Premise, gates and red-green hold: 12 blobs and 4 constants match; 94 passed twice, "
+            "78 passed twice",), "F-01", "INFO", "(R). Premise, gates and red-green hold"),
+    "F2": ("tasks/briefs/jev-laya/VERIFY-GW1-report.md", 216,
+           ("**F-1 BLOCKER. INT or TERM during `restore` ends the script without the verified restore, and rc 130 "
+            "then claims",
+            '"the service back".** Evidence: REPRODUCED (S2, S3, S2b), FORCED-TIMING (MR1). `abort` (96-100) calls '
+            "`exit 130`"), "F-1", "BLOCKER", 'INT or TERM during `restore` ends the script without the verified restore'),
+    "F3": ("tasks/briefs/hermes-repin/VERIFY-REPIN-a-report.md", 234,
+           ("**F1 — BLOCKER. The S0-01 golden compares parsed values, not the entry's lines.** SOLID.",), "F1",
+           "BLOCKER", "The S0-01 golden compares parsed values"),
+    "F4": ("tasks/briefs/jev-laya/VERIFY-JT1-report.md", 269,
+           ("**F-24 (CONTRACT-DEFECT, reproduced live) `rank` returns a signal-free ranking for a long query, and the "
+            "fan-out guard",
+            'cannot see it.** The server gives each chunk the state `{"query": q, "chunk": text}` (query first,'),
+           "F-24", "CONTRACT-DEFECT", "reproduced live) `rank` returns a signal-free ranking"),
+    "F6": ("tasks/briefs/laya/VERIFY-J1-2-R1-report.md", 82,
+           ('### F1 — BLOCKER — `make_row` returns a row that `append` refuses; the lane\'s N11 "EQUIVALENT" is false '
+            "(the pre-write guard is live, load-bearing and unpinned)",), "F1", "BLOCKER",
+           "`make_row` returns a row that `append` refuses"),
+    "F7": ("tasks/briefs/pc/report-pc-verify-b4.md--95c0bb1.md", 127, ("5. B4-05 — INFO / SOLID",), "B4-05", "INFO",
+           "SOLID"),
+    "F8": ("tasks/briefs/s0-01-n5l-support/VERIFY-N5m-report.md", 13,
+           ("1. BLOCKER — the close-fds AST gate permits extra real launches.",), "1", "BLOCKER",
+           "the close-fds AST gate permits extra real launches."),
+    "F11": ("tasks/briefs/laya/VERIFY-J1-2-R1-report.md", 400,
+            ("- **INFO-1 (premise).** See §1; the N5 count difference is test selection.",), "INFO-1", "INFO",
+            "(premise). See §1"),
+    "F12": ("tasks/briefs/jev-laya/VERIFY-JT3-R1-report.md", 211,
+            ("- UTF-16 (INFO): rg decodes a BOM file and finds a match that raw grep cannot see (the answer shows "
+             "more).",), "UTF-16", "INFO", "rg decodes a BOM file"),
+    "F13": ("tasks/briefs/s0-08-support/VERIFY-G1-report.md", 681,
+            ("| # | severity | where (at 517c65e) | one line |", "|---|---|---|---|",
+             '| F1 | **BLOCKER** | `proofs/S0-08/check_containment.py:242` | `if mount_rc == "0":` — P6\'s containment '
+             "signature is skipped whenever the mount fails — which is what happens for uid 10000 and for podman's "
+             "default caps; bundle A5c passes with host PID 1 |"), "F1", "BLOCKER", '`if mount_rc == "0":`'),
+}
+SLOT_CASES = {  # the class slot (AMENDMENT 1 item 4): (path, line, the real line, expected class or the refusal)
+    "two-words": ("tasks/briefs/jev-laya/VERIFY-GW1-R1-report.md", 162,
+                  "**R1-F-7 FOLLOW-UP / UNVERIFIED. The probe bound covers timeout's process group, not the pipe.** "
+                  "REPRODUCED (N6): a", "R1-F-7", "ambiguous-class"),
+    "qualifier": ("tasks/briefs/laya/VERIFY-J1-0-R4-report.md", 749,
+                  "- **V-11 FOLLOW-UP (KNOWN class F-B4)** — `sys.path` shadowing of a LISTED module name (P1 static "
+                  "import, P3 `import_module`):", "V-11", "FOLLOW-UP"),
+    "prose": ("tasks/briefs/laya/VERIFY-J1-3-R2-report.md", 550,
+              "**F-17 FOLLOW-UP — `append` replays the whole ledger per row** "
+              "(`src/agent_factory/decisions/ledger.py:452`, a J1-2 design). INFO-level.", "F-17", "FOLLOW-UP"),
+}
+NO_CLASS_LINE = ("tasks/briefs/canny/VERIFY-C1-report.md", 233,
+                 "**F4 — the argv join (`V:241`).** Contract item 5 writes the grammar as `-- COMMAND`, singular; "
+                 '`" ".join(command_parts)`')
+
+
+def _pin_git(*args: str) -> bytes:
+    result = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
+    if result.returncode != 0:
+        pytest.fail(f"declared input missing: this test reads the PIN {PIN[:12]} from the repo's history "
+                    f"(git {' '.join(args[:2])}: {result.stderr.decode(errors='replace').strip()[:200]})")
+    return result.stdout
+
+
+def _pin_lines(path: str) -> list[str]:
+    return _pin_git("show", f"{PIN}:{path}").decode("utf-8").split("\n")
+
+
+def _load_harvester(path: Path, name: str):
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # the dataclasses resolve their module through sys.modules
+    loader.exec_module(module)
+    return module
+
+
+def _harvest_at_pin(dh) -> tuple[list[str], list[tuple[str, int, str]]]:
+    """decide-harvest's main() at the PIN, in process: the lines `append` writes (canonical(row) + "\\n", a repeated row_id
+    skipped) and the refusals. The PIN script's own run reproduces PIN_ROWS, which pins this replica to the CLI."""
+    from agent_factory.decisions.canonical import canonical
+
+    tree = sorted((p.decode("utf-8") for p in _pin_git("ls-tree", "-r", "--name-only", "-z", PIN).split(b"\0") if p),
+                  key=lambda p: p.encode("utf-8"))
+    registry = dh._registry(_pin_git("cat-file", "blob", f"{PIN}:docs/INCIDENT-LOG.md").decode("utf-8"))
+    lines, refused, seen = [], [], set()
+    for path in (p for p in tree if dh._kind(p) is not None):
+        data = _pin_git("cat-file", "blob", f"{PIN}:{path}")
+        import hashlib
+
+        source = dh.Source(path=path, kind=dh._kind(path), data=data, text=data.decode("utf-8"),
+                           digest=hashlib.sha256(data).hexdigest())
+        for candidate in dh._candidates(source, tree=set(tree), registry=registry):
+            if candidate.reason:
+                refused.append((path, candidate.line, candidate.reason))
+                continue
+            row = dh.make_row(producer=candidate.producer, question_id=candidate.question_id,
+                              raw_state=candidate.state, incumbent_answer=candidate.answer,
+                              source_ref=dh._source_ref(source, candidate.locator), root=ROOT)
+            if row["row_id"] not in seen:
+                seen.add(row["row_id"])
+                lines.append(canonical(row) + "\n")
+    return lines, refused
+
+
+def _family_at_pin(path: str, line: int):
+    dh = _load_harvester(SCRIPT, "decide_harvest_dsv2")
+    lines = _pin_lines(path)
+    found = [f for f in dh._family_findings(lines, dh._grammar_records(lines)) if f.line == line - 1]
+    assert len(found) == 1, (path, line, found)
+    return found[0], lines
+
+
+def test_family_cases_are_real_lines_of_the_pin():
+    """AF-AP-42: every case is the committed text at its cited path and line, byte for byte."""
+    cases = [(p, n, text) for p, n, text, *_ in FAMILY_CASES.values()]
+    cases += [(p, n, (text,)) for p, n, text, *_ in SLOT_CASES.values()] + [NO_CLASS_LINE[:2] + (NO_CLASS_LINE[2:],)]
+    for path, first, text in cases:
+        assert tuple(_pin_lines(path)[first - 1 : first - 1 + len(text)]) == tuple(text), (path, first)
+
+
+@pytest.mark.parametrize("family", sorted(FAMILY_CASES, key=lambda f: int(f[1:])))
+def test_each_family_admits_its_real_line_through_the_harvest(tmp_path, family):
+    path, first, text, finding_id, finding_class, title = FAMILY_CASES[family]
+    repo = _make_repo(tmp_path)
+    report = "tasks/briefs/x/VERIFY-FAMILY-report.md"   # a report of its own: no id of the fixture's is taken
+    (repo / report).write_text("# Findings\n\n" + "\n".join(text) + "\n", encoding="utf-8")
+    _commit(repo, f"a real {family} line")
+    out = tmp_path / "family.jsonl"
+    result = _run(repo, out, report)
+    assert (result.returncode, result.stderr) == (0, ""), (path, first)
+    rows = [row for row in replay(out) if row["question_id"] == "v1.finding_class"]
+    assert [row["state"]["finding_id"] for row in rows] == [finding_id]
+    assert rows[0]["state"]["lane"] == "VERIFY-FAMILY"
+    row = rows[0]
+    assert (row["incumbent_answer"], row["state"]["disposition"]) == (
+        finding_class, "BLOCKING" if finding_class in ("BLOCKER", "CONTRACT-DEFECT") else "NON-BLOCKING")
+    assert row["state"]["title"].startswith(title), row["state"]["title"]
+
+
+@pytest.mark.parametrize("case", sorted(SLOT_CASES))
+def test_class_slot_two_words_refuse_a_qualifier_or_prose_do_not(tmp_path, case):
+    """AMENDMENT 1 item 4: two class words joined in the slot refuse the line; a qualifier after the class, or a class
+    word later in the prose, leaves the slot's class as the label."""
+    path, line, text, finding_id, expected = SLOT_CASES[case]
+    repo = _make_repo(tmp_path)
+    report = "tasks/briefs/x/VERIFY-X-report.md"
+    at = len((repo / report).read_text(encoding="utf-8").split("\n")) + 1   # the appended line's number
+    _append_and_commit(repo, report, "\n" + text + "\n")
+    out = tmp_path / "slot.jsonl"
+    result = _run(repo, out, report)
+    rows = {row["state"]["finding_id"]: row for row in replay(out) if row["question_id"] == "v1.finding_class"}
+    if expected == "ambiguous-class":
+        assert (result.returncode, result.stderr) == (3, f"harvest-source-unparseable: {report}:{at} (ambiguous-class)\n")
+        assert finding_id not in rows
+    else:
+        assert (result.returncode, result.stderr) == (0, "")
+        assert rows[finding_id]["incumbent_answer"] == expected
+
+
+def test_a_line_with_an_id_and_no_class_word_is_not_admitted(tmp_path):
+    """The negative control of every family: an id-anchored line with no class word is no finding (nor a refusal)."""
+    path, line, text = NO_CLASS_LINE
+    repo = _make_repo(tmp_path)
+    report = "tasks/briefs/x/VERIFY-X-report.md"
+    _append_and_commit(repo, report, "\n" + text + "\n")
+    out = tmp_path / "no-class.jsonl"
+    result = _run(repo, out, report)
+    assert (result.returncode, result.stderr) == (0, "")
+    assert [row["state"]["finding_id"] for row in replay(out) if row["question_id"] == "v1.finding_class"] == [
+        "F-1", "F-2"]
+
+
+@pytest.mark.parametrize(
+    ("path", "line", "end", "last", "stop"),
+    [
+        # the list rule: the item's unindented body stays; the section title after it ends the block (before the
+        # report's `Reproduced controls` at :21 and its graft banner at :87)
+        ("tasks/briefs/s0-01-n5l-support/VERIFY-N5m-report.md", 13, "list", 19, "Reproduced controls"),
+        # the list rule: the body stays through :137; `Named mutant disposition` (:139) ends it, before `Retro:` (:190)
+        ("tasks/briefs/pc/report-pc-verify-b4.md--95c0bb1.md", 127, "list", 137, "Named mutant disposition"),
+        # F6: a deeper heading or an indented list does not end it; the next heading of its level (an anchor) does
+        ("tasks/briefs/laya/VERIFY-J1-2-R1-report.md", 82, "anchor", 127, "### F2 — FOLLOW-UP"),
+        # the cap: a block longer than 60 lines is cut at 60 and says so
+        ("tasks/briefs/s0-05-support/VERIFY-E1-R1-report.md", 110, "cap", 169, None),
+    ],
+    ids=["N5m-13", "b4-127", "J1-2-R1-82", "E1-R1-110-cap"],
+)
+def test_block_ends_on_the_real_reports_at_the_pin(path, line, end, last, stop):
+    finding, lines = _family_at_pin(path, line)
+    block = finding.text.split("\n")
+    assert (finding.block_end, finding.reason) == (end, None)
+    assert block == lines[line - 1 : last]   # exactly the anchor through the cited last line
+    if stop is not None:
+        after = next(i for i in range(last, len(lines)) if lines[i].strip())
+        assert lines[after].startswith(stop)
+    else:
+        assert len(block) == 60
+
+
+def test_f13_admits_a_title_table_and_keeps_predicate_and_disposition_tables_out():
+    admitted, _ = _family_at_pin("tasks/briefs/canny/VERIFY-C1-report.md", 369)   # header `id | finding | class | ...`
+    assert (admitted.family, admitted.finding_id, admitted.finding_class, admitted.reason) == (
+        "F13", "F1", "CONTRACT-DEFECT", None)
+    assert admitted.text == "43 shapes count while bash exits 0 with the check failing — nine families (H1-H9)"
+    assert admitted.block_end == "cell"   # the title cell alone: the other cells are the verifier's evidence
+    summary, _ = _family_at_pin("tasks/briefs/s0-08-support/VERIFY-G1-report.md", 683)   # G1's summary table
+    assert (summary.family, summary.finding_id, summary.reason) == ("F13", "F1", "restated")   # F1 is its :98 heading
+    dh = _load_harvester(SCRIPT, "decide_harvest_dsv2")
+    for path, header in (("tasks/briefs/jev-laya/VERIFY-JT1-report.md", 386),   # a blocking-predicate table
+                         ("tasks/briefs/laya/VERIFY-J1-1-report.md", 388)):     # a disposition table with a finding column
+        lines = _pin_lines(path)
+        assert lines[header].startswith("|---") and lines[header + 1].startswith("| ")
+        rows = {f.line for f in dh._family_findings(lines, dh._grammar_records(lines))}
+        assert not rows & set(range(header + 1, header + 30)), (path, sorted(rows))
+
+
+def test_a_restated_id_is_neither_admitted_nor_refused():
+    """AF-AP-199's rule for the families: the first occurrence per (report, id) is the finding."""
+    first, _ = _family_at_pin("tasks/briefs/s0-05-support/VERIFY-E3-R1-report.md", 108)
+    again, _ = _family_at_pin("tasks/briefs/s0-05-support/VERIFY-E3-R1-report.md", 399)
+    assert (first.family, first.finding_id, first.reason) == ("F4", "VE3R1-F1", None)
+    assert (again.family, again.finding_id, again.reason) == ("F7", "VE3R1-F1", "restated")
+
+
+def test_the_grammar_helpers_j2c_reads_are_unchanged_since_the_pin(tmp_path):
+    """AMENDMENT 1 item 9: the families sit beside the helpers j2c.py (the dataset's version 1) calls, never in them."""
+    pin_script = tmp_path / "decide-harvest.pin"
+    pin_script.write_bytes(_pin_git("show", f"{PIN}:scripts/decide-harvest"))
+
+    def sources(path):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        out = {}
+        for node in tree.body:
+            names = [node.name] if isinstance(node, ast.FunctionDef) else [
+                t.id for t in getattr(node, "targets", []) if isinstance(t, ast.Name)]
+            for name in names:
+                out[name] = ast.dump(node)
+        return out
+
+    now, then = sources(SCRIPT), sources(pin_script)
+    for name in ("BULLET_FINDING_RE", "MARKDOWN_HEADING_RE", "FINDING_ID_RE", "_lines", "_heading_text",
+                 "_split_table_row", "_is_separator", "_title_column", "_parse_class", "_report_lane"):
+        assert now[name] == then[name], name
+
+
+def test_pin_rows_are_the_regression_fixture_and_the_families_only_add_rows(tmp_path):
+    """The brief's byte clause: decide-harvest's 369 rows at the PIN (sha256/16 c4589e0d77a97d9b) stay byte-identical, in
+    order; the only change is new rows (families' findings, and ap rows for AF-AP ids in their titles)."""
+    import hashlib
+
+    pin_script = tmp_path / "decide-harvest.pin"
+    pin_script.write_bytes(_pin_git("show", f"{PIN}:scripts/decide-harvest"))
+    old, old_refused = _harvest_at_pin(_load_harvester(pin_script, "decide_harvest_pin"))
+    new, new_refused = _harvest_at_pin(_load_harvester(SCRIPT, "decide_harvest_dsv2"))
+    assert (len(old), hashlib.sha256("".join(old).encode("utf-8")).hexdigest()[:16]) == PIN_ROWS
+    remaining = iter(new)
+    assert all(line in remaining for line in old)   # an ordered subsequence: every old row, byte for byte, in order
+    added = list(new)
+    for line in old:
+        added.remove(line)
+    kinds = {}
+    for line in added:
+        row = json.loads(line)
+        key = (row["question_id"], row["source_ref"]["kind"])
+        kinds[key] = kinds.get(key, 0) + 1
+    assert kinds == {("v1.finding_class", "verify_report"): 726, ("ap.violates_row", "verify_report"): 18}
+    reasons = {}
+    for _path, _line, reason in new_refused:
+        reasons[reason] = reasons.get(reason, 0) + 1
+    assert {r for _p, _l, r in old_refused} >= {"bad-title"} and reasons == {
+        "ambiguous-class": 6, "bad-class": 3, "bad-finding-id": 6, "no-title-column": 78}   # every bad-title admitted

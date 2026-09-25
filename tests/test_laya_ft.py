@@ -1078,3 +1078,271 @@ def test_evaluate_cli_refuses_a_non_finite_served_probability(laya_venue, tmp_pa
     assert (r["rc"], r["answers"], r["files"]) == (5, 7, []), r   # the finite choice passed; no result was written
     assert r["said"] == ["evaluate: refused: NonFiniteAnswer: answer 'BLOCKER' serves the probability nan, not a finite "
                          "float: nothing is scored"], r
+
+
+# ---------- DSV2: version 2 (task #251; D-083, D-085; tasks/briefs/jev-laya/DSV2-brief.md AMENDMENT 1) ----------
+
+PIN = "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb"   # the brief's PIN: the version-2 record is built there (D-4)
+V1_AT = ("0b342c7a29317d611a7f415eb411802276533f1a", "d7cd9b49abac267bb9b5290641ea353180a9a61047ce6c590809520b085cea1c")
+RECORD = FINDINGS / "laya-ft-labels" / "2026-09-25-recorded"
+
+
+def test_row_identities_know_a_commit_and_still_refuse_an_unknown_kind():
+    row = {"item_id": "ap-x", "sources": [{"kind": "commit", "commit": "a" * 40, "row": "AF-AP-1"},
+                                          {"kind": "incident", "heading": "h", "role": "linked"}]}
+    assert C.row_identities(row) == {("commit", "a" * 40), ("incident", "h")}
+    with pytest.raises(C.DatasetError, match=r"^row x: unknown source kind 'tweet'$"):
+        C.row_identities({"item_id": "x", "sources": [{"kind": "tweet"}]})
+
+
+def test_check_no_heldout_reads_a_kind_no_sample_holds_as_empty(tmp_path):
+    heldout = C.heldout_identities(C.worktree_reader)
+    ap_state = json.loads((FINDINGS / "ap-hawk-probe" / "sample.json").read_text())["sample"][0]["state"]
+    commit_src = {"kind": "commit", "commit": "b" * 40, "row": "AF-AP-1"}
+    clean = BD.make_row("ap", "ap.violates_row", {"query": "a FAKE commit message", "chunk": "c"}, [commit_src], None)
+    linked = BD.make_row("ap", "ap.violates_row", {"query": "another FAKE message", "chunk": "c"},
+                         [commit_src, {"kind": "incident", "heading": ap_state, "role": "linked"}], None)
+    C.check_no_heldout([clean], heldout)   # no sample holds a commit: its identity reads as an empty set
+    with pytest.raises(C.HeldOutLeak, match=r"^1 held-out row\(s\) in the dataset \(D-3\)"):
+        C.check_no_heldout([clean, linked], heldout)   # a commit that added a held-out entry is held out with it
+    incident = BD.make_row("ap", "ap.violates_row", {"query": "q", "chunk": "c"},
+                           [{"kind": "incident", "line": 1, "heading": "h", "row": "AF-AP-1"}], None)
+    with pytest.raises(KeyError):   # a SAMPLED kind missing from the held-out set is never read as empty
+        C.check_no_heldout([incident], {k: v for k, v in heldout.items() if k != "incident"})
+    _write_dataset(tmp_path / "ok", [clean])
+    assert len(C.load_dataset(tmp_path / "ok")[0]) == 1
+    _write_dataset(tmp_path / "leak", [clean, linked])
+    with pytest.raises(C.HeldOutLeak):
+        C.load_dataset(tmp_path / "leak")
+
+
+V2_REPORT = REPORT + """
+## Families
+
+**F-5 — BLOCKER. A family paragraph finding: the probe reads a stale cache.** It was reproduced twice.
+
+### F-6 — INFO — a heading finding about the timing table
+
+The body line of F-6.
+"""
+V2_PC_REPORT = """# PC verify
+
+1. BLOCKER — a numbered PC finding: the runner drops the exit code.
+
+- **F-2 INFO — held out: this finding is in the fixture's J2c sample** Measured; no defect.
+- **Q-7 FOLLOW-UP — held out: this finding is in the fixture's J2c sample, restated under a new id** Again.
+"""
+V2_TITLE = "held out: this finding is in the fixture's J2c sample"   # the J2 v1 sample's (masked) title: 53 characters
+E_HELD = "**2026-09-02 11:0xZ — Held out: the heading the fixture's AP sample names (AF-AP-1).** Body text.\n"
+E_NONE = "**2026-09-03 12:0xZ — A disk filled during a probe.** Nothing is named here.\n"
+E_BOTH = "**2026-09-04 09:0xZ — The mirror again (AF-AP-2).** The body names AF-AP-2 too.\n"
+ROW3 = "| AF-AP-3 | an unrelated row about disk space | df | x | y |\n"
+
+
+def _v2_fixture_repo(tmp_path):
+    """A repo whose history holds every version-2 source shape. -> (repo, pins, shas: message head -> sha)"""
+    repo = tmp_path / "repo2"
+    for d in ("tasks/briefs/t", "tasks/briefs/pc", "docs", "samples"):
+        (repo / d).mkdir(parents=True)
+    report_path = "tasks/briefs/t/VERIFY-T-report.md"
+    (repo / report_path).write_text(V2_REPORT, encoding="utf-8")
+    (repo / "tasks/briefs/pc/report-pc-verify-t.md").write_text(V2_PC_REPORT, encoding="utf-8")
+    base = LOG.replace(E_HELD + "\n", "").replace(ROW3, "").replace("## ANTI-PATTERN", E_NONE + "\n## ANTI-PATTERN")
+    (repo / "docs" / "INCIDENT-LOG.md").write_text(base, encoding="utf-8")
+    f2 = next(b for b in C.J2C._blocks(report_path, V2_REPORT) if b[0] == "F-2")
+    held = C.AP.AP_ID.sub("AF-AP-?", C.AP.heading([E_HELD.rstrip("\n")], 0))
+    samples = {"j2_v1": {"sample": [{"row_digest": "d1", "label": "INFO", "lane": "VERIFY-T", "state": V2_TITLE}]},
+               "j2c": {"sample": [{"row_digest": "d1", "label": "INFO", "lane": "VERIFY-T",
+                                   "source": "%s#F-2" % report_path, "state": C.J2C._mask(f2[3])}]},
+               "ap": {"rows": {}, "sample": [{"line": 5, "labels": ["AF-AP-1"], "state": held}]}}
+    pins = {}
+    for name, data in samples.items():
+        body = (json.dumps(data, sort_keys=True) + "\n").encode("utf-8")
+        (repo / "samples" / ("%s.json" % name)).write_bytes(body)
+        pins[name] = ("samples/%s.json" % name, C.sha256_hex(body))
+    _git(repo.parent, "init", "-q", str(repo))
+    shas = {}
+
+    def commit(message, edit):
+        edit()
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", message)
+        shas[message.split("\n")[0]] = _git(repo, "rev-parse", "HEAD").decode().strip()
+
+    log = repo / "docs" / "INCIDENT-LOG.md"
+
+    def insert(entry):
+        return lambda: log.write_text(log.read_text().replace("## ANTI-PATTERN", entry + "\n## ANTI-PATTERN"))
+
+    commit("fixture: base", lambda: None)
+    commit("incident: log the held-out entry (AF-AP-1)", insert(E_HELD))
+    commit("registry: AF-AP-3 (an unrelated row about disk space)",
+           lambda: log.write_text(log.read_text() + ROW3))
+    commit("incident: the mirror again (AF-AP-2)\n\nWhy: AF-AP-1 is named in the body only.", insert(E_BOTH))
+    commit("docs: tidy the wording\n\nAF-AP-2 met again, in the body only.",
+           lambda: (repo / "docs" / "notes.md").write_text("tidy\n"))
+    commit("notes: the incident follow-up (AF-AP-2)\n\n2026-09-02 11:0xZ — Held out: the heading the fixture's AP "
+           "sample names (AF-AP-1).", lambda: (repo / "docs" / "notes.md").write_text("follow-up\n"))
+    return repo, pins, shas
+
+
+def _by_source(items):
+    out = {}
+    for _prefix, qid, state, sources in items:
+        s = sources[0]
+        key = (s["kind"], s.get("path", "").split("/")[-1] + s.get("finding_id", "") if s["kind"] == "verify_finding"
+               else s.get("heading", s.get("commit", ""))[:24], s.get("row"), qid)
+        out[key] = (s.get("answer"), s.get("provenance"), state, sources)
+    return out
+
+
+def test_collect_v2_labels_every_source_with_its_recorded_answer(tmp_path):
+    repo, pins, shas = _v2_fixture_repo(tmp_path)
+    items, info = BD.collect_v2(BD.git_runner(repo), "HEAD", pins=pins)
+    got = _by_source(items)
+    finding = {k[1]: v for k, v in got.items() if k[0] == "verify_finding" and k[3] == "v1.finding_class"}
+    blocking = {k[1]: v[0] for k, v in got.items() if k[0] == "verify_finding" and k[3] == "v1.blocking"}
+    assert {k: v[0] for k, v in finding.items()} == {"VERIFY-T-report.mdF-1": "FOLLOW-UP", "VERIFY-T-report.mdT-1": "BLOCKER",
+                                                   "VERIFY-T-report.mdF-5": "BLOCKER", "VERIFY-T-report.mdF-6": "INFO",
+                                                   "report-pc-verify-t.md1": "BLOCKER"}
+    assert blocking == {"VERIFY-T-report.mdF-1": "false", "VERIFY-T-report.mdT-1": "true",
+                        "VERIFY-T-report.mdF-5": "true", "VERIFY-T-report.mdF-6": "false", "report-pc-verify-t.md1": "true"}
+    assert {v[1] for v in finding.values()} == {"verifier-class"}
+    assert {v[3][0]["family"] for v in finding.values()} == {"grammar", "F3", "F6", "F8"}
+    for _a, _p, state, _s in finding.values():   # the state is masked and scrubbed; the label lives in the sources
+        assert not CLASS_WORDS.search(state) and all(value not in state for value in FAKE_SECRETS.values())
+    assert info["excluded"] == {"identity": {"verify_finding": 1, "incident": 1, "commit": 1},
+                                "text": {"verify_finding": 2, "incident": 0, "commit": 1}}
+    ap = {(k[1], k[2]): v for k, v in got.items() if k[0] in ("incident", "commit")}
+    e1, e4 = "2026-09-01 10:0xZ — A gate", "2026-09-04 09:0xZ — The mi"
+    assert {r: ap[(e1[:24], r)][:2] for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3")} == {
+        "AF-AP-1": ("true", "body-cite"), "AF-AP-2": ("true", "heading-cite"), "AF-AP-3": ("false", "not-cited")}
+    assert {r: ap[(e4[:24], r)][:2] for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3")} == {
+        "AF-AP-1": ("false", "not-cited"), "AF-AP-2": ("true", "heading-cite+body-cite"), "AF-AP-3": ("false", "not-cited")}
+    assert all(ap[("2026-09-03 12:0xZ — A disk"[:24], r)][:2] == (None, None) for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3"))
+    reg, subj = shas["registry: AF-AP-3 (an unrelated row about disk space)"], shas["incident: the mirror again (AF-AP-2)"]
+    base = shas["fixture: base"]   # it creates the registry: a commit that adds rows is a source whatever its message says
+    assert {r: ap[(base[:24], r)][:2] for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3")} == {
+        "AF-AP-1": ("true", "registry-commit"), "AF-AP-2": ("true", "registry-commit"), "AF-AP-3": ("false", "not-cited")}
+    assert [s["heading"][:17] for s in ap[(base[:24], "AF-AP-1")][3][1:]] == ["2026-09-01 10:0xZ", "2026-09-03 12:0xZ"]
+    assert {r: ap[(reg[:24], r)][:2] for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3")} == {
+        "AF-AP-1": ("false", "not-cited"), "AF-AP-2": ("false", "not-cited"), "AF-AP-3": ("true", "registry-commit")}
+    assert {r: ap[(subj[:24], r)][:2] for r in ("AF-AP-1", "AF-AP-2", "AF-AP-3")} == {
+        "AF-AP-1": (None, None), "AF-AP-2": ("true", "commit-subject"), "AF-AP-3": ("false", "not-cited")}
+    assert ap[(subj[:24], "AF-AP-2")][3][1:] == [{"kind": "incident", "role": "linked",
+                                                   "heading": C.AP.AP_ID.sub("AF-AP-?", C.AP.heading([E_BOTH], 0))}]
+    assert all(s["commit"] in (base, reg, subj) for (_k, _r), v in ap.items() for s in v[3][:1] if s["kind"] == "commit")
+    assert info["ap"]["commits_admitted"] == {"registry-commit": 2, "commit-subject": 1}
+    assert (info["ap"]["commits_body_only_not_admitted"], info["ap"]["commit_rows_unlabeled_body_cite"]) == (1, 1)
+    for _a, _p, state, _s in ap.values():
+        assert not re.search(r"\bAF-AP-\d+\b", state["query"]) and list(state) == ["query", "chunk"]
+        assert all(value not in state["query"] for value in FAKE_SECRETS.values())
+    assert BD.collect_v2(BD.git_runner(repo), "HEAD", pins=pins) == (items, info)   # deterministic (D-4)
+
+
+def test_a_commit_that_adds_a_heldout_entry_is_held_out_and_the_loader_is_the_backstop(tmp_path):
+    """AMENDMENT 1 item 2: the builder leaves the commit out; a build that let it through is refused at load."""
+    repo, pins, shas = _v2_fixture_repo(tmp_path)
+    items, info = BD.collect_v2(BD.git_runner(repo), "HEAD", pins=pins)
+    held_sha = shas["incident: log the held-out entry (AF-AP-1)"]
+    heldout = C.heldout_identities(lambda p: BD.git_runner(repo)("show", "HEAD:" + p), pins)
+    assert info["excluded"]["identity"]["commit"] == 1
+    assert not any(s.get("commit") == held_sha for it in items for s in it[3])
+    assert not any(s.get("heading") in heldout["incident"] for it in items for s in it[3])
+    clean = [BD.make_row(*it, None) for it in items if it[3][0]["kind"] == "commit"]
+    assert any(s.get("role") == "linked" for row in clean for s in row["sources"])   # a clean commit's link loads
+    _write_dataset(tmp_path / "clean", clean)
+    assert len(C.load_dataset(tmp_path / "clean", heldout)[0]) == len(clean) == 9
+    planted = BD.make_row("ap", "ap.violates_row", {"query": "incident: log the held-out entry (AF-AP-?)",
+                                                    "chunk": clean[0]["state"]["chunk"]},
+                          [dict(clean[0]["sources"][0], commit=held_sha),   # what a builder without the rule would write
+                           {"kind": "incident", "heading": sorted(heldout["incident"])[0], "role": "linked"}], None)
+    _write_dataset(tmp_path / "planted", clean + [planted])
+    with pytest.raises(C.HeldOutLeak, match=r"^1 held-out row\(s\) in the dataset \(D-3\).*incident 2026-09-02"):
+        C.load_dataset(tmp_path / "planted", heldout)
+
+
+def test_heldout_text_is_left_out_wherever_it_is_planted(tmp_path):
+    """D-3 by text: the PC report restates the held-out F-2 verbatim (another path, so another identity) and Q-7 carries
+    the held-out title under a new id; a commit message quotes the held-out heading. All three are left out by text."""
+    repo, pins, _shas = _v2_fixture_repo(tmp_path)
+    items, info = BD.collect_v2(BD.git_runner(repo), "HEAD", pins=pins)
+    fids = {(s["path"].split("/")[-1], s["finding_id"]) for it in items for s in it[3] if s["kind"] == "verify_finding"}
+    assert ("report-pc-verify-t.md", "F-2") not in fids and ("report-pc-verify-t.md", "Q-7") not in fids
+    assert info["excluded"]["text"] == {"verify_finding": 2, "incident": 0, "commit": 1}
+    overlap = BD.Overlap(BD.heldout_texts(lambda p: BD.git_runner(repo)("show", "HEAD:" + p), pins))
+    assert overlap.hit("before " + V2_TITLE.upper() + " after") and not overlap.hit("a clean finding about a cache")
+    for it in items:   # the second net holds on everything that stayed
+        assert overlap.hit(*(it[2].values() if isinstance(it[2], dict) else [it[2]])) is None
+
+
+def test_block_end_cap_is_carried_in_the_source(tmp_path):
+    """AMENDMENT 1 item 5: a block over 60 lines is cut there and says so in its source."""
+    repo, pins, _shas = _v2_fixture_repo(tmp_path)
+    long_finding = "\n**F-9 — INFO. A long finding.** " + "\n".join("line %d of the body" % n for n in range(80)) + "\n"
+    report = repo / "tasks/briefs/t/VERIFY-T-report.md"
+    report.write_text(report.read_text() + long_finding, encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "a long finding")
+    items, info = BD.collect_v2(BD.git_runner(repo), "HEAD", pins=pins)
+    f9 = [it for it in items if it[3][0].get("finding_id") == "F-9"]
+    assert len(f9) == 2 and all(it[3][0]["block_end"] == "cap" for it in f9) and info["capped_blocks"] == 1
+    assert f9[0][2].count("\n") == 59 and "line 59 of the body" in f9[0][2] and "line 60" not in f9[0][2]
+    others = [it for it in items if it[3][0]["kind"] == "verify_finding" and it[3][0]["finding_id"] != "F-9"]
+    assert others and all("block_end" not in it[3][0] for it in others)
+
+
+def test_leak_flags_mark_the_rows_and_leave_none_out():
+    """AMENDMENT 1 item 8: what a state still says about its label is flagged in every source, never dropped."""
+    rows = [BD.make_row("v1", "v1.finding_class", "two [CLASS]s and some BLOCKERS remain", _v1_source(), None),
+            BD.make_row("v1", "v1.blocking", "the gate says NOT-READY; it is not a [CLASS]", _v1_source(fid="F-8"), None),
+            BD.make_row("v1", "v1.blocking", "a clean finding text", _v1_source(fid="F-7"), None),
+            BD.make_row("ap", "ap.violates_row", {"query": "here a gate trusts a mirror test", "chunk": "row AF-AP-4"},
+                        [{"kind": "incident", "line": 1, "heading": "h", "row": "AF-AP-2", "answer": "true",
+                          "provenance": "heading-cite"}], None)]
+    counts = BD.flag_leaks(rows, {"AF-AP-2": "A gate trusts a mirror"})
+    assert [[s.get("leak") for s in r["sources"]] for r in rows] == [
+        ["class-word"], ["blocking-words"], [None], ["ap-id+row-name"]]
+    assert counts == {"v1.finding_class|class-word": 1, "v1.blocking|blocking-words": 1, "ap.violates_row|ap-id": 1,
+                      "ap.violates_row|row-name": 1}
+
+
+def test_version_1_is_byte_identical_and_still_loads(laya_venue, tmp_path):
+    """The brief's byte clause: version 1's dataset at 0b342c7 is d7cd9b49..., the committed OpenJev manifest's, and it
+    loads through the trainer's loader after the common.py change."""
+    commit, sha = V1_AT
+    proc = subprocess.run([laya_venue["py"], str(ROOT / "scripts" / "laya_ft" / "build_dataset.py"), "--commit", commit,
+                           "--out", str(tmp_path / "v1"), "--model-dir", laya_venue["model_dir"]],
+                          capture_output=True, text=True, timeout=600, env=dict(os.environ, HF_HUB_OFFLINE="1"))
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    committed = json.loads((FINDINGS / "laya-ft-labels" / "2026-09-24-openjev" / "dataset-manifest.json").read_text())
+    assert C.sha256_hex((tmp_path / "v1" / "dataset.jsonl").read_bytes()) == sha == committed["dataset"]["sha256"]
+    rows, _manifest = C.load_dataset(tmp_path / "v1")
+    assert len(rows) == 1788
+
+
+def test_version_2_record_rebuilds_byte_identically_at_the_pin(laya_venue, tmp_path):
+    """D-4: the committed version-2 record (its manifest and labels) rebuilds byte for byte from the PIN; the labels
+    join every labeled row with no stale label; a second build is identical."""
+    outs = []
+    for name in ("a", "b"):
+        proc = subprocess.run([laya_venue["py"], str(ROOT / "scripts" / "laya_ft" / "build_dataset.py"), "--version", "2",
+                               "--commit", PIN, "--out", str(tmp_path / name), "--model-dir", laya_venue["model_dir"]],
+                              capture_output=True, text=True, timeout=600, env=dict(os.environ, HF_HUB_OFFLINE="1"))
+        assert proc.returncode == 0, proc.stderr[-3000:]
+        outs.append(tmp_path / name)
+    for f in ("dataset.jsonl", "manifest.json", "summary.json"):
+        assert (outs[0] / f).read_bytes() == (outs[1] / f).read_bytes(), f
+    assert (outs[0] / "manifest.json").read_bytes() == (RECORD / "dataset-manifest.json").read_bytes()
+    labels = tmp_path / "labels.jsonl"
+    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "laya_ft" / "recorded_labels.py"), "--dataset",
+                           str(outs[0]), "--out", str(labels), "--summary", str(tmp_path / "summary.json")],
+                          capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    assert labels.read_bytes() == (RECORD / "labels.jsonl").read_bytes()
+    assert (tmp_path / "summary.json").read_bytes() == (RECORD / "summary.json").read_bytes()
+    rows, _m = C.load_dataset(outs[0])
+    records, stats = C.read_labels(labels)
+    joined = C.join_labels(rows, records)
+    assert len(joined) == len(records) == stats["records"] and stats["torn"] == stats["duplicates"] == 0
+    fit = _laya(laya_venue, FIT_CHECK, str(ROOT / "scripts"), str(outs[0]), laya_venue["model_dir"])
+    assert fit["rows"] == len(rows) and fit["truncated"] == 0 and fit["markers_bad"] == 0

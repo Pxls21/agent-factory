@@ -1,0 +1,206 @@
+{
+ "dataset_summary": {
+  "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
+  "labels_by_question_answer": {
+   "ap.violates_row|false": 3423,
+   "ap.violates_row|true": 226,
+   "v1.blocking|false": 749,
+   "v1.blocking|true": 77,
+   "v1.finding_class|BLOCKER": 67,
+   "v1.finding_class|CONTRACT-DEFECT": 10,
+   "v1.finding_class|FOLLOW-UP": 334,
+   "v1.finding_class|INFO": 404,
+   "v1.finding_class|KNOWN": 1,
+   "v1.finding_class|UNVERIFIED": 10
+  },
+  "leaks": {
+   "ap.violates_row|ap-id": 126,
+   "ap.violates_row|row-name": 33,
+   "v1.blocking|blocking-words": 35,
+   "v1.blocking|class-word": 1,
+   "v1.finding_class|blocking-words": 35,
+   "v1.finding_class|class-word": 1
+  },
+  "leaks_by_source_question_provenance_kind": {
+   "commit|ap.violates_row|commit-subject|ap-id": 1,
+   "commit|ap.violates_row|not-cited|ap-id": 68,
+   "commit|ap.violates_row|registry-commit|ap-id": 1,
+   "commit|ap.violates_row|registry-commit|row-name": 29,
+   "incident|ap.violates_row|-|ap-id": 32,
+   "incident|ap.violates_row|body-cite|row-name": 4,
+   "incident|ap.violates_row|not-cited|ap-id": 24,
+   "verify_finding|v1.blocking|verifier-class|blocking-words": 36,
+   "verify_finding|v1.blocking|verifier-class|class-word": 1,
+   "verify_finding|v1.finding_class|verifier-class|blocking-words": 36,
+   "verify_finding|v1.finding_class|verifier-class|class-word": 1
+  },
+  "rows_by_source_question_answer_provenance": {
+   "commit|ap.violates_row|-|-": 15,
+   "commit|ap.violates_row|false|not-cited": 2619,
+   "commit|ap.violates_row|true|commit-subject": 62,
+   "commit|ap.violates_row|true|registry-commit": 88,
+   "incident|ap.violates_row|-|-": 880,
+   "incident|ap.violates_row|false|not-cited": 804,
+   "incident|ap.violates_row|true|body-cite": 64,
+   "incident|ap.violates_row|true|heading-cite": 4,
+   "incident|ap.violates_row|true|heading-cite+body-cite": 8,
+   "verify_finding|v1.blocking|false|verifier-class": 760,
+   "verify_finding|v1.blocking|true|verifier-class": 78,
+   "verify_finding|v1.finding_class|BLOCKER|verifier-class": 68,
+   "verify_finding|v1.finding_class|CONTRACT-DEFECT|verifier-class": 10,
+   "verify_finding|v1.finding_class|FOLLOW-UP|verifier-class": 341,
+   "verify_finding|v1.finding_class|INFO|verifier-class": 408,
+   "verify_finding|v1.finding_class|KNOWN|verifier-class": 1,
+   "verify_finding|v1.finding_class|UNVERIFIED|verifier-class": 10
+  },
+  "unlabeled_by_question": {
+   "ap.violates_row|commit": 15,
+   "ap.violates_row|incident": 880
+  }
+ },
+ "labels": {
+  "by_question_answer": {
+   "ap.violates_row|false": 3423,
+   "ap.violates_row|true": 226,
+   "v1.blocking|false": 749,
+   "v1.blocking|true": 77,
+   "v1.finding_class|BLOCKER": 67,
+   "v1.finding_class|CONTRACT-DEFECT": 10,
+   "v1.finding_class|FOLLOW-UP": 334,
+   "v1.finding_class|INFO": 404,
+   "v1.finding_class|KNOWN": 1,
+   "v1.finding_class|UNVERIFIED": 10
+  },
+  "by_question_provenance": {
+   "ap.violates_row|body-cite": 64,
+   "ap.violates_row|commit-subject": 62,
+   "ap.violates_row|heading-cite": 4,
+   "ap.violates_row|heading-cite+body-cite": 8,
+   "ap.violates_row|not-cited": 3423,
+   "ap.violates_row|registry-commit": 88,
+   "v1.blocking|verifier-class": 826,
+   "v1.finding_class|verifier-class": 826
+  },
+  "conflicts": 0,
+  "dataset": {
+   "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
+   "rows_total": 6196,
+   "sha256": "f1b92d6fa79c2f145052fec9f301f1e719987ae5f7d14e19f663eb67426b5c48"
+  },
+  "labeled": 5301,
+  "labels": {
+   "bytes": 2667100,
+   "file": "labels.jsonl",
+   "sha256": "0098e52e0dbfc01db12bfceb0a807db6fad533e10cf7380c72e368926375ca58"
+  },
+  "rows": 6196,
+  "unlabeled": {
+   "ap.violates_row|commit": 15,
+   "ap.violates_row|incident": 880
+  }
+ },
+ "manifest": {
+  "counts": {
+   "cut_to_window": {
+    "ap.violates_row": 253,
+    "v1.blocking": 6,
+    "v1.finding_class": 7
+   },
+   "merged_duplicates": 24,
+   "rows": {
+    "ap.violates_row": 4544,
+    "v1.blocking": 826,
+    "v1.finding_class": 826
+   },
+   "rows_total": 6196
+  },
+  "heading_body_agreement": {
+   "body_subset_of_heading": 0,
+   "entries_with_both": 6,
+   "heading_subset_of_body": 1,
+   "other": 1,
+   "same_set": 4
+  },
+  "heldout": {
+   "excluded": {
+    "identity": {
+     "commit": 82,
+     "incident": 100,
+     "verify_finding": 100
+    },
+    "text": {
+     "commit": 0,
+     "incident": 0,
+     "verify_finding": 0
+    }
+   },
+   "incident_entries": {
+    "excluded": 100,
+    "identities": 100
+   },
+   "overlap_texts": {
+    "under_min": 4,
+    "used": 286
+   },
+   "samples": {
+    "docs/research/findings/ap-hawk-probe/sample.json": {
+     "rows": 100,
+     "sha256": "c07c581ad74201e19efe8b9da61eedd4a4cfcc81c3c10f7036ba20da3aaa2044"
+    },
+    "docs/research/findings/j2-v1-probe/sample.json": {
+     "rows": 100,
+     "sha256": "b1cf7867f5995280f1c9298fa48e024b3039ee50ddca1e3626367717c9f27fc9"
+    },
+    "docs/research/findings/j2c-fulltext/sample.json": {
+     "rows": 100,
+     "sha256": "af469599e3e1054241c75f7b81eec5ae0214136d88fbbbbf6b8701e404b44df3"
+    }
+   },
+   "verify_findings": {
+    "excluded": 100,
+    "identities": 100
+   }
+  },
+  "sources": {
+   "ap": {
+    "commit_rows_unlabeled_body_cite": 15,
+    "commits": 1576,
+    "commits_admitted": {
+     "commit-subject": 103,
+     "registry-commit": 71
+    },
+    "commits_all_cited_outside_16": 52,
+    "commits_body_only_not_admitted": 201,
+    "commits_citing": 457,
+    "entries_all_cited_outside_16": 6,
+    "entries_citing": 55,
+    "entries_without_heading": 0,
+    "incident_entries": 210
+   },
+   "candidates_per_source": 16,
+   "capped_blocks": 1,
+   "findings_by_family": {
+    "F1": 66,
+    "F11": 7,
+    "F12": 1,
+    "F13": 24,
+    "F2": 143,
+    "F3": 250,
+    "F4": 52,
+    "F6": 84,
+    "F7": 22,
+    "F8": 77,
+    "grammar": 212
+   },
+   "not_admitted": {
+    "ambiguous-class": 6,
+    "bad-class": 3,
+    "bad-finding-id": 6,
+    "no-title-column": 78,
+    "restated": 17
+   },
+   "registry_rows": 201,
+   "verify_reports": 132
+  }
+ }
+}

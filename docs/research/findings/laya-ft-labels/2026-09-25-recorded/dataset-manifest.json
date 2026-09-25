@@ -1,0 +1,133 @@
+{
+ "code": {
+  "docs/research/findings/ap-hawk-probe/ap_probe.py": "11d4be533643bd68869b3d0f7c29c7b9fa1d12107303b4758d56c31e6202e222",
+  "docs/research/findings/j2-v1-probe/v1_probe.py": "e861fdbae913be77faacd9d9010bdac4e11e5916ddd44e4e53982fafc0effecd",
+  "docs/research/findings/j2c-fulltext/j2c.py": "28634691edf1cfbfb3acf92a1891391086b1abdab5d0c6aa8111d80c9390466e",
+  "scripts/decide-harvest": "2912b3799639aee6da1f2673b6b41e59b4bec50246219ed7927acb433cb2b7d8",
+  "scripts/laya_ft/build_dataset.py": "f71590b4be1c7108f250e58a1d6528481e59cada6c54f47cd3c7542d4ef4f3d5",
+  "scripts/laya_ft/common.py": "a7ad1838fce325dbe492343e6a9259532ca9256bacf185ae1ef9bd2b90281703",
+  "scripts/transcript_export.py": "f63cd97ef441b8174221c926911b37b0d6d39539a306ea6e1bcbd245b18ae3c1"
+ },
+ "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
+ "commit_time": 1790299156,
+ "counts": {
+  "cut_to_window": {
+   "ap.violates_row": 253,
+   "v1.blocking": 6,
+   "v1.finding_class": 7
+  },
+  "merged_duplicates": 24,
+  "rows": {
+   "ap.violates_row": 4544,
+   "v1.blocking": 826,
+   "v1.finding_class": 826
+  },
+  "rows_total": 6196
+ },
+ "dataset": {
+  "bytes": 12795031,
+  "file": "dataset.jsonl",
+  "sha256": "f1b92d6fa79c2f145052fec9f301f1e719987ae5f7d14e19f663eb67426b5c48"
+ },
+ "heading_body_agreement": {
+  "body_subset_of_heading": 0,
+  "entries_with_both": 6,
+  "heading_subset_of_body": 1,
+  "other": 1,
+  "same_set": 4
+ },
+ "heldout": {
+  "excluded": {
+   "identity": {
+    "commit": 82,
+    "incident": 100,
+    "verify_finding": 100
+   },
+   "text": {
+    "commit": 0,
+    "incident": 0,
+    "verify_finding": 0
+   }
+  },
+  "incident_entries": {
+   "excluded": 100,
+   "identities": 100
+  },
+  "overlap_texts": {
+   "under_min": 4,
+   "used": 286
+  },
+  "samples": {
+   "docs/research/findings/ap-hawk-probe/sample.json": {
+    "rows": 100,
+    "sha256": "c07c581ad74201e19efe8b9da61eedd4a4cfcc81c3c10f7036ba20da3aaa2044"
+   },
+   "docs/research/findings/j2-v1-probe/sample.json": {
+    "rows": 100,
+    "sha256": "b1cf7867f5995280f1c9298fa48e024b3039ee50ddca1e3626367717c9f27fc9"
+   },
+   "docs/research/findings/j2c-fulltext/sample.json": {
+    "rows": 100,
+    "sha256": "af469599e3e1054241c75f7b81eec5ae0214136d88fbbbbf6b8701e404b44df3"
+   }
+  },
+  "verify_findings": {
+   "excluded": 100,
+   "identities": 100
+  }
+ },
+ "model": {
+  "config_sha256": "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8",
+  "head_max_len": 256,
+  "max_len": 1024,
+  "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "tokenizer_sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+ },
+ "questions": {
+  "ap.violates_row": "0a0670b428b9eb387654df674d0a7efabd6cd4f665469c026c19653dcc4e6787",
+  "v1.blocking": "b9621938a4836e7ad02091ffbcfa3956b97a9c3f476cdbf0294cdfb49a066183",
+  "v1.finding_class": "1e589fa1a499250e4db2b0bd4c532ff0f38f48ff47f1bf59c9a1496392677edd"
+ },
+ "sources": {
+  "ap": {
+   "commit_rows_unlabeled_body_cite": 15,
+   "commits": 1576,
+   "commits_admitted": {
+    "commit-subject": 103,
+    "registry-commit": 71
+   },
+   "commits_all_cited_outside_16": 52,
+   "commits_body_only_not_admitted": 201,
+   "commits_citing": 457,
+   "entries_all_cited_outside_16": 6,
+   "entries_citing": 55,
+   "entries_without_heading": 0,
+   "incident_entries": 210
+  },
+  "candidates_per_source": 16,
+  "capped_blocks": 1,
+  "findings_by_family": {
+   "F1": 66,
+   "F11": 7,
+   "F12": 1,
+   "F13": 24,
+   "F2": 143,
+   "F3": 250,
+   "F4": 52,
+   "F6": 84,
+   "F7": 22,
+   "F8": 77,
+   "grammar": 212
+  },
+  "not_admitted": {
+   "ambiguous-class": 6,
+   "bad-class": 3,
+   "bad-finding-id": 6,
+   "no-title-column": 78,
+   "restated": 17
+  },
+  "registry_rows": 201,
+  "verify_reports": 132
+ },
+ "version": 2
+}
