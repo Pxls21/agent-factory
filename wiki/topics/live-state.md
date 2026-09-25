@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 19:4xZ — WHAT IS LIVE NOW (supersedes the 18:2xZ block for the live set).**
+- **RUNNING (sandbox, three agents, the ceiling):** SCRUB1 (task #280): glued keys and a value gate in the scrubber; L2a (task #284): the code-map cache; SLOPO2 (task #285): a launcher that runs slopo with a pruning walker, so the PC index stops walking 18.1M excluded files.
+- **Landed and pushed (origin 37f720a):** S1-L1-R1 (the hook repair; S1-L1 MERGE-READY-WITH-FOLLOWUPS), the held skill bakes, D-091, the CI fix for run #1087 (task #286; the new run on 37f720a decides it), the SLOPO2 brief.
+- **Next, in order of free slots:** S0-04-LEAK (task #287; its brief is drafted, waits for SCRUB1 to land and reuses its anchor; after it, a verify lane, then the owner re-signs `accepted/S0-04`); the library skills move (task #288) after L2a; L2b (the hook injects from the cache) after L2a.
+- **For the owner:** the codebase-memory-mcp issue text is in `docs/research/findings/system1-context/UPSTREAM-ISSUES.md` (the session cannot file on third-party repositories); slopo's text follows SLOPO2.
+
 **2026-09-25 18:2xZ — WHAT IS LIVE NOW (supersedes the 18:1xZ block for the live set).**
 - **RUNNING (sandbox, three agents, the ceiling):** S1-L1-R1 (task #277): the hook repair; SCRUB1 (task #280): glued keys and a value gate in the scrubber; L2a (task #284): the code-map cache.
 - **RUNNING (PC):** the first `slopo_review.sh --sync` (slow: slopo walks the whole PC clone before excluding; task #285); a folder count in `/tmp/pc-tree-count.txt`.
