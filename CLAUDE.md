@@ -473,7 +473,7 @@ block. The DUTY is freshness: when a task's status materially changes, the SAME 
 the ledger AND the task DB, and the wiki live-state at the next stop-gate; a `tasks/*.md`
 breakdown whose work lands gets a one-line STATUS stamp at its top (date + outcome + commit)
 rather than deletion. The in-session task DB is EXPENDABLE (container resets wipe it); on any
-resume where it looks empty, rebuild it from the ledger + transcripts, never from memory. **The DB holds OPEN tasks only (2026-09-24, AF-AP-182's sibling): a task closed in the ledger is deleted from the DB (`TaskUpdate status=deleted`) in the same increment, because every task reminder repeats the whole list; 200 closed rows rode along in each reminder until then. A rebuild restores open tasks only.**
+resume where it looks empty, rebuild it from the ledger + transcripts, never from memory. **The DB holds ACTIVE tasks only (2026-09-25, measured: the harness's task-list reminder re-sent 12.0% of this session's context tokens, `docs/research/findings/jev-pipes/CONTEXT-BUDGET-2026-09-25.md`): in flight or next up; the rest of the backlog stays open in the ledger and returns to the DB when it becomes active. Before that, open tasks only (2026-09-24, AF-AP-182's sibling): a task closed in the ledger is deleted from the DB (`TaskUpdate status=deleted`) in the same increment, because every task reminder repeats the whole list; 200 closed rows rode along in each reminder until then. A rebuild restores open tasks only.**
 
 ## Feature Workflow (summary)
 
