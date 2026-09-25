@@ -382,9 +382,9 @@ D-8 (residual near misses, measured on the rebuild, information only): curly-apo
 won't / wouldn't / can't / can not block" 0 rows; V-6's suggested `predicate:` (not ruled in) 23 rows, all already flagged by the
 ruled forms; "Contract map:" (no "mapp") 1 row, flagged by other alternatives.
 
-D-9 (tree movement during the lane, information): main-tree HEAD moved 24689bc -> 14389bd before the copy (three
-coordinator commits), then to af4fac1 by the end: the coordinator's push rewrote the unpushed range (the DSV2-R1 brief commit
-is now 9845b52, the VERIFY-DSV2 report commit 7d53142; origin reads a1d4f70). 12623b3 is an ancestor of af4fac1.
+D-9 (tree movement during the lane, information): main-tree HEAD moved from the DSV2-R1 brief commit to the D-087 commit before the copy (three
+coordinator commits), then to the 05:0xZ wiki and ledger commit (88445c1 after the coordinator's next push) by the end: the coordinator's push rewrote the unpushed range (the DSV2-R1 brief commit
+is now 9845b52, the VERIFY-DSV2 report commit 7d53142; origin reads a1d4f70). 12623b3 is an ancestor of all of them. [Commit ids edited by the coordinator at harvest: the stale-id check refused the local ids.]
 `git diff --stat 12623b3 HEAD` over the boundary files, `scripts/laya_ft`, the builder's other inputs (`scripts/decide-harvest`,
 `scripts/transcript_export.py`, the three probe dirs, `src/agent_factory/decisions`) and the two other gate test files is EMPTY at
 both checks (before the copy, and at 05:02Z after the worktree removal). The four main-tree boundary files hashed to their PIN
