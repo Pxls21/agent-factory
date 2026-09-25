@@ -1,7 +1,7 @@
 # SLOPO2 report (task #285): slopo's index walks only what it can index
 
 Lane: code-implementer (sandbox, Opus 5.5). Tree: /home/user/agent-factory, started at HEAD 37f720a (PIN cac6fe6);
-HEAD is fad12d8 at hand-back (16 coordinator commits, none touching this lane's five files). No git writes, no PC
+HEAD is 58a9c6f at hand-back (16 coordinator commits, none touching this lane's five files). No git writes, no PC
 bridge, no outward-facing action. Final write: 2026-09-25 20:5xZ.
 
 **TL;DR - DONE (tests green, measured in the sandbox); the PC is NOT run (no bridge in this lane): the coordinator's
@@ -405,7 +405,7 @@ Title: `slopo index` walks every file under source_dir before it applies source_
    REAL tree through `scanned()` with `timeout=120`. On the PC that walk is about 20 minutes, so both would fail by
    timeout in any PC run of test_slopo.py (inferred from the PC's first sync; not run on the PC). They could scan
    through the walker, or skip past a size budget as tests/test_slopo_run.py's repository test now does.
-8. HEAD moved during the lane, 37f720a -> fad12d8 (L2a and SCRUB1 landed, among 16 commits); `git log 37f720a..HEAD`
+8. HEAD moved during the lane, 37f720a -> 58a9c6f (L2a and SCRUB1 landed, among 16 commits); `git log 37f720a..HEAD`
    over the five files prints nothing, and the hook still calls `scripts/slopo_review.sh --sync` (no hook change
    needed). The gates ran on the working tree as it stood at 20:50Z-20:54Z.
 9. Adjacent observation, not fixed: if `scripts/slopo_run.py` were missing, python exits 2 and the wrapper leaves 2,
