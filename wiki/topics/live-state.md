@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 16:4xZ — WHAT IS LIVE NOW (supersedes the 16:2xZ block for the live set).**
+- **RUNNING (sandbox, three agents, the moderation ceiling):** INSTALL1 (task #274): slopo installed, pinned and tuned, the other install rows, a smoke table; VERIFY-S1-L1 (task #275): the independent pass on the situation-to-skill hook; L5 (task #276): `scripts/chat_find.py`, the chat bug locator.
+- **Landed and pushed:** S1-L1 (origin 6195b77), GATED-PENDING-VERIFY; AF-AP-222 registered (open); AF-AP-220 addendum: the codebase-memory Read hook is silent by design for a file the graph covers.
+- **Next:** L2 (the code map cache) after INSTALL1, which shares `scripts/hooks/post-commit`.
+- **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/`; the codebase-memory hook (a longer deadline, an upstream report, or L2; recommended: L2 plus an upstream report).
 **2026-09-25 16:2xZ — WHAT IS LIVE NOW (supersedes the 16:0xZ block for the live set).**
 - **Landed:** S1-L1, the situation-to-skill hook (task #271 closed, GATED-PENDING-VERIFY): skill lines before Write, Edit and Bash calls, skill sections per prompt, once per context window; kill switch `.jev/system1-off`; telemetry `.jev/system1.jsonl`.
 - **RUNNING (sandbox):** INSTALL1 (task #274): slopo installed, pinned and tuned on both venues, the other install rows, a smoke table at session start.
