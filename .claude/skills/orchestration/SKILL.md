@@ -106,7 +106,7 @@ subordinate to, the Anthropic docs.
    `GATED-PENDING-VERIFY` / `MERGE-READY-WITH-FOLLOWUPS` — never "verified", never "frozen". The
    incident: A5p (S0-01 checker r18) landed as "verified, declared-final, tools frozen" on the
    coordinator's re-run of its own gate (432 passed, 13 xfailed) while its report said no
-   independent verifier ran; the audit's first hostile pass found four in-domain defects (issue #8).
+   independent verifier ran; the audit's first hostile pass found four in-domain defects (issue #8). **The cheapest independent review of a repair is the ORIGINAL verifier, resumed** (SendMessage with the post-push PIN): its oracle and mutation driver are still in its scratch, so the re-check is narrow (VERIFY-P1's R1 re-verify, 2026-09-25: 30 tool calls against the first round's 133; it found a residual the repair's own tests could not see).
    **A partial verify is never a verification.** (1) A verify lane served entirely by a low-tier fallback, whose mutants were
    REASONED, not executed, is a partial verify, and the landing stays `GATED-PENDING-VERIFY` whatever it recommends (VERIFY-C2,
    2026-09-23: 29 calls, all on the verify combo's low-tier fallback, MERGE-READY-WITH-FOLLOWUPS over reasoned mutants; the
