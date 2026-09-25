@@ -4,8 +4,9 @@
   "docs/research/findings/j2-v1-probe/v1_probe.py": "e861fdbae913be77faacd9d9010bdac4e11e5916ddd44e4e53982fafc0effecd",
   "docs/research/findings/j2c-fulltext/j2c.py": "28634691edf1cfbfb3acf92a1891391086b1abdab5d0c6aa8111d80c9390466e",
   "scripts/decide-harvest": "2912b3799639aee6da1f2673b6b41e59b4bec50246219ed7927acb433cb2b7d8",
-  "scripts/laya_ft/build_dataset.py": "1c95e37a0d99cfa874879bb0d1a9ee4674b2cfcedef9cbd749d77d6020c69297",
+  "scripts/laya_ft/build_dataset.py": "c78d695fbc41476e5a25b1aa839d9873be28a472e34b6a07bbe927f833b7e0ae",
   "scripts/laya_ft/common.py": "a7ad1838fce325dbe492343e6a9259532ca9256bacf185ae1ef9bd2b90281703",
+  "scripts/laya_ft/fit.py": "1f262ccad009ed828350cbcd39f08512d1c927a3b5acac517bc85e8939434542",
   "scripts/transcript_export.py": "af9d73eab7af665b753b3d3beec346a1571251088432e9e9c1dd0a0c0cf5a922"
  },
  "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",

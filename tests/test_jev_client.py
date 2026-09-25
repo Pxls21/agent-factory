@@ -246,6 +246,8 @@ FAILURES = [
     ("http500", _fail(500, {"error": "system_one failed: KeyError: 'instructions'"}), [],
      "url: HTTP 500 (system_one failed: KeyError: 'instructions')"),
     ("http503", _fail(503, {"error": "model not loaded"}), [], "url: HTTP 503 (model not loaded)"),
+    ("http422", _fail(422, {"error": "chunk 'q' does not fit Laya's window"}), [],
+     "url: HTTP 422 (chunk 'q' does not fit Laya's window)"),
     ("non-json", _fail(200, b"<html>this is not json</html>"), [], "url: non-JSON reply"),
     ("timeout", _fail(200, {"answers": {}}, delay=3), ["--timeout", "0.5"], "url: timeout after 0.5s"),
     ("nan", lambda m, p, b: (200, b'{"answers": {"q": {"type": "noul", "noul": NaN, "confidence": 0.5}}}', 0), [],
@@ -527,6 +529,34 @@ def test_auto_falls_back_to_the_pc_when_local_is_refused_or_slow(double, refused
     assert [r["path"] for r in slow.requests] == ["/health"]
     both_down = jev.rank("q", ["a"], bridge_env=tmp_path / "absent.env", runner=run, log=False)
     assert both_down is None and jev.last_reason.startswith("local: ") and "; pc: no bridge env file" in jev.last_reason
+
+
+def test_auto_treats_a_422_as_final_and_asks_no_other_venue(double, tmp_path, monkeypatch):
+    """K265: a 422 is the server refusing the request itself (a chunk that cannot fit Laya's window); another venue must
+    not answer it (the PC may run a server without the fit). A 500 still falls back to the PC: the control."""
+    run, calls = runner_replying("none")
+    refusal = "chunk 'c0' does not fit Laya's window with every other field empty"
+    local = double(lambda m, p, b: (200, {"ok": True}, 0) if p == "/health" else (422, {"error": refusal}, 0))
+    monkeypatch.setattr(jev, "LOCAL_URL", local.url)
+    assert jev.rank("q", ["a"], bridge_env=bridge_env(tmp_path), runner=run, log=False) is None
+    assert jev.last_reason == "local: HTTP 422 (%s)" % refusal and calls == []
+    assert [r["path"] for r in local.requests] == ["/health", "/v1/systemone"]
+    broken = double(lambda m, p, b: (200, {"ok": True}, 0) if p == "/health" else (500, {"error": "system_one failed"}, 0))
+    monkeypatch.setattr(jev, "LOCAL_URL", broken.url)
+    res = jev.rank("q", ["a"], bridge_env=bridge_env(tmp_path), runner=run, log=False)
+    assert res is not None and res["venue"] == "pc" and len(calls) == 1
+
+
+def test_a_422_and_only_a_422_is_final_on_both_paths(double):
+    d = double(lambda m, p, b: (422, {"error": "no"}, 0))
+    with pytest.raises(jev.Refused, match=r"^HTTP 422 \(no\)$"):
+        jev._http(d.url, "/v1/systemone", b"{}", 5)
+    with pytest.raises(jev.Refused, match=r"^HTTP 422 \(no\)$"):
+        jev.parse_pc_reply({"rc": 0, "stdout": '{"error": "no"}\n422\n', "stderr": ""})
+    for status in (400, 500, 503):
+        with pytest.raises(jev.Unavailable) as other:
+            jev.parse_pc_reply({"rc": 0, "stdout": '{"error": "no"}\n%d\n' % status, "stderr": ""})
+        assert not isinstance(other.value, jev.Refused), status
 
 
 # ---------- jev_local.sh (offline branches; the live start/stop is in the lane report) ----------

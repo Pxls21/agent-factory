@@ -18,14 +18,15 @@ Every source is read at one commit: `rev-parse --verify <REV>^{commit}` once, an
   - every anchored entry of `docs/INCIDENT-LOG.md`: the WHOLE entry (the anchor line and its continuation lines), AF-AP ids
     masked as ap_probe masks them. One `ap.violates_row` noul row per candidate, the candidates being the lexical top 16 of
     the registry ranked exactly as ap_probe.py ranks them, the state `{"query": entry, "chunk": row text}` (the local
-    server's per-chunk fan-out shape, the one J2 scored).
+    server's per-chunk fan-out shape, the one J2 scored; the server fits it with this builder's fit, laya_ft/fit.py).
 The verifier's class is never stored and the ledger is never read (AF-AP-189). Every state string passes
 transcript_export.scrub before it is stored: the dataset holds exactly what leaves the machine. The J2, J2c and AP samples
 are held out by source identity (report path + finding id; the masked incident heading): the build refuses unless it
 excluded exactly as many rows as the samples hold, and a second check refuses any held-out row left in the output. A state
-longer than Laya's window is cut (the finding text, or the query; never the chunk) until build_sequence keeps all of it
-(D-076(b), F-24: a long query pushed every chunk out of the window and tied their scores). Output: dataset.jsonl (one row
-per item and question, ASCII JSON) and manifest.json; both are byte-identical for the same commit, code and model.
+longer than Laya's window is cut by laya_ft/fit.py (the finding text, or the query; never the chunk) until build_sequence
+keeps all of it (D-076(b), F-24: a long query pushed every chunk out of the window and tied their scores). Output:
+dataset.jsonl (one row per item and question, ASCII JSON) and manifest.json; both are byte-identical for the same commit,
+code and model.
 """
 import argparse
 import json
@@ -37,11 +38,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # scripts/: the laya_ft package
 from laya_ft import common as C  # noqa: E402
+from laya_ft import fit as FIT  # noqa: E402   (the window fit the local server applies too; stdlib-only at import)
 
 REPORT_RX = re.compile(r"/VERIFY-[^/]*-report\.md$")   # j2c.py's report set (and the brief's premise count)
 MASK_ID = "AF-AP-?"                                    # ap_probe.py cmd_sample's mask for an AF-AP id
 SUMMARY_FILE = "summary.json"                          # version 2 only: the counts by source, question and label
-CODE = ("scripts/laya_ft/build_dataset.py", "scripts/laya_ft/common.py", "docs/research/findings/j2c-fulltext/j2c.py",
+CODE = ("scripts/laya_ft/build_dataset.py", "scripts/laya_ft/common.py", "scripts/laya_ft/fit.py",
+        "docs/research/findings/j2c-fulltext/j2c.py",
         "docs/research/findings/j2-v1-probe/v1_probe.py", "docs/research/findings/ap-hawk-probe/ap_probe.py",
         "scripts/decide-harvest", "scripts/transcript_export.py")
 
@@ -444,46 +447,23 @@ class Fitter:
 
     def __init__(self, model_dir):
         from laya.agent import Agent
-        from laya.common import build_sequence, serialize_state
         from transformers import AutoTokenizer
 
         self.model_dir = Path(model_dir)
         self.fingerprint = C.model_fingerprint(self.model_dir)
         self.max_len, self.head_max_len = self.fingerprint["max_len"], self.fingerprint["head_max_len"]
         self.tok = AutoTokenizer.from_pretrained(str(self.model_dir / "tokenizer"))
-        self._build, self._serialize, self._internal = build_sequence, serialize_state, Agent._to_internal
-
-    def _tokens(self, state):
-        # build_sequence's own state tokenization (laya/common.py): the mask token blanked, no special tokens
-        text = self._serialize(state).replace(self.tok.mask_token, " ")
-        return len(self.tok(text, add_special_tokens=False)["input_ids"])
+        self._internal = Agent._to_internal
 
     def fit(self, state, question):
-        """-> (state, cut); the state unchanged when build_sequence keeps all of it, else its text (a finding, or the
-        query) cut to the longest prefix it keeps whole, and cut = {"chars_from", "chars_to"}."""
-        q = self._internal(question)
-        empty = len(self._build(self.tok, "", q, self.max_len, self.head_max_len)[0])
-
-        def fits(s):   # the consumer's verdict: build_sequence dropped no state token
-            return len(self._build(self.tok, s, q, self.max_len, self.head_max_len)[0]) == empty + self._tokens(s)
-
-        if fits(state):
+        """-> (state, cut) by laya_ft/fit.py, the fit the local server applies to its per-chunk states too: the state
+        unchanged when build_sequence keeps all of it, else its text (a finding, or the query) cut to the longest prefix
+        it keeps whole, and cut = {"chars_from", "chars_to"}; a chunk that does not fit alone raises FIT.Unfit."""
+        state, cuts = FIT.fit_state(self.tok, self._internal(question), self.max_len, self.head_max_len, state)
+        if not cuts:
             return state, None
-        text = state if isinstance(state, str) else state["query"]
-
-        def cut_to(n):
-            return text[:n] if isinstance(state, str) else {"query": text[:n], "chunk": state["chunk"]}
-
-        if not fits(cut_to(0)):
-            raise ValueError("the chunk alone overflows Laya's window: %r" % (state.get("chunk", "")[:80],))
-        lo, hi = 0, len(text)   # cut_to(lo) fits, cut_to(hi) does not
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            if fits(cut_to(mid)):
-                lo = mid
-            else:
-                hi = mid
-        return cut_to(lo), {"chars_from": len(text), "chars_to": lo}
+        (_field, chars_from, chars_to), = cuts   # the dataset's states have one text to cut: a finding, or the query
+        return state, {"chars_from": chars_from, "chars_to": chars_to}
 
 def make_row(prefix, qid, state, sources, cut):
     q = C.QUESTIONS[qid]

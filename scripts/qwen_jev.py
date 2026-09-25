@@ -384,7 +384,7 @@ class JevService:
 
 def _chunk_map(state):
     """D-5 (the Laya pruner batch form): state.chunks=[{id,text}...] -> {id:text}; None for any other shape.
-    Mirrors scripts/laya_systemone_server.py:118-127."""
+    Mirrors scripts/laya_systemone_server.py:124-133 (its `_chunk_map`)."""
     if not isinstance(state, dict) or not isinstance(state.get("chunks"), list):
         return None
     out = {}

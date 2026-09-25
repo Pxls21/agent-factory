@@ -9,9 +9,15 @@ Every answer comes from `laya.Agent.system_one`; nothing is synthesized here. PE
 (measured 2026-09-22): when every question id names an entry of `state.chunks` (the pruner's batch
 form), the open model answers ONE value for the whole batch (0.598 for three unlike chunks); asked
 one chunk per state it discriminates. So a batch whose ids all match chunk ids is answered per
-chunk: state = the request state minus `chunks` plus `chunk` = that chunk's text, one question per
-call; any other shape goes to the model as one call — a load failure is a refusal (503 with a
-reason), never a fake answer.
+chunk, one question per call, on the shape J2 scored and the fine-tune data holds: the request's
+fields except `chunks`, then `chunk` = that chunk's text, last. Laya keeps only the first tokens of a
+state (`laya.common.build_sequence`, `st[:room]`), so each per-chunk state first goes through the
+dataset builder's own fit (scripts/laya_ft/fit.py; AF-AP-208: unfitted, behind the pruner's history,
+every chunk was cut): unchanged when it fits whole, else its other fields are cut, the longest
+first, never the chunk. Every chunk is fitted before the model is asked about any; a chunk that does
+not fit even with every other field empty refuses the whole request (422 with the reason, final for
+scripts/jev.py). Any other shape goes to the model as one call, unchanged — a load failure is a
+refusal (503 with a reason), never a fake answer.
 Bind is loopback only. The bearer token is not checked (the endpoint is loopback-only; there is no
 second tenant); a client's `authorization` header is ignored. Run inside the Laya venv:
   HF_HUB_OFFLINE=1 HF_HOME=/root/hf-laya-probe /root/venv-laya-probe/bin/python scripts/laya_systemone_server.py
@@ -127,16 +133,46 @@ def _chunk_map(state):
     return out
 
 
+class FitRefused(Exception):
+    """A per-chunk state that does not fit Laya's window even with every other field empty: the request gets no answer
+    (HTTP 422; scripts/jev.py treats it as final and asks no other venue)."""
+
+
+def _laya_fit():
+    """scripts/laya_ft/fit.py, the dataset builder's own fit, imported here in the fan-out path; importing it needs no
+    laya (the module imports laya when a fit runs, in the Laya venv)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from laya_ft import fit
+    return fit
+
+
+def _fit(agent, qid, q, state):
+    """The per-chunk state fitted by the dataset builder's fit, with the loaded agent's tokenizer, window and question
+    form as Agent.system_one reads them. The named seam the model-free tests replace; in production an agent without a
+    tokenizer fails here (a 500), so no state reaches the model unfitted."""
+    fit = _laya_fit()
+    try:
+        return fit.fit_state(agent.tok, agent._to_internal(q), agent.cfg.get("max_len", 512),
+                             agent.cfg.get("head_max_len", 192), state)[0]
+    except fit.Unfit as e:
+        raise FitRefused("chunk %r does not fit Laya's window with every other field empty: %d of its %d state tokens "
+                         "kept; no chunk was asked" % (qid, e.kept, e.own))
+
+
 def _answer(state, questions):
     """One model call per chunk when every question id names a chunk (see the module docstring); else one call."""
     chunks = _chunk_map(state)
     if chunks is None or not set(questions) <= set(chunks):
         return State.agent.system_one(state, questions)
     base = {k: v for k, v in state.items() if k != "chunks"}
+    # every per-chunk state is fitted before the model is asked about any chunk, so a refusal answers nothing
+    fitted = {qid: _fit(State.agent, qid, q, dict(base, chunk=chunks[qid])) for qid, q in questions.items()}
     answers, usage = {}, {"input_tokens": 0, "output_tokens": 0}
     model = None
     for qid, q in questions.items():
-        one = State.agent.system_one(dict(base, chunk=chunks[qid]), {qid: q})
+        one = State.agent.system_one(fitted[qid], {qid: q})
         answers[qid] = one["answers"][qid]
         model = one.get("model", model)
         for k in usage:
@@ -191,6 +227,8 @@ class Handler(BaseHTTPRequestHandler):
                 answers = result.get("answers") if isinstance(result, dict) else None
                 if isinstance(answers, dict) and set(answers) == set(req["questions"]):
                     State.calls += 1
+        except FitRefused as e:  # the request cannot be served in the trained shape: final for the client (jev.py)
+            return self._send(422, {"error": str(e)})
         except Exception as e:  # a model error is a refusal, never a fabricated answer
             return self._send(500, {"error": "system_one failed: %s: %s" % (type(e).__name__, e)})
         answers = result.get("answers") if isinstance(result, dict) else None

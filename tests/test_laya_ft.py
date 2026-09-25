@@ -95,9 +95,11 @@ def test_rank_reproduces_the_committed_lexical_picks():
 
 
 def test_ap_state_is_the_servers_fan_out_shape(monkeypatch):
-    """J2 scored `ap` through the server's per-chunk fan-out: system_one saw {"query", "chunk"} in that order."""
+    """J2 scored `ap` through the server's per-chunk fan-out: system_one saw {"query", "chunk"} in that order. The server
+    fits each per-chunk state with this builder's fit (K265 rev 2); the fit itself runs in the Laya venv
+    (test_server_serves_the_state_the_builder_fits), so here it is replaced through its named seam, `_fit`."""
     server = C.load_module("laya_ft_server_under_test", ROOT / "scripts" / "laya_systemone_server.py")
-    seen = []
+    seen, fitted = [], []
 
     class Agent:
         def system_one(self, state, questions):
@@ -105,8 +107,10 @@ def test_ap_state_is_the_servers_fan_out_shape(monkeypatch):
             return {"model": "m", "answers": {k: {"noul": 0.5} for k in questions}, "usage": {}}
 
     monkeypatch.setattr(server.State, "agent", Agent())
+    monkeypatch.setattr(server, "_fit", lambda agent, qid, q, state: fitted.append((qid, q, json.dumps(state))) or state)
     server._answer({"query": "Q", "chunks": [{"id": "r1", "text": "T"}]}, {"r1": C.QUESTIONS["ap.violates_row"]})
     row = BD.make_row("ap", "ap.violates_row", {"query": "Q", "chunk": "T"}, [], None)
+    assert fitted == [("r1", C.QUESTIONS["ap.violates_row"], '{"query": "Q", "chunk": "T"}')]   # every state is fitted
     assert seen == [row["state"]] and list(seen[0]) == ["query", "chunk"]
     assert list(json.loads(json.dumps(row, ensure_ascii=True))["state"]) == ["query", "chunk"]   # the JSONL keeps it
 
@@ -729,6 +733,140 @@ def test_builder_is_deterministic_and_every_state_fits_the_window(laya_venue, tm
     fit = _laya(laya_venue, FIT_CHECK, str(ROOT / "scripts"), str(outs[0]), laya_venue["model_dir"])
     assert fit["rows"] == manifest["counts"]["rows_total"] > 0 and fit["truncated"] == 0 and fit["markers_bad"] == 0
     assert fit["cut"] == sum(manifest["counts"]["cut_to_window"].values())
+
+
+WORDS = r"""
+def words(tag, n):   # synthetic text of n characters: no session text
+    out, size, i = [], 0, 0
+    while size < n:
+        out.append("%s%d" % (tag, i))
+        size, i = size + len(out[-1]) + 1, i + 1
+    return " ".join(out)[:n]
+"""
+
+FIT_DIFF = r"""
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from laya_ft import build_dataset as BD, common as C
+from laya.agent import Agent
+from laya.common import build_sequence, serialize_state
+""" + WORDS + r"""
+
+def pin_fit(tok, max_len, head_max_len, state, question):
+    # the oracle: build_dataset.py Fitter.fit at 157ddd6 (K265's PIN), verbatim but for `self.` -> arguments
+    q = Agent._to_internal(question)
+    empty = len(build_sequence(tok, "", q, max_len, head_max_len)[0])
+
+    def tokens(s):
+        text = serialize_state(s).replace(tok.mask_token, " ")
+        return len(tok(text, add_special_tokens=False)["input_ids"])
+
+    def fits(s):
+        return len(build_sequence(tok, s, q, max_len, head_max_len)[0]) == empty + tokens(s)
+
+    if fits(state):
+        return state, None
+    text = state if isinstance(state, str) else state["query"]
+
+    def cut_to(n):
+        return text[:n] if isinstance(state, str) else {"query": text[:n], "chunk": state["chunk"]}
+
+    if not fits(cut_to(0)):
+        raise ValueError("the chunk alone overflows Laya's window: %r" % (state.get("chunk", "")[:80],))
+    lo, hi = 0, len(text)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if fits(cut_to(mid)):
+            lo = mid
+        else:
+            hi = mid
+    return cut_to(lo), {"chars_from": len(text), "chars_to": lo}
+
+
+F = BD.Fitter(sys.argv[2])
+odd = 'quotes " and \\ backslashes, [MASK], ' + chr(0xE9) + chr(0x4E2D) + ", tabs\t, "
+cases = [("v1.finding_class", "The gate reads the token file but never checks its mode."),
+         ("v1.blocking", words("finding", 9000)), ("v1.finding_class", (odd + words("f", 200)) * 30),
+         ("ap.violates_row", {"query": "an incident heading", "chunk": "a registry row"}),
+         ("ap.violates_row", {"query": words("incident", 6000), "chunk": words("row", 700)}),
+         ("ap.violates_row", {"query": (odd + words("i", 100)) * 40, "chunk": odd}),
+         ("ap.violates_row", {"query": "an incident", "chunk": words("row", 9000)})]
+out = []
+for qid, state in cases:
+    rows = []
+    for fn in (lambda s, q: pin_fit(F.tok, F.max_len, F.head_max_len, s, q), F.fit):
+        try:
+            rows.append(["returned", json.dumps(fn(state, C.QUESTIONS[qid]), ensure_ascii=False)])
+        except ValueError as e:
+            rows.append(["ValueError", str(e)])
+    out.append({"qid": qid, "pin": rows[0], "new": rows[1]})
+print(json.dumps(out))
+"""
+
+
+def test_fit_delegation_changes_no_dataset_output(laya_venue):
+    """K265 rev 2: Fitter.fit delegates to laya_ft/fit.py (the fit the server applies too). On the dataset's two shapes,
+    fitting and cut, the result equals the PIN's own Fitter.fit (the oracle above, verbatim), the error included."""
+    out = _laya(laya_venue, FIT_DIFF, str(ROOT / "scripts"), laya_venue["model_dir"])
+    assert [o["pin"] == o["new"] for o in out] == [True] * 7, [o for o in out if o["pin"] != o["new"]]
+    kinds = [(o["pin"][0], '"chars_to"' in o["pin"][1]) for o in out]   # the cases do what they are there for
+    assert kinds == [("returned", False), ("returned", True), ("returned", True), ("returned", False),
+                     ("returned", True), ("returned", True), ("ValueError", False)]
+
+
+SERVE_FIT = r"""
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from importlib.util import module_from_spec, spec_from_file_location
+from laya_ft import build_dataset as BD, common as C
+import laya.common as LC
+from laya.agent import Agent
+from transformers import AutoTokenizer
+""" + WORDS + r"""
+spec = spec_from_file_location("laya_systemone_server_in_venv", sys.argv[1] + "/laya_systemone_server.py")
+server = module_from_spec(spec)
+spec.loader.exec_module(server)
+F = BD.Fitter(sys.argv[2])   # the dataset builder's own fit
+with open(sys.argv[2] + "/rl_agent_config.json") as f:
+    cfg = json.load(f)                                           # what Agent.cfg holds
+
+
+class TokenizerOnlyAgent:   # Agent's own tokenizer, config and question form; the forward pass is a recorder
+    _to_internal = staticmethod(Agent._to_internal)
+
+    def __init__(self):
+        self.tok, self.cfg, self.calls = AutoTokenizer.from_pretrained(sys.argv[2] + "/tokenizer"), cfg, []
+
+    def system_one(self, state, questions):
+        self.calls.append(state)
+        qid = next(iter(questions))
+        return {"model": "tokenizer-only", "answers": {qid: {"type": "noul", "noul": 0.5}},
+                "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
+q = C.QUESTIONS["ap.violates_row"]
+iq = Agent._to_internal(q)
+out = []
+for query, row in ((words("incident", 6000), words("row", 700)), ("a short incident heading", "a short registry row")):
+    agent = server.State.agent = TokenizerOnlyAgent()
+    server._answer({"query": query, "chunks": [{"id": "r1", "text": row}]}, {"r1": q})
+    sent = agent.calls[0]
+    fitted, cut = F.fit({"query": query, "chunk": row}, q)
+    out.append({"same": json.dumps(sent, ensure_ascii=False) == json.dumps(fitted, ensure_ascii=False),
+                "keys": list(sent), "cut": cut, "query_chars_sent": len(sent["query"]),
+                "whole": len(LC.build_sequence(agent.tok, sent, iq, F.max_len, F.head_max_len)[0])
+                == len(LC.build_sequence(agent.tok, sent, iq, 10 ** 6, F.head_max_len)[0])})
+print(json.dumps(out))
+"""
+
+
+def test_server_serves_the_state_the_builder_fits(laya_venue):
+    """K265 rev 2, train/serve identity through the real tokenizer: for the same query and chunk, the server's per-chunk
+    state is the dataset builder's fitted state, key order included; the first case is cut, the second fits whole."""
+    cut_case, whole_case = _laya(laya_venue, SERVE_FIT, str(ROOT / "scripts"), laya_venue["model_dir"])
+    assert cut_case["same"] is True and cut_case["keys"] == ["query", "chunk"] and cut_case["whole"] is True
+    assert cut_case["cut"]["chars_from"] == 6000 and cut_case["cut"]["chars_to"] == cut_case["query_chars_sent"] < 6000
+    assert whole_case == {"same": True, "keys": ["query", "chunk"], "cut": None, "query_chars_sent": 24, "whole": True}
 
 
 TRAINER_CHECK = r"""

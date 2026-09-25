@@ -18,7 +18,9 @@ and it refuses as signal-free a reply whose two or more scores are all equal to 
 of about 3,900 characters cut every chunk out of the window and tied them at 0.4958 with fan_out intact).
 
 Venues (D-3): `--venue auto` (default) tries the local loopback endpoint 127.0.0.1:47411 (its /health must answer
-within 1 s), then the PC endpoint through the bridge, then gives up. The PC path reads .pc-bridge.env in-process (the
+within 1 s), then the PC endpoint through the bridge, then gives up. An HTTP 422 is final: the server could not fit a
+chunk into Laya's window even with every other field cut (K265), and no other venue is asked (the PC's server may
+predate that fit and answer without it). The PC path reads .pc-bridge.env in-process (the
 token is never printed and never in argv), sends the request base64-encoded inside the command, decodes it on the PC,
 POSTs it to 127.0.0.1:47411 there with curl, and strips the bridge's `bind: warning: line editing not enabled` text,
 which can land on the data line. `--url` pins one loopback endpoint (tests).
@@ -87,6 +89,10 @@ last_log_error = None       # the reason the last call's log line was not writte
 
 class Unavailable(Exception):
     """No usable answer from any venue; str() is the reason."""
+
+
+class Refused(Unavailable):
+    """HTTP 422: the endpoint refused the request itself (a chunk that cannot fit Laya's window). Final: no other venue."""
 
 
 class Usage(Exception):
@@ -263,7 +269,7 @@ def _http(base, path, payload, timeout):
             body = e.read()
         except Exception:
             body = b""
-        raise Unavailable("HTTP %d%s" % (e.code, _detail(body)))
+        raise (Refused if e.code == 422 else Unavailable)("HTTP %d%s" % (e.code, _detail(body)))
     except urllib.error.URLError as e:
         raise Unavailable(_os_reason(e.reason, timeout))
     except (TimeoutError, OSError) as e:
@@ -340,7 +346,7 @@ def parse_pc_reply(env):
         raise Unavailable("no HTTP status in the bridge reply")
     status, body = int(lines[-1]), "\n".join(lines[:-1])
     if status != 200:
-        raise Unavailable("HTTP %d%s" % (status, _detail(body)))
+        raise (Refused if status == 422 else Unavailable)("HTTP %d%s" % (status, _detail(body)))
     try:
         obj = json.loads(body)
     except ValueError:
@@ -388,6 +394,8 @@ def _ask_venues(cmd, path, payload, ctx, venue, url, timeout, bridge_env, runner
             return name, answers, fields, ms, reply.get("latency_ms")
         except Unavailable as e:
             reasons.append("%s: %s" % (name, e))
+            if isinstance(e, Refused):   # the request itself was refused: another venue must not answer it
+                break
     raise Unavailable("; ".join(reasons))
 
 
