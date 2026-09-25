@@ -45,6 +45,10 @@ node .gitnexus/run.cjs status                                      # index fresh
 - Quirk: stdio needs stdin kept OPEN across the async call — gn_mcp.py handles it;
   naive subprocess.run silently gets nothing.
 - Stale index silently breaks impact on NEW symbols — `analyze` after adding modules.
+- A stale record can pass as fresh (L2a, 2026-09-25, GitNexus 1.6.10): an incremental `analyze` updated `meta.json`'s
+  sha256 for `proofs/S0-08/check_containment.py` without re-parsing it, so its 18 symbols kept the start lines of the
+  previous version (3 lines off; 1 of 105 files). Check a GitNexus line number against the file before you trust it;
+  `scripts/codemap.py` checks every pack's start lines against the file's AST and marks such a graph stale.
 
 ### codebase-memory (binary: /root/.local/bin/codebase-memory-mcp; MCP on stdio or `cli` one-shots)
 ```bash
@@ -71,6 +75,8 @@ code-review-graph dead-code; ... communities; ... architecture
 ```
 - Quirk: `impact` takes FILES not symbols; symbol questions go through `query`.
 - Ambiguous names return a candidates list — re-run with the qualified_name.
+- Quirk (L2a, 2026-09-25): `query file_summary <path>` matches by basename, so `scripts/push_clean.sh` also returns
+  `sandbox-kit/reference-scripts/push_clean.sh`, even with an absolute path; filter the result by exact path.
 - Keep the DB out of the repo (`--data-dir` in scratchpad; `.git/info/exclude` has
   `.code-review-graph/` as belt-and-braces).
 
@@ -227,9 +233,10 @@ here.
   MCP connected at user scope) + code-review-graph (`/root/venv-crg/bin/code-review-graph query
   callers_of` / `tests_for` / `impact --files`); re-index after each landed increment so the map
   never lags the tree.
+- **slopo runs through `scripts/slopo_review.sh <push-base>`** (INSTALL1, 2026-09-25): it runs `slopo index` and `slopo
+  embed` first, because a bare `slopo review` refuses a stale index.
 - **Advisory instruments (NEVER gates; owner decision 2026-09-05):** slopo (semantic duplicates,
-  `scripts/slopo_review.sh <push-base>`, which runs `slopo index` and `slopo embed` first because a bare `slopo review` refuses a
-  stale index; installed and pinned by INSTALL1, 2026-09-25) and **sentrux** (architecture health: `scripts/sentrux_review.sh
+  `slopo review --base <push-base>`) and **sentrux** (architecture health: `scripts/sentrux_review.sh
   save` BEFORE a build lane, `compare` after it, `check` any time; rules in `.sentrux/rules.toml`;
   pinned by digest in `upstream.lock.yaml`; provenance `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`
   §sentrux). **ripwire** (owner ask 2026-09-07, adopted as the SIXTH advisory instrument): ranked symbol map + static call

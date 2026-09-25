@@ -47,3 +47,11 @@ return context in about 2.7 s, which is too slow to run before every tool call.
 Waits for SLOPO2 (task #285): its report drafts the text with the measured numbers (the PC's first index took 1,389 s
 because `scan_directory` walks every file under `source_dir`, 18.1 million of them excluded, before it applies the
 exclude list).
+
+## 3. GitNexus (candidate, not ready to file)
+
+L2a (task #284) found one file whose GitNexus record says fresh while its symbols are stale: `meta.json` holds the sha256 of
+the current `proofs/S0-08/check_containment.py`, but its 18 nodes carry the start lines of the version before a 2026-09-14
+commit (3 lines off). An incremental `analyze` updated the hash without re-parsing the file (GitNexus 1.6.10; 1 of 105
+files). Before filing: a minimal reproduction (a repository where an incremental analyze of a line-shifting edit leaves
+the nodes behind), which this session has not built. `scripts/codemap.py` guards against it meanwhile.
