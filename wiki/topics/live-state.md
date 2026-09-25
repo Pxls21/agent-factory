@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 23:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** S1-RATE (task #295), the injection score line (`hook_context.py` stamps each injection; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`; `scripts/s1_scores.py` extracts; it moves the live wrapper in with one `mv`, off switch `.jev/s1-rate-off`); SCRUB2 (task #292 widened), the scrubber hardening from VERIFY-SCRUB1 (it reads no real secret; its candidate digests get the coordinator's known-value check at landing).
+- **Waiting on the owner:** the S0-04 re-sign (command handed over 23:0xZ).
+- **Landed tonight:** S1-ALL (#296), S0-04-LEAK R1, the four held skill lessons; a CI-skipped test that had failed since 19:20Z fixed.
+- **Queued push:** behind CI run #1093.
+
 **2026-09-25 23:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING:** none in the sandbox this minute; S1-RATE (#295) and SCRUB2 (#292) dispatch next.
 - **Landed:** S1-ALL (task #296): the prompt path reads all 413 skills; library skills only when the prompt names them (Laya's ranking, #297, adds the rest); noise 59.7% to 8.8% on the owner's 219 prompts; gate 70 kept (the coordinator's call on D1), to be re-tuned from #295's scores.
