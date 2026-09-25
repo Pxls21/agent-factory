@@ -1,0 +1,14 @@
+{
+ "accuracy": 0.48,
+ "balanced_accuracy": 0.2854,
+ "blocking_split": 0.79,
+ "n": 100,
+ "per_class_recall": {
+  "BLOCKER": "1/7",
+  "CONTRACT-DEFECT": "1/2",
+  "FOLLOW-UP": "20/43",
+  "INFO": "26/43",
+  "KNOWN": "0/3",
+  "UNVERIFIED": "0/2"
+ }
+}

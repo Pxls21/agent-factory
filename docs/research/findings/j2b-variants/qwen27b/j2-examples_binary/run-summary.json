@@ -1,0 +1,65 @@
+{
+ "health": {
+  "oracle_revision": "5686b217dd0330b81b3325a64c8ace319017f8a2",
+  "revision": "pc-qj2.md--d6a2142"
+ },
+ "per_variant": {
+  "ap_choice": {
+   "bounded": 27,
+   "input_tokens": 364173,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 169.0
+  },
+  "ap_noul": {
+   "bounded": 0,
+   "input_tokens": 1929316,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 487.7
+  },
+  "v1": {
+   "bounded": 0,
+   "input_tokens": 789962,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 200,
+   "seconds": 170.7
+  },
+  "v1_blocking": {
+   "bounded": 0,
+   "input_tokens": 112400,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 24.9
+  },
+  "v1_choice_rich": {
+   "bounded": 0,
+   "input_tokens": 148800,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 42.8
+  },
+  "v1_full": {
+   "bounded": 0,
+   "input_tokens": 833516,
+   "policy": "examples_binary",
+   "refused": 0,
+   "requests": 200,
+   "seconds": 185.1
+  }
+ },
+ "policy": "examples_binary",
+ "url": "http://127.0.0.1:47420",
+ "usage": {
+  "bounded_answers": 17,
+  "bounded_labels": 27,
+  "input_tokens": 4178167,
+  "refused": 0,
+  "requests": 800
+ }
+}

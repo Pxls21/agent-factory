@@ -1,0 +1,65 @@
+{
+ "health": {
+  "oracle_revision": "5686b217dd0330b81b3325a64c8ace319017f8a2",
+  "revision": "pc-qj2.md--d6a2142"
+ },
+ "per_variant": {
+  "ap_choice": {
+   "bounded": 35,
+   "input_tokens": 296441,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 248.1
+  },
+  "ap_noul": {
+   "bounded": 0,
+   "input_tokens": 940985,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 646.6
+  },
+  "v1": {
+   "bounded": 0,
+   "input_tokens": 352305,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 200,
+   "seconds": 221.2
+  },
+  "v1_blocking": {
+   "bounded": 0,
+   "input_tokens": 51039,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 31.1
+  },
+  "v1_choice_rich": {
+   "bounded": 0,
+   "input_tokens": 81039,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 100,
+   "seconds": 47.4
+  },
+  "v1_full": {
+   "bounded": 0,
+   "input_tokens": 396112,
+   "policy": "baseline",
+   "refused": 0,
+   "requests": 200,
+   "seconds": 240.5
+  }
+ },
+ "policy": "baseline",
+ "url": "http://127.0.0.1:47420",
+ "usage": {
+  "bounded_answers": 20,
+  "bounded_labels": 35,
+  "input_tokens": 2117921,
+  "refused": 0,
+  "requests": 800
+ }
+}
