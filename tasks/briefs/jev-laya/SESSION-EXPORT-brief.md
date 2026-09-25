@@ -128,3 +128,35 @@ ModuleNotFoundError: No module named 'zstandard'
 
 Questions for you, not facts: which harness fields in these records hold an outcome beyond `is_error` (name each with a real
 record's line); how many events and bytes the whole export holds after the cap; whether thinking blocks carry plain text.
+
+## AMENDMENT 1 (coordinator, 2026-09-25 03:3xZ; from JEV-MAP's gaps G1-G6)
+
+JEV-MAP (`docs/research/findings/laya-ft-data/JEV-INTEGRATION-MAP-2026-09-25.md`, section 4) checked your D-1 schema against the
+decisions the RWKV student will learn and found six gaps. These rulings extend the brief; nothing in it is removed. Take the field
+names from real records (AF-AP-42), and cite a record line for each.
+
+1. **G1, harness notices.** The harness tells the model when a file changed outside it (the `edited_text_file` attachments: 461
+   of them; they are the visible cause of 4 of 5 "modified since read" errors). Add the event kind `harness_notice`: the path
+   and the notice text, scrubbed. Name every other attachment type the records hold and say which you export.
+2. **G2, model and stop fields.** Add two top-level keys to every event, `model` and `stop_reason` (null where the record has
+   none), and the event kind `api_error` for a record the harness marks as an API error (its text scrubbed). Agent failures,
+   refusals and served-model switches are labeled by these.
+3. **G3, the cap.** Read results and Write inputs get a cap of 131,072 characters (keep the first 98,304 and the last
+   32,768); every other event keeps 32,768 (JEV-MAP: the smaller cap cut 169 Read results and 48 Write
+   inputs, and no pytest summary line). Report the capped counts per kind after the change.
+4. **G4, doubled notifications.** Each task notification is recorded twice. Keep the first of two records that carry the same
+   notification identity (name the fields from the records) and count the dropped copies in the manifest.
+5. **G5, file changes made by Bash.** The harness records the files a Bash call changed (`toolUseResult.bashEditDiff`, 1,722
+   results). Emit them as an event of kind `file_change` right after the call's `tool_result`: the path and the diff text,
+   scrubbed and capped like a Read result.
+6. **G6, join keys.** The coarse opaque-run rule removes 40-character commit SHAs, and with them the key that joins a push to its
+   CI run. In THIS export only, a value that only the opaque-run rule would redact becomes a stable pseudonym instead of the
+   fixed marker: `[opaque:<the first 12 hex of HMAC-SHA256(key, value)>]`. The key is 32 random bytes in
+   `/root/.config/session-export/pseudonym.key` (created once, mode 0600, never exported, never printed); a missing key file
+   makes the exporter refuse, never fall back to a fixed or empty key. Values the named rules catch (token names, bridge links,
+   Bearer, PEM and the rest) stay fully redacted. The chat export keeps its marker, byte-identical on its fixtures. Tests: one
+   fake SHA in two events gets one pseudonym; two fake SHAs get two; the missing key refuses; a fake token caught by a named
+   rule is redacted, not pseudonymized. The leak gate still reads 0.
+
+Evidence demands 2 to 7 stand and cover these items (their tests are in demand 2's and 5's sets; add a mutant for G6: a fixed
+key, or the pseudonym applied to a named-rule match, goes red).
