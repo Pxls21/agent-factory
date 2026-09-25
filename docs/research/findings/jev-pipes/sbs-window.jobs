@@ -1,0 +1,11 @@
+# sbs-window (task #262; D-087, D-088): two side-by-side configurations, each a TEMPORARY Qwen server at a smaller GPU
+# share (loopback 127.0.0.1:8081) beside the RWKV-7 stream reader; each writes summary.json under ~/gpu-window/.
+# Run ON the PC from ~/agent-factory with no lane live, detached (scripts/gpu_window.sh's header):
+#   (setsid nohup bash scripts/gpu_window.sh --max-minutes 45 docs/research/findings/jev-pipes/sbs-window.jobs > ~/gpu-window/sbs-window.log 2>&1 < /dev/null &)
+# Inner caps use timeout --foreground so no job makes a new process group: the window's own TERM/KILL must reach every
+# process. A capped job gets 40 s after TERM for its cleanup (it needs at most about 24 s).
+# The coordinator's configurations (2026-09-25, after SBS1-report section 7): the brief's 0.90/4096 and 0.92/2048 leave
+# +62 and -167 MiB for the RWKV process; these keep about 500 MiB spare (0.90 with 1,024-token chunks, estimated; 0.88 with
+# 4,096-token chunks), one at the smaller Qwen cut and one at the faster read.
+cd ~/agent-factory && timeout --foreground -k 40 1200 bash scripts/gpu_side_by_side.sh --util 0.90 --chunk 1024 --tokens 16384 --load 4 --out ~/gpu-window/sbs-u090-c1024
+cd ~/agent-factory && timeout --foreground -k 40 1200 bash scripts/gpu_side_by_side.sh --util 0.88 --chunk 4096 --tokens 16384 --load 4 --out ~/gpu-window/sbs-u088-c4096

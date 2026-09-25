@@ -16,6 +16,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -309,8 +310,15 @@ def test_term_stops_the_running_job_at_once_and_restores(win):
     assert (win.shim / "active").exists()
 
 
+# Scripts under test start with SIGINT at its default disposition: a detached launcher (`nohup ... &`, as
+# scripts/lane_gate.sh advises) starts the whole run with SIGINT ignored, bash cannot trap a signal that was ignored at
+# entry, and every INT test would hang to its timeout (AF-AP-210). exec keeps the pid.
+INT_DEFAULT = [sys.executable, "-c",
+               "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])"]
+
+
 def _start(w, jobs, **extra):
-    return subprocess.Popen(["bash", str(SCRIPT), jobs], env=dict(w.env, **extra), stdout=subprocess.PIPE,
+    return subprocess.Popen(INT_DEFAULT + ["bash", str(SCRIPT), jobs], env=dict(w.env, **extra), stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
 
 
