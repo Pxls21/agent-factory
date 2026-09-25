@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 09:1xZ — WHAT IS LIVE NOW (supersedes the 09:0xZ block for the live set).**
+- **The GPU window is CLOSED** (09:12:56Z; qwen back in 75 s). Side by side works at Qwen 0.90 beside the RWKV reader at 1,024-token chunks (Qwen keeps 169,622 KV tokens, -24%); at 0.88 with 4,096-token chunks Qwen's engine died of OOM (contained). Findings `docs/research/findings/jev-pipes/SIDE-BY-SIDE-2026-09-25.md`. No permanent change proposed until the reader has a job. Task #262 closed.
+- **VERIFY-P1 returned:** the P1 FAIL is confirmed; the replay instrument overcounts a persisted output's saving (AF-AP-211). The one repair, P1-R1 (task #267), is being dispatched as a sandbox build lane.
+- **RUNNING (sandbox):** SESSION-EXPORT-R1 (task #252) and P1-R1 (task #267). Their files are in `.lanes-live`.
+- **Unchanged:** vllm-rwkv parked; the session export NOT-READY until the repair's re-verify; the Laya fan-out fix (task #265) waits; PC idle, vLLM `qwen` active, no lanes.
+
 **2026-09-25 09:0xZ — WHAT IS LIVE NOW (supersedes the 08:3xZ block for the live set).**
 - **GPU WINDOW OPEN on the PC since 09:07:08Z (window `20260925T090708Z`, D-088):** `scripts/gpu_window.sh` stopped `qwen.service` and runs `docs/research/findings/jev-pipes/sbs-window.jobs` (two configurations: a temporary Qwen at GPU_UTIL 0.90 with 1,024-token RWKV chunks, then 0.88 with 4,096-token chunks, each beside the RWKV stream reader); the runner ALWAYS starts `qwen.service` again and waits for `/v1/models` (a 45-minute cap). Results under `~/gpu-window/sbs-u090-c1024/` and `~/gpu-window/sbs-u088-c4096/` (`summary.json`), the record in `~/gpu-window/record.jsonl`. If a session resumes mid-window: read the record, never start qwen by hand while the runner lives (only a SIGKILL of the runner skips its restore: then `systemctl --user start qwen`).
 - **SBS1 harvested and pushed (origin 2b65901):** the job, the probe, 74 tests; AF-AP-210 (a detached gate made SIGINT tests hang) fixed in both gpu test files; its echo is task #266.

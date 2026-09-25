@@ -1,0 +1,845 @@
+{
+ "boot_seconds": 81,
+ "cleanup": {
+  "podman_rm_rc": 0
+ },
+ "config": {
+  "chunk": 1024,
+  "image": "ghcr.io/syv-ai/qwen38-27b-rtx3090@sha256:c52d9033527df5249d2f7306b35173a47f4f87d45bb60927fbe93fdb4986aacb",
+  "load": 4,
+  "port": 8081,
+  "tokens": 16384,
+  "util": 0.9
+ },
+ "finished": "2026-09-25T09:09:49Z",
+ "job": "gpu_side_by_side",
+ "probe": {
+  "alone": {
+   "chunk_check": {
+    "first": 512,
+    "max_abs_logit_diff": 0.375,
+    "same_argmax": true,
+    "second": 512,
+    "tokens": 1024
+   },
+   "ok": true,
+   "questions": {
+    "finite": true,
+    "question_tokens": 15,
+    "seconds_all": [
+     4.5267,
+     0.0315,
+     0.0311,
+     0.0313,
+     0.0319
+    ],
+    "seconds_median": 0.0315
+   },
+   "read": {
+    "chunks": 16,
+    "finite": true,
+    "peak_allocated_mib": 1296,
+    "peak_reserved_mib": 1408,
+    "rows": [
+     {
+      "finite": true,
+      "peak_allocated_mib": 1192,
+      "peak_reserved_mib": 1406,
+      "seconds": 19.8706,
+      "start": 0,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1296,
+      "peak_reserved_mib": 1408,
+      "seconds": 5.9894,
+      "start": 1024,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0396,
+      "start": 2048,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0392,
+      "start": 3072,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0392,
+      "start": 4096,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.039,
+      "start": 5120,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.039,
+      "start": 6144,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.039,
+      "start": 7168,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0391,
+      "start": 8192,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0389,
+      "start": 9216,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.039,
+      "start": 10240,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0391,
+      "start": 11264,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.039,
+      "start": 12288,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0389,
+      "start": 13312,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0389,
+      "start": 14336,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1408,
+      "seconds": 0.0392,
+      "start": 15360,
+      "tokens": 1024
+     }
+    ],
+    "seconds_median_after_first": 0.039,
+    "seconds_median_chunk": 0.0391,
+    "seconds_total": 26.4071,
+    "tokens": 16384
+   },
+   "smi": {
+    "apps": [
+     {
+      "pid": 2078294,
+      "raw": "2078294, 21798",
+      "used_mib": 21798
+     },
+     {
+      "pid": 2078913,
+      "raw": "2078913, 1722",
+      "used_mib": 1722
+     }
+    ],
+    "ok": true,
+    "own_mib": 1722,
+    "own_pid": 2078913
+   }
+  },
+  "config": {
+   "chunk": 1024,
+   "load": 4,
+   "max_tokens": 512,
+   "model": "qwen3.8-27b-local",
+   "question_repeats": 5,
+   "temperature": 0,
+   "tokens": 16384,
+   "url": "http://127.0.0.1:8081/v1/chat/completions"
+  },
+  "env": {
+   "cuda": true,
+   "fla": "0.3.0",
+   "free_mib": 1802,
+   "gpu": "NVIDIA GeForce RTX 3090",
+   "python": "3.11.15",
+   "snapshot": "/home/rocco/.cache/huggingface/hub/models--RWKV--RWKV7-Goose-World2.9-0.4B-HF/snapshots/e94655a9fad2c8da9f25aba575d8f0fdedc05931",
+   "torch": "2.7.1+cu128",
+   "total_mib": 24122,
+   "transformers": "4.53.3",
+   "triton": "3.3.1"
+  },
+  "finished": "2026-09-25T09:09:46Z",
+  "load": {
+   "allocated_mib": 859,
+   "class": "RWKV7ForCausalLM",
+   "dtype": "bfloat16",
+   "parameters": 450767872,
+   "seconds": 1.07
+  },
+  "pid": 2078913,
+  "probe": "rwkv_sbs_probe",
+  "prompt": {
+   "chars": 6050,
+   "sha256": "b14601928b0a3733",
+   "source": "docs/01_ARCHITECTURE.md"
+  },
+  "qwen_idle_rwkv": {
+   "load": {
+    "completion_tokens": 2048,
+    "end": 13.1834,
+    "ok": true,
+    "requests": 4,
+    "requests_ok": 4,
+    "rows": [
+     {
+      "completion_tokens": 512,
+      "end": 13.1693,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 13.1692,
+      "start": 0.0002,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 13.1694,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 13.1684,
+      "start": 0.001,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 13.1691,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 13.1676,
+      "start": 0.0016,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 13.1834,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 13.1814,
+      "start": 0.0019,
+      "status": 200
+     }
+    ],
+    "start": 0.0001,
+    "tokens_per_second": 155.348,
+    "wall_seconds": 13.1833
+   },
+   "ok": true
+  },
+  "rc": 0,
+  "smi_after_load": {
+   "apps": [
+    {
+     "pid": 2078294,
+     "raw": "2078294, 21798",
+     "used_mib": 21798
+    },
+    {
+     "pid": 2078913,
+     "raw": "2078913, 1120",
+     "used_mib": 1120
+    }
+   ],
+   "ok": true,
+   "own_mib": 1120,
+   "own_pid": 2078913
+  },
+  "started": "2026-09-25T09:08:31Z",
+  "together": {
+   "load": {
+    "completion_tokens": 2048,
+    "end": 23.1683,
+    "ok": true,
+    "requests": 4,
+    "requests_ok": 4,
+    "rows": [
+     {
+      "completion_tokens": 512,
+      "end": 23.1682,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 23.168,
+      "start": 0.0003,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 23.1198,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 23.1192,
+      "start": 0.0006,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 23.168,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 23.1671,
+      "start": 0.0009,
+      "status": 200
+     },
+     {
+      "completion_tokens": 512,
+      "end": 23.1679,
+      "ok": true,
+      "prompt_tokens": 1476,
+      "seconds": 23.1666,
+      "start": 0.0013,
+      "status": 200
+     }
+    ],
+    "start": 0.0001,
+    "tokens_per_second": 88.397,
+    "wall_seconds": 23.1682
+   },
+   "more_passes": [
+    {
+     "chunks": 16,
+     "end": 2.3513,
+     "finite": true,
+     "peak_allocated_mib": 1142,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.036,
+     "seconds_median_after_first": 0.0595,
+     "seconds_median_chunk": 0.0595,
+     "seconds_total": 0.951,
+     "start": 1.1663,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 3.494,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0576,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.92,
+     "start": 2.3513,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 4.6353,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0576,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9203,
+     "start": 3.494,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 5.7757,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9209,
+     "start": 4.6353,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 6.9154,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9202,
+     "start": 5.7757,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 8.0587,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9212,
+     "start": 6.9154,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 9.1947,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0325,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.9202,
+     "start": 8.0587,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 10.338,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0346,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.9207,
+     "start": 9.1947,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 11.48,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0578,
+     "seconds_total": 0.921,
+     "start": 10.338,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 12.621,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.921,
+     "start": 11.48,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 13.7611,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0347,
+     "seconds_median_after_first": 0.0576,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9204,
+     "start": 12.621,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 14.9032,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0578,
+     "seconds_total": 0.9221,
+     "start": 13.7611,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 16.0444,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0341,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.9213,
+     "start": 14.9032,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 17.186,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.9217,
+     "start": 16.0444,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 18.3226,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0326,
+     "seconds_median_after_first": 0.0577,
+     "seconds_median_chunk": 0.0576,
+     "seconds_total": 0.9206,
+     "start": 17.186,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 19.4683,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0578,
+     "seconds_total": 0.9216,
+     "start": 18.3226,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 20.6089,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0327,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0578,
+     "seconds_total": 0.9221,
+     "start": 19.4683,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 21.7532,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0348,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0577,
+     "seconds_total": 0.9225,
+     "start": 20.6089,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 22.8963,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0347,
+     "seconds_median_after_first": 0.0578,
+     "seconds_median_chunk": 0.0578,
+     "seconds_total": 0.9234,
+     "start": 21.7532,
+     "tokens": 16384
+    },
+    {
+     "chunks": 16,
+     "end": 23.7373,
+     "finite": true,
+     "peak_allocated_mib": 1244,
+     "peak_reserved_mib": 1490,
+     "question_finite": true,
+     "question_seconds_median": 0.0308,
+     "seconds_median_after_first": 0.0367,
+     "seconds_median_chunk": 0.0367,
+     "seconds_total": 0.6729,
+     "start": 22.8963,
+     "tokens": 16384
+    }
+   ],
+   "ok": true,
+   "overlap": {
+    "first_pass_inside_load": true,
+    "load_end": 23.1683,
+    "load_fraction_with_rwkv": 1.0,
+    "load_seconds_with_rwkv": 23.1681,
+    "load_start": 0.0001,
+    "rwkv_end": 23.7373,
+    "rwkv_first_pass_end": 1.1663,
+    "rwkv_start": 0.0002
+   },
+   "questions": {
+    "finite": true,
+    "question_tokens": 15,
+    "seconds_all": [
+     0.0359,
+     0.036,
+     0.036,
+     0.0361,
+     0.0363
+    ],
+    "seconds_median": 0.036
+   },
+   "read": {
+    "chunks": 16,
+    "finite": true,
+    "peak_allocated_mib": 1040,
+    "peak_reserved_mib": 1490,
+    "rows": [
+     {
+      "finite": true,
+      "peak_allocated_mib": 1033,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.058,
+      "start": 0,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0593,
+      "start": 1024,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0595,
+      "start": 2048,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0592,
+      "start": 3072,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0591,
+      "start": 4096,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0593,
+      "start": 5120,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0592,
+      "start": 6144,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0591,
+      "start": 7168,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0591,
+      "start": 8192,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0591,
+      "start": 9216,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0478,
+      "start": 10240,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0592,
+      "start": 11264,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0593,
+      "start": 12288,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0594,
+      "start": 13312,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0593,
+      "start": 14336,
+      "tokens": 1024
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1040,
+      "peak_reserved_mib": 1490,
+      "seconds": 0.0592,
+      "start": 15360,
+      "tokens": 1024
+     }
+    ],
+    "seconds_median_after_first": 0.0592,
+    "seconds_median_chunk": 0.0592,
+    "seconds_total": 0.9351,
+    "tokens": 16384
+   },
+   "smi": {
+    "apps": [
+     {
+      "pid": 2078294,
+      "raw": "2078294, 22016",
+      "used_mib": 22016
+     },
+     {
+      "pid": 2078913,
+      "raw": "2078913, 1806",
+      "used_mib": 1806
+     }
+    ],
+    "ok": true,
+    "own_mib": 1806,
+    "own_pid": 2078913
+   }
+  }
+ },
+ "probe_rc": 0,
+ "rc": 0,
+ "reason": null,
+ "sizing": {
+  "available_kv_gib": 5.38,
+  "consumed_gib": 14.73,
+  "cudagraph_gib": 0.71,
+  "desired_gib": 21.2,
+  "desired_util": 0.9,
+  "invalid": [],
+  "kv_tokens": 169622,
+  "lines": {
+   "Available KV cache memory": "(EngineCore pid=392) INFO 09-25 09:08:23 [gpu_worker.py:578] Available KV cache memory: 5.38 GiB",
+   "Desired GPU memory utilization is": "(EngineCore pid=392) INFO 09-25 09:08:26 [gpu_worker.py:804] Free memory on device (23.05/23.56 GiB) on startup. Desired GPU memory utilization is (0.9, 21.2 GiB). Actual usage is 14.73 GiB for consumed memory (weights + non-torch), 1.09 GiB for peak activation, and 0.71 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=4856440832` (4.52 GiB) to fit into requested memory, or `--kv-cache-memory=6844901376` (6.37 GiB) to fully utilize gpu memory. Current kv ca",
+   "GPU KV cache size": "(EngineCore pid=392) INFO 09-25 09:08:23 [kv_cache_utils.py:2065] GPU KV cache size: 169,622 tokens, Maximum concurrency for 131,072 tokens per request: 1.29x",
+   "Maximum concurrency for": "(EngineCore pid=392) INFO 09-25 09:08:23 [kv_cache_utils.py:2065] GPU KV cache size: 169,622 tokens, Maximum concurrency for 131,072 tokens per request: 1.29x",
+   "Model loading took": "(EngineCore pid=392) INFO 09-25 09:08:16 [gpu_model_runner.py:5515] Model loading took 14.26 GiB memory and 14.297028 seconds"
+  },
+  "max_concurrency": 1.29,
+  "max_concurrency_tokens_per_request": 131072,
+  "missing": [],
+  "model_loading_gib": 14.26,
+  "ok": true,
+  "peak_activation_gib": 1.09,
+  "startup_free_gib": 23.05,
+  "startup_total_gib": 23.56,
+  "util_applied": true
+ },
+ "started": "2026-09-25T09:07:09Z"
+}

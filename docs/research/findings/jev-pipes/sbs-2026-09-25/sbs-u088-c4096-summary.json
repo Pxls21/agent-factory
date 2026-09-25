@@ -1,0 +1,359 @@
+{
+ "boot_seconds": 76,
+ "cleanup": {
+  "podman_rm_rc": 0
+ },
+ "config": {
+  "chunk": 4096,
+  "image": "ghcr.io/syv-ai/qwen38-27b-rtx3090@sha256:c52d9033527df5249d2f7306b35173a47f4f87d45bb60927fbe93fdb4986aacb",
+  "load": 4,
+  "port": 8081,
+  "tokens": 16384,
+  "util": 0.88
+ },
+ "finished": "2026-09-25T09:11:40Z",
+ "job": "gpu_side_by_side",
+ "probe": {
+  "alone": {
+   "chunk_check": {
+    "first": 2048,
+    "max_abs_logit_diff": 0.5,
+    "same_argmax": true,
+    "second": 2048,
+    "tokens": 4096
+   },
+   "ok": true,
+   "questions": {
+    "finite": true,
+    "question_tokens": 15,
+    "seconds_all": [
+     3.9901,
+     0.0322,
+     0.0319,
+     0.0317,
+     0.0317
+    ],
+    "seconds_median": 0.0319
+   },
+   "read": {
+    "chunks": 4,
+    "finite": true,
+    "peak_allocated_mib": 1794,
+    "peak_reserved_mib": 1854,
+    "rows": [
+     {
+      "finite": true,
+      "peak_allocated_mib": 1513,
+      "peak_reserved_mib": 1564,
+      "seconds": 19.7371,
+      "start": 0,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1794,
+      "peak_reserved_mib": 1854,
+      "seconds": 1.9578,
+      "start": 4096,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1538,
+      "peak_reserved_mib": 1854,
+      "seconds": 0.0899,
+      "start": 8192,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1538,
+      "peak_reserved_mib": 1854,
+      "seconds": 0.0905,
+      "start": 12288,
+      "tokens": 4096
+     }
+    ],
+    "seconds_median_after_first": 0.0905,
+    "seconds_median_chunk": 1.0241,
+    "seconds_total": 21.8753,
+    "tokens": 16384
+   },
+   "smi": {
+    "apps": [
+     {
+      "pid": 2080620,
+      "raw": "2080620, 21338",
+      "used_mib": 21338
+     },
+     {
+      "pid": 2081120,
+      "raw": "2081120, 2168",
+      "used_mib": 2168
+     }
+    ],
+    "ok": true,
+    "own_mib": 2168,
+    "own_pid": 2081120
+   }
+  },
+  "config": {
+   "chunk": 4096,
+   "load": 4,
+   "max_tokens": 512,
+   "model": "qwen3.8-27b-local",
+   "question_repeats": 5,
+   "temperature": 0,
+   "tokens": 16384,
+   "url": "http://127.0.0.1:8081/v1/chat/completions"
+  },
+  "env": {
+   "cuda": true,
+   "fla": "0.3.0",
+   "free_mib": 2263,
+   "gpu": "NVIDIA GeForce RTX 3090",
+   "python": "3.11.15",
+   "snapshot": "/home/rocco/.cache/huggingface/hub/models--RWKV--RWKV7-Goose-World2.9-0.4B-HF/snapshots/e94655a9fad2c8da9f25aba575d8f0fdedc05931",
+   "torch": "2.7.1+cu128",
+   "total_mib": 24122,
+   "transformers": "4.53.3",
+   "triton": "3.3.1"
+  },
+  "finished": "2026-09-25T09:11:39Z",
+  "load": {
+   "allocated_mib": 859,
+   "class": "RWKV7ForCausalLM",
+   "dtype": "bfloat16",
+   "parameters": 450767872,
+   "seconds": 0.46
+  },
+  "pid": 2081120,
+  "probe": "rwkv_sbs_probe",
+  "prompt": {
+   "chars": 6050,
+   "sha256": "b14601928b0a3733",
+   "source": "docs/01_ARCHITECTURE.md"
+  },
+  "qwen_idle_rwkv": {
+   "load": {
+    "completion_tokens": 0,
+    "end": 0.5454,
+    "ok": false,
+    "requests": 4,
+    "requests_ok": 0,
+    "rows": [
+     {
+      "end": 0.5453,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.5451,
+      "start": 0.0002,
+      "status": 500
+     },
+     {
+      "end": 0.5452,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.5444,
+      "start": 0.0008,
+      "status": 500
+     },
+     {
+      "end": 0.5447,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.5437,
+      "start": 0.001,
+      "status": 500
+     },
+     {
+      "end": 0.5453,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.5439,
+      "start": 0.0014,
+      "status": 500
+     }
+    ],
+    "start": 0.0001,
+    "tokens_per_second": 0.0,
+    "wall_seconds": 0.5453
+   },
+   "ok": false
+  },
+  "rc": 1,
+  "smi_after_load": {
+   "apps": [
+    {
+     "pid": 2080620,
+     "raw": "2080620, 21338",
+     "used_mib": 21338
+    },
+    {
+     "pid": 2081120,
+     "raw": "2081120, 1120",
+     "used_mib": 1120
+    }
+   ],
+   "ok": true,
+   "own_mib": 1120,
+   "own_pid": 2081120
+  },
+  "started": "2026-09-25T09:11:05Z",
+  "together": {
+   "load": {
+    "completion_tokens": 0,
+    "end": 0.0058,
+    "ok": false,
+    "requests": 4,
+    "requests_ok": 0,
+    "rows": [
+     {
+      "end": 0.0045,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.0043,
+      "start": 0.0002,
+      "status": 500
+     },
+     {
+      "end": 0.0056,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.0051,
+      "start": 0.0005,
+      "status": 500
+     },
+     {
+      "end": 0.0057,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.0049,
+      "start": 0.0008,
+      "status": 500
+     },
+     {
+      "end": 0.0057,
+      "error": "HTTP 500: {\"error\":{\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"type\":\"InternalServerError\",\"param\":null,\"code\":500}}",
+      "ok": false,
+      "seconds": 0.0041,
+      "start": 0.0016,
+      "status": 500
+     }
+    ],
+    "start": 0.0001,
+    "tokens_per_second": 0.0,
+    "wall_seconds": 0.0056
+   },
+   "more_passes": [],
+   "ok": false,
+   "overlap": {
+    "first_pass_inside_load": false,
+    "load_end": 0.0058,
+    "load_fraction_with_rwkv": 0.9553,
+    "load_seconds_with_rwkv": 0.0054,
+    "load_start": 0.0001,
+    "rwkv_end": 0.5576,
+    "rwkv_first_pass_end": 0.5575,
+    "rwkv_start": 0.0004
+   },
+   "questions": {
+    "finite": true,
+    "question_tokens": 15,
+    "seconds_all": [
+     0.0381,
+     0.0361,
+     0.0364,
+     0.0369,
+     0.0369
+    ],
+    "seconds_median": 0.0369
+   },
+   "read": {
+    "chunks": 4,
+    "finite": true,
+    "peak_allocated_mib": 1538,
+    "peak_reserved_mib": 2120,
+    "rows": [
+     {
+      "finite": true,
+      "peak_allocated_mib": 1513,
+      "peak_reserved_mib": 2120,
+      "seconds": 0.0897,
+      "start": 0,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1538,
+      "peak_reserved_mib": 2120,
+      "seconds": 0.0944,
+      "start": 4096,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1538,
+      "peak_reserved_mib": 2120,
+      "seconds": 0.0937,
+      "start": 8192,
+      "tokens": 4096
+     },
+     {
+      "finite": true,
+      "peak_allocated_mib": 1538,
+      "peak_reserved_mib": 2120,
+      "seconds": 0.0915,
+      "start": 12288,
+      "tokens": 4096
+     }
+    ],
+    "seconds_median_after_first": 0.0937,
+    "seconds_median_chunk": 0.0926,
+    "seconds_total": 0.3693,
+    "tokens": 16384
+   },
+   "smi": {
+    "apps": [
+     {
+      "pid": 2081120,
+      "raw": "2081120, 2436",
+      "used_mib": 2436
+     }
+    ],
+    "ok": true,
+    "own_mib": 2436,
+    "own_pid": 2081120
+   }
+  }
+ },
+ "probe_rc": 1,
+ "rc": 1,
+ "reason": "probe: rc 1 (see probe.log)",
+ "sizing": {
+  "available_kv_gib": 4.91,
+  "consumed_gib": 14.73,
+  "cudagraph_gib": 0.71,
+  "desired_gib": 20.73,
+  "desired_util": 0.88,
+  "invalid": [],
+  "kv_tokens": 154973,
+  "lines": {
+   "Available KV cache memory": "(EngineCore pid=392) INFO 09-25 09:10:58 [gpu_worker.py:578] Available KV cache memory: 4.91 GiB",
+   "Desired GPU memory utilization is": "(EngineCore pid=392) INFO 09-25 09:11:01 [gpu_worker.py:804] Free memory on device (23.05/23.56 GiB) on startup. Desired GPU memory utilization is (0.88, 20.73 GiB). Actual usage is 14.73 GiB for consumed memory (weights + non-torch), 1.09 GiB for peak activation, and 0.71 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=4350561895` (4.05 GiB) to fit into requested memory, or `--kv-cache-memory=6844901376` (6.37 GiB) to fully utilize gpu memory. Current kv ",
+   "GPU KV cache size": "(EngineCore pid=392) INFO 09-25 09:10:58 [kv_cache_utils.py:2065] GPU KV cache size: 154,973 tokens, Maximum concurrency for 131,072 tokens per request: 1.18x",
+   "Maximum concurrency for": "(EngineCore pid=392) INFO 09-25 09:10:58 [kv_cache_utils.py:2065] GPU KV cache size: 154,973 tokens, Maximum concurrency for 131,072 tokens per request: 1.18x",
+   "Model loading took": "(EngineCore pid=392) INFO 09-25 09:10:51 [gpu_model_runner.py:5515] Model loading took 14.26 GiB memory and 8.500832 seconds"
+  },
+  "max_concurrency": 1.18,
+  "max_concurrency_tokens_per_request": 131072,
+  "missing": [],
+  "model_loading_gib": 14.26,
+  "ok": true,
+  "peak_activation_gib": 1.09,
+  "startup_free_gib": 23.05,
+  "startup_total_gib": 23.56,
+  "util_applied": true
+ },
+ "started": "2026-09-25T09:09:49Z"
+}
