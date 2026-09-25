@@ -8,7 +8,7 @@ false-positive-only rows from F-c and F-d, all `false` answers, none narrowed as
 
 ## 0. Premise re-measure (demand 1), part A: the PIN's boundary files
 
-Clock at start: `Fri Sep 25 04:34:28 UTC 2026`. Main-tree HEAD 24689bc is two commits past the PIN; `git diff --stat 12623b3 24689bc`
+Clock at start: `Fri Sep 25 04:34:28 UTC 2026`. Main-tree HEAD (the DSV2-R1 brief commit, 9845b52 on origin) is two commits past the PIN; `git diff --stat 12623b3 24689bc`
 touches only `tasks/briefs/jev-laya/DSV2-R1-brief.md`, `tasks/briefs/jev-laya/VERIFY-DSV2-report.md`, `todo/BUILD-TASKLIST.md`
 (no boundary file).
 
@@ -376,7 +376,7 @@ ids and `labels.jsonl` change too, and "labels unchanged" will not hold for that
 D-7 (stale counts in past records, not edited, outside the boundary): the old `blocking-words` count of 35 per question is
 quoted by `tasks/briefs/jev-laya/DSV2-report.md:494` (`verifier-class`), `tasks/briefs/jev-laya/VERIFY-DSV2-brief.md:42`
 (`blocking-words`) and `tasks/briefs/jev-laya/VERIFY-DSV2-report.md:117` (`blocking-words`), and the ledger's DSV2 LANDED entry
-(todo/BUILD-TASKLIST.md, line 1497 at HEAD 14389bd). They record what was measured then. The record's own summary now says 141.
+(todo/BUILD-TASKLIST.md, line 1497 at HEAD (the D-087 commit, a1d4f70 on origin)). They record what was measured then. The record's own summary now says 141.
 
 D-8 (residual near misses, measured on the rebuild, information only): curly-apostrophe "n’t block" 0 rows; "don't / didn't /
 won't / wouldn't / can't / can not block" 0 rows; V-6's suggested `predicate:` (not ruled in) 23 rows, all already flagged by the
