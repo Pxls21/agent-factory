@@ -196,6 +196,8 @@ subordinate to, the Anthropic docs.
    `.lanes-live` the same minute.
 
 
+0h. **A brief that changes a SHAPE runs every test that pins the shape, not only the changed file's own suite (2026-09-25, K265, AF-AP-215).** The K265 brief changed the Laya server's per-chunk state order and measured the server's own suite at the PIN; `tests/test_laya_ft.py` pinned the same shape as the fine-tune's train/serve invariant (the dataset's `{"query", "chunk"}` rows equal what the server sends), so the contract broke it and the lane stopped at its boundary (one round). Before a brief changes a function's output shape or order, find every test and consumer that reads it (graft for the callers, a literal grep of `tests/` for the function and module names), run those tests at the PIN, and paste the set with its counts in the premise block; a consumer that pins the old shape is a design input, never a surprise for the lane.
+
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
    derive the how — that is what the reasoning is for. Enumerate steps ONLY where ordering is
    load-bearing (mutation-restore discipline, record-before-side-effect, safety carve-outs).
