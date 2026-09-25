@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# PARKED 2026-09-25 (AF-AP-207): the fork's RWKV7 path needs FlashRWKV, which refuses to build below SM90; the 3090 is SM86.
+# Kept as the record; see docs/research/findings/jev-pipes/VLLM-RWKV-2026-09-25.md.
 # Build the vllm-rwkv image (pinned) for the RTX 3090 (sm_86). Runs detached on the PC; log: ~/vllm-rwkv-build/build.log.
 # Every step's rc is checked explicitly: `set -e` is ignored inside a block on the left of `||` (the first run printed
 # "BUILD OK" after podman failed). Base images are fully qualified: podman refuses short names without a TTY.
