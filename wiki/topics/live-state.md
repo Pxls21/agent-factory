@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 21:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING:** VERIFY-S0-04-LEAK (sandbox `adversarial-verifier`, task #287): the independent pass before the owner re-signs `accepted/S0-04`; on the PC, `slopo_run.py --compare` over the real clone (about 20 minutes, `/tmp/pc-slopo-compare.log`).
+- **Landed today, pending verify:** SCRUB1, L2a, SLOPO2 (the PC slopo sync now takes 10 s, was 1,389 s), S0-04-LEAK (S0-04 re-minted; its anchor is PENDING, declared in the ledger; `check-proof-status.py` rc 0 with the WARNING).
+- **Next:** the owner's re-sign command once the verify passes; #296 (every skill in the System-1 corpus, sections verbatim), #295 (injection scores), #297 (Laya ranks); a verify of SCRUB1, L2a and SLOPO2.
+- **Push:** queued behind CI (push_when_green).
+
 **2026-09-25 20:4xZ — WHAT IS LIVE NOW (supersedes the earlier 20:4xZ block for the live set).**
 - **RUNNING (sandbox, two agents):** SLOPO2 (task #285), the pruning launcher for slopo; S0-04-LEAK (task #287), S0-04's leak screens and the re-mint for the owner's re-sign.
 - **D-093 (the owner's correction of D-092):** the skill list stays at Claude Code's default; the System-1 layer (Laya) is to read every skill's description and inject the ones that matter. The budget raise is reverted; the two label fixes and `tests/test_skill_frontmatter.py` stay. Today the prompt matcher searches 19 of 417 skills and Laya ranks nothing.
