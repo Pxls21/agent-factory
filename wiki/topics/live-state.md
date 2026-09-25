@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 23:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** S1-ALL (task #296), the prompt path of the situation hook over every skill; VERIFY-S0-04-LEAK round 2 (task #287), the focused check of R1 before the owner re-signs.
+- **Verified:** SCRUB1 (task #280) by VERIFY-SCRUB1 (task #301 closed): MERGE-READY-WITH-FOLLOWUPS; the committed docs hold no known secret value (only the public `TYPESAFE_BASE_URL`). Follow-ups: #292 widened into SCRUB2 (one lane on `scripts/transcript_export.py`, including F1: its tests read the real secret sources), #293 (F6, F7), #291 (F5). The post-push value check also scans `docs/HICCUPS.md` until #291 and #293 land.
+- **Next:** the owner's re-sign command once the round-2 check passes; #295 after S1-ALL lands; the held env-tool-quirks bakes at that landing.
+
 **2026-09-25 22:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** S1-ALL (task #296), the prompt path of the situation hook over every skill; VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber; VERIFY-S0-04-LEAK round 2 (task #287), the focused check of R1 before the owner re-signs (its report `tasks/briefs/system1/VERIFY-S0-04-LEAK-R1-report.md`). Pushed: origin a525376 (the R1 landing) and 7ecd6c2 (its retro) after CI run #1092 passed; transcripts eade28c; the post-push value check found only the expected host.
 - **Landed:** S0-04-LEAK R1 (task #287): the five verify findings fixed, S0-04 re-minted again (ledger digest 7daeba65...), F4 fixed (the committed-tree proof-status test pins the pending set to S0-04). Gate: 627 passed twice (set=1d810cbca988).
