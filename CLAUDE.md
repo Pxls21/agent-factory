@@ -143,7 +143,7 @@ errors when left to build-and-fix alone; a builder executes reliably once pointe
 **Brief-writing, Claude-5 delegate tuning, SUCCESSION (no-Fable operation), parallel-agent
 liveness, coordinator token economy, and the full ORCHESTRATOR protocol (worktree SHA pins ·
 brief-as-file · push-reviewed-SHA-never-HEAD · vocabulary lock tests): skill `orchestration` —
-load it before authoring any brief, dispatching agents, or pushing delegate work.** Standing
+load it before authoring any brief, dispatching agents, or pushing delegate work.** **Before any brief, interview seed or question to the owner, run `python3 scripts/owner_rulings.py <topic words>` (the owner's rulings on the topic, newest first; orchestration 0l): a question a ruling already answers is never asked (asked three times on 2026-09-25; the GPU window question was D-081's).** Standing
 do-nots that must survive even without the skill loaded: delegates NEVER take outward-facing
 actions (PRs, comments, publishing; the ONE carve-out, owner ruling 2026-09-07: a VERIFY lane may run
 pytest-only gates on the PC through `scripts/pc_suite.sh launch|wait` — no other bridge use, no lane
