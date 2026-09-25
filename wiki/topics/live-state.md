@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-25 14:1xZ — WHAT IS LIVE NOW (supersedes the 14:0xZ block for the live set).**
-- **Done:** CTX1 landed (fa790aa): CLAUDE.md 498 lines / 44,193 bytes (from 809 / 92,730), lossless into skills with "Load `<skill>` before/when <situation>" pointers; no automatic CLAUDE.md rewrite; no re-index without a code change.
+- **Done:** CTX1 landed (the commit `CTX1 landed (task #270, D-089): ...`): CLAUDE.md 498 lines / 44,193 bytes (from 809 / 92,730), lossless into skills with "Load `<skill>` before/when <situation>" pointers; no automatic CLAUDE.md rewrite; no re-index without a code change.
 - **RUNNING (sandbox, one agent):** S1A, the audit for the System-1 context layer (task #272, D-090).
 - **Next:** the layer's design from S1A's tables; SK1 (task #271) folds into it.
 
