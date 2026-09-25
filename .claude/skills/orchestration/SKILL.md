@@ -330,6 +330,14 @@ costs more than doing it in the main loop.
   spot-checks ONE artifact. Coordinator-priced work is only: designs, briefs, dry-run plan
   reviews, security/spine hunk reads, and the kill-switch question on every green.
 
+- **The main loop's cost is its NUMBER of requests (measured 2026-09-25, JEV-FIT audit A).** Every request re-sends the
+  whole context: the main session made 17,241 requests at a median 460,526 context tokens, and the hooks added about 1%.
+  So a task-list update or a deferred-tool load rides in the same response as real work, never alone (551 lone task-list
+  requests and 212 lone ToolSearch requests); multi-step tooling work goes to a fresh agent, whose requests carry a
+  fraction of the coordinator's context; and a Stop-hook git block whose uncommitted files are all declared lane files
+  gets a one-line answer, never a git investigation (219 git-only blocks cost 587 extra requests; 120 of those turns
+  were text only).
+
 - **A re-armed log monitor is blind to its own gap (2026-09-23, T92).** A watch that starts with `tail -n 0 -F` sees only lines written after it starts, so a lane report printed between the old monitor's expiry and the re-arm never becomes an event: T92 came home at 01:04Z inside that gap and read as silent until a poller check found its report. On every re-arm, first grep each watched log for the filter's patterns since the previous monitor's last delivered event, and act on what it finds; then re-arm.
 
 - **A heartbeat reads PROGRESS, not only liveness (2026-09-24, AF-AP-171).** A live pid and a fresh model-message age say a lane is alive, never that it is working: the PC lane J1-1-R3 made 80 API calls and zero tree edits while its runner failed an attempt (a T93 400) and retried it silently, and its heartbeat read `alive` throughout. Every heartbeat line carries progress fields: failed attempts, lane-made tree edits (the tree minus the staged patch) and the size of the report file the brief names. A lane alive for 30 minutes with no tree edit and no draft is investigated, not waited on. Read progress from the tree the lane actually WRITES, taken from the paths in its own recent tool calls, never from the tree you set up for it: the coordinator's own check of the sandbox J1-1-R3 agent read its git worktree while the agent worked in a non-git copy beside it, and saw no progress from a lane that was editing.

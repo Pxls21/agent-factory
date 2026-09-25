@@ -55,6 +55,13 @@ expansion.
    is empty, and keep three controls: a direct import reds, a caught import is logged, a child process is reached. A
    child started with `-I`, `-S` or `-E`, or with an `env=` that drops `PYTHONPATH`, escapes it: name those in the
    claim or refuse them.
+   **(h) A venue skip keys on the declaration that the runner holding the module's inputs exports: the interpreter,
+   never the machine (AF-AP-24's venue form; QJ2 2026-09-25).** `tests/test_qwen_jev.py` needs `transformers`, which only
+   the PC's `~/venv-qwenjev` holds. A skip on `S0_01_VENUE=pc` would have failed the PC suite at collection
+   (`scripts/pc_suite.sh` exports that flag with `~/venv-agent-factory`) and skipped the lane's own run
+   (`scripts/test_summary.sh` exports `S0_01_VENUE=sandbox` by default). A dedicated declaration, exported only by the
+   run that holds the inputs (`QWEN_JEV_VENUE=pc`), fixed both. Before a declaration ships, run the module under every
+   runner that sets the flag it keys on, and show the skip or the pass on each.
 3. **Mutation-testing IS the hollow-green detector.** Inject bugs into the code-under-gate; a gate
    A CONTROL mutation is itself verified before its effect is asserted — same length, same multiset (`sorted(moved) == sorted(orig)`), different order — and every "the output differs" control is paired with a NAMED production mutant it must kill: a slice-built "swap" that duplicated the neighbour let two production mutants survive a 476-test suite while the real checker's verdicts changed (S0-01 golden, VERIFY-VB-F12 2026-09-21, AF-AP-109).
    that still passes is hollow. Demand BRANCH coverage. A gate surviving no mutants is a tautology
