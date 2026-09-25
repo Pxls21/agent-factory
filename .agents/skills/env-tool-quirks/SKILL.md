@@ -64,8 +64,9 @@ with `cd /home/user/agent-factory` (or absolute paths).
 **slopo 0.6.0 walks its whole `source_dir` before it excludes anything** (`slopo/indexing/scanner.py` `scan_directory`: `rglob("*")`, then a pathspec match per file), so a clone that holds big untracked trees makes every index slow: the PC clone's first index ran over 8 minutes where the whole sandbox sync took 130 s (2026-09-25); task #285 prunes the walk in our launcher, never in slopo's source.
 **Claude Code's skill list has a character budget** (D-092, 2026-09-25): context x 4 x `skillListingBudgetFraction`
 (default 0.01, about 30,000 characters here); past it, skills with recent use keep their descriptions and the rest (ties
-in alphabetical order) are bare names. It is 0.07 in the settings `scripts/install_session_hooks.py` writes (488 of 488
-described, 172,800 characters). A SKILL.md whose frontmatter is not valid YAML (an unquoted `: ` in the description) is
+in alphabetical order) are bare names. The owner keeps the list lean (D-093): the default stays, and the System-1
+layer (Laya) picks the skills to inject; 0.07 would list all 488 (172,800 characters, about 35,000 more tokens per
+request, measured on an Opus probe). A SKILL.md whose frontmatter is not valid YAML (an unquoted `: ` in the description) is
 listed with no description whatever the budget; `tests/test_skill_frontmatter.py` guards it. To measure what a subagent
 received: `python3 docs/research/findings/system1-context/inventory.py listing --listing-from <agent>.jsonl --listing-out
 <file.json>` (it prints names, described and chars; without `--listing-out` it crashes).

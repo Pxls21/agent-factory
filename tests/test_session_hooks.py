@@ -251,20 +251,6 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     assert ish.merged(once, root, remove=True) == foreign
 
 
-def test_the_install_raises_the_skill_listing_budget_and_remove_takes_only_ours():
-    """D-092: at the default 0.01 the listing described 69 of 488 skills; at 0.07, all 488. The install sets at least
-    ours, keeps a larger choice, replaces a non-number (a bool included), and --remove takes the key out only while it
-    still holds ours."""
-    k, f, root = ish.LISTING_KEY, ish.LISTING_FRACTION, Path("/x/agent-factory")
-    assert ish.merged({}, root, remove=False)[k] == f
-    assert ish.merged({k: 0.01}, root, remove=False)[k] == f
-    assert ish.merged({k: 0.5}, root, remove=False)[k] == 0.5
-    assert ish.merged({k: "0.5"}, root, remove=False)[k] == f
-    assert ish.merged({k: True}, root, remove=False)[k] == f
-    assert k not in ish.merged(ish.merged({}, root, remove=False), root, remove=True)
-    assert ish.merged({k: 0.5}, root, remove=True)[k] == 0.5
-
-
 def test_a_foreign_hook_in_a_group_with_ours_survives_install_and_remove(tmp_path):
     """S1-L1-R1 F19: the merge works hook by hook. A foreign hook someone put in one of our groups stays there, under
     that group's matcher, through an install and through --remove."""
