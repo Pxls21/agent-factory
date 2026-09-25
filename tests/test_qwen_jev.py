@@ -27,12 +27,16 @@ from pathlib import Path
 
 import pytest
 
-# The pinned simple-jev checkout (~/simple-jev) and the served tokenizer (~/qwen-jev-tokenizer) are declared inputs of the PC
-# venue only (S0_01_VENUE=pc, which scripts/pc_suite.sh exports). CI and the sandbox declare no such venue, so this module
-# skips LOUDLY there; on the PC venue a missing input fails at import (the pin assert, the tokenizer load), never skips.
-if os.environ.get("S0_01_VENUE") != "pc":
-    pytest.skip("LOUD SKIP: tests/test_qwen_jev.py needs the PC venue's declared inputs (~/simple-jev at its pin, "
-                "~/qwen-jev-tokenizer); S0_01_VENUE=%r" % os.environ.get("S0_01_VENUE"), allow_module_level=True)
+# Declared venue: the PC's qwen-jev venv, which alone holds this module's inputs (transformers in ~/venv-qwenjev, the
+# served tokenizer ~/qwen-jev-tokenizer, the pinned ~/simple-jev checkout). A run there exports QWEN_JEV_VENUE=pc:
+#   QWEN_JEV_VENUE=pc PATH="$HOME/venv-qwenjev/bin:$PATH" bash scripts/test_summary.sh tests/test_qwen_jev.py
+# Everywhere else the module skips LOUDLY: CI, the sandbox, and the PC's default suite venv (scripts/pc_suite.sh exports
+# S0_01_VENUE=pc with ~/venv-agent-factory, which has no transformers). With the declaration set, a missing input fails at
+# import (the pin assert, the tokenizer load), never skips.
+if os.environ.get("QWEN_JEV_VENUE") != "pc":
+    pytest.skip("LOUD SKIP: tests/test_qwen_jev.py runs only in the PC's qwen-jev venv (QWEN_JEV_VENUE=pc; transformers, "
+                "~/simple-jev at its pin, ~/qwen-jev-tokenizer); QWEN_JEV_VENUE=%r" % os.environ.get("QWEN_JEV_VENUE"),
+                allow_module_level=True)
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
