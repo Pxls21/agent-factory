@@ -220,8 +220,10 @@ repo during the port (war stories referencing the source repo by name are left a
 
 ## 5. Hooks
 
-Both harnesses have a real hook surface, so **all five project hooks are ported** — but Hermes
-cannot carry all five with full effect.
+Both harnesses have a real hook surface, so **the five original project hooks are ported** — but Hermes
+cannot carry all five with full effect. The sixth, `.claude/hooks/system1-context.py` (S1-L1, D-090, 2026-09-25: skill
+lines before Write, Edit and Bash calls, skill sections per prompt), is **not ported** to either harness: it runs in
+Claude Code sessions only.
 
 **No hook logic is duplicated.** Both harnesses invoke the same `.claude/hooks/*` scripts
 through `harness-ports/bin/`.

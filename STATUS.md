@@ -47,7 +47,8 @@ a distillation and the ledger wins on any disagreement).
 - The HARNESS MIRRORS (2026-09-15; owner: "claude.md not properly copied into agents.md … skills and hooks"): measured from
   Hermes's own source, a lane loads ONE project context file — `.hermes.md` — under a char cap that drops the file's MIDDLE on
   overflow; CLAUDE.md's seven missing sections are now in `.hermes.md` in full (43 K chars, cap 48 K; the 25 lane-skills
-  named; four of the five hooks wired, the retro gate off for lanes by design) and in `AGENTS.md` as digests (32.4 KB under
+  named; four of the five original hooks wired, the retro gate off for lanes by design; the sixth, system1-context from
+  S1-L1, not ported) and in `AGENTS.md` as digests (32.4 KB under
   Codex's 32 KiB budget), gated by `harness-ports/tests/test_context_mirrors.sh` (section parity keyed off CLAUDE.md, the
   caps, the standing-rules hash; also a pre-commit gate). NOT proven: that a lane's BEHAVIOUR improves from the fuller file —
   the next lanes dispatched on a PIN carrying it are the measurement.
