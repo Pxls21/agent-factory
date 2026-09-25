@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 00:2xZ — WHAT IS LIVE NOW (supersedes the 23:3xZ block for the live set).**
+- **DONE:** the Laya head checkpoint's held-out evaluation: REJECTED on every KC-J3 line (`docs/research/findings/laya-ft-eval/2026-09-25-head-w1-cpu/evaluate-summary.json`). The OpenJev teacher is itself under the lexical baseline on the ap rows (1,616 of the 1,788 training examples); the choice answers did not move. Next for Laya: a better teacher first (QJ2), then retrain.
+- **D-082 (owner):** System 1 connects straight to its model server; OmniRoute stays for System 2. The direct vLLM path is exact (`docs/research/findings/j2b-variants/qwen27b/direct_probe.py`: token-id completions match the compiler by construction). Nothing trained so far went through OmniRoute.
+- **FOUND and stopped:** QJ1's orphaned adapter server on port 47420 (AF-AP-33 recurrence; task #248 opened for the runner to reap a finished lane's processes).
+- **NEXT:** the QJ2 PC lane (task #241): QJ1's harvested patch as LANE_PATCH, the direct token-id transport, both simple-jev policies, then J2; launched after CI on d6a2142 and a push. **PC:** no lane live; qwen active.
+
 **2026-09-24 23:3xZ — WHAT IS LIVE NOW (supersedes the 23:2xZ block for the live set).**
 - **DONE:** GPU window `20260924T232358Z`: all three jobs rc 0; qwen down 23:24:00Z-23:32:30Z (8 min 30 s) and back. G0: RWKV-7 0.4B zero-shot is REJECTED on every KC-J3 line; the long-input mechanics hold (61,440 tokens in 1.17 s; a question from a copied state in about 40 ms). Results: `docs/research/findings/j2b-variants/rwkv7-g0/2026-09-24-window2/`. Task #242 closed.
 - **DONE:** the Laya head checkpoint `~/laya-ft/ckpt-head-w1/` (224 steps; loss over its own training items 0.459 to 0.345; the encoder unchanged).
@@ -799,6 +805,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-25 00:2xZ — the Laya head checkpoint rejected on every KC-J3 line (the teacher is the ceiling); D-082: System 1 direct to vLLM, the direct path measured exact; QJ1's orphaned adapter stopped (task #248).
 2026-09-24 23:5xZ — pc.sh drops the bridge's shell-hook warnings; anchor_edit warns on blank-line runs; the Laya evaluation 2 of 5 runs done.
 2026-09-24 23:5xZ — the coordinator's probe OOM-killed the vLLM engine (about 5 minutes down, AF-AP-201); QJ1's parity gap traced to the reasoning field; the Qwen continuation waits on an owner decision.
 2026-09-24 23:3xZ — pushed (origin d4def2e); task #246 closed: the manifest names its tree, and the push needed no hand fix.
