@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 03:5xZ — WHAT IS LIVE NOW (supersedes the 02:3xZ block for the live set).**
+- **The container restarted at about 03:4xZ.** It stopped SESSION-EXPORT, VERIFY-DSV2 and the QJ2 watch; their files, transcripts and VERIFY-DSV2's worktree survived.
+- **LIVE:** the QJ2 PC lane (task #241; its examples_binary J2 run done, the baseline run writing); dispatcher re-attached with `MAX_POLLS=960`. Do not stop or restart vLLM while it runs.
+- **RUNNING (sandbox):** VERIFY-DSV2 (resumed from its transcript); the council on the System 1 program (task #256; brief `docs/research/prompts/COUNCIL-JEV-2026-09-25.md`; panel Karpathy 1.5x, Kahneman, Meadows, Taleb, Munger, Torvalds; restate gate, then three rounds and an opus Chairman). An Ouroboros interview follows the verdict (owner ask).
+- **HELD:** SESSION-EXPORT (task #252) until the council reports; its partial files stay in the tree (`.lanes-live`).
+- **NEXT:** council Round 1; the VERIFY-DSV2 harvest; the QJ2 harvest. **PC:** QJ2 only; qwen active.
+
 **2026-09-25 02:3xZ — WHAT IS LIVE NOW (supersedes the 01:4xZ block for the live set).**
 - **LIVE since 00:35:59Z:** the QJ2 PC lane `pc-qj2.md--d6a2142` (task #241), the only PC lane; its J2 run (examples_binary) started 02:09Z. A detached loop re-attaches its dispatcher at each 60-minute poll cap (log `qj2-dispatch.log` in the session scratchpad). Do not stop or restart vLLM while it runs.
 - **LANDED 03:2xZ, GATED-PENDING-VERIFY:** DSV2 (task #251): dataset v2, 6,196 rows and 5,301 labels from our recorded answers (`docs/research/findings/laya-ft-labels/2026-09-25-recorded/`); the coordinator's clean-worktree gate 143 passed. VERIFY-DSV2 (sandbox adversarial-verifier, clean worktree at the PIN) dispatched 03:2xZ. The v2 manifest hashes `scripts/transcript_export.py`: the SESSION-EXPORT harvest regenerates it in the same commit.
