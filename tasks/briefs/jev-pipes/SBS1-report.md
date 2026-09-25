@@ -1,7 +1,7 @@
 # SBS1 report: the side-by-side GPU window job (task #262; D-088)
 
 Lane: SBS1 build (sandbox, Opus 5.5). Brief: `tasks/briefs/jev-pipes/SBS1-brief.md`. PIN 6ee9322; local head at start
-91a173b (the brief's own commit, a descendant of the PIN); local head at close 4b5b1bb (the coordinator's and the P1
+91a173b (the brief's own commit, a descendant of the PIN); local head at close 9c49c7f (the coordinator's and the P1
 lane's commits; the three premise files show 0 diff lines against the PIN there, and none of my paths is in them).
 
 STATUS (2026-09-25 08:4xZ): BUILT AND GATED IN THE SANDBOX; NOT RUN ON THE GPU. Four files created, nothing else
