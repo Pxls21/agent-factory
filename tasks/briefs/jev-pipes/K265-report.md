@@ -437,7 +437,7 @@ f628ce5adb9d3eaa / f628ce5adb9d3eaa / 163576313857e73e  tests/test_laya_systemon
 $ git log --oneline 157ddd6..HEAD -- <the five new boundary files>   -> none
 ```
 
-Re-checked at 12:55Z: HEAD 7b18ad5; `git diff --stat eecd786..HEAD` over the eight boundary files and the version-2
+Re-checked at 12:55Z: HEAD 0d0ddad (the commit `wiki 12:5xZ: D-089, three lanes running ...`, its id after the push); `git diff --stat eecd786..HEAD` over the eight boundary files and the version-2
 record is empty (the commits since touch other files only).
 
 ## R2. Design as built (files:lines are the working tree)
