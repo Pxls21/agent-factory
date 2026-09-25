@@ -46,7 +46,10 @@ expansion.
    pin/fixture that verifies the root and inserts its paths — never an ambient PYTHONPATH; the lane shell read
    `29 passed`, the bare static-copy gate `12 failed, 17 passed`. A report's count is graded in the BARE gate on
    the coordinator's venue before it is believed, and a mutation driver exports only repo roots (an ambient
-   upstream path masked the root-insertion mutant).**
+   upstream path masked the root-insertion mutant). A file `setup.sh` provisions is the same kind of input (CI run
+   #1087, 2026-09-25): a slopo wrapper test used a fake venv but ran the real wrapper, whose presence check reads the
+   gitignored model; green in the sandbox, exit 3 on CI. Give such a test its own root with fixture files, or declare
+   the skip; never lean on what setup left in the tree.**
    **(g) A "runs without X" closure blocks X in EVERY process of the run and counts ATTEMPTS, not failures (AF-AP-179,
    J1-5 2026-09-24).** A blocker installed in the test's own process never reaches the scripts the tests start, and a
    gate that reads only failures passes an import the code catches or a test that skips on ImportError. Put the blocker
