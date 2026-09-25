@@ -1,0 +1,300 @@
+goal: Build the P1 jev-pruner replay harness in agent-factory as the first rank-collect-present
+  pipeline deliverable, deciding from this session's own recorded tool results whether
+  inline Jev pruning saves net tokens and calls at a miss rate at or under 5 percent,
+  with the vendored pruner pinned, the pipeline package under scripts/jev_pipes/,
+  a committed replay report, and recorded-answer tests.
+task_type: code
+brownfield_context:
+  project_type: brownfield
+  context_references:
+  - path: /home/user/agent-factory
+    role: primary
+    summary: 'The agent-factory repo: the test bed for the factory per D-087, holding
+      hooks, skills, pipeline and PC lane tooling'
+  - path: docs/research/findings/jev-fit/PLAN-2026-09-25.md
+    role: reference
+    summary: 'JEV-FIT design audit, plan version 2: the seven pipelines and the rules
+      and Jevs the audit named'
+  - path: scripts/jev_pipes/
+    role: primary
+    summary: New package holding the pipeline code, with the replay at scripts/jev_pipes/replay_pruner.py
+  - path: vendor/jev-pruner
+    role: primary
+    summary: The vendored jev-pruner pinned at commit 47d017c with a provenance file;
+      the replay runs its own chunking, keep rules and rendering
+  - path: upstream.lock.yaml
+    role: reference
+    summary: Immutable-commit pins for every upstream dependency, including the jev-pruner
+      entry
+  - path: tests/test_jev_pipes_replay.py
+    role: primary
+    summary: Deterministic tests driven by scorer answers recorded from the real Laya
+      server
+  - path: docs/research/findings/jev-pipes/P1-replay-2026-09-25.md
+    role: primary
+    summary: The committed replay report with counts, rates and the PASS or FAIL verdict
+  - path: .jev/pipes/p1-decisions.jsonl
+    role: reference
+    summary: Per-result decision log, mode 0600, never committed
+  - path: docs/INCIDENT-LOG.md
+    role: reference
+    summary: Anti-pattern registry and incident detail, including the search-intercept
+      precedent that sets the 5-percent miss bar
+  existing_patterns:
+  - Hook scripts return their context to the model through scripts/hook_context.py
+    (plain PostToolUse stdout reaches only the transcript view), and stay plain text
+    so the Codex and Hermes adapters can read them
+  - 'Search-intercept precedent: a warn-and-point instrument ships at a miss rate
+    at or under 5 percent, measured on replay before live'
+  - Vendored third-party tools are pinned by immutable commit with a provenance file
+    and an upstream.lock.yaml row
+  - Deterministic, LLM-free acceptance tests; no LLM judge in the gate spine
+  - One increment equals code plus deterministic test plus commit, with the commit
+    message as the reasoning record
+  - Advisory instruments (slopo, sentrux, ripwire, prism) inform and never gate
+  - Counts and timestamps are pasted from the producing command or the clock, never
+    typed
+  - Reports are linted by scripts/report_lint.py and screened by scripts/ap_screen.py
+    at every checkpoint
+  - The quartet pack (scripts/lane_context.sh) is attached to every build and verify
+    brief
+  existing_dependencies:
+  - jev-pruner plugin (vendored at vendor/jev-pruner, commit 47d017c), already enabled
+    and pointed at the local Laya server
+  - Local Laya CPU scorer at 127.0.0.1:47411 in the sandbox
+  - Transcript records under /root/.claude/projects
+  - Python 3 with pytest
+  - upstream.lock.yaml pinning mechanism
+  - The transcript scrubber and the export leak gate (SESSION-EXPORT)
+  - RWKV-7 0.4B stream-state server on the PC (committed build, runs in parallel)
+  - The lane fact recorder
+  - vLLM qwen container on the PC (never shares GPU with a scorer)
+constraints:
+- 'A Jev never decides a gate: every pipeline stage warns, ranks, points and fails
+  open, and never sits in the fail-closed pre_tool_call path'
+- 'Pruning is reversible by construction: the pruner saves complete stdout and stderr
+  before its first scoring request and prints the archive path in a footer'
+- A chunk is kept when any query scores it at or above the keep threshold, when it
+  is first or last, when it holds a diagnostic, a test total or a path, or when it
+  was not fully scored
+- Only tool results of 2000 characters or more enter a pipeline; every chunk of one
+  result is scored in one request
+- 'Wall-clock budget for the whole pipeline (rank and present) per tool result: 2
+  seconds in the sandbox, 5 seconds on the PC; the pruner''s own 30 second request
+  timeout is cut to the budget'
+- 'Fail-open trips on any of: connection refused, budget passed, non-200 answer, an
+  answer that does not parse or does not cover every chunk, or a scorer queue deeper
+  than one pending request; the original text then passes through unchanged and the
+  decision log records the reason'
+- 'No scorer shares the GPU with vLLM: sandbox hooks score on the local Laya CPU server
+  at 127.0.0.1:47411, PC lane pipelines score on CPU; a GPU scorer waits for an owner-approved
+  GPU window with no lanes live'
+- 'Session text (including the owner''s own messages) travels only between the sandbox
+  and the owner''s PC, and only in scrubbed form: transcript scrubber on every string,
+  denylist drop of secret-bearing payload paths, HMAC pseudonym join keys whose key
+  never leaves the sandbox'
+- Archived tool outputs stay on the machine that made them; the repo receives only
+  counts, labels, pointers (path and byte offset) and derived scores, never raw session
+  text
+- The decision log .jev/pipes/p1-decisions.jsonl is mode 0600 and never committed
+- The replay runs the vendored pruner's own chunking, keep rules and rendering, never
+  a reimplementation of them
+- Tests use recorded scorer answers captured from the real server, never a mirror
+  of the code under test
+- Nothing is sent to an outside service except under the owner's D-078 approval for
+  data generation, after the same scrub
+- Every dependency pinned by immutable commit and recorded in upstream.lock.yaml (jev-pruner
+  at commit 47d017c)
+acceptance_criteria:
+- description: The replay harness runs as one command over the session's tool results
+    of 2000 characters or more and prints a PASS or FAIL verdict against the 5-percent-miss
+    and net-tokens-saved bar
+  semantic_ac_key: ac_42c6ffc96e9d5a64
+  verify_command: python3 scripts/jev_pipes/replay_pruner.py --help
+  expected_artifacts:
+  - scripts/jev_pipes/replay_pruner.py
+  output_assertion: --min-chars
+- description: The replay writes one decision row per result carrying the transcript
+    path and byte offset, the chunks kept and dropped, the characters saved, and the
+    calls that followed until the next compaction
+  semantic_ac_key: ac_b7594ba7e0848e71
+  verify_command: python3 -m pytest tests/test_jev_pipes_replay.py -q
+  expected_artifacts:
+  - scripts/jev_pipes/
+  - tests/test_jev_pipes_replay.py
+- description: The jev-pruner is vendored and pinned at commit 47d017c with a provenance
+    file and an upstream.lock.yaml entry, so the replay exercises the pruner's own
+    chunking, keep rules and rendering
+  semantic_ac_key: ac_ba69d21551e12499
+  verify_command: grep -q '47d017c' upstream.lock.yaml && echo PINNED
+  expected_artifacts:
+  - vendor/jev-pruner
+  - upstream.lock.yaml
+  output_assertion: PINNED
+- description: The committed replay report states the counts, the miss rate, the net
+    tokens saved and the verdict for the P1 pruner
+  semantic_ac_key: ac_cd974f92742b502c
+  expected_artifacts:
+  - docs/research/findings/jev-pipes/P1-replay-2026-09-25.md
+  verify_exemption_reason: The report's honesty and completeness is a human reading
+    judgment; the numbers it quotes are produced and checked by the harness command
+    in the sibling criterion
+- description: Fail-open behavior is proven for every named trip condition (refused
+    connection, passed budget, non-200, unparseable or incomplete answer, queue deeper
+    than one), with the original text passing through unchanged and the reason recorded
+  semantic_ac_key: ac_83810d375ec6c165
+  verify_command: python3 -m pytest tests/test_jev_pipes_replay.py -q -k failopen
+  expected_artifacts:
+  - tests/test_jev_pipes_replay.py
+- description: The decision log is written at mode 0600 and is excluded from the repository
+  semantic_ac_key: ac_e90e9ed855798348
+  verify_command: git check-ignore -q .jev/pipes/p1-decisions.jsonl && echo IGNORED
+  output_assertion: IGNORED
+- description: An independent verify round has run on the harness, tests and report,
+    and its gate recommendation is recorded
+  semantic_ac_key: ac_c64b6e9aa1b01599
+  expected_artifacts:
+  - docs/research/findings/jev-pipes/P1-replay-2026-09-25.md
+  verify_exemption_reason: An adversarial verify round is a separate reviewing lane's
+    judgment; no command can decide that a hostile reviewer failed to break the work
+ontology_schema:
+  name: JevPipelineReplay
+  description: 'The decision record of a rank-collect-present pipeline run over recorded
+    session tool results: what each pipeline stage scored, kept, dropped and saved,
+    what it cost when it was wrong, and where the full original output can be recovered.'
+  fields:
+  - name: result_id
+    type: string
+    description: Stable identifier for the tool result being processed
+    required: true
+  - name: transcript_path
+    type: string
+    description: Path of the transcript file holding the original tool result
+    required: true
+  - name: byte_offset
+    type: number
+    description: Byte offset of the result within the transcript, the archived-output
+      pointer
+    required: true
+  - name: result_chars
+    type: number
+    description: Character length of the original tool result; only 2000 or more enter
+      a pipeline
+    required: true
+  - name: chunks_kept
+    type: array
+    description: Chunk identifiers the pipeline kept, with the keep reason (score
+      at or above threshold, first or last, diagnostic, test total, path, not fully
+      scored)
+    required: true
+  - name: chunks_dropped
+    type: array
+    description: Chunk identifiers the pipeline dropped, with their scores
+    required: true
+  - name: chars_saved
+    type: number
+    description: Characters removed from the expensive model's input by this decision
+    required: true
+  - name: tokens_saved
+    type: number
+    description: Token equivalent of the saving, netted against miss cost
+    required: true
+  - name: fail_open
+    type: boolean
+    description: Whether the stage failed open and passed the original text through
+      unchanged
+    required: true
+  - name: fail_open_reason
+    type: string
+    description: 'Recorded reason for failing open: refused, budget, non_200, unparseable,
+      incomplete, queue_depth'
+    required: true
+  - name: latency_ms
+    type: number
+    description: Wall-clock time of the whole pipeline for this result, against the
+      venue budget
+    required: true
+  - name: venue
+    type: string
+    description: 'Where the pipeline ran: sandbox or pc'
+    required: true
+  - name: scorer
+    type: string
+    description: 'Which scorer answered: the general Laya CPU server or a trained
+      student'
+    required: true
+  - name: miss
+    type: boolean
+    description: Whether a dropped chunk's distinctive tokens reappeared in the next
+      20 tool inputs or messages, or the same command was re-run within 20 calls
+    required: true
+  - name: following_calls
+    type: number
+    description: Calls that followed this result until the next compaction
+    required: true
+evaluation_principles:
+- name: Reversibility
+  description: 'The complete original output is always one read away: archived before
+    the first scoring request, its path printed in a footer, its pointer recorded
+    in the decision row'
+  weight: 0.95
+- name: Fail-open fidelity
+  description: Every named trip condition returns the original text unchanged and
+    records its reason; a slow, down or unsure Jev never removes text
+  weight: 1.0
+- name: Measured savings over asserted savings
+  description: Every pipeline and rule earns its slot on measured net tokens and calls
+    saved on the replay with misses at or under 5 percent, then live; unmeasured benefit
+    is not a benefit
+  weight: 0.9
+- name: Real component, not a mirror
+  description: The replay drives the vendored pruner's own chunking, keep rules and
+    rendering and the real Laya scorer; tests use answers recorded from the real server,
+    never a reimplementation
+  weight: 0.9
+- name: Data boundary discipline
+  description: Session text stays on our own machines in scrubbed form; the repo receives
+    only counts, labels, pointers and derived scores
+  weight: 0.95
+- name: Always-keep guard lines
+  description: Errors, test totals and paths are kept regardless of score; these guard
+    rather than save and are exempt from the savings bar
+  weight: 0.85
+- name: Honest verdict
+  description: The report states counts, rates and the verdict including a FAIL, and
+    names what was not run
+  weight: 0.8
+exit_conditions:
+- name: P1 replay complete
+  description: The harness, its tests and the committed report exist, an independent
+    verify round has run, and the verdict decides whether P1 goes live in the hook
+  criteria: scripts/jev_pipes/replay_pruner.py runs in one command and prints PASS
+    or FAIL; tests/test_jev_pipes_replay.py green; docs/research/findings/jev-pipes/P1-replay-2026-09-25.md
+    committed with counts, rates and verdict; verify round recorded
+- name: Pruner fails the bar
+  description: The replay measures misses above 5 percent of pruned results or net
+    tokens saved at or below zero, so P1 does not go live in the hook
+  criteria: Report records FAIL with the measured miss rate and net token figure;
+    the hook stays unwired and the next pipeline takes its slot
+- name: Waste already covered
+  description: A later pipeline or rule whose waste the earlier pipelines already
+    cover on the replay is dropped rather than built
+  criteria: Replay shows no residual net tokens or calls attributable to that pipeline;
+    the item is recorded as dropped with the measurement
+- name: Scorer blocked
+  description: The Laya CPU scorer at 127.0.0.1:47411 is unreachable or cannot meet
+    the venue budget, so the replay cannot measure
+  criteria: Connection refused or budget exceeded on every request; surfaced as a
+    blocker with the reason, never stubbed with a fake scorer
+metadata:
+  seed_id: seed_5aa221965993
+  version: 1.0.0
+  created_at: '2026-09-25T05:09:37.616671Z'
+  ambiguity_score: 0.1195
+  gate_forced: false
+  interview_id: interview_20260925_043820
+  parent_seed_id: null
+  generation_mode: normal
+  degraded: false
+  unresolved_slots: []
+  recovery_reason: null
