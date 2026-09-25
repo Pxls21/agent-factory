@@ -1,5 +1,7 @@
 # Task breakdown: Jev pipeline P1, the jev-pruner at our scale (2026-09-25)
 
+> **STATUS 2026-09-25 08:2xZ:** P1-1 to P1-4 landed (the P1 harvest commit); the replay verdict is FAIL (0 pruned of 3,153; `docs/research/findings/jev-pipes/P1-replay-2026-09-25.md`). P1-5, the verify round, is owed (task #260). P1-6 is not taken (FAIL).
+
 Source: the seed `seeds/seed-jev-pipes-p1-v1.yaml` (Ouroboros seed_5aa221965993 from interview `interview_20260925_043820`,
 ambiguity 0.12), the owner's direction D-087, and `docs/research/findings/jev-fit/PLAN-2026-09-25.md` (version 2, pipeline P1).
 The seed is the contract; this file is the decomposition.

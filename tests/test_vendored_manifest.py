@@ -14,7 +14,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "vendored_manifest.py"
 MANIFEST_PATH = Path("sandbox-kit/VENDORED-MANIFEST.md")
-EXPECTED_PASS = "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 9 vendored roots\n"
+EXPECTED_PASS = "PASS: sandbox-kit/VENDORED-MANIFEST.md matches 10 vendored roots\n"  # vendor/jev-pruner/ is the 10th (P1, task #231)
 
 
 ADAPTED_PATHS = [

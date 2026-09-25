@@ -115,6 +115,13 @@ VENDORED_ROOTS = (
         "aeb3082",
         "sandbox-kit/VENDORED-FROM.md:18",
     ),
+    VendoredRoot(
+        "vendor/jev-pruner/",
+        "https://github.com/tamaratran/jev-pruner",
+        57,
+        "47d017c34eab7690b95f075ce6f4839247c5dc0a",
+        "upstream.lock.yaml:advisory_tooling.jev-pruner",
+    ),
 )
 
 # CLOSED classification of every top-level entry under `sandbox-kit/`
@@ -810,6 +817,14 @@ def parse_provenance(path: Path) -> tuple[set[str], dict[str, int]]:
     if honey_line is None:
         raise ManifestError("provenance parse failure: sandbox-kit/honey-for-devs/ declaration missing")
     roots["sandbox-kit/honey-for-devs/"] = honey_line
+    # A tree vendored outside the kit snapshot, under `vendor/`, is declared the honey way:
+    # its own `**Added ...` line names the backticked `vendor/<name>/` root (P1, task #231).
+    for index, line in enumerate(lines, start=1):
+        if line.startswith("**Added "):
+            for name in re.findall(r"`(vendor/[A-Za-z0-9._-]+/)`", line):
+                if name in roots:
+                    raise ManifestError(f"provenance parse failure: {name} declared twice")
+                roots[name] = index
     return destinations, roots
 
 

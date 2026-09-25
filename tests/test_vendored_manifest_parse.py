@@ -103,19 +103,20 @@ def _mutate_once(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
-# --- R0: the real files, unmutated (the D-3 digests and the 9 provenance roots) ---
+# --- R0: the real files, unmutated (the D-3 digests and the 10 provenance roots) ---
 
 
 def test_R0_real_files_unchanged(tmp_path: Path) -> None:
     module = _fresh_module()
     lock = module.parse_lock(REPO / "upstream.lock.yaml")
-    assert len(lock) == 24, f"24 expected (D-3), got {len(lock)}"
-    assert _digest(lock) == "f3b81f34ac1966c3"
+    # 25 since P1 (task #231) added advisory_tooling.jev-pruner; at 24 entries the digest was f3b81f34ac1966c3
+    assert len(lock) == 25, f"25 expected (D-3), got {len(lock)}"
+    assert _digest(lock) == "3c3d7af3d636a4b0"
     sbom = module.parse_sbom(REPO / "SBOM.yaml")
     assert len(sbom) == 22, f"22 expected (D-3), got {len(sbom)}"
     assert _digest(sbom) == "734a79b525e59e2f"
     _, roots = module.parse_provenance(REPO / "sandbox-kit/VENDORED-FROM.md")
-    assert len(roots) == 9, f"9 roots expected (R0), got {len(roots)}"
+    assert len(roots) == 10, f"10 roots expected (R0), got {len(roots)}"
 
 
 # --- L rows: the lock ---
@@ -128,7 +129,7 @@ def test_L1_lock_trailing_space_on_component_line(tmp_path: Path) -> None:
     text = _mutate_once(LOCK_TEXT, "\n  hermes-agent:\n", "\n  hermes-agent: \n")
     lock = module.parse_lock(_write(tmp_path, "upstream.lock.yaml", text))
     real = module.parse_lock(REPO / "upstream.lock.yaml")
-    assert lock == real, "the real map (24 entries) is required"
+    assert lock == real, "the real map (25 entries) is required"
 
 
 def test_L2_lock_trailing_comment_on_component_line(tmp_path: Path) -> None:
@@ -201,12 +202,12 @@ def test_L7_lock_pin_read_as_scalar_is_a_regression_row(tmp_path: Path) -> None:
     `commit: 1e10`. The brief's premise is that YAML reads `1e10` as a float, but
     PyYAML 1.1's resolver does not: it is a plain string, so the old parser already
     keeps hermes with `1e10` as the pin value and R5 accepts it as a string. This
-    row proves the pin survives as the 24-entry map with `1e10` as a string (the
+    row proves the pin survives as the 25-entry map with `1e10` as a string (the
     dedicated non-string-pin refusal is L7b, which a real YAML int exercises)."""
     module = _fresh_module()
     text = _mutate_once(LOCK_TEXT, f"    commit: {HERMES_COMMIT}\n", "    commit: 1e10\n")
     lock = module.parse_lock(_write(tmp_path, "upstream.lock.yaml", text))
-    assert len(lock) == 24, f"24 expected, got {len(lock)}"
+    assert len(lock) == 25, f"25 expected, got {len(lock)}"
     assert lock[HERMESL] == ("1e10", "selected_core.hermes-agent")
 
 

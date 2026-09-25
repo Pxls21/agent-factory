@@ -1,0 +1,180 @@
+{
+ "bash_tool_use_result": {
+  "Bash": {
+   "interrupted": "bool",
+   "isImage": "bool",
+   "noOutputExpected": "bool",
+   "stderr": "str",
+   "stdout": "str"
+  }
+ },
+ "block": {
+  "assistant/text": {
+   "text": "str",
+   "type": "str"
+  },
+  "assistant/thinking": {
+   "signature": "str",
+   "thinking": "str",
+   "type": "str"
+  },
+  "assistant/tool_use": {
+   "caller": "dict",
+   "id": "str",
+   "input": "dict",
+   "name": "str",
+   "type": "str"
+  },
+  "user:prompt/image": {
+   "source": "dict",
+   "type": "str"
+  },
+  "user:prompt/text": {
+   "text": "str",
+   "type": "str"
+  },
+  "user:tool_result/tool_result": {
+   "content": "str",
+   "is_error": "bool",
+   "tool_use_id": "str",
+   "type": "str"
+  }
+ },
+ "message": {
+  "assistant": {
+   "container": "NoneType",
+   "content": "list",
+   "context_management": "NoneType",
+   "diagnostics": "NoneType",
+   "id": "str",
+   "input_transformations": "list",
+   "model": "str",
+   "role": "str",
+   "stop_details": "NoneType",
+   "stop_reason": "str",
+   "stop_sequence": "NoneType",
+   "type": "str",
+   "usage": "dict"
+  },
+  "user:compact_summary": {
+   "content": "str",
+   "role": "str"
+  },
+  "user:prompt": {
+   "content": "str",
+   "role": "str"
+  },
+  "user:tool_result": {
+   "content": "list",
+   "role": "str"
+  }
+ },
+ "record": {
+  "assistant": {
+   "advisorModel": "str",
+   "apiBlockIndex": "int",
+   "cwd": "str",
+   "effort": "str",
+   "entrypoint": "str",
+   "gitBranch": "str",
+   "isSidechain": "bool",
+   "message": "dict",
+   "parentUuid": "str",
+   "perTurnEffort": "str",
+   "requestId": "str",
+   "sessionId": "str",
+   "slug": "str",
+   "timestamp": "str",
+   "type": "str",
+   "userType": "str",
+   "uuid": "str",
+   "version": "str"
+  },
+  "system:compact_boundary": {
+   "compactMetadata": "dict",
+   "content": "str",
+   "cwd": "str",
+   "entrypoint": "str",
+   "gitBranch": "str",
+   "isSidechain": "bool",
+   "level": "str",
+   "logicalParentUuid": "str",
+   "parentUuid": "NoneType",
+   "sessionId": "str",
+   "slug": "str",
+   "subtype": "str",
+   "timestamp": "str",
+   "type": "str",
+   "userType": "str",
+   "uuid": "str",
+   "version": "str"
+  },
+  "user:compact_summary": {
+   "cwd": "str",
+   "entrypoint": "str",
+   "gitBranch": "str",
+   "isCompactSummary": "bool",
+   "isSidechain": "bool",
+   "isVisibleInTranscriptOnly": "bool",
+   "message": "dict",
+   "parentUuid": "str",
+   "promptId": "str",
+   "sessionId": "str",
+   "slug": "str",
+   "timestamp": "str",
+   "turnOrigin": "str",
+   "type": "str",
+   "userType": "str",
+   "uuid": "str",
+   "version": "str"
+  },
+  "user:prompt": {
+   "cwd": "str",
+   "entrypoint": "str",
+   "gitBranch": "str",
+   "isSidechain": "bool",
+   "message": "dict",
+   "origin": "dict",
+   "parentUuid": "str",
+   "permissionMode": "str",
+   "promptId": "str",
+   "promptSource": "str",
+   "queueSkipAttachments": "bool",
+   "sessionId": "str",
+   "slug": "str",
+   "timestamp": "str",
+   "turnOrigin": "str",
+   "type": "str",
+   "userType": "str",
+   "uuid": "str",
+   "version": "str"
+  },
+  "user:tool_result": {
+   "cwd": "str",
+   "entrypoint": "str",
+   "gitBranch": "str",
+   "isSidechain": "bool",
+   "message": "dict",
+   "parentUuid": "str",
+   "promptId": "str",
+   "sessionId": "str",
+   "slug": "str",
+   "sourceToolAssistantUUID": "str",
+   "timestamp": "str",
+   "toolUseResult": "dict",
+   "type": "str",
+   "userType": "str",
+   "uuid": "str",
+   "version": "str"
+  }
+ },
+ "source": "most common key sets per record kind; names and type names only",
+ "usage_keys": {
+  "assistant": [
+   "cache_creation_input_tokens",
+   "cache_read_input_tokens",
+   "input_tokens",
+   "output_tokens"
+  ]
+ }
+}

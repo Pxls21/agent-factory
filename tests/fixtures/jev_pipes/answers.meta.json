@@ -1,0 +1,17 @@
+{
+ "captured_at": "2026-09-25T05:59:59Z",
+ "fixture_sha256_with_dir_placeholder": "7edef864b7228c4b0875f3f0bad908cad31e8cdb66e326fdf555e13e9c40646a",
+ "harness_mode": "unbudgeted",
+ "harness_rc": 0,
+ "health": {
+  "device": "cpu",
+  "revision": "1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "snapshot": "/root/hf-laya-probe/hub/models--convaiinnovations--laya/snapshots/1c5edc17a7acd8701df6fc341c0d179f1c62c982",
+  "subfolder": "typed-decisions"
+ },
+ "requests": 9,
+ "scorer": "http://127.0.0.1:47411",
+ "statuses": [
+  200
+ ]
+}

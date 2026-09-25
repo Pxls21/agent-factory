@@ -145,6 +145,13 @@ advisory_tooling:
     role: advisory_code_intel_instrument_ranked_symbol_map_and_call_graph
     adopted: "2026-09-07 (owner ask; advisory, never a gate; binary only — bundled skills/hooks NOT installed)"
     telemetry: "no phone-home found (strings + --help audit: no telemetry/analytics subcommands, no outbound URLs beyond localhost/docs; the binary is documented offline — writes a per-root cache under TMPDIR only)"
+  jev-pruner:
+    repository: https://github.com/tamaratran/jev-pruner
+    commit: 47d017c34eab7690b95f075ce6f4839247c5dc0a
+    license: MIT
+    vendored_at: "vendor/jev-pruner/ (PROVENANCE.md: copied from the commit object; dist/ built with TypeScript 5.9.3; ONE local change, the minTokensFloor option)"
+    role: advisory_tool_output_pruner_replayed_by_scripts_jev_pipes_never_a_gate
+    adopted: "2026-09-25 (owner-recommended plugin fast-jev-output, installed 2026-09-22; vendored for the P1 replay, task #231, D-087)"
 
 # Advisory model — the Laya typed-decisions checkpoint (J1-4, task #121). ADVISORY forever: never a term in any gate, lint,
 # commit, push or proof (seeds/seed-laya-j1-v1.yaml; scripts/no_laya_in_gates.py). Every value below is the one J0 measured

@@ -1,0 +1,1 @@
+{"version":3,"file":"context.d.ts","sourceRoot":"","sources":["../../src/codex/context.ts"],"names":[],"mappings":"AAMA,wBAAgB,WAAW,CAAC,SAAS,EAAE,MAAM,EAAE,IAAI,SAAY,GAAG,MAAM,CAGvE;AAED,wBAAsB,WAAW,CAAC,KAAK,EAAE,OAAO,EAAE,IAAI,SAAY,GAAG,OAAO,CAAC,IAAI,CAAC,CAYjF;AAED,wBAAsB,cAAc,CAAC,SAAS,EAAE,MAAM,EAAE,IAAI,SAAY,GAAG,OAAO,CAAC,MAAM,CAAC,CAKzF"}

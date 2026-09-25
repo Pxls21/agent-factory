@@ -31,7 +31,11 @@ coverage/
 secrets/
 data/
 runtime/
-vendor/
+vendor/*
+# the vendored jev-pruner is committed source, dist/ included (P1, task #231; vendor/jev-pruner/PROVENANCE.md). `vendor/*`, not
+# `vendor/`: git cannot re-include a child of an excluded directory
+!vendor/jev-pruner/
+!vendor/jev-pruner/dist/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
