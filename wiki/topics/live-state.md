@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 08:3xZ — WHAT IS LIVE NOW (supersedes the 07:5xZ block for the live set).**
+- **P1 MEASURED FAIL (task #231 closed):** the vendored jev-pruner replayed on 3,153 large Bash results pruned nothing. Three causes: 2,351 are documents the pruner never cuts; the Laya scorer never saw the chunk (the server's fan-out adds it after the history and Laya keeps 1,024 tokens, AF-AP-208; fix task #265 held until the verify); the CPU scorer is slow and the pruner's requests queue. The hook stays unwired; the seed says the next pipeline takes the slot. Harvest pushed (origin e8c14bf).
+- **RUNNING (sandbox), three agents:** VERIFY-P1 (task #260: the FAIL's causes and the replay instrument's PASS path); SESSION-EXPORT-R1 (task #252, the scrubber repair); SBS1 (task #262, the side-by-side GPU window job). Their files are in `.lanes-live`.
+- **Redesign signal from P1:** document-class outputs need a present step (repeat collapse, excerpt plus pointer; no model needed), and a chunk scorer must see the chunk first and answer fast (the RWKV reader on the GPU, whose side-by-side window waits on SBS1).
+- **Unchanged:** vllm-rwkv parked (AF-AP-207); the session export NOT-READY until the repair's re-verify; PC idle (vLLM `qwen` active, no lanes).
+
 **2026-09-25 07:5xZ — WHAT IS LIVE NOW (supersedes the 05:0xZ block for the live set).**
 - **RUNNING (sandbox), three agents:** the P1 pruner build lane (task #231, brief `tasks/briefs/jev-pipes/P1-brief.md`); SESSION-EXPORT-R1, the one D-031 repair of the scrubber (task #252, brief `tasks/briefs/jev-laya/SESSION-EXPORT-R1-brief.md`: the escaped-credential blocker F-1, the key-dump F-4, cheap named shapes, AMENDMENT 3); SBS1, the side-by-side GPU window job (task #262, brief `tasks/briefs/jev-pipes/SBS1-brief.md`). Their files are in `.lanes-live`.
 - **SESSION-EXPORT NOT-READY (F-1):** a double-quoted credential survived once JSON-escaped; the PC copy was DELETED; re-ship after the repair's narrow re-verify.
