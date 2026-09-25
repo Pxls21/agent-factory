@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 18:2xZ — WHAT IS LIVE NOW (supersedes the 18:1xZ block for the live set).**
+- **RUNNING (sandbox, three agents, the ceiling):** S1-L1-R1 (task #277): the hook repair; SCRUB1 (task #280): glued keys and a value gate in the scrubber; L2a (task #284): the code-map cache.
+- **RUNNING (PC):** the first `slopo_review.sh --sync` (slow: slopo walks the whole PC clone before excluding; task #285); a folder count in `/tmp/pc-tree-count.txt`.
+- **Landed and pushed (c0d01e7, transcripts cac6fe6):** INSTALL1 (slopo on both venues; the PC half installed, its index slow), L5, AF-AP-223 to 225. The transcript digests are value-checked after each push until SCRUB1 lands (0 secret hits so far).
+- **Next:** L2b (the hook injects from the cache) after S1-L1-R1 and L2a; the held skill bakes after S1-L1-R1.
+- **Owner decisions open:** the 356 vendored library skills; the codebase-memory hook (recommended: L2 plus an upstream report); S0-04's two leak detectors (a fix re-mints the signed proof).
 **2026-09-25 18:1xZ — WHAT IS LIVE NOW (supersedes the 17:4xZ block for the live set).**
 - **RUNNING (sandbox, one agent):** S1-L1-R1 (task #277): the one repair of the situation-to-skill hook.
 - **Landed (local, pushing behind CI run #1085):** INSTALL1 (task #274, sandbox half): slopo installed, pinned and tuned (a full embed about 3x faster, the same 18 clusters), the review wrapper, the post-commit sync, the session-start smoke table (32 found, 0 missing); L5 (task #276): `scripts/chat_find.py` (error strings 3 of 3 at rank 1; descriptions weak: 0 of 5 in the top 10).
