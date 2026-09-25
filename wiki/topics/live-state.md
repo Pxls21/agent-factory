@@ -14,7 +14,7 @@ last_compiled: 2026-09-03
 **2026-09-25 03:5xZ — WHAT IS LIVE NOW (supersedes the 02:3xZ block for the live set).**
 - **The container restarted at about 03:4xZ.** It stopped SESSION-EXPORT, VERIFY-DSV2 and the QJ2 watch; their files, transcripts and VERIFY-DSV2's worktree survived.
 - **LIVE:** the QJ2 PC lane (task #241; its examples_binary J2 run done, the baseline run writing); dispatcher re-attached with `MAX_POLLS=960`. Do not stop or restart vLLM while it runs.
-- **RUNNING (sandbox):** VERIFY-DSV2 (resumed from its transcript); the council on the System 1 program (task #256; brief `docs/research/prompts/COUNCIL-JEV-2026-09-25.md`; panel Karpathy 1.5x, Kahneman, Meadows, Taleb, Munger, Torvalds; restate gate, then three rounds and an opus Chairman). An Ouroboros interview follows the verdict (owner ask).
+- **RUNNING (sandbox):** VERIFY-DSV2 (resumed from its transcript); JEV-FIT, the design audit that replaced the council at the owner's word at 04:0xZ (task #256; `tasks/briefs/jev-laya/JEV-FIT-brief.md`): three auditors read the real code of (A) the coordinator session, (B) the build machinery and (C) the agent factory, and each designs where Jevs fit (seam, question, action, payoff, labels, the rule to beat). The coordinator synthesizes one integration plan; the owner's interview follows.
 - **HELD:** SESSION-EXPORT (task #252) until the council reports; its partial files stay in the tree (`.lanes-live`).
 - **NEXT:** council Round 1; the VERIFY-DSV2 harvest; the QJ2 harvest. **PC:** QJ2 only; qwen active.
 

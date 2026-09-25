@@ -160,6 +160,13 @@ subordinate to, the Anthropic docs.
    the lanes, or name in the second brief that its landing regenerates the first artifact in the same commit (AF-AP-56's
    class). Gate each lane in a clean worktree holding only its own files.
 
+0k. **The brief's headline question uses the owner's verb (2026-09-25, AF-AP-203).** The owner asked for a council to find how
+   best to fit Jevs into the setup; the brief asked whether the program should go ahead, and six members graded past
+   experiments. An evaluative question (should, whether, is it worth) draws verdicts; a design ask (where, how, fit, map)
+   needs a design question, with the member's deliverable named (the seam, the mechanism, the payoff, how to test it) and
+   past results given as background, not as the thing to judge. Quote the owner's words in the brief and check the
+   headline against them before dispatch.
+
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
    derive the how — that is what the reasoning is for. Enumerate steps ONLY where ordering is
