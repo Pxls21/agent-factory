@@ -144,7 +144,8 @@
      "a manual analyze run without `--skip-agents-md`.)*"
     ],
     "**push_clean REWRITES the unpushed range",
-    "**`push_clean.sh --lanes-live` counts TRACKED dirty files only**"
+    "**`push_clean.sh --lanes-live` counts TRACKED dirty files only**",
+    "**push_when_green picks `--no-delegates-live` when the live lanes hold no tracked change**"
    ],
    "source": "CLAUDE.md:348 env-tool-quirks: 'a push'"
   },
@@ -214,7 +215,8 @@
    "heading": "Test gates and pasted counts",
    "command": "proof-runner\\b|validate-ledger\\b|ledger-gen\\b",
    "lines": [
-    "**ATTESTED INPUTS (AF-AP-56"
+    "**ATTESTED INPUTS (AF-AP-56",
+    "**The Laya dataset manifests are attested inputs too:**"
    ],
    "source": "CLAUDE.md:348 env-tool-quirks: 'a proof regeneration'"
   },
@@ -242,7 +244,8 @@
    "command": "pytest\\b|test_summary\\.sh\\b|lane_gate\\.sh\\b|pc_suite\\.sh\\b|relaunch-suite\\.sh\\b",
    "command_any": "test_vendored_manifest",
    "lines": [
-    "**`tests/test_vendored_manifest.py` copies the vendored inputs"
+    "**`tests/test_vendored_manifest.py` copies the vendored inputs",
+    "**To run the whole `tests/test_vendored_manifest.py` on this disk, run one test at a time:**"
    ],
    "source": "CLAUDE.md:348 env-tool-quirks: 'a test gate' (the suite that fills the disk)"
   },

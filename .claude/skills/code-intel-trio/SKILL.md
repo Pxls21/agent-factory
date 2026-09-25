@@ -222,7 +222,8 @@ here.
   callers_of` / `tests_for` / `impact --files`); re-index after each landed increment so the map
   never lags the tree.
 - **Advisory instruments (NEVER gates; owner decision 2026-09-05):** slopo (semantic duplicates,
-  `slopo review --base <push-base>`) and **sentrux** (architecture health: `scripts/sentrux_review.sh
+  `scripts/slopo_review.sh <push-base>`, which runs `slopo index` and `slopo embed` first because a bare `slopo review` refuses a
+  stale index; installed and pinned by INSTALL1, 2026-09-25) and **sentrux** (architecture health: `scripts/sentrux_review.sh
   save` BEFORE a build lane, `compare` after it, `check` any time; rules in `.sentrux/rules.toml`;
   pinned by digest in `upstream.lock.yaml`; provenance `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`
   §sentrux). **ripwire** (owner ask 2026-09-07, adopted as the SIXTH advisory instrument): ranked symbol map + static call
