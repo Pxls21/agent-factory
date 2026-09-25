@@ -175,7 +175,13 @@ subordinate to, the Anthropic docs.
    missed it. Before a brief, seed or question ships: (a) grep the decision log's OWNER rows for the topic's words and read
    each; (b) never ask a question a ruling already answers; (c) a design brief lists its domain's installed tools, plugins and
    servers first (`/root/.claude/settings.json` enabledPlugins, `/root/jev-plugins/`, the repo's scripts) and names the
-   owner-recommended ones as the starting point.
+   owner-recommended ones as the starting point. (a) is one command: `python3 scripts/owner_rulings.py <topic words>` (`--all`
+   for every word), the owner rows newest first.
+0m. **A lane boundary is a closed list (2026-09-25, the P1 lane).** The P1 brief let the lane change "whatever the vendored-root
+   registration requires"; it changed `.gitignore`, `scripts/vendored_manifest.py`, its two tests and `sandbox-kit/VENDORED-FROM.md`,
+   none of them in `.lanes-live`, so `push_clean --lanes-live` refused twice (as designed). Measure what the open phrase touches at
+   authoring and list every path as MODIFY, or have the lane name each extra path in its report before it edits one, and add it to
+   `.lanes-live` the same minute.
 
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model

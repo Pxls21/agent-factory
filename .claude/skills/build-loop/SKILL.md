@@ -33,7 +33,7 @@ never the final gate verdict.
 > unbound reference into a launch-killer). Prove with the cheapest whole-artifact gate
 > (`bash -n` + a DRY_RUN invocation), never by reading alone.
 
-1. **Verify every seam BEFORE writing code that calls it — and for any seam AROUND a vendored library, run the `vendor-first` pass FIRST** (grep the vendored tree + introspect the live object for an existing mechanism before designing a new one; AP-28, the in_outputs incident 2026-08-22). Read the actual
+1. **Verify every seam BEFORE writing code that calls it — and for any seam AROUND a vendored library, run the `vendor-first` pass FIRST** (grep the vendored tree + introspect the live object for an existing mechanism before designing a new one; AP-28, the in_outputs incident 2026-08-22). **Build an upstream the way its own CI builds it, after running each pinned dependency's hardware gate for the target (2026-09-25, AF-AP-207):** vllm-rwkv's docs said "CUDA only", and its full Docker image was built twice for the SM86 3090 before its CI job (the `rwkv` build profile) led to the real floor: FlashRWKV's build gate refuses below SM90. Read the CI job first, grep each pinned dependency's setup for arch and capability checks, and run the gate function itself on the target's capability. Read the actual
    signature/regex/contract in the repo — never code from memory or a doc (memory-written code has
    been silently dead; the real contract differed). Doc vs code disagree → code wins, doc gets
    fixed. **MEASURING THE INPUTS IS NOT VERIFYING THE CONTRACT THAT CONSUMES THEM, and a test
