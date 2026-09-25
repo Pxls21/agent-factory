@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 22:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** S0-04-LEAK-R1 (task #287), the repair round for the verify's five findings (F1, F1b, F3, F10, F13) before the owner re-signs `accepted/S0-04`; S1-ALL (task #296), the prompt path of the situation hook over every skill (413 skills, 219 real prompts in its replay); VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber (fixture secret sources only).
+- **Queued push:** `push_when_green.sh` waits on CI run #1091 (a8b9787), then pushes the local range (VERIFY-S0-04-LEAK harvest, the CI wait change, the VERIFY-SCRUB1 brief).
+- **Next:** at the R1 landing, `ledger-gen` in-tree and the F4 test fix (an explicit expected-pending set in `tests/test_proof_status.py`), then the owner's re-sign command; #295 dispatches after S1-ALL lands (draft in the scratchpad: `hook_context.py` stamps each injection with an id and a score request; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`); #297 (Laya ranks) after scores accumulate.
+- **Task DB:** active tasks only (#287, #289, #295, #296, #297, #301); the backlog stays open in the ledger.
+
 **2026-09-25 21:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** VERIFY-S0-04-LEAK (task #287), the independent pass before the owner re-signs `accepted/S0-04`; S1-ALL (task #296), the prompt path of the situation hook over every skill, sections verbatim (it moves the live hook in with one `mv`; kill switch `.jev/system1-off`).
 - **Proven today:** SLOPO2 on the PC: `--compare` same 117 files, same order (slopo 792 s, walker 0.02 s); the PC sync 10 s (was 1,389 s). Task #285 closed.
