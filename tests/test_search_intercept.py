@@ -164,7 +164,9 @@ def test_a_literal_token_grep_passes(tmp_path):
 def test_a_simple_rg_bash_command_is_answered(tmp_path):
     r = run(bash("rg -n our_hooks scripts | head -20"), tmp_path / "st")
     assert r.returncode == 2 and "this Bash rg command was answered here" in lines(err(r))[0]
-    assert "scripts/install_session_hooks.py:%d:" % line_of("kept += our_hooks(root)") in err(r)
+    # the definition line, not an implementation line: S1-L1-R1 rewrote the body and this local-only test (CI has no
+    # graft) read a line that was gone for four hours (2026-09-25)
+    assert "scripts/install_session_hooks.py:%d:" % line_of("def our_hooks(") in err(r)
 
 
 @pytest.mark.parametrize("command", [
