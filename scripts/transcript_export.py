@@ -9,13 +9,20 @@ rule as scripts/chat_tail.py --export), each turn capped, one file per UTC day, 
 full each run (idempotent). Scrubbing is STRUCTURAL and tested: every class in SECRET_PATTERNS is
 replaced before a byte reaches disk, and tests/test_transcript_export.py plants one of each and
 asserts none survives. Never widen what is exported without extending the scrubber test.
+The shapes cannot prove a digest holds no secret, so a VALUE gate stands behind them (AF-AP-224):
+before any file is written, the scrubbed text is checked for the values of the known secrets
+(KNOWN_VALUE_SOURCES, counted as scripts/known_values_check.py counts them); on a hit nothing is
+written.
 
 Usage: transcript_export.py [--transcript <jsonl>] [--out transcripts/sandbox] [--cap 4000]
 Default transcript: the newest *.jsonl under /root/.claude/projects/-home-user/.
-Exit 0 = wrote/refreshed files (prints them), 3 = no transcript found.
+Exit 0 = wrote/refreshed files (prints them), 3 = no transcript found, 4 = refused by the value
+gate (a known secret value in the scrubbed text, or a known source present but unreadable):
+nothing written, and stderr names each source and its counts, never a value.
 """
 import argparse
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -70,11 +77,14 @@ SECRET_PATTERNS = [
     # a bridge link, which their rules take (a token that ate `Bearer` or `https` freed what followed: AF-AP-157)
     (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9._\-]{8})(?:(?!" + _BEARER + r"|" + _LINK + r")[A-Za-z0-9._\-])+"),
      r"\1<redacted>"),
-    # provider-shaped keys
-    (re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b"), "sk-<redacted>"),
-    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "gh<redacted>"),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "AIza<redacted>"),
-    (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"), "xox-<redacted>"),
+    # provider-shaped keys. The left anchor is `(?<![A-Za-z0-9])`, not `\b` (AF-AP-224): `\b` wants a non-word character
+    # before the key, so a key glued to an `_` (`mcp__srv__sk-...`, `my_sk-...`) passed whole. An `_` now separates; a
+    # letter or a digit still does not. SCRUB1 measured no left anchor at all on this session's transcripts: 17,692 more
+    # redactions, all but 6 of them ordinary words (`<task-notification>` first), and no known secret among them.
+    (re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{12,}\b"), "sk-<redacted>"),
+    (re.compile(r"(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "gh<redacted>"),
+    (re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{30,}\b"), "AIza<redacted>"),
+    (re.compile(r"(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9\-]{10,}\b"), "xox-<redacted>"),
     # ephemeral bridge links (the token often rides in the URL's session)
     (re.compile(r"https?://[a-z0-9\-]+\.trycloudflare\.com[^\s)\"']*", re.I), "https://<bridge-link-redacted>"),
     # long opaque tokens (32+ url-safe chars) — coarse, deliberately
@@ -217,20 +227,91 @@ def turns(path):
             yield t, e.get("timestamp", "?"), txt
 
 
-def export(transcript: str, out: str, cap: int) -> list:
-    os.makedirs(out, exist_ok=True)
+# THE VALUE GATE (AF-AP-224, task #280). The rules above know secret SHAPES, and a secret in a shape they lack passes them.
+# Before export() writes a byte, it counts the VALUES of the known secrets in the scrubbed text, as
+# scripts/known_values_check.py counts them (a value whole, a URL's host, each 8-byte window of a token-like value, a raw
+# key's printed forms), and refuses on any hit with the source's name and the counts, never a value. The sources are named
+# here and only here: (kind, where, keys that hold no secret). A hostname is not a secret: TYPESAFE_BASE_URL is a public
+# base URL, so its value and its host are skipped.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+KNOWN_VALUE_SOURCES = (
+    ("env-file", os.path.normpath(os.path.join(_HERE, os.pardir, ".pc-bridge.env")), ()),
+    ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)),
+    ("raw-file", "/root/.config/session-export/pseudonym.key", ()),
+    ("env", "GH_TOKEN", ()),
+    ("env", "GITHUB_TOKEN", ()),
+)
+
+
+class KnownValueRefusal(Exception):
+    """The value gate refused; args[0] is the list of lines to print (source names and counts only)."""
+
+
+def known_values(sources=KNOWN_VALUE_SOURCES):
+    """[(label, form, value, its 8-byte windows or [])] of every source present. known_values_check.py is loaded by path
+    here, not at import: the scrubber's importers need only the rules, and some load this file with no scripts/ on
+    sys.path. A missing source (no file, an unset or short variable, no value of 8+ characters) is skipped with one line
+    on stderr; a source that is present but cannot be read raises KnownValueRefusal (the gate fails closed)."""
+    spec = importlib.util.spec_from_file_location("transcript_export_known_values",
+                                                  os.path.join(_HERE, "known_values_check.py"))
+    kv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(kv)
+    out = []
+    for kind, where, skip in sources:
+        name = "env:" + where if kind == "env" else os.path.basename(where)
+        try:
+            if kind == "env":        # the variable is where the secret lives (known_values_check --env), not a setting
+                v = os.environ.get(where, "").encode()
+                forms = [(name, f, b, w) for f, b, w in kv._forms(where, v)] if len(v) >= kv.MIN_VALUE else []
+            elif not os.path.exists(where):
+                forms = []
+            elif kind == "env-file":
+                forms = [("%s:%s" % (name, k), f, b, w) for k, v in kv._env_values(where, set(skip))
+                         for f, b, w in kv._forms(k, v)]
+            else:                    # raw-file
+                with open(where, "rb") as fh:
+                    data = fh.read()
+                forms = [(name + ":raw", f, b, w) for f, b, w in kv._raw_forms(data)] if len(data) >= kv.MIN_VALUE else []
+        except OSError as e:
+            raise KnownValueRefusal(["value gate: cannot read the source %s (%s)" % (name, type(e).__name__)])
+        if not forms:
+            print("transcript_export: value gate: source %s missing or empty, skipped" % (
+                  name if kind == "env" else where), file=sys.stderr)
+        out += [(label, f, b, kv._windows(b) if w else []) for label, f, b, w in forms]
+    return out
+
+
+def value_hits(datas, values):
+    """['<label> <form> whole=N windows=H/T'] for each known value found in the byte strings `datas` (whole, and by the
+    distinct 8-byte windows seen: known_values_check.py's count and its line)."""
+    hits = []
+    for label, form, b, wins in values:
+        whole = sum(d.count(b) for d in datas)
+        seen = sum(1 for w in wins if any(w in d for d in datas))
+        if whole or seen:
+            hits.append("%s %s whole=%d windows=%d/%d" % (label, form, whole, seen, len(wins)))
+    return hits
+
+
+def export(transcript: str, out: str, cap: int, sources=KNOWN_VALUE_SOURCES) -> list:
     days = {}
     for role, ts, txt in turns(transcript):
         day = ts[:10] if ts != "?" else "undated"
         # Scrub, THEN cap (AF-AP-127): a cap first cuts a secret that straddles it below its
         # pattern's minimum length (or cuts a key block's END line off), and the stub survives.
         days.setdefault(day, []).append(f"## {role} @ {ts}\n\n{scrub(txt)[:cap]}\n")
+    files = [(os.path.join(out, f"chat-{day}.md"),
+              (f"# Conversation {day} (scrubbed digest, {len(days[day])} turns)\n\n" + "\n".join(days[day])).encode())
+             for day in sorted(days)]
+    # The value gate runs on the exact bytes to be written, before the first write (the out directory included).
+    hits = value_hits([data for _, data in files], known_values(sources))
+    if hits:
+        raise KnownValueRefusal(hits)
+    os.makedirs(out, exist_ok=True)
     written = []
-    for day in sorted(days):
-        p = os.path.join(out, f"chat-{day}.md")
-        body = f"# Conversation {day} (scrubbed digest, {len(days[day])} turns)\n\n" + "\n".join(days[day])
-        with open(p, "w") as fh:
-            fh.write(body)
+    for p, data in files:
+        with open(p, "wb") as fh:
+            fh.write(data)
         written.append(p)
     return written
 
@@ -248,7 +329,13 @@ def main() -> int:
     if not path or not os.path.isfile(path):
         print("transcript_export: no transcript found", file=sys.stderr)
         return 3
-    for p in export(path, a.out, a.cap):
+    try:
+        written = export(path, a.out, a.cap)
+    except KnownValueRefusal as e:
+        for line in e.args[0]:
+            print("transcript_export: REFUSED, nothing written: " + line, file=sys.stderr)
+        return 4
+    for p in written:
         print(p)
     return 0
 

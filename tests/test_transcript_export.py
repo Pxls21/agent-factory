@@ -3,9 +3,12 @@ control per class), user/assistant text survives (positive control), noise turns
 output is deterministic and idempotent. Synthetic JSONL only — never the live transcript."""
 import importlib.util
 import json
+import os
 import pathlib
+import re
 import subprocess
 import sys
+from secrets import token_bytes, token_hex
 
 import pytest
 
@@ -657,3 +660,203 @@ def test_run_shapes_are_the_rules_own_shapes():
     opaque = [p for p, r in MOD.SECRET_PATTERNS if r == MOD.OPAQUE_MARK]
     assert len(shapes) == 3 and shapes[0] is opaque[0] and shapes[1] is MOD._KEY_RUN
     assert shapes[2].pattern + "" == MOD._TOKEN_LINE.pattern.split("(", 3)[3].split(")")[0]
+
+
+# SCRUB1 (task #280, AF-AP-224): the four provider-key rules were anchored on `\b`, which wants a non-word character before
+# the key, so a key glued to a preceding `_` passed whole. The anchor is now `(?<![A-Za-z0-9])`. Every key here is fake and
+# built at run time; each context keeps the key's run under the opaque rule's 40 characters, so only its rule can take it.
+def _fake_keys():
+    t = token_hex
+    return {"sk": ["sk-" + t(12), "sk-proj-" + t(8)], "gh": [p + "_" + t(12) for p in ("ghp", "gho", "ghu", "ghs", "ghr")],
+            "AIza": ["AIza" + t(15)], "xox": ["xox%s-%s" % (c, t(6)) for c in "abprs"]}
+
+
+MARK = {"sk": "sk-<redacted>", "gh": "gh<redacted>", "AIza": "AIza<redacted>", "xox": "xox-<redacted>"}
+CONTEXTS = (("standalone", "{k}"), ("after =", "ZQ={k}"), ("after a double quote", '"{k}"'), ("after a quote", "'{k}'"),
+            ("after _", "zq_{k}"), ("after __", "zq__{k}"), ("in a URL query", "https://api.zq.example/v1?q={k}&x=1"),
+            ("in a URL path", "https://api.zq.example/v1/{k}/x"), ("at a line start", "first line\n{k} rest"),
+            ("at a line end", "first {k}\nnext line"))
+GLUED = ("after _", "after __")
+# The PIN's four rules (03ca747:scripts/transcript_export.py:74-77), for the negative controls below.
+PIN_RULES = (r"\bsk-[A-Za-z0-9_\-]{12,}\b", r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b", r"\bAIza[0-9A-Za-z_\-]{30,}\b",
+             r"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b")
+
+
+def _misses(scrub_fn):
+    """[(rule, context)] where a key's random tail survives scrub_fn, or the output is not the context with the key
+    replaced by its rule's marker (the text around the key stays)."""
+    out = set()
+    for rule, keys in _fake_keys().items():
+        for key in keys:
+            for name, ctx in CONTEXTS:
+                got = scrub_fn(ctx.format(k=key))
+                if key[-12:] in got or got != ctx.format(k=MARK[rule]):
+                    out.add((rule, name))
+    return sorted(out)
+
+
+def _scrub_with(rules):
+    """MOD's scrub with its four provider rules replaced by `rules` (in the order of MARK)."""
+    marks = list(MARK.values())
+    pats = [(re.compile(rules[marks.index(r)]), r) if r in marks else (p, r) for p, r in MOD.SECRET_PATTERNS]
+    assert sum(r in marks for _, r in pats) == 4
+
+    def run(text):
+        for p, r in pats:
+            text = p.sub(r, text)
+        return text
+    return run
+
+
+def test_every_provider_rule_takes_its_key_in_every_context():
+    assert _misses(SCRUB) == []
+    assert _misses(getattr(MOD, "scrub_payload")) == []          # session_export's scrubber runs the same rules
+
+
+def test_the_context_test_reds_on_the_pin_rules_exactly_at_the_glued_contexts():
+    # negative control: the PIN's `\b` rules miss every rule's key after `_` and `__`, and nothing else
+    assert _misses(_scrub_with(PIN_RULES)) == sorted((rule, g) for rule in MARK for g in GLUED)
+
+
+# A letter before the prefix is not a separator: `task-` is the word a letter anchor would take 17,258 times in this
+# session's transcripts (the `<task-notification>` tag, SCRUB1's measurement). The brief's five words first.
+ORDINARY = ("task-notification-center", "the risk-register-entries list", "disk-usage-report-weekly",
+            "skip-validation-checks-now", "ghost_protocol_engaged_now_x", "<task-notification>",
+            "subtask-breakdown-for-stage0", "desk-assignment-roster-q3", "flask-application-factory",
+            "laughs_AtTheMoonAndStarsTogether")
+
+
+def test_ordinary_words_are_not_redacted():
+    assert [t for t in ORDINARY if SCRUB(t) != t] == []
+
+
+def test_the_ordinary_words_red_on_rules_that_take_a_letter_before_the_key():
+    # negative control: with no left anchor (a key glued to a letter matched too) every word that holds a prefix is taken
+    wide = _scrub_with(tuple(r[2:] for r in PIN_RULES))
+    assert [t for t in ORDINARY if wide(t) == t] == ["skip-validation-checks-now", "ghost_protocol_engaged_now_x"]
+
+
+def test_glued_keys_never_reach_disk(tmp_path):
+    # the outward path: every fake key glued after `_` and `__`, one turn each, through the real CLI
+    keys = [k for ks in _fake_keys().values() for k in ks]
+    jsonl = tmp_path / "glued.jsonl"
+    jsonl.write_text("".join(_entry("user", "tool mcp__zq__%s and zq_%s" % (k, k), "2026-09-25T18:%02d:00Z" % i) + "\n"
+                             for i, k in enumerate(keys)))
+    r = _run(jsonl, tmp_path / "out")
+    assert r.returncode == 0, r.stderr
+    blob = (tmp_path / "out" / "chat-2026-09-25.md").read_text()
+    assert [k[:4] for k in keys if k[-12:] in blob] == []
+    assert blob.count("mcp__zq__") == blob.count("zq_") - blob.count("mcp__zq__") == len(keys)
+
+
+# SCRUB1 contract item 2: the value gate. A fixture source holds a fake value built at run time: 32 hex characters, a shape
+# no rule takes (no name, under the opaque rule's 40), so only the gate can stop it. Output: source names and counts only.
+def _fake_value():
+    return "7" + token_hex(16)[1:]                         # a digit, so its 8-byte windows count (known_values)
+
+
+def _turns(tmp_path, *texts):
+    """A transcript of one user turn per text, one day each (2026-09-21, 2026-09-22, ...)."""
+    jsonl = tmp_path / "gate.jsonl"
+    jsonl.write_text("".join(_entry("user", t, "2026-09-%02dT18:00:00Z" % (21 + i)) + "\n" for i, t in enumerate(texts)))
+    return str(jsonl)
+
+
+def _no_piece(value, text):
+    return not any(value[i:i + 8] in text for i in range(len(value) - 7))
+
+
+def test_the_value_gate_refuses_a_known_value_and_writes_nothing(tmp_path):
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    src, out = (("env-file", str(env), ()),), tmp_path / "out"
+    with pytest.raises(MOD.KnownValueRefusal) as e:           # the first day is clean, the second holds the value
+        MOD.export(_turns(tmp_path, "a clean day", "the value is %s here" % fake), str(out), 4000, sources=src)
+    assert e.value.args[0] == ["zq.env:ZQ_FAKE_TOKEN value whole=1 windows=25/25"]
+    assert not out.exists() and _no_piece(fake, repr(e.value.args))     # no file, no directory, no piece of the value
+    # positive control: the same days and source without the value are written
+    written = MOD.export(_turns(tmp_path, "a clean day", "the value is not here"), str(out), 4000, sources=src)
+    assert [pathlib.Path(p).name for p in written] == ["chat-2026-09-21.md", "chat-2026-09-22.md"]
+    assert "the value is not here" in (out / "chat-2026-09-22.md").read_text()
+
+
+def test_the_value_gate_reads_the_scrubbed_text(tmp_path):
+    # a known value that a named rule takes never reaches the digest, so it does not block it (the gate reads what is written)
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    out = tmp_path / "out"
+    MOD.export(_turns(tmp_path, "the bridge token=%s set" % fake), str(out), 4000, sources=(("env-file", str(env), ()),))
+    assert (out / "chat-2026-09-21.md").read_text().endswith("the bridge token=<redacted> set\n")
+
+
+def test_the_value_gate_counts_a_cut_copy_by_its_windows(tmp_path):
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, "a cut copy %s ends" % fake[:12]), str(tmp_path / "out"), 4000,
+                   sources=(("env-file", str(env), ()),))
+    assert e.value.args[0] == ["zq.env:ZQ_FAKE_TOKEN value whole=0 windows=5/25"]
+
+
+def test_the_value_gate_reads_a_variable_and_a_raw_key_file(tmp_path, monkeypatch):
+    fake = _fake_value()
+    raw = bytes(0xA0 | b & 0x0F for b in token_bytes(12))   # every byte's hex holds a letter: hex and HEX differ
+    (tmp_path / "zq.key").write_bytes(raw)
+    monkeypatch.setenv("ZQ_FAKE_GATE_VAR", fake)
+    src = (("env", "ZQ_FAKE_GATE_VAR", ()), ("raw-file", str(tmp_path / "zq.key"), ()))
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, "var %s and key %s" % (fake, raw.hex())), str(tmp_path / "out"), 4000, sources=src)
+    assert e.value.args[0] == ["env:ZQ_FAKE_GATE_VAR value whole=1 windows=25/25", "zq.key:raw hex whole=1 windows=17/17"]
+
+
+def test_the_value_gate_skips_a_missing_source_with_one_line(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("ZQ_UNSET_GATE_VAR", raising=False)
+    monkeypatch.setenv("ZQ_SHORT_GATE_VAR", "short")                # under 8 characters: not a secret
+    src = (("env-file", str(tmp_path / "none.env"), ()), ("raw-file", str(tmp_path / "none.key"), ()),
+           ("env", "ZQ_UNSET_GATE_VAR", ()), ("env", "ZQ_SHORT_GATE_VAR", ()))
+    assert len(MOD.export(_turns(tmp_path, "plain text"), str(tmp_path / "out"), 4000, sources=src)) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        "transcript_export: value gate: source %s missing or empty, skipped" % s
+        for s in (tmp_path / "none.env", tmp_path / "none.key", "env:ZQ_UNSET_GATE_VAR", "env:ZQ_SHORT_GATE_VAR")]
+
+
+def test_a_hostname_does_not_block_when_its_key_holds_no_secret(tmp_path):
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_BASE_URL=https://api.zq-fake.example/v1\n")
+    text = "the service at api.zq-fake.example answered"
+    assert len(MOD.export(_turns(tmp_path, text), str(tmp_path / "out"), 4000,
+                          sources=(("env-file", str(env), ("ZQ_BASE_URL",)),))) == 1
+    # negative control: the same source with no skip counts the host
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, text), str(tmp_path / "out2"), 4000, sources=(("env-file", str(env), ()),))
+    assert e.value.args[0] == ["zq.env:ZQ_BASE_URL host whole=1 windows=0/0"]
+    # the production list skips the public base URL whose host the committed digests hold (the premise's one hit)
+    assert ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)) in MOD.KNOWN_VALUE_SOURCES
+
+
+def test_the_value_gate_fails_closed_on_a_source_it_cannot_read(tmp_path):
+    (tmp_path / "zq-dir.env").mkdir()                                # present, and open() fails on it
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, "plain text"), str(tmp_path / "out"), 4000,
+                   sources=(("env-file", str(tmp_path / "zq-dir.env"), ()),))
+    assert e.value.args[0] == ["value gate: cannot read the source zq-dir.env (IsADirectoryError)"]
+    assert not (tmp_path / "out").exists()
+
+
+def test_the_cli_refuses_with_exit_4_and_prints_names_and_counts_only(tmp_path):
+    # the production source list through main(): GH_TOKEN is one of its sources, so a fake value in it is a known value
+    fake = _fake_value()
+    jsonl, out = tmp_path / "cli.jsonl", tmp_path / "out"
+    cmd = [sys.executable, str(TOOL), "--transcript", str(jsonl), "--out", str(out)]
+    jsonl.write_text(_entry("user", "a pasted value %s here" % fake, "2026-09-25T18:00:00Z") + "\n")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=dict(os.environ, GH_TOKEN=fake))
+    assert r.returncode == 4, r.stderr
+    assert "transcript_export: REFUSED, nothing written: env:GH_TOKEN value whole=1 windows=25/25" in r.stderr.splitlines()
+    assert r.stdout == "" and not out.exists() and _no_piece(fake, r.stderr)
+    # positive control: the same variable, and a transcript without the value
+    jsonl.write_text(_entry("user", "nothing pasted here", "2026-09-25T18:00:00Z") + "\n")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=dict(os.environ, GH_TOKEN=fake))
+    assert r.returncode == 0 and r.stdout.strip() == str(out / "chat-2026-09-25.md"), r.stderr
