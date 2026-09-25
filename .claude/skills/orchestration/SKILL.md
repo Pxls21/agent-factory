@@ -133,6 +133,14 @@ subordinate to, the Anthropic docs.
    round); the lane-side catch is the backstop, never the plan. Pair with AF-AP-109: a control
    is verified to discriminate BEFORE it is asked to.
    **0g′ — a LOCATION a brief assigns to new state is checked against that directory's consumers (2026-09-23, E2, AF-AP-124).** The E2 brief put the F23 owner record at `/etc/netns/<ns>/owner`; `ip netns exec` bind-mounts every file in that directory over /etc inside the namespace, so every exec printed `Bind /etc/netns/<ns>/owner -> /etc/owner failed`. Before naming a path for a new file, read who else lists, mounts, sources or deletes that directory, and cite the line.
+0h. **A lane that starts a long-lived process owns it, and the brief says so (2026-09-25, an AF-AP-33 recurrence).** QJ1
+   started its adapter server (`scripts/qwen_jev.py --port 47420`) in the background and then died; the server outlived
+   the lane by about five hours (parent pid 1, a key in memory) and held the port, so the continuation's J2 run would
+   have scored against the dead lane's code. The coordinator's premise measurement (`ss -ltn`) found it. A brief whose
+   lane starts a server or any background job demands four things: refuse a port that is already taken; never treat a
+   listener you did not start as your own (check an identity it reports, such as its revision on `/health`); record the
+   pid; stop it before the report. Until the runner reaps a finished lane's processes (task #248), the brief is the only
+   guard.
 
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
