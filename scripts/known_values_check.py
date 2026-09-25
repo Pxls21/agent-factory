@@ -9,7 +9,9 @@ and counts how often each appears in the targets, whole and in pieces:
     wrapped copy (an `xxd` column, a line-broken paste) still counts;
   - a raw key file's printed forms: hex, base64 and base64url, with and without padding, and their 8-byte windows.
 
-  known_values_check.py [--env-file PATH]... [--raw-file PATH]... [--env NAME]... [--skip KEY]... TARGET...
+  known_values_check.py [--env-file PATH]... [--token-file PATH]... [--raw-file PATH]... [--env NAME]... [--skip KEY]... TARGET...
+
+--token-file PATH: the file's whole content, stripped, is one secret (an API key file).
 
 --skip KEY leaves out an env-file key that holds no secret (a public base URL); the skipped names are printed.
 
@@ -85,6 +87,7 @@ def _targets(paths):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--env-file", action="append", default=[])
+    ap.add_argument("--token-file", action="append", default=[])
     ap.add_argument("--raw-file", action="append", default=[])
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--skip", action="append", default=[])
@@ -102,6 +105,13 @@ def main(argv=None):
                 return 2
             for name, v in vals:
                 secrets += [("%s:%s" % (os.path.basename(p), name), f, b, w) for f, b, w in _forms(name, v)]
+        for p in a.token_file:
+            with open(p, "rb") as fh:
+                v = fh.read().strip()
+            if len(v) < MIN_VALUE:
+                print("known-values: %s holds fewer than %d characters" % (p, MIN_VALUE), file=sys.stderr)
+                return 2
+            secrets += [("%s:token" % os.path.basename(p), f, b, w) for f, b, w in _forms("token", v)]
         for p in a.raw_file:
             with open(p, "rb") as fh:
                 data = fh.read()

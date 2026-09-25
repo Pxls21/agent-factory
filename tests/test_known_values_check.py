@@ -107,3 +107,16 @@ def test_a_skipped_key_is_left_out_and_named(tmp_path):
     rc, out = run(["--env-file", str(env), "--skip", "PC_BRIDGE_URL", str(target)])
     assert rc == 0 and "PC_BRIDGE_URL" not in out.replace("skipped keys PC_BRIDGE_URL", "")
     assert "known-values: skipped keys PC_BRIDGE_URL" in out
+
+
+def test_a_token_file_is_one_secret(tmp_path):
+    token = fake("keyfile")
+    kf = tmp_path / "api-key"
+    kf.write_text(token + "\n")
+    target = tmp_path / "t.txt"
+    target.write_text("Authorization: Bearer %s\n" % token[:20])
+    rc, out = run(["--token-file", str(kf), str(target)])
+    assert rc == 3 and "api-key:token value whole=0 windows=13/" in out
+    short = tmp_path / "short"
+    short.write_text("abc\n")
+    assert run(["--token-file", str(short), str(target)])[0] == 2
