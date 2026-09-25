@@ -12,6 +12,34 @@
 set -euo pipefail
 
 BRANCH="${PUSH_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+# THE PUSH LOCK (AF-AP-216, 2026-09-25): push_when_green.sh's first real run pushed while the coordinator committed. The
+# commit landed on the branch during the inner push from the detached worktree, so the follow step below found the trees
+# unequal and left the ref unfollowed ("reconcile by hand"). This run holds a lock from here to its exit, in both modes:
+# the file `git rev-parse --git-path push-in-flight` of the repository it was started in, holding this run's pid. A lock
+# whose pid runs refuses this run (rc 5; the lock is left as it is). A lock whose pid does not run is stale: it is
+# replaced, and one line names the dead pid. scripts/safe_commit.sh waits while the lock is held, and
+# scripts/hooks/pre-commit refuses a raw commit. PUSH_IN_FLIGHT_PID, exported below, lets this run's own commit (the
+# transcript sync) through that hook. The inner run of --lanes-live takes its worktree's own lock (git-path is per
+# worktree, measured), never this one; a subshell does not run this EXIT trap (measured), so the lock outlives it.
+LOCK="$(git rev-parse --path-format=absolute --git-path push-in-flight)"
+release_lock() {
+  trap '' INT TERM
+  [ "$(cat "$LOCK" 2>/dev/null)" != "$$" ] || rm -f "$LOCK"
+}
+echo "$$" > "$LOCK.$$"
+if ! ln "$LOCK.$$" "$LOCK" 2>/dev/null; then   # ln is atomic: two runs cannot both create the lock
+  HOLDER="$(cat "$LOCK" 2>/dev/null || true)"
+  if [ -n "$HOLDER" ] && [ "$HOLDER" != "$$" ] && kill -0 "$HOLDER" 2>/dev/null; then
+    rm -f "$LOCK.$$"
+    echo "REFUSED: another push_clean (pid $HOLDER) holds the push lock $LOCK; wait for it to end." >&2
+    exit 5
+  fi
+  mv -f "$LOCK.$$" "$LOCK"
+  echo "push_clean: a stale push lock (pid ${HOLDER:-unreadable}, not running) was replaced." >&2
+fi
+rm -f "$LOCK.$$"
+trap release_lock EXIT
+export PUSH_IN_FLIGHT_PID=$$
 # --lanes-live (2026-09-06): sandbox build lanes edit the SHARED tree for hours, so a clean-tree push never comes.
 # The reviewed commits never contain their files (safe_commit stages named paths only); what blocks the push is
 # filter-branch refusing a dirty worktree. In this mode the dirty set must be EXACTLY a subset of the paths declared
@@ -113,7 +141,9 @@ back() {
   git update-ref -m "push_clean: not pushed; back on the pre-rewrite commits" HEAD "$HEAD_BEFORE" "$HEAD_AFTER" ||
     echo "push_clean: WARNING: the branch could not be put back on $HEAD_BEFORE (it moved, or its ref is locked)" >&2
 }
-trap back EXIT
+# The branch is put back first, then the push lock released: the lock guards that restore too. `|| true`: a failure
+# inside back must not skip the release (under set -e a failing trap command ends the shell at once, measured).
+trap 'back || true; release_lock' EXIT
 git rev-list --reverse "$RANGE" > "$OLD_IDS"
 TREE_BEFORE=$(git rev-parse 'HEAD^{tree}')
 git filter-branch -f \

@@ -94,11 +94,11 @@ Facts read for the design (verified by reading, this session):
     under `if filled:` (scripts/anchor_edit.py:84).
   - `plan()` and the all-or-nothing path are unchanged.
 - `scripts/safe_commit.sh` (MODIFY): the new block applies only when the message holds a token:
-  `case "$MSG" in` (scripts/safe_commit.sh:17).
-  - It runs stamp.sh once, `DS=$(bash "$(dirname "$0")/stamp.sh")` (scripts/safe_commit.sh:19).
-  - A format check refuses with rc 1 and `nothing staged` (scripts/safe_commit.sh:20-21).
-  - It fills `{DATESTAMP}`, then fills `{STAMP}` with the time part of the same stamp (scripts/safe_commit.sh:22-23).
-  - It prints one line, `stamp tokens filled from the clock` (scripts/safe_commit.sh:24).
+  `case "$MSG" in` (scripts/safe_commit.sh@2f825ca:17).
+  - It runs stamp.sh once, `DS=$(bash "$(dirname "$0")/stamp.sh")` (scripts/safe_commit.sh@2f825ca:19).
+  - A format check refuses with rc 1 and `nothing staged` (scripts/safe_commit.sh@2f825ca:20-21).
+  - It fills `{DATESTAMP}`, then fills `{STAMP}` with the time part of the same stamp (scripts/safe_commit.sh@2f825ca:22-23).
+  - It prints one line, `stamp tokens filled from the clock` (scripts/safe_commit.sh@2f825ca:24).
   - The block runs before the staged-index guard and before `git add`, so a refusal leaves the index as it was.
   - A message without a token never runs stamp.sh, so a broken stamp.sh cannot stop an ordinary commit (test pinned).
 
@@ -409,3 +409,293 @@ Files for the coordinator's commit (my boundary only; the other modified files i
 `scripts/stamp.sh` `scripts/anchor_edit.py` `scripts/safe_commit.sh` `scripts/stamp_fill.py`
 `scripts/push_when_green.sh` `tests/test_anchor_edit.py` `tests/test_stamp_sh.py` `tests/test_stamp_fill.py`
 `tests/test_safe_commit.py` `tests/test_push_when_green.py` `tasks/briefs/jev-pipes/T268-269-report.md`
+
+## Amendment 1: the push lock (AF-AP-216)
+
+**TL;DR: DONE in the sandbox. push_clean.sh holds the lock for its whole run in both modes. safe_commit.sh waits on it
+(bounded) and refuses naming the pid. The pre-commit hook refuses a raw commit while another run holds it; push_clean's
+own transcript commit is exempt through PUSH_IN_FLIGHT_PID. All three files are installed by one rename each, after
+their tests passed on copies. Red first on 2f825ca's files: `13 failed, 11 passed`, with the incident's own WARNING
+line. The gate on the installed files: `423 passed` twice (set `ec1628cb2088`). Mutation audit: 18 of 20 killed; the
+two survivors are declared. Nothing is committed. The gate recommendation is not mine.**
+
+Started 2026-09-25 12:4xZ, finished 2026-09-25 13:2xZ (both from `date -u`). PIN for this amendment: 2f825ca
+(origin). Scratch: `t268/lane/a1/`. No push_clean or ci_gate run for real, no fetch, no push, no git write in this
+repo, no PC bridge.
+
+### A1.1 Premise re-measure (this session, 2026-09-25 12:4xZ)
+
+```
+git show 2f825ca:scripts/push_clean.sh | sha256sum | cut -c1-16   -> 5d1dbd8625c0edd9 (the brief's value)
+working copies vs 2f825ca: push_clean.sh 5d1dbd8625c0edd9 = ; safe_commit.sh 0b9d99b8d0b4388d = ; pre-commit aae4ffb72b680f41 =
+git diff --quiet 2f825ca HEAD -- push_clean.sh safe_commit.sh hooks/pre-commit   -> rc 0
+git diff --quiet HEAD -- (same three)                                             -> rc 0
+live push processes in this VM (ps snapshot to a file): none at the measurement; no .git/push-in-flight existed
+```
+
+The coordinator wrote that a background push was running. None was visible in this VM's process table, which does
+show the whole session (one claude process, the other lanes' pytest runs, kernel threads). I followed the ordering
+rule anyway, and checked for a live push and a lock file right before each install.
+
+Seams measured before the design (probes in scratch, not the repo):
+- `git rev-parse --path-format=absolute --git-path push-in-flight` gives `<repo>/.git/push-in-flight` in the main tree
+  and in a subdirectory. In a linked worktree it gives `<repo>/.git/worktrees/<name>/push-in-flight`. So the inner
+  push of `--lanes-live`, run in its detached worktree, takes a different file from the outer run's lock.
+- A `( ... )` subshell and a `$( ... )` substitution do not run the parent's EXIT trap (the trap ran once, in the main
+  shell), although the subshell's `$$` equals the parent's. So the lock cannot be released before the follow step.
+- bash 5.2.21 runs an EXIT trap on SIGTERM (rc 143) and SIGHUP (rc 129). A signal that arrives while a foreground
+  child runs is handled when the child returns. SIGKILL cannot be trapped: the lock then names a dead pid, which is
+  stale by the contract.
+- Under `set -e`, a failing command inside the first function of an EXIT trap exits the shell at once. The second
+  command never runs, and the rc became 1. Hence `trap 'back || true; release_lock' EXIT`.
+- The real pre-commit hook runs all its gates in a throwaway repo once its four gate scripts are linked in and a
+  one-comment `scripts/gate_files.txt` is committed. The whole hook took 0.25 s there. The commit-msg hook's checker
+  took 0.035 s, and push_clean's `git status` before its worktree took 0.013-0.016 s.
+
+### A1.2 What was built (installed files and lines)
+
+- `scripts/push_clean.sh` (MODIFY): the lock is taken right after `BRANCH` is set, so it covers both modes.
+  - `LOCK=` comes from `--path-format=absolute --git-path push-in-flight` (scripts/push_clean.sh:24).
+  - `release_lock` (scripts/push_clean.sh:25) opens with `trap '' INT TERM`, AF-AP-145's shape. It removes the lock
+    only while the lock still names this run.
+  - Taking it: `echo "$$" > "$LOCK.$$"`, then an atomic link (scripts/push_clean.sh:29-30).
+  - A holder that runs, `kill -0 "$HOLDER"` (scripts/push_clean.sh:32), refuses the run and leaves the lock as it is:
+    `exit 5` (scripts/push_clean.sh:35).
+  - A holder that does not run is stale: `mv -f` replaces it (scripts/push_clean.sh:37), and one stderr line names
+    the dead pid.
+  - Then `trap release_lock EXIT` (scripts/push_clean.sh:41).
+  - Then `export PUSH_IN_FLIGHT_PID=$$` (scripts/push_clean.sh:42).
+  - The no-delegates-live path's trap is now `back || true; release_lock` (scripts/push_clean.sh:146): the branch
+    restore first, then the release.
+- `scripts/safe_commit.sh` (MODIFY): the wait comes after the argument checks, before the stamp fill and before
+  anything is staged.
+  - The bound: `SAFE_COMMIT_LOCK_WAIT`, default 600 (scripts/safe_commit.sh:24). A value that is not whole seconds
+    refuses with rc 1: `SAFE_COMMIT_LOCK_WAIT takes whole seconds` (scripts/safe_commit.sh:25).
+  - The loop reads the lock: `while HOLDER=` (scripts/safe_commit.sh:27).
+  - It prints one line: `waiting up to` (scripts/safe_commit.sh:31).
+  - After the bound it refuses: `still holds the push lock` (scripts/safe_commit.sh:34), `exit 5`.
+- `scripts/hooks/pre-commit` (MODIFY): the LAST gate, after the never-a-gate screen and before the final `exit 0`.
+  - It reads `_PLOCK=` (scripts/hooks/pre-commit:165) and `_PHOLDER=` (scripts/hooks/pre-commit:166).
+  - It refuses with `COMMIT BLOCKED: a push is in flight` (scripts/hooks/pre-commit:168) when the holder runs and is
+    not the commit's own `PUSH_IN_FLIGHT_PID`.
+
+**The exemption mechanism (the contract asks to name it): `PUSH_IN_FLIGHT_PID`.**
+- push_clean exports its own pid under that name right after it takes the lock. Every child inherits it, including
+  the `git commit` of its transcript-digest sync and the pre-commit hook that commit runs.
+- The hook passes a commit whose `PUSH_IN_FLIGHT_PID` equals the lock's pid.
+- A raw commit from any other shell carries no such value and is refused while the holder runs.
+- safe_commit reads the same value, so a commit made under push_clean never waits on its own run.
+
+**Stale locks (the contract: say what you do with it).**
+- push_clean REPLACES a lock whose pid does not run, with `mv -f` of its own temp file. It prints `push_clean: a stale
+  push lock (pid N, not running) was replaced.`
+- safe_commit and the hook only READ the lock. A stale lock does not block them, and they leave it for push_clean to
+  replace: a reader that removed it could race a new holder.
+
+Diff stat of the three files against HEAD (verbatim):
+```
+ scripts/hooks/pre-commit | 14 ++++++++++++++
+ scripts/push_clean.sh    | 32 +++++++++++++++++++++++++++++++-
+ scripts/safe_commit.sh   | 22 ++++++++++++++++++++++
+ 3 files changed, 67 insertions(+), 1 deletion(-)
+```
+
+### A1.3 Tests: red first on 2f825ca's files, then green
+
+New file: `tests/test_push_clean_lock.py`, 24 tests.
+- The scripts under test are copied into a throwaway repo with a bare origin and COMMITTED, because the inner run of
+  `--lanes-live` executes the worktree's committed copies.
+- A fake `scripts/ci_gate.py` holds the inner push at the gate until the test releases it.
+- The real `stale_ids.py` rides along.
+- The real pre-commit hook is linked into the repo's `core.hooksPath`, with its four gate scripts linked in.
+- Every git call drops the `GIT_*` variables and turns the global and system config off.
+
+The headline test is `test_a_commit_during_the_inner_push_waits_and_lands_on_the_pushed_tip`. With the lock:
+1. the commit made during the inner push waits;
+2. it lands after the push, on the pushed tip;
+3. the ref follows;
+4. the main lock names the OUTER run while the inner run pushes.
+
+RED on 2f825ca's files. The scratch copy `a1/red` is `git archive 2f825ca scripts tests pyproject.toml
+.claude/hooks/edit-snapshot.py` plus the new test; the three files were byte-compared equal to the repo's:
+```
+pytest-exit: 1
+pytest-summary: 13 failed, 11 passed in 10.53s
+```
+- The headline test fails on the AF-AP-216 symptom itself, the incident's own line in push_clean's output:
+  `WARNING: origin/feat tree differs from the branch tree after the push — ref NOT moved; reconcile by hand.`
+- The raw-commit test fails the same way. The placement test fails with ValueError: the PIN's hook has no lock gate.
+- The 11 that pass on the PIN are regression guards, green by design:
+  - the transcript-sync exemption;
+  - the release on four refusals, and "a run never removes a lock it does not hold" (the PIN never writes a lock);
+  - safe_commit's no-wait cases and the empty wait value;
+  - the hook's two allowed cases.
+
+GREEN on the dev copies (`a1/green`): `pytest-summary: 24 passed in 12.69s`. The same file on the INSTALLED files:
+`24 passed in 12.29s`.
+
+The first green run had two red tests, both test artifacts, fixed in the test:
+- The signal test sent TERM while the fake gate ran. bash handles it only when the child returns, so the test now
+  releases the gate after signalling.
+- The waits-then-commits test used a `sleep` child as the holder. It stayed an unreaped zombie, and `kill -0`
+  succeeds on a zombie. The holder now removes its lock as it ends, as push_clean does (see A1.6, item 3).
+
+Mutation audit (scratch copies only, `a1/mutate_a1.py`): **18 killed of 20, 0 void.**
+- push_clean: P1 takes no lock; P2 treats a stale lock as live; P3 ignores a live lock; P4 no release on the
+  no-delegates-live path; P5 no PUSH_IN_FLIGHT_PID export; P6 the release removes a lock it does not hold; P7 the lock
+  taken only without --lanes-live.
+- safe_commit: S1 no wait; S2 no bound (killed by the test's own 60 s timeout); S3 the wait after staging; S4 no
+  own-run exemption; S5 a stale lock treated as live; S6 any wait value accepted.
+- The hook: H1 no lock check; H2 no exemption; H3 any named pid exempt; H4 a stale lock treated as live; H5 the gate
+  placed first again.
+- SURVIVED, expected and declared:
+  - P8, `back; release_lock` without `|| true`: back never fails in a test. The guard is backed by the `set -e`
+    measurement in A1.1.
+  - P9, the release BEFORE the branch restore: the window it opens cannot be driven without a seam. The order is
+    verified by reading.
+
+### A1.4 Install record (the ORDERING rule)
+
+The consumers went in before the producer: the hook, then safe_commit.sh, then push_clean.sh, then the test file.
+Until push_clean writes a lock, the two consumers find none and change nothing. Each install:
+1. check that the repo file still held the expected bytes;
+2. make one rename(2);
+3. check that the inode was kept, and `cmp` it against the dev copy;
+4. re-run its tests on the INSTALLED file (tree `a1/inst`: the dev tests with `scripts/` entries linked to the
+   repo's installed files).
+
+Before the push_clean install, a probe script (whose own command line cannot match) found no push_clean or
+push_when_green process and no lock file.
+```
+installed scripts/hooks/pre-commit: aae4ffb72b680f41 -> 3cf555d6faec2008, mode 755, inode 2615861 kept (one rename)   -> 4 passed
+installed scripts/safe_commit.sh: 0b9d99b8d0b4388d -> fd347806db90c8b5, mode 755, inode 2615862 kept (one rename)     -> 8 passed
+installed scripts/push_clean.sh: 5d1dbd8625c0edd9 -> e75dc227675dcb67, mode 755, inode 2615864 kept (one rename)      -> 23 passed
+installed tests/test_push_clean_lock.py: absent -> da6a456a129680fc, mode 644, inode 2615865 kept (one rename)
+installed scripts/hooks/pre-commit: 3cf555d6faec2008 -> 3b1f0d8e6f55c596, mode 755, inode 2615880 kept (one rename)   (the gate moved last)
+installed tests/test_push_clean_lock.py: da6a456a129680fc -> adab73cc8c6954d5, mode 644, inode 2615861 kept (one rename) -> 24 passed
+```
+
+The hook was installed twice. The first version put the gate FIRST. The window measurement in A1.1 then showed that
+every other gate (0.25 s) ran between that check and git's ref update. The second version runs the gate LAST (about
+0.04 s left: the commit-msg hook and git's writes), and `test_the_lock_gate_is_the_hooks_last_gate` pins the place.
+
+### A1.5 Gates on the installed files (verbatim)
+
+```
+$ bash scripts/pc_suite.sh set-id -- tests/test_anchor_edit.py tests/test_stamp_check.py tests/test_ci_gate.py tests/test_stamp_sh.py tests/test_stamp_fill.py tests/test_safe_commit.py tests/test_push_when_green.py tests/test_push_clean_lock.py tests/test_stale_ids.py tests/test_hooks_worktree.py tests/test_shell_syntax.py tests/test_no_laya_in_gates.py
+12 files set=ec1628cb2088
+== run 1 13:23:02Z ==
+pytest-exit: 0
+pytest-summary: 423 passed in 58.21s
+== run 2 13:24:01Z ==
+pytest-exit: 0
+pytest-summary: 423 passed in 57.96s
+```
+(Before the hook moved, the same set read `422 passed in 59.59s` and `422 passed in 63.98s`.)
+
+The AP-screen suite, a neighbour that models push_clean's trap shape (`1 files set=3d4383148bd3`): `193 passed in
+0.16s`.
+
+Static checks:
+- pyflakes `tests/test_push_clean_lock.py`: rc 0.
+- `bash -n` on the three installed shell files: rc 0.
+- The U+2028/U+2029 byte check: 0 on the four files and this report.
+- `python3 scripts/no_laya_in_gates.py` over the real tree, on disk: `no_laya_in_gates: 41 files scanned, clean`.
+  All three changed files are listed gate files.
+- `python3 scripts/report_lint.py` on this report with `--min-refs 40`, one round: `76 refs — OK 76, NEAR 0, MISS 0,
+  UNCHECKABLE 0, UNRESOLVED 0 (worktree)`, rc 0. The T268 section's safe_commit.sh refs now cite 2f825ca, the
+  revision they describe (`@2f825ca:NN`).
+- `python3 scripts/ap_screen.py` on the three: 5 AF-AP-175 hits, the same 5 pre-existing lines as at the PIN (four in
+  push_clean, one in the hook), none on a new line. No AF-AP-145 hit: `release_lock` opens with the ignore.
+
+bug-echo (by hand, read-only). The multi-step writers of a branch ref in `scripts/`, `harness-ports/` and
+`.claude/hooks/` are push_clean's follow `git update-ref` (scripts/push_clean.sh:72), back's compare-and-swap
+`update-ref` (scripts/push_clean.sh:141) and `filter-branch` (scripts/push_clean.sh:149). All three now run under the
+lock. `git merge --ff-only` (scripts/resume-heal.sh:10) runs after a fetch; it is a single ref step that fails loudly
+when a commit lands in between. No echo outside push_clean. The registry row AF-AP-216 exists (OPEN in
+docs/INCIDENT-LOG.md); its status is the coordinator's. I propose no mechanical screen line: the class is a missing
+exclusion, not a greppable token.
+
+### A1.6 NOT-done (first-class)
+
+1. No live run. push_clean.sh and push_when_green.sh were not run against the real origin (the brief forbids it). The
+   lock's first real use is the coordinator's next push.
+2. Two orders are verified by reading only (mutants P8 and P9 survive): the `|| true` before the release, and the
+   release after the branch restore.
+3. A zombie holder. `kill -0` succeeds on an exited process that is not yet reaped. Suppose push_clean is killed by
+   SIGKILL (so no EXIT trap runs) and its parent never reaps it. Then its lock reads as live: safe_commit waits its
+   bound (600 s) and refuses naming the pid, and the hook refuses raw commits. A normal exit, or a trapped signal
+   (tested for TERM), removes the lock before the process ends. Remedy: remove the named lock file by hand.
+4. Pid reuse. A stale lock whose pid is later reused by an unrelated live process also reads as live, with the same
+   symptom and remedy as item 3. The lock holds the pid only (the contract); a start-time check would close this.
+5. Two push_clean runs that find the SAME stale lock in the same instant can both proceed. The stale replacement is
+   `mv -f`, which a second replacer can race. A fresh lock is atomic through `ln`.
+6. A residual window, narrowed, not closed. Suppose a commit passes the hook's last gate just before push_clean takes
+   the lock. It can still update the branch after push_clean read HEAD.
+   - The window is the commit-msg hook plus git's writes, about 0.04 s measured. With the gate first it was about 0.29
+     s.
+   - It matters only under `--lanes-live`, whose first HEAD read (`git worktree add ... HEAD`) comes tens of
+     milliseconds after the lock. Under `--no-delegates-live`, HEAD is read after the fetch, so such a commit is
+     already in the range and is simply pushed.
+   - Outcome if hit: the same fail-closed WARNING as before, never a lost commit.
+   - Two ways to close it, NOT built: a short settle wait in push_clean after taking the lock, or a commit-in-flight
+     marker that push_clean waits on. Both go beyond the contract.
+7. A commit made in a LINKED worktree is not held back: git-path is per worktree, so that worktree reads its own
+   (absent) lock. A linked worktree cannot have the pushed branch checked out, so its commit cannot move that ref.
+8. The docs (CLAUDE.md, push_when_green.sh's header) do not mention the lock. The coordinator documents it after
+   harvest. push_when_green.sh passes push_clean's rc 5 through unchanged, so it needed no edit.
+
+### A1.7 DISCREPANCIES and deviations
+
+- A1-DEV-1: rc 5. It is the code for "another push_clean holds the lock" (push_clean) and for "the lock never
+  cleared" (safe_commit). The contract names no code. I chose one distinct from every code both scripts already use,
+  following the rc 5 that scripts/gpu_window.sh gives for a held lock.
+- A1-DEV-2: `SAFE_COMMIT_LOCK_WAIT` (seconds, default 600) is a new knob. The contract asks for "a bounded wait" with
+  no number. The CI wait of push_when_green happens BEFORE push_clean takes the lock, so the lock covers only
+  push_clean's own run.
+- A1-DEV-3 (beyond the contract's letter, in boundary): safe_commit honors `PUSH_IN_FLIGHT_PID` like the hook, so a
+  commit made under push_clean cannot wait on its own run. S4 kills the mutant without it.
+- A1-DEV-4: the wait comes BEFORE the stamp fill, so a filled stamp names the commit's moment, not the wait's start.
+- A1-DEV-5: the hook's lock gate is the LAST gate, for the window in A1.6 item 6. The first install put it first;
+  the second fixed that (A1.4).
+- A1-DEV-6 (a measured fact, not fixed): a signal sent to push_clean while a foreground child runs (the gate,
+  filter-branch, the push) is handled when that child returns. The EXIT trap then runs and the lock is released, but
+  not at once.
+- A1-DEV-7: the lock also guards push_clean's own per-read HEAD lines, which the AF-AP-175 screen flags
+  (`HEAD_BEFORE` and three later reads: scripts/push_clean.sh:127, :148, :153, :154). A commit through safe_commit or
+  through the hook can no longer land
+  between them. A hand-run `git update-ref` or `git reset` still can.
+
+### A1.8 Self-attack: the three most likely ways the amendment is wrong
+
+1. **The lock races the commit it guards (check-then-act).** safe_commit checks, then stages and commits, and
+   push_clean can take the lock in between. Ruled out as a silent failure: the hook checks again inside `git commit`,
+   so a live holder that is not the committer refuses (H1 killed). What remains is the window in A1.6 item 6, now
+   about 0.04 s. It is declared and bounded by measurement, not by a test.
+2. **The inner `--lanes-live` run sees the outer lock and refuses, or the lock is released early.** Ruled out by
+   measurement and by test:
+   - git-path is per worktree, so the inner run takes `.git/worktrees/<name>/push-in-flight`;
+   - a subshell runs no EXIT trap (measured);
+   - the headline test asserts that the main lock names the OUTER pid while the inner run pushes, and that the push
+     completes (P7 killed).
+3. **The lock leaks and blocks the coordinator for good.** Ruled out for every exit the tests can drive: four
+   refusals, a success, the transcript sync and a SIGTERM each leave no lock (P4 killed). The release removes only its
+   own lock (P6 killed), and a stale lock never blocks (P2, S5, H4 killed). The residuals are SIGKILL with a
+   non-reaping parent, and pid reuse (A1.6 items 3-4). Both come with a named remedy.
+
+### A1.9 Evidence tiers
+
+- **Verified (this session):**
+  - the premise, and the five seam probes;
+  - red `13 failed, 11 passed` on 2f825ca's files, with the incident's own WARNING line;
+  - green `24 passed` on the copies and on the installed files;
+  - the audit: 18 of 20 killed;
+  - each install's kept inode and its tests on the installed file;
+  - the gate: `423 passed` twice (set `ec1628cb2088`); the AP-screen suite `193 passed`;
+  - the screens, and the bug-echo sweep.
+- **Inferred:**
+  - that the window left after the moved gate is about 0.04 s on the real tree (measured in parts: the commit-msg
+    checker, and `git status` on the real tree);
+  - that 600 s bounds a real push's lock time.
+- **Assumed:** that the coordinator's pushes and commits run in one process namespace, which the pid check needs. This
+  lane and the session share one VM namespace, measured.

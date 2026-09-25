@@ -154,4 +154,18 @@ if [ "$RC" != "0" ]; then
   echo "COMMIT BLOCKED by the never-a-gate screen (rc=$RC)" >&2
   exit 1
 fi
+# PUSH LOCK (AF-AP-216, 2026-09-25): scripts/push_clean.sh holds the file `git rev-parse --git-path push-in-flight` (its
+# pid) for its whole run, and a commit that lands while it pushes from its detached worktree leaves the branch
+# unfollowed. This gate refuses a commit while that pid runs, unless the commit is push_clean's own: push_clean exports
+# PUSH_IN_FLIGHT_PID=<its pid> to its children (its transcript-digest sync commits under it), and a commit whose
+# PUSH_IN_FLIGHT_PID names the lock's pid passes. A lock whose pid does not run is stale and does not block. It runs
+# LAST: between it and git's ref update only the commit-msg hook runs (its checker took 0.035 s, measured), where the
+# gates above took 0.25 s more. No bypass: scripts/safe_commit.sh waits for the push by itself, and a raw git commit is
+# retried after it.
+_PLOCK="$(git rev-parse --path-format=absolute --git-path push-in-flight 2>/dev/null)"
+_PHOLDER="$(cat "$_PLOCK" 2>/dev/null)"
+if [ -n "$_PHOLDER" ] && [ "$_PHOLDER" != "${PUSH_IN_FLIGHT_PID:-}" ] && kill -0 "$_PHOLDER" 2>/dev/null; then
+  echo "COMMIT BLOCKED: a push is in flight (scripts/push_clean.sh, pid $_PHOLDER; lock $_PLOCK) — commit after it ends (scripts/safe_commit.sh waits for it)." >&2
+  exit 1
+fi
 exit 0
