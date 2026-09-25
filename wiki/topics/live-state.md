@@ -13,7 +13,7 @@ last_compiled: 2026-09-03
 
 **2026-09-25 09:1xZ — WHAT IS LIVE NOW (supersedes the 09:0xZ block for the live set).**
 - **The GPU window is CLOSED** (09:12:56Z; qwen back in 75 s). Side by side works at Qwen 0.90 beside the RWKV reader at 1,024-token chunks (Qwen keeps 169,622 KV tokens, -24%); at 0.88 with 4,096-token chunks Qwen's engine died of OOM (contained). Findings `docs/research/findings/jev-pipes/SIDE-BY-SIDE-2026-09-25.md`. No permanent change proposed until the reader has a job. Task #262 closed.
-- **VERIFY-P1 returned:** the P1 FAIL is confirmed; the replay instrument overcounts a persisted output's saving (AF-AP-211). The one repair, P1-R1 (task #267), is being dispatched as a sandbox build lane.
+- **VERIFY-P1 returned:** the P1 FAIL is confirmed; the replay instrument overcounts a persisted output's saving (AF-AP-211). The one repair, P1-R1 (task #267), runs as a sandbox build lane (brief `tasks/briefs/jev-pipes/P1-R1-brief.md`). The results batch and the CLAUDE.md Write-tool stamp note are committed locally; the push waits on CI run #1070.
 - **RUNNING (sandbox):** SESSION-EXPORT-R1 (task #252) and P1-R1 (task #267). Their files are in `.lanes-live`.
 - **Unchanged:** vllm-rwkv parked; the session export NOT-READY until the repair's re-verify; the Laya fan-out fix (task #265) waits; PC idle, vLLM `qwen` active, no lanes.
 
