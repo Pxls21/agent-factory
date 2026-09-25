@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 12:1xZ — WHAT IS LIVE NOW (supersedes the 11:3xZ block for the live set).**
+- **RUNNING (sandbox, two agents):** the session-export verifier's narrow re-verify (task #252); K265 on its contract rev 2 (task #265): the Laya server serves the TRAINING shape (`{"query", "chunk"}`, chunk last) fitted by one function shared with the dataset builder, the chunk never cut, a fit refusal answers 422 and `jev.py` stops there. Rev 1 (chunk first) broke the train/serve lock in `tests/test_laya_ft.py`; the lane found it.
+- **Landed, GATED-PENDING-VERIFY:** T268-269 (tasks #268, #269): stamp tokens filled by `safe_commit.sh`, `anchor_edit.py`, `stamp_fill.py`; `push_when_green.sh` (its first real run is the current push). A verify lane follows when a slot frees.
+- **The real export waits** on AF-AP-213 (one fake canary in one lane transcript) and on the verifier.
+
 **2026-09-25 11:3xZ — WHAT IS LIVE NOW (supersedes the 11:1xZ block for the live set).**
 - **RUNNING (sandbox, three agents, the D-062 ceiling):** the session-export verifier's narrow re-verify (task #252); K265, the Laya fan-out fix (task #265, AF-AP-208: the chunk first, a fit check by Laya's own builder; the live server keeps the old code until the verify round, then the coordinator restarts it); T268-269 (tasks #268, #269: clock stamps filled by the commit tools, a push that waits for green CI).
 - **The real export waits** on AF-AP-213: one fake `orphan` test canary in one lane transcript (1 of 324 files, counts only) stops the gate (rc 3). The fix (the real run replaces the exporter's own canaries with a marker) is a follow-up with its own verify.
