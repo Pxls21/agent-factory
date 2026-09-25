@@ -62,6 +62,13 @@ with `cd /home/user/agent-factory` (or absolute paths).
 **push_when_green picks `--no-delegates-live` when the live lanes hold no tracked change**, and the pre-push manifest check then runs in the shared tree, where it hashes ignored output under `.claude/` (`.claude/fast-jev-output/`) and blocks the push (2026-09-25, the push of 9db6ac6): set that folder aside for the push, or push with `--lanes-live` once a lane has a tracked change (the check then runs in a clean worktree); task #273 ends it.
 **`cmd | grep -q` under `set -o pipefail` reports failure when the check passed, if `cmd` writes again after the match** (AF-AP-225: grep exits at the match, the writer dies of SIGPIPE, rc 141; INSTALL1's `slopo --version | grep -qx` made setup.sh delete and rebuild a good venv, 2026-09-25): capture the output in a variable and compare it; a one-line writer (`echo`, `head -1`, one short `printf`) is safe.
 **slopo 0.6.0 walks its whole `source_dir` before it excludes anything** (`slopo/indexing/scanner.py` `scan_directory`: `rglob("*")`, then a pathspec match per file), so a clone that holds big untracked trees makes every index slow: the PC clone's first index ran over 8 minutes where the whole sandbox sync took 130 s (2026-09-25); task #285 prunes the walk in our launcher, never in slopo's source.
+**Claude Code's skill list has a character budget** (D-092, 2026-09-25): context x 4 x `skillListingBudgetFraction`
+(default 0.01, about 30,000 characters here); past it, skills with recent use keep their descriptions and the rest (ties
+in alphabetical order) are bare names. It is 0.07 in the settings `scripts/install_session_hooks.py` writes (488 of 488
+described, 172,800 characters). A SKILL.md whose frontmatter is not valid YAML (an unquoted `: ` in the description) is
+listed with no description whatever the budget; `tests/test_skill_frontmatter.py` guards it. To measure what a subagent
+received: `python3 docs/research/findings/system1-context/inventory.py listing --listing-from <agent>.jsonl --listing-out
+<file.json>` (it prints names, described and chars; without `--listing-out` it crashes).
 
 ## Test gates and pasted counts
 
