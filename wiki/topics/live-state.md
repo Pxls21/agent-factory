@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 20:4xZ — WHAT IS LIVE NOW (supersedes the 20:2xZ block for the live set).**
+- **RUNNING (sandbox, two agents):** SLOPO2 (task #285), the pruning launcher for slopo; S0-04-LEAK (task #287), S0-04's leak screens and the re-mint for the owner's re-sign.
+- **D-092 DONE:** every skill stays and is listed with its description (488 of 488 on an Opus subagent, was 69; `skillListingBudgetFraction` 0.07, written by `install_session_hooks.py`); the two project skills whose labels did not parse are fixed; LIB1 is cancelled.
+- **Next:** S1-RATE (task #295): the agent scores each System-1 injection in a fixed-format line at the top of its next reply, a deterministic extractor pairs the scores with the injection records for a GEPA-style loop; then L2b; an independent verify of SCRUB1 and L2a.
+- **Pushes wait on CI run #1089** (22b34e6); three local commits queue behind it.
+
 **2026-09-25 20:2xZ — WHAT IS LIVE NOW (supersedes the 19:4xZ block for the live set).**
 - **RUNNING (sandbox, two agents):** SLOPO2 (task #285): the pruning launcher for slopo; S0-04-LEAK (task #287): S0-04's leak screens take SCRUB1's anchor, then the re-mint for the owner's re-sign.
 - **ON HOLD BY THE OWNER:** LIB1 (task #288), the library skills move. The owner asked "are you removing skills? Don't do that." Nothing moved: `.claude/skills/` still has 417 entries. Wait for the owner's answer before any dispatch.
