@@ -79,9 +79,12 @@ MAX_EVIDENCE_FILE = 8 * 1024 * 1024
 # still fails and a bearer smuggled into that field fails the shape check.
 LEAK_PATTERNS = (
     ("bearer", re.compile(r"(?i)bearer\s+\S")),
-    ("sk-key", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}")),
+    # Left anchor `(?<![A-Za-z0-9])`, not `\b`: `\b` needs a non-word character first, so a key glued
+    # after `_` (`x_sk-...`) and a name inside `OMNIROUTE_API_KEY=` passed (AF-AP-224). A letter or
+    # digit before still refuses (`task-...`, `nextPageToken`).
+    ("sk-key", re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}")),
     ("key-assignment", re.compile(
-        r"(?i)\b(?:api[_-]?key|apikey|secret|password|passwd|token)\b"
+        r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|apikey|secret|password|passwd|token)\b"
         r"\s*[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_\-.+/]{8,}")),
     ("hex64", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])")),
 )

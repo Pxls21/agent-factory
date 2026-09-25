@@ -43,7 +43,7 @@ CREDENTIAL_HEADERS = frozenset({
 KEY_LINE_RE = re.compile(r"^OMNIROUTE_API_KEY=(.*)$")
 MAX_RECORD_FILE = 8 * 1024 * 1024
 # An exception message must never become the leak the redaction elsewhere prevents.
-LEAK_RE = re.compile(r"(?i)bearer\s+\S|\bsk-[A-Za-z0-9_-]{8,}")
+LEAK_RE = re.compile(r"(?i)bearer\s+\S|(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}")
 
 
 class CaptureError(Exception):

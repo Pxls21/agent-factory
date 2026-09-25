@@ -13,6 +13,7 @@ import base64
 import http.client
 import json
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -224,6 +225,53 @@ def test_a_second_hex64_still_fails(tmp_path):
     code, out = run_checker(b)
     assert code == 1, out
     assert "credential-in-evidence" in out and "hex64" in out, out
+
+
+# AF-AP-224: a rule anchored on `\b` needs a non-word character before the key or the key name, so a key
+# glued after `_` or `__`, and `<PREFIX>_API_KEY=<value>`, passed the screen. Every key and value below is a
+# fake built at run time; the ordinary texts must still pass (a letter before the key refuses).
+def _fake_key():
+    return "sk-" + secrets.token_hex(16)
+
+
+def _with_note(tmp_path, name, key, value):
+    b = bundle(tmp_path, name)
+    path = b / "off" / "request.json"
+    obj = load(path)
+    obj[key] = value
+    store(path, obj)
+    return b
+
+
+@pytest.mark.parametrize("glue", ["x_", "mcp__srv__"])
+def test_a_key_glued_after_an_underscore_fails_the_checker(tmp_path, glue):
+    key = _fake_key()
+    code, out = run_checker(_with_note(tmp_path, "b", "stray_note", glue + key))
+    assert code == 1, out
+    assert out.splitlines() == ["failure_reason: credential-in-evidence: off/request.json matches sk-key"], out
+    assert key[3:] not in out, "the checker echoed the fake key it rejected"
+
+
+@pytest.mark.parametrize("prefix", ["OMNIROUTE", "OPENAI", "HERMES_PROVIDER"])
+def test_a_prefixed_api_key_assignment_fails_the_checker(tmp_path, prefix):
+    value = secrets.token_hex(16)
+    code, out = run_checker(_with_note(tmp_path, "b", "stray_note", f"{prefix}_API_KEY={value}"))
+    assert code == 1, out
+    assert out.splitlines() == ["failure_reason: credential-in-evidence: off/request.json matches key-assignment"], out
+    assert value not in out, "the checker echoed the fake value it rejected"
+
+
+ORDINARY_NOTES = (
+    ("stray_note", "task-{}"), ("stray_note", "risk-{}"), ("stray_note", "disk-{}"),
+    ("x-api-key-id", "{}"), ("stray_note", "/run/secrets/OMNIROUTE_API_KEY_FILE"), ("nextPageToken", "{}"),
+)
+
+
+@pytest.mark.parametrize("key,template", ORDINARY_NOTES)
+def test_ordinary_text_passes_the_checker(tmp_path, key, template):
+    code, out = run_checker(_with_note(tmp_path, "b", key, template.format(secrets.token_hex(16))))
+    assert code == 0, out
+    assert PASS_LINE in out.splitlines(), out
 
 
 def test_mutant_config_header_missing_accepted(tmp_path):
@@ -890,6 +938,25 @@ def test_capture_leg_error_messages_never_echo_a_credential():
     module = _import(CAPTURE, "capture_leg")
     assert module.safe("boom Bearer sk-abcdefghij") == "<message withheld: credential-shaped>"
     assert module.safe("record dir not found: /tmp/x") == "record dir not found: /tmp/x"
+
+
+@pytest.mark.parametrize("glue", ["x_", "mcp__srv__"])
+def test_capture_leg_withholds_a_key_glued_after_an_underscore(tmp_path, glue):
+    """Through the real CLI: the error names a path that holds a glued fake key; main's handler withholds it."""
+    key = _fake_key()
+    proc = subprocess.run([sys.executable, str(CAPTURE), "--max-seq", "--record-dir",
+                           str(tmp_path / "absent" / (glue + key))],
+                          capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert proc.stderr.splitlines() == ["capture_leg: <message withheld: credential-shaped>"], proc.stderr
+    assert key[3:] not in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("key,template", ORDINARY_NOTES)
+def test_capture_leg_passes_ordinary_text_through(key, template):
+    module = _import(CAPTURE, "capture_leg")
+    text = f"{key}: {template.format(secrets.token_hex(16))}"
+    assert module.safe(text) == text
 
 
 def test_runner_is_syntactically_valid():

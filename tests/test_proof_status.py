@@ -474,6 +474,6 @@ def test_committed_tree_anchor_state_is_the_declared_pending_one():
                          capture_output=True, text=True, timeout=30)
     anchor_present = ref.returncode == 0 or (ROOT / "docs" / "governance" / "tags" / "accepted-S0-11.tag").is_file()
     if anchor_present:
-        assert "WARNING" not in completed.stderr
+        assert "WARNING S0-11" not in completed.stderr    # the docstring's intent; another proof may be pending
     else:
         assert "WARNING S0-11: ACCEPTED with the anchor PENDING" in completed.stderr
