@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 20:2xZ — WHAT IS LIVE NOW (supersedes the 19:4xZ block for the live set).**
+- **RUNNING (sandbox, two agents):** SLOPO2 (task #285): the pruning launcher for slopo; S0-04-LEAK (task #287): S0-04's leak screens take SCRUB1's anchor, then the re-mint for the owner's re-sign.
+- **ON HOLD BY THE OWNER:** LIB1 (task #288), the library skills move. The owner asked "are you removing skills? Don't do that." Nothing moved: `.claude/skills/` still has 417 entries. Wait for the owner's answer before any dispatch.
+- **Landed and pushed (origin 22b34e6, transcripts 5eda746):** SCRUB1 (the scrubber anchor and value gate) and L2a (the code-map cache and its post-commit refresh), both GATED-PENDING-VERIFY; the CI fixes for runs #1087 and #1088; the anti-hollow-green and code-intel-trio bakes.
+- **Next:** an independent verify of SCRUB1 and L2a; L2b (the situation hook injects the code-map entry before an Edit, with task #290); the upstream issue texts in `docs/research/findings/system1-context/UPSTREAM-ISSUES.md` for the owner to file.
+
 **2026-09-25 19:4xZ — WHAT IS LIVE NOW (supersedes the 18:2xZ block for the live set).**
 - **RUNNING (sandbox, three agents, the ceiling):** SCRUB1 (task #280): glued keys and a value gate in the scrubber; L2a (task #284): the code-map cache; SLOPO2 (task #285): a launcher that runs slopo with a pruning walker, so the PC index stops walking 18.1M excluded files.
 - **Landed and pushed (origin 37f720a):** S1-L1-R1 (the hook repair; S1-L1 MERGE-READY-WITH-FOLLOWUPS), the held skill bakes, D-091, the CI fix for run #1087 (task #286; the new run on 37f720a decides it), the SLOPO2 brief.
