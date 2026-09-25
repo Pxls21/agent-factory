@@ -37,10 +37,17 @@ Scrubbing (D-2, G6). Every text passes transcript_export.scrub_payload, run to a
 coarse opaque-run rule, whose match becomes `[opaque:<first 12 hex of HMAC-SHA256(key, value)>]` -- a stable, keyed
 pseudonym, so a commit id still joins a push to its CI run. The key is 32 random bytes in KEY_PATH (made once by `init-key`,
 mode 0600, never exported or printed); with no key, a short key or a key others can read, the export refuses. A Read,
-Write or Edit (and MultiEdit, NotebookEdit) whose path names a secret file (SECRET_PATH) keeps its event, but its input and
-its result become DROPPED; so do an attachment and a file change whose file path names one. Any other call whose input
-names one keeps its scrubbed input, and its result (and its file changes and archive) pass transcript_export.scrub_strict;
-so does a result whose call is not in the transcript. Cap (D-3, G3): a Read result, a Write input, a file change and a
+Write or Edit (and MultiEdit, NotebookEdit) whose path names a secret file keeps its event, but its input and its result
+become DROPPED; so do an attachment and a file change whose file path names one. Any other call whose input names the
+pseudonym key keeps its scrubbed input and its result becomes DROPPED (R1 R-2: a dump of the key in any encoding); any other
+call whose input names a secret file keeps its scrubbed input, and its result (and its file changes and archive) pass
+transcript_export.scrub_strict; so does a result whose call is not in the transcript. A text names a secret file when
+SECRET_PATH finds it in the text itself or in another spelling (R-3, F-7; named_secrets): quotes and backslashes removed,
+`/./` and `//` collapsed, a directory and a file named apart, a name only one secret file has, a glob that matches one.
+Committed text (AMENDMENT 3): a run that a file tracked by --repo at --commit (default: this script's repo at HEAD, or the
+commit an --offsets manifest names) holds verbatim is committed text, not a secret: the opaque rule leaves it as it is (no
+pseudonym) and so does the strict pass; the named rules still take it first. The set is built once per export from the
+commit's blobs and named in the manifest. Cap (D-3, G3): a Read result, a Write input, a file change and a
 pruner archive keep their first 98,304 and last 32,768 characters of a text over 131,072; every other event its first
 24,576 and last 8,192 of a text over 32,768; scrubbed first; if the seam forms a secret shape, the cut moves inward and
 `truncated` records what was kept.
@@ -50,20 +57,22 @@ state to pass back, so a file converted in parts gives the same events as one pa
 from 0. Files (D-4, D-5): each source is read to a byte offset fixed before any work (the end of its last complete line),
 or taken from --offsets <manifest> and checked against that manifest's input sha256 (the pruner archives likewise); one
 <src>.xz (lzma, preset 6) per source; manifest.json last. The leak gate (D-6) decompresses every output as a stream and
-counts, per pattern, each match of the extended scrubber's shapes that the scrubber would still change, each test canary
-and the key's printed forms; it prints counts only.
+counts, per pattern, each match of the extended scrubber's shapes that the scrubber would still change (a committed run
+is not one), each test canary and the key's printed forms; it prints counts only.
 
 usage: session_export.py init-key [--key PATH]
        session_export.py export --out DIR [--root DIR] [--offsets MANIFEST] [--jobs N] [--key PATH] [--archive-dir DIR]
-       session_export.py gate DIR [--jobs N] [--key PATH]
+                                [--repo DIR] [--commit REV]
+       session_export.py gate DIR [--jobs N] [--key PATH]      (reads the committed runs of the repo DIR/manifest.json names)
 exit:  0 done and the gate found nothing; 2 bad input (usage, no sources, a used out dir, a missing or loose key, an input or
-       archive changed under its offset); 3 the gate found a secret shape or a canary (the manifest records it;
-       ship_to_pc.py refuses it). Standard library only. It never prints transcript text.
+       archive changed under its offset, a --repo or commit git cannot read); 3 the gate found a secret shape or a canary
+       (the manifest records it; ship_to_pc.py refuses it). Standard library and git only. It never prints transcript text.
 """
 import argparse
 import base64
 import concurrent.futures
 import datetime
+import fnmatch
 import glob
 import hashlib
 import hmac
@@ -72,13 +81,14 @@ import lzma
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from transcript_export import PAYLOAD_PATTERNS, SECRET_PATTERNS, scrub_payload, scrub_strict  # noqa: E402
+from transcript_export import PAYLOAD_PATTERNS, RUN_SHAPES, SECRET_PATTERNS, scrub_payload, scrub_strict  # noqa: E402
 
 PROJECTS = "/root/.claude/projects"
 KEY_PATH = "/root/.config/session-export/pseudonym.key"
@@ -92,6 +102,17 @@ UNSETTLED = "[payload dropped: scrub did not settle]"
 SEAMLESS = "[payload dropped: no clean cut]"
 SECRET_PATH = re.compile(r"\.env(?![A-Za-z0-9_])|qwen-builder/api-key|qwen-jev/omniroute\.key|\.hermes/profiles/"
                          r"|session-export/pseudonym\.key")
+# R1 R-3 (F-7): the secret files by name, for the spellings SECRET_PATH cannot see in the text itself (named_secrets). A
+# path ending in `/` is a directory whose every file is secret. LONE_NAMES: a name no other file has, so it alone names its
+# file (a relative path after a `cd` in another call). KEY_FILE: the pseudonym key, whose calls lose their result (R-2).
+SECRET_FILES = ("qwen-builder/api-key", "qwen-jev/omniroute.key", "session-export/pseudonym.key", ".hermes/profiles/",
+                ".codiv/api.env", ".pc-bridge.env")
+LONE_NAMES = ("omniroute.key", "pseudonym.key")
+KEY_FILE = "session-export/pseudonym.key"
+_UNQUOTE = re.compile(r"[\\\"']")
+_PATH_WORD = re.compile(r"[^\s;|&(){}<>,=:]+")
+_GLOB_PART = re.compile(r"\*|\?|\[[^\]/]*\]")
+_NOT_A_DIR = frozenset(("", "~", ".", "$HOME", "${HOME}"))
 FILE_TOOLS = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
               "NotebookEdit": "notebook_path"}
 PATH_KEYS = frozenset(("filename", "displayPath", "path", "filePath", "file_path"))
@@ -113,7 +134,8 @@ ARCHIVE_NAME = re.compile(r"bash-([A-Za-z][A-Za-z0-9_\-]*)\.txt\Z")   # the prun
 CWD = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
 PSEUDO = re.compile(r"\[opaque:[0-9a-f]{12}\]")
 PATTERN_NAMES = ("private-key", "credential", "bearer", "sk-key", "github-token", "google-key", "slack-token",
-                 "bridge-link", "opaque-run", "bridge-host", "bearer-tail", "basic-auth", "url-password")
+                 "bridge-link", "opaque-run", "bridge-host", "bearer-tail", "basic-auth", "escaped-credential",
+                 "url-password", "bearer-lower", "curl-user", "pass-name", "url-token-user")
 
 
 def _z(tag):
@@ -144,6 +166,14 @@ CANARIES = {
     "sub-followup": _z("sf1"), "journal-gh": "ghp_" + _z("jg1"),
     "api-error-bearer": _z("ab1"), "notice-token": _z("nt1"), "bash-diff-key": _z("dk1"), "bash-diff-env": _z("de1"),
     "long-token": _z("lt1") + _z("lt2"), "archive-token": _z("at1"), "archive-env": _z("ae2"), "pkey-read": _z("pk1"),
+    # SESSION-EXPORT-R1: R-1 escaped credentials, R-2 key dumps, R-3 named shapes and path spellings, AMENDMENT 3
+    "esc-export": _z("xe1"), "esc-body": _z("xb1"), "esc-write": _z("xw1"), "esc-edit": _z("xd1"), "esc-hook": _z("xh1"),
+    "esc-notice": _z("xn1"), "esc-stop": _z("xs1"), "esc-deep": _z("xp1"), "esc-basic": _z("xa1"), "esc-pass": _z("xq1"),
+    "esc-long": _z("xl1") + _z("xl2") + "Qk7m", "key-xxd": _z("kx1"), "key-rel": _z("kr1"), "key-lone": _z("kl1"),
+    "bearer-lower": _z("bl1"), "curl-user": _z("cu1"), "db-pass": _z("dp1"), "url-user": _z("uu1"),
+    "url-at-tail": _z("ut1"), "path-home": _z("ph1"), "path-tilde": _z("pt1"), "path-dot": _z("pd1"),
+    "path-dslash": _z("ps1"), "path-rel": _z("pr1"), "path-quoted": _z("pq1"), "path-glob": _z("pg1"),
+    "path-glob-env": _z("pe1"), "a3-strict": _z("as1"),
 }
 
 
@@ -266,38 +296,87 @@ def key_forms(key):
             "pseudonym-key-b64": base64.b64encode(key).decode(), "pseudonym-key-b64url": base64.urlsafe_b64encode(key).decode()}
 
 
-def pseudonymizer(key):
-    """G6: the opaque-run rule's replacement in this export: a stable pseudonym keyed by HMAC-SHA256."""
-    return lambda m: "[opaque:%s]" % hmac.new(key, m.group(0).encode("utf-8"), hashlib.sha256).hexdigest()[:12]
+def pseudonymizer(key, committed=frozenset()):
+    """G6: the opaque-run rule's replacement in this export: a stable pseudonym keyed by HMAC-SHA256; a run in
+    `committed` (the repo's tracked files hold it, AMENDMENT 3) stays as it is."""
+    return lambda m: m.group(0) if m.group(0) in committed else \
+        "[opaque:%s]" % hmac.new(key, m.group(0).encode("utf-8"), hashlib.sha256).hexdigest()[:12]
 
 
-def settle(text, strict, opaque):
+def settle(text, strict, opaque, keep=()):
     """The scrubber run to a fixed point (at most 4 passes), so the gate's check holds by construction; None if not."""
-    f = scrub_strict if strict else scrub_payload
     for _ in range(4):
-        out = f(text, opaque)
+        out = scrub_strict(text, opaque, keep) if strict else scrub_payload(text, opaque)
         if out == text:
             return out if not strict or scrub_payload(out, opaque) == out else None
         text = out
     return None
 
 
-def cap(text, strict, opaque, head, tail):
+def cap(text, strict, opaque, head, tail, keep=()):
     """D-3: the head and tail of an over-long text; the cut moves inward until the seam forms no secret shape."""
     for k in (0, 64, 256, 1024, 4096, tail):
         h, t = head - k, tail - k
         out = text[:h] + (text[len(text) - t:] if t else "")
-        if scrub_payload(out, opaque) == out and (not strict or scrub_strict(out, opaque) == out):
+        if scrub_payload(out, opaque) == out and (not strict or scrub_strict(out, opaque, keep) == out):
             return out, {"kept_head": h, "kept_tail": t, "dropped": len(text) - h - t}
     return None, None
 
 
+def _glob_hits(word):
+    """The secret paths a glob can match (F-7): a SECRET_FILES path matched component by component at the glob's end (a
+    directory's anywhere in it) and a LONE_NAMES name by its last component, each on 2 or more literal characters of the
+    matched components (so `*` or `dir/*` alone names nothing); and a `.env` name when the last component's literal head
+    already ends in `.e`, `.en` or `.env` (`prod.e*`, `x.en?`; a `*.env` is SECRET_PATH's own match)."""
+    comps = [c for c in word.split("/") if c not in _NOT_A_DIR]
+    hits = []
+    for f in SECRET_FILES:
+        parts = [p for p in f.split("/") if p]
+        n = len(parts)
+        starts = range(len(comps) - n + 1) if f.endswith("/") else [len(comps) - n]
+        wins = [(parts, comps[i:i + n]) for i in starts if i >= 0]
+        if parts[-1] in LONE_NAMES and comps:
+            wins.append((parts[-1:], comps[-1:]))
+        if any(all(fnmatch.fnmatchcase(p, g) for p, g in zip(ps, win)) and len(_GLOB_PART.sub("", "".join(win))) >= 2
+               for ps, win in wins):
+            hits.append(f)
+    last = comps[-1] if comps else ""
+    head = _GLOB_PART.split(last, 1)[0]
+    hits += [head + s for p, s in ((".e", "nv"), (".en", "v"), (".env", ""))
+             if head.endswith(p) and fnmatch.fnmatchcase(head + s, last)]
+    return hits
+
+
+def named_secrets(text):
+    """Every secret path SECRET_PATH finds in `text` and in its other spellings (R-3, F-7): the text with its quotes and
+    backslashes removed and `/./` and `//` collapsed; a SECRET_FILES path whose directory and file the text names apart,
+    or whose LONE_NAMES name it names alone; each path a glob in it matches. Every candidate passes SECRET_PATH, so the
+    denylist stays that one regex. Not seen: a symlink, a brace expansion, a path built at run time."""
+    norm = re.sub(r"/\.(?=/)", "", re.sub(r"/{2,}", "/", _UNQUOTE.sub("", text)))
+    cands = [text, norm]
+    words = _PATH_WORD.findall(norm)
+    comps = {c for w in words for c in w.split("/") if c}
+    for f in SECRET_FILES:
+        parts = [p for p in f.split("/") if p]
+        if all(p in comps for p in parts) or (parts[-1] in LONE_NAMES and parts[-1] in comps):
+            cands.append(f)
+    for w in words:
+        if _GLOB_PART.search(w):
+            cands += _glob_hits(w)
+    return {m.group(0) for c in cands for m in SECRET_PATH.finditer(c)}
+
+
 def call_mode(name, inp, text):
-    """"drop" for a file tool on a secret path, "strict" for any other call whose input names one, else None."""
+    """(the call's mode, its result's mode): ("drop", "drop") for a file tool on a secret path; (None, "drop") for any
+    other call whose input names the pseudonym key (R-2: a dump of the key never comes out, however it is encoded);
+    (None, "strict") for any other call whose input names a secret path; (None, None) otherwise."""
     key = FILE_TOOLS.get(name)
-    if key and isinstance(inp, dict) and isinstance(inp.get(key), str) and SECRET_PATH.search(inp[key]):
-        return "drop"
-    return "strict" if SECRET_PATH.search(text) else None
+    if key and isinstance(inp, dict) and isinstance(inp.get(key), str) and named_secrets(inp[key]):
+        return "drop", "drop"
+    named = named_secrets(text)
+    if KEY_FILE in named:
+        return None, "drop"
+    return None, "strict" if named else None
 
 
 def read_archive(entry):
@@ -313,10 +392,10 @@ def read_archive(entry):
 class Source:
     """One transcript's events, counts and state (AMENDMENT 2: the state a part hands to the next)."""
 
-    def __init__(self, src, key, archives, sink, state=None):
+    def __init__(self, src, key, archives, sink, state=None, committed=frozenset()):
         self.src, self.sink, self.archives = src, sink, archives
         self.main = src.count("/") == 1              # a session transcript sits directly in its project folder
-        self.opaque = pseudonymizer(key)
+        self.opaque, self.keep = pseudonymizer(key, committed), committed        # AMENDMENT 3: committed runs stay
         state = json.loads(json.dumps(state)) if state else {}
         self.offset, self.line, self.seq = state.get("offset", 0), state.get("line", 0), state.get("seq", 0)
         self.calls = {k: tuple(v) for k, v in state.get("calls", {}).items()}    # tool_use id -> (tool name, mode)
@@ -343,12 +422,12 @@ class Source:
             st["dropped_secret_path"] += 1
         else:
             st["strict_results"] += mode == "strict"
-            text = settle(_fix(text), mode == "strict", self.opaque)
+            text = settle(_fix(text), mode == "strict", self.opaque, self.keep)
             if text is None:
                 text = UNSETTLED
                 st["unsettled"] += 1
             elif len(text) > limit:
-                text, truncated = cap(text, mode == "strict", self.opaque, head, tail)
+                text, truncated = cap(text, mode == "strict", self.opaque, head, tail, self.keep)
                 if text is None:
                     text = SEAMLESS
                     st["unsettled"] += 1
@@ -431,11 +510,11 @@ class Source:
             elif bt == "tool_use":
                 name, cid, inp = b.get("name"), b.get("id"), b.get("input")
                 text = canon(inp)
-                mode = call_mode(name, inp, text)
+                mode, result_mode = call_mode(name, inp, text)
                 if isinstance(cid, str):
-                    self.calls[cid] = (name, mode)
-                self.emit(n, ts, role, "tool_call", text, tool=name, call_id=cid, mode="drop" if mode == "drop" else None,
-                          model=model, stop_reason=stop)
+                    self.calls[cid] = (name, result_mode)
+                self.emit(n, ts, role, "tool_call", text, tool=name, call_id=cid, mode=mode, model=model,
+                          stop_reason=stop)
             else:
                 self.emit(n, ts, role, "text", canon(b), model=model, stop_reason=stop)
 
@@ -489,7 +568,7 @@ class Source:
             for p in changed:
                 body = diff_text(p, files[p]) if p in files else p + "\n[diff not recorded]"
                 self.emit(n, ts, "tool", "file_change", body, tool=name, call_id=cid,
-                          mode="drop" if SECRET_PATH.search(p) else mode)
+                          mode="drop" if named_secrets(p) else mode)
             if type(diff.get("moreFiles")) is int and diff["moreFiles"] > 0:
                 self.st["file_changes_unrecorded"] += diff["moreFiles"]
 
@@ -499,7 +578,7 @@ class Source:
         if at in SKIP_ATTACHMENTS:
             _inc(self.st["skipped_attachments"], at)
             return
-        mode = "drop" if any(SECRET_PATH.search(p) for p in _paths(a)) else None
+        mode = "drop" if any(named_secrets(p) for p in _paths(a)) else None
         if at == "queued_command":
             text = _text_of(a.get("prompt"))
             if not self.repeated(text):
@@ -534,20 +613,22 @@ class Source:
         return out
 
 
-def convert(path, src=None, start=0, state=None, end=None, key=None, archives=None, sink=None, hasher=None):
+def convert(path, src=None, start=0, state=None, end=None, key=None, archives=None, sink=None, hasher=None,
+            committed=frozenset()):
     """AMENDMENT 2: convert one transcript from byte `start` -- 0, or the offset a previous call returned, with the state
     it returned -- through its last complete line (or through `end`, a line boundary). Returns (events, offset, state):
     the events in source order (an empty list when `sink` took each one), the offset after the last complete line read,
     and the state to pass with that offset next time. Converting a file in parts gives the same events as one pass.
     `key` is the pseudonym key (required; no fallback); `archives` maps a call id to its pruner archive entry; `hasher`,
-    when given, is updated with every byte read."""
+    when given, is updated with every byte read; `committed` holds the runs the scrub leaves as they are (repo_runs,
+    AMENDMENT 3; none by default)."""
     if not isinstance(key, bytes) or len(key) != KEY_BYTES:
         raise KeyRefused("convert() needs the %d-byte pseudonym key" % KEY_BYTES)
     if state is not None and state.get("offset") != start:
         raise ValueError("start %d is not the offset its state was returned with" % start)
     events = []
     s = Source(src if src is not None else os.path.relpath(path, PROJECTS), key, archives or {},
-               sink if sink is not None else events.append, state)
+               sink if sink is not None else events.append, state, committed)
     with open(path, "rb") as fh:
         if start:
             fh.seek(start - 1)
@@ -593,6 +674,54 @@ def sha256_file(path):
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _git(repo, *args, stdin=None):
+    """git's stdout as bytes; ValueError (with git's own message, never transcript text) when it fails."""
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], input=stdin, capture_output=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError("git %s: %s" % (args[0], e))
+    if r.returncode:
+        raise ValueError("git %s in %s: %s" % (args[0], repo, r.stderr.decode("utf-8", "replace").strip()[-300:]))
+    return r.stdout
+
+
+def repo_commit(repo, rev):
+    """The full id of the commit `rev` names in the git work tree `repo`; ValueError if there is none."""
+    return _git(repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % rev).decode().strip()
+
+
+def repo_runs(repo, commit):
+    """AMENDMENT 3: every run of transcript_export.RUN_SHAPES in the files tracked at `commit`, read from the commit's
+    blobs (never the working tree), so one commit gives one set."""
+    listing = _git(repo, "ls-tree", "-r", "-z", commit).split(b"\0")
+    blobs = [e.split(b"\t", 1)[0].split()[2] for e in listing if e and e.split()[1] == b"blob"]
+    out = _git(repo, "cat-file", "--batch", stdin=b"".join(b + b"\n" for b in blobs))
+    runs, pos = set(), 0
+    while pos < len(out):
+        nl = out.index(b"\n", pos)
+        head = out[pos:nl].split()
+        if len(head) != 3 or head[1] != b"blob":
+            raise ValueError("git cat-file in %s: %s" % (repo, out[pos:nl].decode("utf-8", "replace")[:120]))
+        size = int(head[2])
+        text = out[nl + 1:nl + 1 + size].decode("utf-8", "replace")
+        pos = nl + 1 + size + 1
+        for rx in RUN_SHAPES:
+            runs.update(rx.findall(text))
+    return frozenset(runs)
+
+
+def runs_digest(runs):
+    return hashlib.sha256("\n".join(sorted(runs)).encode("utf-8")).hexdigest()
+
+
+_COMMITTED = frozenset()           # AMENDMENT 3: this process's committed runs, set by _use_committed in every worker
+
+
+def _use_committed(runs):
+    global _COMMITTED
+    _COMMITTED = runs
 
 
 def archive_dirs(root, sources, extra):
@@ -654,7 +783,7 @@ def export_source(root, src, offset, out_dir, expect_sha, key, archives):
         with lzma.open(dest + ".part", "wb", preset=XZ_PRESET) as out:
             def write(ev):
                 out.write((json.dumps(ev, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
-            _, pos, state = convert(os.path.join(root, src), src, 0, None, offset, key, archives, write, h)
+            _, pos, state = convert(os.path.join(root, src), src, 0, None, offset, key, archives, write, h, _COMMITTED)
     except ArchiveChanged as e:
         os.remove(dest + ".part")
         return {"src": src, "error": str(e)}
@@ -693,10 +822,11 @@ IDENT_FIELDS = ("tool", "call_id")
 
 def gate_file(path, extra=None):
     """D-6 over one output, decompressed as a stream: per pattern, the matches its rule would still change, in every
-    string of every event; per canary (and per printed form of the key, `extra`), its occurrences. Counts only. One
-    exemption: the coarse opaque-run rule (40+ identifier characters) skips a `tool` or `call_id` that is one identifier,
-    because the harness names its tools (`mcp__Claude_Code_Remote__register_repo_root` is 43 characters) and its call
-    ids; every other rule and every canary still reads them."""
+    string of every event; per canary (and per printed form of the key, `extra`), its occurrences. Counts only. Two
+    exemptions, both of the coarse opaque-run rule (40+ identifier characters): a `tool` or `call_id` that is one
+    identifier, because the harness names its tools (`mcp__Claude_Code_Remote__register_repo_root` is 43 characters) and its
+    call ids; and a committed run (_COMMITTED, AMENDMENT 3), which the export leaves as it is. Every other rule and every
+    canary still reads them."""
     pats = gate_patterns()
     needles = dict(CANARIES, **(extra or {}))
     res = {"events": 0, "bad_lines": 0, "patterns": {name: 0 for name, _ in pats}, "canaries": {c: 0 for c in needles}}
@@ -715,6 +845,8 @@ def gate_file(path, extra=None):
                         if ident and name == "opaque-run":
                             continue
                         for m in pat.finditer(s):
+                            if name == "opaque-run" and m.group(0) in _COMMITTED:
+                                continue            # AMENDMENT 3: committed text, which the export leaves as it is
                             if (rep(m) if callable(rep) else m.expand(rep)) != m.group(0):
                                 res["patterns"][name] += 1
                     for c, v in needles.items():
@@ -723,17 +855,19 @@ def gate_file(path, extra=None):
     return res
 
 
-def _pool_map(fn, args, jobs):
-    """fn(*a) for each a, in order; in-process when jobs == 1."""
+def _pool_map(fn, args, jobs, committed=frozenset()):
+    """fn(*a) for each a, in order; in-process when jobs == 1. Every process that runs fn first takes `committed`."""
     if jobs <= 1:
+        _use_committed(committed)
         return [fn(*a) for a in args]
-    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as ex:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs, initializer=_use_committed,
+                                                initargs=(committed,)) as ex:
         return list(ex.map(fn, *zip(*args))) if args else []
 
 
-def gate(paths, jobs, extra=None):
+def gate(paths, jobs, extra=None, committed=frozenset()):
     total = {"files": len(paths), "events": 0, "bad_lines": 0, "patterns": {}, "canaries": {}}
-    for res in _pool_map(gate_file, [(p, extra) for p in paths], jobs):
+    for res in _pool_map(gate_file, [(p, extra) for p in paths], jobs, committed):
         total["events"] += res["events"]
         total["bad_lines"] += res["bad_lines"]
         for k in ("patterns", "canaries"):
@@ -784,6 +918,7 @@ def cmd_export(a):
     if os.path.isdir(out) and os.listdir(out):
         print("session_export: out dir not empty: %s" % out, file=sys.stderr)
         return 2
+    prior = {}
     if a.offsets:
         with open(a.offsets) as fh:
             prior = json.load(fh)
@@ -804,17 +939,31 @@ def cmd_export(a):
     if not jobs_in:
         print("session_export: no *.jsonl under %s" % root, file=sys.stderr)
         return 2
+    # AMENDMENT 3: the committed runs, once per export: --repo at --commit, else at the commit an --offsets manifest names
+    # (the same set, so the rerun is byte-identical), else this script's repo at HEAD. Only that default may be missing
+    # (a copy outside git): then nothing is exempt, and the summary and the manifest say so.
+    named = prior.get("repo") or {}
+    repo = os.path.abspath(a.repo or os.path.dirname(HERE))
+    try:
+        commit = repo_commit(repo, a.commit or named.get("commit") or "HEAD")
+        committed = repo_runs(repo, commit)
+    except ValueError as e:
+        if a.repo or a.commit or named.get("commit"):
+            print("session_export: the committed runs (AMENDMENT 3): %s" % e, file=sys.stderr)
+            return 2
+        commit, committed = None, frozenset()
     os.makedirs(out, exist_ok=True)
     linked = {x["call_id"]: x for x in archives if x["call_id"]}
     order = sorted(jobs_in, key=lambda j: (-j[1], j[0]))                 # the largest first: it bounds the wall time
-    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked) for s, off, sha in order], a.jobs)
+    results = _pool_map(export_source, [(root, s, off, out, sha, key, linked) for s, off, sha in order], a.jobs,
+                        committed)
     errors = [r for r in results if "error" in r]
     if errors:
         for r in errors:
             print("session_export: %s: %s" % (r["src"], r["error"]), file=sys.stderr)
         return 2
     sources = sorted(results, key=lambda r: r["src"])
-    g = gate([os.path.join(out, s["output"]) for s in sources], a.jobs, key_forms(key))
+    g = gate([os.path.join(out, s["output"]) for s in sources], a.jobs, key_forms(key), committed)
     emitted = {c for s in sources for c in s["archived"]}
     totals = {"sources": len(sources), "bytes_read": 0, "bytes_written": 0, "folders": {},
               "archives": len(archives), "archives_skipped": sum(1 for x in archives if x.get("skipped")),
@@ -836,8 +985,10 @@ def cmd_export(a):
     for k in ("events", "capped", "skipped_records", "skipped_attachments"):
         totals[k] = dict(sorted(totals.get(k, {}).items()))
     code_sha, code = code_hashes()
+    repo_entry = {"path": repo, "commit": commit, "runs": len(committed), "runs_sha256": runs_digest(committed)} \
+        if commit else None
     manifest = {"schema": 2, "export_id": export_id, "root": root, "code_sha256": code_sha, "code": code,
-                "pseudonym_key_id": key_id(key),
+                "pseudonym_key_id": key_id(key), "repo": repo_entry,
                 "limits": {"cap": CAP, "kept_head": HEAD, "kept_tail": TAIL, "big_cap": BIG_CAP, "big_kept_head": BIG_HEAD,
                            "big_kept_tail": BIG_TAIL, "xz_preset": XZ_PRESET},
                 "archive_dirs": dirs, "archives": archives, "sources": sources, "totals": totals, "gate": g,
@@ -849,6 +1000,8 @@ def cmd_export(a):
     print("export %s: %d sources, %d bytes read, %d bytes written, %.1f s" % (
         export_id, len(sources), totals["bytes_read"], totals["bytes_written"], manifest["wall_seconds"]))
     print("folders " + json.dumps(totals["folders"]))
+    print("committed runs %d at %s" % (len(committed), commit) if commit else
+          "committed runs 0: %s is not a git work tree, so no run is exempt (AMENDMENT 3)" % repo)
     print("events " + json.dumps(totals["events"]))
     print("capped " + json.dumps(totals["capped"]))
     print(" ".join("%s %d" % (k, totals[k]) for k in (
@@ -871,7 +1024,19 @@ def cmd_gate(a):
         except KeyRefused as e:
             print("session_export: %s" % e, file=sys.stderr)
             return 2
-    g = gate(paths, a.jobs, extra)
+    try:                                            # AMENDMENT 3: the committed runs the export's manifest names
+        with open(os.path.join(a.dir, "manifest.json")) as fh:
+            named = json.load(fh).get("repo") or {}
+    except (OSError, ValueError, AttributeError):
+        named = {}
+    committed = frozenset()
+    if named.get("commit"):
+        try:
+            committed = repo_runs(named["path"], named["commit"])
+        except ValueError as e:
+            print("session_export: the manifest's committed runs: %s" % e, file=sys.stderr)
+            return 2
+    g = gate(paths, a.jobs, extra, committed)
     print_gate(g)
     return 3 if g["total"] or g["bad_lines"] else 0
 
@@ -888,6 +1053,8 @@ def main(argv=None):
     e.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
     e.add_argument("--key", default=KEY_PATH)
     e.add_argument("--archive-dir", action="append", default=[])
+    e.add_argument("--repo")
+    e.add_argument("--commit")
     g = sub.add_parser("gate")
     g.add_argument("dir")
     g.add_argument("--jobs", type=int, default=os.cpu_count() or 1)

@@ -91,16 +91,44 @@ def scrub(text: str) -> str:
 # SESSION-EXPORT (task #252, D-086, the brief's D-2): tool payloads carry shapes `scrub` does not take. `scrub` stays as it
 # is, so every consumer that imports it keeps its output; `scrub_payload` runs scrub's rules and these (the order is in its
 # docstring), and it is the scrubber scripts/session_export.py runs on every text. Each rule matches only what scrub's named
-# rules left.
+# rules left. A name that ends in PASS, in capitals as an env name spells it (DB_PASS, SMTP_PASS): the real transcripts
+# hold thousands of code variables such as `first_pass = ...`. PASSWD and PASSWORD are in _NAME already, in any case.
+_PASS = r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]*[_-])?(?-i:PASS)"
+_VQ = r"(?:[^\s\"'&,;\\]|\\(?![\"']))"      # a value character (_V's), and a backslash only when no quote follows it
 PAYLOAD_PATTERNS = [
     # a bridge host with no scheme or under another scheme (the link rule wants http(s)://), every label of it
     (re.compile(r"(?<![A-Za-z0-9\-])(?:[A-Za-z0-9\-]+\.)+trycloudflare\.com", re.I), "<bridge-link-redacted>"),
     # the tail of a Bearer token in the b64token characters `~+/=`, where the Bearer rule's class stops
     (re.compile(r"((?-i:Bearer)\s+<redacted>)[~+/=][A-Za-z0-9._~+/=\-]*"), r"\1"),
-    # HTTP Basic credentials in an Authorization header
-    (re.compile(r"((?i:authorization)\s*:\s*(?i:basic)\s+)[A-Za-z0-9+/]{8,}=*"), r"\1<redacted>"),
-    # a password in a URL's userinfo (scheme://user:password@host)
-    (re.compile(r"(\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/:@'\"<>]+:)[^\s/@'\"<>]+@"), r"\1<redacted>@"),
+    # HTTP Basic credentials in an Authorization header, also as a JSON member, quoted or behind escaped quotes (R-1)
+    (re.compile(r"((?i:authorization)(?:\\*[\"'])?\s*:\s*(?:\\*[\"'])?(?i:basic)\s+)[A-Za-z0-9+/]{8,}=*"), r"\1<redacted>"),
+    # R1 (VERIFY-SESSION-EXPORT F-1): a named credential whose value sits behind a JSON-escaped quote. The exporter writes a
+    # tool input, a hook, an attachment or a system record as canonical JSON, so `NAME="v"` inside a string becomes
+    # `NAME=\"v\"`, and the credential rule cannot take the backslash as its quote. Any depth of escaping; the value stops
+    # at a backslash, a quote or whitespace, so the escaping stays whole.
+    (re.compile(r"((?:" + _NAME + r"|" + _PASS + r")(?:\\+[\"'])?\s*[:=]\s*\\+[\"'])(?=[^\\\"'\s]{8})[^\\\"'\s]+", re.I),
+     r"\1<redacted>"),
+    # a password in a URL's userinfo (scheme://user:password@host), up to the last `@` before the host (F-6: a password
+    # with a raw `@` in it)
+    (re.compile(r"(\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/:@'\"<>]+:)[^\s/'\"<>]+@"), r"\1<redacted>@"),
+    # R1 R-3 (F-5): a Bearer token after a `bearer` in any case: in an Authorization header, or anywhere when the token
+    # holds a digit (so prose such as "bearer tokens" stays)
+    (re.compile(r"((?i:authorization)(?:\\*[\"'])?\s*[:=]\s*(?:\\*[\"'])?(?i:bearer)\s+"
+                r"|(?i:bearer)\s+(?=[A-Za-z0-9._~+/=\-]*[0-9]))(?=[A-Za-z0-9._~+/=\-]{8})[A-Za-z0-9._~+/=\-]+"),
+     r"\1<redacted>"),
+    # R-3: the password of curl's `-u user:pass` or `--user user:pass` (within 2,000 characters of `curl`, before a pipe or
+    # a command separator); a `$` reference stays. Any `-u` alone took `date -u +%H:%M:%S` thousands of times.
+    (re.compile(r"((?<![A-Za-z0-9_.\-])curl\b[^\n|;&]{0,2000}?\s(?:-u\s*|--user[\s=]+)(?:\\*[\"'])?[^\s:\"'\\]*:)(?!\$)"
+                r"[^\s\"'\\]+"), r"\1<redacted>"),
+    # R-3: a value assigned to a name that ends in PASS (see _PASS); a bare PASS needs `=`, so a `PASS: <test name>` line
+    # stays; a `$` reference stays (`PASS=$((PASS+1))`). The value takes a backslash only when no quote follows it, so the
+    # escape of a closing `\"` stays and the canonical JSON stays valid (scrub's own class, _V, takes that backslash).
+    (re.compile(r"((?<![A-Za-z0-9])(?:[A-Za-z0-9]*[_-]PASS[\"']?\s*[:=]|PASS\s*=)\s*[\"']?)(?!\$)(?=" + _VQ + r"{8})" + _VQ
+                + r"+"), r"\1<redacted>"),
+    # R-3: a credential alone in a URL's userinfo (scheme://token@host): 8 or more characters with a letter and a digit.
+    # The scheme starts where no scheme character precedes it (`\b` let every `.` restart it: quadratic on `a.a.a...`).
+    (re.compile(r"((?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]*://)(?=[^\s/:@'\"<>]*[0-9])(?=[^\s/:@'\"<>]*[A-Za-z])"
+                r"[^\s/:@'\"<>]{8,}@"), r"\1<redacted>@"),
 ]
 
 
@@ -127,21 +155,41 @@ def scrub_payload(text: str, opaque=None) -> str:
 # digit, and every line that is one token of 12+ such characters (a key file printed raw). It over-redacts ordinary output
 # on purpose: it runs only where a secret file was named.
 _ASSIGN_LINE = re.compile(r"(?m)^([ \t]*(?:\d+[:-]|[^\s:=]+:\d+[:-])?[ \t]*(?:export[ \t]+|declare[ \t]+-x[ \t]+)?"
-                          r"[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*)\S.*$")
+                          r"[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*)(\S.*)$")
 _KEY_RUN = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
-_TOKEN_LINE = re.compile(r"(?m)^([ \t]*)([A-Za-z0-9_\-+/=.~:]{12,})([ \t]*)$")
+_TOKEN = r"[A-Za-z0-9_\-+/=.~:]"
+_TOKEN_LINE = re.compile(r"(?m)^([ \t]*)(" + _TOKEN + r"{12,})([ \t]*)$")
 _LETTER, _DIGIT = re.compile(r"[A-Za-z]"), re.compile(r"[0-9]")
+
+# AMENDMENT 3 (the R1 brief): a run of one of these shapes -- the opaque rule's, the strict pass's key run and its token --
+# that a file tracked by the repo holds verbatim is committed text, not a secret. session_export.py collects the runs of the
+# tracked files; the opaque rule's callable and scrub_strict's `keep` leave such a run as it is. Named rules still run first.
+RUN_SHAPES = tuple([p for p, r in SECRET_PATTERNS if r == OPAQUE_MARK] + [_KEY_RUN, re.compile(_TOKEN + r"{12,}")])
 
 
 def _keylike(s):
     return bool(_LETTER.search(s) and _DIGIT.search(s))
 
 
-def scrub_strict(text: str, opaque=None) -> str:
-    """scrub_payload (with the same `opaque`), then every assignment value, long mixed run and lone token line (above)."""
-    text = _ASSIGN_LINE.sub(r"\1<redacted>", scrub_payload(text, opaque))
-    text = _KEY_RUN.sub(lambda m: "<redacted>" if _keylike(m.group(0)) else m.group(0), text)
-    return _TOKEN_LINE.sub(lambda m: m.group(1) + "<redacted>" + m.group(3) if _keylike(m.group(2)) else m.group(0), text)
+_HEAD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _committed(s, keep):
+    """AMENDMENT 3: `s` is in `keep`, or is `NAME=<a value in keep>` (a key run and a token take an assignment's name
+    with its value; the name was never redacted)."""
+    m = _HEAD_NAME.match(s)
+    return s in keep or bool(m) and s[m.end():] in keep
+
+
+def scrub_strict(text: str, opaque=None, keep=()) -> str:
+    """scrub_payload (with the same `opaque`), then every assignment value, long mixed run and lone token line (above),
+    except a committed one (AMENDMENT 3: `keep` holds session_export.py's runs of the repo's tracked files)."""
+    text = _ASSIGN_LINE.sub(lambda m: m.group(0) if m.group(2).rstrip() in keep else m.group(1) + "<redacted>",
+                            scrub_payload(text, opaque))
+    text = _KEY_RUN.sub(lambda m: "<redacted>" if _keylike(m.group(0)) and not _committed(m.group(0), keep)
+                        else m.group(0), text)
+    return _TOKEN_LINE.sub(lambda m: m.group(1) + "<redacted>" + m.group(3)
+                           if _keylike(m.group(2)) and not _committed(m.group(2), keep) else m.group(0), text)
 
 
 def turns(path):

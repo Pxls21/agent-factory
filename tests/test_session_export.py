@@ -5,8 +5,12 @@ Read results, Write inputs, file changes and pruner archives, and its seam forms
 harness notices (G1); a repeated notification is kept once (G4); Bash file changes and pruner archives follow their result
 (G5, A2); a value only the opaque-run rule takes becomes a keyed pseudonym (G6); every project folder is read and convert()
 resumes from a byte offset (A2); fixed offsets give byte-identical output (D-4); the leak gate counts and prints no match
-(D-6). Synthetic transcripts only, in the record shapes the real ones have (the report's survey). Every secret is a FAKE
-canary from session_export.CANARIES, assembled in code; a failure message names canaries and never prints one."""
+(D-6). SESSION-EXPORT-R1 (tasks/briefs/jev-laya/SESSION-EXPORT-R1-brief.md, AMENDMENT 3): a credential behind an escaped
+quote is redacted (R-1); a call that names the pseudonym key loses its result (R-2); more named shapes and secret-path
+spellings (R-3); a run the repo's tracked files hold stays as it is (R-4). Synthetic transcripts only, in the record shapes
+the real ones have (the report's survey). Every secret is a FAKE canary from session_export.CANARIES, assembled in code; a
+failure message names canaries and never prints one. Every export reads the committed runs of a small git repo made here,
+never of this repo."""
 import base64
 import hashlib
 import hmac
@@ -16,6 +20,7 @@ import lzma
 import os
 import pathlib
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -36,6 +41,46 @@ NEVER_READ = {"last-prompt", "queue-op", "signature"}     # canaries in records 
 SHA1 = "0f1e2d3c4b5a6978" * 2 + "0f1e2d3c"                  # fake 40-hex commit ids (G6)
 SHA2 = "a1b2c3d4e5f60718" * 2 + "a1b2c3d4"
 ARCHIVES = os.path.join(".claude", "fast-jev-output")
+# AMENDMENT 3: the text the fixture repo commits. Fake, and never a canary: the export keeps it, so the gate would count it.
+COMMITTED_NAME = "test_zq_committed_evidence_name_that_runs_past_forty_characters"
+UNCOMMITTED_NAME = "test_zq_uncommitted_evidence_name_that_runs_past_forty_chars"
+COMMITTED_PATH = "tests/test_zq_s0_01_committed_path.py"
+COMMITTED_BRANCH = "claude/zq-committed-branch-01"
+COMMITTED_FAKE = "ZQfake0committed0fixture0token0v1"
+COMMITTED_TEXT = "Evidence: %s in `%s` on `%s`.\nfixture token %s\n" % (COMMITTED_NAME, COMMITTED_PATH, COMMITTED_BRANCH,
+                                                                      COMMITTED_FAKE)
+GIT = ["git", "-c", "user.name=zq", "-c", "user.email=zq@example.invalid", "-c", "commit.gpgsign=false",
+       "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main"]
+REPO = {}
+
+
+def _git(repo, *args):
+    r = subprocess.run(GIT + ["-C", str(repo), *args], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr[-500:]
+    return r.stdout.strip()
+
+
+def make_repo(path, *texts):
+    """A git repo whose commits each add docs/zq-<i>.md holding one of `texts`; the commit ids, oldest first."""
+    path.mkdir(parents=True)
+    _git(path, "init", "-q")
+    commits = []
+    for i, text in enumerate(texts):
+        (path / "docs").mkdir(exist_ok=True)
+        (path / "docs" / ("zq-%d.md" % i)).write_text(text)
+        _git(path, "add", "docs")
+        _git(path, "commit", "-q", "-m", "zq %d" % i)
+        commits.append(_git(path, "rev-parse", "HEAD"))
+    return commits
+
+
+@pytest.fixture(scope="module", autouse=True)
+def repo(tmp_path_factory):
+    """AMENDMENT 3: the repo every export here reads its committed runs from: a readme, then COMMITTED_TEXT. Reading this
+    repo instead (187 MB) would cost each export about 13 s and tie the tests to what is committed here."""
+    path = tmp_path_factory.mktemp("repo") / "r"
+    REPO.update(path=path, commits=make_repo(path, "a readme\n", COMMITTED_TEXT))
+    return REPO
 
 
 @pytest.fixture(scope="module")
@@ -130,6 +175,16 @@ def note(tid, tu, status):
 def event(tid, body):
     return "<task-notification>\n<task-id>%s</task-id>\n<summary>Monitor event</summary>\n<event>%s</event>\n" \
            "</task-notification>" % (tid, body)
+
+
+def xxd(data):
+    """xxd's layout: the offset, eight 2-byte hex groups, the printable bytes (the column the strict pass left, F-4)."""
+    rows = []
+    for i in range(0, len(data), 16):
+        row = data[i:i + 16]
+        hx = " ".join(row[j:j + 2].hex() for j in range(0, len(row), 2))
+        rows.append("%08x: %-39s  %s" % (i, hx, "".join(chr(b) if 32 <= b < 127 else "." for b in row)))
+    return "\n".join(rows) + "\n"
 
 
 PARTIAL = '{"type": "user", "message": {"role": "user", "content": "cut'     # a live file's unfinished last line
@@ -285,6 +340,81 @@ def build_tree(root, C, proj):
     at("long-token", m.owner("new token PC_BRIDGE_TOKEN=" + C["long-token"]))
     at("long-gh", m.owner("new key ghp_" + C["long-token"]))          # 44 characters: the GitHub rule's, not a pseudonym
     at("orphan-result", m.result("toolu_fake_missing", "ZQ_ORPHAN=" + C["orphan"]))
+
+    # SESSION-EXPORT-R1. `bash` records a Bash call and its result under `name` and `name`-result.
+    def bash(name, cid, command, result="ok\n"):
+        at(name, m.call(cid, "Bash", {"command": command, "description": "x"}))
+        at(name + "-result", m.result(cid, result, is_error=False, tur=bash_tur(result)))
+    # R-1: a credential behind a JSON-escaped quote in a tool input, a hook, a notification and a stop-hook summary (the
+    # verifier's json-* shapes), one escape level deeper, as a JSON Basic header, under a PASS name, and a 44-character token
+    # (redacted, not a pseudonym: G6)
+    bash("esc-export", "toolu_fake_x1", 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls' % C["esc-export"])
+    bash("esc-body", "toolu_fake_x2", "curl -s -d '{\"password\": \"%s\"}' https://api.example.com/login" % C["esc-body"])
+    at("esc-write", m.call("toolu_fake_x3", "Write", {"file_path": "/srv/app/service.json", "content":
+                                                      '{\n  "api_key": "%s",\n  "region": "eu"\n}\n' % C["esc-write"]}))
+    m.result("toolu_fake_x3", "File created successfully at: /srv/app/service.json")
+    at("esc-edit", m.call("toolu_fake_x4", "Edit", {"file_path": "/srv/app/app.yaml", "old_string": 'token: "x"',
+                                                     "new_string": 'token: "%s"' % C["esc-edit"], "replace_all": False}))
+    m.result("toolu_fake_x4", "The file has been updated successfully.")
+    at("esc-hook", m.attachment({"type": "hook_success", "hookName": "PostToolUse:Bash", "hookEvent": "PostToolUse",
+                                 "toolUseID": "toolu_fake_x1", "command": "python3 hook.py", "content": "ok",
+                                 "stdout": '{"token": "%s"}' % C["esc-hook"], "stderr": "", "exitCode": 0,
+                                 "durationMs": 5}))
+    at("esc-notice", m.attachment({"type": "structured_output", "data": {"note": 'secret: "%s"' % C["esc-notice"]}}))
+    at("esc-stop", m.system("stop_hook_summary", hookCount=1, hookInfos=[{"command": "~/.claude/stop.sh", "durationMs": 3}],
+                            hookErrors=['retry with password="%s"' % C["esc-stop"]], preventedContinuation=False,
+                            stopReason="", hasOutput=True, level="suggestion", toolUseID="toolu_fake_s2",
+                            hookAdditionalContext=[]))
+    bash("esc-deep", "toolu_fake_x5", 'curl -d "{\\"password\\": \\"%s\\"}" https://api.example.com/login' % C["esc-deep"])
+    at("esc-basic", m.call("toolu_fake_x6", "Write", {"file_path": "/srv/app/h.json", "content":
+                                                      '{"headers": {"Authorization": "Basic %s"}}' % C["esc-basic"]}))
+    m.result("toolu_fake_x6", "File created successfully at: /srv/app/h.json")
+    bash("esc-pass", "toolu_fake_x7", 'export DB_PASS="%s" && ./run.sh' % C["esc-pass"])
+    bash("esc-long", "toolu_fake_x8", 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls' % C["esc-long"])
+    # R-2: a call that names the pseudonym key, in any spelling, loses its result; the xxd column is what the strict pass
+    # left (F-4). Its input stays.
+    for name, cid, command in (("key-xxd", "toolu_fake_k1", "xxd /root/.config/session-export/pseudonym.key; "
+                                                             "cat /root/.config/session-export/pseudonym.key"),
+                               ("key-rel", "toolu_fake_k2", "cd /root/.config/session-export && xxd pseudonym.key"),
+                               ("key-lone", "toolu_fake_k3", "xxd pseudonym.key && base64 -w 16 pseudonym.key")):
+        bash(name, cid, command, xxd(C[name].encode()) + C[name] + "\n")
+    # R-3: named shapes the payload pass missed (F-5, F-6)
+    bash("bearer-lower", "toolu_fake_n1", "python3 show_headers.py", "authorization: bearer %s\n" % C["bearer-lower"])
+    bash("curl-user", "toolu_fake_n2", "curl -s -u bob:%s https://api.example.com/v1/me" % C["curl-user"], "{}\n")
+    bash("db-pass", "toolu_fake_n3", "printenv | grep DB_", "DB_HOST=db.internal\nDB_PASS=%s\n" % C["db-pass"])
+    bash("url-user", "toolu_fake_n4", "git remote -v", "origin https://%s@github.com/zq/zq.git (fetch)\n" % C["url-user"])
+    bash("url-at-tail", "toolu_fake_n5", "git remote -v",
+         "origin https://bob:zqp1zqp1@%s@db.example.com/app (fetch)\n" % C["url-at-tail"])
+    # R-3 (F-7): secret-path spellings. Each result holds its canary alone on a line, which only the strict pass takes.
+    for name, cid, command in (("path-home", "toolu_fake_q1", "cat $HOME/.config/qwen-builder/api-key"),
+                               ("path-tilde", "toolu_fake_q2", "cat ~/.config/qwen-jev/omniroute.key"),
+                               ("path-rel", "toolu_fake_q3", "cd ~/.config/qwen-builder && cat api-key"),
+                               ("path-quoted", "toolu_fake_q4", "cat '/root/.config/qwen-builder'/api-key"),
+                               ("path-glob", "toolu_fake_q5", "cat ~/.config/qwen-*/api-key")):
+        bash(name, cid, command, C[name] + "\n")
+    bash("path-glob-env", "toolu_fake_q6", "cat '/home/user/agent-factory/.pc-bridge.e'*",
+         "ZQ_ENDPOINT=%s\n" % C["path-glob-env"])
+    for name, cid, path in (("path-dot", "toolu_fake_q7", "/root/.config/qwen-builder/./api-key"),
+                            ("path-dslash", "toolu_fake_q8", "/root/.config/qwen-builder//api-key")):
+        at(name, m.call(cid, "Read", {"file_path": path}))
+        at(name + "-result", m.result(cid, "     1\t" + C[name]))
+    # ... and in an attachment's path and a Bash file change's path
+    at("att-spelled", m.attachment({"type": "file", "filename": "/root/.config/qwen-builder//api-key",
+                                    "content": {"type": "text", "file": {"filePath": "/root/.config/qwen-builder//api-key",
+                                                                         "content": "zq fake key body", "numLines": 1}}}))
+    spelled = {"changedFiles": ["/root/.config/qwen-builder/./api-key"],
+               "files": [{"filePath": "/root/.config/qwen-builder/./api-key",
+                          "hunks": [{"oldStart": 0, "oldLines": 0, "newStart": 1, "newLines": 1,
+                                     "lines": ["+zq fake key body"]}]}]}
+    at("diff-spelled", m.call("toolu_fake_q9", "Bash", {"command": "bash scripts/zq-rotate.sh", "description": "x"}))
+    at("diff-spelled-result", m.result("toolu_fake_q9", "ok\n", is_error=False, tur=bash_tur("ok\n", bashEditDiff=spelled)))
+    # AMENDMENT 3 (R-4): a run the fixture repo commits stays as it is, in the payload pass and the strict pass; an
+    # uncommitted one becomes a pseudonym or is redacted; the named rules still take a committed fake token first
+    bash("a3-normal", "toolu_fake_a1", "python3 -m pytest -q tests/test_zq.py",
+         "%s::%s PASSED\n%s::%s FAILED\n" % (COMMITTED_PATH, COMMITTED_NAME, COMMITTED_PATH, UNCOMMITTED_NAME))
+    bash("a3-strict", "toolu_fake_a2", "set -a; . ./.pc-bridge.env; set +a; bash scripts/zq-suite.sh",
+         "%s::test_zq_x PASSED\n%s\nZQ_BRANCH=%s\nZQ_RUN=%s\nPC_BRIDGE_TOKEN=%s\n%s\n" % (
+             COMMITTED_PATH, COMMITTED_PATH, COMMITTED_BRANCH, C["a3-strict"], COMMITTED_FAKE, COMMITTED_FAKE))
     at("bad-line", m.add("not json at all"))
     m.write(root / MAIN, tail=PARTIAL)
 
@@ -345,7 +475,7 @@ def _key(where):
 
 
 def _export(tree, out, key, *extra, jobs=2):
-    return _run("export", "--root", tree, "--out", out, "--jobs", jobs, "--key", key, *extra)
+    return _run("export", "--root", tree, "--out", out, "--jobs", jobs, "--key", key, "--repo", REPO["path"], *extra)
 
 
 def _say(text, C):
@@ -459,10 +589,11 @@ def test_the_canaries_show_when_the_protections_are_off(tmp_path, se, monkeypatc
     build_tree(tree, C, tmp_path / "proj")
     key_path, _ = _key(tmp_path)
     monkeypatch.setattr(se, "scrub_payload", lambda s, opaque=None: s)
-    monkeypatch.setattr(se, "scrub_strict", lambda s, opaque=None: s)
-    monkeypatch.setattr(se, "SECRET_PATH", re.compile(r"(?!)"))
+    monkeypatch.setattr(se, "scrub_strict", lambda s, opaque=None, keep=(): s)
+    monkeypatch.setattr(se, "SECRET_PATH", re.compile(r"(?!)"))          # every spelling of a secret path goes through it
     out = tmp_path / "out"
-    rc = se.main(["export", "--root", str(tree), "--out", str(out), "--jobs", "1", "--key", str(key_path)])
+    rc = se.main(["export", "--root", str(tree), "--out", str(out), "--jobs", "1", "--key", str(key_path),
+                  "--repo", str(REPO["path"])])
     shown, expected = _leaks(_blob(out), C), sorted(set(C) - NEVER_READ)
     assert rc == 3 and shown == expected
     gate = _manifest(out)["gate"]
@@ -487,7 +618,8 @@ def test_events_keep_the_schema(se, exported):
         for e in events:
             assert list(e) == KEYS and e["src"] == src and e["role"] in ROLES and e["kind"] in KINDS, e["kind"]
             assert isinstance(e["text"], str) and (e["ts"] is None or isinstance(e["ts"], str))
-            assert (e["outcome"] is not None) == (e["kind"] == "tool_result" or (src, e["line"]) == L["stop-summary"])
+            assert (e["outcome"] is not None) == (e["kind"] == "tool_result" or (src, e["line"]) in (L["stop-summary"],
+                                                                                                        L["esc-stop"]))
             assert (e["tool"] is not None) <= (e["kind"] in ("tool_call", "tool_result", "file_change", "pruner_archive"))
 
 
@@ -587,7 +719,9 @@ def test_secret_paths_are_dropped_or_strict_passed(se, exported):
     bearer = "Bearer <redacted>" in _one(ev, L, "bash-curl")["text"]
     assert bearer, "bash-curl: no redacted Bearer token"
     main = _main_entry(out)
-    assert (main["dropped_secret_path"], main["strict_results"]) == (11, 6)
+    # 11 and 6 before R1; R1 adds 3 key results, 2 Reads (a call and its result each), a spelled attachment and a spelled
+    # file change dropped, and 7 strict results (6 path spellings and the AMENDMENT 3 source-only call)
+    assert (main["dropped_secret_path"], main["strict_results"]) == (20, 13)
 
 
 def test_cap_keeps_head_and_tail(se, exported):
@@ -678,7 +812,8 @@ def test_opaque_values_become_stable_keyed_pseudonyms(se, exported):
     _expect(C, _one(ev, L, "long-gh")["text"], "new key gh<redacted>", "long-gh")   # no fixed point repairs a pseudonym
     blob = _blob(out)
     gone = SHA1 not in blob and SHA2 not in blob
-    assert gone and _main_entry(out)["pseudonyms"] == 4, "a commit id survived, or the pseudonym count moved"
+    # 4 commit-id pseudonyms, and R1's uncommitted test name (AMENDMENT 3); the escaped 44-character token is redacted
+    assert gone and _main_entry(out)["pseudonyms"] == 5, "a commit id survived, or the pseudonym count moved"
 
 
 def test_the_key_is_never_exported_or_printed(se, exported):
@@ -873,13 +1008,256 @@ def test_gate_counts_patterns_and_canaries_and_prints_none(tmp_path, se):
             {"seq": 5, "text": long_name},                                    # the same string as text: counted
             {"seq": 6, "tool": "x " + "q" * 44},                              # not one identifier: counted
             {"seq": 7, "text": "pushed [opaque:0123456789ab] and [opaque:ba9876543210]"}]   # pseudonyms: not counted
+    r1 = {"escaped-credential": 'export PC_BRIDGE_TOKEN=\\"Fk1eGateEsc0002\\" && ls',          # R1: one of each new shape
+          "bearer-lower": "authorization: bearer Fk1eGateLow0003", "curl-user": "curl -u bob:Fk1eGateCurl0004 https://x",
+          "pass-name": "DB_PASS=Fk1eGatePass0005", "url-token-user": "https://Fk1eGateUser0006x@github.com/zq"}
+    rows += [{"seq": 8 + i, "text": t} for i, t in enumerate(r1.values())]
     with lzma.open(d / "x.jsonl.xz", "wt", encoding="utf-8") as fh:
         fh.writelines(json.dumps(r) + "\n" for r in rows)
     r = _run("gate", d)
     rc, said = r.returncode, r.stdout + r.stderr
     leaked = _leaks(said, C)
     assert rc == 3 and said.count(fake) == 0 and said.count("Zq9Zq9Zq9") == 0 and leaked == []
+    assert [v for v in ("Fk1eGateEsc", "Fk1eGateLow", "Fk1eGateCurl", "Fk1eGatePass", "Fk1eGateUser") if v in said] == []
     counts = dict(re.findall(r"^(\S+) (\d+)$", r.stdout, re.M))
     assert counts.get("pattern:credential") == "1" and counts.get("pattern:github-token") == "1", r.stdout
     assert counts.get("pattern:opaque-run") == "2" and counts.get("canary:bridge-token") == "1", r.stdout
-    assert counts.get("total") == "5", r.stdout
+    assert {n: counts.get("pattern:" + n) for n in r1} == {n: "1" for n in r1}, r.stdout
+    assert counts.get("total") == "10", r.stdout
+
+
+# SESSION-EXPORT-R1 (task #252; VERIFY-SESSION-EXPORT F-1, F-4 to F-7; AMENDMENT 3), on the shared export above.
+def test_escaped_credentials_are_redacted(se, exported):
+    # R-1 (F-1): each value behind a JSON-escaped quote is redacted and the rest of the canonical JSON stays whole; the
+    # 44-character token is redacted, not a pseudonym (G6); a stop-hook summary's canonical text as well as its outcome
+    C = se.CANARIES
+    tree, out, L, r, key = exported
+    ev = _events(out)
+    R = "<redacted>"
+    want = {
+        "esc-export": {"command": 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls' % R, "description": "x"},
+        "esc-body": {"command": "curl -s -d '{\"password\": \"%s\"}' https://api.example.com/login" % R, "description": "x"},
+        "esc-write": {"content": '{\n  "api_key": "%s",\n  "region": "eu"\n}\n' % R, "file_path": "/srv/app/service.json"},
+        "esc-edit": {"file_path": "/srv/app/app.yaml", "new_string": 'token: "%s"' % R, "old_string": 'token: "x"',
+                     "replace_all": False},
+        "esc-deep": {"command": 'curl -d "{\\"password\\": \\"%s\\"}" https://api.example.com/login' % R, "description": "x"},
+        "esc-basic": {"content": '{"headers": {"Authorization": "Basic %s"}}' % R, "file_path": "/srv/app/h.json"},
+        "esc-pass": {"command": 'export DB_PASS="%s" && ./run.sh' % R, "description": "x"},
+        "esc-long": {"command": 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls' % R, "description": "x"},
+    }
+    for name, obj in want.items():
+        _expect(C, _one(ev, L, name, "tool_call")["text"], _canon(obj), name)
+    _expect(C, json.loads(_one(ev, L, "esc-hook")["text"])["stdout"], '{"token": "%s"}' % R, "esc-hook")
+    _expect(C, json.loads(_one(ev, L, "esc-notice")["text"])["data"], {"note": 'secret: "%s"' % R}, "esc-notice")
+    stop = _one(ev, L, "esc-stop")
+    _expect(C, json.loads(stop["text"])["hookErrors"], ['retry with password="%s"' % R], "esc-stop text")
+    _expect(C, stop["outcome"], {"hook_errors": ['retry with password="%s"' % R]}, "esc-stop outcome")
+
+
+def test_a_call_that_names_the_pseudonym_key_loses_its_result(se, exported):
+    # R-2 (F-4): the result becomes DROPPED whatever the spelling of the key's path (the strict pass left an xxd dump's
+    # printable column); the call's own input stays, scrubbed
+    C = se.CANARIES
+    tree, out, L, r, key = exported
+    ev = _events(out)
+    for name, command in (("key-xxd", "xxd /root/.config/session-export/pseudonym.key; "
+                                      "cat /root/.config/session-export/pseudonym.key"),
+                          ("key-rel", "cd /root/.config/session-export && xxd pseudonym.key"),
+                          ("key-lone", "xxd pseudonym.key && base64 -w 16 pseudonym.key")):
+        _expect(C, _one(ev, L, name + "-result", "tool_result")["text"], DROPPED, name)
+        _expect(C, _one(ev, L, name, "tool_call")["text"], _canon({"command": command, "description": "x"}), name + " call")
+
+
+def test_secret_path_spellings_are_seen(se, exported):
+    # R-3 (F-7): $HOME/, ~/, a quoted path, a relative path and a glob name a secret file, so the result is strict-passed
+    # (its canary alone on a line goes); a Read through ./ or // is dropped
+    C = se.CANARIES
+    tree, out, L, r, key = exported
+    ev = _events(out)
+    for name in ("path-home", "path-tilde", "path-rel", "path-quoted", "path-glob"):
+        _expect(C, _one(ev, L, name + "-result", "tool_result")["text"], "<redacted>\n", name)
+    _expect(C, _one(ev, L, "path-glob-env-result", "tool_result")["text"], "ZQ_ENDPOINT=<redacted>\n", "path-glob-env")
+    for name in ("path-dot", "path-dslash"):
+        _expect(C, [_one(ev, L, name, "tool_call")["text"], _one(ev, L, name + "-result")["text"]], [DROPPED, DROPPED], name)
+    _expect(C, _one(ev, L, "att-spelled")["text"], DROPPED, "att-spelled")                 # an attachment's path
+    src, line = L["diff-spelled-result"]
+    changes = [e["text"] for e in ev[src] if e["line"] == line and e["kind"] == "file_change"]
+    _expect(C, changes, [DROPPED], "diff-spelled")                                          # a Bash file change's path
+
+
+def test_r3_named_shapes_are_scrubbed_through_the_cli(se, exported):
+    # R-3 (F-5, F-6): a lowercase bearer, a -u user:pass flag, a *_PASS assignment, a token alone in a URL's userinfo, a
+    # URL password with a raw @ in it
+    C = se.CANARIES
+    tree, out, L, r, key = exported
+    ev = _events(out)
+    res = lambda name: _one(ev, L, name + "-result", "tool_result")["text"]          # noqa: E731
+    _expect(C, res("bearer-lower"), "authorization: bearer <redacted>\n", "bearer-lower")
+    _expect(C, _one(ev, L, "curl-user", "tool_call")["text"],
+            _canon({"command": "curl -s -u bob:<redacted> https://api.example.com/v1/me", "description": "x"}), "curl-user")
+    _expect(C, res("db-pass"), "DB_HOST=db.internal\nDB_PASS=<redacted>\n", "db-pass")
+    _expect(C, res("url-user"), "origin https://<redacted>@github.com/zq/zq.git (fetch)\n", "url-user")
+    _expect(C, res("url-at-tail"), "origin https://bob:<redacted>@db.example.com/app (fetch)\n", "url-at-tail")
+
+
+# The run shapes, typed from the rules (the opaque rule, the strict key run, the token-line class): the oracle below
+# builds the committed set from the fixture repo's own text with these, not with the exporter's code.
+ORACLE_SHAPES = (re.compile(r"\b[A-Za-z0-9_\-]{40,}\b"), re.compile(r"[A-Za-z0-9_\-+/=]{20,}"),
+                 re.compile(r"[A-Za-z0-9_\-+/=.~:]{12,}"))
+
+
+def test_committed_runs_stay_as_they_are(se, exported):
+    # AMENDMENT 3 (R-4): a run the repo's tracked files hold is neither a pseudonym nor strict-redacted; an uncommitted
+    # one is; a committed fake token under a credential name is still redacted (the named rules run first). The manifest
+    # names the commit, the run count and the set's digest, each equal to the oracle's
+    C = se.CANARIES
+    tree, out, L, r, key = exported
+    ev = _events(out)
+    _expect(C, _one(ev, L, "a3-normal-result", "tool_result")["text"], "%s::%s PASSED\n%s::[opaque:%s] FAILED\n" % (
+        COMMITTED_PATH, COMMITTED_NAME, COMMITTED_PATH, _hmac12(key, UNCOMMITTED_NAME)), "a3-normal")
+    _expect(C, _one(ev, L, "a3-strict-result", "tool_result")["text"],
+            "%s::test_zq_x PASSED\n%s\nZQ_BRANCH=%s\nZQ_RUN=<redacted>\nPC_BRIDGE_TOKEN=<redacted>\n%s\n" % (
+                COMMITTED_PATH, COMMITTED_PATH, COMMITTED_BRANCH, COMMITTED_FAKE), "a3-strict")
+    head = REPO["commits"][-1]
+    oracle = set()
+    for f in ("docs/zq-0.md", "docs/zq-1.md"):
+        text = _git(REPO["path"], "show", "%s:%s" % (head, f))
+        for rx in ORACLE_SHAPES:
+            oracle.update(rx.findall(text))
+    assert [rx.pattern for rx in ORACLE_SHAPES] == [rx.pattern for rx in se.RUN_SHAPES]
+    assert COMMITTED_NAME in oracle and COMMITTED_FAKE in oracle and UNCOMMITTED_NAME not in oracle
+    assert _manifest(out)["repo"] == {"path": str(REPO["path"]), "commit": head, "runs": len(oracle),
+                                      "runs_sha256": hashlib.sha256("\n".join(sorted(oracle)).encode()).hexdigest()}
+    assert "committed runs %d at %s" % (len(oracle), head) in r.stdout
+
+
+def test_the_gate_reads_the_committed_runs_its_manifest_names(tmp_path, se, exported):
+    # the gate CLI rebuilds the set from the repo and commit the manifest names and reads 0; negative control: the same
+    # export with the manifest naming the repo's first commit, which holds none of them, counts the committed run it kept
+    tree, out, L, r, key = exported
+    g = _run("gate", out)
+    assert g.returncode == 0 and re.search(r"^total 0$", g.stdout, re.M), _say(g.stdout + g.stderr, se.CANARIES)
+    copy = tmp_path / "copy"
+    shutil.copytree(out, copy)
+    m = _manifest(copy)
+    m["repo"]["commit"] = REPO["commits"][0]
+    (copy / "manifest.json").write_text(json.dumps(m))
+    g = _run("gate", copy)
+    counts = dict(re.findall(r"^(\S+) (\d+)$", g.stdout, re.M))
+    assert (g.returncode, counts.get("pattern:opaque-run"), counts.get("total")) == (3, "1", "1"), \
+        _say(g.stdout + g.stderr, se.CANARIES)
+
+
+def _one_call_tree(tmp_path, name, result):
+    """A projects tree with one transcript: a Bash call and its result."""
+    t = Tape(tmp_path / "proj")
+    t.call("toolu_fake_m1", "Bash", {"command": "python3 -m pytest -q"})
+    t.result("toolu_fake_m1", result, is_error=False)
+    t.write(tmp_path / "tree" / "-mv" / (name + ".jsonl"))
+    return tmp_path / "tree"
+
+
+def test_an_offsets_rerun_reads_the_commit_its_manifest_names(tmp_path, se):
+    # AF-AP-175: the commit is resolved once and named in the manifest; a rerun with --offsets reads that commit's runs
+    # even after the repo's HEAD moves on (byte-identical output); negative control: a fresh export reads the new HEAD
+    repo = tmp_path / "repo"
+    c1 = make_repo(repo, COMMITTED_TEXT)[0]
+    tree = _one_call_tree(tmp_path, "mv", "%s FAILED\n" % UNCOMMITTED_NAME)
+    key_path, key = _key(tmp_path)
+
+    def run(out, *extra):
+        return _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, "--repo", repo, *extra)
+    r1 = run(tmp_path / "o1")
+    assert r1.returncode == 0, r1.stderr[-2000:]
+    (repo / "docs" / "zq-9.md").write_text(UNCOMMITTED_NAME + "\n")               # HEAD moves: it now holds the name
+    _git(repo, "add", "docs")
+    _git(repo, "commit", "-q", "-m", "moved")
+    r2, r3 = run(tmp_path / "o2", "--offsets", tmp_path / "o1" / "manifest.json"), run(tmp_path / "o3")
+    assert (r2.returncode, r3.returncode) == (0, 0), r2.stderr[-2000:] + r3.stderr[-2000:]
+    assert _shas(tmp_path / "o2") == _shas(tmp_path / "o1")
+    commits = [_manifest(tmp_path / o)["repo"]["commit"] for o in ("o1", "o2", "o3")]
+    assert commits[:2] == [c1, c1] and commits[2] == _git(repo, "rev-parse", "HEAD") != c1
+    text = lambda o: _events(tmp_path / o)["-mv/mv.jsonl"][1]["text"]              # noqa: E731
+    assert text("o1") == "[opaque:%s] FAILED\n" % _hmac12(key, UNCOMMITTED_NAME) and text("o3") == UNCOMMITTED_NAME + " FAILED\n"
+
+
+def test_a_repo_git_cannot_read_refuses_and_a_copy_outside_git_exempts_nothing(tmp_path, se):
+    # an explicit --repo or --commit that git cannot read refuses before any output; the default is this script's own
+    # repo, and a copy of the script outside any git work tree exports with nothing exempt, and says so
+    tree = _one_call_tree(tmp_path, "mv", "%s FAILED\n" % COMMITTED_NAME)
+    key_path, key = _key(tmp_path)
+    for i, extra in enumerate((["--repo", tree], ["--repo", REPO["path"], "--commit", "0" * 40])):
+        out = tmp_path / ("bad%d" % i)
+        r = _run("export", "--root", tree, "--out", out, "--jobs", 1, "--key", key_path, *extra)
+        assert (r.returncode, "committed runs" in r.stderr, out.exists()) == (2, True, False), r.stderr[-500:]
+    copy = tmp_path / "copy" / "scripts"
+    copy.mkdir(parents=True)
+    for f in ("session_export.py", "transcript_export.py"):
+        shutil.copy(ROOT / "scripts" / f, copy / f)
+    r = subprocess.run([sys.executable, str(copy / "session_export.py"), "export", "--root", str(tree), "--out",
+                        str(tmp_path / "o"), "--jobs", "1", "--key", str(key_path)], capture_output=True, text=True,
+                       timeout=600)
+    assert r.returncode == 0 and "no run is exempt" in r.stdout, r.stdout[-2000:] + r.stderr[-2000:]
+    assert _manifest(tmp_path / "o")["repo"] is None
+    assert _events(tmp_path / "o")["-mv/mv.jsonl"][1]["text"] == "[opaque:%s] FAILED\n" % _hmac12(key, COMMITTED_NAME)
+
+
+# R-3 (F-7) and R-2 in process: the secret paths each spelling names (SECRET_PATH's matches), and ordinary commands that
+# name none (a glob needs two literal characters of a secret name; a bare `*` or `dir/*` names nothing).
+SPELLED = (
+    ("cat $HOME/.config/qwen-builder/api-key", {"qwen-builder/api-key"}),
+    ("cat ~/.config/qwen-jev/omniroute.key", {"qwen-jev/omniroute.key"}),
+    ("cat /root/.config/qwen-builder/./api-key", {"qwen-builder/api-key"}),
+    ("cat /root/.config/qwen-builder//api-key", {"qwen-builder/api-key"}),
+    ("cd ~/.config/qwen-builder && cat api-key", {"qwen-builder/api-key"}),
+    ("cat '/root/.config/qwen-builder'/api-key", {"qwen-builder/api-key"}),
+    ('{"command":"cat \\"/root/.config/qwen-bui\\"lder/api-key\\""}', {"qwen-builder/api-key"}),
+    ("cat ~/.config/qwen-*/api-key", {"qwen-builder/api-key"}),
+    ("cat ~/.config/qwen-builder/*", {"qwen-builder/api-key"}),
+    ("cat '/home/user/agent-factory/.pc-bridge.e'*", {".env"}),
+    ("cat /srv/app/prod.e*", {".env"}),
+    ("cat /srv/app/*.env", {".env"}),
+    ("cat /srv/app/x.en?", {".env"}),
+    ("cat /srv/app/prod.e'nv'", {".env"}),                   # a quote inside the name: only the normalized text
+    ("ls ~/.hermes/prof*/aflane/config.yaml", {".hermes/profiles/"}),
+    ("cd ~/.hermes && cat profiles/aflane/config.yaml", {".hermes/profiles/"}),
+    ("xxd pseudonym.key", {"session-export/pseudonym.key"}),
+    ("cd /root/.config/session-export && xxd pseudonym.key", {"session-export/pseudonym.key"}),
+    ("od -c /root/.config/session-export/pseudonym.k*", {"session-export/pseudonym.key"}),
+    ("cat .env && xxd /root/.config/session-export/pseudonym.key", {".env", "session-export/pseudonym.key"}),
+)
+NOT_SECRET = ("ls *", "rm -rf /tmp/zq/*", "git add *.py", "ls */*", "cat *.md", "grep -rn api-key docs/",
+              "systemctl --user status qwen-builder", "echo '**bold** text'", "python3 -c 'print(x[0])'",
+              "cd ~/.config && ls", "cat notes/*.environment", "pytest tests/test_*.py -k 'not env'",
+              "rm -f /tmp/zq-*", "ls scripts/pc_*", "ls tests/test_*", "ls .e")
+
+
+@pytest.mark.parametrize("text,named", SPELLED)
+def test_named_secrets_sees_each_spelling(se, text, named):
+    assert se.named_secrets(text) == named
+
+
+@pytest.mark.parametrize("text", NOT_SECRET)
+def test_named_secrets_leaves_ordinary_commands(se, text):
+    assert se.named_secrets(text) == set()
+
+
+def test_call_modes(se):
+    # (the call's mode, its result's mode): a file tool on a secret path drops both; a call naming the pseudonym key drops
+    # its result only (R-2); a call naming another secret path strict-passes its result
+    cm = se.call_mode
+    assert cm("Read", {"file_path": "/root/.config/qwen-builder/./api-key"}, "x") == ("drop", "drop")
+    assert cm("Bash", {"command": "xxd pseudonym.key"}, _canon({"command": "xxd pseudonym.key"})) == (None, "drop")
+    assert cm("Bash", {"command": "cat .env"}, _canon({"command": "cat .env"})) == (None, "strict")
+    assert cm("Bash", {"command": "ls"}, _canon({"command": "ls"})) == (None, None)
+
+
+def test_repo_runs_refuses_a_blob_git_cannot_give(tmp_path, se):
+    # a blob the listing names but the object store lacks (a partial clone, a damaged repo) is a refusal (ValueError, which
+    # the CLI turns into rc 2), never a crash and never a set with that file missing
+    repo = tmp_path / "repo"
+    commit = make_repo(repo, COMMITTED_TEXT)[0]
+    blob = _git(repo, "rev-parse", commit + ":docs/zq-0.md")
+    (repo / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+    with pytest.raises(ValueError):
+        se.repo_runs(str(repo), commit)

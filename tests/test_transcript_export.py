@@ -506,3 +506,154 @@ def test_the_opaque_callable_gets_only_what_no_named_rule_takes():
     assert out == "pushing [opaque:x] to origin" and seen == [sha]
     assert getattr(MOD, "scrub_payload")("pushing %s" % sha) == "pushing <opaque-redacted>"      # no callable: the marker
     assert getattr(MOD, "scrub_strict")("sha " + sha, opaque=lambda m: "[opaque:x]") == "sha [opaque:x]"
+
+
+# SESSION-EXPORT-R1 (task #252, the one D-031 repair of VERIFY-SESSION-EXPORT). Every value here is fake.
+def _canon(obj):
+    """What session_export.py writes for a tool input, a hook, an attachment or a system record."""
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+R = "<redacted>"
+# R-1 (F-1): a named credential whose value sits behind a JSON-escaped quote. (the object, its fake value): the verifier's
+# seven shapes (attack 1's json-* rows), then the same class one level deeper, as a JSON Basic header and under a PASS name.
+ESCAPED = (
+    ({"command": 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls', "description": "x"}, "Fk1eEscTok0001"),
+    ({"command": "curl -s -d '{\"password\": \"%s\"}' https://api.example.com/login"}, "Fk1eEscPwd0002"),
+    ({"content": '{\n  "api_key": "%s",\n  "region": "eu"\n}\n', "file_path": "/srv/app/service.json"}, "Fk1eEscKey0003"),
+    ({"file_path": "/srv/app/app.yaml", "new_string": 'token: "%s"', "old_string": 'token: "x"'}, "Fk1eEscTok0004"),
+    ({"hookName": "PostToolUse:Bash", "stdout": '{"token": "%s"}', "type": "hook_success"}, "Fk1eEscTok0005"),
+    ({"data": {"note": 'secret: "%s"'}, "type": "structured_output"}, "Fk1eEscSec0006"),
+    ({"hookErrors": ['retry with password="%s"'], "subtype": "stop_hook_summary"}, "Fk1eEscPwd0007"),
+    ({"command": 'curl -d "{\\"password\\": \\"%s\\"}" https://api.example.com/login'}, "Fk1eEscPwd0008"),
+    ({"content": '{"headers": {"Authorization": "Basic %s"}}', "file_path": "/srv/app/h.json"}, "Zk1lRXNjQmFzaWMwMDA5"),
+    ({"command": 'export DB_PASS="%s" && ./run.sh'}, "Fk1eEscPass0010"),
+)
+
+
+def _fill(obj, value):
+    """obj with every `%s` in its strings replaced by value."""
+    if isinstance(obj, str):
+        return obj.replace("%s", value)
+    if isinstance(obj, dict):
+        return {k: _fill(v, value) for k, v in obj.items()}
+    return [_fill(v, value) for v in obj] if isinstance(obj, list) else obj
+
+
+@pytest.mark.parametrize("obj,value", ESCAPED)
+def test_a_credential_behind_an_escaped_quote_is_redacted(obj, value):
+    out = getattr(MOD, "scrub_payload")(_canon(_fill(obj, value)))
+    assert value not in out and not any(value[i:i + 8] in out for i in range(len(value) - 7)), "the value survived"
+    assert out == _canon(_fill(obj, R)), out              # the rest stays as it was, and the escaping stays whole
+    assert json.loads(out) == _fill(obj, R)
+
+
+def test_an_escaped_long_token_is_redacted_not_pseudonymized():
+    # AMENDMENT 1 G6: a value a named rule takes is redacted, never a pseudonym; behind an escaped quote the credential
+    # rule missed it and only the opaque rule's callable saw it (VERIFY-SESSION-EXPORT attack 3, tok44-esc)
+    obj = {"command": 'export PC_BRIDGE_TOKEN="%s" && bash scripts/pc.sh ls'}
+    seen = []
+    out = getattr(MOD, "scrub_payload")(_canon(_fill(obj, "Q7" * 22)),
+                                        opaque=lambda m: seen.append(m.group(0)) or "[opaque:x]")
+    assert (out, len(seen)) == (_canon(_fill(obj, R)), 0)
+
+
+# R-3: named shapes the payload pass missed (F-5, F-6). (text, its scrub_payload output, the fake values)
+NAMED_R3 = (
+    ("authorization: bearer Fk1eBearerLow0011", "authorization: bearer " + R, ("Fk1eBearerLow0011",)),
+    ('"authorization": "bearer Fk1eBearerLow0012"', '"authorization": "bearer ' + R + '"', ("Fk1eBearerLow0012",)),
+    ("then use bearer Fk1eBearerBare0013 here", "then use bearer " + R + " here", ("Fk1eBearerBare0013",)),
+    ("curl -s -u bob:Fk1eCurlPass0014 https://api.example.com/v1/me", "curl -s -u bob:" + R + " https://api.example.com/v1/me",
+     ("Fk1eCurlPass0014",)),
+    ('curl --user "bob:Fk1eCurlPass0015" https://x', 'curl --user "bob:' + R + '" https://x', ("Fk1eCurlPass0015",)),
+    (_canon({"command": 'curl -u "bob:Fk1eCurlPass0016" https://x'}), _canon({"command": 'curl -u "bob:' + R + '" https://x'}),
+     ("Fk1eCurlPass0016",)),
+    ("DB_HOST=db.internal\nDB_PASS=Fk1eDbPass0017\n", "DB_HOST=db.internal\nDB_PASS=" + R + "\n", ("Fk1eDbPass0017",)),
+    ("SMTP-PASS: Fk1eSmtpPass0018", "SMTP-PASS: " + R, ("Fk1eSmtpPass0018",)),
+    ("PASS=Fk1eBarePass0019", "PASS=" + R, ("Fk1eBarePass0019",)),
+    # inside a quoted string of canonical JSON: the escape of the closing quote stays, so the JSON stays valid
+    (_canon({"command": 'docker run -e "DB_PASS=Fk1eDockPass0025" img'}),
+     _canon({"command": 'docker run -e "DB_PASS=' + R + '" img'}), ("Fk1eDockPass0025",)),
+    ("origin https://Fk1eUrlToken0020x@github.com/zq/zq.git (fetch)", "origin https://" + R + "@github.com/zq/zq.git (fetch)",
+     ("Fk1eUrlToken0020x",)),
+    ("https://bob:Fk1eAtPart0021@Fk1eAtTail0022@db.example.com/app", "https://bob:" + R + "@db.example.com/app",
+     ("Fk1eAtPart0021", "Fk1eAtTail0022")),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", NAMED_R3)
+def test_r3_named_shapes_are_scrubbed(text, scrubbed, secrets):
+    out = getattr(MOD, "scrub_payload")(text)
+    for s in secrets:
+        assert s not in out, "a value survived"
+    assert out == scrubbed, out
+
+
+# Names that end in PASSWD or PASSWORD were scrub's own credential names before R1 (a pin, not a new rule).
+@pytest.mark.parametrize("text,scrubbed", (("DB_PASSWD=Fk1eDbPasswd0023", "DB_PASSWD=" + R),
+                                           ("MYSQL_ROOT_PASSWORD: Fk1eRootPw0024", "MYSQL_ROOT_PASSWORD: " + R)))
+def test_passwd_and_password_names_stay_scrubbed(text, scrubbed):
+    assert getattr(MOD, "scrub_payload")(text) == scrubbed
+
+
+# Negative controls for R-1 and R-3: text with no secret stays as it is.
+PAYLOAD_KEEP_R1 = (
+    "the bearer of bad news", "bearer tokens are fine here", "authorization: bearer short",
+    "python3 -u script.py", "git push -u origin main", "docker run -u 1000 img",
+    "BYPASS=abcdefghij", "COMPASS_HEADING=northnorth", "--- PASS: TestSomethingLongEnough (0.00s)",
+    "PASS: tests/test_x.py::test_a_long_name_here", "https://john.doe@example.com/x", "https://mirror@example.com/x",
+    _canon({"command": 'export PC_BRIDGE_TOKEN="short"'}), _canon({"note": 'token: "a b c d e f g h"'}),
+    # what the first R-3 rules took thousands of times in the real transcripts (R1's own measurement): `date -u`, other
+    # `-u` flags, code variables that end in `pass`, and `$` references
+    "date -u +%H:%M:%SZ", _canon({"command": "date -u +%Y-%m-%dT%H:%M:%SZ && ls"}), "docker run -u 1000:1000 img",
+    "first_pass = something_long_here", "n_pass=len(results)", "PASS=$((PASS+1))", 'curl -u "$USER:$PASS" https://x',
+    "DB_PASS=$SECRET_FROM_VAULT", _canon({"content": 'first_pass = "something_long_here"'}),
+)
+
+
+@pytest.mark.parametrize("text", PAYLOAD_KEEP_R1)
+def test_r1_rules_keep_text_with_no_secret(text):
+    assert getattr(MOD, "scrub_payload")(text) == text
+
+
+def test_r1_rules_stay_linear_on_long_runs():
+    import time
+    payload = getattr(MOD, "scrub_payload")
+    for text in ("password\\\": " * 4000, "token" + "\\" * 40000 + "x", "bearer " * 6000, "-u a " * 8000, "_PASS" * 8000,
+                 "ab://" * 8000, "curl -x " * 8000):
+        t0 = time.monotonic()
+        payload(text)
+        assert time.monotonic() - t0 < 3, text[:12]
+
+
+# AMENDMENT 3: scrub_strict leaves a value, run or token in `keep` (the repo's committed runs) as it is; the named rules
+# still run first, so a committed fake token under a credential name is redacted all the same.
+COMMITTED = frozenset(("tests/test_zq_s0_01_committed_path", "tests/test_zq_s0_01_committed_path.py",
+                       "claude/zq-committed-branch-01", "ZQfake0committed0fixture0token0v1"))
+
+
+def test_strict_pass_keeps_committed_runs():
+    strict = getattr(MOD, "scrub_strict")
+    text = ("tests/test_zq_s0_01_committed_path.py::test_x PASSED\n"          # a key run
+            "tests/test_zq_s0_01_committed_path.py\n"                         # a token line
+            "ZQ_BRANCH=claude/zq-committed-branch-01\n"                       # an assignment value
+            "ZQ_RUN=zq7run7id7not7committed7x9\n"                              # not committed: redacted
+            "QZ7uncommittedkeyrun0000000000 left\n"                            # not committed: redacted
+            "PC_BRIDGE_TOKEN=ZQfake0committed0fixture0token0v1\n"            # a named rule takes it first
+            "ZQfake0committed0fixture0token0v1\n")                            # committed, alone on its line: kept
+    out = strict(text, keep=COMMITTED)
+    assert out == ("tests/test_zq_s0_01_committed_path.py::test_x PASSED\ntests/test_zq_s0_01_committed_path.py\n"
+                   "ZQ_BRANCH=claude/zq-committed-branch-01\nZQ_RUN=" + R + "\n" + R + " left\nPC_BRIDGE_TOKEN=" + R + "\n"
+                   "ZQfake0committed0fixture0token0v1\n"), out
+    assert strict(out, keep=COMMITTED) == out                               # a fixed point
+    # negative control: without the committed runs every one of them is redacted, as before AMENDMENT 3
+    assert strict(text) == (R + ".py::test_x PASSED\n" + R + ".py\nZQ_BRANCH=" + R + "\nZQ_RUN=" + R + "\n" + R + " left\n"
+                            "PC_BRIDGE_TOKEN=" + R + "\n" + R + "\n")
+
+
+def test_run_shapes_are_the_rules_own_shapes():
+    # the set session_export.py builds uses the opaque rule's own pattern, the key-run rule's and the token-line class
+    shapes = getattr(MOD, "RUN_SHAPES")
+    opaque = [p for p, r in MOD.SECRET_PATTERNS if r == MOD.OPAQUE_MARK]
+    assert len(shapes) == 3 and shapes[0] is opaque[0] and shapes[1] is MOD._KEY_RUN
+    assert shapes[2].pattern + "" == MOD._TOKEN_LINE.pattern.split("(", 3)[3].split(")")[0]
