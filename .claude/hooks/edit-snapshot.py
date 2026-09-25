@@ -390,6 +390,13 @@ AP_SCREEN = [
      "a mutation verdict read from the exit code alone — pytest also exits non-zero on a setup or collection error, "
      "an internal error, a usage error and no tests collected, so a broken setup reads as every mutant KILLED: count a "
      "kill only when a test FAILED, score an error-only run INVALID, and run the unmutated control first (AF-AP-223)"),
+    # AF-AP-224 (2026-09-25, L5's adjacent finding, reproduced with fake keys): transcript_export's provider-key rules
+    # start with \b, so a key glued to a preceding `_`, letter or digit (`mcp__srv__sk-…`, `my_sk-…`) passed unscrubbed
+    # unless its whole run reached the 40-character opaque rule. The tell: a key-prefix rule anchored on \b.
+    ("AF-AP-224", re.compile(r"""\\b(?:\(\?:)?(?:sk-|gh[opusr][|_)]|AIza|xox)"""),
+     "a secret-shape rule anchored on a word boundary — `\\b` needs a non-word character before the key, so a key glued "
+     "to a preceding `_`, letter or digit passes: anchor on `(?<![A-Za-z0-9])` (an underscore then counts as a "
+     "separator), test the glued forms, and keep a value check (known_values_check.py) behind the shapes (AF-AP-224)"),
 
 
 ]

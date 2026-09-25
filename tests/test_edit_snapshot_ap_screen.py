@@ -1123,3 +1123,23 @@ class TestAFAP223:
                      "os.kill(pid, signal.SIGTERM) if proc.returncode is None else None",
                      "# killed when the returncode is non-zero (a comment, not a verdict)"):
             assert not self.rx.search(line), line
+
+
+class TestAFAP224:
+    rx = _AP_BY_ID["AF-AP-224"]
+
+    def test_fires_on_a_key_prefix_rule_anchored_on_a_word_boundary(self):
+        # scripts/transcript_export.py:74-77 and proofs/S0-04/check_compression.py:82 at the finding
+        for line in ('    (re.compile(r"\\bsk-[A-Za-z0-9_\\-]{12,}\\b"), "sk-<redacted>"),',
+                     '    (re.compile(r"\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\\b"), "gh<redacted>"),',
+                     '    (re.compile(r"\\bAIza[0-9A-Za-z_\\-]{30,}\\b"), "AIza<redacted>"),',
+                     '    (re.compile(r"\\bxox[abprs]-[A-Za-z0-9\\-]{10,}\\b"), "xox-<redacted>"),',
+                     '    ("sk-key", re.compile(r"\\bsk-[A-Za-z0-9_-]{8,}")),'):
+            assert self.rx.search(line), line
+
+    def test_no_fire_on_the_lookbehind_form_or_unrelated_words(self):
+        for line in ('    (re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_\\-]{12,}"), "sk-<redacted>"),',
+                     'SKIP_RX = re.compile(r"\\bskip-[a-z]+")',
+                     'GHOST_RX = re.compile(r"\\bghost_mode\\b")',
+                     'print("the sk- rule redacts provider keys")'):
+            assert not self.rx.search(line), line
