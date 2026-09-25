@@ -14,6 +14,7 @@ last_compiled: 2026-09-03
 **2026-09-25 17:4xZ — WHAT IS LIVE NOW (supersedes the 16:4xZ block for the live set).**
 - **RUNNING (sandbox, three agents; the first two resumed after the 16:4xZ container restart):** INSTALL1 (task #274): slopo installed, pinned and tuned, the other install rows, a smoke table; L5 (task #276): `scripts/chat_find.py`, the chat bug locator; S1-L1-R1 (task #277): the one repair of the situation-to-skill hook (whole-entry rows, tests that kill the verifier's mutants, the lock, the pointer, the noise).
 - **Landed:** S1-L1 is verified with follow-ups (VERIFY-S1-L1: MERGE-READY-WITH-FOLLOWUPS, 26 findings, none blocking). AF-AP-223 registered: a mutation harness that scores an error as a kill (task #278 fixes the vendored template).
+- **Also landed (17:5xZ):** the verifier's reproductions committed verbatim (`docs/research/findings/system1-context/verify-s1l1/`, the S1-L1-R1 acceptance bar); task #279 opened (commits run the committed git hooks while a lane holds them; until then the coordinator reviews a lane's hook diff before each commit); four commits queued behind CI run #1085.
 - **Next:** L2 (the code map cache) after INSTALL1, which shares `scripts/hooks/post-commit`.
 - **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/`; the codebase-memory hook (a longer deadline, an upstream report, or L2; recommended: L2 plus an upstream report).
 **2026-09-25 16:4xZ — WHAT IS LIVE NOW (supersedes the 16:2xZ block for the live set).**
