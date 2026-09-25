@@ -494,3 +494,191 @@ before a later repair, F-PERSIST and G-PASS drop to FOLLOW-UP and the recommenda
   `replay_pruner.py:165` (F-PERSIST), `:186` (F-MISS-BASELINE) and `:220` (the keep-rate denominator).
 - No PC venue and no GPU scorer (out of scope by the seed).
 - Live requests used: 2 of 20 (one POST, section 7 R-6; one GET /health at the end, 200); the server was never restarted.
+
+## R1 re-verify: the one D-031 repair of F-PERSIST (P1-R1, task #267) [10:1xZ]
+
+Asked by the coordinator after the repair landed. PIN daaccf5 (origin; the repair commit is a09dda3). Venue: a clean
+detached worktree at daaccf5 (`.../scratchpad/verify-p1/wt-r1`, removed at the end); static copies from `git archive`
+(a read) for the PIN's harness. No git write beyond the worktree; loopback only; the live Laya server NOT used (0
+requests in this round); no PC bridge; no subagent. Repair report: `tasks/briefs/jev-pipes/P1-R1-report.md`.
+
+**GATE RECOMMENDATION for the repair: MERGE-READY-WITH-FOLLOWUPS.** F-PERSIST is fixed at all three sites and holds
+against my own oracle. The committed suite now kills M1-M10, each on named tests. The committed FAIL does not move. Four
+residuals remain, none blocking by the predicate (R1-1 to R1-4 below). R1-1 (words of the stub that are in no chunk
+count as dropped) is the one to fix before the harness grades a scorer. It can only ADD misses (it cannot mint a PASS),
+and it touches 2 of the 40 real persisted results.
+
+### R1.1 The repair, read at the PIN
+
+`git diff e8c14bf daaccf5 -- scripts/jev_pipes/ tests/test_jev_pipes_replay.py tests/fixtures/jev_pipes/`: 3 files, +345
+-8. `scripts/jev_pipes/replay_pruner.py` (sha256 prefix 615f1974630e5408, as the repair report states):
+
+- site 1, `scripts/jev_pipes/replay_pruner.py:170` (`chars_saved`): `cand.chars - charsAfter` for a persisted result,
+  `charsBefore - charsAfter` otherwise;
+- site 2, `scripts/jev_pipes/replay_pruner.py:188` (`baseline`): the miss check's original text is `seen` (the tool
+  result the model saw) for a persisted result, `source` otherwise;
+- site 3, `scripts/jev_pipes/replay_pruner.py:228` (`chars_before`): `result_chars` for a row whose `persisted` is true,
+  `source_chars` otherwise; the row gains `"persisted"` (`scripts/jev_pipes/replay_pruner.py:183`).
+
+`decision_row` gained a positional parameter (`seen`, before `history`). `git grep "decision_row(" daaccf5` finds one
+caller, `main` (`scripts/jev_pipes/replay_pruner.py:338`), which passes `job["answer"]["text"]`; nothing else in
+the tree calls it. The new fixture `tests/fixtures/jev_pipes/make_pass_fixture.py` (61df6a072962104d) holds the builder
+and an oracle ported from my `probe/pass_path.py`. The oracle imports only `json`, `re`, `sys`, `pathlib` and
+`make_fixture`, and restates 4.06, 20 and 0.05 itself. Its miss rule matches only the planted token shapes
+(`make_pass_fixture.py:53`, `TOKEN`). The test (`tests/test_jev_pipes_replay.py`, d96f54bc5a4b2138) compares 17 row fields
+and 8 summary keys per variant, over 7 variants (v0, v1, v2, v1neg, edge20, persisted, persisted_miss).
+
+### R1.2 Item (1): my five PASS-path variants against the repaired harness [verified]
+
+`probe/pass_path.py` (unchanged since section 4, sha256 prefix 6fabf7dd0b4f0c85) run on the worktree at daaccf5, 10:09Z:
+
+| Variant | Harness (verdict; pruned; misses; rate; saved; miss cost; net) | My oracle | Row diffs |
+|---|---|---|---|
+| v0 | PASS; 20; 0; 0.0; 37,290.1; 0; 37,290.1 | same | 0 |
+| v1 | PASS; 20; 1; 0.05; 37,768.2; 2,077; 35,691.2 | same | 0 |
+| v2 | FAIL (`miss rate 0.1000 > 0.05`); 20; 2; 0.1; 38,086.9; 4,273; 33,813.9 | same | 0 |
+| v1neg | PASS; 20; 0; 0.0; 64,221.9; 0; 64,221.9 | same | 0 |
+| persisted | PASS; 21; 0; 0.0; **43,216.5**; 0; **43,216.5** | same | **0** (was 1: `chars_saved 3083 vs 1261`) |
+
+Every row matches on pruned, following calls, next context, chars saved, miss, re-run, token-miss and the chunk labels.
+The persisted total differs from section 4's 43,223.9 by the footer's path: my new scratch directory name is 2
+characters longer (`r1probe` against `probe`). The pruner's footer names the file's absolute path, so the repair
+lane's PD-1 mechanism applies here too.
+
+### R1.3 Item (2): M1-M10 against the COMMITTED suite, no external oracle [verified]
+
+`probe/mutate_r1.py` (`probe/mutate.py` with the oracle skipped and every failing test name listed): one exact
+replacement at a time in the worktree, the committed 42 tests, restore from a scratch copy, sha256 checked. After the
+run: `git status --short` empty, and `replay_pruner.py` 615f1974630e5408, `transcript.py` 1e6f77216996d2f5, `bridge.mjs`
+54e1212d125e2654. M10's anchor is re-expressed on the repaired line (the mutant is the same: the saving doubled).
+
+| # | Mutant | Committed suite | Red on (named tests; `pp` = `test_pass_path_pruned_rows_end_to_end`) |
+|---|---|---|---|
+| M1 | a token miss not counted | 4 failed, 38 passed | `pp[v1]`, `pp[v2]`, `pp[edge20]`, `pp[persisted_miss]` |
+| M2 | a re-run miss not counted | 2 failed, 40 passed | `pp[v2]`, `pp[edge20]` |
+| M3 | a miss costs nothing | 4 failed, 38 passed | `pp[v1]`, `pp[v2]`, `pp[edge20]`, `pp[persisted_miss]` |
+| M4 | `Index.following` ignores the compaction | 9 failed, 33 passed | `test_accounting_fixture_end_to_end[replay]`, `[unbudgeted]`, and all 7 `pp` variants |
+| M5 | `decision_row` counts every later request | 7 failed, 35 passed | all 7 `pp` variants |
+| M6 | `few_chunks` by the harness's line count | 9 failed, 33 passed | the 2 lane end-to-end tests and all 7 `pp` variants |
+| M7 | `document` by size | 14 failed, 28 passed | the fail-open set, the lane end-to-end tests and more |
+| M8 | the history not reset at a compaction | 11 failed, 31 passed | the lane's 4 and all 7 `pp` variants |
+| M9 | the lookahead starts one item late | 1 failed, 41 passed | `pp[v1neg]` |
+| M10 | the saving doubled (re-expressed) | 7 failed, 35 passed | all 7 `pp` variants |
+
+All ten are red on committed tests; section 8's six survivors (M1, M2, M3, M5, M9, M10) are all killed. My four probe
+mutants of the repaired sites:
+
+| # | Probe mutant | Committed suite | Reading |
+|---|---|---|---|
+| M23 | the row loses `persisted` (the keep-rate denominator falls back to the file) | 2 failed: `pp[persisted]`, `pp[persisted_miss]` | covered |
+| M24 | `main` passes the pruner's input as `seen` | 1 failed: `pp[persisted_miss]` | covered |
+| M25 | a persisted saving counted in UTF-16 units instead of code points | **42 passed** | equivalent on the ASCII fixtures: no test pins the unit (R1-2) |
+| M26 | a row without the `persisted` key read as persisted | **42 passed** | the pre-repair fallback is never exercised (R1-3) |
+
+### R1.4 Item (3): the three sites, cases the repair's tests do not cover
+
+- **R1-1 [verified, reproduced]: words of the stub that are in no chunk count as dropped (site 2).** The stub is
+  `<persisted-output>` / `Output too large (<size>KB). Full output saved to: <path>` / `Preview (first 2KB):` / the
+  preview (the fixed skeleton of the 40 real stubs; the path and preview replaced by placeholders). With `seen` as the
+  baseline, `accounting.tokens` also yields the stub's own words (`persisted`, `Output`, `Preview`, the size), which are
+  in no chunk of the file. A later use of one then counts as a miss, but the seed's miss is "a dropped chunk's
+  distinctive tokens". Reproduced through the one command (`probe/pass_path_r1.py`, variant `persisted_stubword`: the
+  persisted variant plus a later tool input `grep Preview dump.log` inside the 20-item window): harness PASS, 21 pruned,
+  misses **1**, miss cost 2,364, net 41,453.7; oracle 0 misses, net 43,817.7; row diffs
+  `toolu_pp_px miss True vs False`, `miss_tokens>0 True vs False`. On this session's data (`probe/boilerplate_risk2.py`,
+  counts only, the production tokenizer and windows at the pinned transcript, with the pruned output's header, marker
+  and footer subtracted): each of the 40 persisted candidates has 0 to 5 such words outside its history, and for **2 of
+  40** one of them (`Output` once, `persisted` once) is used within the next 20 items. So those 2 would each carry a
+  false miss if pruned. Before the repair the file was the baseline, and these words never counted (the file does not
+  hold them); instead, file text the model never saw did (F-MISS-BASELINE). The committed oracle cannot see this: its
+  miss rule matches the planted token shapes only. Suggested fix: excuse the stub-only tokens, passing `history |
+  (tokens(seen) - tokens(source))` to `accounting.miss` for a persisted result. That leaves exactly the dropped file
+  text the model saw.
+- **R1-2 [verified, reproduced]: mixed units for a persisted result (sites 1 and 3).** `cand.chars` is Python's length
+  (code points); `charsAfter` is the pruner's JavaScript length (UTF-16 units). Variant `astral` (the persisted file's 20
+  kept head lines each carry U+1F680): harness `chars_saved` 1,204 against the oracle's 1,224, short by the 20 astral
+  characters in the rendered output. The consistent value is 1,224 in EITHER unit (in UTF-16 both the stub and the output
+  gain 20). It undercounts (conservative); it could go negative only with dense astral text near the cap. The repair
+  lane disclosed it (its section 8, item 3) and measured 0 such characters in the 40 real stubs. M25 survives, so no test
+  pins it. Suggested fix: `len(seen.encode("utf-16-le")) // 2` as the persisted "before" (and the same for the keep
+  rate), with an astral fixture.
+- **R1-3 [verified, reproduced]: `--resume` over a log written before the repair keeps the old accounting silently.**
+  `probe/resume_mix.py` on the persisted fixture: (A) the PIN's harness (a `git archive` copy, f10df15241c34828), a full
+  run: tokens saved 49,948.0, the persisted row 3,081 characters, no `persisted` key; (B) the repaired harness, fresh:
+  43,216.5 and 1,259; (C) the repaired harness `--resume` over A's log: **49,948.0 and 3,081**, rc 0, no warning; (D) the
+  same over A's log cut after the persisted row (13 of 21 rows): **49,948.0**. `--resume` skips pointers already in the log
+  and reuses their rows, and `summarize` reads a row with no `persisted` key as before (M26 survives). No existing log
+  triggers it: the committed pre-repair logs hold no pruned row (item 4); the only pre-repair logs with a pruned row are
+  in my scratch. Suggested fix: refuse `--resume` when a row of the same mode lacks the `persisted` key (a version mark).
+- **R1-4 [verified as data; the case itself UNVERIFIED]: a persisted result with stderr.** None exists in this session:
+  0 of the 40 real persisted records carry stderr (the `toolUseResult`, key and length only). By construction the repair
+  handles it: `cand.chars` and `seen` are the whole tool result the model saw, and the hook blanks stderr after a
+  persisted trim (`vendor/jev-pruner/hooks/fast-jev-output.ts:267`), so the saving and the baseline both count it. Not
+  reproduced: there is no production example of such a stub to copy.
+- **R1-5 [verified, INFO]: the fixture's stderr field shape.** In all 48 real non-persisted Bash rows that carry both
+  streams, the recorded `stderr` starts with a newline and the tool result is exactly `stdout + stderr`. The fixture
+  (`make_pass_fixture.py:136`) stores `stderr` without the newline and joins with `"\n"`. The text the model saw is the
+  same; no site reads the field. No effect.
+- **R1-6 [INFO]: result 14 (`persisted_miss`) pins the non-persisted branch of all three sites.** The repair lane's M14 to
+  M16 are red on it alone, and my M23 and M24 are red on the persisted variants. The tests do not cover a Read or Grep
+  result marked persisted (none exists here: every secondary row's `source_chars` equals its `result_chars`). The branch
+  would count the same text either way, because the replay hands those tools the tool-result text itself.
+
+### R1.5 Item (4): the committed FAIL does not move [verified]
+
+- The five committed logs, summarized by the PIN's `summarize` (`git archive e8c14bf`) and by the repaired one (`git
+  archive daaccf5`), per set (Bash, Read, Grep), every key compared (`probe/summ_compare.py`): **0 differing keys** in
+  each of `p1-decisions.jsonl` (3,492 rows), `-sample` (360), `-plan` (3,492), `-plan-all` (3,525) and `-unbudgeted` (60).
+  No committed row carries `persisted` and none was pruned.
+- The full-set log with each row given its TRUE `persisted` flag, read from its transcript record (40 rows true, the same
+  40), summarized by the repaired code (`probe/summ_flagged.py`): **0 differing keys** against the unflagged summary, and
+  **0 differing keys** against the lane's committed `run-full/summary.json` for Bash, Read and Grep. The headline: 3,153
+  Bash results, FAIL (`no result was pruned, so net tokens saved = 0`), pruned 0, net 0, keep rate 1.0, fail-open
+  queue_depth 241 and budget 13. The keep rate cannot move while nothing is pruned (its numerator is 0).
+- The findings report (`docs/research/findings/jev-pipes/P1-replay-2026-09-25.md`, now 1e263a27b4c291b0; the repair
+  report's 9cee9d538f9bb331 predates the coordinator's section-7 edit in the same commit a09dda3): the headline now says
+  "this session's main transcript" and names the unreplayed subagent results (F-SCOPE). Section 6 now says the least-state
+  request's chunk "was not visible either" (N-3). Section 7 records the verify round and the repair. No number changed.
+  N-1 (the 49,926 median label) is still open, as the repair report says.
+
+### R1.6 The gate at daaccf5
+
+```
+$ bash scripts/test_summary.sh tests/test_jev_pipes_replay.py      (worktree at daaccf5, run 1, 10:17Z)
+pytest-exit: 0
+pytest-summary: 42 passed in 21.73s
+$ bash scripts/test_summary.sh tests/test_jev_pipes_replay.py      (run 2)
+pytest-exit: 0
+pytest-summary: 42 passed in 20.34s
+$ bash scripts/pc_suite.sh set-id -- tests/test_jev_pipes_replay.py
+1 files set=17f6a5adc0c9
+```
+
+### R1.7 Finding inventory (R1) and the blocking predicate
+
+| Finding | Class | 1 Contract | 2 Canonical | 3 Material | 4 Discriminator | 5 Ownership |
+|---|---|---|---|---|---|---|
+| F-PERSIST | FIXED | seed `chars_saved` | the one command | the persisted row matches my oracle (0 diffs); fresh vs pre-repair on one fixture: 1,259 vs 3,081 characters (`resume_mix.py` A, B) | `pass_path.py persisted` 0 diffs; my M23, M24 red (the lane's M11-M13 quoted, not re-run) | yes |
+| G-PASS | CLOSED | build brief demand 2 | mutants | M1-M10 all red on committed tests | section R1.3 | yes |
+| R1-1 stub words count as dropped | FOLLOW-UP | contested: the seed's "a dropped chunk's tokens" against the repair brief's "the miss baseline counts what the MODEL saw (the stub)", which the code follows literally | yes (`persisted_stubword`) | small and one-way: at most one extra miss per persisted result (2 of 40 here); it can turn a borderline PASS into a FAIL, never mint a PASS | yes | yes, site 2 |
+| R1-2 mixed units | FOLLOW-UP | the seed counts characters; units unstated | yes (`astral`) | a saving short by the astral count; 0 such characters in the real stubs | yes (M25 survives) | yes, sites 1 and 3 |
+| R1-3 `--resume` across the repair | FOLLOW-UP | none frozen (`--resume` is a lane addition) | yes (`resume_mix.py`) | none on any existing log; latent | yes (M26 survives) | yes |
+| R1-4 persisted with stderr | UNVERIFIED | none | no production example | none in the data | none | yes |
+| R1-5 fixture stderr shape | INFO | none | yes | none | - | yes |
+| R1-6 Read/Grep marked persisted | INFO | none | not reproduced (none exists) | none | - | yes |
+
+No finding meets the whole predicate: R1-1 fails items 1 and 3 as argued in the table, and R1-2 to R1-6 fail item 3.
+Hence MERGE-READY-WITH-FOLLOWUPS. The recommendation rests on reproductions, with one exception. The R1-4 case
+(persisted with stderr) is reasoned from the code and the data, not run.
+
+### R1.8 NOT done (R1)
+
+- No pruned row on real data (the live scorer cannot prune) and no live request in this round.
+- R1-4 not reproduced (no production example of a persisted stub with stderr).
+- The repair lane's M11-M22 were not re-run: its table (P1-R1 report section 4) is quoted, not reproduced. My M23-M26
+  cover the same three sites independently.
+- No `/bug-echo` and no registry row for R1-1 to R1-3: `docs/INCIDENT-LOG.md` is the coordinator's. Echo, read only:
+  the stub-only-token shape (R1-1) has one site (`replay_pruner.py:188`), and the unit shape (R1-2) has two
+  (`replay_pruner.py:170` and `:228`).
+- One probe of mine (the stub skeleton) printed fragments of real preview text to my own console before I fixed its
+  matcher. Nothing was written to any file and nothing secret appeared; the report quotes only the placeholder skeleton.
