@@ -29,7 +29,8 @@ metacharacters (`;` `|` `&` backticks `$`) and certain WORDS ("subprocess" → "
 dangerous input"; paraphrase) — scrub before submitting · nothing is retained between partial
 submissions — resubmit every lane · `ouroboros_generate_seed` returns YAML and writes NO file —
 transcribe to `seeds/` immediately and run the seed's own `verify_command`s (a red first pass is
-the gate working: ours caught a missing per-proof section). **Resume uses the EXACT documented
+the gate working: ours caught a missing per-proof section).
+**Resume uses the EXACT documented
 arg shape** `{session_id, last_question, answer, ambiguity_score}` (the server also writes its artifact store into the PROJECT cwd, `.ouroboros/artifacts/artifacts.db` + WAL, on every interview call — gitignored since 2026-09-22, never committed) — a bare `{session_id,
 answer}` resume and the `ouroboros_session_status` tool both report "No events found" even when
 the session file exists under `~/.ouroboros/data/` (status reads a different store). Interview

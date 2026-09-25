@@ -251,6 +251,36 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     assert ish.merged(once, root, remove=True) == foreign
 
 
+def test_a_foreign_hook_in_a_group_with_ours_survives_install_and_remove(tmp_path):
+    """S1-L1-R1 F19: the merge works hook by hook. A foreign hook someone put in one of our groups stays there, under
+    that group's matcher, through an install and through --remove."""
+    target = tmp_path / "settings.json"
+    assert install(target).returncode == 0
+    s = json.loads(target.read_text())
+    next(g for g in s["hooks"]["PreToolUse"] if g["matcher"] == "Write|Edit|Bash")["hooks"].append(
+        {"type": "command", "command": "echo foreign"})
+    target.write_text(json.dumps(s))
+    assert install(target).returncode == 0
+    groups = json.loads(target.read_text())["hooks"]["PreToolUse"]
+    assert ("Write|Edit|Bash", "echo foreign") in [(g.get("matcher"), h["command"]) for g in groups for h in g["hooks"]]
+    assert install(target, "--remove").returncode == 0
+    assert json.loads(target.read_text()) == {"hooks": {"PreToolUse": [
+        {"matcher": "Write|Edit|Bash", "hooks": [{"type": "command", "command": "echo foreign"}]}]}}
+
+
+def test_remove_takes_out_only_our_exact_commands(tmp_path):
+    """S1-L1-R1 F19: a hook of the owner's own that names a script in the repo's hooks directory is not ours; --remove
+    leaves it."""
+    target = tmp_path / "settings.json"
+    own = {"type": "command", "command": f"bash {ROOT}/.claude/hooks/owner-own.sh"}
+    assert install(target).returncode == 0
+    s = json.loads(target.read_text())
+    s["hooks"]["Stop"].append({"hooks": [own]})
+    target.write_text(json.dumps(s))
+    assert install(target, "--remove").returncode == 0
+    assert json.loads(target.read_text()) == {"hooks": {"Stop": [{"hooks": [own]}]}}
+
+
 def test_the_install_keeps_the_file_mode(tmp_path):
     target = tmp_path / "settings.json"
     target.write_text("{}\n")

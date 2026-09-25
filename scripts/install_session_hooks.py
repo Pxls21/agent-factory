@@ -15,8 +15,10 @@ runs its classifier. system1-context (S1-L1, D-090) is registered twice through 
 and Bash (the governing skill lines for the situation) and UserPromptSubmit (the skill sections that match the prompt,
 beside wiki-context); session-start.sh resets its once-per-window marker.
 
-Merge rule: entries whose command names `<repo>/.claude/hooks/` are ours and are replaced; every other key and entry
-in the file is kept. An existing file that is not a JSON object is refused (exit 1), never overwritten.
+Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/` (an older spelling
+of ours included); --remove takes out only our exact current commands. A foreign hook in the same group as one of ours
+stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
+that is not a JSON object is refused (exit 1), never overwritten.
 
 Usage: install_session_hooks.py [--target PATH] [--check | --remove]
   (default)  write or refresh our entries; prints `session hooks: installed|unchanged ...`
@@ -66,19 +68,29 @@ def our_hooks(root: Path) -> dict:
     }
 
 
-def _ours(entry: object, marker: str) -> bool:
+def _without(entry: object, ours) -> object:
+    """The group without our hooks: None when it held only ours, the group itself when it held none, else a copy that
+    keeps the foreign hooks under the group's matcher."""
     hooks = entry.get("hooks") if isinstance(entry, dict) else None
-    return isinstance(hooks, list) and any(isinstance(h, dict) and marker in str(h.get("command", "")) for h in hooks)
+    if not isinstance(hooks, list):
+        return entry
+    kept = [h for h in hooks if not (isinstance(h, dict) and ours(str(h.get("command", ""))))]
+    if len(kept) == len(hooks):
+        return entry
+    return dict(entry, hooks=kept) if kept else None
 
 
 def merged(current: dict, root: Path, remove: bool) -> dict:
     marker = f"{shlex.quote(str(root))}/.claude/hooks/"  # as the commands spell it (VERIFY-COORD-0924 F-L1-1)
+    mine = our_hooks(root)
+    exact = {h["command"] for groups in mine.values() for g in groups for h in g["hooks"]}
+    ours = exact.__contains__ if remove else (lambda c: c in exact or marker in c)
     out = dict(current)
     hooks = dict(out.get("hooks") or {})
-    for event in sorted(set(hooks) | set(our_hooks(root))):
-        kept = [e for e in (hooks.get(event) or []) if not _ours(e, marker)]
+    for event in sorted(set(hooks) | set(mine)):
+        kept = [e for e in (_without(e, ours) for e in (hooks.get(event) or [])) if e is not None]
         if not remove:
-            kept += our_hooks(root).get(event, [])
+            kept += mine.get(event, [])
         if kept:
             hooks[event] = kept
         else:

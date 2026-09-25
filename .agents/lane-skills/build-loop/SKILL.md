@@ -342,6 +342,7 @@ Model-agnostic, per increment, no skipping steps. The operative core:
    status lines open with the OUTCOME: `Verified live:` ≠ `DONE:` ≠ `NOT built.` (stated
    first-class). Ledger denominators are FOUR-WAY (execution / conformance-checked decision /
    blocked-on-external-input / blocked-on-capability) — never a flat count over the twelve proofs.
+
    Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total). Timestamps are the same rule — pasted from `date -u` or the commit clock (2026-09-07: the day's ledger stamps drifted 2.8 h ahead); a ten-minute bucket comes from the clock too, `date -u +'%H:%M' | sed 's/[0-9]$/xZ/'`, never rounded up to the bucket an event is expected in (three ahead-of-clock stamps on 2026-09-25; the future-stamp gate blocked the one that reached a commit); a fourth at 04:5xZ, typed in the same call that ran `date`). **A stamp is SUBSTITUTED, never typed:** `export STAMP=$(date -u +'%H:%M' | sed 's/[0-9]$/xZ/')` and the text uses `$STAMP` (or `os.environ['STAMP']`) in the same command. **The Write tool cannot substitute:** a file written through Write takes its stamp from a `date -u` run just before it, pasted from that output, or is written through a Bash heredoc that expands `$STAMP` (the P1-R1 brief's premise heading, typed 09:2xZ at 09:18Z, the fifth; the future-stamp gate blocked the commit).
 
 ### Behavioral guidelines (Andrej Karpathy skills)
