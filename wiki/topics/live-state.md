@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 20:4xZ — WHAT IS LIVE NOW (supersedes the earlier 20:4xZ block for the live set).**
+- **RUNNING (sandbox, two agents):** SLOPO2 (task #285), the pruning launcher for slopo; S0-04-LEAK (task #287), S0-04's leak screens and the re-mint for the owner's re-sign.
+- **D-093 (the owner's correction of D-092):** the skill list stays at Claude Code's default; the System-1 layer (Laya) is to read every skill's description and inject the ones that matter. The budget raise is reverted; the two label fixes and `tests/test_skill_frontmatter.py` stay. Today the prompt matcher searches 19 of 417 skills and Laya ranks nothing.
+- **Next, in order:** #296 (every skill in the System-1 corpus, matching first; brief next, one slot free), #295 (the agent's injection scores as labels), #297 (Laya ranks, trained on them); then L2b and an independent verify of SCRUB1 and L2a.
+- **Pushes wait on CI run #1089** (22b34e6); six local commits queue behind it.
+
 **2026-09-25 20:4xZ — WHAT IS LIVE NOW (supersedes the 20:2xZ block for the live set).**
 - **RUNNING (sandbox, two agents):** SLOPO2 (task #285), the pruning launcher for slopo; S0-04-LEAK (task #287), S0-04's leak screens and the re-mint for the owner's re-sign.
 - **D-092 DONE:** every skill stays and is listed with its description (488 of 488 on an Opus subagent, was 69; `skillListingBudgetFraction` 0.07, written by `install_session_hooks.py`); the two project skills whose labels did not parse are fixed; LIB1 is cancelled.

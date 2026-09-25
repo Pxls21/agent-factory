@@ -193,7 +193,11 @@ subordinate to, the Anthropic docs.
    committed, and the owner, reading the status, stopped it before dispatch: "are you removing skills? Don't do that."
    Before dispatching a move, rename, disable or delete the owner approved with a condition, send one plain line with
    the numbers (what moves, what stays, what is deleted, how each is reached afterwards) and wait for an explicit yes.
-   A voice-typed conditional is a question back, not a green light.
+   A voice-typed conditional is a question back, not a green light. Second instance, the same hour (D-092, D-093): a
+   ruling whose words fit two mechanisms ("so they pop up": the harness's skill list, or the System-1 layer choosing)
+   was built as the one that contradicted the standing design. Before choosing how to carry out a ruling, read it
+   against the design record and `owner_rulings.py <topic>`; when two mechanisms fit and one breaks the design's goal,
+   take the other or ask in one line.
 
 
 0h. **A brief that changes a SHAPE runs every test that pins the shape, not only the changed file's own suite (2026-09-25, K265, AF-AP-215).** The K265 brief changed the Laya server's per-chunk state order and measured the server's own suite at the PIN; `tests/test_laya_ft.py` pinned the same shape as the fine-tune's train/serve invariant (the dataset's `{"query", "chunk"}` rows equal what the server sends), so the contract broke it and the lane stopped at its boundary (one round). Before a brief changes a function's output shape or order, find every test and consumer that reads it (graft for the callers, a literal grep of `tests/` for the function and module names), run those tests at the PIN, and paste the set with its counts in the premise block; a consumer that pins the old shape is a design input, never a surprise for the lane.
