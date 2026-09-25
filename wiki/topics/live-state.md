@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 15:1xZ — WHAT IS LIVE NOW (supersedes the 14:1xZ block for the live set).**
+- **Done:** S1A audit (`docs/research/findings/system1-context/AUDIT-2026-09-25.md`) and the layer's design (`DESIGN-2026-09-25.md`, L1-L6); the codebase-memory hooks stripped (a Read 293 ms, was ~2,030; `scripts/strip_cbm_hooks.py`, run by setup.sh).
+- **RUNNING (sandbox, one agent):** S1-L1 (task #271): the situation-to-skill hook (`.claude/hooks/system1-context.py`, PreToolUse Write/Edit/Bash plus UserPromptSubmit skill sections).
+- **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/` (the harness's 30,000-character listing describes 72 of 485 skills, alphabetically; the project's own are bare); slopo's source link.
+
 **2026-09-25 14:1xZ — WHAT IS LIVE NOW (supersedes the 14:0xZ block for the live set).**
 - **Done:** CTX1 landed (the commit `CTX1 landed (task #270, D-089): ...`): CLAUDE.md 498 lines / 44,193 bytes (from 809 / 92,730), lossless into skills with "Load `<skill>` before/when <situation>" pointers; no automatic CLAUDE.md rewrite; no re-index without a code change.
 - **RUNNING (sandbox, one agent):** S1A, the audit for the System-1 context layer (task #272, D-090).
