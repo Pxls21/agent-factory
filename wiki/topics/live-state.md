@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 13:4xZ — WHAT IS LIVE NOW (supersedes the 12:5xZ block for the live set).**
+- **Done:** K265 deployed on both Laya servers (the sandbox pid 5187, the PC's `laya-systemone` on 9124b3c; each answered a 53-segment pruner state and refused an oversized chunk 422); the push lock landed; pushed 9124b3c. Tasks #265, #268, #269 closed.
+- **RUNNING (sandbox, one agent):** CTX1 (task #270); its new CLAUDE.md is installed in the tree (not committed), told to keep its pointers as explicit situation-to-skill lines.
+- **Next (owner idea, 13:4xZ):** a skill router (SK1): a UserPromptSubmit hook names the skills a turn needs, ranked by a keyword baseline then Laya, tuned by GEPA, measured on the recorded sessions before it is wired (AF-AP-218: 12 Skill loads in the main transcripts, none of build-loop, session-continuity, code-intel-trio, anti-hollow-green).
+- **Push caution:** use `push_clean.sh --lanes-live` directly while CTX1 is live (AF-AP-217: `push_when_green.sh`'s banner guard would restore a declared lane's edit inside the gitnexus block).
+
 **2026-09-25 12:5xZ — WHAT IS LIVE NOW (supersedes the 12:4xZ block for the live set).**
 - **D-089 (the owner):** restart the PC's `laya-systemone` and the sandbox Laya server on K265's code once it lands (no wait on a separate verify); CLAUDE.md shortened losslessly into referenced skills; GitNexus stops rewriting CLAUDE.md; no re-index without an update.
 - **RUNNING (sandbox, three agents, the D-062 ceiling):** K265 rev 2 (task #265); the T268-269 push lock (tasks #268, #269); CTX1 (task #270: the CLAUDE.md trim, `--skip-agents-md`, the post-commit re-index rule).
