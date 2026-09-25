@@ -11,6 +11,14 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 04:3xZ — WHAT IS LIVE NOW (supersedes the 03:5xZ block for the live set).**
+- **JEV-FIT LANDED (task #256):** the three design audits (all claude-opus-5-5, 0 refusal stops) and the coordinator's plan are in `docs/research/findings/jev-fit/` (`PLAN-2026-09-25.md`). Most measured waste needs a rule (eight of the fifteen best points): the resume pack, the Stop attribution line, KV-budget admission, the lane context diet, the poll budget, the lane progress rule, three habits. Jevs take the stream questions a rule cannot see (the resume ranker, the lane watch, the anti-pattern ranker, the retro hint, turn-end tags), each only after it beats its rule on held-out data. **NEXT: the owner's interview on the plan (questions in the chat), then a seed and a task breakdown.**
+- **A live bug found by audit A:** `scripts/orient.sh:27` reads a stale 2026-09-22 transcript directory, so the session-start orientation shows old chat. Fix = plan rule R1.
+- **QJ2 HARVESTED (task #241, GATED-PENDING-VERIFY):** `scripts/qwen_jev.py` and its 16 tests (venue `QWEN_JEV_VENUE=pc`; `16 passed` twice on the PC at 12623b3). The Qwen teacher beats the rule only on ranking anti-pattern rows. Owed: an independent verify round.
+- **VERIFY-DSV2: NOT-READY on V-6** (the leak flags miss the blocking predicate stated as its walk). **RUNNING (sandbox): DSV2-R1**, the one repair (D-031), in its own worktree; its boundary is declared in `.lanes-live`.
+- **HELD:** SESSION-EXPORT (task #252) until the owner's interview; its partial files stay in the tree (`.lanes-live`).
+- **PC:** no lanes live; vLLM `qwen` active. **Pending owner decisions:** the interview questions (rules first, GPU sharing for RWKV, the CLAUDE.md size, the owner's messages in training data, System 1 in the product v1).
+
 **2026-09-25 03:5xZ — WHAT IS LIVE NOW (supersedes the 02:3xZ block for the live set).**
 - **The container restarted at about 03:4xZ.** It stopped SESSION-EXPORT, VERIFY-DSV2 and the QJ2 watch; their files, transcripts and VERIFY-DSV2's worktree survived.
 - **LIVE:** the QJ2 PC lane (task #241; its examples_binary J2 run done, the baseline run writing); dispatcher re-attached with `MAX_POLLS=960`. Do not stop or restart vLLM while it runs.

@@ -1,5 +1,8 @@
 # Council brief: the System 1 (Jev) program — go ahead as planned? What exactly should it do first?
 
+> STATUS 2026-09-25: stopped at the owner's word after Round 1 (AF-AP-203). The design audit JEV-FIT replaced it
+> (`tasks/briefs/jev-laya/JEV-FIT-brief.md`; plan `docs/research/findings/jev-fit/PLAN-2026-09-25.md`).
+
 Written 2026-09-25 03:4xZ by the coordinator for the owner's council (owner: "might be worth running a council on this one ... then an
 interview afterwards to get the specifics down ... There's a few things that are worrying me, but I can't put my finger on it"). The
 owner's own questions: what will the Jev models do; what do they do today; how will they save tokens; how will they improve our setup

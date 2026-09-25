@@ -1,5 +1,8 @@
 # JEV-FIT: audit our setup and design where Jevs fit best (owner 2026-09-25)
 
+> STATUS 2026-09-25 04:3xZ: the three audits landed (A, B and C; all claude-opus-5-5, 0 refusal stops). The plan and the
+> verbatim reports are in `docs/research/findings/jev-fit/` (`PLAN-2026-09-25.md`). The owner interview follows.
+
 Three auditors, one per area (A, B, C below). Role: a software architect who READS THE REAL CODE and DESIGNS integrations. Do NOT
 spawn subagents. Your final message IS your report (you cannot write files): at most 1,800 words plus the tables.
 
