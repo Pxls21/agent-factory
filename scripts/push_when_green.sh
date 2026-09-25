@@ -6,7 +6,8 @@
 #   scripts/push_when_green.sh [--wait SECONDS] [--lanes-live | --no-delegates-live]
 #
 # 1. python3 scripts/ci_gate.py --branch B --wait SECONDS. B is $PUSH_BRANCH, else the current branch (a detached HEAD
-#    with no PUSH_BRANCH is a usage error); SECONDS defaults to 1700. rc 0 goes on. Any other rc (1 red, 2 cannot
+#    with no PUSH_BRANCH is a usage error); SECONDS defaults to 3000 (CI runs took 32-37 min on 2026-09-25; 1700 gave up
+#    twice with the run still going). rc 0 goes on. Any other rc (1 red, 2 cannot
 #    decide, 75 still unknown at the deadline, 64 usage, ...) is this script's rc, and nothing is fetched or pushed.
 # 2. The banner guard. AGENTS.md or CLAUDE.md whose working copy differs from HEAD only between its one
 #    `<!-- gitnexus:start -->` line and its one `<!-- gitnexus:end -->` line (the GitNexus re-index churn) is restored
@@ -32,7 +33,7 @@ USAGE="usage: push_when_green.sh [--wait SECONDS] [--lanes-live | --no-delegates
 say() { echo "push_when_green: $*"; }
 die() { local rc="$1"; shift; echo "push_when_green: $*" >&2; exit "$rc"; }
 
-WAIT=1700; MODE=""
+WAIT=3000; MODE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --wait)

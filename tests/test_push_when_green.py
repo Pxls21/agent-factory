@@ -93,7 +93,7 @@ def _push_line(w, mode, dirty="", overrides=""):
             f"cwd={w.root.resolve()}")
 
 
-GATE_LINE = "ci_gate --branch feat --wait 1700 overrides="
+GATE_LINE = "ci_gate --branch feat --wait 3000 overrides="
 
 
 def _steps(result):
@@ -283,7 +283,7 @@ def test_it_sets_no_ci_override_and_passes_a_callers_own(w, given):
     r = _run(w, **given)
     assert r.returncode == 0, r.stdout + r.stderr
     seen = "".join(f"{name}," for name in OVERRIDES if name in given)
-    assert _calls(w) == [f"ci_gate --branch feat --wait 1700 overrides={seen.rstrip(',')}",
+    assert _calls(w) == [f"ci_gate --branch feat --wait 3000 overrides={seen.rstrip(',')}",
                          _push_line(w, "--no-delegates-live", overrides=seen)]
 
 
