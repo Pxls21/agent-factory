@@ -1,0 +1,14 @@
+# codebase-memory-mcp index scope (gitignore syntax; its README "discover" section, docs/cbmignore.md).
+# Vendored and generated trees are not project code (CLAUDE.md: sandbox-kit/, .claude/, graft/ are vendored). On the
+# whole-tree index the graph was 379 MB; with this file 91 MB (re-indexed 2026-09-25, 21 s). The hook's 2 s was NOT the
+# index: every `codebase-memory-mcp` hook or CLI call reads its whole 293 MB executable first (4,476 preads, ~2.6 s,
+# strace 2026-09-25) before ~40 ms of real work, over the hook's 2,000 ms deadline (AF-AP-220).
+/sandbox-kit/
+/.claude/
+/.agents/
+/vendor/
+/graft/
+/.gitnexus/
+/.code-review-graph/
+/transcripts/
+/docs/archive/
