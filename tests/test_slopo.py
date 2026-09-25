@@ -24,6 +24,7 @@ absent (CI) those tests SKIP with the reason, by declaration; everything else ru
 """
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -257,17 +258,34 @@ def fake_venv(tmp_path):
     return tmp_path / "venv", record
 
 
+def wrapper_root(tmp_path):
+    """A root of its own holding a copy of the wrapper, the config and two empty model files: the presence checks the
+    wrapper runs before its lock pass without the real model, which only scripts/setup.sh downloads (CI has none: run
+    #1087 failed here with exit 3). Returns (root, wrapper)."""
+    root = tmp_path / "root"
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy2(WRAPPER, root / "scripts" / "slopo_review.sh")
+    shutil.copy2(CONFIG, root / "slopo.conf.yaml")
+    model = root / ".slopo-runtime" / "model"
+    model.mkdir(parents=True)
+    for name in ("model_quantized.onnx", "tokenizer.json"):
+        (model / name).write_bytes(b"")
+    return root, root / "scripts" / "slopo_review.sh"
+
+
 def test_wrapper_sync_skips_while_another_run_holds_the_lock(tmp_path):
     import fcntl
     venv, record = fake_venv(tmp_path)
+    root, wrapper = wrapper_root(tmp_path)
     lockfile = tmp_path / "slopo.lock"
+    env = {"SLOPO_VENV": str(venv), "SLOPO_LOCK": str(lockfile)}
     with open(lockfile, "w") as held:            # held here, by this process: released when the block ends
         fcntl.flock(held, fcntl.LOCK_EX)
         assert subprocess.run(["flock", "-n", str(lockfile), "true"]).returncode == 1   # the lock is really held
-        r = run_wrapper("--sync", env={"SLOPO_VENV": str(venv), "SLOPO_LOCK": str(lockfile)})
+        r = run_wrapper("--sync", env=env, cwd=root, wrapper=wrapper)
     assert r.returncode == 0 and "this sync skipped" in r.stdout
     assert not record.exists()                   # neither slopo nor python ran
-    r2 = run_wrapper("--sync", env={"SLOPO_VENV": str(venv), "SLOPO_LOCK": str(lockfile)})   # the control: lock free
+    r2 = run_wrapper("--sync", env=env, cwd=root, wrapper=wrapper)   # the control: lock free
     assert r2.returncode == 0 and record.read_text().splitlines()[0] == "slopo index"
 
 
