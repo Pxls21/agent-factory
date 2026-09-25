@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 14:0xZ — WHAT IS LIVE NOW (supersedes the 13:4xZ block for the live set).**
+- **D-090 (the owner): the System-1 context layer.** System 1 (Laya/Jev plus scripts) runs the instruments and feeds the agent the relevant skill sections (verbatim, with a pointer to the full file), wiki, code map and anti-pattern rows BEFORE it acts; Laya shadows the workflow; a chat bug locator; a Jev codebase explorer. The wiki hook the owner likes is `wiki-context.py` (keyword matching, no model).
+- **RUNNING (sandbox, two agents):** CTX1 (task #270, the CLAUDE.md trim, installed in the tree, not committed); S1A (task #272, the audit: inventory, usage over all 325 transcripts, incidents against the instruments that named them, hook budgets, the bug locator) into `docs/research/findings/system1-context/AUDIT-2026-09-25.md`.
+- **Next:** the design of the layer from S1A's tables (situation-to-skill injection before writes, edits and commands; a cached code map before code edits; skills beside the wiki hook; the shadow's rule checks; the bug locator); SK1 (task #271) folds into it.
+
 **2026-09-25 13:4xZ — WHAT IS LIVE NOW (supersedes the 12:5xZ block for the live set).**
 - **Done:** K265 deployed on both Laya servers (the sandbox pid 5187, the PC's `laya-systemone` on 9124b3c; each answered a 53-segment pruner state and refused an oversized chunk 422); the push lock landed; pushed 9124b3c. Tasks #265, #268, #269 closed.
 - **RUNNING (sandbox, one agent):** CTX1 (task #270); its new CLAUDE.md is installed in the tree (not committed), told to keep its pointers as explicit situation-to-skill lines.
