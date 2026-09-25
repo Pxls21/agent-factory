@@ -159,6 +159,15 @@ subordinate to, the Anthropic docs.
    schemas) with the line that decides; each one that must learn the new value is MODIFY in the boundary, and each one
    that must not change is named with the reason.
 
+0j. **Disjoint file boundaries can still collide through an attestation (2026-09-25, DSV2 and SESSION-EXPORT).** DSV2's
+   dataset manifest records the sha256 of `scripts/transcript_export.py` (its commit messages are scrubbed with it), and the
+   SESSION-EXPORT lane, dispatched beside it with a disjoint boundary, was changing that very file: the record's byte test
+   went red on the shared tree although neither lane touched the other's files. The DSV2 lane caught it before it reached
+   CI. Before dispatching parallel lanes, list the files each lane's artifacts HASH (a dataset or proof manifest, a minted
+   result, a lock file); a file one lane changes and another lane's artifact hashes belongs to both boundaries: sequence
+   the lanes, or name in the second brief that its landing regenerates the first artifact in the same commit (AF-AP-56's
+   class). Gate each lane in a clean worktree holding only its own files.
+
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
    derive the how — that is what the reasoning is for. Enumerate steps ONLY where ordering is
