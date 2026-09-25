@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 14:1xZ — WHAT IS LIVE NOW (supersedes the 14:0xZ block for the live set).**
+- **Done:** CTX1 landed (fa790aa): CLAUDE.md 498 lines / 44,193 bytes (from 809 / 92,730), lossless into skills with "Load `<skill>` before/when <situation>" pointers; no automatic CLAUDE.md rewrite; no re-index without a code change.
+- **RUNNING (sandbox, one agent):** S1A, the audit for the System-1 context layer (task #272, D-090).
+- **Next:** the layer's design from S1A's tables; SK1 (task #271) folds into it.
+
 **2026-09-25 14:0xZ — WHAT IS LIVE NOW (supersedes the 13:4xZ block for the live set).**
 - **D-090 (the owner): the System-1 context layer.** System 1 (Laya/Jev plus scripts) runs the instruments and feeds the agent the relevant skill sections (verbatim, with a pointer to the full file), wiki, code map and anti-pattern rows BEFORE it acts; Laya shadows the workflow; a chat bug locator; a Jev codebase explorer. The wiki hook the owner likes is `wiki-context.py` (keyword matching, no model).
 - **RUNNING (sandbox, two agents):** CTX1 (task #270, the CLAUDE.md trim, installed in the tree, not committed); S1A (task #272, the audit: inventory, usage over all 325 transcripts, incidents against the instruments that named them, hook budgets, the bug locator) into `docs/research/findings/system1-context/AUDIT-2026-09-25.md`.
