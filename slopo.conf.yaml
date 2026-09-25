@@ -1,0 +1,42 @@
+# slopo: semantic-duplicate detection (rafal-qa/slopo 0.6.0, AGPL-3.0-or-later; a pinned external tool in its own
+# venv, upstream.lock.yaml advisory_tooling.slopo). ADVISORY, never a gate: its clusters are false positives by design
+# until a person or a lane triages them, and a model or runtime change moves every vector.
+# Ported from the owner's trading-system (slopo.conf.yaml at commit 3e332ce) by INSTALL1 (D-090), rescoped to this
+# repository's code. Run it through scripts/slopo_review.sh, which starts the local embedding server when an embed
+# needs it; the post-commit hook keeps the index in step with each commit that changes a file slopo reads.
+# The model: the local ONNX server (scripts/slopo_embed_server.py); no API key, and no code leaves the box.
+# FROZEN after the first index (delete slopo.db to change one): source_dir, embedding_model, embedding_dimensions,
+# body_node_count_threshold. Every path here resolves from the current directory: run slopo from the repository root.
+
+# The scope: the four code roots. tests/ stays out (INSTALL1 report, section 3, measures it). The patterns are
+# gitignore patterns that slopo matches file by file (pathspec), so "/*" alone excludes only the files at the root and
+# "/*/" is what excludes the root's directories; the "!" lines then bring the four roots back (the last match wins).
+# scripts/hooks/post-commit reads the "!/<root>/" lines to decide whether a commit changed a file slopo reads: keep one
+# root per line, in that form.
+source_dir: .
+source_dir_exclude:
+  - "/*"
+  - "/*/"
+  - "!/scripts/"
+  - "!/src/"
+  - "!/proofs/"
+  - "!/harness-ports/"
+  # vendored upstream code (today proofs/S0-01/vendor/buzz-acp/acp.rs, with its VENDORED-FROM.md): not ours to dedupe
+  - "**/vendor/"
+  # byte-exact archived copies of the old S0-01 instruments, kept for evidence binding: duplicates by design
+  - "/proofs/S0-01/tools/archive/"
+
+db_file: slopo.db
+report_dir: slopo-report
+ignore_file: slopo.ignore.txt
+
+# LiteLLM's openai-compatible provider, pointed at the local server. scripts/slopo_review.sh starts the server on the
+# port named here.
+embedding_model: openai/jina-code-onnx
+embedding_dimensions: 768
+embedding_api_key: local-no-key
+embedding_params:
+  api_base: http://127.0.0.1:8811/v1
+  # LiteLLM refuses `dimensions` for an openai/* model other than text-embedding-3; drop it from the call. The server
+  # always returns 768, and slopo checks each vector's length against embedding_dimensions.
+  drop_params: true

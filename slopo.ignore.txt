@@ -1,0 +1,10 @@
+# slopo: cluster hashes reviewed and dismissed. One hash per line, each with a one-line reason after a '#'
+# (an unexplained ignore is a hollow green in ledger form).
+#
+# A hash covers each unit's code body and its path relative to the index root.
+# It changes when the code or that path changes, so the cluster re-surfaces.
+# Re-indexing from a different root shifts every path, changing the hashes.
+#
+# Ported from the owner's trading-system (slopo.ignore.txt at commit 3e332ce) by INSTALL1 (D-090): the header only.
+# Its dismissed hashes cover that repository's paths and do not apply here, so this ledger starts empty; the first
+# triaged analyze fills it.

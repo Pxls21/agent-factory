@@ -6,7 +6,9 @@
 #   AF_REPO   clone of this repo                default $HOME/agent-factory
 #   AF_VENV   project venv (pyflakes/pytest/aleph) default $HOME/venv-agent-factory
 #   CRG_VENV  code-review-graph venv           default $HOME/venv-crg
-# Also installs the two advisory instruments (sentrux, ripwire) digest-pinned into ~/.local/bin, builds the code-review-graph
+#   SLOPO_VENV slopo + its embed server's venv default $HOME/venv-slopo
+# Also installs the advisory instruments (sentrux, ripwire digest-pinned into ~/.local/bin; slopo into its own venv with
+# its pinned embedding model under $AF_REPO/.slopo-runtime/model), builds the code-review-graph
 # and codebase-memory graphs, and refreshes a graft/gitnexus index that is older than HEAD (owner directive 2026-09-07:
 # every instrument runs on the PC too — scripts/lane_context.sh must work here for the build lanes).
 # Heavy index builds (gitnexus analyze, graft build) run DETACHED at the end — they outlive
@@ -14,6 +16,7 @@
 # Run it over the bridge detached:  nohup bash harness-ports/bin/pc-setup.sh > .lanes/pc-setup.log 2>&1 &
 set -uo pipefail
 : "${AF_REPO:=$HOME/agent-factory}"; : "${AF_VENV:=$HOME/venv-agent-factory}"; : "${CRG_VENV:=$HOME/venv-crg}"
+: "${SLOPO_VENV:=$HOME/venv-slopo}"
 export DO_NOT_TRACK=1
 ok()   { echo "  ✓ $*"; }
 warn() { echo "  ⚠ $*"; }
@@ -90,6 +93,56 @@ elif curl -fsSL -m 300 -o "$TMPD/ripwire.tar.gz" "https://github.com/redhat-et/r
   install -m 0755 "$TMPD/ripwire" "$HOME/.local/bin/ripwire" && ok "ripwire $RIPWIRE_VER installed (digest verified; binary only — the bundled skills/hooks are never installed)"
 else warn "ripwire: download, asset or binary digest check failed"; fi
 rm -rf "$TMPD"
+
+say "slopo (advisory semantic-duplicate detector; the same pins as scripts/setup.sh)"
+# INSTALL1 (D-090): slopo 0.6.0 (AGPL-3.0-or-later: its own venv, never vendored) plus the embed server's runtime, and
+# the embedding model. The wheel and the two model files are digest-checked; each installs only when absent or wrong,
+# and only while 1 GB of disk stays free after it. Python 3.12 or later (Fedora 42's python3 is 3.13).
+SLOPO_WHEEL="slopo-0.6.0-py3-none-any.whl"
+SLOPO_WHEEL_URL="https://files.pythonhosted.org/packages/97/6e/be36bed69c636ffddabc9c41f8738303f28e47ad50529a8f412604414e1c/$SLOPO_WHEEL"
+SLOPO_WHEEL_SHA="ec9d2dd8c5e152c5f1e7cb1d88e25f44b215e3bef308a282a8a9259f5ec6105b"
+SLOPO_SERVER_PINS="onnxruntime==1.30.0 tokenizers==0.23.2 fastapi==0.141.1 uvicorn==0.54.0"
+JINA_URL="https://huggingface.co/jinaai/jina-embeddings-v2-base-code/resolve/516f4baf13dec4ddddda8631e019b5737c8bc250"
+JINA_FILES="onnx/model_quantized.onnx=ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d"
+JINA_FILES+=" tokenizer.json=b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5"
+room_for() { [ "$(df -Pm "$1" | awk 'NR==2 {print $4}')" -ge $((1024 + $2)) ]; }   # room_for DIR MB: 1 GB stays free
+sha_is() { [ -f "$1" ] && [ "$(sha256sum "$1" | cut -d" " -f1)" = "$2" ]; }
+PY312=""
+for c in python3.12 python3.13 python3; do
+  command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 12))' && { PY312="$(command -v "$c")"; break; }
+done
+slopo_ok() {   # the pinned slopo answers and the server's runtime imports. No `| grep -q` here: under pipefail it
+  local v      # breaks slopo's pipe after the first line, fails, and every run rebuilt the venv (INSTALL1, found live)
+  v="$("$SLOPO_VENV/bin/slopo" --version 2>/dev/null)" || return 1
+  [ "${v%%$'\n'*}" = "Slopo 0.6.0" ] && "$SLOPO_VENV/bin/python" -c "import onnxruntime, tokenizers, fastapi, uvicorn" 2>/dev/null
+}
+if slopo_ok; then
+  ok "slopo 0.6.0 present ($SLOPO_VENV)"
+elif [ -z "$PY312" ]; then warn "slopo: no Python 3.12 or later"
+elif ! room_for "$HOME" 600; then warn "slopo: under 1.6 GB free — install skipped"
+else
+  TMPD="$(mktemp -d)"
+  # shellcheck disable=SC2086  # SLOPO_SERVER_PINS is a list of requirement words
+  if curl -fsSL -m 300 -o "$TMPD/$SLOPO_WHEEL" "$SLOPO_WHEEL_URL" && sha_is "$TMPD/$SLOPO_WHEEL" "$SLOPO_WHEEL_SHA" \
+     && rm -rf "$SLOPO_VENV" && "$PY312" -m venv "$SLOPO_VENV" \
+     && "$SLOPO_VENV/bin/pip" install -q --no-cache-dir "$TMPD/$SLOPO_WHEEL" $SLOPO_SERVER_PINS >/dev/null 2>&1 \
+     && cp "$TMPD/$SLOPO_WHEEL" "$SLOPO_VENV/$SLOPO_WHEEL"; then
+    ok "slopo 0.6.0 installed into $SLOPO_VENV with $PY312 (wheel digest verified)"
+  else warn "slopo: download, digest check, venv or pip install failed"; fi
+  rm -rf "$TMPD"
+fi
+[ -x "$SLOPO_VENV/bin/slopo" ] && ln -sfn "$SLOPO_VENV/bin/slopo" "$HOME/.local/bin/slopo"
+mkdir -p "$AF_REPO/.slopo-runtime/model"; jina_ok=0
+for spec in $JINA_FILES; do
+  f="${spec%%=*}"; sha="${spec#*=}"; dest="$AF_REPO/.slopo-runtime/model/${f##*/}"
+  if ! sha_is "$dest" "$sha"; then
+    room_for "$AF_REPO" 200 || { warn "slopo model: under 1.2 GB free — ${f##*/} not downloaded"; continue; }
+    if curl -fsSL -m 900 -o "$dest.part" "$JINA_URL/$f" && sha_is "$dest.part" "$sha"; then mv -f "$dest.part" "$dest"
+    else rm -f "$dest.part"; warn "slopo model: ${f##*/} download or digest check failed"; continue; fi
+  fi
+  jina_ok=$((jina_ok+1))
+done
+[ "$jina_ok" -eq 2 ] && ok "slopo model present ($AF_REPO/.slopo-runtime/model, digests verified)"
 say "ouroboros (uv tool)"
 command -v ouroboros >/dev/null 2>&1 || uv tool install ouroboros-ai==0.53.0 >/dev/null 2>&1
 if command -v ouroboros >/dev/null 2>&1; then

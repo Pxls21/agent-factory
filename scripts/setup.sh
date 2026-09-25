@@ -5,7 +5,9 @@
 # (sandbox-kit/reference-scripts/setup-trading-system.sh) with the trading-only
 # pieces removed. Installs: Ouroboros (binary + MCP registration), Council of
 # High Intelligence, llm-wiki-compiler, Codebase Memory MCP, GitNexus, honey,
-# graft, code-review-graph, the aleph venv, output styles, git identity.
+# graft, code-review-graph, sentrux, ripwire, slopo (its own venv + the pinned
+# embedding model), the aleph venv (with pytest, pytest-xdist, pyflakes), output
+# styles, git identity; then prints one smoke line per tool (the end of this file).
 # Idempotent and tolerant — warns on optional failures, never blocks the session.
 #
 # When the implementation stack lands (Hermes adapters, policy gate, buzz-acp —
@@ -134,8 +136,11 @@ if [ -x "/root/.local/bin/codebase-memory-mcp" ]; then
     ok "codebase-memory index launched in background (log: /tmp/cbm-index.log)"
   fi
 elif [ -f "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" ]; then
-  bash "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" --dir=/root/.local/bin >/dev/null 2>&1 \
-    && ok "codebase-memory-mcp installed (prebuilt release)" \
+  # Pinned to the release this container runs (upstream.lock.yaml session_toolchain.codebase-memory-mcp); the installer
+  # takes releases/latest unless CBM_DOWNLOAD_URL names one, and checks the archive against the release's checksums.txt.
+  CBM_DOWNLOAD_URL="https://github.com/DeusData/codebase-memory-mcp/releases/download/v0.10.8" \
+    bash "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" --dir=/root/.local/bin >/dev/null 2>&1 \
+    && ok "codebase-memory-mcp 0.10.8 installed (prebuilt release)" \
     || warn "codebase-memory-mcp prebuilt install failed (network?)"
 else
   warn "codebase-memory-mcp: no binary and no install.sh"
@@ -204,6 +209,75 @@ else
   rm -rf "$TMPD"
 fi
 
+# slopo (owner decision 2026-09-05; installed by INSTALL1, D-090): the semantic-duplicate detector, ADVISORY, never a
+# gate (`scripts/slopo_review.sh <base-ref>`; the post-commit hook keeps its index in step with each commit).
+# AGPL-3.0-or-later, so it stays a pinned external tool in its OWN venv: never the project venv, and its source is never
+# copied into this repository. The venv also carries the embed server's runtime (scripts/slopo_embed_server.py), pinned
+# by version: one venv for both, measured (pip check clean). The wheel is pinned by sha256
+# (upstream.lock.yaml advisory_tooling.slopo) and kept in the venv for the pin test; the embedding model by revision and
+# sha256 (advisory_models.jina-embeddings-v2-base-code). Each piece installs only when absent or wrong, and only while
+# 1 GB of disk stays free after it (AF-AP-219: a full disk kills every lane on the box).
+say "slopo (advisory semantic-duplicate detector)"
+SLOPO_VENV=/root/venv-slopo
+SLOPO_WHEEL="slopo-0.6.0-py3-none-any.whl"
+SLOPO_WHEEL_URL="https://files.pythonhosted.org/packages/97/6e/be36bed69c636ffddabc9c41f8738303f28e47ad50529a8f412604414e1c/$SLOPO_WHEEL"
+SLOPO_WHEEL_SHA="ec9d2dd8c5e152c5f1e7cb1d88e25f44b215e3bef308a282a8a9259f5ec6105b"
+SLOPO_SERVER_PINS="onnxruntime==1.30.0 tokenizers==0.23.2 fastapi==0.141.1 uvicorn==0.54.0"
+JINA_URL="https://huggingface.co/jinaai/jina-embeddings-v2-base-code/resolve/516f4baf13dec4ddddda8631e019b5737c8bc250"
+JINA_FILES="onnx/model_quantized.onnx=ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d"
+JINA_FILES+=" tokenizer.json=b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5"
+room_for() { [ "$(df -Pm "$1" | awk 'NR==2 {print $4}')" -ge $((1024 + $2)) ]; }   # room_for DIR MB: 1 GB stays free
+sha_is() { [ -f "$1" ] && [ "$(sha256sum "$1" | cut -d" " -f1)" = "$2" ]; }
+fetch_wheel() { curl -fsSL -m 300 -o "$1" "$SLOPO_WHEEL_URL" && sha_is "$1" "$SLOPO_WHEEL_SHA"; }
+slopo_ok() {   # the pinned slopo answers and the server's runtime imports. No `| grep -q` here: under pipefail it
+  local v      # breaks slopo's pipe after the first line, fails, and every run rebuilt the venv (INSTALL1, found live)
+  v="$("$SLOPO_VENV/bin/slopo" --version 2>/dev/null)" || return 1
+  [ "${v%%$'\n'*}" = "Slopo 0.6.0" ] && "$SLOPO_VENV/bin/python" -c "import onnxruntime, tokenizers, fastapi, uvicorn" 2>/dev/null
+}
+if slopo_ok; then
+  if sha_is "$SLOPO_VENV/$SLOPO_WHEEL" "$SLOPO_WHEEL_SHA" || fetch_wheel "$SLOPO_VENV/$SLOPO_WHEEL"; then
+    ok "slopo 0.6.0 present ($SLOPO_VENV, with the embed server's runtime; the kept wheel's digest verified)"
+  else
+    rm -f "$SLOPO_VENV/$SLOPO_WHEEL"; warn "slopo 0.6.0 present, but its wheel could not be fetched for the pin check"
+  fi
+elif ! command -v python3.12 >/dev/null 2>&1; then
+  warn "slopo: no python3.12 (slopo needs Python 3.12 or later) — advisory instrument unavailable this session"
+elif ! room_for / 600; then
+  warn "slopo: under 1.6 GB free on / (the venv takes about 450 MB; 1 GB must stay free) — install skipped this session"
+else
+  TMPD=$(mktemp -d)
+  if fetch_wheel "$TMPD/$SLOPO_WHEEL"; then
+    rm -rf "$SLOPO_VENV"
+    # shellcheck disable=SC2086  # SLOPO_SERVER_PINS is a list of requirement words
+    if python3.12 -m venv "$SLOPO_VENV" >/dev/null 2>&1 \
+       && "$SLOPO_VENV/bin/pip" install -q --no-cache-dir "$TMPD/$SLOPO_WHEEL" $SLOPO_SERVER_PINS >/dev/null 2>&1 \
+       && cp "$TMPD/$SLOPO_WHEEL" "$SLOPO_VENV/$SLOPO_WHEEL"; then
+      ok "slopo 0.6.0 installed into $SLOPO_VENV (wheel digest verified)"
+    else
+      warn "slopo: venv or pip install failed (network?) — advisory instrument unavailable this session"
+    fi
+  else
+    warn "slopo: wheel download or digest check failed (network?) — advisory instrument unavailable this session"
+  fi
+  rm -rf "$TMPD"
+fi
+[ -x "$SLOPO_VENV/bin/slopo" ] && mkdir -p /root/.local/bin && ln -sfn "$SLOPO_VENV/bin/slopo" /root/.local/bin/slopo
+mkdir -p "$REPO_ROOT/.slopo-runtime/model"
+jina_ok=0
+for spec in $JINA_FILES; do
+  f="${spec%%=*}"; sha="${spec#*=}"; dest="$REPO_ROOT/.slopo-runtime/model/${f##*/}"
+  if ! sha_is "$dest" "$sha"; then
+    if ! room_for "$REPO_ROOT" 200; then warn "slopo model: under 1.2 GB free — ${f##*/} not downloaded"; continue; fi
+    if curl -fsSL -m 900 -o "$dest.part" "$JINA_URL/$f" && sha_is "$dest.part" "$sha"; then
+      mv -f "$dest.part" "$dest" && ok "slopo model: ${f##*/} downloaded (revision 516f4ba, digest verified)"
+    else
+      rm -f "$dest.part"; warn "slopo model: ${f##*/} download or digest check failed (network?)"; continue
+    fi
+  fi
+  jina_ok=$((jina_ok+1))
+done
+[ "$jina_ok" -eq 2 ] && ok "slopo model present (.slopo-runtime/model: jina-embeddings-v2-base-code int8 ONNX, digests verified)"
+
 # GitNexus: pinned global install (1.6.10). --ignore-scripts avoids the
 # @ladybugdb/core postinstall network fetch racing npm's extract; the explicit
 # rebuild then runs it once, deterministically.
@@ -229,8 +303,8 @@ if [ -x "/root/venv-crg/bin/code-review-graph" ]; then
     ok "code-review-graph build launched in background (log: /tmp/crg-build.log)"
   fi
 elif command -v python3 >/dev/null 2>&1; then
-  (python3 -m venv /root/venv-crg && /root/venv-crg/bin/pip install -q code-review-graph) >/dev/null 2>&1 \
-    && ok "code-review-graph installed (/root/venv-crg)" \
+  (python3 -m venv /root/venv-crg && /root/venv-crg/bin/pip install -q "code-review-graph==2.3.8") >/dev/null 2>&1 \
+    && ok "code-review-graph 2.3.8 installed (/root/venv-crg)" \
     || warn "code-review-graph install failed (network?)"
 else
   warn "python3 not on PATH — skipping code-review-graph"
@@ -257,10 +331,11 @@ if [ -x "$VENV_PY" ]; then
     && ok "agent-factory installed editable" \
     || warn "agent-factory editable install failed"; fi
 
-  # pyflakes powers the edit-snapshot hook's lint-delta tell.
-  "$VENV_PY" -m pip install -q pyflakes pytest "jsonschema==4.25.1" "rfc3339-validator==0.1.4" 2>&1 \
-    && ok "pyflakes installed (edit-snapshot hook lint delta)" \
-    || warn "pyflakes install failed — edit-snapshot hook loses its pyflakes delta"
+  # pyflakes powers the edit-snapshot hook's lint-delta tell; pytest-xdist runs a suite on several workers (-n N), as
+  # the PC does. Versions pinned (upstream.lock.yaml session_toolchain).
+  "$VENV_PY" -m pip install -q "pyflakes==3.4.0" "pytest==9.1.1" "pytest-xdist==3.8.0" "jsonschema==4.25.1" "rfc3339-validator==0.1.4" 2>&1 \
+    && ok "pyflakes 3.4.0, pytest 9.1.1, pytest-xdist 3.8.0 installed (edit-snapshot hook lint delta; -n N suites)" \
+    || warn "pyflakes/pytest/pytest-xdist install failed — edit-snapshot hook loses its pyflakes delta"
 
   # MCP-SDK v1 pin for the aleph MCP server: it imports `mcp.server.fastmcp`,
   # which mcp>=2 removed. An unpinned venv drifting to 2.x kills the server at
@@ -374,5 +449,62 @@ if [ -d "$REPO_ROOT/sandbox-kit/output-styles" ]; then
     && say "output-styles installed (attention-kind / spartan / rundown)" \
     || warn "output-styles copy failed"
 fi
+
+# --- Tool smoke table (INSTALL1, D-090) ---------------------------------------
+# One line per tool the workflow names (the installation table: docs/research/findings/system1-context/
+# AUDIT-2026-09-25.md, section 7): the tool's first --version line (or a presence count) when it is found, and a warn()
+# line when it is MISSING; the session-start hook surfaces warn() lines, and a missing tool never stops the session.
+# Three rows have no sandbox binary by design and say so: gh, the RWKV/fla venv (PC only) and phoenix-docs (an http
+# MCP registration). Each probe is capped at 20 s.
+say "Tool smoke table (one line per tool; a MISSING line is a warning, never a stop)"
+SMOKE_FOUND=0; SMOKE_MISSING=0
+smoke() {   # smoke NAME COMMAND...: "found" and the command's first output line on rc 0 with output; else MISSING
+  local name="$1" out rc; shift
+  out="$(timeout 20 "$@" 2>&1)"; rc=$?
+  out="$(printf '%s' "${out%%$'\n'*}" | sed 's/\x1b\[[0-9;]*m//g')"
+  if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
+    SMOKE_FOUND=$((SMOKE_FOUND+1)); ok "$(printf '%-26s found    %s' "$name" "$out")"
+  else
+    SMOKE_MISSING=$((SMOKE_MISSING+1)); warn "$(printf '%-26s MISSING  %s (rc %s)' "$name" "${out:-no output}" "$rc")"
+  fi
+}
+by_design() { printf '  - %-26s %s\n' "$1" "$2"; }
+VPY=/root/venv-agent-factory/bin/python
+smoke graft                    graft --version
+smoke GitNexus                 gitnexus --version
+smoke codebase-memory          /root/.local/bin/codebase-memory-mcp --version
+smoke code-review-graph        /root/venv-crg/bin/code-review-graph --version
+smoke ripwire                  ripwire --version
+smoke sentrux                  sentrux --version
+smoke slopo                    slopo --version
+smoke "slopo model"            bash -c "[ '${jina_ok:-0}' -eq 2 ] && echo 'jina-embeddings-v2-base-code int8 ONNX + tokenizer, digests verified'"
+smoke "prism skills (count)"   bash -c "ls '$REPO_ROOT/.claude/skills' | grep -c '^prism-'"
+smoke "honey plugin"           ls -d "$HOME/.claude/plugins/cache/greenpt/honey"
+smoke "jev plugin"             ls -d "$HOME/.claude/plugins/cache/fast-jev-output"
+smoke "aegis plugin"           ls -d "$HOME/.claude/plugins/cache/aegis-dev/aegis"
+smoke "wiki commands (count)"  bash -c "ls '$HOME/.claude/commands' | grep -c '^wiki-'"
+smoke "council agents (count)" bash -c "ls '$HOME/.claude/agents' | grep -c '^council-'"
+smoke Ouroboros                ouroboros --version
+smoke aleph                    /root/venv-agent-factory/bin/aleph --help
+smoke "Laya venv"              /root/venv-laya-probe/bin/python -c 'import importlib.metadata as m; print("laya", m.version("laya"))'
+smoke node                     node --version
+smoke npm                      npm --version
+smoke uv                       uv --version
+smoke pytest                   "$VPY" -m pytest --version
+smoke pytest-xdist             "$VPY" -c 'import importlib.metadata as m; print("pytest-xdist", m.version("pytest-xdist"))'
+smoke pyflakes                 "$VPY" -m pyflakes --version
+smoke "mcp (aleph's SDK)"      "$VPY" -c 'import importlib.metadata as m; print("mcp", m.version("mcp"))'
+smoke ripgrep                  rg --version
+smoke jq                       jq --version
+smoke git                      git --version
+smoke "claude CLI"             claude --version
+smoke gpg                      gpg --version
+smoke "output styles (count)"  bash -c "ls '$HOME/.claude/output-styles' | grep -c '[.]md$'"
+smoke "session hooks"          python3 "$REPO_ROOT/scripts/install_session_hooks.py" --check
+smoke "git hooks"              git -C "$REPO_ROOT" config core.hooksPath
+by_design "gh (GitHub CLI)"    "absent by design: this sandbox reaches GitHub through the GitHub MCP tools"
+by_design "RWKV / fla venv"    "PC only: ~/venv-rwkv and ~/venv-rwkv-b on the PC (PC-BRIDGE.md); no sandbox tool uses it"
+by_design "phoenix-docs"       "an http MCP registration (the user-scope block above registers it); no binary to run"
+say "Tool smoke: $SMOKE_FOUND found, $SMOKE_MISSING missing, 3 absent by design"
 
 say "Done."

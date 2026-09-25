@@ -152,6 +152,22 @@ advisory_tooling:
     vendored_at: "vendor/jev-pruner/ (PROVENANCE.md: copied from the commit object; dist/ built with TypeScript 5.9.3; ONE local change, the minTokensFloor option)"
     role: advisory_tool_output_pruner_replayed_by_scripts_jev_pipes_never_a_gate
     adopted: "2026-09-25 (owner-recommended plugin fast-jev-output, installed 2026-09-22; vendored for the P1 replay, task #231, D-087)"
+  # slopo: pinned by its PyPI wheel. The key names avoid `repository`/`commit`/`*_sha256` on purpose: parse_lock
+  # (scripts/vendored_manifest.py) requires a commit or binary pin for every `repository`, and a wheel is neither.
+  slopo:
+    package: slopo
+    version: 0.6.0
+    source: https://github.com/rafal-qa/slopo
+    index: https://pypi.org/project/slopo/0.6.0/
+    package_wheel: slopo-0.6.0-py3-none-any.whl
+    package_wheel_digest: "sha256:ec9d2dd8c5e152c5f1e7cb1d88e25f44b215e3bef308a282a8a9259f5ec6105b"
+    license: AGPL-3.0-or-later
+    python: ">=3.12 (sandbox: /usr/bin/python3.12, 3.12.3)"
+    venv: "/root/venv-slopo in the sandbox, ~/venv-slopo on the PC: its own venv, never the project venv; its source is never copied into this repository"
+    embed_server_runtime: "onnxruntime 1.30.0, tokenizers 0.23.2, fastapi 0.141.1, uvicorn 0.54.0, in the same venv (pip check clean, 2026-09-25)"
+    installed_by: "scripts/setup.sh, harness-ports/bin/pc-setup.sh (the wheel's digest checked before install)"
+    role: advisory_semantic_duplicate_detector_never_a_gate
+    adopted: "2026-09-05 (owner decision); installed and wired 2026-09-25 (INSTALL1, D-090)"
 
 # Advisory model — the Laya typed-decisions checkpoint (J1-4, task #121). ADVISORY forever: never a term in any gate, lint,
 # commit, push or proof (seeds/seed-laya-j1-v1.yaml; scripts/no_laya_in_gates.py). Every value below is the one J0 measured
@@ -180,6 +196,17 @@ advisory_models:
     runtime_required: "flash-linear-attention 0.3.0, transformers 4.48 or later, trust_remote_code (modeling_rwkv7.py)"
     role: advisory_long_input_decision_student_candidate_never_a_gate
     adopted: "2026-09-24 (owner choice, D-079; not yet downloaded or run)"
+  jina-embeddings-v2-base-code:
+    checkpoint_source: https://huggingface.co/jinaai/jina-embeddings-v2-base-code
+    revision: "516f4baf13dec4ddddda8631e019b5737c8bc250"
+    license: Apache-2.0
+    files: "onnx/model_quantized.onnx (int8, 161,895,621 bytes) and tokenizer.json (2,561,316 bytes), under .slopo-runtime/model/"
+    onnx_digest: "sha256:ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d"
+    tokenizer_digest: "sha256:b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5"
+    published_ids: "the ONNX digest is the file's Hugging Face LFS oid at this revision; tokenizer.json is not in LFS, and its git blob id 64a31466e9fdd5ef043ff0f07b97ee2e256a205e matches"
+    served_by: "scripts/slopo_embed_server.py (127.0.0.1:8811, CPU, mean pooling; for slopo only)"
+    role: advisory_code_embedding_model_for_slopo_never_a_gate
+    adopted: "2026-09-25 (INSTALL1, D-090; the model the trading-system integration chose)"
 
 # Advisory Jev runtimes (D-079, task #241). ADVISORY: never a term in any gate, lint, commit, push or proof. Pinned by commit;
 # the key names avoid `repository`/`commit`/`*_sha256` on purpose, as advisory_models does (parse_lock reads those for the
@@ -220,3 +247,106 @@ lane_runtime:
     reason: "SQLite >= 3.51.3 for WAL on the shared profile state.db (VERIFY-B5j); owner-run hermes update 2026-09-08"
     diff_from_proof_pin: "31816 commits, 3939 files"
     verified: "harness-ports/tests/run-all.sh on the PC at 2ebd486, in a git clone with the lanes' AF_VENV, Python 3.13.11: all suites passed, rc 0, 2026-09-23 09:08Z (binary-free by its header); identity probe 2026-09-23 08:58Z: b3399c1, Hermes Agent v0.21.1, venv Python 3.11.15, SQLite 3.53.1, shared state.db WAL; 110 PC lane directories whose latest launch was at or after 2026-09-08 14:22:00Z (98 with a report; brief.md--0000000 never ran Hermes), tasks/briefs/hermes-repin/REPIN-a-R1-lane-record.md"
+
+# The session toolchain (INSTALL1, D-090; the installation table, docs/research/findings/system1-context/
+# AUDIT-2026-09-25.md section 7): the agents' development tools, never in the production spine. Each version is the one
+# the install line pins and the one measured installed in the sandbox on 2026-09-25; a published npm or PyPI version is
+# immutable. The key names avoid `repository`/`commit`/`*_sha256` on purpose (parse_lock, as above).
+session_toolchain:
+  graft:
+    registry: npm
+    package: "@nanonets/graft"
+    version: 0.16.0
+    installed_by: "scripts/setup.sh, harness-ports/bin/pc-setup.sh"
+  gitnexus:
+    registry: npm
+    package: gitnexus
+    version: 1.6.10
+    installed_by: "scripts/setup.sh, harness-ports/bin/pc-setup.sh"
+  codebase-memory-mcp:
+    registry: "GitHub release (prebuilt binary)"
+    source: https://github.com/DeusData/codebase-memory-mcp
+    version: 0.10.8
+    installed_by: "scripts/setup.sh (CBM_DOWNLOAD_URL names this release; the installer checks the archive against its checksums.txt). harness-ports/bin/pc-setup.sh still takes the latest release (PC version not measured)"
+  code-review-graph:
+    registry: PyPI
+    package: code-review-graph
+    version: 2.3.8
+    installed_by: "scripts/setup.sh (/root/venv-crg). harness-ports/bin/pc-setup.sh installs it unpinned (PC version not measured)"
+  ouroboros-ai:
+    registry: PyPI
+    package: ouroboros-ai
+    version: 0.53.0
+    installed_by: "scripts/setup.sh, harness-ports/bin/pc-setup.sh (uv tool install)"
+  pytest:
+    registry: PyPI
+    version: 9.1.1
+    installed_by: "scripts/setup.sh (the project venv). harness-ports/bin/pc-setup.sh installs it unpinned (PC version not measured)"
+  pytest-xdist:
+    registry: PyPI
+    version: 3.8.0
+    installed_by: "scripts/setup.sh (the project venv). harness-ports/bin/pc-setup.sh installs it unpinned (PC version not measured)"
+  pyflakes:
+    registry: PyPI
+    version: 3.4.0
+    installed_by: "scripts/setup.sh (the project venv). harness-ports/bin/pc-setup.sh installs it unpinned (PC version not measured)"
+  mcp:
+    registry: PyPI
+    version: 1.29.1
+    installed_by: "scripts/setup.sh, harness-ports/bin/pc-setup.sh (the v1 API aleph imports)"
+
+# Vendored tooling: pinned by its committed bytes (sandbox-kit/VENDORED-MANIFEST.md hashes each tree) and by the named
+# provenance file; scripts/setup.sh installs it from this repository, so nothing is downloaded.
+vendored_tooling:
+  honey-for-devs:
+    path: sandbox-kit/honey-for-devs
+    provenance: sandbox-kit/VENDORED-FROM.md
+    installed_as: "plugin honey@greenpt from the vendored local marketplace (scripts/setup.sh)"
+  council-of-high-intelligence:
+    path: sandbox-kit/council-of-high-intelligence
+    provenance: sandbox-kit/VENDORED-FROM.md
+    installed_as: "/council and the council-* agents under ~/.claude (scripts/setup.sh)"
+  llm-wiki-compiler:
+    path: sandbox-kit/llm-wiki-compiler
+    provenance: sandbox-kit/VENDORED-FROM.md
+    installed_as: "/wiki-* commands and the wiki-compiler skill under ~/.claude (scripts/setup.sh)"
+  aleph:
+    path: sandbox-kit/aleph
+    provenance: sandbox-kit/VENDORED-FROM.md
+    installed_as: "editable into /root/venv-agent-factory (scripts/setup.sh)"
+  output-styles:
+    path: sandbox-kit/output-styles
+    provenance: sandbox-kit/VENDORED-FROM.md
+    installed_as: "copied to ~/.claude/output-styles (scripts/setup.sh)"
+  prism-skills:
+    path: ".claude/skills/prism-*"
+    provenance: .claude/skills/PROVENANCE-PRISM.md
+    installed_as: "loaded from the repository; no install step"
+  aegis-skills:
+    path: ".claude/skills/aegis-*"
+    provenance: .claude/skills/PROVENANCE-AEGIS.md
+    installed_as: "loaded from the repository; the aegis@aegis-dev plugin itself was installed by hand from a local clone at the same commit, and no script installs it (INSTALL1 report: NOT done)"
+
+# Container-provided system tools: the container image brings them, and no repository script installs them. Versions
+# measured in the sandbox on 2026-09-25; they move with the image, not with this file (scripts/setup.sh's smoke table
+# prints each one every session). Absent by design: gh (the sandbox reaches GitHub through the GitHub MCP tools) and
+# the RWKV/fla venvs (the PC only: ~/venv-rwkv and ~/venv-rwkv-b, PC-BRIDGE.md).
+container_provided:
+  node:
+    measured_version: v22.22.2
+  npm:
+    measured_version: 10.9.7
+  uv:
+    measured_version: 0.8.17
+  ripgrep:
+    measured_version: 14.1.0
+  jq:
+    measured_version: "1.7"
+  git:
+    measured_version: 2.43.0
+  claude-cli:
+    measured_version: 2.1.280
+  gnupg:
+    measured_version: 2.4.4
+  python3.12:
+    measured_version: 3.12.3

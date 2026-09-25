@@ -66,3 +66,11 @@ vendor/*
 
 # the Jev client call log and the sandbox-local Laya server state (task #221; never committed)
 .jev/
+
+# slopo (semantic-duplicate detector, ADVISORY, never a gate; INSTALL1): the index DB and its transient rollback journal,
+# the report dir and the local runtime (the pinned embedding model). Regenerable, never committed; slopo.conf.yaml and
+# slopo.ignore.txt ARE committed.
+/slopo.db
+/slopo.db-journal
+/slopo-report/
+/.slopo-runtime/
