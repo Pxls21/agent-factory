@@ -110,3 +110,59 @@ blocking rows 86 | OpenJev correct at 0.5 72 | always-false correct 83 | TP 1 FN
 Questions for you, not facts: whether every family's block end can be found without ambiguity; whether commit messages
 that cite an AF-AP id in passing (not as the change's subject) should count as positives, and how you would tell them
 apart deterministically. Report what you measure; the coordinator decides.
+
+## AMENDMENT 1 (coordinator, 2026-09-25 01:4xZ, after the lane's STOP; D-085)
+
+The STOP was correct (`DSV2-report.md` section 2). These rulings replace the brief where they conflict. Continue from
+your premise run and surveys: the PIN is unchanged, so no new premise block is needed.
+
+1. **The boundary grows by one file.** MODIFY `scripts/laya_ft/common.py` (its tests stay in `tests/test_laya_ft.py`).
+   Two changes only: `row_identities` learns the kind `commit` with the identity `("commit", <full sha>)`, and any other
+   unknown kind still raises (keep a test for it); `check_no_heldout` reads a kind with no held-out sample as an empty
+   set. The version-1 dataset at 0b342c7 still loads through `load_dataset`, and every existing test passes unchanged.
+2. **Commits: your option 1 with your split.**
+   - Admit a commit when it adds a registry row (your rule: the ids on `+|` lines minus the ids on `-|` lines of its
+     `docs/INCIDENT-LOG.md` diff; provenance `registry-commit`) or when an AF-AP id sits in its subject line (provenance
+     `commit-subject`). A commit that meets both gets `registry-commit`.
+   - Body-only citations are NOT admitted in version 2 (your read: 2 of 6 describe an instance). Count them in the
+     summary as not admitted. A phrase rule with its own precision read is a later increment.
+   - Held-out linkage: a commit whose diff adds an incident entry carries that entry as a second source,
+     `{"kind": "incident", "heading": <the masked heading>, "role": "linked"}`, one per entry it adds. The builder leaves
+     out a commit linked to a held-out entry; the loader's own gate is the backstop. Test both: a planted commit that adds
+     a held-out entry (the gate refuses it) and a clean commit (it loads).
+3. **ap negatives (amends D-1; D-085).** In a source that cites at least one registry row, each of its 16 candidates that
+   it does not cite gets the recorded answer `false` with provenance `not-cited`. The reason: J2's ap test scores this
+   same truth (the cited rows positive, the other candidates negative; `ap_probe.py:80`), so training and evaluation read
+   one answer. Positives keep `heading-cite`, `body-cite`, `commit-subject` or `registry-commit`. The summary counts, per
+   source kind, the sources whose cited rows all fall outside their top 16 (all 16 of their rows are `not-cited`). Report
+   the class balance per question; do not rebalance (D-3).
+4. **Class words: your second reading.** One class in the class slot. Two class words inside the slot (joined by `/` or
+   `,`, or an alternative in parentheses such as `(UNVERIFIED, FOLLOW-UP)`) are refused as ambiguous. A qualifier after
+   the class (`FOLLOW-UP (KNOWN class F-B4)`) or a class word later in the prose does not refuse the line; the label is
+   the slot's class. Test one real line of each case.
+5. **Block ends: a per-family rule you define and test.** The frame: a block ends at the next anchor line of any family
+   (the admitted grammar included), at a markdown heading, or at a horizontal rule. List-item families (F7, F8, and any
+   numbered or bulleted anchor) also end at a blank line followed by an unindented line that does not continue the item.
+   A heading family (F6) ends at the next heading of the same or a higher level. Every block is capped at 60 lines; a
+   capped block carries `"block_end": "cap"` in its source, and the summary counts them. Tests on real lines:
+   `VERIFY-N5m-report.md:13` stops before the graft banner; `report-pc-verify-b4.md--95c0bb1.md:127` stops before
+   `Retro:`; `VERIFY-J1-2-R1-report.md:82` keeps its whole body.
+6. **F14 stays refused.** The 30 rows with no title cell stay out, and
+   `test_class_table_without_a_title_column_refuses_each_row` stands unchanged. Count them in NOT-admitted.
+7. **F13: your proposal.** Admit a table row only under a header with a finding or title column. Blocking-predicate and
+   disposition tables stay out (their cells are the label's own evidence). Dedup by the first occurrence per (report,
+   id), as version 1 does (AF-AP-199).
+8. **Masking and leak counts (AF-AP-189's class).** Mask every version-2 finding state with `j2c._mask`, as version 1
+   does. Measure and report, per source and provenance: finding states that still hold a class word of the closed set;
+   finding states that state the blocking outcome in words (for example "non-blocking", "blocks the merge", "blocking
+   predicate"); ap states that hold an unmasked AF-AP id or the positive candidate's registry name cell verbatim. Flag
+   each such row in its source (`"leak": "<kind>"`) so a training run can select. Leave nothing out on this basis: the
+   disposition is task #238's.
+9. **Your two version-1 constraints are rules.** New families go beside the decide-harvest helpers that `j2c._blocks`
+   calls, never by changing them. The byte clause is version 1's `dataset.jsonl` (`d7cd9b49...`); its `manifest.json`
+   code hashes change by construction, and that is accepted.
+10. **The build commit is the PIN** 434b727, for the regression fixture and the version-2 record (D-4).
+
+Evidence demands 2 to 7 stand. Demand 4's set adds the `common.py` tests. Demand 5: report how many of the 8 rows joined a
+label (an unlabeled row is skipped by `join_labels`; none may be stale). Demand 6 adds a mutant: a commit linked to a
+held-out entry let through.

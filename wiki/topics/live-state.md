@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 01:4xZ — WHAT IS LIVE NOW (supersedes the 00:2xZ block for the live set).**
+- **LIVE since 00:35:59Z:** the QJ2 PC lane `pc-qj2.md--d6a2142` (task #241), the only PC lane. Its dispatcher hit the 60-minute poll cap and re-attached at 01:41Z (`/tmp/pc_lane.sh.OtRTlc`, log `qj2-dispatch.log` in the session scratchpad). At 01:39Z the lane was at its mutant stage. Do not stop or restart vLLM while it runs.
+- **RUNNING since 01:3xZ:** the DATA-SESSION evidence-gatherer (D-084): the typed decisions in our session records, with recorded answers and counts. Report `docs/research/findings/laya-ft-data/SESSION-DECISIONS-2026-09-25.md`.
+- **DSV2 (task #251) RESUMED 01:4xZ on AMENDMENT 1 (D-085):** it stopped correctly before any code (the loader refused a `commit` source kind; `common.py` was READ-only). Now: `common.py` joins its boundary; commits count by registry-add or a subject-line cite; a candidate the source does not cite is a recorded `false` (`not-cited`). Its boundary (`.lanes-live`) is the lane's until it reports; an independent verify round follows (rule 0f).
+- **NEXT:** harvest DATA-SESSION and DSV2; DSV2's verify round; then the scrubbed session export and dataset v3 (D-084). **PC:** QJ2 only; qwen active.
+
 **2026-09-25 00:2xZ — WHAT IS LIVE NOW (supersedes the 23:3xZ block for the live set).**
 - **DONE:** the Laya head checkpoint's held-out evaluation: REJECTED on every KC-J3 line (`docs/research/findings/laya-ft-eval/2026-09-25-head-w1-cpu/evaluate-summary.json`). The OpenJev teacher is itself under the lexical baseline on the ap rows (1,616 of the 1,788 training examples); the choice answers did not move. Next for Laya: a better teacher first (QJ2), then retrain.
 - **D-082 (owner):** System 1 connects straight to its model server; OmniRoute stays for System 2. The direct vLLM path is exact (`docs/research/findings/j2b-variants/qwen27b/direct_probe.py`: token-id completions match the compiler by construction). Nothing trained so far went through OmniRoute.
