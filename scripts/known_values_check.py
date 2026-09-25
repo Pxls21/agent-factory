@@ -9,7 +9,9 @@ and counts how often each appears in the targets, whole and in pieces:
     wrapped copy (an `xxd` column, a line-broken paste) still counts;
   - a raw key file's printed forms: hex, base64 and base64url, with and without padding, and their 8-byte windows.
 
-  known_values_check.py [--env-file PATH]... [--raw-file PATH]... [--env NAME]... TARGET...
+  known_values_check.py [--env-file PATH]... [--raw-file PATH]... [--env NAME]... [--skip KEY]... TARGET...
+
+--skip KEY leaves out an env-file key that holds no secret (a public base URL); the skipped names are printed.
 
 TARGET is a file or a directory (every regular file below it). Output: one line per secret form,
 `<source>:<name> <form> whole=N windows=H/T`, then a total line. Exit 0 no hit, 3 a hit, 2 a source could not be read or
@@ -27,7 +29,7 @@ WINDOW = 8
 TOKENISH = re.compile(rb"[A-Za-z0-9_\-+/=.~]{16,}")
 
 
-def _env_values(path):
+def _env_values(path, skip=()):
     out = []
     with open(path, "rb") as fh:
         for raw in fh.read().splitlines():
@@ -37,6 +39,8 @@ def _env_values(path):
             key, _, val = line.partition(b"=")
             key = key.removeprefix(b"export ").strip()
             val = val.strip().strip(b"'\"")
+            if key.decode("utf-8", "replace") in skip:
+                continue
             if len(val) >= MIN_VALUE:
                 out.append((key.decode("utf-8", "replace"), val))
     return out
@@ -83,6 +87,7 @@ def main(argv=None):
     ap.add_argument("--env-file", action="append", default=[])
     ap.add_argument("--raw-file", action="append", default=[])
     ap.add_argument("--env", action="append", default=[])
+    ap.add_argument("--skip", action="append", default=[])
     ap.add_argument("targets", nargs="+")
     try:
         a = ap.parse_args(argv)
@@ -91,7 +96,7 @@ def main(argv=None):
     secrets = []   # (label, form, bytes, windowed)
     try:
         for p in a.env_file:
-            vals = _env_values(p)
+            vals = _env_values(p, set(a.skip))
             if not vals:
                 print("known-values: %s holds no value of %d+ characters" % (p, MIN_VALUE), file=sys.stderr)
                 return 2
@@ -132,6 +137,8 @@ def main(argv=None):
     for (label, form, _, _), (whole, seen), w in zip(secrets, counts, wins):
         print("%s %s whole=%d windows=%d/%d" % (label, form, whole, len(seen), len(w)))
         hits += whole + len(seen)
+    if a.skip:
+        print("known-values: skipped keys %s" % ", ".join(sorted(a.skip)))
     print("known-values: %d secret forms, %d files, %d bytes, %s" % (
         len(secrets), nfiles, nbytes, "NO HIT" if hits == 0 else "%d HIT(S)" % hits))
     return 3 if hits else 0

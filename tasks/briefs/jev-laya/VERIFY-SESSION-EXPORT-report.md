@@ -9,6 +9,10 @@ Venue: a clean detached worktree at the PIN,
 `/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/verify-session-export/wt` (added 2026-09-25T06:24Z).
 Scratch: the same `verify-session-export/` dir. No network, no bridge, no subagents.
 
+R1 (re-verify of the one D-031 repair, PIN ce2e1c5, 2026-09-25 12:2xZ): GATE RECOMMENDATION FOR THE REPAIR:
+**MERGE-READY-WITH-FOLLOWUPS**. It rests on reading R1-F-1 as not material; see "# R1 re-verify", R1.11. The first
+round's text below stands as written.
+
 STATUS: DONE 2026-09-25T07:32:03Z (started 06:24:34Z). GATE RECOMMENDATION: **NOT-READY** (one blocker, F-1; the
 coordinator owns the gate).
 
@@ -691,3 +695,748 @@ pseudonym properties hold, and the shipper survived every remote attack I made.
   fix of F-1 on copies of the lane's files (not committed; not the lane's fix). My copy of the real export, the fixture
   trees (some held the builder's canaries), the fixture keys and the mutant copies were deleted; `attack2.out` and
   `survey.out` (counts and repo identifiers only) remain.
+
+---
+
+# R1 re-verify (the one D-031 repair; task #252)
+
+Started 2026-09-25T11:12:18Z. Scope (the coordinator's message): re-run my harness through the repaired CLI; attack the
+new surface (the four new rules, the F-7 path forms, and above all AMENDMENT 3's committed-run exemption); regressions.
+PIN: ce2e1c5 (`ce2e1c5003f6c524d5ad98b03aa895999a95a685`, on origin; head 157ddd6 adds only a chat-digest sync). Contract:
+the original brief with AMENDMENTS 1 and 2, plus AMENDMENT 3 (`tasks/briefs/jev-laya/SESSION-EXPORT-R1-brief.md`). The
+repair's report: `tasks/briefs/jev-laya/SESSION-EXPORT-R1-report.md`. Venue: a clean detached worktree at ce2e1c5,
+`<scratch>/verify-session-export/wt`, added 11:1xZ. Same rules as before: no network, no bridge, no ship, FAKE canaries
+only, no real secret read.
+
+R1 STATUS: DONE 2026-09-25 12:2xZ (started 11:12:18Z). GATE RECOMMENDATION FOR THE REPAIR: **MERGE-READY-WITH-FOLLOWUPS**
+(R1.11). It rests on one reading: R1-F-1 is not material. The coordinator owns the gate.
+
+TL;DR:
+- **F-1 is closed.** 7 of 7 escaped shapes are gone through the real CLI, and the real export's escaped letters+digits
+  class falls from 145 to 0. The key dump is dropped. The new rules work on their own shapes.
+- **AMENDMENT 3 holds, with one leak path.** The exemption keeps exactly the committed runs, and the named rules still run
+  first on 17 of 17 committed FAKE credentials. One path lets an uncommitted value through: in a strict result,
+  `<identifier>=<committed run>` stays whole, because `_committed` never checks the name (R1-F-1). Real text has 105 such
+  keeps and no secret-shaped name among them. A one-line fix is tested: 233 of 233 lane tests stay green.
+- **The tests do not pin the exactness.** 8 widening mutants survive the lane's tests, and my harness catches all 8
+  (R1-F-2).
+- **The chat digests widen the set.** The digests under `transcripts/` add 10,156 runs. 22 strict keeps come only from
+  them and stay unread (R1-F-7, UNVERIFIED).
+- **The rest reproduces exactly:** the real export, `scrub`, the chat export and the importers.
+
+- [x] Gates at ce2e1c5: 238 passed twice, set 6dde7977ceba (R1.1)
+- [x] My harness through the repaired CLI: the repair report's section 4 reproduced (R1.2)
+- [x] AMENDMENT 3: 40 rows; named rules first; exact membership; one leak path (R1.3, R1.8)
+- [x] New shapes for the new rules and the path forms: 47 rows (R1.4)
+- [x] A pre-existing hang in two rules, timed at both PINs (R1.5)
+- [x] The real export and five counts over it (R1.6)
+- [x] Regressions: `scrub` and the chat export byte-identical, importers green (R1.7)
+- [x] 17 new mutants: 5 red, 12 survive; my harness catches the 8 that widen AMENDMENT 3 (R1.8)
+- [x] Inventory, predicate, recommendation (R1.9 to R1.11); cleanup (R1.12)
+
+## R1.0 Premise
+
+```
+$ sha256sum < <file> | cut -c1-16      (the worktree at ce2e1c5)
+af9d73eab7af665b  scripts/transcript_export.py        (the repair report's section 3: af9d73eab7af665b...)
+630dfe64fe28aa76  tests/test_transcript_export.py
+9f56802d112465ef  scripts/session_export.py           (the repair report: 9f56802d112465ef...)
+bcda8895814ee561  tests/test_session_export.py
+39c88510acb21ee2  scripts/ship_to_pc.py               (unchanged since db1de1c)
+37cc6c042aea1771  tests/test_ship_to_pc.py            (unchanged since db1de1c)
+$ git diff --stat ce2e1c5 157ddd6
+ transcripts/sandbox/chat-2026-09-25.md | 2258 +++++++++++++++++++++++++++++++-
+```
+
+## R1.1 Gates at ce2e1c5, clean worktree
+
+```
+$ bash scripts/test_summary.sh tests/test_transcript_export.py tests/test_session_export.py tests/test_ship_to_pc.py   (11:17:17Z)
+238 passed in 33.21s
+pytest-exit: 0
+pytest-summary: 238 passed in 33.21s
+$ (the same, 11:17:51Z)
+238 passed in 32.30s
+pytest-exit: 0
+pytest-summary: 238 passed in 32.30s
+$ bash scripts/pc_suite.sh set-id -- tests/test_transcript_export.py tests/test_session_export.py tests/test_ship_to_pc.py
+3 files set=6dde7977ceba
+```
+
+`git status --short` in the worktree was empty after both runs.
+
+## R1.2 My harness through the repaired CLI (reproduced; judges the repair report's section 4)
+
+The same scripts as the first round (`<scratch>/verify-session-export/h/`), run against the worktree's CLI (the exporter's
+default repo is then the worktree at ce2e1c5). One edit, like the repair lane's: attack 1's protections-off control stubs
+`scrub_payload` and `scrub_strict` as `lambda s, *a, **k: s`, since `scrub_strict` now also takes `keep`. My first attack-1
+run passed a RELATIVE base path, so the fixture's `cwd` was relative and the exporter (correctly: `archive_dirs` keeps
+absolute paths only) ignored the pruner archive; the harness's own control flagged it (`archive-bare ...
+[CONTROL: absent even when off]`). The run below uses an absolute path, as the first round did.
+
+Attack 1 (11:19:16Z), pasted without the unchanged control rows:
+
+```
+export rc 0; gate total 0
+protections-off export rc 3
+json-cmd-export  json-cmd-body  json-write-cfg  json-edit-yaml  json-hook  json-notif  json-stophook   -  0   (all 7)
+url-pass-at  url-token-user  curl-u  bearer-lower  unlisted-name                                          -  0
+glob-keyfile  rel-keyfile  dot-keyfile-read  dslash-keyfile-read  quoted-glob-env                         -  0
+survivors 12 of 38: short-echo printenv-bare split-lines split-events urlenc-pass netrc secret-key-base docker-auth thinking-prose archive-bare symlink-read bg-output
+```
+
+(The full table is in `<scratch>/verify-session-export/r1-a1.out`; every positive control is present when the protections
+are off.) This is the repair report's list exactly (its section 4: the same 12 tags). All 7 escaped shapes are gone.
+
+Attack 1c (11:19:50Z), pasted:
+
+```
+export rc 0; gate total 0; key-form canaries in the gate: [('pseudonym-key-HEX', '0'), ('pseudonym-key-b64', '0'), ('pseudonym-key-b64url', '0'), ('pseudonym-key-hex', '0')]
+xxd-key          strict-passed result: key recoverable by joining the dump: False | key hex 8-char pieces present 0/8 | bridge-token 8-char windows present 0
+od-key           strict-passed result: key recoverable by joining the dump: False | key hex 8-char pieces present 0/8 | bridge-token 8-char windows present 0
+b64-wrapped-key  strict-passed result: key recoverable by joining the dump: False | key hex 8-char pieces present 0/8 | bridge-token 8-char windows present 0
+xxd-bridge-env   strict-passed result: key recoverable by joining the dump: False | key hex 8-char pieces present 0/8 | bridge-token 8-char windows present 10
+```
+
+(The label `strict-passed` is my script's wording from the first round; the three key results are now DROPPED.) F-4's key
+half is closed; its bridge-env half is unchanged, as the repair report says.
+
+Attack 3 (11:20Z): every property holds (stable across folders and runs, keyed, HMAC equal to my computation, the key in
+no output), and `tok44-esc  raw-in-export False pseudonymised False`, exported as
+`{"command":"export PC_BRIDGE_TOKEN=\"<redacted>\" && bash scripts/pc.sh ls"}`. The G6 case of F-1 is closed.
+
+The repair report's section 4 is reproduced: same counts, same survivors.
+
+## R1.3 AMENDMENT 3 under attack (reproduced)
+
+`h/attack_a3.py`. A scratch fixture repo (`git init` in my scratch, with its own identity and `core.hooksPath=/dev/null`;
+never the project's repo) whose commit c2 tracks FAKE values in a text file, a force-added ignored file and a binary
+file, and holds other FAKE values only in an earlier commit (removed at c2), a later commit, another branch, an untracked
+file, a staged file and an uncommitted edit. First, the production `repo_runs(repo, c2)` is asked which values it holds:
+exactly the committed ones (the precondition). Then one transcript echoes the values through the real CLI
+(`export --repo <fixture> --commit <c2>`). Each row is read in its own call's events. Pasted (11:3xZ):
+
+```
+fixture repo: c2 has 26 committed runs
+precondition (a value is in the production set exactly when it is committed at c2): holds
+  not in the set: e-early l-later u-untracked s-staged w-worktree o-otherbranch
+export rc 0; gate total 0; committed runs line: 26 at c2
+  named raw PC_BRIDGE_TOKEN=                                     normal result      gone
+  named escaped NAME=\"v\"                                       tool_call          gone
+  named Bearer                                                   normal result      gone
+  named bearer-lower                                             normal result      gone
+  named basic-auth                                               normal result      gone
+  named url-password                                             normal result      gone
+  named url-token-user                                           normal result      gone
+  named curl-user                                                tool_call          gone
+  named pass-name                                                normal result      gone
+  named password: (yaml)                                         strict result      gone
+  named escaped JSON api_key                                     tool_call (Write)  gone
+  named X-Agent-Token                                            normal result      gone
+  named provider keys (ghp_ sk- AIza xoxb-)                      normal result      gone, gone, gone, gone
+  named PEM block                                                normal result      gone
+  named bridge link                                              normal result      gone
+  named PC_BRIDGE_TOKEN= in a strict result                      strict result      gone
+  named NAME="v" (raw) in a strict result                        strict result      gone
+  bare committed 44-char run                                     normal result      kept
+  bare committed 24-char token line                              strict result      kept
+  committed value after NAME=                                    strict result      kept
+  edge: committed 44-char run +1 char                            normal result      pseudo
+  edge: committed 44-char run -1 char                            normal result      pseudo
+  edge: committed 44-char run prefix char                        normal result      pseudo
+  edge: committed 44-char run swapcase                           normal result      pseudo
+  edge: committed 44-char run glued -tail                        normal result      pseudo
+  edge: committed token line +1 char                             strict result      gone
+  edge: committed token line -1 char                             strict result      gone
+  edge: <uncommitted identifier>=<committed> as a token line     strict result      kept (EXPECTED gone)
+  edge: <uncommitted identifier>=<committed> inside a line       strict result      kept (EXPECTED gone)
+  source: earlier commit, removed at c2                          normal result      pseudo
+  source: a later commit (c3)                                    normal result      pseudo
+  source: another branch                                         normal result      pseudo
+  source: untracked file                                         normal result      pseudo
+  source: staged only                                            normal result      pseudo
+  source: uncommitted edit of a tracked file                     normal result      pseudo
+  source: ignored but force-added (tracked)                      normal result      kept
+  source: inside a tracked binary file                           normal result      kept
+rows 37, unexpected 2
+standalone gate CLI (it rebuilds the set from the manifest's repo and commit): rc 0, total 0
+```
+
+(A first run read every row against the whole export and flagged the two `-1 char` rows; the kept committed values hold
+their own shorter prefixes, so that was my harness. The table above reads each row in its own call's events.)
+
+Answers to the coordinator's two questions:
+- **Does the exemption apply only after the named rules?** Yes. 17 of 17 named shapes on COMMITTED fake values are
+  redacted in normal results, strict results and tool inputs (every rule of `SECRET_PATTERNS` and `PAYLOAD_PATTERNS`,
+  the new ones included). The code agrees: `scrub_payload` runs every named rule before the opaque rule and its callable
+  (`scripts/transcript_export.py:138-150`), and `scrub_strict` runs `scrub_payload` before its three sub-rules
+  (`:184-192`).
+- **Can a secret-shaped value escape redaction because a matching run exists in a tracked file?** A value that is ITSELF
+  committed at the export commit is kept (AMENDMENT 3's intent). Membership is exact: one character more or less, a
+  prefix, a glued tail or another case is not exempt, and a value only in an earlier commit, a later commit, another branch,
+  an untracked or staged file, or an uncommitted edit is not exempt. ONE path lets an UNCOMMITTED value through (below).
+
+The exported bytes of the two unexpected rows (the FAKE identifier and the committed run masked):
+
+```
+toolu_vfy_a3_028 -> '<C:secret-ident>=<committed c-tok>\n'
+toolu_vfy_a3_029 -> 'x <C:secret-ident>=<committed c-tok> y\n'
+```
+
+Mechanism (`scripts/transcript_export.py:174-181`): `_committed(s, keep)` accepts `s` when `s in keep`, OR when `s` is
+`NAME=` followed by a committed run, with `_HEAD_NAME = [A-Za-z_][A-Za-z0-9_]*=`. The name part is never checked (neither
+committed nor redacted), so in a strict result any identifier-shaped value glued by `=` to a committed run of 12+ (a token
+line) or 20+ (a key run) characters is kept raw. AMENDMENT 3 exempts "a run that occurs verbatim in a file tracked by
+the repo"; `X=C` does not occur there. The repair report names the branch (its section 1: "`_committed` also accepts
+`NAME=<a committed value>`"); the coordinator's acceptance message names only the run-shape reading.
+
+## R1.4 The new rules, the F-7 path forms and the R-2 key forms under new shapes (reproduced)
+
+`h/attack_r3.py`: 47 rows through the real CLI, each read in its own call's events. `expect` is `gone` where the rule
+claims the shape, `limit` where the repair report names the limit (or where the shape is outside R-3's list), `gone?`
+where R-3's wording claims it and the code does not. Pasted (11:25:20Z):
+
+```
+export rc 0; gate total 0
+  bearer: lowercase, no digit, outside a header                bearer-lower       limit  LEAK
+  bearer: raw JSON "authorization":"bearer v"                  bearer-lower       gone   scrubbed
+  bearer: Proxy-Authorization: bearer v                        bearer-lower       gone   scrubbed
+  bearer: authorization:bearer<TAB>v                           bearer-lower       gone   scrubbed
+  bearer: curl -H "authorization: bearer v" (tool input)       bearer-lower       gone   scrubbed
+  bearer: token on the next line                               bearer-lower       gone   scrubbed
+  bearer: BEARER v (caps, digit, no header)                    bearer-lower       gone   scrubbed
+  curl: -U proxyuser:pass (proxy credentials)                  curl-user          limit  LEAK
+  curl: --proxy-user u:pass                                    curl-user          limit  LEAK
+  curl: -u on a continued line of a printed script (result)    curl-user          limit  LEAK
+  curl: a -K config file read back: user = "bob:pass"          curl-user          limit  LEAK
+  httpie: http -a bob:pass                                     curl-user          limit  LEAK
+  curl: -u 'bob:pass' (quoted)                                 curl-user          gone   scrubbed
+  curl: --user=bob:pass                                        curl-user          gone   scrubbed
+  PASS name without a separator: DBPASS=v                      pass-name          gone?  LEAK
+  PASS name without a separator: ROOTPASS=v                    pass-name          gone?  LEAK
+  PASS name without a separator: export MYSQLPASS=v            pass-name          gone?  LEAK
+  lowercase db_pass: v (yaml)                                  pass-name          limit  LEAK
+  GPG_PASSPHRASE=v (a name that ends in PHRASE)                pass-name          limit  LEAK
+  MYSQL_PWD=v                                                  pass-name          limit  LEAK
+  DB_PASS = "v" (spaces around =)                              pass-name          gone   scrubbed
+  bare PASS: v (colon)                                         pass-name          limit  LEAK
+  export SMTP_PASS=v                                           pass-name          gone   scrubbed
+  DB.PASS=v (dot separator)                                    pass-name          gone?  scrubbed
+  url token user: letters only                                 url-token-user     limit  LEAK
+  url token user: 7 characters                                 url-token-user     limit  LEAK
+  url token user: git+https scheme                             url-token-user     gone   scrubbed
+  url token user: inside a quoted URL in a tool input          url-token-user     gone   scrubbed
+  escaped: JSON value on the next line after the colon (Write) escaped-credential limit  LEAK
+  escaped: passphrase with a space, second word                escaped-credential limit  LEAK
+  escaped twice: a JSON string inside a JSON string (hook stdout) escaped-credential gone   scrubbed
+  F-6: https://user:a@b@host/path                              url-password       gone   scrubbed
+  F-6: npm-style path with @scope after the host               url-password       gone   scrubbed
+  F-7: brace expansion qwen-{builder,jev}/api-key              F-7                limit  LEAK
+  F-7: a glob with one literal character: cat .*               F-7                limit  LEAK
+  F-7: a glob with no literal: cat ~/.config/*/*               F-7                limit  LEAK
+  F-7: a path set in an earlier call: cat $D/api-key           F-7                limit  LEAK
+  F-7: ../ segments                                            F-7                gone   scrubbed
+  F-7: glob api-ke?                                            F-7                gone   scrubbed
+  F-7: name in a variable, same command                        F-7                gone   scrubbed
+  F-7: path inside $(echo ...)                                 F-7                gone   scrubbed
+  R-2: xxd ~/.config/session-export/*                          R-2                gone   DROPPED
+  R-2: xxd ~/.config/*/* (no literal)                          R-2                limit  16/16 key groups left
+  R-2: python open(...pseudonym.key) in -c                     R-2                gone   DROPPED
+  R-2: for f in ~/.config/session-export/*                     R-2                gone   DROPPED
+  R-2: find -name 'pseudo*' -exec xxd                          R-2                gone   DROPPED
+  R-2: od $K (path set in an earlier call)                     R-2                limit  16/16 key groups left
+```
+
+Every `gone` row is scrubbed; every `limit` row leaks as its limit says (the digit rule of `bearer-lower` and
+`url-token-user`, curl's other credential flags, the case-sensitive `PASS`, names outside the list, a value split by a
+line break or a space, a path the text does not spell, a glob with fewer than 2 literal characters). One group contradicts
+R-3's own words: R-3 asks for "assignments to names that end in `PASS`", and `pass-name` needs a `_` or `-` before
+`PASS` (or `PASS` alone): `(?<![A-Za-z0-9])(?:[A-Za-z0-9]*[_-]PASS["']?\s*[:=]|PASS\s*=)` (`scripts/transcript_export.py`,
+the `pass-name` rule). So `DBPASS=`, `ROOTPASS=` and `MYSQLPASS=` leak. The repair report describes the rule as "a name
+ending in capital `PASS`" and does not name the separator requirement.
+
+## R1.5 A hang: two payload rules are quadratic on a dotted run (pre-existing; the repair report names it)
+
+`h/regex_time.py` times each payload rule and the whole scrubs on 100 KB adversarial texts, each case in its own process
+under a 60 s limit (11:27:02Z): 11 of 12 cases take at most 0.66 s for the whole `scrub_strict`; `a.a.a...` (100 KB, no
+`://`) is killed at 60 s. `h/rule_scale.py` then runs each rule alone at 5, 10 and 20 KB of `a.a.a...`, at ce2e1c5 and at
+the original PIN db1de1c (11:28:36Z), pasted (rules that stay under 0.02 s are not printed):
+
+```
+ce2e1c5 payload:0  a.a.a... at 5 KB / 10 KB / 20 KB: 0.15 / 0.68 / 2.48 s
+ce2e1c5 payload:4  a.a.a... at 5 KB / 10 KB / 20 KB: 0.02 / 0.06 / 0.32 s
+db1de1c payload:0  a.a.a... at 5 KB / 10 KB / 20 KB: 0.15 / 0.65 / 2.49 s
+db1de1c payload:3  a.a.a... at 5 KB / 10 KB / 20 KB: 0.02 / 0.07 / 0.25 s
+```
+
+`payload:0` is the bare bridge-host rule `(?<![A-Za-z0-9\-])(?:[A-Za-z0-9\-]+\.)+trycloudflare\.com`: every label start
+is a legal start (the lookbehind allows a `.` before it), and from each the repeated `label.` group runs to the end of the
+run and backtracks; four times the time per doubling, so about a minute at 100 KB and hours at a megabyte. The scrub runs
+on a whole text before the cap. `payload:4` (`url-password`; `payload:3` at db1de1c) grows faster than linear from its
+`\b`-anchored scheme, the shape the repair lane named and fixed in its new `url-token-user` rule only. Both rules were
+already in db1de1c: not caused by R1. My first round missed them. The repair report's section 10 names both ("9.06 s for
+`"a." * 20000`", and 0.95 s for `url-password`) and says "a pathological text would slow the export, not break it". At
+the measured doubling, 1 MB of such a run takes about 1.8 hours in `payload:0` alone. The real export finishes, so no real text today is
+such a run; the live tailer the JEV-FIT plan will build on `convert()` would stall on one.
+
+## R1.6 The real export at the builder's offsets, and counts over it (reproduced; counts only)
+
+The export ran from the worktree's CLI, with a scratch key my harness made (never the real key). The offsets came from the
+first round's builder manifest: 317 sources, the same set the repair report used. Those sources predate the lane
+transcript that holds the FAKE `orphan` canary, so no file needed to be excluded. Pasted from `<scratch>/r1-real.log`
+(started 11:29:29Z). I condensed the 18 pattern lines and 78 canary lines: `grep` counted every one at 0.
+
+```
+$ python3 wt/scripts/session_export.py export --out <scratch>/r1-real \
+      --offsets <scratchpad>/session-export-r1/builder-manifest.json --key <scratch>/r1key/cfg/pseudonym.key --jobs 4 \
+      --repo <scratch>/wt --commit 6ee93223b2cb7c06c85edf6a0faaa24ccf2baed5
+export 2026-09-25T11:29:29Z: 317 sources, 1178943962 bytes read, 38865748 bytes written, 589.2 s
+folders {"-home-user-agent-factory": {"sources": 1, "bytes_read": 3074681}, "-home-user": {"sources": 316, "bytes_read": 1175869281}}
+committed runs 296985 at 6ee93223b2cb7c06c85edf6a0faaa24ccf2baed5
+events {"api_error": 72, "file_change": 2796, "harness_notice": 488, "hook": 2644, "notification": 6684, "pruner_archive": 1, "summary": 131, "text": 16267, "thinking": 4997, "tool_call": 46435, "tool_result": 46422}
+capped {"hook": 2, "notification": 1753, "summary": 2, "text": 40, "tool_call": 41, "tool_result": 20}
+dropped_secret_path 29 strict_results 2572 unsettled 0 seam_adjusted 2 thinking_signature_only 29704 duplicate_notifications 2 file_changes_unrecorded 364 pseudonyms 10838 pruner_archives 1 archives 1 archives_skipped 0 archives_unlinked 0 archives_unmatched 0
+gate: 317 files, 126937 events, 0 unreadable lines
+(18 pattern lines, each 0; 78 canary lines, each 0)
+total 0
+$ (the manifest) repo: commit 6ee93223b2cb..., runs 296985, runs_sha256 9780a3842b7fec17...; key id 69c5df6455a6; gate total 0, bad 0
+```
+
+The export matches the repair report's section 3 line by line: sources, bytes read, committed runs, events, capped, every
+counter, and the gate. The runs digest also matches (`9780a3842b7fec17...`). Only "bytes written" differs: 38,865,748
+here and 38,866,988 there. The key differs, so the pseudonym hex differs and xz compresses it to a different size. The
+wall time is 589.2 s here and 564.3 s there.
+
+The escaped class F-1 counted (`h/escaped_count.py`, 12:08:30Z). Named credentials behind an escaped quote, by bucket:
+
+```
+file_change    already-scrubbed                   1
+harness_notice already-scrubbed                   18
+harness_notice under-8 (below the rule's floor)   16
+harness_notice variable-or-template               2
+notification   already-scrubbed                   12
+notification   under-8 (below the rule's floor)   78
+tool_call      already-scrubbed                   333
+tool_call      under-8 (below the rule's floor)   602
+tool_call      variable-or-template               39
+tool_result    already-scrubbed                   1
+tool_result    under-8 (below the rule's floor)   3
+--- totals by bucket: {'already-scrubbed': 365, "under-8 (below the rule's floor)": 699, 'variable-or-template': 41}
+```
+
+At db1de1c this count was `letters+digits` 145 (my first round, section 4a). It is now 0. The 699 under-8 values sit
+below the credential rule's own 8-character floor, which `scrub` has always had.
+
+`h/r1_measure.py` runs the production `convert()` over the same sources with R1's code and the set of 6ee9322. It wraps
+`_committed` and `settle` to count first passes. Pasted (11:49Z):
+
+```
+$ python3 h/r1_measure.py <scratchpad>/session-export-r1/builder-manifest.json <scratch>/r1key/cfg/pseudonym.key <scratch>/wt 6ee93223b2cb7c06c85edf6a0faaa24ccf2baed5
+committed runs at 6ee93223b2cb: 296985; held only by transcripts/ (the chat digests): 10156
+  of them mixed case + digits (token-like): 303
+  kept: NAME= branch (the whole run is NOT committed)                105
+  kept: NAME= branch, name UPPER env-style                           30
+  kept: NAME= branch, name lower snake                               69
+  kept: NAME= branch, name other                                     6
+  kept: NAME= branch, the name itself committed                      4
+  kept: digest-only AND mixed case + digits                          22
+  kept: exact committed run                                          4321
+  kept: exact run only the chat digests hold                         142
+  surviving PASS assignments with a separator (should be 0)          0
+  NAME= branch, top upper-case env-style names: LANE_ID x5, HERMES_GIT_SHA x4, HEAD x2, CHANNEL_ID x2, HOME x2, RID x2, BRANCH x2, PWD x2
+  no-separator PASS assignments whose value SURVIVES the export, by name: none
+```
+
+(The counter "no-separator PASS assignments in the input" never fired: 0 in the input.) Three readings:
+- **The strict pass's keeps reproduce the repair report exactly.** 4,321 exact runs plus 105 through the NAME= branch make
+  4,426. The report's section 5 gives 4,094 key runs plus 332 token lines, also 4,426. The two instruments are separate
+  and use the same first-pass rule.
+- **The NAME= branch (R1.3's leak) fires 105 times on real text.** Every name is an env-style name (30), a lower snake
+  name (69) or another single-word name (6). None is mixed case with digits, so no real secret-shaped name was kept.
+- **The chat digests widen the set.** The auto-committed chat digests under `transcripts/` hold 10,156 of the committed
+  runs, and no other tracked file holds them. 303 of those are mixed case with digits. The strict pass keeps 142 values
+  only because a digest holds them, and 22 of those are mixed case with digits. I did not read those values (standing rule).
+
+Real reader calls on a low-literal glob (the F-7 floor, R1.4's `cat .*` and `~/.config/*/*` rows). `h/glob_floor_count.py`
+sends every real tool input (the same sources and offsets) through R1's `call_mode()` and through a copy whose literal
+floor is 0 (the only edit). It prints counts and glob WORDS only (12:15Z):
+
+```
+    reader cat on .* (hits at floor 0: .pc-bridge.env)                           1
+    reader head on * (hits at floor 0: .pc-bridge.env,qwen-jev/omniroute.key,session-export/pseudonym.key) 1
+    reader tail on * (hits at floor 0: .pc-bridge.env,qwen-jev/omniroute.key,session-export/pseudonym.key) 3
+  mode differs with the floor at 0: (None, 'strict') -> (None, 'drop')           412
+  mode differs with the floor at 0: (None, None) -> (None, 'drop')               2920
+  mode differs with the floor at 0: (None, None) -> (None, 'strict')             727
+  of them: a reader (cat/head/tail/xxd/od/less/more/strings/base64/source/.) on such a glob 5
+  tool calls                                                                     46435
+  glob words behind the difference: ** x4901, * x3739, .** x1227, .* x255, *** x137, .*? x91, .*/ x91, */ x75, scripts/hooks/* x42, *? x39, s/.* x31, ?** x26, *s* x25, b/.*/ x24, accepted/* x24
+```
+
+The floor does real work. At floor 0, 4,059 of 46,435 real calls would change mode, mostly for markdown `**` and regex
+`.*`. Five real calls are readers on such a glob. `h/reader_glob_check.py` reads their results in MY scrubbed export, never
+the raw transcripts, and prints counts only (12:17Z):
+
+```
+reader calls on a low-literal glob in the export: 5
+  tail  result chars   3869 | markers already: <redacted> 0, bridge-link 0 | bridge env names present: False | the strict pass would add 0 <redacted> markers
+  head  result chars    414 | markers already: <redacted> 1, bridge-link 0 | bridge env names present: False | the strict pass would add 0 <redacted> markers
+  tail  result chars    546 | markers already: <redacted> 0, bridge-link 0 | bridge env names present: False | the strict pass would add 0 <redacted> markers
+  cat   result chars    634 | markers already: <redacted> 0, bridge-link 0 | bridge env names present: False | the strict pass would add 2 <redacted> markers
+      would redact: assignment  21 chars, shape path-like, words 1, uncommitted keylike 20+ runs inside 0
+      would redact: assignment  21 chars, shape path-like, words 1, uncommitted keylike 20+ runs inside 0
+  tail  result chars    287 | markers already: <redacted> 0, bridge-link 0 | bridge env names present: False | the strict pass would add 2 <redacted> markers
+      would redact: assignment 141 chars, shape mixed case + digits, words 27, uncommitted keylike 20+ runs inside 0
+      would redact: assignment 141 chars, shape mixed case + digits, words 27, uncommitted keylike 20+ runs inside 0
+```
+
+None of the five results read the bridge env file. The strict pass would add only assignment values: a one-word path of 21
+characters and a 27-word line. Neither holds an uncommitted key-like run. So the glob floor let no secret-shaped value
+through in the real transcripts.
+
+## R1.7 Regressions (reproduced)
+
+`scrub`, the chat export and every other importer (worktree at ce2e1c5, 11:49Z to 12:11Z):
+
+```
+$ git diff --numstat db1de1c~1 ce2e1c5 -- scripts/transcript_export.py
+104	0	scripts/transcript_export.py
+$ (python: each region of db1de1c~1 against ce2e1c5)
+SECRET_PATTERNS block identical: True
+_NAME .. _redact_run identical: True
+def scrub( identical: True
+def turns( identical: True
+def export( identical: True
+def main( identical: True
+$ (the chat export: db1de1c~1's transcript_export.py and ce2e1c5's, on 5 real transcripts; sha256 over each output tree)
+11:49:59Z
+transcript 1 (7355669 bytes): rc 0/0, 1 day files, parent 66c6804ed131ed9b ce2e1c5 66c6804ed131ed9b IDENTICAL
+transcript 2 (1709822 bytes): rc 0/0, 1 day files, parent 776bd5a9459b4daf ce2e1c5 776bd5a9459b4daf IDENTICAL
+transcript 3 (861187 bytes): rc 0/0, 1 day files, parent 20dc29a2a6edd39f ce2e1c5 20dc29a2a6edd39f IDENTICAL
+transcript 4 (3074681 bytes): rc 0/0, 3 day files, parent e11a8379781dd32c ce2e1c5 e11a8379781dd32c IDENTICAL
+transcript 5 (724178443 bytes): rc 0/0, 18 day files, parent 9d1b1429502dc487 ce2e1c5 9d1b1429502dc487 IDENTICAL
+11:50:10Z
+$ bash scripts/test_summary.sh tests/test_hiccup_scan.py tests/test_jev_context.py tests/test_jev_locate_echo.py harness-ports/tests/test_hermes_session_export.py harness-ports/tests/test_qwen_matrix.py
+pytest-exit: 0
+pytest-summary: 132 passed in 28.49s
+$ bash scripts/test_summary.sh "tests/test_laya_ft.py::test_version_2_record_rebuilds_byte_identically_at_the_pin"
+pytest-exit: 0
+pytest-summary: 1 passed in 90.17s (0:01:30)
+$ bash scripts/test_summary.sh tests/test_jev_client.py tests/test_decisions_canonical.py tests/test_edit_snapshot_ap_screen.py   (12:10:30Z)
+pytest-exit: 0
+pytest-summary: 382 passed in 30.07s
+```
+
+R1 only adds lines to `transcript_export.py`. `scrub` and everything the chat export runs are byte-identical, and so are
+the chat digests. The only users of the new names (`PAYLOAD_PATTERNS`, `scrub_payload`, `scrub_strict`, `RUN_SHAPES`,
+`OPAQUE_MARK`) are the two lane files and their tests (a literal sweep of the worktree's `*.py`). The DSV2 record test
+is green at ce2e1c5, so the record regenerated at harvest holds. `git status --short` in the worktree stayed empty after
+every run.
+
+## R1.8 New mutants on the repair (scratch copies only)
+
+`h/mutate_r1.py`: 17 mutants, none of them among the builder's R1a-R4l. The builder's mutants REMOVE a piece. Most of
+mine WIDEN one: they exempt or redact more than the contract says. Each mutant is one exact-anchor edit (asserted to match
+once) on a scratch copy of the eight lane files. The worktree is never edited. The two lane test files then run. A mutant
+marked `a3` also runs my AMENDMENT 3 attack against the mutant copy (`VFX_WT`), and the output lists the rows that differ
+from the real code. A mutant marked `gate` runs `h/gate_probe.py`: a planted output whose FAKE `ghp_` token is committed.
+
+The attack got three strict rows for these mutants: swapcase, a glued `-tail`, and `NAME=<committed> <letters-only
+secret>`. Baselines on the real code (12:0xZ):
+
+```
+$ python3 h/attack_a3.py <scratch>/mr1/a3-base      (tail; the 37 earlier rows are unchanged from R1.3)
+  edge: committed token line swapcase                            strict result      gone
+  edge: committed token line glued -tail                         strict result      gone
+  edge: NAME=<committed> <letters-only secret>                   strict result      gone
+rows 40, unexpected 2
+$ python3 h/gate_probe.py <scratch>/mr1/gp-base
+gate probe (committed set named): rc 3, total 1, counted by: github-token 1
+gate probe (control, no repo named): rc 3, total 2, counted by: github-token 1, opaque-run 1
+```
+
+The gate still counts a committed `ghp_` token under its named rule. The exemption covers `opaque-run` only, as AMENDMENT 3
+says. Mutants, pasted (`<scratch>/mr1/mutants.out`, 11:5xZ to 12:04Z):
+
+```
+X1    gate: a committed match skipped for EVERY pattern, not only opaque-run   | 72 passed in 10.81s | red: NONE (the mutant survives)
+      gate probe: gate probe (committed set named): rc 0, total 0, counted by: none; gate probe (control, no repo named): rc 3, total 2, counted by: github-token 1, opaque-run 1
+X2a   _committed: a run INSIDE a committed run counts (truncations exempt)     | 233 passed in 12.92s | red: NONE (the mutant survives)
+      a3 probe: ... rows 40, unexpected 3; ... | rows that differ from the real code: edge: committed token line -1 char: gone -> kept (EXPECTED gone)
+X2b   _committed: a run HOLDING a committed run counts (glued forms exempt)    | 233 passed in 12.98s | red: NONE (the mutant survives)
+      a3 probe: ... rows 40, unexpected 4; ... | rows that differ from the real code: edge: committed token line +1 char: gone -> kept (EXPECTED gone) || edge: committed token line glued -tail: gone -> kept (EXPECTED gone)
+X3    _committed: case-insensitive membership                                  | 233 passed in 13.21s | red: NONE (the mutant survives)
+      a3 probe: ... rows 40, unexpected 3; ... | rows that differ from the real code: edge: committed token line swapcase: gone -> kept (EXPECTED gone)
+X4a   pseudonymizer: a run INSIDE a committed run stays raw                    | 233 passed in 13.39s | red: NONE (the mutant survives)
+      a3 probe: ... export rc 3; gate total 1; ... rows 40, unexpected 3; standalone gate CLI ...: rc 3, total 1 | rows that differ from the real code: edge: committed 44-char run -1 char: pseudo -> kept (EXPECTED pseudo)
+X4b   pseudonymizer: a run HOLDING a committed run stays raw                   | 233 passed in 13.56s | red: NONE (the mutant survives)
+      a3 probe: ... export rc 3; gate total 3; ... rows 40, unexpected 5; standalone gate CLI ...: rc 3, total 3 | rows that differ from the real code: edge: committed 44-char run +1 char: pseudo -> kept (EXPECTED pseudo) || edge: committed 44-char run prefix char: pseudo -> kept (EXPECTED pseudo) || edge: committed 44-char run glued -tail: pseudo -> kept (EXPECTED pseudo)
+X4c   pseudonymizer: case-insensitive membership                               | 233 passed in 13.42s | red: NONE (the mutant survives)
+      a3 probe: ... export rc 3; gate total 1; ... rows 40, unexpected 3; standalone gate CLI ...: rc 3, total 1 | rows that differ from the real code: edge: committed 44-char run swapcase: pseudo -> kept (EXPECTED pseudo)
+X5    repo_runs: the tracked files' WORKING-TREE copies, not the commit's blobs | 3 failed, 230 passed in 13.40s | red: test_an_offsets_rerun_reads_the_commit_its_manifest_names, test_repo_runs_refuses_a_blob_git_cannot_give, test_the_gate_reads_the_committed_runs_its_manifest_names
+      a3 probe: precondition ...: FAILS for l-later s-staged w-worktree; ... committed runs line: 29 at c2; rows 40, unexpected 5; ... | rows that differ from the real code: source: a later commit (c3): pseudo -> kept (EXPECTED pseudo) || source: staged only: pseudo -> kept (EXPECTED pseudo) || source: uncommitted edit of a tracked file: pseudo -> kept (EXPECTED pseudo)
+X6    assignment rule: a value HOLDING a committed run keeps the whole line    | 233 passed in 13.24s | red: NONE (the mutant survives)
+      a3 probe: ... rows 40, unexpected 3; ... | rows that differ from the real code: edge: NAME=<committed> <letters-only secret>: gone -> kept (EXPECTED gone)
+X8    RUN_SHAPES: the token floor 12 -> 8 (a wider committed set)              | 2 failed, 231 passed in 13.31s | red: test_committed_runs_stay_as_they_are, test_run_shapes_are_the_rules_own_shapes
+      a3 probe: ... committed runs line: 32 at c2; rows 40, unexpected 2; ... | no row differs from the real code
+X9    escaped-credential: the value eats the backslash of the closing escaped quote | 11 failed, 222 passed in 13.44s | red: test_a_credential_behind_an_escaped_quote_is_redacted, test_an_escaped_long_token_is_redacted_not_pseudonymized, test_escaped_credentials_are_redacted
+X10   bearer-lower: no digit needed outside a header (prose 'bearer tokens')   | 233 passed in 13.37s | red: NONE (the mutant survives)
+X11a  url-token-user: the 8-character floor lowered to 1                       | 233 passed in 13.35s | red: NONE (the mutant survives)
+X11b  url-token-user: no digit needed                                          | 1 failed, 232 passed in 13.25s | red: test_r1_rules_keep_text_with_no_secret
+X12   curl-user: the window crosses a pipe or a command separator              | 233 passed in 13.14s | red: NONE (the mutant survives)
+X13   cap: the strict seam check without keep                                  | 72 passed in 11.12s | red: NONE (the mutant survives)
+X18   workers never take the committed set (--jobs > 1)                        | 3 failed, 69 passed in 11.26s | red: test_committed_runs_stay_as_they_are, test_opaque_values_become_stable_keyed_pseudonyms, test_the_gate_reads_the_committed_runs_its_manifest_names
+```
+
+(`...` marks where I cut repeated probe summary text: the precondition held, and the committed-run count and the
+standalone gate matched the baseline, except where printed.) Summary:
+
+- **5 of 17 are red** on the lane's tests: X5, X8, X9, X11b and X18.
+- **8 widening mutants of AMENDMENT 3 survive the lane's tests:** X1, X2a, X2b, X3, X4a, X4b, X4c and X6. My harness
+  catches every one of them (the rows above). So the production code IS exact: at ce2e1c5 each of these rows reads as
+  the contract says (R1.3). But no lane test pins that exactness, so a later edit that widened membership would stay green.
+- **The export's own gate backs up the pseudonymizer.** Under X4a, X4b and X4c the export exits 3, because the gate's
+  exemption is exact.
+- **Nothing backs up the strict pass.** Under X2a, X2b, X3 and X6 the export exits 0 with gate total 0. The gate never
+  checks the strict pass's shapes (R1-F-10).
+- **4 survivors only over-redact:** X10, X11a, X12 and X13. None of them leaks.
+
+`h/survivors_r1.py` checks that these 4 survivors are real behaviour changes. It sends one benign input per mutant
+through the real code and each mutant, and prints output digests (12:0xZ):
+
+```
+real code:
+X10  'bearer authentication' in prose                          87e16b068f81
+X11a a 4-character url user with a digit                       3d77416a65c0
+X12  curl, then a pipe, then date -u                           9f0499e2e5a4
+X13  an over-long strict result, a committed run in its head   edc99f1a83cd
+X10:   X10 row c0cccd19ddfc, the other three rows as the real code
+X11a:  X11a row 9e99852ec6be, the other three rows as the real code
+X12:   X12 row 7d09077cf3ae, the other three rows as the real code
+X13:   X13 row "cap returned None (the text becomes the seamless marker)", the other three rows as the real code
+```
+
+(The mutant blocks are condensed. Each block printed all four rows, and the three unchanged rows equal the real code's
+digests.) Each survivor changes exactly its own row. The three rule survivors on their inputs (`scrub_payload`, 12:2xZ):
+
+```
+X10   real 'the API uses bearer authentication on every call'
+      mut  'the API uses bearer <redacted> on every call'
+X11a  real 'clone ssh://git2@example.com/zq/zq.git'
+      mut  'clone ssh://<redacted>@example.com/zq/zq.git'
+X12   real 'curl -s https://example.com/x | date -u +%H:%M:%S'
+      mut  'curl -s https://example.com/x | date -u +%H:<redacted>'
+```
+
+X10 survives because the lane's prose controls put only short words after `bearer` (`the bearer of bad news`, `bearer
+tokens are fine here`, `tests/test_transcript_export.py:601`). The 8-character floor keeps those words, with or without
+the digit rule. X13 loses the whole over-long strict result when a committed run sits in its kept head: the text becomes
+the seamless marker and counts as unsettled.
+
+Candidate fixes for the two contract deviations, each tried on a scratch copy (12:0xZ to 12:1xZ):
+
+```
+candidate fix (the NAME= branch refuses a keylike name of 12+ characters): tests: 233 passed in 13.39s
+  a3 probe: precondition ... holds; export rc 0; gate total 0; committed runs line: 26 at c2; rows 40, unexpected 0; ... | rows that differ from the real code: edge: <uncommitted identifier>=<committed> as a token line: kept (EXPECTED gone) -> gone || edge: <uncommitted identifier>=<committed> inside a line: kept (EXPECTED gone) -> gone
+candidate pass-name fix (an upper-case name ending in PASS, no separator, with =): tests: 1 failed, 232 passed in 12.72s
+  PASS name without a separator: DBPASS=v                      pass-name          gone?  scrubbed
+  PASS name without a separator: ROOTPASS=v                    pass-name          gone?  scrubbed
+  PASS name without a separator: export MYSQLPASS=v            pass-name          gone?  scrubbed
+  negative/edge BYPASS=enabledforall             changed: True
+  negative/edge COMPASS=northnorthwest           changed: True
+  negative/edge PASS: test_zq_something_long     changed: False
+  negative/edge PASS=$((PASS+1))                 changed: False
+  negative/edge SKIPPASS=12345678                changed: True
+```
+
+The NAME= fix is one line in `_committed`:
+`return s in keep or bool(m) and s[m.end():] in keep and not (m.end() > 12 and _keylike(s[:m.end() - 1]))`.
+It closes R1.3's leak, and all 233 lane tests stay green. The pass-name fix makes the lane's own negative control red:
+`BYPASS=abcdefghij` must stay (`tests/test_transcript_export.py:603`). So the separator requirement is a deliberate choice
+that a test pins, and R-3's words ("names that end in `PASS`") also cover `BYPASS`. The coordinator settles that wording.
+
+## R1.9 Finding inventory, R1 round (no severity filter)
+
+Each item: class · evidence · contract mapping · canonical path · material effect · reproduction · suggested fix.
+
+**R1-F-1 · FOLLOW-UP (the one contract deviation in AMENDMENT 3's code; read the gate line) · the NAME= branch keeps an
+uncommitted value.**
+- Evidence: REPRODUCED through the real CLI (R1.3, rows `toolu_vfy_a3_028/029`; R1.8). Real text: 105 NAME= keeps and
+  no token-like name among them (R1.6).
+- Contract: AMENDMENT 3 exempts "a run that occurs verbatim in a file tracked by the repo". The run `<identifier>=<committed>`
+  does not occur there. D-2's strict pass redacts such a run. The repair report names the branch (its section 1). The
+  coordinator's acceptance message does not.
+- Canonical path: yes (`export`, a strict result).
+- Material effect: an uncommitted, identifier-shaped FAKE value leaves the export raw. On real text there is no instance,
+  and I found no plausible source. A secret would have to be an assignment's NAME, glued by `=` to a committed run.
+  Env files, key files and profiles put the secret on the right of `=`.
+- Reproduction: `python3 h/attack_a3.py <abs dir>` (2 unexpected rows). The mutation that removes the branch is the
+  builder's R4c (red on two lane tests). The corrected implementation is the candidate in R1.8.
+- Fix: the one-line candidate in R1.8 (233/233 green, my rows gone), plus my three a3 rows as lane tests.
+
+**R1-F-2 · FOLLOW-UP · no lane test pins the exact membership of AMENDMENT 3.**
+- Evidence: 8 widening mutants survive the lane's 233 tests (X1, X2a, X2b, X3, X4a, X4b, X4c, X6). My harness catches
+  each one (R1.8).
+- Contract: evidence demand 5 asks for "one [mutant] per new rule, each red on a named test". The builder's removal
+  mutants meet it. Widening is not demanded.
+- Canonical path: the code at ce2e1c5 is exact (R1.3). The gap is in the regression tests.
+- Material effect: none today. A later edit could widen membership and stay green. For the strict pass nothing at run
+  time would notice (gate total 0 under X2a, X2b, X3 and X6).
+- Reproduction: `python3 h/mutate_r1.py <abs dir> X1 X2a X2b X3 X4a X4b X4c X6`.
+- Fix: port the a3 edge rows (±1 character, prefix, swapcase, glued tail, `NAME=<committed> <letters>`) and
+  `h/gate_probe.py` into `tests/test_transcript_export.py` and `tests/test_session_export.py`.
+
+**R1-F-3 · FOLLOW-UP · 4 over-redacting widenings survive (X10, X11a, X12, X13).**
+- Evidence: REPRODUCED. Each changes its own benign input (R1.8).
+- Contract: the rules' own comments ("so prose such as \"bearer tokens\" stays"; the 8-character floor; the pipe-bounded
+  window; `cap` keeps committed runs through `keep`).
+- Material effect: evidence loss only (over-redaction), no leak.
+- Fix: add `bearer authentication`, `ssh://git2@host`, `curl ... | date -u +%H:%M:%S` to
+  `test_r1_rules_keep_text_with_no_secret` (each redacted by its mutant above), and an over-long strict result with a
+  committed run to the cap tests.
+
+**R1-F-4 · FOLLOW-UP (wording question) · `pass-name` needs `_` or `-` before `PASS`.**
+- Evidence: REPRODUCED (R1.4). `DBPASS=`, `ROOTPASS=` and `export MYSQLPASS=` leak. Real input: 0 such assignments (R1.6).
+- Contract: R-3 says "names that end in `PASS`". The lane pins `BYPASS=abcdefghij` as NOT a secret (line 603), and the
+  literal wording would redact it.
+- Material effect: 0 real instances. A plausible shell-script shape.
+- Fix: an explicit list of prefixes without a separator (`DB`, `ROOT`, `MYSQL`, `PG`, `SMTP`, `REDIS`, `ADMIN`, ...), or
+  a ruling that the separator form is what R-3 meant. The repair report should name the requirement: its prose says "a
+  name ending in capital `PASS`".
+
+**R1-F-5 · FOLLOW-UP · the F-7 glob floor (2 literal characters) misses `cat .*` and `cat ~/.config/*/*`.**
+- Evidence: REPRODUCED with FAKE key tokens (R1.4). Real text: 5 reader calls on such globs, and none holds a
+  secret-shaped run (R1.6).
+- Contract: R-3 lists "a glob that matches a secret path". The repair report documents the floor (its section 1), and the
+  lane pins it (R3j). At floor 0, 4,059 real calls would change mode.
+- Material effect: none on real text. A leak shape for a key file printed through a no-literal glob.
+- Fix: in reader commands only (`cat`, `head`, `tail`, `xxd`, `od`, `less`, `strings`, `base64`, `source`), take a glob
+  with 0 or 1 literal characters when it can expand to a SECRET_FILES path. Bash's `*` skips dotfiles, so `.*` is the
+  dotfile form.
+
+**R1-F-6 · FOLLOW-UP (pre-existing; the repair report names it) · `bridge-host` is quadratic and `url-password` is
+super-linear on a dotted run (R1.5).**
+- Evidence: REPRODUCED at ce2e1c5 and at db1de1c.
+- Contract: none new. The live tailer that JEV-FIT plans needs a linear scrub.
+- Material effect: for 1 MB of `a.a.a...`, about 1.8 hours in `payload:0` alone (from the measured doubling). The real
+  export finishes today.
+- Fix: start `bridge-host` only where no `.` precedes it, `(?<![A-Za-z0-9\-.])`, as `url-token-user` does for its scheme.
+  Check that a host right after an ellipsis is still covered by the named `bridge-link` rule or by a test.
+
+**R1-F-7 · UNVERIFIED (contract question for the coordinator) · the auto-committed chat digests widen the set.**
+- Evidence: MEASURED, counts only (R1.6). 10,156 committed runs exist only in `transcripts/`. The strict pass keeps 142
+  values only because a digest holds them, and 22 of those are mixed case with digits. I did not read them.
+- Contract: AMENDMENT 3 rests on "the repo's hooks keep secrets out of it". The digests are machine-committed transcript
+  text whose only filter is `scrub`, which is weaker than the strict pass.
+- Material effect: unknown. The premise also says a committed secret is already exposed, so the export would add no new
+  exposure beyond origin.
+- Fix: leave `transcripts/` out of the set (a one-path filter in `repo_runs`, at a cost of the 142 keeps), or have the
+  coordinator run a known-values check of the real secrets against `repo_runs(HEAD)`. A hit is an origin incident in its
+  own right.
+
+**R1-F-8 · FOLLOW-UP (disclosed) · the limits of the new rules (R1.4's `limit` rows).**
+- Leaking shapes: `bearer` with no digit outside a header; curl's `-U` and `--proxy-user`; a `-u` on a continued line; a
+  `-K` config file; httpie's `-a`; lowercase `db_pass`; `GPG_PASSPHRASE`; `MYSQL_PWD`; `PASS:`; a url token user of
+  letters only or under 8 characters; an escaped value on the next line; the second word of a passphrase; brace
+  expansion; a path set in an earlier call; R-2 with a no-literal glob or a variable path.
+- Each is outside R-3's list or named in the repair report's NOT-done. Fix: the F-5 continuation.
+
+**R1-F-9 · FOLLOW-UP (disclosed) · F-4's bridge-env half.** An `xxd` of a bridge env file still shows 10 eight-character
+windows of the token (R1.2, attack 1c). R-2 covers the pseudonym key only, as the brief words it.
+
+**R1-F-10 · INFO · what the gate cannot see.**
+- The gate counts named and opaque shapes only, so a strict-pass regression is invisible to it (R1.8: X2a, X2b, X3, X6).
+- Its exemption keys on the rule name `opaque-run` (the repair report's section 10; it fails loud).
+
+**R1-F-11 · INFO · the standalone gate trusts the manifest.** It rebuilds the set from the manifest's `repo.path` and
+`commit`, and does not compare `runs`/`runs_sha256` with the result. An edited manifest could widen the gate's opaque
+exemption. The shipper reads the recorded gate, so this is hypothetical misuse only.
+
+**R1-F-12 · INFO · the set's sources.** Runs from tracked BINARY blobs and from force-added ignored files are exempt (R1.3).
+This fits AMENDMENT 3's words ("a file tracked by the repo"). A random 12-character run in a binary is exempt too.
+
+**R1-F-13 · INFO · evidence audit of the repair report.**
+- Reproduced exactly: section 3's real-export summary, section 4 (my harness: 12 survivors, 7 of 7 escaped shapes
+  gone, key dumps dropped), and section 5's strict-pass keeps (4,426, R1.6).
+- Not re-derived: section 5's opaque split (28,302 / 80,981), the builder's 36 mutants ("36 of 36 red"), and the 410
+  canonical tool-call texts that no longer parse (section 10: pre-existing, R1 adds none).
+- Two wording gaps: the report calls `pass-name` "a name ending in capital `PASS`" without the separator requirement
+  (R1-F-4), and it says the quadratic rule "would slow the export, not break it" (R1-F-6: about 1.8 hours per megabyte).
+
+**R1-F-14 · INFO · my own harness corrections this round.**
+- A relative base path made attack 1's pruner control fire. The exporter keeps absolute `cwd` paths only, so the fault was
+  mine (R1.2).
+- Blob-wide detection flagged the `-1 char` rows falsely. The fixed harness reads each row in its own call's events (R1.3).
+
+**First-round items, status at ce2e1c5:**
+- F-1: closed (R1.2, R1.6: 0 letters+digits values).
+- F-2 and F-3: addressed by AMENDMENT 3. The effect is measured in the repair report's section 5, and I reproduced its
+  strict half.
+- F-4: the key half is closed; the bridge-env half is open (R1-F-9).
+- F-5: partly closed by R-3 (R1-F-8).
+- F-6: closed (R1.4 F-6 rows).
+- F-7: partly closed (R1-F-5, R1-F-8).
+- F-8 to F-11: outside R1's boundary.
+
+## R1.10 The blocking predicate, item by item (R1 round)
+
+| Finding | 1 contract | 2 canonical | 3 material | 4 discriminator | 5 ownership | Blocks? |
+|---|---|---|---|---|---|---|
+| R1-F-1 NAME= branch | yes (AMENDMENT 3, D-2) | yes (CLI) | NO on real text: 0 of 105 keeps have a token-like name, and no plausible source | yes (a3 rows; R4c; the candidate fix) | yes | no, see the note |
+| R1-F-2 exactness not pinned | no (demand 5 is met) | code exact | no (latent) | yes (8 mutants) | yes | no |
+| R1-F-3 over-redacting survivors | partial (comments) | yes | evidence loss only | yes | yes | no |
+| R1-F-4 no-separator PASS | wording (R-3 vs a pinned BYPASS) | yes | no (0 real) | yes | yes | no |
+| R1-F-5 glob floor | partial (R-3; floor documented) | yes | no (5 real calls, no secret shape) | yes | yes | no |
+| R1-F-6 quadratic rules | no (pre-existing) | yes | no (the real export finishes) | yes (timings) | outside R1's items | no |
+| R1-F-7 chat digests in the set | question | measured | unknown | none yet | coordinator | no (UNVERIFIED) |
+| R1-F-8, R1-F-9 limits | outside R-3's list | yes | disclosed | yes | follow-up | no |
+
+Note on R1-F-1: it meets conditions 1, 2, 4 and 5. It fails condition 3 only as a question of real-world materiality: the
+leak is real for its shape, and that shape is absent from real text and implausible in secret files. If the coordinator
+counts any reproduced leak of an uncommitted value as material in itself, R1-F-1 blocks, and the fix is the one line in
+R1.8. No finding qualifies as CONTRACT-DEFECT: nothing new falsifies evidence, corrupts state or loses data. The
+evidence-loss items are over-redactions that the lane's own design accepts.
+
+## R1.11 Gate recommendation for the repair
+
+**MERGE-READY-WITH-FOLLOWUPS.** It rests on one reading: R1-F-1, a reproduced leak of a hostile shape with 0 real
+instances, is not material. If the coordinator reads it as material, the recommendation is NOT-READY on R1-F-1 alone, and
+the fix is one tested line. R1-F-7 is UNVERIFIED (22 values unread) and needs the coordinator's known-values check or
+ruling. The coordinator owns the gate.
+
+The repair did what it was asked:
+- F-1 is closed: 7 of 7 escaped shapes are gone, and the real export's letters+digits class is 0.
+- The key dump is dropped.
+- R-3's rules and the F-6 and F-7 forms work on their own shapes.
+- AMENDMENT 3 holds for exact membership, and the named rules run first on 17 of 17 committed shapes.
+- The real export reproduces the repair report.
+- `scrub` and the chat export are byte-identical, and every importer is green.
+
+Follow-ups, in order of value:
+1. The NAME= line (R1-F-1).
+2. The exactness tests (R1-F-2).
+3. The chat-digest question (R1-F-7).
+4. The linear `bridge-host` (R1-F-6).
+5. The over-redaction controls (R1-F-3).
+6. The PASS wording (R1-F-4).
+7. The reader-glob rule (R1-F-5).
+8. The F-5 and F-7 continuations (R1-F-8, R1-F-9).
+
+## R1.12 What I reproduced, reviewed statically, skipped, and NOT-done (R1 round)
+
+- **Reproduced** (commands and outputs above): the gates at ce2e1c5 twice (R1.1); my harness through the repaired CLI
+  (R1.2); AMENDMENT 3 in 40 rows with the production `repo_runs` as a precondition (R1.3, R1.8); 47 new-shape rows
+  (R1.4); rule timings at both PINs (R1.5); the real export and five counts over it (R1.6); the regressions (R1.7);
+  17 new mutants, 4 survivor probes and 2 candidate fixes (R1.8).
+- **Reviewed statically:** `repo_runs` (ls-tree `-z` parsing, blob-only, refusal on a missing blob), `cmd_export`'s
+  repo/commit resolution, `cmd_gate`, `_pool_map`'s initializer, and the wiring of `keep` into `settle` and `cap`
+  (`scripts/session_export.py:398, 425, 430`). `Source.settled` scrubs non-strict texts only, so it needs no `keep`
+  (`:609`).
+- **Skipped, and why:** the builder's 36 mutants (my 17 cover the new surface), the section 5 opaque split, the shipper
+  (unchanged since db1de1c; F-8 stays a follow-up), and anything on the PC (no bridge by rule).
+- **NOT-done:** no ship. The real pseudonym key was never read. I read no real value: the 22 digest-only token-like keeps,
+  the 4 reader-glob assignment values and the first round's 17 unexplained escaped values stay unread (counts and shapes
+  only). The known-values check is the coordinator's (R1-F-7).
+- **Cleanup at the end:** the worktree is removed with `git worktree remove`. Deleted: the real-data export
+  (`r1-real/`), my scratch key, every fixture dir and the mutant copies. Kept: the `h/` scripts and the `.out` files,
+  which hold counts, tags and digests only.

@@ -100,3 +100,10 @@ def test_usage_and_unreadable_sources(tmp_path):
     assert run(["--env-file", str(tmp_path / "missing.env"), str(target)])[0] == 2
     assert run(["--env", "KV_FAKE_TOKEN", str(tmp_path / "no-such-target")], env={"KV_FAKE_TOKEN": fake("u")})[0] == 64
     assert run([])[0] == 64
+
+
+def test_a_skipped_key_is_left_out_and_named(tmp_path):
+    env, target, _, host = setup(tmp_path, lambda t, h: "public base %s\n" % h)
+    rc, out = run(["--env-file", str(env), "--skip", "PC_BRIDGE_URL", str(target)])
+    assert rc == 0 and "PC_BRIDGE_URL" not in out.replace("skipped keys PC_BRIDGE_URL", "")
+    assert "known-values: skipped keys PC_BRIDGE_URL" in out
