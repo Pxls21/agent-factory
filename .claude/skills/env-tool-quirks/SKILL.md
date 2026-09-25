@@ -54,6 +54,10 @@ message; bit 2026-09-07 after the last lane landed) — once no lane is live, pu
 a manual analyze run without `--skip-agents-md`.)*
 **push_clean REWRITES the unpushed range, so a lane brief's `PIN:` is the POST-PUSH SHA — read it from `git log origin/<branch>` AFTER the push, never from the local commit (bit 2026-09-21: the VB-F12-T2 brief pinned 592d9a8, which became 38ad46b on origin and did not exist on the PC clone; one extra commit to correct it).**
 **A trailing `&` backgrounds the WHOLE `&&` list** (`rm -f pidfile && … && nohup lane.sh … &` ran the list in one background subshell: its own `rm -f` raced and deleted the pidfile the next line wrote, and `$!` was the subshell, bit 2026-09-21) — put the `nohup … &` on its own line. **A poller relaunched INSIDE a Monitor script dies with the monitor's expiry** (the harness kills the monitor's process group; `Terminated` at 20:17Z 2026-09-21): start long-lived pollers with `setsid nohup … </dev/null &` and locate them by `pgrep -f '[p]c_lane.sh\.[A-Za-z0-9]* <brief>'` — `$!` after setsid is its short-lived parent. **A PC-RESIDENT lane cannot run `scripts/pc_suite.sh`** (the sandbox's bridge launcher; `bridge_http_code=000` on the host, G1 2026-09-21): a PC brief's pytest gate is `python -m pytest -n 8 …` directly (xdist is installed on the PC), under the 420 s cap.
+**A waiter on a background task's `.output` never ends when it reads the last lines (2026-09-25: one spun 53 minutes after
+its target had finished):** the harness appends a blank line and `[exited with code N]` after the command's own output, so
+`until grep … <(tail -2 <task>.output)` never sees the command's last line. The harness re-invokes the session when a
+background task ends, so no waiter is needed; when one is, test the trailer line or the whole file, never the last N lines.
 **The shell's cwd resets to `/home/user` after a container restart** — start every command chain
 with `cd /home/user/agent-factory` (or absolute paths).
 **`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
@@ -87,9 +91,15 @@ a scratch copy) to compare with.
 length limit and the eleven throwaway-key anchor tests fail with `gpg … --quick-generate-key … exit status 2` (nine false reds on 2026-09-14);
 the same tests are green with a short path. pytest creates only the LAST component of `--basetemp` — `mkdir -p` its parent first, or every test errors at setup with `FileNotFoundError` (bit 2026-09-14). A regenerated minted result (AF-AP-56) after an `accepted/<id>` tag exists fails three of its
 committed-state tests BY DESIGN until the owner re-signs — read the assertion, never the count.
+**A proof-status test in the CI shape (no tag refs) runs in `git clone --shared --no-tags <repo> <scratch>`, never by
+touching the owner's `accepted/*` refs (2026-09-25, the F4 control):** the clone shares the objects (about 190 MB of working
+tree) and holds no tags, as CI does; a linked worktree shares the refs, so it cannot show that state. Plant the state there
+(a tag object removed, a PENDING line declared) and run the test in the clone.
 **ATTESTED INPUTS (AF-AP-56, CI runs 106-110 red 2026-09-06):** every minted `proofs/<id>/result.json` hashes its tooling — `proofs/schemas/*`, `scripts/proof-runner`, `scripts/validate-ledger`, `proofs/registry.yaml` and the proof's own files. Any change to one of those is a tooling change: regenerate the dependent artifacts in the SAME increment (`python3 scripts/proof-runner run --proof <id> --venue sandbox --root .` for each minted id), then gate on `python3 scripts/validate-ledger integrity --root .` (PRESENT, never INVALID) + `python3 scripts/ledger-gen --root .` + `git diff --exit-code proofs/ledger.json`. A lane brief whose boundary contains an attested path names this gate. Regenerate ONLY from a world-traversable tree (the repo, never a root-only scratch
 copy: S0-11 drops to `nobody` and cannot read `0700` paths) — a real proof failure DELETES the minted artifact by design (VERIFY-N5g F8).
-**The Laya dataset manifests are attested inputs too:** `docs/research/findings/laya-ft-labels/*/dataset-manifest.json` hash `scripts/transcript_export.py` and the `scripts/laya_ft/` code as code inputs, so a change to any of them regenerates the manifest's code hash and proves the dataset bytes unchanged (K265's step; SCRUB1 re-scrubs every stored record before it may, 2026-09-25).
+**The Laya dataset manifests are attested inputs too:** `docs/research/findings/laya-ft-labels/*/dataset-manifest.json` hash `scripts/transcript_export.py` and the `scripts/laya_ft/` code as code inputs, so a change to any of them regenerates the manifest's code hash and proves the dataset bytes unchanged (K265's step; SCRUB1 re-scrubs every stored record before it may, 2026-09-25). The lock check itself is the builder's pre-fit comparison (`collect_v2` at the manifest's recorded commit, run with the old
+and the new scrub, its items counted), not a re-scrub of the stored states, which can miss a change the old opaque rule had
+hidden (VERIFY-SCRUB1 F11, 2026-09-25: 0 of 6,220 items differed, and the proxy agreed that time).
 **REAL-LEG CORPUS = a DECLARED input (VERIFY-CK10 F-R10-25):** the checker's real-producer tests read `S0_01_REAL_LEG_DIR`
 (sandbox default `/root/s0-01-realleg/golden`, exported by `scripts/test_summary.sh`; the PC tree by `pc_suite.sh`) under
 `S0_01_VENUE` sandbox/pc — corpus absent or incomplete = the suite FAILS by design, never skips; CI (venue unset) skips by

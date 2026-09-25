@@ -35,6 +35,11 @@ RECOMMENDATION, never the final gate verdict.
 > post-change output and called it golden" hollow). Mutants on every format axis (ordering,
 > separators, algorithm, domain separator) must fail the fence before the refactor commits ride it.
 
+> **Gate rule: every test that names a changed file (2026-09-25, a CI-skipped test failed unseen for four hours):** a
+> changed file's gate includes every test that names its path (`grep -l <path> tests/ harness-ports/tests/`), not only the
+> tests that import it: a test that reads a source file as DATA (a line it looks up, a literal it greps) has no import edge to
+> it. The sandbox gate also runs the tests CI skips (a LOUD SKIP without graft or a PC tool): nothing else ever runs them.
+
 > **Seam rule extension (2026-08-25, launcher near-miss):** seam verification applies to the
 > FIX's own dependencies too — every variable your fix references must be proven DEFINED on the
 > EXECUTING path (not just somewhere in the file: a branch-scoped definition + `set -u` turns an
