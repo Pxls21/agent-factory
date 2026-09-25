@@ -140,6 +140,12 @@ elif [ -f "$REPO_ROOT/sandbox-kit/codebase-memory-mcp/install.sh" ]; then
 else
   warn "codebase-memory-mcp: no binary and no install.sh"
 fi
+# The installer also writes seven hooks into ~/.claude/settings.json; the Grep/Glob/Read gate costs ~2.0 s per call and
+# injected nothing since 2026-09-18 (S1A audit D7, measured 2026-09-25). Strip them every session (idempotent); the MCP
+# server and the CLI stay.
+python3 "$REPO_ROOT/scripts/strip_cbm_hooks.py" >/dev/null 2>&1 \
+  && ok "codebase-memory hooks stripped from ~/.claude/settings.json (2 s per Read/Grep/Glob, no output)" \
+  || warn "strip_cbm_hooks.py failed; ~/.claude/settings.json left as it was"
 
 # sentrux (owner decision 2026-09-05): the FIFTH, ADVISORY code-intel instrument — architecture-health
 # scorer + before/after gate for build lanes (`scripts/sentrux_review.sh`; never a gate). Pinned by
