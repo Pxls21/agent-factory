@@ -74,7 +74,11 @@ subordinate to, the Anthropic docs.
    root was absent (rc 2 stayed in the widened set) and an independent `PASS:` assertion already caught rc 0, so the flip could not red
    and the lane stopped CONTRACT-INVALID as told. The premise block covers three things, each pasted from a run on the PIN: identities and
    hunks; every count with its set; and every flip/mutant whose outcome the brief asserts. An expectation that was not run is written as a
-   question for the lane ("does this flip red? if not, say why"), never as a contract line. **A verifier's PROPOSED FIX is a
+   question for the lane ("does this flip red? if not, say why"), never as a contract line. **The same for a RESOURCE BUDGET
+   (2026-09-25, SBS1):** a configuration the brief sets (a memory share, a chunk size, a lane count) is fitted at authoring against
+   EVERY measured consumer of the resource, pasted per consumer: SBS1's two GPU configurations counted Qwen and the RWKV reader
+   but not the desktop's 255 MiB or vLLM's 320 MiB beyond its budget, and the lane's own table showed one of them short by 167
+   MiB. **A verifier's PROPOSED FIX is a
    hypothesis too (2026-09-23, VERIFY-J1-1-R1's option B; AF-AP-153's class):** before a brief adopts it, run it against a control
    with a REAL value for each condition under which it SKIPS a redaction or a refusal. Option B added a lookahead that skips the
    bearer redaction when `:` or `=` follows the token; run at authoring on a scratch copy, `Authorization: Bearer <token>: rejected`
