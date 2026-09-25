@@ -4,7 +4,7 @@
   "docs/research/findings/j2-v1-probe/v1_probe.py": "e861fdbae913be77faacd9d9010bdac4e11e5916ddd44e4e53982fafc0effecd",
   "docs/research/findings/j2c-fulltext/j2c.py": "28634691edf1cfbfb3acf92a1891391086b1abdab5d0c6aa8111d80c9390466e",
   "scripts/decide-harvest": "2912b3799639aee6da1f2673b6b41e59b4bec50246219ed7927acb433cb2b7d8",
-  "scripts/laya_ft/build_dataset.py": "f71590b4be1c7108f250e58a1d6528481e59cada6c54f47cd3c7542d4ef4f3d5",
+  "scripts/laya_ft/build_dataset.py": "1c95e37a0d99cfa874879bb0d1a9ee4674b2cfcedef9cbd749d77d6020c69297",
   "scripts/laya_ft/common.py": "a7ad1838fce325dbe492343e6a9259532ca9256bacf185ae1ef9bd2b90281703",
   "scripts/transcript_export.py": "f63cd97ef441b8174221c926911b37b0d6d39539a306ea6e1bcbd245b18ae3c1"
  },
@@ -25,9 +25,9 @@
   "rows_total": 6196
  },
  "dataset": {
-  "bytes": 12795031,
+  "bytes": 12800855,
   "file": "dataset.jsonl",
-  "sha256": "f1b92d6fa79c2f145052fec9f301f1e719987ae5f7d14e19f663eb67426b5c48"
+  "sha256": "99070c33830832ca11e64226eddac1934ccd300c73b4d5d8d8c7bf5a36271f9d"
  },
  "heading_body_agreement": {
   "body_subset_of_heading": 0,

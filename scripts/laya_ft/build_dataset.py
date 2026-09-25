@@ -144,7 +144,15 @@ LEAKS = (   # AMENDMENT 1 item 8, flagged per row (never a reason to leave one o
     ("class-word", re.compile(r"(?i)\b(?:BLOCKER|FOLLOW-UP|INFO|UNVERIFIED|CONTRACT-DEFECT|KNOWN)(?:S|ES)?\b")),
     ("blocking-words", re.compile(r"(?i)\bblocks? (?:the )?(?:merge|landing|push)\b|\bdoes not block\b"
                                   r"|\bnot (?:a |an )?\[CLASS\]|\[CLASS\] predicate|\bblocking predicate\b"
-                                  r"|\bgate recommendation\b|\b(?:MERGE-READY|NOT-READY|CONTRACT-INVALID)\b")),
+                                  r"|\bgate recommendation\b|\b(?:MERGE-READY|NOT-READY|CONTRACT-INVALID)\b"
+                                  # DSV2-R1 (VERIFY-DSV2 V-6): the five ruled forms, F-a to F-e, each with its own flags
+                                  r"|\bcontract[- ]mapp|\bcanonical(?: path| reproduction)?\s*[:=]"   # F-a the walk
+                                  r"|\bmaterial(?: effect)?\s*[:=]|\bdiscriminator\s*[:=]|\btask ownership\b"
+                                  r"|\bin[- ]boundary\s*[:=]"
+                                  r"|(?-i:\bNo \[CLASS\])"   # F-b a class summary (case-sensitive, as ruled)
+                                  r"|\b(?:does not|doesn't|do not|did not|would not|will not|cannot) block\b"   # F-c
+                                  r"|\b(?:is|as) (?:a |an )?\[CLASS\]"   # F-d the class stated
+                                  r"|\bno material effect\b|\bnot material\b|\bimmaterial\b")),   # F-e materiality
 )
 AP_ID_LEAK = re.compile(r"AF-AP-\d")
 

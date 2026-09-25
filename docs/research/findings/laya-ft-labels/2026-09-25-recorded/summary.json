@@ -16,9 +16,9 @@
   "leaks": {
    "ap.violates_row|ap-id": 126,
    "ap.violates_row|row-name": 33,
-   "v1.blocking|blocking-words": 35,
+   "v1.blocking|blocking-words": 141,
    "v1.blocking|class-word": 1,
-   "v1.finding_class|blocking-words": 35,
+   "v1.finding_class|blocking-words": 141,
    "v1.finding_class|class-word": 1
   },
   "leaks_by_source_question_provenance_kind": {
@@ -29,9 +29,9 @@
    "incident|ap.violates_row|-|ap-id": 32,
    "incident|ap.violates_row|body-cite|row-name": 4,
    "incident|ap.violates_row|not-cited|ap-id": 24,
-   "verify_finding|v1.blocking|verifier-class|blocking-words": 36,
+   "verify_finding|v1.blocking|verifier-class|blocking-words": 148,
    "verify_finding|v1.blocking|verifier-class|class-word": 1,
-   "verify_finding|v1.finding_class|verifier-class|blocking-words": 36,
+   "verify_finding|v1.finding_class|verifier-class|blocking-words": 148,
    "verify_finding|v1.finding_class|verifier-class|class-word": 1
   },
   "rows_by_source_question_answer_provenance": {
@@ -85,7 +85,7 @@
   "dataset": {
    "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
    "rows_total": 6196,
-   "sha256": "f1b92d6fa79c2f145052fec9f301f1e719987ae5f7d14e19f663eb67426b5c48"
+   "sha256": "99070c33830832ca11e64226eddac1934ccd300c73b4d5d8d8c7bf5a36271f9d"
   },
   "labeled": 5301,
   "labels": {

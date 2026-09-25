@@ -1292,18 +1292,36 @@ def test_block_end_cap_is_carried_in_the_source(tmp_path):
 
 
 def test_leak_flags_mark_the_rows_and_leave_none_out():
-    """AMENDMENT 1 item 8: what a state still says about its label is flagged in every source, never dropped."""
+    """AMENDMENT 1 item 8: what a state still says about its label is flagged in every source, never dropped. DSV2-R1
+    (VERIFY-DSV2 V-6): `blocking-words` also flags the five ruled forms, one state each (F-a to F-e), while a hook's
+    "blocks" and a severity word stay unflagged; every alternative of the five forms flags on its own."""
+    forms = ["Predicate: not contract-mapped; the contract names no file-type rule",   # F-a the predicate walk
+             "No [CLASS] in this round.",                                             # F-b a class summary
+             "The finding would not block on its own.",                              # F-c a negated block
+             "This is a [CLASS] by the rule.",                                        # F-d the class stated
+             "It is not material to the claim."]                                      # F-e materiality stated
     rows = [BD.make_row("v1", "v1.finding_class", "two [CLASS]s and some BLOCKERS remain", _v1_source(), None),
             BD.make_row("v1", "v1.blocking", "the gate says NOT-READY; it is not a [CLASS]", _v1_source(fid="F-8"), None),
             BD.make_row("v1", "v1.blocking", "a clean finding text", _v1_source(fid="F-7"), None),
             BD.make_row("ap", "ap.violates_row", {"query": "here a gate trusts a mirror test", "chunk": "row AF-AP-4"},
                         [{"kind": "incident", "line": 1, "heading": "h", "row": "AF-AP-2", "answer": "true",
                           "provenance": "heading-cite"}], None)]
+    rows += [BD.make_row("v1", "v1.blocking", state, _v1_source(fid="F-%d" % n), None)
+             for n, state in enumerate(forms + ["the hook blocks the call", "optional hardening"], 10)]
     counts = BD.flag_leaks(rows, {"AF-AP-2": "A gate trusts a mirror"})
     assert [[s.get("leak") for s in r["sources"]] for r in rows] == [
-        ["class-word"], ["blocking-words"], [None], ["ap-id+row-name"]]
-    assert counts == {"v1.finding_class|class-word": 1, "v1.blocking|blocking-words": 1, "ap.violates_row|ap-id": 1,
+        ["class-word"], ["blocking-words"], [None], ["ap-id+row-name"]] + [["blocking-words"]] * 5 + [[None]] * 2
+    assert counts == {"v1.finding_class|class-word": 1, "v1.blocking|blocking-words": 6, "ap.violates_row|ap-id": 1,
                       "ap.violates_row|row-name": 1}
+    for words in ("Contract mapping: none.", "Canonical: yes.", "Canonical path: the real CLI.",
+                  "canonical reproduction = the real CLI", "Material: yes.", "Material effect: none.",
+                  "Discriminator: the probe.", "Task ownership: the lane.", "In boundary: yes.", "in-boundary: yes",
+                  "No [CLASS].", "It does not block.", "It doesn't block.", "They do not block.", "It did not block.",
+                  "It will not block.", "It cannot block.", "It is [CLASS].", "It is an [CLASS].",
+                  "Filed as a [CLASS].", "Filed as an [CLASS].", "Filed as [CLASS].", "No material effect.",
+                  "Not material.", "Immaterial."):
+        row = BD.make_row("v1", "v1.blocking", words, _v1_source(), None)
+        assert BD.flag_leaks([row], {}) == {"v1.blocking|blocking-words": 1}, words
 
 
 def test_version_1_is_byte_identical_and_still_loads(laya_venue, tmp_path):
