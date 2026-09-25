@@ -8,9 +8,13 @@
   temp ports, one test per trip condition, each with the original text coming back unchanged and the reason recorded.
 - The floor option: the vendored `minTokensFloor` lowers the floor only when passed; a 9,999-token output still passes
   untouched without it.
+- The PASS path (P1-R1; VERIFY-P1 G-PASS and F-PERSIST): pruned rows end to end through the one command, a loopback
+  scorer that drops only planted noise chunks, and an oracle computed from the fixture's own event list
+  (make_pass_fixture.py), never from the harness.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -34,6 +38,7 @@ sys.path.insert(0, str(FIXTURES))
 from jev_pipes import accounting, replay_pruner, transcript  # noqa: E402
 import capture_shapes  # noqa: E402
 import make_fixture  # noqa: E402
+import make_pass_fixture  # noqa: E402
 
 ANSWERS = {json.loads(line)["sha256"]: json.loads(line) for line in (FIXTURES / "answers.jsonl").read_text().splitlines()}
 TOOLS = {"Bash", "Read", "Grep"}
@@ -54,7 +59,8 @@ needs_strip = pytest.mark.skipif(not _node_strips_types(), reason="this Node can
 
 class Scorer:
     """A local HTTP scorer on a temp port. behavior: recorded (answers.jsonl by body sha256; unknown -> 404), status500,
-    not_json, no_answers, incomplete (a recorded answer less its first question id), slow503. `delay` holds each request."""
+    not_json, no_answers, incomplete (a recorded answer less its first question id), slow503, planted (the PASS path's
+    fake: 0.02 for a chunk that holds the planted noise marker, 0.93 for any other). `delay` holds each request."""
 
     def __init__(self, behavior: str = "recorded", delay: float = 0.0):
         self.behavior, self.delay = behavior, delay
@@ -109,6 +115,12 @@ class Scorer:
             return 200, json.dumps(answer)
         if self.behavior == "slow503":
             return 503, '{"error": "busy"}'
+        if self.behavior == "planted":
+            request = json.loads(body)
+            chunks = {c["id"]: c["text"] for c in request["state"].get("chunks", [])}
+            answers = {qid: {"type": "noul", "noul": 0.02 if make_pass_fixture.NOISE in chunks.get(qid, "") else 0.93,
+                             "confidence": 0.9, "probabilities": {}} for qid in request["questions"]}
+            return 200, json.dumps({"model": "fixture-planted", "answers": answers})
         raise AssertionError(self.behavior)
 
     def close(self):
@@ -395,6 +407,70 @@ def test_accounting_tokens_saved_and_the_bar():
     assert accounting.verdict([{"pruned": False}])["why"] == ["no result was pruned, so net tokens saved = 0"]
     assert accounting.verdict(rows(20, 0, 0, saved=float("nan")))["verdict"] == "FAIL"  # NaN never passes
     assert accounting.verdict(rows(20, 0, 0, saved=float("inf")))["verdict"] == "FAIL"
+
+
+# ---------------------------------------------------------------- the PASS path: pruned rows end to end (P1-R1)
+
+PASS_ROW_KEYS = ("decision", "pruned", "following_calls", "next_context_tokens", "chars_saved", "miss", "miss_rerun",
+                 "miss_cost", "chunks", "kept", "dropped", "alignment", "chunks_kept", "chunks_dropped")
+
+
+@pytest.mark.parametrize("variant", make_pass_fixture.VARIANTS)
+def test_pass_path_pruned_rows_end_to_end(tmp_path, capsys, variant):
+    """VERIFY-P1 G-PASS and F-PERSIST: through the one command and a loopback scorer that drops only the planted noise
+    chunks, every row and the verdict equal the oracle computed from the fixture's own event list: the saving and the
+    compaction stop, token and re-run misses, the 20-item and 20-call edges, the 5% bar, the miss cost, the chunk labels.
+    A persisted result counts what the MODEL saw, its stub, never the file the pruner read: the saving, the miss baseline
+    and the keep rate's denominator; a result with stderr counts its stdout as before."""
+    path, events = make_pass_fixture.build(tmp_path / "fixture", variant)
+    expect, bar = make_pass_fixture.oracle(events)
+    # the oracle acted: every result is pruned, the planted misses are there, and each control sits where it claims
+    assert bar["pruned"] == len(expect) == 20 + len(make_pass_fixture.PERSISTED.get(variant, []))
+    assert bar["misses"] == make_pass_fixture.PLANTED_MISSES[variant]
+    if variant in ("v1neg", "edge20"):
+        at = {"v1neg": 21, "edge20": 20}[variant]
+        assert (expect["toolu_pp_05"]["uses"], expect["toolu_pp_09"]["rerun_at"]) == ({"noisetok_r05_n05": at}, at)
+    if variant == "persisted_miss":
+        seen = {e["uid"]: e for e in events if e["kind"] == "result"}
+        # each planted use is inside the 20-item window, so only the miss baseline decides it
+        for uid, token, miss in (("toolu_pp_pxa", "noisetok_pa_n45", False), ("toolu_pp_pxb", "noisetok_pb_n05", True),
+                                 ("toolu_pp_14", "errtok_r14_n00", False)):
+            assert expect[uid]["uses"] == {token: 4 if uid.startswith("toolu_pp_px") else 5}, uid
+            assert expect[uid]["miss"] is miss, uid
+        assert "noisetok_pa_n45" in seen["toolu_pp_pxa"]["pruner_text"] and "noisetok_pa_n45" not in seen["toolu_pp_pxa"]["seen"]
+        assert "noisetok_pb_n05" in seen["toolu_pp_pxb"]["seen"]
+        assert "errtok_r14_n00" in seen["toolu_pp_14"]["seen"] and "errtok_r14_n00" not in seen["toolu_pp_14"]["pruner_text"]
+    scorer = Scorer("planted")
+    try:
+        rows = by_id(run_harness(tmp_path, path, scorer.url))
+    finally:
+        scorer.close()
+    assert len(scorer.bodies) == len(expect)  # one request per result: the scorer was asked, and no queue trip fired
+    summary = json.loads((tmp_path / "out-replay" / "summary.json").read_text())["primary"]
+    printed = capsys.readouterr().out.strip().splitlines()[-1]
+    diffs = []
+    for uid, want in expect.items():
+        row = rows.get(uid, {})
+        got = {key: row.get(key) for key in PASS_ROW_KEYS}
+        got.update({"persisted": row.get("persisted") is True, "miss_tokens>0": (row.get("miss_tokens") or 0) > 0})
+        diffs += [(uid, key, got[key], want[key]) for key in got if got[key] != want[key]]
+        if row.get("tokens_saved") != pytest.approx(want["tokens_saved"], rel=1e-12):
+            diffs.append((uid, "tokens_saved", row.get("tokens_saved"), want["tokens_saved"]))
+    diffs += [("summary", key, summary[key], bar[key]) for key in ("pruned", "misses", "miss_rate", "miss_cost", "verdict")
+              if summary[key] != bar[key]]
+    diffs += [("summary", key, summary[key], bar[key]) for key in ("tokens_saved", "net", "char_keep_rate")
+              if summary[key] != pytest.approx(bar[key], rel=1e-12)]
+    assert diffs == [], "\n" + "\n".join(map(repr, diffs))
+    assert sorted(rows) == sorted(expect)  # nothing else was a candidate (every other result is under 2,000 characters)
+    assert printed.startswith(f"{bar['verdict']}: ")  # the one command prints the oracle's verdict
+
+
+def test_pass_path_oracle_imports_nothing_from_the_harness():
+    """The oracle restates the accounting on its own; one that imported the harness would grade it against itself."""
+    tree = ast.parse((FIXTURES / "make_pass_fixture.py").read_text())
+    names = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    names |= {(node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert names == {"json", "re", "sys", "pathlib", "make_fixture"}
 
 
 # ---------------------------------------------------------------- the transcript model

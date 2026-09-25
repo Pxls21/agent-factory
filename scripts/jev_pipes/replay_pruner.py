@@ -157,12 +157,17 @@ class Bridge:
         self.proc.wait(timeout=60)
 
 
-def decision_row(cand, set_name: str, index, answer: dict, source: str | None, history: set, mode: str,
+def decision_row(cand, set_name: str, index, answer: dict, source: str | None, seen: str, history: set, mode: str,
                  transport: dict) -> dict:
+    """One row. `source` is the text the pruner read, `seen` the text the model saw (the tool result). For a persisted
+    result they differ: the pruner reads the whole file, the model saw only the stub. So a persisted result's saving and
+    miss baseline count the stub (`cand.chars`, `seen`), never the file (VERIFY-P1 F-PERSIST), and so does its keep-rate
+    denominator in summarize. Any other result keeps the pruner's own counts: its input is the stdout the model saw, and
+    the hook keeps stderr."""
     result = answer.get("result") or {}
     pruned = answer.get("fail_open") is False and result.get("trimmed") is True
     following, next_context = index.following(cand.offset)
-    chars_saved = result["charsBefore"] - result["charsAfter"] if pruned else 0
+    chars_saved = ((cand.chars if cand.persisted else result["charsBefore"]) - result["charsAfter"]) if pruned else 0
     row = {
         "result_id": cand.tool_use_id, "transcript_path": cand.path, "byte_offset": cand.offset, "tool": cand.tool,
         "set": set_name, "band": band(cand.chars, BAND_EDGES), "result_chars": cand.chars,
@@ -175,15 +180,16 @@ def decision_row(cand, set_name: str, index, answer: dict, source: str | None, h
         "scores": result.get("scores"), "alignment": (answer.get("chunk_labels") or {}).get("alignment"),
         "chunks_kept": (answer.get("chunk_labels") or {}).get("kept"),
         "chunks_dropped": (answer.get("chunk_labels") or {}).get("dropped"),
-        "pruned": pruned, "chars_saved": chars_saved, "following_calls": following,
+        "pruned": pruned, "persisted": cand.persisted, "chars_saved": chars_saved, "following_calls": following,
         "next_context_tokens": next_context, "tokens_saved": accounting.tokens_saved(chars_saved, following),
         "miss": False, "miss_tokens": 0, "miss_rerun": False, "miss_cost": 0, "secret": answer.get("secret"),
         "document_rule": answer.get("document_rule"),
     }
-    if pruned and isinstance(source, str) and isinstance(answer.get("output"), str):
+    baseline = seen if cand.persisted else source
+    if pruned and isinstance(baseline, str) and isinstance(answer.get("output"), str):
         look = index.items[cand.item_index: cand.item_index + accounting.LOOKAHEAD]
         calls = [index.items[i].rerun_key for i in index.tool_items[cand.tool_item_index: cand.tool_item_index + accounting.LOOKAHEAD]]
-        hits, rerun = accounting.miss(source, answer["output"], history, [i.tokens for i in look], calls, cand.rerun_key)
+        hits, rerun = accounting.miss(baseline, answer["output"], history, [i.tokens for i in look], calls, cand.rerun_key)
         row.update(miss=hits > 0 or rerun, miss_tokens=hits, miss_rerun=rerun)
         row["miss_cost"] = (next_context or 0) if row["miss"] else 0
     return row
@@ -217,7 +223,9 @@ def summarize(rows: list[dict]) -> dict:
     per_question = [q["latency_ms"] / q["questions"] for q in requests if q.get("status") == 200 and q["questions"]]
     spread = [q["scores"] for q in requests if isinstance(q.get("scores"), list) and len(q["scores"]) >= 2]
     scored = [r for r in rows if isinstance(r.get("chunks"), int) and r["chunks"] > 0]
-    chars_before = sum(r["source_chars"] or 0 for r in rows)
+    # a persisted result counts the stub the model saw, as its saving does (decision_row); a row logged before that repair
+    # has no "persisted" key and keeps the pruner's input (the committed decision logs hold no pruned row)
+    chars_before = sum((r["result_chars"] if r.get("persisted") else r["source_chars"]) or 0 for r in rows)
     out = {
         "results": len(rows),
         "decisions": dict(collections.Counter(r["decision"] for r in rows).most_common()),
@@ -327,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
                 set_name, cand = chosen[(path, snap.offset)]
                 job, source = build_job(cand, snap, transport)
                 answer = bridge.run(job)
-                row = decision_row(cand, set_name, indexes[path], answer, source, snap.history_tokens, args.mode, transport)
+                row = decision_row(cand, set_name, indexes[path], answer, source, job["answer"]["text"], snap.history_tokens,
+                                   args.mode, transport)
                 log.write(json.dumps(row) + "\n")
                 log.flush()
                 processed += 1
