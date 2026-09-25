@@ -11,6 +11,13 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 05:0xZ — WHAT IS LIVE NOW (supersedes the 04:3xZ block for the live set).**
+- **D-087 (owner):** our workflow is the factory's test bed; Jevs chain into rank-collect-present pipelines. Plan version 2 (`docs/research/findings/jev-fit/PLAN-2026-09-25.md`): seven pipelines, the first P1 = the owner-recommended jev-pruner at our scale (task #231; its 10,000-token floor skips 98% of our tool-output text).
+- **The interview is COMPLETE** (`interview_20260925_043820`, ambiguity 0.12; eight questions answered from D-086 and D-087). **RUNNING: seed generation**; next the seed file under `seeds/`, its verify commands, and a task breakdown. The first deliverable: the P1 replay (`scripts/jev_pipes/replay_pruner.py`, one command prints PASS or FAIL: misses at or under 5% and net tokens saved).
+- **DSV2 CLOSED (task #251):** the one repair landed (DSV2-R1); the verifier's own probe reads 0 unflagged for every ruled form; MERGE-READY-WITH-FOLLOWUPS, issue #76.
+- **RUNNING (sandbox): SESSION-EXPORT** (task #252), resumed with AMENDMENT 2 (every project folder, a byte-offset converter, pruner archives as events); its files are declared in `.lanes-live`. At its harvest the DSV2 record is regenerated (orchestration 0j).
+- **QJ2** (task #241) owes an independent verify round. **PC:** no lanes live; vLLM `qwen` active.
+
 **2026-09-25 04:3xZ — WHAT IS LIVE NOW (supersedes the 03:5xZ block for the live set).**
 - **JEV-FIT PLAN VERSION 2 (D-087, 04:5xZ):** the owner ruled that our workflow is the factory's test bed and that Jevs chain into rank-collect-present pipelines. The plan (`docs/research/findings/jev-fit/PLAN-2026-09-25.md`) now has seven pipelines; the first build is P1, the owner-recommended jev-pruner at our scale (task #231): its 10,000-token floor skips 98% of our tool-output text, so it fired twice in 19,358 results. **The interview** continues on the pipelines: four questions answered by the coordinator from D-087 and the plan (reversible pruning with a 5% miss bar; one tokens-and-calls bar for every saver; CPU scoring, 2 s sandbox and 5 s PC budgets); ambiguity 0.25.
 - **A live bug found by audit A, FIXED 04:4xZ (AF-AP-204):** `scripts/orient.sh` read a stale 2026-09-22 transcript directory at every session start; it now takes the newest session file in any project directory. **The interview** (`interview_20260925_043820`) waits on the owner's answer to its first question (scope: internal tooling first, or product surface from the start).

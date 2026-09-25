@@ -38,6 +38,9 @@ origin state, task state, or owner statements contradict what you remember:
    - local tip + base: `git log --oneline origin/<branch>..HEAD`
    - transcript: first/last timestamps + entries-per-day histogram of
      `/root/.claude/projects/<project>/<session-id>.jsonl`
+     (read EVERY `/root/.claude/projects/*/<session-id>.jsonl`: the harness files a transcript under the slug of the launch
+     directory, and one session can write to several; this session's id wrote under `-home-user` and, 2026-09-05 to 09-22,
+     under `-home-user-agent-factory`, AF-AP-204)
    If the transcript shows activity AFTER the summary's last event, the
    summary is STALE — the transcript is the primary source for session
    history, the summary is a lossy cache. Rebuild state from transcript tail

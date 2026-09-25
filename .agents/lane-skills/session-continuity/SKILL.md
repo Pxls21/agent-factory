@@ -46,6 +46,8 @@ origin state, task state, or owner statements contradict what you remember:
    - local tip + base: `git log --oneline origin/<branch>..HEAD`
    - transcript: first/last timestamps + entries-per-day histogram of
      `the harness session store (Codex: `~/.codex/sessions/*.jsonl`; Hermes: SQLite `~/.hermes/state.db`)`
+     (read EVERY location the store keeps for the session: a store can file one session under several directories, as
+     Claude Code did for this project's main session, AF-AP-204)
    If the transcript shows activity AFTER the summary's last event, the
    summary is STALE — the transcript is the primary source for session
    history, the summary is a lossy cache. Rebuild state from transcript tail
