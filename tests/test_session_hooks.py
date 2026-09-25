@@ -1,7 +1,7 @@
 """scripts/hook_context.py and scripts/install_session_hooks.py (task #214, AF-AP-172).
 
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
-measured live 2026-09-24); install_session_hooks registers the five project hooks for a session rooted above the repo.
+measured live 2026-09-24); install_session_hooks registers the six project hooks for a session rooted above the repo.
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
 """
 import json
@@ -79,18 +79,27 @@ def test_real_edit_snapshot_screen_reaches_the_model_form():
 
 # ---- install_session_hooks.py ----
 
-def test_fresh_install_registers_the_five_hooks(tmp_path):
+def test_fresh_install_registers_the_six_hooks(tmp_path):
     target = tmp_path / ".claude" / "settings.json"
     r = install(target)
-    assert r.returncode == 0 and "installed 5" in r.stdout
+    assert r.returncode == 0 and "installed 6" in r.stdout
     hooks = json.loads(target.read_text())["hooks"]
     assert sorted(hooks) == ["PostToolUse", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"]
     cmds = {ev: [h["command"] for e in v for h in e["hooks"]] for ev, v in hooks.items()}
-    assert all(len(c) == 1 and MARKER in c[0] for c in cmds.values())
+    assert {ev: len(c) for ev, c in cmds.items()} == {"PostToolUse": 1, "PreToolUse": 2, "SessionStart": 1, "Stop": 1,
+                                                      "UserPromptSubmit": 2}
+    assert all(MARKER in c for cs in cmds.values() for c in cs)
     assert "hook_context.py PostToolUse --" in cmds["PostToolUse"][0]
     assert "hook_context.py PreToolUse --" in cmds["PreToolUse"][0]
-    assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read" and hooks["PreToolUse"][0]["matcher"] == "Grep|Bash"
+    assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read"
+    assert [e["matcher"] for e in hooks["PreToolUse"]] == ["Grep|Bash", "Write|Edit|Bash"]
     assert "/.claude/hooks/search-intercept.py" in cmds["PreToolUse"][0]
+    # system1-context (S1-L1): the tool event and the prompt event, both through the wrapper; wiki-context unchanged
+    assert "hook_context.py PreToolUse -- python3" in cmds["PreToolUse"][1]
+    assert cmds["PreToolUse"][1].endswith("/.claude/hooks/system1-context.py")
+    assert cmds["UserPromptSubmit"][0].endswith(f"python3 {ROOT}/.claude/hooks/wiki-context.py")
+    assert "hook_context.py UserPromptSubmit -- python3" in cmds["UserPromptSubmit"][1]
+    assert cmds["UserPromptSubmit"][1].endswith("/.claude/hooks/system1-context.py")
 
 
 def test_second_install_is_a_no_op(tmp_path):
@@ -152,6 +161,11 @@ def _commands(root):
     return {ev: arr[0]["hooks"][0]["command"] for ev, arr in ish.our_hooks(Path(root)).items()}
 
 
+def _all_commands(root):
+    """(event, command) for every group of every event, not only the first (PreToolUse and UserPromptSubmit hold two)."""
+    return [(ev, h["command"]) for ev, arr in ish.our_hooks(Path(root)).items() for g in arr for h in g["hooks"]]
+
+
 def _fake_repo(tmp_path, hook_scripts=True, wrapper=True, stop_rc=0):
     repo = tmp_path / "repo"
     (repo / ".claude" / "hooks").mkdir(parents=True)
@@ -159,7 +173,7 @@ def _fake_repo(tmp_path, hook_scripts=True, wrapper=True, stop_rc=0):
     if hook_scripts:
         (repo / ".claude" / "hooks" / "session-start.sh").write_text('echo "dir=$CLAUDE_PROJECT_DIR pwd=$(pwd)"\n')
         (repo / ".claude" / "hooks" / "turn-retro-gate.sh").write_text(f"echo retro >&2; exit {stop_rc}\n")
-        for name in ("wiki-context.py", "edit-snapshot.py", "search-intercept.py"):
+        for name in ("wiki-context.py", "edit-snapshot.py", "search-intercept.py", "system1-context.py"):
             (repo / ".claude" / "hooks" / name).write_text("import os; print('ran from', os.getcwd())\n")
     if wrapper:
         (repo / "scripts" / "hook_context.py").write_bytes(WRAP.read_bytes())
@@ -171,22 +185,25 @@ def _sh(cmd, stdin="{}", cwd="/", env=None):
 
 
 def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
-    for ev, cmd in _commands(tmp_path / "no-such-repo").items():
+    cmds = _all_commands(tmp_path / "no-such-repo")
+    assert len(cmds) == 7
+    for ev, cmd in cmds:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stdout, r.stderr)
 
 
 def test_wrapped_commands_fail_open_when_the_wrapper_is_absent(tmp_path):
     repo = _fake_repo(tmp_path, wrapper=False)
-    cmds = _commands(repo)
-    for ev in ("PostToolUse", "PreToolUse"):
-        r = _sh(cmds[ev])
+    wrapped = [(ev, cmd) for ev, cmd in _all_commands(repo) if "hook_context.py" in cmd]
+    assert sorted(ev for ev, _ in wrapped) == ["PostToolUse", "PreToolUse", "PreToolUse", "UserPromptSubmit"]
+    for ev, cmd in wrapped:
+        r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
 
 
 def test_a_missing_hook_script_fails_open(tmp_path):
     repo = _fake_repo(tmp_path, hook_scripts=False)
-    for ev, cmd in _commands(repo).items():
+    for ev, cmd in _all_commands(repo):
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
 
@@ -208,14 +225,14 @@ def test_commands_run_from_the_repo_and_session_start_gets_the_project_dir(tmp_p
 
 
 def test_wrapped_commands_name_their_own_event(tmp_path):
-    hooks = ish.our_hooks(tmp_path)
-    for ev, arr in hooks.items():
-        cmd = arr[0]["hooks"][0]["command"]
+    for ev, cmd in _all_commands(tmp_path):
         if "hook_context.py" in cmd:
             assert cmd.rsplit("hook_context.py ", 1)[1].split(" ", 1)[0] == ev, (ev, cmd)  # the call, not the guard
     repo = _fake_repo(tmp_path)
-    r = _sh(_commands(repo)["PreToolUse"])
-    assert json.loads(r.stdout)["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    for ev, cmd in _all_commands(repo):
+        if "hook_context.py" in cmd:
+            r = _sh(cmd)
+            assert json.loads(r.stdout)["hookSpecificOutput"]["hookEventName"] == ev, (ev, r.stdout)
 
 
 def test_a_real_read_from_another_cwd_reaches_the_model_form():
@@ -230,7 +247,7 @@ def test_a_repo_path_that_needs_quoting_stays_idempotent_and_removable(tmp_path)
     foreign = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
     once = ish.merged(foreign, root, remove=False)
     assert ish.merged(once, root, remove=False) == once
-    assert sum(len(v) for v in once["hooks"].values()) == 6
+    assert sum(len(v) for v in once["hooks"].values()) == 8
     assert ish.merged(once, root, remove=True) == foreign
 
 

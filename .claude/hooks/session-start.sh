@@ -9,6 +9,13 @@
 # session and benefits from container caching after the first run.
 set -uo pipefail
 
+# System-1 context layer (S1-L1, D-090): a compaction, a resume or a clear starts a new context window, so the
+# once-per-window marker of system1-context.py is reset here, in every environment. It reads this hook's payload on
+# stdin (a bounded read), prints nothing, and a missing script is a no-op.
+if [ -f "$(dirname "$0")/system1-context.py" ]; then
+  python3 "$(dirname "$0")/system1-context.py" --reset >/dev/null 2>&1 || true
+fi
+
 # Web-only: local dev manages its own toolchain.
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0

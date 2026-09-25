@@ -1,0 +1,627 @@
+{
+ "about": "The S1-L1 situation table (D-090; design docs/research/findings/system1-context/DESIGN-2026-09-25.md L1). One row per situation: the tool input that detects it and the skill section whose key lines are injected verbatim before the call. Derived from CLAUDE.md's 'Load `<skill>` before/when <situation>' pointer lines and its other load rules; each row's `source` names the line. Detectors (all given ones must match): `command` (a regex at a shell command position), `command_any` (anywhere in the command), `path` / `path_not` (the repo-relative file path), `text` (the written text or the command). A `lines` entry is a substring naming one line of the section (the whole entry from that line is taken) or a [from, to] pair (the lines from one to the other). Rows are in priority order: under the byte budget the earlier row wins. The hook: .claude/hooks/system1-context.py; the tests: tests/test_system1_context.py.",
+ "version": 1,
+ "prompt_corpus": [
+  "adversarial-review",
+  "anti-hollow-green",
+  "bug-echo",
+  "build-loop",
+  "code-intel-trio",
+  "contract-gate",
+  "deep-work",
+  "empirical-validation",
+  "env-tool-quirks",
+  "luck",
+  "orchestration",
+  "ouroboros-stdio",
+  "pc-bridge-lanes",
+  "premortem-roast",
+  "root-cause-debugging",
+  "session-continuity",
+  "thermo-nuclear-review",
+  "trace-the-chain",
+  "vendor-first"
+ ],
+ "rows": [
+  {
+   "id": "pc-sqlite",
+   "skill": "pc-bridge-lanes",
+   "heading": "Bridge calls",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pc\\.sh\\b",
+   "command_any": "\\bsqlite3\\b",
+   "lines": [
+    "**`sqlite3` over the bridge: ship the SQL as a base64-decoded script file**"
+   ],
+   "source": "CLAUDE.md:350 pc-bridge-lanes: 'a PC-side sqlite ... command'"
+  },
+  {
+   "id": "pc-podman",
+   "skill": "pc-bridge-lanes",
+   "heading": "Bridge calls",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pc\\.sh\\b",
+   "command_any": "\\bpodman\\b",
+   "lines": [
+    "**Podman on the PC refuses a SHORT image name with no TTY**"
+   ],
+   "source": "CLAUDE.md:350 pc-bridge-lanes: 'a PC-side ... podman command'"
+  },
+  {
+   "id": "pc-call",
+   "skill": "pc-bridge-lanes",
+   "heading": "Bridge calls",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pc\\.sh\\b",
+   "lines": [
+    "**A `scripts/pc.sh` call is capped at `curl -m 120`",
+    "**The bridge's stderr lands on the DATA line"
+   ],
+   "source": "CLAUDE.md:350 pc-bridge-lanes: 'a `pc.sh` ... call'"
+  },
+  {
+   "id": "pc-lane",
+   "skill": "pc-bridge-lanes",
+   "heading": "Launching, re-attaching and sizing PC lanes",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pc_lane\\.sh\\b|pc-lane\\.sh\\b",
+   "lines": [
+    "**The dispatcher polls for 60 minutes, then exits 75 with the lane still running"
+   ],
+   "source": "CLAUDE.md:77 pc-bridge-lanes: 'dispatching, re-attaching ... a PC lane'; CLAUDE.md:350 'a `pc_lane.sh` call'"
+  },
+  {
+   "id": "pc-suite",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pc_suite\\.sh\\b",
+   "lines": [
+    [
+     "**PC gate on EXACTLY the pushed commit while lanes hold the tree:**",
+     "`launch` resolves the index via `git rev-parse --git-path index`"
+    ]
+   ],
+   "source": "CLAUDE.md:350 pc-bridge-lanes: 'a `pc_suite.sh` call' (its section points on to env-tool-quirks, which holds the text); CLAUDE.md:304 env-tool-quirks: ops script pc_suite"
+  },
+  {
+   "id": "ouroboros",
+   "skill": "ouroboros-stdio",
+   "heading": "Ouroboros through the stdio client",
+   "tools": [
+    "Bash"
+   ],
+   "command": "ooo_mcp\\.py\\b|ouroboros\\b",
+   "lines": [
+    [
+     "**Ouroboros** — 3-tier fallback",
+     "with `session_id` + `answer`."
+    ],
+    [
+     "**Ouroboros stdio quirks (hit 2026-09-02, all reproduced):**",
+     "fresh interview and push detail through answers"
+    ]
+   ],
+   "source": "CLAUDE.md:329 ouroboros-stdio: 'any Ouroboros interview round, fan-out submission, resume or seed generation'"
+  },
+  {
+   "id": "push",
+   "skill": "env-tool-quirks",
+   "heading": "Shell, git, commit-helper and tool quirks",
+   "tools": [
+    "Bash"
+   ],
+   "command": "git\\s+(?:-C\\s+\\S+\\s+)?push(?![-\\w])|push_clean\\.sh\\b|push_when_green\\.sh\\b",
+   "lines": [
+    [
+     "**push_clean can LOSE A RACE with the GitNexus banner rewriter:**",
+     "the untracked `.lanes-live` file itself is gitignored"
+    ],
+    "**push_clean REWRITES the unpushed range"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a push'"
+  },
+  {
+   "id": "push-delegate-work",
+   "skill": "orchestration",
+   "heading": "The ORCHESTRATOR protocol (proven over a full MVP sprint)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "git\\s+(?:-C\\s+\\S+\\s+)?push(?![-\\w])|push_clean\\.sh\\b|push_when_green\\.sh\\b",
+   "lines": [
+    [
+     "origin/<branch>..HEAD` before ANY push**",
+     "explicitly (`git push origin <sha>:<branch>`), never HEAD.**"
+    ]
+   ],
+   "source": "CLAUDE.md:144-145 orchestration: 'pushing delegate work'"
+  },
+  {
+   "id": "stamp",
+   "skill": "build-loop",
+   "heading": "The operative core (CLAUDE.md's index of this skill)",
+   "tools": [
+    "Write",
+    "Edit",
+    "Bash"
+   ],
+   "text": "\\b[0-2]\\d:[0-5](?:\\d|x)Z\\b",
+   "lines": [
+    [
+     "Test counts in reports and commit messages are PASTED",
+     "Test counts in reports and commit messages are PASTED"
+    ]
+   ],
+   "source": "DESIGN L1 'a stamp in text': the count and stamp rule (CLAUDE.md keeps it; build-loop holds it verbatim)"
+  },
+  {
+   "id": "commit",
+   "skill": "env-tool-quirks",
+   "heading": "Shell, git, commit-helper and tool quirks",
+   "tools": [
+    "Bash"
+   ],
+   "command": "git\\s+(?:-C\\s+\\S+\\s+)?commit(?![-\\w])|safe_commit\\.sh\\b",
+   "lines": [
+    "**`scripts/safe_commit.sh -m"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a commit'"
+  },
+  {
+   "id": "commit-increment",
+   "skill": "build-loop",
+   "heading": "The operative core (CLAUDE.md's index of this skill)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "git\\s+(?:-C\\s+\\S+\\s+)?commit(?![-\\w])|safe_commit\\.sh\\b",
+   "lines": [
+    "2. **One increment = code + deterministic LLM-free test + commit.**"
+   ],
+   "source": "CLAUDE.md:386 build-loop: 'before any code increment, test or commit'"
+  },
+  {
+   "id": "proof-regen",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "proof-runner\\b|validate-ledger\\b|ledger-gen\\b",
+   "lines": [
+    "**ATTESTED INPUTS (AF-AP-56"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a proof regeneration'"
+  },
+  {
+   "id": "vendored-manifest-write",
+   "skill": "env-tool-quirks",
+   "heading": "Shell, git, commit-helper and tool quirks",
+   "tools": [
+    "Bash"
+   ],
+   "command": "vendored_manifest\\.py\\b",
+   "command_any": "--write\\b",
+   "lines": [
+    "**`scripts/vendored_manifest.py --write` hashes IGNORED files"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a `vendored_manifest.py --write`'"
+  },
+  {
+   "id": "test-vendored-manifest",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pytest\\b|test_summary\\.sh\\b|lane_gate\\.sh\\b|pc_suite\\.sh\\b|relaunch-suite\\.sh\\b",
+   "command_any": "test_vendored_manifest",
+   "lines": [
+    "**`tests/test_vendored_manifest.py` copies the vendored inputs"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a test gate' (the suite that fills the disk)"
+  },
+  {
+   "id": "test-proof-status",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pytest\\b|test_summary\\.sh\\b|lane_gate\\.sh\\b|pc_suite\\.sh\\b|relaunch-suite\\.sh\\b",
+   "command_any": "test_proof_status",
+   "lines": [
+    "**`tests/test_proof_status.py` needs a SHORT `--basetemp`"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a test gate' (the gpg socket-path suite)"
+  },
+  {
+   "id": "test-gate",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "pytest\\b|test_summary\\.sh\\b|lane_gate\\.sh\\b|pc_suite\\.sh\\b|relaunch-suite\\.sh\\b",
+   "lines": [
+    [
+     "**A PASTED COUNT CARRIES ITS SET",
+     "**A PASTED COUNT CARRIES ITS SET"
+    ]
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a test gate or pasted count'"
+  },
+  {
+   "id": "pasted-count",
+   "skill": "env-tool-quirks",
+   "heading": "Test gates and pasted counts",
+   "tools": [
+    "Write",
+    "Edit",
+    "Bash"
+   ],
+   "text": "\\b\\d+ (?:passed|failed|xfailed|xpassed|errors?|skipped)\\b",
+   "lines": [
+    [
+     "**A PASTED COUNT CARRIES ITS SET",
+     "**A PASTED COUNT CARRIES ITS SET"
+    ]
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a test gate or pasted count'"
+  },
+  {
+   "id": "anchor-edit",
+   "skill": "env-tool-quirks",
+   "heading": "The ops scripts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "anchor_edit\\.py\\b",
+   "lines": [
+    [
+     "**`scripts/anchor_edit.py` (ledger-plane",
+     "`--insert-after|--insert-before PREFIX TEXT`"
+    ]
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'an anchor edit'; CLAUDE.md:304 'an ops script (... anchor_edit)'"
+  },
+  {
+   "id": "ops-script",
+   "skill": "env-tool-quirks",
+   "heading": "The ops scripts",
+   "tools": [
+    "Bash"
+   ],
+   "command": "(?:resume-heal|orient|relaunch-suite|why|verify-planning-repo)\\.sh\\b|(?:replay_transcript_edits|lint_delta)\\.py\\b|pc_suite\\.sh\\b",
+   "lines": [
+    [
+     "Ephemeral container. `scripts/setup.sh` is the toolchain source of truth",
+     "(on-demand chronology from primary sources)"
+    ]
+   ],
+   "source": "CLAUDE.md:304 env-tool-quirks: 'an ops script (resume-heal, orient, relaunch-suite, pc_suite, why, replay_transcript_edits, lint_delta, verify-planning-repo, anchor_edit)'"
+  },
+  {
+   "id": "background",
+   "skill": "env-tool-quirks",
+   "heading": "Shell, git, commit-helper and tool quirks",
+   "tools": [
+    "Bash"
+   ],
+   "command_any": "(?<![&>|<])&(?![&>])(?=\\s|$)|(?:^|[;&|(\\s])(?:nohup|setsid|disown)\\b",
+   "lines": [
+    "**A trailing `&` backgrounds the WHOLE `&&` list**"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a background job'"
+  },
+  {
+   "id": "pgrep",
+   "skill": "env-tool-quirks",
+   "heading": "Shell, git, commit-helper and tool quirks",
+   "tools": [
+    "Bash"
+   ],
+   "command": "p(?:grep|kill)\\b",
+   "lines": [
+    "**A `pgrep -f <pattern>` liveness/wait loop MUST exclude its own command line**"
+   ],
+   "source": "CLAUDE.md:348 env-tool-quirks: 'a `pgrep` or `pkill`'"
+  },
+  {
+   "id": "gitnexus",
+   "skill": "code-intel-trio",
+   "heading": "GitNexus (tier ladder: native MCP → stdio → CLI; prefer richest alive)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "gitnexus\\b|gn_mcp\\.py\\b|run\\.cjs\\b",
+   "lines": [
+    "- Quirk: stdio needs stdin kept OPEN",
+    "- Stale index silently breaks impact on NEW symbols"
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'impact analysis'"
+  },
+  {
+   "id": "codebase-memory",
+   "skill": "code-intel-trio",
+   "heading": "codebase-memory (binary: /root/.local/bin/codebase-memory-mcp; MCP on stdio or `cli` one-shots)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "codebase-memory-mcp\\b",
+   "lines": [
+    "- QUIRK: arg is `repo_path`",
+    "- QUIRK: CLI-mode `trace_path` returns an empty echo",
+    "- Project name = slugged path"
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'Phase-1 grounding ... dead-wiring hunt'"
+  },
+  {
+   "id": "code-review-graph",
+   "skill": "code-intel-trio",
+   "heading": "code-review-graph (venv: /root/venv-crg/bin/code-review-graph)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "code-review-graph\\b",
+   "lines": [
+    "- Quirk: `impact` takes FILES not symbols",
+    "- Ambiguous names return a candidates list",
+    "- Keep the DB out of the repo"
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'impact analysis, dead-wiring hunt'"
+  },
+  {
+   "id": "graft",
+   "skill": "code-intel-trio",
+   "heading": "The core reflexes (CLAUDE.md's code-intelligence section)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "graft\\s+(?:ask|skeleton|build|find)\\b",
+   "lines": [
+    "- **GRAFT-FIRST FOR CODE QUESTIONS.**",
+    "- **DORMANT/reachability claims need TWO independent instruments"
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'any semantic code question'"
+  },
+  {
+   "id": "lane-context",
+   "skill": "code-intel-trio",
+   "heading": "§ lane_context — the ONE-COMMAND tool pass (owner escalation 2026-09-07)",
+   "tools": [
+    "Bash"
+   ],
+   "command": "lane_context\\.sh\\b",
+   "lines": [
+    [
+     "`scripts/lane_context.sh [-q \"<question>\"]",
+     "path is not in the loop."
+    ]
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'Phase-1 grounding' (the pack)"
+  },
+  {
+   "id": "brief",
+   "skill": "orchestration",
+   "heading": "CLAUDE-5 PROMPTING & DELEGATION (2026-07-27 — source: Anthropic model docs, primary)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^tasks/briefs/.+\\.md$",
+   "path_not": "(?i)report|(?:^|/|-)pack\\.md$|ledger|/VENUE-MAP\\.md$",
+   "lines": [
+    [
+     "0l. **Every brief, interview seed and owner question",
+     "from what the owner already installed"
+    ],
+    [
+     "missed it. Before a brief, seed or question ships",
+     "for every word), the owner rows newest first."
+    ],
+    "0a. **Every path a brief names carries CREATE / MODIFY / READ",
+    [
+     "3. **The brief is a HYPOTHESIS",
+     "any recorded diagnosis.\""
+    ]
+   ],
+   "source": "CLAUDE.md:144-145 orchestration: 'before authoring any brief' (and 0l, the owner-rulings check CLAUDE.md:145 names)"
+  },
+  {
+   "id": "brief-contract",
+   "skill": "contract-gate",
+   "heading": "The loop (this repo's shape)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^tasks/briefs/.+\\.md$",
+   "path_not": "(?i)report|(?:^|/|-)pack\\.md$|ledger|/VENUE-MAP\\.md$",
+   "lines": [
+    [
+     "1. **Negotiate the contract BEFORE any code.**",
+     "drop-don't-rewrite oracle rule applies)."
+    ]
+   ],
+   "source": "CLAUDE.md:116 contract-gate: 'USE for every serious increment' (the contract lives in the brief)"
+  },
+  {
+   "id": "research-prompt",
+   "skill": "deep-work",
+   "heading": "Feature workflow (for any substantial new subsystem)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^docs/research/prompts/.+\\.md$",
+   "lines": [
+    [
+     "> **Full guide:** `sandbox-kit/RESEARCH-PROMPT-GUIDE.md`",
+     "EXAMPLE-RESEARCH-PROMPT-EXPLORATORY.md"
+    ],
+    [
+     "2. **Research prompt** —",
+     "settled direction; `docs/research/FINDINGS-STAGE0-v1.md` stood in"
+    ]
+   ],
+   "source": "CLAUDE.md:372 deep-work: 'authoring a research prompt'"
+  },
+  {
+   "id": "live-state",
+   "skill": "session-continuity",
+   "heading": "The wiki: per-commit freshness and the continuity spine (CLAUDE.md's onboarding-map entry)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^wiki/topics/live-state\\.md$",
+   "lines": [
+    [
+     "**WIKI-AS-CONTINUITY-SPINE",
+     "reconcile for VERIFICATION"
+    ]
+   ],
+   "source": "CLAUDE.md:285 session-continuity: 'when updating `wiki/topics/live-state.md`'"
+  },
+  {
+   "id": "claude-md-gitnexus-block",
+   "skill": "code-intel-trio",
+   "heading": "Superseded by CTX1: the GitNexus block's pre-CTX1 wording (history only)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^CLAUDE\\.md$",
+   "text": "GitNexus",
+   "lines": [
+    [
+     "Since CTX1 every automatic `gitnexus analyze` passes",
+     "rewrites the block below on every `analyze`"
+    ]
+   ],
+   "source": "CLAUDE.md:454 code-intel-trio: 'before editing this block'"
+  },
+  {
+   "id": "dormant-claim",
+   "skill": "code-intel-trio",
+   "heading": "The core reflexes (CLAUDE.md's code-intelligence section)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "text": "\\bDORMANT\\b",
+   "lines": [
+    "- **DORMANT/reachability claims need TWO independent instruments"
+   ],
+   "source": "CLAUDE.md:445 code-intel-trio: 'a ... DORMANT claim'"
+  },
+  {
+   "id": "test-edit",
+   "skill": "anti-hollow-green",
+   "heading": "Anti-hollow-green TACTICS — operational checklist (every gate, oracle, test, increment)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^tests/.+\\.py$|(?:^|/)test_[^/]+\\.(?:py|sh)$|(?:^|/)[^/]+_test\\.py$",
+   "lines": [
+    [
+     "1. **Test the UNHAPPY path.**",
+     "merely \"it failed\"."
+    ],
+    [
+     "2. **Execution guards — make cheating structurally impossible",
+     "changed. (d) A gain on one axis"
+    ]
+   ],
+   "source": "CLAUDE.md:181 anti-hollow-green: 'designing or reviewing ANY gate/oracle/test/guard'"
+  },
+  {
+   "id": "test-edit-increment",
+   "skill": "build-loop",
+   "heading": "The operative core (CLAUDE.md's index of this skill)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^tests/.+\\.py$|(?:^|/)test_[^/]+\\.(?:py|sh)$|(?:^|/)[^/]+_test\\.py$",
+   "lines": [
+    "2. **One increment = code + deterministic LLM-free test + commit.**"
+   ],
+   "source": "CLAUDE.md:386 build-loop: 'before any code increment, test or commit'"
+  },
+  {
+   "id": "gate-edit",
+   "skill": "deep-work",
+   "heading": "Phase index (CLAUDE.md's index of this skill)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^(?:scripts/hooks/|\\.claude/hooks/|src/agent_factory/|proofs/schemas/)|^scripts/[^/]*(?:gate|lint|screen|validate|ledger|proof|push|commit|guard)[^/]*$",
+   "lines": [
+    "- **Phase 3 — blast radius before edit.**",
+    "- **Phase 4 — build (light loop), plus:**"
+   ],
+   "source": "CLAUDE.md:401 deep-work: 'a gate, security or store spine change'"
+  },
+  {
+   "id": "gate-edit-tactics",
+   "skill": "anti-hollow-green",
+   "heading": "Anti-hollow-green TACTICS — operational checklist (every gate, oracle, test, increment)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^(?:scripts/hooks/|\\.claude/hooks/|src/agent_factory/|proofs/schemas/)|^scripts/[^/]*(?:gate|lint|screen|validate|ledger|proof|push|commit|guard)[^/]*$",
+   "lines": [
+    [
+     "1. **Test the UNHAPPY path.**",
+     "merely \"it failed\"."
+    ]
+   ],
+   "source": "CLAUDE.md:181 anti-hollow-green: 'designing or reviewing ANY gate/oracle/test/guard'"
+  },
+  {
+   "id": "code-edit",
+   "skill": "build-loop",
+   "heading": "The operative core (CLAUDE.md's index of this skill)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^(?:proofs|spikes|scripts|src|tests|harness-ports|\\.claude/hooks)/.+\\.(?:py|sh|js|mjs|ts|rs)$|^scripts/[^/.]+$",
+   "lines": [
+    "1. **Verify every seam BEFORE writing code that calls it**"
+   ],
+   "source": "CLAUDE.md:379 build-loop: 'before writing code'; CLAUDE.md:386 'before any code increment'"
+  },
+  {
+   "id": "code-edit-guidelines",
+   "skill": "build-loop",
+   "heading": "Behavioral guidelines (Andrej Karpathy skills)",
+   "tools": [
+    "Write",
+    "Edit"
+   ],
+   "path": "^(?:proofs|spikes|scripts|src|tests|harness-ports|\\.claude/hooks)/.+\\.(?:py|sh|js|mjs|ts|rs)$|^scripts/[^/.]+$",
+   "lines": [
+    "**2. Simplicity First",
+    "**3. Surgical Changes"
+   ],
+   "source": "CLAUDE.md:379 build-loop: 'before writing code (the four behavioral guidelines ...)'"
+  }
+ ]
+}

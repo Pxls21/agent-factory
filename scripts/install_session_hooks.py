@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""install_session_hooks.py — register the five project hooks for a session rooted ABOVE the repository.
+"""install_session_hooks.py — register the six project hooks for a session rooted ABOVE the repository.
 
 Claude Code loads `.claude/settings.json` from the session's project root only. A session rooted in `/home/user` (the
 CCR default here) never loads `agent-factory/.claude/settings.json`, so none of the five project hooks fired there
-(AF-AP-172: the turn-end retro ran 0 times in 834 Stop runs). This script writes the same five hooks, with absolute
+(AF-AP-172: the turn-end retro ran 0 times in 834 Stop runs). This script writes the same six hooks, with absolute
 paths, into `<repo parent>/.claude/settings.json`. Measured 2026-09-24 (task #214): a settings file created
 mid-session takes effect on the next tool call, so running this script IS the manual start; no restart is needed.
 
-The two tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
+The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
 additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
 PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
 which the wrapper passes through unchanged. graft-first-nag.py stays for the Codex and Hermes adapters; search-intercept
-runs its classifier.
+runs its classifier. system1-context (S1-L1, D-090) is registered twice through the wrapper: PreToolUse on Write, Edit
+and Bash (the governing skill lines for the situation) and UserPromptSubmit (the skill sections that match the prompt,
+beside wiki-context); session-start.sh resets its once-per-window marker.
 
 Merge rule: entries whose command names `<repo>/.claude/hooks/` are ours and are replaced; every other key and entry
 in the file is kept. An existing file that is not a JSON object is refused (exit 1), never overwritten.
@@ -47,12 +49,18 @@ def our_hooks(root: Path) -> dict:
         "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]}],
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": guarded(
-            ".claude/hooks/wiki-context.py", f"python3 {r}/.claude/hooks/wiki-context.py")}]}],
+            ".claude/hooks/wiki-context.py", f"python3 {r}/.claude/hooks/wiki-context.py")}]},
+            {"hooks": [{"type": "command", "command": guarded(
+                ".claude/hooks/system1-context.py",
+                f"{wrap} UserPromptSubmit -- python3 {r}/.claude/hooks/system1-context.py", True)}]}],
         "PostToolUse": [{"matcher": "Edit|Write|Read", "hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/edit-snapshot.py", f"{wrap} PostToolUse -- python3 {r}/.claude/hooks/edit-snapshot.py", True)}]}],
         "PreToolUse": [{"matcher": "Grep|Bash", "hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/search-intercept.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/search-intercept.py",
-            True)}]}],
+            True)}]},
+            {"matcher": "Write|Edit|Bash", "hooks": [{"type": "command", "command": guarded(
+                ".claude/hooks/system1-context.py", f"{wrap} PreToolUse -- python3 {r}/.claude/hooks/system1-context.py",
+                True)}]}],
         "Stop": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/turn-retro-gate.sh", f"bash {r}/.claude/hooks/turn-retro-gate.sh")}]}],
     }
@@ -123,7 +131,7 @@ def main(argv: list[str]) -> int:
     else:
         os.chmod(tmp, 0o644)
     os.replace(tmp, target)
-    verb = "removed ours from" if args.remove else "installed 5 in"
+    verb = "removed ours from" if args.remove else "installed 6 in"
     print(f"session hooks: {verb} {target} (live from the next tool call)")
     return 0
 

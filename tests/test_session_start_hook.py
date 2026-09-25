@@ -88,3 +88,26 @@ def test_outside_the_web_container_it_does_nothing(tmp_path):
     tree = _tree(tmp_path)
     rc, out = _run(tree, remote="false")
     assert (rc, out) == (0, "") and not (tree / "setup.log").exists()
+
+
+def test_a_compaction_resets_the_system1_marker_in_every_environment(tmp_path):
+    # S1-L1 (D-090): the reset runs before the web-only exit, reads the SessionStart payload on stdin, prints nothing.
+    tree = _tree(tmp_path)
+    shutil.copy(HOOKS / "system1-context.py", tree / ".claude" / "hooks" / "system1-context.py")
+    seen = tree / ".jev" / "system1-seen"
+    seen.mkdir(parents=True)
+    main, other = seen / "sess-1.main.json", seen / "sess-2.main.json"
+    env = {"PATH": os.environ["PATH"], "CLAUDE_CODE_REMOTE": "false", "CLAUDE_PROJECT_DIR": str(tree)}
+
+    def start(source):
+        main.write_text('{"keys": ["k"]}')
+        other.write_text('{"keys": ["k"]}')
+        payload = '{"session_id": "sess-1", "hook_event_name": "SessionStart", "source": "%s"}' % source
+        return subprocess.run(["bash", str(tree / ".claude" / "hooks" / "session-start.sh")], input=payload.encode(),
+                              capture_output=True, timeout=60, env=env, cwd=str(tree))
+
+    r = start("startup")
+    assert (r.returncode, r.stdout) == (0, b"") and main.exists() and other.exists()     # a new session keeps it
+    r = start("compact")
+    assert (r.returncode, r.stdout) == (0, b"") and not main.exists() and other.exists()  # only its own window
+    assert not (tree / "setup.log").exists()

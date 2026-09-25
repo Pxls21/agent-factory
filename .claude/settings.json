@@ -56,6 +56,14 @@
             "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/wiki-context.py"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f $CLAUDE_PROJECT_DIR/.claude/hooks/system1-context.py ] && [ -f $CLAUDE_PROJECT_DIR/scripts/hook_context.py ] || exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py UserPromptSubmit -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/system1-context.py"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -75,6 +83,15 @@
           {
             "type": "command",
             "command": "[ -f $CLAUDE_PROJECT_DIR/.claude/hooks/search-intercept.py ] && [ -f $CLAUDE_PROJECT_DIR/scripts/hook_context.py ] || exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/search-intercept.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f $CLAUDE_PROJECT_DIR/.claude/hooks/system1-context.py ] && [ -f $CLAUDE_PROJECT_DIR/scripts/hook_context.py ] || exit 0; python3 $CLAUDE_PROJECT_DIR/scripts/hook_context.py PreToolUse -- python3 $CLAUDE_PROJECT_DIR/.claude/hooks/system1-context.py"
           }
         ]
       }

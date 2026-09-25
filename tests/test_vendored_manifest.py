@@ -381,11 +381,12 @@ def test_real_claude_split_counts_and_class_file(tmp_path: Path) -> None:
     # 12 -> 13 on 2026-09-24 (JT3 lands, tasks #228/#225): hooks/search-intercept.py is first-party (no kit counterpart).
     # 13 -> 16 on 2026-09-25 (CTX1, D-089): the three skills CLAUDE.md's text moved into (env-tool-quirks,
     # ouroboros-stdio, pc-bridge-lanes) are first-party (no kit counterpart, no declared set).
-    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["16", "0"]
+    # 16 -> 18 on 2026-09-25 (S1-L1, D-090): hooks/system1-context.py and hooks/system1-situations.json are first-party (no kit counterpart).
+    assert manifest_row(manifest, ".claude/ (first-party)").split(" | ")[6:8] == ["18", "0"]
     assert [path for path, klass in classes.items() if klass == "kit-adapted"] == ADAPTED_PATHS
     assert sum(klass == "kit-verbatim" for klass in classes.values()) == 2955
     assert sum(klass == "kit-adapted" for klass in classes.values()) == 17
-    assert sum(klass == "first-party" for klass in classes.values()) == 16
+    assert sum(klass == "first-party" for klass in classes.values()) == 18
 
 
 # K1-h: the 12-file remainder of `.claude/ (first-party)` at the PIN. The three
@@ -399,6 +400,8 @@ K1H_FIRST_PARTY_REMAINDER = [
     "commands/wiki-ingest.md",
     "commands/wiki-visualize.md",
     "hooks/search-intercept.py",
+    "hooks/system1-context.py",
+    "hooks/system1-situations.json",
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
     "skills/PROVENANCE-TYPESAFE.md",
@@ -413,7 +416,7 @@ K1H_FIRST_PARTY_REMAINDER = [
 # The three PROVENANCE-*.md files are the only first-party files OUTSIDE a
 # declared set prefix and outside the copy rule; everything else under the
 # set prefixes is a set member, everything byte-identical to a kit root is a
-# copy, and the 16 above are the remainder (12 at K1-h, plus JT3's hook, plus CTX1's three skills).
+# copy, and the 18 above are the remainder (12 at K1-h, plus JT3's hook, plus CTX1's three skills, plus S1-L1's two hook files).
 K1H_SET_REMAINDER_PATHS = {
     "skills/PROVENANCE-AEGIS.md",
     "skills/PROVENANCE-PRISM.md",
@@ -452,7 +455,7 @@ def test_k1h_claude_classification_and_remainder(tmp_path: Path) -> None:
     classes = class_rows(root / module.CLASSES_PATH)
     counts = k1h_class_counts(classes)
 
-    assert counts.get("first-party", 0) == 16
+    assert counts.get("first-party", 0) == 18
     assert counts.get("vendored:aegis", 0) == 47
     assert counts.get("vendored:prism", 0) == 12
     assert counts.get("vendored:typesafe", 0) == 2
@@ -565,7 +568,7 @@ def test_k1h_honey_copy_byte_change_falls_back_to_first_party(tmp_path: Path) ->
     assert classes["agents/hive-builder.md"] == "first-party"
     counts = k1h_class_counts(classes)
     assert counts.get("copy:sandbox-kit/honey-for-devs/", 0) == 18
-    assert counts.get("first-party", 0) == 17   # the 16-file remainder (CTX1's skills since 2026-09-25) plus the changed copy
+    assert counts.get("first-party", 0) == 19   # the 18-file remainder (CTX1's skills and S1-L1's two hook files since 2026-09-25) plus the changed copy
 
 
 def test_k1h_ambiguous_copy_blob_is_refused_by_name(tmp_path: Path) -> None:
