@@ -36,6 +36,9 @@ immediately append a one-line fix to this file. Don't defer.
 **A `pgrep -f <pattern>` liveness/wait loop MUST exclude its own command line** — bracket the
 first char (`pgrep -f '[p]ytest ...'`) or match the binary with `-x` (two self-matching waiters
 spun for a whole lane in the source repo). **The bracket protects only the PATTERN: any other literal occurrence of the name in the same command line (a later `sed`/`nohup` argument naming the script) self-matches — a `pkill -f "[r]un_packs.sh"` killed the coordinator's own shell 2026-09-14 (rc 144); kill by pid, never by `pkill -f` inside a compound command that also names the target.**
+**`safe_commit.sh` fills `{STAMP}` and `{DATESTAMP}` in the commit MESSAGE only, never inside a file** (VERIFY-S0-04-LEAK
+F14, 2026-09-25: 16 ledger entries written with a literal `{DATESTAMP}` were committed that way; filled afterwards
+from each line's commit time): a stamp in file text is substituted when the text is written (`$STAMP` from `date -u`).
 **`scripts/safe_commit.sh -m "…"`: no backticks inside a double-quoted message** — bash runs them as command substitutions and the phrase vanishes from the commit (three `in …` phrases eaten on 2026-09-15); write the message to a file or single-quote it. **`git rev-parse --short REV1 REV2` fails ("Needed a single revision") in this container's
 shell inside a compound command** — one rev-parse per call.
 **While a lane holds `scripts/hooks/*`, every commit runs the lane's working copy of the git hooks** (AF-AP-222; INSTALL1's and L2a's post-commit, 2026-09-25): commit with HEAD's committed hooks instead, a temp dir of `git show HEAD:scripts/hooks/<name>` files made executable and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=<dir> bash scripts/safe_commit.sh ...` (no hook locates a helper relative to itself, so the copies run as they are), or read the lane's hook diff before committing; task #279 makes safe_commit do it.
