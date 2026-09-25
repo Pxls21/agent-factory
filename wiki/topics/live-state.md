@@ -12,7 +12,7 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-25 22:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
-- **RUNNING (sandbox, three agents):** S1-ALL (task #296), the prompt path of the situation hook over every skill; VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber; VERIFY-S0-04-LEAK round 2 (task #287), the focused check of R1 before the owner re-signs (its report `tasks/briefs/system1/VERIFY-S0-04-LEAK-R1-report.md`). The R1 landing's push waits on CI (`push_when_green.sh`).
+- **RUNNING (sandbox, three agents):** S1-ALL (task #296), the prompt path of the situation hook over every skill; VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber; VERIFY-S0-04-LEAK round 2 (task #287), the focused check of R1 before the owner re-signs (its report `tasks/briefs/system1/VERIFY-S0-04-LEAK-R1-report.md`). Pushed: origin a525376 (the R1 landing) and 7ecd6c2 (its retro) after CI run #1092 passed; transcripts eade28c; the post-push value check found only the expected host.
 - **Landed:** S0-04-LEAK R1 (task #287): the five verify findings fixed, S0-04 re-minted again (ledger digest 7daeba65...), F4 fixed (the committed-tree proof-status test pins the pending set to S0-04). Gate: 627 passed twice (set=1d810cbca988).
 - **Next:** the owner's re-sign command once the round-2 check passes; #295 after S1-ALL lands (draft in the scratchpad); the held env-tool-quirks bake (the waiter trailer) at the S1-ALL landing.
 
