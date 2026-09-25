@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 07:5xZ — WHAT IS LIVE NOW (supersedes the 05:0xZ block for the live set).**
+- **RUNNING (sandbox), three agents:** the P1 pruner build lane (task #231, brief `tasks/briefs/jev-pipes/P1-brief.md`); SESSION-EXPORT-R1, the one D-031 repair of the scrubber (task #252, brief `tasks/briefs/jev-laya/SESSION-EXPORT-R1-brief.md`: the escaped-credential blocker F-1, the key-dump F-4, cheap named shapes, AMENDMENT 3); SBS1, the side-by-side GPU window job (task #262, brief `tasks/briefs/jev-pipes/SBS1-brief.md`). Their files are in `.lanes-live`.
+- **SESSION-EXPORT NOT-READY (F-1):** a double-quoted credential survived once JSON-escaped; the PC copy was DELETED; re-ship after the repair's narrow re-verify.
+- **VLLM-RWKV PARKED (AF-AP-207):** its RWKV7 path needs FlashRWKV, whose build gate refuses below SM90 (measured); the 3090 is SM86. The second engine is the plan's own RWKV stream reader on the FLA stack (ran on this card 2026-09-24). The side-by-side window (D-088, standing-approved) runs SBS1's job once it lands: a temporary Qwen at GPU_UTIL 0.90 or 0.92 on loopback 8081 beside the chunked reader; the live server holds 7.08 GiB of KV (222,822 tokens), about 31,000 tokens per GiB given up. A permanent change goes to the owner with the numbers.
+- **PC:** no lanes live; vLLM `qwen` active and idle; no build running. QJ2 (task #241) still owes its verify round. Unpushed: the blocker record and the SBS1 brief (CI run #1067 in progress; push after its verdict).
+
 **2026-09-25 05:0xZ — WHAT IS LIVE NOW (supersedes the 04:3xZ block for the live set).**
 - **D-087 (owner):** our workflow is the factory's test bed; Jevs chain into rank-collect-present pipelines. Plan version 2 (`docs/research/findings/jev-fit/PLAN-2026-09-25.md`): seven pipelines, the first P1 = the owner-recommended jev-pruner at our scale (task #231; its 10,000-token floor skips 98% of our tool-output text).
 - **The interview is COMPLETE; the SEED landed** (`seeds/seed-jev-pipes-p1-v1.yaml`, seed_5aa221965993, ambiguity 0.12) with its breakdown (`tasks/jev-pipes-p1-breakdown.md`). **RUNNING (sandbox): the P1 build lane** (task #231, brief `tasks/briefs/jev-pipes/P1-brief.md`, dispatched 05:1xZ): the vendored jev-pruner's own `trimOutput` with the real local Laya scorer at a 2k floor; one command prints PASS or FAIL (misses at or under 5%, net tokens saved). Its tracked files are in `.lanes-live`. Then VERIFY-P1 (#260); live in the hook only on PASS (#261).
