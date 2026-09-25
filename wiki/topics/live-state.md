@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 18:1xZ — WHAT IS LIVE NOW (supersedes the 17:4xZ block for the live set).**
+- **RUNNING (sandbox, one agent):** S1-L1-R1 (task #277): the one repair of the situation-to-skill hook.
+- **Landed (local, pushing behind CI run #1085):** INSTALL1 (task #274, sandbox half): slopo installed, pinned and tuned (a full embed about 3x faster, the same 18 clusters), the review wrapper, the post-commit sync, the session-start smoke table (32 found, 0 missing); L5 (task #276): `scripts/chat_find.py` (error strings 3 of 3 at rank 1; descriptions weak: 0 of 5 in the top 10).
+- **Registered:** AF-AP-224 (the scrubber misses a key glued to a preceding character; no leak by value in the committed digests), AF-AP-225 (a `grep -q` pipe under pipefail failed on a good venv and setup rebuilt it; fixed).
+- **Next:** SCRUB1 (task #280) dispatches once the push lands; the PC half of INSTALL1 (the PC has Python 3.13 and no slopo) runs over the bridge; L2 (the code map cache) is unblocked now that INSTALL1 no longer holds `scripts/hooks/post-commit`.
+- **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/`; the codebase-memory hook (a longer deadline, an upstream report, or L2; recommended: L2 plus an upstream report); S0-04's two leak detectors have the AF-AP-224 shape (a change re-mints the signed proof).
 **2026-09-25 17:4xZ — WHAT IS LIVE NOW (supersedes the 16:4xZ block for the live set).**
 - **RUNNING (sandbox, three agents; the first two resumed after the 16:4xZ container restart):** INSTALL1 (task #274): slopo installed, pinned and tuned, the other install rows, a smoke table; L5 (task #276): `scripts/chat_find.py`, the chat bug locator; S1-L1-R1 (task #277): the one repair of the situation-to-skill hook (whole-entry rows, tests that kill the verifier's mutants, the lock, the pointer, the noise).
 - **Landed:** S1-L1 is verified with follow-ups (VERIFY-S1-L1: MERGE-READY-WITH-FOLLOWUPS, 26 findings, none blocking). AF-AP-223 registered: a mutation harness that scores an error as a kill (task #278 fixes the vendored template).
