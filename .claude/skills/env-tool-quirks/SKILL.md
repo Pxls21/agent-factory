@@ -70,6 +70,13 @@ request, measured on an Opus probe). A SKILL.md whose frontmatter is not valid Y
 listed with no description whatever the budget; `tests/test_skill_frontmatter.py` guards it. To measure what a subagent
 received: `python3 docs/research/findings/system1-context/inventory.py listing --listing-from <agent>.jsonl --listing-out
 <file.json>` (it prints names, described and chars; without `--listing-out` it crashes).
+**In a linked worktree `.git` is a one-line file, not a directory** (`gitdir: <repo>/.git/worktrees/<name>`; SLOPO2's
+landing gate, 2026-09-25): a test that asserts something about a `.git` directory reds in the clean-worktree gate
+and passes in the clone. Key such an assertion on `(ROOT / ".git").is_dir()`.
+**The permission classifier refuses a sandbox lane's `python3 scripts/ledger-gen --root .` in the shared tree**
+("Modify Shared Resources", S0-04-LEAK 2026-09-25) and its `scripts/pc_suite.sh set-id` call: a re-mint brief names
+the ledger regeneration as a coordinator landing step, and the lane hands over the expected file (a `ledger-gen` over
+a scratch copy) to compare with.
 
 ## Test gates and pasted counts
 
