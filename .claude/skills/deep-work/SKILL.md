@@ -139,6 +139,11 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   its cause and measure whether the input the model will actually read carries it (a record's fields for a per-block
   model such as Laya; the stream prefix for a stream model); cue words written before the call (outcome words sat in
   1,490 Bash descriptions) stay a leak to flag either way.
+- **In a stream, a label sits where its answer FIRST appears, not where the record states it (2026-09-25, JEV-MAP).**
+  18 of 93 verifier lanes wrote their gate recommendation into a report file before their final message; a stream example
+  that asks for the recommendation at the final message has the answer in its own prefix. For every decision a stream
+  model learns, find the first event that reveals the answer (a file write, an echo, a partial report, a notification)
+  and place the question before it; measure how often the answer precedes its recording event.
 
 **Phase 3 — blast radius before edit.** Impact analysis (GitNexus `impact`, grep-for-callers
 fallback) on every symbol whose SEMANTICS change; read every caller. `detect_changes` before every
