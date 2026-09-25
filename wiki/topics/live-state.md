@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 09:0xZ — WHAT IS LIVE NOW (supersedes the 08:3xZ block for the live set).**
+- **GPU WINDOW OPEN on the PC since 09:07:08Z (window `20260925T090708Z`, D-088):** `scripts/gpu_window.sh` stopped `qwen.service` and runs `docs/research/findings/jev-pipes/sbs-window.jobs` (two configurations: a temporary Qwen at GPU_UTIL 0.90 with 1,024-token RWKV chunks, then 0.88 with 4,096-token chunks, each beside the RWKV stream reader); the runner ALWAYS starts `qwen.service` again and waits for `/v1/models` (a 45-minute cap). Results under `~/gpu-window/sbs-u090-c1024/` and `~/gpu-window/sbs-u088-c4096/` (`summary.json`), the record in `~/gpu-window/record.jsonl`. If a session resumes mid-window: read the record, never start qwen by hand while the runner lives (only a SIGKILL of the runner skips its restore: then `systemctl --user start qwen`).
+- **SBS1 harvested and pushed (origin 2b65901):** the job, the probe, 74 tests; AF-AP-210 (a detached gate made SIGINT tests hang) fixed in both gpu test files; its echo is task #266.
+- **RUNNING (sandbox), two agents:** VERIFY-P1 (task #260) and SESSION-EXPORT-R1 (task #252).
+- **Unchanged:** P1 measured FAIL (the hook stays unwired); vllm-rwkv parked; the session export NOT-READY until the repair's re-verify.
+
 **2026-09-25 08:3xZ — WHAT IS LIVE NOW (supersedes the 07:5xZ block for the live set).**
 - **P1 MEASURED FAIL (task #231 closed):** the vendored jev-pruner replayed on 3,153 large Bash results pruned nothing. Three causes: 2,351 are documents the pruner never cuts; the Laya scorer never saw the chunk (the server's fan-out adds it after the history and Laya keeps 1,024 tokens, AF-AP-208; fix task #265 held until the verify); the CPU scorer is slow and the pruner's requests queue. The hook stays unwired; the seed says the next pipeline takes the slot. Harvest pushed (origin e8c14bf).
 - **RUNNING (sandbox), three agents:** VERIFY-P1 (task #260: the FAIL's causes and the replay instrument's PASS path); SESSION-EXPORT-R1 (task #252, the scrubber repair); SBS1 (task #262, the side-by-side GPU window job). Their files are in `.lanes-live`.
