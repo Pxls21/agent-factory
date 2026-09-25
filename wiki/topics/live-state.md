@@ -13,7 +13,8 @@ last_compiled: 2026-09-03
 
 **2026-09-25 02:3xZ — WHAT IS LIVE NOW (supersedes the 01:4xZ block for the live set).**
 - **LIVE since 00:35:59Z:** the QJ2 PC lane `pc-qj2.md--d6a2142` (task #241), the only PC lane; its J2 run (examples_binary) started 02:09Z. A detached loop re-attaches its dispatcher at each 60-minute poll cap (log `qj2-dispatch.log` in the session scratchpad). Do not stop or restart vLLM while it runs.
-- **RUNNING (sandbox):** DSV2 (task #251, dataset v2 on AMENDMENT 1 + D-085; editing its boundary files); SESSION-EXPORT (task #252) and JEV-MAP (task #253), dispatched 02:3xZ. `.lanes-live` lists the build lanes' files; commit none of them until each lane reports.
+- **LANDED 03:2xZ, GATED-PENDING-VERIFY:** DSV2 (task #251): dataset v2, 6,196 rows and 5,301 labels from our recorded answers (`docs/research/findings/laya-ft-labels/2026-09-25-recorded/`); the coordinator's clean-worktree gate 143 passed. VERIFY-DSV2 (sandbox adversarial-verifier, clean worktree at the PIN) dispatched 03:2xZ. The v2 manifest hashes `scripts/transcript_export.py`: the SESSION-EXPORT harvest regenerates it in the same commit.
+- **RUNNING (sandbox):** SESSION-EXPORT (task #252) and JEV-MAP (task #253), dispatched 02:3xZ. `.lanes-live` lists the build lanes' files; commit none of them until each lane reports.
 - **D-086 (owner, 02:2xZ):** every session record is training data: the RWKV student reads the session as a stream, so a decision's state is the whole prefix (614 of 652 main-session Edits follow a read of the same file). This supersedes the 02:1xZ reading that the session export waits. DSV2 is the initial set.
 - **NEXT:** harvest each lane as it reports; DSV2's verify round (rule 0f); ship the export to the PC once its leak gate is 0; then the RWKV stream-training design. **PC:** QJ2 only; qwen active.
 
