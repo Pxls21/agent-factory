@@ -111,7 +111,7 @@ errors when left to build-and-fix alone; a builder executes reliably once pointe
   **The harness reads `.claude/agents/*.md` ONCE per session: an edited `model:` line reaches no dispatch until the next session
   (bit 2026-09-23, AF-AP-131: E3's first dispatch after D-054 ran on `claude-opus-4-6`; stopped, re-dispatched with `model: "opus"`) —
   after a mid-session definition change pass the model on the dispatch, and read the served model from the transcript
-  (`grep -o '"model":"[^"]*"' <tasks-dir>/<agentId>.output | sort | uniq -c`), never assume it.** **A refusal stop switches a lane's model mid-run with no notice (AF-AP-154; VERIFY-E3-R1 2026-09-23: Opus 5.5 to Opus 4.8 after a refusal on a PATH-shim test driver): at harvest, count the served model per ASSISTANT record (the grep also counts JSON inside tool output) and search for `"stop_reason":"refusal"`; the report must state the mix.**
+  (`grep -o '"model":"[^"]*"' <tasks-dir>/<agentId>.output | sort | uniq -c`), never assume it.** **A refusal stop switches a lane's model mid-run with no notice (AF-AP-154; VERIFY-E3-R1 2026-09-23: Opus 5.5 to Opus 4.8 after a refusal on a PATH-shim test driver): at harvest, count the served model per ASSISTANT record (the grep also counts JSON inside tool output) and search for `"stop_reason":"refusal"`; the report must state the mix. One command does both: `python3 scripts/hiccup_scan.py --transcript <tasks-dir>/<agentId>.output --out <scratch>/harvest.md` (it streams the JSONL, never whole).**
 - **Installed delegation tooling (audited third-party — provenance
   `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`):** agents `code-implementer` ·
   `evidence-gatherer` · `adversarial-verifier`. Skills `contract-gate` (USE for every serious
