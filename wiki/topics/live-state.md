@@ -809,6 +809,7 @@ build-status or count disagreement.
 
 ## Last updated
 
+2026-09-25 01:1xZ — DATA-EXT landed (54 public datasets); CLAUDE.md names hiccup_scan.py as the one-command agent harvest check (served model, refusal stops); DATA-INT and QJ2 still running.
 2026-09-25 00:2xZ — the Laya head checkpoint rejected on every KC-J3 line (the teacher is the ceiling); D-082: System 1 direct to vLLM, the direct path measured exact; QJ1's orphaned adapter stopped (task #248).
 2026-09-24 23:5xZ — pc.sh drops the bridge's shell-hook warnings; anchor_edit warns on blank-line runs; the Laya evaluation 2 of 5 runs done.
 2026-09-24 23:5xZ — the coordinator's probe OOM-killed the vLLM engine (about 5 minutes down, AF-AP-201); QJ1's parity gap traced to the reasoning field; the Qwen continuation waits on an owner decision.
