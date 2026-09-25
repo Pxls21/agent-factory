@@ -1,6 +1,6 @@
 ---
 name: deep-work
-description: The deep-work protocol ("Fable deep") — general-purpose, any project: Phases 0-6 plus the retrospective rule and the operational meta-rules, full text with war-story evidence. Load for new subsystems, gate/security/store spine changes, code review of a stretch, root-cause investigations, anything where a wrong green is expensive, long-running probes/measurements, GC/retention sweeps, handoffs, or session close-outs. CLAUDE.md carries the trigger list; its phase index and the feature workflow moved to the end of this skill (CTX1, D-089) — this skill is the authoritative expansion. Also load it before starting a substantial new subsystem or authoring a research prompt.
+description: 'The deep-work protocol ("Fable deep") — general-purpose, any project: Phases 0-6 plus the retrospective rule and the operational meta-rules, full text with war-story evidence. Load for new subsystems, gate/security/store spine changes, code review of a stretch, root-cause investigations, anything where a wrong green is expensive, long-running probes/measurements, GC/retention sweeps, handoffs, or session close-outs. CLAUDE.md carries the trigger list; its phase index and the feature workflow moved to the end of this skill (CTX1, D-089) — this skill is the authoritative expansion. Also load it before starting a substantial new subsystem or authoring a research prompt.'
 ---
 
 # The deep-work protocol ("Fable deep" — serious increments and reviews)

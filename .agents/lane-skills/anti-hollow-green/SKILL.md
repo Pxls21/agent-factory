@@ -1,6 +1,6 @@
 ---
 name: anti-hollow-green
-description: The anti-hollow-green tactics — general-purpose, any project: the full operational checklist behind the #1 NO STUBS rule, with war-story evidence (NaN fail-open wormholes, os.environ config leaks, mutation-testing, oracle independence, searchable-parameter-domain attack surface). Load when designing or reviewing ANY gate, oracle, test suite, benchmark, guard on externally-sourced values, or numeric fail-closed check; when a green looks too easy; or when bounding any optimizer/search parameter domain. the project instructions file carries the rule + one-line tactic index — this skill is the authoritative expansion.
+description: 'The anti-hollow-green tactics — general-purpose, any project: the full operational checklist behind the #1 NO STUBS rule, with war-story evidence (NaN fail-open wormholes, os.environ config leaks, mutation-testing, oracle independence, searchable-parameter-domain attack surface). Load when designing or reviewing ANY gate, oracle, test suite, benchmark, guard on externally-sourced values, or numeric fail-closed check; when a green looks too easy; or when bounding any optimizer/search parameter domain. the project instructions file carries the rule + one-line tactic index — this skill is the authoritative expansion.'
 ---
 
 > **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes

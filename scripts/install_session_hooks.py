@@ -20,6 +20,12 @@ of ours included); --remove takes out only our exact current commands. A foreign
 stays, in that group with its matcher (S1-L1-R1 F19); every other key and entry in the file is kept. An existing file
 that is not a JSON object is refused (exit 1), never overwritten.
 
+The skill listing (D-092, owner 2026-09-25: "keep the skills, just label them properly ... so they pop up"): Claude Code
+lists skills in context x 4 x `skillListingBudgetFraction` characters (default 0.01, measured 29,994 characters here: 69
+of 488 skills with a description, the rest bare names). The install sets the fraction to at least LISTING_FRACTION;
+measured on an Opus subagent at 0.07: 488 of 488 described, 172,800 characters. A larger value already in the file is
+kept; --remove takes the key out only while it still holds ours.
+
 Usage: install_session_hooks.py [--target PATH] [--check | --remove]
   (default)  write or refresh our entries; prints `session hooks: installed|unchanged ...`
   --check    exit 0 when the file already holds exactly our entries, 1 otherwise; writes nothing
@@ -35,6 +41,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+LISTING_KEY, LISTING_FRACTION = "skillListingBudgetFraction", 0.07
 
 
 def our_hooks(root: Path) -> dict:
@@ -99,6 +106,12 @@ def merged(current: dict, root: Path, remove: bool) -> dict:
         out["hooks"] = hooks
     else:
         out.pop("hooks", None)
+    have = out.get(LISTING_KEY)
+    if remove:
+        if have == LISTING_FRACTION:
+            out.pop(LISTING_KEY)
+    elif type(have) not in (int, float) or have < LISTING_FRACTION:
+        out[LISTING_KEY] = LISTING_FRACTION
     return out
 
 
