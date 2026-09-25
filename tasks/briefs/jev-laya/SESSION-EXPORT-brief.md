@@ -160,3 +160,18 @@ names from real records (AF-AP-42), and cite a record line for each.
 
 Evidence demands 2 to 7 stand and cover these items (their tests are in demand 2's and 5's sets; add a mutant for G6: a fixed
 key, or the pseudonym applied to a named-rule match, goes red).
+
+## AMENDMENT 2 (coordinator, 2026-09-25 05:0xZ; D-087, AF-AP-204, JEV-FIT plan version 2)
+
+1. **Every project folder.** Read every transcript under `/root/.claude/projects/*/`, not only `-home-user/`. The harness files a
+   session under the slug of its launch directory, and this session's own id also has a transcript under
+   `-home-user-agent-factory/` (2.1M, one top-level file, written 2026-09-05 to 09-22). `src` becomes the path relative to
+   `/root/.claude/projects/`, so it names the folder. Paste each folder's file count in the report.
+2. **An incremental converter.** Expose one function that converts a transcript from a start byte: it reads only complete lines
+   from that offset and returns the events plus the offset after the last complete line. The batch export calls it with 0. Test:
+   converting a file in two parts, the second from the returned offset, gives the same events as one pass (D-4). The live tailer of
+   the JEV-FIT plan reuses it.
+3. **Pruner archives as labeled data.** The jev-pruner saves the full output of each result it trimmed as
+   `<project>/.claude/fast-jev-output/bash-<tool_use_id>.txt`. Emit each archive as one event of kind `pruner_archive`, linked by
+   `call_id` to its tool call, through the same scrub and cap, so a trainer can compare what the model saw with what the pruner
+   dropped. Measure the archives present (one at authoring, under `/home/user/agent-factory/.claude/fast-jev-output/`).
