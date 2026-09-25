@@ -1104,3 +1104,22 @@ class TestAFAP204:
         for line in ('TR=$(ls -t /root/.claude/projects/*/*.jsonl 2>/dev/null | head -1)',
                      'cands = glob.glob("/root/.claude/projects/*/*.jsonl")', 'root = Path.home() / ".claude"'):
             assert not self.rx.search(line), line
+
+
+class TestAFAP223:
+    rx = _AP_BY_ID["AF-AP-223"]
+
+    def test_fires_on_a_kill_verdict_from_the_exit_code_alone(self):
+        # the verifier's mutate.py, the S1-L1 builder's harness and tasks/briefs/s0-01-b5c-support/probes/mut.py:197
+        assert self.rx.search('print(f"{\'KILLED \' if r.returncode else \'SURVIVED\'} {name:70s}")')
+        assert self.rx.search('results.append((name, "KILLED" if r.returncode != 0 else "SURVIVED", failed[:1], last))')
+        assert self.rx.search("    killed = p.returncode != 0")
+        assert self.rx.search('print((name, "KILLED" if base.returncode else "SURVIVED", last))')
+
+    def test_no_fire_when_the_verdict_needs_a_failed_test_or_is_not_a_kill(self):
+        for line in ('killed = bool(failed) and p.returncode == 1',
+                     'killed = any(l.startswith("FAILED ") for l in out.splitlines())',
+                     "if p.returncode != 0: raise SystemExit(p.returncode)",
+                     "os.kill(pid, signal.SIGTERM) if proc.returncode is None else None",
+                     "# killed when the returncode is non-zero (a comment, not a verdict)"):
+            assert not self.rx.search(line), line

@@ -383,6 +383,13 @@ AP_SCREEN = [
      "a hardcoded Claude Code project directory — sessions land under the slug of their launch cwd, and a container "
      "can hold several: glob /root/.claude/projects/*/ (the newest file for the current session, every file for an "
      "export of all session data) (AF-AP-204)"),
+    # AF-AP-223 (2026-09-25, the S1-L1-R1 premise run): a mutation harness scored KILLED from the exit code alone, with
+    # no unmutated control run. Its --basetemp parent had been deleted, every run errored at setup ("2 passed, 1 error"),
+    # and all 8 mutants read KILLED where 7 survive. The tell: a killed verdict taken from returncode (!= 0, or bare).
+    ("AF-AP-223", re.compile(r"""(?i)\bkilled\b[^#\n]*\breturncode\b(?:\s*!=\s*0\b|\s+else\b|\s*\)|\s*$)"""),
+     "a mutation verdict read from the exit code alone — pytest also exits non-zero on a setup or collection error, "
+     "an internal error, a usage error and no tests collected, so a broken setup reads as every mutant KILLED: count a "
+     "kill only when a test FAILED, score an error-only run INVALID, and run the unmutated control first (AF-AP-223)"),
 
 
 ]
