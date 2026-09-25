@@ -15,6 +15,20 @@ if [ ! -d "$D/src/.git" ]; then git init -q "$D/src" && git -C "$D/src" remote a
 git -C "$D/src" fetch -q --depth 1 origin "$PIN" >> "$LOG" 2>&1 || fail "git fetch rc=$?"
 git -C "$D/src" checkout -q --detach FETCH_HEAD >> "$LOG" 2>&1 || fail "git checkout rc=$?"
 [ "$(git -C "$D/src" rev-parse HEAD)" = "$PIN" ] || fail "pin mismatch"
+# LOCAL PATCH (recorded in docs/research/findings/jev-pipes/VLLM-RWKV-2026-09-25.md): at the pin the csrc-build stage copies
+# setup.py but not tools/build_profiles.py, which setup.py loads at import (setup.py:36-37); the first real build failed there
+# with FileNotFoundError. Restore the file first so a rerun patches a clean copy.
+git -C "$D/src" checkout -q -- docker/Dockerfile || fail "restore Dockerfile"
+python3 - "$D/src/docker/Dockerfile" <<'PY' >> "$LOG" 2>&1 || fail "patch Dockerfile"
+import sys
+p = sys.argv[1]
+s = open(p).read()
+a = "COPY tools/build_rust.py tools/build_rust.py\nCOPY cmake cmake/\n"
+assert s.count(a) == 1, s.count(a)
+s = s.replace(a, "COPY tools/build_rust.py tools/build_rust.py\nCOPY tools/build_profiles.py tools/build_profiles.py\nCOPY cmake cmake/\n")
+open(p, "w").write(s)
+print("patched: COPY tools/build_profiles.py")
+PY
 say "podman build"
 ( cd "$D/src" && podman build -f docker/Dockerfile --target vllm-openai \
     --build-arg BUILD_BASE_IMAGE=docker.io/nvidia/cuda:13.0.3-devel-ubuntu22.04 \
