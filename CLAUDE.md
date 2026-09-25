@@ -132,8 +132,11 @@ errors when left to build-and-fix alone; a builder executes reliably once pointe
   trigger class yet; its security-testing vocabulary (gVisor escape canaries, egress canaries,
   policy-bypass fixtures, unauthorized-turn fixtures) is defensive work on the owner's own system
   — state that authorization inside the brief.
-- **EXPLICIT `model=` ON EVERY DISPATCH.** A dispatch that omits `model` INHERITS the session
-  model — an unrouted delegate is a Fable delegate: coordinator-priced tokens for executor work.
+- **EXPLICIT `model=` ON EVERY DISPATCH.** A dispatch that omits `model` runs on the agent definition's model as the
+  harness read it at session start, which can be stale (AF-AP-131); only a type whose definition names no model takes
+  the default, the session's own model (the Agent tool's schema; measured 2026-09-25: 82 omitted-model dispatches,
+  each served by its definition's model, `docs/research/findings/laya-ft-data/SESSION-DECISIONS-2026-09-25.md` X3).
+  An unrouted delegate of such a type is a Fable delegate: coordinator-priced tokens for executor work.
   Omission is a routing bug. Route by STAGE: explore/verify → `opus` (the agent types with `model: "opus"`; D-065),
   build → `code-implementer`, scouts/sweeps → `haiku`.
 
