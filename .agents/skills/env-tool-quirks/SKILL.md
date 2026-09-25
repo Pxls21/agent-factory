@@ -82,3 +82,5 @@ the last three basetemps). Check `df -Pm /` first, pass `--basetemp` under a scr
 only the `-k` tests you need. The copy also takes ignored files under `.claude/` (task #232), so prove a class-count
 pin on a `git archive HEAD` mirror of `.claude/ .agents/ sandbox-kit/ vendor/` plus the changed files, not in the
 shared tree.
+
+**A hook registered outside the repo can cost on every call (2026-09-25, AF-AP-220).** The codebase-memory installer wrote seven hooks into `~/.claude/settings.json`; the Read/Grep/Glob gate cost 2.0 s per call with 0 bytes out for a week, unseen, because a hook that prints nothing leaves no record in the transcript. Census every registered hook (the three settings files and the plugins) with a timed synthetic run and its bytes out (`docs/research/findings/system1-context/hook_probe.py`), and strip what gives nothing (`scripts/strip_cbm_hooks.py`).
