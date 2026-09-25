@@ -84,3 +84,38 @@ vendor/jev-pruner/src/output.ts:10:const DEFAULT_MAX_STATE_TOKENS = 25_000;   <-
 
 A question for you, not a fact: how does the pruner (`vendor/jev-pruner/src/jev.ts`, `output.ts`) treat a refused request and a
 missing answer? Read it and say which refusal keeps the output.
+
+## AMENDMENT 1: contract rev 2 (the coordinator, 2026-09-25 12:1xZ; replaces CONTRACT items 1 and 2)
+
+WHY: the lane's hand-back found that `tests/test_laya_ft.py::test_ap_state_is_the_servers_fan_out_shape` locks a train/serve
+invariant this brief missed: the fine-tune `ap` rows are `{"query", "chunk"}` in that order, with the query cut by
+`build_dataset.Fitter` so the whole state fits, and J2 scored that shape through this server. Chunk-first serving would show the
+student a shape it never trained on, for most `scripts/jev.py` rank requests (the lane's echo E2: the state does not fit whole
+in most of them). So the server serves the training shape, fitted by the training transformation.
+
+1. **The training order, fitted as in training.** The per-chunk state keeps the PIN's order (the request's fields except
+   `chunks`, then `chunk` last). It goes through ONE fit function that the dataset builder also uses: returned unchanged when
+   it fits whole (the builder's verdict), otherwise its non-chunk fields are cut, the longest serialized value first (a string to
+   its longest fitting prefix by the Fitter's own search, a list to its longest fitting prefix of whole entries), until the whole
+   state fits. The chunk is never cut; a chunk that does not fit alone gets no answer and the request is refused.
+2. **One function, two callers.** The fit lives in a small module under `scripts/laya_ft/` that both import in the Laya venv (the
+   server imports it inside the fan-out path, so the default interpreter never needs `laya`); `build_dataset.Fitter.fit`
+   delegates to it. A differential test in the Laya venv (the `laya_venue` pattern) shows the delegation changes no output for
+   the dataset's shapes (a string state, `{"query", "chunk"}`) against the PIN's Fitter, on synthetic inputs that include cuts.
+3. **Train/serve identity, through the real tokenizer.** In the Laya venv: for a `{"query": <long>, "chunks": [...]}` request, the
+   server's per-chunk state equals the dataset builder's fitted state for the same query and chunk, key order included (a cut
+   case). The default-interpreter test keeps its assertion with the fit replaced through a named seam; an agent without a tokenizer
+   in production is a refusal, never a bypass.
+4. **A refusal is final for the client.** The fit refusal answers HTTP 422 with its reason (a model or load failure stays 500);
+   `scripts/jev.py` treats 422 as a final no-answer (fail open, exit 3), never as a reason to try the next venue: the PC runs the
+   PIN's server until the owner approves its restart (your D3).
+5. Comments your change falsifies are fixed in the same change: `build_dataset.py:20`, `scripts/jev.py:14-16` if still false,
+   `scripts/qwen_jev.py:387`'s line citation. E4 (`qwen_jev.py`'s own order) stays a question for the PC; do not change it.
+6. Re-measure the timing line for the new fit (per chunk and per 16-chunk request, median, sandbox CPU); the searches cost more
+   than one check.
+
+BOUNDARY, rev 2 (adds to the original): MODIFY `scripts/laya_ft/build_dataset.py` (the delegation and its docstring),
+`tests/test_laya_ft.py` (the seam in the invariant test, the new venv tests), `scripts/jev.py` (the 422 rule and the comment
+only), `tests/test_jev_client.py` (the 422 test), `scripts/qwen_jev.py` (the citation only). CREATE the fit module under
+`scripts/laya_ft/`. Evidence demands 2-7 apply to the new contract (red first on the PIN where it applies; `tests/test_laya_ft.py`
+and `tests/test_jev_client.py` join the gate set, with its set id).
