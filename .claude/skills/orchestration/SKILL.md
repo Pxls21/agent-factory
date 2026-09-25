@@ -375,6 +375,10 @@ The model a lane ran on is read from the egress log (OmniRoute `call_logs`: the 
 
 A brief whose file boundary contains any path listed in `scripts/gate_files.txt` lists `python3 scripts/no_laya_in_gates.py` among its gates, beside the tests. PCJ1's brief did not: the lane wired the pruner into `harness-ports/bin/pc-lane.sh` (a listed gate file), and only the pre-commit screen caught it at landing. The screen reads each listed file's TEXT only, so a repair that sources an unlisted helper from a gate file reads clean while it carries the banned behaviour into the gate's process. Refuse that repair shape at review until the screen itself follows or refuses `source` and `.` edges (J1-0-R3).
 
+### A lane that registers a hook changes the coordinator's own session from its first write (baked 2026-09-25; S1-L1)
+
+The harness reads hook settings live (a settings file written mid-session is live from the next tool call, measured 2026-09-24), so a lane whose boundary holds `.claude/settings.json` or `scripts/install_session_hooks.py` (which writes `/home/user/.claude/settings.json` when run) puts its half-built hook on the coordinator's own tool calls before its gate runs. S1-L1's situation-to-skill hook fed the coordinator skill lines on its Edit and Bash calls while the lane was still building. Such a brief carries the two safety lines of every hook contract (never block; always exit 0) and a kill-switch file (`.jev/system1-off` for S1-L1). The coordinator knows the switch before dispatch and uses it the moment the hook misbehaves; it never edits the lane's files.
+
 ## The ORCHESTRATOR protocol (proven over a full MVP sprint)
 
 Delegate the bulk to well-briefed agents, keep review + the hardest seams yourself.
