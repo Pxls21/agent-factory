@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 16:2xZ — WHAT IS LIVE NOW (supersedes the 16:0xZ block for the live set).**
+- **Landed:** S1-L1, the situation-to-skill hook (task #271 closed, GATED-PENDING-VERIFY): skill lines before Write, Edit and Bash calls, skill sections per prompt, once per context window; kill switch `.jev/system1-off`; telemetry `.jev/system1.jsonl`.
+- **RUNNING (sandbox):** INSTALL1 (task #274): slopo installed, pinned and tuned on both venues, the other install rows, a smoke table at session start.
+- **Next:** an independent verify of S1-L1; L5, the chat bug locator; L2 (the code map cache) after INSTALL1, which shares `scripts/hooks/post-commit`.
+- **Found:** AF-AP-222: a lane's uncommitted hook or installer change deploys itself at the next compaction (setup.sh runs the working-tree installer); `scripts/setup.sh` and `scripts/hooks/post-commit` are live echoes while INSTALL1 holds them.
+- **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/`; the codebase-memory hook (a longer deadline, an upstream report, or L2; recommended: L2 plus an upstream report).
 **2026-09-25 16:0xZ — WHAT IS LIVE NOW (supersedes the 15:1xZ block for the live set).**
 - **RUNNING (sandbox, two agents):** S1-L1 (task #271): the situation-to-skill hook (`.claude/hooks/system1-context.py`), already registered and firing on the coordinator's calls, its gate not yet run; INSTALL1 (task #274): slopo installed, pinned and tuned on both venues, the audit's other install rows, a smoke table at session start.
 - **Found:** the codebase-memory hook returned nothing because every call reads its own 293 MB executable (about 2.6 s) before 40 ms of work, over its 2,000 ms deadline (AF-AP-220). The hooks stay off.
