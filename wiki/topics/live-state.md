@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 21:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** VERIFY-S0-04-LEAK (task #287), the independent pass before the owner re-signs `accepted/S0-04`; S1-ALL (task #296), the prompt path of the situation hook over every skill, sections verbatim (it moves the live hook in with one `mv`; kill switch `.jev/system1-off`).
+- **Proven today:** SLOPO2 on the PC: `--compare` same 117 files, same order (slopo 792 s, walker 0.02 s); the PC sync 10 s (was 1,389 s). Task #285 closed.
+- **Pushed:** origin a8b9787 (transcripts 2dbf1f4): SCRUB1, L2a, SLOPO2, S0-04-LEAK (re-minted, anchor PENDING), D-092 and D-093.
+- **Next:** the owner's re-sign command after the verify; #295 (injection scores), #297 (Laya ranks); a verify of SCRUB1, L2a and SLOPO2.
+
 **2026-09-25 21:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING:** VERIFY-S0-04-LEAK (sandbox `adversarial-verifier`, task #287): the independent pass before the owner re-signs `accepted/S0-04`; on the PC, `slopo_run.py --compare` over the real clone (about 20 minutes, `/tmp/pc-slopo-compare.log`).
 - **Landed today, pending verify:** SCRUB1, L2a, SLOPO2 (the PC slopo sync now takes 10 s, was 1,389 s), S0-04-LEAK (S0-04 re-minted; its anchor is PENDING, declared in the ledger; `check-proof-status.py` rc 0 with the WARNING).
