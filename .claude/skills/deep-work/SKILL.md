@@ -129,13 +129,16 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   type: finding class 38/86 against the majority class's 49/86, blocking 72/86 against always-false's 83/86. A student
   trained on labels under the baseline cannot beat the baseline. The audit costs minutes; a training window and its
   evaluation cost hours. Score the labels on the TRAINING rows themselves, not only on a held-out sample.
-- **A recorded answer is a training label only if the state holds its cause (2026-09-25, DATA-SESSION).** Our session
-  records hold 44,055 answered outcomes in their five largest decision types (Bash exit, Edit applies, test-run verdict,
-  commit gate, Stop gate), and every one depends on something the recorded state lacks: the file's bytes, the code under
-  test, the staged diff, the git state. A model trained on them learns the base rate, or the cue words written before
-  the call (outcome words sat in 1,490 Bash descriptions). Before a recorded outcome becomes a label, name its cause and
-  check that the state carries it; the rows that pass are judgments made from the text itself (a verifier's class, a
-  registry class), not the results of a process run on hidden inputs.
+- **A recorded answer is a training label only if the state THE MODEL SEES holds its cause (2026-09-25, DATA-SESSION;
+  corrected by the owner the same hour, D-086).** DATA-SESSION judged the five largest session decision types (Bash exit,
+  Edit applies, test-run verdict, commit gate, Stop gate; 44,055 answered outcomes) by each record's own fields, which
+  lack the cause: the file's bytes, the code under test, the staged diff. The coordinator read that as "they teach only
+  the base rate". The owner: the RWKV student reads the session as a STREAM, so its state is the whole prefix, and the
+  prefix often holds the cause: 614 of 652 main-session Edits follow a read or write of the same file, and a re-run test
+  command with no edit in between repeats its outcome 17 of 18 times. Before a recorded outcome becomes a label, name
+  its cause and measure whether the input the model will actually read carries it (a record's fields for a per-block
+  model such as Laya; the stream prefix for a stream model); cue words written before the call (outcome words sat in
+  1,490 Bash descriptions) stay a leak to flag either way.
 
 **Phase 3 — blast radius before edit.** Impact analysis (GitNexus `impact`, grep-for-callers
 fallback) on every symbol whose SEMANTICS change; read every caller. `detect_changes` before every
