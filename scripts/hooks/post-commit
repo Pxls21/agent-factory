@@ -143,6 +143,35 @@ else msg="none: ${skipped#, }"
 fi
 printf '%s %s re-index %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" "$msg" >>"$T/post-commit-reindex.log"
 
+# --- The code-map refresh (L2a, D-090): `scripts/codemap.py refresh` rebuilds the pack (one per file, in codemap.py's PACK_DIR) of
+# each file this commit changed under the project-code prefixes, outside the docs plane, and of each other code file
+# whose callers it changed (a changed tests/*.py counts as a caller), in the background: niced, one refresh at a time
+# (a blocking flock on $T/codemap-refresh.lock queues a later commit's refresh behind this one), never blocking the
+# commit. A pack must come from graphs re-indexed for THIS commit, and each re-index above runs in the
+# background under its own lock, so a refresh started beside them could win the race and read the old graph: the
+# refresh waits until each graph launched above is idle (its lock not held, read from /proc/locks, never taken, since
+# taking it would make a re-index starting at that instant skip) and has indexed each file's bytes (the sha256 every
+# graph records per file), then builds; a graph that never catches up is marked stale in the pack, never trusted.
+# One line per commit in $T/codemap-refresh.log says whether it launched or why not; the refresh adds its result line.
+cm_paths=()
+while IFS= read -r p; do
+  case "$p" in scripts/*|src/*|proofs/*|spikes/*|harness-ports/*) docs_plane "$p" || cm_paths+=("$p") ;;
+    tests/*.py) cm_paths+=("$p") ;; esac
+done <<< "$(git -c core.quotePath=false diff-tree --root -m --no-commit-id --name-only -r HEAD | sort -u)"
+if [ ! -f "$REPO_ROOT/scripts/codemap.py" ]; then cmsg="none: scripts/codemap.py is absent"
+elif [ "${#cm_paths[@]}" -eq 0 ]; then
+  cmsg="none: no changed path under scripts/, src/, proofs/, spikes/, harness-ports/ (outside the docs plane) or tests/*.py"
+else cmsg="launched: ${#cm_paths[@]} path(s) (first: ${cm_paths[0]}), after the re-index of:${launched:- none}"; fi
+printf '%s %s codemap refresh %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" "$cmsg" \
+  >>"$T/codemap-refresh.log"
+case "$cmsg" in launched*)
+  cm_head="$(git rev-parse HEAD)"
+  ( flock 8
+    cd "$REPO_ROOT" && nice -n 19 ionice -c 3 python3 scripts/codemap.py refresh --commit "$cm_head" --lock-dir "$T" \
+      --graphs "$launched" -- "${cm_paths[@]}"
+  ) 8>"$T/codemap-refresh.lock" >>"$T/codemap-refresh.log" 2>&1 </dev/null & ;;
+esac
+
 # --- slopo (INSTALL1, D-090): the kit's IP-3 sync, ADVISORY, never a gate. After a commit that changed a file slopo
 # reads (an extension slopo 0.6.0 parses, from its indexing/parsing/registry.py, matched case-insensitively, under a
 # root that slopo.conf.yaml brings back with a "!/<root>/" line: the config is the one scope, and no docs-plane path
