@@ -122,6 +122,13 @@ hash gate for four increments — caught only when a downstream cross-check re-r
   existing calibrated artifact (rank by λ̂ − dist rather than adding a hand-tuned threshold beside
   a calibration). **A razor-thin residual gap is the TELL of a boundary, not a threshold site** —
   the signal hit its ceiling; the fix is a NEW orthogonal signal of a different KIND.
+- **A teacher's labels are a hypothesis: score them against the answers your records already hold, and against the
+  trivial baselines, BEFORE training on them (2026-09-25, D-083).** Laya was fine-tuned on 1,788 rows the OpenJev teacher
+  labeled and was rejected on every check. The audit afterwards, against the answers our own records held (the verifier's
+  class of each finding; the registry rows each incident cites), found the labels under trivial baselines on every question
+  type: finding class 38/86 against the majority class's 49/86, blocking 72/86 against always-false's 83/86. A student
+  trained on labels under the baseline cannot beat the baseline. The audit costs minutes; a training window and its
+  evaluation cost hours. Score the labels on the TRAINING rows themselves, not only on a held-out sample.
 
 **Phase 3 — blast radius before edit.** Impact analysis (GitNexus `impact`, grep-for-callers
 fallback) on every symbol whose SEMANTICS change; read every caller. `detect_changes` before every
