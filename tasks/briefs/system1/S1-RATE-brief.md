@@ -1,7 +1,7 @@
 # S1-RATE: every System-1 injection carries an id, and the agent scores it on the first line of its next text (task #295, D-092 item 3)
 
 Role: code-implementer (sandbox, Opus 5.5). Do NOT spawn subagents. Report: `tasks/briefs/system1/S1-RATE-report.md` (write it
-incrementally from the start). PIN: the local HEAD 425cc61 (subject "skills: four held lessons baked"; its push to origin is queued behind CI, so cite commits by subject in anything you write). Design: `docs/research/findings/system1-context/DESIGN-2026-09-25.md`
+incrementally from the start). PIN: the local HEAD f2403c2 (subject "skills: four held lessons baked"; its push to origin is queued behind CI, so cite commits by subject in anything you write). Design: `docs/research/findings/system1-context/DESIGN-2026-09-25.md`
 (layers L1, L2, L3, L6). Rulings: D-092 (item 3) and D-093 in `docs/08_DECISION_LOG.md`.
 
 ## WHY
@@ -97,11 +97,11 @@ and counts, never a prompt's or an injection's text. The disk is shared (1.8G fr
 `--basetemp` with its parent created first. Test counts pasted from `scripts/test_summary.sh`; stamps from `date -u`. Long
 commands in one foreground call; kill by pid, never by name.
 
-## PREMISE — MEASURED at authoring (2026-09-25 23:2xZ, the sandbox tree at 425cc61)
+## PREMISE — MEASURED at authoring (2026-09-25 23:2xZ, the sandbox tree at f2403c2)
 
 ```
 $ git log -1 --format='%h %s' HEAD | cut -c1-100
-425cc61 skills: four held lessons baked (env-tool-quirks: a waiter on a task .output reads the trail
+f2403c2 skills: four held lessons baked (env-tool-quirks: a waiter on a task .output reads the trail
 $ git log -1 --format='%h %s' origin/claude/soundbox-kit-migration-iz1jwf | cut -c1-100
 eade28c transcripts: scrubbed sandbox chat digests (2026-09-25)
 $ wc -l < scripts/hook_context.py; sed -n 34,44p scripts/hook_context.py

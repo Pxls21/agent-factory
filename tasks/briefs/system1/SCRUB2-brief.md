@@ -1,7 +1,7 @@
 # SCRUB2: the scrubber's right side, escape contexts and shape gaps; its tests never read a real secret (task #292 widened; VERIFY-SCRUB1 F1-F3, F8-F10, F12-F14, F17)
 
 Role: code-implementer (sandbox, Opus 5.5). Do NOT spawn subagents. Report: `tasks/briefs/system1/SCRUB2-report.md` (write it
-incrementally from the start). PIN: the local HEAD f3ab062 (its push to origin is queued behind CI, so cite commits by subject in
+incrementally from the start). PIN: the local HEAD 4b3b699 (its push to origin is queued behind CI, so cite commits by subject in
 anything you write). Grounds: `tasks/briefs/system1/VERIFY-SCRUB1-report.md` (section 9, the finding inventory, and its probes),
 `tasks/briefs/system1/SCRUB1-brief.md` and `SCRUB1-report.md` (the method this lane repeats), AF-AP-224 in `docs/INCIDENT-LOG.md`.
 
@@ -86,7 +86,7 @@ authoring): scratch under 300 MB in `/tmp/claude-0/-home-user/bdab799a-dc80-5933
 Test counts pasted from `scripts/test_summary.sh`; stamps from `date -u`. Long commands in one foreground call; kill by pid, never
 by name.
 
-## PREMISE — MEASURED at authoring (2026-09-25 23:2xZ, the sandbox tree at f3ab062)
+## PREMISE — MEASURED at authoring (2026-09-25 23:2xZ, the sandbox tree at 4b3b699)
 
 ```
 $ git log --format=%h 49bf75e..HEAD -- scripts/transcript_export.py scripts/known_values_check.py tests/test_transcript_export.py tests/test_known_values_check.py scripts/session_export.py | wc -l
