@@ -448,3 +448,89 @@ consumers outside the diff, devex regressions, and feature-gate leaks — the th
 skill's lens set exists for exactly that altitude. The push waits on BOTH verdicts.
 This is the same standing integration bug-echo has (every real fix gets swept for
 siblings); thermo is the stack-level twin, not an on-request extra.
+
+## Moved from CLAUDE.md by CTX1 (D-089, 2026-09-25)
+
+CLAUDE.md was shortened losslessly (the owner, D-089, 2026-09-25): the text below left it VERBATIM, and CLAUDE.md points
+here.
+
+### Phase index (CLAUDE.md's index of this skill)
+
+Phase index (each expanded in the skill):
+- **Phase 0 — distrust is the method.** Admissible evidence = primary source or probe from THIS
+  session. Unverified: numbers with no committed producer · absence off capped queries ·
+  wrong-sink and wrong-token grep absences · hash-pinned values (integrity ≠ correctness — pinned
+  external identifiers get re-resolved against a live primary source) · **the environment
+  inventory read off the sandbox alone** (2026-09-03: the owner's PC held every "blocked"
+  capability; probe the host and read the owner's runbooks before classifying a venue).
+- **Phase 1 — ground.** Exact `file:line` seams; reachability traced from the LIVE entry point
+  ("exists" ≠ "wired"); inventory what's already built — including what the OWNER already runs.
+- **Phase 2 — measure before designing.** Value tables before constants; benchmarks at the
+  PRODUCTION shape read from live telemetry; the cheapest order-changing reality probe FIRST
+  (Stage 0's spike #0 was the bridge probe: it reclassified two proofs before increment 1);
+  verify the consuming SELECTOR still discriminates; joint satisfiability for multi-constraint
+  walls; escalate resolution, never mint a constant.
+- **Phase 3 — blast radius before edit.** `impact` on every semantics-changing symbol;
+  `detect_changes` before every commit.
+- **Phase 4 — build (light loop), plus:** follow mid-build failure forks; prove "pre-existing"
+  on the clean tree; spine behavior changes ship default-OFF; every fail-soft is fail-LOUD
+  (config-presence ≠ delivery — acceptance-probe external sinks; events need a real, shared
+  production sink); re-Read before Edit after out-of-band writes; pre-init every `finally` local.
+- **Phase 5 — adversarial verify.** Discovery stays exhaustive; DISPOSITION is disciplined — a
+  finding blocks only if it meets the blocking predicate (contract-mapped · canonically reproduced
+  through the real production path · materially effective · a concrete discriminator · in-boundary;
+  a red test is necessary but not sufficient), the lane emits a GATE RECOMMENDATION
+  (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`) not a verdict,
+  and the repair budget is ONE focused repair keyed by component/proof ID + frozen contract
+  revision + production-code digest, never reset by a renamed wave (skill `contract-gate`; D-031).
+  Done = a hostile reviewer failed to break it: loaded briefs,
+  mutation audits (scratchpad-copy restore ONLY — never git-restore/stash a shared tree; never
+  disable a guard while tests point at a real protected resource), independently reproduce every
+  load-bearing claim AND its mechanism (the Chairman's netns probe was reproduced before it
+  entered the findings), the kill-switch question on every green, symmetric finality gates,
+  directionality checks on every risk cap, forensic pass on benchmark verdicts, **/bug-echo on
+  every real defect FOUND — fixed or merely diagnosed**, **and a thermo-nuclear-review FULL-STACK
+  pass before pushing any multi-commit stack (owner mandate 2026-08-26, inherited: the whole
+  origin..HEAD diff through the skill's lens set on the verify lane, parallel with the final
+  finding-driven verify, BOTH verdicts gating the push)**.
+- **Phase 6 — close.** Affected suites + adjacent consumers; full tree at least once per wave;
+  telemetry sufficiency; docs + task list same increment; wiki recompile; push; honest report
+  including NOT-built.
+- **Retrospective rule** — extract the alpha at every continuation/task-close/handoff; bake
+  general lessons into the matching SKILL in the same increment; keep the protocol tight; no
+  lesson → say so, never invent one.
+- **Meta-rules** (all in the skill): structural membership for GC sweeps · bounded in-loop
+  diagnostics · live-calibrated defaults · failure-aware waits (a wait's exit condition includes
+  failure signatures — never success-only silence) · per-cycle caps in perpetual loops ·
+  order-blind set-diff guards · clean checkpoints · handoff shape (read-order · pinned decisions
+  with rejected alternatives · recovery rule per in-flight item · NOT-built ledger) · scope from
+  primary source · raw output before filters · state-guards not flock for destroy-and-recreate ·
+  `ps` liveness not output volume · no timing on a contended box · cap the solo probe loop at ~3
+  falsified hypotheses, then delegate an instrumented-forensics agent with the evidence ledger.
+
+### Feature workflow (for any substantial new subsystem)
+
+> **Full guide:** `sandbox-kit/RESEARCH-PROMPT-GUIDE.md` — read before authoring any research prompt.
+> Two worked examples: `sandbox-kit/EXAMPLE-RESEARCH-PROMPT-SETTLED-SPEC.md` and
+> `sandbox-kit/EXAMPLE-RESEARCH-PROMPT-EXPLORATORY.md`.
+
+For any substantial new subsystem:
+1. **Audit first** — read the actual code; write a grounded findings/plan doc.
+2. **Research prompt** — `docs/research/prompts/RESEARCH-PROMPT-N.md`. SETTLE the direction; leave
+   open ONLY the technical resolution. ONE self-contained file ending "Decide; do not ask."
+   **ATTACH-TO-CHAT MANDATE (owner request 2026-08-28, inherited): every authored research prompt
+   is ATTACHED to the chat (SendUserFile) in the same turn it is written — the owner pastes it
+   into the research tool from the chat, never from the repo. Committing it is not delivery.**
+   (Stage 0 ran with NO research prompt by owner decision 2026-09-02 — the plan docs were the
+   settled direction; `docs/research/FINDINGS-STAGE0-v1.md` stood in for the findings.)
+3. **Findings** — the returned report becomes the constraint set.
+4. **Council debate** — `/council` on the FINDINGS (facts, not hypotheses). Never `--quick`. The
+   brief carries a CURRENT-STATE CAPABILITY LEDGER (proven-live vs built-never-run vs absent) —
+   an under-briefed panel returns confident advice about a system that doesn't exist.
+5. **Ouroboros interview** — seeded with findings + verdict; drive `ambiguity_score` → ~0.
+6. **Seed** — persist to `seeds/seed-<name>-vN.yaml`, commit, run its own `verify_command`s.
+7. **Task breakdown** — decompose the seed BEFORE writing code; register the increments.
+8. **Hand-build** — surgical, test-driven, one commit per increment; every acceptance test
+   deterministic and LLM-free.
+
+Cross-cutting invariants: **no-LLM-judge spine · negative-control discipline · heavy jobs ON the PC.**

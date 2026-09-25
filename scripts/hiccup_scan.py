@@ -19,10 +19,10 @@ scrub is only as good as transcript_export.scrub: a value it does not recognize 
 under 40,000 bytes.
 
 --jev (D-10, advisory, KC-J1b): for each UNCOVERED cluster the page shows (the top-25 table and the new-this-week
-rows), a lexical top 8 over the registry row titles (docs/INCIDENT-LOG.md) and the CLAUDE.md `bit 2026-` quirk lines,
-then jev.rank over those 8; the best match and its score fill one extra column in both cluster tables. Jev unavailable:
-`n/a (<reason>)`. KC-J1b as bytes (D-076 c): for every input, the --jev page minus its column is the plain page byte
-for byte, over the cap too (build_page trims both against one budget; F-18).
+rows), a lexical top 8 over the registry row titles (docs/INCIDENT-LOG.md) and the `bit 2026-` quirk lines of CLAUDE.md
+and its quirk skills (QUIRK_SOURCES), then jev.rank over those 8; the best match and its score fill one extra column in
+both cluster tables. Jev unavailable: `n/a (<reason>)`. KC-J1b as bytes (D-076 c): for every input, the --jev page
+minus its column is the plain page byte for byte, over the cap too (build_page trims both against one budget; F-18).
 
 usage: hiccup_scan.py [--project-dir DIR | --transcript PATH ...] [--limit-bytes N] [--out PATH] [--jev]
                       [--jev-venue auto|local|pc]
@@ -52,7 +52,10 @@ DEFAULT_PROJECT_DIR = "/root/.claude/projects/-home-user"
 DEFAULT_OUT = os.path.join(ROOT, "docs", "HICCUPS.md")
 FAMILIES_TSV = os.path.join(HERE, "hiccup_families.tsv")
 REGISTRY_MD = os.path.join(ROOT, "docs", "INCIDENT-LOG.md")
-CLAUDE_MD = os.path.join(ROOT, "CLAUDE.md")
+# The quirk records: CLAUDE.md, then the skills its quirk lines moved into (CTX1, D-089); the same tuple as
+# scripts/jev_context.py QUIRK_SOURCES (tests/test_jev_context.py holds the two equal).
+QUIRK_SOURCES = ("CLAUDE.md", ".claude/skills/env-tool-quirks/SKILL.md", ".claude/skills/pc-bridge-lanes/SKILL.md",
+                 ".claude/skills/ouroboros-stdio/SKILL.md")
 
 PAGE_MAX_BYTES = 40000
 CUT = 160
@@ -576,7 +579,7 @@ def _words(text):
 
 
 def _quirk_snippet(line, pos, width=300):
-    """The sentence (or bold run) of a CLAUDE.md line that holds the `bit 2026-` marker at `pos`."""
+    """The sentence (or bold run) of a quirk-source line that holds the `bit 2026-` marker at `pos`."""
     start = max(line.rfind(". ", 0, pos), line.rfind("**", 0, pos))
     start = 0 if start < 0 else start + 2
     end = line.find(")", pos)
@@ -584,18 +587,20 @@ def _quirk_snippet(line, pos, width=300):
     return line[start:end].strip().strip("*").strip()[-width:]
 
 
-def load_candidates(registry=REGISTRY_MD, claude=CLAUDE_MD):
-    """[(id, text)]: every registry row title, then every CLAUDE.md `bit 2026-` quirk snippet."""
+def load_candidates(registry=REGISTRY_MD, quirks=QUIRK_SOURCES, root=ROOT):
+    """[(id, text)]: every registry row title, then every `bit 2026-` quirk snippet of each quirk source, keyed
+    `<source>:<line>[#k]` (`CLAUDE.md:433`, `.claude/skills/env-tool-quirks/SKILL.md:12`)."""
     cands = []
     with open(registry, encoding="utf-8") as fh:
         for ln in fh:
             m = re.match(r"^\| *(AF-AP-\d+) *\|([^|]*)\|", ln)
             if m:
                 cands.append((m.group(1), m.group(2).split(" — ")[0].strip()[:300]))
-    with open(claude, encoding="utf-8") as fh:
-        for no, ln in enumerate(fh, 1):
-            for k, mm in enumerate(re.finditer(r"bit 2026-", ln)):
-                cands.append(("CLAUDE.md:%d%s" % (no, "#%d" % (k + 1) if k else ""), _quirk_snippet(ln, mm.start())))
+    for rel in quirks:
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            for no, ln in enumerate(fh, 1):
+                for k, mm in enumerate(re.finditer(r"bit 2026-", ln)):
+                    cands.append(("%s:%d%s" % (rel, no, "#%d" % (k + 1) if k else ""), _quirk_snippet(ln, mm.start())))
     return cands
 
 

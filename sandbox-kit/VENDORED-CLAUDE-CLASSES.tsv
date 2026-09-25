@@ -980,6 +980,7 @@ skills/ensembl_database/SKILL.md	kit-verbatim
 skills/ensembl_database/references/citation.bib	kit-verbatim
 skills/ensembl_database/references/ensembl_rest_api_reference.md	kit-verbatim
 skills/ensembl_database/scripts/ensembl_api.py	kit-verbatim
+skills/env-tool-quirks/SKILL.md	first-party
 skills/esm/SKILL.md	kit-verbatim
 skills/esm/references/biohub-platform.md	kit-verbatim
 skills/esm/references/esm-c-api.md	kit-verbatim
@@ -1826,6 +1827,7 @@ skills/optimize-for-gpu/references/numba.md	kit-verbatim
 skills/optimize-for-gpu/references/raft.md	kit-verbatim
 skills/optimize-for-gpu/references/warp.md	kit-verbatim
 skills/orchestration/SKILL.md	kit-adapted
+skills/ouroboros-stdio/SKILL.md	first-party
 skills/outlines/SKILL.md	kit-verbatim
 skills/outlines/references/backends.md	kit-verbatim
 skills/outlines/references/examples.md	kit-verbatim
@@ -1868,6 +1870,7 @@ skills/pathway-enrichment/references/databases-and-gene-sets.md	kit-verbatim
 skills/pathway-enrichment/references/gseapy.md	kit-verbatim
 skills/pathway-enrichment/references/interpretation.md	kit-verbatim
 skills/pathway-enrichment/scripts/run_enrichment.py	kit-verbatim
+skills/pc-bridge-lanes/SKILL.md	first-party
 skills/pdb_database/SKILL.md	kit-verbatim
 skills/pdb_database/references/citation.bib	kit-verbatim
 skills/pdb_database/scripts/download_coordinate_files.py	kit-verbatim

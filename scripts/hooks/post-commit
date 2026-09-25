@@ -1,9 +1,10 @@
 #!/bin/bash
 # HOOKS-QUARTET (owner directive 2026-08-25): keep the code-intel quartet and
 # the wiki fresh at every commit.
-# 1) Background-reindex graft + GitNexus so `graft ask`/`impact` never lag the
-#    tree. Lock-guarded: a commit landing while a build runs skips (the running
-#    build already sees the new tree or the next commit re-triggers).
+# 1) Background-reindex the quartet (graft, GitNexus, codebase-memory, code-review-graph) so `graft ask`/`impact`
+#    never lag the tree, each graph ONLY when the commit changed a file it reads (CTX1, D-089; the owner: "I don't
+#    think anything should be re-indexed unless it's updated first"). Lock-guarded: a commit landing while a build
+#    runs skips (the running build already sees the new tree or the next commit re-triggers).
 # 2) Wiki freshness marker: a commit touching non-wiki files marks the wiki
 #    stale (until a wiki/ commit clears it). pre-push reads the marker.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -41,27 +42,104 @@ elif echo "$CHANGED" | grep -qv '^wiki/'; then
   fi
 fi
 
-if command -v graft >/dev/null 2>&1; then
-  ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && DO_NOT_TRACK=1 nice -n 19 ionice -c 3 graft build >/tmp/graft-build.log 2>&1
-  ) 9>/tmp/graft-build.lock >/dev/null 2>&1 &
+# --- The re-index (CTX1, D-089). A commit of only Markdown (.md .mdx .markdown) or of paths under wiki/, todo/,
+# transcripts/ or tasks/ launches none of the four. Every other path launches each graph that READS it. The read-sets
+# were generated 2026-09-25 from each tool's own source (a tool upgrade that adds a language needs its set widened):
+#   graft 0.16.0          dist/graph/extract.js EXTENSIONS + graph/generic.js + graph/container.js (case-insensitive)
+#   GitNexus 1.6.10       dist/_shared/language-detection.js EXTENSION_MAP + its extension-less Ruby file names
+#   code-review-graph     2.3.8 parser.py EXTENSION_TO_LANGUAGE (case-insensitive) + extension-less files (shebang)
+#   codebase-memory       the vendored sandbox-kit/codebase-memory-mcp/src/discover/language.c (case-sensitive; the
+#                         installed binary is a prebuilt release whose own table was not readable)
+# GitNexus and codebase-memory also parse Markdown, and graft cards the probe scripts under tasks/: the docs plane
+# re-indexes none of them, so those nodes wait for the next commit that re-indexes. Every `gitnexus analyze` passes
+# --skip-agents-md: analyze never rewrites CLAUDE.md or AGENTS.md (the GitNexus block there is ours since CTX1); it
+# still refreshes the .claude/skills/gitnexus-* files. One line per commit in $T/post-commit-reindex.log says which
+# graphs were launched, or why none was.
+T="${AF_POST_COMMIT_TMP:-/tmp}"    # the locks and logs; the tests point it at a temp dir
+GRAFT_EXT="bb c cc cjs clj cljc cljs cpp cs cts cxx dart ex exs go h hh hpp java js jsx kt kts lua mjs ml mli mts "
+GRAFT_EXT+="nix php py pyi r rb rs sc scala sol swift ts tsx vue zig "
+GITNEXUS_EXT="c cbl cc cjs cob cobol cpp cpy cs cts cu cuh cxx dart gemspec go h hh hpp hxx java js jsx kt kts mjs mts "
+GITNEXUS_EXT+="php php3 php4 php5 php8 phtml py rake rb rs swift ts tsx vue "
+GITNEXUS_NAMES="Brewfile Gemfile Guardfile Rakefile Vagrantfile "
+CRG_EXT="astro bash c cc cpp cs cxx dart ex exs gd go h hcl hh hpp ipynb java jl js jsx ksh kt lua luau m mjs nix "
+CRG_EXT+="php pl pm properties ps1 psd1 psm1 py r rb res resi rs scala sh sol sql sv svelte svh swift t tf ts tsx "
+CRG_EXT+="v vb vh vue xs yaml yml zig zsh "
+CBM_EXT="R S adb ads agda astro awk bash bb bbappend bbclass beancount bib bicep blade.php bzl c cairo capnp cbl "
+CBM_EXT+="cc ccm cfc cfg cfm cjs cl clj cljc cljs cls cmake cob conf cpp cppm cr cs css csv cts cu cuh cxx d dart "
+CBM_EXT+="diff dockerfile dpr dts dtsi el elm env env.local erl ex exs f03 f08 f90 f95 fc fish fnl frag frm fs fsi "
+CBM_EXT+="fsx fx gd gemspec gitattributes gleam glsl gn gni go gotmpl gql gradle graphql groovy h ha hcl hh hl "
+CBM_EXT+="hlsl hlsli hpp hs htm html hxx inc ini ispc ixx j2 janet java jinja jinja2 jl js json json5 jsonnet jsx "
+CBM_EXT+="just justfile kdl kt kts ld lds lean libsonnet liquid lisp ll lpr lsp lua luau m mag magma matlab md mdx "
+CBM_EXT+="mermaid meson mjs mk ml mli mlx mmd move mts nasm ncl nix nut odin overlay pas patch php pine pkl pl pm "
+CBM_EXT+="po pony pot pp prc prisma properties proto ps1 psd1 psm1 purs py qml r rake rb re res resi rkt ron rs "
+CBM_EXT+="rst s sc scala scm scss sh slang smali smithy sol soql sosl sql ss ssh/config star sv svelte svg sw "
+CBM_EXT+="swift tcl td templ tf thrift tl tla tmpl toml tpl trigger ts tsx typ v vert vhd vhdl vim vimrc vue wgsl "
+CBM_EXT+="wit wl wls xml xsd xsl yaml yml zig zprofile zsh zshenv zshrc "
+CBM_NAMES="BUILD BUILD.bazel CMakeLists.txt Dockerfile GNUmakefile Justfile Kconfig Makefile WORKSPACE "
+CBM_NAMES+="WORKSPACE.bazel go.mod hyprland.conf justfile kustomization.yaml kustomization.yml makefile meson.build "
+CBM_NAMES+="meson.options meson_options.txt requirements-dev.txt requirements-test.txt requirements.txt ssh_config "
+CBM_NAMES+="sshd_config "
+in_set() { case " $2 " in *" $1 "*) [ -n "$1" ] ;; *) return 1 ;; esac; }
+docs_plane() { case "$1" in wiki/*|todo/*|transcripts/*|tasks/*) return 0 ;; esac
+  case "${1,,}" in *.md|*.mdx|*.markdown) return 0 ;; esac; return 1; }
+reads() {   # reads GRAPH PATH: 0 when GRAPH parses the content of PATH
+  local b="${2##*/}" e=""
+  case "$b" in ?*.*) e="${b##*.}" ;; esac      # after the last dot; none for "Makefile" or ".bashrc"
+  case "$1" in
+    graft) in_set "${e,,}" "$GRAFT_EXT" ;;
+    gitnexus) in_set "${e,,}" "$GITNEXUS_EXT" || in_set "$b" "$GITNEXUS_NAMES" ;;
+    codebase-memory) in_set "$e" "$CBM_EXT" || in_set "$b" "$CBM_NAMES" ;;
+    code-review-graph) [ -z "$e" ] || in_set "${e,,}" "$CRG_EXT" ;;
+  esac
+}
+tool() { command -v "$1" 2>/dev/null || { [ -x "$2" ] && echo "$2"; }; }   # PATH first, then the old fixed path
+
+GRAPHS="graft gitnexus codebase-memory code-review-graph"
+want=" "; n=0; ndocs=0; first=""
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  n=$((n+1))
+  if docs_plane "$p"; then ndocs=$((ndocs+1)); continue; fi
+  [ -n "$first" ] || first="$p"
+  for g in $GRAPHS; do
+    in_set "$g" "$want" || { reads "$g" "$p" && want="$want$g "; }
+  done
+done <<< "$(git -c core.quotePath=false diff-tree --root -m --no-commit-id --name-only -r HEAD | sort -u)"   # -m: a merge counts both sides
+
+launched=""; skipped=""
+for g in $GRAPHS; do
+  if ! in_set "$g" "$want"; then skipped="$skipped, $g (reads none of them)"; continue; fi
+  case "$g" in
+    graft) bin="$(tool graft "")" ;;
+    gitnexus) bin="$(tool gitnexus "")" ;;
+    codebase-memory) bin="$(tool codebase-memory-mcp /root/.local/bin/codebase-memory-mcp)" ;;
+    code-review-graph) bin="$(tool code-review-graph /root/venv-crg/bin/code-review-graph)" ;;
+  esac
+  if [ -z "$bin" ]; then skipped="$skipped, $g (not installed)"; continue; fi
+  launched="$launched $g"
+  case "$g" in
+    graft) ( flock -n 9 || exit 0
+        cd "$REPO_ROOT" && DO_NOT_TRACK=1 nice -n 19 ionice -c 3 "$bin" build >"$T/graft-build.log" 2>&1
+      ) 9>"$T/graft-build.lock" >/dev/null 2>&1 & ;;
+    gitnexus) ( flock -n 9 || exit 0
+        cd "$REPO_ROOT" && nice -n 19 ionice -c 3 "$bin" analyze --skip-agents-md >"$T/gitnexus-analyze.log" 2>&1
+      ) 9>"$T/gitnexus-analyze.lock" >/dev/null 2>&1 & ;;
+    # The other two quartet graphs refresh here too (owner escalation 2026-09-07: "re-index after each landed increment
+    # so the map never lags the tree" was written down and never wired): codebase-memory (fast mode, ~30 s) and
+    # code-review-graph (`update` when it exists, else `build`, ~80 s). Both niced, one at a time per graph via flock.
+    codebase-memory) ( flock -n 9 || exit 0
+        cd "$REPO_ROOT" && nice -n 19 ionice -c 3 "$bin" cli index_repository --repo-path "$REPO_ROOT" --mode fast >"$T/cbm-index.log" 2>&1
+      ) 9>"$T/cbm-index.lock" >/dev/null 2>&1 & ;;
+    code-review-graph) ( flock -n 9 || exit 0
+        cd "$REPO_ROOT" && { "$bin" update >"$T/crg-build.log" 2>&1 || nice -n 19 ionice -c 3 "$bin" build >"$T/crg-build.log" 2>&1; }
+      ) 9>"$T/crg-build.lock" >/dev/null 2>&1 & ;;
+  esac
+done
+if [ -n "$launched" ]; then msg="launched:$launched${skipped:+; skipped: ${skipped#, }}"
+elif [ "$n" -eq 0 ]; then msg="none: the commit changed no path"
+elif [ "$ndocs" -eq "$n" ]; then msg="none: all $n changed paths are Markdown or under wiki/, todo/, transcripts/, tasks/"
+elif [ "$want" = " " ]; then msg="none: no graph reads the $((n-ndocs)) changed path(s) outside the docs plane (first: $first)"
+else msg="none: ${skipped#, }"
 fi
-if command -v gitnexus >/dev/null 2>&1; then
-  ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && nice -n 19 ionice -c 3 gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1
-  ) 9>/tmp/gitnexus-analyze.lock >/dev/null 2>&1 &
-fi
-# The other two quartet graphs refresh here too (owner escalation 2026-09-07: "re-index after each landed increment so
-# the map never lags the tree" was written down and never wired): codebase-memory (fast mode, ~30 s) and
-# code-review-graph (`update` when it exists, else `build`, ~80 s). Both niced, one at a time per graph via flock.
-if [ -x /root/.local/bin/codebase-memory-mcp ]; then
-  ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && nice -n 19 ionice -c 3 /root/.local/bin/codebase-memory-mcp cli index_repository --repo-path "$REPO_ROOT" --mode fast >/tmp/cbm-index.log 2>&1
-  ) 9>/tmp/cbm-index.lock >/dev/null 2>&1 &
-fi
-if [ -x /root/venv-crg/bin/code-review-graph ]; then
-  ( flock -n 9 || exit 0
-    cd "$REPO_ROOT" && { /root/venv-crg/bin/code-review-graph update >/tmp/crg-build.log 2>&1 || nice -n 19 ionice -c 3 /root/venv-crg/bin/code-review-graph build >/tmp/crg-build.log 2>&1; }
-  ) 9>/tmp/crg-build.lock >/dev/null 2>&1 &
-fi
+printf '%s %s re-index %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" "$msg" >>"$T/post-commit-reindex.log"
 exit 0

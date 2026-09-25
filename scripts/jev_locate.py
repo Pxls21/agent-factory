@@ -8,8 +8,9 @@ tasks/briefs/jev-laya/JT2-brief.md, D-5).
 
 The bug text can be an error trace, a failing test's output or a sentence; --from-file reads it (its last 4,000
 characters when larger). Every code-intel instrument runs (scripts/jev_context.py: graft, GitNexus, codebase-memory,
-code-review-graph, rg, the registry rows, the CLAUDE.md quirk lines, git log -S), and the pack names the top K items
-and the files to read, under --budget characters (default 6,000; hard cap 9,000). --in scopes graft and rg to one path.
+code-review-graph, rg, the registry rows, the quirk lines of CLAUDE.md and its quirk skills, git log -S), and the pack
+names the top K items and the files to read, under --budget characters (default 6,000; hard cap 9,000). --in scopes
+graft and rg to one path.
 The order is `lexical` by default (D-077: in the A3 benchmark Jev did not beat the plain order); `--order jev` is opt-in
 and lets Jev reorder the lexical selection, never drop from it (KC-J5); `--order unranked` is D-3's agreement-first
 order. Jev is asked only on the local endpoint (or the loopback --jev-url).

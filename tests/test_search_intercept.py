@@ -17,6 +17,7 @@ PATHs without graft and without graft and rg.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -444,9 +445,42 @@ def test_each_shipped_rule_blocks_its_positive_once_and_passes_its_near_miss(tmp
     assert r.returncode == 2 and r.stdout == b"", (r.returncode, text)
     first = lines(text)[0]
     assert first.startswith("QUIRK GUARD") and "rule %s" % rid in first and "repeat the identical call" in first
-    assert "Anchor: " in text and ("CLAUDE.md" in text or "AF-AP-" in text)
+    assert "Anchor: " in text and ("SKILL.md" in text or "CLAUDE.md" in text or "AF-AP-" in text)
     assert_silent_pass(run(bash(positive), tmp_path / "st"))        # the escape hatch
     assert_silent_pass(run(bash(near_miss), tmp_path / "st2"))
+
+
+# CTX1 (D-089): the quoted sentences moved out of CLAUDE.md into .claude/skills/env-tool-quirks/SKILL.md. Each shipped
+# anchor names the file that holds its quote, and the quote is really in that file (whitespace-normalized).
+ANCHOR_QUOTES = {
+    "trailing-amp": ["A trailing `&` backgrounds the WHOLE `&&` list"],
+    "pkill-self": ["kill by pid, never by `pkill -f` inside a compound command that also names the target"],
+    "safe-commit-backtick": ['`scripts/safe_commit.sh -m "\u2026"`: no backticks inside a double-quoted message'],
+    "rev-parse-two": ["`git rev-parse --short REV1 REV2` fails", "one rev-parse per call"],
+}
+
+
+def anchor_problems(anchor, quotes):
+    """What is wrong with an anchor: no cited file, a quote the anchor does not carry, or one its file lacks."""
+    m = re.match(r"(\.claude/skills/[a-z0-9-]+/SKILL\.md|CLAUDE\.md) ", anchor)
+    if not m:
+        return ["no cited file"]
+    text = " ".join((ROOT / m.group(1)).read_text(encoding="utf-8").split())
+    return (["anchor lacks %r" % q for q in quotes if q not in anchor]
+            + ["%s lacks %r" % (m.group(1), q) for q in quotes if " ".join(q.split()) not in text])
+
+
+def test_every_shipped_anchor_cites_the_file_that_holds_its_quote():
+    assert set(ANCHOR_QUOTES) == set(si.SHIPPED)
+    for rid, quotes in ANCHOR_QUOTES.items():
+        assert anchor_problems(si.QUIRK_RULES[rid][1][1], quotes) == [], rid
+
+
+def test_negative_control_an_anchor_citing_a_file_without_its_quote_is_caught():
+    moved = si.QUIRK_RULES["trailing-amp"][1][1].replace(si.QUIRK_SKILL, "CLAUDE.md", 1)   # the pre-CTX1 anchor
+    assert moved.startswith("CLAUDE.md ")
+    assert anchor_problems(moved, ANCHOR_QUOTES["trailing-amp"]) == [
+        "CLAUDE.md lacks 'A trailing `&` backgrounds the WHOLE `&&` list'"]
 
 
 @pytest.mark.parametrize("command", [

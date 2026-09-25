@@ -692,6 +692,33 @@ def test_registry_and_quirks_take_the_lexical_top_rows(tmp_path):
     assert ok and [(h["line"], h["text"]) for h in hits] == [(2, "alpha thing (bit 2026-09-01).** other")]
 
 
+def test_quirks_read_the_skills_the_quirk_lines_moved_into(tmp_path):
+    # CTX1 (D-089): the quirk lines left CLAUDE.md for the quirk skills; a quirk that lives in a skill is found there,
+    # the hit names the skill file, ties keep source order, and each absent quirk skill is one note.
+    (tmp_path / "CLAUDE.md").write_text("intro\n**zeta rule (bit 2026-09-02).**\n")
+    skill = tmp_path / ".claude" / "skills" / "env-tool-quirks" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# quirks\n\n**alpha moved quirk (bit 2026-09-03).** tail\n")
+    ctx = jc.Context(str(tmp_path), {})
+    hits, notes, ok = jc.inst_quirks("alpha", [], ctx)
+    assert ok and [(h["path"], h["line"], h["text"]) for h in hits] == [
+        (".claude/skills/env-tool-quirks/SKILL.md", 3, "alpha moved quirk (bit 2026-09-03).** tail")]
+    assert notes == ["unmapped — quirks .claude/skills/pc-bridge-lanes/SKILL.md unavailable (absent)",
+                     "unmapped — quirks .claude/skills/ouroboros-stdio/SKILL.md unavailable (absent)"]
+    hits, _, _ = jc.inst_quirks("alpha zeta rule moved", [], ctx)          # 2 words each: source order breaks the tie
+    assert [(h["path"], h["line"]) for h in hits] == [("CLAUDE.md", 2), (".claude/skills/env-tool-quirks/SKILL.md", 3)]
+
+
+def test_the_quirk_sources_agree_and_hold_the_moved_quirks():
+    spec = importlib.util.spec_from_file_location("hiccup_scan_for_ctx1", ROOT / "scripts" / "hiccup_scan.py")
+    hs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hs)
+    assert hs.QUIRK_SOURCES == jc.QUIRK_SOURCES and jc.QUIRK_SOURCES[0] == "CLAUDE.md"
+    hits, notes, ok = jc.inst_quirks("sqlite over the bridge: a double-quoted SQL string reads as an identifier", [],
+                                     jc.Context(str(ROOT), {}))
+    assert ok and notes == [] and hits[0]["path"] == ".claude/skills/pc-bridge-lanes/SKILL.md", hits[:2]
+
+
 def test_absent_records_are_unmapped(tmp_path):
     ctx = jc.Context(str(tmp_path), {})
     assert jc.inst_registry("q", [], ctx) == ([], ["unmapped — registry unavailable (docs/INCIDENT-LOG.md absent)"], False)

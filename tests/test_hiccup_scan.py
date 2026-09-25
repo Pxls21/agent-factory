@@ -279,7 +279,15 @@ def test_family_map_is_closed_and_every_covering_rule_is_real():
     names = [n for _, n, _ in fams]
     assert len(names) == len(set(names)) and hs.SLEEP_FAMILY in names and hs.DENIAL_FAMILY in names
     registry = (ROOT / "docs" / "INCIDENT-LOG.md").read_text(encoding="utf-8")
-    claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8").lower().replace("`", "").splitlines()
+    # CTX1 (D-089): a `CLAUDE.md:` rule's passage is in CLAUDE.md or in a skill CLAUDE.md names (where its text moved)
+    claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    texts = [claude] + [(ROOT / ".claude" / "skills" / n / "SKILL.md").read_text(encoding="utf-8")
+                        for n in sorted(set(re.findall(r"`([a-z0-9][a-z0-9-]*)`", claude)))
+                        if (ROOT / ".claude" / "skills" / n / "SKILL.md").is_file()]
+    windows = []
+    for t in texts:
+        lines = t.lower().replace("`", "").splitlines()
+        windows += [" ".join(lines[i:i + 3]) for i in range(len(lines))]       # a sentence may wrap
     for _, name, rule in fams:
         if rule == "none":
             continue
@@ -289,8 +297,8 @@ def test_family_map_is_closed_and_every_covering_rule_is_real():
             continue
         assert rule.startswith("CLAUDE.md: "), "rule %r is neither none, an AF-AP id nor a CLAUDE.md phrase" % rule
         words = [w for w in re.findall(r"[a-z][a-z0-9_.-]{3,}", rule[len("CLAUDE.md: "):].lower())]
-        windows = [" ".join(claude[i:i + 3]) for i in range(len(claude))]      # a CLAUDE.md sentence may wrap
-        assert words and any(all(w in win for w in words) for win in windows), "no CLAUDE.md passage holds %r" % rule
+        assert words and any(all(w in win for w in words) for win in windows), \
+            "no passage of CLAUDE.md or a skill it names holds %r" % rule
 
 
 # first lines as E4.3 printed them (JEV-LEVERAGE-EVIDENCE-2026-09-24.md, error classes), completed to their real form
@@ -406,12 +414,15 @@ def test_candidates_are_every_registry_row_and_every_quirk_marker():
     ids = [c for c, _ in cands]
     registry = (ROOT / "docs" / "INCIDENT-LOG.md").read_text(encoding="utf-8")
     n_rows = len(re.findall(r"^\| *AF-AP-\d+ *\|", registry, re.M))
-    n_marks = len(re.findall(r"bit 2026-", (ROOT / "CLAUDE.md").read_text(encoding="utf-8")))
-    assert len(ids) == len(set(ids)) == n_rows + n_marks
+    n_marks = {rel: len(re.findall(r"bit 2026-", (ROOT / rel).read_text(encoding="utf-8"))) for rel in hs.QUIRK_SOURCES}
+    assert len(ids) == len(set(ids)) == n_rows + sum(n_marks.values())
     assert all(t.strip() for _, t in cands)
-    assert sum(1 for c in ids if c.startswith("CLAUDE.md:")) == n_marks
+    for rel, n in n_marks.items():
+        assert sum(1 for c in ids if c.startswith(rel + ":")) == n, rel
+    assert n_marks[".claude/skills/env-tool-quirks/SKILL.md"] > 0      # CTX1: the moved quirks are candidates
     top = hs.lexical_top("Exit code N :: pytest basetemp parent missing mkdir", cands)
     assert 0 < len(top) <= 8 and top == hs.lexical_top("Exit code N :: pytest basetemp parent missing mkdir", cands)
+    assert any(c.startswith(".claude/skills/env-tool-quirks/SKILL.md:") for c, _ in top), top   # the basetemp quirk
 
 
 # ---------- D-11: the size cap ----------

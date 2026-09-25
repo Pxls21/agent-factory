@@ -18,6 +18,6 @@ VP=/root/venv-agent-factory/bin/python
 export DO_NOT_TRACK=1
 command -v graft >/dev/null 2>&1 || npm install -g @nanonets/graft@0.16.0 --silent
 [ -f graft/INDEX.md ] || { nohup graft build >/tmp/graft-build.log 2>&1 & echo "graft: building (bg)"; }
-command -v gitnexus >/dev/null 2>&1 && [ ! -f .gitnexus/run.cjs ] && { nohup gitnexus analyze >/tmp/gitnexus-analyze.log 2>&1 & echo "gitnexus: indexing (bg)"; }
+command -v gitnexus >/dev/null 2>&1 && [ ! -f .gitnexus/run.cjs ] && { nohup gitnexus analyze --skip-agents-md >/tmp/gitnexus-analyze.log 2>&1 & echo "gitnexus: indexing (bg)"; }
 [ -f .pc-bridge.env ] && echo "bridge: .pc-bridge.env present (probe: scripts/pc.sh hostname)" || echo "bridge: no .pc-bridge.env — ask the owner for the BRIDGE READY banner"
 echo "resume-heal done — now: three-clock compare, task-DB re-seed from todo/BUILD-TASKLIST.md, PC probe"

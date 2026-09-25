@@ -1,6 +1,6 @@
 ---
 name: code-intel-trio
-description: Use the three code-intelligence tools (GitNexus, codebase-memory, code-review-graph) together — which one for which question, exact CLI invocations that work in this container, bootstrap steps on a fresh container, and the two-instrument rule for dormancy claims. Load before any Phase-1 grounding, impact analysis, dead-wiring hunt, pre-commit check, or DORMANT/reachability claim.
+description: Use the three code-intelligence tools (GitNexus, codebase-memory, code-review-graph) together — which one for which question, exact CLI invocations that work in this container, bootstrap steps on a fresh container, and the two-instrument rule for dormancy claims. Load before any Phase-1 grounding, impact analysis, dead-wiring hunt, pre-commit check, or DORMANT/reachability claim; and when an MCP server fails to connect (the CLI is the path; moved from CLAUDE.md by CTX1).
 ---
 
 > **HARNESS PORT.** This copy is read by Codex CLI (`.agents/skills/`) and by Hermes
@@ -184,3 +184,88 @@ single instrument run on a lane delta; graft's MCP had timed out at session star
 index — `MCP_TIMEOUT=120000` is the environment fix), the code-review-graph graph had never been built ("lazy,
 first use"), and the registry screen only ever saw edited hunks. An instrument that is not in a script on the
 path is not in the loop.
+
+## Moved from CLAUDE.md by CTX1 (D-089, 2026-09-25)
+
+CLAUDE.md was shortened losslessly (the owner, D-089, 2026-09-25): the text below left it VERBATIM, and CLAUDE.md points
+here.
+
+### The core reflexes (CLAUDE.md's code-intelligence section)
+
+- **GRAFT-FIRST FOR CODE QUESTIONS.** `graft ask "<question>" [--source] [--in <path>]` /
+  `graft skeleton <file>` BEFORE any bare grep. Cold container: `graft build` backgrounds
+  (setup.sh does this; log `/tmp/graft-build.log`) — check `graft/INDEX.md` exists before relying
+  on it, and NAME the fallback instrument when graft wasn't available. MCP tools
+  (`graft_find_code`/`graft_trace_calls`/…) register at user scope for the NEXT session; same-
+  session use is the CLI. Provenance: `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §Graft.
+- **EDIT-SNAPSHOT hook (owner directive 2026-08-25):** every Edit/Write on a production `.py`
+  auto-returns a snapshot (**to the model through `scripts/hook_context.py`, which turns the hook's plain text into additionalContext — plain
+  PostToolUse/PreToolUse stdout reaches only the transcript view, measured live 2026-09-24; the graft nag runs through it too, and
+  the hook scripts stay plain text for the Codex/Hermes adapters — AF-AP-172**) — enclosing symbol's GitNexus blast radius + an anti-pattern-registry
+  screen of the hunk (`.claude/hooks/edit-snapshot.py`, PostToolUse; venv
+  `/root/venv-agent-factory`, package prefix `agent_factory`, `sandbox-kit/` excluded). READ it,
+  act on flags; it says "index rebuilding" during the post-commit reanalyze window — re-check
+  impact before commit then. It informs, never blocks. **Every new registry row with a
+  mechanical signature extends the hook's AP_SCREEN in the same increment** (the screen ships
+  with the source repo's inherited AP-1…AP-70 signatures; this project's rows are `AF-AP-*`).
+- **TRACE-BACK RECIPE (`scripts/why.sh <file> [function]`):** the per-function "histogram of
+  edits and why" is COMPUTED on demand from primary sources (git `log -L` chronology + the last
+  change's full reasoning-record commit body + incident-log/findings/wiki mentions + current
+  blast radius) — never stored in the wiki, which would drift per commit. Wiki carries the
+  MEANING layers (map, key decisions with SHA anchors, live-state, do-not-trust list); git
+  carries the chronology; why.sh joins them.
+- **Before editing any symbol:** GitNexus `impact` (who calls this, what breaks).
+- **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM -s SYM2… -o pack.md FILE...` —
+  the whole quartet + ripwire + the whole-file registry screen in ONE command; every build and verify brief attaches
+  its pack; the coordinator runs it before designing and on the lane's diff before the verifier. `scripts/report_lint.py`
+  and `scripts/ap_screen.py --s0-01` gate every checkpoint (`report_lint.py --min-refs N`: a report that cites nothing lints clean by construction — B3's `0 refs — MISS 0`, 2026-09-14 — so a checkpoint gates on a FLOOR, never on the MISS count alone; the LANE side is BOUNDED — the lint's own `fix:` hints applied for at most three rounds, then paste and finish, injected into every lane prompt by `pc-lane.sh` since N5k looped 47 minutes on an unbounded `MISS 0` bar, AF-AP-76). An instrument that is not in a script on the path AND in the LANE TREE and its prompt is not in the loop (2026-09-15: no lane had used the quartet — a lane worktree carries no index and the briefs named none; `pc-lane.sh` now builds the graft index at launch, overlays the current lint and injects the CODE INTEL FIRST standing rule). An instrument that is not in a script on the path is not in
+  the loop.
+- **After EVERY edit-batch, not just before commit:** `detect_changes`; re-`analyze` (detached)
+  on a stale index. Before commit stays mandatory.
+- **When grounding (Phase 1) or hunting dead wiring:** codebase-memory (`search_graph` /
+  `query_graph` Cypher / `get_architecture`; prebuilt binary `/root/.local/bin/codebase-memory-mcp`,
+  MCP connected at user scope) + code-review-graph (`/root/venv-crg/bin/code-review-graph query
+  callers_of` / `tests_for` / `impact --files`); re-index after each landed increment so the map
+  never lags the tree.
+- **Advisory instruments (NEVER gates; owner decision 2026-09-05):** slopo (semantic duplicates,
+  `slopo review --base <push-base>`) and **sentrux** (architecture health: `scripts/sentrux_review.sh
+  save` BEFORE a build lane, `compare` after it, `check` any time; rules in `.sentrux/rules.toml`;
+  pinned by digest in `upstream.lock.yaml`; provenance `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`
+  §sentrux). **ripwire** (owner ask 2026-09-07, adopted as the SIXTH advisory instrument): ranked symbol map + static call
+  graph, `scripts/ripwire_review.sh map|for|callers|impact|exercises|test-gate|edit-check|skipped`; blind to subprocess
+  edges (a zero is "none found", never "none exists"); binary pinned by digest in `upstream.lock.yaml`, the bundled
+  skills/hooks are never installed. Attach a lane's `compare` delta to its verify brief; a "degraded" line is information
+  for the verifier, not a verdict. Known blind spot: Python import resolution is weak on this tree,
+  so its coupling/cycle numbers are near-empty here; complexity and function length are the live signal.
+- **The prism review skills (advisory, NEVER a gate; owner 2026-09-17):** `prism-scan`/`prism-full`/`prism-3way`/`prism-discover`/`prism-reflect` (`.claude/skills/`, mirrored to `.agents/skills/`; vendored super-hermes MIT, `.claude/skills/PROVENANCE-PRISM.md`). On a hard-to-see bug or an important artifact, run one — it cooks a custom analytical lens for THAT artifact and reports a findings table (location · what breaks · severity · fixable-or-structural); `prism-full` adds a mandatory adversarial self-correction pass (attack your own findings, retract overclaims), the deep-work Phase-5 ethos in prompt form. LLM analysis, so a prism FINDS and INFORMS; it never DECIDES a green (no LLM-judge in the gate spine) — its output feeds the human/coordinator verdict and the deterministic gates, exactly like slopo/sentrux/ripwire.
+- **DORMANT/reachability claims need TWO independent instruments, named in the report** (e.g.
+  crg `callers_of` AND a cbm Cypher trace) — never off one.
+- Fallbacks (CCR sessions often drop MCP): GitNexus 3-tier (MCP → stdio `scripts/gn_mcp.py` →
+  CLI `node .gitnexus/run.cjs`); codebase-memory prebuilt binary + crg venv are installed by
+  setup. **If ALL tiers of the relevant tools are unreachable, say "unmapped — tool
+  unavailable" in the report; never imply a mapped claim a tool didn't produce.**
+
+### MCP servers are NOT the path (CLAUDE.md's Environment section)
+
+**MCP servers are NOT the path (owner ruling 2026-09-07: "the MCP server not working — just use the CLI, it's more reliable").**
+The graft CONNECT_TIMEOUT on a fresh container (2026-09-07 12:37Z: the startup reindex stampede hit the 30 s limit; the server
+answers `initialize` in 0.5 s idle) was the symptom; the rule is the CLI on every venue — `graft ask` / `graft skeleton`,
+`node .gitnexus/run.cjs` (or `scripts/gn_mcp.py`), `codebase-memory-mcp cli <tool> --flag value`, `/root/venv-crg/bin/code-review-graph`,
+`scripts/ripwire_review.sh` — all wrapped by `scripts/lane_context.sh`. A failed MCP connect is never worked around and needs no
+`MCP_TIMEOUT`; the background builds stay delayed and niced so a connect that does happen is quiet.
+
+### Superseded by CTX1: the GitNexus block's pre-CTX1 wording (history only)
+
+Since CTX1 every automatic `gitnexus analyze` passes `--skip-agents-md`, the GitNexus block in CLAUDE.md and AGENTS.md
+is ours, and its volatile counts line is gone. Until then the block opened with the counts line, and CLAUDE.md said what
+follows. Neither is true now; they stay here as the record.
+
+```text
+This project is indexed by GitNexus as **agent-factory** (15749 symbols, 35231 relationships, 784 execution flows).
+
+The harness auto-injects the live GitNexus block (index stats + Always/Never-Do rules) every
+turn — those rules govern; don't duplicate them here. GitNexus owns the flat
+`.claude/skills/gitnexus-*/SKILL.md` set (exploring / impact-analysis / debugging / refactoring /
+guide / cli) and rewrites the block below on every `analyze` — commit that churn, never hand-edit
+it.
+```

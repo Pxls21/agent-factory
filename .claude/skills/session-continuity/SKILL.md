@@ -1,6 +1,6 @@
 ---
 name: session-continuity
-description: Resume/continuity protocol — verify session timeline and work provenance against the transcript and git BEFORE asserting who did what, when, or re-executing any close-out. Load on EVERY session resume from a compaction summary, whenever origin is ahead of your remembered state, whenever local commits look like duplicates of origin, or before claiming a container/session "died" or that "another session" did work.
+description: Resume/continuity protocol — verify session timeline and work provenance against the transcript and git BEFORE asserting who did what, when, or re-executing any close-out. Load on EVERY session resume from a compaction summary, whenever origin is ahead of your remembered state, whenever local commits look like duplicates of origin, or before claiming a container/session "died" or that "another session" did work; and when updating `wiki/topics/live-state.md` or answering the retro gate (the wiki continuity spine, moved from CLAUDE.md by CTX1).
 ---
 
 # Session continuity — verify before asserting (owner mandate 2026-08-04)
@@ -260,3 +260,57 @@ chat-histogram workflow script under the session workflows dir.
   three times while the coordinator invented a new script, offered the wrong launcher,
   and searched scripts/ twice; the answer was in the runbook's "proven cell" paragraph
   and the commit subjects the whole time. Owner recall of names outranks search heuristics.
+
+## Moved from CLAUDE.md by CTX1 (D-089, 2026-09-25)
+
+CLAUDE.md was shortened losslessly (the owner, D-089, 2026-09-25): the text below left it VERBATIM, and CLAUDE.md points
+here.
+
+### SESSION-RESUME CONTINUITY (owner mandate 2026-08-04, inherited)
+
+**On EVERY resume from a compaction summary: fetch origin, then compare the three clocks
+(origin tip date · local tip vs origin · transcript timestamps/day-histogram via
+`scripts/chat_tail.py`) BEFORE any resumed work or timeline claim.** The summary AND the
+workspace disk can both be rolled back behind the real session — they are the same stale snapshot
+twice, not two confirmations. Origin ahead of memory = almost always YOUR OWN later work (one
+chat, many containers); near-duplicate commit messages are rollback evidence, NOT a "parallel
+session". The transcript JSONL (`/root/.claude/projects/-home-user*/…jsonl`) is the primary
+source for session history and records every Write call's full content (lost briefs and dead
+delegates' edits are recoverable from it — `scripts/replay_transcript_edits.py`). Mechanics:
+`scripts/resume-heal.sh`; judgment: skill `session-continuity` — load it on every resume and
+whenever owner statements or origin state contradict what you remember. Then re-read the PC
+bridge env: a resumed session has NO bridge link until the owner pastes a fresh banner.
+
+**KEEP-ALIVE (owner-optional, NOT enabled here).** The source repo runs two self-bind hourly
+Routines that tick the session every 30 min until the build is done. This project has none: the
+2026-08-01 trigger-tool caution stands in full until the owner explicitly asks for keep-alive
+Routines (they are the one sanctioned exception when enabled; verify both exist on every resume
+once they are).
+
+### The wiki: per-commit freshness and the continuity spine (CLAUDE.md's onboarding-map entry)
+
+- `wiki/` — **PER-COMMIT FRESHNESS MANDATE (owner 2026-08-25, inherited: "wiki is updated at
+  every commit — that way it's never outdated").** A commit touching non-wiki files marks the
+  wiki stale (post-commit hook writes `.git/wiki-stale`; ledger-plane appends, skill bakes and
+  index-stamp churn are exempt); ship the wiki delta in the SAME increment wherever feasible;
+  pre-push warns (blocks once `.git/wiki-gate-block` is armed) while stale. Hooks live in
+  `scripts/hooks/` (activated by setup.sh via `core.hooksPath`); the same post-commit hook
+  auto-reindexes graft + GitNexus in the background so the code-intel quartet never lags the
+  tree. **WIKI-AS-CONTINUITY-SPINE (owner directive 2026-08-25, "smarter than transcript
+  archaeology"):** `wiki/topics/live-state.md` is the turn-maintained continuity snapshot (active
+  lanes, in-flight runs, pending owner decisions, clocks) — updated at the END of any turn that
+  lands a material change (the Stop hook `turn-retro-gate.sh` blocks turn-end ONCE PER LANDED
+  BATCH with the self-tuning retro checklist — wiki delta · bugs→registry/screen · nuance→matching
+  SKILL · next-time-easier tooling — answered by DOING or an explicit "retro: nothing to bake";
+  this mechanizes the deep-work retrospective rule); injected at every session start/compaction
+  (`session-start.sh`) and relevance-matched wiki excerpts on every prompt (`wiki-context.py`,
+  UserPromptSubmit). Resume order: wiki live-state FIRST for orientation, then the three-clock
+  reconcile for VERIFICATION — the wiki is a map, never a substitute for primary-source checks.
+  **Status: `wiki-init` ran 2026-09-03 (`wiki/INDEX.md` exists) and the hooks are registered, **and since 2026-09-24 (owner: all five, task #214) they fire in a `/home/user`-rooted session too:
+  `scripts/install_session_hooks.py` writes them with absolute paths into `/home/user/.claude/settings.json` (setup.sh and
+  resume-heal.sh run it; a settings file written mid-session is live from the NEXT tool call, measured — running it IS the manual
+  start). Before that none of the five fired there (the retro checklist ran 0 times in 834 Stop runs, AF-AP-172)**; `live-state.md` was re-synced
+  2026-09-22 after a week's gap (2026-09-16..21 are in the ledger only) — keep the per-turn delta honest, never narrative.**
+
+*(Since CTX1, D-089, the post-commit hook re-indexes a graph only when the commit changed a file that graph
+reads; a commit of only Markdown, `wiki/`, `todo/`, `transcripts/` or `tasks/` re-indexes none.)*

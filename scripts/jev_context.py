@@ -11,8 +11,9 @@ The pipeline (the brief's pinned decisions D-1 to D-4):
              failing one yields an `unmapped — <tool> unavailable` line, never a silent blank. Each instrument has ONE
              30 s budget shared by its calls. A timed-out tool is killed with its whole process group.
   merge()    makes every hit a chunk {id, instruments, path, line, text<=400}. Code hits on the same path within 5
-             lines merge and keep every instrument that found them (D-2). Record rows (registry rows, CLAUDE.md quirk
-             segments, commits) stay separate rows and are not files to read (the lane report, DD-8).
+             lines merge and keep every instrument that found them (D-2). Record rows (registry rows, the quirk
+             segments of CLAUDE.md and its quirk skills, commits) stay separate rows and are not files to read (the
+             lane report, DD-8).
   jev_rank() scores at most 48 chunks through scripts/jev.py, one noul per chunk, after a lexical pre-filter (D-3).
              Only the local endpoint is asked (venue "local", or a pinned loopback url): never the bridge. Every query
              reaches jev.rank WHOLE (JT2-R1): scrubbed FIRST with the scrub jev.rank applies, then cut to at most
@@ -606,8 +607,14 @@ def inst_registry(question, toks, ctx):
     return _top_records(question, rows, "registry", "docs/INCIDENT-LOG.md"), [], True
 
 
+# The quirk records: CLAUDE.md, then the skills its quirk lines moved into (CTX1, D-089). A new quirk skill is named
+# here and in scripts/hiccup_scan.py QUIRK_SOURCES (tests/test_jev_context.py holds the two equal).
+QUIRK_SOURCES = ("CLAUDE.md", ".claude/skills/env-tool-quirks/SKILL.md", ".claude/skills/pc-bridge-lanes/SKILL.md",
+                 ".claude/skills/ouroboros-stdio/SKILL.md")
+
+
 def quirk_segments(lines):
-    """[(line, segment)]: one window per `bit 2026-` marker in CLAUDE.md, starting at the clause that holds it."""
+    """[(line, segment)]: one window per `bit 2026-` marker in a quirk source, starting at the clause that holds it."""
     out = []
     for i, ln in enumerate(lines, 1):
         for m in re.finditer(re.escape(MARK), ln):
@@ -620,11 +627,20 @@ def quirk_segments(lines):
 
 
 def inst_quirks(question, toks, ctx):
-    lines = _read_lines(ctx.root, "CLAUDE.md")
-    if lines is None:
-        return [], [_unmapped("quirks", "CLAUDE.md absent")], False
-    rows = [(ln, seg, 0) for ln, seg in quirk_segments(lines)]
-    return _top_records(question, rows, "quirks", "CLAUDE.md"), [], True
+    """The RECORD_TOP best quirk segments of QUIRK_SOURCES by lexical overlap, ties in source order, then line order;
+    each hit names its own file. CLAUDE.md absent is unmapped (as before CTX1); an absent quirk skill is one note."""
+    qw, rows, notes = words(question), [], []
+    for rel in QUIRK_SOURCES:
+        lines = _read_lines(ctx.root, rel)
+        if lines is None and rel == "CLAUDE.md":
+            return [], [_unmapped("quirks", "CLAUDE.md absent")], False
+        if lines is None:
+            notes.append(_unmapped("quirks " + rel, "absent"))
+            continue
+        for ln, seg in quirk_segments(lines):
+            rows.append((len(qw & words(seg)), len(rows), rel, ln, seg))
+    top = sorted((r for r in rows if r[0] > 0), key=lambda r: (-r[0], r[1]))[:RECORD_TOP]
+    return [hit("quirks", rel, ln, seg) for _, _, rel, ln, seg in top], notes, True
 
 
 def inst_gitlog(question, toks, ctx):

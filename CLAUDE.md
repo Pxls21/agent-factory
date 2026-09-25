@@ -71,12 +71,11 @@ artifacts.
 
 Model routing — cheapest tier that cannot mint an expensive wrong green; honey mode per role:
 
-**THROUGHPUT RULING (owner 2026-09-07 23:4xZ: "do as much as you can in parallel … use Hermes, use codex, use 5.6 sol … even have it do
-the verify round"):** the remaining Stage 0 proofs run as PARALLEL lanes on every venue at once — build lanes on the PC Hermes lane
-(`agentfactory-build` = the owner's OpenAI model through OmniRoute; ONE admission slot while the owner's own Hermes sessions run) and in the
-sandbox (`code-implementer`), verify lanes on the PC (`scripts/pc_lane.sh <brief> hermes adversarial-verifier`, route `agentfactory-verify`)
-when a slot is free and in the sandbox (Opus 5.5 since D-054) otherwise; the codex CLI is NOT installed on the PC (2026-09-07 probe) — "codex" means the
-OmniRoute codex route Hermes already uses. Disjoint file boundaries per proof; the class list of the S0-01 sweeps is every new brief's preflight. **OWNER RULING 2026-09-08 07:5xZ (after the THIRD sandbox quota stop killed seven Opus lanes at once): "don't relaunch the stopped workflows inside this sandbox — launch on Hermes on the PC using the pc_lane script; I've got a lot of codex quota."** Build AND verify lanes go to the PC Hermes lane by default (`scripts/pc_lane.sh tasks/briefs/pc/<lane>.md hermes <role>`, the continuation-brief pattern: `tasks/briefs/pc/VENUE-MAP.md` + a per-lane brief that names the original brief, the shipped verifier report and the PIN; a dead sandbox lane's uncommitted work travels as `LANE_PATCH`, built by a temp-index `git diff` that includes untracked files). The sandbox Opus agents are the fallback only when the bridge is down; a quota-killed sandbox agent is never resumed in the sandbox. **OVERFLOW GOES TO THE PC CLOUD ROUTE, NEVER TO THE SANDBOX (the fourth quota stop, 2026-09-23 16:4xZ: the local route sat at its KV ceiling, four lanes went to sandbox agents instead, and the weekly limit killed all four at once): when the local route is full, the next lane runs on the PC with `HERMES_MODEL=agentfactory-build HERMES_REASONING=ultra`; a sandbox agent runs only sandbox-only or root-only work, or while the bridge is down.** **SUSPENDED while the owner's cloud subscription is out (D-061, 2026-09-23; D-062, 2026-09-24): PC lanes run on the local routes only, and overflow goes to sandbox Opus 5.5 agents in moderation (two to three at once) until the owner says the cloud route is back.** **PC ADMISSION (measured 2026-09-08 08:1xZ): the OmniRoute route refuses a BURST — seven lanes launched within a minute drew `HTTP 503 … capacity is busy` on every one, the admitted sessions were then killed by refusals mid-way, and the upstream's own `Our servers are currently overloaded` appeared — the cause, read from the running OmniRoute v16.3.1 (10:3xZ): `OMNIROUTE_CHAT_MAX_HEAVY_IN_FLIGHT` defaults to 1 — ONE heavy request in flight per process, a queued one gets the 503 after `OMNIROUTE_CHAT_ADMISSION_QUEUE_MS` (5 s) — the owner raised it 2026-09-08 10:4xZ (`OMNIROUTE_CHAT_MAX_HEAVY_IN_FLIGHT=2` + `OMNIROUTE_CHAT_ADMISSION_HEALTHY_HEADROOM=2` = FOUR heavy requests at once, `OMNIROUTE_CHAT_ADMISSION_QUEUE_MS=60000` so a fifth waits up to 60 s instead of failing; OmniRoute restarted by the owner) — run FOUR PC lanes at once, launched ~60 s apart, and watch the PC's memory and swap (swap was nearly full at the change) before going wider — **WIDENED by the owner 2026-09-08 16:4xZ ("widen the bins, fit more lanes"): NINE lanes at once, launched 60-120 s apart; the 16:48Z probe read nine alive, refused 0, load 1.8, 95 GB free — but the 16:59Z probe found TWO lanes (VERIFY-D5m, VERIFY-O2) refused `HTTP 503` at the launch burst (16:47-16:48Z) and resumed from their drafts by the ten-retry backoff: each lost one in-flight turn. NINE is OVER the ceiling under the current OmniRoute admission (4 heavy requests in flight, a 60 s queue): the 17:17Z probe read six refusals in 30 minutes across five of the nine lanes at STEADY STATE (each a lost in-flight turn and a resume from the draft), where six lanes had run for hours with none — the coordinator stopped the two newest lanes (B5k, VERIFY-B2: one TERM each to lane.pid, the session-scoped stop's first live use) and holds SEVEN, re-measuring; the practical count under this admission is six to seven. The owner's lever beyond nine: `OMNIROUTE_CHAT_MAX_HEAVY_IN_FLIGHT` / `OMNIROUTE_CHAT_ADMISSION_HEALTHY_HEADROOM` / `OMNIROUTE_CHAT_ADMISSION_QUEUE_MS` in the OmniRoute env, then their restart of OmniRoute (never the coordinator's). The health probe counts `refused by route capacity` lines as refusals since 17:0xZ — its `^API call failed` grep had missed this family (AF-AP-67's screen rule, met again)**; a lane must still survive a refusal (ten patient retries + the resume-from-draft note); pc-lane.sh retries a refusal with backoff and runs from a private copy, and scripts/pc_lane.sh never reads a refusal line as a report. The shared `agentfactory` profile state.db ran `journal_mode=DELETE` (SQLite 3.49.1's WAL-reset bug) until the owner's `hermes update` of 2026-09-08 14:2xZ; it is WAL since (lane runtime b3399c1, SQLite 3.53.1; read-only probe 2026-09-23 08:58Z), and each PC lane now runs on its own cloned profile (D-049, T92). A lane can still die on `session_persistence_failed` with `⚠️ No reply: …` as its only output (VERIFY-B5j 2026-09-08 13:3xZ): pc-lane.sh resumes it from its draft (PERSIST_RX).**
+**Lane venues in force:** build AND verify lanes go to the PC Hermes lane by default (`scripts/pc_lane.sh <brief>
+hermes <role>`); while the owner's cloud subscription is out (D-061, D-062), PC lanes use the local routes only, ONE
+long-context local lane at a time, and overflow goes to two or three sandbox Opus 5.5 agents until it is back.
+Load `pc-bridge-lanes` before dispatching, re-attaching or harvesting a PC lane, or sizing lanes per route.
+
 **STAGE ROUTING (owner ruling 2026-07-28, inherited; BUILD lane re-ruled by the owner
 2026-09-03): plan/orchestrate = Fable (the main loop) · every EXPLORE lane = Opus 5.5 (owner 2026-09-24, D-065; was Opus 5) · every VERIFY lane = **the
 local Qwen3.8-27B on the PC too since 2026-09-14 (owner: "it does both the build and verify lane and goes back and
@@ -283,28 +282,8 @@ build continues; the first pending increment is named in the ledger.
   context type, `.hermes.md` first (its `prompt_builder.py`); `AGENTS.md` is Codex-only.
 - `sandbox-kit/` — the vendored operating kit (operating guide, research-prompt guide + two
   worked examples, telemetry reference, vendored tools; provenance `sandbox-kit/VENDORED-FROM.md`).
-- `wiki/` — **PER-COMMIT FRESHNESS MANDATE (owner 2026-08-25, inherited: "wiki is updated at
-  every commit — that way it's never outdated").** A commit touching non-wiki files marks the
-  wiki stale (post-commit hook writes `.git/wiki-stale`; ledger-plane appends, skill bakes and
-  index-stamp churn are exempt); ship the wiki delta in the SAME increment wherever feasible;
-  pre-push warns (blocks once `.git/wiki-gate-block` is armed) while stale. Hooks live in
-  `scripts/hooks/` (activated by setup.sh via `core.hooksPath`); the same post-commit hook
-  auto-reindexes graft + GitNexus in the background so the code-intel quartet never lags the
-  tree. **WIKI-AS-CONTINUITY-SPINE (owner directive 2026-08-25, "smarter than transcript
-  archaeology"):** `wiki/topics/live-state.md` is the turn-maintained continuity snapshot (active
-  lanes, in-flight runs, pending owner decisions, clocks) — updated at the END of any turn that
-  lands a material change (the Stop hook `turn-retro-gate.sh` blocks turn-end ONCE PER LANDED
-  BATCH with the self-tuning retro checklist — wiki delta · bugs→registry/screen · nuance→matching
-  SKILL · next-time-easier tooling — answered by DOING or an explicit "retro: nothing to bake";
-  this mechanizes the deep-work retrospective rule); injected at every session start/compaction
-  (`session-start.sh`) and relevance-matched wiki excerpts on every prompt (`wiki-context.py`,
-  UserPromptSubmit). Resume order: wiki live-state FIRST for orientation, then the three-clock
-  reconcile for VERIFICATION — the wiki is a map, never a substitute for primary-source checks.
-  **Status: `wiki-init` ran 2026-09-03 (`wiki/INDEX.md` exists) and the hooks are registered, **and since 2026-09-24 (owner: all five, task #214) they fire in a `/home/user`-rooted session too:
-  `scripts/install_session_hooks.py` writes them with absolute paths into `/home/user/.claude/settings.json` (setup.sh and
-  resume-heal.sh run it; a settings file written mid-session is live from the NEXT tool call, measured — running it IS the manual
-  start). Before that none of the five fired there (the retro checklist ran 0 times in 834 Stop runs, AF-AP-172)**; `live-state.md` was re-synced
-  2026-09-22 after a week's gap (2026-09-16..21 are in the ledger only) — keep the per-turn delta honest, never narrative.**
+- `wiki/` — the continuity spine: load `session-continuity` when updating `wiki/topics/live-state.md` or answering the
+  retro gate (the per-commit freshness mandate, its hooks, the resume order).
 
 ## Environment & Tools (summary)
 
@@ -321,21 +300,9 @@ routed model id OmniRoute reports. Never stop or restart the owner's running ser
 OmniRoute, Ollama, Phoenix, OpenObserve, neo4j; the `qwen-builder` model unit — a restart kills every lane mid-turn) without their say-so; `sudo` on the PC needs the
 owner's password — surface it, never work around it; an owner-run package command is written with `-y` (`sudo dnf install -y …`): the owner's terminal does not take a typed answer at dnf's `[y/N]` prompt (2026-09-24, PC-BRIDGE.md).
 
-Ephemeral container. `scripts/setup.sh` is the toolchain source of truth (the SessionStart hook
-re-runs it every session; idempotent, tolerant). Commit and push anything worth keeping. The ops
-scripts, all ported from the source repo and re-pointed at this one: `scripts/resume-heal.sh`
-(the mechanical fresh-container resume in ONE command — ff-sync, hooks, venv, background
-reindex; judgment steps stay yours) · `scripts/orient.sh` (three-layer startup orientation:
-quartet liveness → chat intent via `chat_tail.py` → last commits → ready-to-run `graft ask`
-suggestions; hooked at session start) · `scripts/relaunch-suite.sh` (the detached full suite,
-`pytest proofs/ spikes/ tests/`, survives the Bash cap) · **`scripts/pc_suite.sh launch|wait|log` (the SAME suite on
-the PC's 12 cores with 8 xdist workers, on the pushed head + the working tree as a sha-verified patch — the default
-gate venue when the bridge is up; `spikes/` stays sandbox-only)** · `scripts/why.sh <file> [fn]`
-(on-demand chronology from primary sources) · `scripts/replay_transcript_edits.py` (recover a
-dead delegate's edits from its transcript) · `scripts/lint_delta.py` (the pre-commit pyflakes
-DELTA gate: new hits only; `--base HEAD` reads tracked files only, so a lane's NEW files are linted by `pyflakes` directly until staged, JT1 DISC-1 2026-09-24) · `scripts/verify-planning-repo.sh` (the planning docs' own check) · **`scripts/anchor_edit.py` (ledger-plane
-edits: every anchor validated unique BEFORE any write, all-or-nothing, rc 2 with the file untouched on a miss; `--replace OLD NEW` /
-`--insert-after|--insert-before PREFIX TEXT`, `@file` values; it never commits — a mutation and a commit never share a call, bit twice 2026-09-08; a VALUE that begins with `@` is ALWAYS read as a file path — there is no escape — so a placeholder never starts with `@`, bit 2026-09-22 on an `@@FULL@@` placeholder; an `@file` OLD value carries the file's trailing newline, so an OLD anchor ends at a line boundary or is written without one — a mid-line OLD is refused with nothing written, bit 2026-09-22; an `@file` TEXT for `--insert-after|--insert-before` is split on newlines, so a file that ends in a newline inserts one EXTRA blank line: write it with `printf '%s'`, bit twice 2026-09-24, a wiki block and the D-070 row)**.
+Ephemeral container: `scripts/setup.sh` is the toolchain source of truth; commit and push anything worth keeping.
+Load `env-tool-quirks` before using an ops script (resume-heal, orient, relaunch-suite, pc_suite, why,
+replay_transcript_edits, lint_delta, verify-planning-repo, anchor_edit).
 
 > **Full details:** `sandbox-kit/OPERATING-GUIDE.md` (day-to-day rules, shell/tool gotchas,
 > GitNexus/Ouroboros fallbacks, task tracking, pipeline order).
@@ -355,39 +322,12 @@ Run `impact` before editing a symbol, `detect_changes` before committing. Stale 
 `run.cjs` absent) — run it detached (`nohup gitnexus analyze >/tmp/gitnexus-analyze.log &`, which
 is what the post-commit hook and resume-heal do), never foreground. The index is dominated by
 vendored code (`sandbox-kit/`, `.claude/`); read symbol counts with that in mind.
+**Since CTX1 every automatic `analyze` passes `--skip-agents-md`** (post-commit, resume-heal, pc-setup): no analyze
+rewrites CLAUDE.md or AGENTS.md, and a manual run takes the flag too. The post-commit hook re-indexes a graph only
+when a commit changed a file it reads (a docs-only commit re-indexes none; `/tmp/post-commit-reindex.log`).
 
-**Ouroboros** — 3-tier fallback (MCP → stdio `scripts/ooo_mcp.py` → CLI `ouroboros`). **Always
-prefer stdio** (`python scripts/ooo_mcp.py` — full MCP tool surface as JSON-RPC, no permission
-gates; MCP tools hang on permission prompts when the user is away, the sandbox times out, and
-in-flight requests are lost). **Stdio quoting:** shell expansion corrupts curly-brace JSON — write
-it to a temp file: `JSONARG=$(cat /path/args.json) && python scripts/ooo_mcp.py tool_name
-"$JSONARG"`. The interview tool starts with `initial_context` (not `topic`/`context`) and resumes
-with `session_id` + `answer`.
-**Ouroboros stdio quirks (hit 2026-09-02, all reproduced):** every `scripts/ooo_mcp.py` call that
-drives the interview/seed backend needs `IS_SANDBOX=1` exported (the nested claude refuses
-root+bypassPermissions; symptom: a question-less "cannot complete yet" reply) · `initial_context`
-is capped (~1.5k chars) and an oversized one POISONS the session for every later round — start a
-fresh interview and push detail through answers · each question issues a Synapse fan-out: submit
-`{session_id, fanout_id, correlation_key:"context.lane_id", results:[{key, content}|{key,
-undispatched:true}]}` covering the required lanes; `data_context` must match its contract exactly
-(`{question_identity, lane_id, data_needed:false, no_evidence_reason, read_requests:[]}`) and the
-`question_identity` lives in `~/.ouroboros/data/fanout/<fanout_id>.json` (`no_evidence_reason` is an ENUM, `not_a_measurement` / `answer_would_not_be_an_aggregate` / `question_too_ambiguous_to_measure` / `no_data_store_described` / `store_described_but_not_callable`, and data_context's `content` is the object itself, never a JSON string; bit twice 2026-09-25) (read the registry
-file — `ls -t` over tool-result files picked a stale one) · string values are rejected on shell
-metacharacters (`;` `|` `&` backticks `$`) and certain WORDS ("subprocess" → "Potentially
-dangerous input"; paraphrase) — scrub before submitting · nothing is retained between partial
-submissions — resubmit every lane · `ouroboros_generate_seed` returns YAML and writes NO file —
-transcribe to `seeds/` immediately and run the seed's own `verify_command`s (a red first pass is
-the gate working: ours caught a missing per-proof section). **Resume uses the EXACT documented
-arg shape** `{session_id, last_question, answer, ambiguity_score}` (the server also writes its artifact store into the PROJECT cwd, `.ouroboros/artifacts/artifacts.db` + WAL, on every interview call — gitignored since 2026-09-22, never committed) — a bare `{session_id,
-answer}` resume and the `ouroboros_session_status` tool both report "No events found" even when
-the session file exists under `~/.ouroboros/data/` (status reads a different store). Interview
-rounds can take >3 min — run them as background Bash. **`ouroboros mcp serve` is broken in the
-installed tool env** (MCP-SDK v2 vs the claude-sdk extra's v1.x — the user-scope MCP registration
-shows CONNECTION_CLOSED every session); `scripts/ooo_mcp.py` auto-falls-back to an isolated
-`uvx --from 'ouroboros-ai[mcp]'` server on that signature — expect the native attempt to fail
-first (one stderr line): that is the fallback working. `scripts/patch_ouroboros.py` (run with the
-ooo tool interpreter; setup.sh does it) applies the two idempotent upstream patches
-(`sandbox-kit/OUROBOROS-SETUP.md`).
+Load `ouroboros-stdio` before any Ouroboros interview round, fan-out submission, resume or seed generation (the stdio
+client `scripts/ooo_mcp.py` and its measured quirks).
 
 **Never use `AskUserQuestion` for interview routing or design decisions** — it blocks like MCP
 (hang → timeout → lost requests). Ask in natural text; the user answers when back. During
@@ -405,60 +345,12 @@ approval" in CCR — `scripts/setup.sh` registers the same servers at USER scope
 aleph, codebase-memory, phoenix-docs, ouroboros) so they connect without a prompt; tools bind on
 the NEXT session start.
 
-**Document quirks on contact.** Hit a tooling quirk (wrong arg name, quoting, API mismatch) →
-immediately append a one-line fix to this file. Don't defer.
-**A `pgrep -f <pattern>` liveness/wait loop MUST exclude its own command line** — bracket the
-first char (`pgrep -f '[p]ytest ...'`) or match the binary with `-x` (two self-matching waiters
-spun for a whole lane in the source repo). **The bracket protects only the PATTERN: any other literal occurrence of the name in the same command line (a later `sed`/`nohup` argument naming the script) self-matches — a `pkill -f "[r]un_packs.sh"` killed the coordinator's own shell 2026-09-14 (rc 144); kill by pid, never by `pkill -f` inside a compound command that also names the target.**
-**`scripts/safe_commit.sh -m "…"`: no backticks inside a double-quoted message** — bash runs them as command substitutions and the phrase vanishes from the commit (three `in …` phrases eaten on 2026-09-15); write the message to a file or single-quote it. **`git rev-parse --short REV1 REV2` fails ("Needed a single revision") in this container's
-shell inside a compound command** — one rev-parse per call.
-**push_clean can LOSE A RACE with the GitNexus banner rewriter:** AGENTS.md/CLAUDE.md index-stat
-churn can regrow between its clean-check and filter-branch ("Cannot rewrite branches: You have
-unstaged changes" → "N trailer(s) remain — ABORT"). Run `git checkout -- AGENTS.md CLAUDE.md &&
-PUSH_BRANCH=<branch> bash scripts/push_clean.sh --no-delegates-live` as ONE compound command; on
-that abort, re-check `git status` before suspecting real leftover trailers. It also REFUSES on a
-dirty tree — commit or stash first (bit 2026-09-03). **`--lanes-live` with an EMPTY declared list refuses SILENTLY (rc 1, no
-message; bit 2026-09-07 after the last lane landed) — once no lane is live, push the clean tree with
-`--no-delegates-live`; the untracked `.lanes-live` file itself is gitignored and does not count as dirt. It also refuses a CLEAN tracked tree while lanes are declared (`tree is clean — use --no-delegates-live`, 2026-09-23): push that state with `--no-delegates-live`.**
-**push_clean REWRITES the unpushed range, so a lane brief's `PIN:` is the POST-PUSH SHA — read it from `git log origin/<branch>` AFTER the push, never from the local commit (bit 2026-09-21: the VB-F12-T2 brief pinned 592d9a8, which became 38ad46b on origin and did not exist on the PC clone; one extra commit to correct it).**
-**A trailing `&` backgrounds the WHOLE `&&` list** (`rm -f pidfile && … && nohup lane.sh … &` ran the list in one background subshell: its own `rm -f` raced and deleted the pidfile the next line wrote, and `$!` was the subshell, bit 2026-09-21) — put the `nohup … &` on its own line. **A poller relaunched INSIDE a Monitor script dies with the monitor's expiry** (the harness kills the monitor's process group; `Terminated` at 20:17Z 2026-09-21): start long-lived pollers with `setsid nohup … </dev/null &` and locate them by `pgrep -f '[p]c_lane.sh\.[A-Za-z0-9]* <brief>'` — `$!` after setsid is its short-lived parent. **A PC-RESIDENT lane cannot run `scripts/pc_suite.sh`** (the sandbox's bridge launcher; `bridge_http_code=000` on the host, G1 2026-09-21): a PC brief's pytest gate is `python -m pytest -n 8 …` directly (xdist is installed on the PC), under the 420 s cap.
-
-**`scripts/pc_lane.sh` makes its OWN private copy (line 42, since b7a0e0a 2026-09-08): launch it as `bash scripts/pc_lane.sh <brief> hermes <role>` with the bridge env exported first — NEVER from a manual copy with `PC_LANE_ORIG` set: the self-copy re-execs with `PC_LANE_ORIG` reset to the manual copy's path, `ROOT` becomes `/` and the brief fails to ship with `can't open file '//scripts/pc_bridge_exec.py'` (bit 2026-09-22 08:52Z, AF-AP-113's second instance); the older recipe needed BOTH the env var AND the bridge env (`set -a; . ./.pc-bridge.env; set +a`) — three dead launches on 2026-09-14 before the fourth (rc 64 `PC_BRIDGE_URL not set`, then `pc_bridge_exec.py: No such file`).** `systemctl --user` / `systemd-analyze --user` over the bridge need `XDG_RUNTIME_DIR=/run/user/$(id -u)` exported (the bridge shell has none; `qwen-server.sh` exports it itself). **LOCAL-ROUTE CONCURRENCY (owner ruling 2026-09-22 01:1xZ, correcting the coordinator's stale one-lane premise): the vLLM `qwen` container (D-032) batches concurrent requests — measured 2026-09-16 near-linear to ~310 tok/s aggregate at 7 lanes, C64 in the migration findings (`docs/research/findings/VLLM-MIGRATION.md`, `PC-BRIDGE.md` §vLLM) — and Hermes carries about FOUR lanes comfortably: run up to FOUR local-route lanes in parallel, launched 60 s apart; the "ONE 262k slot" limit was the retired llama.cpp `qwen-builder` unit. **The binding constraint at LONG contexts is KV tokens, not lanes (measured 2026-09-23 10:5xZ, AF-AP-146): the vLLM KV cache holds 222,822 tokens and lanes that have run for hours send 57-90k-token prompts, so TWO fit; a third lane's request waits in vLLM past OmniRoute's 80 s first-event limit and dies 504. Run TWO long-context local lanes; the four is the ceiling for short contexts; the heartbeat's `vllm wait>0` with `kv>=0.75` is the signal.** **Measured again 2026-09-24 01:5xZ: two long-context lanes starved each other (J1-3-R1 died on the 100 s first-event 504 beside J1-1-R3, zero tree changes) — while the cloud route is out (D-061), run ONE long-context local lane and send the next to a sandbox agent (D-062).** **A relaunched PC lane no longer inherits its previous loop's FAILED marker (AF-AP-140; T94 = tasks #167 + #200, VERIFY-T94-R1 MERGE-READY-WITH-FOLLOWUPS 2026-09-23): the runner sets a stale marker aside itself (`FAILED.stale-<ts>`, never deleted) before the new loop runs, and a relaunch runs the PC clone's current runner (`scripts/pc_lane.sh` launches `harness-ports/bin/pc-lane.sh` from `$PC_AF_REPO`). One form is still left in place: a `FAILED` that is a dangling symlink, which then hides the next terminal verdict (issue #55) — move it aside by hand.** **A new bridge banner or a worker restart orphans every live sandbox poller and monitor (AF-AP-131, 2026-09-23 12:5xZ): each keeps the link and the agent proxy port (`HTTPS_PROXY`) it started with, survives the restart, and fails every call (`curl (7) ... 127.0.0.1:<old port>`). After either: rewrite `.pc-bridge.env` through the Write tool if the banner changed, probe, re-attach each live lane from a current shell (its log says `a resume of <lane>`; the PC pid stays), and restart the monitor.**** The retired unit, when it runs as the fallback, fills the 3090 (22.7 of 24 GiB) and `qwen-server.sh restart` kills every lane mid-turn — check `.lanes/*/lane.pid` first; the vLLM container is never stopped or restarted while a local-route lane is live. **Hermes's `--reasoning` is INERT on the local model** (this llama-server build ignores a per-request `reasoning_effort`, measured 2026-09-14): the effort is the SERVER default, set per lane role by `scripts/pc_lane.sh` before each launch (build medium, verify xhigh) — a lane dispatched by hand around the dispatcher runs at whatever the server was last set to. **Hermes's `terminal` tool caps ONE call at 420 s on the PC** (lane A5l 2026-09-15): a PC brief sizes every gate call under it — `lane_gate.sh -n 1` twice, never `-n 2` once over a 3-minute suite. **`scripts/lane_context.sh` refuses a nonexistent FILE (rc 64) since 2026-09-15** — a pack over a stale path was a HOLLOW pack (graft exits 0 on a missing file); verify every brief path with `git ls-files` at authoring. **`scripts/ripwire_review.sh edit-check` was dead from adoption until 2026-09-15** (ripwire 0.4.0 refuses `--limit` on `--edit-check`); the wrapper no longer passes it. **The dispatcher's premise gate (`_premise_block_ok` in `scripts/pc_lane.sh`) accepts only a bare ``` line as the premise block's opening fence** (its awk compares the whole line): a language-tagged opener such as ```text is skipped, and a first launch is refused with rc 64 (caught at authoring 2026-09-24 on the K170 brief; the gate's own function, run on the brief, is the check).
-**The dispatcher polls for 60 minutes, then exits 75 with the lane still running (`MAX_POLLS=240` x `POLL_SECONDS=15`, `scripts/pc_lane.sh:143-144`; the QJ2 lane hit it at 01:41Z 2026-09-25):** re-run the same command to re-attach (the runner's state guard, `harness-ports/bin/pc-lane.sh`, neither starts a running lane twice nor re-runs a finished one; no `LANE_PATCH` is needed again), or launch a lane that will run for hours with `MAX_POLLS=960` (4 h).
-
-**MCP servers are NOT the path (owner ruling 2026-09-07: "the MCP server not working — just use the CLI, it's more reliable").**
-The graft CONNECT_TIMEOUT on a fresh container (2026-09-07 12:37Z: the startup reindex stampede hit the 30 s limit; the server
-answers `initialize` in 0.5 s idle) was the symptom; the rule is the CLI on every venue — `graft ask` / `graft skeleton`,
-`node .gitnexus/run.cjs` (or `scripts/gn_mcp.py`), `codebase-memory-mcp cli <tool> --flag value`, `/root/venv-crg/bin/code-review-graph`,
-`scripts/ripwire_review.sh` — all wrapped by `scripts/lane_context.sh`. A failed MCP connect is never worked around and needs no
-`MCP_TIMEOUT`; the background builds stay delayed and niced so a connect that does happen is quiet.
-**The shell's cwd resets to `/home/user` after a container restart** — start every command chain
-**A `scripts/pc.sh` call is capped at `curl -m 120` and its non-JSON retry RE-RUNS the whole command up to 3× (pc.sh:15-21)** — a >120 s command is cut off (`curl (28) … timed out`) then re-executed, so ONE bridge call is neither atomic nor single-shot: never put a long job (poll loop, build, suite) in one `pc.sh` call — background it on the PC (`nohup … &`) and poll with SEPARATE short calls, or use `pc_suite.sh`/`pc_lane.sh` launch/wait; keep any mutation at the TOP where it lands once (AF-AP-92, bit 2026-09-16 on the qwen cutover — idempotent, no harm).
-**The bridge's stderr lands on the DATA line (bit 2026-09-22, two monitor heartbeats read empty): a `pc.sh` command whose last output is `echo -n …` gets the PC shell's `bind: warning: line editing not enabled` text appended to the SAME line (stderr merges after the unterminated stdout), so a `grep -v 'bind: warning'` filter DROPS the data line — strip the warning text with `sed 's#…bash-hook.bash: line [0-9]*: bind: warning: line editing not enabled##g'` AFTER joining, or end the data with a newline; never `grep -v` a joined line. The warnings often come LAST, on their own lines: after the strip, drop the emptied lines (`sed '/^[[:space:]]*$/d'`) before any `tail -N`, or the tail reads only blanks (a `tail -3` read three empty lines and looked like a dead probe, 2026-09-24 23:3xZ). Since 2026-09-24 23:5xZ `scripts/pc.sh` drops exactly those whole lines from the remote stderr itself (`tests/test_pc_sh.py`, a fake bridge in a temp tree); the strip is for other bridge clients.**
-**`sqlite3` over the bridge: ship the SQL as a base64-decoded script file** (`B64=$(base64 -w0 q.sh); bash scripts/pc.sh "echo $B64 | base64 -d > /tmp/q.sh && bash /tmp/q.sh"`) — inside the single-quoted bridge command every SQL string literal would have to be double-quoted, and SQLite reads a double-quoted string as an IDENTIFIER (`no such column: "unixepoch"`; bit 2026-09-14 22:3xZ, eight queries dead in one call). The Hermes session DB (`~/.hermes/profiles/agentfactory/state.db`) keys lanes by `sessions.cwd LIKE %.lanes/<lane-id>%` for lanes launched before T92 — a T92-and-later lane keeps its sessions in its OWN cloned profile's `~/.hermes/profiles/aflane<normalized lane id>/state.db` (the shared db held 0 of VERIFY-T92's 9 sessions, 2026-09-23; issue #51 A-7); list EVERY session of the lane id (`started_at`, `message_count`, the last message time) and read them together — a RESUMED lane is a NEWER session with FEWER messages (bit 2026-09-22 09:0xZ: the 08:09Z resumes of K1-d and T90 hid behind their 323/83-message predecessors for an hour and read as "hung"), while a one-shot probe in the same tree is newer with almost none; neither `message_count desc` nor `started_at desc` alone picks right.
-with `cd /home/user/agent-factory` (or absolute paths).
-**`rsync` is absent in the sandbox** — copy trees with `tar` / `cp -a`.
-**Podman on the PC refuses a SHORT image name with no TTY** (`short-name resolution enforced but cannot prompt without a TTY`, the first vllm-rwkv build 2026-09-25): every image in a bridge or background command is fully qualified (`docker.io/nvidia/cuda:...`, or the Dockerfile's base-image build args set that way).
-**`scripts/vendored_manifest.py --write` hashes IGNORED files under `.claude/` too** (a plugin's `.claude/fast-jev-output/` drifted the `.claude/` row, 2026-09-25; task #232): move such plugin output aside before `--write`, put it back after. The pre-commit manifest check hashes the same working tree, so a commit that stages a path under a vendored root is blocked the same way (the P1 harvest, 2026-09-25 08:2xZ): move the output aside for that commit too, until task #232 hashes tracked files only.
-**The Edit, Write and Bash tools turn a typed `\u2028` / `\u2029` escape into the LITERAL separator bytes** (K215 2026-09-24, then the coordinator's own Write probe: the file held `e2 80 a8`; a typed `\u0085` or `\t` stays as text) — AF-AP-132's second shape, written by the tool; VERIFY-K215 F-7 (2026-09-24) measured the Bash tool doing it through a quoted heredoc, and a typed backslash-u-0041 became `A` there, so the decoding is not limited to the separators. Build such a string in code (`chr(0x2028)`) and check every written file before a gate runs: `LC_ALL=C grep -c $'\xe2\x80[\xa8\xa9]' <file>` must print 0.
-**An Agent dispatch with `isolation: "worktree"` cannot work on this tree (bit 2026-09-23, J1-0-R3):** the agent's worktree was a partial checkout (mostly `.claude/skills/`, none of the brief's boundary files) and its Bash tool refused every command ("the working-directory isolation context for this agent was lost"); it returned with no work done. Dispatch a sandbox build agent WITHOUT worktree isolation (a disjoint file boundary in the shared tree; the coordinator commits through `safe_commit.sh`), or build small tooling in the main loop.
-**`tests/test_proof_status.py` needs a SHORT `--basetemp` (e.g. `/tmp/ps/bt`)** — the session scratchpad path exceeds gpg-agent's Unix-socket
-length limit and the eleven throwaway-key anchor tests fail with `gpg … --quick-generate-key … exit status 2` (nine false reds on 2026-09-14);
-the same tests are green with a short path. pytest creates only the LAST component of `--basetemp` — `mkdir -p` its parent first, or every test errors at setup with `FileNotFoundError` (bit 2026-09-14). A regenerated minted result (AF-AP-56) after an `accepted/<id>` tag exists fails three of its
-committed-state tests BY DESIGN until the owner re-signs — read the assertion, never the count.
-**ATTESTED INPUTS (AF-AP-56, CI runs 106-110 red 2026-09-06):** every minted `proofs/<id>/result.json` hashes its tooling — `proofs/schemas/*`, `scripts/proof-runner`, `scripts/validate-ledger`, `proofs/registry.yaml` and the proof's own files. Any change to one of those is a tooling change: regenerate the dependent artifacts in the SAME increment (`python3 scripts/proof-runner run --proof <id> --venue sandbox --root .` for each minted id), then gate on `python3 scripts/validate-ledger integrity --root .` (PRESENT, never INVALID) + `python3 scripts/ledger-gen --root .` + `git diff --exit-code proofs/ledger.json`. A lane brief whose boundary contains an attested path names this gate. Regenerate ONLY from a world-traversable tree (the repo, never a root-only scratch
-copy: S0-11 drops to `nobody` and cannot read `0700` paths) — a real proof failure DELETES the minted artifact by design (VERIFY-N5g F8).
-**REAL-LEG CORPUS = a DECLARED input (VERIFY-CK10 F-R10-25):** the checker's real-producer tests read `S0_01_REAL_LEG_DIR`
-(sandbox default `/root/s0-01-realleg/golden`, exported by `scripts/test_summary.sh`; the PC tree by `pc_suite.sh`) under
-`S0_01_VENUE` sandbox/pc — corpus absent or incomplete = the suite FAILS by design, never skips; CI (venue unset) skips by
-declaration. A fresh container restores it with `bash scripts/realleg_sync.sh pull` (20 s over the bridge, every sha verified
-against the PC tree; `check` re-verifies).
-**A PASTED COUNT CARRIES ITS SET (2026-09-15: the ledger's `1556 passed, 9 xfailed` floor was an 18-file run, read as the 13-file `tests/test_s0_01_*.py` glob — a 215-test "drop" that was no drop, AF-AP-73 at the floor):** `pc_suite.sh wait` prints `pytest-set: N files set=<sha12> — <files>` beside the summary, `lane_gate.sh`'s RESULT line carries `tests=<sha12>`, and `scripts/pc_suite.sh set-id -- <files>` prints the id a brief or a ledger line quotes a count against (sha256 of the sorted list of the path STRINGS as given — order-blind, spelling-sensitive: quote the paths repo-relative exactly as the brief lists them; the GOV2c-A lane read `892ef4ebb5b8` for the brief’s `f3baa8cf79c7` six files, 2026-09-22 — same files, another spelling). **Sandbox static-copy gate in ONE command:** `scripts/lane_gate.sh -r <rev> -f "<lane files>" -t "<tests>" [-n 2]` — a `git archive`
-copy + exactly the lane's working-tree files, the identity table, N `test_summary.sh` runs whose counts must agree, one RESULT line the
-checkpoint commit pastes; long sets run it DETACHED (`nohup … > gate.log 2>&1 &`) and read the log. **PC gate on EXACTLY the pushed commit while lanes hold the tree:** `pc_suite.sh` ships the working tree as a patch, so run it
-from a clean detached worktree (`WT=$(mktemp -d) && git worktree add -q --detach $WT HEAD && cp .pc-bridge.env $WT/ && cd $WT &&
-bash scripts/pc_suite.sh launch -n 8 -- <files>`; ff-sync the PC clone first; `wait <RUN_ID>` takes the id `launch` prints; remove
-the worktree after). `launch` resolves the index via `git rev-parse --git-path index` (a worktree's `.git` is a file — bit 2026-09-06).
+Load `env-tool-quirks` before a background job, a `pgrep` or `pkill`, a commit, a push, an anchor edit, a test gate or
+pasted count, a proof regeneration, a `vendored_manifest.py --write` or a worktree-isolated Agent dispatch.
+Load `pc-bridge-lanes` before a `pc.sh`, `pc_lane.sh` or `pc_suite.sh` call, or a PC-side sqlite, systemctl or podman
+command.
+**Document quirks on contact, in the quirk skill** (shell, git, tool, test gate: `env-tool-quirks`; PC:
+`pc-bridge-lanes`; Ouroboros: `ouroboros-stdio`), never here.
 
 **Pipeline order is load-bearing: interview → SEED → task-breakdown → build.** To-dos come FROM
 the seed.
@@ -477,99 +369,24 @@ resume where it looks empty, rebuild it from the ledger + transcripts, never fro
 
 ## Feature Workflow (summary)
 
-> **Full guide:** `sandbox-kit/RESEARCH-PROMPT-GUIDE.md` — read before authoring any research prompt.
-> Two worked examples: `sandbox-kit/EXAMPLE-RESEARCH-PROMPT-SETTLED-SPEC.md` and
-> `sandbox-kit/EXAMPLE-RESEARCH-PROMPT-EXPLORATORY.md`.
-
-For any substantial new subsystem:
-1. **Audit first** — read the actual code; write a grounded findings/plan doc.
-2. **Research prompt** — `docs/research/prompts/RESEARCH-PROMPT-N.md`. SETTLE the direction; leave
-   open ONLY the technical resolution. ONE self-contained file ending "Decide; do not ask."
-   **ATTACH-TO-CHAT MANDATE (owner request 2026-08-28, inherited): every authored research prompt
-   is ATTACHED to the chat (SendUserFile) in the same turn it is written — the owner pastes it
-   into the research tool from the chat, never from the repo. Committing it is not delivery.**
-   (Stage 0 ran with NO research prompt by owner decision 2026-09-02 — the plan docs were the
-   settled direction; `docs/research/FINDINGS-STAGE0-v1.md` stood in for the findings.)
-3. **Findings** — the returned report becomes the constraint set.
-4. **Council debate** — `/council` on the FINDINGS (facts, not hypotheses). Never `--quick`. The
-   brief carries a CURRENT-STATE CAPABILITY LEDGER (proven-live vs built-never-run vs absent) —
-   an under-briefed panel returns confident advice about a system that doesn't exist.
-5. **Ouroboros interview** — seeded with findings + verdict; drive `ambiguity_score` → ~0.
-6. **Seed** — persist to `seeds/seed-<name>-vN.yaml`, commit, run its own `verify_command`s.
-7. **Task breakdown** — decompose the seed BEFORE writing code; register the increments.
-8. **Hand-build** — surgical, test-driven, one commit per increment; every acceptance test
-   deterministic and LLM-free.
+Load `deep-work` before starting a substantial new subsystem or authoring a research prompt (audit → research prompt →
+findings → council → Ouroboros interview → seed → task breakdown → hand-build).
 
 Cross-cutting invariants: **no-LLM-judge spine · negative-control discipline · heavy jobs ON the PC.**
 
 ## Behavioral guidelines (Andrej Karpathy skills)
 
-Bias toward caution over speed; for trivial tasks, use judgment.
-
-**1. Think Before Coding — don't assume, don't hide confusion, surface tradeoffs.** State
-assumptions; if uncertain, ask. Multiple interpretations → present them, don't pick silently.
-Simpler approach exists → say so; push back when warranted. Something unclear → stop, name it, ask.
-
-**2. Simplicity First — minimum code that solves the problem.** No unrequested features,
-abstractions for single-use code, speculative "flexibility", or error handling for impossible
-scenarios. 200 lines that could be 50 → rewrite. Test: "would a senior engineer call this
-overcomplicated?"
-
-**3. Surgical Changes — touch only what you must; clean up only your own mess.** Don't "improve"
-adjacent code/comments/formatting or refactor the unbroken; match existing style; mention (don't
-delete) unrelated dead code. Remove imports/variables YOUR change orphaned; leave pre-existing
-dead code. Test: every changed line traces to the request.
-
-**4. Goal-Driven Execution — define success criteria, loop until verified.** "Add validation" →
-"write tests for invalid inputs, make them pass"; "fix the bug" → "write a repro test, make it
-pass"; "refactor X" → "tests pass before and after". Multi-step → a brief `[step] → verify:
-[check]` plan. Strong criteria let you loop independently.
-
-**Working if:** fewer unnecessary diff lines, fewer overcomplication rewrites, clarifying
-questions BEFORE implementation.
-
-When Fable deep-mode rules conflict with these (e.g. chasing a surfaced defect to its root vs
-surgical changes), deep-mode governs — a real defect the wiring exposed is not scope creep.
+Load `build-loop` before writing code (the four behavioral guidelines: think before coding, simplicity first, surgical
+changes, goal-driven execution; deep-mode governs on conflict).
 
 ## The meticulous build loop ("Fable light" — mandatory for every code increment)
 
 **Full text + war-story evidence: skill `build-loop` — load it before any code increment.**
-Model-agnostic, per increment, no skipping steps. The operative core:
 
-1. **Verify every seam BEFORE writing code that calls it** — vendored-library seams get the
-   `vendor-first` pass FIRST (the library probably already built it); read the real contract in
-   the repo, from the CONSUMER; measuring inputs ≠ verifying the consuming contract; a test
-   written from the code's own assumption is a MIRROR, not a gate. Durable records that guard
-   IRREVERSIBLE side effects are written BEFORE the side effect, keyed by a pre-action id; the
-   residual fails LOUD. When enriching a build (new rung/check/channel), emit only shapes that
-   can actually fire — an emitted-but-unreachable check is a silent hollow green.
-2. **One increment = code + deterministic LLM-free test + commit.** Negative control failing for
-   the exact expected reason, de-vacuoused at write time; fixtures carry PRODUCTION data types;
-   parity gates assert the oracle ACTED and pin discrete metrics EXACTLY; prove STATE and
-   IDENTITY (and that the identity key COVERS the changing attribute); at least one negative
-   control through the REAL emitter/sink. Commit message = reasoning record (rejected
-   alternative, ordering rationale, primary source; enumerate disjoint hunks). Commit BEFORE any
-   destructive probe. Deterministic tests: run twice, bitwise. Forced to commit mid-increment →
-   embed recovery state in the message (acceptance bar + where it stands, WHY short, the plan).
-   PRE-MINT GATE (AF-AP-36): a reviewer-reported mutation of a proof's evidence becomes a committed FAILING regression test before the artifact is minted or re-minted; a checker is graded against hostile bundles, never only its own golden.
-3. **An unexpected test failure indicts YOUR assumption first** — ladder: telemetry → isolation →
-   code; reproduce before believing any recorded diagnosis; `${PIPESTATUS[0]}`, never a piped rc.
-4. **The live run is the real proof — live failures are FINDINGS.** Paired positive + negative
-   control, exact outcomes asserted; assert the probe's INSTRUMENT fired (or find a structural
-   signature only one mode can produce); resolve undocumented contracts from primary source;
-   prove the fix at the OUTERMOST boundary where the failure was observed (here: the PC-side
-   entry point over the bridge, not a narrower sandbox harness).
-5. **Close the loop in writing — and ECHO before closing.** Any real defect this increment
-   FOUND or FIXED (bug, wrinkle, wormhole, weird pattern) gets `/bug-echo` run on its
-   anti-pattern and the class registered in the ANTI-PATTERN REGISTRY atop
-   `docs/INCIDENT-LOG.md` BEFORE the increment closes — part of the validation contract in the
-   LIGHT loop too, not just deep-mode Phase 5 (owner mandate 2026-08-20/21/22, inherited: the
-   source repo's mega-sweep found unexploded siblings in ~half of all previously-fixed bug
-   classes). Docs/runbook updated the moment the live proof lands; TODO ↔ task list synced; push;
-   status lines open with the OUTCOME: `Verified live:` ≠ `DONE:` ≠ `NOT built.` (stated
-   first-class). Ledger denominators are FOUR-WAY (execution / conformance-checked decision /
-   blocked-on-external-input / blocked-on-capability) — never a flat count over the twelve proofs.
-   Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total). Timestamps are the same rule — pasted from `date -u` or the commit clock (2026-09-07: the day's ledger stamps drifted 2.8 h ahead); a ten-minute bucket comes from the clock too, `date -u +'%H:%M' | sed 's/[0-9]$/xZ/'`, never rounded up to the bucket an event is expected in (three ahead-of-clock stamps on 2026-09-25; the future-stamp gate blocked the one that reached a commit); a fourth at 04:5xZ, typed in the same call that ran `date`). **A stamp is SUBSTITUTED, never typed:** `export STAMP=$(date -u +'%H:%M' | sed 's/[0-9]$/xZ/')` and the text uses `$STAMP` (or `os.environ['STAMP']`) in the same command. **The Write tool cannot substitute:** a file written through Write takes its stamp from a `date -u` run just before it, pasted from that output, or is written through a Bash heredoc that expands `$STAMP` (the P1-R1 brief's premise heading, typed 09:2xZ at 09:18Z, the fifth; the future-stamp gate blocked the commit).
+Load `build-loop` before any code increment, test or commit (its operative core moved there verbatim). The count and
+stamp rule holds on every turn, so it stays here:
+
+Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total). Timestamps are the same rule — pasted from `date -u` or the commit clock (2026-09-07: the day's ledger stamps drifted 2.8 h ahead); a ten-minute bucket comes from the clock too, `date -u +'%H:%M' | sed 's/[0-9]$/xZ/'`, never rounded up to the bucket an event is expected in (three ahead-of-clock stamps on 2026-09-25; the future-stamp gate blocked the one that reached a commit); a fourth at 04:5xZ, typed in the same call that ran `date`). **A stamp is SUBSTITUTED, never typed:** `export STAMP=$(date -u +'%H:%M' | sed 's/[0-9]$/xZ/')` and the text uses `$STAMP` (or `os.environ['STAMP']`) in the same command. **The Write tool cannot substitute:** a file written through Write takes its stamp from a `date -u` run just before it, pasted from that output, or is written through a Bash heredoc that expands `$STAMP` (the P1-R1 brief's premise heading, typed 09:2xZ at 09:18Z, the fifth; the future-stamp gate blocked the commit).
 
 ## The deep-work protocol ("Fable deep" — serious increments and reviews)
 
@@ -581,95 +398,20 @@ governs on conflict with the Karpathy guidelines.
 anything where a wrong green is expensive, or on request. **Skip for:** doc edits, mechanical
 renames, single-file obvious fixes (light loop still applies).
 
-Phase index (each expanded in the skill):
-- **Phase 0 — distrust is the method.** Admissible evidence = primary source or probe from THIS
-  session. Unverified: numbers with no committed producer · absence off capped queries ·
-  wrong-sink and wrong-token grep absences · hash-pinned values (integrity ≠ correctness — pinned
-  external identifiers get re-resolved against a live primary source) · **the environment
-  inventory read off the sandbox alone** (2026-09-03: the owner's PC held every "blocked"
-  capability; probe the host and read the owner's runbooks before classifying a venue).
-- **Phase 1 — ground.** Exact `file:line` seams; reachability traced from the LIVE entry point
-  ("exists" ≠ "wired"); inventory what's already built — including what the OWNER already runs.
-- **Phase 2 — measure before designing.** Value tables before constants; benchmarks at the
-  PRODUCTION shape read from live telemetry; the cheapest order-changing reality probe FIRST
-  (Stage 0's spike #0 was the bridge probe: it reclassified two proofs before increment 1);
-  verify the consuming SELECTOR still discriminates; joint satisfiability for multi-constraint
-  walls; escalate resolution, never mint a constant.
-- **Phase 3 — blast radius before edit.** `impact` on every semantics-changing symbol;
-  `detect_changes` before every commit.
-- **Phase 4 — build (light loop), plus:** follow mid-build failure forks; prove "pre-existing"
-  on the clean tree; spine behavior changes ship default-OFF; every fail-soft is fail-LOUD
-  (config-presence ≠ delivery — acceptance-probe external sinks; events need a real, shared
-  production sink); re-Read before Edit after out-of-band writes; pre-init every `finally` local.
-- **Phase 5 — adversarial verify.** Discovery stays exhaustive; DISPOSITION is disciplined — a
-  finding blocks only if it meets the blocking predicate (contract-mapped · canonically reproduced
-  through the real production path · materially effective · a concrete discriminator · in-boundary;
-  a red test is necessary but not sufficient), the lane emits a GATE RECOMMENDATION
-  (`MERGE-READY` / `MERGE-READY-WITH-FOLLOWUPS` / `NOT-READY` / `CONTRACT-INVALID`) not a verdict,
-  and the repair budget is ONE focused repair keyed by component/proof ID + frozen contract
-  revision + production-code digest, never reset by a renamed wave (skill `contract-gate`; D-031).
-  Done = a hostile reviewer failed to break it: loaded briefs,
-  mutation audits (scratchpad-copy restore ONLY — never git-restore/stash a shared tree; never
-  disable a guard while tests point at a real protected resource), independently reproduce every
-  load-bearing claim AND its mechanism (the Chairman's netns probe was reproduced before it
-  entered the findings), the kill-switch question on every green, symmetric finality gates,
-  directionality checks on every risk cap, forensic pass on benchmark verdicts, **/bug-echo on
-  every real defect FOUND — fixed or merely diagnosed**, **and a thermo-nuclear-review FULL-STACK
-  pass before pushing any multi-commit stack (owner mandate 2026-08-26, inherited: the whole
-  origin..HEAD diff through the skill's lens set on the verify lane, parallel with the final
-  finding-driven verify, BOTH verdicts gating the push)**.
-- **Phase 6 — close.** Affected suites + adjacent consumers; full tree at least once per wave;
-  telemetry sufficiency; docs + task list same increment; wiki recompile; push; honest report
-  including NOT-built.
-- **Retrospective rule** — extract the alpha at every continuation/task-close/handoff; bake
-  general lessons into the matching SKILL in the same increment; keep the protocol tight; no
-  lesson → say so, never invent one.
-- **Meta-rules** (all in the skill): structural membership for GC sweeps · bounded in-loop
-  diagnostics · live-calibrated defaults · failure-aware waits (a wait's exit condition includes
-  failure signatures — never success-only silence) · per-cycle caps in perpetual loops ·
-  order-blind set-diff guards · clean checkpoints · handoff shape (read-order · pinned decisions
-  with rejected alternatives · recovery rule per in-flight item · NOT-built ledger) · scope from
-  primary source · raw output before filters · state-guards not flock for destroy-and-recreate ·
-  `ps` liveness not output volume · no timing on a contended box · cap the solo probe loop at ~3
-  falsified hypotheses, then delegate an instrumented-forensics agent with the evidence ledger.
+Load `deep-work` before a new subsystem, a gate, security or store spine change, a code review of a stretch, or any
+work where a wrong green is expensive (the phase index moved there verbatim).
 
 ## Telemetry (summary)
 
 > **Full specification:** `sandbox-kit/TELEMETRY-REFERENCE.md` (framework API, all 6 rules, standing loop).
 
-Treat the codebase like a PLC — every state, decision, transition externally observable.
-Framework: the PandaProbe-based observability plane per `docs/06_EVALUATION.md` is PLANNED, not
-built; until it lands every component emits structured JSON events carrying the reason field
-(byte-invisible human plane), and the PC-side sinks (OpenObserve `:5080`, Phoenix `:6006`/`:4317`
-— running, `docs/OBSERVABILITY-RUNBOOK.md`) receive nothing yet. Key rules:
-1. **Every decision/branch/abstain/error emits a span or event carrying the REASON.** Silent
-   decision paths are defects.
-2. **No shallow spans** — stamp inputs, outcome, discriminating detail.
-3. **Session context always attached** — `recording(input_hash, session_id=..., metadata={...})`.
-4. **Byte-invisible** — human-plane keys never change committed bytes or force re-baselining.
-5. **On every failure, assess telemetry sufficiency** — trace doesn't explain it → fix the
-   telemetry gap FIRST.
+The observability plane is PLANNED, NOT built (no component ships telemetry to the PC sinks yet).
+Load `build-loop` before adding a decision path, an event or a span to a component (the five key rules).
 
 ## SESSION-RESUME CONTINUITY (owner mandate 2026-08-04, inherited)
 
-**On EVERY resume from a compaction summary: fetch origin, then compare the three clocks
-(origin tip date · local tip vs origin · transcript timestamps/day-histogram via
-`scripts/chat_tail.py`) BEFORE any resumed work or timeline claim.** The summary AND the
-workspace disk can both be rolled back behind the real session — they are the same stale snapshot
-twice, not two confirmations. Origin ahead of memory = almost always YOUR OWN later work (one
-chat, many containers); near-duplicate commit messages are rollback evidence, NOT a "parallel
-session". The transcript JSONL (`/root/.claude/projects/-home-user*/…jsonl`) is the primary
-source for session history and records every Write call's full content (lost briefs and dead
-delegates' edits are recoverable from it — `scripts/replay_transcript_edits.py`). Mechanics:
-`scripts/resume-heal.sh`; judgment: skill `session-continuity` — load it on every resume and
-whenever owner statements or origin state contradict what you remember. Then re-read the PC
-bridge env: a resumed session has NO bridge link until the owner pastes a fresh banner.
-
-**KEEP-ALIVE (owner-optional, NOT enabled here).** The source repo runs two self-bind hourly
-Routines that tick the session every 30 min until the build is done. This project has none: the
-2026-08-01 trigger-tool caution stands in full until the owner explicitly asks for keep-alive
-Routines (they are the one sanctioned exception when enabled; verify both exist on every resume
-once they are).
+**Load `session-continuity` on EVERY resume from a compaction summary, BEFORE any resumed work or timeline claim**
+(fetch origin, compare the three clocks, re-read the PC bridge env). KEEP-ALIVE: owner-optional, NOT enabled.
 
 ## Project-specific incident log
 
@@ -700,72 +442,19 @@ exact invocations that work in this container (incl. every known arg/CLI quirk; 
 `home-user-agent-factory`), and the fresh-container bootstrap. Load it before any Phase-1
 grounding, impact analysis, dead-wiring hunt, or DORMANT claim. The core reflexes:
 
-- **GRAFT-FIRST FOR CODE QUESTIONS.** `graft ask "<question>" [--source] [--in <path>]` /
-  `graft skeleton <file>` BEFORE any bare grep. Cold container: `graft build` backgrounds
-  (setup.sh does this; log `/tmp/graft-build.log`) — check `graft/INDEX.md` exists before relying
-  on it, and NAME the fallback instrument when graft wasn't available. MCP tools
-  (`graft_find_code`/`graft_trace_calls`/…) register at user scope for the NEXT session; same-
-  session use is the CLI. Provenance: `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md` §Graft.
-- **EDIT-SNAPSHOT hook (owner directive 2026-08-25):** every Edit/Write on a production `.py`
-  auto-returns a snapshot (**to the model through `scripts/hook_context.py`, which turns the hook's plain text into additionalContext — plain
-  PostToolUse/PreToolUse stdout reaches only the transcript view, measured live 2026-09-24; the graft nag runs through it too, and
-  the hook scripts stay plain text for the Codex/Hermes adapters — AF-AP-172**) — enclosing symbol's GitNexus blast radius + an anti-pattern-registry
-  screen of the hunk (`.claude/hooks/edit-snapshot.py`, PostToolUse; venv
-  `/root/venv-agent-factory`, package prefix `agent_factory`, `sandbox-kit/` excluded). READ it,
-  act on flags; it says "index rebuilding" during the post-commit reanalyze window — re-check
-  impact before commit then. It informs, never blocks. **Every new registry row with a
-  mechanical signature extends the hook's AP_SCREEN in the same increment** (the screen ships
-  with the source repo's inherited AP-1…AP-70 signatures; this project's rows are `AF-AP-*`).
-- **TRACE-BACK RECIPE (`scripts/why.sh <file> [function]`):** the per-function "histogram of
-  edits and why" is COMPUTED on demand from primary sources (git `log -L` chronology + the last
-  change's full reasoning-record commit body + incident-log/findings/wiki mentions + current
-  blast radius) — never stored in the wiki, which would drift per commit. Wiki carries the
-  MEANING layers (map, key decisions with SHA anchors, live-state, do-not-trust list); git
-  carries the chronology; why.sh joins them.
-- **Before editing any symbol:** GitNexus `impact` (who calls this, what breaks).
-- **THE PACK (owner escalation 2026-09-07):** `scripts/lane_context.sh -q '<question>' -s SYM -s SYM2… -o pack.md FILE...` —
-  the whole quartet + ripwire + the whole-file registry screen in ONE command; every build and verify brief attaches
-  its pack; the coordinator runs it before designing and on the lane's diff before the verifier. `scripts/report_lint.py`
-  and `scripts/ap_screen.py --s0-01` gate every checkpoint (`report_lint.py --min-refs N`: a report that cites nothing lints clean by construction — B3's `0 refs — MISS 0`, 2026-09-14 — so a checkpoint gates on a FLOOR, never on the MISS count alone; the LANE side is BOUNDED — the lint's own `fix:` hints applied for at most three rounds, then paste and finish, injected into every lane prompt by `pc-lane.sh` since N5k looped 47 minutes on an unbounded `MISS 0` bar, AF-AP-76). An instrument that is not in a script on the path AND in the LANE TREE and its prompt is not in the loop (2026-09-15: no lane had used the quartet — a lane worktree carries no index and the briefs named none; `pc-lane.sh` now builds the graft index at launch, overlays the current lint and injects the CODE INTEL FIRST standing rule). An instrument that is not in a script on the path is not in
-  the loop.
-- **After EVERY edit-batch, not just before commit:** `detect_changes`; re-`analyze` (detached)
-  on a stale index. Before commit stays mandatory.
-- **When grounding (Phase 1) or hunting dead wiring:** codebase-memory (`search_graph` /
-  `query_graph` Cypher / `get_architecture`; prebuilt binary `/root/.local/bin/codebase-memory-mcp`,
-  MCP connected at user scope) + code-review-graph (`/root/venv-crg/bin/code-review-graph query
-  callers_of` / `tests_for` / `impact --files`); re-index after each landed increment so the map
-  never lags the tree.
-- **Advisory instruments (NEVER gates; owner decision 2026-09-05):** slopo (semantic duplicates,
-  `slopo review --base <push-base>`) and **sentrux** (architecture health: `scripts/sentrux_review.sh
-  save` BEFORE a build lane, `compare` after it, `check` any time; rules in `.sentrux/rules.toml`;
-  pinned by digest in `upstream.lock.yaml`; provenance `sandbox-kit/docs/THIRD-PARTY-AGENT-TOOLS.md`
-  §sentrux). **ripwire** (owner ask 2026-09-07, adopted as the SIXTH advisory instrument): ranked symbol map + static call
-  graph, `scripts/ripwire_review.sh map|for|callers|impact|exercises|test-gate|edit-check|skipped`; blind to subprocess
-  edges (a zero is "none found", never "none exists"); binary pinned by digest in `upstream.lock.yaml`, the bundled
-  skills/hooks are never installed. Attach a lane's `compare` delta to its verify brief; a "degraded" line is information
-  for the verifier, not a verdict. Known blind spot: Python import resolution is weak on this tree,
-  so its coupling/cycle numbers are near-empty here; complexity and function length are the live signal.
-- **The prism review skills (advisory, NEVER a gate; owner 2026-09-17):** `prism-scan`/`prism-full`/`prism-3way`/`prism-discover`/`prism-reflect` (`.claude/skills/`, mirrored to `.agents/skills/`; vendored super-hermes MIT, `.claude/skills/PROVENANCE-PRISM.md`). On a hard-to-see bug or an important artifact, run one — it cooks a custom analytical lens for THAT artifact and reports a findings table (location · what breaks · severity · fixable-or-structural); `prism-full` adds a mandatory adversarial self-correction pass (attack your own findings, retract overclaims), the deep-work Phase-5 ethos in prompt form. LLM analysis, so a prism FINDS and INFORMS; it never DECIDES a green (no LLM-judge in the gate spine) — its output feeds the human/coordinator verdict and the deterministic gates, exactly like slopo/sentrux/ripwire.
-- **DORMANT/reachability claims need TWO independent instruments, named in the report** (e.g.
-  crg `callers_of` AND a cbm Cypher trace) — never off one.
-- Fallbacks (CCR sessions often drop MCP): GitNexus 3-tier (MCP → stdio `scripts/gn_mcp.py` →
-  CLI `node .gitnexus/run.cjs`); codebase-memory prebuilt binary + crg venv are installed by
-  setup. **If ALL tiers of the relevant tools are unreachable, say "unmapped — tool
-  unavailable" in the report; never imply a mapped claim a tool didn't produce.**
+- Load `code-intel-trio` before any semantic code question, Phase-1 grounding, impact analysis, dead-wiring hunt or
+  DORMANT claim, and when an MCP server fails to connect (the core reflexes; the CLI, not MCP, on every venue).
 - **Project code lives under `proofs/`, `spikes/`, `scripts/`, `src/` (once it exists)** — the
   hooks and `orient.sh` key on those prefixes; everything under `sandbox-kit/`, `.claude/`,
   `graft/` is vendored and excluded from the wiki compiler and the edit-snapshot screen.
 
-The harness auto-injects the live GitNexus block (index stats + Always/Never-Do rules) every
-turn — those rules govern; don't duplicate them here. GitNexus owns the flat
-`.claude/skills/gitnexus-*/SKILL.md` set (exploring / impact-analysis / debugging / refactoring /
-guide / cli) and rewrites the block below on every `analyze` — commit that churn, never hand-edit
-it.
+The GitNexus block below is injected every turn; its rules govern. **It is OURS since CTX1 (D-089):** every automatic
+`gitnexus analyze` passes `--skip-agents-md`, the volatile counts line is gone (live counts: `gitnexus status`), and
+it is edited by hand and kept last. `analyze` still rewrites the gitnexus-* skills; commit that churn.
+Load `code-intel-trio` before editing this block (its pre-CTX1 wording, verbatim).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **agent-factory** (15749 symbols, 35231 relationships, 784 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 

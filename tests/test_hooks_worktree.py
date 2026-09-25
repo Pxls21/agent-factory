@@ -26,8 +26,10 @@ def _repo(tmp_path):
     shutil.copy(ROOT / ".claude" / "hooks" / "turn-retro-gate.sh", repo / ".claude" / "hooks" / "turn-retro-gate.sh")
     for h in ("post-commit", "pre-push"):
         shutil.copy(ROOT / "scripts" / "hooks" / h, repo / "scripts" / "hooks" / h)
+    (tmp_path / "hook-tmp").mkdir()                   # post-commit's locks and its re-index log stay out of /tmp (CTX1)
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
-               GIT_COMMITTER_EMAIL="t@t", HOME=str(tmp_path), PATH=os.environ["PATH"])
+               GIT_COMMITTER_EMAIL="t@t", HOME=str(tmp_path), PATH=os.environ["PATH"],
+               AF_POST_COMMIT_TMP=str(tmp_path / "hook-tmp"))
     assert _sh(["git", "init", "-q", "-b", "main"], repo, env).returncode == 0
     (repo / "README.md").write_text("x\n")
     assert _sh(["git", "add", "."], repo, env).returncode == 0

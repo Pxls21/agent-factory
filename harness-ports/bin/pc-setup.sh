@@ -104,7 +104,7 @@ bash harness-ports/bin/sync-skills.sh --check >/dev/null 2>&1 && ok "skills in s
 
 say "indexes (detached)"
 if command -v gitnexus >/dev/null 2>&1 && [ ! -f .gitnexus/run.cjs ]; then
-  ( flock -n 9 || exit 0; nohup gitnexus analyze > .lanes/gitnexus-analyze.log 2>&1 ) 9>.lanes/gitnexus-analyze.lock & ok "gitnexus analyze launched (.lanes/gitnexus-analyze.log)"
+  ( flock -n 9 || exit 0; nohup gitnexus analyze --skip-agents-md > .lanes/gitnexus-analyze.log 2>&1 ) 9>.lanes/gitnexus-analyze.lock & ok "gitnexus analyze launched (.lanes/gitnexus-analyze.log)"
 else ok "gitnexus index present or tool absent"; fi
 if command -v graft >/dev/null 2>&1 && [ ! -f graft/INDEX.md ]; then
   ( flock -n 9 || exit 0; nohup graft build > .lanes/graft-build.log 2>&1 ) 9>.lanes/graft-build.lock & ok "graft build launched (.lanes/graft-build.log)"
@@ -122,7 +122,7 @@ if [ -x "$HOME/.local/bin/codebase-memory-mcp" ] && ! ls "$HOME/.cache/codebase-
 else ok "codebase-memory index present or tool absent"; fi
 HEAD_T="$(git log -1 --format=%ct)"
 if command -v gitnexus >/dev/null 2>&1 && [ -f .gitnexus/run.cjs ] && [ "$(stat -c %Y .gitnexus/run.cjs)" -lt "$HEAD_T" ]; then
-  ( flock -n 9 || exit 0; nohup gitnexus analyze > .lanes/gitnexus-analyze.log 2>&1 ) 9>.lanes/gitnexus-analyze.lock & ok "gitnexus index older than HEAD — analyze relaunched"
+  ( flock -n 9 || exit 0; nohup gitnexus analyze --skip-agents-md > .lanes/gitnexus-analyze.log 2>&1 ) 9>.lanes/gitnexus-analyze.lock & ok "gitnexus index older than HEAD — analyze relaunched"
 fi
 if command -v graft >/dev/null 2>&1 && [ -f graft/INDEX.md ] && [ "$(stat -c %Y graft/INDEX.md)" -lt "$HEAD_T" ]; then
   ( flock -n 9 || exit 0; nohup graft build > .lanes/graft-build.log 2>&1 ) 9>.lanes/graft-build.lock & ok "graft index older than HEAD — build relaunched"

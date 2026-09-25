@@ -299,3 +299,93 @@ the test count in the report was hand-typed rather than machine-pasted. Two rule
    refs — 13, 11, 6, 17 wrong — a five-second mechanical check nobody ran). And the anti-pattern screen runs
    over WHOLE FILES before every checkpoint (`scripts/ap_screen.py`), not only over edited hunks: a registered
    AF-AP-40 sat untouched in the checker for eleven rounds because no hunk ever contained it.
+
+## Moved from CLAUDE.md by CTX1 (D-089, 2026-09-25)
+
+CLAUDE.md was shortened losslessly (the owner, D-089, 2026-09-25): the text below left it VERBATIM, and CLAUDE.md points
+here.
+
+### The operative core (CLAUDE.md's index of this skill)
+
+Model-agnostic, per increment, no skipping steps. The operative core:
+
+1. **Verify every seam BEFORE writing code that calls it** — vendored-library seams get the
+   `vendor-first` pass FIRST (the library probably already built it); read the real contract in
+   the repo, from the CONSUMER; measuring inputs ≠ verifying the consuming contract; a test
+   written from the code's own assumption is a MIRROR, not a gate. Durable records that guard
+   IRREVERSIBLE side effects are written BEFORE the side effect, keyed by a pre-action id; the
+   residual fails LOUD. When enriching a build (new rung/check/channel), emit only shapes that
+   can actually fire — an emitted-but-unreachable check is a silent hollow green.
+2. **One increment = code + deterministic LLM-free test + commit.** Negative control failing for
+   the exact expected reason, de-vacuoused at write time; fixtures carry PRODUCTION data types;
+   parity gates assert the oracle ACTED and pin discrete metrics EXACTLY; prove STATE and
+   IDENTITY (and that the identity key COVERS the changing attribute); at least one negative
+   control through the REAL emitter/sink. Commit message = reasoning record (rejected
+   alternative, ordering rationale, primary source; enumerate disjoint hunks). Commit BEFORE any
+   destructive probe. Deterministic tests: run twice, bitwise. Forced to commit mid-increment →
+   embed recovery state in the message (acceptance bar + where it stands, WHY short, the plan).
+   PRE-MINT GATE (AF-AP-36): a reviewer-reported mutation of a proof's evidence becomes a committed FAILING regression test before the artifact is minted or re-minted; a checker is graded against hostile bundles, never only its own golden.
+3. **An unexpected test failure indicts YOUR assumption first** — ladder: telemetry → isolation →
+   code; reproduce before believing any recorded diagnosis; `${PIPESTATUS[0]}`, never a piped rc.
+4. **The live run is the real proof — live failures are FINDINGS.** Paired positive + negative
+   control, exact outcomes asserted; assert the probe's INSTRUMENT fired (or find a structural
+   signature only one mode can produce); resolve undocumented contracts from primary source;
+   prove the fix at the OUTERMOST boundary where the failure was observed (here: the PC-side
+   entry point over the bridge, not a narrower sandbox harness).
+5. **Close the loop in writing — and ECHO before closing.** Any real defect this increment
+   FOUND or FIXED (bug, wrinkle, wormhole, weird pattern) gets `/bug-echo` run on its
+   anti-pattern and the class registered in the ANTI-PATTERN REGISTRY atop
+   `docs/INCIDENT-LOG.md` BEFORE the increment closes — part of the validation contract in the
+   LIGHT loop too, not just deep-mode Phase 5 (owner mandate 2026-08-20/21/22, inherited: the
+   source repo's mega-sweep found unexploded siblings in ~half of all previously-fixed bug
+   classes). Docs/runbook updated the moment the live proof lands; TODO ↔ task list synced; push;
+   status lines open with the OUTCOME: `Verified live:` ≠ `DONE:` ≠ `NOT built.` (stated
+   first-class). Ledger denominators are FOUR-WAY (execution / conformance-checked decision /
+   blocked-on-external-input / blocked-on-capability) — never a flat count over the twelve proofs.
+   Test counts in reports and commit messages are PASTED from `scripts/test_summary.sh` output verbatim, never typed (AF-AP-37: '217 tests green' was a collection total). Timestamps are the same rule — pasted from `date -u` or the commit clock (2026-09-07: the day's ledger stamps drifted 2.8 h ahead); a ten-minute bucket comes from the clock too, `date -u +'%H:%M' | sed 's/[0-9]$/xZ/'`, never rounded up to the bucket an event is expected in (three ahead-of-clock stamps on 2026-09-25; the future-stamp gate blocked the one that reached a commit); a fourth at 04:5xZ, typed in the same call that ran `date`). **A stamp is SUBSTITUTED, never typed:** `export STAMP=$(date -u +'%H:%M' | sed 's/[0-9]$/xZ/')` and the text uses `$STAMP` (or `os.environ['STAMP']`) in the same command. **The Write tool cannot substitute:** a file written through Write takes its stamp from a `date -u` run just before it, pasted from that output, or is written through a Bash heredoc that expands `$STAMP` (the P1-R1 brief's premise heading, typed 09:2xZ at 09:18Z, the fifth; the future-stamp gate blocked the commit).
+
+### Behavioral guidelines (Andrej Karpathy skills)
+
+Bias toward caution over speed; for trivial tasks, use judgment.
+
+**1. Think Before Coding — don't assume, don't hide confusion, surface tradeoffs.** State
+assumptions; if uncertain, ask. Multiple interpretations → present them, don't pick silently.
+Simpler approach exists → say so; push back when warranted. Something unclear → stop, name it, ask.
+
+**2. Simplicity First — minimum code that solves the problem.** No unrequested features,
+abstractions for single-use code, speculative "flexibility", or error handling for impossible
+scenarios. 200 lines that could be 50 → rewrite. Test: "would a senior engineer call this
+overcomplicated?"
+
+**3. Surgical Changes — touch only what you must; clean up only your own mess.** Don't "improve"
+adjacent code/comments/formatting or refactor the unbroken; match existing style; mention (don't
+delete) unrelated dead code. Remove imports/variables YOUR change orphaned; leave pre-existing
+dead code. Test: every changed line traces to the request.
+
+**4. Goal-Driven Execution — define success criteria, loop until verified.** "Add validation" →
+"write tests for invalid inputs, make them pass"; "fix the bug" → "write a repro test, make it
+pass"; "refactor X" → "tests pass before and after". Multi-step → a brief `[step] → verify:
+[check]` plan. Strong criteria let you loop independently.
+
+**Working if:** fewer unnecessary diff lines, fewer overcomplication rewrites, clarifying
+questions BEFORE implementation.
+
+When Fable deep-mode rules conflict with these (e.g. chasing a surfaced defect to its root vs
+surgical changes), deep-mode governs — a real defect the wiring exposed is not scope creep.
+
+### Telemetry (the key rules)
+
+Full specification: `sandbox-kit/TELEMETRY-REFERENCE.md` (framework API, all 6 rules, standing loop).
+
+Treat the codebase like a PLC — every state, decision, transition externally observable.
+Framework: the PandaProbe-based observability plane per `docs/06_EVALUATION.md` is PLANNED, not
+built; until it lands every component emits structured JSON events carrying the reason field
+(byte-invisible human plane), and the PC-side sinks (OpenObserve `:5080`, Phoenix `:6006`/`:4317`
+— running, `docs/OBSERVABILITY-RUNBOOK.md`) receive nothing yet. Key rules:
+1. **Every decision/branch/abstain/error emits a span or event carrying the REASON.** Silent
+   decision paths are defects.
+2. **No shallow spans** — stamp inputs, outcome, discriminating detail.
+3. **Session context always attached** — `recording(input_hash, session_id=..., metadata={...})`.
+4. **Byte-invisible** — human-plane keys never change committed bytes or force re-baselining.
+5. **On every failure, assess telemetry sufficiency** — trace doesn't explain it → fix the
+   telemetry gap FIRST.

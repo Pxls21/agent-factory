@@ -21,9 +21,10 @@ answers, and lets an identical repeat through.
     (coordinator ruling 2026-09-24 13:3xZ: the J2 probe measured Jev's noul reranking picking the right row first 5% of
     the time, below random). No Jev score decides which hits are cut (KC-J5, needle loss).
 (b) QUIRK. A Bash command that matches a SHIPPED rule of QUIRK_RULES is blocked with the rule's explanation and its
-    CLAUDE.md or AF-AP anchor on stderr, exit 2. The table is closed; a rule ships only when its false-positive rate
-    (a block of a command that would have run as intended), read on this session's transcripts, is 5% or less
-    (tasks/briefs/jev-laya/JT3-report.md section 2; trailing-amp re-measured in JT3-R1-report.md section 3).
+    anchor (the skill file that holds the quirk since CTX1, CLAUDE.md, or an AF-AP row) on stderr, exit 2. The table
+    is closed; a rule ships only when its false-positive rate (a block of a command that would have run as intended),
+    read on this session's transcripts, is 5% or less (tasks/briefs/jev-laya/JT3-report.md section 2; trailing-amp
+    re-measured in JT3-R1-report.md section 3).
 (c) ESCAPE HATCH. The same tool name and input seen again within 120 s passes untouched (exit 0), so a wrong intercept
     costs one call. The Bash `description` field is left out of the key: it is a label, never executed. The record is
     written BEFORE the block, and when it cannot be written the hook does not block. State: .jev/intercept-seen.json
@@ -569,29 +570,32 @@ def _rule_rev_parse_two(p):
     return None
 
 
+QUIRK_SKILL = ".claude/skills/env-tool-quirks/SKILL.md"    # the quirks' home since CTX1 (D-089): each anchor cites it
 QUIRK_RULES = {
     "trailing-amp": (_rule_trailing_amp, (
         "A `&&` list ends in a trailing `&`, so the WHOLE list runs in one background subshell, and a later step reads "
         "what that subshell took with it: `$!` is the subshell's pid, not your job's (`kill $!` leaves the job "
         "running), and a variable the list assigns is unset after it.",
-        'CLAUDE.md "A trailing `&` backgrounds the WHOLE `&&` list" (bit 2026-09-21 and 2026-09-24 12:1xZ; task #225).',
+        '%s "A trailing `&` backgrounds the WHOLE `&&` list" (bit 2026-09-21 and 2026-09-24 12:1xZ; '
+        'task #225).' % QUIRK_SKILL,
         "End the list before the job: `a && b` on one line, then `nohup c > log 2>&1 &` on its own line, so `$!` is "
         "the job's pid and the list's variables stay in your shell.")),
     "pkill-self": (_rule_pkill_self, (
         "The pattern matches this command's own text, and the Bash tool runs every command through `eval` inside "
         "`bash -c '... eval '<command>' ...'`: pkill matches that shell and kills it (rc 143 or 144; the rest never "
         "runs).",
-        'CLAUDE.md "kill by pid, never by `pkill -f` inside a compound command that also names the target" '
-        "(rc 144, 2026-09-14; AF-AP-34).",
+        '%s "kill by pid, never by `pkill -f` inside a compound command that also names the target" '
+        "(rc 144, 2026-09-14; AF-AP-34)." % QUIRK_SKILL,
         "Kill by pid: read a pidfile, or run `pgrep -f '[x]yz'` in its OWN call, then `kill <pid>`.")),
     "safe-commit-backtick": (_rule_safe_commit_tick, (
         "Inside double quotes bash runs each `...` span as a command substitution, so the phrase vanishes from the "
         "commit message (or runs as a command).",
-        'CLAUDE.md "`scripts/safe_commit.sh -m "…"`: no backticks inside a double-quoted message" (2026-09-15).',
+        '%s "`scripts/safe_commit.sh -m "…"`: no backticks inside a double-quoted message" (2026-09-15).'
+        % QUIRK_SKILL,
         "Single-quote the message, escape each backtick as \\`, or write the message to a file.")),
     "rev-parse-two": (_rule_rev_parse_two, (
         "`git rev-parse --short` takes ONE revision; with two it fails: fatal: Needed a single revision (rc 128).",
-        'CLAUDE.md "`git rev-parse --short REV1 REV2` fails ... one rev-parse per call".',
+        '%s "`git rev-parse --short REV1 REV2` fails ... one rev-parse per call".' % QUIRK_SKILL,
         "Run one `git rev-parse --short <rev>` per revision.")),
 }
 # The measured table. A false positive is a block of a command that would have run as intended (VERIFY-JT3 F-3).
