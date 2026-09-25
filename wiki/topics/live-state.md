@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 16:0xZ — WHAT IS LIVE NOW (supersedes the 15:1xZ block for the live set).**
+- **RUNNING (sandbox, two agents):** S1-L1 (task #271): the situation-to-skill hook (`.claude/hooks/system1-context.py`), already registered and firing on the coordinator's calls, its gate not yet run; INSTALL1 (task #274): slopo installed, pinned and tuned on both venues, the audit's other install rows, a smoke table at session start.
+- **Found:** the codebase-memory hook returned nothing because every call reads its own 293 MB executable (about 2.6 s) before 40 ms of work, over its 2,000 ms deadline (AF-AP-220). The hooks stay off.
+- **Owner decisions open:** move the 356 vendored library skills out of `.claude/skills/`; the codebase-memory hook (a longer deadline, an upstream report, or the layer's L2 cache; recommended: L2 plus an upstream report).
 **2026-09-25 15:1xZ — WHAT IS LIVE NOW (supersedes the 14:1xZ block for the live set).**
 - **Done:** S1A audit (`docs/research/findings/system1-context/AUDIT-2026-09-25.md`) and the layer's design (`DESIGN-2026-09-25.md`, L1-L6); the codebase-memory hooks stripped (a Read 293 ms, was ~2,030; `scripts/strip_cbm_hooks.py`, run by setup.sh).
 - **RUNNING (sandbox, one agent):** S1-L1 (task #271): the situation-to-skill hook (`.claude/hooks/system1-context.py`, PreToolUse Write/Edit/Bash plus UserPromptSubmit skill sections).
