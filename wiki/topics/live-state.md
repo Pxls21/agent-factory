@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 12:5xZ — WHAT IS LIVE NOW (supersedes the 12:4xZ block for the live set).**
+- **D-089 (the owner):** restart the PC's `laya-systemone` and the sandbox Laya server on K265's code once it lands (no wait on a separate verify); CLAUDE.md shortened losslessly into referenced skills; GitNexus stops rewriting CLAUDE.md; no re-index without an update.
+- **RUNNING (sandbox, three agents, the D-062 ceiling):** K265 rev 2 (task #265); the T268-269 push lock (tasks #268, #269); CTX1 (task #270: the CLAUDE.md trim, `--skip-agents-md`, the post-commit re-index rule).
+- **Push cautions until the lock and CTX1 land:** no commit while a push runs (AF-AP-216); `push_when_green.sh` refuses (rc 65) once CTX1 installs its CLAUDE.md (a declared lane's edit outside the gitnexus block); CTX1's skill paths join `.lanes-live` at push time.
+
 **2026-09-25 12:4xZ — WHAT IS LIVE NOW (supersedes the 12:3xZ block for the live set).**
 - **Done:** the session export shipped (`/home/rocco/jev-data/session-export-2026-09-25-r1`, 318 files verified) and the known-values check found NO HIT on both sides (task #252 closed; follow-ups issue #78). The diverged branch (AF-AP-216) was reconciled with the owner's approval (8 commits replayed onto 2f825ca, trees identical, a local ref move only) and pushed through `push_when_green.sh` to 715caaf.
 - **RUNNING (sandbox, two agents):** K265 on contract rev 2 (task #265); the T268-269 builder on AMENDMENT 1, the push lock (tasks #268, #269; AF-AP-216). Until the lock lands: no commit while a push runs.
