@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 11:0xZ — WHAT IS LIVE NOW (supersedes the 10:1xZ block for the live set).**
+- **SESSION-EXPORT-R1 landed (origin ce2e1c5, GATED-PENDING-VERIFY):** escaped credentials redacted, the key dump dropped, four named rules, AMENDMENT 3 (repo test names now survive as evidence); the DSV2 record manifest regenerated. RUNNING: the original verifier's narrow re-verify (resumed). After it: a real-key export (the repair lane's transcript holds one FAKE canary that stops a fresh export with rc 3; exclude or handle it), the known-values checks, then the ship to the PC.
+- **P1 closed** (measured FAIL, verified instrument, issue #77); **side by side measured** (Qwen 0.90 works beside the reader).
+- **Open:** #265 (Laya fan-out subject first), #266, #268, #269, #264; AF-AP-212 (a redaction breaks 410 tool inputs' JSON) goes to the export follow-ups issue. PC idle, vLLM `qwen` active, no lanes.
+
 **2026-09-25 10:2xZ — WHAT IS LIVE NOW (supersedes the 09:1xZ block for the live set).**
 - **P1 CLOSED as measured FAIL with a verified instrument:** the P1-R1 repair re-verified MERGE-READY-WITH-FOLLOWUPS; follow-ups in issue #77, of which R1-1 must land before the replay grades any scorer. The seed's next step: the next pipeline takes P1's slot (PLAN-2026-09-25 build order: P2 prefetch and P3 digests). The redesign signal stays: document-class outputs need a model-free present step; a chunk scorer must see the chunk first and answer fast.
 - **RUNNING (sandbox):** SESSION-EXPORT-R1 (task #252), alive at 10:17 (139 turns). Its files are in `.lanes-live`.
