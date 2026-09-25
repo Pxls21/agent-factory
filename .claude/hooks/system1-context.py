@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""system1-context.py — the System-1 context layer, parts L1 and L3 (D-090; S1-L1, repaired by S1-L1-R1).
+"""system1-context.py — the System-1 context layer, parts L1 and L3 (D-090; S1-L1, repaired by S1-L1-R1; the prompt
+path reads every skill since S1-ALL, D-093).
 
 Design: docs/research/findings/system1-context/DESIGN-2026-09-25.md, sections L1 and L3. A rule that says "load skill X
 before Y" does not load the skill (AF-AP-218: 12 Skill calls in the main transcripts, while the hooks that inject fired
@@ -11,8 +12,11 @@ hundreds of times). So this hook injects the governing skill text itself, verbat
                                    `full details: <skill file> § <heading>`. A command row sees shell code only:
                                    quoted text, heredoc bodies and comments are data unless a shell reads them.
   UserPromptSubmit                 L3. The prompt is keyword-matched against the SECTIONS (a skill split at its
-                                   headings) of the table's prompt corpus; the best one or two excerpts are injected,
-                                   each with its pointer. It runs beside wiki-context.py, never inside it.
+                                   headings) of every skill under .claude/skills: a skill's description and name say
+                                   what it is for, its headings and body which section. A library skill (not in the
+                                   table's project_skills) counts only when the prompt names it, and its excerpt starts
+                                   with its one-line description. The best one or two excerpts are injected, each with
+                                   its pointer. It runs beside wiki-context.py, never inside it.
   --reset (from session-start.sh)  SessionStart `compact`, `resume` or `clear`: the window's marker is removed.
 
 Once per context window: the key of every injected line goes into a marker, <state>/system1-seen/<session>.<agent>.json
@@ -29,12 +33,17 @@ additionalContext (plain PreToolUse stdout reaches only the transcript view, AF-
 Advisory, never a gate: every path exits 0 and nothing blocks. Off switch: the file <state>/system1-off (the reset
 still runs, so a marker never outlives its window). Telemetry: one JSON line per decision in <state>/system1.jsonl
 (time, event, tool, the situations matched, the keys injected or skipped and why, the bytes); ids, keys and counts only,
-never the tool input or the prompt. An exception injects nothing and logs its type (and its window, once known); a row
-whose pattern or skill file fails is skipped alone, with its type.
+never the tool input or the prompt. A prompt excerpt's entry also carries its skill, heading, score, whether the skill
+is a project skill, and the sha256 of the excerpt's text: the transcript records that text, so the agent's scores of an
+injection (task #295) join its entry on it. An exception injects nothing and logs its type (and its window, once
+known); a row whose pattern or skill file fails is skipped alone, with its type.
 
-Latency: no instrument, no network, no model. The prompt path reads the corpus through <state>/system1-cache.json, keyed
-on each skill file's mtime and size (it saves about 19 ms per prompt, measured); the tool path parses only the one to
-three skill files a call needs, which costs less than loading that cache.
+Latency: no instrument, no network, no model. The prompt path reads its index of every skill through
+<state>/system1-cache.json, rebuilt whole only when a SKILL.md is added, removed or changed (its mtime or size); the
+tool path parses only the one to three skill files a call needs, which costs less than loading that index.
+Measured on the 413-skill tree (S1-ALL report): the index builds in about 0.6 s, once per change of the tree; warm,
+a prompt plans in 23 ms at the median and 36 ms at p95, and the whole hook process takes 64 and 90 ms (the PIN's: 38
+and 50).
 
 <state> is <repo>/.jev. Test seam, read once at start: AF_SYSTEM1_STATE (the state directory instead of <repo>/.jev).
 """
@@ -53,9 +62,16 @@ TOOL_BUDGET = 2048
 PROMPT_BUDGET = 4096
 PROMPT_EXCERPTS = 2                  # the best one or two sections per prompt, each at most PROMPT_BUDGET // 2
 PROMPT_SCAN_CHARS = 4000             # a pasted document is matched on its head
-MIN_PROMPT_SCORE = 12.0              # below it a prompt injects nothing (noise is worse than absence)
-ONE_LEAD_MIN_SCORE = 18.0            # a section whose heading and skill name share ONE word with the prompt (F5)
+MIN_PROMPT_SCORE = 70.0             # a project section with two or more lead words (noise is worse than absence)
+ONE_LEAD_MIN_SCORE = 80.0           # a project section with ONE lead word (F5)
+SHORT_MIN_SCORE = 30.0              # ... with two or more, in a short prompt: this, when they carry MIN_COVER
+MIN_COVER = 0.2                     # the share of the prompt's weight (skill-level idf) its lead words carry
+NAMED_MIN_SCORE = 40.0              # a section of a skill the prompt names: the only way a library skill counts
 SECOND_EXCERPT_RATIO = 0.75          # a second section only when it scores at least this share of the best one
+LEAD_MIN_IDF = 2.0                   # a lead word: at most one skill in e^2 - 1 (6.4) holds it
+BODY_K1, BODY_B = 1.2, 0.75          # BM25's defaults: a long section's body counts for less
+DESCRIPTION_MAX = 300                # bytes of a library skill's description line
+INDEX_VERSION = 2                    # the prompt index's format in <state>/system1-cache.json
 TOOLS = ("Write", "Edit", "Bash")
 STDIN_WAIT_S = 2.0
 LOCK_WAIT_S = 0.5
@@ -73,10 +89,30 @@ STOPWORDS = {
     "not", "but", "all", "any", "one", "use", "from", "has", "had", "its", "let", "lets", "will", "would", "should",
     "could", "then", "than", "them", "they", "there", "their", "here", "when", "which", "who", "into", "out", "about",
     "please", "okay", "yes", "did", "done", "need", "want", "see", "look", "make", "sure", "way", "more", "some",
+    # S1-ALL: the corpus is documentation, where the words of speech are rare, so rarity alone would make them leads;
+    # and URL parts, which a description's link spreads over unrelated prompts.
+    "again", "ago", "ahead", "already", "although", "always", "another", "anything", "anyway", "anywhere", "around",
+    "away", "back", "basically", "been", "before", "being", "best", "better", "between", "both", "came", "come",
+    "comes", "coming", "cool", "definitely", "didn", "don", "doesn", "doing", "down", "each", "either", "else",
+    "enough", "especially", "etc", "even", "ever", "every", "everything", "exactly", "far", "few", "fine", "first",
+    "found", "gave", "getting", "give", "given", "gives", "giving", "going", "gone", "gonna", "good", "got", "gotta",
+    "great", "guess", "guy", "guys", "hey", "hmm", "honestly", "isn", "keep", "kind", "last", "later", "least", "less",
+    "lot", "lots", "maybe", "mean", "means", "might", "mine", "most", "much", "must", "myself", "never", "next", "nice",
+    "nothing", "off", "often", "once", "only", "other", "others", "over", "own", "part", "per", "perhaps", "pretty",
+    "probably", "put", "quite", "rather", "really", "right", "said", "same", "saw", "say", "saying", "says", "seem",
+    "seems", "since", "something", "sometimes", "somewhere", "soon", "sort", "still", "stuff", "such", "take", "taken",
+    "takes", "taking", "tell", "thank", "thanks", "thing", "things", "think", "thinking", "those", "though", "thought",
+    "through", "till", "today", "together", "told", "too", "took", "tried", "tries", "try", "trying", "under", "until",
+    "upon", "very", "via", "wanna", "wasn", "well", "went", "were", "whatever", "whether", "while", "whole", "whose",
+    "within", "without", "won", "wouldn", "yet", "yours", "aren", "weren", "haven", "hasn", "hadn", "couldn", "shouldn",
+    "mustn", "yep", "nope", "huh", "umm", "uhh", "wow", "lol", "long", "time", "times",
+    "http", "https", "www", "com", "org", "github", "html",
 }
 
 HEADING_RX = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 TOKEN_RX = re.compile(r"[a-z0-9_]{3,}")
+FRONT_RX = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*$", re.S | re.M)       # a SKILL.md's frontmatter block
+DQ_ESCAPES = {"n": " ", "t": " ", "\\": "\\", '"': '"', "/": "/", "0": "", " ": " "}   # YAML double-quoted, folded
 # A line that starts a new entry: a heading, a bold lead, a list item, a numbered or lettered item, a table, a quote, a
 # fence. Other non-blank lines continue the entry above them.
 ENTRY_START_RX = re.compile(r"^\s*(?:\*\*|#{1,6}\s|[-*+]\s|\d+[a-z]?\.\s|\([a-z0-9]{1,3}\)\s|\||>|```)")
@@ -560,43 +596,204 @@ def plan_tool(payload, table, seen, budget=TOOL_BUDGET):
 
 # ---------------------------------------------------------------- the prompt path (L3)
 
-def tokens(text):
-    """Lower-case words of three or more characters, stopwords out, a plural `s` folded ("briefs" meets "brief")."""
-    out = set()
+def words(text):
+    """Lower-case words of three or more characters, in order, a plural `s` folded ("briefs" meets "brief"). A skill's
+    name is matched on this sequence as a phrase, stopwords kept."""
+    out = []
     for w in TOKEN_RX.findall(text.lower()):
         if len(w) > 4 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
             w = w[:-1]
-        if w not in STOPWORDS:
-            out.add(w)
+        out.append(w)
     return out
 
 
-def corpus_index(corpus, cache_path):
-    """{skill: [[heading, start, end, heading tokens, body tokens], ...]} through the mtime-keyed cache."""
+def tokens(text):
+    """The words of `text` as a set, stopwords out."""
+    return {w for w in words(text) if w not in STOPWORDS}
+
+
+def description(text):
+    """A skill's frontmatter `description` on one line (a YAML plain, quoted or block scalar, whitespace folded), or ''
+    when it has none. Stdlib only; a test holds it equal to PyYAML's reading of every SKILL.md in the tree."""
+    m = FRONT_RX.match(text)
+    if not m:
+        return ""
+    lines = m.group(1).split("\n")
+    for i, line in enumerate(lines):
+        if not line.startswith("description:"):
+            continue
+        first, more = line[len("description:"):].strip(), []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and not nxt[0].isspace():
+                break                                                    # the next key
+            more.append(nxt.strip())
+        if first[:1] in ("|", ">"):
+            parts = more
+        elif first[:1] == "'":                                            # up to the closing quote; '' is a quote
+            parts = [re.match(r"(?:[^']|'')*", " ".join([first[1:]] + more)).group(0).replace("''", "'")]
+        elif first[:1] == '"':
+            parts = [_double_quoted(" ".join([first[1:]] + more))]
+        else:
+            parts = [re.split(r"\s#", first, 1)[0]] + more                # a plain scalar: " #" starts a comment
+        return " ".join(" ".join(parts).split())
+    return ""
+
+
+def _double_quoted(raw):
+    """A double-quoted YAML scalar's text up to its closing quote, its escapes resolved."""
+    out, k = [], 0
+    while k < len(raw) and raw[k] != '"':
+        if raw[k] == "\\" and k + 1 < len(raw):
+            nx = raw[k + 1]
+            if nx == "u" and re.match(r"[0-9a-fA-F]{4}", raw[k + 2:k + 6]):
+                out.append(chr(int(raw[k + 2:k + 6], 16)))
+                k += 6
+                continue
+            out.append(DQ_ESCAPES.get(nx, nx))
+            k += 2
+            continue
+        out.append(raw[k])
+        k += 1
+    return "".join(out)
+
+
+def one_line(desc, limit=DESCRIPTION_MAX):
+    """`desc` cut to `limit` UTF-8 bytes at a word boundary, "…" marking the cut."""
+    if len(desc.encode("utf-8")) <= limit:
+        return desc
+    cut = desc.encode("utf-8")[:limit - len("…".encode("utf-8"))].decode("utf-8", "ignore")
+    return (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,;:") + "…"
+
+
+def skill_files():
+    """{skill: [mtime_ns, size]} of every regular SKILL.md one directory below .claude/skills. The corpus follows the
+    tree: a skill added or removed changes it with no table edit. A linked skill directory is followed (F17)."""
+    import stat
+    out = {}
     try:
-        cache = json.loads(read_regular(cache_path).decode("utf-8"))
-    except (FileNotFoundError, ValueError):                          # absent or torn: rebuilt below and rewritten
-        cache = None
-    if not isinstance(cache, dict) or cache.get("v") != 1 or not isinstance(cache.get("skills"), dict):
-        cache = {"v": 1, "skills": {}}
-    dirty, out = False, {}
-    for skill in corpus:
-        st = os.stat(skill_file(skill))
-        ent = cache["skills"].get(skill)
-        if not ent or ent.get("mtime_ns") != st.st_mtime_ns or ent.get("size") != st.st_size:
-            lines, sections = parse_skill(read_skill(skill))
-            ent = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "sections": [
-                [h, s, e, sorted(tokens(h)), sorted(tokens("\n".join(lines[s + 1:e])))] for h, s, e in sections]}
-            cache["skills"][skill] = ent
-            dirty = True
-        out[skill] = ent["sections"]
-    if dirty:
-        write_json_atomic(cache_path, cache)
+        names = sorted(os.listdir(SKILLS_DIR))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            st = os.stat(skill_file(name))
+        except OSError:
+            continue
+        if stat.S_ISREG(st.st_mode):
+            out[name] = [st.st_mtime_ns, st.st_size]
     return out
+
+
+def build_index(files):
+    """The prompt path's index of the skills in `files`. skills: [name, description, description tokens, name words,
+    first section, end section]; sections: [skill, heading, start, end, token count, heading tokens, non-blank lines
+    under the heading]; post: {token: "<how many skills hold it anywhere> <section> <section> ..."}, one string per
+    token, split only for the prompt's words (a JSON list of numbers per token loads about four times slower,
+    measured). An unreadable skill file is left out (F17)."""
+    skills, sections, post = [], [], {}
+    for name in sorted(files):
+        try:
+            text = read_skill(name)
+        except (OSError, ValueError):
+            continue
+        lines, secs = parse_skill(text)
+        desc, first = description(text), len(sections)
+        held = tokens(desc) | tokens(name.replace("-", " "))
+        for h, s, e in secs:
+            toks = tokens(h) | tokens("\n".join(lines[s + 1:e]))
+            for t in toks:
+                post.setdefault(t, [0]).append(len(sections))
+            body_lines = sum(1 for x in lines[s + 1:e] if x.strip())
+            sections.append([len(skills), h, s, e, len(toks), sorted(tokens(h)), body_lines])
+            held |= toks
+        for t in held:
+            post.setdefault(t, [0])[0] += 1
+        skills.append([name, desc, sorted(tokens(desc)), words(name.replace("-", " ")), first, len(sections)])
+    avg = sum(x[4] for x in sections) / len(sections) if sections else 1.0
+    return {"v": INDEX_VERSION, "files": files, "skills": skills, "sections": sections, "avg": avg,
+            "post": {t: " ".join(map(str, v)) for t, v in post.items()}}
+
+
+def corpus_index(cache_path):
+    """The index of every skill in the tree, through <state>/system1-cache.json: rebuilt whole when a SKILL.md is added,
+    removed or changed (its mtime or size), else read as it is."""
+    files = skill_files()
+    try:
+        idx = json.loads(read_regular(cache_path).decode("utf-8"))
+    except (FileNotFoundError, ValueError):                          # absent or torn: rebuilt below and rewritten
+        idx = None
+    if not (isinstance(idx, dict) and idx.get("v") == INDEX_VERSION and idx.get("files") == files
+            and isinstance(idx.get("skills"), list) and isinstance(idx.get("sections"), list)
+            and isinstance(idx.get("post"), dict)):
+        idx = build_index(files)
+        write_json_atomic(cache_path, idx)
+    return idx
+
+
+def named(name_words, qset, qwords):
+    """True when a skill's name words stand in the prompt as a phrase, in order."""
+    if not name_words or not qset.issuperset(name_words):
+        return False
+    n = len(name_words)
+    return any(qwords[i:i + n] == name_words for i in range(len(qwords) - n + 1))
+
+
+def rank_prompt(prompt, idx, project):
+    """[(score, skill, heading, start, end, project skill, description)] of the sections that pass, best first, and the
+    prompt's word weights {word: section-level idf}. A section's score: its skill's description words (2x their
+    skill-level idf), its skill's name when the prompt names it (2x), its heading words (3x their section-level idf) and
+    its body (the idf of the prompt words it holds, scaled down for a long section, BM25-style). A lead word is a
+    description, heading or name word that at most one skill in e^LEAD_MIN_IDF - 1 holds. A project skill needs two
+    lead words and MIN_PROMPT_SCORE, or, for a short prompt, two lead words that carry MIN_COVER of the prompt's
+    weight (its words' skill-level idf) and SHORT_MIN_SCORE; with one lead word it needs ONE_LEAD_MIN_SCORE (F5). A
+    library skill counts only when the prompt names it, and needs NAMED_MIN_SCORE (so does a named project skill)."""
+    import math
+    qw = words(prompt[:PROMPT_SCAN_CHARS])
+    q = {w for w in qw if w not in STOPWORDS}
+    skills, sections, post = idx["skills"], idx["sections"], idx["post"]
+    held = {t: post[t].split() for t in q if post.get(t)}              # [skills holding t, then its sections]
+    sidf = {t: math.log(1 + len(skills) / int(v[0])) for t, v in held.items() if int(v[0])}
+    idf = {t: math.log(1 + len(sections) / (len(v) - 1)) for t, v in held.items() if len(v) > 1}
+    mass = sum(sidf.values())                                        # the prompt's weight: what the corpus knows of it
+    body = {}
+    for t, w in idf.items():
+        for j in held[t][1:]:                                        # section ids as strings: no int() per posting
+            body[j] = body.get(j, 0.0) + w
+    qset, avg, out = set(qw), idx.get("avg") or 1.0, []
+    for name, desc, dtoks, nwords, lo, hi in skills:
+        own = name in project
+        hit = named(nwords, qset, qw) and (len(nwords) > 1 or sidf.get(nwords[0], 0.0) >= LEAD_MIN_IDF)
+        if not (own or hit):
+            continue                                                 # a library skill counts only when named
+        dm = q.intersection(dtoks)
+        nset = {w for w in nwords if w not in STOPWORDS} if hit else set()
+        base = 2 * sum(sidf.get(t, 0.0) for t in dm) + 2 * sum(sidf.get(t, 0.0) for t in nset)
+        dlead = {t for t in dm if sidf.get(t, 0.0) >= LEAD_MIN_IDF} | nset
+        for j in range(lo, hi):
+            _, h, s, e, n, htoks, body_lines = sections[j]
+            if not body_lines:
+                continue                                             # a title with nothing under it: nothing to inject
+            hm = q.intersection(htoks)
+            lead = dlead | {t for t in hm if sidf.get(t, 0.0) >= LEAD_MIN_IDF}
+            if not lead:
+                continue
+            score = base + 3 * sum(idf.get(t, 0.0) for t in hm) + body.get(str(j), 0.0) * (BODY_K1 + 1) / (
+                1 + BODY_K1 * (1 - BODY_B + BODY_B * n / avg))
+            if hit:
+                ok = score >= NAMED_MIN_SCORE
+            elif len(lead) > 1:                                      # strong, or a large share of a short prompt
+                ok = score >= MIN_PROMPT_SCORE or (
+                    score >= SHORT_MIN_SCORE and sum(sidf[t] for t in lead) >= MIN_COVER * mass)
+            else:
+                ok = score >= ONE_LEAD_MIN_SCORE
+            if ok:
+                out.append((round(score, 2), name, h, s, e, own, desc))
+    out.sort(key=lambda x: (-x[0], x[1], x[3]))
+    return out, idf
 
 
 def plan_prompt(payload, table, seen, cache_path, budget=PROMPT_BUDGET):
-    import math
+    import hashlib
     rec = {"event": "UserPromptSubmit", "matched": [], "injected": [], "skipped": [], "bytes": 0}
     prompt = payload.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
@@ -609,26 +806,15 @@ def plan_prompt(payload, table, seen, cache_path, budget=PROMPT_BUDGET):
     if not q:
         rec["why"] = "no-tokens"
         return "", rec, []
-    index = corpus_index(table["prompt_corpus"], cache_path)
-    secs = [(skill, h, s, e, set(ht), set(bt)) for skill, lst in index.items() for h, s, e, ht, bt in lst]
-    df = {t: sum(1 for *_, ht, bt in secs if t in ht or t in bt) for t in q}
-    idf = {t: math.log(1 + len(secs) / df[t]) for t in q if df[t]}
-    scored = []
-    for skill, h, s, e, ht, bt in secs:
-        named = tokens(skill.replace("-", " "))
-        lead = (q & ht) | (q & named)
-        if not lead:
-            continue
-        score = sum(3 * idf[t] for t in q & ht) + sum(2 * idf[t] for t in q & named) + sum(idf[t] for t in q & bt)
-        if score >= (MIN_PROMPT_SCORE if len(lead) > 1 else ONE_LEAD_MIN_SCORE):     # F5: one word needs more
-            scored.append((round(score, 2), skill, h, s, e))
-    scored.sort(key=lambda x: (-x[0], x[1], x[3]))
-    rec["matched"] = [f"{skill} § {h} ({score})" for score, skill, h, s, e in scored[:5]]
+    idx = corpus_index(cache_path)
+    rec["corpus"] = len(idx["skills"])
+    scored, idf = rank_prompt(prompt, idx, set(table.get("project_skills") or ()))
+    rec["matched"] = [f"{skill} § {h} ({score})" for score, skill, h, *_ in scored[:5]]
     top = scored[0][0] if scored else 0.0
     chosen = [x for x in scored[:PROMPT_EXCERPTS] if x[0] >= SECOND_EXCERPT_RATIO * top]
     share = budget // PROMPT_EXCERPTS
     texts = []
-    for score, skill, h, s, e in chosen:
+    for score, skill, h, s, e, own, desc in chosen:
         lines = read_skill(skill).split("\n")
         # The excerpt starts at the entry that shares the most weight with the prompt, else at the section's top.
         best, best_w, start = s + 1, 0.0, None
@@ -646,8 +832,19 @@ def plan_prompt(payload, table, seen, cache_path, budget=PROMPT_BUDGET):
                     best, best_w = i, w
         label = f"[system1 · prompt] skill {skill}, the section that matches this prompt, verbatim:"
         taken = seen | {k for t in texts for k in t[3]}                   # the first excerpt's lines count as seen
+        dkey = None
+        if not own and desc:                                             # a library skill: what it is, once a window
+            dline = "description: " + one_line(desc)
+            if line_key(skill, dline) not in taken:
+                label, dkey = label + "\n" + dline, line_key(skill, dline)
         units = [[(i, lines[i])] for i in range(best, e)]
-        texts.append(compose([("prompt", skill, h, units, label)], taken, share, pointer_only=True))
+        text, injected, skipped, new = compose([("prompt", skill, h, units, label)], taken, share, pointer_only=True)
+        if injected and dkey:
+            new.append(dkey)
+        for i in injected:                                               # the join keys for the agent's scores (#295)
+            i.update(skill=skill, heading=h, score=score, project=own,
+                     sha=hashlib.sha256(text.encode("utf-8")).hexdigest()[:16])
+        texts.append((text, injected, skipped, new))
     out = [t[0] for t in texts if t[0]]
     new_keys = [k for t in texts for k in t[3]]
     for _, injected, skipped, _ in texts:

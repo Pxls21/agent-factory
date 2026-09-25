@@ -11,6 +11,11 @@ hook's.
 State never touches the real .jev/: AF_SYSTEM1_STATE points each test at its own tmp dir. The tests that need a broken
 skill, table or row run the registered command against a copy of the hook, the table and the skills (`copy_repo`).
 S1-L1-R1 added the tests for the VERIFY-S1-L1 follow-ups (F1, F2, F4-F10, F12, F16, F17) and for its mutants.
+
+S1-ALL (task #296, D-093) made the prompt path read every skill under .claude/skills. A library skill (outside the
+table's project_skills) is reached by its name and its excerpt opens with its one-line description; the oracle for that
+line is PyYAML's reading of the skill's frontmatter (`description_of`), never the hook's parser. The tests from
+`test_a_library_skill_is_reached_by_name_with_its_description` on each name the reason they are red on the PIN, a67489f.
 """
 import collections
 import fcntl
@@ -27,6 +32,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / ".claude" / "hooks"
@@ -34,6 +40,7 @@ HOOK = HOOKS / "system1-context.py"
 TABLE = json.loads((HOOKS / "system1-situations.json").read_text(encoding="utf-8"))
 SETTINGS = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
 ROWS = {row["id"]: row for row in TABLE["rows"]}
+PROJECT = set(TABLE["project_skills"])        # the project's own skills; any other skill is a library one
 SID = "s1test-session-0001"
 # An entry starts at a heading, a bold lead, a list item, a numbered or lettered item, a table, a quote or a fence, or
 # after a blank line; other lines continue it. The hook's ENTRY_START_RX must say the same (a test holds it).
@@ -109,13 +116,33 @@ def start(source, sid=SID, agent=None):
     return p
 
 
-def skill_lines(skill):
-    return (ROOT / ".claude" / "skills" / skill / "SKILL.md").read_text(encoding="utf-8").split("\n")
+def skill_lines(skill, root=ROOT):
+    return (root / ".claude" / "skills" / skill / "SKILL.md").read_text(encoding="utf-8").split("\n")
 
 
-def blocks(ctx, pointer_only_ok=False):
+def description_of(skill, root=ROOT):
+    """A skill's frontmatter description as PyYAML reads it, whitespace folded: the oracle for the hook's own parser."""
+    text = (root / ".claude" / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    front = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
+    return " ".join(str(yaml.safe_load(front.group(1)).get("description") or "").split()) if front else ""
+
+
+def description_line_ok(skill, line, root=ROOT):
+    """A library excerpt's description line: `description: ` and the skill's description, whole, or cut at a word
+    boundary to at most 300 UTF-8 bytes and marked with `…`."""
+    if not line.startswith("description: "):
+        return False
+    text, want = line[len("description: "):], description_of(skill, root)
+    head = text[:-1]
+    return text == want or (text.endswith("…") and len(text.encode("utf-8")) <= 300 and want.startswith(head)
+                            and want[len(head):len(head) + 1] in (" ", ",", ";", ":"))
+
+
+def blocks(ctx, pointer_only_ok=False, root=ROOT):
     """Split an injection into (label, body, pointer, skill) blocks and check each against its skill file (the oracle).
-    A block with no line (label and pointer only) is allowed only where the caller says so (F4, the prompt path)."""
+    A block with no line (label and pointer only) is allowed only where the caller says so (F4, the prompt path). A
+    library skill's prompt block may open with its description line (S1-ALL): checked against PyYAML's reading of the
+    skill, and left out of the body returned."""
     out, cur = [], None
     for line in ctx.split("\n") if ctx else []:
         if line.startswith("[system1 · "):
@@ -124,12 +151,15 @@ def blocks(ctx, pointer_only_ok=False):
         elif line.startswith("full details: .claude/skills/"):
             assert cur is not None, "a pointer with no label"
             skill, heading = line[len("full details: .claude/skills/"):].split("/SKILL.md § ", 1)
-            lines = skill_lines(skill)
+            lines = skill_lines(skill, root)
             assert any(x.lstrip("#").strip() == heading for x in lines if x.startswith("#")), heading
-            assert (cur[1] or pointer_only_ok) and cur[1][:1] != ["…"], "a block with no skill line"
-            for body in cur[1]:
-                assert body == "…" or body in lines, f"not a verbatim line of {skill}: {body[:80]!r}"
-            out.append((cur[0], cur[1], line, skill))
+            body = cur[1]
+            if skill not in PROJECT and body[:1] and description_line_ok(skill, body[0], root):
+                body = body[1:]
+            assert (body or pointer_only_ok) and body[:1] != ["…"], "a block with no skill line"
+            for x in body:
+                assert x == "…" or x in lines, f"not a verbatim line of {skill}: {x[:80]!r}"
+            out.append((cur[0], body, line, skill))
             cur = None
         else:
             assert cur is not None, f"text outside a block: {line[:80]!r}"
@@ -216,7 +246,7 @@ def copy_repo(dst):
     for f in ("system1-context.py", "system1-situations.json"):
         shutil.copy2(HOOKS / f, dst / ".claude" / "hooks" / f)
     shutil.copy2(ROOT / "scripts" / "hook_context.py", dst / "scripts" / "hook_context.py")
-    for skill in sorted({r["skill"] for r in TABLE["rows"]} | set(TABLE["prompt_corpus"])):
+    for skill in sorted({r["skill"] for r in TABLE["rows"]} | PROJECT):
         (dst / ".claude" / "skills" / skill).mkdir(parents=True)
         shutil.copy2(ROOT / ".claude" / "skills" / skill / "SKILL.md", dst / ".claude" / "skills" / skill / "SKILL.md")
     return dst
@@ -508,23 +538,25 @@ def _score(matched):
 
 
 def test_the_prompt_budget(tmp_path):
-    # one long section: its excerpt is cut at the share (half the prompt budget), the pointer kept
-    ctx = context(run(PROMPT, prompt("claude 5 prompting and delegation: how to write the brief"), tmp_path / "a"))
+    # one long section: its excerpt is cut at the share (half the prompt budget), the pointer kept. The next section
+    # passed its gate (matched lists only those) but scores under SECOND_EXCERPT_RATIO of the best: one excerpt only.
+    ask = "anti hollow green: the negative control on every gate and the mutation check"
+    ctx = context(run(PROMPT, prompt(ask), tmp_path / "a"))
     rec = telemetry(tmp_path / "a")[-1]
     assert rec["event"] == "UserPromptSubmit" and 0 < rec["bytes"] == len(ctx.encode("utf-8")) <= 2048
     assert len(blocks(ctx)) == 1 and rec["injected"][0]["cut"] > 0
-    # two sections that score alike: two excerpts, each within its share, both within 4,096
-    ctx = context(run(PROMPT, prompt("bug echo after the fix, find similar bugs"), tmp_path / "b"))
-    rec = telemetry(tmp_path / "b")[-1]
-    assert len(blocks(ctx)) == 2 and 0 < rec["bytes"] == len(ctx.encode("utf-8")) <= 4096
-    assert all(i["bytes"] <= 2048 for i in rec["injected"])
-    # a second section above MIN_PROMPT_SCORE but under SECOND_EXCERPT_RATIO of the best: one excerpt only
-    ctx = context(run(PROMPT, prompt("trace the chain from the hook to the model"), tmp_path / "c"))
-    rec = telemetry(tmp_path / "c")[-1]
     s1 = _module(HOOK, "s1_ratio")
     best, second = _score(rec["matched"][0]), _score(rec["matched"][1])
-    assert s1.MIN_PROMPT_SCORE <= second < s1.SECOND_EXCERPT_RATIO * best       # de-vacuous: the case is the boundary
-    assert len(blocks(ctx)) == 1 and "§ Trace the chain" in ctx
+    assert second < s1.SECOND_EXCERPT_RATIO * best                               # de-vacuous: the case is the boundary
+    # two sections that score alike: two excerpts, each within its share, both within 4,096
+    for k, ask in enumerate(("claude 5 prompting and delegation: how to write the brief",
+                             "bug echo after the fix, find similar bugs")):
+        ctx = context(run(PROMPT, prompt(ask), tmp_path / f"b{k}"))
+        rec = telemetry(tmp_path / f"b{k}")[-1]
+        assert len(blocks(ctx)) == 2 and 0 < rec["bytes"] == len(ctx.encode("utf-8")) <= 4096
+        assert all(i["bytes"] <= 2048 for i in rec["injected"])
+    # a short prompt that names a project skill still reaches its section (the project skills keep their reach)
+    assert "§ Trace the chain" in context(run(PROMPT, prompt("trace the chain from the hook to the model"), tmp_path / "c"))
 
 
 def test_the_prompt_path_filters_and_never_repeats(tmp_path):
@@ -560,19 +592,25 @@ def test_a_prompt_whose_first_line_is_too_long_still_gets_its_pointer(tmp_path):
 
 
 def test_a_one_word_lead_needs_a_higher_score(tmp_path, monkeypatch):
-    """F5: a section whose heading and skill name share ONE word with the prompt needs ONE_LEAD_MIN_SCORE, not
-    MIN_PROMPT_SCORE. The verifier's case: the systemctl prompt drew "Repair briefs …" on the word "unit"."""
-    ask = "the systemctl user unit restart on the PC failed with XDG_RUNTIME_DIR"
+    """F5: a section with ONE lead word (a description, heading or name word that few skills hold) needs
+    ONE_LEAD_MIN_SCORE. The case: `metadata`, the one lead of bug-echo § Metadata keys in this prompt. Opening the
+    two-lead gates changes nothing; opening the one-lead gate lets it through: the one-lead gate is the reason."""
+    ask = "why keep the metadata keys at all"
     assert context(run(PROMPT, prompt(ask), tmp_path)) == ""
-    s1 = _module(HOOK, "s1_lead")                                             # de-vacuous: the rule is the reason
-    monkeypatch.setattr(s1, "ONE_LEAD_MIN_SCORE", s1.MIN_PROMPT_SCORE)
-    text, rec, _ = s1.plan_prompt({"prompt": ask}, s1.load_table(), set(), str(tmp_path / "cache.json"))
-    best = rec["matched"][0].rsplit(" (", 1)[0]
-    skill, heading = best.split(" § ", 1)
-    q = s1.tokens(ask)
-    assert len((q & s1.tokens(heading)) | (q & s1.tokens(skill.replace("-", " ")))) == 1
-    assert s1.MIN_PROMPT_SCORE <= _score(rec["matched"][0]) < _module(HOOK, "s1_lead2").ONE_LEAD_MIN_SCORE
-    # a one-word lead that scores above it still goes (the resume protocol on the word "protocol")
+    s1 = _module(HOOK, "s1_lead")
+    table, cache = s1.load_table(), str(tmp_path / "cache.json")
+    for name in ("MIN_PROMPT_SCORE", "SHORT_MIN_SCORE"):
+        monkeypatch.setattr(s1, name, 0.0)
+    assert s1.plan_prompt({"prompt": ask}, table, set(), cache)[1]["matched"] == []
+    monkeypatch.setattr(s1, "ONE_LEAD_MIN_SCORE", 0.0)
+    rec = s1.plan_prompt({"prompt": ask}, table, set(), cache)[1]
+    assert rec["matched"][0].startswith("bug-echo § Metadata keys (")
+    assert _score(rec["matched"][0]) < _module(HOOK, "s1_lead2").ONE_LEAD_MIN_SCORE
+    # the verifier's F5 case drew "Repair briefs …" on the word "unit"; now only pc-bridge-lanes, whose description
+    # names a PC-side systemctl command, may answer it
+    sysd = context(run(PROMPT, prompt("the systemctl user unit restart on the PC failed with XDG_RUNTIME_DIR"), tmp_path))
+    assert "Repair briefs" not in sysd and {b[3] for b in blocks(sysd, pointer_only_ok=True)} <= {"pc-bridge-lanes"}
+    # a prompt with several lead words still goes: the resume protocol
     assert "SESSION-RESUME" in context(run(PROMPT, prompt(
         "the resume after compaction protocol, fetch origin and compare the three clocks"), tmp_path))
 
@@ -888,7 +926,7 @@ def test_every_row_resolves_and_each_entry_fits_a_call_alone():
             need = len(label.encode()) + sum(len(x.encode()) + 1 for x in unit) + len(pointer(row).encode()) + 1
             assert need <= s1.TOOL_BUDGET, (row["id"], unit[0][:40], need)
         assert lines[idx[0]] == first_line(row) and row["source"]
-    for skill in TABLE["prompt_corpus"]:
+    for skill in PROJECT:
         assert (ROOT / ".claude" / "skills" / skill / "SKILL.md").is_file(), skill
 
 
@@ -923,3 +961,230 @@ def test_the_installed_commands_reach_the_model_form(tmp_path):
         r = subprocess.run(["sh", "-c", cmd], input=json.dumps(payload).encode(), capture_output=True, timeout=60,
                            env=env, cwd="/")
         assert want in context(r)
+
+
+# ---- S1-ALL (D-093): the prompt path reads every skill under .claude/skills. Each test below names its red on the PIN.
+
+LIBRARY_ASK = "convene the council on the memory design"
+RWKV_ASK = "fine-tune rwkv on one gpu: how do we train an rwkv model and compare rwkv with transformers"
+ENV_LOG = ("Loaded env from /srv/app/.env\nwarning: REQUIRE_API_KEY in /srv/app/.env is ignored, set it first\n"
+           "listening on 0.0.0.0:20128\nhealth check ok (200)\ndashboard ready at http://localhost:20128/dashboard\n"
+           "session store: sqlite at /srv/app/data/app.db\nprovider registry loaded: 14 providers, 3 combos\n") * 8
+
+
+def fixture_skill(root, name, description, sections):
+    """Write a library skill into a copied tree: its frontmatter, a title, and `sections` [(heading, [lines])]."""
+    d = root / ".claude" / "skills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    body = [f"# {name}", "", "A fixture skill for tests/test_system1_context.py.", ""]
+    for heading, lines in sections:
+        body += [f"## {heading}", ""] + lines + [""]
+    p = d / "SKILL.md"
+    p.write_text(f"---\nname: {name}\ndescription: {description}\n---\n\n" + "\n".join(body), encoding="utf-8")
+    return p
+
+
+GLIMMER = ("zqx-glimmer", "Tune a zqx glimmer lattice before a glimmer run.",
+           [("Glimmer lattice tuning", ["1. Pin the zqx glimmer lattice seed before the run.",
+                                        "2. Record the lattice drift after it."])])
+
+
+def split_blocks(ctx):
+    """The injection cut at its label lines: each block's text as the model receives it."""
+    parts, cur = [], []
+    for line in ctx.split("\n"):
+        if line.startswith("[system1 · ") and cur:
+            parts.append("\n".join(cur))
+            cur = []
+        cur.append(line)
+    return parts + ["\n".join(cur)] if cur else parts
+
+
+def test_a_library_skill_is_reached_by_name_with_its_description(tmp_path):
+    """A skill outside the table's project_skills (council, a library skill) is injected when the prompt names it: its
+    label, one line `description: …` (the skill's frontmatter description), its lines verbatim, its pointer. Its
+    description's words without its name bring none of it: a library skill counts only when named. Red on the PIN:
+    council is outside the PIN's prompt_corpus, so no council block comes."""
+    assert "council" not in PROJECT and (ROOT / ".claude" / "skills" / "council" / "SKILL.md").is_file()
+    ctx = context(run(PROMPT, prompt(LIBRARY_ASK), tmp_path / "a"))
+    got = [b for b in blocks(ctx) if b[3] == "council"]
+    assert got, "no council block"
+    lines = ctx.split("\n")
+    assert description_line_ok("council", lines[lines.index(got[0][0]) + 1])     # right after the label
+    rec = telemetry(tmp_path / "a")[-1]
+    assert [e["project"] for e in rec["injected"] if e["skill"] == "council"] == [False] * len(got)
+    ctl = context(run(PROMPT, prompt("multi-persona deliberation with historical thinkers"), tmp_path / "b"))
+    assert "skill council," not in ctl                                            # the control: not named, not sent
+
+
+def test_the_corpus_follows_the_tree_with_no_table_edit(tmp_path):
+    """A skill added to a copied tree is ranked with no table edit, and a removed one is gone at the next prompt. Red on
+    the PIN: the PIN ranks only the table's prompt_corpus."""
+    root = copy_repo(tmp_path / "repo")
+    fixture_skill(root, *GLIMMER)
+    assert "zqx-glimmer" not in (root / ".claude" / "hooks" / "system1-situations.json").read_text(encoding="utf-8")
+    ask = "tune the zqx glimmer lattice before the next glimmer run"
+    ctx = context(run(PROMPT, prompt(ask), tmp_path / "st", root=root))
+    got = [b for b in blocks(ctx, root=root) if b[3] == "zqx-glimmer"]
+    assert got, "the added skill was not reached"
+    lines = ctx.split("\n")
+    assert description_line_ok("zqx-glimmer", lines[lines.index(got[0][0]) + 1], root)
+    n_skills = len(list((root / ".claude" / "skills").glob("*/SKILL.md")))
+    assert telemetry(tmp_path / "st")[-1]["corpus"] == n_skills
+    shutil.rmtree(root / ".claude" / "skills" / "zqx-glimmer")
+    ctx = context(run(PROMPT, prompt(ask, sid="s1test-session-0003"), tmp_path / "st", root=root))
+    rec = telemetry(tmp_path / "st")[-1]
+    assert "zqx-glimmer" not in ctx and "error" not in rec and rec["corpus"] == n_skills - 1
+
+
+def test_a_weak_match_injects_nothing(tmp_path, monkeypatch):
+    """Noise is worse than absence: a prompt whose one lead is an incidental word, and a pasted service log, inject
+    nothing, and nothing passes (matched is empty). Opened in process, the same gates let sections through: the gates
+    are what hold them. Red on the PIN: it injects bug-echo § Metadata keys for the first prompt (and env-tool-quirks
+    § Test gates and pasted counts for the log)."""
+    for ask in ("why keep the metadata keys at all", ENV_LOG):
+        assert context(run(PROMPT, prompt(ask), tmp_path)) == ""
+        assert telemetry(tmp_path)[-1]["matched"] == [], ask[:20]
+    s1 = _module(HOOK, "s1_weak")
+    for name in ("MIN_PROMPT_SCORE", "ONE_LEAD_MIN_SCORE", "SHORT_MIN_SCORE", "NAMED_MIN_SCORE"):
+        monkeypatch.setattr(s1, name, 0.0)
+    table, cache = s1.load_table(), str(tmp_path / "cache.json")
+    for ask in ("why keep the metadata keys at all", ENV_LOG):
+        assert s1.plan_prompt({"prompt": ask}, table, set(), cache)[1]["matched"], ask[:20]   # de-vacuous
+
+
+def test_the_budget_and_the_marker_with_the_whole_corpus(tmp_path):
+    """Two excerpts of a library skill: each within its share (2,048 bytes), both within 4,096, each with its pointer;
+    the description line once, in the first block; the same prompt again in the window repeats no line, the description
+    included, and the marker holds the key of every line sent. Red on the PIN: it sends no rwkv block."""
+    first = context(run(PROMPT, prompt(RWKV_ASK), tmp_path))
+    rec = telemetry(tmp_path)[-1]
+    got = blocks(first)
+    assert [b[3] for b in got] == ["rwkv", "rwkv"]
+    assert 0 < rec["bytes"] == len(first.encode("utf-8")) <= 4096 and all(e["bytes"] <= 2048 for e in rec["injected"])
+    lines = first.split("\n")
+    desc = [x for x in lines if x.startswith("description: ")]
+    assert len(desc) == 1 and lines.index(desc[0]) == 1 and description_line_ok("rwkv", desc[0])
+    sent = {x for b in got for x in b[1] if x != "…"} | set(desc)
+    again = context(run(PROMPT, prompt(RWKV_ASK), tmp_path))
+    assert not set(again.split("\n")) & sent                                  # nothing again, the description neither
+    keys = set(json.loads((tmp_path / "system1-seen" / f"{SID}.main.json").read_text())["keys"])
+    assert {line_key("rwkv", x) for x in sent} <= keys
+
+
+def test_the_cache_rebuilds_on_a_changed_skill_file_only(tmp_path):
+    """The prompt index is read as it is while no SKILL.md changes (the cache file is not rewritten), and rebuilt when
+    one does: a section added to a library skill is found by the next prompt. Red on the PIN: its corpus never holds a
+    library skill, so the new section never comes."""
+    root = copy_repo(tmp_path / "repo")
+    skill = fixture_skill(root, *GLIMMER)
+    st = tmp_path / "st"
+    cache = st / "system1-cache.json"
+    context(run(PROMPT, prompt("tune the zqx glimmer lattice"), st, root=root))
+    before = cache.stat()
+    context(run(PROMPT, prompt("tune the zqx glimmer lattice", sid="s1test-session-0004"), st, root=root))
+    after = cache.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)      # read, not rebuilt
+    added = "\n## Quartz drift ledger\n\nLog every zqx glimmer quartz drift in the ledger.\n"
+    skill.write_text(skill.read_text(encoding="utf-8") + added, encoding="utf-8")
+    ctx = context(run(PROMPT, prompt("the zqx glimmer quartz drift ledger", sid="s1test-session-0005"), st, root=root))
+    assert "§ Quartz drift ledger" in ctx
+    assert cache.stat().st_ino != before.st_ino                                  # rewritten (a new file renamed in)
+    s = skill.stat()
+    assert json.loads(cache.read_text())["files"]["zqx-glimmer"] == [s.st_mtime_ns, s.st_size]
+
+
+def test_the_description_parser_reads_every_skill_as_pyyaml_does():
+    """The hook reads a frontmatter description with the stdlib; PyYAML's reading, whitespace folded, is the oracle, on
+    every SKILL.md in the tree and on each YAML shape. Red on the PIN: it has no description()."""
+    s1 = _module(HOOK, "s1_desc")
+    files = sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md"))
+    assert len(files) > 300
+    differ = [p.parent.name for p in files
+              if s1.description(p.read_text(encoding="utf-8")) != description_of(p.parent.name)]
+    assert differ == []
+    shapes = ["description: plain words on one line # a comment",
+              'description: "double \\"quoted\\" text\\u2014escaped"',
+              "description: 'single ''quoted'' text'",
+              "description: >\n  a folded block\n  over two lines",
+              "description: |\n  a literal block\n  kept",
+              "name: no-description"]
+    for front in shapes:
+        want = " ".join(str(yaml.safe_load(front).get("description") or "").split())
+        assert s1.description(f"---\n{front}\n---\nbody\n") == want, front
+    assert s1.description("# no frontmatter\n") == ""
+
+
+def test_the_prompt_entries_carry_their_join_keys(tmp_path):
+    """Each prompt excerpt's telemetry entry names its skill, heading and score, whether the skill is a project skill,
+    and the sha256 of the excerpt's text as the model receives it, so the agent's scores of an injection (task #295)
+    join its entry exactly; the record counts the skills indexed. Red on the PIN: none of these fields."""
+    n_skills = len(list((ROOT / ".claude" / "skills").glob("*/SKILL.md")))
+    asks = ((RWKV_ASK, False), ("claude 5 prompting and delegation: how to write the brief", True))
+    for k, (ask, own) in enumerate(asks):
+        ctx = context(run(PROMPT, prompt(ask, sid=f"s1test-join-{k}"), tmp_path))
+        rec = telemetry(tmp_path)[-1]
+        parts = split_blocks(ctx)
+        assert len(parts) == len(rec["injected"]) >= 1 and rec["corpus"] == n_skills
+        for text, e in zip(parts, rec["injected"]):
+            assert e["sha"] == hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+            assert text.split("\n")[-1] == f"full details: .claude/skills/{e['skill']}/SKILL.md § {e['heading']}"
+            assert e["key"] == f"{e['skill']} § {e['heading']}" and isinstance(e["score"], float) and e["score"] > 0
+            assert e["project"] is own is (e["skill"] in PROJECT)
+
+
+def test_the_prompt_path_stays_fast_with_a_warm_cache(tmp_path):
+    """CONTRACT 4's guard: with a warm index, a prompt cut at 4,000 characters plans well under a second in process
+    (measured p95 36 ms over the owner's 219 prompts; the bound is 300 ms, best of three). Passes on the PIN too: a
+    guard, not a control."""
+    s1 = _module(HOOK, "s1_fast")
+    table, cache, ask = s1.load_table(), str(tmp_path / "cache.json"), (ENV_LOG + RWKV_ASK + " ") * 3
+    s1.plan_prompt({"prompt": ask}, table, set(), cache)                         # builds the index
+    ts = []
+    for _ in range(3):
+        t0 = time.perf_counter()
+        s1.plan_prompt({"prompt": ask}, table, set(), cache)
+        ts.append(time.perf_counter() - t0)
+    assert min(ts) < 0.3, ts
+
+
+def test_a_fifo_in_the_tree_never_blocks_the_prompt_path(tmp_path):
+    """F17 for the whole-tree scan: a FIFO in place of a skill's SKILL.md is left out at once, the prompt answered and
+    nothing logged as an error. Passes on the PIN too, which never reads that directory."""
+    root = copy_repo(tmp_path / "repo")
+    fifo = fixture_skill(root, *GLIMMER)
+    fifo.unlink()
+    os.mkfifo(fifo)
+    try:
+        t0 = time.monotonic()
+        r = run(PROMPT, prompt("tune the zqx glimmer lattice"), tmp_path / "st", root=root, timeout=20)
+        assert time.monotonic() - t0 < 10 and "zqx-glimmer" not in context(r)
+        assert "error" not in telemetry(tmp_path / "st")[-1]
+    finally:
+        _unblock(fifo)
+
+
+def test_a_name_is_its_words_in_order(tmp_path):
+    """A skill is named when its name's words stand in the prompt as a phrase, in order; the same words apart name
+    nothing, so a library skill whose words are only scattered through a prompt stays out. Red on the PIN: the control
+    (the name in order) reaches nothing, the skill being outside its prompt_corpus."""
+    root = copy_repo(tmp_path / "repo")
+    fixture_skill(root, *GLIMMER)
+    assert "skill zqx-glimmer," in context(run(PROMPT, prompt("tune the zqx glimmer lattice"), tmp_path / "a", root=root))
+    ctx = context(run(PROMPT, prompt("the glimmer of the zqx lattice, tuned"), tmp_path / "b", root=root))
+    assert "zqx-glimmer" not in ctx and telemetry(tmp_path / "b")[-1]["matched"] == []
+
+
+def test_a_title_with_nothing_under_it_is_never_ranked(tmp_path):
+    """A heading with no line under it (a skill's bare title) has nothing to inject, so it is never ranked: it cannot
+    win and leave the prompt with nothing, as vllm's title did in the replay before this rule. Red on the PIN: the
+    skill is outside its prompt_corpus."""
+    root = copy_repo(tmp_path / "repo")
+    d = root / ".claude" / "skills" / "zqx-bare"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: zqx-bare\ndescription: The zqx bare procedure for bare runs.\n---\n\n"
+                                "# zqx bare\n\n## Bare procedure steps\n\n1. Run the zqx bare procedure step by step.\n",
+                                encoding="utf-8")
+    ctx = context(run(PROMPT, prompt("the zqx bare procedure"), tmp_path / "st", root=root))
+    assert "§ Bare procedure steps" in ctx
+    assert not [m for m in telemetry(tmp_path / "st")[-1]["matched"] if m.startswith("zqx-bare § zqx bare (")]

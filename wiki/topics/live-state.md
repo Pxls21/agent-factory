@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 23:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING:** none in the sandbox this minute; S1-RATE (#295) and SCRUB2 (#292) dispatch next.
+- **Landed:** S1-ALL (task #296): the prompt path reads all 413 skills; library skills only when the prompt names them (Laya's ranking, #297, adds the rest); noise 59.7% to 8.8% on the owner's 219 prompts; gate 70 kept (the coordinator's call on D1), to be re-tuned from #295's scores.
+- **Waiting on the owner:** the S0-04 re-sign (command handed over).
+- **Held bakes, now due:** three `env-tool-quirks` items (the waiter trailer, the no-tags clone control, the Laya lock via the builder's pre-fit check).
+
 **2026-09-25 23:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one agent):** S1-ALL (task #296), the prompt path of the situation hook over every skill.
 - **Waiting on the owner:** the S0-04 re-sign (round 2 of the verify: MERGE-READY-WITH-FOLLOWUPS, the owner may sign the R1 result). After the signature: the tag object over the bridge, `docs/governance/tags/accepted-S0-04.tag`, the PENDING line removed, `EXPECTED_PENDING = set()`.
