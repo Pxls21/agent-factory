@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 11:1xZ — WHAT IS LIVE NOW (supersedes the 11:0xZ block for the live set).**
+- **Context budget measured** (`docs/research/findings/jev-pipes/CONTEXT-BUDGET-2026-09-25.md`): of 8.15 billion re-sent tokens, task-list reminders 12.0%, all tool results 7.5% (the ceiling of any output pruner), CLAUDE.md re-injections 7.1%, our Bash commands 4.1%; exact repeats 0.00%. The task DB now holds ACTIVE tasks only (#252, #265, #268, #269); the backlog stays open in the ledger. Proposed to the owner: a shorter CLAUDE.md, a session started in the repo, a GitNexus banner that does not rewrite CLAUDE.md.
+- **RUNNING (sandbox):** the session-export verifier's narrow re-verify of SESSION-EXPORT-R1 (task #252); then the real-key export and the ship.
+- **Closed today:** P1 (measured FAIL, verified instrument, issue #77); the side-by-side window (Qwen 0.90 works beside the reader); vllm-rwkv parked.
+
 **2026-09-25 11:0xZ — WHAT IS LIVE NOW (supersedes the 10:1xZ block for the live set).**
 - **SESSION-EXPORT-R1 landed (origin ce2e1c5, GATED-PENDING-VERIFY):** escaped credentials redacted, the key dump dropped, four named rules, AMENDMENT 3 (repo test names now survive as evidence); the DSV2 record manifest regenerated. RUNNING: the original verifier's narrow re-verify (resumed). After it: a real-key export (the repair lane's transcript holds one FAKE canary that stops a fresh export with rc 3; exclude or handle it), the known-values checks, then the ship to the PC.
 - **P1 closed** (measured FAIL, verified instrument, issue #77); **side by side measured** (Qwen 0.90 works beside the reader).
