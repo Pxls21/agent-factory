@@ -349,3 +349,160 @@ def test_missing_transcript_exits_3(tmp_path):
     r = subprocess.run([sys.executable, str(TOOL), "--transcript", str(tmp_path / "nope.jsonl"), "--out", str(tmp_path / "o")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 3 and "no transcript" in r.stderr
+
+
+# SESSION-EXPORT (task #252, D-086): tool payloads pass `scrub_payload` (scrub, then payload shapes scrub does not take) and
+# the output of a command that names a secret file passes `scrub_strict` (every assignment value, every long mixed run,
+# every lone token line). `scrub` itself is unchanged, so every consumer that imports it keeps its output. Each function is
+# read at test time, so a module without it fails its own tests only. Every value here is fake.
+def _module():
+    spec = importlib.util.spec_from_file_location("transcript_export_payload_under_test", TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+MOD = _module()
+
+# (text, its scrub_payload output, the fake values of which no byte may survive)
+PAYLOAD_SHAPES = (
+    # a bridge host with no scheme (the link rule wants http(s)://), one under another scheme, one with two labels
+    ("curl -s zq-fake-quartz-tunnel.trycloudflare.com/exec", "curl -s <bridge-link-redacted>/exec", ("zq-fake-quartz",)),
+    ("wss://zq-fake-quartz-tunnel.trycloudflare.com/ws", "wss://<bridge-link-redacted>/ws", ("zq-fake-quartz",)),
+    ("host a.zq-fake-quartz.trycloudflare.com", "host <bridge-link-redacted>", ("zq-fake-quartz",)),
+    # a Bearer token with b64token characters the Bearer rule's class stops at
+    ("Authorization: Bearer Fk1eBearerTok0001+Fk1e/Tail0002==", "Authorization: Bearer <redacted>",
+     ("Fk1eBearerTok0001", "Tail0002")),
+    ("Bearer Fk1eBearerTok0003~Fk1eTail0004 next", "Bearer <redacted> next", ("Fk1eBearerTok0003", "Tail0004")),
+    # HTTP Basic credentials in a header
+    ("-H 'Authorization: Basic ZmFrZXVzZXI6ZmFrZXBhc3N3b3Jk'", "-H 'Authorization: Basic <redacted>'",
+     ("ZmFrZXVzZXI6ZmFrZXBhc3N3b3Jk",)),
+    # a password in a URL's userinfo
+    ("postgres://fakeuser:Fk1ePgPass0005@db.internal:5432/app", "postgres://fakeuser:<redacted>@db.internal:5432/app",
+     ("Fk1ePgPass0005",)),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", PAYLOAD_SHAPES)
+def test_payload_shapes_scrub_misses_are_scrubbed(text, scrubbed, secrets):
+    out = getattr(MOD, "scrub_payload")(text)
+    for s in secrets:
+        assert s not in out, f"a payload value survived: {out!r}"
+    assert out == scrubbed, out
+
+
+# Negative controls: none of these holds a secret, so scrub_payload leaves each one as it is.
+PAYLOAD_KEEP = (
+    "see https://example.com/a+b=c and x+y=z",
+    "git@github.com:owner/repo.git",
+    "mailto:someone@example.com",
+    "https://user@example.com/x",
+    "http://localhost:20128/v1/chat",
+    "user@host:~/dir",
+    "the trycloudflare.com docs",
+    "Basic auth is off; Authorization: Basic",
+    "Authorization: Bearer <redacted>Bearer <redacted>",
+    "Bearer <redacted> short",
+)
+
+
+@pytest.mark.parametrize("text", PAYLOAD_KEEP)
+def test_payload_rules_keep_text_with_no_secret(text):
+    assert getattr(MOD, "scrub_payload")(text) == text
+
+
+def test_payload_rules_leave_every_pinned_fixture_as_scrub_leaves_it():
+    # the payload rules run after scrub; on every fixture above they change nothing scrub produced
+    payload = getattr(MOD, "scrub_payload")
+    texts = [t for t, _ in PIN_OUTPUTS] + [t for t, _, _ in CHAINED + IN_RUN + LATER_RULES] + [t for t, _ in QUOTED_OR_COMPOUND]
+    texts += list(PLANTED.values()) + ["-----BEGIN %s-----\n%s\n-----END %s-----" % (k, KEY_BODY, k) for k in KEY_FAMILIES]
+    moved = [t[:24] for t in texts if payload(t) != SCRUB(t)]
+    assert moved == [], moved
+
+
+# (text, its scrub_strict output, the fake values of which no byte may survive)
+STRICT_SHAPES = (
+    # an env file printed whole: every value goes, whatever its name
+    ("PC_BRIDGE_URL=https://zq-fake.trycloudflare.com\nPC_BRIDGE_TOKEN=Fk1eTok0006x\nZQ_ENDPOINT=http://10.9.8.7:20128/v1\n"
+     "export ZQ_OTHER='two fake words'\n",
+     "PC_BRIDGE_URL=<redacted>\nPC_BRIDGE_TOKEN=<redacted>\nZQ_ENDPOINT=<redacted>\nexport ZQ_OTHER=<redacted>\n",
+     ("zq-fake", "Fk1eTok0006x", "10.9.8.7", "two fake words")),
+    # grep -n output and a file:line prefix
+    ("3:ZQ_SETTING=Fk1eValue0007\nsrc/app.env:7:ZQ_B=Fk1eValue0008", "3:ZQ_SETTING=<redacted>\nsrc/app.env:7:ZQ_B=<redacted>",
+     ("Fk1eValue0007", "Fk1eValue0008")),
+    # a key file printed raw: a long token, and a short one alone on its line
+    ("Fk1eRawKey0009abcdef\nFk1eRaw00010\n", "<redacted>\n<redacted>\n", ("Fk1eRawKey0009", "Fk1eRaw00010")),
+    # a long mixed run inside a line, with base64 characters
+    ("key is Fk1eMixed/Run0011+abcdefgh== here", "key is <redacted> here", ("Fk1eMixed", "Run0011")),
+    # a curl config: each line's value goes
+    ('header = "X-Agent-Token: Fk1eHdr0012"\nurl = "https://zq-fake.trycloudflare.com/exec"', "header = <redacted>\nurl = <redacted>",
+     ("Fk1eHdr0012", "zq-fake")),
+    # the strict pass includes scrub_payload: a key block and a bare bridge host
+    ("-----BEGIN OPENSSH PRIVATE KEY-----\n" + KEY_BODY + "\n-----END OPENSSH PRIVATE KEY-----\nzq-fake-host.trycloudflare.com",
+     "<private-key-redacted>\n<bridge-link-redacted>", ("AAKCAQ", "zq-fake-host")),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed,secrets", STRICT_SHAPES)
+def test_strict_pass_takes_every_value_of_a_secret_file(text, scrubbed, secrets):
+    out = getattr(MOD, "scrub_strict")(text)
+    for s in secrets:
+        assert s not in out, f"a value survived the strict pass: {out!r}"
+    assert out == scrubbed, out
+
+
+# Negative controls: ordinary command output with no assignment, no long mixed run and no lone token line stays.
+STRICT_KEEP = (
+    "5 passed in 1.20s",
+    "tests/test_x.py::test_y PASSED",
+    "no such file: /etc/zq.env",
+    "/home/user/agent-factory/scripts/pc_lane.sh",
+    "short tok9 here",
+    "if x > 1: print('ok')",
+)
+
+
+@pytest.mark.parametrize("text", STRICT_KEEP)
+def test_strict_pass_keeps_plain_output(text):
+    assert getattr(MOD, "scrub_strict")(text) == text
+
+
+def test_strict_pass_is_a_fixed_point_and_stays_linear():
+    import time
+    strict = getattr(MOD, "scrub_strict")
+    once = strict(STRICT_SHAPES[0][0] + STRICT_SHAPES[4][0])
+    assert strict(once) == once
+    run = ("Ab1" * 10 + "+") * 1400          # no piece reaches the opaque rule's 40; one run for the strict pass
+    t0 = time.monotonic()
+    out = strict("A=" + run + "\n" + run + " x\n" + run)
+    assert time.monotonic() - t0 < 3, "the strict pass is not linear on a long run"
+    assert out == "A=<redacted>\n<redacted> x\n<redacted>", out[:80]
+
+
+# SESSION-EXPORT AMENDMENT 1, G6: scrub_payload and scrub_strict take an `opaque` callable for the coarse opaque-run rule
+# (session_export.py's stable pseudonyms). Every named rule runs first, so a value a named rule takes never reaches the
+# callable, even when it is 40+ characters long. Every value here is fake.
+NAMED_LONG = (
+    ("PC_BRIDGE_TOKEN=" + "Q7" * 22, "PC_BRIDGE_TOKEN=<redacted>"),
+    ("ghp_" + "Zq9" * 14, "gh<redacted>"),
+    ("host " + "zq" * 22 + ".trycloudflare.com", "host <bridge-link-redacted>"),
+    ("Bearer Fk1eBearerTok0001+" + "Q7" * 22, "Bearer <redacted>"),
+    ("Authorization: Basic " + "Zm9v" * 11, "Authorization: Basic <redacted>"),
+    ("postgres://u:" + "Q7" * 22 + "@db/x", "postgres://u:<redacted>@db/x"),
+)
+
+
+@pytest.mark.parametrize("text,scrubbed", NAMED_LONG)
+def test_named_rules_take_a_long_value_before_the_opaque_rule(text, scrubbed):
+    seen = []
+    out = getattr(MOD, "scrub_payload")(text, opaque=lambda m: seen.append(m.group(0)) or "[opaque:x]")
+    assert out == scrubbed and seen == [], (out, len(seen))
+
+
+def test_the_opaque_callable_gets_only_what_no_named_rule_takes():
+    sha = "0123456789abcdef" * 2 + "01234567"                       # a fake 40-hex commit id
+    seen = []
+    out = getattr(MOD, "scrub_payload")("pushing %s to origin" % sha, opaque=lambda m: seen.append(m.group(0)) or "[opaque:x]")
+    assert out == "pushing [opaque:x] to origin" and seen == [sha]
+    assert getattr(MOD, "scrub_payload")("pushing %s" % sha) == "pushing <opaque-redacted>"      # no callable: the marker
+    assert getattr(MOD, "scrub_strict")("sha " + sha, opaque=lambda m: "[opaque:x]") == "sha [opaque:x]"

@@ -88,6 +88,62 @@ def scrub(text: str) -> str:
     return text
 
 
+# SESSION-EXPORT (task #252, D-086, the brief's D-2): tool payloads carry shapes `scrub` does not take. `scrub` stays as it
+# is, so every consumer that imports it keeps its output; `scrub_payload` runs scrub's rules and these (the order is in its
+# docstring), and it is the scrubber scripts/session_export.py runs on every text. Each rule matches only what scrub's named
+# rules left.
+PAYLOAD_PATTERNS = [
+    # a bridge host with no scheme or under another scheme (the link rule wants http(s)://), every label of it
+    (re.compile(r"(?<![A-Za-z0-9\-])(?:[A-Za-z0-9\-]+\.)+trycloudflare\.com", re.I), "<bridge-link-redacted>"),
+    # the tail of a Bearer token in the b64token characters `~+/=`, where the Bearer rule's class stops
+    (re.compile(r"((?-i:Bearer)\s+<redacted>)[~+/=][A-Za-z0-9._~+/=\-]*"), r"\1"),
+    # HTTP Basic credentials in an Authorization header
+    (re.compile(r"((?i:authorization)\s*:\s*(?i:basic)\s+)[A-Za-z0-9+/]{8,}=*"), r"\1<redacted>"),
+    # a password in a URL's userinfo (scheme://user:password@host)
+    (re.compile(r"(\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s/:@'\"<>]+:)[^\s/@'\"<>]+@"), r"\1<redacted>@"),
+]
+
+
+OPAQUE_MARK = "<opaque-redacted>"      # the marker of scrub's coarse opaque-run rule
+
+
+def scrub_payload(text: str, opaque=None) -> str:
+    """The extended scrubber for tool payloads: scrub's named rules, then PAYLOAD_PATTERNS, then scrub's coarse opaque-run
+    rule, whose match becomes `opaque(match)` when a callable is given (session_export.py's stable pseudonyms, AMENDMENT 1
+    G6) or its marker. The named rules run first, so a value one of them takes never reaches `opaque`, however long."""
+    for pat, rep in SECRET_PATTERNS:
+        if rep != OPAQUE_MARK:
+            text = pat.sub(rep, text)
+    for pat, rep in PAYLOAD_PATTERNS:
+        text = pat.sub(rep, text)
+    for pat, rep in SECRET_PATTERNS:
+        if rep == OPAQUE_MARK:
+            text = pat.sub(rep if opaque is None else opaque, text)
+    return text
+
+
+# The strict pass (D-2), for the output of a command that names a secret file: scrub_payload, then every assignment value
+# on a line (an env file, `grep -n` over one, a curl config), every run of 20+ key characters that holds a letter and a
+# digit, and every line that is one token of 12+ such characters (a key file printed raw). It over-redacts ordinary output
+# on purpose: it runs only where a secret file was named.
+_ASSIGN_LINE = re.compile(r"(?m)^([ \t]*(?:\d+[:-]|[^\s:=]+:\d+[:-])?[ \t]*(?:export[ \t]+|declare[ \t]+-x[ \t]+)?"
+                          r"[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*)\S.*$")
+_KEY_RUN = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
+_TOKEN_LINE = re.compile(r"(?m)^([ \t]*)([A-Za-z0-9_\-+/=.~:]{12,})([ \t]*)$")
+_LETTER, _DIGIT = re.compile(r"[A-Za-z]"), re.compile(r"[0-9]")
+
+
+def _keylike(s):
+    return bool(_LETTER.search(s) and _DIGIT.search(s))
+
+
+def scrub_strict(text: str, opaque=None) -> str:
+    """scrub_payload (with the same `opaque`), then every assignment value, long mixed run and lone token line (above)."""
+    text = _ASSIGN_LINE.sub(r"\1<redacted>", scrub_payload(text, opaque))
+    text = _KEY_RUN.sub(lambda m: "<redacted>" if _keylike(m.group(0)) else m.group(0), text)
+    return _TOKEN_LINE.sub(lambda m: m.group(1) + "<redacted>" + m.group(3) if _keylike(m.group(2)) else m.group(0), text)
+
+
 def turns(path):
     with open(path, errors="replace") as fh:
         for line in fh:
