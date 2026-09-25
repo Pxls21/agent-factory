@@ -195,6 +195,13 @@ subordinate to, the Anthropic docs.
    none of them in `.lanes-live`, so `push_clean --lanes-live` refused twice (as designed). Measure what the open phrase touches at
    authoring and list every path as MODIFY, or have the lane name each extra path in its report before it edits one, and add it to
    `.lanes-live` the same minute.
+0n. **A conditional owner yes to a change the owner could read as losing something is restated and confirmed before
+   dispatch (2026-09-25, LIB1).** D-091 recorded the owner's voice-typed "so long as the skills are still usable, you
+   don't lose the skills anywhere" as a yes to moving 356 skills out of `.claude/skills/`; the brief was written and
+   committed, and the owner, reading the status, stopped it before dispatch: "are you removing skills? Don't do that."
+   Before dispatching a move, rename, disable or delete the owner approved with a condition, send one plain line with
+   the numbers (what moves, what stays, what is deleted, how each is reached afterwards) and wait for an explicit yes.
+   A voice-typed conditional is a question back, not a green light.
 
 
 0h. **A brief that changes a SHAPE runs every test that pins the shape, not only the changed file's own suite (2026-09-25, K265, AF-AP-215).** The K265 brief changed the Laya server's per-chunk state order and measured the server's own suite at the PIN; `tests/test_laya_ft.py` pinned the same shape as the fine-tune's train/serve invariant (the dataset's `{"query", "chunk"}` rows equal what the server sends), so the contract broke it and the lane stopped at its boundary (one round). Before a brief changes a function's output shape or order, find every test and consumer that reads it (graft for the callers, a literal grep of `tests/` for the function and module names), run those tests at the PIN, and paste the set with its counts in the premise block; a consumer that pins the old shape is a design input, never a surprise for the lane.
