@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 12:4xZ — WHAT IS LIVE NOW (supersedes the 12:3xZ block for the live set).**
+- **Done:** the session export shipped (`/home/rocco/jev-data/session-export-2026-09-25-r1`, 318 files verified) and the known-values check found NO HIT on both sides (task #252 closed; follow-ups issue #78). The diverged branch (AF-AP-216) was reconciled with the owner's approval (8 commits replayed onto 2f825ca, trees identical, a local ref move only) and pushed through `push_when_green.sh` to 715caaf.
+- **RUNNING (sandbox, two agents):** K265 on contract rev 2 (task #265); the T268-269 builder on AMENDMENT 1, the push lock (tasks #268, #269; AF-AP-216). Until the lock lands: no commit while a push runs.
+- **Owner decisions open:** restart the PC's `laya-systemone` on K265's code after its verify; the three context savings (a shorter CLAUDE.md, a session started in the repo, no GitNexus rewrite of CLAUDE.md).
+
 **2026-09-25 12:3xZ — WHAT IS LIVE NOW (supersedes the 12:1xZ block for the live set).**
 - **Session export (task #252):** the R1 re-verify returned MERGE-READY-WITH-FOLLOWUPS, accepted (R1-F-1 has 0 instances in the real corpus; its one-line fix and AF-AP-213 land before the next export; issue #78). The real-key export ran on the verified snapshot (317 sources, rc 0, gate 0, canaries 0) and `scripts/known_values_check.py` found NO HIT for every sandbox secret in it and 0 for every secret over all 9,707 tracked files. SHIPPING to the PC now (`/home/rocco/jev-data/session-export-2026-09-25-r1`), then the PC-side check with the PC's keys.
 - **RUNNING (sandbox, one agent):** K265 on contract rev 2 (task #265).
