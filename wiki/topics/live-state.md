@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 22:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** S1-ALL (task #296), the prompt path of the situation hook over every skill; VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber.
+- **Landed:** S0-04-LEAK R1 (task #287): the five verify findings fixed, S0-04 re-minted again (ledger digest 7daeba65...), F4 fixed (the committed-tree proof-status test pins the pending set to S0-04). Gate: 627 passed twice (set=1d810cbca988).
+- **Next:** a focused independent check of R1, then the owner's re-sign command; #295 after S1-ALL lands (draft in the scratchpad); the held env-tool-quirks bake (the waiter trailer) at the S1-ALL landing.
+
 **2026-09-25 22:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** S0-04-LEAK-R1 (task #287), the repair round for the verify's five findings (F1, F1b, F3, F10, F13) before the owner re-signs `accepted/S0-04`; S1-ALL (task #296), the prompt path of the situation hook over every skill (413 skills, 219 real prompts in its replay); VERIFY-SCRUB1 (task #301), the independent check of the transcript scrubber (fixture secret sources only).
 - **Pushed:** origin 7a5e342 after CI run #1091 passed (the VERIFY-S0-04-LEAK harvest, the CI wait change, the VERIFY-SCRUB1 brief, the waiter quirk); the value check on the 18 pushed digests found only the expected `TYPESAFE_BASE_URL` host.

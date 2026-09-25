@@ -6,7 +6,7 @@ Tree at start: HEAD = origin = 5eda746. Brief PIN: 37f720a. Scratch: `<scratch>/
 
 ## STATUS
 
-DONE (tests green, re-minted, not committed), ONE ITEM NOT DONE: `proofs/ledger.json` was not regenerated in the tree (the permission classifier refused the in-tree write; the exact expected file and its one-line diff are in section 5; the coordinator runs `python3 scripts/ledger-gen --root .`). S1 `(?<![A-Za-z0-9])` on the three anchored rules; 19 new test cases, 7 red on the PIN for the exact reason; 6 of 6 required mutants killed; the re-mint changes the two attestation hashes and six volatile fields only. Gate: `pytest-summary: 3 failed, 128 passed` twice (2 files set=2fa20f3af1f3), the 3 the brief's by-design anchor failures. Anchor states (a) and (b) proved in a scratch clone; (b) still leaves one test red (D3). The capture question: no new capture needed (section 7). Flagged: DEVIATION X1 (the capture guard has no key-assignment rule).
+(R1, the repair round of 2026-09-25, is at the end of this report.) R0: DONE (tests green, re-minted, not committed), ONE ITEM NOT DONE: `proofs/ledger.json` was not regenerated in the tree (the permission classifier refused the in-tree write; the exact expected file and its one-line diff are in section 5; the coordinator runs `python3 scripts/ledger-gen --root .`). S1 `(?<![A-Za-z0-9])` on the three anchored rules; 19 new test cases, 7 red on the PIN for the exact reason; 6 of 6 required mutants killed; the re-mint changes the two attestation hashes and six volatile fields only. Gate: `pytest-summary: 3 failed, 128 passed` twice (2 files set=2fa20f3af1f3), the 3 the brief's by-design anchor failures. Anchor states (a) and (b) proved in a scratch clone; (b) still leaves one test red (D3). The capture question: no new capture needed (section 7). Flagged: DEVIATION X1 (the capture guard has no key-assignment rule).
 
 ## 1. PREMISE, re-measured (20:3xZ)
 
@@ -533,3 +533,359 @@ Evidence tiers: VERIFIED (run here, output pasted): the premise, the measurement
 re-mint and both diffs, the anchor states and the landing model, the capture-tool equivalence, both gate runs, the
 static gates. INFERRED: that CI reads the landed state (b) as the landing model did (CI clones without tags per the test's
 own docstring; CI itself not run). ASSUMED: nothing load-bearing.
+
+---
+
+# R1: the repair round (F1, F1b, F3, F10, F13 from VERIFY-S0-04-LEAK)
+
+R1 STATUS: DONE (tests green, re-minted in the tree, not committed). The key-assignment rule is linear and
+takes name tails (K2) in both screens; the capture guard carries it and reports a YAML error by position
+only. 58 new cases, 26 red on the committed bytes for the exact reason; 37 of 39 mutants killed (2
+equivalent). Gate `pytest-summary: 189 passed` twice (2 files set=2fa20f3af1f3); `tests/test_proof_status.py`
+green in state (b). The in-tree `ledger-gen` is yours; the expected file is in R1.7.
+
+Resumed 2026-09-25T22:00:50Z (bucket 22:0xZ). Tree: HEAD f15970f; my R0 landing is 1f764fe (origin), my four files byte-identical
+to it; state (b) in force (no `accepted-S0-04.tag`, no local ref, the PENDING line at `todo/BUILD-TASKLIST.md:351`).
+The landing already narrowed `tests/test_proof_status.py:477` to `"WARNING S0-11"` (my D3 option). Scratch:
+`<scratch>/s004r1/`; short basetemps under `/tmp/s4r/`. Live beside me: S1-ALL (its three files untouched).
+
+## R1.1 PREMISE: each finding reproduced on the committed bytes (22:0xZ)
+
+Venue: `<scratch>/s004r1/r0` = `git archive 1f764fe proofs/S0-04` (`cmp`: both tools equal the tree's). Probe
+`<scratch>/s004r1/premise.py` (real CLIs, fakes from `secrets.token_hex(16)`, verdicts and booleans only):
+```
+F1  capture guard, <PREFIX>_API_KEY=<v> through the real CLI (--max-seq --record-dir <tmp>/absent/<text>):
+    OMNIROUTE_API_KEY=<hex32> / DB_PASSWORD=<hex32> / GITHUB_TOKEN=<hex32> / api_key: <hex32>
+    each: rc=1 withheld=False fake_in_stderr=True
+F3  checker, the name's right side (a bundle field, the real CLI):
+    SECRET_KEY=<hex32> / AWS_SECRET_ACCESS_KEY=<hex32> / OMNIROUTE_API_KEY_2=<hex32>
+    each: rc=0 verdict=PASS; capture: rc=1 withheld=False
+F13 the key-assignment rule alone, ' token' + N spaces: N=2000 0.024 s, 4000 0.098 s, 8000 0.390 s, 16000 1.518 s
+    (x4 per doubling: quadratic); the real checker CLI, 32,000 spaces planted: rc=0 PASS, wall 6.4 s
+F1b the verifier's own x1.py on the committed capture tool (PyYAML 6.0.1; it tests the value's LAST 12 chars):
+    a colon after the value (api_key: <v>: x), sk- value: printed ScannerError, value in stderr: True
+    unclosed quote, hex32: printed, value in stderr: True; sk-: WITHHELD
+    tab indent, hex32: printed (a 22-char PREFIX leaks, which x1's tail test cannot see; measured in R0 section 3)
+    error on another line: printed, no value
+```
+F10 is a coverage finding (the verifier's mutants M23 to M25 survive); it is reproduced by R1.5's mutation pass.
+Verdict: all five hold on the committed bytes; no CONTRACT-INVALID.
+
+## R1.2 F3 and F13: which right side and which separator, by measurement (22:0xZ)
+
+Instrument (scratch): `<scratch>/s004r1/instr_r1.py` builds each candidate from the COMMITTED rule text (it asserts the
+text first); `measure_r1.py` walks the corpora; `timing_r1.py` times them. Masked shapes only (the NAME side is an
+identifier and is shown only when every tail segment is on a fixed word list; values as length and classes).
+Candidates, all on the committed left anchor and value part:
+- K0 = committed: `...token)\b` + `\s*[\"']?\s*[:=]`;
+- K0L = K0 with only the separator linear: `\s*(?:[\"']\s*)?[:=]` (the same language: with no quote both are `\s*`);
+- K1 = K0L + underscore tails `(?:_[A-Za-z0-9]+){0,4}\b`;
+- **K2 = K1 minus a last segment `_env`, `_file` or `_path`: `(?:_[A-Za-z0-9]+){0,4}(?<!_env)(?<!_file)(?<!_path)\b`**;
+- K3 = K0L + any identifier tail `[A-Za-z0-9_]{0,40}\b` (to price the naive widening).
+
+```
+$ python3 <scratch>/s004r1/instrument_r1.py <scratch>/s004r1/tree        (git archive 1f764fe; verdicts stay K0's)
+$ (cd <scratch>/s004r1/tree && python3 -m pytest -q -p no:cacheprovider --basetemp=/tmp/s4r/bt1 tests/test_s0_04_compression.py)
+98 passed in 8.38s                                         (736 screened texts logged)
+$ python3 -B <scratch>/s004r1/measure_r1.py . <scratch>/s004r1/r0 <scratch>/s004r1/corpus_r1.jsonl <scratch>/vs004/anchors.py \
+    'proofs-other=proofs/S0-0[1-35-9]/**/*' 'proofs-other-1x=proofs/S0-1[0-2]/**/*' 'transcripts=transcripts/sandbox/*.md' \
+    'code-scripts=scripts/*.py' 'code-src=src/**/*.py' 'code-tests=tests/*.py'
+```
+
+| Corpus | K0 hits | K0L new/lost | K1 new | K2 new | K3 new |
+|---|---|---|---|---|---|
+| real evidence (7 files, 163,028 chars) | 0 | 0/0 | 0 | **0** | 0 |
+| every fixture (evidence-pass, -header-missing, -body-diff, request-baseline, request-large) | 0 | 0/0 | 0 | **0** | 0 |
+| test corpus (736 texts: 567 bundle files, 136 reason lines, 23 fixture texts, 10 capture messages) | 4 | 0/0 | 0 | **0** | 0 |
+| bystander: proofs S0-01..S0-09 except S0-04 (796 files) | 3 | 0/0 | 9 (every one a `..._SECRET_FILE` path reference in S0-02's committed evidence) | **0** | 12 |
+| bystander: proofs S0-10..S0-12 | 1 | 0/0 | 0 | 0 | 0 |
+| bystander: transcript digests (18) | 0 | 0/0 | 0 | 0 | 0 |
+| bystander: scripts/*.py (39) | 4 | 0/0 | 3 | 2 (`..._TOKEN_<n> = re.compile` code lines) | 21 positions |
+| bystander: src/**/*.py (13) | 1 | 0/0 | 0 | 0 | 0 |
+| bystander: tests/*.py (108) | 21 | 0/0 | 9 positions | 6 positions (other suites' fakes of the F3 shapes: `SECRET_KEY`, `SECRET_ACCESS_KEY`, `SECRET_VALUE`) | 23 positions |
+
+The verifier's own shapes (`anchors.py`'s SHAPES, each as the checker reads it), K0 K0L K1 K2 K3:
+A20 `SECRET_KEY=`, A21 `AWS_SECRET_ACCESS_KEY=`, A22 `OMNIROUTE_API_KEY_2=`: pass pass HIT HIT HIT (F3 closed by K1-K3);
+O13 `DB_PASSWORD_FILE=/run/secrets/db`, O14 `api_key_env=OMNIROUTE_API_KEY`: pass pass HIT **pass** HIT;
+O10 `max_tokens: 12345678`: pass except K3; every other A and O row identical across all five.
+
+Timing (seconds; `timing_r1.py`; K0 at small N because it is quadratic):
+```
+' token' + N spaces      K0: 2000 0.0249  4000 0.0989  8000 0.4557  16000 1.5066     (x4 per doubling)
+                         K2: 16000 0.0018  32000 0.0034  1,000,000 0.1079  8 MiB 0.9596
+' token"' + N spaces     K2: 32000 0.0030  8 MiB 0.7509        ' token=' + N spaces  K2: 32000 0.0035  8 MiB 1.0047
+'_token' x N/6           K2: 32000 0.0075  1,000,000 0.2398  8 MiB 2.0328  (many name starts in one identifier)
+' token_' + N letters    K2: 8 MiB 0.5437    ' token' + '_a' x N/2  K2: 8 MiB 0.3957    ' api_key_env' x N/12  K2: 8 MiB 0.4640
+unbounded tail (*) on '_token' x N/6:  6000 0.1437  12000 0.5761  24000 2.3683  48000 9.2334  (quadratic; K2 at 48000: 0.0109)
+```
+
+**Decision: K2 in both screens.** It closes F3 (A20-A22) and F13 (linear on every shape to 8 MiB), adds 0 hits on the
+real evidence, every fixture and the test corpus, and keeps the verifier's O13/O14 reference names passing; K1 would
+fail every S0-02 evidence file that carries a `..._SECRET_FILE` path (9), K3 takes `max_tokens` and `tokenizer`. The
+tail bound `{0,4}` is load-bearing: unbounded, a run of names inside one identifier is quadratic (9.2 s at 48,000
+characters). K0L alone changes no verdict anywhere (0 new, 0 lost), so the separator fix is pure performance.
+
+## R1.3 What changed (22:0xZ)
+
+- `proofs/S0-04/check_compression.py`, inside `LEAK_PATTERNS`: the key-assignment rule becomes K2 (name list and
+  left anchor unchanged; the tail, the three reference exclusions, the linear separator); the comment above `sk-key` now
+  says "an ASCII letter or digit" (the verifier's F7 wording; the rule is unchanged); a comment above the rule says why.
+- `proofs/S0-04/tools/pc/capture_leg.py`:
+  - `LEAK_RE` gains a third alternative, the checker's key-assignment rule (without its own `(?i)`: `LEAK_RE`'s leading
+    `(?i)` covers every alternative); the bearer and `sk-` alternatives are byte-identical; the comment names the pin.
+  - `do_config`: `yaml.safe_load` wrapped; a `yaml.YAMLError` becomes `CaptureError("profile <path> is not valid YAML
+    at line L, column C")` from the error's `problem_mark` (else `context_mark`), `from None`; no snippet, no problem
+    text. Nothing else in `do_config` changed.
+- Impact: GitNexus `impact do_config`: LOW, direct `main` (index 3 commits behind); `LEAK_PATTERNS`/`LEAK_RE` as in R0.
+
+Semantic check on the new bytes (fakes at run time, masked):
+```
+lock: capture ends with the checker rule: True | starts (?i): True
+OMNIROUTE_API_KEY=, SECRET_KEY=, AWS_SECRET_ACCESS_KEY=, OMNIROUTE_API_KEY_2=, DB_PASSWORD=, api_key: , x/api_key=
+    (+<hex32>)                                   checker=key-assignment  capture_withheld=True
+x_<sk-fake>, x-<sk-fake>                         checker=sk-key          capture_withheld=True
+DB_PASSWORD_FILE=/run/secrets/db, api_key_env=OMNIROUTE_API_KEY, SECRET_PATH=/etc/app/secret.d, max_tokens: 12345678,
+tokenizer: <hex32>, x-api-key-id: <hex32>, nextPageToken: <hex32>, task-<hex32>    checker=None  capture_withheld=False
+timing: 32,006 chars of ' token'+spaces 0.0049 s (both screens); 48,000 chars of '_token' 0.0127 / 0.0132 s
+yaml, api_key: <sk-fake>: x   rc 1, no 8-char window of the key in stderr,
+    stderr: capture_leg: profile <profile> is not valid YAML at line 4, column 49
+spec legs: PASS: S0-04 compression-contract - 3 assertions over 3 legs / failure_reason: off: compression-header-missing rc=1
+```
+
+**The verifier's hostile shapes, run unmodified as an independent oracle** (`<scratch>/vs004/anchors.py <repo>
+<scratch>/s004r1/r0/proofs/S0-04 <work>`: new = these bytes, old = the committed R0 tools; 75 rows, real CLIs, fresh
+fakes; 0 ECHO flags). Verdict changes new vs old, and why:
+- Checker: exactly A20, A21, A22 change, `PASS` -> `LEAK:key-assignment` (F3's right side). No other checker row moves.
+- Capture: `PRINTED` -> `WITHHELD` on every assignment row the checker already caught (A01-A08, A10-A17, A27-A30; F1)
+  and on A20-A22 (F3), and on the three rows that were already checker false positives (O09 `next_page_token:`, O12
+  `_CHMOD_SYM_TOKEN = re.compile`, O16 prose `the password: forgotten again`): the guard now shares the checker's rule,
+  so it shares its false positives too; the cost is a withheld error message, nothing else.
+- Nothing moved from caught to passed, in either tool.
+The verifier's `x1.py` (PyYAML errors through `--config`), new vs old: every new row prints `capture_leg: profile <path>
+is not valid YAML at ...` with no value and no `api_key` in stderr; the old rows print the value in three cases (the
+colon row with an `sk-` key among them).
+
+## R1.4 Tests, red first on the committed bytes (22:1xZ)
+
+`tests/test_s0_04_compression.py`: `import re`; 58 new cases (98 -> 156), every key and value from `secrets.token_hex(16)`:
+- `ORDINARY_NOTES` gains five controls, so both existing ordinary tests grow by five: `DB_PASSWORD_FILE=/run/secrets/db`,
+  `api_key_env=OMNIROUTE_API_KEY`, `SECRET_PATH=/etc/app/secret.d` (reference tails), the key `max_tokens`, the key
+  `tokenizer` (words that only start like a name).
+- F3: `test_a_key_name_with_a_tail_fails_the_checker` x3 (`SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`, `OMNIROUTE_API_KEY_2`):
+  rc 1, the whole output the one exact `... matches key-assignment` line, the value not echoed.
+- F10: `NO_LOSS = ("-", "/", ":", ".", '"', "'", " ")`; `test_a_key_after_a_separator_still_fails_the_checker` x14 (each
+  separator x {an `sk-` key, `api_key=<v>`}: the exact `matches sk-key` / `matches key-assignment` line) and
+  `test_capture_leg_withholds_a_key_after_a_separator` x14 (the real CLI: stderr exactly the withheld line).
+- F13: `test_both_screens_are_linear_on_a_hostile_run[spaces | names]` (32,000 spaces after ` token`; 8,000 x `_token`;
+  each screen under 1.0 s; measured 0.005 s and 0.013 s) and `test_the_checker_cli_screens_a_file_at_the_size_cap_in_bounded_time`
+  (the real CLI on a bundle holding a `MAX_EVIDENCE_FILE`-sized run of spaces after ` token`, `timeout=60`; 1.35 s here).
+- F1 and F3 through the capture CLI: `test_capture_leg_withholds_a_key_assignment` x7 (`OMNIROUTE_API_KEY=`, `DB_PASSWORD=`,
+  `GITHUB_TOKEN=`, `api_key: `, `SECRET_KEY=`, `AWS_SECRET_ACCESS_KEY=`, `OMNIROUTE_API_KEY_2=` + a value), with a small
+  `_capture_error` helper for the CLI error path.
+- F1 lock: `test_capture_guard_carries_the_checker_key_assignment_rule`: both patterns start `(?i)`, and `LEAK_RE`'s text
+  ends with `|` + the checker's rule minus its `(?i)`.
+- F1b: `test_capture_leg_reports_a_yaml_error_by_position_only` x6 ({unclosed quote, tab indent, colon after the value} x
+  {an `sk-` key, a hex value}) through `--config`: no 8-character window of the value anywhere in the output (stricter
+  than x1.py's last-12 test: it also sees the tab case's prefix), rc 1, stderr exactly `capture_leg: profile <path> is not
+  valid YAML at line N, column M` (N and M as digits: the line is where PyYAML's problem mark falls, which for an
+  unclosed quote is the end of the stream).
+
+**Red run** (`<scratch>/s004r1/red`: `git archive 1f764fe` of proofs/S0-04 and the test inputs, the new test file copied
+in, `cmp` proves both tools are the committed R0 bytes):
+```
+$ (cd <scratch>/s004r1/red && python3 -m pytest -q -p no:cacheprovider -rf --basetemp=/tmp/s4r/bt3 tests/test_s0_04_compression.py)
+26 failed, 130 passed in 73.75s (0:01:13)
+```
+| Failed (26) | Where | Exact reason on the R0 bytes |
+|---|---|---|
+| `test_a_key_name_with_a_tail_fails_the_checker` x3 | :286 `assert code == 1` | `assert 0 == 1`: the checker printed its observations and PASSed over the tailed assignment (F3) |
+| `test_both_screens_are_linear_on_a_hostile_run[spaces]` | :314 | `AssertionError: _leak_hit`: the checker took over 1.0 s on 32,000 spaces (F13) |
+| `test_the_checker_cli_screens_a_file_at_the_size_cap_in_bounded_time` | the CLI call | `subprocess.TimeoutExpired` after 60 s on the 8 MiB run (F13, at the cap) |
+| `test_capture_leg_withholds_a_key_assignment` x7 | :1030 | stderr `capture_leg: record dir not found: <tmp>/absent/<name><hex>`: the fake printed (F1, F3) |
+| `test_capture_leg_withholds_a_key_after_a_separator[<sep>-key-assignment]` x7 | :1041 | the same, `...x<sep>api_key=<hex>` printed (R0 has no assignment rule in the guard) |
+| `test_capture_guard_carries_the_checker_key_assignment_rule` | :1049 | `endswith(...)` is False: no key-assignment alternative in `LEAK_RE` (F1) |
+| `test_capture_leg_reports_a_yaml_error_by_position_only` x4 (unclosed quote/hex, tab/hex, colon/`sk-`, colon/hex) | :1070 | `<label>: part of the value printed`: the snippet carried the value (F1b; the colon/`sk-` row is the verifier's 32-of-35) |
+| the same x2 (unclosed quote/`sk-`, tab/`sk-`) | :1072 | the output is `capture_leg: <message withheld: credential-shaped>`, not the position line: R0's `sk-` rule hid the snippet, the contract now asks for the position |
+
+The 32 new cases that pass on R0, by design: the 14 checker and 7 capture `sk-` no-loss cases (F10 pins a behaviour R0
+already has), the 10 new ordinary controls (R0 takes no tail), and `[names]` (R0 has no tail to backtrack). Their red
+states are the mutants of R1.5. **Deviation (flagged, as in R0 D5): "red first on the current bytes" holds for 26 of the
+58 new cases; the other 32 are no-loss pins and controls that cannot red there.** Fixed tree, R1-related cases:
+`74 passed, 82 deselected in 4.17s`.
+
+## R1.5 Mutation pass on each changed rule (22:2xZ)
+
+`<scratch>/s004r1/mutate_r1.py` on `<scratch>/s004r1/mut` (a `git archive HEAD` copy with the three working-tree files).
+AF-AP-223 rules: the unmutated control first and green at the full count; a mutant's edit text must occur exactly once;
+KILLED only when a test FAILED (named) with no ERROR and an unchanged total; files restored and re-hashed after each run.
+Group A mutates the key-assignment rule in BOTH files at once, so the lock test stays green and only behavioural tests
+can kill; group B mutates one file; C pins the no-loss direction of both `sk-` rules; D is the YAML path.
+```
+CONTROL (unmutated): rc=0 156 passed in 7.98s            (each group re-ran it green: 8.21s, 7.96s, 8.08s)
+A1  both: name tail removed (back to \b)          KILLED  the 3 tail cases (checker) + the 3 tailed capture cases
+A2  both: name tail unbounded                     KILLED  test_both_screens_are_linear_on_a_hostile_run[names]
+A3  both: _env tail no longer excluded            KILLED  both ordinary tests [stray_note-api_key_env=OMNIROUTE_API_KEY]
+A4  both: _file tail no longer excluded           KILLED  both ordinary tests [stray_note-DB_PASSWORD_FILE=/run/secrets/db]
+A5  both: _path tail no longer excluded           KILLED  both ordinary tests [stray_note-SECRET_PATH=/etc/app/secret.d]
+A6  both: any identifier tail                     KILLED  10: both ordinary tests on max_tokens, tokenizer and the 3 reference tails
+A7  both: hyphen tails too                        KILLED  both ordinary tests [x-api-key-id-{}]
+A8  both: tail bound 1                            KILLED  [AWS_SECRET_ACCESS_KEY] (checker) and [AWS_SECRET_ACCESS_KEY=] (capture)
+A9  both: the quadratic separator restored        KILLED  [spaces] and test_the_checker_cli_screens_a_file_at_the_size_cap_in_bounded_time
+A10 both: name anchor back to \b                  KILLED  10 (the R0 prefixed cases, the tail cases, the capture assignment cases)
+A11 both: name anchor none                        KILLED  both ordinary tests [nextPageToken-{}]
+A12 both: name anchor refuses - / : . " ' space   KILLED  x7, each by its own [<sep>-key-assignment] case in the checker AND the capture test
+B1  checker only: name tail removed               KILLED  the 3 checker tail cases + the lock
+B2  capture only: the key-assignment alternative removed   KILLED  15 (the lock, the 7 assignment cases, the 7 separator assignment cases)
+B3  capture only: name tail removed               KILLED  the 3 tailed capture cases + the lock
+C1  checker sk-key refuses - / : . " ' space      KILLED  x7, each by test_a_key_after_a_separator_still_fails_the_checker[<sep>-sk-key]
+C2  capture sk refuses - / : . " ' space          KILLED  x7, each by test_capture_leg_withholds_a_key_after_a_separator[<sep>-sk-key]
+D1  the YAML handler removed (the error reaches main's catch-all)   KILLED  all 6 YAML cases
+D2  the message carries the exception text        KILLED  all 6 YAML cases
+D3  `from None` dropped                           SURVIVED (156 passed)
+D4  context_mark preferred over problem_mark      SURVIVED (156 passed)
+TOTAL A {'KILLED': 18} B {'KILLED': 3} C {'KILLED': 14} D {'KILLED': 2, 'SURVIVED': 2}; INVALID 0; files restored: True
+```
+Survivors, classified: D3 and D4 are equivalent at the CLI. `main` prints only `safe(str(error))`, never a traceback,
+so the chained YAMLError is never printed with or without `from None`; either mark is a position, never content, and
+the tests pin the format (`line \d+, column \d+`), not which mark. The verifier's M23-M25 (the no-loss direction)
+survived R0; C1/C2 now kill each separator on each screen. Not pinned, by scope (as in R0): a digit or an uppercase
+letter before the key (the verifier's M7-M9, M13-M14), because a pinning test asserts that a key-shaped string passes.
+
+## R1.6 The capture tool's outputs outside the error paths, R0 vs R1 (22:2xZ)
+
+`<scratch>/s004r1/capture_equiv_r1.py <R0 capture_leg.py> <R1 capture_leg.py> <repo> <scratch>`:
+```
+1. the same top-level definitions, in the same order: True
+   definitions whose AST differs: ['LEAK_RE', 'do_config']
+   | -    profile = yaml.safe_load(read_regular(Path(args.profile), 'profile'))
+   | +    try:
+   | +        profile = yaml.safe_load(read_regular(Path(args.profile), 'profile'))
+   | +    except yaml.YAMLError as exc:
+   | +        mark = getattr(exc, 'problem_mark', None) or getattr(exc, 'context_mark', None)
+   | +        where = f'line {mark.line + 1}, column {mark.column + 1}' if mark is not None else 'an unknown position'
+   | +        raise CaptureError(f'profile {args.profile} is not valid YAML at {where}') from None
+2. LEAK_RE read in: ['safe'] | safe() called at: [('main', 'inside except handler', 317), ('main', 'inside except handler', 320)]
+3. modes and rc (new): capture, --config, --find-record, --max-seq all 0 | safe() tripwire never fired
+   stdout identical per mode: [True, True, True, True]
+   files written: config/hermes-provider.json, off/request.json, off/response.json, off/upstream-record.json
+   every written file byte-identical between the old and the new version: True
+```
+So R0's answer to the capture question still holds for R1: the `LEAK_RE` change sits on the error path only, and the
+YAML handler runs only when `yaml.safe_load` raises, when no evidence is written; the committed evidence is what the
+R1 bytes write from the same inputs. No new PC capture is needed.
+
+## R1.7 The re-mint, by the same recipe (22:2xZ)
+
+Dry run first in a scratch `git archive HEAD` of the attested closure plus the two R1 tools: `dry proof-runner rc=0`, only
+the two tools' attestation entries changed (44 both sides), runs changed only in their timestamps, negative control
+identical. Then, in the repo:
+```
+# the control: the R1 tools against the R0 result, the binding catches it
+$ python3 scripts/validate-ledger integrity --root .
+S0-04 INVALID / execution_proof numerator=8 denominator=9 / attestation-mismatch: S0-04 proofs/S0-04/check_compression.py
+integrity rc=1
+# the re-mint, 22:24:38Z
+$ python3 scripts/proof-runner run --proof S0-04 --venue sandbox --root .        -> proof-runner rc=0
+$ python3 scripts/validate-ledger integrity --root .                             -> all twelve PRESENT, execution_proof 9/9, rc=0
+$ python3 scripts/ledger-gen --root . --output <scratch>/s004r1/ledger/r1-regen.json   -> rc=0 (not written in-tree: yours)
+$ diff <(git show HEAD:proofs/ledger.json) <scratch>/s004r1/ledger/r1-regen.json
+23c23
+<       "normalized_digest": "5b49bfb5cb33a1ea5361622a83fc04bdd1013506d67ab405e7b1c6fbac271c04",
+---
+>       "normalized_digest": "7daeba65ace36822f232847e50e9448d76e59fa9c8269f7353e354fdb76a8b9f",
+$ python3 scripts/check-proof-status.py .
+proof-status: WARNING S0-04: ACCEPTED with the anchor PENDING the owner's signed tag accepted/S0-04 (declared in the ledger) — not owner-verifiable yet
+check-proof-status rc=0
+```
+**The expected ledger file: `<scratch>/s004r1/ledger/r1-regen.json`** (one line differs from HEAD, S0-04's digest; the state
+stays PRESENT). `proofs/ledger.json` in the tree is unchanged from HEAD.
+
+**`proofs/S0-04/result.json`, field by field (HEAD = the R0 mint vs R1): 71 leaf fields, 63 identical, 8 changed.**
+
+| Field | R0 (committed) | R1 | Why |
+|---|---|---|---|
+| `attestation["proofs/S0-04/check_compression.py"]` | 881710af6818ee0dfb695f5b96fc5b60262c04d6914493d62c3c613ac12ea090 | 033333c57e3c371efdd7aed17223357ad4e2dc1c397f4e11f6b187060cbf9d7f | the edited checker (= its sha256 now) |
+| `attestation["proofs/S0-04/tools/pc/capture_leg.py"]` | 7b202db013aa597a67a4f0fb151afa11cc409efb015c7e604fb30c8c6f9eb7eb | f455144f8889e5ff9209f1399f4d7a9c97c83939f77e97e6e545a4f509764c5f | the edited capture tool (= its sha256 now) |
+| `recorded_at` | 2026-09-25T20:51:59.316128Z | 2026-09-25T22:24:38.746170Z | volatile |
+| `runs[0].started_at` / `finished_at` | 20:51:59.203373Z / .264970Z | 22:24:38.660638Z / .705154Z | volatile |
+| `runs[1].started_at` / `finished_at` | 20:51:59.265172Z / .315284Z | 22:24:38.705370Z / .745708Z | volatile |
+| `digest` | 5fe687a29691b64571a4cb794a55f648bec5d1f1baf646252fbc08d4ebd50d05 | 27c71a8b552268f382501a880afc2cfdb0798b0298414c655969403cd0f08cf6 | sha256 of `runs` (their timestamps) |
+
+Identical: classification (execution_proof), `env_fingerprint` (sandbox:vm), the other 42 attestation entries, both runs'
+`cmd`, `exit_code`, `stdout_sha256`, `stderr_sha256`, the negative leg's `failure_reason`, and `negative_control`: PASS for
+the same assertions, with byte-identical checker output. The ledger line follows from the two hashes alone: R1 normalizes
+to `7daeba65...`; R1 with the two R0 hashes put back normalizes to `5b49bfb5cb33a1ea5361622a83fc04bdd1013506d67ab405e7b1c6fbac271c04`,
+the committed value exactly.
+
+## R1.8 Gates, pasted (22:2xZ)
+
+`bash scripts/test_summary.sh --basetemp=/tmp/s4r/bt tests/test_s0_04_compression.py tests/test_proof_status.py`
+(`/tmp/s4r` created first, the basetemp deleted before each run; set id by `scripts/pc_suite.sh:46`'s `set_id`, inline):
+```
+run 1: pytest-exit: 0
+       pytest-summary: 189 passed in 14.37s
+run 2: pytest-exit: 0
+       pytest-summary: 189 passed in 14.82s
+       2 files set=2fa20f3af1f3
+```
+189 = 156 S0-04 cases (98 + 58) + the 33 of `tests/test_proof_status.py`. **`tests/test_proof_status.py` is green in state
+(b)**, as expected: the landing narrowed its committed-anchor assertion to `"WARNING S0-11"` (:477), so S0-04's pending
+warning no longer reds it; nothing in R1 touches that file.
+```
+$ python3 -m pyflakes proofs/S0-04/check_compression.py proofs/S0-04/tools/pc/capture_leg.py tests/test_s0_04_compression.py
+pyflakes rc=0
+$ LC_ALL=C grep -c $'\xe2\x80[\xa8\xa9]' <file>    -> 0 for both tools, the test file, result.json, this report
+$ git diff --check -- proofs/S0-04 tests/test_s0_04_compression.py    -> rc 0
+$ python3 scripts/ap_screen.py <the three files>    -> 6 hits over 3 files, the same six as at R0's end, moved by the
+  new lines: AP-1 x2 capture_leg.py:65, AF-AP-70 capture_leg.py:186, AF-AP-132 test:847, AP-32 test:661 (pre-existing),
+  AF-AP-39 test:259 (R0's disclosed false positive); no hit on an R1 line
+$ python3 scripts/report_lint.py tasks/briefs/system1/S0-04-LEAK-report.md --min-refs 10
+report_lint: 35 refs — OK 20, NEAR 0, MISS 0, UNCHECKABLE 15, UNRESOLVED 0 (worktree)
+```
+(The R0 sections' line numbers name the R0 bytes at 1f764fe; R1's line numbers name the working tree now.)
+Identities (sha256 prefix, `git diff --numstat` against HEAD): `proofs/S0-04/check_compression.py` 033333c57e3c371e
+(+10 -4), `proofs/S0-04/tools/pc/capture_leg.py` f455144f8889e5ff (+16 -3), `tests/test_s0_04_compression.py` (+114 -0),
+`proofs/S0-04/result.json` (+8 -8, by the runner).
+
+## R1.9 Self-attack: the likeliest ways R1 is wrong
+
+1. **The reference-tail exclusions open a hole:** `OMNIROUTE_API_KEY_FILE=<a real key>` (a key in a variable named like a
+   reference) now passes, as it did under R0 (R0 took no tail at all), so nothing is lost versus R0; and the three
+   exclusions apply only to the LAST segment, so `API_KEY_FILE_2=` is still caught. Measured cost of NOT excluding them:
+   9 S0-02 evidence files (K1). Kept, and flagged as a design choice.
+2. **A linearity claim that holds for my inputs only:** the tail bound was the one new backtracking risk; it is timed on
+   seven shapes to 8 MiB (the worst 2.0 s), the unbounded form is shown quadratic (9.2 s at 48,000 chars), and A2/A9
+   prove the two timing tests kill both quadratic mutants. The value side keeps one `\s*` and the bearer rule one `\s+`.
+3. **The YAML fix hides a useful message or leaks through another path:** it keeps a position for every YAMLError that
+   carries a mark (else "an unknown position"); D1/D2 prove the tests see both a missing handler and a message that
+   re-adds the exception text; the other exceptions `do_config` can raise carry a path or a byte offset, not content
+   (measured: a non-UTF-8 profile prints `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 29`, no
+   value; and `API_KEY_FILE_2=<v>` is caught while `OMNIROUTE_API_KEY_FILE=<v>` passes, as item 1 says).
+4. **The lock test is a mirror:** it pins the capture's third alternative to the checker's rule text; B1/B3 show it reds on
+   drift, and the behavioural capture tests (A-group) kill every semantic mutant with the lock green.
+
+## R1 NOT DONE
+
+- `proofs/ledger.json` not regenerated in the tree (yours at landing; the expected file is above).
+- No commit, tag, ref, ledger (`todo/BUILD-TASKLIST.md`), `docs/governance/` or `tests/test_proof_status.py` change.
+- Out of R1's scope, as the brief set it: F2 (the screen reads raw text: JSON escapes, URL encoding, `body_b64`), F4 (the
+  allowlist assertion in `tests/test_proof_status.py`, yours), F5 (`STATUS.md`), F8 (the checker's `sk-key` is
+  case-sensitive while the capture's is not), F9 (`parse_args` outside `main`'s `try`), F11 (S0-01's stderr screen),
+  F12, F14; the digit and uppercase-letter pins (M7-M9, M13-M14: a pinning test asserts that a key passes).
+- D3/D4 mutants survive as equivalent at the CLI (R1.5).
+- No PC run, no CI run.
+
+## R1 DISCREPANCIES
+
+- R1-D1. "Red first on the current bytes" holds for 26 of the 58 new cases; the other 32 are no-loss pins (F10's `sk-`
+  cases), ordinary controls and the tail-timing case, whose red states are mutants (R1.4, R1.5).
+- R1-D2. Beyond the brief's literal scope, one comment word: "an ASCII letter or digit" in the checker's `sk-key` comment
+  (the verifier's F7), inside `LEAK_PATTERNS`, in the same edit.
+- R1-D3. Design choices the brief did not dictate: the tail bound `{0,4}` and the three reference-tail exclusions
+  (`_env`, `_file`, `_path`), both measured (R1.2).
+- R1-D4. The capture guard now shares the checker's existing false positives (O09 `next_page_token:`, O12, O16): a
+  withheld error message, nothing else.
+- R1-D5. `tasks/briefs/system1/VERIFY-SCRUB1-report.md` appeared untracked in the shared tree during R1; not mine,
+  untouched (an untracked file does not count against a `--lanes-live` push).
+- R1-D6. The F1b test asserts the position line's format (`line \d+, column \d+`), not which mark: for an unclosed quote
+  PyYAML's problem mark is the end of the stream, one line below the key.

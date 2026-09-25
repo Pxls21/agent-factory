@@ -80,12 +80,18 @@ MAX_EVIDENCE_FILE = 8 * 1024 * 1024
 LEAK_PATTERNS = (
     ("bearer", re.compile(r"(?i)bearer\s+\S")),
     # Left anchor `(?<![A-Za-z0-9])`, not `\b`: `\b` needs a non-word character first, so a key glued
-    # after `_` (`x_sk-...`) and a name inside `OMNIROUTE_API_KEY=` passed (AF-AP-224). A letter or
-    # digit before still refuses (`task-...`, `nextPageToken`).
+    # after `_` (`x_sk-...`) and a name inside `OMNIROUTE_API_KEY=` passed (AF-AP-224). An ASCII
+    # letter or digit before still refuses (`task-...`, `nextPageToken`).
     ("sk-key", re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}")),
+    # The name may go on in up to four `_` segments (`SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`,
+    # `API_KEY_2`) unless the last one names a reference, not a key (`_env`, `_file`, `_path`); the
+    # bound keeps a run of names linear. The quote carries its own `\s*`: `\s*["']?\s*` split a run of
+    # spaces between two `\s*` and backtracked quadratically. `capture_leg.LEAK_RE` ends with this
+    # rule (a test pins the two equal).
     ("key-assignment", re.compile(
-        r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|apikey|secret|password|passwd|token)\b"
-        r"\s*[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_\-.+/]{8,}")),
+        r"(?i)(?<![A-Za-z0-9])(?:api[_-]?key|apikey|secret|password|passwd|token)"
+        r"(?:_[A-Za-z0-9]+){0,4}(?<!_env)(?<!_file)(?<!_path)\b"
+        r"\s*(?:[\"']\s*)?[:=]\s*[\"']?[A-Za-z0-9_\-.+/]{8,}")),
     ("hex64", re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])")),
 )
 

@@ -13,6 +13,7 @@ import base64
 import http.client
 import json
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -264,6 +265,9 @@ def test_a_prefixed_api_key_assignment_fails_the_checker(tmp_path, prefix):
 ORDINARY_NOTES = (
     ("stray_note", "task-{}"), ("stray_note", "risk-{}"), ("stray_note", "disk-{}"),
     ("x-api-key-id", "{}"), ("stray_note", "/run/secrets/OMNIROUTE_API_KEY_FILE"), ("nextPageToken", "{}"),
+    # R1 (VERIFY-S0-04-LEAK F3): a name's tail names a reference, not a key; a word only starts like a name
+    ("stray_note", "DB_PASSWORD_FILE=/run/secrets/db"), ("stray_note", "api_key_env=OMNIROUTE_API_KEY"),
+    ("stray_note", "SECRET_PATH=/etc/app/secret.d"), ("max_tokens", "12345678"), ("tokenizer", "{}"),
 )
 
 
@@ -272,6 +276,53 @@ def test_ordinary_text_passes_the_checker(tmp_path, key, template):
     code, out = run_checker(_with_note(tmp_path, "b", key, template.format(secrets.token_hex(16))))
     assert code == 0, out
     assert PASS_LINE in out.splitlines(), out
+
+
+# R1 (VERIFY-S0-04-LEAK F3): the NAME's right side; the rule's trailing `\b` refused a name that goes on.
+@pytest.mark.parametrize("name", ["SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "OMNIROUTE_API_KEY_2"])
+def test_a_key_name_with_a_tail_fails_the_checker(tmp_path, name):
+    value = secrets.token_hex(16)
+    code, out = run_checker(_with_note(tmp_path, "b", "stray_note", f"{name}={value}"))
+    assert code == 1, out
+    assert out.splitlines() == ["failure_reason: credential-in-evidence: off/request.json matches key-assignment"], out
+    assert value not in out, "the checker echoed the fake value it rejected"
+
+
+# R1 (F10): the no-loss direction. `\b` accepted every one of these before a key; the new anchor must too.
+NO_LOSS = ("-", "/", ":", ".", '"', "'", " ")
+
+
+@pytest.mark.parametrize("kind", ["sk-key", "key-assignment"])
+@pytest.mark.parametrize("sep", NO_LOSS)
+def test_a_key_after_a_separator_still_fails_the_checker(tmp_path, sep, kind):
+    value = _fake_key() if kind == "sk-key" else secrets.token_hex(16)
+    note = "x" + sep + (value if kind == "sk-key" else "api_key=" + value)
+    code, out = run_checker(_with_note(tmp_path, "b", "stray_note", note))
+    assert code == 1, out
+    assert out.splitlines() == [f"failure_reason: credential-in-evidence: off/request.json matches {kind}"], out
+
+
+# R1 (F13): both screens stay linear. The old separator `\s*["']?\s*` took about 6 s on the 32,000 spaces
+# here, and an unbounded name tail took about 9 s on the 8,000 names; the new rule takes milliseconds.
+@pytest.mark.parametrize("text", [" token" + " " * 32000, "_token" * 8000], ids=["spaces", "names"])
+def test_both_screens_are_linear_on_a_hostile_run(text):
+    checker = _import(CHECKER, "check_compression")
+    capture = _import(CAPTURE, "capture_leg")
+    for screen in (checker._leak_hit, capture.safe):
+        started = time.perf_counter()
+        screen(text)
+        assert time.perf_counter() - started < 1.0, screen.__name__
+
+
+def test_the_checker_cli_screens_a_file_at_the_size_cap_in_bounded_time(tmp_path):
+    """The real CLI over a bundle holding a MAX_EVIDENCE_FILE-sized run of spaces after a key name."""
+    cap = _import(CHECKER, "check_compression").MAX_EVIDENCE_FILE
+    b = bundle(tmp_path)
+    (b / "off" / "zz-note.txt").write_bytes(b" token" + b" " * (cap - len(b" token")))
+    proc = subprocess.run([sys.executable, str(CHECKER), str(b)], capture_output=True, text=True, timeout=60,
+                          cwd=str(ROOT))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert PASS_LINE in proc.stdout.splitlines(), proc.stdout
 
 
 def test_mutant_config_header_missing_accepted(tmp_path):
@@ -957,6 +1008,69 @@ def test_capture_leg_passes_ordinary_text_through(key, template):
     module = _import(CAPTURE, "capture_leg")
     text = f"{key}: {template.format(secrets.token_hex(16))}"
     assert module.safe(text) == text
+
+
+WITHHELD = "capture_leg: <message withheld: credential-shaped>"
+
+
+def _capture_error(tmp_path, text):
+    """The real CLI's error path: max_seq raises `record dir not found: <path>`, main prints it through safe()."""
+    return subprocess.run([sys.executable, str(CAPTURE), "--max-seq", "--record-dir",
+                           str(tmp_path / "absent" / text)],
+                          capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+
+
+# R1 (VERIFY-S0-04-LEAK F1, F3): the capture guard refuses the assignment shapes the checker refuses.
+@pytest.mark.parametrize("name", ["OMNIROUTE_API_KEY=", "DB_PASSWORD=", "GITHUB_TOKEN=", "api_key: ",
+                                  "SECRET_KEY=", "AWS_SECRET_ACCESS_KEY=", "OMNIROUTE_API_KEY_2="])
+def test_capture_leg_withholds_a_key_assignment(tmp_path, name):
+    value = secrets.token_hex(16)
+    proc = _capture_error(tmp_path, name + value)
+    assert proc.returncode == 1, proc.stderr
+    assert proc.stderr.splitlines() == [WITHHELD], proc.stderr
+    assert value not in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("kind", ["sk-key", "key-assignment"])
+@pytest.mark.parametrize("sep", NO_LOSS)
+def test_capture_leg_withholds_a_key_after_a_separator(tmp_path, sep, kind):
+    """R1 (F10): the no-loss direction through the real CLI."""
+    value = _fake_key() if kind == "sk-key" else secrets.token_hex(16)
+    proc = _capture_error(tmp_path, "x" + sep + (value if kind == "sk-key" else "api_key=" + value))
+    assert proc.returncode == 1, proc.stderr
+    assert proc.stderr.splitlines() == [WITHHELD], proc.stderr
+
+
+def test_capture_guard_carries_the_checker_key_assignment_rule():
+    """R1 (F1): the guard's third alternative IS the checker's rule; `LEAK_RE`'s leading (?i) covers it."""
+    rule = dict(_import(CHECKER, "check_compression").LEAK_PATTERNS)["key-assignment"].pattern
+    leak_re = _import(CAPTURE, "capture_leg").LEAK_RE.pattern
+    assert rule.startswith("(?i)") and leak_re.startswith("(?i)")
+    assert leak_re.endswith("|" + rule[len("(?i)"):])
+
+
+# R1 (F1b): PyYAML quotes the offending line in a window that can start inside a value, so an inline key can
+# print with its `sk-` cut off, past every shape rule. The tool reports the position only.
+YAML_ERRORS = (
+    ("an unclosed quote", '    api_key: "{}'),
+    ("a tab indent", "\tapi_key: {}"),
+    ("a colon after the value", "    api_key: {}: x"),
+)
+
+
+@pytest.mark.parametrize("kind", ["sk-key", "hex"])
+@pytest.mark.parametrize("label,line", YAML_ERRORS)
+def test_capture_leg_reports_a_yaml_error_by_position_only(tmp_path, label, line, kind):
+    value = _fake_key() if kind == "sk-key" else secrets.token_hex(16)
+    profile = tmp_path / "config.yaml"
+    profile.write_text("providers:\n  p:\n    api: http://127.0.0.1:20128/v1\n" + line.format(value) + "\n")
+    proc = subprocess.run([sys.executable, str(CAPTURE), "--config", "--profile", str(profile),
+                           "--out", str(tmp_path / "out")], capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+    printed = proc.stdout + proc.stderr
+    assert not any(value[i:i + 8] in printed for i in range(len(value) - 7)), f"{label}: part of the value printed"
+    assert proc.returncode == 1, proc.stderr
+    assert re.fullmatch(rf"capture_leg: profile {re.escape(str(profile))} is not valid YAML "
+                        r"at line \d+, column \d+\n", proc.stderr), proc.stderr
 
 
 def test_runner_is_syntactically_valid():

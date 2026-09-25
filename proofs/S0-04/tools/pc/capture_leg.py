@@ -42,8 +42,13 @@ CREDENTIAL_HEADERS = frozenset({
 })
 KEY_LINE_RE = re.compile(r"^OMNIROUTE_API_KEY=(.*)$")
 MAX_RECORD_FILE = 8 * 1024 * 1024
-# An exception message must never become the leak the redaction elsewhere prevents.
-LEAK_RE = re.compile(r"(?i)bearer\s+\S|(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}")
+# An exception message must never become the leak the redaction elsewhere prevents. The third
+# alternative is check_compression.py's key-assignment rule (a test pins the two equal).
+LEAK_RE = re.compile(
+    r"(?i)bearer\s+\S|(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}"
+    r"|(?<![A-Za-z0-9])(?:api[_-]?key|apikey|secret|password|passwd|token)"
+    r"(?:_[A-Za-z0-9]+){0,4}(?<!_env)(?<!_file)(?<!_path)\b"
+    r"\s*(?:[\"']\s*)?[:=]\s*[\"']?[A-Za-z0-9_\-.+/]{8,}")
 
 
 class CaptureError(Exception):
@@ -231,7 +236,15 @@ def do_config(args) -> int:
         raise CaptureError(
             "PyYAML is required for --config on this host; install it or export the Hermes "
             "profile to JSON — the provider block is not parsed by hand") from exc
-    profile = yaml.safe_load(read_regular(Path(args.profile), "profile"))
+    try:
+        profile = yaml.safe_load(read_regular(Path(args.profile), "profile"))
+    except yaml.YAMLError as exc:
+        # PyYAML's message quotes the offending line in a window that can start inside a value, so an
+        # inline key can print with its `sk-` cut off, past every shape rule (VERIFY-S0-04-LEAK F1b).
+        # Report the position only, never the snippet or the problem text.
+        mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+        where = f"line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "an unknown position"
+        raise CaptureError(f"profile {args.profile} is not valid YAML at {where}") from None
     if not isinstance(profile, dict):
         raise CaptureError(f"profile {args.profile} is not a YAML mapping")
     _write(Path(args.out) / "hermes-provider.json", provider_block(profile, args.provider))

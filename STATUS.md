@@ -104,8 +104,9 @@ The three items this section listed until today were all decided on 2026-09-08: 
 closed 2026-09-22), ADR 0002 (`chat_completions` is the live transport), and the signed-tag acceptance anchor (built; four proofs
 accepted by it). The open items now:
 
-- Review and signed acceptance of the eight minted proofs that are not yet accepted: S0-03, S0-04, S0-06, S0-07 (REVIEW-PENDING),
-  S0-08, S0-09, S0-10 and S0-12. The coordinator hands over one signing command per proof, as for S0-01, S0-02 and S0-05.
+- (refreshed 2026-09-25 22:3xZ) The owner's re-sign of S0-04: re-minted 2026-09-25 after its leak-screen fix and one repair round
+  (D-091, S0-04-LEAK and its R1), its acceptance PENDING. The coordinator hands over the signing command once the repair's
+  independent check passes. The other eleven proofs are ACCEPTED (line 11 above).
 - Then the Stage 0 pull request to `main`, which only the owner merges.
 - MoJev (task #210): a decision from the findings doc once the read-only audit lands.
 - The cloud model route (D-061, D-062): until it returns, the PC's local route carries one long-context lane at a time and sandbox

@@ -15,6 +15,7 @@ owner-only. `ACCEPTED` records an explicit owner PROCESS decision; the
 owner-verifiable anchor is the separate `acceptance-anchor-af-ap-32` task.
 """
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -460,6 +461,15 @@ def test_anchor_ref_and_committed_tag_object_must_be_one_object(tmp_path):
     assert "is not the object the ref accepted/S0-11 names" in completed.stderr
 
 
+# The proofs whose acceptance the committed ledger declares PENDING the owner's signed tag (a `PROOF-ANCHOR: <id> =
+# PENDING-OWNER-TAG` line): exactly these may warn. S0-04 was re-minted by S0-04-LEAK (task #287, D-091 item 3) and
+# waits for the owner's re-sign; when the owner's tag lands and its PENDING line goes, S0-04 leaves this set. An
+# undeclared warning, a second pending proof, or a pending proof whose tag landed each fail the test below
+# (VERIFY-S0-04-LEAK F4: asserting only "no WARNING S0-11" let any other proof's downgrade pass).
+EXPECTED_PENDING = {"S0-04"}
+PENDING_WARNING = re.compile(r"proof-status: WARNING (S0-\d+): ACCEPTED with the anchor PENDING ")
+
+
 def test_committed_tree_anchor_state_is_the_declared_pending_one():
     """S0-11 is ACCEPTED and the owner's signature is anchored — as a pushed ref where one exists, and
     ALWAYS as the committed tag object docs/governance/tags/accepted-S0-11.tag (the CI/no-tags path: the
@@ -474,6 +484,10 @@ def test_committed_tree_anchor_state_is_the_declared_pending_one():
                          capture_output=True, text=True, timeout=30)
     anchor_present = ref.returncode == 0 or (ROOT / "docs" / "governance" / "tags" / "accepted-S0-11.tag").is_file()
     if anchor_present:
-        assert "WARNING S0-11" not in completed.stderr    # the docstring's intent; another proof may be pending
+        assert "WARNING S0-11" not in completed.stderr
     else:
         assert "WARNING S0-11: ACCEPTED with the anchor PENDING" in completed.stderr
+    warnings = [line for line in completed.stderr.splitlines() if line.startswith("proof-status: WARNING")]
+    pending = {m.group(1) for m in map(PENDING_WARNING.match, warnings) if m}
+    assert len(pending) == len(warnings), completed.stderr     # every warning is a declared pending anchor
+    assert pending == EXPECTED_PENDING | (set() if anchor_present else {"S0-11"}), completed.stderr
