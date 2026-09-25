@@ -174,6 +174,16 @@ subordinate to, the Anthropic docs.
    needs a design question, with the member's deliverable named (the seam, the mechanism, the payoff, how to test it) and
    past results given as background, not as the thing to judge. Quote the owner's words in the brief and check the
    headline against them before dispatch.
+0l. **Every brief, interview seed and owner question is checked against the owner's standing rulings; a design brief starts
+   from what the owner already installed (2026-09-25, AF-AP-203's second instance, AF-AP-205).** One hour after 0k, the
+   coordinator's interview seed asked whether System 1 ships in the product's first release, and its owner questions split
+   "internal tooling" from "product", though D-084 had ruled that our session's tools are the factory's tools. The owner: "I
+   literally just said that before" (D-087). The same design brief named none of the Jev tooling already installed: the
+   owner-recommended jev-pruner had been enabled since 2026-09-22 and pointed at the local Laya server, and all three auditors
+   missed it. Before a brief, seed or question ships: (a) grep the decision log's OWNER rows for the topic's words and read
+   each; (b) never ask a question a ruling already answers; (c) a design brief lists its domain's installed tools, plugins and
+   servers first (`/root/.claude/settings.json` enabledPlugins, `/root/jev-plugins/`, the repo's scripts) and names the
+   owner-recommended ones as the starting point.
 
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
