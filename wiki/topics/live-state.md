@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-25 12:3xZ — WHAT IS LIVE NOW (supersedes the 12:1xZ block for the live set).**
+- **Session export (task #252):** the R1 re-verify returned MERGE-READY-WITH-FOLLOWUPS, accepted (R1-F-1 has 0 instances in the real corpus; its one-line fix and AF-AP-213 land before the next export; issue #78). The real-key export ran on the verified snapshot (317 sources, rc 0, gate 0, canaries 0) and `scripts/known_values_check.py` found NO HIT for every sandbox secret in it and 0 for every secret over all 9,707 tracked files. SHIPPING to the PC now (`/home/rocco/jev-data/session-export-2026-09-25-r1`), then the PC-side check with the PC's keys.
+- **RUNNING (sandbox, one agent):** K265 on contract rev 2 (task #265).
+- **PUSH BLOCKED (AF-AP-216)** until the owner approves the local ref move; local commits keep landing.
+
 **2026-09-25 12:1xZ — WHAT IS LIVE NOW (supersedes the 11:3xZ block for the live set).**
 - **RUNNING (sandbox, two agents):** the session-export verifier's narrow re-verify (task #252); K265 on its contract rev 2 (task #265): the Laya server serves the TRAINING shape (`{"query", "chunk"}`, chunk last) fitted by one function shared with the dataset builder, the chunk never cut, a fit refusal answers 422 and `jev.py` stops there. Rev 1 (chunk first) broke the train/serve lock in `tests/test_laya_ft.py`; the lane found it.
 - **Landed, GATED-PENDING-VERIFY:** T268-269 (tasks #268, #269): stamp tokens filled by `safe_commit.sh`, `anchor_edit.py`, `stamp_fill.py`; `push_when_green.sh` (its first real run pushed a6dfcca..2f825ca). A verify lane follows when a slot frees.

@@ -175,6 +175,11 @@ expansion.
    interfaces (`ip netns exec` and container runtimes remount it). Read netns facts from `/proc/self/net/dev` and
    `ip -o link`. The CD1 probe first read a no-network user namespace as networked through sysfs; the second instrument
    caught it before any conclusion.
+   **Scrubber corollary (2026-09-25, the session export, task #252):** a scrubber and its gate share one list of secret
+   SHAPES, so the gate's 0 says nothing about a secret in a shape the list lacks. The independent instrument is a VALUE
+   check: read every known secret where it lives, in process, and count it in the output, whole, by 8-byte windows and in
+   its printed forms (`scripts/known_values_check.py`, names and counts only). Run it on every export before it ships, and
+   on the repository's tracked files when committed text feeds an exemption.
 
 9. **Verify input ownership at MINT time, not launch time.** A launch-time existence check on a
    shared append-only artifact is NOT a race guard: a concurrent writer (a test suite calling the
