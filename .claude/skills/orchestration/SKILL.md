@@ -142,6 +142,15 @@ subordinate to, the Anthropic docs.
    pid; stop it before the report. Until the runner reaps a finished lane's processes (task #248), the brief is the only
    guard.
 
+0i. **A brief that adds a new KIND of record traces every consumer of that record at authoring (2026-09-25, DSV2,
+   AF-AP-202).** The DSV2 brief asked for a new source kind (commit-message rows) and marked the trainer's shared loader
+   (`scripts/laya_ft/common.py`) READ-only; that loader's `row_identities` accepts two kinds and raises on any other, so no
+   build inside the boundary could pass the brief's own CPU smoke. The lane stopped before writing code, which is the rule
+   working; the miss was the brief's. When a brief adds a value to a closed set (a source kind, a question id, an event
+   type, a provenance value, a status), list at authoring every consumer that reads that set (loaders, gates, evaluators,
+   schemas) with the line that decides; each one that must learn the new value is MODIFY in the boundary, and each one
+   that must not change is named with the reason.
+
 
 1. **Briefs state GOAL + CONSTRAINTS + EVIDENCE DEMANDS, not enumerated steps.** Let the model
    derive the how — that is what the reasoning is for. Enumerate steps ONLY where ordering is
