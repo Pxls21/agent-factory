@@ -20,7 +20,7 @@ Headline numbers (details and methods below):
 
 Scratch directory for every artifact named below:
 `/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/data-int/` (called `$S` below).
-Local HEAD at start: `f08860c4fba0171c85539092c2134306701987a5` (2026-09-25T00:45:20Z), branch
+Local HEAD at start: `5d7385a0fba0171c85539092c2134306701987a5` (2026-09-25T00:45:20Z), branch
 `claude/soundbox-kit-migration-iz1jwf`.
 
 ## 0. Enumeration (the cells this report must fill)
@@ -228,7 +228,7 @@ the per-entry maximum has min 0.6087, median 0.9727, max 0.9997. Not-cited rows 
 
 ## 3. Goal 2: what our own records could add
 
-Every Goal 2 count reads the tree at ONE pinned commit, `f08860c4fba0171c85539092c2134306701987a5` (the local HEAD at
+Every Goal 2 count reads the tree at ONE pinned commit, `5d7385a0fba0171c85539092c2134306701987a5` (the local HEAD at
 start, 2026-09-25T00:45:20Z; `$S/HEAD.pin`), through `git show`/`git ls-tree`, except the raw transcripts (read from
 disk, counts only). "New" = not among the dataset's 86 training findings or 101 entries, and not among the 100 + 100
 held-out identities. Label origin: INCUMBENT = an answer our process already wrote down (the verifier's class, the
@@ -252,8 +252,8 @@ Producers (all under `$S`, all rc 0): `goal2a.py` (report findings; `goal2a_summ
 | a7 | `tasks/briefs/pc/report-pc-*.md` (lane reports, not verify; 32, 1 new after eb256f49) | none of the three | 0 class-tagged findings; decide-harvest: 1 `wf.drift` row | incumbent (`wf.drift`) | `goal2a.py`; `dh-head/` | SOLID |
 | b1 | `docs/INCIDENT-LOG.md` entries new after eb256f49 | `ap.violates_row` | 9 entries (201 -> 210) = 144 rows at 16 candidates each; 6 of 9 cite a registry row in the whole entry (2 in the heading); 5 have a cited row among their 16; 7 positive rows of 144 | incumbent citation for the 6; the 3 that cite nothing have no positive (teacher-needed for a positive) | builder at HEAD (`rebuild-HEAD-current`), key diff against R2 | SOLID |
 | b2 | registry rows new after eb256f49 (193 -> 201: AF-AP-194 ... AF-AP-201) | `ap.violates_row` | 47 new (entry, row) candidate pairs in 36 of the 101 old training entries, every one of them a new registry row entering the lexical top 16 (AF-AP-197 14, -195 10, -199 7, -201 5, -200 4, -196 4, -194 3; -198 none), displacing 47 old pairs; 1 more entry changes only its candidate order; 30 more rows change key with the same (entry, row) pair because the entry text changed | incumbent citation fact (positive only where the entry cites the row) | same key diff | SOLID |
-| b3 | the builder's own total at HEAD | all three | 1968 rows (ap 1760 = 110 entries x 16; v1 104 x 2); 257 keys not in the training dataset (ap 221, v1 18 + 18); 77 training ap keys gone | as b1, b2, a1 | `build_dataset.py --commit f08860c4...` (rc 0; dataset sha256 `1fc4fbea8928d47da09d989f7dfb92edcad23c34bc7f5151f072870311e3b03f`) | SOLID |
-| c1 | commit messages, `git log f08860c4` (1568 commits; 115 in 0b342c7..HEAD) | decisions (not one of the three) | P1 `Rejected:` alternative 147 commits (8 after the dataset); P2 D-nnn 223 (16); P7 owner ruling cited 37 (3) | incumbent (the message states the decision); no extractor exists | `goal2c.py` | UNSURE (pattern counts) |
+| b3 | the builder's own total at HEAD | all three | 1968 rows (ap 1760 = 110 entries x 16; v1 104 x 2); 257 keys not in the training dataset (ap 221, v1 18 + 18); 77 training ap keys gone | as b1, b2, a1 | `build_dataset.py --commit 5d7385a0...` (rc 0; dataset sha256 `1fc4fbea8928d47da09d989f7dfb92edcad23c34bc7f5151f072870311e3b03f`) | SOLID |
+| c1 | commit messages, `git log 5d7385a0` (1568 commits; 115 in 0b342c7..HEAD) | decisions (not one of the three) | P1 `Rejected:` alternative 147 commits (8 after the dataset); P2 D-nnn 223 (16); P7 owner ruling cited 37 (3) | incumbent (the message states the decision); no extractor exists | `goal2c.py` | UNSURE (pattern counts) |
 | c2 | same | `ap.violates_row`-like (a commit that names an anti-pattern row) | P3 AF-AP-n: 457 commits (41 after), 994 occurrences, 195 distinct ids, 736 commit-id pairs | incumbent citation; the state (message or diff hunk) would need building | `goal2c.py` | UNSURE |
 | c3 | same | `v1.*`-like | P4 a finding id within 3 words of a class word: 25 commits (0 after), 36 occurrences | incumbent | `goal2c.py` | UNSURE |
 | c4 | same | gate recommendation (not one of the three) | P5 gate word: 182 commits (14 after), 260 occurrences; 102 distinct (VERIFY-lane, gate word) pairs over 79 lanes (NOT-READY 62, MERGE-READY-WITH-FOLLOWUPS 24, MERGE-READY 12, CONTRACT-INVALID 4) | incumbent | `goal2c.py`; the pair regex below | UNSURE |
@@ -358,7 +358,7 @@ sources: 298 read (incident_log=1, lane_report=165, transcript_jsonl=0, verify_r
   session transcript's size and record counts: that file is the live coordinator session and grew between the runs
   (700,478,822 -> 700,582,503 bytes; user records 20,213 -> 20,220, assistant 39,908 -> 39,925); every decision count
   (owner text 206, gate-word blocks 186, gate pairs 66, class-tagged ids) is equal in both runs. The table quotes the first run.
-- Decision log (d8): `git show f08860c4:docs/08_DECISION_LOG.md`, rows matching `^\|\s*D-\d{3}\s*\|`: 82 (82
+- Decision log (d8): `git show 5d7385a0:docs/08_DECISION_LOG.md`, rows matching `^\|\s*D-\d{3}\s*\|`: 82 (82
   distinct, D-001 to D-082); 52 of them contain the word "owner".
 - The builder at HEAD (b3), sources: `verify_reports` 102, `reports_with_findings` 12, `verify_findings` 204,
   `repeated_finding_ids` 1, `incident_entries` 210, `registry_rows` 201, held-out excluded 100 + 100, 32 ap rows cut to
@@ -382,7 +382,7 @@ sources: 298 read (incident_log=1, lane_report=165, transcript_jsonl=0, verify_r
 | X6 | The sandbox digests hold 268 "user" turns that start with no injected prefix, while the raw sessions hold 206 + 17 owner text records by this report's rule (which also drops `isMeta`/`isCompactSummary` records). `transcript_export.turns` (`scripts/transcript_export.py:91-113`) filters by text prefix and never reads `isMeta` (grep: 0 hits). The cause of the 45-turn difference was not established (the digests cover the newest transcript only; the rules differ). | d1, d3, d6 | UNSURE |
 | X7 | 56 of the 59 verify reports with no class-tagged finding still carry a gate word or an `F-n` token (3.2 "Where the class words are absent"); the admitted grammar finds findings in 12 of 102 `VERIFY-*` reports and 1 of 30 `report-pc-verify-*` reports. | 3.2 | SOLID (counts) |
 
-The cited files and their last change at the pinned HEAD (`git log -1 --format='%h %cI' f08860c4 -- <file>`):
+The cited files and their last change at the pinned HEAD (`git log -1 --format='%h %cI' 5d7385a0 -- <file>`):
 
 | File | Last change |
 |---|---|
@@ -394,9 +394,9 @@ The cited files and their last change at the pinned HEAD (`git log -1 --format='
 | `docs/research/findings/j2c-fulltext/j2c.py`, `.../sample.json` | ce5e283 2026-09-24T14:59:53Z |
 | `scripts/transcript_export.py` | 5415c2a 2026-09-23T17:03:44Z |
 | `docs/research/findings/laya-ft-labels/2026-09-24-openjev/labels.jsonl`, `dataset-manifest.json` | 1958d59 2026-09-24T18:09:11Z |
-| `docs/INCIDENT-LOG.md` | d36ba41 2026-09-25T00:25:51Z (Goal 1 reads it at eb256f49, Goal 2 at f08860c4) |
+| `docs/INCIDENT-LOG.md` | d36ba41 2026-09-25T00:25:51Z (Goal 1 reads it at eb256f49, Goal 2 at 5d7385a0) |
 | `docs/08_DECISION_LOG.md` | 2969794 2026-09-25T00:21:19Z |
-| `todo/BUILD-TASKLIST.md`, `wiki/topics/live-state.md` | f08860c 2026-09-25T00:45:20Z |
+| `todo/BUILD-TASKLIST.md`, `wiki/topics/live-state.md` | 5d7385a 2026-09-25T00:45:20Z |
 | `tasks/briefs/jev-laya/window1.jobs` | 24a07a8 2026-09-24T21:46:23Z |
 | `tasks/briefs/jev-laya/VERIFY-FT1-report.md` | d483505 2026-09-24T18:36:10Z |
 
