@@ -5,6 +5,10 @@
 #                                        clusters go to slopo-report/ (the directory `slopo analyze` uses; a review that
 #                                        finds nothing leaves it as it was)
 #   scripts/slopo_review.sh --sync       sync only: `slopo index`, then `slopo embed` (the post-commit hook runs this)
+# `slopo index` runs through scripts/slopo_run.py: slopo's own CLI with a walk that skips the directories
+# slopo.conf.yaml excludes whole (slopo's own walk reads every file under source_dir first: 23 minutes on the PC).
+# `index` is the only command that walks the tree; `embed` reads the database and `review` stats only the changed
+# files, so both stay on bin/slopo (the SLOPO2 report).
 # slopo refuses a review until the index is fresh and every unit is embedded, and an embed needs the local embedding
 # server (scripts/slopo_embed_server.py). So the sync starts one, on the port slopo.conf.yaml's api_base names, when a
 # unit waits for its embedding and no server answers /health; it stops the one it started on every exit. One slopo run
@@ -60,7 +64,7 @@ trap 'trap "" INT TERM; exit 143' TERM
 health() { curl -fsS -m 2 "http://127.0.0.1:$PORT/health" 2>/dev/null; }
 up() { grep -Eq "\"model\": ?\"$MODEL_ID\".*\"max_tokens\": ?$MAX_TOKENS[,}]" <<<"$(health)"; }   # no pipe: pipefail
 
-"$VENV/bin/slopo" index || leave $?
+"$VENV/bin/python" scripts/slopo_run.py index || leave $?
 # slopo's own count (the one `slopo embed` starts from); an unreadable count starts the server anyway.
 waiting="$("$VENV/bin/python" -c 'from pathlib import Path
 from slopo.config import load_config

@@ -44,9 +44,37 @@ return context in about 2.7 s, which is too slow to run before every tool call.
 
 ## 2. rafal-qa/slopo
 
-Waits for SLOPO2 (task #285): its report drafts the text with the measured numbers (the PC's first index took 1,389 s
-because `scan_directory` walks every file under `source_dir`, 18.1 million of them excluded, before it applies the
-exclude list).
+**Title:** `slopo index` walks every file under source_dir before it applies source_dir_exclude
+
+**Body:**
+
+**slopo 0.6.0** (the PyPI wheel), Python 3.13 on Linux, pathspec 1.1.x.
+
+`scan_directory` (slopo/indexing/scanner.py) iterates `root.rglob("*")` and tests each path against
+`source_dir_exclude` only afterwards. A directory the excludes cover completely is still walked, entry by entry.
+
+Numbers: our repository root holds about 18.1 million files under `.lanes/` and 1.7 million under `.suite/` (lane
+worktrees and test scratch), all excluded. The first `slopo index` there took **1,389 s** (23 minutes). The index
+needs about 116 files, under four directories. On a clone without those two directories (36,044 files) the full
+walk takes 0.33-0.35 s and a walk that skips the excluded directories 0.02-0.03 s, with the same result.
+
+Config (excerpt): `source_dir: .`; `source_dir_exclude: ["/*", "/*/", "!/scripts/", "!/src/", "!/proofs/",
+"!/harness-ports/", "**/vendor/", "/proofs/S0-01/tools/archive/"]`.
+
+Suggestion: prune while walking (for example `os.walk` top-down, dropping a directory from `dirnames` when the spec
+excludes every path below it). With pathspec's file-by-file, last-match-wins semantics a directory can only be
+skipped when no later `!` pattern could match below it, so a conservative check is needed; an explicit
+`source_dirs` list (several roots) would also solve our case.
+
+Related: the report bytes depend on the walk order. Unit ids follow the scan order, `sort_cluster` orders a
+two-unit cluster by id, and a group of same-body-hash units prints its first unit's raw body. Reversing the scan
+order changed 15 of 19 cluster files on the same index (member order in 14, the printed body in 1); the clusters
+and their ignore-file hashes did not change. If the walk changes, sorting by path would keep reports stable.
+
+We work around it locally by running the CLI with a pruning walk in place of `scan_directory`; the files, their
+order and the clusters are identical to slopo's own walk.
+
+(Drafted by SLOPO2, task #285, from its measurements; the workaround is `scripts/slopo_run.py`.)
 
 ## 3. GitNexus (candidate, not ready to file)
 

@@ -8,7 +8,8 @@ Six groups, deterministic and LLM-free:
      runs by hand in a throwaway repo (its commits made with hooks off) with FAKES first on PATH for every quartet
      indexer (so no real index is touched) and a fake wrapper that records its argv, as tests/test_post_commit_reindex.py
      does; the repo carries a copy of the REAL slopo.conf.yaml.
-  2. scripts/slopo_review.sh: usage, not-installed and lock-busy exits; then the REAL pipeline (slopo, the embed server,
+  2. scripts/slopo_review.sh: usage, not-installed and lock-busy exits; the calls it makes (`index` through
+     scripts/slopo_run.py, `embed` and `review` on bin/slopo: SLOPO2); then the REAL pipeline (slopo, the embed server,
      the pinned model) on a throwaway repo: a sync embeds every unit and leaves no server running, a new near-copy of a
      function is flagged, an unrelated new function is not.
   3. scripts/slopo_embed_server.py: a text's vector does not depend on the other texts in its request, and 4 workers
@@ -38,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "scripts" / "hooks" / "post-commit"
 WRAPPER = ROOT / "scripts" / "slopo_review.sh"
 SERVER = ROOT / "scripts" / "slopo_embed_server.py"
+LAUNCHER = ROOT / "scripts" / "slopo_run.py"
 CONFIG = ROOT / "slopo.conf.yaml"
 LOCK = ROOT / "upstream.lock.yaml"
 SETUP = ROOT / "scripts" / "setup.sh"
@@ -286,7 +288,94 @@ def test_wrapper_sync_skips_while_another_run_holds_the_lock(tmp_path):
     assert r.returncode == 0 and "this sync skipped" in r.stdout
     assert not record.exists()                   # neither slopo nor python ran
     r2 = run_wrapper("--sync", env=env, cwd=root, wrapper=wrapper)   # the control: lock free
-    assert r2.returncode == 0 and record.read_text().splitlines()[0] == "slopo index"
+    assert r2.returncode == 0 and record.read_text().splitlines()[0] == "python scripts/slopo_run.py index"
+
+
+RECORDING_VENV = r'''#!/bin/sh
+# records each call the wrapper makes: the index by the launcher's script and command, slopo's count as "python -c"
+if [ "$(basename "$0")" = python ]; then
+  if [ "$1" = -c ]; then echo "python -c" >> "$FAKE_RECORD"; echo 1; exit 0; fi
+  echo "python $*" >> "$FAKE_RECORD"; exit "${FAKE_INDEX_RC:-0}"
+fi
+echo "slopo $*" >> "$FAKE_RECORD"
+'''
+HEALTHY = r'''
+import http.server, json, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):                            # /health as scripts/slopo_embed_server.py answers it
+        body = json.dumps({"status": "ok", "model": "jina-embeddings-v2-base-code-onnx-q8",
+                           "max_tokens": 1024}).encode()
+        self.send_response(200 if self.path == "/health" else 404); self.end_headers()
+        self.wfile.write(body if self.path == "/health" else b"")
+    def log_message(self, *a):
+        pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+'''
+
+
+class RecordingRoot:
+    """wrapper_root with a venv that records every call and reports one unit waiting for its embedding, and the config's
+    port moved to a free one where a fake /health answers as the real server: the embed branch runs, no model needed."""
+
+    def __init__(self, tmp_path):
+        self.root, self.wrapper = wrapper_root(tmp_path)
+        self.record = tmp_path / "calls.txt"
+        for name in ("slopo", "python"):
+            f = tmp_path / "venv" / "bin" / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(RECORDING_VENV)
+            f.chmod(0o755)
+        port = free_port()
+        conf = self.root / "slopo.conf.yaml"
+        conf.write_text(conf.read_text().replace("http://127.0.0.1:8811/v1", "http://127.0.0.1:%d/v1" % port))
+        self.env = {"SLOPO_VENV": str(tmp_path / "venv"), "SLOPO_LOCK": str(tmp_path / "slopo.lock"),
+                    "FAKE_RECORD": str(self.record)}
+        self.server = subprocess.Popen([sys.executable, "-c", HEALTHY, str(port)])
+        deadline = time.monotonic() + 20
+        while subprocess.run(["curl", "-fsS", "-m", "2", "http://127.0.0.1:%d/health" % port],
+                             capture_output=True).returncode != 0:
+            assert time.monotonic() < deadline and self.server.poll() is None
+            time.sleep(0.05)
+
+    def run(self, *args, **env):
+        if self.record.exists():
+            self.record.unlink()
+        r = run_wrapper(*args, env={**self.env, **env}, cwd=self.root, wrapper=self.wrapper)
+        return r, (self.record.read_text().splitlines() if self.record.exists() else [])
+
+    def stop(self):
+        self.server.kill()
+        self.server.wait()
+
+
+@pytest.mark.parametrize("mode,tail", [("--sync", []), ("HEAD", ["slopo review --base HEAD"])])
+def test_wrapper_runs_index_through_the_launcher_and_embed_and_review_on_bin_slopo(tmp_path, mode, tail):
+    """SLOPO2 item 4: `index`, the one command that walks the tree, runs through scripts/slopo_run.py; `embed` (it reads
+    the database) and `review` (it stats only the changed files) stay on bin/slopo. The negative control is the wrapper
+    as it was before SLOPO2, whose index was bin/slopo's own."""
+    rr = RecordingRoot(tmp_path)
+    try:
+        r, calls = rr.run(mode)
+        assert r.returncode == 0, r.stderr
+        assert calls == ["python scripts/slopo_run.py index", "python -c", "slopo embed"] + tail
+        text = rr.wrapper.read_text()
+        old = text.replace('"$VENV/bin/python" scripts/slopo_run.py index || leave $?',
+                           '"$VENV/bin/slopo" index || leave $?')
+        assert old != text
+        rr.wrapper.write_text(old)
+        r, calls = rr.run(mode)
+        assert r.returncode == 0 and calls == ["slopo index", "python -c", "slopo embed"] + tail
+    finally:
+        rr.stop()
+
+
+def test_wrapper_leaves_with_the_launcher_s_exit_code(tmp_path):
+    rr = RecordingRoot(tmp_path)
+    try:
+        r, calls = rr.run("--sync", FAKE_INDEX_RC="7")
+        assert r.returncode == 7 and calls == ["python scripts/slopo_run.py index"]   # nothing after a failed index
+    finally:
+        rr.stop()
 
 
 def free_port():
@@ -326,8 +415,9 @@ class SlopoRepo:
     def __init__(self, tmp_path):
         self.root = tmp_path / "repo"
         (self.root / "scripts").mkdir(parents=True)
-        for src in (WRAPPER, SERVER):
+        for src in (WRAPPER, SERVER, LAUNCHER):
             (self.root / "scripts" / src.name).write_bytes(src.read_bytes())
+        (self.root / LOCK.name).write_bytes(LOCK.read_bytes())   # the launcher checks slopo's pin in it (SLOPO2)
         (self.root / "scripts" / WRAPPER.name).chmod(0o755)
         self.port = free_port()
         conf = CONFIG.read_text(encoding="utf-8").replace("http://127.0.0.1:8811/v1", "http://127.0.0.1:%d/v1" % self.port)
