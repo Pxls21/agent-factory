@@ -15,6 +15,7 @@ last_compiled: 2026-09-03
 - **DONE:** the Laya head checkpoint's held-out evaluation: REJECTED on every KC-J3 line (`docs/research/findings/laya-ft-eval/2026-09-25-head-w1-cpu/evaluate-summary.json`). The OpenJev teacher is itself under the lexical baseline on the ap rows (1,616 of the 1,788 training examples); the choice answers did not move. Next for Laya: a better teacher first (QJ2), then retrain.
 - **D-082 (owner):** System 1 connects straight to its model server; OmniRoute stays for System 2. The direct vLLM path is exact (`docs/research/findings/j2b-variants/qwen27b/direct_probe.py`: token-id completions match the compiler by construction). Nothing trained so far went through OmniRoute.
 - **FOUND and stopped:** QJ1's orphaned adapter server on port 47420 (AF-AP-33 recurrence; task #248 opened for the runner to reap a finished lane's processes).
+- **READY 00:2xZ:** the QJ2 brief `tasks/briefs/pc/pc-qj2.md` (PIN d6a2142; LANE_PATCH = QJ1's harvested patch; the dispatcher's premise gate passes); orchestration 0h baked (a lane that starts a server owns its port and pid). Launch: after CI on d6a2142 passes and the local commits are pushed.
 - **NEXT:** the QJ2 PC lane (task #241): QJ1's harvested patch as LANE_PATCH, the direct token-id transport, both simple-jev policies, then J2; launched after CI on d6a2142 and a push. **PC:** no lane live; qwen active.
 
 **2026-09-24 23:3xZ — WHAT IS LIVE NOW (supersedes the 23:2xZ block for the live set).**
