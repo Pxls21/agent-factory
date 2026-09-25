@@ -9,7 +9,7 @@ remaining proofs. Spine-dependent feature work waits until the proof pack valida
 **Implementation:** branch `claude/soundbox-kit-migration-iz1jwf`. The proof machinery is built. The Wave 0 spikes are all
 positive. All twelve proofs are minted (three conformance-checked decisions, nine execution proofs — S0-01 to S0-08, S0-11; the
 last two, S0-02 and S0-05, minted 2026-09-23 from live PC captures); all twelve were ACCEPTED by the owner's GPG-signed tags (S0-04 PENDING its re-sign since 2026-09-25): S0-03, S0-04, S0-06, S0-07, S0-08, S0-09, S0-10 and S0-12 signed together 2026-09-24 10:26Z on fa20942
-(the eight tag objects committed as `docs/governance/tags/accepted-<id>.tag`, each verified GOODSIG against the owner's key), S0-11 (2026-09-04; re-signed 2026-09-22 on the
+(the eight tag objects committed as `docs/governance/tags/accepted-<id>.tag`, each verified GOODSIG against the owner's key; S0-04's was removed at its 2026-09-25 re-mint, so seven remain until the re-sign), S0-11 (2026-09-04; re-signed 2026-09-22 on the
 regenerated result, so every anchor is current), S0-05 (2026-09-24 01:37Z, after VERIFY-S0-05 MERGE-READY-WITH-FOLLOWUPS), S0-02 (2026-09-23 23:41Z, after the live eight-leg capture and VERIFY-S0-02
 MERGE-READY) and S0-01 (2026-09-22, after the v2.4 live capture of 2026-09-21, the golden made order-free
 for asynchronous session-metadata notifications (D-035) and two adversarial verify rounds — VERIFY-VB-F12 NOT-READY on one

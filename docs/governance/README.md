@@ -53,6 +53,10 @@ git tag -d accepted/S0-11
 git -c gpg.format=openpgp tag -s accepted/S0-11 -m "ACCEPTED: S0-11 evaluation hardening — owner process decision 2026-09-04, on the current minted result" HEAD
 git push --force origin accepted/S0-11
 ```
+The coordinator's landing after a re-sign commits the new tag object as `docs/governance/tags/accepted-<id>.tag`, removes the
+proof's `PROOF-ANCHOR: <id> = PENDING-OWNER-TAG` line, and removes the proof from `EXPECTED_PENDING` in `tests/test_proof_status.py`
+(that test pins the exact set of pending proofs, VERIFY-S0-04-LEAK F4; a stale entry turns it red). Then `check-proof-status.py`
+must give rc 0 with no WARNING for that proof.
 
 `gpg.format=openpgp` is forced because a git configured for SSH signing (common on machines that sign GitHub commits with
 an SSH key) would otherwise refuse to make or verify an OpenPGP signature. The checker forces the same at verify time.
