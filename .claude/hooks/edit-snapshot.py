@@ -376,6 +376,13 @@ AP_SCREEN = [
      "a request option that makes the model server compute output for every prompt token (prompt_logprobs) or extra "
      "sequences (best_of) — vLLM allocates it OUTSIDE its reserved memory; on the PC's 3090 `prompt_logprobs` "
      "OOM-killed the engine and restarted qwen for every user: never send it to a shared server (AF-AP-201)"),
+    # AF-AP-204 (2026-09-25, JEV-FIT audit A): one Claude Code project directory assumed for session transcripts. The
+    # harness files a session under the slug of its launch cwd, and this container holds two; scripts/orient.sh read the
+    # stale -home-user-agent-factory file (2026-09-22) at every session start. The tell: a literal project slug path.
+    ("AF-AP-204", re.compile(r"""\.claude/projects/-[A-Za-z0-9]"""),
+     "a hardcoded Claude Code project directory — sessions land under the slug of their launch cwd, and a container "
+     "can hold several: glob /root/.claude/projects/*/ (the newest file for the current session, every file for an "
+     "export of all session data) (AF-AP-204)"),
 
 
 ]

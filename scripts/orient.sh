@@ -24,7 +24,9 @@ echo "  crg:          $( [ -x /root/venv-crg/bin/code-review-graph ] && echo "OK
 
 echo ""
 echo "── orient: layer 1 — CHAT (intent) ──"
-TR=$(ls -t /root/.claude/projects/-home-user-agent-factory/*.jsonl 2>/dev/null | head -1)
+# The newest session file in ANY project directory: the harness files a session under the slug of its launch cwd, and
+# this container holds two (-home-user, -home-user-agent-factory). A hardcoded one read a stale 2026-09-22 file (AF-AP-204).
+TR=$(ls -t /root/.claude/projects/*/*.jsonl 2>/dev/null | head -1)
 if [ -n "$TR" ] && [ -f "scripts/chat_tail.py" ]; then
   PY=$(command -v python3 || echo /root/venv-agent-factory/bin/python)
   "$PY" scripts/chat_tail.py "$TR" --turns 6 --day "$(date -u +%F)" 2>/dev/null \

@@ -1090,3 +1090,17 @@ class TestAFAP201:
         for line in ('"logprobs": True, "top_logprobs": 20,', "report = prompt_logprobs_note",
                      "best_of_n = 3", "if params.prompt_logprobs == 0:"):
             assert not self.rx.search(line), line
+
+
+class TestAFAP204:
+    rx = _AP_BY_ID["AF-AP-204"]
+
+    def test_fires_on_a_hardcoded_project_directory(self):
+        # scripts/orient.sh:27 before the fix, and scripts/hiccup_scan.py:51, an open site the registry names
+        assert self.rx.search('TR=$(ls -t /root/.claude/projects/-home-user-agent-factory/*.jsonl 2>/dev/null | head -1)')
+        assert self.rx.search('DEFAULT_PROJECT_DIR = "/root/.claude/projects/-home-user"')
+
+    def test_no_fire_on_the_glob_over_every_project_directory(self):
+        for line in ('TR=$(ls -t /root/.claude/projects/*/*.jsonl 2>/dev/null | head -1)',
+                     'cands = glob.glob("/root/.claude/projects/*/*.jsonl")', 'root = Path.home() / ".claude"'):
+            assert not self.rx.search(line), line

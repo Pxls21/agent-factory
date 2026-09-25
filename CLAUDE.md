@@ -371,7 +371,7 @@ fresh interview and push detail through answers · each question issues a Synaps
 `{session_id, fanout_id, correlation_key:"context.lane_id", results:[{key, content}|{key,
 undispatched:true}]}` covering the required lanes; `data_context` must match its contract exactly
 (`{question_identity, lane_id, data_needed:false, no_evidence_reason, read_requests:[]}`) and the
-`question_identity` lives in `~/.ouroboros/data/fanout/<fanout_id>.json` (read the registry
+`question_identity` lives in `~/.ouroboros/data/fanout/<fanout_id>.json` (`no_evidence_reason` is an ENUM, `not_a_measurement` / `answer_would_not_be_an_aggregate` / `question_too_ambiguous_to_measure` / `no_data_store_described` / `store_described_but_not_callable`, and data_context's `content` is the object itself, never a JSON string; bit twice 2026-09-25) (read the registry
 file — `ls -t` over tool-result files picked a stale one) · string values are rejected on shell
 metacharacters (`;` `|` `&` backticks `$`) and certain WORDS ("subprocess" → "Potentially
 dangerous input"; paraphrase) — scrub before submitting · nothing is retained between partial
