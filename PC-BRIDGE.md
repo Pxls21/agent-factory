@@ -202,7 +202,11 @@ serves, through OmniRoute. What it needs on the PC, and how each piece was made 
   final assistant message does not reach the server's template (an `examples_binary` choice branch arrives 12 tokens short,
   exactly its reasoning block; a `reasoning` field, or both, the same). With the reasoning inside the message text, the local
   template and the wire agree token for token (both +4: an empty think block comes first). The response names the model
-  `qwen3.8-27b-local`, and the 20 candidates sit in `logprobs.content[0].top_logprobs`.
+  `qwen3.8-27b-local`, and the 20 candidates sit in `logprobs.content[0].top_logprobs`. **Straight to vLLM (D-082: System 1
+  connects directly; measured 2026-09-25 00:20Z, `docs/research/findings/j2b-variants/qwen27b/direct_probe.py`):** the same
+  chat request keeps the field (1,106 tokens = the compiler), so OmniRoute is what drops it; `/v1/completions` with the
+  compiler's `token_ids` as the prompt matches by construction, with the same label logprobs. The vLLM key is
+  `~/.config/qwen-builder/api-key` (read in process); `/v1/models` lists `qwen3.8-27b-local` and `qwen3.8-27b`.
 - **Never send `prompt_logprobs` (or `best_of`) to the shared server (AF-AP-201, 2026-09-24):** vLLM computes a float32
   log-softmax over the whole vocabulary for every prompt token, outside the memory it reserved at start. One request (a
   1,037-token prompt: 758 MiB needed, 148 MiB free) OOM-killed the EngineCore at 23:45:08Z; systemd restarted `qwen.service`

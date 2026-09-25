@@ -48,8 +48,30 @@ E reasoning and reasoning_content fields
 
 ## Not measured, and why
 
-- Where the field is dropped (OmniRoute or vLLM) is not located: telling them apart needs one request straight to vLLM on
-  `:8080`, which QJ1's brief reserved for the owner's word (D-3).
+- ~~Where the field is dropped (OmniRoute or vLLM) is not located~~: LOCATED 2026-09-25, see the next section. OmniRoute
+  drops it; vLLM keeps it.
 - Whether a token-count match also means the same token ids: the server's prompt ids are not in the chat response. vLLM's
   `prompt_logprobs` would return them, but it must never be sent to the shared server: at 23:45:08Z one such request
   OOM-killed the vLLM engine and systemd restarted `qwen.service` (AF-AP-201, `docs/INCIDENT-LOG.md`).
+
+## The direct path (D-082: System 1 connects straight to its model server), measured 2026-09-25 00:20Z
+
+`direct_probe.py` (beside this file) sends the same compiled branches straight to the vLLM server on `127.0.0.1:8080`, two
+ways: chat with the `reasoning_content` field (QJ1's transport), and a raw completion whose prompt is the compiler's own
+`token_ids` (exact by construction; the check is that the server counts the same number). Every option was priced first
+(AF-AP-201): one generated token, its 20 top logprobs; no echo, no `prompt_logprobs`, no `best_of`.
+
+```
+models HTTP 200: ['qwen3.8-27b-local', 'qwen3.8-27b']
+choice: compiler 1106 tokens; reasoning True; labels ['A', 'B']
+  chat: served 'qwen3.8-27b-local'; prompt_tokens 1106 (delta +0); labels {'A': -0.0011, 'B': -6.8761}
+  token ids: served 'qwen3.8-27b-local'; prompt_tokens 1106 (delta +0); 20 top logprobs (mass 1.0000); labels {'A': -0.0011, 'B': -6.8761}; generated 'A'
+noul: compiler 1037 tokens; reasoning False; labels ['A', 'B']
+  chat: served 'qwen3.8-27b-local'; prompt_tokens 1037 (delta +0); labels {'A': -6.877, 'B': -0.002}
+  token ids: served 'qwen3.8-27b-local'; prompt_tokens 1037 (delta +0); 20 top logprobs (mass 1.0000); labels {'A': -6.877, 'B': -0.002}; generated 'B'
+00:20:36Z
+```
+
+Read: straight to vLLM, the chat transport keeps the reasoning field (1,106 = the compiler; 1,094 through OmniRoute), so
+OmniRoute is what drops it. The token-id transport matches by construction, and both give the same label logprobs to four
+decimals. The 20 returned candidates carry all of the probability mass (1.0000), so neither label had to be bounded here.
