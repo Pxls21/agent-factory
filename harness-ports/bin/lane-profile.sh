@@ -12,7 +12,11 @@ ACTION="${1:-}"; VALUE="${2:-}"
 : "${HERMES_BIN:=hermes}"
 : "${HERMES_PROFILES_DIR:=$HOME/.hermes/profiles}"
 : "${HERMES_SOURCE_PROFILE:=agentfactory}"
+: "${QWEN_QUADLET:=$HOME/.config/containers/systemd/qwen.container}"
 SOURCE="$HERMES_PROFILES_DIR/$HERMES_SOURCE_PROFILE"
+# The local lane models (HCTX1): OmniRoute tells Hermes 200,000 for the two combos (128,000 for the raw node), but the
+# vLLM behind them serves the quadlet's MAX_LEN, so each lane profile states that value per model.
+CONTEXT_MODELS=(agentfactory-build-local agentfactory-verify-local qwen-local/qwen3.8-27b-local)
 
 profile_name() {
   local lane clean
@@ -22,6 +26,54 @@ profile_name() {
   printf 'aflane%s\n' "$clean"
 }
 
+# The context the local model server really serves: MAX_LEN in the quadlet's [Container] section (systemd quoting and
+# line continuation; the last assignment wins). Unreadable or unset: 131072 with one stderr line naming why. A value
+# that is not a positive integer fails (never a silent guess). No message echoes another Environment= value.
+quadlet_context_length() {
+  python3 - "$QWEN_QUADLET" <<'PY'
+import re
+import shlex
+import sys
+
+path, fallback = sys.argv[1], 131072
+try:
+    with open(path, encoding="utf-8") as stream:
+        text = stream.read()
+except (OSError, UnicodeError) as exc:
+    why = getattr(exc, "strerror", None) or type(exc).__name__
+    sys.stderr.write(f"lane-profile: context_length {fallback}: quadlet {path} unreadable ({why})\n")
+    print(fallback)
+    raise SystemExit(0)
+section, value = None, None
+for line in (raw.strip() for raw in text.replace("\\\n", " ").splitlines()):
+    if not line or line[0] in "#;":
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        section = line[1:-1]
+        continue
+    key, eq, assignments = line.partition("=")
+    if section != "Container" or not eq or key.strip() != "Environment":
+        continue
+    try:
+        words = shlex.split(assignments)
+    except ValueError:
+        sys.stderr.write(f"lane-profile: quadlet {path}: an Environment= line does not parse\n")
+        raise SystemExit(64)
+    for word in words:
+        name, eq, assigned = word.partition("=")
+        if eq and name == "MAX_LEN":
+            value = assigned
+if value is None:
+    sys.stderr.write(f"lane-profile: context_length {fallback}: no MAX_LEN= in the [Container] section of {path}\n")
+    print(fallback)
+    raise SystemExit(0)
+if not re.fullmatch(r"[0-9]+", value) or int(value) <= 0:
+    sys.stderr.write(f"lane-profile: quadlet MAX_LEN is not a positive integer: {value[:40]!a}\n")
+    raise SystemExit(64)
+print(int(value))
+PY
+}
+
 verify_lane() {
   local lane="$1" name target source_sha target_sha verdict rc
   name="$(profile_name "$lane")" || exit $?
@@ -29,12 +81,40 @@ verify_lane() {
   [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
   [ -f "$SOURCE/.env" ] || fail "source env missing"
 
-  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY'
+  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" \
+    "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY'
 import copy
 import sys
 import yaml
 
-path, lane, source_path, root = sys.argv[1:]
+path, lane, source_path, root, context = sys.argv[1:6]
+context_length, context_models = int(context), sys.argv[6:]
+
+
+def lane_provider(conf):
+    """The one providers entry whose api is model.base_url (the lanes' OmniRoute route), or None."""
+    model, providers = conf.get("model"), conf.get("providers")
+    url = str(model.get("base_url") or "").strip().rstrip("/") if isinstance(model, dict) else ""
+    keys = [key for key, entry in providers.items() if isinstance(entry, dict)
+            and str(entry.get("api") or "").strip().rstrip("/") == url] if url and isinstance(providers, dict) else []
+    return keys[0] if len(keys) == 1 else None
+
+
+def add_override(entry, model_ids, value):
+    """Set models.<id>.context_length on one provider entry, keeping every other id and key. Returns a reason or None."""
+    models = {} if entry.get("models") is None else entry["models"]
+    if not isinstance(models, dict):
+        return "models must be a mapping"
+    for model_id in model_ids:
+        settings = {} if models.get(model_id) is None else models[model_id]
+        if not isinstance(settings, dict):
+            return f"models.{model_id} must be a mapping"
+        settings["context_length"] = value
+        models[model_id] = settings
+    entry["models"] = models
+    return None
+
+
 try:
     with open(path, encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
@@ -55,10 +135,29 @@ got = headers.get("x-omniroute-session-id") if isinstance(headers, dict) else No
 if got != lane:
     print("header missing or wrong: " + ("<missing>" if got is None else str(got)))
     raise SystemExit(2)
+provider = lane_provider(source)
+if provider is None:
+    print("source needs exactly one providers entry whose api is model.base_url")
+    raise SystemExit(3)
+entry = config.get("providers", {}).get(provider) if isinstance(config.get("providers"), dict) else None
+models = entry.get("models") if isinstance(entry, dict) else None
+for model_id in context_models:
+    settings = models.get(model_id) if isinstance(models, dict) else None
+    got = settings.get("context_length") if isinstance(settings, dict) else None
+    if got is None:
+        print(f"context override missing: {model_id}")
+        raise SystemExit(2)
+    if type(got) is not int or got != context_length:
+        print(f"context override wrong: {model_id}={got!r} (expected {context_length})")
+        raise SystemExit(2)
 
 expected = copy.deepcopy(source)
 expected.pop("fallback_providers", None)
 expected.setdefault("model", {}).setdefault("default_headers", {})["x-omniroute-session-id"] = lane
+reason = add_override(expected["providers"][provider], context_models, context_length)
+if reason:
+    print(f"providers.{provider}.{reason}")
+    raise SystemExit(3)
 helper = f"{root}/harness-ports/bin/lane-done-gate.py"
 record = {
     "matcher": "terminal|patch|write_file",
@@ -112,8 +211,10 @@ create_lane() {
 
   # Preserve every untouched byte in config.yaml. Parse before and after, and refuse
   # unless the semantic delta is exactly chain removal, this lane's request header,
-  # and, when enabled, the two lane done-gate hooks.
-  python3 - "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" <<'PY' || fail "config rewrite failed"
+  # the local models' context_length under the lane provider, and, when enabled, the
+  # two lane done-gate hooks.
+  python3 - "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" \
+    "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY' || fail "config rewrite failed"
 import copy
 import os
 from pathlib import Path
@@ -126,6 +227,33 @@ path = Path(sys.argv[1])
 lane = sys.argv[2]
 gate_enabled = sys.argv[3] == "1"
 root = Path(sys.argv[4])
+context_length, context_models = int(sys.argv[5]), sys.argv[6:]
+
+
+def lane_provider(conf):
+    """The one providers entry whose api is model.base_url (the lanes' OmniRoute route), or None."""
+    model, providers = conf.get("model"), conf.get("providers")
+    url = str(model.get("base_url") or "").strip().rstrip("/") if isinstance(model, dict) else ""
+    keys = [key for key, entry in providers.items() if isinstance(entry, dict)
+            and str(entry.get("api") or "").strip().rstrip("/") == url] if url and isinstance(providers, dict) else []
+    return keys[0] if len(keys) == 1 else None
+
+
+def add_override(entry, model_ids, value):
+    """Set models.<id>.context_length on one provider entry, keeping every other id and key. Returns a reason or None."""
+    models = {} if entry.get("models") is None else entry["models"]
+    if not isinstance(models, dict):
+        return "models must be a mapping"
+    for model_id in model_ids:
+        settings = {} if models.get(model_id) is None else models[model_id]
+        if not isinstance(settings, dict):
+            return f"models.{model_id} must be a mapping"
+        settings["context_length"] = value
+        models[model_id] = settings
+    entry["models"] = models
+    return None
+
+
 text = path.read_text(encoding="utf-8")
 before = yaml.safe_load(text)
 if not isinstance(before, dict) or not isinstance(before.get("model"), dict):
@@ -139,6 +267,12 @@ if headers is None:
 if not isinstance(headers, dict):
     raise SystemExit("model.default_headers must be a mapping")
 headers["x-omniroute-session-id"] = lane
+provider = lane_provider(expected)
+if provider is None:
+    raise SystemExit("config needs exactly one providers entry whose api is model.base_url")
+reason = add_override(expected["providers"][provider], context_models, context_length)
+if reason:
+    raise SystemExit(f"providers.{provider}.{reason}")
 if gate_enabled:
     helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
     hooks = expected.setdefault("hooks", {})
@@ -203,6 +337,48 @@ else:
         lines[default_end:default_end] = [header_line]
     else:
         lines[existing] = header_line
+
+# The context override goes after the lane provider's last line, or re-emits that
+# provider's existing models block (other ids and settings kept); the semantic
+# equality guard below rejects any collateral change.
+def indent(i):
+    return len(lines[i]) - len(lines[i].lstrip(" "))
+
+span = top_block("providers")
+rows = [] if span is None else [
+    i for i in range(span[0] + 1, span[1]) if lines[i].strip() and not lines[i].lstrip().startswith("#")
+]
+key_line = re.compile(r" *(?:%s):\s*(?:#.*)?$" % "|".join(re.escape(q % provider) for q in ("%s", "'%s'", '"%s"')))
+head = next((i for i in rows if indent(i) == indent(rows[0]) and key_line.match(lines[i])), None)
+body = []
+for i in rows:
+    if head is not None and i > head:
+        if indent(i) <= indent(head):
+            break
+        body.append(i)
+if not body:
+    raise SystemExit(f"providers.{provider} is not a block mapping")
+child = indent(body[0])
+rendered = yaml.safe_dump(
+    {"models": expected["providers"][provider]["models"]},
+    default_flow_style=False, sort_keys=False, allow_unicode=True,
+)
+block = [" " * child + row for row in rendered.splitlines(keepends=True)]
+models_at = next((i for i in body if indent(i) == child and lines[i].lstrip().startswith("models:")), None)
+if models_at is None:
+    if "models" in before["providers"][provider]:
+        raise SystemExit(f"providers.{provider}.models is not a block key")
+    if not lines[body[-1]].endswith("\n"):
+        lines[body[-1]] += "\n"
+    lines[body[-1] + 1:body[-1] + 1] = block
+else:
+    last = models_at
+    for i in body:
+        if i > models_at:
+            if indent(i) <= child:
+                break
+            last = i
+    lines[models_at:last + 1] = block
 
 if gate_enabled:
     helper = root / "harness-ports" / "bin" / "lane-done-gate.py"
@@ -290,9 +466,10 @@ remove_profile() {
   [ ! -e "$HERMES_PROFILES_DIR/$name" ] || fail "delete left profile $name"
 }
 
+# Resolved once per run: create's own verify reuses it, so a fallback prints one line.
 case "$ACTION" in
-  create) create_lane "$VALUE";;
-  verify) verify_lane "$VALUE";;
+  create) CONTEXT_LENGTH="$(quadlet_context_length)" || exit $?; create_lane "$VALUE";;
+  verify) CONTEXT_LENGTH="$(quadlet_context_length)" || exit $?; verify_lane "$VALUE";;
   remove) remove_profile "$VALUE";;
   *) fail "unknown action $ACTION";;
 esac
