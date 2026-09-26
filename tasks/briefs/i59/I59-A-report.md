@@ -411,8 +411,8 @@ re-hashed equal to the bytes every piece of evidence used; the PIN..HEAD boundar
 
 ## 14. Status
 
-DONE for the lane, rounds 2 and 3 included (GATED-PENDING-VERIFY): the change is in the tree, uncommitted; the landing
-waits for #313 and #314 and the section 5 steps. Round 2 is section 15, round 3 section 16.
+DONE for the lane, rounds 2 to 4 included (GATED-PENDING-VERIFY): the change is in the tree, uncommitted; the landing
+waits for #313 and #314 and the section 5 steps. Round 2 is section 15, round 3 section 16, round 4 section 17.
 
 ## 15. Round 2: the S0-08 gap closed (2026-09-26 06:0xZ, the coordinator's round-2 request)
 
@@ -607,5 +607,86 @@ NOT done after round 3:
 - FU-4 (CI's `-rs`), FU-6 (S0-07's Fubuki checkout, task #320) and the verify's INFO items: not in this round, per the
   coordinator.
 - The guard's blind spots, named in its docstring (above). CI's skips of S0-07 and S0-11 are emulated, not run on CI.
+- Not run: the whole `tests/`, `tests/red`, the PC suite; GitNexus cannot index the suffix-less validator.
+- S0-11 still re-reads its previous result (A2).
+
+## 17. Round 4: FU-7, FU-8, I-14 before the batch landing (2026-09-26 07:4xZ)
+
+The verify judged round 3 MERGE-READY-WITH-FOLLOWUPS for the whole change (`tasks/briefs/i59/VERIFY-I59-A-report.md`
+section 13). Premise: the tree held my round-3 bytes (the six sha256 prefixes recorded at the end of round 3,
+re-measured equal before any edit).
+
+FU-7, `proofs/schemas/result.schema.json`, `properties.attestation.description` only. It opens "Binds this artifact to
+the repo files that produced or check it: a map of each such file to its sha256, over ..." (the same list: the closure,
+the schemas, the proof directory minus its own two artifacts and `__pycache__`, the declared inputs). The middle clause
+says "a changed attested file" where it said "a changed input", the second half of the overclaim the verify quoted. It
+closes: "Inputs outside the repository (S0-07's Fubuki checkout; the interpreter and its packages) are not attested
+(task #320)." Proven: the parsed schema is identical to round 3's apart from that one string;
+`Draft202012Validator.check_schema` passes; the trailing newline is kept; `git diff --numstat` against HEAD is still one
+line changed.
+
+FU-8, `tests/test_attested_inputs.py`:
+- `PLANTED_STATS` gains `os_access` (`os.access(<os.path.join ...>, os.F_OK)`, target `docs/stat_m.md`) and
+  `os_path_lexists` (`os.path.lexists(<os.path.join ...>)`, which calls `os.lstat`, target `docs/stat_n.md`). Each reds
+  the guard naming exactly its target, and passes once declared (the parametrized pair).
+- The refusal table gains `long-segment-multibyte`: `LONG_MULTIBYTE = "docs/" + "é" * 128 + ".md"`, a segment of 131
+  characters and 259 bytes, refused by its finding `... has a segment over 255 bytes`.
+
+I-14: the guard's docstring names two more blind spots: a stat called with `dir_fd` (the wrapper skips it) and an
+`os.readlink` type test (not wrapped).
+
+The verifier's mutants, with the verifier's own harness (`scratchpad/verify-i59a/mutate_r3.py`, its 18 rows, its anchors
+and replacements verbatim, AF-AP-223 rules), run in a scratch mirror of the round-4 files. The copy differs from the
+verifier's file in two named lists only (diff pasted below). The harness counts a kill only when EVERY named test fails,
+and its V-S4 row named the three round-3 shapes plus S0-12's guard test, all through `os.stat`, which V-S4 still wraps.
+Its V-L4 row named the ASCII long segment, which a character count also refuses. So no new test could turn those rows
+KILLED; the rows now name the tests that exist to kill them.
+```
+38c38
+<      STATS + [A + "test_every_repo_file_a_checker_reads_is_attested[S0-12]"]),
+---
+>      [A + f"test_the_guard_reds_on_an_undeclared_existence_test[{s}]" for s in ("os_access", "os_path_lexists")]),
+41c41
+<      "elif any(len(part) > 255 for part in parts):", [RF.format("long-segment")]),
+---
+>      "elif any(len(part) > 255 for part in parts):", [RF.format("long-segment-multibyte")]),
+CONTROL (unmutated, 21 named tests): rc=0 21 passed in 5.10s
+KILLED         V-S4 only os.stat wrapped (lstat, access unwatched): 2/2 named FAILED; 2 failed in 0.39s
+KILLED         V-L4 long-segment check counts characters, not bytes: 1/1 named FAILED; 1 failed in 0.21s
+EXPECTED=18 KILLED=18 SURVIVED=0 INVALID=0
+```
+The other sixteen rows (the builder's twelve and the verifier's V-S6, V-L5, V-L6, V-M-F2) are KILLED too, each by all of its
+named tests; every mutated file was restored and hash-checked (validate-ledger, registry.yaml, the test file).
+
+Gates (pasted):
+```
+tests/test_attested_inputs.py (1 files set=96d60da64331)
+run 1: pytest-exit: 0  pytest-summary: 83 passed in 34.49s
+run 2: pytest-exit: 0  pytest-summary: 83 passed in 34.39s
+```
+83 = round 3's 78 + the multibyte case + two new red controls + their two declared pairs. `pyflakes` rc 0 on the changed
+Python; the schema parses; the separator grep prints 0 for `proofs/schemas/result.schema.json`,
+`tests/test_attested_inputs.py`, `scripts/validate-ledger`, `proofs/registry.yaml`, `tests/test_validate_ledger.py` and
+this report. The screen over the test file: AP-70 x3, AF-AP-80 x1, AP-66 x1, the same counts as the round-3 file. A
+correction to section 16: it said "the hook's two deliberate excepts (AP-70)"; there are three, all inside the `HOOK`
+source string (`_emit`, `_hook`, the stat wrapper).
+
+The floor was not re-run, as the coordinator allowed: no validator code changed this round (`scripts/validate-ledger`
+sha256 prefix `f1eb20ff26c87939`, the round-3 value). The schema is an attested file, so it only adds to the committed
+results' existing staleness, and no test, script or harness test references its description (grep over `tests/`,
+`harness-ports/tests/`, `scripts/`: no file).
+
+The landing command list (section 5) is unchanged: the schema edit rides the same re-mint of all twelve.
+
+Files this round: `proofs/schemas/result.schema.json` (the description string only; `git diff --numstat` against HEAD
++1/-1), `tests/test_attested_inputs.py` (832 lines, 83 tests), this report. `scripts/validate-ledger`,
+`proofs/registry.yaml` and `tests/test_validate_ledger.py` are unchanged since round 3. No patch file.
+
+NOT done after round 4 (unchanged from round 3 apart from FU-7, FU-8 and I-14, now done):
+- No `result.json`, ledger, tag object or task-ledger line written in the tree.
+- FU-1's second half (`.claude/skills/env-tool-quirks/SKILL.md:98`): outside my boundary.
+- FU-4, FU-6 (task #320), I-13 (an unreadable declared file crashes the validator; the same as an unreadable file inside
+  a proof's own directory today, pre-existing) and the other INFO items: not in this round.
+- The guard's blind spots, named in its docstring; CI's skips of S0-07 and S0-11 emulated here, not run on CI.
 - Not run: the whole `tests/`, `tests/red`, the PC suite; GitNexus cannot index the suffix-less validator.
 - S0-11 still re-reads its previous result (A2).

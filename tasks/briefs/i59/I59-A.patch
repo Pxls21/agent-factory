@@ -28,7 +28,7 @@ index 7659e4b..697e609 100644
  
  # COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.
 diff --git a/proofs/schemas/result.schema.json b/proofs/schemas/result.schema.json
-index c03733e..70c72ae 100644
+index c03733e..782d016 100644
 --- a/proofs/schemas/result.schema.json
 +++ b/proofs/schemas/result.schema.json
 @@ -30,7 +30,7 @@
@@ -36,7 +36,7 @@ index c03733e..70c72ae 100644
      "attestation": {
        "type": "object",
 -      "description": "Binds this artifact to the exact proof inputs that produced it: a map of every input file under the proof directory (checker, spec, fixtures, design) to its sha256. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker with a stale green artifact no longer validates.",
-+      "description": "Binds this artifact to every input that produced or checks it: a map of each input file to its sha256, over the trust closure (scripts/proof-runner, scripts/validate-ledger, proofs/registry.yaml), the JSON schemas in proofs/schemas, every file under the proof directory (checker, spec, fixtures, design) except its own result.json and blocked.json and __pycache__, and the repo files outside it that the proof's registry entry declares in extra_attested_inputs. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker, a changed input or a mutated runner, validator or registry with a stale green artifact no longer validates.",
++      "description": "Binds this artifact to the repo files that produced or check it: a map of each such file to its sha256, over the trust closure (scripts/proof-runner, scripts/validate-ledger, proofs/registry.yaml), the JSON schemas in proofs/schemas, every file under the proof directory (checker, spec, fixtures, design) except its own result.json and blocked.json and __pycache__, and the repo files outside it that the proof's registry entry declares in extra_attested_inputs. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker, a changed attested file or a mutated runner, validator or registry with a stale green artifact no longer validates. Inputs outside the repository (S0-07's Fubuki checkout; the interpreter and its packages) are not attested (task #320).",
        "minProperties": 1,
        "additionalProperties": {"$ref": "#/$defs/sha256"}
      },
@@ -238,38 +238,12 @@ index 2210fbf..1f14db7 100755
              # Bind the recorded runs to the ATTESTED spec: the legs the runner
              # recorded must BE the spec's legs — same count and order, same
              # leg-type, same command, same expected exit code, and each negative
-diff --git a/tests/test_validate_ledger.py b/tests/test_validate_ledger.py
-index 1826ddf..aa70a61 100644
---- a/tests/test_validate_ledger.py
-+++ b/tests/test_validate_ledger.py
-@@ -497,6 +497,11 @@ def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_
-     root = _copy_contract(tmp_path)
-     registry = _load_registry(root / "proofs" / "registry.yaml")
-     assert next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["required_negative_controls"] == 4
-+    # S0-02 declares the S0-01 files its checker loads (extra_attested_inputs, I59-A): its result is PRESENT only
-+    # while they are in the tree, so this root carries them.
-+    for rel in next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["extra_attested_inputs"]:
-+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-+        shutil.copy(ROOT / rel, root / rel)
-     def with_negatives(count):
-         # ASYMMETRIC on purpose (one positive, `count` negatives): a check that counted the wrong leg type read
-         # the same "1" off the symmetric two-leg fixture and survived (mutant COUNT-POSITIVES, 2026-09-08)
-@@ -559,7 +564,8 @@ def test_registry_rows_carry_no_key_the_validator_does_not_read():
-     read by nothing — documentation wearing a gate's clothes. The row's key set is CLOSED to what the
-     validator consumes; the real registry must satisfy it and the validator must pass on it."""
-     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
--    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked"}
-+    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked",
-+               "extra_attested_inputs"}  # I59-A: bound by proof_attestation (tests/test_attested_inputs.py)
-     for entry in registry["proofs"]:
-         assert set(entry) <= allowed, (entry["proof_id"], sorted(set(entry) - allowed))
-     assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()
 diff --git a/tests/test_attested_inputs.py b/tests/test_attested_inputs.py
 new file mode 100644
-index 0000000..ccc3ffe
+index 0000000..f6067a3
 --- /dev/null
 +++ b/tests/test_attested_inputs.py
-@@ -0,0 +1,816 @@
+@@ -0,0 +1,832 @@
 +"""I59-A (task #312, issue #59 F-1): every repo file a proof's checker reads while it grades is attested.
 +
 +A proof's entry in `proofs/registry.yaml` may carry `extra_attested_inputs`: repo files OUTSIDE its directory that its
@@ -291,8 +265,10 @@ index 0000000..ccc3ffe
 +- a child process that does not load the instruments (one started with an `env=` that drops PYTHONPATH, or with
 +  -I/-S/-E) and a non-Python child: a checker that starts a child process must be named in UNOBSERVED_CHILDREN with its
 +  reason, or the guard fails;
-+- a stat made below the `os` module (a C extension, or the import system's own `posix.stat`); a test of a DIRECTORY or
-+  of a file's ABSENCE (neither can be declared: a declaration names a regular file that exists);
++- a stat made below the `os` module (a C extension, or the import system's own `posix.stat`); a stat called with
++  `dir_fd` (the wrapper skips it: its path is relative to a directory descriptor); an `os.readlink` type test (not
++  wrapped); a test of a DIRECTORY or of a file's ABSENCE (neither can be declared: a declaration names a regular file
++  that exists);
 +- a directory listing (`os.listdir`, `os.scandir`, `glob`, `Path.iterdir`);
 +- a C-level reader that raises no `open` audit event (`sqlite3.connect`, a `ctypes` `fopen`); no checker uses one today.
 +A stat of a `__pycache__` file is ignored (bytecode caches are never attested; S0-11's sweep stats its own, then skips
@@ -318,6 +294,7 @@ index 0000000..ccc3ffe
 +PROOF_IDS = [f"S0-{index:02d}" for index in range(1, 13)]
 +KEY = "extra_attested_inputs"
 +LONG_SEGMENT = "docs/" + "a" * 256 + ".md"            # one segment over NAME_MAX (255 bytes)
++LONG_MULTIBYTE = "docs/" + "\u00e9" * 128 + ".md"     # 131 characters but 259 bytes: NAME_MAX counts bytes
 +LONG_PATH = "/".join(["d" * 200] * 21) + "/input.md"  # every segment short, the whole path over PATH_MAX (4096 bytes)
 +# scripts/proof-runner `_clean_env`: a leg sees these from the parent, plus its spec's own env.
 +PASSTHROUGH_ENV = ("PATH", "HOME", "LANG")
@@ -484,12 +461,13 @@ index 0000000..ccc3ffe
 +        (["scripts/validate-ledger"], "scripts/validate-ledger is in the attestation closure (already attested)"),
 +        (["proofs/registry.yaml"], "proofs/registry.yaml is in the attestation closure (already attested)"),
 +        ([LONG_SEGMENT], f"{LONG_SEGMENT} has a segment over 255 bytes"),
++        ([LONG_MULTIBYTE], f"{LONG_MULTIBYTE} has a segment over 255 bytes"),
 +        (["proofs/schemas/result.schema.json"],
 +         "proofs/schemas/result.schema.json is in the attestation closure (already attested)"),
 +    ],
 +    ids=["string", "empty", "non-string", "absolute", "dotdot", "star", "question", "bracket", "dot-segment",
 +         "doubled-slash", "duplicate", "own-directory", "own-directory-nested", "closure", "closure-validator",
-+         "closure-registry", "long-segment", "schema"],
++         "closure-registry", "long-segment", "long-segment-multibyte", "schema"],
 +)
 +def test_the_registry_refuses_a_malformed_declaration_by_name(tmp_path, value, finding):
 +    root = _copy_contract(tmp_path)
@@ -935,6 +913,18 @@ index 0000000..ccc3ffe
 +        "import os as _os\n"
 +        "_os.stat(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'lib', 'stat_l.txt'))\n",
 +    ),
++    # os.access (F_OK), wrapped on its own: it never calls os.stat (VERIFY-I59-A FU-8, V-S4)
++    "os_access": (
++        "docs/stat_m.md",
++        "import os as _os\n"
++        "_os.access(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'docs', 'stat_m.md'), _os.F_OK)\n",
++    ),
++    # os.path.lexists, which calls os.lstat, not os.stat (VERIFY-I59-A FU-8, V-S4)
++    "os_path_lexists": (
++        "docs/stat_n.md",
++        "import os as _os\n"
++        "_os.path.lexists(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'docs', 'stat_n.md'))\n",
++    ),
 +}
 +
 +
@@ -1086,3 +1076,29 @@ index 0000000..ccc3ffe
 +    assert _absent_outside_paths(spec) == [(1, str(tmp_path / "absent"))]
 +    assert _deferred_legs(([(0, 2, 0, "deferred"), (1, 1, 0, "failed"), (2, 2, 2, "expected two")], set(), set(), [])) \
 +        == [(0, "deferred")]
+diff --git a/tests/test_validate_ledger.py b/tests/test_validate_ledger.py
+index 1826ddf..aa70a61 100644
+--- a/tests/test_validate_ledger.py
++++ b/tests/test_validate_ledger.py
+@@ -497,6 +497,11 @@ def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_
+     root = _copy_contract(tmp_path)
+     registry = _load_registry(root / "proofs" / "registry.yaml")
+     assert next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["required_negative_controls"] == 4
++    # S0-02 declares the S0-01 files its checker loads (extra_attested_inputs, I59-A): its result is PRESENT only
++    # while they are in the tree, so this root carries them.
++    for rel in next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["extra_attested_inputs"]:
++        (root / rel).parent.mkdir(parents=True, exist_ok=True)
++        shutil.copy(ROOT / rel, root / rel)
+     def with_negatives(count):
+         # ASYMMETRIC on purpose (one positive, `count` negatives): a check that counted the wrong leg type read
+         # the same "1" off the symmetric two-leg fixture and survived (mutant COUNT-POSITIVES, 2026-09-08)
+@@ -559,7 +564,8 @@ def test_registry_rows_carry_no_key_the_validator_does_not_read():
+     read by nothing — documentation wearing a gate's clothes. The row's key set is CLOSED to what the
+     validator consumes; the real registry must satisfy it and the validator must pass on it."""
+     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
+-    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked"}
++    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked",
++               "extra_attested_inputs"}  # I59-A: bound by proof_attestation (tests/test_attested_inputs.py)
+     for entry in registry["proofs"]:
+         assert set(entry) <= allowed, (entry["proof_id"], sorted(set(entry) - allowed))
+     assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()

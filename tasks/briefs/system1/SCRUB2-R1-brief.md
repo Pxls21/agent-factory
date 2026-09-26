@@ -1,7 +1,7 @@
 # SCRUB2-R1: the scrubber repair wave after VERIFY-SCRUB2 (task #321)
 
 Role: code-implementer (sandbox, Opus 5.5). Do NOT spawn subagents. Report: `tasks/briefs/system1/SCRUB2-R1-report.md` (write
-it incrementally from the start). PIN: origin 626fc4c (the scrubber files are SCRUB2's bytes, unchanged since cdbc1b8).
+it incrementally from the start). PIN: origin 7a050b6 (re-pinned at dispatch from 626fc4c; the scrubber files are SCRUB2's bytes, unchanged since cdbc1b8).
 The contract: `tasks/briefs/system1/SCRUB2-brief.md`. Its items 1-8 hold in full, and this round leaves every one of them
 true. The findings: `tasks/briefs/system1/VERIFY-SCRUB2-report.md`, section 14 (the inventory) and section 15 (the gate).
 The verifier's reproduction scripts sit in `/tmp/claude-0/-home-user/bdab799a-dc80-5933-9c9e-c80f206f9a17/scratchpad/vscrub2/`.
@@ -69,9 +69,9 @@ landed) scrub every item with it before a Laya dataset is committed.
 - Never read a real secret source: `.pc-bridge.env`, any `*.env`, `/root/.codiv/api.env`, `~/.config/qwen-*`,
   `/root/.config/session-export/pseudonym.key`, and the GH_TOKEN and GITHUB_TOKEN variables. The exporter's default sources
   are never exercised. Test secrets are fake strings built at run time.
-- Other lanes hold this tree: VERIFY-I59-A (its report) and HCTX1-R1 (`harness-ports/bin/lane-profile.sh`,
-  `harness-ports/tests/test_lane_profile.sh`, its report). Never touch their files.
-- The disk is shared (about 1.4G free): scratch under 200 MB in `.../scratchpad/scrub2r1/`, deleted as you go; a short
+- No other sandbox lane holds this tree at dispatch (the lanes named at authoring are home). If the coordinator dispatches
+  one later, its files are listed in `.lanes-live`; never touch them. Touch only your boundary.
+- The disk is shared (about 1.8G free at dispatch): scratch under 200 MB in `.../scratchpad/scrub2r1/`, deleted as you go; a short
   `--basetemp`; never run the whole `tests/test_vendored_manifest.py`.
 - Test counts are pasted from `scripts/test_summary.sh`. Stamps are substituted from `date -u`, never typed.
 - Run long commands in one foreground call, each under 10 minutes. Kill by pid only.
@@ -133,6 +133,25 @@ tests/test_decisions_canonical.py tests/test_edit_snapshot_ap_screen.py tests/te
 $ bash scripts/test_summary.sh tests/test_decisions_canonical.py tests/test_edit_snapshot_ap_screen.py tests/test_jev_client.py tests/test_jev_context.py tests/test_jev_locate_echo.py tests/test_known_values_check.py tests/test_push_clean_lock.py tests/test_s1_rate.py tests/test_s1_synth.py tests/test_session_export.py tests/test_ship_to_pc.py tests/test_transcript_export.py   (the floor at the PIN; SYNTH1 landed, its round-2 edits not yet begun)
 pytest-exit: 0
 pytest-summary: 822 passed in 122.39s (0:02:02)
+$ bash scripts/pc_suite.sh set-id -- <the same 12 files>
+12 files set=27f27a25516b
+```
+
+## PREMISE — RE-MEASURED at dispatch (2026-09-26 07:5xZ, the sandbox tree; HEAD = origin 7a050b6, the tree clean)
+
+The origin moved from 626fc4c to 7a050b6 (SYNTH1 round 2, HCTX1-R1, the I59-A reports). No scrubber file changed; the
+floor's test set is the same 12 files, and `tests/test_s1_synth.py` gained tests, so the floor is now 824.
+
+```
+$ git log -1 --format='%h %s' origin/claude/soundbox-kit-migration-iz1jwf | cut -c1-60
+7a050b6 VERIFY-I59-A report: three commit ids that the push 
+$ git log --oneline cdbc1b8..origin/claude/soundbox-kit-migration-iz1jwf -- scripts/transcript_export.py scripts/known_values_check.py scripts/session_export.py | wc -l
+0
+$ grep -l -E 'transcript_export|known_values_check|session_export' tests/*.py | tr '\n' ' '
+tests/test_decisions_canonical.py tests/test_edit_snapshot_ap_screen.py tests/test_jev_client.py tests/test_jev_context.py tests/test_jev_locate_echo.py tests/test_known_values_check.py tests/test_push_clean_lock.py tests/test_s1_rate.py tests/test_s1_synth.py tests/test_session_export.py tests/test_ship_to_pc.py tests/test_transcript_export.py 
+$ bash scripts/test_summary.sh <the same 12 files>   (the floor at 7a050b6)
+pytest-exit: 0
+pytest-summary: 824 passed in 122.05s (0:02:02)
 $ bash scripts/pc_suite.sh set-id -- <the same 12 files>
 12 files set=27f27a25516b
 ```
