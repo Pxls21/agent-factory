@@ -33,7 +33,12 @@ count, or only what the checker reads when it grades?
 
 **#312 I59-A, the tooling (re-mints all twelve).** A registry field per proof, `extra_attested_inputs`: repo-relative paths
 of regular files, no globs, no `..`, no symlinks; `proof_attestation()` hashes them beside the proof's own files (one function
-serves the runner and the validator); a missing or irregular path is a named registry finding. A drift guard: a test that
+serves the runner and the validator); a missing or irregular path is a named registry finding. The registry check refuses an unknown proof key ("every registry
+key must bind a gate", `scripts/validate-ledger:180-182`), so the new key joins its allowed set and binds the attestation.
+The gate names every test file that names the runner, the validator or the registry (`grep -l`: `test_validate_ledger`,
+`test_proof_runner`, `test_proof_status`, `test_ledger_gen`, `test_no_laya_in_gates`, `test_s0_01_spec_runner`,
+`test_s0_02_buzz_authz`, `test_s0_03_omniroute`, `test_s0_08_containment`, `test_s0_11_eval_hardening`,
+`test_system1_context`), plus S0-05's and S0-06's own tests. A drift guard: a test that
 enumerates each proof's path-based imports and root-relative reads statically and fails when one is undeclared (the SET
 above is its first oracle). Declare the set for S0-02, S0-03, S0-05, S0-06 (and S0-07 per the lane's answer).
 Rejected: (a) an automatic import closure at attestation time (a path built at run time evades a parser, and an upstream
@@ -59,7 +64,11 @@ form); `scripts/import_owner_tags.py` (task #306) imports them; `tests/test_proo
 ## Order and venues
 
 #312 first (it changes the attestation every other increment re-mints under); #313 and #314 in parallel after it, each in
-its own boundary; #315 last. Build lanes run on the PC Hermes lane (the default route; one long-context local lane at a time
+its own boundary; #315 last. #312 cannot land alone: `scripts/validate-ledger` and `proofs/registry.yaml` are in every
+proof's `ATTESTATION_CLOSURE`, so the change turns all twelve committed `result.json` files stale (`check-proof-status.py`,
+`tests/test_proof_status.py`, CI red) until they are re-minted. The lanes build and verify without landing; ONE landing
+carries #312-#314 and the re-mint of all twelve, with `EXPECTED_PENDING` set to the twelve (the stale tags); the owner's
+re-sign lands after it and empties the set again (governance README, G4). Build lanes run on the PC Hermes lane (the default route; one long-context local lane at a time
 while the cloud route is out, D-061/D-062) once HCTX1 (task #310, D-097) lands, or as sandbox agents when a slot is free.
 Each gets an independent verify lane before its landing is called good.
 
