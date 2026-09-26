@@ -632,6 +632,10 @@ session's leftovers.
 verifier's fake is a hypothesis about the sink, never the sink (AF-AP-83's twin rule). A verify brief that forbids lifecycle
 commands still names the read-only live probes it allows.
 
+## A lane whose work cannot land alone: hold it as a committed patch (2026-09-26, I59-A)
+
+A change to the proof tooling (`scripts/validate-ledger`, `proofs/registry.yaml`) makes every committed `result.json` stale until the batch re-mints, so its lane's files cannot be committed on their own, and left dirty in the shared tree they red other lanes' gates. Hold such work as an artifact: `git diff -- <modified files>` plus `git diff --no-index /dev/null <new file>` into `tasks/briefs/<batch>/<lane>.patch`; apply it to HEAD's copies in a scratch directory and compare sha256 with the lane's files (all equal, or the patch is wrong); commit the patch and the report; write HEAD's bytes back over the lane's files and move its new files into scratch; drop its `.lanes-live` block. Its verify lane applies the patch only in its own scratch worktree, and the batch landing applies all the held patches together with the re-mint.
+
 ## Checkpoint discipline for delegate lanes (baked 2026-08-31, after TWO restart-kills)
 The sandbox container restarts without warning and kills running lanes; uncommitted delegate
 work died twice in 24h (the original perf build, then its repair lane mid-edit). EVERY
