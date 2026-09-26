@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 09:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** SCRUB2-R1 (task #321), I59-B (task #313, S0-05). Their files are in `.lanes-live`.
+- **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308); vLLM healthy at `GPU_UTIL` 0.96 (D-099).
+- **Held for the batch (#315):** I59-A round 4, I59-C (S0-04) and I59-E (S0-03, task #327) as `tasks/briefs/i59/I59-{A,C,E}.patch`. I59-B joins them when it lands; then the re-mint of all twelve, one verify, the owner's re-sign.
+- **CI:** run #1105 on the #1104 fix in progress; four local commits wait for it.
+
 **2026-09-26 09:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SCRUB2-R1 (task #321), I59-B (task #313, S0-05), I59-E (task #327, S0-03's YAML reader: AF-AP-232's echo, rides the batch). Their files are in `.lanes-live`.
 - **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308); vLLM healthy at `GPU_UTIL` 0.96 (D-099).
