@@ -87,6 +87,8 @@ a scratch copy) to compare with.
 
 ## Test gates and pasted counts
 
+**A skip guard that stats a path under `/root` raises on CI instead of skipping (2026-09-26, stage0-ci run #1102):** the sandbox runs as root, CI's runner does not, and Python 3.12's `Path.exists()` swallows only ENOENT, ENOTDIR, EBADF and ELOOP, so `Path("/root/venv-laya-probe/bin/python").exists()` raised `PermissionError` and the test failed where it meant to skip (`tests/test_s1_synth.py`, SYNTH1). A guard for a sandbox-only resource uses `os.path.exists` (it returns False on any `OSError`) or catches `OSError`; a green in the sandbox proves nothing about a non-root runner.
+
 **`tests/test_proof_status.py` needs a SHORT `--basetemp` (e.g. `/tmp/ps/bt`)** — the session scratchpad path exceeds gpg-agent's Unix-socket
 length limit and the eleven throwaway-key anchor tests fail with `gpg … --quick-generate-key … exit status 2` (nine false reds on 2026-09-14);
 the same tests are green with a short path. pytest creates only the LAST component of `--basetemp` — `mkdir -p` its parent first, or every test errors at setup with `FileNotFoundError` (bit 2026-09-14). A regenerated minted result (AF-AP-56) after an `accepted/<id>` tag exists fails three of its
