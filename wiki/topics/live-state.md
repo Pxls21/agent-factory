@@ -12,6 +12,12 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-26 06:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** SYNTH1 round 2 (task #308), I59-A round 3 (task #312).
+- **RUNNING (PC, local route):** I59-C (task #314).
+- **HCTX1-R1 landed (tasks #316, #317):** a relaunched lane re-derives its config and keeps its state; the PC check follows the push, which waits for CI on 626fc4c.
+- **Ready:** SCRUB2-R1 (task #321) after SYNTH1 round 2.
+
+**2026-09-26 06:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 round 2 (task #308), HCTX1-R1 (tasks #316, #317), I59-A round 3 (task #312: S0-12's existence-tested files, the attested schema text, the long-path crash, three test gaps; the patch re-applied to the tree and declared).
 - **RUNNING (PC, local route):** I59-C (task #314).
 - **VERIFY-I59-A home:** MERGE-READY-WITH-FOLLOWUPS against the frozen contract; its one contract defect (F-1) blocks by the coordinator's amendment (an existence-tested file is an input).
