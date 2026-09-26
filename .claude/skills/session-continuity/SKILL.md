@@ -231,6 +231,12 @@ origin state, task state, or owner statements contradict what you remember:
   while it was stopped (the restart time, other lanes' landings, any new finding that touches its files) and
   repeat the standing rules. Re-dispatch only when the transcript is gone. Processes a lane or the coordinator
   started outside the harness (a `setsid` server, a PC run) survive a worker restart: check them by pid.
+  **The rule covers a worker restart, never an OWNER stop (2026-09-26, VERIFY-SCRUB2):** an interrupt during the
+  coordinator's turn also stops every background agent's in-flight tool call (the verifier's Bash was rejected 24 ms
+  after the main thread's interrupt), and the harness then refuses the resume: `SendMessage` answers "stopped by the
+  user and won't be resumed ... only launch a new agent if the user explicitly asks". Record what the lane left on disk
+  (report sections, scratch results) and ask the owner before a relaunch; a lane dispatched after the interrupt runs
+  normally.
 
 ## Handed-value freshness (2026-09-03 — three stale values in one night, all owner-caught)
 
