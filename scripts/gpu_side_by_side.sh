@@ -8,7 +8,8 @@
 # qwen, Exec= not batch, a [Container] key or a PodmanArgs token this job does not copy, no read-only key mount at
 # /app/api_key.txt, or VLLM_API_KEY anywhere in it; or when the probe's Python, the probe or the key file is missing.
 # Then:
-#   1. starts the temporary server: the unit's volumes, environment, device and IPC arguments, plus GPU_UTIL=U,
+#   1. starts the temporary server: the unit's volumes, environment (its own GPU_UTIL replaced), device and IPC
+#      arguments, plus GPU_UTIL=U,
 #      published on 127.0.0.1:8081 only, command batch, --rm, named qwen (the run line says why); log DIR/qwen.log
 #   2. waits up to BOOT_SECONDS (900) for /v1/models to answer 200; the key goes in a header read from the unit's own
 #      key file through a process substitution, never argv or a log (gpu_window.sh's models_answer; AF-AP-39)
@@ -155,6 +156,8 @@ for k, v in items:
         for i, w in enumerate(words(k, v)):
             if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w):
                 refuse("word %d of an Environment= line of the unit is not NAME=value" % (i + 1))
+            if w.startswith("GPU_UTIL="):   # the window's --util replaces the unit's own share (D-099 set one)
+                continue
             args += ["-e", w]
     elif k == "PodmanArgs":
         toks, i = words(k, v), 0

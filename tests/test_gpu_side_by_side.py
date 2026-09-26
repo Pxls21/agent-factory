@@ -301,7 +301,8 @@ def _pid(w, name):
 
 
 def expected_run(port, key, util):
-    """The podman argv from the brief: the unit's lines 21-32 plus GPU_UTIL, loopback only, --rm, command batch."""
+    """The podman argv from the brief: the unit's lines plus GPU_UTIL (the unit's own GPU_UTIL, set by D-099, replaced),
+    loopback only, --rm, command batch."""
     return ["run", "-d", "--rm", "--pull=never", "--name", "qwen", "-p", "127.0.0.1:%s:8080" % port,
             "-v", "qwen-cache:/cache", "-v", "/home/rocco/qwen-serving/models:/app/models",
             "-v", "%s:/app/api_key.txt:ro" % key,

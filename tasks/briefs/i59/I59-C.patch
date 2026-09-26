@@ -1,0 +1,203 @@
+diff --git a/proofs/S0-04/tools/pc/capture_leg.py b/proofs/S0-04/tools/pc/capture_leg.py
+index 0388db6..a999328 100644
+--- a/proofs/S0-04/tools/pc/capture_leg.py
++++ b/proofs/S0-04/tools/pc/capture_leg.py
+@@ -236,15 +236,19 @@ def do_config(args) -> int:
+         raise CaptureError(
+             "PyYAML is required for --config on this host; install it or export the Hermes "
+             "profile to JSON — the provider block is not parsed by hand") from exc
++    text = read_regular(Path(args.profile), "profile")
+     try:
+-        profile = yaml.safe_load(read_regular(Path(args.profile), "profile"))
+-    except yaml.YAMLError as exc:
++        profile = yaml.safe_load(text)
++    except Exception as exc:                                   # noqa: BLE001 - every parse error, no message
+         # PyYAML's message quotes the offending line in a window that can start inside a value, so an
+-        # inline key can print with its `sk-` cut off, past every shape rule (VERIFY-S0-04-LEAK F1b).
+-        # Report the position only, never the snippet or the problem text.
++        # inline key can print with its `sk-` cut off, past every shape rule (VERIFY-S0-04-LEAK F1b). Not
++        # every parse error is a YAMLError: an explicit tag's constructor (`api_key: !!int <v>`) raises a
++        # plain ValueError or KeyError that quotes the value, and a deep nesting a RecursionError
++        # (VERIFY-S0-04-LEAK-R1 G2). Report the class and the position only, never the message, the
++        # snippet or the problem text. The read stays outside: its errors keep their own messages.
+         mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
+         where = f"line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "an unknown position"
+-        raise CaptureError(f"profile {args.profile} is not valid YAML at {where}") from None
++        raise CaptureError(f"profile {args.profile} is not valid YAML ({type(exc).__name__}) at {where}") from None
+     if not isinstance(profile, dict):
+         raise CaptureError(f"profile {args.profile} is not a YAML mapping")
+     _write(Path(args.out) / "hermes-provider.json", provider_block(profile, args.provider))
+diff --git a/tests/test_s0_04_compression.py b/tests/test_s0_04_compression.py
+index d616e02..5144b2e 100644
+--- a/tests/test_s0_04_compression.py
++++ b/tests/test_s0_04_compression.py
+@@ -13,7 +13,6 @@ import base64
+ import http.client
+ import json
+ import os
+-import re
+ import secrets
+ import shutil
+ import socket
+@@ -268,6 +267,8 @@ ORDINARY_NOTES = (
+     # R1 (VERIFY-S0-04-LEAK F3): a name's tail names a reference, not a key; a word only starts like a name
+     ("stray_note", "DB_PASSWORD_FILE=/run/secrets/db"), ("stray_note", "api_key_env=OMNIROUTE_API_KEY"),
+     ("stray_note", "SECRET_PATH=/etc/app/secret.d"), ("max_tokens", "12345678"), ("tokenizer", "{}"),
++    # I59-C (VERIFY-S0-04-LEAK-R1 G6): `(?i)` makes the `_env` exclusion cover `_ENV`; the long value keeps it live
++    ("stray_note", "API_KEY_ENV={}"),
+ )
+ 
+ 
+@@ -288,6 +289,26 @@ def test_a_key_name_with_a_tail_fails_the_checker(tmp_path, name):
+     assert value not in out, "the checker echoed the fake value it rejected"
+ 
+ 
++# I59-C (VERIFY-S0-04-LEAK-R1 G6): the tail's bound is FOUR `_` segments after the listed word. A name with four is a
++# key; a fifth passes, by design (the bound keeps a run of names linear). The cases above pin "at least 2" only, so a
++# bound of 2, 3 or 5 survived them. Tests only: the rule does not change.
++def _tailed_name(segments):
++    return "API_KEY" + "".join(f"_S{i}" for i in range(1, segments + 1))
++
++
++@pytest.mark.parametrize("segments", [4, 5])
++def test_the_checker_bounds_a_key_name_tail_at_four_segments(tmp_path, segments):
++    value = secrets.token_hex(16)
++    code, out = run_checker(_with_note(tmp_path, "b", "stray_note", f"{_tailed_name(segments)}={value}"))
++    if segments == 4:
++        assert code == 1, out
++        assert out.splitlines() == ["failure_reason: credential-in-evidence: off/request.json matches key-assignment"], out
++        assert value not in out, "the checker echoed the fake value it rejected"
++    else:
++        assert code == 0, out
++        assert PASS_LINE in out.splitlines(), out
++
++
+ # R1 (F10): the no-loss direction. `\b` accepted every one of these before a key; the new anchor must too.
+ NO_LOSS = ("-", "/", ":", ".", '"', "'", " ")
+ 
+@@ -1041,6 +1062,21 @@ def test_capture_leg_withholds_a_key_after_a_separator(tmp_path, sep, kind):
+     assert proc.stderr.splitlines() == [WITHHELD], proc.stderr
+ 
+ 
++@pytest.mark.parametrize("segments", [4, 5])
++def test_the_capture_guard_bounds_a_key_name_tail_at_four_segments(tmp_path, segments):
++    """I59-C (G6): the checker's bound through the real CLI: four segments are withheld, a fifth prints in full."""
++    value = secrets.token_hex(16)
++    text = f"{_tailed_name(segments)}={value}"
++    proc = _capture_error(tmp_path, text)
++    assert proc.returncode == 1, proc.stderr
++    if segments == 4:
++        assert proc.stderr.splitlines() == [WITHHELD], proc.stderr
++        assert value not in proc.stdout + proc.stderr
++    else:
++        assert proc.stderr.splitlines() == [f"capture_leg: record dir not found: {tmp_path / 'absent' / text}"], \
++            proc.stderr
++
++
+ def test_capture_guard_carries_the_checker_key_assignment_rule():
+     """R1 (F1): the guard's third alternative IS the checker's rule; `LEAK_RE`'s leading (?i) covers it."""
+     rule = dict(_import(CHECKER, "check_compression").LEAK_PATTERNS)["key-assignment"].pattern
+@@ -1050,27 +1086,89 @@ def test_capture_guard_carries_the_checker_key_assignment_rule():
+ 
+ 
+ # R1 (F1b): PyYAML quotes the offending line in a window that can start inside a value, so an inline key can
+-# print with its `sk-` cut off, past every shape rule. The tool reports the position only.
++# print with its `sk-` cut off, past every shape rule. The tool reports the class and the position only.
++# I59-C (VERIFY-S0-04-LEAK-R1 G5): the first three rows are all ScannerErrors, so a handler narrowed to ScannerError
++# passed them; the parser, composer and constructor rows print the whole value past such a handler.
+ YAML_ERRORS = (
+-    ("an unclosed quote", '    api_key: "{}'),
+-    ("a tab indent", "\tapi_key: {}"),
+-    ("a colon after the value", "    api_key: {}: x"),
++    ("ScannerError", "an unclosed quote", '    api_key: "{}'),
++    ("ScannerError", "a tab indent", "\tapi_key: {}"),
++    ("ScannerError", "a colon after the value", "    api_key: {}: x"),
++    ("ParserError", "an unclosed flow sequence", "    api_key: [{}"),
++    ("ComposerError", "an alias the profile never defines", "    api_key: *{}"),
++    ("ConstructorError", "a tag no constructor knows", "    api_key: !{} x"),
+ )
++PROFILE_HEAD = "providers:\n  p:\n    api: http://127.0.0.1:20128/v1\n"
++
++
++def _prints_part_of(value, printed):
++    """True when an 8-character run of `value` is in `printed`, case folded: `!!float` and `!!bool` lower-case a
++    value before PyYAML quotes it (I59-C), so a case-sensitive check misses those."""
++    value, printed = value.lower(), printed.lower()
++    return any(value[i:i + 8] in printed for i in range(len(value) - 7))
++
++
++def _yaml_error(text):
++    """The oracle: what PyYAML itself raises on `text`, the class and the mark the tool must report."""
++    import yaml
++    try:
++        yaml.safe_load(text)
++    except Exception as exc:  # noqa: BLE001 - the oracle records every class
++        return exc
++    raise AssertionError("the fixture parsed: it reaches no error path")
++
++
++def _config_leg(tmp_path, text):
++    """The real CLI's `--config` over a profile holding `text`: (the profile path, the finished process)."""
++    profile = tmp_path / "config.yaml"
++    profile.write_text(text)
++    return profile, subprocess.run([sys.executable, str(CAPTURE), "--config", "--profile", str(profile),
++                                    "--out", str(tmp_path / "out")], capture_output=True, text=True, timeout=60,
++                                   cwd=str(ROOT))
+ 
+ 
+ @pytest.mark.parametrize("kind", ["sk-key", "hex"])
+-@pytest.mark.parametrize("label,line", YAML_ERRORS)
+-def test_capture_leg_reports_a_yaml_error_by_position_only(tmp_path, label, line, kind):
++@pytest.mark.parametrize("cls,label,line", YAML_ERRORS, ids=[row[1] for row in YAML_ERRORS])
++def test_capture_leg_reports_a_yaml_error_by_position_only(tmp_path, cls, label, line, kind):
+     value = _fake_key() if kind == "sk-key" else secrets.token_hex(16)
+-    profile = tmp_path / "config.yaml"
+-    profile.write_text("providers:\n  p:\n    api: http://127.0.0.1:20128/v1\n" + line.format(value) + "\n")
+-    proc = subprocess.run([sys.executable, str(CAPTURE), "--config", "--profile", str(profile),
+-                           "--out", str(tmp_path / "out")], capture_output=True, text=True, timeout=60, cwd=str(ROOT))
+-    printed = proc.stdout + proc.stderr
+-    assert not any(value[i:i + 8] in printed for i in range(len(value) - 7)), f"{label}: part of the value printed"
++    text = PROFILE_HEAD + line.format(value) + "\n"
++    raw = _yaml_error(text)
++    # de-vacuous: PyYAML's own message carries the value, so the handler is the only reason it is not printed
++    assert type(raw).__name__ == cls and _prints_part_of(value, str(raw)), f"{label}: the fixture went vacuous"
++    profile, proc = _config_leg(tmp_path, text)
++    assert not _prints_part_of(value, proc.stdout + proc.stderr), f"{label}: part of the value printed"
++    assert proc.returncode == 1, proc.stderr
++    mark = raw.problem_mark
++    assert proc.stderr == (f"capture_leg: profile {profile} is not valid YAML ({cls}) "
++                           f"at line {mark.line + 1}, column {mark.column + 1}\n"), proc.stderr
++
++
++# I59-C (VERIFY-S0-04-LEAK-R1 G2): some parse errors are not YAMLErrors. An explicit tag's constructor raises a plain
++# ValueError or KeyError that quotes the value (`!!float` and `!!bool` lower-case it first); a deep nesting raises a
++# RecursionError and a `!!timestamp` that is no date an AttributeError: their messages hold no value, but they are a
++# message, and they are the rows a handler that adds only ValueError and KeyError misses. None carries a mark.
++NON_YAML_ERRORS = (
++    ("ValueError", "an !!int tag", "    api_key: !!int {}"),
++    ("ValueError", "an !!float tag", "    api_key: !!float {}"),
++    ("KeyError", "an !!bool tag", "    api_key: !!bool {}"),
++    ("RecursionError", "a 5000-deep nesting", "    api_key: " + "[" * 5000 + "{}" + "]" * 5000),
++    ("AttributeError", "a !!timestamp that is no date", "    api_key: !!timestamp 2026-99-99{}"),
++)
++
++
++@pytest.mark.parametrize("kind", ["sk-key", "mixed-case"])
++@pytest.mark.parametrize("cls,label,line", NON_YAML_ERRORS, ids=[row[1] for row in NON_YAML_ERRORS])
++def test_capture_leg_reports_a_non_yaml_parse_error_by_class_only(tmp_path, cls, label, line, kind):
++    value = _fake_key() if kind == "sk-key" else "Zq" + secrets.token_hex(16).upper()
++    text = PROFILE_HEAD + line.format(value) + "\n"
++    raw = _yaml_error(text)
++    assert type(raw).__name__ == cls, f"{label}: PyYAML raised {type(raw).__name__}"
++    if cls in ("ValueError", "KeyError"):
++        assert _prints_part_of(value, str(raw)), f"{label}: the fixture went vacuous"
++    profile, proc = _config_leg(tmp_path, text)
++    assert not _prints_part_of(value, proc.stdout + proc.stderr), f"{label}: part of the value printed"
+     assert proc.returncode == 1, proc.stderr
+-    assert re.fullmatch(rf"capture_leg: profile {re.escape(str(profile))} is not valid YAML "
+-                        r"at line \d+, column \d+\n", proc.stderr), proc.stderr
++    assert proc.stderr == f"capture_leg: profile {profile} is not valid YAML ({cls}) at an unknown position\n", \
++        proc.stderr
+ 
+ 
+ def test_runner_is_syntactically_valid():
