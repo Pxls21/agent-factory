@@ -16,6 +16,7 @@ last_compiled: 2026-09-03
 - **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308); vLLM healthy at `GPU_UTIL` 0.96 (D-099).
 - **Held for the batch:** I59-A round 4 (`tasks/briefs/i59/I59-A.patch`) and I59-C (`tasks/briefs/i59/I59-C.patch`, task #314).
 - **CI:** run #1104 red on the D-099 push (`tests/test_gpu_side_by_side.py` read the new quadlet `GPU_UTIL`); the fix is on origin 3ee246d with `CI_FIX`; its run is in progress.
+- **Baked this batch:** `pc-bridge-lanes` (a batch client never runs beside a local-route lane; check `nvidia-smi` first) and `orchestration` (b) (a build lane can meet the harness's report-write block too; every brief carries the return-as-text fallback). Registered: #325 (laya's probe context), #326 (a GPU-slack preflight), #328 (two tooling YAML echoes), #329 (two AP_SCREEN entries), #330 (safe_commit lists the tests that name each staged path).
 
 **2026-09-26 08:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **vLLM back (D-099):** it crashed at 07:52Z and crash-looped: `laya-systemone`'s probe held a 256 MiB CUDA context (AF-AP-231). The owner's fix, `GPU_UTIL` 0.96 in `deploy/qwen.container`, is deployed; healthy since 08:10Z, KV 215,112 tokens. Task #325 removes the probe's context.
