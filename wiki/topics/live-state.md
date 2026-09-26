@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 05:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-SCRUB2 (task #303), I59-A round 2 (task #312: attest fixtures named `blocked.json`/`result.json` below a proof's top level; round 1 held uncommitted in the tree for the batch landing, declared in `.lanes-live`).
+- **RUNNING (PC, local route):** I59-C (task #314, lane `pc-i59c.md--2a50a65`: S0-04 G2, G5, G6), on the HCTX1 profile helper (131072). The poller logs to `<scratch>/pc-i59c-dispatch.log`.
+- **Next:** I59-B (task #313, S0-05) after I59-C frees the local slot; a verify lane on I59-A; then the batch landing (the re-mint of all twelve, EXPECTED_PENDING = the twelve) and the owner's one re-sign.
+
 **2026-09-26 05:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents, resumed after a container restart at about 05:40Z):** SYNTH1 (task #308), I59-A (task #312), VERIFY-SCRUB2 (task #303, D-098). Their files were intact; SYNTH1's orphaned gate run (the whole vendored-manifest test inside it) was stopped by pid before it could fill the disk.
 - **Waiting:** S1-RATE-R1 (task #318) after SYNTH1 lands; I59-B/C (tasks #313, #314) after I59-A; task #273 (one shared copy for the vendored-manifest test) is the next small fix.
