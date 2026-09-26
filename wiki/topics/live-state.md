@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 11:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three verifiers):** VERIFY-I59-BCE and VERIFY-I59-LANDING (on the local landing commit, branch `i59-landing`, rebased onto origin 8992772), VERIFY-SCRUB2-R1 (on `tasks/briefs/system1/SCRUB2-R1.patch`). A disk watch alerts under 400 MB.
+- **SYNTH1 (task #308): the labeler FAILS the check against the real scores** (S1-RATE rel exact 0.3846 on 52 sections, bar 0.75; it scatters on the real 2s). Under D-096 its 21,930 labels feed nothing; the next choice is the owner's.
+- **Waiting:** the push of the local commits (CI run #1107 in progress).
+
 **2026-09-26 10:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **No sandbox lane is live.** SCRUB2-R1 (task #321) is home and held as `tasks/briefs/system1/SCRUB2-R1.patch` for its verify.
 - **The issue #59 landing is committed LOCALLY** (branch `i59-landing`, worktree `/home/user/i59-landing`); its full suite runs (as root). Then three verifiers go out together after one push: VERIFY-I59-BCE, VERIFY-I59-LANDING (their premise blocks take the suite's result) and VERIFY-SCRUB2-R1 (briefs committed in `tasks/briefs/`).
