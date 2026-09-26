@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 04:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** SYNTH1 (task #308), I59-A (task #312).
+- **VERIFY-S1-RATE HOME (task #309 closed): CONTRACT-INVALID on item 4's measurement only.** A reply over about 200 characters before a tool call is recorded as thinking with no text, so its score lines are invisible; compliance 0.36-0.50 measured reply length. The stamp stays live (everything else survived). Repair S1-RATE-R1 (task #318) waits for SYNTH1 to land. Until then, write each score as a short text of its own (under 200 characters; a note only for a 0).
+- **HCTX1 landed and checked live (task #310).** VERIFY-SCRUB2 (task #303) waits for the owner.
+
 **2026-09-26 04:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-S1-RATE (task #309), I59-A (task #312: `extra_attested_inputs`, the main build's next step; brief `tasks/briefs/i59/I59-A-brief.md`).
 - **HCTX1 LANDED AND CHECKED LIVE (task #310, D-097):** each PC lane's cloned Hermes profile now states 131072 for the three local ids, read from the quadlet; on the PC, Hermes's own code resolves 131072 for all three, and the owner's profile is unchanged. PC lanes may run again (one long-context local lane at a time, D-062). Follow-ups #316 (stale lane profiles fail verify on relaunch: remove the old `aflane*` profile first) and #317 (the helper's repo root).
