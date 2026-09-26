@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 02:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303).
+- **Landed and live:** S1-RATE (task #295, D-095: the safeguard stop read as a false positive). Every hook injection through `hook_context.py` carries `[S1 <id> <source>]` and a score request; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`; `scripts/s1_scores.py <transcript>` pairs them (main thread proven live: s1-ffb64a49 scored). The standing rule is in CLAUDE.md. Off switch: `.jev/s1-rate-off`.
+- **Next:** VERIFY-S1-RATE after VERIFY-SCRUB2; the wiki-context stamp needs the owner's settings approval.
+
 **2026-09-26 02:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303).
 - **Done:** S0-04 re-accepted (D-094): the owner's tag on cdbc1b8 verifies, committed as `docs/governance/tags/accepted-S0-04.tag`; `check-proof-status.py` rc 0 with no WARNING; all twelve proofs ACCEPTED. Pushed: origin d00455f (after CI #1095).
