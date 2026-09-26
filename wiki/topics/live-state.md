@@ -11,6 +11,10 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 05:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents, resumed after a container restart at about 05:40Z):** SYNTH1 (task #308), I59-A (task #312), VERIFY-SCRUB2 (task #303, D-098). Their files were intact; SYNTH1's orphaned gate run (the whole vendored-manifest test inside it) was stopped by pid before it could fill the disk.
+- **Waiting:** S1-RATE-R1 (task #318) after SYNTH1 lands; I59-B/C (tasks #313, #314) after I59-A; task #273 (one shared copy for the vendored-manifest test) is the next small fix.
+
 **2026-09-26 05:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 (task #308), I59-A (task #312), VERIFY-SCRUB2 resumed from its saved point (task #303, D-098: the owner said yes; brief `tasks/briefs/system1/VERIFY-SCRUB2-RESUME-brief.md`).
 - **Waiting:** S1-RATE-R1 (task #318) after SYNTH1 lands; I59-C/B (tasks #313, #314) after I59-A.
