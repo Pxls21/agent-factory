@@ -73,3 +73,34 @@ remove.
 - Long commands in one foreground call, each under 10 minutes; kill by pid only.
 - When a hook injection stamped `[S1 <id> <source>]` reaches you, write `S1-RATE <id> rel=<0-3> use=<0-3>` as a short text of
   its own (under 200 characters; a note only for a 0).
+
+## PREMISE — MEASURED at authoring (2026-09-26 11:2xZ, the sandbox; the landing worktree `/home/user/i59-landing`, clean)
+
+The disk floor matters to you too: `tests/test_lane_gate.py` refuses below 1,500 MB free (exit 66), and the post-commit
+hook re-indexes any worktree a commit or a rebase lands in (about 740 MB; task #332): never commit or rebase in yours.
+
+```
+$ git -C /home/user/i59-landing log -2 --format='%h %s' | cut -c1-80   (the landing commit, local; its parent is origin's head)
+e778cf5 The issue #59 batch landed (task #315): four follow-up patches, FU-4, al
+8992772 transcripts: scrubbed sandbox chat digests (2026-09-26)
+$ sha256sum tasks/briefs/i59/I59-{A,B,C,E}.patch | cut -c1-16
+342e8d4225a2d764 I59-A.patch
+c46b5dffe358063a I59-B.patch
+d048d18f452996a7 I59-C.patch
+ea9da2271112fa58 I59-E.patch
+$ git -C /home/user/i59-landing show --stat HEAD | tail -1
+ 43 files changed, 2052 insertions(+), 384 deletions(-)
+$ (in the landing worktree, as root) python3 scripts/validate-ledger integrity --root .   -> rc, PRESENT, INVALID
+integrity rc=0 PRESENT=12 INVALID=0
+$ python3 scripts/ledger-gen --root . twice, then cmp   -> idempotent; validate-ledger integrity --ledger proofs/ledger.json rc 0; stage1-gate rc 0
+$ python3 scripts/check-proof-status.py .   -> rc 0, twelve WARNING lines, nothing else
+$ bash scripts/test_summary.sh --ignore=tests/test_vendored_manifest.py --basetemp=/tmp/lbt tests/   (the landing, before its rebase onto 8992772, which changed only docs)
+pytest-exit: 1
+pytest-summary: 10 failed, 5784 passed, 9 skipped, 8 xfailed in 3044.77s (0:50:44)
+#   9 of the 10: tests/test_lane_gate.py, each "lane_gate: only 1408 MB free under ...; a tree copy needs about 1 GB
+#   (LANE_GATE_MIN_FREE_MB, default 1500): free space first" (exit 66), the sandbox disk, not the landing
+#   the 10th: test_i59b_the_handback_runs_when_a_signal_stops_the_run[HUP], load-sensitive (task #331); alone, unloaded:
+3 passed, 294 deselected in 5.20s
+$ df -Pm / | awk ...
+1453 MB free
+```
