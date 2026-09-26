@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 03:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, two agents):** SYNTH1 (task #308, D-096: synthetic skill labels from our chat history) and HCTX1 (task #310, D-097: each PC lane's cloned Hermes profile learns the 131,072-token context vLLM really serves).
+- **STOPPED:** VERIFY-SCRUB2 (task #303). The owner's interrupt at 03:33:29Z also stopped its in-flight call, and the harness refuses a resume of a user-stopped agent (INCIDENT-LOG; session-continuity narrowed). Report sections 1-4 sit untracked in the tree; the relaunch waits for the owner's word.
+- **D-097:** vLLM already serves 131,072 (the quadlet's MAX_LEN); OmniRoute tells Hermes 200,000 for the two local lane combos, so a lane compresses near 100k. The fix goes into the lane clones only; the owner's profile and OmniRoute stay untouched.
+- **Next:** harvest SYNTH1 and HCTX1; the PC check of HCTX1 (a throwaway lane profile resolves 131072); the labeling run on the PC; VERIFY-S1-RATE (task #309). Task #311 (backlog): search-intercept refuses a whole-file run of `tests/test_vendored_manifest.py`.
+
 **2026-09-26 02:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303).
 - **Landed and live:** S1-RATE (task #295, D-095: the safeguard stop read as a false positive). Every hook injection through `hook_context.py` carries `[S1 <id> <source>]` and a score request; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`; `scripts/s1_scores.py <transcript>` pairs them (main thread proven live: s1-ffb64a49 scored). The standing rule is in CLAUDE.md. Off switch: `.jev/s1-rate-off`.
