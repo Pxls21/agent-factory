@@ -122,6 +122,7 @@
 | X-005 | Enable PandaProbe | Measured telemetry gap, safe redaction/retention, OmniRoute-only judges |
 | X-006 | Shared ai-memory workspace vs stronger tenant separation | Threat classification and cross-scope authorization tests |
 | X-007 | Native Hermes Buzz plugin as future simplification | Demonstrated parity and approved change to the `buzz-acp` contract |
+| X-008 | Interference-style frontier search for the Foundry's candidate loop (merge candidates that behave the same on the evaluation suite, advance the best few per round; upstream Badtheorylabs/interference-search at afedcc2, Apache-2.0; `docs/research/findings/INTERFERENCE-SEARCH-ASSESSMENT-2026-09-26.md`) | Its Countdown numbers reproduced; a Foundry-scale measurement that merging cuts evaluator calls without losing the best candidate; execution only in the evaluation sandbox (its own runner is not a sandbox) |
 
 ## Owner inputs still needed
 
