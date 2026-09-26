@@ -413,7 +413,7 @@ harness-ports/tests/ names none of them. On this disk the set runs in two parts 
 without tests/test_vendored_manifest.py (set=ac3b6ebef974), whole, twice; part 2 is tests/test_vendored_manifest.py, its
 57 tests one at a time, each through `bash scripts/test_summary.sh <node id> --basetemp <fresh>` with the basetemp deleted
 right after, twice. The bytes under test: scripts/s1_synth.py sha256 374cc5ede5b3ec32..., tests/test_s1_synth.py
-9f3bdde0847eb666... (neither changed after 05:44:22Z). The tree's HEAD moved from 2a50a65 to e1a55e5 during run A (the
+9f3bdde0847eb666... (neither changed after 05:44:22Z). The tree's HEAD moved from 2a50a65 to 5673d6e during run A (the
 coordinator's four commits, 06:06:59Z to 06:09:18Z: briefs, the ledger, the wiki, the incident log, the orchestration
 skill and the manifest); none touches a file of the set or of the tool's imports. Some tests read files those commits
 changed (the orchestration skill through the hook's corpus, which this lane's tests rank on; the wiki live-state; the
@@ -542,7 +542,7 @@ of section 8 runs it for real.
   proofs/registry.yaml, scripts/validate-ledger and tests/test_validate_ledger.py, and untracked
   tasks/briefs/i59/I59-A-report.md and tests/test_attested_inputs.py. Not touched. At 06:1xZ
   (`git --no-optional-locks status --short`) only untracked files remained: this lane's three, VERIFY-SCRUB2's report
-  and tasks/briefs/i59/VERIFY-I59-A-report.md; the I59-A changes had been committed as a patch file (6af9f03). The
+  and tasks/briefs/i59/VERIFY-I59-A-report.md; the I59-A changes had been committed as a patch file (4b1980c). The
   coordinator's commits during gate run A are listed in section 9.
 - **D7. S1-ALL labels name a skill, not a section.** The brief says "per prompt and skill"; the validator joins each to
   the best-ranked section of that skill (section 5).
