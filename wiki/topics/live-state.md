@@ -16,6 +16,7 @@ last_compiled: 2026-09-03
 - **RUNNING (sandbox):** SCRUB2-R1 (task #321); its files are in `.lanes-live`.
 - **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308).
 - **CI:** run for origin eb48880 (the #1105 fix) in progress.
+- **Assessed, not built:** the owner's link Badtheorylabs/interference-search (a beam search with state merging and a judge): a Harness Foundry candidate, open choice X-008; its code runner is no sandbox. Two optional checks offered to the owner.
 
 **2026-09-26 09:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **The issue #59 batch is built:** I59-A, I59-C and I59-E are held as patches; I59-B is home and its coordinator gate re-run is in progress (then `tasks/briefs/i59/I59-B.patch`). Its census driver ran on the PC: 6 right, 2 fail-closed, 0 wrong. Next: the landing (#315, in the sandbox as root: apply the four patches, FU-4, re-mint all twelve, anchors PENDING), one verify, the owner's re-sign.
