@@ -75,3 +75,9 @@ signed tag OBJECT is also committed as a file, `docs/governance/tags/accepted-<i
 It is content-addressed: `git hash-object -w -t tag` on the file reproduces the exact object the owner signed, and the checker
 imports and verifies it whenever the ref is absent (a clone without tags, CI with `fetch-depth: 0`). When both exist they must be
 the same object. Anyone can restore the ref: `git update-ref refs/tags/accepted/<id> $(git hash-object -w -t tag docs/governance/tags/accepted-<id>.tag)`.
+
+The shortest import, used for S0-04's re-sign (2026-09-26, D-094): the coordinator reads the object over the bridge
+(`bash scripts/pc.sh 'cd ~/agent-factory && git cat-file tag accepted/<id> | base64 -w0; echo'`), decodes it to a file, checks
+that `git hash-object -t tag <file>` equals the PC's `git rev-parse accepted/<id>`, that the tagged commit is present locally
+and holds the current `proofs/<id>/result.json`, then commits the file as `docs/governance/tags/accepted-<id>.tag` and
+restores the ref as above. A git bundle (the section above) is needed only when commits must travel too.
