@@ -604,7 +604,10 @@ def test_the_prompt_path_filters_and_never_repeats(tmp_path):
 def test_a_prompt_whose_first_line_is_too_long_still_gets_its_pointer(tmp_path):
     """F4: the best section's excerpt starts at a line longer than the share, so no line of it can go; its label and
     pointer still reach the model, once per window."""
-    ask = prompt("sizing pc lanes: launching and re-attaching a lane")
+    # The prompt picks pc-bridge-lanes § Launching, re-attaching and sizing PC lanes, whose best entry for these words is
+    # its 4,800-byte first line. A skill edit that adds a shorter entry matching the prompt better moves the excerpt's
+    # start (the D-099 lesson did, on "sizing" and "lane"; CI run #1105): re-point the prompt, never the assertions.
+    ask = prompt("launching and re-attaching pc lanes")
     ctx = context(run(PROMPT, ask, tmp_path))
     rec = telemetry(tmp_path)[-1]
     best = rec["matched"][0].rsplit(" (", 1)[0]
