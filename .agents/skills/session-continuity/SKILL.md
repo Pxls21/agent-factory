@@ -239,6 +239,11 @@ origin state, task state, or owner statements contradict what you remember:
   while it was stopped (the restart time, other lanes' landings, any new finding that touches its files) and
   repeat the standing rules. Re-dispatch only when the transcript is gone. Processes a lane or the coordinator
   started outside the harness (a `setsid` server, a PC run) survive a worker restart: check them by pid.
+  **A lane's own foreground command survives too, as an orphan (PPID 1), while its agent is gone (2026-09-26 05:4xZ):**
+  SYNTH1's 18-file gate run went on after a container restart, headed for the whole `tests/test_vendored_manifest.py`
+  (about 3.4 GB of copies against 1.5 GB free). Before the resume messages, list the orphans
+  (`ps -eo pid,ppid,etime,cmd | awk '$2==1'`, filtered to the lanes' scratch paths and scripts), stop a hazardous one
+  by pid, and tell the resumed lane which of its commands was stopped and why.
   **The rule covers a worker restart, never an OWNER stop (2026-09-26, VERIFY-SCRUB2):** an interrupt during the
   coordinator's turn also stops every background agent's in-flight tool call (the verifier's Bash was rejected 24 ms
   after the main thread's interrupt), and the harness then refuses the resume: `SendMessage` answers "stopped by the
