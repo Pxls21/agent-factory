@@ -379,14 +379,14 @@ an input, so F-1 was blocking; the builder's round 3 (`tasks/briefs/i59/I59-A-re
 FU-1, FU-2, FU-3, FU-5. Written incrementally from here.
 
 Premise, re-measured at 07:1xZ:
-- HEAD c15a46e; origin 626fc4c; `git diff --stat origin HEAD -- scripts/ proofs/ tests/` empty (HEAD's code = origin's).
+- HEAD 474b591; origin 626fc4c; `git diff --stat origin HEAD -- scripts/ proofs/ tests/` empty (HEAD's code = origin's).
 - `git diff --stat 2a50a65 626fc4c` over every attested area (`proofs/`, the validator, the runner, `ledger-gen`,
   `check-proof-status.py`, the two test files, `docs/adr`, `SBOM.yaml`, `upstream.lock.yaml`, the two root files,
   `fixtures/`): empty. Round 1's PIN baseline (issue #59 F-1 as filed, section 1) still describes this base.
 - `tasks/briefs/i59/I59-A.patch`: sha256 prefix `988261b5dc447fce`, five diffs (the four of round 2 plus
   `proofs/schemas/result.schema.json`), `git apply --check -v` rc 0 on HEAD. The round-2 patch (`8e83b983e966ce2b`) is
   read back from 6af9f03 for the delta.
-- My round-1 report is committed (096e564); this section appends to it.
+- My round-1 report is committed (4991a05); this section appends to it.
 Verdict: premise HOLDS.
 
 ### 13.1 The delta (07:4xZ)
@@ -557,7 +557,7 @@ round 1's surviving N1, N2 and N5 are now killed. Live differentials of my two s
   (a one-byte edit turns it INVALID though its checker only tests existence): stricter than the verdict, fail-closed, and
   one more pair of files whose routine edits need a re-mint and a re-sign.
 - I-15 (new) The `tests` job is red on the base itself (626fc4c: SYNTH1's skip guard on the non-root runner, per the
-  coordinator's c15a46e; its fix rides SYNTH1 round 2). The landing's CI verdict needs that fix too; this change is not
+  coordinator's 474b591; its fix rides SYNTH1 round 2). The landing's CI verdict needs that fix too; this change is not
   its cause (the CI emulation above is green on the attested-inputs set).
 - Round 1's other INFO items (I-1 to I-6, I-8 to I-12) are unchanged by round 3.
 
