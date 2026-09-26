@@ -12,6 +12,11 @@ last_compiled: 2026-09-03
 ## Active lanes
 
 **2026-09-26 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303), the independent check of the scrubber hardening (origin cdbc1b8), fixture sources only.
+- **Pushed:** origin cdbc1b8 (SCRUB2 landed; `--lanes-live`, so no transcript sync this push).
+- **HELD for the owner:** S1-RATE (task #295), stamping paused; the S0-04 re-sign.
+
+**2026-09-26 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING:** none.
 - **Landed:** SCRUB2 (task #292): keys before a non-ASCII letter and after a JSON escape, five measured shapes, tests that never open a real secret (an `openat` trace: 0), a non-blocking value-gate reader; the real gate passes the real transcript. VERIFY-SCRUB2 is due.
 - **HELD for the owner:** S1-RATE (task #295), after the API safeguard flag; stamping paused (`.jev/s1-rate-off`), its code uncommitted in the tree.
