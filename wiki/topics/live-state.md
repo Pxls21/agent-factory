@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 10:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **No sandbox lane is live.** SCRUB2-R1 (task #321) is home and held as `tasks/briefs/system1/SCRUB2-R1.patch` for its verify.
+- **The issue #59 landing is committed LOCALLY** (branch `i59-landing`, worktree `/home/user/i59-landing`); its full suite runs (as root). Then three verifiers go out together after one push: VERIFY-I59-BCE, VERIFY-I59-LANDING (their premise blocks take the suite's result) and VERIFY-SCRUB2-R1 (briefs committed in `tasks/briefs/`).
+- **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308), about 85% done.
+- **Registered:** #333 (three older super-linear scrubber rules, AF-AP-152's class).
+
 **2026-09-26 10:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **The issue #59 landing is committed LOCALLY, not pushed:** branch `i59-landing`, worktree `/home/user/i59-landing` (the four patches, FU-4, the env-tool-quirks line, all twelve re-minted: integrity 12 PRESENT, stage1-gate rc 0; the twelve anchors PENDING, check-proof-status twelve WARNING lines). The full suite runs on it (as root); then VERIFY-I59-BCE and VERIFY-I59-LANDING (briefs in `tasks/briefs/i59/`); then the push and the owner's re-sign of all twelve.
 - **RUNNING (sandbox):** SCRUB2-R1 (task #321); its files are in `.lanes-live`.
