@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 04:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-S1-RATE (task #309), I59-A (task #312: `extra_attested_inputs`, the main build's next step; brief `tasks/briefs/i59/I59-A-brief.md`).
+- **HCTX1 LANDED AND CHECKED LIVE (task #310, D-097):** each PC lane's cloned Hermes profile now states 131072 for the three local ids, read from the quadlet; on the PC, Hermes's own code resolves 131072 for all three, and the owner's profile is unchanged. PC lanes may run again (one long-context local lane at a time, D-062). Follow-ups #316 (stale lane profiles fail verify on relaunch: remove the old `aflane*` profile first) and #317 (the helper's repo root).
+- **STOPPED, waiting for the owner:** VERIFY-SCRUB2 (task #303).
+- **Unpushed:** the HCTX1 landing and its ledger lines; the push waits for CI on 331a20c.
+
 **2026-09-26 04:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents, the ceiling):** SYNTH1 (task #308), HCTX1 (task #310, D-097), VERIFY-S1-RATE (task #309: the stamp, the score line and the extractor; the live read found compliance 0.36-0.50 per source, and the lane judges each `missing` score).
 - **STOPPED, waiting for the owner:** VERIFY-SCRUB2 (task #303); the owner was asked whether to relaunch it from its saved report.
