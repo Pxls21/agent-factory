@@ -14,8 +14,8 @@ last_compiled: 2026-09-03
 **2026-09-26 04:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents, the ceiling):** SYNTH1 (task #308), HCTX1 (task #310, D-097), VERIFY-S1-RATE (task #309: the stamp, the score line and the extractor; the live read found compliance 0.36-0.50 per source, and the lane judges each `missing` score).
 - **STOPPED, waiting for the owner:** VERIFY-SCRUB2 (task #303); the owner was asked whether to relaunch it from its saved report.
-- **MAIN BUILD NEXT:** the issue #59 batch (`tasks/issue59-batch-plan.md`, tasks #312-#315): one re-mint and one owner re-sign of all twelve proofs, then the Stage 0 pull request. F-1 measured as a set of five consumers (S0-02, S0-03, S0-05 load S0-01 files; S0-06 reads `upstream.lock.yaml`; S0-07 imports the Fubuki checkout). #312's brief (`tasks/briefs/i59/I59-A-brief.md`) waits on its test floor, then on a free lane slot.
-- **Unpushed:** the VERIFY-S1-RATE brief and the plan (three commits); they go out with the next push.
+- **MAIN BUILD NEXT:** the issue #59 batch (`tasks/issue59-batch-plan.md`, tasks #312-#315): one re-mint and one owner re-sign of all twelve proofs, then the Stage 0 pull request. F-1 measured as a set of five consumers (S0-02, S0-03, S0-05 load S0-01 files; S0-06 reads `upstream.lock.yaml`; S0-07 imports the Fubuki checkout). #312's brief (`tasks/briefs/i59/I59-A-brief.md`) is committed (floor at the PIN: 1527 passed, 13 files set=07f9aa59b430) and waits for a free lane slot.
+- **Unpushed:** the VERIFY-S1-RATE brief, the plan and the I59-A brief (five commits); the push waits for the CI verdict of the last push.
 
 **2026-09-26 03:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** SYNTH1 (task #308, D-096: synthetic skill labels from our chat history) and HCTX1 (task #310, D-097: each PC lane's cloned Hermes profile learns the 131,072-token context vLLM really serves).
