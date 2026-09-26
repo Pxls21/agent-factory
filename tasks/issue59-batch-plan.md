@@ -1,6 +1,6 @@
 # The issue #59 batch: every attested follow-up in one re-mint and one re-sign (plan, 2026-09-26 03:5xZ)
 
-STATUS: PLANNED (coordinator, 2026-09-26 03:58Z; origin 4b5434f). Not dispatched. Tasks #312-#315 in `todo/BUILD-TASKLIST.md`.
+STATUS: IN PROGRESS (2026-09-26 05:5xZ): #312 round 1 home (the set measured by the lane: S0-02, S0-03, S0-05, S0-06, S0-09, S0-10, S0-12), round 2 running; #313 and #314 not dispatched; the landing procedure is in `tasks/briefs/i59/I59-A-report.md` section 5.
 
 ## Why now
 
