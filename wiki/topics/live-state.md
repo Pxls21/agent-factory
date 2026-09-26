@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 06:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 round 2 (task #308: parse model answers by structure; the real smoke stopped at 74 of 108 malformed), VERIFY-I59-A (task #312's check), HCTX1-R1 (tasks #316, #317).
+- **RUNNING (PC, local route):** I59-C (task #314). The SYNTH1 candidates sit on the PC (`/home/rocco/synth1/cand`, sha256 equal to the sandbox copy); the labeling resumes after round 2 lands.
+- **Ready, not dispatched:** SCRUB2-R1 (task #321), after SYNTH1 round 2.
+
 **2026-09-26 06:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-I59-A (task #312's check), HCTX1-R1 (tasks #316, #317).
 - **RUNNING (PC, local route):** I59-C (task #314).
