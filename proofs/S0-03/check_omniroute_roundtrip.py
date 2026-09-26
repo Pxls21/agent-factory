@@ -266,8 +266,13 @@ def _read_yaml(path: Path, name: str):
 
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (yaml.YAMLError, UnicodeDecodeError) as exc:
-        raise Failure(f"bundle: {name} is not valid YAML ({exc.__class__.__name__})")
+    except Exception as exc:  # noqa: BLE001 - every error of the read and the parse, never its message
+        # PyYAML raises more than YAMLError: an explicit tag's constructor raises a ValueError or a
+        # KeyError that quotes the value (`!!float` and `!!bool` lower-cased), a bad `!!timestamp` an
+        # AttributeError, a deep nesting a RecursionError (AF-AP-232). The class name only, never the
+        # message, a snippet or the problem text; `from None` keeps the quoting error out of any
+        # traceback of this Failure.
+        raise Failure(f"bundle: {name} is not valid YAML ({exc.__class__.__name__})") from None
 
 
 def _obj(value, name: str) -> dict:

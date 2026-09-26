@@ -1756,9 +1756,10 @@ def _stop(process):
 
 def _secret_free_environ():
     """os.environ without any key the pins' redaction rule names (the sandbox exports real tokens):
-    a runner under test never needs them, and a leak into a unit must be proven with PLANTED fakes."""
+    a runner under test never needs them, and a leak into a unit must be proven with PLANTED fakes.
+    Nor sudo's SUDO_* (I59-B): they switch the runner's handback on, which a test sets, never inherits."""
     rx = re.compile(r"(?i)(KEY|TOKEN|SECRET|PASSWORD|NSEC|PRIV)")
-    return {k: v for k, v in os.environ.items() if not rx.search(k)}
+    return {k: v for k, v in os.environ.items() if not rx.search(k) and not k.startswith("SUDO_")}
 
 
 # The pinned values the runner and the checker read, loaded the way the checker loads them (by path).
@@ -3618,7 +3619,8 @@ def test_a2pp_a_log_its_holder_appends_during_the_leg_passes(e3dir):
     request are both logged through the held descriptor — while every byte it held before stays. The
     census lists it under `appended` with both records and its holder, says so on stderr, names nothing,
     and the leg goes on to its checker. The unit's own append to the same file passes too: declared
-    limit 8, pinned here so the prose cannot drift from the behaviour."""
+    limit 8 (the census admits an end state equal to a pure append by the same holders, whoever wrote
+    it), pinned here so the prose cannot drift from the behaviour."""
     markers = _s0_01_tree(e3dir, dirs=["v2-run-1"], files={
         "relay.log": b"relay: listening\n", "buzz-acp.pid": b"4242\n", "v2-run-1/frames.jsonl": b"{}\n"})
     port, host = 18144, _lib("egress_ns_host_ip s0-05-hermes-acp").stdout.strip()
@@ -3760,3 +3762,534 @@ def test_a2pp_a_file_that_grows_while_the_census_reads_it_gets_one_consistent_re
     was, now = census["appended"]["stream.log"]["before"], census["appended"]["stream.log"]["after"]
     assert (32 << 20) < was["size"] < now["size"] <= len(data), (was, now, len(data))
     assert was["sha256"] == _sha_of(data[:was["size"]]) and now["sha256"] == _sha_of(data[:now["size"]]), census
+
+
+# ===================================================================== I59-B (task #313): S0-05's follow-ups
+# tasks/briefs/i59/I59-B-brief.md. The census tests (F-2, F-3, F-6) run R's OWN `_s0_01_census`, cut from R's
+# bytes at test time and called as R calls it (`snap` into a variable, then `compare <file> 3<<<"$snap"`), over
+# a scratch tree whose holders are this test's own processes: they need no root and no namespace. The AF-AP-169
+# tests (item 4) drive the REAL runner: its refusal of an evidence root inside a git work tree, and its
+# handback of the evidence to the invoking user under sudo.
+
+NEEDS_ROOT = pytest.mark.skipif(
+    os.getuid() != 0,
+    reason="needs root: it runs the runner as root over a tree another uid owns, or drops to another uid; NOT "
+           "run here — it runs on a root venue (this sandbox runs as root; CI does not)")
+
+
+def _census_function():
+    """R's `_s0_01_census`, cut from R's bytes at call time: a mutant of R is what these tests run."""
+    text = RUNNER.read_text()
+    start = text.index("\n_s0_01_census() {") + 1
+    end = text.index("\nPY\n}\n", start) + len("\nPY\n}\n")
+    return text[start:end]
+
+
+# R's two calls: CENSUS_BEFORE=$(_s0_01_census snap) before the first unit, and at the leg's end
+# _s0_01_census compare <census file> 3<<<"$CENSUS_BEFORE". PIN[BASE] is the pinned base, the dir holding .markers.
+CENSUS_CALL = ('declare -A PIN\nPIN[BASE]=$1\n@@FUNCTION@@\n'
+               'if [ "$2" = snap ]; then _s0_01_census snap; else _s0_01_census compare "$3" 3<<<"$4"; fi\n')
+
+
+def _census_run(base, *args):
+    script = CENSUS_CALL.replace("@@FUNCTION@@", _census_function())
+    return subprocess.run(["bash", "-c", script, "census", str(base), *args], capture_output=True, text=True,
+                          timeout=60)
+
+
+def _census_snap(base):
+    """`snap`'s output: the text the runner holds in CENSUS_BEFORE."""
+    run = _census_run(base, "snap")
+    assert run.returncode == 0 and run.stdout, run.stderr
+    return run.stdout
+
+
+def _census_compare(base, snap, out):
+    """`compare <out>` with <snap> on fd 3. Returns the finished call and the census file it wrote."""
+    run = _census_run(base, "compare", str(out), snap)
+    assert run.returncode == 0, run.stderr
+    return run, json.loads(out.read_text())
+
+
+def _markers(tmp_path, files):
+    """<tmp_path>/base/.markers holding <files> ({name: bytes}, mode 0644), owned by this test's uid. Returns the
+    base (the census's PIN[BASE]) and .markers."""
+    markers = tmp_path / "base" / ".markers"
+    markers.mkdir(parents=True)
+    for name, data in files.items():
+        (markers / name).write_bytes(data)
+        (markers / name).chmod(0o644)
+    return markers.parent, markers
+
+
+# A holder for the census tests, as this test's own uid. It opens each <how>:<path> ONCE at start (w: O_WRONLY,
+# the relay's shape; rw: O_RDWR only, never O_WRONLY) and creates <ready>. On SIGUSR1 it applies <shape> to each
+# file it holds, then appends one line at the end, then writes <ready>.done: a JSON record of what it read back
+# in the middle of the shape through a fresh descriptor (the proof that the shape happened). The shapes: append
+# (the append only); truncate-rewrite (truncated to 0, the same bytes written back); restore-byte (byte 0
+# rewritten, then restored); restore-mode (mode 0600, then back); keep-mode (mode 0600, left so).
+SHAPER = """
+import json, os, signal, sys
+shape, ready, *specs = sys.argv[1:]
+held = []
+for spec in specs:
+    how, path = spec.split(":", 1)
+    held.append((os.open(path, {"w": os.O_WRONLY, "rw": os.O_RDWR}[how]), path))
+def look(path):
+    with open(path, "rb") as fh:                       # read-only and closed at once: never a holder
+        return fh.read()
+def mode_now(path):
+    with open(path, "rb") as fh:
+        return "%04o" % (os.fstat(fh.fileno()).st_mode & 0o7777)
+def on_signal(*_):
+    seen = {}
+    for fd, path in held:
+        data = look(path)
+        if shape == "truncate-rewrite":
+            os.ftruncate(fd, 0)
+            seen[path] = len(look(path))
+            os.pwrite(fd, data, 0)
+        elif shape == "restore-byte":
+            os.pwrite(fd, b"X", 0)
+            seen[path] = look(path)[:1].decode()
+            os.pwrite(fd, data[:1], 0)
+        elif shape in ("restore-mode", "keep-mode"):
+            mode = os.fstat(fd).st_mode & 0o7777
+            os.fchmod(fd, 0o600)
+            seen[path] = mode_now(path)
+            if shape == "restore-mode":
+                os.fchmod(fd, mode)
+        os.pwrite(fd, ("%s %d: appended\\n" % (shape, os.getpid())).encode(), len(data))
+    with open(ready + ".tmp", "w") as fh:
+        json.dump(seen, fh)
+    os.replace(ready + ".tmp", ready + ".done")
+signal.signal(signal.SIGUSR1, on_signal)
+open(ready, "w").close()
+while True:
+    signal.pause()
+"""
+
+
+def _shaper(workdir, shape, *specs):
+    """Starts a SHAPER as this test's own uid; returns it and its <ready> path. The caller stops it BY PID."""
+    script = workdir / "shaper.py"
+    script.write_text(SHAPER)
+    ready = workdir / f"ready-{shape}-{uuid.uuid4().hex[:6]}"
+    process = subprocess.Popen([sys.executable, str(script), shape, str(ready), *specs],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _wait_ready(ready, process, f"shaper {shape}")
+    return process, ready
+
+
+def _shape_now(process, ready):
+    """SIGUSR1 to the shaper; returns what it read back mid-shape, once it has appended."""
+    os.kill(process.pid, signal.SIGUSR1)
+    done = Path(f"{ready}.done")
+    _wait_for(lambda: done.exists() or process.poll() is not None, 10, "the shaper's shape")
+    assert done.exists(), f"the shaper exited with {process.poll()} before its shape was done"
+    return json.loads(done.read_text())
+
+
+def test_i59b_f2_a_pid_reused_with_another_start_time_is_another_holder(tmp_path):
+    """F-2 (VERIFY-S0-05, mutant M1): `appended` compares holders by pid AND start time (R's `w[:2]`). Here the
+    file's holder at the second snapshot has the pid of its holder at the first and another start time: a NEW
+    process that took a departed holder's pid. The census lists the file under `changed`, never `appended`.
+    `compare` reads the first snapshot on fd 3, as data, and this test builds it: the REAL `snap` of this tree
+    with ONE value moved, the start time of relay.log's holder, set one tick earlier. A real reuse leaves exactly
+    that shape: the departed holder (pid P, an earlier start time) in the first snapshot, the new process (pid P,
+    a later one) in the second; `compare` never looks the first snapshot's pids up in /proc, it only compares
+    them. The same call with the snapshot as `snap` wrote it (the control) lists relay.log under `appended`, so
+    the moved start time is the one reason for `changed`. (A real pid reuse is item 6's shape 2c, for the PC.)"""
+    base, markers = _markers(tmp_path, {"relay.log": b"relay: before\n"})
+    shaper, ready = _shaper(tmp_path, "append", f"w:{markers / 'relay.log'}")
+    try:
+        identity = _proc_identity(shaper.pid)
+        snap = _census_snap(base)
+        _shape_now(shaper, ready)
+        _, control = _census_compare(base, snap, tmp_path / "control.json")
+        built = json.loads(snap)
+        assert built["writers"] == {"relay.log": [identity]}, built["writers"]   # the census saw the real holder
+        pid, start, comm = identity
+        built["writers"]["relay.log"] = [[pid, start - 1, comm]]
+        reused, census = _census_compare(base, json.dumps(built, sort_keys=True), tmp_path / "reused.json")
+    finally:
+        _stop(shaper)
+    assert sorted(control["appended"]) == ["relay.log"] and control["changed"] == [], control
+    assert census["changed"] == ["relay.log"] and census["appended"] == {}, census
+    assert census["writers"] == {"before": {"relay.log": [[pid, start - 1, comm]]},
+                                 "after": {"relay.log": [identity]}}, census
+    assert reused.stdout == f"{markers / 'relay.log'}\n" and "s0-01-tree-appended" not in reused.stderr, reused
+
+
+def _write_modes(pid, path):
+    """The access mode of each descriptor <pid> holds on <path>, read from its fdinfo here (never R's scan)."""
+    modes = []
+    for fd in os.listdir(f"/proc/{pid}/fd"):
+        if os.readlink(f"/proc/{pid}/fd/{fd}") == os.path.realpath(path):
+            flags = next(line for line in Path(f"/proc/{pid}/fdinfo/{fd}").read_text().splitlines()
+                         if line.startswith("flags:"))
+            modes.append(int(flags.split()[1], 8) & os.O_ACCMODE)
+    return modes
+
+
+def test_i59b_f3_a_holder_that_opened_the_file_o_rdwr_only_and_appends_is_appended(tmp_path):
+    """F-3 (VERIFY-S0-05, mutant M4): a holder is a descriptor open for writing, O_WRONLY OR O_RDWR in its fdinfo
+    (R's `holders()`). rdwr.log's one holder opened it O_RDWR and never O_WRONLY (its fdinfo, read here, says so)
+    before the first snapshot, and only appends between the snapshots. The census lists rdwr.log under
+    `appended`, with that holder on both sides, and names nothing."""
+    base, markers = _markers(tmp_path, {"rdwr.log": b"rdwr: before\n"})
+    shaper, ready = _shaper(tmp_path, "append", f"rw:{markers / 'rdwr.log'}")
+    try:
+        identity = _proc_identity(shaper.pid)
+        assert _write_modes(shaper.pid, markers / "rdwr.log") == [os.O_RDWR]
+        snap = _census_snap(base)
+        _shape_now(shaper, ready)
+        run, census = _census_compare(base, snap, tmp_path / "census.json")
+    finally:
+        _stop(shaper)
+    assert sorted(census["appended"]) == ["rdwr.log"] and census["changed"] == [], census
+    assert census["writers"] == {"before": {"rdwr.log": [identity]}, "after": {"rdwr.log": [identity]}}, census
+    assert (markers / "rdwr.log").read_bytes() == b"rdwr: before\n" + f"append {identity[0]}: appended\n".encode()
+    assert run.stdout == "" and f"s0-01-tree-appended: {markers / 'rdwr.log'}" in run.stderr, run.stderr
+
+
+def test_i59b_f6_limit_8_the_end_states_the_census_lets_through_are_named(tmp_path):
+    """F-6 (VERIFY-S0-05): declared limit 8, pinned so its words cannot drift from the behaviour. The census
+    compares two snapshots, so it admits a file whose END state equals a pure append by the same holders, whatever
+    happened between them. Each file below has its own holder, which does one of limit 8's named shapes between
+    the snapshots and then appends: truncated to 0 and the same bytes written back (truncate-rewrite.log), byte 0
+    rewritten and restored (restore-byte.log), mode 0600 and back (restore-mode.log). Each shape happened (the
+    holder read the middle state back: size 0, byte "X", mode 0600), and all three are listed under `appended`.
+    The control, keep-mode.log (mode 0600 left so), is named under `changed`: the census does see the change that
+    the other shapes undo."""
+    let_through = ("truncate-rewrite", "restore-byte", "restore-mode")
+    name = {shape: f"{shape}.log" for shape in let_through + ("keep-mode",)}
+    base, markers = _markers(tmp_path, {log: f"{log}: before\n".encode() for log in name.values()})
+    shapers, seen = [], {}
+    try:
+        for shape, log in name.items():
+            shapers.append(_shaper(tmp_path, shape, f"w:{markers / log}"))
+        snap = _census_snap(base)
+        for shaper, ready in shapers:
+            seen.update(_shape_now(shaper, ready))
+        run, census = _census_compare(base, snap, tmp_path / "census.json")
+    finally:
+        for shaper, _ in shapers:
+            _stop(shaper)
+    assert seen == {str(markers / name["truncate-rewrite"]): 0, str(markers / name["restore-byte"]): "X",
+                    str(markers / name["restore-mode"]): "0600", str(markers / name["keep-mode"]): "0600"}, seen
+    assert sorted(census["appended"]) == sorted(name[shape] for shape in let_through), census
+    assert census["changed"] == ["keep-mode.log"], census
+    assert census["changed_records"]["keep-mode.log"]["after"]["mode"] == "0600", census
+    assert run.stdout == f"{markers / 'keep-mode.log'}\n", run.stdout
+
+
+def _git_free_environ(home):
+    """_secret_free_environ() with no GIT_* variable (this sandbox exports GIT_CONFIG_COUNT and its keys; sudo's
+    env_reset passes none), HOME=<home> and no system git file: no git configuration this test did not make."""
+    env = {key: value for key, value in _secret_free_environ().items() if not key.startswith("GIT_")}
+    return {**env, "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _work_tree(path, gitfile=False):
+    """A git work tree at <path>: `git init` (a `.git` directory) or, with <gitfile>, a directory whose `.git` is a
+    FILE naming another repository's git dir (a linked worktree's or a submodule's shape). Git itself must read
+    <path> as a work tree (no git configuration read but its own), or the test proves nothing."""
+    path.mkdir(parents=True)
+    env = _git_free_environ(path.parent)
+    if gitfile:
+        repository = path.parent / "the-repository"
+        subprocess.run(["git", "init", "-q", str(repository)], check=True, timeout=30, env=env)
+        (path / ".git").write_text(f"gitdir: {repository / '.git'}\n")
+    else:
+        subprocess.run(["git", "init", "-q", str(path)], check=True, timeout=30, env=env)
+    top = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                         timeout=30, env=env)
+    assert top.returncode == 0 and top.stdout.strip() == os.path.realpath(path), (top.returncode, top.stderr)
+    return path
+
+
+def _entries(path):
+    """{path relative to <path>: (uid, gid, mode)} for <path> itself ('.') and every entry under it, never
+    following a symbolic link."""
+    def one(entry):
+        st = os.lstat(entry)
+        return st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)
+    out = {".": one(path)}
+    for top, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            out[os.path.relpath(os.path.join(top, name), path)] = one(os.path.join(top, name))
+    return out
+
+
+@pytest.mark.parametrize("shape", ["below-its-top", "its-top", "through-a-symbolic-link", "not-made-yet",
+                                   "a-git-file"])
+def test_i59b_an_evidence_root_inside_a_git_work_tree_is_refused_before_anything_is_written(tmp_path, shape):
+    """AF-AP-169 (item 4a), the failure case: an evidence root inside a git work tree is refused with exit 73 and
+    a named reason before the runner writes anything: no entry under tmp_path changes, and the run stops before
+    its venue check (on a venue without root, that check would speak next). The root is judged by its resolved
+    path, through its nearest existing ancestor: below the tree's top, the top itself, a path outside that a
+    symbolic link carries into the tree, a root three levels below anything that exists, and a tree whose `.git`
+    is a file."""
+    tree = _work_tree(tmp_path / "clone", gitfile=(shape == "a-git-file"))
+    (tree / "sub").mkdir()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "into-the-clone").symlink_to(tree / "sub")
+    root = {"below-its-top": tree / "sub" / "evidence", "its-top": tree,
+            "through-a-symbolic-link": tmp_path / "outside" / "into-the-clone" / "evidence",
+            "not-made-yet": tree / "sub" / "a" / "b" / "c" / "evidence",
+            "a-git-file": tree / "sub" / "evidence"}[shape]
+    before = _entries(tmp_path)
+    runner = subprocess.run(["bash", str(RUNNER), str(root), "hermes-acp"], capture_output=True, text=True,
+                            timeout=60, env=_git_free_environ(tmp_path))
+    assert runner.returncode == 73, (runner.returncode, runner.stderr)
+    assert runner.stderr == (f"run_s0_05_units: evidence root refused: {os.path.realpath(root)} is inside the git"
+                             f" work tree {os.path.realpath(tree)} (AF-AP-169: give an evidence root outside every"
+                             " clone)\n"), runner.stderr
+    assert runner.stdout == "" and _entries(tmp_path) == before
+
+
+@NEEDS_ROOT
+def test_i59b_the_refusal_holds_as_root_on_a_clone_another_user_owns(tmp_path):
+    """AF-AP-169 (item 4a), the security boundary, the sudo case: the clone belongs to uid 65534 and the runner runs
+    as root, where git itself will not answer: `git rev-parse` exits 128 with `detected dubious ownership`
+    (asserted here: the failure a `git rev-parse` check would read as "not a work tree"), with no git configuration
+    that could trust the clone (no GIT_* variable, HOME set aside, no system file: for git and the runner alike, as
+    sudo's env_reset leaves it). The runner still
+    refuses the root inside it (exit 73), and no entry of the clone changes: nothing root-owned appears that its
+    owner would need sudo to remove."""
+    tree = _work_tree(tmp_path / "clone")
+    (tree / "sub").mkdir()
+    for top, dirnames, filenames in os.walk(tree):
+        for entry in [top] + [os.path.join(top, name) for name in dirnames + filenames]:
+            os.lchown(entry, *UNIT_USER)
+    env = _git_free_environ(tmp_path)
+    git = subprocess.run(["git", "-C", str(tree / "sub"), "rev-parse", "--is-inside-work-tree"],
+                         capture_output=True, text=True, timeout=30, env=env)
+    assert git.returncode == 128 and "detected dubious ownership" in git.stderr, (git.returncode, git.stderr)
+    before = _entries(tree)
+    runner = subprocess.run(["bash", str(RUNNER), str(tree / "sub" / "evidence"), "hermes-acp"],
+                            capture_output=True, text=True, timeout=60, env=env)
+    assert runner.returncode == 73, (runner.returncode, runner.stderr)
+    assert f"is inside the git work tree {os.path.realpath(tree)} (AF-AP-169" in runner.stderr, runner.stderr
+    assert _entries(tree) == before and {entry[:2] for entry in before.values()} == {UNIT_USER}
+
+
+@NEEDS_NETNS
+def test_i59b_an_evidence_root_outside_every_work_tree_runs_as_before_without_sudo(e3dir):
+    """AF-AP-169 (item 4a), the normal case, and item 4c: without sudo the run is as before. The root is outside
+    every work tree, reached through a symbolic link, and already holds a file (without sudo a root that exists is
+    taken, as before). The runner passes the guard and runs to its checker (the unit is not one it launches, so no
+    namespace is made); every entry it wrote is root's (no handback, and no handback line), and the file that was
+    there is untouched."""
+    real = e3dir / "real" / "evidence"
+    real.mkdir(parents=True)
+    (real / "was-here.txt").write_text("before the run\n")
+    (real / "was-here.txt").chmod(0o644)
+    os.chown(real / "was-here.txt", *UNIT_USER)
+    (e3dir / "link").symlink_to(e3dir / "real")
+    runner = _run_runner(_secret_free_environ(), e3dir / "link" / "evidence", "not-a-unit")
+    assert "=== checker ===" in runner.stdout and "evidence root refused" not in runner.stderr, runner.stderr
+    assert "handback" not in runner.stderr, runner.stderr
+    entries = _entries(real)
+    assert entries.pop("was-here.txt") == (*UNIT_USER, 0o644), entries
+    assert sorted(entries) == [".", "s0-01-census.json", "units.json"], entries
+    assert {entry[:2] for entry in entries.values()} == {(0, 0)}, entries
+
+
+INVOKER = (4242, 4243)          # SUDO_UID, SUDO_GID of the "sudo" runs below: numeric ids no account here has
+
+
+def _sudo(env):
+    """<env> as sudo hands it to the runner: EUID 0 (this venue's root), with SUDO_UID and SUDO_GID set."""
+    return {**env, "SUDO_UID": str(INVOKER[0]), "SUDO_GID": str(INVOKER[1])}
+
+
+def _invoker_dir(e3dir):
+    """A directory of the invoking user's, to hold the evidence root: deleting the root needs its parent."""
+    parent = e3dir / "invoker"
+    parent.mkdir()
+    os.chown(parent, *INVOKER)
+    return parent
+
+
+def _delete_as_invoker(path):
+    """`rm -rf <path>` as the invoking user, without sudo: what the handback is for."""
+    return subprocess.run(["setpriv", f"--reuid={INVOKER[0]}", f"--regid={INVOKER[1]}", "--clear-groups",
+                           "rm", "-rf", "--", str(path)], capture_output=True, text=True, timeout=60)
+
+
+# The unit's scratch tree (A2: its HOME) as a unit may leave it: a hard link to a file outside the evidence root,
+# symbolic links to a file and a directory outside it, a directory with a file, and a FIFO.
+UNIT_SCRATCH = """
+H, OUT = os.environ["HOME"], @@OUT@@
+os.link(os.path.join(OUT, "shared.txt"), os.path.join(H, "hard-link"))
+os.symlink(os.path.join(OUT, "target.txt"), os.path.join(H, "link-to-file"))
+os.symlink(os.path.join(OUT, "dir"), os.path.join(H, "link-to-dir"))
+os.mkdir(os.path.join(H, "sub"))
+with open(os.path.join(H, "sub", "own.txt"), "w") as fh:
+    fh.write("the unit's own file\\n")
+os.mkfifo(os.path.join(H, "fifo"))
+"""
+
+
+@NEEDS_NETNS
+def test_i59b_under_sudo_the_evidence_goes_back_to_the_invoker_and_nothing_outside_changes(e3dir):
+    """AF-AP-169 (item 4b), the normal case and the security boundary, on a REAL leg that runs to its checker (the
+    run's own end). Under sudo the unit leaves in its scratch tree a hard link to a root file outside the evidence
+    root (mode 0666, so protected_hardlinks lets uid 65534 link it), symbolic links to a root file and a root
+    directory outside it, a directory with a file, and a FIFO. At exit the root and every entry under it belong to
+    the invoking user, the links themselves included, except the hard link: a path outside names it too, so it is
+    left as it was and named on stderr. Nothing outside changes: not the linked file, not a link's target, not the
+    directory a link names nor what it holds. Then the invoking user deletes the whole root without sudo."""
+    outside = e3dir / "outside"
+    (outside / "dir").mkdir(parents=True)
+    (outside / "shared.txt").write_text("a root file the unit may write\n")
+    (outside / "shared.txt").chmod(0o666)
+    (outside / "target.txt").write_text("a root file\n")
+    (outside / "dir" / "inner.txt").write_text("a root file in a root directory\n")
+    untouched = _entries(outside)
+    evidence = _invoker_dir(e3dir) / "evidence"
+    port = 18150
+    env = _sudo(_runner_env(e3dir, port, extra=UNIT_SCRATCH.replace("@@OUT@@", repr(str(outside))) + "sys.exit(0)\n"))
+    listener = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _run_runner(env, evidence, "hermes-acp", timeout=240)
+    finally:
+        _stop(listener)
+        _lib("egress_ns_destroy s0-05-hermes-acp")
+    assert _census("s0-05-hermes-acp") == CLEAN
+    home = evidence / "hermes-acp" / "scratch" / "home"
+    log = (evidence / "hermes-acp.launch.log").read_text()
+    shared = os.lstat(outside / "shared.txt")
+    # the unit left all of it (else nothing below proves anything)
+    assert os.lstat(home / "hard-link").st_ino == shared.st_ino and shared.st_nlink == 2, log
+    assert os.readlink(home / "link-to-file") == str(outside / "target.txt"), log
+    assert os.readlink(home / "link-to-dir") == str(outside / "dir"), log
+    assert stat.S_ISFIFO(os.lstat(home / "fifo").st_mode) and (home / "sub" / "own.txt").is_file(), log
+    assert "=== checker ===" in runner.stdout, runner.stdout                  # the run's own end
+    assert _entries(outside) == untouched            # the boundary: no link followed, no linked file changed
+    assert (f"run_s0_05_units: handback: left as it is: {home / 'hard-link'} (a hard link: 2 paths name it)"
+            in runner.stderr.splitlines()), runner.stderr
+    owners = {rel: entry[:2] for rel, entry in _entries(evidence).items()}
+    assert owners.pop("hermes-acp/scratch/home/hard-link") == (0, 0), owners
+    assert {".", "units.json", "hermes-acp.launch.log", "hermes-acp/scratch/home/link-to-file",
+            "hermes-acp/scratch/home/link-to-dir", "hermes-acp/scratch/home/fifo",
+            "hermes-acp/scratch/home/sub/own.txt"} <= set(owners), owners
+    assert set(owners.values()) == {INVOKER}, owners
+    assert (f"run_s0_05_units: handback: {len(owners)} entries of {evidence} (the root included) now belong to "
+            f"{INVOKER[0]}:{INVOKER[1]}; 1 left as they are") in runner.stderr.splitlines(), runner.stderr
+    deleted = _delete_as_invoker(evidence)
+    assert deleted.returncode == 0 and not os.path.lexists(evidence), deleted.stderr
+    assert os.lstat(outside / "shared.txt").st_nlink == 1
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("sudo", [True, False], ids=["under-sudo", "without-sudo"])
+def test_i59b_the_handback_runs_on_an_exit_the_runner_takes_itself(e3dir, sudo):
+    """AF-AP-169 (items 4b and 4c) on an `exit` the runner takes itself after its traps are set: the S0-01 census
+    cannot be taken (the pinned base is a regular file), so the run stops with `exit 1` before its checker (the
+    unit is not one it launches, so no namespace is made). Under sudo the root and the entry under it then belong
+    to the invoking user, who deletes the whole root without sudo. Without sudo (a root run with no SUDO_UID) the
+    run is as before: every entry is root's, and no handback line is printed."""
+    (e3dir / "s0-01-pinned").write_text("not a directory\n")
+    env = _runner_env(e3dir, 18151, override={"PINNED_HERMES_HOME": str(e3dir / "s0-01-pinned" / ".hermes-home")})
+    evidence = _invoker_dir(e3dir) / "evidence"
+    runner = _run_runner(_sudo(env) if sudo else env, evidence, "not-a-unit")
+    assert runner.returncode == 1 and "=== checker ===" not in runner.stdout, (runner.returncode, runner.stdout)
+    assert "=== S0-01's tree census failed (exit 1): the leg FAILS ===" in runner.stderr.splitlines(), runner.stderr
+    owners = {rel: entry[:2] for rel, entry in _entries(evidence).items()}
+    assert sorted(owners) == [".", "units.json"], owners
+    if not sudo:
+        assert set(owners.values()) == {(0, 0)} and "handback" not in runner.stderr, (owners, runner.stderr)
+        return
+    assert set(owners.values()) == {INVOKER}, owners
+    assert (f"run_s0_05_units: handback: 2 entries of {evidence} (the root included) now belong to "
+            f"{INVOKER[0]}:{INVOKER[1]}") in runner.stderr.splitlines(), runner.stderr
+    deleted = _delete_as_invoker(evidence)
+    assert deleted.returncode == 0 and not os.path.lexists(evidence), deleted.stderr
+
+
+@NEEDS_NETNS
+@pytest.mark.parametrize("name,rc", [("INT", 130), ("TERM", 143), ("HUP", -signal.SIGHUP)], ids=["INT", "TERM", "HUP"])
+def test_i59b_the_handback_runs_when_a_signal_stops_the_run(e3dir, name, rc):
+    """AF-AP-169 (item 4b) on a stop: the unit is serving (the leg's settle window) when a signal reaches the
+    runner. INT and TERM go through the runner's own handlers (exit 130, 143); HUP has none: bash runs the EXIT
+    trap itself and then ends by the signal (Popen's -1; a shell reads 129). Each way `cleanup` ends with the
+    handback: the root and every entry under it belong to the invoking user, and nothing of the leg is left."""
+    ns = "s0-05-hermes-acp"
+    port = 18152
+    env = _sudo(_runner_env(e3dir, port))
+    evidence = _invoker_dir(e3dir) / "evidence"
+    listener = runner = None
+    try:
+        listener = _listener(e3dir, port)
+        runner = _runner_session(env, evidence, "hermes-acp")
+        _wait_for(lambda: _standin_records(e3dir), 60, "the unit to serve")
+        runner.send_signal(getattr(signal, f"SIG{name}"))
+        out, err = runner.communicate(timeout=120)
+    finally:
+        _stop(runner)
+        _stop(listener)
+        _lib(f"egress_ns_destroy {ns}")
+    assert runner.returncode == rc, (runner.returncode, out, err)
+    assert _census(ns) == CLEAN
+    owners = {rel: entry[:2] for rel, entry in _entries(evidence).items()}
+    assert {".", "hermes-acp.launch.log", "hermes-acp/scratch/home"} <= set(owners), owners
+    assert set(owners.values()) == {INVOKER}, owners
+    assert (f"run_s0_05_units: handback: {len(owners)} entries of {evidence} (the root included) now belong to "
+            f"{INVOKER[0]}:{INVOKER[1]}") in err.splitlines(), err
+
+
+@NEEDS_ROOT
+@pytest.mark.parametrize("case", ["an-empty-directory", "a-directory-with-entries", "a-symbolic-link-to-one",
+                                  "a-gid-not-a-number", "no-gid"])
+def test_i59b_under_sudo_an_existing_root_or_a_bad_id_is_refused_before_anything_is_written(e3dir, case):
+    """This lane's addition to item 4b (flagged in its report): under sudo the evidence root must be a NEW path, so
+    everything under it at exit is this run's and the handback may give all of it to the invoking user. A root that
+    exists (empty, holding another user's entry, or a symbolic link to one) is refused with exit 74 and a named
+    reason, and SUDO ids that are not both decimal with exit 64 (as S0_05_UNIT_USER is), before anything is
+    written: no entry under e3dir changes. The literal handback over an existing root would give the invoking user
+    whatever the root already held (`/tmp` holds everyone's)."""
+    exists = e3dir / "exists"
+    exists.mkdir()
+    if case == "a-directory-with-entries":
+        (exists / "not-ours.txt").write_text("another user's file\n")
+        os.chown(exists / "not-ours.txt", *UNIT_USER)
+    (e3dir / "link").symlink_to(exists)
+    root = {"an-empty-directory": exists, "a-directory-with-entries": exists,
+            "a-symbolic-link-to-one": e3dir / "link"}.get(case, e3dir / "new")
+    env = _sudo(_secret_free_environ())
+    if case == "a-gid-not-a-number":
+        env["SUDO_GID"] = "staff"
+    elif case == "no-gid":
+        del env["SUDO_GID"]
+    before = _entries(e3dir)
+    runner = subprocess.run(["bash", str(RUNNER), str(root), "hermes-acp"], capture_output=True, text=True,
+                            timeout=60, env=env)
+    if case in ("a-gid-not-a-number", "no-gid"):
+        assert runner.returncode == 64, (runner.returncode, runner.stderr)
+        assert runner.stderr == ("run_s0_05_units: SUDO_UID and SUDO_GID must be decimal ids, got "
+                                 f"'{INVOKER[0]}:{env.get('SUDO_GID', '')}'\n"), runner.stderr
+    else:
+        assert runner.returncode == 74, (runner.returncode, runner.stderr)
+        assert runner.stderr == (f"run_s0_05_units: evidence root refused: {exists} exists; under sudo it must be a"
+                                 f" new path (everything under it goes to uid {INVOKER[0]} at exit)\n"), runner.stderr
+    assert runner.stdout == "" and _entries(e3dir) == before
+
+
+@NEEDS_ROOT
+def test_i59b_a_non_root_run_that_carries_sudo_ids_runs_as_before(e3dir):
+    """Item 4c: the handback needs EUID 0. A non-root run (uid 65534) is the run as before whether or not it carries
+    SUDO_UID and SUDO_GID: a root that exists is no refusal (exit 74 is for sudo only), the guard passes, and the
+    run stops at its venue check (exit 2, the same line both ways) having written nothing."""
+    root = e3dir / "exists"
+    root.mkdir()
+    before = _entries(e3dir)
+    drop = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "bash", str(RUNNER), str(root),
+            "hermes-acp"]
+    for env in (_sudo(_secret_free_environ()), _secret_free_environ()):
+        run = subprocess.run(drop, capture_output=True, text=True, timeout=60, env=env)
+        assert (run.returncode, run.stderr) == (2, "run_s0_05_units: cannot run here (not-root)\n"), run.stderr
+    assert _entries(e3dir) == before

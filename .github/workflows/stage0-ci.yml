@@ -43,7 +43,7 @@ jobs:
       - name: Run tests
         env:
           S0_01_VENUE: ci   # the S0-01 real-leg corpus is a DECLARED input: CI declares itself and skips the real-producer tests by declaration (VERIFY-CK11 F13/F16)
-        run: python -m pytest tests/ -q
+        run: python -m pytest tests/ -q -rs   # -rs: every skip prints its reason (FU-4, VERIFY-I59-A)
       - name: Lint scripts
         run: python -m pyflakes scripts/validate-ledger scripts/proof-runner
       - name: Lint proofs and tests

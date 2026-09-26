@@ -60,13 +60,18 @@
 #  7. The S0-01 census (A2') compares each entry's type, mode, uid, gid and size, a regular file's
 #     sha256 and a symbolic link's target. It does not compare times, inode numbers, link counts or
 #     extended attributes, and it never reads what a symbolic link points to.
-#  8. A2'' lets one change through that the census cannot attribute: a regular file that the same
-#     processes (pid and start time) held open for write on the path's inode before the first unit and
-#     still hold after the last, which only grew, with every earlier byte and its mode, uid and gid
-#     unchanged (the pinned test relay's stdout, .markers/relay.log, appended while it serves the pair).
-#     A unit that appends to such a file itself (as a uid that may write it) and changes nothing else
-#     is not told apart from that writer. Any other change to the file still fails the leg: a
-#     rewritten byte, a new mode or owner, a holder gone or added.
+#  8. A2'' lets one kind of end state through. The file is a regular file that the same processes (pid
+#     and start time) held open for write on the path's inode at BOTH snapshots, before the first unit
+#     and after the last. Its end state equals a pure append to its start state: it is larger, every
+#     byte it held before is in place, and its type, mode, uid and gid are the same. The census compares
+#     the two snapshots only (limit 7), so it admits that end state whatever happened between them, and
+#     whoever did it. These pass, named here: the file truncated and the same bytes written back plus
+#     more; a byte rewritten and then restored; a mode changed and then changed back; an append by a unit
+#     (as a uid that may write the file), which is not told apart from the holders' own. Containment
+#     holds: each of them leaves S0-01's tree exactly as a pure append by its holders leaves it, and the
+#     census certifies that end state, not the path to it. Every other end state still fails the leg: a
+#     byte that differs, a new mode or owner, a holder gone or added. (A2'' is for the pinned test
+#     relay's stdout, .markers/relay.log, which the relay appends to while it serves the pair.)
 #
 # PREFLIGHT, not a workaround: a service bound only to 127.0.0.1 is unreachable from a namespace (a
 # fresh namespace has its own empty loopback — findings §6a, docs/research/FINDINGS-STAGE0-v1.md:98-108).
@@ -82,6 +87,44 @@ P="$(cd "$HERE/../.." && pwd)"
 . "$P/netns_lib.sh"
 
 EVIDENCE_ROOT=${1:?usage: run_s0_05_units.sh <evidence-root> [unit...]}; shift || true
+
+# AF-AP-169 (I59-B): an evidence root inside a git work tree is refused (exit 73) before anything is
+# written. On 2026-09-19 a sudo run given a root inside the owner's clone left a root-owned directory
+# that blocked `git merge --ff-only` there five days later. The check finds a work tree as git's own
+# discovery does, without asking git: a `.git` entry (a directory, or the file of a linked worktree or a
+# submodule) in the root or in any directory above it, after `readlink -m` resolves every symbolic link
+# (a root that does not exist yet is read through its nearest existing ancestor). Not `git rev-parse`:
+# run as root on a clone another user owns, git refuses with `detected dubious ownership` (exit 128),
+# and a check that reads that failure as "not a work tree" fails open in exactly the sudo case.
+EVIDENCE_REAL=$(readlink -m -- "$EVIDENCE_ROOT") && [ -n "$EVIDENCE_REAL" ] \
+  || { echo "run_s0_05_units: evidence root refused: cannot resolve '$EVIDENCE_ROOT'" >&2; exit 73; }
+_dir=$EVIDENCE_REAL
+while :; do
+  if [ -e "$_dir/.git" ] || [ -L "$_dir/.git" ]; then
+    echo "run_s0_05_units: evidence root refused: $EVIDENCE_REAL is inside the git work tree $_dir" \
+         "(AF-AP-169: give an evidence root outside every clone)" >&2
+    exit 73
+  fi
+  [ "$_dir" = / ] && break
+  _dir=$(dirname -- "$_dir")
+done
+# AF-AP-169 (I59-B): under sudo (EUID 0 with SUDO_UID and SUDO_GID set), `cleanup` hands everything under
+# the evidence root back to SUDO_UID:SUDO_GID as its last step (`_handback`). The root must not exist yet
+# (exit 74), so everything under it at exit is this run's: a root that exists may hold entries of others
+# (`/tmp` holds everyone's), and the handback would give them to the invoking user. Without sudo (a root
+# run with no SUDO_UID, or a non-root run) HANDBACK stays empty and nothing here changes the run.
+HANDBACK=""
+if [ "$EUID" -eq 0 ] && [ -n "${SUDO_UID:-}" ]; then
+  if ! [[ "$SUDO_UID:${SUDO_GID:-}" =~ ^(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,9})$ ]]; then
+    echo "run_s0_05_units: SUDO_UID and SUDO_GID must be decimal ids, got '$SUDO_UID:${SUDO_GID:-}'" >&2; exit 64
+  fi
+  if [ -e "$EVIDENCE_REAL" ] || [ -L "$EVIDENCE_REAL" ]; then
+    echo "run_s0_05_units: evidence root refused: $EVIDENCE_REAL exists; under sudo it must be a new path" \
+         "(everything under it goes to uid $SUDO_UID at exit)" >&2
+    exit 74
+  fi
+  HANDBACK=$SUDO_UID:$SUDO_GID
+fi
 
 status=$(egress_ns_capable) || { echo "run_s0_05_units: cannot run here ($status)" >&2; exit 2; }
 SETPRIV_BIN=$(command -v setpriv) || { echo "run_s0_05_units: cannot run here (no-setpriv)" >&2; exit 2; }
@@ -234,16 +277,18 @@ _pair_identity() {
 #
 # A2'' (the coordinator's amendment after the first live pair leg, 2026-09-23 22:47Z: the census failed
 # that leg on .markers/relay.log, which the pinned test relay, running since before the leg, holds open
-# for write as its stdout and appended while it served the pair). The census now tells ONE change apart
-# from the rest: a regular file that the same processes held open for write before the first unit and
-# still hold after the last, which only grew, with every byte it held before unchanged and its type,
-# mode, uid and gid unchanged. `compare` lists such a file under `appended`, never under `changed`, and
-# the leg goes on. A holder is a process with a descriptor open for writing (O_WRONLY or O_RDWR in its
-# fdinfo) on the very inode the tree's path names (device and inode compared, so a file that only reads
-# the same path in another mount namespace is no holder), identified by its pid and start time. `snap`
-# records the holders with the census; `compare` records both sides under `writers`. A file's size is
-# the count of the bytes its digest covers, so a file that grows while it is read still gets one record
-# that describes one byte string. Declared limit 8 says what this cannot tell apart.
+# for write as its stdout and appended while it served the pair). The census now tells ONE end state
+# apart from the rest: a regular file that the same processes held open for write at both snapshots,
+# before the first unit and after the last, and whose end state equals a pure append to its start state
+# (larger, every byte it held before in place, its type, mode, uid and gid the same). `compare` lists such
+# a file under `appended`, never under `changed`, and the leg goes on. It compares the two snapshots only,
+# so it admits that end state whatever happened between them: declared limit 8 names what that lets
+# through and why containment holds. A holder is a process with a descriptor open for writing (O_WRONLY or
+# O_RDWR in its fdinfo) on the very inode the tree's path names (device and inode compared, so a file that
+# only reads the same path in another mount namespace is no holder), identified by its pid and start time.
+# `snap` records the holders with the census; `compare` records both sides under `writers`. A file's size
+# is the count of the bytes its digest covers, so a file that grows while it is read still gets one record
+# that describes one byte string.
 _s0_01_census() {  # snap | compare <census file>
   python3 -B - "${PIN[BASE]}" "$@" <<'PY'
 import hashlib, json, os, stat, sys
@@ -465,11 +510,73 @@ _leg_teardown() {
 # Kill a pid only while it is still THIS runner's child (a reaped pid may be reused).
 _kill_our_child() { [ "$(ps -o ppid= -p "$1" 2>/dev/null | tr -d ' ')" = "$$" ] && kill -KILL "$1" 2>/dev/null; }
 
-mkdir -p "$EVIDENCE_ROOT"
 declare -A RESULT
 NS_LIVE=""; LOG_PIDS=""; FIFO_DIRS=""
+# AF-AP-169 (I59-B): the handback, run under sudo only (HANDBACK, above) as `cleanup`'s last step, when
+# no unit, canary or log reader is left to write. The root (this run made it) and every entry under it go
+# to SUDO_UID:SUDO_GID, so the invoking user can delete the evidence without sudo. It changes nothing
+# outside the root. It never follows a symbolic link: each entry is opened O_PATH|O_NOFOLLOW relative to
+# its directory's descriptor and its owner is changed on that descriptor (fchownat, AT_EMPTY_PATH), so a
+# link's own owner changes, never its target's, and no path is looked up twice. It leaves as it is, and
+# names on stderr, a non-directory with more than one link (another path may name it: the unit user can
+# hard-link a file it may write into its scratch tree, A2) and an entry on another filesystem (a mount
+# point is not descended). A parent that `mkdir -p` made ABOVE the root is outside it and keeps its
+# owner. A SIGKILL runs no trap, so no handback.
+_handback() {
+  python3 -B - "$EVIDENCE_REAL" "${HANDBACK%%:*}" "${HANDBACK##*:}" <<'PY'
+import ctypes, os, stat, sys
+root, uid, gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+libc = ctypes.CDLL(None, use_errno=True)
+def own(fd):                                   # fchownat(fd, "", uid, gid, AT_EMPTY_PATH): the inode fd pins
+    if libc.fchownat(fd, b"", uid, gid, 0x1000) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+done, left = 0, []
+def hand(fd, where, dev):
+    global done
+    st = os.fstat(fd)
+    if st.st_dev != dev:
+        return left.append(f"{where} (another filesystem)")
+    if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
+        return left.append(f"{where} (a hard link: {st.st_nlink} paths name it)")
+    own(fd)
+    done += 1
+    if stat.S_ISDIR(st.st_mode):
+        sub = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+        try:
+            for name in sorted(os.listdir(sub)):
+                child = None
+                try:
+                    child = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=sub)
+                    hand(child, os.path.join(where, name), dev)
+                except FileNotFoundError:
+                    pass
+                except (OSError, RecursionError) as exc:
+                    left.append(f"{os.path.join(where, name)} ({exc.__class__.__name__}: {exc})")
+                finally:
+                    if child is not None:
+                        os.close(child)
+        finally:
+            os.close(sub)
+try:
+    top = os.open(root, os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY)
+except OSError as exc:
+    sys.exit(print(f"run_s0_05_units: handback: nothing handed back: {root}: {exc.strerror}", file=sys.stderr))
+try:
+    hand(top, root, os.fstat(top).st_dev)
+except OSError as exc:
+    left.append(f"{root} ({exc.__class__.__name__}: {exc})")
+finally:
+    os.close(top)
+for entry in left:
+    print(f"run_s0_05_units: handback: left as it is: {entry}", file=sys.stderr)
+print(f"run_s0_05_units: handback: {done} entries of {root} (the root included) now belong to {uid}:{gid}"
+      + (f"; {len(left)} left as they are" if left else ""), file=sys.stderr)
+PY
+}
 # F3: cleanup destroys only namespaces this runner created and still owns (owner record = $$);
-# destroy also removes a relay reach (D-051). Then any log reader left, by pid, and the pipes.
+# destroy also removes a relay reach (D-051). Then any log reader left, by pid, and the pipes; then,
+# under sudo, the handback (AF-AP-169).
 # E3-R1: its first command ignores SIGINT and SIGTERM, so no later stop cuts a teardown step short,
 # and every command it starts inherits the ignore (a signal to the whole process group cannot kill
 # the `iptables -D` that removes the relay reach).
@@ -482,6 +589,7 @@ cleanup() {
   done
   for pid in $LOG_PIDS; do _kill_our_child "$pid"; done
   for dir in $FIFO_DIRS; do rm -rf "$dir"; done
+  [ -z "$HANDBACK" ] || _handback
 }
 # R4 (E3-b): a stop stops. `cleanup` runs ONCE, on EXIT; SIGINT and SIGTERM exit 130 / 143 through it,
 # so no further unit leg starts, no units.json is written, and neither the census comparison nor the
@@ -497,6 +605,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'trap "" INT TERM; exit 130' INT
 trap 'trap "" INT TERM; exit 143' TERM
+# AF-AP-169 (I59-B): the root is made under the EXIT trap, so the handback covers it on every exit.
+mkdir -p "$EVIDENCE_ROOT"
 
 CENSUS_BEFORE=$(_s0_01_census snap)
 

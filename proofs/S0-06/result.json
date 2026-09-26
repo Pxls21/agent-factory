@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-06",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-19T07:59:38.865732Z",
+  "recorded_at": "2026-09-26T10:26:36.859365Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-06/check_four_scope.py",
         "proofs/S0-06/evidence"
       ],
-      "started_at": "2026-09-19T07:59:37.890677Z",
-      "finished_at": "2026-09-19T07:59:37.979505Z",
+      "started_at": "2026-09-26T10:26:36.529562Z",
+      "finished_at": "2026-09-26T10:26:36.614868Z",
       "exit_code": 0,
       "stdout_sha256": "bb6f13b2783134e94190ee9b1e8c2fb9b284b30d7fc9595f9d5995d74276f855",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -28,8 +28,8 @@
         "--query",
         "x"
       ],
-      "started_at": "2026-09-19T07:59:37.979740Z",
-      "finished_at": "2026-09-19T07:59:38.182639Z",
+      "started_at": "2026-09-26T10:26:36.615013Z",
+      "finished_at": "2026-09-26T10:26:36.673540Z",
       "exit_code": 1,
       "stdout_sha256": "974df346a1f2e54bf447b747a285b71bed2959fd753eba3bd3f43fa2473d2fbe",
       "stderr_sha256": "be660f68cf223abc5be206a4c8827d7a3c4f9451c6bce1efaeed2ceba44527d0",
@@ -42,8 +42,8 @@
         "proofs/S0-06/check_four_scope.py",
         "proofs/S0-06/fixtures/evidence-leak"
       ],
-      "started_at": "2026-09-19T07:59:38.182864Z",
-      "finished_at": "2026-09-19T07:59:38.732198Z",
+      "started_at": "2026-09-26T10:26:36.673663Z",
+      "finished_at": "2026-09-26T10:26:36.752770Z",
       "exit_code": 1,
       "stdout_sha256": "5438823f3652ed8f1d40be017523b2085465c6160df56836ba553a450fa83591",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -56,8 +56,8 @@
         "proofs/S0-06/check_four_scope.py",
         "proofs/S0-06/fixtures/evidence-wrong-scope-write"
       ],
-      "started_at": "2026-09-19T07:59:38.732446Z",
-      "finished_at": "2026-09-19T07:59:38.864635Z",
+      "started_at": "2026-09-26T10:26:36.752905Z",
+      "finished_at": "2026-09-26T10:26:36.852647Z",
       "exit_code": 1,
       "stdout_sha256": "efd2aad414ade32f280f56bd42a864420030955f685cd771e95b1fe2933d27be",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -71,11 +71,11 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
+    "scripts/validate-ledger": "f1eb20ff26c879395c63a9c6e322927a5380970a92957c8c2d04d73db6e8e7a9",
+    "proofs/registry.yaml": "e392a7f46661963c8c40fb37c661f61aff4e03013824b52fabf9ed2979802201",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
-    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/result.schema.json": "8bd5dabd0a4d87b7f9e0b985066a4c6db3d2191a9406e8bbfa9475babc2566c5",
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-06/adapter/bindings.json": "fe4f014a593fdb51b554a82167c35ab6ee737b7a934926cd962f67ede618d8eb",
@@ -235,7 +235,9 @@
     "proofs/S0-06/tools/pc/collect_leg.sh": "41cdc4d4f74ed1f20bc3943bb20473ce26a522f83bbadab32a4305528a5ff96a",
     "proofs/S0-06/tools/pc/run_s0_06_legs.sh": "b4579150336758e0c919d33ac4b275807356e75acdf7b53b307c6090202ac4d9",
     "proofs/S0-06/tools/pc/seed_scopes.py": "95e17bca596eb86172b83e850b13709673589a0c7af7c5bfb8ee8188d5971d6c",
-    "proofs/S0-06/tools/pc/start_ai_memory.sh": "3955cc931a9f654ae16e3cfd84bb779a495502cd54107056a5305899817dc7a3"
+    "proofs/S0-06/tools/pc/start_ai_memory.sh": "3955cc931a9f654ae16e3cfd84bb779a495502cd54107056a5305899817dc7a3",
+    "fixtures/s0-06/neg-unauthorized-tuple.json": "a6012f29fcd48c68f6a0317e658ed505b51a850dc2173b8273d9f08e985ea7d2",
+    "upstream.lock.yaml": "8990e5f12dbdb6a73118182480d9f7902588cbc9ac79a1b33b82a90df1bbf3f9"
   },
-  "digest": "92e9cbdad72d3940c13afe75eb0618698d0357abe6746708e7f92430730f8214"
+  "digest": "0a7a0fa8f101af17d0675fa52a90237e48310b6427bf15609d9a8beaa63edd47"
 }

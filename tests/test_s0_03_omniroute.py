@@ -17,11 +17,14 @@ import importlib.util
 import inspect
 import json
 import os
+import secrets
 import shutil
 import socket
+import string
 import subprocess
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 import pytest
@@ -818,6 +821,96 @@ def test_malformed_json_is_a_named_failure(passing):
     result = run_checker(passing)
     assert result.returncode == 1
     assert "is not valid JSON" in result.stdout
+
+
+# --------------------------------------------------------------------------- the profile's YAML reader
+# AF-AP-232 in S0-03 (I59-E, task #327). PyYAML raises more than `yaml.YAMLError`: an explicit tag's
+# constructor raises a builtin that quotes the value (`!!int` verbatim, `!!float` and `!!bool`
+# lower-cased), a bad `!!timestamp` an AttributeError, a deep nesting a RecursionError. Each must
+# become the checker's own Failure, the class name only. The last two rows are errors the reader
+# already caught at 3ee246d; they stay so a rewrite of its handler cannot drop them.
+_NEST = 5000  # flow levels; PyYAML's composer spends two frames on each (494 levels trip the limit of 1000)
+
+PROFILE_PARSE_ERRORS = [
+    # (id, the line added under the provider block, the exact class, how that class's message quotes the key)
+    ("int-tag", lambda key: f"api_key: !!int {key}".encode(), ValueError, "verbatim"),
+    ("float-tag", lambda key: f"api_key: !!float {key}".encode(), ValueError, "lower-cased"),
+    ("bool-tag", lambda key: f"api_key: !!bool {key}".encode(), KeyError, "lower-cased"),
+    ("timestamp-tag", lambda key: f"api_key: !!timestamp {key}".encode(), AttributeError, None),
+    ("deep-nesting", lambda key: ("api_key: " + "[" * _NEST + key + "]" * _NEST).encode(), RecursionError, None),
+    ("syntax-error", lambda key: f"api_key: {key}: x".encode(), yaml.scanner.ScannerError, "verbatim"),
+    ("invalid-utf8", lambda key: f"api_key: {key}".encode() + b"\xff", UnicodeDecodeError, None),
+]
+_PARSE_ERROR_IDS = [row[0] for row in PROFILE_PARSE_ERRORS]
+
+
+def _fake_key() -> str:
+    """A FAKE key built at run time. Every other letter is upper-case, so every run of 8 characters holds
+    one, and a lower-cased copy (the `!!float` and `!!bool` messages) is found only case-folded."""
+    letters = [secrets.choice(string.ascii_lowercase) for _ in range(24)]
+    return "sk-FAKE-" + "".join(c.upper() if i % 2 else c for i, c in enumerate(letters))
+
+
+def _leaked_runs(key: str, text: str) -> list:
+    """Every run of 8 characters of `key` that `text` carries, both sides case-folded."""
+    folded = text.casefold()
+    runs = {key[i:i + 8].casefold() for i in range(len(key) - 7)}
+    return sorted(run for run in runs if run in folded)
+
+
+def _profile_with_a_fake_key(root: Path, line) -> tuple:
+    """Add one line holding a fresh fake key under the provider block of the bundle's profile."""
+    key = _fake_key()
+    assert all(key[i:i + 8] != key[i:i + 8].lower() for i in range(len(key) - 7))
+    profile = root / "hermes" / "profile.yaml"
+    anchor = b"key_env: OMNIROUTE_API_KEY"
+    raw = profile.read_bytes()
+    assert raw.count(anchor) == 1
+    profile.write_bytes(raw.replace(anchor, anchor + b"\n    " + line(key)))
+    return key, profile
+
+
+@pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
+def test_profile_parse_error_is_a_named_failure_that_never_prints_the_key(passing, row):
+    """Through the real CLI: a parse error of the captured profile exits 1 with the checker's own
+    reason, the class name only, and no case-folded run of 8 characters of the key reaches stdout or
+    stderr. The row first proves, in process, that parsing this file raises exactly that class and
+    (where the class quotes input) that its message carries the key: the handler is then the only
+    reason the key is absent."""
+    _, line, cls, quoted = row
+    key, profile = _profile_with_a_fake_key(passing, line)
+    with pytest.raises(Exception) as raised:
+        yaml.safe_load(profile.read_text(encoding="utf-8"))
+    assert type(raised.value) is cls, type(raised.value)
+    message = str(raised.value)
+    if quoted == "verbatim":
+        assert key in message
+    if quoted == "lower-cased":
+        assert key not in message and key.lower() in message
+    if quoted:
+        assert _leaked_runs(key, message)  # the screen finds the key where PyYAML prints it
+
+    result = run_checker(passing)
+    assert _leaked_runs(key, result.stdout) == [], "the key leaked to stdout"
+    assert _leaked_runs(key, result.stderr) == [], "the key leaked to stderr"
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout.strip() == (
+        f"failure_reason: bundle: hermes/profile.yaml is not valid YAML ({cls.__name__})"), result.stderr[-2000:]
+
+
+@pytest.mark.parametrize("row", PROFILE_PARSE_ERRORS, ids=_PARSE_ERROR_IDS)
+def test_profile_parse_failure_chains_no_error_that_quotes_the_key(passing, row):
+    """The reader raises its Failure `from None`: a traceback of it (a caller that lets it escape, a log
+    of `format_exc()`) shows no chained PyYAML error, so the key cannot ride the context either."""
+    _, line, cls, _ = row
+    key, profile = _profile_with_a_fake_key(passing, line)
+    with pytest.raises(check.Failure) as raised:
+        check._read_yaml(profile, "hermes/profile.yaml")
+    failure = raised.value
+    assert str(failure) == f"bundle: hermes/profile.yaml is not valid YAML ({cls.__name__})"
+    rendered = "".join(traceback.format_exception(type(failure), failure, failure.__traceback__))
+    assert _leaked_runs(key, rendered) == [], "the key rides the rendered traceback"
+    assert failure.__cause__ is None and failure.__suppress_context__
 
 
 # --------------------------------------------------------------------------- spec + schema

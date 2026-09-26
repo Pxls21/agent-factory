@@ -10,17 +10,17 @@
 "waves": [0, 1, 2, 3],
 "proofs": [
   {"proof_id": "S0-01", "title": "buzz-acp launches pinned hermes-acp", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
-  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4},
-  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1},
+  {"proof_id": "S0-02", "title": "Buzz authorization and freshness", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 4, "extra_attested_inputs": ["proofs/S0-01/check_acp_conformance.py", "proofs/S0-01/check_initialize.py", "proofs/S0-01/fixtures/identities.json", "proofs/S0-01/negative_contract.py", "proofs/S0-01/pins.py", "proofs/S0-01/tools/nostr_verify.py"]},
+  {"proof_id": "S0-03", "title": "Hermes to OmniRoute", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["pc-bridge"], "required_negative_controls": 1, "extra_attested_inputs": ["proofs/S0-01/check_acp_conformance.py", "proofs/S0-01/check_initialize.py", "proofs/S0-01/negative_contract.py", "proofs/S0-01/pins.py", "proofs/S0-01/tools/nostr_verify.py"]},
   {"proof_id": "S0-04", "title": "Compression contract", "classification": "execution_proof", "wave": 2, "spike_dependencies": [], "required_negative_controls": 1},
-  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1},
-  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1},
+  {"proof_id": "S0-05", "title": "No direct model egress", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["selective-egress"], "required_negative_controls": 1, "extra_attested_inputs": ["proofs/S0-01/pins.py"]},
+  {"proof_id": "S0-06", "title": "Four-scope adapter design", "classification": "execution_proof", "wave": 1, "spike_dependencies": ["rust-ai-memory"], "required_negative_controls": 1, "extra_attested_inputs": ["fixtures/s0-06/neg-unauthorized-tuple.json", "upstream.lock.yaml"]},
   {"proof_id": "S0-07", "title": "Fubuki corrections", "classification": "execution_proof", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
   {"proof_id": "S0-08", "title": "gVisor compatibility", "classification": "execution_proof", "wave": 2, "spike_dependencies": ["runsc", "pc-bridge"], "required_negative_controls": 1},
-  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
-  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1},
+  {"proof_id": "S0-09", "title": "Foundry host decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["docs/adr/0005-foundry-host.md"]},
+  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["docs/adr/0006-gbrain-seam.md"]},
   {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1},
-  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1}
+  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["LICENSE-DECISION.md", "SBOM.yaml", "THIRD-PARTY-NOTICES.md", "upstream.lock.yaml"]}
 ],
 
 # COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.

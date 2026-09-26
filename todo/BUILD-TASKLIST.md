@@ -342,17 +342,29 @@ owner's native GitHub review on the head SHA); that is the separate AF-AP-32 gov
 (`acceptance-anchor-af-ap-32`), owner-blocked on infrastructure.
 
 PROOF-STATUS: S0-11 = ACCEPTED
+PROOF-ANCHOR: S0-11 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-11` on a commit holding the re-minted proofs/S0-11/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-01 = ACCEPTED
+PROOF-ANCHOR: S0-01 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-01` on a commit holding the re-minted proofs/S0-01/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-02 = ACCEPTED
+PROOF-ANCHOR: S0-02 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-02` on a commit holding the re-minted proofs/S0-02/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-05 = ACCEPTED
+PROOF-ANCHOR: S0-05 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-05` on a commit holding the re-minted proofs/S0-05/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-07 = ACCEPTED
+PROOF-ANCHOR: S0-07 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-07` on a commit holding the re-minted proofs/S0-07/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-03 = ACCEPTED
+PROOF-ANCHOR: S0-03 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-03` on a commit holding the re-minted proofs/S0-03/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-04 = ACCEPTED
+PROOF-ANCHOR: S0-04 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-04` on a commit holding the re-minted proofs/S0-04/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-06 = ACCEPTED
+PROOF-ANCHOR: S0-06 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-06` on a commit holding the re-minted proofs/S0-06/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-08 = ACCEPTED
+PROOF-ANCHOR: S0-08 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-08` on a commit holding the re-minted proofs/S0-08/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-09 = ACCEPTED
+PROOF-ANCHOR: S0-09 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-09` on a commit holding the re-minted proofs/S0-09/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-10 = ACCEPTED
+PROOF-ANCHOR: S0-10 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-10` on a commit holding the re-minted proofs/S0-10/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 PROOF-STATUS: S0-12 = ACCEPTED
+PROOF-ANCHOR: S0-12 = PENDING-OWNER-TAG (requested 2026-09-26: the owner's GPG-signed tag `accepted/S0-12` on a commit holding the re-minted proofs/S0-12/result.json (the issue #59 batch) makes this acceptance owner-verifiable again; procedure in docs/governance/README.md; check-proof-status.py reports this state as a WARNING, never as verified)
 Upstream lock refresh (`upstream-lock-refresh`) DONE 2026-09-04 — OmniRoute + GBrain pins advanced (D-019).
 PC bridge: live this session (spike `pc-bridge` recorded); Buzz relay stack, OmniRoute,
 Phoenix/OpenObserve already running on the PC; runsc on the PC (owner-installed); rustup has 1.95.0.

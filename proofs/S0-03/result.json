@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-03",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-19T06:04:16.403831Z",
+  "recorded_at": "2026-09-26T10:26:36.139874Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -21,8 +21,8 @@
         "s0-01-scripted/s0-01-slow",
         "proofs/S0-03/evidence"
       ],
-      "started_at": "2026-09-19T06:04:15.803923Z",
-      "finished_at": "2026-09-19T06:04:15.975014Z",
+      "started_at": "2026-09-26T10:26:35.589514Z",
+      "finished_at": "2026-09-26T10:26:35.738577Z",
       "exit_code": 0,
       "stdout_sha256": "f3e76588e6eda1df7cce4f61c4df5bfa08d87be7c9e4dad4d0bb2e03c6becb91",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -44,8 +44,8 @@
         "s0-01-scripted/s0-01-slow",
         "proofs/S0-03/fixtures/evidence-credential-absent"
       ],
-      "started_at": "2026-09-19T06:04:15.975214Z",
-      "finished_at": "2026-09-19T06:04:16.018644Z",
+      "started_at": "2026-09-26T10:26:35.738776Z",
+      "finished_at": "2026-09-26T10:26:35.774260Z",
       "exit_code": 1,
       "stdout_sha256": "6f9f7de317d518e2e8fdc0a49b03dfd99aa5bfdefe2f406ae9d37bcbec44ad18",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -68,8 +68,8 @@
         "s0-01-scripted/s0-01-slow",
         "proofs/S0-03/fixtures/evidence-credential-rejected"
       ],
-      "started_at": "2026-09-19T06:04:16.018898Z",
-      "finished_at": "2026-09-19T06:04:16.058042Z",
+      "started_at": "2026-09-26T10:26:35.774453Z",
+      "finished_at": "2026-09-26T10:26:35.814542Z",
       "exit_code": 1,
       "stdout_sha256": "222e5c96102cbe8e5b990e61a31e65ea803237e68c0c10c39dd26a68559d28a7",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -92,8 +92,8 @@
         "s0-01-scripted/s0-01-slow",
         "proofs/S0-03/fixtures/evidence-stub-route"
       ],
-      "started_at": "2026-09-19T06:04:16.058207Z",
-      "finished_at": "2026-09-19T06:04:16.241187Z",
+      "started_at": "2026-09-26T10:26:35.814689Z",
+      "finished_at": "2026-09-26T10:26:35.985823Z",
       "exit_code": 1,
       "stdout_sha256": "85e99e524774c7b399b21cec83bfd201f9691edd2a83891735aded94b80ae43a",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -116,8 +116,8 @@
         "s0-01-scripted/s0-01-slow",
         "proofs/S0-03/fixtures/evidence-provider-key-present"
       ],
-      "started_at": "2026-09-19T06:04:16.241391Z",
-      "finished_at": "2026-09-19T06:04:16.403231Z",
+      "started_at": "2026-09-26T10:26:35.986011Z",
+      "finished_at": "2026-09-26T10:26:36.133412Z",
       "exit_code": 1,
       "stdout_sha256": "ca763d37c417a24669dbccc06968fe8b7743a97ccbe583d35c8cf2743ee2c11e",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -131,15 +131,15 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
+    "scripts/validate-ledger": "f1eb20ff26c879395c63a9c6e322927a5380970a92957c8c2d04d73db6e8e7a9",
+    "proofs/registry.yaml": "e392a7f46661963c8c40fb37c661f61aff4e03013824b52fabf9ed2979802201",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
-    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/result.schema.json": "8bd5dabd0a4d87b7f9e0b985066a4c6db3d2191a9406e8bbfa9475babc2566c5",
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-03/LIVE-CAPTURE-FINDINGS.md": "79784ac4fd40fc20818c788489f21b4526465c59216a31fd8968a6d5ade159a9",
-    "proofs/S0-03/check_omniroute_roundtrip.py": "757abf9eb75ae1d9f38d6e917d458b8cc495e44c20d6255fecfa14f692db4812",
+    "proofs/S0-03/check_omniroute_roundtrip.py": "3dbf485fc95ca5917c9ed939c5c6185b85f22004fe7632584504c349bf875ba2",
     "proofs/S0-03/evidence/credential-absent/NOT-CAPTURED.md": "4a4885789ea0df1e82a446ead0e6a8ad2f66f9abab2dd97f47022a0d6c7bc9a8",
     "proofs/S0-03/evidence/credential-absent/direct/direct.json": "7f2761294673e7c2d7832339d149d3ba1e7a77fcec6634b08f784f78d09cd08b",
     "proofs/S0-03/evidence/credential-absent/omniroute-requests.json": "478d4dfba9ef4cabe1f65cd2c5ae1696330bf491e05c56c4f2d382a33d75f576",
@@ -220,7 +220,12 @@
     "proofs/S0-03/tools/pc/collect_leg.sh": "4aca6a45691b1a70261e1428882348d92e31977bbe8e7cd5571501181655c7e1",
     "proofs/S0-03/tools/pc/direct_responses_probe.py": "0dce390a2128a8c994622fe4967af9410032bdb9043e074a82483f1247248f7c",
     "proofs/S0-03/tools/pc/hermes_env_names.py": "9e4fa240a227cda85826b25cb91b5638d50679b292519eb6f7a6da3dc37d68b1",
-    "proofs/S0-03/tools/pc/run_s0_03_legs.sh": "e5517d119dab0b6c05c640b1ab8d89a2109862a8064de1fc15fe8ec01c09d669"
+    "proofs/S0-03/tools/pc/run_s0_03_legs.sh": "e5517d119dab0b6c05c640b1ab8d89a2109862a8064de1fc15fe8ec01c09d669",
+    "proofs/S0-01/check_acp_conformance.py": "868b8705699b5e78b1468252ecbdec93736d2a7e2f4819424311c31c243db46a",
+    "proofs/S0-01/check_initialize.py": "304d44d6f8dcdbad6c41931ffbb8f6d45e3c2cf3456dd6285848581a39872c28",
+    "proofs/S0-01/negative_contract.py": "b397f6b71b674000c8bc521cfe5e0a30c0f1e517de841639f98aed987cbdcf9f",
+    "proofs/S0-01/pins.py": "1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981",
+    "proofs/S0-01/tools/nostr_verify.py": "53005edc0f230329d38eaee5e01ed4056f7415c1cef08878b914115edded3375"
   },
-  "digest": "4c3ed26c01924962be4aff1f0550cbff7b608c5d12d19e49ee1670d2e7418a81"
+  "digest": "8173597d0c5d5f1ae3574b7acf5f86e7087e477a6241ff6f951984ebbf38cbc3"
 }

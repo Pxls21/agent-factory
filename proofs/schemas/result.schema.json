@@ -30,7 +30,7 @@
     },
     "attestation": {
       "type": "object",
-      "description": "Binds this artifact to the exact proof inputs that produced it: a map of every input file under the proof directory (checker, spec, fixtures, design) to its sha256. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker with a stale green artifact no longer validates.",
+      "description": "Binds this artifact to the repo files that produced or check it: a map of each such file to its sha256, over the trust closure (scripts/proof-runner, scripts/validate-ledger, proofs/registry.yaml), the JSON schemas in proofs/schemas, every file under the proof directory (checker, spec, fixtures, design) except its own result.json and blocked.json and __pycache__, and the repo files outside it that the proof's registry entry declares in extra_attested_inputs. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker, a changed attested file or a mutated runner, validator or registry with a stale green artifact no longer validates. Inputs outside the repository (S0-07's Fubuki checkout; the interpreter and its packages) are not attested (task #320).",
       "minProperties": 1,
       "additionalProperties": {"$ref": "#/$defs/sha256"}
     },

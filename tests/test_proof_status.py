@@ -466,7 +466,10 @@ def test_anchor_ref_and_committed_tag_object_must_be_one_object(tmp_path):
 # waited for the owner's re-sign; the owner signed it on 2026-09-26 (the tag object is committed), so the set is empty
 # again. An undeclared warning, a pending proof, or a pending proof whose tag landed each fail the test below
 # (VERIFY-S0-04-LEAK F4: asserting only "no WARNING S0-11" let any other proof's downgrade pass).
-EXPECTED_PENDING = set()
+# The issue #59 batch (task #315, 2026-09-26) re-minted all twelve under the attested-inputs change: the set holds
+# them until the owner's re-sign lands their new tags, and that commit empties it again.
+EXPECTED_PENDING = {"S0-01", "S0-02", "S0-03", "S0-04", "S0-05", "S0-06", "S0-07", "S0-08", "S0-09", "S0-10", "S0-11",
+                    "S0-12"}   # re-minted by the issue #59 batch (task #315), waiting for the owner's re-sign
 PENDING_WARNING = re.compile(r"proof-status: WARNING (S0-\d+): ACCEPTED with the anchor PENDING ")
 
 

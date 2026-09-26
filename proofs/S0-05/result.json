@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-05",
   "classification": "execution_proof",
-  "recorded_at": "2026-09-23T23:54:50.774930Z",
+  "recorded_at": "2026-09-26T10:26:35.430961Z",
   "env_fingerprint": "pc-bridge:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-mechanism-sandbox"
       ],
-      "started_at": "2026-09-23T23:54:50.591434Z",
-      "finished_at": "2026-09-23T23:54:50.635996Z",
+      "started_at": "2026-09-26T10:26:35.243839Z",
+      "finished_at": "2026-09-26T10:26:35.285101Z",
       "exit_code": 0,
       "stdout_sha256": "ac7dd60606bf5427176480c017e2cb6eed1459154908b2b3f3818c00ff413bbf",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -26,8 +26,8 @@
         "--units",
         "hermes-acp,buzz-acp"
       ],
-      "started_at": "2026-09-23T23:54:50.636195Z",
-      "finished_at": "2026-09-23T23:54:50.683268Z",
+      "started_at": "2026-09-26T10:26:35.285255Z",
+      "finished_at": "2026-09-26T10:26:35.326696Z",
       "exit_code": 0,
       "stdout_sha256": "593cc9741b217233f142bf32f2952541a18426be8bf35d87e6107c28dc69a63a",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -39,8 +39,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-gate-off"
       ],
-      "started_at": "2026-09-23T23:54:50.683515Z",
-      "finished_at": "2026-09-23T23:54:50.729338Z",
+      "started_at": "2026-09-26T10:26:35.326829Z",
+      "finished_at": "2026-09-26T10:26:35.381289Z",
       "exit_code": 1,
       "stdout_sha256": "ade6d30e58f0e7424568eb9cedaf01522817a00d2ac2e9e678ec6d706fc31bf3",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -53,8 +53,8 @@
         "proofs/S0-05/check_egress.py",
         "proofs/S0-05/fixtures/evidence-bare-unshare"
       ],
-      "started_at": "2026-09-23T23:54:50.729619Z",
-      "finished_at": "2026-09-23T23:54:50.774362Z",
+      "started_at": "2026-09-26T10:26:35.381464Z",
+      "finished_at": "2026-09-26T10:26:35.423982Z",
       "exit_code": 1,
       "stdout_sha256": "f84841567fc09171e2f43c09d37ea18c2dee3422f284914f2f285b52f937d01b",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -68,11 +68,11 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
+    "scripts/validate-ledger": "f1eb20ff26c879395c63a9c6e322927a5380970a92957c8c2d04d73db6e8e7a9",
+    "proofs/registry.yaml": "e392a7f46661963c8c40fb37c661f61aff4e03013824b52fabf9ed2979802201",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
-    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/result.schema.json": "8bd5dabd0a4d87b7f9e0b985066a4c6db3d2191a9406e8bbfa9475babc2566c5",
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-05/canaries/_emit.sh": "6d313b8bef0c677e10f131c4e5064fd90f41ba5a3680d424b32607a4a648182f",
@@ -128,7 +128,8 @@
     "proofs/S0-05/netns_lib.sh": "d2837c4d073bf398ee8fb2c900d246a2647a38262b88d92e2c79b09dc01dce9b",
     "proofs/S0-05/run_canaries.sh": "5241b539c50a98b8fd7cbb8f5b11d3321c8be262fcba099f3f78b2e56fd10bb0",
     "proofs/S0-05/spec.json": "9f418af8859e4afc39b8b353647ebf3919fd4306cc4660e904c0a4ef079e549e",
-    "proofs/S0-05/tools/pc/run_s0_05_units.sh": "6c1dee427b5b1d0c4f93a34a5f97535b2e07468f713d279f0b50f8557d1cd5bb"
+    "proofs/S0-05/tools/pc/run_s0_05_units.sh": "b6780a867b67aceb3d85c8d16830a65cc145603c041cb99b9a178a3ac511efd9",
+    "proofs/S0-01/pins.py": "1a2f9a38ddba14e3ea75c06e77e43083a059e8dc5caf5499c7e54e9013921981"
   },
-  "digest": "5e9b63214d27613cb35636df6053f90d6194f648fc0cad7c7755783f0a6e9846"
+  "digest": "9d2a898760799ff45f3aa81bec2c233397a6ee43c5e37c97bbc07379037f5152"
 }

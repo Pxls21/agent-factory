@@ -497,6 +497,11 @@ def test_result_with_fewer_negative_legs_than_the_registry_floor_is_invalid(tmp_
     root = _copy_contract(tmp_path)
     registry = _load_registry(root / "proofs" / "registry.yaml")
     assert next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["required_negative_controls"] == 4
+    # S0-02 declares the S0-01 files its checker loads (extra_attested_inputs, I59-A): its result is PRESENT only
+    # while they are in the tree, so this root carries them.
+    for rel in next(e for e in registry["proofs"] if e["proof_id"] == "S0-02")["extra_attested_inputs"]:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / rel, root / rel)
     def with_negatives(count):
         # ASYMMETRIC on purpose (one positive, `count` negatives): a check that counted the wrong leg type read
         # the same "1" off the symmetric two-leg fixture and survived (mutant COUNT-POSITIVES, 2026-09-08)
@@ -559,7 +564,8 @@ def test_registry_rows_carry_no_key_the_validator_does_not_read():
     read by nothing — documentation wearing a gate's clothes. The row's key set is CLOSED to what the
     validator consumes; the real registry must satisfy it and the validator must pass on it."""
     registry = _load_registry(ROOT / "proofs" / "registry.yaml")
-    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked"}
+    allowed = {"proof_id", "title", "classification", "wave", "spike_dependencies", "required_negative_controls", "blocked",
+               "extra_attested_inputs"}  # I59-A: bound by proof_attestation (tests/test_attested_inputs.py)
     for entry in registry["proofs"]:
         assert set(entry) <= allowed, (entry["proof_id"], sorted(set(entry) - allowed))
     assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()

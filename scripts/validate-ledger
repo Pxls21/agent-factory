@@ -3,9 +3,10 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import jsonschema
 
@@ -50,22 +51,109 @@ def canonical_digest(value):
 
 
 ATTESTATION_CLOSURE = ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml")
+EXTRA_INPUTS_KEY = "extra_attested_inputs"
+
+
+def _read_registry(root):
+    """The registry document: JSON once its `#` comment lines are dropped. One parser serves the registry check and
+    proof_attestation, so both read the same declarations."""
+    text = "\n".join(
+        line for line in (Path(root) / "proofs" / "registry.yaml").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    return json.loads(text)
+
+
+def _extra_inputs(proof):
+    """Split a registry entry's `extra_attested_inputs` into the repo files it adds to the proof's attestation and one
+    finding per refused item. A declared path names ONE file by ONE spelling, relative to the root: no absolute path,
+    no `..` segment, no glob character, no `.`/empty/doubled segment, no duplicate, and nothing the attestation already
+    covers (the proof's own directory, the closure). An entry without the key declares nothing."""
+    if EXTRA_INPUTS_KEY not in proof:
+        return [], []
+    proof_id = proof.get("proof_id")
+    value = proof[EXTRA_INPUTS_KEY]
+    prefix = f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY}"
+    if not isinstance(value, list) or not value:
+        return [], [f"{prefix} must be a non-empty list of paths"]
+    paths, problems = [], []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            problems.append(f"{prefix} item {index} is not a string")
+            continue
+        parts = item.split("/")
+        if item.startswith("/"):
+            problem = "is absolute"
+        elif ".." in parts:
+            problem = "has a .. segment"
+        elif any(character in item for character in "*?["):  # glob.has_magic's set
+            problem = "has a glob character"
+        elif any(len(part.encode("utf-8", "surrogatepass")) > 255 for part in parts):
+            problem = "has a segment over 255 bytes"  # NAME_MAX: a stat would raise ENAMETOOLONG (VERIFY-I59-A FU-2)
+        elif str(PurePosixPath(item)) != item:
+            problem = "is not in canonical form"
+        elif item in paths:
+            problem = "is a duplicate"
+        elif parts[:2] == ["proofs", proof_id]:
+            problem = f"is inside proofs/{proof_id}/ (already attested)"
+        elif item in ATTESTATION_CLOSURE or (len(parts) == 3 and parts[:2] == ["proofs", "schemas"]
+                                             and item.endswith(".json")):
+            problem = "is in the attestation closure (already attested)"
+        else:
+            paths.append(item)
+            continue
+        problems.append(f"{prefix} {item} {problem}")
+    return paths, problems
+
+
+def _is_regular_file(root, rel):
+    """A regular file reached with no symlink anywhere below the root (a symlink at any step resolves elsewhere), so
+    the bytes hashed are the tree's own. A path the filesystem refuses (ENAMETOOLONG, EACCES, ...) is not one: an
+    OSError here would crash the validator and, through the runner, delete a minted result (VERIFY-I59-A FU-2)."""
+    root = Path(root)
+    path = root / rel
+    try:
+        return path.is_file() and path.resolve() == root.resolve() / rel
+    except OSError:
+        return False
+
+
+def _declared_inputs(root, proof_id):
+    """The paths the registry adds to this proof's attestation. An absent or unreadable registry, or a proof with no
+    entry, declares none; the registry check names why, as it names every refused item."""
+    try:
+        entries = _read_registry(root)["proofs"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and entry.get("proof_id") == proof_id:
+            return _extra_inputs(entry)[0]
+    return []
 
 
 def proof_attestation(root, proof_id):
     """Map every input that DETERMINES this proof's verdict to its sha256: the
     proof-local inputs (checker source, spec, fixtures, design) AND the shared
     TRUST CLOSURE that runs and validates it — the canonical runner, this
-    validator, the registry, and the JSON schemas. Recorded in the artifact by
+    validator, the registry, and the JSON schemas — AND the repo files outside
+    the proof's directory that its checker reads while it grades, declared in the
+    proof's registry entry as `extra_attested_inputs` (issue #59 F-1: S0-05
+    loads proofs/S0-01/pins.py; tests/test_attested_inputs.py observes every
+    checker's reads and fails on an undeclared one). Recorded in the artifact by
     the runner and re-derived here from the tree; any divergence means the
     artifact is no longer bound to the code that produced OR checks it (a
     neutered checker OR a mutated runner/validator with a stale green artifact
     fails this, where the schema+digest checks alone passed). A file the recorded
     attestation names but the tree lacks still fails — the recorded key has no
-    match. Paths are relative to `root`; result.json/blocked.json/__pycache__
-    excluded; a closure file absent from a minimal (test) root is simply skipped,
-    so both sides compute the same set over that root."""
+    match. Paths are relative to `root`; __pycache__ and the proof's OWN two
+    artifacts (proofs/<id>/result.json and proofs/<id>/blocked.json, directly in
+    its directory) are excluded, while a fixture of either name deeper down is an
+    input and is hashed (S0-08 grades fixtures/malformed-marker/blocked.json); a
+    closure or declared file absent from a minimal (test) root is simply skipped,
+    so both sides compute the same set over that root (a result whose declared
+    input is absent is refused in _artifact_states)."""
     root = Path(root)
+    own_artifacts = {root / "proofs" / proof_id / name for name in ("result.json", "blocked.json")}
     paths = [root / rel for rel in ATTESTATION_CLOSURE]
     paths += sorted((root / "proofs" / "schemas").glob("*.json"))
     paths += sorted((root / "proofs" / proof_id).rglob("*"))
@@ -73,19 +161,18 @@ def proof_attestation(root, proof_id):
     for path in paths:
         if not path.is_file() or "__pycache__" in path.parts:
             continue
-        if path.name in ("result.json", "blocked.json"):
+        if path in own_artifacts:
             continue
         attestation[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    for rel in _declared_inputs(root, proof_id):
+        if _is_regular_file(root, rel):
+            attestation[rel] = hashlib.sha256((root / rel).read_bytes()).hexdigest()
     return attestation
 
 
 def _registry(root, findings):
-    path = root / "proofs" / "registry.yaml"
     try:
-        text = "\n".join(
-            line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")
-        )
-        registry = json.loads(text)
+        registry = _read_registry(root)
     except Exception as error:
         findings.add(f"registry-schema: {error}")
         return None
@@ -176,8 +263,9 @@ def _registry(root, findings):
             # `"classification" not in missing` guard hid the siblings behind that one finding)
             findings.add(f"registry-schema: {proof_id} missing {','.join(missing)}")
         # A key nobody reads must not exist (AF-AP-66, 2026-09-08: `assertion_count` sat in every row, validated for
-        # type and consumed by nothing) — the row's key set is CLOSED: the required keys plus `blocked`.
-        unknown = sorted(set(proof) - required - {"blocked"})
+        # type and consumed by nothing) — the row's key set is CLOSED: the required keys plus `blocked` and
+        # `extra_attested_inputs` (bound by proof_attestation, checked below).
+        unknown = sorted(set(proof) - required - {"blocked", EXTRA_INPUTS_KEY})
         if unknown:
             findings.add(f"registry-schema: {proof_id} unknown key(s) {','.join(unknown)} — every registry key must bind a gate")
         if not isinstance(proof_id, str) or not PROOF_ID_RE.fullmatch(proof_id):
@@ -204,6 +292,16 @@ def _registry(root, findings):
             blocked_required = {"owner", "unblock_condition", "marker_path"}
             if not isinstance(blocked, dict) or set(blocked) != blocked_required:
                 findings.add(f"registry-schema: {proof_id} blocked metadata invalid")
+        # A declared path that exists as anything but a regular file (a symlink, a directory) is refused here; an
+        # ABSENT one where it binds a verdict (_artifact_states), since a registry copied into a minimal test root
+        # names files that root does not carry.
+        extra_paths, extra_problems = _extra_inputs(proof)
+        for problem in extra_problems:
+            findings.add(problem)
+        for rel in extra_paths:
+            target = root / rel
+            if os.path.lexists(target) and not _is_regular_file(root, rel):  # lexists never raises
+                findings.add(f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY} {rel} is not a regular file")
     expected_ids = {f"S0-{index:02d}" for index in range(1, 13)}
     if seen != expected_ids:
         findings.add("registry-schema: proof ids must be S0-01 through S0-12")
@@ -276,6 +374,13 @@ def _artifact_states(root, registry, schemas, findings):
                         | {k for k in recorded if k in current and recorded[k] != current[k]}
                     )
                     findings.add(f"attestation-mismatch: {proof_id} {changed[0] if changed else ''}".rstrip())
+                    valid = False
+            # A declared outside input binds this verdict only while it is a regular file in the tree: a result minted
+            # while one was absent (the attestation skips an absent file, as it skips an absent closure file) records
+            # no key for it, so the comparison above cannot see it.
+            for rel in _extra_inputs(proof)[0]:
+                if not _is_regular_file(root, rel):
+                    findings.add(f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY} {rel} is not a regular file")
                     valid = False
             # Bind the recorded runs to the ATTESTED spec: the legs the runner
             # recorded must BE the spec's legs — same count and order, same

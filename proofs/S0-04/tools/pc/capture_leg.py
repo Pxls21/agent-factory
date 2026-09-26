@@ -236,15 +236,19 @@ def do_config(args) -> int:
         raise CaptureError(
             "PyYAML is required for --config on this host; install it or export the Hermes "
             "profile to JSON — the provider block is not parsed by hand") from exc
+    text = read_regular(Path(args.profile), "profile")
     try:
-        profile = yaml.safe_load(read_regular(Path(args.profile), "profile"))
-    except yaml.YAMLError as exc:
+        profile = yaml.safe_load(text)
+    except Exception as exc:                                   # noqa: BLE001 - every parse error, no message
         # PyYAML's message quotes the offending line in a window that can start inside a value, so an
-        # inline key can print with its `sk-` cut off, past every shape rule (VERIFY-S0-04-LEAK F1b).
-        # Report the position only, never the snippet or the problem text.
+        # inline key can print with its `sk-` cut off, past every shape rule (VERIFY-S0-04-LEAK F1b). Not
+        # every parse error is a YAMLError: an explicit tag's constructor (`api_key: !!int <v>`) raises a
+        # plain ValueError or KeyError that quotes the value, and a deep nesting a RecursionError
+        # (VERIFY-S0-04-LEAK-R1 G2). Report the class and the position only, never the message, the
+        # snippet or the problem text. The read stays outside: its errors keep their own messages.
         mark = getattr(exc, "problem_mark", None) or getattr(exc, "context_mark", None)
         where = f"line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "an unknown position"
-        raise CaptureError(f"profile {args.profile} is not valid YAML at {where}") from None
+        raise CaptureError(f"profile {args.profile} is not valid YAML ({type(exc).__name__}) at {where}") from None
     if not isinstance(profile, dict):
         raise CaptureError(f"profile {args.profile} is not a YAML mapping")
     _write(Path(args.out) / "hermes-provider.json", provider_block(profile, args.provider))

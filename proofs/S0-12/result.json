@@ -1,7 +1,7 @@
 {
   "proof_id": "S0-12",
   "classification": "conformance_checked_decision",
-  "recorded_at": "2026-09-19T05:54:03.679963Z",
+  "recorded_at": "2026-09-26T10:26:38.544748Z",
   "env_fingerprint": "sandbox:vm",
   "runs": [
     {
@@ -11,8 +11,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "."
       ],
-      "started_at": "2026-09-19T05:54:03.566852Z",
-      "finished_at": "2026-09-19T05:54:03.630805Z",
+      "started_at": "2026-09-26T10:26:38.440673Z",
+      "finished_at": "2026-09-26T10:26:38.503406Z",
       "exit_code": 0,
       "stdout_sha256": "c26de83abdc9496cd1301470918ec39ecca1cf389ef0ae1c6504da1800d1c431",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -24,8 +24,8 @@
         "proofs/S0-12/check_pin_diff.py",
         "proofs/S0-12/fixtures/mutated-root"
       ],
-      "started_at": "2026-09-19T05:54:03.631055Z",
-      "finished_at": "2026-09-19T05:54:03.679323Z",
+      "started_at": "2026-09-26T10:26:38.503597Z",
+      "finished_at": "2026-09-26T10:26:38.538269Z",
       "exit_code": 1,
       "stdout_sha256": "be67901080b0bd7ecae40951af137988b1bf42d84cec9b7cd83d52d017302caa",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -39,11 +39,11 @@
   },
   "attestation": {
     "scripts/proof-runner": "40fbbf9fc85a5457c067d06bebfc4aa012136b3ee5747d961eea75d1c531c0ce",
-    "scripts/validate-ledger": "f8d59bb1cb451b2f8b8fc757ca5a0f26f1d8994df9b176ae7aa4479d9e639051",
-    "proofs/registry.yaml": "f9480e515211995c34787afe74bf77658bdf7622fab427ceb43e4a41db1f6756",
+    "scripts/validate-ledger": "f1eb20ff26c879395c63a9c6e322927a5380970a92957c8c2d04d73db6e8e7a9",
+    "proofs/registry.yaml": "e392a7f46661963c8c40fb37c661f61aff4e03013824b52fabf9ed2979802201",
     "proofs/schemas/blocked.schema.json": "bbe4a1a68dc3f1c3dfc38855846d7c2540adda8e332721991622824f88e705b6",
     "proofs/schemas/probe.schema.json": "bd71b22e47bea10f92f17fbc79d62ed729e514a4734223f9da2d6e7a0492e80e",
-    "proofs/schemas/result.schema.json": "9a165ceb4bee63ed4c3f2346bcef786062ead3b825a8ff35931fb4f41af85ea6",
+    "proofs/schemas/result.schema.json": "8bd5dabd0a4d87b7f9e0b985066a4c6db3d2191a9406e8bbfa9475babc2566c5",
     "proofs/schemas/spec.schema.json": "f425996d48f22316e96b9ca638de1aee617d7ca063388741534d5cffe95f5715",
     "proofs/schemas/spike.schema.json": "d2c3ad52b76b48e727cb748cfde9f9ad1e92ad801a6bbef3266b6f4342a6c773",
     "proofs/S0-12/check_pin_diff.py": "70777c1824ae6bae71dc701a653db8440e8736122814327f4271db4521647f89",
@@ -51,7 +51,11 @@
     "proofs/S0-12/fixtures/mutated-root/SBOM.yaml": "513bd9771fbe45d95a01e0629d839ede1d1bb810ebf5581147d2017c598a39cf",
     "proofs/S0-12/fixtures/mutated-root/THIRD-PARTY-NOTICES.md": "a70db7ee9ddb73a0cd4be156e61f9d77a8398b199f66dee901f1c35bb7e02a63",
     "proofs/S0-12/fixtures/mutated-root/upstream.lock.yaml": "c5cb3825513e9371e3d083835f5842cad79c3d3cacbdaadad256f855f19ec4eb",
-    "proofs/S0-12/spec.json": "2569589f8b33018de6199039108d8e4396c4c0905258a617a2b0206fb92ffd93"
+    "proofs/S0-12/spec.json": "2569589f8b33018de6199039108d8e4396c4c0905258a617a2b0206fb92ffd93",
+    "LICENSE-DECISION.md": "87e07256b1c4493b4454af63e557e5a80f4ec0e515163a153b5450fd84474e62",
+    "SBOM.yaml": "eb46e7180cd28da5f6740c9b8a50e5684197911b73af7ee4c6d131548e2774fc",
+    "THIRD-PARTY-NOTICES.md": "064dccb814a3b4e1909bdabdf5d9e1998bec6e3ef6bcb22ec6287355801cd8d6",
+    "upstream.lock.yaml": "8990e5f12dbdb6a73118182480d9f7902588cbc9ac79a1b33b82a90df1bbf3f9"
   },
-  "digest": "a2313be6758ff321e84f12b2e25f17426222be8272ecb989dff8c1056f06efba"
+  "digest": "bcab6cb740366f69f4a39953596a132066ed4ec2cec9eacf3cf87ae2b6585ef3"
 }
