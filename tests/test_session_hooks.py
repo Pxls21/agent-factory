@@ -124,9 +124,11 @@ def test_fresh_install_registers_the_six_hooks(tmp_path):
     assert hooks["PostToolUse"][0]["matcher"] == "Edit|Write|Read"
     assert [e["matcher"] for e in hooks["PreToolUse"]] == ["Grep|Bash", "Write|Edit|Bash"]
     assert "/.claude/hooks/search-intercept.py" in cmds["PreToolUse"][0]
-    # system1-context (S1-L1): the tool event and the prompt event, both through the wrapper; wiki-context unchanged
+    # system1-context (S1-L1): the tool event and the prompt event, both through the wrapper; wiki-context through the
+    # wrapper too since D-095, so its excerpt carries the S1-RATE stamp
     assert "hook_context.py PreToolUse -- python3" in cmds["PreToolUse"][1]
     assert cmds["PreToolUse"][1].endswith("/.claude/hooks/system1-context.py")
+    assert "hook_context.py UserPromptSubmit -- python3" in cmds["UserPromptSubmit"][0]
     assert cmds["UserPromptSubmit"][0].endswith(f"python3 {ROOT}/.claude/hooks/wiki-context.py")
     assert "hook_context.py UserPromptSubmit -- python3" in cmds["UserPromptSubmit"][1]
     assert cmds["UserPromptSubmit"][1].endswith("/.claude/hooks/system1-context.py")
@@ -226,7 +228,8 @@ def test_every_installed_command_fails_open_when_the_repo_is_absent(tmp_path):
 def test_wrapped_commands_fail_open_when_the_wrapper_is_absent(tmp_path):
     repo = _fake_repo(tmp_path, wrapper=False)
     wrapped = [(ev, cmd) for ev, cmd in _all_commands(repo) if "hook_context.py" in cmd]
-    assert sorted(ev for ev, _ in wrapped) == ["PostToolUse", "PreToolUse", "PreToolUse", "UserPromptSubmit"]
+    assert sorted(ev for ev, _ in wrapped) == ["PostToolUse", "PreToolUse", "PreToolUse", "UserPromptSubmit",
+                                               "UserPromptSubmit"]    # wiki-context wrapped too since D-095
     for ev, cmd in wrapped:
         r = _sh(cmd)
         assert (r.returncode, r.stdout) == (0, ""), (ev, r.returncode, r.stderr)
@@ -251,8 +254,9 @@ def test_commands_run_from_the_repo_and_session_start_gets_the_project_dir(tmp_p
     env = {"PATH": "/usr/bin:/bin", "CLAUDE_PROJECT_DIR": "/elsewhere"}
     r = _sh(cmds["SessionStart"], env=env)
     assert r.returncode == 0 and r.stdout.strip() == f"dir={repo} pwd={repo}", r.stdout
-    r = _sh(cmds["UserPromptSubmit"])
-    assert r.stdout.strip() == f"ran from {repo}"
+    r = _sh(cmds["UserPromptSubmit"])          # wiki-context, through the wrapper since D-095: its text arrives stamped
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"].split("\n")
+    assert re.fullmatch(r"\[S1 s1-[0-9a-f]{8} wiki-context\]", ctx[0]) and ctx[1] == f"ran from {repo}", ctx
 
 
 def test_wrapped_commands_name_their_own_event(tmp_path):

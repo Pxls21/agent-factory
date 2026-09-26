@@ -10,10 +10,11 @@ mid-session takes effect on the next tool call, so running this script IS the ma
 The tool hooks run through scripts/hook_context.py: edit-snapshot prints plain text, which the wrapper turns into
 additionalContext the model reads (the Codex and Hermes adapters parse that plain text); search-intercept (task #228,
 PreToolUse on Grep and Bash) answers a semantic search or stops a known Bash quirk with exit 2 and its text on stderr,
-which the wrapper passes through unchanged. graft-first-nag.py stays for the Codex and Hermes adapters; search-intercept
-runs its classifier. system1-context (S1-L1, D-090) is registered twice through the wrapper: PreToolUse on Write, Edit
-and Bash (the governing skill lines for the situation) and UserPromptSubmit (the skill sections that match the prompt,
-beside wiki-context); session-start.sh resets its once-per-window marker.
+which the wrapper stamps and passes on with its exit code (S1-RATE). graft-first-nag.py stays for the Codex and Hermes
+adapters; search-intercept runs its classifier. system1-context (S1-L1, D-090) is registered twice through the wrapper:
+PreToolUse on Write, Edit and Bash (the governing skill lines for the situation) and UserPromptSubmit (the skill sections
+that match the prompt, beside wiki-context); session-start.sh resets its once-per-window marker. wiki-context runs through
+the wrapper too since D-095, so its excerpt carries the S1-RATE stamp and score request like every other injection.
 
 Merge rule, hook by hook: an install replaces every hook whose command names `<repo>/.claude/hooks/` (an older spelling
 of ours included); --remove takes out only our exact current commands. A foreign hook in the same group as one of ours
@@ -51,7 +52,8 @@ def our_hooks(root: Path) -> dict:
         "SessionStart": [{"hooks": [{"type": "command", "command": guarded(
             ".claude/hooks/session-start.sh", f"CLAUDE_PROJECT_DIR={r} bash {r}/.claude/hooks/session-start.sh")}]}],
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": guarded(
-            ".claude/hooks/wiki-context.py", f"python3 {r}/.claude/hooks/wiki-context.py")}]},
+            ".claude/hooks/wiki-context.py", f"{wrap} UserPromptSubmit -- python3 {r}/.claude/hooks/wiki-context.py",
+            True)}]},
             {"hooks": [{"type": "command", "command": guarded(
                 ".claude/hooks/system1-context.py",
                 f"{wrap} UserPromptSubmit -- python3 {r}/.claude/hooks/system1-context.py", True)}]}],
