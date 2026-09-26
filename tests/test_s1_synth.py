@@ -10,11 +10,14 @@ them) with fake content and fake secrets. Each test names the mutants of s1_synt
 run (SYNTH1 report) shows each mutant killed by a FAILED test.
 """
 import datetime
+import errno
 import fcntl
 import hashlib
 import http.server
 import importlib.util
 import json
+import os
+import re
 import subprocess
 import sys
 import threading
@@ -36,7 +39,10 @@ FLOORS = ("MIN_PROMPT_SCORE", "ONE_LEAD_MIN_SCORE", "SHORT_MIN_SCORE", "NAMED_MI
 FORBIDDEN = ("prompt_logprobs", "best_of", "echo", "n")                                    # AF-AP-201, this file's copy
 BODY_KEYS = {"model", "messages", "max_tokens", "temperature", "chat_template_kwargs"}
 FAKE_KEY = "QZJ8-fake-vllm-key-5c1d9e7a"
-SHAPED = ("QZJ8fakefakefake1234", "X4Z9fakefakefake5678", "QZJ8fakefakefakefake")   # values the scrubber's shapes take
+R150 = ("The fixture section is about fixture lanes and fixture checks, which has nothing to do with this fixture step "
+        "that unpacks a fixture archive in place.")       # SYNTHETIC, 150 characters: the PC smoke's long-reason shape
+ROUND1_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\S.{0,119})")   # round 1's rule, this file's copy: a capped match
+SHAPED =("QZJ8fakefakefake1234", "X4Z9fakefakefake5678", "QZJ8fakefakefakefake")   # values the scrubber's shapes take
 PLAIN = "QZJ8plainwordvalue77"            # a value no shape takes: only the value gate stops it
 ABSENT = "Qz7Kx9Vw2Jm4Pd8Rt6"              # a fixture source's value that the fixture never holds
 KEEP = ("cnryprompt4a1", "cnrycommand4a2")                                             # must reach the items
@@ -611,13 +617,18 @@ def test_a_rerun_skips_the_done_keys(tmp_path, server):
 
 def test_a_malformed_answer_is_stored_as_malformed_never_guessed(tmp_path, server):
     """Only one line `rel=<0-3> use=<0-3> <reason>` parses, after an EMPTY leading <think></think> (a template can emit
-    one with thinking off). Out of range, no reason, prose around it, two lines, a reason over 120 characters, a think
-    block WITH content while thinking is off: each is stored with status malformed, rel and use None, the raw answer
-    kept; a rerun asks nothing again. Red on the mutants lenient-parse, empty-think-kept and any-think-dropped."""
-    answers = [("rel=2 use=1 a fine reason", (2, 1)), ("<think>\n\n</think>\n\nrel=3 use=2 after an empty block", (3, 2)),
+    one with thinking off). The reason may be of any length (the PC smoke's answers ran past the rubric's 120): it is
+    stored cut to 120 characters and marked reason_cut. Out of range (rel or use), no reason, prose before it, two
+    lines, the fields swapped, a think block WITH content while thinking is off: each is stored with status malformed,
+    rel and use None, the raw answer kept; a rerun asks nothing again. Red on the mutants lenient-parse,
+    empty-think-kept, any-think-dropped, reason-cap-restored and reason-not-cut."""
+    assert len(R150) == 150
+    answers = [("rel=2 use=1 a fine reason", (2, 1, "a fine reason", False)),
+               ("<think>\n\n</think>\n\nrel=3 use=2 after an empty block", (3, 2, "after an empty block", False)),
                ("rel=4 use=1 out of range", None), ("rel=2 use=1", None), ("The answer: rel=2 use=1 because", None),
-               ("rel=2 use=1 two\nlines", None), ("rel=1 use=0 " + "x" * 121, None),
-               ("<think>the model thought here</think>\nrel=1 use=1 after a thought", None)]
+               ("rel=2 use=1 two\nlines", None), ("rel=1 use=0 " + R150, (1, 0, R150[:120], True)),
+               ("<think>the model thought here</think>\nrel=1 use=1 after a thought", None),
+               ("use=1 rel=2 the fields swapped", None), ("rel=2 use=7 use out of range", None)]
     cdir = tmp_path / "cand"
     hand_candidates(cdir, 1, len(answers))
     s = server(lambda path, body, n: chat(answers[int(body["messages"][1]["content"].split("fixture line 0.")[1][0])][0]))
@@ -628,11 +639,69 @@ def test_a_malformed_answer_is_stored_as_malformed_never_guessed(tmp_path, serve
     for c, (ans, want) in zip(items[0]["candidates"], answers):
         r = got[c["sha"]]
         if want:
-            assert (r["status"], r["rel"], r["use"], r["raw"]) == ("ok", want[0], want[1], None), ans
+            assert (r["status"], r["rel"], r["use"], r["reason"], r["reason_cut"], r["raw"]) == ("ok",) + want + (None,)
         else:
-            assert (r["status"], r["rel"], r["use"], r["raw"]) == ("malformed", None, None, ans[:300]), ans
+            assert (r["status"], r["rel"], r["use"], r["reason_cut"], r["raw"]) == ("malformed", None, None, None,
+                                                                                    ans[:300]), ans
     again = server(vllm_ok)
     assert run_label(cdir, out, again.url) == 0 and again.requests == []
+
+
+def test_a_resume_reparses_a_stored_answer_and_asks_nothing(tmp_path, server, monkeypatch, capsys):
+    """Round 2: the PC smoke stored long-reason answers as malformed under round 1's rule. A file made the same way
+    (this code with round 1's capped match put back), 3 items x 4 sections answered by section: a long reason (R150), a
+    short one, two lines, one line of 312 characters. Round 1 labels the first 8 pairs (--limit 8): 2 ok, 6 malformed,
+    raw kept (cut to 300). The resume under today's rule with --limit 0 sends NO request: it appends a `reparsed` record
+    for each long reason (2): the same key, sent_sha and raw, rel 1 use 0, the reason cut to 120 and marked. The two
+    lines stay malformed, and so do the 312-character answers, whose stored raw is only their head (reparse_unchecked
+    2); read_labels gives the reparsed record in place of the malformed one. The next run labels only the 4 pending
+    pairs, where the same 312-character answer, seen whole, is ok; a last run appends nothing. Red on the mutants
+    reason-cap-restored, reason-not-cut, reparse-skipped, cut-raw-trusted and reparsed-never-replaces."""
+    cdir = tmp_path / "cand"
+    hand_candidates(cdir, 3, 4)
+    one_line = "rel=0 use=0 " + "y" * 300
+    answers = ["rel=1 use=0 " + R150, "rel=3 use=2 a short reason", "rel=2 use=1 two\nlines", one_line]
+
+    def answer(path, body, n):
+        return chat(answers[int(body["messages"][1]["content"].split("fixture line ")[1][2])])
+
+    out = tmp_path / "labels.jsonl"
+    first = server(answer)
+    with monkeypatch.context() as m:
+        m.setattr(SY, "ANSWER_RX", ROUND1_RX)
+        assert run_label(cdir, out, first.url, extra=["--limit", "8"]) == 0
+    old = labels_of(out)
+    assert len(first.requests) == 8 and sorted(r["status"] for r in old) == ["malformed"] * 6 + ["ok"] * 2
+    capsys.readouterr()
+    second = server(answer)
+    assert run_label(cdir, out, second.url, extra=["--limit", "0"]) == 0 and second.requests == []
+    printed = capsys.readouterr().out
+    assert " reparsed=2 reparse_unchecked=2 skipped_done=8 pending_left=4 " in printed
+    assert " file_ok=2 file_reparsed=2 file_malformed=4 " in printed
+    lines = labels_of(out)
+    assert len(lines) == 10 and lines[:8] == old                        # appended; round 1's records untouched
+    changed = {"status", "rel", "use", "reason", "reason_cut", "why", "reparsed_ts"}
+    was_by_key = {r["key"]: r for r in old}
+    for new in lines[8:]:
+        was = was_by_key[new["key"]]
+        assert (was["status"], was["raw"]) == ("malformed", "rel=1 use=0 " + R150)
+        assert (new["status"], new["rel"], new["use"], new["reason"], new["reason_cut"], new["why"]) == (
+            "reparsed", 1, 0, R150[:120], True, None)
+        assert {k: v for k, v in new.items() if k not in changed} == {k: v for k, v in was.items() if k not in changed}
+    recs, stats = SY.read_labels(out)
+    assert stats == {"records": 8, "torn": 0, "duplicates": 0, "reparsed": 2}
+    assert sorted(r["status"] for r in recs.values()) == ["malformed"] * 4 + ["ok"] * 2 + ["reparsed"] * 2
+    assert sorted(r["raw"] for r in recs.values() if r["status"] == "malformed") == sorted(
+        ["rel=2 use=1 two\nlines", one_line[:300]] * 2)
+    third = server(answer)
+    assert run_label(cdir, out, third.url) == 0 and len(third.requests) == 4
+    printed = capsys.readouterr().out
+    assert " stored=4 ok=3 malformed=1 reparsed=0 reparse_unchecked=2 " in printed
+    assert " file_ok=5 file_reparsed=2 file_malformed=5 " in printed
+    fresh = [r for r in labels_of(out)[10:] if r["raw"] is None and r["rel"] == 0]
+    assert [(r["status"], r["reason"], r["reason_cut"]) for r in fresh] == [("ok", "y" * 120, True)]
+    last = server(answer)
+    assert run_label(cdir, out, last.url) == 0 and last.requests == [] and len(labels_of(out)) == 14
 
 
 def test_the_openjev_backend_reuses_teacher_label(tmp_path, server, capsys):
@@ -718,8 +787,8 @@ def test_the_validator_numbers_on_hand_made_gold():
     prompt (over 2 s): no item. r2 is late and r5 missing: not gold. So 5 gold sections from 4 injections, 3 joined
     (2 with the same text), 2 with no item; gold rel 2, 2, 1, 0, 2 -> the most common (2) holds 3/5 = 0.6, median_low
     2, and 4 of 5 lie within one of it (the 0 does not): 0.8. Rows by status: scored 4, late 1, missing 1.
-    Red on the mutants exact-is-within-one, spearman-no-ties, map-a-is-b, prompt-link-10s, s1all-worst-rank and
-    late-counted."""
+    The same labels marked `reparsed` (round 2) give the same numbers. Red on the mutants exact-is-within-one,
+    spearman-no-ties, map-a-is-b, prompt-link-10s, s1all-worst-rank, late-counted and validator-reparsed-malformed."""
     t0 = "2026-09-25T20:00:00.000Z"
     items = [
         {"id": "p-u1", "kind": "prompt", "tool": None, "uuid": "u1", "prompt_id": "aaaaaaaa-p1", "session": "S",
@@ -778,6 +847,14 @@ def test_the_validator_numbers_on_hand_made_gold():
     assert r["constant_baseline"] == {"majority_exact": 0.6, "median": 2, "median_within_one": 0.8}
     assert r["rows_by_status"] == {"scored": 4, "late": 1, "missing": 1}
     assert "scored rows only" in r["caveat"] and "200 characters" in r["caveat"]
+    # round 2: a reparsed label is an ok label, so the same labels marked reparsed give the same numbers; only the
+    # count of reparsed labels is added beside them. Red on the mutant validator-reparsed-malformed.
+    again = SY.validate(items, {k: dict(v, status="reparsed") for k, v in labels.items()}, gold_rows, s1_all, "vllm",
+                        "r1")
+    for src in ("s1-all", "s1-rate"):
+        counts = dict(again[src]["counts"])
+        assert counts.pop("labeled_reparsed", 0) == counts.get("labeled") == res[src]["counts"]["labeled"]
+        assert dict(again[src], counts=counts) == res[src]
 
 
 def test_the_validator_numbers_on_hand_made_s1_rate_gold():
@@ -845,7 +922,8 @@ def test_the_dataset_rows_join_with_laya_ft_and_the_loader_names_its_gap(tmp_pat
     at the label's value; common.join_labels (the trainer's own join) accepts every label; a malformed label, another
     backend's and another rubric's give no row. common.load_dataset refuses the rows today with the exact reason: its
     QUESTIONS lack skill.governs and skill.helps (the NOT-done item this test pins; it goes red when common.py learns
-    them). Red on the mutants target-off-by-one and question-sha-swapped."""
+    them). The ok labels marked `reparsed` (round 2) give the same rows and records. Red on the mutants
+    target-off-by-one, question-sha-swapped and dataset-reparsed-dropped."""
     from laya_ft import common as C
     cdir = tmp_path / "cand"
     items, secs = hand_candidates(cdir, 2, 2)
@@ -859,6 +937,10 @@ def test_the_dataset_rows_join_with_laya_ft_and_the_loader_names_its_gap(tmp_pat
     labels = {r["key"]: r for r in recs}
     rows, out, counts = SY.dataset_rows(items, secs, labels, "vllm", "r1")
     assert len(rows) == 6 and len(out) == 6
+    # round 2: a reparsed label is an ok label: the same rows and label records, and the count of reparsed labels
+    flipped = {k: dict(v, status="reparsed") if v["status"] == "ok" else v for k, v in labels.items()}
+    rows_r, out_r, counts_r = SY.dataset_rows(items, secs, flipped, "vllm", "r1")
+    assert (rows_r, out_r) == (rows, out) and dict(counts_r) == dict(counts, labels_reparsed=3)
     for row in rows:
         assert row["state_sha"] == C.state_sha(row["state"]) and row["question_sha"] == C.question_sha(row["question"])
         assert row["options"] == C.options(row["question"]) and row["item_id"] == "s1-" + row["state_sha"][:20]
@@ -963,14 +1045,21 @@ print(json.dumps({"rows": [[r["sources"][0]["item"], r["question_id"], bool(r.ge
 """
 
 
+def _present(path):
+    """Whether this user can see `path`; any OSError counts as absent. Path.exists re-raises every OSError but ENOENT,
+    ENOTDIR, EBADF and ELOOP, so a non-root runner's EACCES under /root failed the Laya-venue test instead of skipping
+    it (stage0-ci run 36224456809)."""
+    return os.path.exists(path)
+
+
 def test_the_dataset_fits_laya_window_in_the_laya_venue(tmp_path):
     """build_dataset.Fitter (Laya's own tokenizer and build_sequence, run by the Laya venv's python in a subprocess): a
     short state is kept whole; a long step is cut and its section kept whole; a section that alone overflows the window
     gives no row, counted, never a crash; the fitted rows still join their labels. Skipped, loudly, where the Laya venv
-    or its model is absent (CI). Red on the mutant unfit-not-caught."""
+    or its model is absent or unreadable (CI). Red on the mutant unfit-not-caught."""
     from laya_ft import common as C
-    if not Path(LAYA_PY).exists() or not Path(C.DEFAULT_MODEL_DIR).exists():
-        pytest.skip("LOUD SKIP: the Laya venv (%s) or its model is absent on this venue" % LAYA_PY)
+    if not _present(LAYA_PY) or not _present(C.DEFAULT_MODEL_DIR):
+        pytest.skip("LOUD SKIP: the Laya venv (%s) or its model is absent or unreadable on this venue" % LAYA_PY)
     cdir = tmp_path / "cand"
     items, secs = hand_candidates(cdir, 3, 1)
     items[1]["text"] = "fixture step 1: " + "word " * 3000
@@ -997,6 +1086,25 @@ def test_the_dataset_fits_laya_window_in_the_laya_venue(tmp_path):
         assert rows[("p-hand-1", q)] == (True, True)
         assert ("p-hand-2", q) not in rows and got["counts"]["unfit." + q] == 1
     assert got["joined"] == 4 and len(got["rows"]) == 4
+
+
+def test_an_unreadable_laya_path_counts_as_absent_and_the_laya_test_skips(tmp_path, monkeypatch):
+    """CI's non-root runner cannot stat under /root, and Path.exists raised PermissionError at the Laya-venue test's
+    guard (stage0-ci run 36224456809): a failure where the docstring promises a loud skip. os.stat is patched to raise
+    EACCES for the venv's python, as that runner does. _present answers absent (and present for a readable file), and
+    the Laya-venue test then skips with its LOUD SKIP reason instead of raising. Red on the mutants present-bare-exists
+    and guard-bare-exists."""
+    real = os.stat
+
+    def stat(path, *args, **kwargs):
+        if os.fspath(path) == LAYA_PY:
+            raise PermissionError(errno.EACCES, "Permission denied", LAYA_PY)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    assert _present(LAYA_PY) is False and _present(__file__) is True
+    with pytest.raises(pytest.skip.Exception, match="LOUD SKIP"):
+        test_the_dataset_fits_laya_window_in_the_laya_venue(tmp_path)
 
 
 def test_the_files_are_ascii_json_and_a_line_separator_round_trips(tmp_path):

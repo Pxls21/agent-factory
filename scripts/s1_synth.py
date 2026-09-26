@@ -39,16 +39,20 @@ label --candidates DIR --out LABELS.jsonl --backend vllm|openjev [--concurrency 
       vllm: [--url http://127.0.0.1:8080] [--model qwen3.8-27b-local] [--key-file ~/.config/qwen-builder/api-key]
             [--thinking] [--max-tokens N] [--timeout 120];  openjev: [--env-file /root/.codiv/api.env]
   One request per (item, section): the rubric (the S1-RATE scale for rel; use = would this section help with this
-  step), the step, then the section (the step first, so vLLM's prefix cache serves an item's other sections; the
-  pairs go out item by item, gold items first). vllm: straight to the PC's vLLM chat endpoint; the body has EXACTLY the
-  keys of ALLOWED_BODY_KEYS and never one of FORBIDDEN_BODY_KEYS (AF-AP-201: one such request OOM-killed the shared
+  step), the step, then the section (the step first, so vLLM's prefix cache serves an item's other sections; the pairs
+  go out item by item, gold items first). vllm: straight to the PC's vLLM chat endpoint; the body has EXACTLY the keys
+  of ALLOWED_BODY_KEYS and never one of FORBIDDEN_BODY_KEYS (AF-AP-201: one such request OOM-killed the shared
   server), thinking off unless --thinking, max_tokens small; the answer is ONE line `rel=<0-3> use=<0-3> <reason>`,
-  parsed exactly, and anything else is stored as malformed, never guessed. openjev: teacher_label.py's Client, Limiter,
-  scrubbing and key handling, by import (one Limiter shared by every thread: 60 requests a minute, 1 s apart); two
-  choice questions, QUESTIONS, answered as distributions. Both: --concurrency requests in flight (a thread pool of
-  that size); an append-only JSONL keyed by (item, section sha, backend, rubric), with the served model and the
-  digests of what was sent; a rerun skips done keys; 429, 5xx and connection errors retry with backoff; the usage
-  totals print at the end, also after a failure. The key is read in this process, never from argv, never printed.
+  parsed exactly (a reason of any length, stored cut to REASON_MAX and marked reason_cut: the model does not keep the
+  rubric's length), and anything else is stored as malformed, never guessed. openjev: teacher_label.py's Client,
+  Limiter, scrubbing and key handling, by import (one Limiter shared by every thread: 60 requests a minute, 1 s
+  apart); two choice questions, QUESTIONS, answered as distributions. Both: --concurrency requests in flight (a thread
+  pool of that size); an append-only JSONL keyed by (item, section sha, backend, rubric), with the served model and
+  the digests of what was sent; a rerun skips done keys, after it re-parses each stored malformed answer under today's
+  rule: one whose stored raw answer is whole and parses gets an appended `reparsed` record and no request (--limit 0
+  re-parses only); 429, 5xx and connection errors retry with backoff; the usage totals, and the file's own ok,
+  reparsed and malformed counts, print at the end, also after a failure. The key is read in this process, never from
+  argv, never printed.
 
 validate --candidates DIR --transcript MAIN.jsonl [--labels LABELS.jsonl --backend B] [--rubric r1] [--jev DIR]
          [--s1-all REPORT] [--out FILE]
@@ -65,11 +69,11 @@ validate --candidates DIR --transcript MAIN.jsonl [--labels LABELS.jsonl --backe
   the gold's coverage and the baselines.
 
 dataset --candidates DIR --labels LABELS.jsonl --backend B --out DIR [--rubric r1] [--model-dir DIR] [--commit-dir DIR]
-  The ok labels as scripts/laya_ft/ rows (build_dataset.make_row's shape: item_id, question_id, question_sha,
-  state_sha, options, question, state {query: the step, chunk: the section}, sources) and labels (teacher_label's
-  record shape), two questions per pair (QUESTIONS), with a manifest. --model-dir fits each state to Laya's window
-  with build_dataset.Fitter (the Laya venv). The value gate runs before --out is written; --commit-dir gets only what
-  may be committed (the manifest and the labels: ids, digests, targets; no text).
+  The LABELED labels (ok and reparsed alike) as scripts/laya_ft/ rows (build_dataset.make_row's shape: item_id,
+  question_id, question_sha, state_sha, options, question, state {query: the step, chunk: the section}, sources) and
+  labels (teacher_label's record shape), two questions per pair (QUESTIONS), with a manifest. --model-dir fits each
+  state to Laya's window with build_dataset.Fitter (the Laya venv). The value gate runs before --out is written;
+  --commit-dir gets only what may be committed (the manifest and the labels: ids, digests, targets; no text).
 
 Exit: 0 done; 2 usage; 3 the labeler refused (a non-retryable status, or retries spent); 4 the value gate refused;
 75 another run holds the labels file.
@@ -150,11 +154,12 @@ Q_USE = {"type": "choice", "instructions": "Would the skill section in `chunk` h
 QUESTIONS = {"skill.governs": Q_REL, "skill.helps": Q_USE}     # option index = the 0-3 value (rel, use)
 RUBRIC_SHA = hashlib.sha256(json.dumps({"rubric": RUBRIC, "template": USER_TEMPLATE, "kinds": STEP_KINDS,
                                         "questions": QUESTIONS}, sort_keys=True).encode("utf-8")).hexdigest()
-REASON_MAX = 120
-ANSWER_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\S.{0,%d})" % (REASON_MAX - 1))
+REASON_MAX = 120                      # the STORED reason's length: a longer reason is cut and marked, never refused
+ANSWER_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\S.*)")      # fullmatch: ONE line (`.` stops at a newline)
 THINK_RX = re.compile(r"\A\s*<think>.*?</think>\s*", re.S)
 EMPTY_THINK_RX = re.compile(r"\A\s*<think>\s*</think>\s*")      # no content: never an answer
 RAW_MAX = 300
+LABELED = ("ok", "reparsed")          # the statuses validate and dataset use: a reparsed label is an ok label
 
 # ---------------------------------------------------------------- the vLLM wire contract (AF-AP-201)
 
@@ -727,8 +732,8 @@ def pairs_of(items):
 
 def read_labels(path):
     """({key: record}, stats) of an append-only labels file; a torn line is skipped and counted, a repeated key keeps
-    its first record."""
-    recs, stats = {}, {"records": 0, "torn": 0, "duplicates": 0}
+    its first record, except that a `reparsed` record replaces the `malformed` record it re-parses (reparse)."""
+    recs, stats = {}, {"records": 0, "torn": 0, "duplicates": 0, "reparsed": 0}
     if not os.path.exists(path):
         return recs, stats
     for line in open(path, encoding="utf-8").read().split("\n"):
@@ -741,7 +746,11 @@ def read_labels(path):
             stats["torn"] += 1
             continue
         if key in recs:
-            stats["duplicates"] += 1
+            if rec.get("status") == "reparsed" and recs[key].get("status") == "malformed":
+                recs[key] = rec
+                stats["reparsed"] += 1
+            else:
+                stats["duplicates"] += 1
             continue
         recs[key] = rec
     stats["records"] = len(recs)
@@ -778,14 +787,32 @@ def chat_body(model, item, section, thinking, max_tokens):
 
 
 def parse_answer(content, thinking=False):
-    """(rel, use, reason) of an answer that is exactly one line `rel=<0-3> use=<0-3> <reason>`; None otherwise. A
-    leading EMPTY <think></think> block (a template can emit one with thinking off) is dropped; with --thinking, a
-    leading <think> block with content too (it is never stored)."""
+    """(rel, use, reason, cut) of an answer that is exactly one line `rel=<0-3> use=<0-3> <reason>`, the reason of any
+    length and kept to REASON_MAX characters (cut: it was longer); None otherwise. A leading EMPTY <think></think> block
+    (a template can emit one with thinking off) is dropped; with --thinking, a leading <think> block with content too
+    (it is never stored)."""
     if not isinstance(content, str):
         return None
     content = (THINK_RX if thinking else EMPTY_THINK_RX).sub("", content, count=1)
     m = ANSWER_RX.fullmatch(content.strip())
-    return (int(m.group(1)), int(m.group(2)), m.group(3)) if m else None
+    if not m:
+        return None
+    reason = m.group(3)
+    return int(m.group(1)), int(m.group(2)), reason[:REASON_MAX], len(reason) > REASON_MAX
+
+
+def reparse(rec, thinking=False):
+    """A stored `malformed` record whose raw answer parses under parse_answer now -> its `reparsed` record (the same
+    key, sent_sha and raw; the answer's rel, use and reason), else None. A raw of RAW_MAX characters or more is the
+    head of a longer answer whose rest (a second line?) was never stored: it is never re-parsed."""
+    raw = rec.get("raw")
+    if rec.get("status") != "malformed" or not isinstance(raw, str) or len(raw) >= RAW_MAX:
+        return None
+    parsed = parse_answer(raw, thinking)
+    if parsed is None:
+        return None
+    return dict(rec, status="reparsed", rel=parsed[0], use=parsed[1], reason=parsed[2], reason_cut=parsed[3],
+                why=None, reparsed_ts=round(time.time(), 3))
 
 
 def http_post(url, data, key, timeout):
@@ -875,6 +902,7 @@ def vllm_worker(args, sleep):
                      **{"ok" if parsed else "malformed": 1})
         return {"status": "ok" if parsed else "malformed", "rel": parsed[0] if parsed else None,
                 "use": parsed[1] if parsed else None, "reason": parsed[2] if parsed else None,
+                "reason_cut": parsed[3] if parsed else None,
                 "raw": None if parsed else (content if isinstance(content, str) else json.dumps(content))[:RAW_MAX],
                 "why": None if parsed else "not one line `rel=<0-3> use=<0-3> <reason>`",
                 "model": out.get("model"), "requested_model": args.model, "endpoint": client.endpoint,
@@ -979,6 +1007,18 @@ def cmd_label(args, clock=time.monotonic, sleep=time.sleep, post=None):
                 tail.seek(-1, os.SEEK_END)
                 if tail.read(1) != b"\n":
                     fh.write("\n")                   # a torn last line stays its own (skipped) line
+        rep = collections.Counter()    # a stored answer that parses under today's rule is re-parsed, never re-asked
+        for key in sorted(done):
+            new = reparse(done[key], args.thinking)
+            if new is not None:
+                fh.write(dumps_line(new))
+                done[key] = new
+                rep["reparsed"] += 1
+            elif done[key].get("status") == "malformed" and len(done[key].get("raw") or "") >= RAW_MAX:
+                rep["unchecked"] += 1              # its raw is the head of a longer answer: it stays malformed
+        if rep["reparsed"]:
+            fh.flush()
+            os.fsync(fh.fileno())
 
         stop = threading.Event()       # the first failure stops the run: no task starts, no vLLM attempt follows
 
@@ -1024,10 +1064,15 @@ def cmd_label(args, clock=time.monotonic, sleep=time.sleep, post=None):
             if refused is not None:
                 print("s1_synth: refused: %s: %s" % (type(refused).__name__, safe(refused)), file=sys.stderr)
                 rc = 3
-            print("usage: backend=%s rubric=%s stored=%d ok=%d malformed=%d skipped_done=%d pending_left=%d "
-                  "seconds=%.1f pairs_per_s=%.3f %s" % (
-                      args.backend, args.rubric, n, stored["ok"], stored["malformed"], len(done), len(pairs) - n,
-                      elapsed, n / elapsed if elapsed > 0 else 0.0,
+            infile = collections.Counter(r.get("status") for r in done.values()     # the file's records, as read
+                                         if r.get("backend") == args.backend and r.get("rubric") == args.rubric)
+            infile.update(stored)
+            print("usage: backend=%s rubric=%s stored=%d ok=%d malformed=%d reparsed=%d reparse_unchecked=%d "
+                  "skipped_done=%d pending_left=%d file_ok=%d file_reparsed=%d file_malformed=%d seconds=%.1f "
+                  "pairs_per_s=%.3f %s" % (
+                      args.backend, args.rubric, n, stored["ok"], stored["malformed"], rep["reparsed"],
+                      rep["unchecked"], len(done), len(pairs) - n, infile["ok"], infile["reparsed"],
+                      infile["malformed"], elapsed, n / elapsed if elapsed > 0 else 0.0,
                       " ".join("%s=%s" % kv for kv in sorted(usage().items()))), flush=True)
     return rc
 
@@ -1191,10 +1236,12 @@ def validate(items, labels, gold_rows, s1_all, backend, rubric):
             rec = labels.get(label_key(it["id"], cand["sha"], backend, rubric))
             if rec is None:
                 counts["unlabeled"] += 1
-            elif rec.get("status") != "ok":
+            elif rec.get("status") not in LABELED:
                 counts["malformed"] += 1
             else:
                 counts["labeled"] += 1
+                if rec["status"] == "reparsed":
+                    counts["labeled_reparsed"] += 1
                 got.append((gold, cand, rec))
         out = {"gold": len(mine), "counts": dict(counts)}
         if src == "s1-rate":
@@ -1261,8 +1308,8 @@ def cmd_validate(args):
 # ---------------------------------------------------------------- the dataset
 
 def dataset_rows(items, sections, labels, backend, rubric, fitter=None):
-    """(rows, label records, counts): two rows per ok label (QUESTIONS), in build_dataset.make_row's shape, and one
-    teacher_label-shaped record per row."""
+    """(rows, label records, counts): two rows per LABELED label (ok or reparsed, alike; QUESTIONS), in
+    build_dataset.make_row's shape, and one teacher_label-shaped record per row."""
     sys.path.insert(0, HERE)
     from laya_ft import common as C
     from laya_ft import fit as FIT
@@ -1271,12 +1318,14 @@ def dataset_rows(items, sections, labels, backend, rubric, fitter=None):
     counts = collections.Counter()
     for key in sorted(labels):
         lab = labels[key]
-        if lab.get("backend") != backend or lab.get("rubric") != rubric or lab.get("status") != "ok":
+        if lab.get("backend") != backend or lab.get("rubric") != rubric or lab.get("status") not in LABELED:
             continue
         it, sec = by_id.get(lab["item"]), sections.get(lab["section"])
         if it is None or sec is None:
             counts["label_without_candidate"] += 1
             continue
+        if lab["status"] == "reparsed":
+            counts["labels_reparsed"] += 1
         state = {"query": step_text(it), "chunk": sec["text"]}
         for qid, value, dist in (("skill.governs", lab["rel"], lab.get("target_rel")),
                                  ("skill.helps", lab["use"], lab.get("target_use"))):

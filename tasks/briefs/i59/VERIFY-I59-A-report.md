@@ -371,3 +371,210 @@ kept (552 KB) under `scratchpad/verify-i59a/`: the harnesses named above, `redte
 registry), the parsed strace summaries (`st/S0-NN/parsed.json`) and the re-minted artifacts' copies (`reminted/`).
 No subagent, no PC bridge, no outward-facing action; the network reads were `git ls-remote --tags origin
 'refs/tags/accepted/*'` (empty) and a pip download of CI's five test dependencies into the scratch venv.
+
+## 13. Round 2 (2026-09-26 07:1xZ): the builder's round-3 delta, against the amended contract
+
+The coordinator's ruling amends contract item 3: a repo file whose existence or type a checker tests while it grades is
+an input, so F-1 was blocking; the builder's round 3 (`tasks/briefs/i59/I59-A-report.md` section 16) answers it and
+FU-1, FU-2, FU-3, FU-5. Written incrementally from here.
+
+Premise, re-measured at 07:1xZ:
+- HEAD c15a46e; origin 626fc4c; `git diff --stat origin HEAD -- scripts/ proofs/ tests/` empty (HEAD's code = origin's).
+- `git diff --stat 2a50a65 626fc4c` over every attested area (`proofs/`, the validator, the runner, `ledger-gen`,
+  `check-proof-status.py`, the two test files, `docs/adr`, `SBOM.yaml`, `upstream.lock.yaml`, the two root files,
+  `fixtures/`): empty. Round 1's PIN baseline (issue #59 F-1 as filed, section 1) still describes this base.
+- `tasks/briefs/i59/I59-A.patch`: sha256 prefix `988261b5dc447fce`, five diffs (the four of round 2 plus
+  `proofs/schemas/result.schema.json`), `git apply --check -v` rc 0 on HEAD. The round-2 patch (`8e83b983e966ce2b`) is
+  read back from 6af9f03 for the delta.
+- My round-1 report is committed (096e564); this section appends to it.
+Verdict: premise HOLDS.
+
+### 13.1 The delta (07:4xZ)
+
+A tag-free clone at 626fc4c (`/tmp/v59b/clone`, the round-1 recipe) with the round-3 patch applied; sha256 prefixes
+`e392a7f46661963c` registry.yaml, `4252d5e1569a23ea` result.schema.json, `f1eb20ff26c87939` validate-ledger,
+`dae0cd1c8a4c2798` test_validate_ledger.py, `c70c7a50981844a2` test_attested_inputs.py. Against the round-2 files
+(the round-2 patch applied to the same base): `test_validate_ledger.py` unchanged; the registry changes S0-12's list
+only; the validator changes in three places only (the long-segment refusal in `_extra_inputs`, the `OSError` guard in
+`_is_regular_file`, `os.path.lexists` in the registry-level presence test, plus `import os`); the test file gains the
+second instrument, the new tests and the docstring (232 changed lines).
+
+### 13.2 Attack 1: does the stat instrument catch the class? (`scratchpad/verify-i59a/planted_stats.py`)
+
+Fifteen existence and type tests of my own, each planted in the builder's scratch S0-09 copy and judged by its round-3
+`_observe` + `_verdict`, pasted:
+```
+isdir_on_a_file  target=docs/v_a.md       RED names-target=True   (os.path.isdir on a FILE: a type test)
+os_access        target=docs/v_b.md       RED names-target=True
+path_is_file     target=docs/v_c.md       RED names-target=True
+islink_lstat     target=docs/v_d.md       RED names-target=True
+lexists          target=docs/v_e.md       RED names-target=True
+getsize          target=docs/v_f.md       RED names-target=True
+samefile         target=docs/v_g.md       RED names-target=True
+shutil_which     target=docs/v_h.md       RED names-target=True
+isdir_on_a_dir   target=docs/vdir         GREEN (not caught)      named: a test of a DIRECTORY
+absent_file      target=docs/v_absent.md  GREEN (not caught)      named: a file's ABSENCE
+posix_stat       target=docs/v_k.md       GREEN (not caught)      named: a stat below the os module
+find_spec        target=lib/v_mod.py      GREEN (not caught)      named: the import system's own posix.stat
+scandir_is_file  target=docs/v_m.md       GREEN (not caught)      named: a directory listing
+stat_dir_fd      target=docs/v_i.md       GREEN (not caught)      NOT named: the wrapper skips calls with dir_fd
+readlink_type    target=docs/v_l.md       GREEN (not caught)      NOT named: os.readlink is not wrapped
+```
+Every file test through `os.stat`, `os.lstat` or `os.access` reds with exactly its target: the class the amended item 3
+names is caught for Python-level code. The five named blind spots behave as the docstring says. Two minor ones are not
+named (INFO I-14).
+
+Does a CURRENT verdict depend on a blind spot? No. The round-3 strace run (13.3) sees, outside each proof's directory, no
+absence probe but S0-02's own bytecode-cache miss and no directory test or listing but the import machinery's
+(`proofs/S0-01`, `proofs/S0-01/tools`, `proofs/S0-01/__pycache__` for S0-02 and S0-03, whose files there are declared).
+A grep over every checker finds `dir_fd` nowhere, `os.readlink` only on `/proc` (S0-11), and every
+`iterdir`/`glob`/`listdir`/`rglob` on the proof's own evidence directories, whose files the directory walk attests.
+
+### 13.3 Attack 2: the strace enumeration re-run on round 3 (`st_mint.sh`, `st_parse.py`, `st_compare.py`)
+
+All twelve re-minted through `scripts/proof-runner run` under `strace -f -ff -y` with `newfstatat`, `stat`, `lstat`,
+`statx`, `access`, `faccessat`, `faccessat2` and `readlink` traced beside the opens; every leg rc 0. Per proof, the regular
+repo files its legs OPEN or STAT outside its directory, the closure, the schemas and `__pycache__`, against its
+`extra_attested_inputs`, pasted:
+```
+S0-01 MATCH declared=0   S0-02 MATCH declared=6   S0-03 MATCH declared=5   S0-04 MATCH declared=0
+S0-05 MATCH declared=1   S0-06 MATCH declared=2   S0-07 MATCH declared=0   S0-08 MATCH declared=0
+S0-09 MATCH declared=1   S0-10 MATCH declared=1   S0-11 MATCH declared=0
+S0-12 MATCH declared=4 opened=['SBOM.yaml', 'upstream.lock.yaml'] stat-only=['LICENSE-DECISION.md', 'THIRD-PARTY-NOTICES.md']
+ALL MATCH
+```
+The declared set now matches my instrument exactly, stat-only files included, for all twelve. The builder's claim ("those
+two were the only undeclared outside stats") holds.
+
+### 13.4 Attack 3: FU-2 through the validator CLI and the canonical runner (`fu2.py`)
+
+Each case: S0-04 minted by the runner in a minimal root, the path declared, a re-mint, then `integrity` (pasted):
+```
+long-segment           uid=0      re-mint rc=0 result-kept=True  integrity rc=1 stderr=EMPTY  S0-04 PRESENT + "has a segment over 255 bytes"
+long-segment-multibyte uid=0      re-mint rc=0 result-kept=True  integrity rc=1 stderr=EMPTY  S0-04 PRESENT + "has a segment over 255 bytes"
+over-path-max          uid=0      re-mint rc=0 result-kept=True  integrity rc=1 stderr=EMPTY  S0-04 INVALID + "is not a regular file"
+nul-byte               uid=0      re-mint rc=0 result-kept=True  integrity rc=1 stderr=EMPTY  S0-04 INVALID + "is not a regular file"
+eacces-dir             uid=65534  re-mint rc=0 result-kept=True  integrity rc=1 stderr=EMPTY  S0-04 INVALID + "is not a regular file"
+unreadable-file        uid=65534  re-mint rc=1 result-kept=False (PermissionError)   integrity: S0-04 ABSENT
+```
+The three changes hold: a long segment (by bytes: 128 two-byte characters are refused too) is refused by name before any
+filesystem call; an `OSError` in `_is_regular_file` (ENAMETOOLONG as root, EACCES on a parent as uid 65534) reads as not
+regular; `os.path.lexists` keeps the registry check from crashing on a path over PATH_MAX. In none of those cases does a
+re-mint delete the result. The last row is a different trigger, outside FU-2: a declared file that is itself unreadable
+(mode 000, non-root) passes `_is_regular_file` and fails at `read_bytes()`, so the runner still deletes the result, and
+the validator exits with a `PermissionError` traceback. The same happens today for an unreadable file inside a proof's own
+directory (measured: the same traceback), so it is pre-existing, not a regression (INFO I-13).
+
+### 13.5 Attack 4: the schema edit
+
+Parsed old (round 2 = the base) and new `proofs/schemas/result.schema.json`: identical once
+`properties.attestation.description` is removed from both; the description differs; `Draft202012Validator.check_schema`
+passes; 67 lines each, trailing newline kept. Only the description changed. Its new text lists the closure, the schemas,
+the directory minus the own artifacts and `__pycache__`, and the declared inputs, which matches the code. One overclaim:
+it opens "Binds this artifact to every input that produced or checks it" and ends "so ... a changed input ... no longer
+validates". S0-07's Fubuki checkout (8 modules executed, FU-6) is such an input, and a change to it still validates (FU-7).
+
+### 13.6 Attack 5: the landing on round 3 (tag-free clone)
+
+- Step 1, the section 5 re-mint verbatim: no `FAILED`; attested counts S0-01 247, S0-02 214, S0-03 96, S0-04 44, S0-05 63,
+  S0-06 168, S0-07 14, S0-08 30, S0-09 12, S0-10 12, S0-11 13, S0-12 18 (its outside keys: `LICENSE-DECISION.md`,
+  `SBOM.yaml`, `THIRD-PARTY-NOTICES.md`, `upstream.lock.yaml`).
+- Step 2: integrity rc 0, 12 PRESENT; `ledger-gen` twice, `cmp` rc 0; `integrity --ledger` rc 0; `stage1-gate` rc 0.
+- S0-12's part (`integrity --ledger`, each restored to 12 PRESENT): `LICENSE-DECISION.md` removed: `S0-12 INVALID`,
+  `attestation-mismatch: S0-12 LICENSE-DECISION.md`, `... LICENSE-DECISION.md is not a regular file`, and the leg exits 1
+  (`sbom-missing-file`); the same for `THIRD-PARTY-NOTICES.md`. One byte of `LICENSE-DECISION.md`: `S0-12 INVALID` (its
+  content is bound too, stricter than the checker, which reads none of it). Replaced by a directory: `S0-12 INVALID`
+  while the checker still passes (`exists()` is true for a directory): fail-closed.
+- The pins.py demonstration: one byte turns S0-01, S0-02, S0-03, S0-05 INVALID (`attestation-mismatch: S0-0N
+  proofs/S0-01/pins.py`), `S0-09 PRESENT`, 8 PRESENT; one byte of the S0-08 nested fixture turns S0-08 INVALID.
+- Steps 3-5: `check-proof-status.py .` rc 0, exactly twelve `proof-status: WARNING S0-NN: ACCEPTED with the anchor PENDING
+  ...` lines.
+- Step 6, `bash scripts/test_summary.sh --basetemp=<short>` in the landed clone (pasted):
+```
+4 files set=379203742124  run 1: pytest-exit: 0  pytest-summary: 190 passed in 46.22s
+                          run 2: pytest-exit: 0  pytest-summary: 190 passed in 48.59s
+1 files set=96d60da64331  run 1: pytest-summary: 78 passed in 32.68s    run 2: pytest-summary: 78 passed in 32.14s
+6 files set=63923f3a5a15  pytest-exit: 0  pytest-summary: 444 passed in 70.95s (0:01:10)
+4 files set=f5fcca671f19  pytest-exit: 0  pytest-summary: 971 passed in 422.71s (0:07:02)
+5 files set=f63a056b995b  pytest-exit: 0  pytest-summary: 415 passed in 80.14s (0:01:20)
+```
+  The floor's thirteen files plus the new one: 190 + 444 + 971, all green in the landed state; the derived extras green.
+- CI emulation (uid 65534, a Python 3.12.3 venv with the `tests` job's pip set, `S0_01_VENUE=ci`, no tags, the Fubuki path
+  hidden in a private mount namespace): the 4-file set `pytest-exit: 0`, `178 passed, 12 skipped in 51.39s`, the guard
+  skipping exactly S0-07 and S0-11 with their reasons, the other ten graded under both instruments. The pyflakes steps
+  rc 0; `ledger-gen` on 3.12 byte-identical to the landed ledger; `integrity --ledger` rc 0; `stage1-gate` rc 0;
+  `verify-planning-repo.sh` rc 0. The separator grep prints 0 for the five changed files.
+
+### 13.7 Attack 6: the new mutants (`scratchpad/verify-i59a/mutate_r3.py`, AF-AP-223 rules as round 1)
+
+The builder's ten round-3 mutants and its two re-run guard mutants, reconstructed from its section 16 (its harness file
+now holds only the last two), plus six of mine against the round-3 code; each file sha-checked after restore (equal
+prefixes before and after: `f1eb20ff26c87939`, `c70c7a50981844a2`, `e392a7f46661963c`). Pasted:
+```
+CONTROL (unmutated, 18 named tests): rc=0 18 passed in 4.51s
+KILLED  B-M-F1 S0-12 back to its round-2 list 3/3 · B-S1 stat instrument never installed 3/3 · B-S2 stat rule off 3/3
+KILLED  B-S3 __pycache__ stat exemption removed 1/1 · B-L1 long-segment refusal removed 1/1 · B-L2 no OSError guard 1/1
+KILLED  B-L3 registry presence test back to exists() or is_symlink() 1/1 · B-N1 closure refusal covers scripts/proof-runner only 2/2
+KILLED  B-N2 own-directory refusal covers direct children only 1/1 · B-N5 verdict binding tests existence only 1/1
+KILLED  B-G2 outside rule off (re-run) 3/3 · B-G5 inside rule off (re-run) 1/1
+SURVIVED       V-S4 only os.stat wrapped (lstat, access unwatched): 0/4 named FAILED; 4 passed in 0.99s
+KILLED         V-S6 stats filed as reads: 3/3 named FAILED; 3 failed in 0.70s
+SURVIVED       V-L4 long-segment check counts characters, not bytes: 0/1 named FAILED; 1 passed in 0.21s
+KILLED         V-L5 OSError guard narrowed to FileNotFoundError: 1/1 named FAILED; 1 failed in 0.12s
+KILLED         V-L6 registry presence test follows symlinks (exists): 1/1 named FAILED; 1 failed in 0.21s
+KILLED         V-M-F2 S0-12 drops THIRD-PARTY-NOTICES.md: 2/2 named FAILED; 2 failed in 0.71s
+EXPECTED=18 KILLED=16 SURVIVED=2 INVALID=0
+```
+All twelve of the builder's are KILLED as FAILED tests, reproducing its `EXPECTED=10 KILLED=10` and `EXPECTED=2 KILLED=2`;
+round 1's surviving N1, N2 and N5 are now killed. Live differentials of my two survivors:
+- V-S4: with only `os.stat` wrapped, my `os_access`, `islink_lstat` and `lexists` plants go GREEN; the original reds all
+  three. Non-equivalent: `PLANTED_STATS` holds three shapes, all through `os.stat` (FU-8).
+- V-L4: a 128-character, 256-byte segment: the mutant loses the by-name refusal and the path falls to the `OSError` guard
+  (`S0-04 INVALID`, `... is not a regular file`); the original refuses it by name (`S0-04 PRESENT` plus the finding).
+  rc 1 and no crash in both; a missing multibyte case (FU-8).
+
+### 13.8 The inventory after round 3 (07:4xZ)
+
+- F-1 (CONTRACT-DEFECT, blocking under the amended item 3): FIXED and VERIFIED. S0-12 declares the two files; strace
+  matches the declarations for all twelve proofs; removing either file turns the re-minted S0-12 INVALID on the real path;
+  the guard reds the class (eight shapes) and the builder's version of my red test is committed in the new file
+  (`test_removing_a_file_s0_12_tests_for_invalidates_its_minted_result[*]`, killed by B-M-F1 and V-M-F2).
+- FU-1: the schema half DONE (description only, 13.5); the `.claude/skills/env-tool-quirks/SKILL.md:98` half still open
+  (outside the builder's boundary). FU-2: DONE for its trigger class (13.4). FU-3: DONE (N1, N2, N5 killed). FU-5: DONE.
+  FU-4 (CI `-rs`) and FU-6 (S0-07's checkout, task #320): open, as the coordinator scoped them.
+- FU-7 (new) The schema description overclaims in an ATTESTED file: "Binds this artifact to every input that produced or
+  checks it ... so ... a changed input ... no longer validates" is false for S0-07, whose checkout (8 executed modules) is
+  unattested. Suggested: "Binds this artifact to the repo files that produced or check it: ..." and a closing sentence
+  "Inputs outside the repository (S0-07's Fubuki checkout; the interpreter and its packages) are not attested (task #320)."
+  Timing: before the landing, or the fix re-mints all twelve again. Prose, not behaviour, so not blocking.
+- FU-8 (new) Test gaps from V-S4 and V-L4: add an `os.access` and an `os.lstat` (`os.path.lexists`/`islink`) shape to
+  `PLANTED_STATS`, and a multibyte long segment to the refusal table.
+- I-13 (new) An unreadable declared file (mode 000, non-root) crashes the validator (`PermissionError` traceback) and makes
+  the runner delete the result: the same as an unreadable file in a proof's own directory today (measured). Pre-existing.
+- I-14 (new) Two blind spots the docstring does not name: a stat with `dir_fd` (the wrapper skips it) and an `os.readlink`
+  type test (not wrapped). No checker uses either on a repo path. One line each in the docstring would close the naming.
+- I-7 (updated) After the landing, S0-12 also binds the CONTENT of `LICENSE-DECISION.md` and `THIRD-PARTY-NOTICES.md`
+  (a one-byte edit turns it INVALID though its checker only tests existence): stricter than the verdict, fail-closed, and
+  one more pair of files whose routine edits need a re-mint and a re-sign.
+- I-15 (new) The `tests` job is red on the base itself (626fc4c: SYNTH1's skip guard on the non-root runner, per the
+  coordinator's c15a46e; its fix rides SYNTH1 round 2). The landing's CI verdict needs that fix too; this change is not
+  its cause (the CI emulation above is green on the attested-inputs set).
+- Round 1's other INFO items (I-1 to I-6, I-8 to I-12) are unchanged by round 3.
+
+### 13.9 Gate recommendation for the whole change (round 3, against the amended contract)
+
+**MERGE-READY-WITH-FOLLOWUPS.** F-1 is fixed and reproduced fixed on the real path; no other finding meets the whole
+blocking predicate (the new ones are test gaps, prose or pre-existing). Take FU-7 (the schema wording) in this batch if
+at all: after the landing it costs another re-mint of all twelve. Not reproduced here: real CI (emulated) and the whole
+`tests/` suite (every file naming a touched symbol ran green in the landed state).
+
+### 13.10 Cleanup (07:4xZ)
+
+The tag-free clone, the Python 3.12 venv, the uid 65534 scratch roots and every `/tmp/v59b` path removed (this round used
+no linked worktree; `git worktree list` shows only the main tree, `git worktree prune --dry-run` prints nothing). Shared
+tree: my only change is this report; nothing under `proofs/` or `docs/governance/` changed (`git diff HEAD` empty there),
+twelve `refs/tags/accepted/*` present, no git write. The other dirty files are SYNTH1's (`scripts/s1_synth.py`,
+`tests/test_s1_synth.py`, its report), untouched. Scratch kept (944 KB) under `scratchpad/verify-i59a/`: this round's
+harnesses (`planted_stats.py`, `st_compare.py`, `fu2.py`, `mutate_r3.py`), the parsed strace summaries (`st3/S0-NN/parsed.json`)
+and both patches (`r2.patch`, `r3.patch`). No subagent, no PC bridge, no outward-facing action; one pip download of CI's
+five test dependencies into the (removed) scratch venv.

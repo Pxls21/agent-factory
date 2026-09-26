@@ -12,6 +12,13 @@ scripts/s1_scores.py, so the tool relies only on `scored` and the fields it read
 short text of its own. The gate re-ran with tests/test_vendored_manifest.py one test at a time (section 9); the
 mutation run and the dry run re-ran on the final code.
 
+**Round 2 (07:4xZ), section 14.** After the landing (origin 626fc4c) two findings came back, both fixed in this lane's
+own files: (A) the PC smoke stored 74 of 108 answers as malformed because their reasons ran past 120 characters, so
+the parse now takes a reason of any length (stored cut to 120) and a resume re-parses the stored answers with no
+request; (B) stage0-ci failed on the Laya-venue test, whose skip guard raised PermissionError on a non-root runner, so
+the guard now treats an unreadable path as absent and skips loudly. Sections 1 to 13 are round 1's record; where
+round 2 changed a fact, the passage points to section 14.
+
 ## 1. Premise re-measure (EVIDENCE DEMANDS 1), 03:5xZ
 
 Every line of the brief's PREMISE block was re-run. Verdict: **the premise holds; no CONTRACT-INVALID.** The deltas are
@@ -150,7 +157,8 @@ prefix cache (the quadlet sets `PREFIX_CACHE=1`, deploy/qwen.container:30) serve
 sections of the same item; the pairs go out item by item, the gold items first.
 
 **The answer** is exactly one line `rel=<0-3> use=<0-3> <a reason of 1-120 characters>`, matched whole
-(`ANSWER_RX.fullmatch` on the stripped text). A leading EMPTY `<think></think>` is dropped first (a chat template can emit
+(`ANSWER_RX.fullmatch` on the stripped text). (Round 2: a reason of any length parses and is stored cut to 120
+characters, marked `reason_cut`; section 14.) A leading EMPTY `<think></think>` is dropped first (a chat template can emit
 one with thinking off); a think block with content is dropped only under `--thinking`, and is never stored. Anything
 else is stored with `status: malformed`, `rel` and `use` null and the raw answer (300 characters): never guessed.
 
@@ -173,7 +181,7 @@ as malformed.
 **Both.** An append-only JSONL, locked (a second run exits 75): one record per pair, keyed
 `<item id>|<section sha>|<backend>|<rubric>`, with the served model, the endpoint, the sha256 of the request body as sent
 (`sent_sha`), the item text's sha, the section text's sha256, the tokens, the attempts and the time. A rerun skips the done
-keys (ok and malformed alike). The first failure sets a stop flag: no task starts after it and no vLLM attempt follows
+keys (ok and malformed alike; round 2: after it re-parses the stored malformed answers, section 14). The first failure sets a stop flag: no task starts after it and no vLLM attempt follows
 (the resume test found the gap: section 7). The usage line prints at the end, also after a failure: stored, ok,
 malformed, skipped, pending, seconds, pairs per second, and the backend's own counters.
 
@@ -296,6 +304,11 @@ the test's docstring.
 | the sample | `test_the_sample_takes_tools_in_turn_then_strata_in_turn` (worked by hand; the same seed, the same calls) | M31 tools-not-in-turn |
 | ASCII JSON | `test_the_files_are_ascii_json_and_a_line_separator_round_trips` | M37 non-ascii-json |
 
+Round 2 (section 14) changed the malformed-answer test to 10 answers (3 parse, 7 malformed), added
+`test_a_resume_reparses_a_stored_answer_and_asks_nothing` and
+`test_an_unreadable_laya_path_counts_as_absent_and_the_laya_test_skips` (23 tests), and added nine mutants, M39 to
+M47 (Appendix B).
+
 **The mutation run** (`<scratchpad>/synth1/mut/mutants.py`, Appendix A): each mutant of scripts/s1_synth.py runs the test
 file in its own mirror of the tree; a kill is a FAILED test, never an error (AF-AP-223); the unmutated baseline must pass
 first and a control mutant (a comment) must stay green. On the final code, after the resume (05:45Z-05:58Z):
@@ -349,7 +362,20 @@ bash scripts/pc.sh 'cd /home/rocco/synth1 && cat parts/part.* | base64 -d > cand
 # 3. PC: the smoke, 120 pairs (gold items first), in the background
 bash scripts/pc.sh 'cd /home/rocco/agent-factory; setsid nohup python3 scripts/s1_synth.py label --candidates /home/rocco/synth1/cand --out /home/rocco/synth1/labels.jsonl --backend vllm --limit 120 > /home/rocco/synth1/smoke.log 2>&1 < /dev/null & echo started'
 bash scripts/pc.sh 'tail -3 /home/rocco/synth1/smoke.log; wc -l < /home/rocco/synth1/labels.jsonl'      # repeat until the usage line
-bash scripts/pc.sh 'grep -o "\"model\": \"[^\"]*\"" /home/rocco/synth1/labels.jsonl | sort | uniq -c; grep -c "\"status\": \"malformed\"" /home/rocco/synth1/labels.jsonl'
+#    the counts are the usage line's file_ok, file_reparsed and file_malformed (the file as the tool reads it; round 2);
+#    a run with --limit 0 prints them at any time and sends nothing. Never count with grep: a re-parsed key keeps
+#    its round-1 line. The served model (a re-parsed key's two lines count twice; only the name matters):
+bash scripts/pc.sh 'grep -o "\"model\": \"[^\"]*\"" /home/rocco/synth1/labels.jsonl | sort | uniq -c'
+
+# R2. Round 2, on the smoke file already on the PC (108 rows, 74 malformed by round 1's parse), after step 0 with the
+#     round-2 code. R2-1 re-parses it (appends a reparsed record per answer that parses now; no request; seconds):
+bash scripts/pc.sh 'cd /home/rocco/agent-factory && python3 scripts/s1_synth.py label --candidates /home/rocco/synth1/cand --out /home/rocco/synth1/labels.jsonl --backend vllm --limit 0 2>&1 | tail -2'
+#     expect stored=0 reparsed=74 reparse_unchecked=0 file_ok=34 file_reparsed=74 file_malformed=0; an answer stored
+#     cut at 300 characters shows as reparse_unchecked and stays malformed. A second R2-1 appends nothing.
+#     R2-2 finishes the smoke's 120 (120 - 108 = 12 pending; --concurrency 3 while a Hermes lane holds the route):
+bash scripts/pc.sh 'cd /home/rocco/agent-factory; setsid nohup python3 scripts/s1_synth.py label --candidates /home/rocco/synth1/cand --out /home/rocco/synth1/labels.jsonl --backend vllm --limit 12 --concurrency 3 > /home/rocco/synth1/smoke2.log 2>&1 < /dev/null & echo started'
+bash scripts/pc.sh 'tail -2 /home/rocco/synth1/smoke2.log'                                             # repeat until the usage line
+#     then decide by the stop rule below, on that usage line's file_malformed.
 
 # 4. PC: the full run; it resumes after the smoke's 120. A second launch while one runs exits 75, so a re-run is safe.
 bash scripts/pc.sh 'cd /home/rocco/agent-factory; setsid nohup python3 scripts/s1_synth.py label --candidates /home/rocco/synth1/cand --out /home/rocco/synth1/labels.jsonl --backend vllm > /home/rocco/synth1/label.log 2>&1 < /dev/null & echo started'
@@ -374,7 +400,8 @@ The OpenJev alternative runs from the sandbox (the API is external; D-078): step
 `--backend openjev --env-file /root/.codiv/api.env` and `--out $SCR/labels-openjev.jsonl`, no PC step. At its limit of 60
 requests a minute, 21,960 pairs take at least 21,960 / 60 = 366 minutes (6.1 h), whatever `--concurrency` is.
 
-**Decide after the smoke (step 3):** at most 2 malformed of 120, else stop and look at their `raw` answers (the rubric or
+**Decide after the smoke (step 3, or R2-2 in round 2):** at most 2 malformed of 120 (the usage line's
+`file_malformed`; the rule is unchanged in round 2), else stop and look at their `raw` answers (the rubric or
 the parse); the served model is `qwen3.8-27b-local`; `pairs_per_s` in the usage line gives the full run's time as
 21,960 / pairs_per_s seconds; `prompt_tokens` / stored gives the real tokens per request.
 
@@ -478,7 +505,8 @@ not generator inputs. Not proven by a run without the two files: that would chan
 2. **The real labeler's answers.** Every test uses a fake server. The real Qwen's compliance with the one-line format, its
    output with `enable_thinking: false` (an empty think block is handled; one with content is malformed) and whether
    64 tokens suffice are unproven. The smoke's stop rule (at most 2 malformed of 120) catches a format failure before
-   the other 21,840 requests, at the cost of 120.
+   the other 21,840 requests, at the cost of 120. (Round 2: the smoke found exactly this, 74 of 108 answers with a
+   reason past 120 characters; section 14.)
 3. **The gold is thin and selected.** S1-RATE: 32 sections from 28 scored injections, all tool-path rows the live hook
    injected, rel 1-3, none 0, and a subsample selected by reply length (the caveat): it cannot check the labeler on
    negatives, which are most of the 21,960 pairs. S1-ALL: one
@@ -513,6 +541,7 @@ of section 8 runs it for real.
 - The anti-pattern screen's tells (section 9) are explained, not changed.
 - The 8 tests/test_vendored_manifest.py failures (D3) are traced by their message, the generator's code and the
   count, not by a run without the two ignored files: that needs a tree change outside this boundary (or task #232).
+- Round 2's NOT-done items are in section 14.
 
 ## 12. DISCREPANCIES
 
@@ -551,16 +580,190 @@ of section 8 runs it for real.
   callable would keep such runs apart, but it needs a key this lane may not read.
 - **D9. The transcripts grew during the lane:** 225 human prompts at 03:4xZ, 226 at the final dry run; the gold grew
   from 3 to 28 scored System-1 injections.
+- **D10 (round 2). The model does not keep the rubric's reason length.** Round 1 put the 120-character limit inside
+  the match, and round 1's own test pinned a 121-character reason as malformed: a strict parse built on an
+  assumption about the real model that the smoke proved false (74 of 108). The rubric is unchanged; the parse now
+  cuts instead of refusing (section 14).
+- **D11 (round 2). The sandbox runs as root; CI does not.** The Laya-venue test's guard used `Path.exists()`, which
+  raises PermissionError under /root on a non-root runner, so CI (run 36224456809) failed where the docstring
+  promised a loud skip. Every gate this lane ran was as root, so none could see it; the round-2 fix was checked as
+  `nobody` too (section 14).
 
-## 13. Files (created; no file modified; no git write)
+## 13. Files (round 1 created them; round 2 changed the two code files; no git write)
 
-- `scripts/s1_synth.py` (1,424 lines): the rubric 121-157, the vLLM wire contract 159-213, reading the transcripts
-  215-361, the hook's own ranking 363-448, candidates 450-695, loading 697-749, the labeler 751-1033, statistics
-  1035-1134, the validator 1136-1259, the dataset 1261-1357, the command line 1359-1424.
-- `tests/test_s1_synth.py` (1,017 lines, 21 tests).
+- `scripts/s1_synth.py` (1,473 lines after round 2; 1,424 in round 1): the rubric 125-162, the vLLM wire contract
+  164-217, reading the transcripts 220-365, the hook's own ranking 368-452, candidates 455-699, loading 702-757,
+  the labeler 760-1077, statistics 1080-1178, the validator 1181-1305, the dataset 1308-1405, the command line
+  1408-1473.
+- `tests/test_s1_synth.py` (1,125 lines, 23 tests after round 2; 1,017 lines, 21 tests in round 1).
 - `tasks/briefs/system1/SYNTH1-report.md` (this report).
-- Scratch (`<scratchpad>/synth1/`, deleted at the end but for the harness text kept in Appendix A): the dry-run JSONs,
-  the gate logs, the mutation harness.
+- Scratch (`<scratchpad>/synth1/` in round 1, `<scratchpad>/synth1r2/` in round 2; each deleted at the end but for
+  the harness text kept in Appendices A and B): the dry-run JSONs, the gate logs, the mutation harness.
+
+## 14. Round 2: the long-reason answers and the CI failure (task #308 round 2), 07:4xZ
+
+Round 2 fixes two findings in this lane's landed files (origin 626fc4c): (A) the PC smoke stored most answers as
+malformed, and (B) stage0-ci failed on this lane's Laya-venue test. Both fixes stay inside the lane's own files.
+
+### A. The long-reason answers
+
+**The finding (the coordinator's PC smoke).** The smoke ran with `--limit 120 --concurrency 3` and was stopped by pid
+at 108 rows. All 108 carry the model `qwen3.8-27b-local`. 74 were `malformed`, each with the why "not one line
+`rel=<0-3> use=<0-3> <reason>`". The raw answers were well-formed single lines whose reason ran past 120 characters
+(completion_tokens 31 to 42 in the three examples). The model does not keep the rubric's "at most 120 characters".
+
+**The premise, re-measured before any change (verified).** At 73261cd, `ANSWER_RX` (scripts/s1_synth.py@73261cd:154) was
+`rel=([0-3]) use=([0-3]) (\S.{0,119})` in a fullmatch. In process, a synthetic answer with a 149-character reason
+parsed to None; with a 120-character reason it parsed; with 121 it did not. No commit had touched the file since
+73261cd. This lane did not read the 108-row file (it is on the PC); its facts come from the coordinator's message.
+
+**The fix (scripts/s1_synth.py).**
+- The parse goes by structure: `ANSWER_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\S.*)")`, still a fullmatch on the
+  stripped answer (line 158). `.` stops at a newline, so two lines still fail. The reason may be of any length.
+  `parse_answer` (789-801) returns (rel, use, reason, cut): the reason kept to REASON_MAX (120) characters, and `cut`
+  true when it was longer. A new record stores the flag as `reason_cut` (905). Everything else stays malformed as in
+  round 1: two lines, a rel or use outside 0-3, the fields out of order, text before `rel=`, no reason, and a think
+  block with content while thinking is off.
+- The rubric is unchanged (it still asks for at most 120 characters), so RUBRIC_SHA and every `r1` key stay valid for
+  the 108 rows.
+- **A resume re-parses; it never re-asks.** `reparse` (804-815) turns a stored `malformed` record whose raw answer
+  parses today into a `reparsed` record. The key, sent_sha, raw and ts stay the same. rel, use, reason and reason_cut
+  come from the parse, `why` becomes null, and `reparsed_ts` is added. `cmd_label` (1010-1021) runs it over every
+  record of the file, under the file lock, before any request, and APPENDS each reparsed record (then one fsync).
+- The file stays append-only, as the brief's CONTRACT 2 demands: the round-1 line stays as it was. `read_labels`
+  (733-757) lets a later `reparsed` record replace the `malformed` record of its key and counts it in a new
+  `reparsed` stat; any other repeat is still a duplicate, and the first record is kept. A re-parsed key is a done key,
+  so no request goes out for it. A second resume finds no malformed record to re-parse and appends nothing.
+  `--limit 0` re-parses and sends nothing.
+- **A stored raw of 300 characters or more is never re-parsed (a deliberate limit).** The raw is the answer cut to
+  RAW_MAX (300). If the answer was that long, a second line after character 300 was never stored, so the head could
+  parse while the whole answer would not. Such a record stays malformed and is counted `reparse_unchecked`. A new
+  answer is parsed whole at label time, so the limit touches only records stored before round 2.
+- The re-parse uses the run's own `--thinking` flag, as a new answer does. The PC commands run with thinking off.
+- **The usage line** adds `reparsed=` and `reparse_unchecked=` (this run's), and `file_ok=`, `file_reparsed=` and
+  `file_malformed=`: the file's records of this backend and rubric as the tool reads them, after this run
+  (1067-1076).
+
+**How validate and dataset treat a `reparsed` row: the same as `ok`.** Both use `LABELED = ("ok", "reparsed")` (162).
+- validate (1239-1245): a reparsed label counts as `labeled` and joins its gold exactly as an ok label does. The
+  counts add `labeled_reparsed`, only when there is one.
+- dataset (1321-1328): a reparsed label gives the same two rows and label records as an ok label. The manifest's
+  counts add `labels_reparsed`, only when there is one. The reason never reaches the dataset, as before.
+
+**Tests (synthetic answers only, never the real ones).**
+- `R150` (tests/test_s1_synth.py:42-43) is a synthetic 150-character reason in the real answers' shape. `ROUND1_RX`
+  (44) is round 1's capped match, this file's own copy.
+- `test_a_malformed_answer_is_stored_as_malformed_never_guessed` (618-647), 10 answers: `rel=1 use=0 <R150>` is now
+  ok, with the first 120 characters as its reason and reason_cut true (round 1's test pinned a 121-character reason as
+  malformed; that case is replaced). Added: the fields swapped, and a use out of range; both malformed.
+- `test_a_resume_reparses_a_stored_answer_and_asks_nothing` (650-704, new). A labels file made the round-1 way (this
+  code with ROUND1_RX put back by monkeypatch): 3 items x 4 sections, answered by section with R150, a short reason,
+  two lines, and one line of 312 characters. Round 1 with `--limit 8`: 2 ok, 6 malformed.
+  - The resume with `--limit 0` sends no request and appends 2 records (the R150 answers: reparsed, rel 1, use 0, the
+    reason cut to 120, every other field unchanged).
+  - The two-line and the 312-character answers stay malformed (`reparse_unchecked=2`). read_labels gives the stats
+    `{"records": 8, "torn": 0, "duplicates": 0, "reparsed": 2}`, and the usage line `file_ok=2 file_reparsed=2
+    file_malformed=4`.
+  - The next run labels only the 4 pending pairs. There the 312-character answer, parsed whole, is ok with
+    reason_cut true: `file_ok=5 file_reparsed=2 file_malformed=5`. A last run sends nothing and appends nothing.
+- `test_the_validator_numbers_on_hand_made_gold` (lines 850-857 added) and
+  `test_the_dataset_rows_join_with_laya_ft_and_the_loader_names_its_gap` (940-943 added): the same labels marked
+  `reparsed` give the same numbers, rows and records as when they are `ok`.
+- **Red-green (verified).** Today's test file against the landed code (73261cd's s1_synth.py, sha256
+  374cc5ede5b3ec32..., in the harness's mirror): `4 failed, 19 passed in 19.65s`. The 4 are the tests above, each
+  FAILED, with 0 errors. On the new code, all 23 pass.
+
+### B. The CI failure (stage0-ci run #1102, run id 36224456809, origin 626fc4c)
+
+**The finding (the coordinator's message).** The `tests` job: `1 failed, 5380 passed, 336 skipped, 8 xfailed`. The
+one failure: `tests/test_s1_synth.py::test_the_dataset_fits_laya_window_in_the_laya_venue - PermissionError: [Errno
+13] Permission denied: '/root/venv-laya-probe/bin/python'`, raised at the skip guard
+`if not Path(LAYA_PY).exists() or not Path(C.DEFAULT_MODEL_DIR).exists():` (line 972 at 626fc4c).
+
+**The premise, re-measured two ways (verified).**
+- In process, with `os.stat` patched to raise EACCES for the venv's python: `Path.exists()` raised PermissionError
+  (errno 13), and `os.path.exists()` returned False. pathlib swallows only ENOENT, ENOTDIR, EBADF and ELOOP; this
+  sandbox runs as root, so the failure never showed here.
+- For real, as a non-root user (`runuser -u nobody`, with /root at mode 700, the CI runner's condition): the landed
+  test file (a mirror of HEAD's) failed with `E PermissionError: [Errno 13] Permission denied:
+  '/root/venv-laya-probe/bin/python'` at pathlib.py:1013 (`1 failed, 20 deselected in 0.20s`): the CI failure,
+  reproduced.
+
+**The fix (tests/test_s1_synth.py).** `_present(path)` (1048-1052) returns `os.path.exists(path)`, which treats any
+OSError as absent. The guard (1061) uses it for both paths, and the skip reason now says "absent or unreadable". The
+test therefore skips loudly on a venue that cannot see the venv, as its docstring promises. As `nobody`, today's file
+gives `SKIPPED [1] tests/test_s1_synth.py:1062: LOUD SKIP: the Laya venv (/root/venv-laya-probe/bin/python) or its
+model is absent or unreadable on this venue` and `1 passed, 1 skipped, 21 deselected in 0.06s`.
+
+**The test** `test_an_unreadable_laya_path_counts_as_absent_and_the_laya_test_skips` (1091-1107, new) patches
+`os.stat` to raise EACCES for the venv's python. It asserts that `_present` answers absent for it and present for a
+readable file, and that the Laya-venue test then raises pytest's Skipped with "LOUD SKIP" (never PermissionError).
+Two test-file mutants: M46 present-bare-exists (the helper back to `Path(path).exists()`) and M47 guard-bare-exists
+(the guard back to the landed `Path(...).exists()` form). Each is killed by this test as a FAILED test.
+
+**The sweep of this lane's files for the same pattern:** no other site. scripts/s1_synth.py:737 uses `os.path.exists`
+(it never raises), and tests/test_s1_synth.py:455 checks `out.exists()` on a path under pytest's tmp_path (always
+readable).
+
+### The run, the gates and the PC
+
+**The mutation run (Appendix B), 07:20Z to 07:37Z, on the final bytes** (scripts/s1_synth.py sha256
+8dfa6755876cb403..., tests/test_s1_synth.py b84ac40ceecfeabf...): the baseline passed 23 of 23; the control stayed
+green twice; **47 of 47 mutants were KILLED, each by FAILED tests, with 0 errors.** The nine new mutants, with the
+number of tests that killed each:
+
+| mutant | killed by |
+|---|---|
+| M39 reason-cap-restored (the cap back inside the match: the coordinator's named mutant) | 2 |
+| M40 reason-not-cut | 2 |
+| M41 reparse-skipped | 1 |
+| M42 cut-raw-trusted | 1 |
+| M43 validator-reparsed-malformed | 1 |
+| M44 dataset-reparsed-dropped | 1 |
+| M45 reparsed-never-replaces | 1 |
+| M46 present-bare-exists (the coordinator's named mutant for B) | 1 |
+| M47 guard-bare-exists (the landed guard) | 1 |
+
+**Gates (pasted).**
+- `bash scripts/test_summary.sh tests/test_s1_synth.py` (set=7f2ad640fd36), twice, at 07:38:01Z and 07:38:21Z:
+  `pytest-exit: 0` / `pytest-summary: 23 passed in 19.91s`, and `pytest-exit: 0` / `pytest-summary: 23 passed in
+  19.24s`. Neither run printed a SKIPPED or an ERROR line (the Laya venue is present here).
+- `python3 -m pyflakes scripts/s1_synth.py tests/test_s1_synth.py`: rc 0.
+- `LC_ALL=C grep -c $'\xe2\x80[\xa8\xa9]'`: 0 for scripts/s1_synth.py, tests/test_s1_synth.py and this report (re-run
+  after this report's last edit; the lane's final message pastes that result).
+- Only tests/test_s1_synth.py imports scripts/s1_synth.py (a text search of scripts/ and tests/), and round 2 adds no
+  import to the tool, so no other test file's result can change.
+
+**On the PC, what changes (section 8 is updated).** Land and sync first (step 0). Then R2-1 re-parses the 108-row
+file with `--limit 0` (no request), and R2-2 finishes the smoke's 120 with `--limit 12`. The stop rule is unchanged;
+read it on `file_malformed`. Read every count from the usage line, never with grep: the file keeps each superseded
+malformed line. Fix B changes nothing on the PC.
+
+### Round 2, NOT done
+- The re-parse did not run on the real 108-row file (the PC is the coordinator's). If all 74 raws are whole single
+  lines under 300 characters (completion_tokens of 31 to 42 suggest about 150 to 200 characters), R2-1 prints
+  `reparsed=74 reparse_unchecked=0 file_ok=34 file_reparsed=74 file_malformed=0`. A raw of 300 characters shows as
+  `reparse_unchecked`, and its record stays malformed; it is NOT re-asked.
+- The rubric still asks for at most 120 characters. A new rubric (r2) that allows a longer reason would change every
+  key and re-ask the done pairs. Not done; not asked.
+- max_tokens stays 64. A reason cut by the token limit (finish "length") still parses when rel and use come first.
+  Such a reason stops short, but it is only a note.
+- On CI the Laya-venue test now skips (loudly), as it was designed to; the Laya fit is proven only where the Laya venv
+  is (this sandbox). The fix was not run on CI itself: the non-root run above is this lane's stand-in.
+
+### Round 2, self-attack
+1. *A re-parse that accepts what the whole answer would refuse.* Only a raw cut at 300 characters can hide the rest of
+   an answer, and it is never re-parsed (M42 proves the test sees it). A raw under 300 characters is the whole answer
+   (raw = answer[:300]).
+2. *A reparsed record that the readers miss, or count twice.* read_labels puts the later reparsed record in place of
+   the malformed one (M45). A second resume appends nothing (the test's last run). validate and dataset treat the
+   record as ok (M43 and M44, and the same-numbers checks).
+3. *A skip that hides a real failure.* The guard now treats an unreadable path as absent, so a venue where the venv is
+   present but unreadable skips instead of running. That is the intended reading ("absent or unreadable"), and the
+   skip is loud: its reason names the path. Where the venv is readable (this sandbox), the test runs in full.
+Also weighed: the re-parse uses the resume's `--thinking` flag. With thinking off in both runs (the PC commands), a
+stored think block with content stays malformed, as in round 1. Not guarded: a resume with `--thinking` over a file
+labeled without it would drop such a block and re-parse the answer.
 
 ## Appendix A. The mutation harness (`<scratchpad>/synth1/mut/mutants.py`) and its final run
 
@@ -777,4 +980,163 @@ def main(only):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+```
+
+## Appendix B. The round-2 mutation run (`<scratchpad>/synth1r2/mut/mutants.py`) and the red-green check
+
+The harness is Appendix A's with the changes below: the nine new mutants, and a second table, T, whose
+mutants edit the TEST file's own helper and guard (the CI fix) in the mirror's copy of it. Applied with `patch`
+to Appendix A's text, the diff rebuilds the round-2 file byte for byte (checked in process before the scratch
+was deleted). Run on scripts/s1_synth.py sha256 8dfa6755876cb403... and tests/test_s1_synth.py
+b84ac40ceecfeabf...: `python3 mutants.py BASE M00 M01 ... M12`, then `M13 ... M25`, then `M26 ... M38`, then
+`M39 ... M47 M00` (four calls, 07:20:36Z to 07:37:30Z; the harness runs the named mutants in its own order, so the
+second M00 prints first in the last call). Every line of the run, pasted from its output:
+
+```
+BASELINE unmutated: rc 0 failed 0 errors 0 | 23 passed in 19.82s
+M00 CONTROL a comment            CONTROL-GREEN          by 0:  | 23 passed in 19.73s
+M01 items-origin-dropped         KILLED                 by 3: a_dry_run_writes_nothing_opens_no_secret, items_are_human_prompts_and_tool_inputs_, the_validator_joins_the_real_readers_out | 3 failed, 20 passed in 19.81s
+M02 items-assistant-blocks       KILLED                 by 3: a_dry_run_writes_nothing_opens_no_secret, items_are_human_prompts_and_tool_inputs_, the_candidates_are_the_hooks_own_ranking | 3 failed, 20 passed in 19.40s
+M03 scrub-identity               KILLED                 by 2: scrubbing_happens_before_any_byte_leaves, the_cut_comes_after_the_scrub | 2 failed, 21 passed in 19.15s
+M04 gate-skipped                 KILLED                 by 1: the_value_gate_refuses_before_any_write | 1 failed, 22 passed in 18.36s
+M05 dry-run-writes               KILLED                 by 1: a_dry_run_writes_nothing_opens_no_secret | 1 failed, 22 passed in 19.88s
+M06 floors-kept                  KILLED                 by 1: the_candidates_are_the_hooks_own_ranking | 1 failed, 22 passed in 19.41s
+M07 ranking-reversed             KILLED                 by 1: the_candidates_are_the_hooks_own_ranking | 1 failed, 22 passed in 19.36s
+M08 top-cut                      KILLED                 by 1: the_candidates_are_the_hooks_own_ranking | 1 failed, 22 passed in 19.56s
+M09 rows-dropped                 KILLED                 by 2: the_candidates_are_the_hooks_own_ranking, the_validator_joins_the_real_readers_out | 2 failed, 21 passed in 19.25s
+M10 section-without-pointer      KILLED                 by 1: the_candidates_are_the_hooks_own_ranking | 1 failed, 22 passed in 19.42s
+M11 guard-off                    KILLED                 by 1: the_vllm_body_never_carries_a_forbidden_ | 1 failed, 22 passed in 19.75s
+M12 body-adds-n                  KILLED                 by 8: a_malformed_answer_is_stored_as_malforme, a_rerun_skips_the_done_keys, a_resume_reparses_a_stored_answer_and_as, concurrency_reaches_and_never_passes_its | 8 failed, 15 passed in 19.28s
+M13 pool-plus-two                KILLED                 by 2: a_rerun_skips_the_done_keys, concurrency_reaches_and_never_passes_its | 2 failed, 21 passed in 20.26s
+M14 pool-of-one                  KILLED                 by 1: concurrency_reaches_and_never_passes_its | 1 failed, 22 passed in 28.84s
+M15 done-keys-ignored            KILLED                 by 3: a_malformed_answer_is_stored_as_malforme, a_rerun_skips_the_done_keys, a_resume_reparses_a_stored_answer_and_as | 3 failed, 20 passed in 19.61s
+M16 lenient-parse                KILLED                 by 2: a_malformed_answer_is_stored_as_malforme, a_resume_reparses_a_stored_answer_and_as | 2 failed, 21 passed in 19.64s
+M17 limiter-per-thread           KILLED                 by 1: the_openjev_backend_reuses_teacher_label | 1 failed, 22 passed in 17.72s
+M18 safe-keeps-key               KILLED                 by 1: the_key_never_reaches_a_message | 1 failed, 22 passed in 19.69s
+M19 lock-dropped                 KILLED                 by 1: a_second_run_on_the_same_labels_file_is_ | 1 failed, 22 passed in 19.63s
+M20 exact-is-within-one          KILLED                 by 2: the_validator_numbers_on_hand_made_gold, the_validator_numbers_on_hand_made_s1_ra | 2 failed, 21 passed in 19.69s
+M21 spearman-no-ties             KILLED                 by 2: the_validator_numbers_on_hand_made_gold, the_validator_numbers_on_hand_made_s1_ra | 2 failed, 21 passed in 19.99s
+M22 map-a-is-b                   KILLED                 by 1: the_validator_numbers_on_hand_made_gold | 1 failed, 22 passed in 19.90s
+M23 prompt-link-10s              KILLED                 by 1: the_validator_numbers_on_hand_made_gold | 1 failed, 22 passed in 19.75s
+M24 s1all-worst-rank             KILLED                 by 1: the_validator_numbers_on_hand_made_gold | 1 failed, 22 passed in 19.52s
+M25 target-off-by-one            KILLED                 by 1: the_dataset_rows_join_with_laya_ft_and_t | 1 failed, 22 passed in 19.59s
+M26 question-sha-swapped         KILLED                 by 1: the_dataset_rows_join_with_laya_ft_and_t | 1 failed, 22 passed in 19.63s
+M27 openjev-malformed-guessed    KILLED                 by 1: the_openjev_backend_reuses_teacher_label | 1 failed, 22 passed in 19.66s
+M28 thinking-on                  KILLED                 by 1: the_vllm_body_never_carries_a_forbidden_ | 1 failed, 22 passed in 19.46s
+M29 cut-before-scrub             KILLED                 by 1: the_cut_comes_after_the_scrub | 1 failed, 22 passed in 19.48s
+M30 cut-dropped                  KILLED                 by 1: the_cut_comes_after_the_scrub | 1 failed, 22 passed in 19.83s
+M31 tools-not-in-turn            KILLED                 by 1: the_sample_takes_tools_in_turn_then_stra | 1 failed, 22 passed in 19.74s
+M32 gold-dropped                 KILLED                 by 6: a_dry_run_writes_nothing_opens_no_secret, items_are_human_prompts_and_tool_inputs_, scrubbing_happens_before_any_byte_leaves, the_candidates_are_the_hooks_own_ranking | 6 failed, 17 passed in 19.11s
+M33 stop-ignored                 KILLED                 by 1: a_rerun_skips_the_done_keys | 1 failed, 22 passed in 19.57s
+M34 empty-think-kept             KILLED                 by 1: a_malformed_answer_is_stored_as_malforme | 1 failed, 22 passed in 19.50s
+M35 any-think-dropped            KILLED                 by 1: a_malformed_answer_is_stored_as_malforme | 1 failed, 22 passed in 19.68s
+M36 unfit-not-caught             KILLED                 by 1: the_dataset_fits_laya_window_in_the_laya | 1 failed, 22 passed in 19.86s
+M37 non-ascii-json               KILLED                 by 1: the_files_are_ascii_json_and_a_line_sepa | 1 failed, 22 passed in 19.57s
+M38 late-counted                 KILLED                 by 2: the_validator_numbers_on_hand_made_gold, the_validator_numbers_on_hand_made_s1_ra | 2 failed, 21 passed in 19.39s
+M00 CONTROL a comment            CONTROL-GREEN          by 0:  | 23 passed in 19.31s
+M39 reason-cap-restored          KILLED                 by 2: a_malformed_answer_is_stored_as_malforme, a_resume_reparses_a_stored_answer_and_as | 2 failed, 21 passed in 19.43s
+M40 reason-not-cut               KILLED                 by 2: a_malformed_answer_is_stored_as_malforme, a_resume_reparses_a_stored_answer_and_as | 2 failed, 21 passed in 19.45s
+M41 reparse-skipped              KILLED                 by 1: a_resume_reparses_a_stored_answer_and_as | 1 failed, 22 passed in 19.34s
+M42 cut-raw-trusted              KILLED                 by 1: a_resume_reparses_a_stored_answer_and_as | 1 failed, 22 passed in 19.67s
+M43 validator-reparsed-malformed KILLED                 by 1: the_validator_numbers_on_hand_made_gold | 1 failed, 22 passed in 19.83s
+M44 dataset-reparsed-dropped     KILLED                 by 1: the_dataset_rows_join_with_laya_ft_and_t | 1 failed, 22 passed in 19.82s
+M45 reparsed-never-replaces      KILLED                 by 1: a_resume_reparses_a_stored_answer_and_as | 1 failed, 22 passed in 19.80s
+M46 present-bare-exists          KILLED                 by 1: an_unreadable_laya_path_counts_as_absent | 1 failed, 22 passed in 19.79s
+M47 guard-bare-exists            KILLED                 by 1: an_unreadable_laya_path_counts_as_absent | 1 failed, 22 passed in 19.80s
+```
+
+The harness changes, a unified diff against Appendix A's text:
+
+```diff
+--- appendix-a/mutants.py
++++ round-2/mutants.py
+@@ -16,2 +16,3 @@
+ TEST = "tests/test_s1_synth.py"
++TEST_SRC = open(os.path.join(REPO, TEST), encoding="utf-8").read()
+ 
+@@ -95,2 +96,18 @@
+                           '        if r["status"] not in ("scored", "late"):\n            continue\n        if r["event"] == "UserPromptSubmit":\n')],
++    "M39 reason-cap-restored": [('ANSWER_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\\S.*)")',
++                                 'ANSWER_RX = re.compile(r"rel=([0-3]) use=([0-3]) (\\S.{0,%d})" % (REASON_MAX - 1))')],
++    "M40 reason-not-cut": [("reason[:REASON_MAX], len(reason) > REASON_MAX", "reason, len(reason) > REASON_MAX")],
++    "M41 reparse-skipped": [("            new = reparse(done[key], args.thinking)\n", "            new = None\n")],
++    "M42 cut-raw-trusted": [(" or not isinstance(raw, str) or len(raw) >= RAW_MAX:", " or not isinstance(raw, str):")],
++    "M43 validator-reparsed-malformed": [('            elif rec.get("status") not in LABELED:\n',
++                                          '            elif rec.get("status") != "ok":\n')],
++    "M44 dataset-reparsed-dropped": [('lab.get("rubric") != rubric or lab.get("status") not in LABELED:',
++                                      'lab.get("rubric") != rubric or lab.get("status") != "ok":')],
++    "M45 reparsed-never-replaces": [('            if rec.get("status") == "reparsed" and recs[key].get("status") == "malformed":\n',
++                                     "            if False:\n")],
++}
++T = {   # round 2: mutants of the TEST file's own helper and guard (the CI fix), applied to the mirror's copy of it
++    "M46 present-bare-exists": [("    return os.path.exists(path)\n", "    return Path(path).exists()\n")],
++    "M47 guard-bare-exists": [("    if not _present(LAYA_PY) or not _present(C.DEFAULT_MODEL_DIR):\n",
++                               "    if not Path(LAYA_PY).exists() or not Path(C.DEFAULT_MODEL_DIR).exists():\n")],
+ }
+@@ -98,3 +115,3 @@
+ 
+-def mirror(dst, src_text):
++def mirror(dst, src_text, test_text=None):
+     shutil.rmtree(dst, ignore_errors=True)
+@@ -111,2 +128,4 @@
+         shutil.copy(os.path.join(REPO, "tests", name), os.path.join(dst, "tests", name))
++    if test_text is not None:
++        open(os.path.join(dst, "tests", "test_s1_synth.py"), "w", encoding="utf-8").write(test_text)
+ 
+@@ -133,10 +152,13 @@
+             sys.exit("the unmutated baseline is not green: no mutant verdict means anything")
+-    for name, edits in M.items():
++    for name, edits, base in [(n, e, SRC) for n, e in M.items()] + [(n, e, TEST_SRC) for n, e in T.items()]:
+         if only and not any(name.startswith(o) for o in only):
+             continue
+-        text = SRC
++        text = base
+         for a, b in edits:
+-            assert SRC.count(a) == 1, (name, SRC.count(a), a[:60])
++            assert base.count(a) == 1, (name, base.count(a), a[:60])
+             text = text.replace(a, b)
+-        mirror(dst, text)
++        if base is SRC:
++            mirror(dst, text)
++        else:
++            mirror(dst, SRC, text)
+         rc, failed, errors, last = run(dst, bt)
+```
+
+The red-green check (`redgreen.py` beside the harness: today's tests in the harness's own mirror, with the landed
+scripts/s1_synth.py from `git show HEAD:scripts/s1_synth.py`, sha256 374cc5ede5b3ec32..., the bytes of 73261cd),
+run at 07:37:41Z on the final test bytes, pasted:
+
+```
+LANDED HEAD code, today's tests: rc 1 failed 4 errors 0 | 4 failed, 19 passed in 19.65s
+  FAILED test_a_malformed_answer_is_stored_as_malformed_never_guessed
+  FAILED test_a_resume_reparses_a_stored_answer_and_asks_nothing
+  FAILED test_the_dataset_rows_join_with_laya_ft_and_the_loader_names_its_gap
+  FAILED test_the_validator_numbers_on_hand_made_gold
+```
+
+`redgreen.py`, verbatim:
+
+```python
+"""SYNTH1 round 2, red-green: today's tests/test_s1_synth.py against the LANDED scripts/s1_synth.py (git HEAD), in the
+mutation harness's own mirror. The round-2 tests must fail there, each as a FAILED test (not an error)."""
+import os
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mutants as MU  # noqa: E402
+
+head = subprocess.run(["git", "--no-optional-locks", "show", "HEAD:scripts/s1_synth.py"], cwd=MU.REPO,
+                      capture_output=True, text=True, check=True).stdout
+dst, bt = os.path.join(MU.HERE, "mirror"), os.path.join(MU.HERE, "bt", "rg")
+MU.mirror(dst, head)
+rc, failed, errors, last = MU.run(dst, bt)
+shutil.rmtree(dst, ignore_errors=True)
+print("LANDED HEAD code, today's tests: rc %d failed %d errors %d | %s" % (rc, len(failed), len(errors), last))
+for f in failed:
+    print("  FAILED", f)
+for e in errors:
+    print("  ERROR", e)
 ```
