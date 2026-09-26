@@ -7,6 +7,11 @@ set -uo pipefail
 unset HERMES_BIN HERMES_PROFILES_DIR HERMES_SOURCE_PROFILE FAKE_HERMES_CALLS LANE_DONE_GATE QWEN_QUADLET 2>/dev/null || true
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="$HERE/../bin/lane-profile.sh"
+# The repo root from this file's own known place, <repo>/harness-ports/tests: a literal suffix, never the helper's `..`
+# arithmetic (AF-AP-226: an oracle that computed the root the helper's way passed while both named a missing file).
+REPO_ROOT="${HERE%/harness-ports/tests}"
+[ "$REPO_ROOT" != "$HERE" ] || { echo "layout: $HERE is not <repo>/harness-ports/tests" >&2; exit 1; }
+GATE_PY="$REPO_ROOT/harness-ports/bin/lane-done-gate.py"
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 PROFILES="$TMP/profiles"; SOURCE="$PROFILES/agentfactory"; BIN="$TMP/bin"
@@ -281,7 +286,7 @@ check "switch OFF leaves the clone byte-identical to the chain, header and conte
 reset_lane gateon
 LANE_DONE_GATE=1 bash "$HELPER" create gateon >/dev/null; GATE_ON_RC=$?
 GATE_ON="$PROFILES/aflanegateon/config.yaml"
-python3 - "$TMP/source-config.yaml" "$GATE_ON" "$(cd "$HERE/../../.." && pwd)" gateon <<'PY'
+python3 - "$TMP/source-config.yaml" "$GATE_ON" "$REPO_ROOT" gateon <<'PY'
 import copy, sys, yaml
 source, target, root, lane = sys.argv[1:]
 with open(source, encoding="utf-8") as f: before = yaml.safe_load(f)
@@ -311,6 +316,17 @@ LANE_DONE_GATE=1 run_verify gateon
   && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
 check "switch ON adds exactly the recorder and pre_verify entries and verify accepts them" $? \
   "create_rc=$GATE_ON_RC semantic_rc=$GATE_ON_SEM_RC verify_off_rc=$GATE_ON_VERIFY_OFF_RC verify_on_rc=$VERIFY_RC"
+
+# The two hook commands as the clone carries them, against the literal path; the file they name must exist.
+GATE_CMDS="$(python3 - "$GATE_ON" <<'PY'
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as f: hooks = yaml.safe_load(f)["hooks"]
+print(hooks["post_tool_call"][-1]["command"]); print(hooks["pre_verify"][0]["command"])
+PY
+)"
+[ "$GATE_CMDS" = "python3 $GATE_PY record"$'\n'"python3 $GATE_PY gate" ] && [ -f "$GATE_PY" ]
+check "the done-gate hooks name this checkout's lane-done-gate.py by the literal path from the test's own place" $? \
+  "want=$GATE_PY exists=$([ -f "$GATE_PY" ] && echo yes || echo no) got=$(printf '%s' "$GATE_CMDS" | tr '\n' '|')"
 
 cp "$GATE_ON" "$TMP/gate-good.yaml"
 python3 - "$GATE_ON" <<'PY'
@@ -518,6 +534,120 @@ run_verify ctxverify
   && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
 check "verify rejects another context_length, including one the quadlet no longer serves, with the exact reason" $? \
   "value: rc=$WRONG_RC | float: rc=$FLOAT_RC | quadlet_moved: rc=$MOVED_RC | restored: rc=$VERIFY_RC"
+
+# Relaunch (#316): create on an existing lane profile re-derives config.yaml from the SOURCE by the new-clone rule and
+# keeps every other file. The old-style config is a pre-HCTX1 clone (header, no context block) of an OLDER source
+# (max_turns 40), so only a rewrite from the current source can reach a new clone's bytes.
+tree_state() {  # every entry under a profile but its config.yaml: a file with its sha256, anything else with its type
+  (cd "$1" && find . -mindepth 1 ! -path ./config.yaml | LC_ALL=C sort | while IFS= read -r entry; do
+    if [ -f "$entry" ] && [ ! -L "$entry" ]; then printf '%s %s\n' "$(sha256sum < "$entry" | cut -c1-64)" "$entry"
+    else printf '%s %s\n' "$(stat -c %F "$entry")" "$entry"; fi
+  done)
+}
+cat > "$TMP/relaunch-old.yaml" <<'YAML'
+model:
+  default: auto/best-coding-fast
+  provider: custom:omniroute-fedora
+  base_url: http://127.0.0.1:20128/v1
+  api_mode: chat_completions
+  default_headers:
+    x-omniroute-session-id: relaunch
+agent:
+  max_turns: 40
+providers:
+  omniroute-fedora:
+    api: http://127.0.0.1:20128/v1
+    # the lanes' route (a whole-file re-emit would drop this comment)
+    key_env: OMNIROUTE_API_KEY
+    default_model: auto/best-coding-fast
+    discover_models: True
+YAML
+reset_lane relaunch
+bash "$HELPER" create relaunch >/dev/null; RL_NEW_RC=$?
+RL="$PROFILES/aflanerelaunch"; cp "$RL/config.yaml" "$TMP/relaunch-new-clone.yaml"
+cp "$TMP/relaunch-old.yaml" "$RL/config.yaml"
+python3 - "$RL/state.db" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT)")
+db.execute("INSERT INTO sessions VALUES ('20260926_000000_relaunch', 'the run before the relaunch')")
+db.commit(); db.close()
+PY
+mkdir -p "$RL/sessions" "$RL/memories"
+printf '{"id": "20260926_000000_relaunch"}\n' > "$RL/sessions/session_20260926_000000_relaunch.json"
+printf 'a note the lane kept\n' > "$RL/memories/MEMORY.md"
+run_verify relaunch; RL_OLD_RC=$VERIFY_RC; RL_OLD_OUT=$VERIFY_OUT
+tree_state "$RL" > "$TMP/relaunch.before"
+RL_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
+RL_OUT="$(bash "$HELPER" create relaunch 2>"$TMP/relaunch.err")"; RL_RC=$?
+tree_state "$RL" > "$TMP/relaunch.after"
+cmp -s "$TMP/relaunch-new-clone.yaml" "$RL/config.yaml"; RL_BYTES_RC=$?
+cmp -s "$TMP/relaunch.before" "$TMP/relaunch.after"; RL_KEPT_RC=$?
+run_verify relaunch
+[ "$RL_NEW_RC" -eq 0 ] && [ "$RL_OLD_RC" -eq 64 ] \
+  && [ "$RL_OLD_OUT" = 'lane-profile: context override missing: agentfactory-build-local' ] \
+  && [ "$RL_RC" -eq 0 ] && [ "$RL_OUT" = aflanerelaunch ] && [ ! -s "$TMP/relaunch.err" ] && [ "$RL_BYTES_RC" -eq 0 ] \
+  && [ "$RL_KEPT_RC" -eq 0 ] && [ "$(wc -l < "$TMP/relaunch.after")" -eq 10 ] && grep -q ' \./state\.db$' "$TMP/relaunch.after" \
+  && [ "$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")" = "$RL_CREATES" ] && [ "$VERIFY_RC" -eq 0 ] && [ -z "$VERIFY_OUT" ]
+check "create on an old-style profile rewrites config.yaml from the source to a new clone's bytes and keeps every other file" $? \
+  "old_verify_rc=$RL_OLD_RC create_rc=$RL_RC out=$RL_OUT bytes_vs_new_clone_rc=$RL_BYTES_RC others_kept_rc=$RL_KEPT_RC entries=$(wc -l < "$TMP/relaunch.after") verify_rc=$VERIFY_RC"
+
+# A second create on a current profile writes nothing: the same bytes and the same inode (a rewrite always lands on a
+# new inode), with the done-gate switch OFF (the relaunched profile) and ON (a fresh gate-on clone).
+RL_INODE="$(stat -c %i "$RL/config.yaml")"; cp "$RL/config.yaml" "$TMP/relaunch-current.yaml"
+bash "$HELPER" create relaunch >/dev/null; ID_OFF_RC=$?
+reset_lane idemgate
+LANE_DONE_GATE=1 bash "$HELPER" create idemgate >/dev/null; ID_NEW_RC=$?
+IG="$PROFILES/aflaneidemgate/config.yaml"; IG_INODE="$(stat -c %i "$IG")"; cp "$IG" "$TMP/idemgate-current.yaml"
+IG_GATE="$(python3 - "$IG" <<'PY' 2>/dev/null
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as f: print(yaml.safe_load(f)["hooks"]["pre_verify"][0]["command"])
+PY
+)"  # parsed, not grepped: PyYAML folds a long command at 80 columns
+LANE_DONE_GATE=1 bash "$HELPER" create idemgate >/dev/null; ID_ON_RC=$?
+[ "$ID_OFF_RC" -eq 0 ] && cmp -s "$TMP/relaunch-current.yaml" "$RL/config.yaml" && [ "$(stat -c %i "$RL/config.yaml")" = "$RL_INODE" ] \
+  && [ "$ID_NEW_RC" -eq 0 ] && [ "$IG_GATE" = "python3 $GATE_PY gate" ] \
+  && [ "$ID_ON_RC" -eq 0 ] && cmp -s "$TMP/idemgate-current.yaml" "$IG" && [ "$(stat -c %i "$IG")" = "$IG_INODE" ]
+check "a second create leaves a current config.yaml byte-identical and unwritten (same inode), switch OFF and ON" $? \
+  "off: rc=$ID_OFF_RC inode $RL_INODE->$(stat -c %i "$RL/config.yaml") | on: new_rc=$ID_NEW_RC rc=$ID_ON_RC inode $IG_INODE->$(stat -c %i "$IG")"
+
+# The relaunch keeps .env as it is: a drifted .env stays (it is never re-copied from the source) and verify refuses it.
+printf 'DRIFT=1\n' >> "$RL/.env"; cp "$RL/.env" "$TMP/relaunch-drifted.env"
+EV_OUT="$(bash "$HELPER" create relaunch 2>&1)"; EV_RC=$?
+cmp -s "$TMP/relaunch-drifted.env" "$RL/.env"; EV_KEPT_RC=$?
+[ "$EV_RC" -eq 64 ] && [ "$EV_OUT" = 'lane-profile: env drift' ] && [ "$EV_KEPT_RC" -eq 0 ]
+check "create keeps a relaunched profile's .env, never re-copying it from the source, and verify refuses the drift" $? \
+  "rc=$EV_RC output=$EV_OUT env_kept_rc=$EV_KEPT_RC"
+
+# A lane path that is not a real directory fails with its reason before any clone or write: a plain file, and a symlink
+# to an old-style profile that a rewrite through the link would change.
+printf 'not a profile\n' > "$PROFILES/aflanenotdir"; cp "$PROFILES/aflanenotdir" "$TMP/notdir.before"
+mkdir -p "$TMP/link-target"; cp "$SOURCE/.env" "$TMP/link-target/.env"; cp "$TMP/relaunch-old.yaml" "$TMP/link-target/config.yaml"
+ln -s "$TMP/link-target" "$PROFILES/aflanelinked"
+ND_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
+ND_OUT="$(bash "$HELPER" create notdir 2>"$TMP/notdir.err")"; ND_RC=$?
+LK_OUT="$(bash "$HELPER" create linked 2>"$TMP/linked.err")"; LK_RC=$?
+[ "$ND_RC" -eq 64 ] && [ -z "$ND_OUT" ] && [ "$(cat "$TMP/notdir.err")" = 'lane-profile: profile not a directory aflanenotdir' ] \
+  && cmp -s "$TMP/notdir.before" "$PROFILES/aflanenotdir" \
+  && [ "$LK_RC" -eq 64 ] && [ -z "$LK_OUT" ] && [ "$(cat "$TMP/linked.err")" = 'lane-profile: profile not a directory aflanelinked' ] \
+  && cmp -s "$TMP/relaunch-old.yaml" "$TMP/link-target/config.yaml" && [ -L "$PROFILES/aflanelinked" ] \
+  && [ "$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")" = "$ND_CREATES" ]
+check "create refuses a lane path that is not a real directory (a file, a symlink) with its reason, before any clone or write" $? \
+  "file: rc=$ND_RC $(cat "$TMP/notdir.err") | symlink: rc=$LK_RC $(cat "$TMP/linked.err")"
+rm -f "$PROFILES/aflanenotdir" "$PROFILES/aflanelinked"
+
+# An existing profile directory with no config.yaml fails with its reason; nothing is cloned, written or removed.
+mkdir -p "$PROFILES/aflanenoconfig/sessions"; cp "$SOURCE/.env" "$PROFILES/aflanenoconfig/.env"
+printf '{"id": "kept"}\n' > "$PROFILES/aflanenoconfig/sessions/kept.json"
+tree_state "$PROFILES/aflanenoconfig" > "$TMP/noconfig.before"
+NC_CREATES="$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")"
+NC_OUT="$(bash "$HELPER" create noconfig 2>"$TMP/noconfig.err")"; NC_RC=$?
+tree_state "$PROFILES/aflanenoconfig" > "$TMP/noconfig.after"
+[ "$NC_RC" -eq 64 ] && [ -z "$NC_OUT" ] && [ "$(cat "$TMP/noconfig.err")" = 'lane-profile: profile has no config.yaml aflanenoconfig' ] \
+  && [ ! -e "$PROFILES/aflanenoconfig/config.yaml" ] && cmp -s "$TMP/noconfig.before" "$TMP/noconfig.after" \
+  && [ "$(grep -c '^profile create ' "$FAKE_HERMES_CALLS")" = "$NC_CREATES" ]
+check "create refuses an existing profile with no config.yaml with its reason, before any clone or write" $? \
+  "rc=$NC_RC stderr=$(cat "$TMP/noconfig.err") config_made=$([ -e "$PROFILES/aflanenoconfig/config.yaml" ] && echo yes || echo no)"
 
 base_hashes > "$TMP/base-hashes.after"
 cmp -s "$TMP/base-hashes.before" "$TMP/base-hashes.after"

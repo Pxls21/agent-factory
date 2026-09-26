@@ -81,7 +81,7 @@ verify_lane() {
   [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "profile missing $name"
   [ -f "$SOURCE/.env" ] || fail "source env missing"
 
-  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" \
+  verdict="$(python3 - "$target/config.yaml" "$lane" "$SOURCE/config.yaml" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
     "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY'
 import copy
 import sys
@@ -186,34 +186,39 @@ PY
 }
 
 create_lane() {
-  local lane="$1" name target component
+  local lane="$1" name target component from
   name="$(profile_name "$lane")" || exit $?
   target="$HERMES_PROFILES_DIR/$name"
   [ -f "$SOURCE/config.yaml" ] && [ -f "$SOURCE/.env" ] || fail "source profile missing $HERMES_SOURCE_PROFILE"
 
   if [ -e "$target" ]; then
-    verify_lane "$lane"
-    printf '%s\n' "$name"
-    return 0
+    # A relaunch reuses the lane's profile. Its config.yaml is re-derived from the SOURCE by
+    # the same rule as a new clone (below), so a profile cut under an older rule or from an
+    # older source gets the current one; state.db, .env and every other file stay as they
+    # are. A symlink counts as not a directory: the rewrite must never land where it points.
+    [ -d "$target" ] && [ ! -L "$target" ] || fail "profile not a directory $name"
+    [ -f "$target/config.yaml" ] || fail "profile has no config.yaml $name"
+    from="$SOURCE/config.yaml"
+  else
+    "$HERMES_BIN" profile create --clone-from "$HERMES_SOURCE_PROFILE" --no-alias "$name" >/dev/null \
+      || fail "clone failed $name"
+    [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "clone incomplete $name"
+
+    # `--clone-from` omits some profile-local directories on Hermes releases that
+    # otherwise copy config/.env. Add only source components that are actually absent.
+    for component in hooks cron; do
+      if [ -e "$SOURCE/$component" ] && [ ! -e "$target/$component" ]; then
+        cp -a "$SOURCE/$component" "$target/$component" || fail "copy failed $component"
+      fi
+    done
+    from="$target/config.yaml"
   fi
 
-  "$HERMES_BIN" profile create --clone-from "$HERMES_SOURCE_PROFILE" --no-alias "$name" >/dev/null \
-    || fail "clone failed $name"
-  [ -f "$target/config.yaml" ] && [ -f "$target/.env" ] || fail "clone incomplete $name"
-
-  # `--clone-from` omits some profile-local directories on Hermes releases that
-  # otherwise copy config/.env. Add only source components that are actually absent.
-  for component in hooks cron; do
-    if [ -e "$SOURCE/$component" ] && [ ! -e "$target/$component" ]; then
-      cp -a "$SOURCE/$component" "$target/$component" || fail "copy failed $component"
-    fi
-  done
-
-  # Preserve every untouched byte in config.yaml. Parse before and after, and refuse
-  # unless the semantic delta is exactly chain removal, this lane's request header,
-  # the local models' context_length under the lane provider, and, when enabled, the
-  # two lane done-gate hooks.
-  python3 - "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" \
+  # Rewrite config.yaml from $from, preserving every untouched byte of it. Parse before and
+  # after, and refuse unless the semantic delta is exactly chain removal, this lane's request
+  # header, the local models' context_length under the lane provider, and, when enabled, the
+  # two lane done-gate hooks. A result equal to the lane's current bytes is not written.
+  python3 - "$from" "$target/config.yaml" "$lane" "${LANE_DONE_GATE:-0}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" \
     "$CONTEXT_LENGTH" "${CONTEXT_MODELS[@]}" <<'PY' || fail "config rewrite failed"
 import copy
 import os
@@ -223,11 +228,12 @@ import sys
 import tempfile
 import yaml
 
-path = Path(sys.argv[1])
-lane = sys.argv[2]
-gate_enabled = sys.argv[3] == "1"
-root = Path(sys.argv[4])
-context_length, context_models = int(sys.argv[5]), sys.argv[6:]
+# The text to rewrite (a new clone's own copy, or on a relaunch the source profile's), and the lane's config.yaml.
+src, path = Path(sys.argv[1]), Path(sys.argv[2])
+lane = sys.argv[3]
+gate_enabled = sys.argv[4] == "1"
+root = Path(sys.argv[5])
+context_length, context_models = int(sys.argv[6]), sys.argv[7:]
 
 
 def lane_provider(conf):
@@ -254,7 +260,7 @@ def add_override(entry, model_ids, value):
     return None
 
 
-text = path.read_text(encoding="utf-8")
+text = src.read_text(encoding="utf-8")
 before = yaml.safe_load(text)
 if not isinstance(before, dict) or not isinstance(before.get("model"), dict):
     raise SystemExit("config must contain a model mapping")
@@ -435,6 +441,8 @@ if set(before) - set(after) != removed:
     raise SystemExit("unexpected removed top-level key")
 if set(after) - set(before) != added:
     raise SystemExit("unexpected added top-level key")
+if path.read_bytes() == updated.encode("utf-8"):
+    raise SystemExit(0)  # already current (a second create): nothing is written
 
 mode = path.stat().st_mode
 fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
