@@ -1142,3 +1142,9 @@ for f in failed:
 for e in errors:
     print("  ERROR", e)
 ```
+
+## Coordinator: the full run and the validator (2026-09-26 11:2xZ)
+
+The labeling run (report section 8 step 4, resumed alone after the vLLM crash of 07:52Z, AF-AP-231) labeled 21,930 of 21,934 pairs, 4 malformed, all 22,008 records served by `qwen3.8-27b-local`, in 11,295.6 s at 1.905 pairs/s. Step 6, the validator: S1-ALL (n=393): map A exact 0.626 [0.5771, 0.6724], linear kappa 0.3807, Spearman 0.4765 [0.3938, 0.5516]; map B exact 0.6972 [0.65, 0.7405], kappa 0.5386, Spearman 0.6143 [0.5466, 0.6739]. S1-RATE scored rows (n=52): rel exact 0.3846 [0.2647, 0.5204], kappa 0.2006, Spearman 0.36 [0.0883, 0.5818], within one 0.9231; use exact 0.2692 [0.1677, 0.4025], kappa 0.0494, Spearman 0.0299 [-0.2528, 0.3079].
+
+Against the report's bar: 1 (format, at most 2% malformed) PASSES, 4 of 21,934; 2 (S1-ALL) FAILS as written on map A (the Spearman lower bound 0.3938 is under the plain order's 0.47, exact 0.626 under 0.64, kappa 0.3807 under 0.40), though map B clears all three; 3 (S1-RATE, exact at least 0.75 with its Wilson bound above the majority) FAILS, rel exact 0.3846 on 52 sections. So under D-096 (2) and the bar's item 4 the labels feed neither GEPA nor a fine-tune; the step-7 dataset is not built.
