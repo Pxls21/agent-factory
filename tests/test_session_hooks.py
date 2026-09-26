@@ -3,17 +3,42 @@
 hook_context turns a hook's plain stdout into additionalContext (the only PreToolUse/PostToolUse output the model reads,
 measured live 2026-09-24); install_session_hooks registers the six project hooks for a session rooted above the repo.
 The end-to-end tests run the INSTALLED command strings through a shell, so a quoting or path defect fails here.
+Since S1-RATE (task #295) the wrapper stamps what it hands the model: a first line `[S1 <id> <source>]` and a last line
+that asks for the score. `unstamp` checks both against literals (tests/test_s1_rate.py holds the stamp's own tests), and
+AF_S1_RATE_STATE keeps the wrapper's telemetry out of the real .jev/.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAP = ROOT / "scripts" / "hook_context.py"
 INSTALL = ROOT / "scripts" / "install_session_hooks.py"
 MARKER = f"{ROOT}/.claude/hooks/"
+STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) ([A-Za-z0-9_.-]+)\]")
+REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
+           'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
+           'use 0 noise/known,1 confirms,2 used it,3 changed what I did')
+
+
+@pytest.fixture(autouse=True)
+def _s1_rate_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("AF_S1_RATE_STATE", str(tmp_path / "s1-rate-state"))
+
+
+def unstamp(text, source):
+    """The lines between a stamped text's stamp line and its request line, both checked against the literals."""
+    first, _, rest = text.partition("\n")
+    m = STAMP.fullmatch(first)
+    assert m and m.group(2) == source, first[:80]
+    body, _, last = rest.rpartition("\n")
+    assert last == REQUEST.format(id=m.group(1)), last[:80]
+    return body
 
 
 def wrap(event, cmd, stdin=b""):
@@ -30,8 +55,11 @@ def install(target, *extra):
 def test_output_becomes_additional_context():
     r = wrap("PostToolUse", ["printf", "line one\nline two\n"])
     assert r.returncode == 0
-    assert json.loads(r.stdout) == {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                                           "additionalContext": "line one\nline two"}}
+    obj = json.loads(r.stdout)
+    assert list(obj) == ["hookSpecificOutput"] and list(obj["hookSpecificOutput"]) == ["hookEventName",
+                                                                                     "additionalContext"]
+    assert obj["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+    assert unstamp(obj["hookSpecificOutput"]["additionalContext"], "printf") == "line one\nline two"
 
 
 def test_no_output_prints_nothing():
@@ -41,12 +69,14 @@ def test_no_output_prints_nothing():
 
 def test_stdin_reaches_the_hook():
     r = wrap("PreToolUse", ["cat"], stdin=b'{"tool_name": "Grep"}')
-    assert json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] == '{"tool_name": "Grep"}'
+    assert unstamp(json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"], "cat") == '{"tool_name": "Grep"}'
 
 
-def test_a_blocking_exit_passes_through_unchanged():
+def test_a_blocking_exit_keeps_its_code_and_stdout_and_its_stderr_is_stamped():
     r = wrap("PreToolUse", ["sh", "-c", "echo out; echo blocked >&2; exit 2"])
-    assert (r.returncode, r.stdout, r.stderr) == (2, b"out\n", b"blocked\n")
+    assert (r.returncode, r.stdout) == (2, b"out\n")
+    err = r.stderr.decode()
+    assert err.endswith("\n") and unstamp(err[:-1], "sh") == "blocked"      # the model reads a PreToolUse block
 
 
 def test_usage_errors_never_block():
@@ -144,7 +174,8 @@ def test_installed_commands_run_through_a_shell(tmp_path):
     quirk = json.dumps({"tool_name": "Bash", "tool_input": {"command": "git rev-parse --short HEAD HEAD~1"}})
     env = dict(os.environ, AF_SEARCH_INTERCEPT_STATE=str(tmp_path / "intercept-state"))  # never the real .jev/
     r = subprocess.run(["sh", "-c", pre], input=quirk, capture_output=True, text=True, timeout=60, cwd="/", env=env)
-    assert r.returncode == 2 and r.stdout == "" and r.stderr.startswith("QUIRK GUARD")  # blocked once, explained
+    assert r.returncode == 2 and r.stdout == "" and r.stderr.endswith("\n")        # blocked once, explained, stamped
+    assert unstamp(r.stderr[:-1], "search-intercept").startswith("QUIRK GUARD")
     prompt = hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
     r = subprocess.run(["sh", "-c", prompt], input=json.dumps({"prompt": "what is live now"}),
                        capture_output=True, text=True, timeout=60, cwd="/")

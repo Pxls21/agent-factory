@@ -16,6 +16,11 @@ S1-ALL (task #296, D-093) made the prompt path read every skill under .claude/sk
 table's project_skills) is reached by its name and its excerpt opens with its one-line description; the oracle for that
 line is PyYAML's reading of the skill's frontmatter (`description_of`), never the hook's parser. The tests from
 `test_a_library_skill_is_reached_by_name_with_its_description` on each name the reason they are red on the PIN, a67489f.
+
+S1-RATE (task #295, D-092 item 3): the wrapper stamps what it hands the model. `context` checks the stamp (the first line
+`[S1 <id> system1-context]`, the last line the score request for that id) against literals and cuts it off, so every
+test below reads the hook's own text; AF_S1_RATE_STATE keeps the wrapper's telemetry in each test's tmp dir. The tool
+path's record carries the payload's tool_use_id and each block's sha (`test_the_tool_record_carries_its_join_keys`).
 """
 import collections
 import fcntl
@@ -46,6 +51,15 @@ SID = "s1test-session-0001"
 # after a blank line; other lines continue it. The hook's ENTRY_START_RX must say the same (a test holds it).
 ENTRY_RX = re.compile(r"^\s*(?:\*\*|#{1,6}\s|[-*+]\s|\d+[a-z]?\.\s|\([a-z0-9]{1,3}\)\s|\||>|```)")
 HEAD_RX = re.compile(r"#{1,6}\s")
+STAMP = re.compile(r"\[S1 (s1-[0-9a-f]{8}) system1-context\]")                  # the wrapper's stamp (S1-RATE)
+REQUEST = ('Begin your next text with "S1-RATE {id} rel=R use=U" (+ a note <=120 chars: why, if a 0), one line per '
+           'unscored injection. rel 0 unrelated,1 same area not this step,2 relevant to this step,3 governs it; '
+           'use 0 noise/known,1 confirms,2 used it,3 changed what I did')
+
+
+@pytest.fixture(autouse=True)
+def _s1_rate_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("AF_S1_RATE_STATE", str(tmp_path / "s1-rate-state"))   # never the real .jev/
 
 
 def registered(event, matcher=None):
@@ -62,20 +76,33 @@ START = SETTINGS["hooks"]["SessionStart"][0]["hooks"][0]["command"]
 
 
 def run(cmd, payload, state, timeout=60, root=ROOT, prefix=""):
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), AF_SYSTEM1_STATE=str(state), CLAUDE_CODE_REMOTE="false")
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), AF_SYSTEM1_STATE=str(state), AF_S1_RATE_STATE=str(state),
+               CLAUDE_CODE_REMOTE="false")
     data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
     return subprocess.run(["sh", "-c", prefix + cmd], input=data, capture_output=True, timeout=timeout, env=env, cwd="/")
 
 
+def unstamp(ctx):
+    """The hook's own text inside the wrapper's stamp: the first line `[S1 <id> system1-context]` and the last line the
+    score request for that id, both checked against the literals, then cut off."""
+    first, _, rest = ctx.partition("\n")
+    m = STAMP.fullmatch(first)
+    assert m, first[:80]
+    body, _, last = rest.rpartition("\n")
+    assert last == REQUEST.format(id=m.group(1)), last[:80]
+    return body
+
+
 def context(r):
-    """What reaches the model: the additionalContext of the one JSON line, or '' when the hook printed nothing."""
+    """What reaches the model, the stamp checked and cut off: the hook's text in the additionalContext of the one JSON
+    line, or '' when the hook printed nothing."""
     assert r.returncode == 0, (r.returncode, r.stderr)
     out = r.stdout.decode("utf-8")
     if not out.strip():
         return ""
     obj = json.loads(out)
     assert set(obj) == {"hookSpecificOutput"} and set(obj["hookSpecificOutput"]) == {"hookEventName", "additionalContext"}
-    return obj["hookSpecificOutput"]["additionalContext"]
+    return unstamp(obj["hookSpecificOutput"]["additionalContext"])
 
 
 def telemetry(state):
@@ -765,7 +792,7 @@ def test_a_parallel_burst_on_one_window_never_repeats_or_loses_a_line(tmp_path):
     for p in procs:
         out = p.stdout.read()
         assert p.wait(timeout=60) == 0
-        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"] if out.strip() else ""
+        ctx = unstamp(json.loads(out)["hookSpecificOutput"]["additionalContext"]) if out.strip() else ""
         for label, body, ptr, skill in blocks(ctx):
             delivered.update((skill, x) for x in body if x != "…")
     assert delivered and max(delivered.values()) == 1
@@ -1131,6 +1158,32 @@ def test_the_prompt_entries_carry_their_join_keys(tmp_path):
             assert text.split("\n")[-1] == f"full details: .claude/skills/{e['skill']}/SKILL.md § {e['heading']}"
             assert e["key"] == f"{e['skill']} § {e['heading']}" and isinstance(e["score"], float) and e["score"] > 0
             assert e["project"] is own is (e["skill"] in PROJECT)
+
+
+def test_the_tool_record_carries_its_join_keys(tmp_path):
+    """S1-RATE (task #295): the REAL hook through the REAL wrapper on a fixture tool call. What the model receives is
+    stamped; the tool path's system1.jsonl record carries the payload's tool_use_id (null when it has none), and each
+    injected entry the sha256 (16 hex) of its block's text as the model receives it between the stamp lines, cut at the
+    label lines; the wrapper's injections.jsonl line names the same tool_use_id and the sha256 of the whole stamped
+    text. Nothing else in the record changes. Red on the PIN: no stamp, no tool_use_id, no sha."""
+    r = run(PRE, tool(*bash("git commit -m 'x'")), tmp_path)
+    raw = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    parts = split_blocks(context(r))
+    rec = telemetry(tmp_path)[-1]
+    assert set(rec) == {"event", "tool", "tool_use_id", "matched", "injected", "skipped", "bytes", "window", "t", "ms"}
+    assert rec["tool_use_id"] == "toolu_s1test" and [e["row"] for e in rec["injected"]] == ["commit", "commit-increment"]
+    assert len(parts) == len(rec["injected"])
+    for text, e in zip(parts, rec["injected"]):
+        assert e["sha"] == hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        assert {"row", "key", "lines", "bytes", "sha"} <= set(e) <= {"row", "key", "lines", "bytes", "sha", "cut"}
+    (inj,) = [json.loads(x) for x in (tmp_path / "injections.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert (inj["id"], inj["source"], inj["event"], inj["tool"], inj["tool_use_id"], inj["session"]) == (
+        STAMP.fullmatch(raw.split("\n", 1)[0]).group(1), "system1-context", "PreToolUse", "Bash", "toolu_s1test", SID)
+    assert inj["sha256"] == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    bare = tool(*bash("git push origin HEAD:claude/x"))
+    del bare["tool_use_id"]
+    context(run(PRE, bare, tmp_path))
+    assert telemetry(tmp_path)[-1]["tool_use_id"] is None
 
 
 def test_the_prompt_path_stays_fast_with_a_warm_cache(tmp_path):

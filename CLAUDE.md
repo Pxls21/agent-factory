@@ -68,6 +68,10 @@ measurement verdict reports → Rundown shape (TL;DR line first, then checkbox s
 keep-alive ticks + trivial confirmations → Spartan compression (one line, no warmth).
 Deliverables (preregs/findings/briefs) keep their document form — styles govern chat, never
 artifacts.
+**SYSTEM-1 SCORE LINE (owner D-092 item 3, D-095):** a hook injection stamped `[S1 <id> <source>]` ends with a score
+request; the next text you write begins with one `S1-RATE <id> rel=<0-3> use=<0-3>` line per unscored injection (an
+optional short note), before anything else, a reply to the owner included. `scripts/s1_scores.py` collects the scores as
+the System-1 layer's feedback signal; the off switch is the file `.jev/s1-rate-off`.
 
 Model routing — cheapest tier that cannot mint an expensive wrong green; honey mode per role:
 

@@ -35,8 +35,10 @@ still runs, so a marker never outlives its window). Telemetry: one JSON line per
 (time, event, tool, the situations matched, the keys injected or skipped and why, the bytes); ids, keys and counts only,
 never the tool input or the prompt. A prompt excerpt's entry also carries its skill, heading, score, whether the skill
 is a project skill, and the sha256 of the excerpt's text: the transcript records that text, so the agent's scores of an
-injection (task #295) join its entry on it. An exception injects nothing and logs its type (and its window, once
-known); a row whose pattern or skill file fails is skipped alone, with its type.
+injection (task #295) join its entry on it. A tool call's record carries the payload's tool_use_id, and each injected
+block's entry the same sha256 of that block's text, from its label line to its pointer line (S1-RATE, task #295). An
+exception injects nothing and logs its type (and its window, once known); a row whose pattern or skill file fails is
+skipped alone, with its type.
 
 Latency: no instrument, no network, no model. The prompt path reads its index of every skill through
 <state>/system1-cache.json, rebuilt whole only when a SKILL.md is added, removed or changed (its mtime or size); the
@@ -565,8 +567,10 @@ def match_rows(table, tool, ti, cwd, skipped=None):
 
 def plan_tool(payload, table, seen, budget=TOOL_BUDGET):
     """(text, record, new keys) for one PreToolUse payload. Reads only the skill files of the matched rows."""
-    tool, ti = payload.get("tool_name"), payload.get("tool_input")
-    rec = {"event": "PreToolUse", "tool": tool, "matched": [], "injected": [], "skipped": [], "bytes": 0}
+    import hashlib
+    tool, ti, tuid = payload.get("tool_name"), payload.get("tool_input"), payload.get("tool_use_id")
+    rec = {"event": "PreToolUse", "tool": tool, "tool_use_id": tuid if isinstance(tuid, str) else None, "matched": [],
+           "injected": [], "skipped": [], "bytes": 0}
     if tool not in TOOLS or not isinstance(ti, dict):
         return "", rec, []
     rows = match_rows(table, tool, ti, payload.get("cwd"), rec["skipped"])
@@ -589,6 +593,10 @@ def plan_tool(payload, table, seen, budget=TOOL_BUDGET):
         label = f"[system1 · {row['id']}] skill {skill}, the governing lines verbatim:"
         blocks.append((row["id"], skill, row["heading"], entry_units(idx, lines), label))
     text, injected, skipped, new = compose(blocks, seen, budget)
+    raw, at = text.encode("utf-8"), 0
+    for i in injected:          # the join key for the agent's scores (#295): the sha of each block's text, label to
+        i["sha"] = hashlib.sha256(raw[at:at + i["bytes"] - 1]).hexdigest()[:16]   # pointer (`bytes` counts its newlines)
+        at += i["bytes"]
     rec["injected"], rec["bytes"] = injected, len(text.encode()) if text else 0
     rec["skipped"] += skipped
     return text, rec, new
