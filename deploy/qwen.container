@@ -28,6 +28,13 @@ Environment=PORT=8080
 Environment=SPEC=mtp
 Environment=MAX_LEN=131072
 Environment=PREFIX_CACHE=1
+# GPU_UTIL (owner ruling D-099, 2026-09-26: "Reduce the kv cache a little so they both fit"): the image's
+# batch/start_qwen.sh default is 0.972. laya-systemone (the System-1 server, on the CPU) keeps a 256 MiB CUDA
+# context from its device probe; at 0.972 that left vLLM 63 MiB of slack, a four-request load hit a CUDA OOM
+# in the DeltaNet prefill workspace (07:52Z), and every restart then failed the startup free-memory check
+# (22.8 GiB free, 22.9 GiB wanted). 0.96 gives back the slack vLLM had before laya (about 0.7 GiB) for a
+# KV pool about 0.28 GiB smaller.
+Environment=GPU_UTIL=0.96
 Environment="EXTRA_ARGS=--served-model-name qwen3.8-27b-local qwen3.8-27b"
 PodmanArgs=--ipc=host --device nvidia.com/gpu=all
 
