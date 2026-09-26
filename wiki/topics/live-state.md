@@ -15,6 +15,7 @@ last_compiled: 2026-09-03
 - **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303).
 - **Landed and live:** S1-RATE (task #295, D-095: the safeguard stop read as a false positive). Every hook injection through `hook_context.py` carries `[S1 <id> <source>]` and a score request; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`; `scripts/s1_scores.py <transcript>` pairs them (main thread proven live: s1-ffb64a49 scored). The standing rule is in CLAUDE.md. Off switch: `.jev/s1-rate-off`.
 - **Also stamped now:** the wiki excerpt on each prompt (wiki-context through the wrapper; the owner turned auto mode off for the settings edit).
+- **Pushed:** origin 49dd6f5 (S1-RATE and the wiki stamp), transcripts fb7f614, the first sync through SCRUB2's scrubber (one old digest line changed as predicted: a documented `Authorization: Token` example); the value check found only the expected host.
 - **Next:** VERIFY-S1-RATE after VERIFY-SCRUB2.
 
 **2026-09-26 02:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
