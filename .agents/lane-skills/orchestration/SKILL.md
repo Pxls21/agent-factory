@@ -435,6 +435,7 @@ luck); **a long brief travels as a FILE, not an inline prompt** —
 scratchpad file + a short pointer prompt that Reads it first and STOPS loud if missing (an inline
 audit brief once arrived truncated to 79 chars and burned the dispatch; the file pattern makes
 re-truncation impossible and a lost file a cheap loud retry).
+**The same block meets BUILD lanes, mid-lane (2026-09-26, I59-C): two writes of the lane's own report file went through, then its Write of a scratch `report-body` file at 08:50Z returned the block; the lane returned the rest as text and the coordinator assembled the report of record from the file and the transcript's hand-back (never retyped). Every brief, build or research, carries the fallback: "if the harness refuses a report-file write, return the rest of the report as the text of your final message; never work around the refusal".**
 
 (c) **Review = re-run the gates yourself + read only security/spine-critical hunks** — where
 every real delegate defect was caught (dead-wire tier check, jail escape, fabricated-green risk);

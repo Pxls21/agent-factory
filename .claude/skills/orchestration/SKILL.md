@@ -426,6 +426,7 @@ re-checked against `git rev-parse HEAD` at DISPATCH time, not authoring time** â
 authored before a coordinator boundary commit names a stale tip, and the delegate's mandatory
 premise check halts on it (2026-09-02: I3h brief said 30e6cd7d, tree was 7d759443; one sed
 before dispatch). Pin the PUSH BASE as the immutable anchor; the HEAD line is "current tip".
+**The same block meets BUILD lanes, mid-lane (2026-09-26, I59-C): two writes of the lane's own report file went through, then its Write of a scratch `report-body` file at 08:50Z returned the block; the lane returned the rest as text and the coordinator assembled the report of record from the file and the transcript's hand-back (never retyped). Every brief, build or research, carries the fallback: "if the harness refuses a report-file write, return the rest of the report as the text of your final message; never work around the refusal".**
 
 (c) **Review = re-run the gates yourself + read only security/spine-critical hunks** â€” where
 every real delegate defect was caught (dead-wire tier check, jail escape, fabricated-green risk);
