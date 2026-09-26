@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 06:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-I59-A (task #312's check), HCTX1-R1 (tasks #316, #317).
+- **RUNNING (PC, local route):** I59-C (task #314).
+- **VERIFY-SCRUB2 home: NOT-READY** (F1, F7, F15; both open readings confirmed blocking). The repair SCRUB2-R1 (task #321) waits for SYNTH1 to land, since SYNTH1 imports the scrubber; the scrubber stays live meanwhile.
+
 **2026-09-26 06:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, three agents):** SYNTH1 (task #308), VERIFY-SCRUB2 (task #303), VERIFY-I59-A (task #312's independent check, on `tasks/briefs/i59/I59-A.patch` in its own scratch worktree).
 - **RUNNING (PC, local route):** I59-C (task #314, lane `pc-i59c.md--2a50a65`).
