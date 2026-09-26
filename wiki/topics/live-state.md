@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 05:0xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, three agents):** SYNTH1 (task #308), I59-A (task #312), VERIFY-SCRUB2 resumed from its saved point (task #303, D-098: the owner said yes; brief `tasks/briefs/system1/VERIFY-SCRUB2-RESUME-brief.md`).
+- **Waiting:** S1-RATE-R1 (task #318) after SYNTH1 lands; I59-C/B (tasks #313, #314) after I59-A.
+- **Pushed:** origin 8d39d6a (the transcript sync; the value check found only the expected host).
+
 **2026-09-26 04:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** SYNTH1 (task #308), I59-A (task #312).
 - **VERIFY-S1-RATE HOME (task #309 closed): CONTRACT-INVALID on item 4's measurement only.** A reply over about 200 characters before a tool call is recorded as thinking with no text, so its score lines are invisible; compliance 0.36-0.50 measured reply length. The stamp stays live (everything else survived). Repair S1-RATE-R1 (task #318) waits for SYNTH1 to land. Until then, write each score as a short text of its own (under 200 characters; a note only for a 0).
