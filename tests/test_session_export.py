@@ -1023,7 +1023,8 @@ def test_gate_counts_patterns_and_canaries_and_prints_none(tmp_path, se):
     assert counts.get("pattern:credential") == "1" and counts.get("pattern:github-token") == "1", r.stdout
     assert counts.get("pattern:opaque-run") == "2" and counts.get("canary:bridge-token") == "1", r.stdout
     assert {n: counts.get("pattern:" + n) for n in r1} == {n: "1" for n in r1}, r.stdout
-    assert counts.get("total") == "10", r.stdout
+    # SCRUB2: the lower-case bearer header is also the scrub's own authorization-scheme shape now
+    assert counts.get("pattern:authorization-scheme") == "1" and counts.get("total") == "11", r.stdout
 
 
 # SESSION-EXPORT-R1 (task #252; VERIFY-SESSION-EXPORT F-1, F-4 to F-7; AMENDMENT 3), on the shared export above.
@@ -1102,7 +1103,7 @@ def test_r3_named_shapes_are_scrubbed_through_the_cli(se, exported):
 
 # The run shapes, typed from the rules (the opaque rule, the strict key run, the token-line class): the oracle below
 # builds the committed set from the fixture repo's own text with these, not with the exporter's code.
-ORACLE_SHAPES = (re.compile(r"\b[A-Za-z0-9_\-]{40,}\b"), re.compile(r"[A-Za-z0-9_\-+/=]{20,}"),
+ORACLE_SHAPES = (re.compile(r"(?:\b|(?a:\b))[A-Za-z0-9_\-]{40,}(?:\b|(?a:\b))"), re.compile(r"[A-Za-z0-9_\-+/=]{20,}"),
                  re.compile(r"[A-Za-z0-9_\-+/=.~:]{12,}"))
 
 

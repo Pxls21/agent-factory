@@ -133,9 +133,10 @@ ARCHIVE_DIR = os.path.join(".claude", "fast-jev-output")
 ARCHIVE_NAME = re.compile(r"bash-([A-Za-z][A-Za-z0-9_\-]*)\.txt\Z")   # the pruner's fallback name is a clock: no call id
 CWD = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
 PSEUDO = re.compile(r"\[opaque:[0-9a-f]{12}\]")
-PATTERN_NAMES = ("private-key", "credential", "bearer", "sk-key", "github-token", "google-key", "slack-token",
-                 "bridge-link", "opaque-run", "bridge-host", "bearer-tail", "basic-auth", "escaped-credential",
-                 "url-password", "bearer-lower", "curl-user", "pass-name", "url-token-user")
+PATTERN_NAMES = ("private-key", "private-key-malformed", "credential", "bearer", "cookie", "authorization-scheme", "pwd",
+                 "credentials", "sk-key", "github-token", "google-key", "slack-token", "bridge-link", "opaque-run",
+                 "bridge-host", "bearer-tail", "basic-auth", "escaped-credential", "url-password", "bearer-lower", "curl-user",
+                 "pass-name", "url-token-user")
 
 
 def _z(tag):

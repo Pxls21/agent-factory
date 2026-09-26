@@ -1,13 +1,18 @@
 """transcript_export: every planted secret class is scrubbed before it reaches disk (negative
 control per class), user/assistant text survives (positive control), noise turns are dropped,
 output is deterministic and idempotent. Synthetic JSONL only — never the live transcript."""
+import base64
+import contextlib
 import importlib.util
+import inspect
+import io
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+import types
 from secrets import token_bytes, token_hex
 
 import pytest
@@ -50,9 +55,27 @@ def _write_jsonl(p):
     p.write_text("\n".join(lines) + "\n")
 
 
-def _run(jsonl, out):
-    return subprocess.run([sys.executable, str(TOOL), "--transcript", str(jsonl), "--out", str(out)],
-                          capture_output=True, text=True, timeout=60)
+def _fixture_sources(where):
+    """Value-gate sources for a CLI test: an env file and a raw key file in `where`, holding fakes made at run time."""
+    env, key = pathlib.Path(where) / "zq-fixture.env", pathlib.Path(where) / "zq-fixture.key"
+    env.write_text("ZQ_FIXTURE_TOKEN=%s\n" % _fake_value())
+    key.write_bytes(token_bytes(32))
+    return (("env-file", str(env), ()), ("raw-file", str(key), ()))
+
+
+def _run(jsonl, out, *args, sources=None):
+    """The CLI in process: MOD.main() with these arguments; its exit code, stdout and stderr. main() reads
+    MOD.KNOWN_VALUE_SOURCES when it runs, and for this call it holds `sources` (default: fakes made next to `out`).
+    VERIFY-SCRUB1 F1: this ran the CLI as a child process, which read the machine's real value-gate sources."""
+    saved = MOD.KNOWN_VALUE_SOURCES
+    MOD.KNOWN_VALUE_SOURCES = _fixture_sources(pathlib.Path(out).parent) if sources is None else sources
+    o, e = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(o), contextlib.redirect_stderr(e):
+            rc = MOD.main(["--transcript", str(jsonl), "--out", str(out), *map(str, args)])
+    finally:
+        MOD.KNOWN_VALUE_SOURCES = saved
+    return types.SimpleNamespace(returncode=rc, stdout=o.getvalue(), stderr=e.getvalue())
 
 
 def test_secrets_never_reach_disk_and_text_survives(tmp_path):
@@ -87,8 +110,7 @@ def _export_one(tmp_path, text, cap):
     jsonl = tmp_path / "one.jsonl"
     jsonl.write_text(_entry("user", text, "2026-09-03T05:00:00Z") + "\n")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(TOOL), "--transcript", str(jsonl), "--out", str(out), "--cap", str(cap)],
-                       capture_output=True, text=True, timeout=60)
+    r = _run(jsonl, out, "--cap", cap)
     assert r.returncode == 0, r.stderr
     return (out / "chat-2026-09-03.md").read_text()
 
@@ -366,6 +388,17 @@ def _module():
 
 
 MOD = _module()
+PRODUCTION_SOURCES = MOD.KNOWN_VALUE_SOURCES          # taken at import, before a test replaces the attribute
+TRIPWIRE = (("tripwire", "the production sources, reached in a test", ()),)
+
+
+@pytest.fixture(autouse=True)
+def _never_the_real_sources(monkeypatch):
+    """VERIFY-SCRUB1 F1: no test reads a real value-gate source. main() reads MOD.KNOWN_VALUE_SOURCES when it runs, and
+    in every test that is a tripwire, a kind the gate refuses before it reads any source, unless the test names fixture
+    sources (`_run`'s default holds fakes). The production list itself is pinned as data (the test after the gate's)."""
+    monkeypatch.setattr(MOD, "KNOWN_VALUE_SOURCES", TRIPWIRE)
+
 
 # (text, its scrub_payload output, the fake values of which no byte may survive)
 PAYLOAD_SHAPES = (
@@ -834,7 +867,7 @@ def test_a_hostname_does_not_block_when_its_key_holds_no_secret(tmp_path):
         MOD.export(_turns(tmp_path, text), str(tmp_path / "out2"), 4000, sources=(("env-file", str(env), ()),))
     assert e.value.args[0] == ["zq.env:ZQ_BASE_URL host whole=1 windows=0/0"]
     # the production list skips the public base URL whose host the committed digests hold (the premise's one hit)
-    assert ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)) in MOD.KNOWN_VALUE_SOURCES
+    assert ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)) in PRODUCTION_SOURCES
 
 
 def test_the_value_gate_fails_closed_on_a_source_it_cannot_read(tmp_path):
@@ -846,17 +879,411 @@ def test_the_value_gate_fails_closed_on_a_source_it_cannot_read(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
-def test_the_cli_refuses_with_exit_4_and_prints_names_and_counts_only(tmp_path):
-    # the production source list through main(): GH_TOKEN is one of its sources, so a fake value in it is a known value
-    fake = _fake_value()
+def test_the_cli_refuses_with_exit_4_and_prints_names_and_counts_only(tmp_path, monkeypatch):
+    # main() with fixture sources whose fake values are pasted into the transcript: an env file's and a variable's
+    fake, var = _fake_value(), _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    monkeypatch.setenv("ZQ_FAKE_GATE_VAR", var)
+    src = (("env-file", str(env), ()), ("env", "ZQ_FAKE_GATE_VAR", ()))
     jsonl, out = tmp_path / "cli.jsonl", tmp_path / "out"
-    cmd = [sys.executable, str(TOOL), "--transcript", str(jsonl), "--out", str(out)]
-    jsonl.write_text(_entry("user", "a pasted value %s here" % fake, "2026-09-25T18:00:00Z") + "\n")
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=dict(os.environ, GH_TOKEN=fake))
+    jsonl.write_text(_entry("user", "a pasted value %s and %s here" % (fake, var), "2026-09-25T18:00:00Z") + "\n")
+    r = _run(jsonl, out, sources=src)
     assert r.returncode == 4, r.stderr
-    assert "transcript_export: REFUSED, nothing written: env:GH_TOKEN value whole=1 windows=25/25" in r.stderr.splitlines()
-    assert r.stdout == "" and not out.exists() and _no_piece(fake, r.stderr)
-    # positive control: the same variable, and a transcript without the value
+    assert r.stderr.splitlines() == ["transcript_export: REFUSED, nothing written: zq.env:ZQ_FAKE_TOKEN value whole=1 windows=25/25",
+                                     "transcript_export: REFUSED, nothing written: env:ZQ_FAKE_GATE_VAR value whole=1 windows=25/25"]
+    assert r.stdout == "" and not out.exists() and _no_piece(fake, r.stderr) and _no_piece(var, r.stderr)
+    # positive control: the same sources, and a transcript without the values
     jsonl.write_text(_entry("user", "nothing pasted here", "2026-09-25T18:00:00Z") + "\n")
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=dict(os.environ, GH_TOKEN=fake))
+    r = _run(jsonl, out, sources=src)
     assert r.returncode == 0 and r.stdout.strip() == str(out / "chat-2026-09-25.md"), r.stderr
+
+
+# SCRUB2 (task #292; VERIFY-SCRUB1 F1-F3, F8-F10, F12-F14). Item 4: the sources. main() reads the module's tuple when it
+# runs, export() and known_values() take theirs from the caller, and the production tuple is pinned as data, never opened.
+def test_the_production_sources_are_the_five_known_ones():
+    # VERIFY-SCRUB1 F8: a wrong entry fails silently in production (its skip line goes to stderr, which push_clean
+    # discards), so the list is pinned whole: the bridge env beside the repo root, the API env with its public base URL
+    # skipped, the raw pseudonym key, the two token variables
+    bridge_dir, bridge_name = os.path.split(PRODUCTION_SOURCES[0][1])
+    assert (os.path.realpath(bridge_dir), bridge_name) == (str(ROOT), ".pc-bridge.env")
+    assert PRODUCTION_SOURCES == (("env-file", os.path.join(bridge_dir, ".pc-bridge.env"), ()),
+                                  ("env-file", "/root/.codiv/api.env", ("TYPESAFE_BASE_URL",)),
+                                  ("raw-file", "/root/.config/session-export/pseudonym.key", ()),
+                                  ("env", "GH_TOKEN", ()),
+                                  ("env", "GITHUB_TOKEN", ()))
+
+
+def test_main_reads_the_sources_when_it_runs(tmp_path, monkeypatch):
+    # VERIFY-SCRUB1 F1: export()'s default was bound when export() was defined, so a replaced module attribute never
+    # reached main(), which always read the real sources. The tuple main() finds when it runs is now the one it uses.
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    monkeypatch.setattr(MOD, "KNOWN_VALUE_SOURCES", (("env-file", str(env), ()),))
+    jsonl, out = tmp_path / "t.jsonl", tmp_path / "out"
+    jsonl.write_text(_entry("user", "the value %s here" % fake, "2026-09-25T18:00:00Z") + "\n")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = MOD.main(["--transcript", str(jsonl), "--out", str(out)])
+    assert (rc, err.getvalue().splitlines()) == (4, [
+        "transcript_export: REFUSED, nothing written: zq.env:ZQ_FAKE_TOKEN value whole=1 windows=25/25"])
+    assert not out.exists()
+
+
+def test_export_and_known_values_take_their_sources_from_the_caller():
+    # no default is bound at definition time: a call that names no sources is an error, never the production list
+    for fn in (MOD.export, MOD.known_values):
+        assert inspect.signature(fn).parameters["sources"].default is inspect.Parameter.empty, fn.__name__
+    with pytest.raises(TypeError):
+        MOD.export(os.devnull, os.devnull, 4000)
+
+
+def test_a_test_that_names_no_sources_meets_the_tripwire(tmp_path):
+    # the autouse fixture: main() in a test that names no sources refuses on the tripwire, before any source is read
+    jsonl = tmp_path / "t.jsonl"
+    jsonl.write_text(_entry("user", "plain text", "2026-09-25T18:00:00Z") + "\n")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = MOD.main(["--transcript", str(jsonl), "--out", str(tmp_path / "out")])
+    assert (rc, err.getvalue().splitlines()) == (4, ["transcript_export: REFUSED, nothing written: value gate: the source "
+                                                     "the production sources, reached in a test has an unknown kind 'tripwire'"])
+    assert not (tmp_path / "out").exists()
+
+
+def test_nothing_outside_the_process_can_replace_the_sources():
+    # only code in the process replaces the sources (the module attribute, export's argument): the CLI takes no option
+    # for them, the tuple is assigned once, and the module reads the environment only for a source of kind env, so
+    # push_clean's sync, which runs the plain CLI, always gets the production list
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), pytest.raises(SystemExit) as e:
+        MOD.main(["--help"])
+    assert e.value.code == 0 and set(re.findall(r"--[a-z]+", out.getvalue())) == {"--help", "--transcript", "--out", "--cap"}
+    src = TOOL.read_text()
+    assert re.findall(r"os\.environ[^\n]*", src) == ['os.environ.get(where, "").encode()']
+    assert re.findall(r"getenv|putenv", src) == [] and re.findall(r"(?m)^KNOWN_VALUE_SOURCES\b.*", src) == [
+        "KNOWN_VALUE_SOURCES = ("]
+
+
+# Item 5: the gate's sources. A child process runs export() where a source could block a read: a hang then fails the
+# test by its timeout instead of stopping the suite.
+CHILD = r"""
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("transcript_export_child", sys.argv[1])
+te = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(te)
+try:
+    te.export(sys.argv[2], sys.argv[3], 4000, sources=tuple((k, w, tuple(s)) for k, w, s in json.loads(sys.argv[4])))
+except te.KnownValueRefusal as e:
+    print("\n".join(e.args[0]))
+    sys.exit(4)
+"""
+
+
+def _export_in_a_child(tmp_path, sources, *texts):
+    """export() in a child process with these fixture sources ([kind, where, skip] lists); its exit code and stdout."""
+    r = subprocess.run([sys.executable, "-c", CHILD, str(TOOL), _turns(tmp_path, *texts), str(tmp_path / "out"),
+                        json.dumps(sources)], capture_output=True, text=True, timeout=20)
+    return r.returncode, r.stdout.splitlines()
+
+
+def test_a_source_that_is_not_a_regular_file_refuses_at_once(tmp_path):
+    # VERIFY-SCRUB1 F10: a FIFO source hung the export at open() (it waits for a writer); a device was read as empty
+    # and skipped. Each refuses now, before anything is written.
+    fifo = tmp_path / "zq-fifo.env"
+    os.mkfifo(fifo)
+    for kind in ("env-file", "raw-file"):
+        assert _export_in_a_child(tmp_path, [[kind, str(fifo), []]], "plain text") == (
+            4, ["value gate: cannot read the source zq-fifo.env (NotRegularFile)"]), kind
+    assert _export_in_a_child(tmp_path, [["raw-file", os.devnull, []]], "plain text") == (
+        4, ["value gate: cannot read the source null (NotRegularFile)"])
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_malformed_env_line_is_named_by_its_line_number(tmp_path):
+    # VERIFY-SCRUB1 F13: a refusal printed an env line's part before `=` verbatim, and on a malformed line that part can
+    # hold anything (here a piece of the value). A name that is not an env name is printed as its line number.
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("# a comment\nzq %s=%s\nexport ZQ_GOOD_NAME=%s\n" % (fake[:20], fake, fake))
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, "the value %s here" % fake), str(tmp_path / "out"), 4000,
+                   sources=(("env-file", str(env), ()),))
+    assert e.value.args[0] == ["zq.env:<malformed line 2> value whole=1 windows=25/25",
+                               "zq.env:ZQ_GOOD_NAME value whole=1 windows=25/25"]
+    assert _no_piece(fake, repr(e.value.args))
+
+
+def test_a_source_of_an_unknown_kind_is_refused_before_any_source_is_read(tmp_path):
+    # VERIFY-SCRUB1 F10: a kind typo (`env_file`) was read as a raw file, so the values in it were never counted. The
+    # kinds are checked before any source is read (a FIFO listed first would block a read).
+    fake = _fake_value()
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FAKE_TOKEN=%s\n" % fake)
+    line = "value gate: the source zq.env has an unknown kind 'env_file'"
+    assert _export_in_a_child(tmp_path, [["env_file", str(env), []]], "the value %s here" % fake) == (4, [line])
+    fifo = tmp_path / "zq-fifo.key"
+    os.mkfifo(fifo)
+    assert _export_in_a_child(tmp_path, [["raw-file", str(fifo), []], ["env_file", str(env), []]], "plain") == (4, [line])
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_letter_before_the_key_is_not_a_separator_in_any_rule():
+    # VERIFY-SCRUB1 F9 (V5, V6): the ordinary words pin the letter decision for sk and gh only (no word puts a letter
+    # before `AIza` or `xox`), so an AIza or xox rule that lost its left anchor passed every test. Pinned per rule.
+    for rule, keys in _fake_keys().items():
+        for key in keys:
+            assert SCRUB("zq" + key + " end") == "zq" + key + " end", rule
+
+
+def test_the_8_character_floor_counts_8_and_skips_7(tmp_path, monkeypatch, capsys):
+    # VERIFY-SCRUB1 F9 (V12): a value of 8 characters is a secret and one of 7 is not, in a variable and in an env file
+    v8, v7, f8, f7 = ("7" + token_hex(4)[1:n] for n in (8, 7, 8, 7))
+    monkeypatch.setenv("ZQ_GATE_VAR8", v8)
+    monkeypatch.setenv("ZQ_GATE_VAR7", v7)
+    env = tmp_path / "zq.env"
+    env.write_text("ZQ_FILE8=%s\nZQ_FILE7=%s\n" % (f8, f7))
+    src = (("env", "ZQ_GATE_VAR8", ()), ("env", "ZQ_GATE_VAR7", ()), ("env-file", str(env), ()))
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, "%s %s %s %s" % (v8, v7, f8, f7)), str(tmp_path / "out"), 4000, sources=src)
+    assert e.value.args[0] == ["env:ZQ_GATE_VAR8 value whole=1 windows=0/0", "zq.env:ZQ_FILE8 value whole=1 windows=0/0"]
+    assert capsys.readouterr().err.splitlines() == [
+        "transcript_export: value gate: source env:ZQ_GATE_VAR7 missing or empty, skipped"]
+
+
+def test_the_public_base_url_is_skipped_in_its_own_source_only(tmp_path):
+    # VERIFY-SCRUB1 F9 (V13): TYPESAFE_BASE_URL is skipped where its source says so (api.env in the production list); the
+    # same name in another source is counted like any other
+    host = "api-%s.zq-fake.example" % token_hex(3)
+    own, other = tmp_path / "own.env", tmp_path / "other.env"
+    for f in (own, other):
+        f.write_text("TYPESAFE_BASE_URL=https://%s/v1\n" % host)
+    text = "the service at %s answered" % host
+    assert len(MOD.export(_turns(tmp_path, text), str(tmp_path / "out"), 4000,
+                          sources=(("env-file", str(own), ("TYPESAFE_BASE_URL",)),))) == 1
+    with pytest.raises(MOD.KnownValueRefusal) as e:
+        MOD.export(_turns(tmp_path, text), str(tmp_path / "out2"), 4000,
+                   sources=(("env-file", str(own), ("TYPESAFE_BASE_URL",)), ("env-file", str(other), ())))
+    assert e.value.args[0] == ["other.env:TYPESAFE_BASE_URL host whole=1 windows=0/0"]
+
+
+# Items 1 and 2: the right side of the four rules (F2) and a key right after a JSON escape (F3). Every context keeps a
+# key's run under the opaque rule's 40, so only its own rule can take it. The expected output is the context with the
+# key's run replaced by its marker, the run being the key and what its rule's class takes after it (`_zq` joins an sk
+# or AIza key, not a gh or xox one; the `-` before a quote joins every key but gh's).
+SCRUB1_RULES = tuple(r"(?<![A-Za-z0-9])" + r[2:] for r in PIN_RULES)       # 49bf75e..f3ab062: only the left anchor moved
+BODY = {"sk": r"[A-Za-z0-9_\-]", "gh": r"[A-Za-z0-9]", "AIza": r"[0-9A-Za-z_\-]", "xox": r"[A-Za-z0-9\-]"}
+ESCAPES = ("\\n", "\\r", "\\t", "\\b", "\\f", "\\u00e9", "\\u001b")
+SCRUB2_CONTEXTS = tuple(("after a literal %s" % e, "zq" + e + "{k} end") for e in ESCAPES) + (
+    ("before é", "zq {k}é zq"), ("before の", "zq {k}のです"), ("between é and の", "é{k}の"), ("before _", "zq {k}_zq end"),
+    ("before a quote, the key ending in -", "zq '{k}-' end"), ("before a literal \\n", "zq {k}\\nzq"), ("after é", "zqé{k} end"))
+
+
+def _expected(rule, ctx):
+    before, after = ctx.split("{k}")
+    return before + MARK[rule] + re.sub("^" + BODY[rule] + "*", "", after)
+
+
+def _misses2(scrub_fn):
+    """[(rule, context)] where scrub_fn's output is not the context with the key's run replaced by its rule's marker."""
+    out = set()
+    for rule, keys in _fake_keys().items():
+        for key in keys:
+            for name, ctx in SCRUB2_CONTEXTS:
+                if scrub_fn(ctx.replace("{k}", key)) != _expected(rule, ctx):
+                    out.add((rule, name))
+    return sorted(out)
+
+
+def test_every_provider_rule_takes_its_key_on_the_right_and_after_an_escape():
+    assert _misses2(SCRUB) == []
+    assert _misses2(getattr(MOD, "scrub_payload")) == []          # session_export's scrubber runs the same rules
+
+
+def test_the_scrub2_grid_reds_on_the_scrub1_rules_exactly_where_expected():
+    # negative control: SCRUB1's rules (\b on the right, no escape anchor) miss every rule after a literal escape and
+    # before or between non-ASCII letters, gh and xox before `_`, and a key ending in `-` before a quote (\b left the `-`)
+    want = {(r, "after a literal %s" % e) for r in MARK for e in ESCAPES}
+    want |= {(r, c) for r in MARK for c in ("before é", "before の", "between é and の")}
+    want |= {("gh", "before _"), ("xox", "before _")} | {(r, "before a quote, the key ending in -") for r in ("sk", "AIza", "xox")}
+    assert _misses2(_scrub_with(SCRUB1_RULES)) == sorted(want)
+
+
+def test_an_xox_token_followed_by_an_underscore_loses_no_segment():
+    # VERIFY-SCRUB1 F2: before an `_` the xox rule ended at the token's last hyphen, and the secret last segment stayed
+    tok = "xoxb-%s-%s-%s" % (token_hex(5), token_hex(6), token_hex(12))
+    text = "zq %s_zq end" % tok
+    assert SCRUB(text) == "zq xox-<redacted>_zq end"
+    assert _scrub_with(SCRUB1_RULES)(text) == "zq xox-<redacted>%s_zq end" % tok.rsplit("-", 1)[1]    # negative control
+
+
+# Item 1, the opaque rule (F12): `\b` never holds next to a non-ASCII letter, so a 40+ run glued to one passed on either
+# side. Each end is now `\b` or its ASCII form, which keeps every run `\b` took (a dash after `é` still starts one).
+def _opaque_contexts():
+    """(name, text, its scrub output, the fake of which no piece may survive or None)."""
+    t, t39 = token_hex(24), token_hex(20)[:39]
+    return (("after é", "café%s zq" % t, "café<opaque-redacted> zq", t),
+            ("before é", "zq %sé" % t, "zq <opaque-redacted>é", t),
+            ("between の", "の%sの" % t, "の<opaque-redacted>の", t),
+            ("after é and a dash, 40 with the dash", "é-%s zq" % t39, "é<opaque-redacted> zq", t39),
+            ("standalone", "zq %s zq" % t, "zq <opaque-redacted> zq", t),
+            ("after _", "zq_%s zq" % t, "<opaque-redacted> zq", t),
+            ("after =", "ZQ=%s" % t, "ZQ=<opaque-redacted>", t),
+            ("in a quote", "'%s'" % t, "'<opaque-redacted>'", t),
+            ("in a URL path", "https://zq.example/v1/%s/x" % t, "https://zq.example/v1/<opaque-redacted>/x", t),
+            ("at a line start", "first line\n%s rest" % t, "first line\n<opaque-redacted> rest", t),
+            ("39 after é, under the floor", "é%s zq" % t39, "é%s zq" % t39, None))
+
+
+def _scrub_with_opaque(pattern):
+    """MOD's scrub with its opaque rule's pattern replaced by `pattern`."""
+    pats = [(re.compile(pattern), r) if r == MOD.OPAQUE_MARK else (p, r) for p, r in MOD.SECRET_PATTERNS]
+
+    def run(text):
+        for p, r in pats:
+            text = p.sub(r, text)
+        return text
+    return run
+
+
+def test_the_opaque_rule_takes_a_run_next_to_a_non_ascii_letter():
+    for name, text, want, _ in _opaque_contexts():
+        assert SCRUB(text) == want, name
+        assert getattr(MOD, "scrub_payload")(text) == want, name
+
+
+def test_the_opaque_grid_reds_on_either_boundary_alone():
+    # negative controls: `\b` alone (the PIN) misses the three runs glued to a non-ASCII letter; the ASCII boundary alone
+    # drops the run `\b` took after `é` and its dash (39 characters are left, under the rule's 40)
+    ctx = _opaque_contexts()
+    pin = _scrub_with_opaque(r"\b[A-Za-z0-9_\-]{40,}\b")
+    ascii_only = _scrub_with_opaque(r"(?a:\b)[A-Za-z0-9_\-]{40,}(?a:\b)")
+    assert [n for n, text, want, _ in ctx if pin(text) != want] == ["after é", "before é", "between の"]
+    assert [n for n, text, want, _ in ctx if ascii_only(text) != want] == ["after é and a dash, 40 with the dash"]
+
+
+# Item 3, the shape gaps (F14), each measured before it went in (SCRUB2-report.md): `passphrase` as a credential name;
+# `pwd` and `credentials` assigned a value that is not a path; a Cookie header; an Authorization credential after a
+# known scheme; a private-key block with malformed header lines (it needs its END line).
+def _named_shapes():
+    """(text, its scrub output, the fakes of which no piece may survive), fakes built here."""
+    v = ["7" + token_hex(10)[1:] for _ in range(20)]
+    b64 = base64.b64encode(token_bytes(96)).decode()
+
+    def pem(head, tail):
+        return "%s\n%s\n%s" % (head, b64, tail)
+    return (
+        ("passphrase=%s" % v[0], "passphrase=" + R, [v[0]]),
+        ('"passphrase": "%s"' % v[1], '"passphrase": "%s"' % R, [v[1]]),
+        ("SSH_PASSPHRASE: %s" % v[2], "SSH_PASSPHRASE: " + R, [v[2]]),
+        ("db_pwd=%s" % v[3], "db_pwd=" + R, [v[3]]),
+        ("Server=db;Uid=sa;Pwd=%s;" % v[4], "Server=db;Uid=sa;Pwd=%s;" % R, [v[4]]),
+        ('"pwd": "%s"' % v[5], '"pwd": "%s"' % R, [v[5]]),
+        ("credentials=%s" % v[6], "credentials=" + R, [v[6]]),
+        ('{"credentials": "%s"}' % v[7], '{"credentials": "%s"}' % R, [v[7]]),
+        ("AWS_CREDENTIALS = %s" % v[8], "AWS_CREDENTIALS = " + R, [v[8]]),
+        ("Cookie: session=%s; theme=dark" % v[9], "Cookie: " + R, [v[9]]),
+        ("curl -H 'Cookie: a=1; sid=%s' https://zq.example" % v[10], "curl -H 'Cookie: %s' https://zq.example" % R, [v[10]]),
+        ("Set-Cookie: sid=%s; Path=/; HttpOnly" % v[11], "Set-Cookie: " + R, [v[11]]),
+        ('"Cookie": "session=%s"' % v[12], '"Cookie": "%s"' % R, [v[12]]),
+        ("Authorization: Token %s" % v[13], "Authorization: Token " + R, [v[13]]),
+        ("authorization: bearer %s" % v[14], "authorization: bearer " + R, [v[14]]),
+        ("Authorization: Basic %s+/%s==" % (v[15][:9], v[15][9:]), "Authorization: Basic " + R, [v[15][:9], v[15][9:]]),
+        ('"Authorization": "Token %s"' % v[16], '"Authorization": "Token %s"' % R, [v[16]]),
+        ("curl -H \"authorization: ApiKey %s\" https://zq.example" % v[17],
+         "curl -H \"authorization: ApiKey %s\" https://zq.example" % R, [v[17]]),
+        (pem("----BEGIN RSA PRIVATE KEY----", "----END RSA PRIVATE KEY----"), "<private-key-redacted>", [b64]),
+        (pem("---- BEGIN OPENSSH PRIVATE KEY ----", "---- END OPENSSH PRIVATE KEY ----"), "<private-key-redacted>", [b64]),
+        (pem("---BEGIN EC PRIVATE KEY---", "-----END EC PRIVATE KEY-----"), "<private-key-redacted>", [b64]),
+    )
+
+
+# Ordinary text the item-3 shapes must leave as it is: what the wider forms took on this session's transcripts (a path
+# after PWD, a Python annotation after `credentials:`, prose after this repo's `AUTHORIZATION:` headings), a header with no
+# credential, a malformed key header with no END line (prose about it), a rule of dashes, and CJK prose.
+ORDINARY2 = ("PWD=/home/user/agent-factory", "OLDPWD=/tmp/zq-work", "pwd: ~/work/zq", "PWD=$HOME/zq", 'cd "$(pwd)"',
+             "pwd=./relative/zq/path", "oldpwd = os.getcwd()", "credentials: LoginRequest",
+             "async def login(credentials: HTTPBasicCredentials):", "GOOGLE_APPLICATION_CREDENTIALS=/srv/zq/key.json",
+             "credentials = ~/creds.json", "AUTHORIZATION: a read-only harvester over the owner's own commit",
+             "Authorization: this is defensive work on the owner's own system", "Authorization: Basic auth",
+             "the Cookie: header carries the session", "Cookie: a=1", "Set-Cookie: theme=dark", "cookies: many of them",
+             "the passphrase is set", "passphrase: short",
+             "a line of prose: ----BEGIN RSA PRIVATE KEY---- starts the block", "-" * 42, "これはtestです")
+
+
+def test_the_shape_gaps_are_scrubbed():
+    missed = [(i, fn.__name__) for i, (text, scrubbed, fakes) in enumerate(_named_shapes())
+              for fn in (SCRUB, getattr(MOD, "scrub_payload")) if fn(text) != scrubbed or not all(_no_piece(f, fn(text)) for f in fakes)]
+    assert missed == []                                                  # (the shape's index, the scrubber), no value
+
+
+def test_the_shape_gaps_leave_ordinary_text():
+    assert [t for t in ORDINARY2 if SCRUB(t) != t] == []
+    assert [t for t in ORDINARY2 if getattr(MOD, "scrub_payload")(t) != t] == []
+
+
+def test_a_value_stops_before_a_passphrase_name():
+    # `passphrase` is an in-run head too (AF-AP-157's class): the value before it stops, and the name stays a name
+    v1, v2 = "QZJ8" + token_hex(4), "X4Z9" + token_hex(6)
+    assert SCRUB("password=%spassphrase=%s" % (v1, v2)) == "password=%spassphrase=%s" % (R, R)
+
+
+def test_scrub2_shapes_never_reach_the_digest(tmp_path):
+    # the outward path: every key in every SCRUB2 context, the opaque runs and the item-3 shapes, one turn each, through
+    # main() in process with fixture sources; the ordinary texts reach the digest whole
+    rows = [(ctx.replace("{k}", key), key) for keys in _fake_keys().values() for key in keys for _, ctx in SCRUB2_CONTEXTS]
+    rows += [(text, fake) for _, text, _, fake in _opaque_contexts() if fake]
+    rows += [(text, fake) for text, _, fakes in _named_shapes() for fake in fakes]
+    texts = [t for t, _ in rows] + list(ORDINARY2)
+    jsonl = tmp_path / "scrub2.jsonl"
+    jsonl.write_text("".join(_entry("user", t, "2026-09-26T00:%02d:%02d.000Z" % divmod(i, 60)) + "\n"
+                             for i, t in enumerate(texts)))
+    r = _run(jsonl, tmp_path / "out")
+    assert r.returncode == 0, r.stderr
+    blob = (tmp_path / "out" / "chat-2026-09-26.md").read_text()
+    assert [f[:4] for _, f in rows if not _no_piece(f, blob)] == []
+    assert [t for t in ORDINARY2 if "\n%s\n" % t not in blob] == []
+
+
+def _session_export():
+    spec = importlib.util.spec_from_file_location("session_export_scrub2", ROOT / "scripts" / "session_export.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_scrub2_shapes_never_reach_the_session_export(tmp_path):
+    # VERIFY-SCRUB1 F3 through session_export's real convert(): a tool input is written as canonical JSON, so a key at a
+    # line start sits after `\n`, one after a tab after `\t`, one after a control character after `\u001b`; the item-3
+    # shapes as JSON members; a 48-character run glued to `é`
+    fakes, inputs = [], []
+    for keys in _fake_keys().values():
+        for key in keys:
+            fakes.append(key)
+            inputs += [{"command": "first line\n%s rest" % key}, {"command": "a\tb\t%s" % key}, {"command": "\x1b%s" % key}]
+    v = ["7" + token_hex(10)[1:] for _ in range(6)]
+    t = token_hex(24)
+    fakes += v + [t]
+    inputs += [{"headers": {"Cookie": "session=%s" % v[0], "Authorization": "Token %s" % v[1]}},
+               {"pwd": v[2], "credentials": v[3], "passphrase": v[4]}, {"command": "psql 'Pwd=%s;'" % v[5]},
+               {"command": "café%s" % t}]
+    lines = []
+    for n, inp in enumerate(inputs, 1):
+        lines.append(json.dumps({
+            "parentUuid": None, "isSidechain": False, "userType": "external", "cwd": str(tmp_path),
+            "sessionId": "0f0f0f0f-fake-4a4a-8b8b-00000000cafe", "version": "2.1.0", "gitBranch": "fake",
+            "type": "assistant", "uuid": "u-%05d" % n, "timestamp": "2026-09-26T00:%02d:%02d.000Z" % divmod(n, 60),
+            "requestId": "req_fake%05d" % n,
+            "message": {"model": "claude-fake", "id": "msg_fake%05d" % n, "type": "message", "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "toolu_%05d" % n, "name": "Bash", "input": inp,
+                                     "caller": {"type": "direct"}}],
+                        "stop_reason": "tool_use", "usage": {"input_tokens": 1, "output_tokens": 1}}},
+            separators=(",", ":")))
+    path = tmp_path / "scrub2.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    events = []
+    _session_export().convert(str(path), src="zq/scrub2.jsonl", key=token_bytes(32), sink=events.append)
+    calls = [e for e in events if e.get("kind") == "tool_call"]
+    assert len(calls) == len(inputs), [e.get("kind") for e in events][:8]
+    blob = json.dumps(events, ensure_ascii=False)
+    assert [f[:4] for f in fakes if not _no_piece(f, blob)] == []

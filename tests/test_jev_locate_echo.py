@@ -558,10 +558,10 @@ def test_every_jev_query_fits_rank_whole_after_the_scrub(double, monkeypatch):
     chunks = [{"id": "k%d" % i, "path": "f%d.py" % i, "line": 1, "instruments": ["rg"], "agreement": 1,
                "record": False, "text": "chunk %d" % i, "lexical": i} for i in range(2)]
     rnd = random.Random(20260924)
-    run_on = chr(0xe9) + "A" * 1100                          # a run the whole-text scrub leaves; a tail cut exposes it
+    run_on = chr(0xe9) + "A" * 1100          # a run glued to a non-ASCII letter: the whole-text scrub takes it (SCRUB2, F12)
     questions = [_generated(rnd) for _ in range(120)] + [_generated(rnd, lengthen=True) for _ in range(40)]
     questions += ["x " * 600 + run_on + " LAST_WORDS"]
-    for token in ("sk-QZJ8" + "B" * 20, "ghp_" + "C" * 24):     # FAKE keys glued to a letter: no word boundary before
+    for token in ("sk-QZJ8" + "B" * 20, "ghp_" + "C" * 24, "xoxb-" + "E" * 20):   # FAKE keys glued to a letter: no anchor
         rest = (" then open_socket raised" * 50)[:1000 - len(token) - 11] + " LAST_WORDS"
         questions.append("x " * 300 + "a" + token + rest)        # ... until the 1,000 cut starts on the key
     # a side whose 488 cut lands inside `<redacted>` after a name, leaving 8-9 value characters the scrub regrows

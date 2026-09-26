@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING:** none.
+- **Landed:** SCRUB2 (task #292): keys before a non-ASCII letter and after a JSON escape, five measured shapes, tests that never open a real secret (an `openat` trace: 0), a non-blocking value-gate reader; the real gate passes the real transcript. VERIFY-SCRUB2 is due.
+- **HELD for the owner:** S1-RATE (task #295), after the API safeguard flag; stamping paused (`.jev/s1-rate-off`), its code uncommitted in the tree.
+- **Waiting on the owner:** the S0-04 re-sign.
+
 **2026-09-26 00:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one agent):** SCRUB2 (task #292 widened), the scrubber hardening.
 - **HELD for the owner:** S1-RATE (task #295). Built and tested, then stopped by the API's content safeguard (`reasoning_extraction`) while re-reading its report. Stamping is paused (`.jev/s1-rate-off`); the code is uncommitted in the tree (declared in `.lanes-live`) with a scratch backup. The owner decides whether the rating loop continues.

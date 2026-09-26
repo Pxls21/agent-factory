@@ -4,6 +4,7 @@ Every secret here is FAKE and assembled at run time from a hash (no source line 
 transcript that wrote it carry no whole value for a later export's check to trip on (AF-AP-213).
 """
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,11 +18,11 @@ def fake(tag, n=40):
     return "".join(alphabet[int(h[i:i + 2], 16) % len(alphabet)] for i in range(0, 2 * (n - 1), 2)) + "9"
 
 
-def run(args, env=None):
-    import os
-    e = dict(os.environ)
+def run(args, env=None, timeout=60):
+    # the child's environment is this one without the two token variables, which this file never reads (SCRUB2)
+    e = {k: os.environ[k] for k in os.environ if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
     e.update(env or {})
-    p = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=60)
+    p = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=timeout)
     return p.returncode, p.stdout + p.stderr
 
 
@@ -120,3 +121,32 @@ def test_a_token_file_is_one_secret(tmp_path):
     short = tmp_path / "short"
     short.write_text("abc\n")
     assert run(["--token-file", str(short), str(target)])[0] == 2
+
+
+def test_a_source_that_is_not_a_regular_file_is_refused_at_once(tmp_path):
+    # VERIFY-SCRUB1 F10: a FIFO source hung the check at open() (it waits for a writer), and a device was read as empty.
+    # Each is refused now (exit 2), whatever flag names it; a directory was refused before and still is.
+    target = tmp_path / "t.txt"
+    target.write_text("x\n")
+    fifo = tmp_path / "zq-fifo"
+    os.mkfifo(fifo)
+    for flag in ("--env-file", "--raw-file", "--token-file"):
+        assert run([flag, str(fifo), str(target)], timeout=20) == (2, "known-values: cannot read a source (NotRegularFile)\n"), flag
+    assert run(["--raw-file", os.devnull, str(target)], timeout=20) == (2, "known-values: cannot read a source (NotRegularFile)\n")
+    assert run(["--env-file", str(tmp_path), str(target)], timeout=20) == (
+        2, "known-values: cannot read a source (IsADirectoryError)\n")
+
+
+def test_a_malformed_env_line_is_printed_as_its_line_number(tmp_path):
+    # VERIFY-SCRUB1 F13: the part of a line before `=` was printed verbatim, and on a malformed line it can hold anything
+    # (here a piece of the value). Its line number is printed instead, counted on "\n" as grep counts (a lone "\r" still
+    # ends an entry, as it did, without moving the count: AF-AP-132).
+    token = fake("malformed")
+    env = tmp_path / "bad.env"
+    env.write_text("# comment\n\nzq %s=%s\nGOOD_NAME=%s\nX=1\rzq b=%s\n" % (token[:20], token, token, token))
+    target = tmp_path / "t.txt"
+    target.write_text("the value %s\n" % token)
+    rc, out = run(["--env-file", str(env), str(target)])
+    assert rc == 3 and [ln.split(" whole=")[0] for ln in out.splitlines() if " whole=" in ln] == [
+        "bad.env:<malformed line 3> value", "bad.env:GOOD_NAME value", "bad.env:<malformed line 5> value"]
+    assert not any(w in out for w in windows(token))

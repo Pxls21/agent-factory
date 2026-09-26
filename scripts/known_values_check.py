@@ -16,35 +16,67 @@ and counts how often each appears in the targets, whole and in pieces:
 --skip KEY leaves out an env-file key that holds no secret (a public base URL); the skipped names are printed.
 
 TARGET is a file or a directory (every regular file below it). Output: one line per secret form,
-`<source>:<name> <form> whole=N windows=H/T`, then a total line. Exit 0 no hit, 3 a hit, 2 a source could not be read or
-held no value, 64 usage. Born 2026-09-25 (task #252): the session export's known-values step before any ship.
+`<source>:<name> <form> whole=N windows=H/T`, then a total line. Exit 0 no hit, 3 a hit, 2 a source could not be read, is
+not a regular file (a FIFO is refused at once, never read) or held no value, 64 usage. An env line whose name is not an
+env name is printed as `<malformed line N>`. Born 2026-09-25 (task #252): the session export's known-values step before any ship.
 """
 import argparse
 import base64
+import errno
 import os
 import re
+import stat
 import sys
 from urllib.parse import urlsplit
 
 MIN_VALUE = 8          # shorter env values are not secrets (flags, ports, "true")
 WINDOW = 8
 TOKENISH = re.compile(rb"[A-Za-z0-9_\-+/=.~]{16,}")
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+class NotRegularFile(OSError):
+    """A source that is not a regular file (a FIFO, a device): refused at once, never read."""
+
+
+def _read_regular(path):
+    """A source's bytes, from one open that never blocks: a plain open of a FIFO waits for a writer and hung the
+    transcript export's gate (VERIFY-SCRUB1 F10). A directory raises IsADirectoryError, any other file that is not
+    regular NotRegularFile; a link is followed."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        mode = os.fstat(fd).st_mode
+        if stat.S_ISDIR(mode):
+            raise IsADirectoryError(errno.EISDIR, "a directory", path)
+        if not stat.S_ISREG(mode):
+            raise NotRegularFile(errno.EINVAL, "not a regular file", path)
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
 
 
 def _env_values(path, skip=()):
+    """[(name, value)] of an env file's NAME=value lines whose value has MIN_VALUE+ bytes. The name is printed, so a line
+    whose part before `=` is not an env name (a malformed line, which may hold anything) is named `<malformed line N>`
+    instead (VERIFY-SCRUB1 F13)."""
     out = []
-    with open(path, "rb") as fh:
-        for raw in fh.read().splitlines():
+    for n, text in enumerate(_read_regular(path).split(b"\n"), 1):   # N counts "\n" lines, as grep does (AF-AP-132)
+        for raw in text.splitlines():                                  # a lone \r still ends an entry, as it did
             line = raw.strip()
             if not line or line.startswith(b"#") or b"=" not in line:
                 continue
             key, _, val = line.partition(b"=")
-            key = key.removeprefix(b"export ").strip()
+            key = key.removeprefix(b"export ").strip().decode("utf-8", "replace")
             val = val.strip().strip(b"'\"")
-            if key.decode("utf-8", "replace") in skip:
+            if key in skip:
                 continue
             if len(val) >= MIN_VALUE:
-                out.append((key.decode("utf-8", "replace"), val))
+                out.append((key if ENV_NAME.fullmatch(key) else "<malformed line %d>" % n, val))
     return out
 
 
@@ -106,15 +138,13 @@ def main(argv=None):
             for name, v in vals:
                 secrets += [("%s:%s" % (os.path.basename(p), name), f, b, w) for f, b, w in _forms(name, v)]
         for p in a.token_file:
-            with open(p, "rb") as fh:
-                v = fh.read().strip()
+            v = _read_regular(p).strip()
             if len(v) < MIN_VALUE:
                 print("known-values: %s holds fewer than %d characters" % (p, MIN_VALUE), file=sys.stderr)
                 return 2
             secrets += [("%s:token" % os.path.basename(p), f, b, w) for f, b, w in _forms("token", v)]
         for p in a.raw_file:
-            with open(p, "rb") as fh:
-                data = fh.read()
+            data = _read_regular(p)
             if len(data) < MIN_VALUE:
                 print("known-values: %s holds fewer than %d bytes" % (p, MIN_VALUE), file=sys.stderr)
                 return 2

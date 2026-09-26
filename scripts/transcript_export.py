@@ -17,8 +17,9 @@ written.
 Usage: transcript_export.py [--transcript <jsonl>] [--out transcripts/sandbox] [--cap 4000]
 Default transcript: the newest *.jsonl under /root/.claude/projects/-home-user/.
 Exit 0 = wrote/refreshed files (prints them), 3 = no transcript found, 4 = refused by the value
-gate (a known secret value in the scrubbed text, or a known source present but unreadable):
-nothing written, and stderr names each source and its counts, never a value.
+gate (a known secret value in the scrubbed text, or a known source present but unreadable or not
+a regular file, or a source of an unknown kind): nothing written, and stderr names each source and
+its counts, never a value.
 """
 import argparse
 import glob
@@ -32,11 +33,12 @@ import sys
 # non-alphanumeric: unanchored, a long run re-scans itself, quadratic). A bare `_key` / `-key` also starts an assignment:
 # that is where a value cut before such a name ends (below).
 _NAME = (r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]key|[_-]key|api[_-]?key"
-         r"|token|secret|password|passwd|Authorization)")
+         r"|token|secret|password|passwd|passphrase|Authorization)")
 # Inside a value a name is read at its shortest -- a secret word, or `_key` / `-key` without the compound's alphanumeric
 # prefix, which may be the value's own tail (`passwd=QZJ8my_key: v` keeps `QZJ8my` a value) -- and a HEAD is that name, an
 # optional quote, `:` or `=`.
-_WORD = r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|[_-]key|api[_-]?key|token|secret|password|passwd|Authorization)"
+_WORD = (r"(?:AGENT_TOKEN|PC_BRIDGE_TOKEN|X-Agent-Token|[_-]key|api[_-]?key|token|secret|password|passwd|passphrase"
+         r"|Authorization)")
 _HEAD = _WORD + r"[\"']?\s*[:=]"
 # Where the Bearer rule matches (case as written; its token comes after whitespace), and where a bridge link starts.
 _BEARER = r"(?-i:Bearer)\s+[A-Za-z0-9._\-]{8}"
@@ -60,6 +62,11 @@ def _redact_run(m):
     return m.group(1) + _CUT.sub(lambda p: p.group(1) or "<redacted>", m.group(2))
 
 
+# The provider-key rules' anchors (their comment below says why): before a key no ASCII letter or digit, unless it is a
+# JSON escape's own letter; after it no ASCII letter or digit.
+_KEY_L = r"(?:(?<![A-Za-z0-9])|(?<=\\[nrtbf])|(?<=\\u[0-9A-Fa-f]{4}))"
+_KEY_R = r"(?![A-Za-z0-9])"
+
 SECRET_PATTERNS = [
     # a private-key block, BEGIN through END: PEM and OpenSSH (`… PRIVATE KEY`) and GnuPG's armor
     # (`PGP PRIVATE KEY BLOCK`, the PGP 2.x `PGP SECRET KEY BLOCK`); a block with no END line (cut
@@ -67,6 +74,12 @@ SECRET_PATTERNS = [
     # behind (a credential rule that ran earlier would eat the BEGIN line and strand the body).
     (re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----.*?"
                 r"(?:-----END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?-----|\Z)", re.S),
+     "<private-key-redacted>"),
+    # the same block with malformed header lines (3 or more dashes, spaces beside them; VERIFY-SCRUB1 F14), from BEGIN
+    # through END. Unlike the rule above it needs the END line: without one, a line of prose about these headers hid
+    # the rest of a tool result (SCRUB2 measured up to 15,522 characters on this session's transcripts).
+    (re.compile(r"-{3,}[ \t]*BEGIN [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}.*?"
+                r"-{3,}[ \t]*END [A-Z0-9 ]*(?:PRIVATE|SECRET) KEY(?: BLOCK)?[ \t]*-{3,}", re.S),
      "<private-key-redacted>"),
     # explicit credential assignments / headers: the head is kept, the value (_VALUE) replaced. The 8-character floor reads
     # the whole run after the separator (the lookahead). Every piece of the value is redacted whatever its length: the run
@@ -77,18 +90,39 @@ SECRET_PATTERNS = [
     # a bridge link, which their rules take (a token that ate `Bearer` or `https` freed what followed: AF-AP-157)
     (re.compile(r"(Bearer\s+)(?=[A-Za-z0-9._\-]{8})(?:(?!" + _BEARER + r"|" + _LINK + r")[A-Za-z0-9._\-])+"),
      r"\1<redacted>"),
+    # SCRUB2 (VERIFY-SCRUB1 F14), each shape measured on this session's transcripts before it went in (SCRUB2-report.md):
+    # a Cookie header, from its head to the end of the line or a quote, when a `name=value` of 8+ characters is in it
+    (re.compile(r"((?i:\b(?:set-)?cookie)[\"']?\s*:\s*[\"']?)(?=[^\r\n\"']*=[^\s;\"']{8})[^\r\n\"']+"), r"\1<redacted>"),
+    # an Authorization header's credential after a known scheme (a bearer in any case too). Any word as the scheme took
+    # prose after this repo's `AUTHORIZATION:` brief headings.
+    (re.compile(r"((?i:authorization)[\"']?\s*:\s*[\"']?(?i:token|basic|bearer|digest|negotiate|ntlm|apikey|api-key|key"
+                r"|ssws)\s+)(?=[A-Za-z0-9._~+/=\-]{8})[A-Za-z0-9._~+/=\-]+"), r"\1<redacted>"),
+    # `pwd` and `credentials` assigned a value that is not a path or a reference (it starts with none of / ~ . $ \). As
+    # names of the credential rule both took paths (`PWD=/home/...`), and `credentials` took Python annotations
+    # (`credentials: LoginRequest`), so `credentials` needs `=` or a quoted key.
+    (re.compile(r"((?<![A-Za-z0-9])(?i:pwd)[\"']?\s*[:=]\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})[^\s\"'&,;]+"),
+     r"\1<redacted>"),
+    (re.compile(r"((?<![A-Za-z0-9])(?i:credentials)(?:[\"']\s*:|\s*=)\s*[\"']?)(?![/~.$\\])(?=[^\s\"'&,;]{8})"
+                r"[^\s\"'&,;]+"), r"\1<redacted>"),
     # provider-shaped keys. The left anchor is `(?<![A-Za-z0-9])`, not `\b` (AF-AP-224): `\b` wants a non-word character
     # before the key, so a key glued to an `_` (`mcp__srv__sk-...`, `my_sk-...`) passed whole. An `_` now separates; a
     # letter or a digit still does not. SCRUB1 measured no left anchor at all on this session's transcripts: 17,692 more
     # redactions, all but 6 of them ordinary words (`<task-notification>` first), and no known secret among them.
-    (re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{12,}\b"), "sk-<redacted>"),
-    (re.compile(r"(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "gh<redacted>"),
-    (re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{30,}\b"), "AIza<redacted>"),
-    (re.compile(r"(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9\-]{10,}\b"), "xox-<redacted>"),
+    # SCRUB2: a key right after a JSON escape (`\n`, `\r`, `\t`, `\b`, `\f`, `\uXXXX`) counts as separated too, for a
+    # writer that scrubs raw JSON (session_export writes a tool input as JSON, `\n` before each line); the escape stays,
+    # so the JSON stays valid. The right anchor is `(?![A-Za-z0-9])`, not `\b`: `\b` never holds between an ASCII letter
+    # and a non-ASCII one (`é`, `の`), and before an `_` the gh rule found no end (the key passed whole) while the xox rule
+    # ended at its last hyphen (the token's secret last segment stayed). Each rule now takes the key's whole run.
+    (re.compile(_KEY_L + r"sk-[A-Za-z0-9_\-]{12,}" + _KEY_R), "sk-<redacted>"),
+    (re.compile(_KEY_L + r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}" + _KEY_R), "gh<redacted>"),
+    (re.compile(_KEY_L + r"AIza[0-9A-Za-z_\-]{30,}" + _KEY_R), "AIza<redacted>"),
+    (re.compile(_KEY_L + r"xox[abprs]-[A-Za-z0-9\-]{10,}" + _KEY_R), "xox-<redacted>"),
     # ephemeral bridge links (the token often rides in the URL's session)
     (re.compile(r"https?://[a-z0-9\-]+\.trycloudflare\.com[^\s)\"']*", re.I), "https://<bridge-link-redacted>"),
-    # long opaque tokens (32+ url-safe chars) — coarse, deliberately
-    (re.compile(r"\b[A-Za-z0-9_\-]{40,}\b"), "<opaque-redacted>"),
+    # long opaque tokens (40+ url-safe chars) — coarse, deliberately. Each end is `\b` or its ASCII form: `\b` alone never
+    # holds next to a non-ASCII letter, so a token glued to `é` or `の` passed (VERIFY-SCRUB1 F12); with both forms every
+    # match `\b` made stays a match.
+    (re.compile(r"(?:\b|(?a:\b))[A-Za-z0-9_\-]{40,}(?:\b|(?a:\b))"), "<opaque-redacted>"),
 ]
 
 
@@ -232,7 +266,9 @@ def turns(path):
 # scripts/known_values_check.py counts them (a value whole, a URL's host, each 8-byte window of a token-like value, a raw
 # key's printed forms), and refuses on any hit with the source's name and the counts, never a value. The sources are named
 # here and only here: (kind, where, keys that hold no secret). A hostname is not a secret: TYPESAFE_BASE_URL is a public
-# base URL, so its value and its host are skipped.
+# base URL, so its value and its host are skipped. main() reads this tuple when it runs and hands it on; export() and
+# known_values() have no default (VERIFY-SCRUB1 F1: a default bound when export() was defined sent every test that ran
+# main() to the real sources, whatever the test replaced).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 KNOWN_VALUE_SOURCES = (
     ("env-file", os.path.normpath(os.path.join(_HERE, os.pardir, ".pc-bridge.env")), ()),
@@ -247,11 +283,15 @@ class KnownValueRefusal(Exception):
     """The value gate refused; args[0] is the list of lines to print (source names and counts only)."""
 
 
-def known_values(sources=KNOWN_VALUE_SOURCES):
+def known_values(sources):
     """[(label, form, value, its 8-byte windows or [])] of every source present. known_values_check.py is loaded by path
     here, not at import: the scrubber's importers need only the rules, and some load this file with no scripts/ on
     sys.path. A missing source (no file, an unset or short variable, no value of 8+ characters) is skipped with one line
-    on stderr; a source that is present but cannot be read raises KnownValueRefusal (the gate fails closed)."""
+    on stderr; a source that is present but cannot be read, or is not a regular file (a FIFO would block the read), and a
+    source of a kind other than env, env-file and raw-file raise KnownValueRefusal (the gate fails closed)."""
+    for kind, where, _ in sources:
+        if kind not in ("env", "env-file", "raw-file"):
+            raise KnownValueRefusal(["value gate: the source %s has an unknown kind %r" % (os.path.basename(where), kind)])
     spec = importlib.util.spec_from_file_location("transcript_export_known_values",
                                                   os.path.join(_HERE, "known_values_check.py"))
     kv = importlib.util.module_from_spec(spec)
@@ -269,8 +309,7 @@ def known_values(sources=KNOWN_VALUE_SOURCES):
                 forms = [("%s:%s" % (name, k), f, b, w) for k, v in kv._env_values(where, set(skip))
                          for f, b, w in kv._forms(k, v)]
             else:                    # raw-file
-                with open(where, "rb") as fh:
-                    data = fh.read()
+                data = kv._read_regular(where)
                 forms = [(name + ":raw", f, b, w) for f, b, w in kv._raw_forms(data)] if len(data) >= kv.MIN_VALUE else []
         except OSError as e:
             raise KnownValueRefusal(["value gate: cannot read the source %s (%s)" % (name, type(e).__name__)])
@@ -293,7 +332,7 @@ def value_hits(datas, values):
     return hits
 
 
-def export(transcript: str, out: str, cap: int, sources=KNOWN_VALUE_SOURCES) -> list:
+def export(transcript: str, out: str, cap: int, *, sources) -> list:
     days = {}
     for role, ts, txt in turns(transcript):
         day = ts[:10] if ts != "?" else "undated"
@@ -316,12 +355,12 @@ def export(transcript: str, out: str, cap: int, sources=KNOWN_VALUE_SOURCES) -> 
     return written
 
 
-def main() -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcript")
     ap.add_argument("--out", default="transcripts/sandbox")
     ap.add_argument("--cap", type=int, default=4000)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     path = a.transcript
     if not path:
         cands = sorted(glob.glob("/root/.claude/projects/-home-user/*.jsonl"), key=os.path.getmtime)
@@ -330,7 +369,7 @@ def main() -> int:
         print("transcript_export: no transcript found", file=sys.stderr)
         return 3
     try:
-        written = export(path, a.out, a.cap)
+        written = export(path, a.out, a.cap, sources=KNOWN_VALUE_SOURCES)     # the module's tuple as it is now
     except KnownValueRefusal as e:
         for line in e.args[0]:
             print("transcript_export: REFUSED, nothing written: " + line, file=sys.stderr)

@@ -7,7 +7,7 @@
   "scripts/laya_ft/build_dataset.py": "c78d695fbc41476e5a25b1aa839d9873be28a472e34b6a07bbe927f833b7e0ae",
   "scripts/laya_ft/common.py": "a7ad1838fce325dbe492343e6a9259532ca9256bacf185ae1ef9bd2b90281703",
   "scripts/laya_ft/fit.py": "1f262ccad009ed828350cbcd39f08512d1c927a3b5acac517bc85e8939434542",
-  "scripts/transcript_export.py": "2136062e0af69815cb793809c76dd0c7ed49348ff89397fa79eacbbdc75e2e40"
+  "scripts/transcript_export.py": "6ad316dccfca01474c7da0f716e4788407dd8e4c2699d2368e41ea96e5195f42"
  },
  "commit": "434b727dfd2b6daa5aa3cf4d638e706f5dfa59cb",
  "commit_time": 1790299156,
