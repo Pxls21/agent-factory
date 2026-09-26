@@ -13,7 +13,8 @@ last_compiled: 2026-09-03
 
 **2026-09-26 02:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, one agent):** VERIFY-SCRUB2 (task #303).
-- **Done:** S0-04 re-accepted (D-094): the owner's tag on cdbc1b8 verifies, committed as `docs/governance/tags/accepted-S0-04.tag`; `check-proof-status.py` rc 0 with no WARNING; all twelve proofs ACCEPTED.
+- **Done:** S0-04 re-accepted (D-094): the owner's tag on cdbc1b8 verifies, committed as `docs/governance/tags/accepted-S0-04.tag`; `check-proof-status.py` rc 0 with no WARNING; all twelve proofs ACCEPTED. Pushed: origin d00455f (after CI #1095).
+- **Next-time-easier:** the governance README carries the bridge form of the tag import; task #306 (import many signed tags at once) registered for the issue #59 re-sign batch.
 - **HELD for the owner:** S1-RATE (task #295), stamping paused.
 
 **2026-09-26 01:4xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
