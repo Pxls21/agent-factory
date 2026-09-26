@@ -34,7 +34,7 @@ repo root; kept: repo files outside `proofs/<id>/` and outside the closure. Ever
 | S0-09 | `docs/adr/0005-foundry-host.md` | none ("an undeclaring proof") | DISCREPANCY D2 |
 | S0-10 | `docs/adr/0006-gbrain-seam.md` | none | DISCREPANCY D3 |
 | S0-11 | none observed; two child kinds unobserved (see the guard's coverage) | - | agrees |
-| S0-12 | `SBOM.yaml`, `upstream.lock.yaml` | none | DISCREPANCY D4 |
+| S0-12 | `SBOM.yaml`, `upstream.lock.yaml` (round 3: also `LICENSE-DECISION.md` and `THIRD-PARTY-NOTICES.md`, tested for existence and never opened, VERIFY F-1, section 16) | none | DISCREPANCY D4 |
 
 Answers to the plan's open questions:
 - Q1 `pins.py` reads no data file. In the S0-05 run the only S0-01 file opened is `pins.py` itself; in the S0-03 run
@@ -411,8 +411,8 @@ re-hashed equal to the bytes every piece of evidence used; the PIN..HEAD boundar
 
 ## 14. Status
 
-DONE for the lane, round 2 included (GATED-PENDING-VERIFY): the change is in the tree, uncommitted; the landing waits
-for #313 and #314 and the section 5 steps. Round 2 is section 15.
+DONE for the lane, rounds 2 and 3 included (GATED-PENDING-VERIFY): the change is in the tree, uncommitted; the landing
+waits for #313 and #314 and the section 5 steps. Round 2 is section 15, round 3 section 16.
 
 ## 15. Round 2: the S0-08 gap closed (2026-09-26 06:0xZ, the coordinator's round-2 request)
 
@@ -495,3 +495,117 @@ NOT done after round 2:
   read data there would red the guard (its control) instead of being attested.
 - N5-N8 unchanged: CI's skips of S0-07 and S0-11 are emulated, not run on CI; the whole `tests/`, `tests/red` and the
   PC suite not run; GitNexus cannot index the suffix-less validator; S0-11 still re-reads its previous result (A2).
+
+## 16. Round 3: F-1 fixed under the amended item 3, and FU-1, FU-2, FU-3, FU-5 (2026-09-26 07:1xZ)
+
+The coordinator's ruling amends contract item 3: a repo file whose existence or type the checker tests while it grades
+is an input, the same as a file it reads. The independent verify (`tasks/briefs/i59/VERIFY-I59-A-report.md` section 9)
+returned F-1: `proofs/S0-12/check_pin_diff.py:23-24` (`sbom-missing-file`) stats `LICENSE-DECISION.md` and
+`THIRD-PARTY-NOTICES.md` and never opens them.
+
+F-1, the fix:
+- `proofs/registry.yaml`: S0-12 declares `["LICENSE-DECISION.md", "SBOM.yaml", "THIRD-PARTY-NOTICES.md", "upstream.lock.yaml"]`.
+- The drift guard's second instrument. Not the static pass the coordinator offered as an example: S0-12's own paths are
+  `(root / name).exists()` with `root` from argv and `name` from a loop over a literal tuple, which no static pass
+  resolves without running the code. The instrument is dynamic instead, in the same hooked processes: `os.stat`,
+  `os.lstat` and `os.access` are wrapped (the wrapper records the path, then calls the original with every argument
+  unchanged; it joins the original's `os.supports_*` sets, so `shutil.rmtree` keeps its fd-based path). That covers
+  `os.path.exists`, `isfile`, `isdir`, `lexists` and `islink`, and pathlib's `exists`, `is_file`, `is_dir`, `stat` and
+  `lstat`, which all look up `os.stat`/`os.lstat` on the module at call time. `_observe` returns the stat'ed files as their own
+  set; `_verdict` fails on a repo file tested outside the proof's directory that the attestation does not cover:
+  `<id>: its checker tests the existence or type of repo files its attestation does not cover; declare them in
+  proofs/registry.yaml extra_attested_inputs: [...]`. Stats of `__pycache__` files are ignored (never attested; S0-11's
+  forbidden-op sweep stats its own cache, then skips it: measured, the one false positive the raw instrument showed).
+- Measured over all twelve proofs with the prototype (every leg, the runner's environment): the only uncovered stat
+  outside a proof's directory is S0-12's two files; no other proof stats a repo file outside its directory that it does
+  not also open. The strace enumeration of the verify agrees (its section 3).
+- What it covers, exactly (the module docstring, FU-5): Python-level stats through the `os` module in every process that
+  loads the instruments. What it cannot see: a child that does not load them (S0-11's isolated children; named in
+  `UNOBSERVED_CHILDREN`) and a non-Python child; a stat below the `os` module (a C extension, the import system's own
+  `posix.stat`); a test of a DIRECTORY or of a file's ABSENCE (neither can be declared); a directory listing; a C-level
+  reader without an `open` audit event (`sqlite3.connect`, `ctypes`).
+- New negative controls: an undeclared existence test of three shapes planted in the scratch S0-09 copy
+  (`Path.exists` on a `parents[2]` expression, `os.path.isfile` on an `os.path.join`, `os.stat` on an `os.path.join`), each
+  red naming exactly its target; the same test declared passes; a stat of a `__pycache__` file stays green.
+- `test_removing_a_file_s0_12_tests_for_invalidates_its_minted_result[LICENSE-DECISION.md|THIRD-PARTY-NOTICES.md]`: this
+  repo's version of the verifier's red test. The canonical runner mints S0-12 in a minimal root; the minted attestation
+  names the file; `S0-12 PRESENT`; the file removed, the checker exits 1 (`sbom-missing-file: <name> does not exist`)
+  and the state is `S0-12 INVALID` with `attestation-mismatch: S0-12 <name>`.
+- The F-1 red, on the round-2 registry (the mirror, the S0-12 line restored to `["SBOM.yaml", "upstream.lock.yaml"]`),
+  pasted: `S0-12: its checker tests the existence or type of repo files its attestation does not cover; declare them in
+  proofs/registry.yaml extra_attested_inputs: ['LICENSE-DECISION.md', 'THIRD-PARTY-NOTICES.md']`.
+
+FU-1: `proofs/schemas/result.schema.json`, the attestation's `description` only. It now names the trust closure, the
+schemas, every file under the proof directory except its own `result.json`/`blocked.json` and `__pycache__`, and the
+declared inputs. Proven: the parsed schema is identical to the old one apart from that one string, and
+`Draft202012Validator.check_schema` passes. The file is in every closure; it rides the planned re-mint of all twelve.
+
+FU-2: `_extra_inputs` refuses a path with a segment over 255 bytes by name, before any filesystem call
+(`registry-schema: <id> extra_attested_inputs <path> has a segment over 255 bytes`). `_is_regular_file` reads any
+`OSError` as not a regular file. Beyond the letter, the same class: the registry-level presence test uses
+`os.path.lexists` (it never raises), since a declared path over PATH_MAX made of short segments passes the name check
+and would crash `Path.exists()` there. Tests: the long segment by its finding; a path over PATH_MAX never crashes
+`_is_regular_file`, the runner (a re-mint with it declared exits 0 and the result stays) or the validator (no stderr;
+`S0-04 INVALID` with `... is not a regular file`).
+
+FU-3: refusal cases for `scripts/validate-ledger` and `proofs/registry.yaml` (N1) and the nested own-directory path
+`proofs/S0-05/fixtures/x.json` (N2); `test_a_result_minted_while_its_declared_input_was_a_symlink_is_invalid` (N5).
+
+Named mutants (a scratch mirror: `git archive 4b5434f` of `proofs`, `scripts`, `tests/conftest.py`, `pyproject.toml`, the
+two ADRs, `SBOM.yaml`, `upstream.lock.yaml`, the two files, `fixtures/s0-06`, plus the four changed files; AF-AP-223
+rules), pasted:
+```
+CONTROL (unmutated, 13 named tests): rc=0 13 passed in 3.56s
+KILLED         M-F1 S0-12 declares its round-2 list (no existence-tested files): 3/3 named FAILED; 3 failed in 0.90s
+KILLED         S1 stat instrument never installed: 3/3 named FAILED; 3 failed in 0.62s
+KILLED         S2 stat rule off: 3/3 named FAILED; 3 failed in 0.62s
+KILLED         S3 __pycache__ stat exemption removed: 1/1 named FAILED; 1 failed in 0.29s
+KILLED         L1 long-segment refusal removed: 1/1 named FAILED; 1 failed in 0.21s
+KILLED         L2 no OSError guard in _is_regular_file: 1/1 named FAILED; 1 failed in 0.11s
+KILLED         L3 registry-level presence test back to exists() or is_symlink(): 1/1 named FAILED; 1 failed in 0.62s
+KILLED         N1 closure refusal covers scripts/proof-runner only: 2/2 named FAILED; 2 failed in 0.33s
+KILLED         N2 own-directory refusal covers direct children only: 1/1 named FAILED; 1 failed in 0.20s
+KILLED         N5 verdict binding tests existence only: 1/1 named FAILED; 1 failed in 0.27s
+EXPECTED=10 KILLED=10 SURVIVED=0 INVALID=0
+```
+N1, N2 and N5 are the verify's surviving mutants in its own shapes. Two round-1 guard mutants re-run over the
+restructured `_verdict`: `CONTROL (unmutated, 4 named tests): rc=0 4 passed in 0.92s`, `G2 outside rule off` and
+`G5 inside rule off` KILLED, `EXPECTED=2 KILLED=2 SURVIVED=0 INVALID=0`.
+
+Gates (pasted):
+```
+tests/test_attested_inputs.py (1 files set=96d60da64331)
+run 1: pytest-exit: 0  pytest-summary: 78 passed in 30.80s
+run 2: pytest-exit: 0  pytest-summary: 78 passed in 31.06s
+floor (13 files set=07f9aa59b430), once
+pytest-exit: 1  pytest-summary: 5 failed, 1522 passed in 504.44s (0:08:24)
+```
+The same five stale reds as rounds 1 and 2, at the same lines (`test_validate_ledger.py` :573 and :592,
+`test_proof_status.py` :95, `test_s0_11_eval_hardening.py` :153 and :197). No test is newly red. The new S0-12
+staleness shows inside them: S0-12's first mismatched key is now `LICENSE-DECISION.md` (a key the committed S0-12 result
+lacks). `pyflakes` rc 0 on the changed Python; the schema parses; the separator grep prints 0 for
+`scripts/validate-ledger`, `proofs/registry.yaml`, `tests/test_attested_inputs.py`, `proofs/schemas/result.schema.json`,
+`tests/test_validate_ledger.py` and this report. The screen: round 1's validator hits only; in the tests the hook's two
+deliberate excepts (AP-70), and two false positives, AP-66 on the `setattr(os, ...)` inside the `HOOK` source string
+(it runs only in the observed child processes, never in pytest's) and AF-AP-80 on the F-1 test's identity assertion over
+the minted `result.json` (the behavior, INVALID after removal, is asserted in the same test).
+
+The landing (dry run where this round changes it): S0-12 re-minted in the mirror, `proof-runner run --proof S0-12
+--venue sandbox --root .` rc 0; attested 14 (the committed PIN result) -> 18, the four declared files among them;
+`S0-12 PRESENT`; each existence-tested file removed in turn -> `S0-12 INVALID` with `attestation-mismatch: S0-12 <name>`
+and `... is not a regular file`; restored -> PRESENT. The landing command list (section 5) is unchanged: the schema
+edit and the S0-12 declaration ride the same re-mint of all twelve. Mirror removed.
+
+Files this round (measured, `git diff --numstat` at the working tree): `scripts/validate-ledger` +118/-13,
+`proofs/registry.yaml` +7/-7, `proofs/schemas/result.schema.json` +1/-1, `tests/test_validate_ledger.py` +7/-1 (unchanged
+since round 1); `tests/test_attested_inputs.py` 816 lines, 78 tests.
+
+NOT done after round 3:
+- No `result.json`, ledger, tag object or task-ledger line written in the tree. No patch file.
+- FU-1's second half: the ATTESTED INPUTS line in `.claude/skills/env-tool-quirks/SKILL.md:98` still lists the closure
+  and "the proof's own files" only. Outside my boundary.
+- FU-4 (CI's `-rs`), FU-6 (S0-07's Fubuki checkout, task #320) and the verify's INFO items: not in this round, per the
+  coordinator.
+- The guard's blind spots, named in its docstring (above). CI's skips of S0-07 and S0-11 are emulated, not run on CI.
+- Not run: the whole `tests/`, `tests/red`, the PC suite; GitNexus cannot index the suffix-less validator.
+- S0-11 still re-reads its previous result (A2).

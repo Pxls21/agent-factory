@@ -1,5 +1,5 @@
 diff --git a/proofs/registry.yaml b/proofs/registry.yaml
-index 7659e4b..3a58348 100644
+index 7659e4b..697e609 100644
 --- a/proofs/registry.yaml
 +++ b/proofs/registry.yaml
 @@ -10,17 +10,17 @@
@@ -23,16 +23,32 @@ index 7659e4b..3a58348 100644
 +  {"proof_id": "S0-10", "title": "GBrain seam decision", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["docs/adr/0006-gbrain-seam.md"]},
    {"proof_id": "S0-11", "title": "Evaluation hardening", "classification": "execution_proof", "wave": 3, "spike_dependencies": [], "required_negative_controls": 1},
 -  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1}
-+  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["SBOM.yaml", "upstream.lock.yaml"]}
++  {"proof_id": "S0-12", "title": "License and release policy", "classification": "conformance_checked_decision", "wave": 1, "spike_dependencies": [], "required_negative_controls": 1, "extra_attested_inputs": ["LICENSE-DECISION.md", "SBOM.yaml", "THIRD-PARTY-NOTICES.md", "upstream.lock.yaml"]}
  ],
  
  # COORDINATOR DECISION — VOCABULARY (2026-09-03): normalize blocked_capability to blocked_host when reading spike effects and mapping rules only; proof artifacts must use the canonical four-class enum.
+diff --git a/proofs/schemas/result.schema.json b/proofs/schemas/result.schema.json
+index c03733e..70c72ae 100644
+--- a/proofs/schemas/result.schema.json
++++ b/proofs/schemas/result.schema.json
+@@ -30,7 +30,7 @@
+     },
+     "attestation": {
+       "type": "object",
+-      "description": "Binds this artifact to the exact proof inputs that produced it: a map of every input file under the proof directory (checker, spec, fixtures, design) to its sha256. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker with a stale green artifact no longer validates.",
++      "description": "Binds this artifact to every input that produced or checks it: a map of each input file to its sha256, over the trust closure (scripts/proof-runner, scripts/validate-ledger, proofs/registry.yaml), the JSON schemas in proofs/schemas, every file under the proof directory (checker, spec, fixtures, design) except its own result.json and blocked.json and __pycache__, and the repo files outside it that the proof's registry entry declares in extra_attested_inputs. The validator recomputes it from the tree and fails on any mismatch, so a neutered checker, a changed input or a mutated runner, validator or registry with a stale green artifact no longer validates.",
+       "minProperties": 1,
+       "additionalProperties": {"$ref": "#/$defs/sha256"}
+     },
 diff --git a/scripts/validate-ledger b/scripts/validate-ledger
-index 2210fbf..c9efe89 100755
+index 2210fbf..1f14db7 100755
 --- a/scripts/validate-ledger
 +++ b/scripts/validate-ledger
-@@ -5,7 +5,7 @@ import hashlib
+@@ -3,9 +3,10 @@
+ import argparse
+ import hashlib
  import json
++import os
  import re
  import sys
 -from pathlib import Path
@@ -40,7 +56,7 @@ index 2210fbf..c9efe89 100755
  
  import jsonschema
  
-@@ -50,22 +50,103 @@ def canonical_digest(value):
+@@ -50,22 +51,109 @@ def canonical_digest(value):
  
  
  ATTESTATION_CLOSURE = ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml")
@@ -81,6 +97,8 @@ index 2210fbf..c9efe89 100755
 +            problem = "has a .. segment"
 +        elif any(character in item for character in "*?["):  # glob.has_magic's set
 +            problem = "has a glob character"
++        elif any(len(part.encode("utf-8", "surrogatepass")) > 255 for part in parts):
++            problem = "has a segment over 255 bytes"  # NAME_MAX: a stat would raise ENAMETOOLONG (VERIFY-I59-A FU-2)
 +        elif str(PurePosixPath(item)) != item:
 +            problem = "is not in canonical form"
 +        elif item in paths:
@@ -99,10 +117,14 @@ index 2210fbf..c9efe89 100755
 +
 +def _is_regular_file(root, rel):
 +    """A regular file reached with no symlink anywhere below the root (a symlink at any step resolves elsewhere), so
-+    the bytes hashed are the tree's own."""
++    the bytes hashed are the tree's own. A path the filesystem refuses (ENAMETOOLONG, EACCES, ...) is not one: an
++    OSError here would crash the validator and, through the runner, delete a minted result (VERIFY-I59-A FU-2)."""
 +    root = Path(root)
 +    path = root / rel
-+    return path.is_file() and path.resolve() == root.resolve() / rel
++    try:
++        return path.is_file() and path.resolve() == root.resolve() / rel
++    except OSError:
++        return False
 +
 +
 +def _declared_inputs(root, proof_id):
@@ -148,7 +170,7 @@ index 2210fbf..c9efe89 100755
      paths = [root / rel for rel in ATTESTATION_CLOSURE]
      paths += sorted((root / "proofs" / "schemas").glob("*.json"))
      paths += sorted((root / "proofs" / proof_id).rglob("*"))
-@@ -73,19 +154,18 @@ def proof_attestation(root, proof_id):
+@@ -73,19 +161,18 @@ def proof_attestation(root, proof_id):
      for path in paths:
          if not path.is_file() or "__pycache__" in path.parts:
              continue
@@ -173,7 +195,7 @@ index 2210fbf..c9efe89 100755
      except Exception as error:
          findings.add(f"registry-schema: {error}")
          return None
-@@ -176,8 +256,9 @@ def _registry(root, findings):
+@@ -176,8 +263,9 @@ def _registry(root, findings):
              # `"classification" not in missing` guard hid the siblings behind that one finding)
              findings.add(f"registry-schema: {proof_id} missing {','.join(missing)}")
          # A key nobody reads must not exist (AF-AP-66, 2026-09-08: `assertion_count` sat in every row, validated for
@@ -185,7 +207,7 @@ index 2210fbf..c9efe89 100755
          if unknown:
              findings.add(f"registry-schema: {proof_id} unknown key(s) {','.join(unknown)} — every registry key must bind a gate")
          if not isinstance(proof_id, str) or not PROOF_ID_RE.fullmatch(proof_id):
-@@ -204,6 +285,16 @@ def _registry(root, findings):
+@@ -204,6 +292,16 @@ def _registry(root, findings):
              blocked_required = {"owner", "unblock_condition", "marker_path"}
              if not isinstance(blocked, dict) or set(blocked) != blocked_required:
                  findings.add(f"registry-schema: {proof_id} blocked metadata invalid")
@@ -197,12 +219,12 @@ index 2210fbf..c9efe89 100755
 +            findings.add(problem)
 +        for rel in extra_paths:
 +            target = root / rel
-+            if (target.exists() or target.is_symlink()) and not _is_regular_file(root, rel):
++            if os.path.lexists(target) and not _is_regular_file(root, rel):  # lexists never raises
 +                findings.add(f"registry-schema: {proof_id} {EXTRA_INPUTS_KEY} {rel} is not a regular file")
      expected_ids = {f"S0-{index:02d}" for index in range(1, 13)}
      if seen != expected_ids:
          findings.add("registry-schema: proof ids must be S0-01 through S0-12")
-@@ -277,6 +368,13 @@ def _artifact_states(root, registry, schemas, findings):
+@@ -277,6 +375,13 @@ def _artifact_states(root, registry, schemas, findings):
                      )
                      findings.add(f"attestation-mismatch: {proof_id} {changed[0] if changed else ''}".rstrip())
                      valid = False
@@ -244,10 +266,10 @@ index 1826ddf..aa70a61 100644
      assert "assertion_count" not in (ROOT / "proofs" / "registry.yaml").read_text()
 diff --git a/tests/test_attested_inputs.py b/tests/test_attested_inputs.py
 new file mode 100644
-index 0000000..87967ae
+index 0000000..ccc3ffe
 --- /dev/null
 +++ b/tests/test_attested_inputs.py
-@@ -0,0 +1,638 @@
+@@ -0,0 +1,816 @@
 +"""I59-A (task #312, issue #59 F-1): every repo file a proof's checker reads while it grades is attested.
 +
 +A proof's entry in `proofs/registry.yaml` may carry `extra_attested_inputs`: repo files OUTSIDE its directory that its
@@ -257,16 +279,25 @@ index 0000000..87967ae
 +1. the registry key: each refusal by its exact finding (negative controls first), then the accepted declaration;
 +2. the attestation: a declared file hashed under its root-relative path, a proof's key set otherwise unchanged, a
 +   changed, deleted or never-present declared file INVALID, and the canonical runner recording the declaration;
-+3. the DRIFT GUARD: every proof's spec legs run as scripts/proof-runner runs them, with an audit hook loaded, and every
-+   repo file a leg's processes open must be in that proof's attestation. A path built at run time is caught
-+   because the reads are observed, not parsed. Its negative controls plant one undeclared read of each shape in a
-+   scratch copy of S0-09.
++3. the DRIFT GUARD: every proof's spec legs run as scripts/proof-runner runs them, with two instruments loaded in their
++   Python processes, and every repo file a leg's processes open (the audit hook's `open` events) or test for existence
++   or type (the second instrument: `os.stat`, `os.lstat` and `os.access` wrapped, so `os.path.exists/isfile/isdir` and
++   `Path.exists/is_file/is_dir/stat` are seen) must be in that proof's attestation. A path built at run time is caught
++   because the calls are observed, not parsed. Its negative controls plant, in a scratch copy of S0-09, one undeclared
++   read of each shape and one undeclared existence test of each shape. (VERIFY-I59-A F-1: S0-12 tests two repo files
++   for existence and never opens them; the contract amendment counts such a file as an input.)
 +
-+What the guard cannot see (named here, not hidden): a child process that does not load the hook (one started with an
-+`env=` that drops PYTHONPATH, or with -I/-S/-E) and a non-Python child; a verdict that rests on a directory listing or a
-+stat instead of a read. A checker that starts a child process must be named in UNOBSERVED_CHILDREN with its reason, or
-+the guard fails. A proof whose leg defers (exit 2, the runner's capability-unavailable signal) or grades a path outside
-+the repo that this venue lacks is SKIPPED by name: its reads are not observed there.
++What the guard cannot see (named here, not hidden):
++- a child process that does not load the instruments (one started with an `env=` that drops PYTHONPATH, or with
++  -I/-S/-E) and a non-Python child: a checker that starts a child process must be named in UNOBSERVED_CHILDREN with its
++  reason, or the guard fails;
++- a stat made below the `os` module (a C extension, or the import system's own `posix.stat`); a test of a DIRECTORY or
++  of a file's ABSENCE (neither can be declared: a declaration names a regular file that exists);
++- a directory listing (`os.listdir`, `os.scandir`, `glob`, `Path.iterdir`);
++- a C-level reader that raises no `open` audit event (`sqlite3.connect`, a `ctypes` `fopen`); no checker uses one today.
++A stat of a `__pycache__` file is ignored (bytecode caches are never attested; S0-11's sweep stats its own, then skips
++it). A proof whose leg defers (exit 2, the runner's capability-unavailable signal) or grades a path outside the repo that
++this venue lacks is SKIPPED by name: its reads are not observed there.
 +"""
 +import hashlib
 +import importlib.machinery
@@ -286,6 +317,8 @@ index 0000000..87967ae
 +RUNNER = ROOT / "scripts" / "proof-runner"
 +PROOF_IDS = [f"S0-{index:02d}" for index in range(1, 13)]
 +KEY = "extra_attested_inputs"
++LONG_SEGMENT = "docs/" + "a" * 256 + ".md"            # one segment over NAME_MAX (255 bytes)
++LONG_PATH = "/".join(["d" * 200] * 21) + "/input.md"  # every segment short, the whole path over PATH_MAX (4096 bytes)
 +# scripts/proof-runner `_clean_env`: a leg sees these from the parent, plus its spec's own env.
 +PASSTHROUGH_ENV = ("PATH", "HOME", "LANG")
 +# A checker that starts a child process the hook cannot reach, with the reason. Only S0-11: its rubric children run
@@ -330,8 +363,29 @@ index 0000000..87967ae
 +        pass
 +
 +
++def _observed(name):
++    """Wrap os.<name> (stat, lstat, access): record the path, then call the original, unchanged. A module attribute is
++    what os.path.exists/isfile/isdir and pathlib's exists/is_file/is_dir/stat look up at call time."""
++    real = getattr(os, name)
++
++    def wrapper(path, *args, **kwargs):
++        try:
++            if kwargs.get("dir_fd") is None and isinstance(path, (str, bytes, os.PathLike)):
++                _emit("stat", os.path.abspath(os.fsdecode(path)))
++        except Exception:
++            pass
++        return real(path, *args, **kwargs)
++
++    for group in (os.supports_dir_fd, os.supports_fd, os.supports_follow_symlinks, os.supports_effective_ids):
++        if real in group:  # keep `os.stat in os.supports_dir_fd` true (shutil.rmtree decides its path on it)
++            group.add(wrapper)
++    return wrapper
++
++
 +if _OUT is not None:
 +    sys.addaudithook(_hook)
++    for _name in ("stat", "lstat", "access"):
++        setattr(os, _name, _observed(_name))
 +'''
 +
 +
@@ -425,12 +479,17 @@ index 0000000..87967ae
 +        (["docs//a.md"], "docs//a.md is not in canonical form"),
 +        (["upstream.lock.yaml", "upstream.lock.yaml"], "upstream.lock.yaml is a duplicate"),
 +        (["proofs/S0-05/spec.json"], "proofs/S0-05/spec.json is inside proofs/S0-05/ (already attested)"),
++        (["proofs/S0-05/fixtures/x.json"], "proofs/S0-05/fixtures/x.json is inside proofs/S0-05/ (already attested)"),
 +        (["scripts/proof-runner"], "scripts/proof-runner is in the attestation closure (already attested)"),
++        (["scripts/validate-ledger"], "scripts/validate-ledger is in the attestation closure (already attested)"),
++        (["proofs/registry.yaml"], "proofs/registry.yaml is in the attestation closure (already attested)"),
++        ([LONG_SEGMENT], f"{LONG_SEGMENT} has a segment over 255 bytes"),
 +        (["proofs/schemas/result.schema.json"],
 +         "proofs/schemas/result.schema.json is in the attestation closure (already attested)"),
 +    ],
 +    ids=["string", "empty", "non-string", "absolute", "dotdot", "star", "question", "bracket", "dot-segment",
-+         "doubled-slash", "duplicate", "own-directory", "closure", "schema"],
++         "doubled-slash", "duplicate", "own-directory", "own-directory-nested", "closure", "closure-validator",
++         "closure-registry", "long-segment", "schema"],
 +)
 +def test_the_registry_refuses_a_malformed_declaration_by_name(tmp_path, value, finding):
 +    root = _copy_contract(tmp_path)
@@ -622,6 +681,84 @@ index 0000000..87967ae
 +    assert "attestation-mismatch: S0-04 proofs/S0-04/fixtures/marker/blocked.json" in after, after
 +
 +
++@pytest.mark.parametrize("name", ["LICENSE-DECISION.md", "THIRD-PARTY-NOTICES.md"])
++def test_removing_a_file_s0_12_tests_for_invalidates_its_minted_result(tmp_path, name):
++    """VERIFY-I59-A F-1: S0-12's checker requires LICENSE-DECISION.md and THIRD-PARTY-NOTICES.md to EXIST
++    (proofs/S0-12/check_pin_diff.py:23-24) and never opens them, so its verdict depends on them and they are declared.
++    Minted by the canonical runner in a minimal root, S0-12 is PRESENT and attests both; with either removed its checker
++    fails, so the minted result must not stay PRESENT."""
++    root = tmp_path / "repo"
++    for rel in ("scripts/proof-runner", "scripts/validate-ledger", "proofs/registry.yaml", "SBOM.yaml",
++                "upstream.lock.yaml", "LICENSE-DECISION.md", "THIRD-PARTY-NOTICES.md"):
++        (root / rel).parent.mkdir(parents=True, exist_ok=True)
++        shutil.copy2(ROOT / rel, root / rel)
++    shutil.copytree(ROOT / "proofs" / "schemas", root / "proofs" / "schemas")
++    shutil.copytree(ROOT / "proofs" / "S0-12", root / "proofs" / "S0-12",
++                    ignore=shutil.ignore_patterns("__pycache__", "result.json"))
++    minted = subprocess.run([sys.executable, str(root / "scripts" / "proof-runner"), "run", "--proof", "S0-12",
++                             "--venue", "sandbox", "--root", str(root)], capture_output=True, text=True, timeout=120)
++    assert minted.returncode == 0, minted.stdout + minted.stderr
++    assert name in json.loads((root / "proofs" / "S0-12" / "result.json").read_text())["attestation"]
++    assert "S0-12 PRESENT" in _integrity(root).stdout.splitlines()
++
++    (root / name).unlink()
++    leg = subprocess.run([sys.executable, "proofs/S0-12/check_pin_diff.py", "."], cwd=root, capture_output=True,
++                         text=True, timeout=60)
++    after = _integrity(root).stdout.splitlines()
++
++    assert leg.returncode == 1 and f"sbom-missing-file: {name} does not exist" in leg.stdout, leg.stdout
++    assert "S0-12 INVALID" in after, after
++    assert f"attestation-mismatch: S0-12 {name}" in after, after
++
++
++def test_a_declared_path_the_filesystem_refuses_never_crashes_the_validator_or_the_runner(tmp_path):
++    """VERIFY-I59-A FU-2: a declared path the filesystem refuses must not crash. A segment over 255 bytes is refused by
++    name (the table above); a path over PATH_MAX made of short segments still reaches the filesystem, where
++    _is_regular_file reads its OSError (ENAMETOOLONG) as not a regular file. Before the fix the OSError crashed the
++    validator and, through the runner, deleted a minted result."""
++    try:
++        assert _load_validator()._is_regular_file(tmp_path, LONG_PATH) is False
++    except OSError as error:
++        pytest.fail(f"_is_regular_file raised {error!r}")
++    root = _copy_contract(tmp_path)
++    spec = {"proof_id": "S0-04", "legs": [
++        {"leg": "negative", "cmd": [sys.executable, "-c", "import sys; print('denied'); raise SystemExit(1)"],
++         "cwd": ".", "timeout_s": 10, "expect": {"exit_code": 1, "failure_reason": "denied"}},
++        {"leg": "positive", "cmd": [sys.executable, "-c", "print('ok')"], "cwd": ".", "timeout_s": 10,
++         "expect": {"exit_code": 0}},
++    ]}
++    (root / "proofs" / "S0-04").mkdir()
++    (root / "proofs" / "S0-04" / "spec.json").write_text(json.dumps(spec) + "\n")
++    runner = [sys.executable, str(RUNNER), "run", "--proof", "S0-04", "--venue", "sandbox", "--root", str(root)]
++    assert subprocess.run(runner, capture_output=True, text=True, timeout=60).returncode == 0
++    _declare(root, "S0-04", [LONG_PATH])
++
++    again = subprocess.run(runner, capture_output=True, text=True, timeout=60)
++    completed = _integrity(root)
++
++    assert again.returncode == 0 and (root / "proofs" / "S0-04" / "result.json").is_file(), again.stderr[-300:]
++    assert completed.stderr == "", completed.stderr[-300:]
++    assert "S0-04 INVALID" in completed.stdout.splitlines()
++    assert f"registry-schema: S0-04 {KEY} {LONG_PATH} is not a regular file" in completed.stdout.splitlines()
++
++
++def test_a_result_minted_while_its_declared_input_was_a_symlink_is_invalid(tmp_path):
++    """VERIFY-I59-A FU-3 (N5): a declared symlink is never hashed, so a result minted over one records no key for it and
++    the recorded-vs-current comparison agrees; the verdict binding (a regular file, not merely an existing path) refuses
++    it. The registry-level finding alone would leave the state PRESENT."""
++    root = _copy_contract(tmp_path)
++    (root / "docs").mkdir()
++    (root / "docs" / "real.md").write_text("real\n")
++    (root / "docs" / "input.md").symlink_to("real.md")
++    _declare(root, "S0-05", ["docs/input.md"])
++    assert "docs/input.md" not in _mint(root, "S0-05")["attestation"]
++
++    after = _integrity(root).stdout.splitlines()
++
++    assert "S0-05 INVALID" in after, after
++    assert f"registry-schema: S0-05 {KEY} docs/input.md is not a regular file" in after, after
++
++
 +def test_a_declared_symlink_is_never_hashed(tmp_path):
 +    """The attestation reads no file through a symlink: a declared link to a file outside the root is not hashed (the
 +    registry check refuses it by name, test above), so the validator never reads outside the tree it attests."""
@@ -666,14 +803,15 @@ index 0000000..87967ae
 +def _observe(root, proof_id, scratch):
 +    """Run every leg of the proof's spec as scripts/proof-runner runs it (the literal command, the leg's cwd, the
 +    runner's clean environment and the leg's env) with the audit hook loaded and a fresh, empty bytecode prefix per leg,
-+    so every import opens its source, never a .pyc left in the tree. Returns (exits, reads, spawns): each leg's (index, exit,
-+    expected, output tail); the root-relative files any hooked process opened; each process start."""
++    so every import opens its source, never a .pyc left in the tree. Returns (exits, reads, stats, spawns): each leg's
++    (index, exit, expected, output tail); the root-relative files any hooked process opened; the ones it tested for
++    existence or type; each process start."""
 +    hook_dir = scratch / "hook"
 +    hook_dir.mkdir(parents=True, exist_ok=True)
 +    (hook_dir / "sitecustomize.py").write_text(HOOK)
 +    real_root = os.path.realpath(root)
 +    spec = json.loads((root / "proofs" / proof_id / "spec.json").read_text())
-+    exits, reads, spawns = [], set(), []
++    exits, reads, stats, spawns = [], set(), set(), []
 +    for index, leg in enumerate(spec["legs"]):
 +        log = scratch / f"leg{index}.jsonl"
 +        environment = {name: os.environ[name] for name in PASSTHROUGH_ENV if name in os.environ}
@@ -692,17 +830,18 @@ index 0000000..87967ae
 +                continue
 +            real = os.path.realpath(value)
 +            if real.startswith(real_root + os.sep) and os.path.isfile(real):
-+                reads.add(Path(os.path.relpath(real, real_root)).as_posix())
-+    return exits, reads, spawns
++                (stats if kind == "stat" else reads).add(Path(os.path.relpath(real, real_root)).as_posix())
++    return exits, reads, stats, spawns
 +
 +
 +def _verdict(root, proof_id, observation):
-+    """The guard: every leg graded (its spec's exit code), the hook saw each leg's own script, every repo file read
-+    outside the proof's directory is in its attestation (the closure or a declaration), every file read inside it is too,
-+    and no child process escaped unnamed. The proof's own two artifacts are
-+    exempt: a re-mint may read the result it replaces (S0-11's forbidden-op sweep reads every non-.md file of its
-+    directory), and an artifact cannot attest itself. An AssertionError names what is wrong."""
-+    exits, reads, spawns = observation
++    """The guard: every leg graded (its spec's exit code), the hook saw each leg's own script, every repo file read or
++    tested for existence outside the proof's directory is in its attestation (the closure or a declaration), every such
++    file inside it is too, and no child process escaped unnamed. The proof's own two artifacts are exempt: a re-mint may
++    read the result it replaces (S0-11's forbidden-op sweep reads every non-.md file of its directory), and an artifact
++    cannot attest itself. A stat of a __pycache__ file is ignored: bytecode caches are never attested (the same sweep
++    stats its own cache, then skips it). An AssertionError names what is wrong."""
++    exits, reads, stats, spawns = observation
 +    wrong = [(index, got, want, tail) for index, got, want, tail in exits if got != want]
 +    assert not wrong, f"{proof_id}: leg(s) did not grade (index, exit, expected, output tail): {wrong}"
 +    spec = json.loads((root / "proofs" / proof_id / "spec.json").read_text())
@@ -710,11 +849,16 @@ index 0000000..87967ae
 +               for leg in spec["legs"] if len(leg["cmd"]) > 1 and leg["cmd"][1].endswith(".py")}
 +    assert scripts <= reads, f"{proof_id}: the hook did not observe the legs' own scripts {sorted(scripts - reads)}"
 +    own = f"proofs/{proof_id}/"
-+    uncovered = reads - set(_load_validator().proof_attestation(root, proof_id)) - {own + "result.json", own + "blocked.json"}
++    covered = set(_load_validator().proof_attestation(root, proof_id)) | {own + "result.json", own + "blocked.json"}
++    uncovered = reads - covered
++    tested = {path for path in stats - covered if "__pycache__" not in path.split("/")}
 +    outside = sorted(path for path in uncovered if not path.startswith(own))
 +    assert not outside, (f"{proof_id}: its checker reads repo files its attestation does not cover; declare them in "
 +                         f"proofs/registry.yaml {KEY}: {outside}")
-+    inside = sorted(path for path in uncovered if path.startswith(own))
++    outside_tested = sorted(path for path in tested if not path.startswith(own))
++    assert not outside_tested, (f"{proof_id}: its checker tests the existence or type of repo files its attestation does "
++                                f"not cover; declare them in proofs/registry.yaml {KEY}: {outside_tested}")
++    inside = sorted(path for path in uncovered | tested if path.startswith(own))
 +    assert not inside, f"{proof_id}: its checker reads files inside its directory that its attestation does not cover: {inside}"
 +    if proof_id not in UNOBSERVED_CHILDREN:
 +        assert not spawns, (f"{proof_id}: its checker starts child processes the hook may not reach; observe them or "
@@ -772,6 +916,28 @@ index 0000000..87967ae
 +}
 +
 +
++PLANTED_STATS = {
++    # Path.exists on a Path expression built at run time (S0-12's shape, VERIFY-I59-A F-1)
++    "pathlib_exists": (
++        "docs/stat_j.md",
++        "from pathlib import Path as _Path\n"
++        "_Path(__file__).resolve().parents[2].joinpath('docs', 'stat_j.md').exists()\n",
++    ),
++    # os.path.isfile on an os.path.join
++    "os_path_isfile": (
++        "docs/stat_k.md",
++        "import os as _os\n"
++        "_os.path.isfile(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'docs', 'stat_k.md'))\n",
++    ),
++    # os.stat on an os.path.join
++    "os_stat": (
++        "lib/stat_l.txt",
++        "import os as _os\n"
++        "_os.stat(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'lib', 'stat_l.txt'))\n",
++    ),
++}
++
++
 +def _scratch_s0_09(tmp_path, planted_code=None, declare=()):
 +    """A scratch copy of S0-09 (its directory, the files it declares, the registry) whose checker runs `planted_code`
 +    at import time, before it grades; every PLANTED target exists in it. `declare` adds paths to S0-09's declaration."""
@@ -782,7 +948,7 @@ index 0000000..87967ae
 +    for rel in next(p for p in _load_registry(ROOT)["proofs"] if p["proof_id"] == "S0-09").get(KEY, []):
 +        (root / rel).parent.mkdir(parents=True, exist_ok=True)
 +        shutil.copy(ROOT / rel, root / rel)
-+    for rel, _code in PLANTED.values():
++    for rel, _code in [*PLANTED.values(), *PLANTED_STATS.values()]:
 +        (root / rel).parent.mkdir(parents=True, exist_ok=True)
 +        (root / rel).write_text("VALUE = 1\n")
 +        if rel.endswith(".py"):  # a valid .pyc beside it, as the live tree has: only the empty prefix makes the source read
@@ -825,6 +991,40 @@ index 0000000..87967ae
 +    the control above reds is the missing declaration."""
 +    target, code = PLANTED[shape]
 +    root = _scratch_s0_09(tmp_path, code, declare=[target])
++    _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++
++@pytest.mark.parametrize("shape", sorted(PLANTED_STATS))
++def test_the_guard_reds_on_an_undeclared_existence_test(tmp_path, shape):
++    """NEGATIVE CONTROL of the second instrument: one undeclared existence or type test of each shape, its path built at
++    run time, on a file the checker never opens (VERIFY-I59-A F-1's class)."""
++    target, code = PLANTED_STATS[shape]
++    root = _scratch_s0_09(tmp_path, code)
++
++    with pytest.raises(AssertionError) as caught:
++        _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++    assert "tests the existence or type of repo files" in str(caught.value), str(caught.value)
++    assert f"{KEY}: {[target]}" in str(caught.value), str(caught.value)
++
++
++@pytest.mark.parametrize("shape", sorted(PLANTED_STATS))
++def test_the_guard_passes_the_same_existence_test_once_declared(tmp_path, shape):
++    """The pair: the same planted existence test, declared, is covered, so the only reason the control above reds is
++    the missing declaration."""
++    target, code = PLANTED_STATS[shape]
++    root = _scratch_s0_09(tmp_path, code, declare=[target])
++    _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
++
++
++def test_the_guard_ignores_a_stat_of_a_bytecode_cache(tmp_path):
++    """A POSITIVE control: a checker that stats a __pycache__ file inside its directory (S0-11's sweep stats every file,
++    then skips the caches) depends on no attested input, and the guard stays green."""
++    code = ("from pathlib import Path as _Path\n"
++            "_Path(__file__).resolve().parent.joinpath('__pycache__', 'cached.cpython-311.pyc').is_file()\n")
++    root = _scratch_s0_09(tmp_path, code)
++    (root / "proofs" / "S0-09" / "__pycache__").mkdir()
++    (root / "proofs" / "S0-09" / "__pycache__" / "cached.cpython-311.pyc").write_bytes(b"not bytecode\n")
 +    _verdict(root, "S0-09", _observe(root, "S0-09", tmp_path / "observe"))
 +
 +
@@ -871,7 +1071,7 @@ index 0000000..87967ae
 +    """A hook that never loaded (an environment that dropped it) observes no read at all, so every coverage check would
 +    pass over an empty set: the guard's own-script check refuses that observation."""
 +    with pytest.raises(AssertionError) as caught:
-+        _verdict(ROOT, "S0-09", ([(0, 0, 0, ""), (1, 1, 1, "")], set(), []))
++        _verdict(ROOT, "S0-09", ([(0, 0, 0, ""), (1, 1, 1, "")], set(), set(), []))
 +
 +    assert "S0-09: the hook did not observe the legs' own scripts ['proofs/S0-09/check_conformance.py']" \
 +        in str(caught.value), str(caught.value)
@@ -884,5 +1084,5 @@ index 0000000..87967ae
 +    spec = {"legs": [{"cmd": ["python3", "proofs/S0-07/check.py", str(present)]},
 +                     {"cmd": ["python3", "relative/missing.py", str(tmp_path / "absent")]}]}
 +    assert _absent_outside_paths(spec) == [(1, str(tmp_path / "absent"))]
-+    assert _deferred_legs(([(0, 2, 0, "deferred"), (1, 1, 0, "failed"), (2, 2, 2, "expected two")], set(), [])) \
++    assert _deferred_legs(([(0, 2, 0, "deferred"), (1, 1, 0, "failed"), (2, 2, 2, "expected two")], set(), set(), [])) \
 +        == [(0, "deferred")]
