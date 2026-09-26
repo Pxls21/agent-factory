@@ -11,6 +11,11 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 00:1xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **RUNNING (sandbox, one agent):** SCRUB2 (task #292 widened), the scrubber hardening.
+- **HELD for the owner:** S1-RATE (task #295). Built and tested, then stopped by the API's content safeguard (`reasoning_extraction`) while re-reading its report. Stamping is paused (`.jev/s1-rate-off`); the code is uncommitted in the tree (declared in `.lanes-live`) with a scratch backup. The owner decides whether the rating loop continues.
+- **Waiting on the owner:** the S0-04 re-sign.
+
 **2026-09-25 23:2xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **RUNNING (sandbox, two agents):** S1-RATE (task #295), the injection score line (`hook_context.py` stamps each injection; the agent begins its next text with `S1-RATE <id> rel=<0-3> use=<0-3>`; `scripts/s1_scores.py` extracts; it moves the live wrapper in with one `mv`, off switch `.jev/s1-rate-off`); SCRUB2 (task #292 widened), the scrubber hardening from VERIFY-SCRUB1 (it reads no real secret; its candidate digests get the coordinator's known-value check at landing).
 - **Waiting on the owner:** the S0-04 re-sign (command handed over 23:0xZ).
