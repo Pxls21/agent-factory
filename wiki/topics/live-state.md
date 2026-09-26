@@ -11,6 +11,12 @@ last_compiled: 2026-09-03
 
 ## Active lanes
 
+**2026-09-26 10:3xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
+- **The issue #59 landing is committed LOCALLY, not pushed:** branch `i59-landing`, worktree `/home/user/i59-landing` (the four patches, FU-4, the env-tool-quirks line, all twelve re-minted: integrity 12 PRESENT, stage1-gate rc 0; the twelve anchors PENDING, check-proof-status twelve WARNING lines). The full suite runs on it (as root); then VERIFY-I59-BCE and VERIFY-I59-LANDING (briefs in `tasks/briefs/i59/`); then the push and the owner's re-sign of all twelve.
+- **RUNNING (sandbox):** SCRUB2-R1 (task #321); its files are in `.lanes-live`.
+- **RUNNING (PC, local route):** the SYNTH1 labeler alone (task #308).
+- **CI:** run for origin eb48880 (the #1105 fix) in progress.
+
 **2026-09-26 09:5xZ — WHAT IS LIVE NOW (supersedes the block below for the live set).**
 - **The issue #59 batch is built:** I59-A, I59-C and I59-E are held as patches; I59-B is home and its coordinator gate re-run is in progress (then `tasks/briefs/i59/I59-B.patch`). Its census driver ran on the PC: 6 right, 2 fail-closed, 0 wrong. Next: the landing (#315, in the sandbox as root: apply the four patches, FU-4, re-mint all twelve, anchors PENDING), one verify, the owner's re-sign.
 - **RUNNING (sandbox):** SCRUB2-R1 (task #321). Its files are in `.lanes-live`.
